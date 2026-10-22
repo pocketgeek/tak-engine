@@ -124,6 +124,8 @@ struct Settings {
     // YouTube streaming REMEMBER KEY (client/streamkey.h): only whether the stream key is
     // kept in the OS credential store. The key itself is never in this file.
     bool streamRememberKey = false;
+    // The streaming panel's SAVE A LOCAL COPY: also write the stream to videoDir().
+    bool streamLocalCopy = false;
     struct GameCreate {
         bool crusades = false, doubleSight = false, speedUnlock = false;
         bool monarchExpendable = false;
@@ -201,7 +203,7 @@ struct Settings {
             && a.edgeScroll == b.edgeScroll && a.cursorScale == b.cursorScale
             && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion
             && a.playerName == b.playerName && a.accountName == b.accountName
-            && a.streamRememberKey == b.streamRememberKey
+            && a.streamRememberKey == b.streamRememberKey && a.streamLocalCopy == b.streamLocalCopy
             && a.gameModPacks == b.gameModPacks && a.cosmeticModPacks == b.cosmeticModPacks
             && a.lastMap == b.lastMap && a.gameCreate == b.gameCreate
             && a.dataDir == b.dataDir && a.dataManifest == b.dataManifest
@@ -224,6 +226,9 @@ std::string settingsPath();
 // Where replays are recorded and listed: settingsPath()'s folder, ending in a path
 // separator. Empty when there is no per-user folder.
 std::string replayDir();
+// Where the streaming panel's local copies go: replayDir() + "videos" and a separator
+// (created when the first copy starts). Empty when there is no per-user folder.
+std::string videoDir();
 // Point settingsPath() at another file for the rest of the process ("" = back to the
 // default). Cartographer's test profile uses it so a UI test of the shared GAME DATA
 // FOLDER setting can never read or write the player's real game settings -- in any
@@ -258,7 +263,8 @@ std::string serializeSettings(const Settings&);
 //     send someone back to the data-dir picker.
 //   * Identity and things with their own reset UI -- name, account, last map, hotkeys,
 //     and the streaming panel's Remember Key (a stored key sits behind that flag; only
-//     unticking it there deletes the key, so DEFAULTS must not orphan it).
+//     unticking it there deletes the key, so DEFAULTS must not orphan it) and its Save
+//     A Local Copy, which also lives only on that panel.
 //
 // This used to be two separate lists: one inline in the DEFAULTS click handler, one in
 // Options::atDefaults(). They have to agree, and three times they did not -- dataDir was
@@ -269,6 +275,7 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.playerName = cur.playerName;
     d.accountName = cur.accountName;
     d.streamRememberKey = cur.streamRememberKey;
+    d.streamLocalCopy = cur.streamLocalCopy;
     d.lastMap = cur.lastMap;
     d.gameCreate = cur.gameCreate;
     d.gameModPacks=cur.gameModPacks;d.cosmeticModPacks=cur.cosmeticModPacks;

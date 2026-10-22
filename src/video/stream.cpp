@@ -14,7 +14,9 @@ extern "C" {
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -32,6 +34,26 @@ void logCallback(void* obj, int level, const char* fmt, va_list args) {
 void check(int result) { if (result < 0) throw result; }
 struct HardwareUnavailable {};
 struct EncodeFailure {};
+// The optional local copy: a second muxer fed references to the encoder's own packets
+// (nothing is encoded twice). Fragmented MP4 -- an empty moov, then one moof+mdat per
+// two-second keyframe interval -- so a crash or a power cut still leaves a playable
+// file holding every finished fragment. Never throws: the stream must not depend on it.
+struct LocalCopy {
+    AVFormatContext* mux = nullptr;
+    AVStream *vs = nullptr, *as = nullptr;
+    AVPacket* packet = nullptr;
+    std::function<void(bool)> closed; // a finished copy: whether the trailer reached the disk
+    void close(bool finish) {
+        if (mux) {
+            bool ok = finish && av_write_trailer(mux) >= 0 && mux->pb && !mux->pb->error;
+            if (mux->pb && avio_closep(&mux->pb) < 0) ok = false;
+            avformat_free_context(mux); mux = nullptr;
+            if (finish && closed) closed(ok);
+        }
+        av_packet_free(&packet);
+    }
+    ~LocalCopy() { close(true); }
+};
 struct Encoder {
     AVFormatContext* mux = nullptr;
     AVCodecContext *v = nullptr, *a = nullptr;
@@ -42,7 +64,9 @@ struct Encoder {
     SwrContext* resample = nullptr;
     AVAudioFifo* fifo = nullptr;
     bool header = false;
+    LocalCopy copy;
     ~Encoder() {
+        copy.close(true);
         sws_freeContext(scale); swr_free(&resample);
         av_audio_fifo_free(fifo);
         av_frame_free(&vf); av_frame_free(&af); av_frame_free(&hw);
@@ -55,6 +79,7 @@ bool valid(const StreamConfig& c) {
     return (c.width >= 2 && c.height >= 2 && c.width <= 8192 && c.height <= 8192 &&
             c.width % 2 == 0 && c.height % 2 == 0) &&
         (c.fps == 30 || c.fps == 60) && c.bitrateKbps >= 1000 && c.bitrateKbps <= 80000 &&
+        c.localCopyDir.find("://") == std::string::npos &&
         (c.encoder.empty() || c.encoder == "libx264" || c.encoder == "h264_nvenc" ||
          c.encoder == "h264_amf" || c.encoder == "h264_qsv" ||
          c.encoder == "h264_vaapi" || c.encoder == "h264_videotoolbox" ||
@@ -72,6 +97,7 @@ struct Stream::Impl {
 #ifdef TAK_STREAM_TESTING
     std::atomic<int> testDelay{0};
     std::atomic<bool> testDelaying{false};
+    std::atomic<int> testCopyFail{-1};
 #endif
     mutable std::mutex stateMutex;
     StreamStatus state;
@@ -89,6 +115,86 @@ struct Stream::Impl {
     void report(const std::string& s, const std::string& encoder = {}) {
         std::lock_guard lock(stateMutex); state.state = s;
         if (!encoder.empty()) state.encoder = encoder;
+    }
+    void reportCopy(const std::string& s, const std::string& file = {}) {
+        std::lock_guard lock(stateMutex); state.local = s;
+        if (!file.empty()) state.localFile = file;
+    }
+    // TAK-YYYYMMDD-HHMMSS.mp4 in `dir` (local time), "-2", "-3"... if that name exists
+    // (a CPU-fallback restart can begin a second file within the same second).
+    static std::string copyName(std::string dir) {
+        if (dir.back() != '/' && dir.back() != '\\') dir += '/';
+        const std::time_t now = std::time(nullptr);
+        std::tm tm{};
+#ifdef _WIN32
+        localtime_s(&tm, &now);
+#else
+        localtime_r(&now, &tm);
+#endif
+        char stamp[32];
+        std::strftime(stamp, sizeof stamp, "TAK-%Y%m%d-%H%M%S", &tm);
+        std::string file = dir + stamp + ".mp4";
+        for (int n = 2; n < 100 && avio_check(("file:" + file).c_str(), 0) >= 0; ++n)
+            file = dir + stamp + "-" + std::to_string(n) + ".mp4";
+        return file;
+    }
+    // Opened once the stream's own header is out: a copy only of what is going live.
+    void openCopy(Encoder& e, const StreamConfig& c) {
+        if (c.localCopyDir.empty()) return;
+        auto& l = e.copy;
+        std::string file;
+        std::error_code ec;
+        try {
+            const std::filesystem::path dir(std::u8string(c.localCopyDir.begin(), c.localCopyDir.end()));
+            std::filesystem::create_directories(dir, ec);
+            if (!std::filesystem::is_directory(dir, ec)) { reportCopy("LOCAL COPY FAILED - CANNOT CREATE THE VIDEOS FOLDER"); return; }
+            file = copyName(c.localCopyDir);
+        } catch (...) { reportCopy("LOCAL COPY FAILED - CANNOT CREATE THE VIDEOS FOLDER"); return; }
+        auto fail = [&](const char* why, bool created) {
+            l.close(false);
+            if (created) {
+                try { std::filesystem::remove(std::filesystem::path(std::u8string(file.begin(), file.end())), ec); } catch (...) {}
+            }
+            reportCopy(why);
+        };
+        if (avformat_alloc_output_context2(&l.mux, nullptr, "mp4", nullptr) < 0 || !l.mux) {
+            l.mux = nullptr; return fail("LOCAL COPY FAILED - MP4 WRITER MISSING", false);
+        }
+        l.mux->max_interleave_delta = 250000;
+        l.vs = avformat_new_stream(l.mux, nullptr); l.as = avformat_new_stream(l.mux, nullptr);
+        l.packet = av_packet_alloc();
+        if (!l.vs || !l.as || !l.packet || avcodec_parameters_from_context(l.vs->codecpar, e.v) < 0 ||
+            avcodec_parameters_from_context(l.as->codecpar, e.a) < 0)
+            return fail("LOCAL COPY FAILED - OUT OF MEMORY", false);
+        l.vs->time_base = e.v->time_base; l.as->time_base = e.a->time_base;
+        // hvc1 (parameter sets in the sample entry) is the HEVC tag Apple players accept.
+        if (e.v->codec_id == AV_CODEC_ID_HEVC) l.vs->codecpar->codec_tag = MKTAG('h','v','c','1');
+        if (avio_open(&l.mux->pb, ("file:" + file).c_str(), AVIO_FLAG_WRITE) < 0)
+            return fail("LOCAL COPY FAILED - VIDEOS FOLDER NOT WRITABLE", false);
+        AVDictionary* opts = nullptr;
+        av_dict_set(&opts, "movflags", "frag_keyframe+empty_moov+default_base_moof", 0);
+        const int result = avformat_write_header(l.mux, &opts); av_dict_free(&opts);
+        if (result < 0 || l.mux->pb->error) return fail("LOCAL COPY FAILED - CANNOT WRITE THE FILE", true);
+        l.closed = [this](bool ok) { reportCopy(ok ? "LOCAL COPY SAVED" : "LOCAL COPY STOPPED - WRITE FAILED"); };
+        reportCopy("SAVING LOCAL COPY", file);
+    }
+    // A reference to the stream's packet, not a copy of its data. A failed write (a
+    // full disk, a removed drive) closes the copy and leaves the stream running.
+    void copyPacket(Encoder& e, AVCodecContext* codec, AVStream* stream, const AVPacket* packet) {
+        auto& l = e.copy;
+        if (!l.mux) return;
+        AVStream* out = stream == e.vs ? l.vs : l.as;
+        bool ok = av_packet_ref(l.packet, packet) >= 0;
+#ifdef TAK_STREAM_TESTING
+        if (ok && testCopyFail >= 0 && testCopyFail-- == 0) ok = false;
+#endif
+        if (ok) {
+            av_packet_rescale_ts(l.packet, codec->time_base, out->time_base);
+            l.packet->stream_index = out->index;
+            ok = av_interleaved_write_frame(l.mux, l.packet) >= 0 && !l.mux->pb->error;
+        }
+        av_packet_unref(l.packet);
+        if (!ok) { l.close(false); reportCopy("LOCAL COPY STOPPED - WRITE FAILED (DISK FULL?)"); }
     }
     static int interrupted(void* arg) {
         auto& p = *static_cast<Impl*>(arg);
@@ -228,6 +334,7 @@ struct Stream::Impl {
         av_dict_set(&opts, "flvflags", local ? "0" : "no_duration_filesize", 0);
         timeout(); result = avformat_write_header(e.mux, &opts); av_dict_free(&opts); check(result);
         e.header = true; deadline = 0;
+        openCopy(e, c);
     }
     void packets(Encoder& e, AVCodecContext* codec, AVStream* stream, AVFrame* frame) {
         if (avcodec_send_frame(codec, frame) < 0) throw EncodeFailure{};
@@ -235,6 +342,7 @@ struct Stream::Impl {
         int result = 0;
         bool writeFailure = false;
         while ((result = avcodec_receive_packet(codec, packet)) >= 0) {
+            copyPacket(e, codec, stream, packet);
             av_packet_rescale_ts(packet, codec->time_base, stream->time_base);
             packet->stream_index = stream->index;
             const int size = packet->size;
@@ -422,6 +530,7 @@ bool Stream::startRecording(const StreamConfig& c, const std::string& path) {
 }
 #ifdef TAK_STREAM_TESTING
 void Stream::testDelayOnce(int milliseconds) { p_->testDelay = milliseconds; }
+void Stream::testFailLocalAfter(int packets) { p_->testCopyFail = packets; }
 bool Stream::testDelayInProgress() const { return p_->testDelaying; }
 size_t Stream::testRetainedVideoBytes() const {
     std::lock_guard lock(p_->inputMutex); return p_->pixels.capacity();

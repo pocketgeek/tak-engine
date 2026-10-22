@@ -54,6 +54,47 @@ and connection badges are drawn **after capture** and stay off-stream.
 Microphone input, desktop capture, account login and broadcast scheduling are
 not included.
 
+## Saving a local copy
+
+Tick **Save a Local Copy**, the box above **Start Streaming**, to keep a copy of the
+broadcast on your own disk as well. It is off by default, and the game remembers
+whether you ticked it (the `streamLocalCopy` line in the settings file). **Defaults**
+in Options leaves it alone. The box is greyed out while a stream runs: the choice
+applies when you next press **Start Streaming**.
+
+The copy is the **same encoded video and audio** that goes to YouTube, written to a
+second file as it is sent. Nothing is encoded twice, so a copy costs disk writes,
+not extra CPU or GPU time, and it has the stream's resolution, frame rate, bitrate
+and codec (H.264, or HEVC for very wide streams; AAC audio). Files go into a
+**videos** folder inside the game's user folder, the folder that holds `settings.ini`
+and your replays, and are named after the local time the connection opened:
+`TAK-YYYYMMDD-HHMMSS.mp4`. The folder is created when the first copy starts.
+
+| Platform | Videos folder |
+| --- | --- |
+| Windows | `%APPDATA%\TAKengine\TAKingdoms\videos\` |
+| macOS | `~/Library/Application Support/TAKengine/TAKingdoms/videos/` |
+| Linux | `~/.local/share/TAKengine/TAKingdoms/videos/` (or under `$XDG_DATA_HOME`) |
+
+The file is a **fragmented MP4**: a fragment is written every two seconds, at each
+keyframe, so if the game crashes or the computer loses power the file still plays up
+to the last finished fragment. Stopping normally finishes the file. While saving,
+the panel's status shows **SAVING LOCAL COPY** and the file name, and the corner
+badge shows it while the panel is closed. After **Stop Streaming** it shows **LOCAL
+COPY SAVED** and the file's full path.
+
+The copy only records what is actually going out. Nothing is saved while the stream
+is connecting or reconnecting, and every connection gets its own file: after a
+reconnect, or a restart on the CPU encoder, a new file begins (a `-2` suffix is added
+if two would share a name).
+
+A problem with the copy never stops the stream. If the folder cannot be created or
+written, the status shows **LOCAL COPY FAILED** and the stream carries on without
+a copy. If writing fails part-way, for example because the disk is full, the status
+shows **LOCAL COPY STOPPED - WRITE FAILED** and the stream carries on; the file
+keeps everything up to its last finished fragment. If the game has no user folder at
+all, **Start Streaming** asks you to untick the box instead.
+
 **Stop Streaming** stops the upload; closing the F9 panel leaves it running.
 Returning to the title screen keeps it running. Exiting the application stops it.
 The video preferences last for that application session only, and so does the key
@@ -144,7 +185,14 @@ is patched explicitly for the pinned FFmpeg 7.1 source.
 
 CMake requires the media/codec/TLS/loader archives by full path; CI additionally
 checks executable imports. `stream_test` tests H.264/AAC output, timestamps,
-configuration validation, stopping, failure and restart without any network.
+configuration validation, stopping, failure and restart without any network. It also
+records with a local copy and reads the MP4 back box by box (the shipped FFmpeg has no
+MP4 reader): fragmented, an H.264/HEVC video track and an AAC track, the expected
+duration, and exactly as many video frames as the stream itself carried. A simulated
+full disk must stop only the copy, leaving the frames already fragmented readable,
+and an unwritable folder must fail only the copy. Built against an FFmpeg from before
+the local copy (no MP4 muxer), that part reports itself and CTest shows the test as
+skipped; CI does not allow the skip. Rerun `tools/build-ffmpeg-bink.sh` to update.
 `stream_capture_test` exercises capture with an open private setup panel.
 `stream_key_test` drives Remember Key through the panel against a fake store, and
 checks that the saved settings never contain the key. `credstore_test` makes a round
@@ -161,15 +209,17 @@ SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=opengl \
 ```
 
 The optional local network check uses a test-only build of the backend, a local
-TLS proxy, and a local FFmpeg receiver. It verifies reconnect and rejects a
-trusted certificate for the wrong hostname. It never contacts YouTube:
+TLS proxy, and a local FFmpeg receiver. It verifies reconnect, saves a local copy
+of each connection and checks with `ffprobe` that both files open with H.264 video,
+AAC audio and a plausible duration, and rejects a trusted certificate for the wrong
+hostname. It never contacts YouTube:
 
 ```sh
 cmake --build build-o2 --target stream_network_test
 python3 tools/check-stream-network.py build-o2/stream_network_test
 ```
 
-The external `ffmpeg` and `openssl` commands used by this check are development
+The external `ffmpeg`, `ffprobe` and `openssl` commands used by this check are development
 test tools, not engine runtime dependencies.
 
 Encoder slowdowns skip late video frames without reconnecting. Audio catches up

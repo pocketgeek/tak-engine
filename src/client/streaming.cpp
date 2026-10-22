@@ -177,13 +177,16 @@ struct Streaming::Impl {
     std::unique_ptr<StreamKeyMemory> keys;
     int resolution=5; // 720p, 1080p, 1440p, 4K, full window, max width 3840
     bool visible=false,editing=false,wasActive=false,wasTextInput=false;
+    bool localCopy=false; // SAVE A LOCAL COPY: settings->streamLocalCopy when there are settings
     std::string error;
     uint64_t nextCapture=0, rateTime=0, rateBytes=0;
     uint64_t rateKbps=0;
     float x=0,y=0,u=1;
-    // Row 0 is the key; the REMEMBER KEY row sits under it, then rows 1-5.
-    SDL_FRect row(int n) const {return {x+20*u,y+(70+45*(n+(n>0)))*u,600*u,34*u};}
+    // Row 0 is the key; the REMEMBER KEY row sits under it, then rows 1-4, the SAVE A
+    // LOCAL COPY row, and row 5 (start/stop).
+    SDL_FRect row(int n) const {return {x+20*u,y+(70+45*(n+(n>0)+(n>4)))*u,600*u,34*u};}
     SDL_FRect rememberRect() const {return {x+20*u,y+115*u,600*u,34*u};}
+    SDL_FRect localCopyRect() const {return {x+20*u,y+340*u,600*u,34*u};}
     std::pair<int,int> windowResolution(int w,int h) const {
         if(resolution!=5)return {w&~1,h&~1};
         const int width=std::max(2,std::min(w&~1,3840));
@@ -204,6 +207,21 @@ struct Streaming::Impl {
         if(!keys->setRemember(!keys->remember(),config.key)) {keys->check();return;} // greyed out: look again
         if(settings) {settings->streamRememberKey=keys->remember();if(save)save();}
     }
+    void toggleLocalCopy() {
+        if(stream.active())return; // greyed out: the choice applies at Start Streaming
+        localCopy=!localCopy;
+        if(settings) {settings->streamLocalCopy=localCopy;if(save)save();}
+    }
+    // The local copy's line: what it is doing, and its file -- the name while saving,
+    // the whole path once the stream has stopped. Paths keep their end when cut.
+    std::string localLine(const video::StreamStatus& s,float maxW) const {
+        if(s.local.empty())return {};
+        std::string file=s.localFile;
+        if(s.active) {const auto cut=file.find_last_of("/\\");if(cut!=std::string::npos)file.erase(0,cut+1);}
+        if(file.empty())return uiTextFit(s.local,1.5f*u,maxW);
+        const std::string head=s.local+": ";
+        return head+uiTextFitStart(file,1.5f*u,std::max(0.f,maxW-uiTextWidth(head,1.5f*u)));
+    }
     void pollKeys() {
         keys->poll(config.key);
         if(auto e=keys->takeError();!e.empty())error=e;
@@ -212,7 +230,7 @@ struct Streaming::Impl {
             settings->streamRememberKey=keys->remember();if(save)save();
         }
     }
-    void layout(int w,int h) {u=std::max(.4f,std::min({float(w)/680,float(h)/555,1.5f}));x=(w-640*u)/2;y=(h-515*u)/2;}
+    void layout(int w,int h) {u=std::max(.4f,std::min({float(w)/680,float(h)/620,1.5f}));x=(w-640*u)/2;y=(h-580*u)/2;}
     void show(bool on) {
         if(on&&!visible)wasTextInput=SDL_IsTextInputActive();
         if(on)keys->check();else if(visible)keys->sync(config.key);
@@ -226,7 +244,9 @@ struct Streaming::Impl {
         else if(now-rateTime>=1000) {rateKbps=(s.bytes-rateBytes)*8/(now-rateTime);rateTime=now;rateBytes=s.bytes;}
         if(!visible) {
             if(s.active || s.state.starts_with("FAILED")) {
-                std::string text="STREAM " + s.state + " - F9";
+                std::string text="STREAM " + s.state;
+                if(s.active && !s.local.empty() && s.local!="LOCAL COPY SAVED")text+=" - "+s.local;
+                text+=" - F9";
                 SDL_SetRenderDrawColor(ren,10,12,18,230);SDL_FRect r{10,10,std::min(float(w-20),uiTextWidth(text,1.5f)+20),30};SDL_RenderFillRectF(ren,&r);
                 uiText(ren,text,20,20,1.5f,{255,210,100,255});
             }
@@ -236,7 +256,7 @@ struct Streaming::Impl {
         pollKeys();
         const bool storeOk=keys->state()==StreamKeyMemory::State::Available;
         SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ren,12,17,26,248);SDL_FRect panel{x,y,640*u,515*u};SDL_RenderFillRectF(ren,&panel);
+        SDL_SetRenderDrawColor(ren,12,17,26,248);SDL_FRect panel{x,y,640*u,580*u};SDL_RenderFillRectF(ren,&panel);
         auto text=[&](const std::string& t,float px,float py,SDL_Color col=SDL_Color{235,235,235,255}) {uiText(ren,t,x+px*u,y+py*u,1.5f*u,col);};
         text("YOUTUBE STREAMING",20,20);
         text(storeOk&&keys->remember()?"GAME VIDEO AND AUDIO - KEY SAVED IN PASSWORD STORE":
@@ -271,20 +291,37 @@ struct Streaming::Impl {
             !storeOk?std::string("CHECKING PASSWORD STORE"):keys->busy()?std::string("SAVING..."):keys->storeName();
         uiText(ren,where,remember.x+remember.w-10*u-uiTextWidth(where,1.5f*u),remember.y+11*u,1.5f*u,
                       storeOk?SDL_Color{170,175,180,255}:grey);
+        // SAVE A LOCAL COPY: the same look, greyed out while streaming (applies at start).
+        const auto copyRow=localCopyRect();
+        SDL_SetRenderDrawColor(ren,35,45,60,255);SDL_RenderFillRectF(ren,&copyRow);
+        SDL_FRect copyBox{copyRow.x+10*u,copyRow.y+7*u,20*u,20*u};
+        SDL_SetRenderDrawColor(ren,s.active?90:200,s.active?95:195,s.active?100:175,255);SDL_RenderDrawRectF(ren,&copyBox);
+        if(localCopy) {
+            SDL_FRect tick{copyBox.x+5*u,copyBox.y+5*u,10*u,10*u};
+            SDL_SetRenderDrawColor(ren,s.active?90:255,s.active?95:210,s.active?100:100,255);SDL_RenderFillRectF(ren,&tick);
+        }
+        uiText(ren,"SAVE A LOCAL COPY",copyRow.x+42*u,copyRow.y+11*u,1.5f*u,s.active?grey:live);
+        const std::string copyWhere=s.active?"APPLIES AT START":"MP4 IN THE VIDEOS FOLDER";
+        uiText(ren,copyWhere,copyRow.x+copyRow.w-10*u-uiTextWidth(copyWhere,1.5f*u),copyRow.y+11*u,1.5f*u,
+                      s.active?grey:SDL_Color{170,175,180,255});
         const auto paste=pasteRect();
         SDL_SetRenderDrawColor(ren,s.active?35:50,s.active?40:65,s.active?45:85,255);
         SDL_RenderFillRectF(ren,&paste);
         uiText(ren,"PASTE",paste.x+27*u,paste.y+11*u,1.5f*u,
                       s.active?SDL_Color{110,115,120,255}:SDL_Color{240,235,210,255});
-        text(s.state,20,397,{255,210,100,255});
-        text(s.encoder+"  FRAMES "+std::to_string(s.frames)+"  DROPPED "+std::to_string(s.dropped),20,420);
-        text("REPLACED "+std::to_string(s.replaced)+"  RATE "+std::to_string(rateKbps)+" KBPS",20,443);
-        text(error.empty()?"ESC / F9: CLOSE - STREAM CONTINUES UNTIL STOP":error,20,482);
+        text(s.state,20,442,{255,210,100,255});
+        text(s.encoder+"  FRAMES "+std::to_string(s.frames)+"  DROPPED "+std::to_string(s.dropped),20,465);
+        text("REPLACED "+std::to_string(s.replaced)+"  RATE "+std::to_string(rateKbps)+" KBPS",20,488);
+        if(const auto line=localLine(s,600*u);!line.empty())
+            text(line,20,511,s.local.find("STOPPED")!=std::string::npos||s.local.find("FAILED")!=std::string::npos?
+                 SDL_Color{255,150,110,255}:SDL_Color{170,215,170,255});
+        text(error.empty()?"ESC / F9: CLOSE - STREAM CONTINUES UNTIL STOP":error,20,547);
     }
 };
 Streaming::Streaming(SDL_Renderer* ren,Settings* settings,std::function<void()> save,
                      std::shared_ptr<credstore::Store> store):p_(std::make_unique<Impl>()) {
     p_->ren=ren;p_->config.fps=60;p_->settings=settings;p_->save=std::move(save);
+    p_->localCopy=settings && settings->streamLocalCopy;
     p_->config.key.reserve(320); // room for 255 bytes + one text event: typing never reallocates (unwiped copies)
     const bool remember=settings && settings->streamRememberKey;
     p_->keys=std::make_unique<StreamKeyMemory>(store?std::move(store):streamKeyStore(),remember);
@@ -296,6 +333,7 @@ Streaming::~Streaming(){
     credstore::wipe(p_->config.key);
 }
 SDL_FRect Streaming::rememberRect(int w,int h){p_->layout(w,h);return p_->rememberRect();}
+SDL_FRect Streaming::localCopyRect(int w,int h){p_->layout(w,h);return p_->localCopyRect();}
 bool Streaming::waitKeyStore(int ms){const bool idle=p_->keys->waitIdle(ms);p_->pollKeys();return idle;}
 video::Stream& Streaming::stream(){return p_->stream;}
 bool Streaming::shown() const{return p_->visible;}
@@ -329,6 +367,8 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
         }
         const auto remember=p_->rememberRect();
         if(SDL_PointInFRect(&pt,&remember)) {if(direction>0)p_->toggleRemember();return true;} // left only: untick deletes
+        const auto copyRow=p_->localCopyRect();
+        if(SDL_PointInFRect(&pt,&copyRow)) {if(direction>0)p_->toggleLocalCopy();return true;}
         for(int i=0;i<6;++i) {auto r=p_->row(i);if(!SDL_PointInFRect(&pt,&r))continue;
             if(direction<0 && (i==0 || i==5))return true;
             if(i==5) {
@@ -338,8 +378,11 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
                         const auto size=p_->windowResolution(w,h);
                         p_->config.width=size.first;p_->config.height=size.second;
                     }
+                    p_->config.localCopyDir=p_->localCopy?videoDir():std::string();
                     if(w<2 || h<2 || p_->config.width>8192 || p_->config.height>8192)
                         p_->error="RESOLUTION MUST BE BETWEEN 2 AND 8192 PIXELS";
+                    else if(p_->localCopy && p_->config.localCopyDir.empty())
+                        p_->error="NO USER FOLDER FOR A LOCAL COPY - UNTICK SAVE A LOCAL COPY";
                     else if(!p_->stream.start(p_->config))p_->error="ENTER A VALID YOUTUBE STUDIO STREAM KEY";
                     else {p_->error.clear();p_->editing=false;SDL_StopTextInput();p_->keys->sync(p_->config.key);}
                 }

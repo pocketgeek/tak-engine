@@ -214,6 +214,13 @@ while it is ticked, deletes the stored key. If your system has no password store
 the box is greyed out with **NO SYSTEM PASSWORD STORE**.
 [Remembering the key](streaming.md#remembering-the-key) has the details.
 
+Tick **Save a Local Copy** (off by default; the game remembers your choice) to also
+keep the broadcast on disk: the same video YouTube receives, as an MP4 in the
+**videos** folder beside your replays ([Where files are kept](#where-files-are-kept)), named `TAK-YYYYMMDD-HHMMSS.mp4`. The panel
+shows the file's path when you stop. A full disk or unwritable folder stops only the
+copy, never the stream. [Saving a local copy](streaming.md#saving-a-local-copy) has
+the details.
+
 The version number is shown on the title screen.
 
 In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
@@ -2216,7 +2223,8 @@ Settings, saved replays and downloaded content live in a per-user folder:
 
 The settings file is `settings.ini`. Replays (`.takrep` files) are saved beside
 it; a game still being recorded is a `.takrep.part` file, with a small
-`.takrep.part.chk` beside it, until it ends. Cartographer keeps its preferences in a sibling `Cartographer` folder.
+`.takrep.part.chk` beside it, until it ends. Local copies of YouTube streams go in its
+`videos` folder. Cartographer keeps its preferences in a sibling `Cartographer` folder.
 
 The game prints diagnostic messages to the terminal it was started from. On
 Linux and macOS, start it from a terminal if you need them for a bug report.

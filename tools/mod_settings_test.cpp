@@ -145,6 +145,21 @@ int main() {
         if(tak::loadSettings().scorecardScale!=2.0f)throw std::runtime_error("scorecard upper limit");
         std::ofstream(path)<<"scorecardScale = 0\n";
         if(tak::loadSettings().scorecardScale!=0.5f)throw std::runtime_error("scorecard lower limit");
+        // Streaming SAVE A LOCAL COPY: off by default and in files written before it
+        // existed; the choice survives a save and load (a restart) both ways.
+        if(tak::Settings{}.streamLocalCopy)throw std::runtime_error("local copy must default to off");
+        std::ofstream(path)<<"uiScale = 2\n";
+        if(tak::loadSettings().streamLocalCopy)throw std::runtime_error("local copy must load as off when absent");
+        {
+            auto copy=s;copy.streamLocalCopy=true;
+            if(!tak::saveSettings(copy) || !tak::loadSettings().streamLocalCopy)throw std::runtime_error("local copy on must persist");
+            copy.streamLocalCopy=false;
+            if(!tak::saveSettings(copy) || tak::loadSettings().streamLocalCopy)throw std::runtime_error("local copy off must persist");
+            if(tak::serializeSettings(copy).find("streamLocalCopy = 0\n")==std::string::npos)
+                throw std::runtime_error("local copy saved as an on/off key");
+            if(tak::videoDir()!=tak::replayDir()+"videos"+tak::replayDir().back())
+                throw std::runtime_error("local copies go in the user folder's videos folder");
+        }
         // Renderer: AUTO ("") by default and when the key is absent (every file written
         // before the option existed); stored by SDL driver id, written as "auto" for AUTO.
         if(!tak::Settings{}.renderer.empty())throw std::runtime_error("renderer must default to Auto");

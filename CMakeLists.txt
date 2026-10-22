@@ -1845,7 +1845,8 @@ target_link_libraries(stream_test PRIVATE tak-formats tak_ffmpeg)
 add_test(NAME streaming COMMAND stream_test)
 add_test(NAME streaming_overload COMMAND stream_test libx264 overload)
 add_test(NAME streaming_native COMMAND stream_test libx264 native)
-set_tests_properties(streaming PROPERTIES TIMEOUT 30)
+# 77: this FFmpeg build predates the local copy's MP4 muxer (rerun build-ffmpeg-bink.sh).
+set_tests_properties(streaming PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
 
 # Streaming REMEMBER KEY: the stream key in the OS credential store (src/client/credstore.h),
 # one platform file each. Linux dlopens libsecret at run time, so static release builds gain
@@ -1976,7 +1977,8 @@ if(TAK_BUILD_CLIENT)
     add_executable(crusades_effective_audit tools/crusades_effective_audit.cpp)
     target_compile_definitions(crusades_effective_audit PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(crusades_effective_audit PRIVATE tak-formats ${_tak_sdl2})
-    add_executable(stream_capture_test tools/stream_capture_test.cpp src/client/streaming.cpp src/video/stream.cpp)
+    add_executable(stream_capture_test tools/stream_capture_test.cpp src/client/streaming.cpp src/video/stream.cpp
+                   src/client/settings.cpp)
     target_link_libraries(stream_capture_test PRIVATE tak-uifont tak-formats tak-credstore tak_ffmpeg ${_tak_sdl2})
     target_compile_definitions(stream_capture_test PRIVATE SDL_MAIN_HANDLED)
     add_test(NAME streaming_capture COMMAND stream_capture_test)

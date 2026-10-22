@@ -22,6 +22,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -95,6 +96,12 @@ static void type(Streaming& p, const char* text) {
 }
 static void clickRemember(Streaming& p) {
     const SDL_FRect r = p.rememberRect(W, H);
+    SDL_Event e{}; e.type = SDL_MOUSEBUTTONDOWN; e.button.button = SDL_BUTTON_LEFT;
+    e.button.x = int(r.x + r.w / 2); e.button.y = int(r.y + r.h / 2);
+    p.input(e, W, H);
+}
+static void clickLocalCopy(Streaming& p) {
+    const SDL_FRect r = p.localCopyRect(W, H);
     SDL_Event e{}; e.type = SDL_MOUSEBUTTONDOWN; e.button.button = SDL_BUTTON_LEFT;
     e.button.x = int(r.x + r.w / 2); e.button.y = int(r.y + r.h / 2);
     p.input(e, W, H);
@@ -301,6 +308,43 @@ int main() {
         m.check(); m.waitIdle(3000); m.poll(field);
         expect(*fake, {"probe", "load"}, "the next panel open retries the load");
         check(field == kDummy, "...which fills the field");
+    }
+
+    std::printf("stream_key_test: SAVE A LOCAL COPY\n");
+    {
+        auto fake = std::make_shared<Fake>();
+        Settings s;
+        int saves = 0;
+        std::string last;
+        check(!s.streamLocalCopy, "the box starts unticked");
+        {
+            Streaming p(ren, &s, [&] { last = serializeSettings(s); ++saves; }, fake);
+            key(p, SDLK_F9); settle(p); p.draw(W, H);
+            clickLocalCopy(p);
+            check(s.streamLocalCopy && saves == 1 && last.find("streamLocalCopy = 1") != std::string::npos,
+                  "ticking sets and saves the preference");
+            check(!s.streamRememberKey, "...and leaves REMEMBER KEY alone");
+            // While a stream runs the box is greyed out: the choice applies at the next start.
+            const auto file = std::filesystem::temp_directory_path() / "tak-stream-key-test.flv";
+            video::StreamConfig c; c.encoder = "libx264";
+            check(p.stream().startRecording(c, file.string()), "a local recording runs");
+            clickLocalCopy(p); p.draw(W, H);
+            check(s.streamLocalCopy && saves == 1, "the box cannot change while streaming");
+            p.stream().stop();
+            for (int i = 0; i < 500 && p.stream().active(); ++i) SDL_Delay(10);
+            std::filesystem::remove(file);
+            clickLocalCopy(p);
+            check(!s.streamLocalCopy && saves == 2 && last.find("streamLocalCopy = 0") != std::string::npos,
+                  "unticking after the stream clears and saves it");
+            clickLocalCopy(p);
+        }
+        // A restart: a new panel reads the remembered choice (ticked), so a click unticks.
+        Streaming again(ren, &s, [&] { last = serializeSettings(s); ++saves; }, fake);
+        key(again, SDLK_F9); settle(again);
+        clickLocalCopy(again);
+        check(!s.streamLocalCopy && last.find("streamLocalCopy = 0") != std::string::npos,
+              "the remembered choice is the box's state after a restart");
+        key(again, SDLK_ESCAPE); settle(again);
     }
 
     check(!savedTexts.empty(), "settings were serialized");

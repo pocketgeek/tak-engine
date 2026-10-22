@@ -1,4 +1,7 @@
 #include "video/stream.h"
+extern "C" {
+#include <libavformat/avformat.h>
+}
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -7,11 +10,199 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
+#include <string>
 #include <thread>
 #include <vector>
 using namespace std::chrono_literals;
 static void require(bool value,const char* message) {if(!value){std::fprintf(stderr,"FAIL: %s\n",message);std::exit(1);}}
 static uint32_t be24(const unsigned char* p){return uint32_t(p[0])<<16|uint32_t(p[1])<<8|p[2];}
+static uint32_t be32(const unsigned char* p){return uint32_t(p[0])<<24|be24(p+1);}
+static uint64_t be64(const unsigned char* p){return uint64_t(be32(p))<<32|be32(p+4);}
+static std::vector<unsigned char> slurp(const std::filesystem::path& path) {
+    std::ifstream file(path,std::ios::binary);
+    return {std::istreambuf_iterator<char>(file),{}};
+}
+// Coded video frames in an FLV file (the stream's own packets).
+static int flvVideoFrames(const std::vector<unsigned char>& bytes) {
+    int videos=0;
+    for(size_t pos=13;pos+15<=bytes.size();) {
+        const size_t len=be24(&bytes[pos+1]);
+        if(pos+11+len+4>bytes.size())break;
+        const auto* p=&bytes[pos+11];
+        if(bytes[pos]==9&&len>=5) {
+            const bool enhanced=(p[0]&0x80)!=0;
+            const int packet=enhanced?(p[0]&15):p[1];
+            if(packet==1 || (enhanced && packet==3))++videos;
+        }
+        pos+=11+len+4;
+    }
+    return videos;
+}
+// A fragmented MP4, read box by box (the shipped FFmpeg has no MP4 demuxer): its
+// tracks' sample entries and timescales, and per track the samples and decode time
+// the moof fragments add up to. Anything malformed fails the walk.
+struct Mp4Track { std::string handler, entry; uint32_t timescale=0, defaultDuration=0; uint64_t samples=0, end=0; };
+struct Mp4 { bool ftyp=false, mvex=false, trailer=false; int fragments=0; uint64_t mdat=0; std::map<uint32_t,Mp4Track> tracks; };
+static bool walk(const unsigned char* p,size_t n,Mp4& m,uint32_t track,const std::string& parent) {
+    size_t pos=0;
+    uint32_t trafTrack=0,trafDefault=0;uint64_t trafBase=0,trafDuration=0;
+    while(pos+8<=n) {
+        uint64_t size=be32(p+pos);size_t head=8;
+        const std::string type(reinterpret_cast<const char*>(p+pos+4),4);
+        if(size==1){if(pos+16>n)return false;size=be64(p+pos+8);head=16;}
+        else if(size==0)size=n-pos;
+        if(size<head||size>n-pos)return false;
+        const unsigned char* b=p+pos+head;const size_t len=size_t(size)-head;
+        auto need=[&](size_t k){return len>=k;};
+        if(type=="ftyp")m.ftyp=true;
+        else if(type=="mdat")m.mdat+=len;
+        else if(type=="mfra")m.trailer=true;
+        else if(type=="mvex"){m.mvex=true;if(!walk(b,len,m,0,type))return false;}
+        else if(type=="moov"||type=="mdia"||type=="minf"||type=="stbl"){if(!walk(b,len,m,track,type))return false;}
+        else if(type=="trak") {
+            // tkhd comes first: find the track id, then read the rest under it.
+            if(!need(24)||std::string(reinterpret_cast<const char*>(b+4),4)!="tkhd")return false;
+            const uint32_t id=be32(b+8+(b[8]==1?20:12));
+            m.tracks[id];if(!walk(b,len,m,id,type))return false;
+        } else if(type=="hdlr"){if(!need(12))return false;m.tracks[track].handler.assign(reinterpret_cast<const char*>(b+8),4);}
+        else if(type=="mdhd"){if(!need(24))return false;m.tracks[track].timescale=be32(b+(b[0]==1?20:12));}
+        else if(type=="stsd"){if(!need(16))return false;m.tracks[track].entry.assign(reinterpret_cast<const char*>(b+12),4);}
+        else if(type=="trex"){if(!need(24))return false;m.tracks[be32(b+4)].defaultDuration=be32(b+12);}
+        else if(type=="moof"){++m.fragments;if(!walk(b,len,m,0,type))return false;}
+        else if(type=="traf") {
+            if(!walk(b,len,m,0,type))return false;
+        } else if(type=="tfhd"&&parent=="traf") {
+            if(!need(8))return false;
+            const uint32_t flags=be32(b)&0xffffff;size_t at=8;
+            trafTrack=be32(b+4);trafDefault=m.tracks[trafTrack].defaultDuration;
+            if(flags&1)at+=8;
+            if(flags&2)at+=4;
+            if(flags&8){if(!need(at+4))return false;trafDefault=be32(b+at);}
+        } else if(type=="tfdt"&&parent=="traf") {
+            if(!need(b[0]==1?12:8))return false;
+            trafBase=b[0]==1?be64(b+4):be32(b+4);
+        } else if(type=="trun"&&parent=="traf") {
+            if(!need(8)||!trafTrack)return false;
+            const uint32_t flags=be32(b)&0xffffff,count=be32(b+4);size_t at=8;
+            if(flags&1)at+=4;
+            if(flags&4)at+=4;
+            const size_t each=4*(((flags>>8)&1)+((flags>>9)&1)+((flags>>10)&1)+((flags>>11)&1));
+            if(!need(at+each*count))return false;
+            for(uint32_t i=0;i<count;++i)trafDuration+=(flags&0x100)?be32(b+at+i*each):trafDefault;
+            auto& t=m.tracks[trafTrack];t.samples+=count;
+            t.end=std::max(t.end,trafBase+trafDuration);
+        }
+        pos+=size_t(size);
+    }
+    return pos==n;
+}
+static bool readMp4(const std::filesystem::path& path,Mp4& m) {
+    const auto bytes=slurp(path);
+    return !bytes.empty() && walk(bytes.data(),bytes.size(),m,0,"");
+}
+static const Mp4Track* trackOf(const Mp4& m,const char* handler) {
+    for(auto& [id,t]:m.tracks)if(t.handler==handler)return &t;
+    return nullptr;
+}
+static void waitStopped(tak::video::Stream& stream) {
+    const auto deadline=std::chrono::steady_clock::now()+5s;
+    while(stream.active() && std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(1ms);
+    require(!stream.active(),"stream stops");
+}
+// Feeds moving pixels and a tone for `seconds`, requiring the stream to stay up.
+static void feed(tak::video::Stream& stream,std::chrono::milliseconds length) {
+    std::vector<uint8_t> pixels(640*480*4);
+    std::array<int16_t,256*2> audio{};
+    int samples=0,frame=0;
+    const auto begin=std::chrono::steady_clock::now();
+    while(std::chrono::steady_clock::now()-begin<length) {
+        require(stream.active(),stream.status().state.c_str());
+        for(size_t i=0;i<pixels.size();i+=4){pixels[i]=uint8_t(i/7+frame);pixels[i+1]=uint8_t(i/13);pixels[i+2]=80;pixels[i+3]=255;}
+        ++frame;
+        stream.video(pixels.data(),640,480,640*4);
+        for(int i=0;i<256;++i)audio[i*2]=audio[i*2+1]=int16_t(std::sin(double(samples++)*6.283185307179586*440/11025)*12000);
+        stream.audio(audio.data(),256,2);
+        std::this_thread::sleep_for(23ms);
+    }
+}
+// SAVE A LOCAL COPY: the stream's packets, also in a fragmented MP4 beside it. Returns
+// false (skipped) when this FFmpeg build has no MP4 writer -- tools/build-ffmpeg-bink.sh
+// predates it -- which CI never allows.
+static bool localCopy(tak::video::StreamConfig config) {
+    if(!av_guess_format("mp4",nullptr,nullptr)) {
+        std::printf("SKIP local copy: this static FFmpeg has no MP4 muxer; rerun tools/build-ffmpeg-bink.sh\n");
+        require(!std::getenv("CI"),"CI FFmpeg has the MP4 muxer");
+        return false;
+    }
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-stream-copy-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto videos=root/"videos"; // missing: the stream creates it
+    const auto flv=root/"stream.flv";
+    fs::create_directories(root);
+    config.key.clear();config.localCopyDir=videos.string();
+    {
+        tak::video::Stream stream;
+        require(stream.startRecording(config,flv.string()),"start with a local copy");
+        feed(stream,2500ms);
+        auto s=stream.status();
+        require(s.local=="SAVING LOCAL COPY","status says SAVING LOCAL COPY");
+        require(fs::path(s.localFile).parent_path()==videos,"the copy is in the videos folder");
+        const auto name=fs::path(s.localFile).filename().string();
+        require(name.size()==23 && name.starts_with("TAK-") && name[12]=='-' && name.ends_with(".mp4"),"named TAK-YYYYMMDD-HHMMSS.mp4");
+        stream.stop();waitStopped(stream);
+        s=stream.status();
+        require(s.local=="LOCAL COPY SAVED" && fs::exists(s.localFile),"status says LOCAL COPY SAVED, with the path");
+        Mp4 m;
+        require(readMp4(s.localFile,m),"the copy is a well-formed MP4");
+        const auto* v=trackOf(m,"vide");const auto* a=trackOf(m,"soun");
+        require(m.ftyp && m.mvex && m.fragments>=1 && m.trailer,"fragmented MP4 with its trailer");
+        require(v && (v->entry=="avc1"||v->entry=="hvc1") && v->timescale,"H.264/HEVC video track");
+        require(a && a->entry=="mp4a" && a->timescale,"AAC audio track");
+        const double vs=double(v->end)/v->timescale,as=double(a->end)/a->timescale;
+        std::printf("local copy %s: %d fragments, video %llu samples %.2fs, audio %.2fs, %llu bytes\n",s.localFile.c_str(),
+                    m.fragments,(unsigned long long)v->samples,vs,as,(unsigned long long)fs::file_size(s.localFile));
+        require(m.mdat>10000 && v->samples>=30,"video samples written");
+        require(vs>1.8 && vs<3.5 && std::abs(vs-as)<0.2,"duration matches the stream");
+        const int flvFrames=flvVideoFrames(slurp(flv));
+        std::printf("stream video frames %d, copy %llu\n",flvFrames,(unsigned long long)v->samples);
+        require(uint64_t(flvFrames)==v->samples,"the copy holds exactly the stream's packets");
+    }
+    {
+        // A full disk mid-stream: the copy stops, the stream does not.
+        tak::video::Stream stream;
+        require(stream.startRecording(config,flv.string()),"start with a local copy (disk fills)");
+        stream.testFailLocalAfter(180);
+        feed(stream,4000ms);
+        auto s=stream.status();
+        require(stream.active() && s.state=="RECORDING","a failed local write leaves the stream running");
+        require(s.local.starts_with("LOCAL COPY STOPPED"),"status says the local copy stopped");
+        const auto before=s.frames;
+        feed(stream,500ms);
+        require(stream.status().frames>before,"frames keep encoding after the copy stopped");
+        stream.stop();waitStopped(stream);
+        require(stream.status().local.starts_with("LOCAL COPY STOPPED"),"stop keeps the stopped reason");
+        Mp4 m;
+        require(readMp4(stream.status().localFile,m),"the cut-off copy is still well-formed (no trailer)");
+        const auto* v=trackOf(m,"vide");
+        require(!m.trailer && m.fragments>=1 && v && v->samples>=30,"its finished fragments remain");
+    }
+    {
+        // A folder that cannot be created: the copy fails, the stream runs.
+        tak::video::Stream stream;
+        std::ofstream(root/"file").put('x');
+        config.localCopyDir=(root/"file"/"videos").string();
+        require(stream.startRecording(config,flv.string()),"start with an impossible local copy");
+        feed(stream,800ms);
+        const auto s=stream.status();
+        require(s.state=="RECORDING" && s.local.starts_with("LOCAL COPY FAILED"),"unwritable folder: copy failed, stream runs");
+        stream.stop();waitStopped(stream);
+        config.localCopyDir="rtmps://example.invalid/x";
+        require(!stream.startRecording(config,flv.string()),"a local copy cannot be a network destination");
+    }
+    fs::remove_all(root);
+    return true;
+}
 int main(int argc,char** argv) {
     tak::video::StreamConfig config;
     config.encoder=argc>1?argv[1]:"libx264";
@@ -132,5 +323,6 @@ int main(int argc,char** argv) {
         require(stream.startRecording(config,path.string()),"can restart after failure");stream.stop();
     }
     std::filesystem::remove(path);
+    if(argc<3 && !localCopy(config))return 77; // the plain run only: CTest reports a skip
     return 0;
 }

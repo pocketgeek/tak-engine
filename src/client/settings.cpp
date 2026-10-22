@@ -69,6 +69,11 @@ std::string replayDir() {
     return dir;
 }
 
+std::string videoDir() {
+    const std::string dir = replayDir();
+    return dir.empty() ? dir : dir + "videos" + dir.back();
+}
+
 Settings loadSettings() {
     Settings s;   // defaults
     std::string path = settingsPath();
@@ -142,6 +147,7 @@ Settings loadSettings() {
         else if (key == "playerName")      s.playerName = val;
         else if (key == "accountName")     s.accountName = val;
         else if (key == "streamRememberKey") s.streamRememberKey = asBool();
+        else if (key == "streamLocalCopy") s.streamLocalCopy = asBool();
         else if (key == "audioDevice")     s.audioDevice = val;
         else if (key == "voiceEnabled")    s.voiceEnabled = asBool();
         else if (key == "voiceActivation") s.voiceActivation = asBool();
@@ -246,6 +252,7 @@ std::string serializeSettings(const Settings& s) {
     o << "playerName = " << s.playerName << "\n";
     o << "accountName = " << s.accountName << "\n";
     o << "streamRememberKey = " << (s.streamRememberKey ? 1 : 0) << "\n";
+    o << "streamLocalCopy = " << (s.streamLocalCopy ? 1 : 0) << "\n";
     o << "audioDevice = " << s.audioDevice << "\n";
     o << "voiceEnabled = " << (s.voiceEnabled ? 1 : 0) << "\n";
     o << "voiceActivation = " << (s.voiceActivation ? 1 : 0) << "\n";

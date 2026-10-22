@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Local-only RTMPS reconnect + certificate tests. Needs ffmpeg/openssl on PATH.
+"""Local-only RTMPS reconnect + certificate + local-copy tests. Needs ffmpeg/ffprobe/openssl on PATH.
 Usage: python3 tools/check-stream-network.py build-o2/stream_network_test
 These executables are test tools, never runtime dependencies of the game.
 """
+import json
 import pathlib
 import queue
 import select
@@ -79,10 +80,23 @@ class Proxy:
         self.thread.join(timeout=1)
 
 
-def launch(exe, proxy, cert, seconds):
+def launch(exe, proxy, cert, seconds, copy_dir=None):
+    extra = sys.argv[2:3]
+    if copy_dir:
+        extra = (extra or ['libx264']) + [str(copy_dir)]
     return subprocess.Popen([exe, f'rtmps://localhost:{proxy.port}/live/test-key',
-                             str(cert), str(seconds)] + sys.argv[2:3], stdout=subprocess.PIPE,
+                             str(cert), str(seconds)] + extra, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True)
+
+
+def probe(path):
+    """ffprobe's view of a local copy: its streams' types/codecs and duration."""
+    out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries',
+                          'format=duration:stream=codec_type,codec_name', '-of', 'json', str(path)],
+                         check=True, capture_output=True, text=True).stdout
+    info = json.loads(out)
+    return ({s['codec_type']: s['codec_name'] for s in info['streams']},
+            float(info['format'].get('duration', 0)))
 
 
 def stop(p):
@@ -110,7 +124,8 @@ def main():
         process = None
         try:
             time.sleep(.3)
-            process = launch(exe, proxy, cert, 16)
+            videos = root / 'videos'
+            process = launch(exe, proxy, cert, 16, videos)
             lines = queue.Queue()
             def reader():
                 for line in process.stdout:
@@ -143,6 +158,14 @@ def main():
             assert (root / 'first.flv').stat().st_size > 10000
             stop(server)
             assert (root / 'second.flv').stat().st_size > 10000
+            # SAVE A LOCAL COPY: one fragmented MP4 per connection, each playable.
+            copies = sorted(videos.glob('TAK-*.mp4'))
+            assert len(copies) == 2, f'expected a local copy per connection: {copies}'
+            for copy in copies:
+                streams, duration = probe(copy)
+                print(f'{copy.name}: {streams} {duration:.1f}s', flush=True)
+                assert streams.get('video') in ('h264', 'hevc') and streams.get('audio') == 'aac', streams
+                assert duration > 1.5, f'{copy.name} is only {duration}s'
         finally:
             stop(process)
             stop(server)
@@ -157,7 +180,7 @@ def main():
             assert 'RECONNECTING' in output, output
             assert proxy.accepted == 0, 'TLS handshake accepted a mismatched hostname'
             assert 'test-key' not in output + errors, 'stream key leaked into logs'
-            print('PASS: encrypted upload, reconnect, hostname rejection, key redaction')
+            print('PASS: encrypted upload, reconnect, local copies, hostname rejection, key redaction')
         finally:
             proxy.close()
 

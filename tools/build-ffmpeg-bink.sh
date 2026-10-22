@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Static FFmpeg for retail Bink playback and H.264/HEVC/AAC RTMPS streaming.
+# Static FFmpeg for retail Bink playback, H.264/HEVC/AAC RTMPS streaming and the
+# streaming panel's local MP4 copy (fragmented, so a crash still leaves a playable file).
 # Builds pinned static dependencies using build-stream-deps.sh. Only OS frameworks
 # and GPU driver runtimes remain external. PREFIX / JOBS / cross knobs supported.
 set -euo pipefail
@@ -61,7 +62,7 @@ fi
   --enable-gpl --enable-version3 --enable-libx264 --pkg-config-flags=--static \
   --extra-cflags="-I$PREFIX/include" --extra-ldflags="-L$PREFIX/lib" \
   --enable-swscale --enable-swresample \
-  --enable-encoder=libx264,aac --enable-muxer=flv \
+  --enable-encoder=libx264,aac --enable-muxer=flv,mp4 \
   --enable-protocol=file,rtmp,rtmps,tcp,tls \
   "${stream_args[@]}" \
   --enable-demuxer=bink \

@@ -10,7 +10,8 @@ constexpr int kStreamingEvent = 0x54414b53;
 // Owned by the application; survives transitions between title and game.
 // REMEMBER KEY (client/streamkey.h) reads/writes settings->streamRememberKey and calls
 // `save` after changing it; without settings it still works for the session. `store`
-// defaults to streamKeyStore(); tests inject a fake.
+// defaults to streamKeyStore(); tests inject a fake. SAVE A LOCAL COPY likewise keeps
+// settings->streamLocalCopy (default off) and saves it; it applies at Start Streaming.
 class Streaming {
 public:
     explicit Streaming(SDL_Renderer*, Settings* settings = nullptr, std::function<void()> save = {},
@@ -24,6 +25,7 @@ public:
     bool shown() const;
     // Tests and screenshots: the REMEMBER KEY row, and a wait for its credential-store work.
     SDL_FRect rememberRect(int w, int h);
+    SDL_FRect localCopyRect(int w, int h); // the SAVE A LOCAL COPY row
     bool waitKeyStore(int ms);
 private:
     struct Impl;

@@ -11,12 +11,19 @@ struct StreamConfig {
     // Empty means automatic hardware selection with a CPU fallback.
     std::string encoder;
     std::string key; // Memory only. Never persisted or logged.
+    // Non-empty: also save the SAME encoded packets to a fragmented MP4 in this folder
+    // (created if missing), TAK-YYYYMMDD-HHMMSS.mp4, one file per connection. A local
+    // failure stops only the copy; the stream continues.
+    std::string localCopyDir;
 };
 struct StreamStatus {
     bool active = false;
     std::string state = "OFF", encoder;
     uint64_t frames = 0, dropped = 0, replaced = 0, bytes = 0;
     int width = 0, height = 0, fps = 30;
+    // Local copy: "" when off, else "SAVING LOCAL COPY", "LOCAL COPY SAVED" or a
+    // "LOCAL COPY STOPPED/FAILED - ..." reason; localFile is the newest file's path.
+    std::string local, localFile;
 };
 // One application-owned encoder. All codec/network operations run on its worker.
 // Video/audio producers never wait for that worker or allocate on the audio thread.
@@ -32,6 +39,8 @@ public:
     bool testDelayInProgress() const;
     size_t testRetainedVideoBytes() const;
     bool startTestEndpoint(const StreamConfig&, const std::string& url, const std::string& caFile);
+    // The local copy's next write after `packets` more fails, as a full disk would.
+    void testFailLocalAfter(int packets);
 #endif
     void stop(); // nonblocking; destruction joins after interrupting network I/O
     bool active() const;

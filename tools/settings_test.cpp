@@ -95,6 +95,7 @@ int main() {
     flips("playerName",      [](Settings& s) { s.playerName = "someone"; });
     flips("accountName",     [](Settings& s) { s.accountName = "someone"; });
     flips("streamRememberKey", [](Settings& s) { s.streamRememberKey = !s.streamRememberKey; });
+    flips("streamLocalCopy", [](Settings& s) { s.streamLocalCopy = !s.streamLocalCopy; });
     flips("gameCreate.crusades", [](Settings& s) { s.gameCreate.crusades = !s.gameCreate.crusades; });
     flips("gameCreate.doubleSight", [](Settings& s) { s.gameCreate.doubleSight = !s.gameCreate.doubleSight; });
     flips("gameCreate.speedUnlock", [](Settings& s) { s.gameCreate.speedUnlock = !s.gameCreate.speedUnlock; });
@@ -163,6 +164,7 @@ int main() {
         cur.playerName = "curtis";
         cur.accountName = "curtis";
         cur.streamRememberKey = true;
+        cur.streamLocalCopy = true;
         cur.lastMap = "Inner Circle";
         cur.gameCreate.crusades = true;
         cur.gameCreate.generator = "saved recipe";
@@ -205,6 +207,7 @@ int main() {
         keep("playerName",        d.playerName == cur.playerName);
         keep("accountName",       d.accountName == cur.accountName);
         keep("streamRememberKey", d.streamRememberKey);
+        keep("streamLocalCopy",   d.streamLocalCopy);
         keep("lastMap",           d.lastMap == cur.lastMap);
         keep("hotkeys",           d.hotkeys == cur.hotkeys);
         keep("voice chat",        d.voiceEnabled && d.voiceMicDevice == "a-mic" && !d.voiceOutputSameAsGame &&
