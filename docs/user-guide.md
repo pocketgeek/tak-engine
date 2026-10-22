@@ -1680,7 +1680,9 @@ Version 0.8.9 uses network protocol **288**, the same as 0.8.8, so 0.8.9 and
 0.8.8 play together: a server and its players may run either. It cannot play
 with 0.8.7 (protocol 284) or any earlier version: the server turns away a client
 whose protocol differs from its own, so when updating from 0.8.7 or earlier a
-server and all of its players must update together.
+server and all of its players must update together. Builds from the source after
+0.8.9 use protocol **289** and play with neither 0.8.9 nor 0.8.8, nor their
+replays.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
 This should not happen between matching versions with matching game data; if it

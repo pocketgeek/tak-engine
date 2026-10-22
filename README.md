@@ -1357,6 +1357,8 @@ selection, shared game-mod pack transfer, and Darien Crusades campaign messages.
 each other's replays. 0.8.7 (protocol 284) and earlier clients cannot join 0.8.9 or
 0.8.8 matches, and 0.8.9 or 0.8.8 clients cannot join older servers: update from 0.8.7 or
 earlier with the server and all players together.
+The source on `main` after 0.8.9 uses protocol **289** and is not compatible with
+0.8.9 or 0.8.8: it cannot join their servers or play their replays.
 Replay format is **14** (checkpoints also carry a position digest, and the header
 records the Map Scenario and Power Codes options), and
 playback requires the current simulation protocol. Older recordings need the engine that recorded them.
