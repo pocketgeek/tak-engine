@@ -2,14 +2,8 @@
 
 Protocol **289** (was 288), replay format **14**, generator version **9**,
 campaign payload **4**, database schema **9**.
-<!-- LEAD: re-check kNetVersion and kReplayFormat right before tagging (289 / 14
-     at c73416f0). If either moves again, update the protocol lines in these
-     notes, the release notes, README.md ("New in 0.8.10", protocol lines),
-     docs/user-guide.md (intro, Versions, Replays, troubleshooting),
-     docs/public-server.md, docs/random-map-generation.md and
-     docs/multiplayer-design.md. -->
 
-TODO-LEAD: Tagged `v0.8.10` at `<sha>` (annotated tag object `<obj>`) and published on `<date>` UTC.
+Tagged `v0.8.10` at `66055338` (annotated tag object `de785d73`) and published on 2026-10-22 22:21 UTC.
 
 ## Scope and compatibility
 
@@ -66,7 +60,7 @@ water. `--mpai` Inner Circle seed 1 at 60 s is unchanged per `deb6a31b` and
 At 300 s they are unchanged as well: Retail `a3d953803a064191`, Legion
 `ce5c4ba7562e53b9`, the same as 0.8.9 (the turn-rate change evidently never
 changes a target score in this small scenario; see the local checks).
-TODO-LEAD: `--mpai` on Windows and macOS (optimized Debug builds of the tag).
+`--mpai` on Windows and macOS was run on optimized Debug builds (`-O2`) of the tag `66055338`, built on oden-win (MSYS2 MINGW64, GCC) and on the arm64 MacBook (Apple Clang). The release binaries reject the harness flags, so Debug builds were needed. The settings were Inner Circle, `takserver --local --no-auth --seed 1`, a scratch profile, and `TAK_LEGION=1` for Legion. All eight games ended `err=none end=timelimit` and match Linux and 0.8.9: Retail 60 s `b353410003e98dd5` (4 units), 300 s `a3d953803a064191` (13 units); Legion 60 s `0825aeb9e8139203` (4 units), 300 s `ce5c4ba7562e53b9` (18 units), on both hosts. Neither host logged a desync or referee-suspect line. The tag's dispatched Determinism run (39857683568) runs no `--mpai` game. Its cross-build check agrees on golden `dcef618cd2e4d558`.
 
 **Compatibility.** `kNetVersion` is **289** in `src/net/protocol.h` at
 `c73416f0` (288 at `v0.8.9`). `kReplayFormat` is **14** in
@@ -350,31 +344,60 @@ completed, and the one case that lost its seat agrees with the referee on the se
 
 ## CI and packages
 
-TODO-LEAD: main CI on the final source (Determinism, Windows, Linux packages,
-macOS); tag CI runs and reruns (known flakes: macOS `stream_test` timing, "Upload
-CI artifact: ENOTFOUND", macOS x64 `hdiutil` "Resource busy", Fedora openh264
-mirror, Slackware mirror `md5sum`, `gitlab.freedesktop.org`, `downloads.xiph.org`
-opus, Ubuntu 22.04 `crusades_client_network_test`, GitHub runner hang in
-determinism.yml 'Install build deps').
+Main CI on the final source `66055338`: [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/39853029630), [Linux packages](https://github.com/pocketgeek/tak-engine/actions/runs/39853029616) and [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/39853029594) passed on the first attempt. [Determinism](https://github.com/pocketgeek/tak-engine/actions/runs/39853029625) passed on attempt 2. On attempt 1 its `sim-equiv` job hung for 28 minutes in "Install build deps" (the GitHub runner hang): it was force-cancelled (`gh api -X POST .../force-cancel`) and `gh run rerun --failed` passed. `detmath` and `unit-tests` had passed on attempt 1.
 
-- TODO-LEAD: 29 assets downloaded, SHA-256 digests and sizes vs GitHub, size
-  ratios vs 0.8.9 (FFmpeg now carries the MP4 muxer, so every `takclient` is
-  expected to grow slightly).
-- **Build ids.** TODO-LEAD (`0.8.10 (build v0.8.10)` on Linux, Windows, macOS;
-  installer and DMG names carry `0.8.10`).
-- **Windows signatures.** TODO-LEAD (9 Authenticode Valid in 0.8.9).
-- **macOS notarization.** TODO-LEAD (both DMGs and both apps, DMG and ZIP).
-- **macOS Test Map.** TODO-LEAD (Cartographer from the DMG and from the ZIP
-  starts the game's private lobby with Test Map).
-- **Streaming local copy in packages.** TODO-LEAD (the packaged FFmpeg has the
-  MP4 muxer: a short local copy on at least one platform, or `stream_test` in CI
-  not skipped).
-- **Opus is static; font licences; mods folder; macOS microphone and Retina;
-  no libsecret/GLib `NEEDED`.** TODO-LEAD (as in 0.8.9).
-- TODO-LEAD: `docs/release-0.8.10-notes.md` and this report in the source tree
-  at the tag; `kNetVersion` there is 289.
+On the exact tag (`66055338`, annotated tag object `de785d73`), all four workflows passed. macOS needed one rerun for a known flake: on attempt 1 the x64 job failed in "App bundle + DMG" with `hdiutil: create failed - Resource busy`, so both **Sign + notarize** jobs were skipped. `gh run rerun --failed` passed on attempt 2, including both signing jobs. No other job failed, so none of the other known flakes appeared: macOS `stream_test` timing (x64 and arm64), "Upload CI artifact: ENOTFOUND", the Fedora openh264 mirror, the Slackware mirror `md5sum` error, `gitlab.freedesktop.org` or `downloads.xiph.org` connect failures, the Ubuntu 22.04 `crusades_client_network_test` "complete replay not published", and the runner hang in "Install build deps".
 
-TODO-LEAD: Published `<date>` UTC with `gh release edit v0.8.10 --draft=false --latest`.
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/39857683568): started manually on the tag because the workflow is path-filtered. `unit-tests` (8/8), `detmath` and `sim-equiv` passed. The GCC and Clang x86-64 builds at O0/O2/O3 all agree on golden `dcef618cd2e4d558` (aarch64 skipped), the same as 0.8.9. This workflow runs no `--mpai` game.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/39857684029): all 16 native package jobs and the release attachment, first attempt.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/39857683792): x64, ARM64 and the x64 signing/package job, first attempt.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/39857683818): both builds plus the **Sign + notarize** job for each architecture (attempt 2). That job replaced the unsigned macOS ZIPs and DMGs in the draft with signed, notarized and stapled ones.
+
+The release was created as a draft with these notes, and tagged CI attached the packages. All **29 assets** were downloaded after the macOS signing finished.
+- They are the same set as 0.8.9 with the version swapped. None has size 0 or an upload state other than "uploaded". Each one matched GitHub's SHA-256 digest and byte size before publication.
+- Every release asset is 0.41% to 0.77% larger than its 0.8.9 counterpart (+76 KB to +266 KB). The debug archives grew 0.37% to 0.58% (+157 KB to +468 KB).
+- The release `takclient` grew by 196 KB to 277 KB across platforms, which is the MP4 muxer in FFmpeg plus the local-copy code. The release `takserver` grew by 4 KB to 70 KB (disconnect wait).
+- There are no new dependencies. Debian and Ubuntu packages still depend only on `libc6`, RPMs require only libc, libm and the loader, and the Windows import tables are identical to 0.8.9's.
+- Each package, installer and ZIP ships the same file list as its 0.8.9 counterpart, and the DMGs hold the same two apps and `Applications` link.
+
+- **Build ids.** The client and server in every Linux package carry `v0.8.10`. That covers Debian 12 and 13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44 and openSUSE Leap 16.0 (each for both architectures), plus Arch, Slackware and both Linux debug tarballs. Installer, DMG and ZIP names carry `0.8.10`.
+  - On Linux, the x86-64 `takclient` and `takserver` report `0.8.10 (build v0.8.10)`. That holds for Debian 12 and 13, Ubuntu 22.04, 24.04 and 26.04, Fedora 44, openSUSE Leap 16.0, Slackware and the x64 debug tarball. So does the Arch `takserver`. The Arch `takclient` needs glibc 2.44, newer than the checking host's 2.43, so only its build string was checked. For the arm64 binaries, only the build string `v0.8.10` was checked.
+  - On Windows 11, the x64 Windows ZIP's `takclient.exe` and `takserver.exe` report `0.8.10 (build v0.8.10)`. For the ARM64 `takclient.exe` and `takserver.exe`, and for the installer's, only the build string `v0.8.10` was checked.
+  - On the arm64 MacBook (macOS 26.6.2), `takclient` and `takserver` report `0.8.10 (build v0.8.10)` for both architectures. This holds for the bare programs from the ZIPs and for the copies inside the game app from each DMG and each ZIP. The x64 copies ran under Rosetta.
+- **Windows signatures.** `Get-AuthenticodeSignature` on oden-win reports **Valid** (CN=Curtis Edge, timestamped) for 9 signed files, the same count as 0.8.9. They are the setup `.exe`, plus `takclient.exe`, `takserver.exe`, `cartographer.exe` and `crusades_admin.exe` in both the x64 and ARM64 ZIPs. The debug ZIPs were not checked.
+- **macOS notarization.** On the MacBook, both DMGs pass `xcrun stapler validate` and `spctl` (open, primary signature) as **accepted, source=Notarized Developer ID, origin=Developer ID Application: Curtis Edge (L479Y59RN8)**.
+  - Both apps (the game and TAK Cartographer) pass both checks the same way, from each DMG and from each ZIP.
+  - Every bundled and bare `takclient`, `takserver`, `cartographer` and `crusades_admin` passes `codesign --verify --strict` (TeamIdentifier L479Y59RN8).
+  - `spctl` says the bare command-line programs do not seem to be an app. That is expected for unstapled command-line tools.
+- **macOS Test Map.** On the MacBook, in a scratch folder with a scratch `HOME` and the retail data folder, the check covered four layouts: both apps copied out of each DMG side by side, and each ZIP extracted.
+  - A probe linked from the tag's own `cartographer/playtest.cpp` objects ran `cart::Playtest::clientPath` on `TAK Cartographer.app/Contents/Resources/` (the base path SDL reports inside a bundle) and on `Contents/MacOS`.
+  - In all four layouts, both lookups resolve to `Total Annihilation - Kingdoms.app/Contents/MacOS/takclient` beside the Cartographer app. That client exists and reports `0.8.10 (build v0.8.10)`.
+  - The packaged Cartographer then wrote a snapshot headless (`cartographer --data <retail> "Inner Circle" --bundle "Cartographer Test.kmp"`). The resolved client was started with the same arguments Test Map passes (`--data <retail> --play-map <snapshot>`, `SDL_VIDEODRIVER=dummy`).
+  - In all four layouts it started the bundled `takserver`, created the private 'Single Player' game, verified the map and connected as `player`. It was still running after 15 s and was then stopped by PID.
+  - The Test Map menu itself was not clicked; this was not a GUI run.
+- **Streaming local copy in packages.** Every shipped `takclient` contains FFmpeg's MP4 muxer: 29 copies across all Linux packages and tarballs, the Windows installer and ZIPs, and the macOS ZIPs, debug ZIPs and the game apps from both DMGs and both ZIPs.
+  - Each has the muxer's `video/mp4` MIME string and the `frag_keyframe` movflags option, next to the FLV muxer's `video/x-flv`. Every 0.8.9 `takclient` has `video/x-flv` but neither MP4 string, which shows the check can fail.
+  - Functionally, the tag CI's "Streaming encode test" ran `stream_test` against the same static FFmpeg build that is linked into the packages, on all 16 Linux package jobs and on the Windows x64, Windows ARM64, macOS x64 and macOS arm64 builds.
+  - Each run wrote a fragmented local copy (`local copy .../videos/TAK-<date>-<time>.mp4: 2 fragments, video 73-76 samples 2.56s, audio 2.53-2.55s`). No run printed the `SKIP local copy` line, and under `CI` that test fails rather than skips when the muxer is missing.
+- **Opus is static.**
+  - No packaged Linux `takclient` or `takserver` has a `NEEDED` entry beyond libc, libm and the loader (Slackware also lists libdl and libpthread), so none needs libopus.
+  - No Windows `.exe` imports or names an Opus DLL, and the ZIPs ship no DLLs (the installer has only its NSIS plugin DLLs). The x64 import tables list only system DLLs.
+  - No macOS binary links a libopus dylib (`otool -L`).
+  - `OPUS-LICENSE.txt` is in every Debian, RPM, Arch and Slackware package, in both Linux debug tarballs, in the Windows installer, in all four release ZIPs (inside the game app's Resources on macOS) and in the four debug ZIPs.
+- **Font licences.** `CHAT-FONT-LICENSE.txt` sits beside `EDITOR-FONT-LICENSE.txt` in every place the game ships:
+  - every Debian, RPM, Arch and Slackware package (`share/licenses/tak-engine`) and both Linux debug tarballs;
+  - the Windows installer, both Windows release ZIPs and both Windows debug ZIPs;
+  - both macOS debug ZIPs;
+  - the game app's `Contents/Resources` from both DMGs and both ZIPs.
+
+  As in 0.8.9, TAK Cartographer's app has only `EDITOR-FONT-LICENSE.txt`, which covers its Noto Sans Mono editor font.
+- **Mods folder.** No package, installer, ZIP, DMG or app contains an `overrides/` or `mods/` directory, and none contains `click.hpi`. This is the same as 0.8.9.
+- **macOS microphone.** The game app's `Info.plist` carries `NSMicrophoneUsageDescription` in both DMGs and both ZIPs. The `com.apple.security.device.audio-input` entitlement is on the game app's `takclient` (DMG and ZIP, both architectures) and on the bare ZIP `takclient`. It is absent from `takserver`, `crusades_admin` and `cartographer`.
+- **macOS Retina.** `NSHighResolutionCapable` is `true` in the `Info.plist` of both apps (the game and TAK Cartographer), from both DMGs and both ZIPs.
+- As in 0.8.1 to 0.8.9, no packaged Linux `takclient` has a `NEEDED` entry for libsecret, GLib, GIO or GObject.
+- `docs/release-0.8.10-notes.md`, this report, `docs/img/streaming.jpg` and `docs/img/guide/disconnect-wait.jpg` are in the source tree at the tag. `kNetVersion` there is 289.
+
+Published 2026-10-22 22:21 UTC with `gh release edit v0.8.10 --draft=false --latest`; the API's latest release is `v0.8.10`, with 29 assets.
 
 ## Screenshots
 
@@ -412,4 +435,7 @@ Cartographer pictures show nothing 0.8.10 changed and were kept.
   suite (passed alone and at `-O2`); Legion `2h-stress` in the remote sweep lost
   its seat to the 30 s budget on the loaded harness (the documented hitch
   caveat; passed on retry, identical to 0.8.9).
-- TODO-LEAD: flakes seen in CI and tag CI.
+- Flakes seen in CI (none is a code fault, no source changed):
+  - Main CI on `66055338`: Determinism's `sim-equiv` job hung for 28 minutes in "Install build deps" (the GitHub runner hang). It was force-cancelled, and `gh run rerun --failed` passed.
+  - Tag CI: the macOS x64 job failed in "App bundle + DMG" with `hdiutil: create failed - Resource busy`, which also skipped both Sign + notarize jobs. One `gh run rerun --failed` passed everything.
+  - No other CI job failed.

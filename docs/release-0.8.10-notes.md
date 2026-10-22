@@ -10,8 +10,6 @@ simulation do, so the network protocol moves to **289** (replays stay at format
 **14**): **0.8.10 does not play with 0.8.9, 0.8.8 or any earlier version, and
 does not play their replays.** Servers and every player must update together.
 
-<!-- LEAD: re-check kNetVersion (289) and kReplayFormat (14) right before tagging. -->
-
 ## Disconnects
 
 - **The game waits for a player who stops responding.** When nothing has been
