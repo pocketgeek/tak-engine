@@ -1757,7 +1757,7 @@ foreach(_tls_lib ssl crypto)
     message(FATAL_ERROR "Missing static TLS archive; run tools/build-ffmpeg-bink.sh")
   endif()
 endforeach()
-add_library(tak_tls STATIC src/net/tls.cpp)
+add_library(tak_tls STATIC src/net/tls.cpp src/net/revocation.cpp)
 target_include_directories(tak_tls PUBLIC src PRIVATE "${TAK_FFMPEG_PREFIX}/include")
 target_include_directories(tak-formats PRIVATE "${TAK_FFMPEG_PREFIX}/include")
 target_link_libraries(tak_tls PUBLIC "${TAK_FFMPEG_PREFIX}/lib/libssl.a"

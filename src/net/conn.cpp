@@ -1,7 +1,9 @@
 #include "net/conn.h"
 
 #include "net/netcompat.h"
+#include "net/revocation.h"
 
+#include <cstdio>
 #include <cstring>
 #include <algorithm>
 #include <chrono>
@@ -189,6 +191,11 @@ bool Conn::connect(const std::string& address, uint16_t port, int timeoutMs) {
             if(TAK_POLL(&p,1,int(remaining))<=0) {err_="TLS handshake timed out";break;}
         }
         if(!err_.empty()) {closeNow();return false;}
+        // Soft-fail: only a valid CRL listing this certificate refuses the server.
+        const auto revocation=checkPeerRevocation(ssl);
+        if(revocation.state==Revocation::Revoked) {err_="TLS certificate revoked";closeNow();return false;}
+        if(revocation.state==Revocation::Unavailable)
+            std::fprintf(stderr,"TLS: revocation status unavailable (%s); continuing\n",revocation.detail.c_str());
     }
     return true;
 }

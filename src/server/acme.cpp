@@ -7,10 +7,12 @@
 #include "server/acme.h"
 #include "server/acme_internal.h"
 #include "net/conn.h"
+#include "net/revocation.h"
 #include "server/crusades/servicelease.h"
 #include "vendor/nlohmann/json.hpp"
 #include <openssl/ssl.h>
 #include <openssl/pem.h>
+#include <openssl/err.h>
 #include <openssl/x509v3.h>
 #include <openssl/core_names.h>
 #include <openssl/rand.h>
@@ -27,6 +29,7 @@
 #include <cctype>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #ifdef _WIN32
@@ -167,6 +170,7 @@ Response https(const std::string& endpoint,const std::string& method,const std::
         waitSocket(socket.fd,e==SSL_ERROR_WANT_READ?POLLIN:POLLOUT,deadline,stop);
     };
     for(;;) {int n=SSL_connect(ssl.get());if(n==1)break;retry(n);}
+    require(tak::net::checkPeerRevocation(ssl.get()).state!=tak::net::Revocation::Revoked,"CA certificate revoked");
     const std::string request=method+" "+u.path+" HTTP/1.1\r\nHost: "+u.origin.substr(8)+"\r\nUser-Agent: TAK-ACME/1\r\nConnection: close\r\nAccept: application/json, application/pem-certificate-chain\r\n"+(method=="POST"?"Content-Type: application/jose+json\r\nContent-Length: "+std::to_string(body.size())+"\r\n":"")+"\r\n"+body;
     for(size_t sent=0;sent<request.size();) {int n=SSL_write(ssl.get(),request.data()+sent,int(request.size()-sent));if(n>0)sent+=size_t(n);else retry(n);}
     std::string received;char buf[8192];
@@ -295,7 +299,7 @@ class Client {
     AcmeOptions options_;
     Key account_{nullptr,EVP_PKEY_free};
     Json directory_;
-    std::string origin_,nonce_,kid_;
+    std::string origin_,nonce_,kid_,problem_;
     Stop stop_;
     Clock::time_point deadline_=Clock::now()+std::chrono::minutes(5);
     Response request(const std::string& endpoint,const std::string& method,const std::string& body) {
@@ -307,6 +311,7 @@ class Client {
     }
     void success(const Response& response) {
         if(response.status>=200 && response.status<300)return;
+        try {problem_=json(response.body).value("type",std::string{});}catch(const std::exception&) {problem_.clear();}
         throw RetryError("ACME: CA rejected request (HTTP "+std::to_string(response.status)+")",retryAfter(response,60));
     }
     Response post(const std::string& endpoint,const std::string& payload,bool account=false) {
@@ -341,8 +346,19 @@ public:
         kid_=response.headers["location"];require(!kid_.empty(),"CA omitted account URL");
         require(json(response.body).value("status",std::string{})=="valid","ACME account not valid");
     }
-    std::string issue() {
-        auto response=post(directory_.at("newOrder"),Json{{"identifiers",Json::array({Json{{"type","dns"},{"value",options_.domain}}})}}.dump());
+    // `replaces` is the RFC 9773 certID of the certificate this order renews, sent
+    // only to a CA that advertises renewalInfo. A CA that has already seen it
+    // replaced still issues an ordinary order.
+    std::string issue(const std::string& replaces) {
+        Json newOrder={{"identifiers",Json::array({Json{{"type","dns"},{"value",options_.domain}}})}};
+        if(!replaces.empty() && directory_.contains("renewalInfo"))newOrder["replaces"]=replaces;
+        Response response;
+        try {response=post(directory_.at("newOrder"),newOrder.dump());}
+        catch(const RetryError&) {
+            if(!newOrder.contains("replaces") || problem_!="urn:ietf:params:acme:error:alreadyReplaced")throw;
+            std::fprintf(stderr,"ACME: CA reports the certificate already replaced; ordering without replaces\n");
+            newOrder.erase("replaces");response=post(directory_.at("newOrder"),newOrder.dump());
+        }
         const auto orderUrl=response.headers["location"];require(!orderUrl.empty(),"CA omitted order URL");
         auto order=json(response.body);
         const auto authorizations=order.at("authorizations");require(authorizations.is_array() && authorizations.size()==1,"unexpected authorization count");
@@ -393,6 +409,82 @@ std::time_t renewalTime(const std::string& bundle,const std::string& domain) {
     require(ASN1_TIME_diff(&days,&seconds,nullptr,X509_get0_notAfter(cert.get()))==1,"invalid certificate expiry");
     return std::time(nullptr)+int64_t(days)*86400+seconds-lifetime/(lifetime<10*86400?2:3);
 }
+using X509Ptr=std::unique_ptr<X509,decltype(&X509_free)>;
+// The leaf and (when present) its issuer from a saved chain/key bundle.
+std::pair<X509Ptr,X509Ptr> bundleChain(const std::string& bundle) {
+    Bio bio(BIO_new_mem_buf(bundle.data(),int(bundle.size())),BIO_free);
+    X509Ptr leaf(PEM_read_bio_X509(bio.get(),nullptr,nullptr,nullptr),X509_free);
+    X509Ptr issuer(leaf?PEM_read_bio_X509(bio.get(),nullptr,nullptr,nullptr):nullptr,X509_free);
+    ERR_clear_error();return {std::move(leaf),std::move(issuer)};
+}
+std::time_t expiry(X509* cert) {
+    int days=0,seconds=0;require(ASN1_TIME_diff(&days,&seconds,nullptr,X509_get0_notAfter(cert))==1,"invalid certificate expiry");
+    return std::time(nullptr)+int64_t(days)*86400+seconds;
+}
+std::string certId(X509* cert) {
+    // RFC 9773: base64url(AKI keyIdentifier) "." base64url(DER INTEGER content of the serial).
+    const auto* aki=X509_get0_authority_key_id(cert);
+    if(!aki || ASN1_STRING_length(aki)<=0)return {};
+    const int n=i2d_ASN1_INTEGER(X509_get0_serialNumber(cert),nullptr);if(n<3)return {};
+    std::vector<unsigned char> der(static_cast<size_t>(n));auto* p=der.data();i2d_ASN1_INTEGER(X509_get0_serialNumber(cert),&p);
+    const size_t header=der[1]<0x80?2:2+size_t(der[1]&0x7f);if(header>=der.size())return {};
+    return b64(ASN1_STRING_get0_data(aki),size_t(ASN1_STRING_length(aki)))+"."+b64(der.data()+header,der.size()-header);
+}
+int64_t civilDays(int64_t y,unsigned m,unsigned d) {
+    y-=m<=2;const int64_t era=(y>=0?y:y-399)/400;const unsigned yoe=unsigned(y-era*400);
+    const unsigned doy=(153*(m+(m>2?-3:9))+2)/5+d-1,doe=yoe*365+yoe/4-yoe/100+doy;
+    return era*146097+int64_t(doe)-719468;
+}
+std::optional<std::time_t> rfc3339(const std::string& text) {
+    // YYYY-MM-DDTHH:MM:SS[.fraction](Z|+HH:MM|-HH:MM); fractions are truncated.
+    auto digits=[&](size_t at,size_t count,unsigned& out) {
+        if(at+count>text.size())return false;
+        out=0;
+        for(size_t i=at;i<at+count;++i) {if(text[i]<'0' || text[i]>'9')return false;out=out*10+unsigned(text[i]-'0');}
+        return true;
+    };
+    unsigned y,mo,d,h,mi,sec;
+    if(text.size()<20 || !digits(0,4,y) || text[4]!='-' || !digits(5,2,mo) || text[7]!='-' || !digits(8,2,d) ||
+       (text[10]!='T' && text[10]!='t') || !digits(11,2,h) || text[13]!=':' || !digits(14,2,mi) || text[16]!=':' || !digits(17,2,sec) ||
+       mo<1 || mo>12 || d<1 || d>31 || h>23 || mi>59 || sec>60)return std::nullopt;
+    size_t at=19;
+    if(text[at]=='.') {++at;const size_t first=at;while(at<text.size() && text[at]>='0' && text[at]<='9')++at;if(at==first)return std::nullopt;}
+    int64_t offset=0;
+    if(at<text.size() && (text[at]=='Z' || text[at]=='z'))++at;
+    else if(at<text.size() && (text[at]=='+' || text[at]=='-')) {
+        unsigned oh,om;if(!digits(at+1,2,oh) || text[at+3]!=':' || !digits(at+4,2,om) || oh>23 || om>59)return std::nullopt;
+        offset=(text[at]=='+'?1:-1)*int64_t(oh*3600+om*60);at+=6;
+    } else return std::nullopt;
+    if(at!=text.size())return std::nullopt;
+    return std::time_t(civilDays(y,mo,d)*86400+h*3600+mi*60+std::min(sec,59u)-offset);
+}
+// RFC 9773 section 4.2: renew at a uniformly chosen point of the suggested window,
+// or at once when that point has passed. The point is derived from the certID, so
+// it is stable across restarts and still spreads one CA's certificates evenly.
+std::optional<std::time_t> ariTime(const std::string& body,const std::string& id,std::time_t notAfter,std::time_t now) {
+    try {
+        const auto info=json(body);const auto& window=info.at("suggestedWindow");
+        const auto start=rfc3339(window.at("start").get<std::string>()),end=rfc3339(window.at("end").get<std::string>());
+        if(!start || !end || *end<=*start || *start>=notAfter)return std::nullopt;
+        unsigned char hash[32];unsigned n=0;
+        require(EVP_Digest(id.data(),id.size(),hash,&n,EVP_sha256(),nullptr)==1 && n==32,"window digest failed");
+        uint64_t seed=0;for(int i=0;i<8;++i)seed=seed<<8|hash[i];
+        const auto span=uint64_t(*end-*start);
+        const auto chosen=*start+std::time_t(seed%(span+1));
+        return std::max(chosen,now);
+    }catch(const std::exception&) {return std::nullopt;}
+}
+struct RenewalInfo {bool advertised=false;Response response;};
+RenewalInfo renewalInfo(const AcmeOptions& options,const std::string& id,Stop stop) {
+    auto response=https(options.directory,"GET","",stop);
+    require(response.status==200,"CA directory unavailable");
+    const auto directory=json(response.body);
+    RenewalInfo info;if(!directory.contains("renewalInfo") || !directory["renewalInfo"].is_string())return info;
+    std::string base=directory["renewalInfo"];
+    require(url(base).origin==url(options.directory).origin,"CA endpoint changed origin");
+    if(base.ends_with('/'))base.pop_back();
+    info.advertised=true;info.response=https(base+"/"+id,"GET","",stop);return info;
+}
 }
 struct acme_detail::Challenge::Impl:ChallengeResponder {
     using ChallengeResponder::ChallengeResponder;
@@ -401,12 +493,19 @@ acme_detail::Challenge::Challenge(uint16_t port,std::string token,std::string au
     :impl_(std::make_unique<Impl>(port,std::move(token),std::move(authorization))){}
 acme_detail::Challenge::~Challenge()=default;
 bool acme_detail::validDomain(const std::string& domain) {return dnsName(domain);}
+std::string acme_detail::ariCertId(const std::string& pem) {auto chain=bundleChain(pem);return chain.first?certId(chain.first.get()):std::string{};}
+std::optional<std::time_t> acme_detail::parseRfc3339(const std::string& text) {return rfc3339(text);}
+std::optional<std::time_t> acme_detail::ariRenewalTime(const std::string& body,const std::string& id,std::time_t notAfter,std::time_t now) {return ariTime(body,id,notAfter,now);}
 struct AcmeCertificates::Impl {
     AcmeOptions options;
     std::unique_ptr<crusades::CampaignServiceLease> lease;
     std::shared_ptr<tak::net::TlsContext> current;
     std::time_t renewAt=0,nextAttempt=0;
     unsigned failures=0;
+    // Renewal information (RFC 9773) for the current certificate. renewAt holds the
+    // fixed one-third-of-lifetime rule until the CA suggests a window.
+    std::string bundle,replaces,certificateId;
+    std::time_t fixedRenewAt=0,ariPollAt=0,ariChoice=0;
     std::atomic<bool> stopping{false};
     std::thread worker;
     ~Impl() {stopping=true;if(worker.joinable())worker.join();}
@@ -439,9 +538,9 @@ struct AcmeCertificates::Impl {
         require(saved.empty() || saved==identity,"state directory belongs to another hostname or CA");
         if(saved.empty())save(options.state/"identity.json",identity);
         auto retry=readFile(options.state/"retry.json");if(!retry.empty()) {auto r=json(retry);nextAttempt=r.value("next",std::time_t{});failures=std::min(r.value("failures",0u),4u);}
-        const auto bundle=readFile(options.state/"current.pem");
-        if(!bundle.empty()) {
-            try {renewAt=renewalTime(bundle,options.domain);std::atomic_store(&current,tak::net::TlsContext::serverPem(bundle,bundle));}
+        const auto stored=readFile(options.state/"current.pem");
+        if(!stored.empty()) {
+            try {renewAt=renewalTime(stored,options.domain);std::atomic_store(&current,tak::net::TlsContext::serverPem(stored,stored));adopt(stored,renewAt);}
             catch(const std::exception& e) {std::fprintf(stderr,"ACME: stored certificate unavailable: %s\n",e.what());}
         }
         // Initial issuance uses the same persistent, interruptible retry loop as
@@ -449,8 +548,9 @@ struct AcmeCertificates::Impl {
         worker=std::thread([this] {
             const Stop stop{&stopping};
             while(!stop.stop_requested()) {
+                if(!bundle.empty() && std::time(nullptr)>=ariPollAt)pollRenewal(stop);
                 const auto now=std::time(nullptr);
-                if(now>=renewAt && now>=nextAttempt) {
+                if(!stop.stop_requested() && now>=renewAt && now>=nextAttempt) {
                     try {issue(stop);}catch(const std::exception& e) {if(!stop.stop_requested()) {try {recordFailure(e);}catch(const std::exception& stateError) {std::fprintf(stderr,"ACME: cannot save retry state: %s\n",stateError.what());}}}
                 }
                 for(int i=0;i<100 && !stop.stop_requested();++i)std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -459,13 +559,58 @@ struct AcmeCertificates::Impl {
     }
     void issue(Stop stop) {
         std::fprintf(stderr,"ACME: obtaining certificate for %s\n",options.domain.c_str());
-        Client client(options,stop);auto bundle=client.issue();const auto renewal=renewalTime(bundle,options.domain);
+        Client client(options,stop);auto issued=client.issue(replaces);const auto renewal=renewalTime(issued,options.domain);
         require(renewal>std::time(nullptr),"issued certificate already due for renewal");
-        auto context=tak::net::TlsContext::serverPem(bundle,bundle);
-        save(options.state/"current.pem",bundle);
-        std::atomic_store(&current,std::move(context));renewAt=renewal;nextAttempt=0;failures=0;
+        auto context=tak::net::TlsContext::serverPem(issued,issued);
+        save(options.state/"current.pem",issued);
+        std::atomic_store(&current,std::move(context));renewAt=renewal;nextAttempt=0;failures=0;adopt(issued,renewal);
         save(options.state/"retry.json",Json{{"next",0},{"failures",0}}.dump());
         std::fprintf(stderr,"ACME: certificate installed; existing game connections retained\n");
+    }
+    void adopt(const std::string& pem,std::time_t fixed) {
+        bundle=pem;fixedRenewAt=fixed;replaces.clear();ariPollAt=0;ariChoice=0;
+        auto chain=bundleChain(pem);certificateId=chain.first?certId(chain.first.get()):std::string{};
+    }
+    // Polls the CA's renewalInfo for the current certificate and checks the
+    // certificate's own CRL. A CA without renewalInfo keeps the fixed rule; a failed
+    // poll keeps the last schedule and retries within an hour. Retry-After is
+    // honoured between one minute and one day (RFC 9773 section 4.3).
+    void pollRenewal(Stop stop) {
+        const auto now=std::time(nullptr);ariPollAt=now+6*3600;
+        auto chain=bundleChain(bundle);if(!chain.first)return;
+        if(!certificateId.empty()) {
+            try {
+                auto info=renewalInfo(options,certificateId,stop);
+                if(!info.advertised) {renewAt=fixedRenewAt;replaces.clear();ariPollAt=now+86400;}
+                else {
+                    replaces=certificateId;
+                    const auto chosen=info.response.status==200?ariTime(info.response.body,certificateId,expiry(chain.first.get()),now):std::nullopt;
+                    ariPollAt=now+std::clamp(retryAfter(info.response,chosen?6*3600:3600),60L,86400L);
+                    if(chosen) {
+                        if(*chosen!=ariChoice) {
+                            char when[32];std::tm tm{};const std::time_t value=*chosen;
+#ifdef _WIN32
+                            gmtime_s(&tm,&value);
+#else
+                            gmtime_r(&value,&tm);
+#endif
+                            std::strftime(when,sizeof when,"%Y-%m-%d %H:%M:%S UTC",&tm);
+                            std::string why;try {why=json(info.response.body).value("explanationURL",std::string{});}catch(const std::exception&) {}
+                            std::fprintf(stderr,"ACME: renewal information schedules renewal at %s%s%s\n",when,why.empty()?"":"; CA explanation: ",why.c_str());
+                        }
+                        ariChoice=*chosen;renewAt=*chosen;
+                    } else std::fprintf(stderr,"ACME: renewal information unusable (HTTP %d); keeping current schedule\n",info.response.status);
+                }
+            }catch(const std::exception& e) {
+                if(stop.stop_requested())return;
+                ariPollAt=now+3600;std::fprintf(stderr,"ACME: renewal information unavailable: %s\n",e.what());
+            }
+        }
+        // The CA's renewal window covers revocation for ARI CAs; the CRL also covers others.
+        if(!stop.stop_requested() && chain.second &&
+           tak::net::checkRevocation(chain.first.get(),chain.second.get()).state==tak::net::Revocation::Revoked && renewAt>now) {
+            std::fprintf(stderr,"ACME: current certificate is revoked; renewing now\n");renewAt=now;
+        }
     }
     void recordFailure(const std::exception& error) {
         constexpr long delays[]={60,600,6000,86400};long delay=delays[std::min(failures++,3u)];

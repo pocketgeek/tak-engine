@@ -94,12 +94,27 @@ persisted backoffs leave the service running, so the packaged systemd restart
 limit cannot prevent eventual recovery. Shutdown interrupts retry waits promptly;
 do not delete retry state to bypass a CA backoff. The worker uses bounded
 requests, nonce retries, persistent exponential backoff and CA `Retry-After`
-handling. It renews when about one-third of certificate lifetime remains (half
-for certificates shorter than ten days), without assuming a fixed 90-day lifetime.
+handling. Without renewal information from the CA it renews when about one-third
+of certificate lifetime remains (half for certificates shorter than ten days),
+without assuming a fixed 90-day lifetime.
 The temporary HTTP-01 listener allows 32 connections globally and four per
 normalized source address (IPv4 and IPv4-mapped IPv6 share a limit). Its three-second
 deadline and 8 KiB request limit also apply to incomplete requests.
-ACME Renewal Information (ARI) scheduling is not yet implemented. A successful
+When the CA directory advertises `renewalInfo`, the worker follows ACME Renewal
+Information ([RFC 9773](https://www.rfc-editor.org/rfc/rfc9773)): it fetches the
+`suggestedWindow` for the current certificate (certID from its Authority Key
+Identifier and serial), renews at a point inside that window, and renews at once
+when the window has already passed, which is how a CA signals revocation or
+mis-issuance. The point within the window is derived from the certificate ID, so
+it is stable across restarts while different certificates still spread out. The
+worker polls again after the CA's `Retry-After` (limited to between one minute and
+one day; six hours without one) and logs the chosen time with any CA
+`explanationURL`. Renewal orders then carry `replaces` with the old certificate's
+ID; if the CA answers `alreadyReplaced`, the worker orders without it. A CA
+without `renewalInfo`, a malformed window, or a window past expiry keeps the
+fixed rule; a failed poll keeps the current schedule and retries within an hour.
+At each poll the worker also checks the current certificate against its CRL (see
+below) and renews immediately if the CA has revoked it. A successful
 renewal atomically saves the certificate/key bundle and switches new connections
 to it; existing games keep their established TLS sessions. Renewal failures keep
 the previous certificate and log the problem. An expired certificate will still
@@ -563,7 +578,10 @@ See the [2026-10-01 validation report](public-server-validation-2026-10-01.md)
 for local suites, remote TLS matches, and the deployment boundary.
 
 `tls_test` checks encrypted framing/backpressure, valid connections, wrong host,
-untrusted/expired certificates, abrupt peer closure and plaintext rejection.
+untrusted/expired certificates, abrupt peer closure and plaintext rejection, and
+CRL revocation through a loopback CRL host: good, revoked, cached, unreachable
+(soft-fail) and no distribution point, plus forged, stale, out-of-scope and
+malformed CRLs.
 `server_public_test.py` exercises real-server admission, map reservation,
 registration closure, floods, invalid configuration, TLS login and ordinary
 lobby traffic. `server_spectators_test.py` checks the per-room spectator rule. `server_commands_test` checks malformed command batches and
@@ -575,8 +593,22 @@ Remaining risks include malicious asset-parser inputs not covered by these
 tests, CPU-heavy but valid maps/scenarios, distributed connection exhaustion,
 and attacks exceeding the host/network capacity. Map admission and room caps
 bound work but do not isolate each referee into its own process. The TLS client
-checks chains, hostnames and expiry; online certificate-revocation checking is
-not implemented. Keep OpenSSL and operating-system trust stores updated.
+checks chains, hostnames and expiry, then online revocation: after the handshake
+it fetches the CRL named by the server certificate's CRL Distribution Points
+(plain HTTP, 4-second limit, 10 MiB cap; Let's Encrypt no longer runs OCSP, so
+CRLs are the online source) and refuses the connection if a valid CRL lists the
+certificate. A CRL is trusted only when its issuer and signature match the
+certificate's issuer, that issuer may sign CRLs, it is current (five minutes of
+clock skew) and its issuing distribution point covers the fetched URL and
+end-entity certificates; delta, indirect and reason-partitioned CRLs are not
+used. CRLs are cached for up to six hours (never past their `nextUpdate`).
+Revocation is soft-fail: an unreachable or unusable CRL logs "revocation status
+unavailable" and the connection continues, because failing closed would let any
+CRL-host outage lock players out. An attacker who can block the CRL fetch can
+therefore still use a revoked certificate. Certificates without a CRL
+distribution point (such as short-lived certificates) and self-issued
+certificates are not checked. The ACME client applies the same check to the CA
+API connection. Keep OpenSSL and operating-system trust stores updated.
 
 Implementation references: [OpenSSL hostname verification](https://docs.openssl.org/3.6/man3/SSL_set1_host/),
 [OpenSSL protocol minimum](https://docs.openssl.org/master/man3/SSL_CTX_set_min_proto_version/),
@@ -595,10 +627,15 @@ The additional local HTTPS ACME fixture requires Python `cryptography` (test-onl
 
 ```sh
 python3 tools/acme_recovery_test.py --driver build/acme_test_driver --tls-tool build/tls_test
+python3 tools/acme_ari_test.py --driver build/acme_test_driver --tls-tool build/tls_test
 ```
 
 It deliberately waits through the real initial CA backoff, then verifies successful
 issuance without restarting and recovery from a future persisted deadline. It uses
 only loopback endpoints and temporary keys; it does not contact Let's Encrypt.
+`acme_ari_test.py` checks that a past renewal window renews at once with
+`replaces`, that `alreadyReplaced` falls back to an ordinary order, and that a
+future window or a CA without `renewalInfo` keeps the certificate.
 The C++ ACME test also covers long persisted backoff, prompt shutdown, strict paths
-and challenge availability while another source holds incomplete connections.
+and challenge availability while another source holds incomplete connections, and
+the RFC 9773 certID example, RFC 3339 window parsing and window selection.

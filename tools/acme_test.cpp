@@ -89,6 +89,36 @@ int main() {
         check(connectTo(failedPort)<0,"port remained open after failure");
         bool rejected=false;try {Challenge listener(port,"../invalid",auth);}catch(const std::exception&){rejected=true;}
         check(rejected && connectTo(port)<0,"invalid token opened listener");
+        // ACME Renewal Information (RFC 9773). certID uses the RFC's own example
+        // values: AKI 69:88:5B:...:C8:D4 and serial 0x87654321 (DER 00 87 65 43 21).
+        {
+            using namespace tak::srv::acme_detail;
+            EVP_PKEY* key=EVP_RSA_gen(2048);X509* cert=X509_new();check(key && cert,"ARI fixture");
+            X509_set_version(cert,2);ASN1_INTEGER_set_uint64(X509_get_serialNumber(cert),0x87654321u);
+            X509_gmtime_adj(X509_getm_notBefore(cert),-60);X509_gmtime_adj(X509_getm_notAfter(cert),90*86400);X509_set_pubkey(cert,key);
+            const unsigned char keyId[]={0x69,0x88,0x5B,0x6B,0x87,0x46,0x40,0x41,0xE1,0xB3,0x7B,0x84,0x7B,0xA0,0xAE,0x2C,0xDE,0x01,0xC8,0xD4};
+            AUTHORITY_KEYID* aki=AUTHORITY_KEYID_new();aki->keyid=ASN1_OCTET_STRING_new();ASN1_OCTET_STRING_set(aki->keyid,keyId,int(sizeof keyId));
+            check(X509_add1_ext_i2d(cert,NID_authority_key_identifier,aki,0,X509V3_ADD_DEFAULT)==1,"ARI AKI");AUTHORITY_KEYID_free(aki);
+            check(X509_sign(cert,key,EVP_sha256())>0,"ARI signature");
+            BIO* bio=BIO_new(BIO_s_mem());PEM_write_bio_X509(bio,cert);char* bytes=nullptr;const long length=BIO_get_mem_data(bio,&bytes);
+            const std::string pem(bytes,size_t(length));BIO_free(bio);X509_free(cert);EVP_PKEY_free(key);
+            const auto id=ariCertId(pem);
+            check(id=="aYhba4dGQEHhs3uEe6CuLN4ByNQ.AIdlQyE","RFC 9773 certID");
+            check(parseRfc3339("2025-01-02T04:00:00Z")==std::time_t(1735790400) &&
+                  parseRfc3339("2025-01-02T06:00:00.123456+02:00")==std::time_t(1735790400) &&
+                  parseRfc3339("2024-02-29t23:59:59z")==std::time_t(1709251199),"RFC 3339 timestamps");
+            for(const char* bad:{"","2025-13-01T00:00:00Z","2025-01-02 04:00:00Z","2025-01-02T04:00:00","2025-01-02T04:00:00.Z","2025-01-02T04:00:00Zx"})
+                check(!parseRfc3339(bad),"invalid RFC 3339 accepted");
+            auto window=[](const char* start,const char* end) {return std::string("{\"suggestedWindow\":{\"start\":\"")+start+"\",\"end\":\""+end+"\"}}";};
+            const std::time_t now=1735000000,notAfter=1740000000,start=1735790400,end=start+2*86400;
+            const auto chosen=ariRenewalTime(window("2025-01-02T04:00:00Z","2025-01-04T04:00:00Z"),id,notAfter,now);
+            check(chosen && *chosen>=start && *chosen<=end,"renewal outside suggested window");
+            check(chosen==ariRenewalTime(window("2025-01-02T04:00:00Z","2025-01-04T04:00:00Z"),id,notAfter,now),"window choice not stable per certificate");
+            check(ariRenewalTime(window("2024-01-02T04:00:00Z","2024-01-04T04:00:00Z"),id,notAfter,now)==now,"past window must renew now");
+            check(!ariRenewalTime(window("2025-01-04T04:00:00Z","2025-01-02T04:00:00Z"),id,notAfter,now),"inverted window accepted");
+            check(!ariRenewalTime(window("2026-01-04T04:00:00Z","2026-01-05T04:00:00Z"),id,notAfter,now),"window after expiry accepted");
+            for(const char* bad:{"","{}","{\"suggestedWindow\":{\"start\":1}}","not json"})check(!ariRenewalTime(bad,id,notAfter,now),"malformed renewalInfo accepted");
+        }
         tak::srv::AcmeOptions options;options.domain="tak.pgnet.us";options.state="unused-acme-test-state";
         rejected=false;try {tak::srv::AcmeCertificates certificates(options);}catch(const std::exception&) {rejected=true;}
         check(rejected,"terms agreement not enforced");
