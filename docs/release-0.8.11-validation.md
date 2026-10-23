@@ -48,14 +48,15 @@ and CreateGame's optional AI byte are gone (protocol stays 290, unreleased),
 and the `--mpmission` harness now plays Classic with no settings:
 `takmission08_dh` 300 s gives `5c35c83f41cbae5f` (the Classic hash above), and
 the Normal mission hashes below no longer apply. The Classic AI's profile file
-is looked up in the server's view of the room (base, game mods, map package; a
-map package carries the map archive's own file). The same branch gave our own
+is looked up in the room's layers (game mods, else the map package, else the
+base; a map package carries the map archive's own file). The same branch gave our own
 AI levels (Defensive to Absurdly Defensive) built-in build profiles
 (`src/ai/builtinprofile.{h,cpp}`, the values of the default profile they had
 always read, so they play exactly as before) and stopped them reading
-`ai/*.txt`; a game pack's `ai/d_ai.txt`, `ai/e_ai.txt`, `ai/n_ai.txt`,
-`ai/h_ai.txt`, `ai/a_ai.txt` or `ai/ad_ai.txt` (in its `ai` folder) adjusts that
-one level (cosmetic packs cannot carry them; a root `n_ai.txt` is not read). Besides `src/ai/`, `src/client/`, `src/net/` and
+`ai/*.txt`; a game pack's `ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`,
+`ai/a.txt` or `ai/ad.txt` (in its `ai` folder), else the `.kmp` map's own,
+adjusts that one level (cosmetic packs and the install cannot carry them; a root
+`n.txt` is not read). Besides `src/ai/`, `src/client/`, `src/net/` and
 `src/server/`, it touches `src/hpi/` (`hpi.cpp`, `hpi.h`: the game-mod file list
 and the cosmetic filter) and `src/net/mappackage.cpp` (a map package may carry
 the map's AI profile). See branch `task-ai-profiles`.
@@ -63,8 +64,8 @@ the map's AI profile). See branch `task-ai-profiles`.
 Then, by the user's decisions of 2026-10-23 ("Our files, n_ai.txt and whatever
 need to go in the ai directory in a mod or game archive"; "rename classic to
 default in the game lobby, so the default.txt naming matches that"), branch
-`task-ai-dir`: our levels' game-mod files moved to `ai/d_ai.txt` ...
-`ai/ad_ai.txt` (a root `n_ai.txt` is no longer read; still game mods only), and
+`task-ai-dir`: our levels' game-mod files moved into the pack's `ai/` folder
+(a root file is no longer read; at first game mods only, named `*_ai.txt`), and
 AI level 6 is shown to players as **DEFAULT**, the DEFAULT AI (the lobby's level
 name, the server log's `DEFAULT AI profile` and mission lines, `aitool default`
 (which still takes `classic`), the user documents). Its internal name stays
@@ -75,6 +76,22 @@ filter's root-name list is gone; `ai/` was already dropped),
 `src/client/gameview_lobby.cpp`, `gameview.h` / `gameview_net.cpp` (the debug
 `TAK_AI_LEVELS` per-seat harness levels), `src/server/server.cpp`,
 `tools/aitool.cpp`. Protocol stays 290.
+
+Then, same day and branch ("for all of our ai files remove the _ai from the file
+name"; "Custom ai files should also be read from kmp map files"; "Game mods should
+win over what is in a map file"): the level files are `ai/d.txt`, `ai/ad.txt`,
+`ai/e.txt`, `ai/n.txt`, `ai/h.txt` and `ai/a.txt` (the `*_ai.txt` names were never
+released and are not read), and a `.kmp` map's own `ai/` folder may carry them
+too: they travel in the map package (`src/net/mappackage.cpp`'s AI-file names),
+and the server applies a level's game-mod file, else the map package's
+(`ai::levelProfile`, per room in `src/server/server.cpp` instead of per data set).
+The DEFAULT AI's `ai/<aiprofile>.txt` / `ai/default.txt` lookup follows the same
+rule for `ai/` files (game mod, else map package, else base; it was map over game
+mod before); other map content keeps its layering. No shipped map or mission names
+an `aiprofile` that collides with a level file. The Cartographer neither adds an
+`ai/` folder to a `.kmp` nor keeps one when it saves a map again (it reads only
+`kmap/` entries); an `ai/` folder added to a finished `.kmp` with an HPI packer
+travels to the server with the map. Protocol stays 290.
 
 The changes:
 
@@ -132,8 +149,8 @@ Debug builds of the tag), or state that it was not run this release.
   `mods/` packs and `ModCache/*.takmods` carry over. No settings key was added
   or removed (the prereleases' `campaignAi` key is ignored if present). Campaign
   missions now play DEFAULT AI (Classic) opponents. A game pack written for 0.8.10 that
-  happens to carry an `ai/d_ai.txt` ... `ai/ad_ai.txt` would now adjust that AI
-  level; a game pack's `ai/default.txt` no longer changes our levels (it now
+  happens to carry an `ai/d.txt` ... `ai/ad.txt` would now adjust that AI
+  level (so would a `.kmp` map carrying one); a game pack's `ai/default.txt` no longer changes our levels (it now
   changes Classic only).
 
 ## Local preparation checks
@@ -189,18 +206,35 @@ Testing was reduced for this release, by the user's rule (minimal testing):
   `TAK_AI_LEVEL=2`) `68a4b1588012db76` both, unchanged; Classic
   (`TAK_AI_LEVEL=6`) `5c35c83f41cbae5f`, `err=none end=timelimit`. Logs:
   `~/tak-tmp/scratch/campaign-classic/`.
+- **Level files `ai/<x>.txt`, also from a `.kmp` map; game mod over map**
+  (branch `task-ai-dir`, `build-o2`, all targets rebuilt): `--mpai` Inner
+  Circle, seed 1, 60 s: Retail `b353410003e98dd5`, Legion (`TAK_LEGION=1`)
+  `0825aeb9e8139203`, DEFAULT (`TAK_AI_LEVEL=6`) `14849c00bc6e2a19` twice, all
+  unchanged, every game `err=none end=timelimit`. `ai_profile`,
+  `ai_profile_data` (a map package carries `ai/d.txt` ... `ai/ad.txt`; the map's
+  `ai/n.txt` adjusts Normal; a game mod's wins over it; DEFAULT's
+  `ai/default.txt` game mod > map > base), `ai_mod_profile` (three hosted all-AI
+  games on AI Circle, Easy Aramon + Normal Taros: the game pack's
+  comment-only `ai/n.txt` wins over the map's ban, Normal builds `tarcage` /
+  `targarg`; with no game-mod file the `.kmp`'s `ai/n.txt` stops the Normal seat
+  only, Easy still builds `araat` / `aralode`; the game pack's `ai/n.txt` does
+  the same; root, cosmetic and base install `n.txt` ignored throughout),
+  `classic_ai_map_profile` (adds a game with both a game pack's and the map's
+  `ai/default.txt`: the game mod's is used), `server_ai_level`, `settings`,
+  `match_codec`, `ai_behavior`, `ai_behavior_data`, `classic_ai`,
+  `classic_ai_data`, `map_transfer`, `mod_transfer` and `mod_packs` passed;
+  `ctest -L quick` 491/491; `check-detmath.sh` OK.
 - **Game-mod files in `ai/`, level 6 shown as DEFAULT** (branch `task-ai-dir`,
   `build-o2`, all targets rebuilt): `--mpai` Inner Circle, seed 1, 60 s: Retail
   `b353410003e98dd5`, Legion (`TAK_LEGION=1`) `0825aeb9e8139203`, DEFAULT
   (`TAK_AI_LEVEL=6`) `14849c00bc6e2a19` twice, all unchanged, every game
   `err=none end=timelimit`. `ai_profile` and `ai_profile_data` (a pack's loose
-  `ai/n_ai.txt` and an archive's `ai/n_ai.txt` are read; a root `n_ai.txt`, a
-  base install archive's and a map archive's `ai/n_ai.txt` and a cosmetic pack's
-  are not; the mod codec carries `ai/*_ai.txt`), `ai_mod_profile` (a hosted
-  all-AI game, Easy Aramon + Normal Taros on AI Circle, game mods on: every
-  misplaced `n_ai.txt` banning the Normal seat's `tarcage` / `targarg` is
-  ignored; `mods/game/my_ai/ai/n_ai.txt` stops the Normal seat only, Easy still
-  builds `araat` / `aralode`), `classic_ai_map_profile` (log lines now read
+  `ai/n` file and an archive's are read; a root one, a base install archive's
+  and a cosmetic pack's are not; the mod codec carries them), `ai_mod_profile`
+  (a hosted all-AI game, Easy Aramon + Normal Taros on AI Circle, game mods on:
+  every misplaced file banning the Normal seat's `tarcage` / `targarg` is
+  ignored; the game pack's `ai/` file stops the Normal seat only, Easy still
+  builds `araat` / `aralode`; file names then `*_ai.txt`, since renamed), `classic_ai_map_profile` (log lines now read
   `DEFAULT AI profile`), `server_ai_level`, `settings`, `match_codec`,
   `ai_behavior`, `ai_behavior_data`, `classic_ai`, `classic_ai_data`,
   `mod_transfer` and `mod_packs` passed; `ctest -L quick` 491/491;
@@ -213,8 +247,8 @@ Testing was reduced for this release, by the user's rule (minimal testing):
   (`TAK_AI_LEVEL=6`) 60 s `14849c00bc6e2a19`, twice, unchanged. `ai_profile`,
   `ai_profile_data` (the built-in Normal table equals the install's
   `ai/default.txt`), `ai_mod_profile` (a real hosted game: a game pack's
-  `n_ai.txt` reaches only the server's Normal AI; since `task-ai-dir` the file is
-  `ai/n_ai.txt`), `classic_ai_map_profile`
+  Normal file reaches only the server's Normal AI; since `task-ai-dir` it is
+  `ai/n.txt`), `classic_ai_map_profile`
   (base, game-pack and map-package profiles each win in turn;
   `takmission08_dh` reads `ai/mission08.txt`), every `classic_ai*` test,
   `ai_behavior`, `ai_behavior_data`, `naval_ai`, `retail_ai`, `settings`,

@@ -454,7 +454,7 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
 ### 2.1 Retail behaviours vs our current AI (`src/ai` Controller, all levels)
 | # | Retail behaviour | Ours | Status |
 |---|---|---|---|
-| 1 | Profile from the map .ota `aiprofile` (skirmish = default) | built-in per-level tables (`ai/builtinprofile.h`, the retail default profile), adjusted by a game pack's `ai/<x>_ai.txt` | different (equivalent on shipped skirmish maps) |
+| 1 | Profile from the map .ota `aiprofile` (skirmish = default) | built-in per-level tables (`ai/builtinprofile.h`, the retail default profile), adjusted by a game pack's or the map's `ai/<x>.txt` (`ai/n.txt` ...) | different (equivalent on shipped skirmish maps) |
 | 2 | pref = 100 x weight, clamped (weights are on/off) | raw file weight is the draw weight | **different** |
 | 3 | First-writer-wins locks; category/ALL lines | last line wins, no categories | different |
 | 4 | Unlisted type = weight 100, unlimited | missing weight = never built | **different** (arasiege, aratrans, vercen, npctemp) |

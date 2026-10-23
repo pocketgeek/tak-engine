@@ -76,7 +76,7 @@ Each is an accepted limit; why:
 
 | What | Where | Why there is no oracle |
 |---|---|---|
-| Profile file choice (.ota `aiprofile`, `ai\<name>.txt`, fallback to `ai\default.txt`) | `classicMapAiProfile`, `classicProfileScript` | file selection, read statically (0x4c8608, 0x4f6860); classic_ai_data checks it on the shipped data; classic_ai_map_profile checks it is read from the room's view (a game pack's and a map archive's `ai/default.txt` win) |
+| Profile file choice (.ota `aiprofile`, `ai\<name>.txt`, fallback to `ai\default.txt`) | `classicMapAiProfile`, `classicProfileScript` | file selection, read statically (0x4c8608, 0x4f6860); classic_ai_data checks it on the shipped data; classic_ai_map_profile checks it is read from the room's layers (a game pack's `ai/default.txt` over a map archive's over the base's) |
 | The canbuild menu (0x4c1d35) and its order | brain `menu_` | our build tree sorts ties by name and defaults a missing Priority to 99 (retail: listing order, 9999999999); the order only maps RNG values to types, not the odds (plan §1.6) |
 | The type facts (armed, builder, yardmap 'S', minwaterdepth, cost ...) | `ClassicTypeInfo::from` | not a routine: derived from the FBI; check_ai_printweights reproduces all 20 captured tables from them |
 | The count recount 0x4119d0 | brain `bookkeeping` | a count of own units by type; covered by the PrintWeights reproduction |

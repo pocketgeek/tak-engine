@@ -347,10 +347,10 @@ quirks included:
 - It builds from the map's **AI profile**, the file the map names
   (`ai/default.txt` for every shipped skirmish map; many campaign missions name
   their own, and a missing one falls back to `ai/default.txt`). The file is
-  looked up like any game file, so a ticked game pack that carries its own
-  `ai/default.txt` (or the file the map names) replaces the install's, and a map
-  whose own archive in `Maps/` carries one plays with that one; it travels with
-  the map in multiplayer. That file only switches units on or off and sets how many of each it may have; the
+  taken from a ticked game pack that carries its own `ai/default.txt` (or the
+  file the map names), else from the map's own archive in `Maps/` (a `.kmp`; it
+  travels with the map in multiplayer), else from the install: a game pack's
+  file wins over the map's, and the map's over the install's. That file only switches units on or off and sets how many of each it may have; the
   AI picks at random among what its builders can make, favouring what it is
   short of.
 - It has no difficulty setting and no income bonus.
@@ -2071,30 +2071,36 @@ then ticked cosmetic packs.
 ### AI profiles in game mods
 
 A game pack can change the build profile of each AI level except Default with a
-file of its own in the pack's `ai` folder, loose (`mods/game/My AI/ai/n_ai.txt`)
-or in the `ai` folder inside an archive in the pack. A file of that name anywhere
-else, such as directly in the pack folder, is not read.
+file of its own in the pack's `ai` folder, loose (`mods/game/My AI/ai/n.txt`)
+or in the `ai` folder inside an archive in the pack. A map can too: a `.kmp` map
+in `Maps/` may carry the same files in its own `ai` folder, and they apply to
+games on that map (in multiplayer they travel with the map). When a game pack and
+the map both have a level's file, the game pack's is used. A file of that name
+anywhere else, such as directly in the pack folder, is not read.
 
 | File | Level |
 | --- | --- |
-| `ai/d_ai.txt` | Defensive |
-| `ai/e_ai.txt` | Easy |
-| `ai/n_ai.txt` | Normal |
-| `ai/h_ai.txt` | Hard |
-| `ai/a_ai.txt` | Absurd |
-| `ai/ad_ai.txt` | Absurdly Defensive |
+| `ai/d.txt` | Defensive |
+| `ai/e.txt` | Easy |
+| `ai/n.txt` | Normal |
+| `ai/h.txt` | Hard |
+| `ai/a.txt` | Absurd |
+| `ai/ad.txt` | Absurdly Defensive |
 
 Each line is `weight <unit> <number>` or `limit <unit> <number>`, with the
 unit's file name (`arabow`, `tarcage`); lines starting with `//` are comments.
 A file changes only the units it names; every other unit keeps the level's
 built-in values. `limit <unit> 0` stops that level building the unit. Only the
-level a file is named for reads it: `ai/n_ai.txt` changes Normal (and the Normal
+level a file is named for reads it: `ai/n.txt` changes Normal (and the Normal
 AI that takes over a disconnected player's seat), never Easy. Names are not
 case-sensitive. When two ticked packs have the same file, the alphabetically
 later pack wins, as for any file. In multiplayer the files travel with the
-host's game packs. Cosmetic packs, maps and the install itself cannot change
-these levels' profiles, even with an `ai/n_ai.txt` of their own. The DEFAULT AI reads none of these files: it reads the
-map's own AI profile, which a game pack can replace (see [Default](#default)).
+host's game packs. Cosmetic packs and the install itself cannot change these
+levels' profiles, even with an `ai/n.txt` of their own. The Cartographer does
+not add an `ai` folder to the maps it saves, and saving a map again in it drops
+one; add the folder to the finished `.kmp` with an HPI packer. The DEFAULT AI
+reads none of these files: it reads the map's own AI profile, which a game pack
+or the map's archive can replace (see [Default](#default)).
 
 The old `overrides/` folder is no longer read. Nothing in it is moved or
 changed; move your packs into `mods/cosmetic/` or `mods/game/` yourself, each

@@ -51,14 +51,15 @@ and the source call this level **Classic** (`ai::Difficulty::Classic`,
   `ai/default.txt`: each has a built-in weight and limit per unit, today the
   values of the original default profile they were tuned on, so they play
   exactly as before.
-- **Game mods can change them, one level at a time.** A game pack with
-  `ai/d_ai.txt`, `ai/e_ai.txt`, `ai/n_ai.txt`, `ai/h_ai.txt`, `ai/a_ai.txt` or
-  `ai/ad_ai.txt` (in the pack's `ai` folder, loose or inside an archive in the
-  pack) adjusts that level only (`ai/n_ai.txt`: Normal); units the file does not
-  name keep the built-in values, and `limit <unit> 0` stops the level building
-  one. A file of that name directly in the pack folder is not read. The files
-  travel with the host's game packs in multiplayer; cosmetic packs, maps and the
-  install cannot supply them. See
+- **Game mods and maps can change them, one level at a time.** A game pack with
+  `ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt` or `ai/ad.txt` (in
+  the pack's `ai` folder, loose or inside an archive in the pack) adjusts that
+  level only (`ai/n.txt`: Normal); units the file does not name keep the
+  built-in values, and `limit <unit> 0` stops the level building one. A `.kmp`
+  map may carry the same files in its own `ai` folder; when a game pack has the
+  same file, the game pack's wins. A file of that name directly in the pack
+  folder is not read. The files travel with the host's game packs, or with the
+  map, in multiplayer; cosmetic packs and the install cannot supply them. See
   [AI profiles in game mods](user-guide.md#ai-profiles-in-game-mods).
 
 ## Campaigns
@@ -76,11 +77,11 @@ See [Campaigns](user-guide.md#campaigns).
 ## DEFAULT AI profile files
 
 - **The DEFAULT AI reads the room's own profile file.** The file the map names
-  (`ai/<name>.txt`, else `ai/default.txt`) is looked up like any game file: a
-  ticked game pack that carries one replaces the install's, and a map whose own
-  archive in `Maps/` carries one plays with it (the file travels in the map's
-  package, so a server without that map gets it too). Profiles in other
-  maps' archives never apply.
+  (`ai/<name>.txt`, else `ai/default.txt`) comes from a ticked game pack that
+  carries one, else from the map's own archive in `Maps/` (the file travels in
+  the map's package, so a server without that map gets it too), else from the
+  install: a game pack's file wins over the map's. Profiles in other maps'
+  archives never apply.
 
 ## Interface
 
@@ -124,12 +125,14 @@ See [Building](user-guide.md#building).
   replays.
 - `tools/check-detmath.sh` now also guards the Classic brain's sources.
 - Our levels' tables are `src/ai/builtinprofile.{h,cpp}` (`ai::builtinProfile`,
-  `ai::levelProfile`); the server builds each data set's per-level profiles from
-  them and the room's game-mod package. New tests: `ai_profile`,
-  `ai_profile_data` (the built-in Normal table still equals the install's
-  `ai/default.txt`) and `ai_mod_profile` (a game pack's `ai/n_ai.txt` reaches
-  the server's Normal AI, and only it, through the real mod transfer; misplaced
-  `n_ai.txt` files are not read). The headless harness takes `TAK_AI_LEVELS`
+  `ai::levelProfile`); the server builds each room's per-level profiles from
+  them, the room's game-mod package and then its map package. New tests:
+  `ai_profile`, `ai_profile_data` (the built-in Normal table still equals the
+  install's `ai/default.txt`; a map package carries `ai/d.txt` ... `ai/ad.txt`;
+  game mod over map) and `ai_mod_profile` (a game pack's `ai/n.txt`, through the
+  real mod transfer, or a `.kmp` map's, through the map package, reaches the
+  server's Normal AI, and only it; the game pack's wins; misplaced `n.txt` files
+  are not read). The headless harness takes `TAK_AI_LEVELS`
   (`1,2`: one level per seated AI) for mixed-level games.
 - Retail AI comparison harness under `tools/re` (`retail_ai_harness.py`,
   `retail_ai_poll.py`, `tak_ai_run.py`, `compare_ai.py`) and a debug-only
@@ -139,11 +142,12 @@ See [Building](user-guide.md#building).
 - New tests: `buildrow_test` (icon count x window x UI scale x build scale x
   alignment); `build_controls` narrows the window until a menu wraps, then
   hovers and clicks a bottom-row icon.
-- The server looks up the Classic profile file in the room's view (base data,
-  game mods, map package). A map package may carry the map's own
+- The server looks up the Classic profile file in the room's layers: game
+  mods, else the map package, else the base data (`ai/` files only). A map package may carry the map's own
   `ai/<aiprofile>.txt` / `ai/default.txt` when the map's archive does
   (`maps::build`, checked on decode); new tests `classic_ai_map_profile` (a game
-  pack's and a map archive's `ai/default.txt` reach the server's Classic AI; a
+  pack's and a map archive's `ai/default.txt` reach the server's Classic AI, the
+  game pack's winning when both have one; a
   mission plays Classic with no settings) and more `ai_profile_data` cases.
 - A campaign mission's opponents are Classic: `takmission08_dh` at 300 s gives
   `5c35c83f41cbae5f`.
