@@ -1554,8 +1554,10 @@ name).
   multiplayer when the host turns **Game mods: On** and ticks it. A game that is
   already running shows a new pack the next time a room opens.
 
-**OPEN FROM GAME MOD...** opens one pack's AI files for editing instead of the
-map's. The title then reads **GAME MOD PACK:**. These edits are not part of the
+**OPEN FROM GAME MOD...** lists your game mods; with more than 14, scroll the
+list with the mouse wheel or its scrollbar, or use **Up**/**Down**,
+**Page Up**/**Page Down**, **Home**/**End** and **Enter**. It opens one pack's AI
+files for editing instead of the map's. The title then reads **GAME MOD PACK:**. These edits are not part of the
 map: **SAVE TO PACK...** writes them back to the pack, and **CLOSE PACK** goes
 back to the map's files, asking first about unsaved pack edits. The pack's
 units are listed, tagged `pack`.
@@ -2145,8 +2147,7 @@ Start Cartographer from its shortcut and choose **Recover**. See
   window, which lists a game mod's units while that pack is previewed or
   opened there.
 - **AI profiles.** Each level is edited on its own tab; there is no "copy to
-  other levels". Group rules can only be moved up one step at a time. **OPEN
-  FROM GAME MOD** lists at most 14 packs.
+  other levels". Group rules can only be moved up one step at a time.
 - **Display names** are cut to 31 bytes in the game.
 - **Text.** The editor's own font covers Latin (including Vietnamese), Greek,
   Cyrillic, Armenian and Georgian letters, common symbols, Japanese kana, Korean

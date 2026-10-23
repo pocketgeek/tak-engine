@@ -529,6 +529,91 @@ static int aiModWorkflow(const char* data) {
     if(result || !failure.empty() || lastFrame>40) {std::cerr<<failure<<'\n';return 1;}
     std::cout<<"PASS: AI Profiles game mod: save into an existing case-variant pack (compare, backup outside the pack), open from the pack, save back, emptied draft deleted, DEFAULT as default.txt names its file\n";return 0;
 }
+// OPEN FROM GAME MOD with more packs than its 14 rows, against a SCRATCH data root
+// with 22 synthetic game packs (an ai/n.txt each): the wheel, a track click, a thumb
+// drag and End all reach the last pack, the selection stays in view, Enter opens it.
+// TAK_EDITOR_TEST_CAPTURE=<prefix> also writes <prefix>-packs.png (scrolled to the end).
+static int aiPackListWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-aipacks-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);isolateProfile(root.string().c_str());
+    const auto install=root/"data";fs::create_directory(install);
+    for(const auto& entry:fs::directory_iterator(data))
+        if(tak::hpi::MountSet::key(entry.path().filename().string())!="mods")fs::create_symlink(fs::absolute(entry.path()),install/entry.path().filename());
+    constexpr int kPacks=22;
+    for(int i=0;i<kPacks;++i) {
+        char name[16];std::snprintf(name,sizeof name,"Pack%02d",i);
+        const auto ai=install/"mods"/"game"/name/"ai";fs::create_directories(ai);
+        std::ofstream(ai/"n.txt",std::ios::binary)<<"weight araarch "<<i<<"\n";
+    }
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",install.string(),"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    cart::Editor* editor=nullptr;cart::EditorHooks hooks;hooks.attached=[&](cart::Editor& e){editor=&e;};
+    std::string failure,last;int lastFrame=0;
+    auto check=[&](bool value,const std::string& message) {if(!value && failure.empty())failure="frame "+std::to_string(lastFrame)+": "+message;};
+    auto shown=[&](const std::string& pack) {
+        for(const auto& [r,p]:editor->aiModPackRows)if(p==pack)
+            return r.y>=editor->aiModPackList.y && r.y+r.h<=editor->aiModPackList.y+editor->aiModPackList.h;
+        return false;
+    };
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window*,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;
+        float sx=1,sy=1;SDL_RenderGetScale(renderer,&sx,&sy);
+        auto mouse=[&](Uint32 type,int x,int y) {
+            SDL_Event e{};e.type=type;
+            if(type==SDL_MOUSEMOTION) {e.motion.x=int(x*sx);e.motion.y=int(y*sy);e.motion.state=SDL_BUTTON_LMASK;}
+            else {e.button.button=SDL_BUTTON_LEFT;e.button.clicks=1;e.button.x=int(x*sx);e.button.y=int(y*sy);}
+            SDL_PushEvent(&e);
+        };
+        auto click=[&](const SDL_Rect& r) {
+            if(r.w<=0) {check(false,"target not drawn");return;}
+            mouse(SDL_MOUSEBUTTONDOWN,r.x+r.w/2,r.y+r.h/2);mouse(SDL_MOUSEBUTTONUP,r.x+r.w/2,r.y+r.h/2);
+        };
+        auto capture=[&](const char* suffix) {
+            const char* prefix=SDL_getenv("TAK_EDITOR_TEST_CAPTURE");if(!prefix)return;
+            int pw=0,ph=0;SDL_GetRendererOutputSize(renderer,&pw,&ph);std::vector<uint8_t> rgba(size_t(pw)*ph*4);
+            if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),pw*4)==0)tak::png::write(std::string(prefix)+suffix,pw,ph,rgba);
+        };
+        const auto bar=editor?editor->aiModPackBar():cart::ScrollBar{};
+        switch(frame) {
+        case 0:key(SDLK_a);break;
+        case 1:check(editor->aiOpen && int(editor->aiPacks.size())==kPacks,"the window did not list the 22 scratch packs");
+            if(!editor->aiPacks.empty())last=editor->aiPacks.back();
+            click(editor->aiModOpenButton);break;
+        case 2:check(editor->aiModOpenOpen && bar.active() && shown(editor->aiPacks.front()) && !shown(last),"the list does not start at the top with a scrollbar");
+            check(int(editor->aiModPackRows.size())<=cart::Editor::kAiPackRowsShown+1,"rows outside the list are hit targets");
+            for(int i=0;i<10;++i) {SDL_Event e{};e.type=SDL_MOUSEWHEEL;e.wheel.y=-1;SDL_PushEvent(&e);}
+            break;
+        case 3:check(editor->aiModPackScroll==bar.maxScroll() && shown(last),"the wheel does not reach the last pack");
+            capture("-packs.png");key(SDLK_HOME);break;
+        case 4:check(editor->aiModPackScroll==0 && editor->aiModPackSel==0,"Home did not go back to the first pack");
+            mouse(SDL_MOUSEBUTTONDOWN,bar.x+bar.w/2,bar.y+bar.h-2);mouse(SDL_MOUSEBUTTONUP,bar.x+bar.w/2,bar.y+bar.h-2);break;
+        case 5:check(editor->aiModPackScroll==bar.maxScroll() && shown(last),"a track click did not page down");
+            key(SDLK_HOME);break;
+        case 6:{   // drag the thumb from the top to the bottom of the track
+            const int top=bar.thumbTop(0)+bar.thumbHeight()/2;
+            mouse(SDL_MOUSEBUTTONDOWN,bar.x+bar.w/2,top);mouse(SDL_MOUSEMOTION,bar.x+bar.w/2,top+bar.h);mouse(SDL_MOUSEBUTTONUP,bar.x+bar.w/2,top+bar.h);
+            break;
+        }
+        case 7:check(editor->aiModPackScroll==bar.maxScroll() && shown(last) && editor->aiModOpenOpen,"dragging the thumb did not reach the last pack");
+            key(SDLK_HOME);for(int i=0;i<16;++i)key(SDLK_DOWN);break;
+        case 8:check(editor->aiModPackSel==16 && shown(editor->aiPacks[16]),"Down does not keep the selected pack in view");
+            key(SDLK_END);break;
+        case 9:check(editor->aiModPackSel==kPacks-1 && shown(last),"End does not show the last pack");
+            key(SDLK_PAGEUP);break;
+        case 10:check(editor->aiModPackSel==kPacks-1-(cart::Editor::kAiPackRowsShown-1) && shown(editor->aiPacks[size_t(editor->aiModPackSel)]),"PgUp lost the selection");
+            key(SDLK_END);key(SDLK_RETURN);break;
+        case 11:check(!editor->aiModOpenOpen && editor->aiMod && editor->aiMod->pack==last,"Enter did not open the last pack");
+            click(editor->aiDoneButton);break;
+        case 12:{SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        case 13:if(editor->modal==cart::Editor::M_QUITSAVE)click(editor->mQuit);break;
+        default:if(frame>18) {failure+=" (AI pack list workflow did not exit)";std::_Exit(3);}
+        }
+    },hooks);
+    fs::remove_all(root);
+    if(result || !failure.empty() || lastFrame>18) {std::cerr<<failure<<'\n';return 1;}
+    std::cout<<"PASS: AI Profiles OPEN FROM GAME MOD: 22 packs, wheel, track, thumb drag and keys reach the last; Enter opens it\n";return 0;
+}
 // The AI window's phase-5 extras, against a SCRATCH data root whose game mod "Extra"
 // adds one synthetic unit: the pack roster (PREVIEW WITH GAME MOD and OPEN FROM GAME
 // MOD list the pack's units; back to the base install without it), the DEFAULT group
@@ -2035,6 +2120,7 @@ int main(int argc,char** argv) {
     if(argc==3 && std::string(argv[2])=="aiprofile")return aiProfileWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="aiprofile-mod")return aiModWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="aiprofile-extras")return aiExtrasWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="aiprofile-packs")return aiPackListWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="templates")return templateWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="rules")return ruleTextWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);

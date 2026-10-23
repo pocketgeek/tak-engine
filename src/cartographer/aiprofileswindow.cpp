@@ -659,7 +659,7 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
         aiCommitText();
         if(aiMod)aiClosePack();
         else if(aiPacks.empty())aiNote="This install has no game mods yet (mods/game/<pack>/). SAVE AS GAME MOD makes one.";
-        else {aiModOpenOpen=true;aiNote.clear();}
+        else {aiOpenPackList();aiNote.clear();}
         return;
     }
     if(aiMod && cart::pointIn(mx,my,aiModDefaultButton)) {aiCommitText();aiStepModDefault();return;}
@@ -1206,13 +1206,55 @@ void cart::Editor::aiStepModDefault() {
     if(aiView==AiView::Text) {aiTextKey.clear();aiSelectTab(aiTab);}
 }
 
+void cart::Editor::aiOpenPackList() {
+    aiModOpenOpen=true;aiModPackScroll=aiModPackSel=0;aiModPackThumbDrag=false;
+}
+
+cart::ScrollBar cart::Editor::aiModPackBar() const {
+    ScrollBar bar;bar.w=8;bar.x=aiModPackList.x+aiModPackList.w-bar.w;bar.y=aiModPackList.y;bar.h=aiModPackList.h;
+    bar.content=int(aiPacks.size())*kAiPackRowH;bar.view=std::min<int>(int(aiPacks.size()),kAiPackRowsShown)*kAiPackRowH;
+    return bar;
+}
+
+void cart::Editor::aiRevealPack() {
+    const int view=std::min<int>(int(aiPacks.size()),kAiPackRowsShown)*kAiPackRowH,top=aiModPackSel*kAiPackRowH;
+    if(top<aiModPackScroll)aiModPackScroll=top;
+    else if(top+kAiPackRowH>aiModPackScroll+view)aiModPackScroll=top+kAiPackRowH-view;
+}
+
 // The Save-as-game-mod and Open-from-game-mod panels take all input while up.
 bool cart::Editor::handleAiModDialogs(SDL_Event& e) {
     if(aiModOpenOpen) {
-        if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE)aiModOpenOpen=false;
-        else if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
+        const int n=int(aiPacks.size());
+        const auto bar=aiModPackBar();
+        if(aiModPackThumbDrag) {   // the thumb owns the pointer until release
+            if(e.type==SDL_MOUSEMOTION) {
+                if(!(e.motion.state&SDL_BUTTON_LMASK))aiModPackThumbDrag=false;
+                else aiModPackScroll=bar.scrollForThumb(e.motion.y-aiModPackThumbGrab);
+            } else if(e.type==SDL_MOUSEBUTTONUP && e.button.button==SDL_BUTTON_LEFT)aiModPackThumbDrag=false;
+            return true;
+        }
+        if(e.type==SDL_MOUSEWHEEL)aiModPackScroll=bar.clamp(aiModPackScroll-e.wheel.y*2*kAiPackRowH);
+        else if(e.type==SDL_KEYDOWN) {
+            const auto key=e.key.keysym.sym;const int page=kAiPackRowsShown-1;
+            if(key==SDLK_ESCAPE)aiModOpenOpen=false;
+            else if((key==SDLK_RETURN || key==SDLK_KP_ENTER) && n>0)aiOpenPack(aiPacks[size_t(std::clamp(aiModPackSel,0,n-1))]);
+            else if(n>0) {
+                int sel=aiModPackSel;
+                if(key==SDLK_UP)--sel;else if(key==SDLK_DOWN)++sel;
+                else if(key==SDLK_PAGEUP)sel-=page;else if(key==SDLK_PAGEDOWN)sel+=page;
+                else if(key==SDLK_HOME)sel=0;else if(key==SDLK_END)sel=n-1;
+                else return true;
+                aiModPackSel=std::clamp(sel,0,n-1);aiRevealPack();
+            }
+        } else if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
             const int mx=e.button.x,my=e.button.y;
-            for(const auto& [rect,pack]:aiModPackRows)if(cart::pointIn(mx,my,rect)) {aiOpenPack(pack);return true;}
+            if(bar.inTrack(mx,my)) {
+                if(bar.inThumb(mx,my,aiModPackScroll)) {aiModPackThumbDrag=true;aiModPackThumbGrab=my-bar.thumbTop(aiModPackScroll);}
+                else aiModPackScroll=bar.page(aiModPackScroll,my);
+                return true;
+            }
+            if(cart::pointIn(mx,my,aiModPackList))for(const auto& [rect,pack]:aiModPackRows)if(cart::pointIn(mx,my,rect)) {aiOpenPack(pack);return true;}
             if(cart::pointIn(mx,my,aiModCancelButton))aiModOpenOpen=false;
         }
         return true;
@@ -1253,17 +1295,29 @@ bool cart::Editor::handleAiModDialogs(SDL_Event& e) {
 void cart::Editor::drawAiModDialogs() {
     using A=ModProfileChange::Action;
     if(aiModOpenOpen) {
-        const int shown=std::min<int>(int(aiPacks.size()),14);
-        const auto pc=cart::drawPanel(ren,w,h,420,96+shown*20,"OPEN FROM GAME MOD");
+        const int n=int(aiPacks.size()),shown=std::min(n,kAiPackRowsShown);
+        const auto pc=cart::drawPanel(ren,w,h,420,96+shown*kAiPackRowH,"OPEN FROM GAME MOD");
         cart::drawText(ren,"Edit one pack's ai/ files. They stay the pack's: not in the map, no undo.",pc.x,pc.y,1,220,225,235);
+        aiModPackList={pc.x,pc.y+18,pc.w,shown*kAiPackRowH};
+        const auto bar=aiModPackBar();
+        aiModPackScroll=bar.clamp(aiModPackScroll);aiModPackSel=n?std::clamp(aiModPackSel,0,n-1):0;
+        const int rowW=bar.active()?bar.x-2-pc.x:pc.w;
         aiModPackRows.clear();
-        for(int i=0;i<shown;++i) {
-            const SDL_Rect r{pc.x,pc.y+18+i*20,pc.w,18};
-            fillRect(ren,r.x,r.y,r.w,r.h,30,34,44);
+        SDL_RenderSetClipRect(ren,&aiModPackList);
+        for(int i=aiModPackScroll/kAiPackRowH;i<n && i*kAiPackRowH<aiModPackScroll+aiModPackList.h;++i) {
+            const SDL_Rect r{pc.x,aiModPackList.y+i*kAiPackRowH-aiModPackScroll,rowW,kAiPackRowH-2};
+            if(i==aiModPackSel)fillRect(ren,r.x,r.y,r.w,r.h,50,60,82);else fillRect(ren,r.x,r.y,r.w,r.h,30,34,44);
             cart::drawText(ren,aiPacks[size_t(i)],r.x+4,r.y+6,1,215,225,240);
             aiModPackRows.push_back({r,aiPacks[size_t(i)]});
         }
-        if(int(aiPacks.size())>shown)cart::drawText(ren,std::to_string(aiPacks.size()-size_t(shown))+" more packs are not listed.",pc.x,pc.y+22+shown*20,1,150,160,175);
+        SDL_RenderSetClipRect(ren,nullptr);
+        if(bar.active()) {   // track, then the thumb (brighter while hovered or dragged), as in the browser
+            int mx,my;SDL_GetMouseState(&mx,&my);mx=int(mx/kUIScale);my=int(my/kUIScale);
+            const bool hot=aiModPackThumbDrag || bar.inThumb(mx,my,aiModPackScroll);
+            fillRect(ren,bar.x,bar.y,bar.w,bar.h,22,24,30);
+            fillRect(ren,bar.x+1,bar.thumbTop(aiModPackScroll)+1,bar.w-2,bar.thumbHeight()-2,hot?140:96,hot?150:104,hot?185:132);
+            cart::drawText(ren,std::to_string(n)+" packs: the wheel or the bar scrolls; Up/Down and Enter pick.",pc.x,aiModPackList.y+aiModPackList.h+4,1,150,160,175);
+        }
         aiModCancelButton=cart::drawButton(ren,pc.x+pc.w-74,pc.y+pc.h-20,70,18,"CANCEL",false);
         return;
     }

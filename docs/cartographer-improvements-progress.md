@@ -1492,8 +1492,8 @@ Deviations from the design:
 
 - The dialogs live in `aiprofileswindow.cpp` with the rest of the window, not in
   `dialogs.cpp`; the writer is in `document.{h,cpp}` as planned.
-- The pack chooser is a text field with `< >` stepping (no drop-down widget exists);
-  Open from game mod lists at most 14 packs.
+- The pack chooser is a text field with `< >` stepping (no drop-down widget exists).
+  Open from game mod showed at most 14 packs; it now scrolls (see the follow-ups below).
 - Map mode offers a delete only for a level file emptied in this window session;
   open-from-pack mode offers one for every pack file emptied since opening.
 - SAVE TO PACK ticks only changed files, so an unchanged file that lives in a pack
@@ -1674,7 +1674,8 @@ Deviations from the design:
 
 ## AI profile editor, follow-ups (2026-10-23)
 
-Two items from phase 4's deviations, decided on 2026-10-23.
+Two items from phase 4's deviations, decided on 2026-10-23: the header a DEFAULT
+profile gets as a pack's `ai/default.txt`, and the 14-pack limit of OPEN FROM GAME MOD.
 
 - A DEFAULT AI profile saved from a map into a game mod as `ai/default.txt` now names
   the file it becomes. Before, it kept the map's header line, for example `// DEFAULT
@@ -1701,6 +1702,29 @@ Validation:
   `Harder/AI/default.txt`, whose line 2 is the new header and whose other lines equal
   the map's `ai/ulasem arena.txt`, which itself is unchanged. With the rewrite
   disabled, the test fails at frame 33 on the old header.
+
+- OPEN FROM GAME MOD scrolls, so every pack can be reached. It used to list the first 14
+  packs and say "n more packs are not listed". The list still shows 14 rows of 20 px,
+  clipped. It scrolls with the mouse wheel (two rows per notch) and with a scrollbar
+  on `ScrollBar` (scrolling.h), drawn like the browser's: drag the thumb, or click the
+  track to page. A selected row, highlighted, moves with Up/Down, PgUp/PgDn and
+  Home/End, `aiRevealPack` keeps it in view, and Enter opens it. A click on a visible
+  row still opens it at once. Rows outside the list are not hit targets.
+
+Validation:
+
+- `cartographer_aiprofile_packs_ui` (`cartographer_ui_test <data> aiprofile-packs`):
+  a scratch data root holds 22 synthetic packs, each with an `ai/n.txt`.
+  1. The list opens at the top with the bar, and the last pack is not shown.
+  2. Ten wheel notches reach the end, with the last pack fully in view.
+  3. Home returns to the top. A track click pages to the end. A thumb drag from the
+     top reaches the end.
+  4. Sixteen Downs keep row 16 in view. End shows the last pack. PgUp moves 13 rows.
+  5. Enter opens the last pack.
+
+  Mutations that ignore the wheel (frame 3) or keyboard selection (frame 4) fail it.
+  I inspected a capture of the list scrolled to the end, with
+  `TAK_EDITOR_TEST_CAPTURE=<prefix>`, which writes `<prefix>-packs.png`.
 
 ## Scope and remaining limitations
 

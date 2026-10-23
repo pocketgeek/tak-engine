@@ -607,6 +607,14 @@ struct Editor : Session {
     std::vector<std::string> aiModDeletes;       // emptied drafts the pack still has (offered, unticked)
     std::set<std::string> aiModDeleteTicked;
     std::vector<std::pair<SDL_Rect,std::string>> aiModDeleteBoxes,aiModPackRows;
+    // OPEN FROM GAME MOD's pack list: 14 rows shown, the rest by wheel, scrollbar
+    // (drag the thumb, click the track to page) or Up/Down/PgUp/PgDn/Home/End + Enter.
+    static constexpr int kAiPackRowH=20,kAiPackRowsShown=14;
+    int aiModPackScroll=0,aiModPackSel=0;bool aiModPackThumbDrag=false;int aiModPackThumbGrab=0;
+    SDL_Rect aiModPackList{};
+    ScrollBar aiModPackBar() const;
+    void aiOpenPackList();
+    void aiRevealPack();   // scrolls the selected pack into view
     ModProfilePlan aiModPlan;std::string aiModPlanError,aiModNote;
     SDL_Rect aiModSaveButton{},aiModOpenButton{},aiModDefaultButton{},aiModPackBox{},aiModPackPrev{},aiModPackNext{},
              aiModDefaultAsBox{},aiModWriteButton{},aiModCancelButton{};
