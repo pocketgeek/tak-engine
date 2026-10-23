@@ -1740,8 +1740,8 @@
             if(tak::devFlag("TAK_RENDER_OVERLAYS")) {
                 // Per-unit overlays (workstream L): control squads on every fifth grid unit
                 // (every third of those a formation), factories across the middle of the
-                // army with long production queues (progress bars), and builders with
-                // queued build orders (ghosts).
+                // army with long production queues (the units they make draw health
+                // bars), and builders with queued build orders (ghosts).
                 for(size_t k=0;k<spawnedIds.size();k+=5) {
                     const int n=int(k/5)%10+1;
                     writableWorld().setSquad(spawnedIds[k],(k/5)%3==2 ? -n : n);++squads;

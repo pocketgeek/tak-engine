@@ -12,7 +12,7 @@
 //     filtering the candidates gives the full scan's accepted list, in order. Units
 //     are placed ulps either side of each edge.
 //  3. Every unit pass of the renderer (unitpass::*: painter cull, health bar,
-//     self-destruct number, squad marker, production bar): with random views,
+//     self-destruct number, squad marker): with random views,
 //     lifts and footprint depths, the exact float flip point of each edge of the
 //     pass's test is located by bisection and units a few ulps either side of it
 //     (plus random ones) that pass the test lie inside the rectangle built from
