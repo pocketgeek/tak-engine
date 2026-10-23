@@ -499,20 +499,21 @@ struct Editor : Session {
     // --- AI Profiles window (aiprofileswindow.cpp) ------------------------------
     // The map's ai/ files (Session::aiFiles) are the truth; the window parses the
     // shown file into a draft (aiprofiles.h) and every committed edit writes the
-    // bytes back, one undo step each. Undo itself waits until the window closes.
+    // bytes back, one undo step each. Ctrl+Z / Ctrl+Y inside the window step through
+    // the steps made since it opened (aiUndo); older map steps undo after DONE.
     struct AiRosterRow {
         std::string key;                         // DEFAULT: FBI unitname; levels: UnitType::id
         const tak::sim::UnitType* type=nullptr;
         std::string label,group,side;
-        bool variant=false,reachable=true,lockedForDefault=false;
+        bool variant=false,reachable=true,lockedForDefault=false,fromPack=false;
     };
     struct AiTabView {                           // the shown file and what it does
         bool built=false;std::string key,bytes;bool readOnly=false;
         AiDraft draft;std::vector<AiLine> lines;std::vector<AiIssue> issues;
         tak::ai::ClassicProfile classic;tak::ai::Profile level,builtin;
     };
-    enum class AiView {Table,Text,Issues};
-    enum AiFocus {AI_NONE,AI_SEARCH,AI_NAME,AI_CELL,AI_TEXT,AI_PACK};
+    enum class AiView {Table,Text,Issues,Groups};   // Groups: the DEFAULT tab's group rules (Advanced)
+    enum AiFocus {AI_NONE,AI_SEARCH,AI_NAME,AI_CELL,AI_TEXT,AI_PACK,AI_GROUP,AI_WORD};
     bool aiOpen=false,aiStartOpen=false,aiSetOnly=false,aiShowUnbuildable=false,aiTextFollow=true;
     std::string aiPendingName;                   // own profile chosen, waiting for Start from (one undo step with its file)
     std::map<std::string,std::pair<std::string,bool>> aiWrittenCache;   // key -> (bytes, opens as written)
@@ -562,6 +563,34 @@ struct Editor : Session {
     std::string aiRowExplanation(const AiRosterRow&);
     void handleAiProfiles(SDL_Event& e);
     void drawAiProfiles();
+    // Group rules (design 4, DEFAULT only): rows of the draft's category-word lines,
+    // each listing the units it covers, words only from this install's catalogue.
+    struct AiGroupRow {SDL_Rect row{},keyword{},word{},value{},up{},remove{};};
+    std::vector<AiGroupRow> aiGroupRows;
+    std::vector<std::pair<SDL_Rect,std::string>> aiWordRows;
+    int aiGroupSelected=-1,aiGroupCell=-1,aiGroupScroll=0,aiGroupUnitScroll=0,aiWordScroll=0;
+    int aiWordPick=-2;                           // the word picker: -2 closed, -1 adds a rule, else that rule's word
+    std::string aiWordSearch;TextEdit aiWordSearchEdit;
+    SDL_Rect aiGroupsButton{},aiAddGroupButton{},aiGroupList{},aiGroupUnits{},aiWordSearchBox{},aiWordList{},aiWordCancel{};
+    bool aiGroupsEditable();
+    void aiPickWord(const std::string& word);
+    void aiCommitGroupCell();
+    void aiGroupAction(int rule,int what);       // 0 keyword, 1 move up, 2 remove
+    void drawAiGroups(int x0,int y0,int W,int listBottom);
+    void drawAiWordPicker();
+    // The unit roster of a game mod (design 7.2, phase 5): when a pack is edited or
+    // previewed, the window lists the base install's units with that pack mounted
+    // (an AI-window-only registry; the map's own registry is untouched).
+    struct AiPackRoster {std::string pack;tak::sim::TypeRegistry registry;std::set<std::string> added;};
+    std::unique_ptr<AiPackRoster> aiPackRoster;  // the last pack's, cached
+    std::string aiRosterPack;                    // the pack whose units are listed ("" = the base install)
+    const tak::sim::TypeRegistry& aiRegistry() const {return !aiRosterPack.empty() && aiPackRoster && aiPackRoster->pack==aiRosterPack?aiPackRoster->registry:unitRegistry;}
+    void aiUseRoster(const std::string& pack);
+    bool aiRosterLists(const std::string& pack) const;   // the units listed are this pack's
+    void aiBuildRoster();
+    // Undo inside the window: only the steps made since it opened.
+    uint64_t aiUndoFloor=0,aiRedoAt=0;std::vector<uint64_t> aiRedoRevisions;
+    void aiUndo(bool redo);
     // Game mods (design 3.5, 7.2). OPEN FROM GAME MOD edits one pack's ai/ files as
     // a separate set with a pack banner: not the map's, not in map undo (a file
     // operation, like Save); SAVE TO PACK writes them back. SAVE AS GAME MOD writes

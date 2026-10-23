@@ -10,6 +10,7 @@
 #include "cartographer/editorstate.h"
 #include "cartographer/dialog.h"
 #include "ai/builtinprofile.h"
+#include "sim/matchsetup.h"
 #include "sim/sim.h"
 
 #include <charconv>
@@ -86,7 +87,7 @@ const cart::Editor::AiTabView& cart::Editor::aiTabView() {
     const auto& catalogue=*aiCatalogue;
     v.draft=cart::parseAiDraft(v.bytes,kind,catalogue);
     v.lines=cart::attributeAiLines(v.bytes,kind,catalogue);   // views into v.bytes
-    if(!key.empty())v.issues=cart::checkAiFile(key,v.bytes,{&catalogue,&unitRegistry});
+    if(!key.empty())v.issues=cart::checkAiFile(key,v.bytes,{&catalogue,&aiRegistry()});
     if(kind==AiKind::Default) {v.classic.reset(catalogue.size());v.classic.execute(v.bytes,catalogue);}
     else {v.builtin=tak::ai::builtinProfile(*aiTabLevel());v.level=v.builtin;tak::ai::applyProfileText(v.bytes,v.level);}
     return v;
@@ -120,15 +121,19 @@ bool cart::Editor::aiEdit(const std::function<bool(AiDraft&)>& change,const std:
     aiSetFile(key,bytes);aiNote.clear();return true;
 }
 
-void cart::Editor::openAiProfiles() {
-    if(aiOpen)return;
-    aiCatalogue=tak::ai::ClassicCatalogue::from(unitRegistry);
-    const auto reach=cart::aiReachableUnits(unitRegistry);
+// The window's catalogue and unit rows, from the base install's registry or, while a
+// game mod is edited or previewed, from that pack's (aiRegistry).
+void cart::Editor::aiBuildRoster() {
+    const auto& registry=aiRegistry();
+    aiCatalogue=tak::ai::ClassicCatalogue::from(registry);
+    const auto reach=cart::aiReachableUnits(registry);
+    const auto* added=!aiRosterPack.empty() && aiPackRoster?&aiPackRoster->added:nullptr;
     auto row=[&](std::string key,const tak::sim::UnitType* type) {
         AiRosterRow r;r.key=std::move(key);r.type=type;
         r.label=type?(type->name.empty()?type->id:type->name):r.key;
         r.group=cart::unitGroupOf(type);r.side=type?upperText(type->side):"";
         r.reachable=type && reach.count(type->id);
+        r.fromPack=type && added && added->count(type->id);
         return r;
     };
     aiDefaultRoster.clear();aiLevelRoster.clear();
@@ -140,17 +145,50 @@ void cart::Editor::openAiProfiles() {
         r.lockedForDefault=!cart::classicCanSingleOut(*aiCatalogue,r.key);
         aiDefaultRoster.push_back(std::move(r));
     }
-    for(const auto& [id,type]:unitRegistry.types())if(!type.commander)aiLevelRoster.push_back(row(id,&type));
+    for(const auto& [id,type]:registry.types())if(!type.commander)aiLevelRoster.push_back(row(id,&type));
     for(auto* roster:{&aiDefaultRoster,&aiLevelRoster})
         std::sort(roster->begin(),roster->end(),[](const AiRosterRow& a,const AiRosterRow& b) {
             return std::tie(a.group,a.label,a.key)<std::tie(b.group,b.label,b.key);
         });
+    aiViewCache=AiTabView{};aiWrittenCache.clear();aiIssues.clear();   // catalogue indices changed
+    if(aiView==AiView::Issues)aiView=AiView::Table;
+}
+
+// Lists `pack`'s units ("" = the base install's): the install mounted with that one
+// game mod, read once and cached.
+void cart::Editor::aiUseRoster(const std::string& pack) {
+    if(aiCatalogue && pack==aiRosterPack && (pack.empty() || (aiPackRoster && aiPackRoster->pack==pack)))return;
+    if(!pack.empty() && !(aiPackRoster && aiPackRoster->pack==pack)) {
+        try {
+            auto roster=std::make_unique<AiPackRoster>();roster->pack=pack;
+            const auto packVfs=tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot),{pack});
+            tak::sim::setupRegistry(roster->registry,packVfs,false);
+            for(const auto& [id,type]:roster->registry.types())if(!unitRegistry.find(id))roster->added.insert(id);
+            aiPackRoster=std::move(roster);
+        } catch(const std::exception& error) {
+            aiNote="Could not read the units of game mod "+pack+" ("+error.what()+"); the base install's units are listed.";
+            aiRosterPack.clear();aiBuildRoster();return;
+        }
+    }
+    aiRosterPack=pack;aiBuildRoster();
+}
+
+bool cart::Editor::aiRosterLists(const std::string& pack) const {
+    return !aiRosterPack.empty() && aiPackRoster && aiPackRoster->pack==aiRosterPack && lowerText(aiRosterPack)==lowerText(pack);
+}
+
+void cart::Editor::openAiProfiles() {
+    if(aiOpen)return;
     try {aiPacks=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {aiPacks.clear();}
     if(aiPack>int(aiPacks.size())) {aiPack=0;aiPackFiles.reset();}
-    aiOpened=aiFiles;aiOpen=true;aiStartOpen=false;aiView=AiView::Table;aiFocus=AI_NONE;
-    aiNote.clear();aiName=scenario.aiProfile;aiPendingName.clear();aiScroll=0;aiIssues.clear();
+    aiPackRoster.reset();aiRosterPack.clear();aiCatalogue.reset();   // units are read afresh each time
+    aiMod.reset();aiModSaveOpen=aiModOpenOpen=false;aiView=AiView::Table;
+    aiUseRoster(aiPack?aiPacks[size_t(aiPack-1)]:"");
+    commitHistory();aiUndoFloor=history.revision();aiRedoRevisions.clear();aiRedoAt=0;
+    aiOpened=aiFiles;aiOpen=true;aiStartOpen=false;aiFocus=AI_NONE;aiWordPick=-2;aiGroupSelected=-1;aiGroupCell=-1;
+    if(aiNote.find("Could not read the units")!=0)aiNote.clear();
+    aiName=scenario.aiProfile;aiPendingName.clear();aiScroll=0;aiGroupScroll=aiGroupUnitScroll=0;aiIssues.clear();
     aiViewCache=AiTabView{};menuOpen=-1;
-    aiMod.reset();aiModSaveOpen=aiModOpenOpen=false;
     SDL_StartTextInput();
 }
 
@@ -159,7 +197,7 @@ void cart::Editor::closeAiProfiles() {
     aiCommitText();
     if(aiModDirty()) {aiClosePack([this] {closeAiProfiles();});return;}   // asks first; closes after
     aiMod.reset();aiModSaveOpen=aiModOpenOpen=false;
-    aiOpen=aiStartOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();
+    aiOpen=aiStartOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();aiWordPick=-2;aiGroupCell=-1;
     SDL_StopTextInput();
 }
 
@@ -173,6 +211,8 @@ void cart::Editor::aiSelectTab(int tab) {
     aiCommitText();
     if(aiFocus==AI_CELL || aiFocus==AI_TEXT)aiFocus=AI_NONE;
     aiTab=std::clamp(tab,0,6);aiScroll=0;aiNote.clear();
+    if(aiTab && aiView==AiView::Groups)aiView=AiView::Table;   // group rules are the DEFAULT AI's only
+    if(aiFocus==AI_GROUP)aiFocus=AI_NONE;
     if(aiView==AiView::Text) {
         aiTextKey=aiTabKey();
         if(aiTextKey.empty())aiText=tak::ai::classicProfileScript(vfs,"").text;
@@ -398,9 +438,86 @@ void cart::Editor::aiCheck() {
     if(aiMod) {   // a pack has no aiprofile name: each file's own checks
         aiIssues.clear();
         for(const auto& [key,bytes]:aiMod->files)
-            for(auto& issue:cart::checkAiFile(key,bytesText(bytes),{&*aiCatalogue,&unitRegistry}))aiIssues.push_back(std::move(issue));
-    } else aiIssues=cart::checkAiMap(aiFiles,scenario.aiProfile,vfs,{&*aiCatalogue,&unitRegistry});
+            for(auto& issue:cart::checkAiFile(key,bytesText(bytes),{&*aiCatalogue,&aiRegistry()}))aiIssues.push_back(std::move(issue));
+    } else aiIssues=cart::checkAiMap(aiFiles,scenario.aiProfile,vfs,{&*aiCatalogue,&aiRegistry()});
     aiView=AiView::Issues;aiIssueScroll=0;if(aiFocus==AI_TEXT || aiFocus==AI_CELL)aiFocus=AI_NONE;
+}
+
+// ---- undo inside the window -------------------------------------------------------------
+// Each committed edit is already its own map history step, so the window steps the map's
+// history directly -- but only back to where it opened: map edits from before stay for
+// Ctrl+Z after DONE, where the user can see them. A pack's set has no history.
+void cart::Editor::aiUndo(bool redo) {
+    aiCommitText();
+    if(aiFocus==AI_CELL || aiFocus==AI_NAME || aiFocus==AI_GROUP || aiFocus==AI_TEXT)aiFocus=AI_NONE;
+    if(aiMod) {aiNote="Edits to a game mod's files have no undo: CLOSE PACK discards what is not saved.";return;}
+    commitHistory();
+    if(history.revision()!=aiRedoAt)aiRedoRevisions.clear();   // an edit since the last undo
+    if(!redo) {
+        if(history.revision()==aiUndoFloor || !history.canUndo()) {aiNote="Nothing to undo in this window. Map edits made before it opened undo after DONE.";return;}
+        const auto before=history.revision();
+        restoreHistory(history.undo());aiRedoRevisions.push_back(before);
+    } else {
+        if(aiRedoRevisions.empty() || !history.canRedo()) {aiNote="Nothing to redo in this window.";return;}
+        restoreHistory(history.redo());aiRedoRevisions.pop_back();
+    }
+    aiRedoAt=history.revision();
+    // The window follows the restored files and name.
+    aiName=scenario.aiProfile;aiPendingName.clear();aiStartOpen=false;aiWordPick=-2;
+    aiViewCache=AiTabView{};aiIssues.clear();if(aiView==AiView::Issues)aiView=AiView::Table;
+    if(aiView==AiView::Text) {aiTextKey.clear();aiSelectTab(aiTab);}
+    aiNote=redo?"Redone.":"Undone.";
+}
+
+// ---- group rules (design 4: DEFAULT AI, Advanced) -------------------------------------------
+
+bool cart::Editor::aiGroupsEditable() {
+    const auto& view=aiTabView();
+    return !aiTab && !view.key.empty() && !view.draft.asWritten;
+}
+
+void cart::Editor::aiPickWord(const std::string& word) {
+    const int rule=aiWordPick;aiWordPick=-2;if(aiFocus==AI_WORD)aiFocus=AI_NONE;
+    if(!aiCatalogue->categories.count(word) || cart::classicCanSingleOut(*aiCatalogue,word))return;   // never a unit name
+    const int count=int(aiTabView().draft.groups.size());
+    if(aiEdit([&](AiDraft& d) {
+        if(rule<0) {d.groups.push_back({true,word,cart::classicChanceText(50)});return true;}
+        if(rule>=int(d.groups.size()))return false;
+        d.groups[size_t(rule)].word=word;return true;
+    })) {
+        aiGroupSelected=rule<0?count:rule;aiGroupUnitScroll=0;
+        if(rule<0)aiNote="Added \"weight "+word+"\" at 50 %. Click WEIGHT to make it a limit rule, or the value to change it.";
+    }
+}
+
+void cart::Editor::aiCommitGroupCell() {
+    const int rule=aiGroupCell;aiFocus=AI_NONE;aiGroupCell=-1;
+    const auto& groups=aiTabView().draft.groups;
+    if(rule<0 || rule>=int(groups.size()))return;
+    const bool weight=groups[size_t(rule)].weight;
+    std::string t=lowerText(trimmed(aiCellText)),value;int v=0;
+    if(weight) {
+        if(t.ends_with('%'))t=trimmed(t.substr(0,t.size()-1));
+        if(!whole(t,v) || v<0 || v>100) {aiNote="Type a whole percentage from 0 to 100: what the rule makes of a unit at 100 %.";aiFocus=AI_GROUP;aiGroupCell=rule;return;}
+        value=cart::classicChanceText(v);
+    } else if(t=="no limit" || t=="none" || t=="unlimited" || t=="-1")value="-1";
+    else if(!whole(t,v) || v<0 || v>9999) {aiNote="Type a whole limit from 0 to 9999, or \"no limit\".";aiFocus=AI_GROUP;aiGroupCell=rule;return;}
+    else value=std::to_string(v);
+    aiEdit([&](AiDraft& d) {d.groups[size_t(rule)].value=value;return true;});
+}
+
+void cart::Editor::aiGroupAction(int rule,int what) {
+    if(rule<0 || rule>=int(aiTabView().draft.groups.size()))return;
+    if(what==1 && rule==0)return;
+    aiEdit([&](AiDraft& d) {
+        auto& g=d.groups[size_t(rule)];
+        if(what==0) {g.weight=!g.weight;g.value=g.weight?cart::classicChanceText(50):"2";}
+        else if(what==1)std::swap(d.groups[size_t(rule)],d.groups[size_t(rule-1)]);
+        else d.groups.erase(d.groups.begin()+rule);
+        return true;
+    });
+    if(what==0)aiNote=aiTabView().draft.groups[size_t(rule)].weight?"Now a weight rule, at 50 %.":"Now a limit rule, at 2.";
+    aiGroupSelected=what==1?rule-1:what==2?std::min(rule,int(aiTabView().draft.groups.size())-1):rule;aiGroupUnitScroll=0;
 }
 
 std::string cart::Editor::aiRowExplanation(const AiRosterRow& row) {
@@ -445,15 +562,34 @@ std::string cart::Editor::aiRowExplanation(const AiRosterRow& row) {
         if(limit)out+="; limit "+std::to_string(limit->levelValue)+" (line "+std::to_string(limit->number)+").";
         else if(l!=view.level.limit.end())out+="; limit "+std::to_string(l->second)+" (built-in).";
         else out+="; no cap"+std::string(builtinWeight || weight?".":" ");
+        const auto effective=cart::aiEffectiveLimit(*aiTabLevel(),l==view.level.limit.end()?std::optional<int>():l->second,row.type,&aiRegistry());
+        if(effective.changed || effective.mayRise)out+=" In play on "+std::string(cart::aiLevelName(*aiTabLevel()))+": "+effective.text+".";
     }
     for(const auto& issue:view.issues)if(issue.unit==row.key && issue.severity!=AiIssue::Severity::Info) {out+=" "+issue.message;break;}
     if(!row.reachable)out+=" No builder of its side can make it.";
+    if(row.fromPack)out+=" Added by game mod "+aiRosterPack+".";
     return out;
 }
 
-// The window swallows input while up (like Scripting); Ctrl+Z waits until it closes.
+// The window swallows input while up (like Scripting); Ctrl+Z / Ctrl+Y step through
+// the edits made since it opened (aiUndo).
 void cart::Editor::handleAiProfiles(SDL_Event& e) {
     if(handleAiModDialogs(e))return;
+    if(aiWordPick!=-2) {   // the group word picker
+        if(e.type==SDL_TEXTINPUT) {if(aiWordSearchEdit.input(e,aiWordSearch))aiWordScroll=0;}
+        else if(e.type==SDL_KEYDOWN) {
+            const auto key=e.key.keysym.sym;
+            if(key==SDLK_ESCAPE) {aiWordPick=-2;aiFocus=AI_NONE;}
+            else if(key==SDLK_RETURN || key==SDLK_KP_ENTER) {if(aiWordRows.size()==1)aiPickWord(aiWordRows[0].second);}
+            else if(aiWordSearchEdit.input(e,aiWordSearch))aiWordScroll=0;
+        } else if(e.type==SDL_MOUSEWHEEL)aiWordScroll=std::max(0,aiWordScroll-e.wheel.y*40);
+        else if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
+            const int mx=e.button.x,my=e.button.y;
+            if(cart::pointIn(mx,my,aiWordCancel)) {aiWordPick=-2;aiFocus=AI_NONE;return;}
+            if(cart::pointIn(mx,my,aiWordList))for(const auto& [rect,word]:aiWordRows)if(cart::pointIn(mx,my,rect)) {aiPickWord(word);return;}
+        }
+        return;
+    }
     if(aiStartOpen) {
         if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE) {aiStartOpen=false;aiPendingName.clear();}
         else if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
@@ -468,15 +604,16 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
     auto typeInto=[&](const SDL_Event& ev) {
         if(aiFocus==AI_SEARCH) {if(aiSearchEdit.input(ev,aiSearch))aiScroll=0;}
         else if(aiFocus==AI_NAME)aiNameEdit.input(ev,aiName);
-        else if(aiFocus==AI_CELL)aiCellEdit.input(ev,aiCellText);
+        else if(aiFocus==AI_CELL || aiFocus==AI_GROUP)aiCellEdit.input(ev,aiCellText);
         else if(aiFocus==AI_TEXT) {aiTextEdit.input(ev,aiText,false,true,textColumns);aiTextFollow=true;}
     };
     if(e.type==SDL_TEXTINPUT) {typeInto(e);return;}
     if(e.type==SDL_KEYDOWN) {
         const auto key=e.key.keysym.sym;const bool ctrl=(e.key.keysym.mod&(KMOD_CTRL|KMOD_GUI))!=0;
         const bool enter=key==SDLK_RETURN || key==SDLK_KP_ENTER;
-        if(ctrl && (key==SDLK_z || key==SDLK_y)) {aiNote="Undo and Redo work after closing this window (DONE).";return;}
+        if(ctrl && (key==SDLK_z || key==SDLK_y)) {aiUndo(key==SDLK_y || (e.key.keysym.mod&KMOD_SHIFT));return;}
         if(aiFocus==AI_CELL) {if(key==SDLK_ESCAPE)aiFocus=AI_NONE;else if(enter)aiCommitCell();else typeInto(e);return;}
+        if(aiFocus==AI_GROUP) {if(key==SDLK_ESCAPE) {aiFocus=AI_NONE;aiGroupCell=-1;} else if(enter)aiCommitGroupCell();else typeInto(e);return;}
         if(aiFocus==AI_NAME) {if(key==SDLK_ESCAPE) {aiFocus=AI_NONE;aiName=scenario.aiProfile;} else if(enter)aiCommitName();else typeInto(e);return;}
         if(aiFocus==AI_SEARCH) {if(key==SDLK_ESCAPE || enter)aiFocus=AI_NONE;else typeInto(e);return;}
         if(aiFocus==AI_TEXT) {
@@ -493,6 +630,10 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
         int mx,my;SDL_GetMouseState(&mx,&my);mx=int(mx/kUIScale);my=int(my/kUIScale);
         if(aiView==AiView::Text && cart::pointIn(mx,my,aiTextBox)) {aiTextScroll=std::max(0,aiTextScroll-e.wheel.y*3);aiTextFollow=false;}
         else if(aiView==AiView::Issues)aiIssueScroll=std::max(0,aiIssueScroll-e.wheel.y*36);
+        else if(aiView==AiView::Groups) {
+            if(cart::pointIn(mx,my,aiGroupUnits))aiGroupUnitScroll=std::max(0,aiGroupUnitScroll-e.wheel.y*36);
+            else aiGroupScroll=std::max(0,aiGroupScroll-e.wheel.y*40);
+        }
         else aiScroll=std::max(0,aiScroll-e.wheel.y*kRowH*2);
         return;
     }
@@ -506,6 +647,7 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
     // A click elsewhere leaves a field: cell and name edits are dropped (Enter commits them).
     if(aiFocus==AI_NAME && !cart::pointIn(mx,my,aiNameBox)) {aiFocus=AI_NONE;aiName=scenario.aiProfile;}
     if(aiFocus==AI_CELL)aiFocus=AI_NONE;
+    if(aiFocus==AI_GROUP) {aiFocus=AI_NONE;aiGroupCell=-1;}
     if(aiFocus==AI_SEARCH && !cart::pointIn(mx,my,aiSearchBox))aiFocus=AI_NONE;
     for(int t=0;t<7;++t)if(cart::pointIn(mx,my,aiTabRects[t])) {if(t!=aiTab)aiSelectTab(t);return;}
     for(int p=0;p<3;++p)if(cart::pointIn(mx,my,aiPresetRects[p])) {aiPreset(p);return;}
@@ -526,6 +668,7 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
             std::erase_if(files,[](const auto& file){return !file.first.starts_with("ai/");});   // only ai/ is asked
             aiPackFiles=std::move(files);
         } catch(const std::exception& error) {aiNote=std::string("Game mod: ")+error.what();aiPack=0;}
+        aiUseRoster(aiPack?aiPacks[size_t(aiPack-1)]:"");   // that pack's units are listed too
         return;
     }
     if(cart::pointIn(mx,my,aiViewButton)) {
@@ -534,6 +677,13 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
         return;
     }
     if(cart::pointIn(mx,my,aiCheckButton)) {if(aiView==AiView::Issues)aiView=AiView::Table;else aiCheck();return;}
+    if(cart::pointIn(mx,my,aiGroupsButton)) {
+        aiCommitText();
+        if(aiView==AiView::Groups)aiView=AiView::Table;
+        else {aiView=AiView::Groups;aiGroupScroll=aiGroupUnitScroll=0;if(aiFocus==AI_TEXT)aiFocus=AI_NONE;
+              if(aiGroupSelected<0 && !aiTabView().draft.groups.empty())aiGroupSelected=0;}
+        return;
+    }
     if(cart::pointIn(mx,my,aiEditableButton)) {aiCommitText();aiMakeEditable();return;}
     if(cart::pointIn(mx,my,aiStartButton)) {aiCommitText();if(!aiTab && (aiMod || !cart::standardAiProfile(scenario.aiProfile)))aiStartOpen=true;return;}
     if(cart::pointIn(mx,my,aiInsertButton)) {
@@ -551,6 +701,32 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
     if(aiView==AiView::Text) {
         if(cart::pointIn(mx,my,aiTextBox) && !aiTextKey.empty()) {
             aiFocus=AI_TEXT;aiTextEdit.click(aiText,textColumns,(my-aiTextBox.y-4)/12+aiTextScroll,(mx-aiTextBox.x-4)/6,(SDL_GetModState()&KMOD_SHIFT)!=0);aiTextFollow=true;
+        }
+        return;
+    }
+    if(aiView==AiView::Groups) {
+        const bool editable=aiGroupsEditable();
+        if(cart::pointIn(mx,my,aiAddGroupButton)) {
+            if(!editable) {aiNote=aiTabKey().empty()?"Choose \"This map's own profile\" first: the standard profile is the installed file.":"This file was written by hand. Press MAKE EDITABLE first, or edit it in the Text view.";return;}
+            aiWordPick=-1;aiWordSearch.clear();aiWordScroll=0;aiFocus=AI_WORD;aiWordSearchEdit.focus(aiWordSearch);return;
+        }
+        if(!cart::pointIn(mx,my,aiGroupList))return;
+        for(int i=0;i<int(aiGroupRows.size());++i) {
+            const auto& row=aiGroupRows[size_t(i)];
+            if(!cart::pointIn(mx,my,row.row))continue;
+            aiGroupSelected=i;aiGroupUnitScroll=0;
+            if(!editable)return;
+            if(cart::pointIn(mx,my,row.keyword))aiGroupAction(i,0);
+            else if(cart::pointIn(mx,my,row.up))aiGroupAction(i,1);
+            else if(cart::pointIn(mx,my,row.remove))aiGroupAction(i,2);
+            else if(cart::pointIn(mx,my,row.word)) {aiWordPick=i;aiWordSearch.clear();aiWordScroll=0;aiFocus=AI_WORD;aiWordSearchEdit.focus(aiWordSearch);}
+            else if(cart::pointIn(mx,my,row.value)) {
+                const auto& g=aiTabView().draft.groups[size_t(i)];
+                const int v=g.weight?cart::aiGroupRuleChance(g):cart::aiGroupRuleLimit(g);
+                aiCellText=!g.weight && v<0?"no limit":std::to_string(v);
+                aiGroupCell=i;aiFocus=AI_GROUP;aiCellEdit.focus(aiCellText);aiNote.clear();
+            }
+            return;
         }
         return;
     }
@@ -633,12 +809,14 @@ void cart::Editor::drawAiProfiles() {
         std::string pack=aiPack?aiPacks[size_t(aiPack-1)]:"NONE";
         if(pack.size()>24)pack=pack.substr(0,22)+"..";
         aiPackButton=cart::drawButton(ren,ct.x,ly+12,kLeftW,18,"PACK: "+pack,false);
-        drawWrapped(ren,aiPacks.empty()?"No game mods in this install.":"Click to step through mods/game packs.",ct.x,ly+34,kLeftW,2,140,150,165);
+        drawWrapped(ren,aiPacks.empty()?"No game mods in this install.":aiPack && aiRosterPack==aiPacks[size_t(aiPack-1)]?
+            "Its units are listed: "+std::to_string(aiPackRoster->added.size())+" added by the pack.":"Click to step through mods/game packs.",ct.x,ly+34,kLeftW,2,140,150,165);
     } else {
         // The pack banner: these files are the pack's, edited apart from the map.
         fillRect(ren,ct.x,ly-2,kLeftW,60,70,52,28);
         cart::drawText(ren,"PACK: "+(aiMod->pack.size()>20?aiMod->pack.substr(0,18)+"..":aiMod->pack),ct.x+3,ly,1,255,215,150);
-        drawWrapped(ren,"Game-mod files, not the map's. No undo; SAVE TO PACK writes them.",ct.x+3,ly+14,kLeftW-6,3,235,205,160);
+        drawWrapped(ren,"Game-mod files, not the map's. No undo; SAVE TO PACK writes them."+std::string(aiRosterPack==aiMod->pack && aiPackRoster?
+            " Units listed with the pack ("+std::to_string(aiPackRoster->added.size())+" added).":""),ct.x+3,ly+14,kLeftW-6,4,235,205,160);
     }
     ly+=64;
     cart::drawText(ren,"GAME MOD",ct.x,ly,1,150,200,150);
@@ -671,6 +849,7 @@ void cart::Editor::drawAiProfiles() {
     const int listTop=y0+90,listBottom=ct.y+ct.h-112;
     aiCells.clear();aiRows.clear();aiIssueRows.clear();
     aiSearchBox=aiSideBox=aiGroupBox=aiSetOnlyBox=aiUnbuildableBox=aiTextBox={};aiList={};
+    aiGroupList=aiGroupUnits=aiAddGroupButton={};aiGroupRows.clear();
     if(aiView==AiView::Table) {
         aiSearchBox=cart::drawField(ren,x0,y0+46,150,"FIND (NAME OR KEY)",aiSearch,aiFocus==AI_SEARCH,aiFocus==AI_SEARCH?&aiSearchEdit:nullptr);
         aiSideBox=cart::drawChoice(ren,x0+158,y0+46,100,"SIDE",kSideNames[aiSide],false);
@@ -681,7 +860,7 @@ void cart::Editor::drawAiProfiles() {
         cart::drawText(ren,"BUILD",x0+234,y0+80,1,150,200,150);
         cart::drawText(ren,aiTab?"WEIGHT":"CHANCE",x0+280,y0+80,1,150,200,150);
         cart::drawText(ren,aiTab?"BUILT-IN":"SET BY",x0+378,y0+80,1,150,200,150);
-        cart::drawText(ren,"LIMIT",x0+462,y0+80,1,150,200,150);
+        cart::drawText(ren,aiTab?"LIMIT (IN PLAY)":"LIMIT",x0+462,y0+80,1,150,200,150);
         aiList={x0,listTop,W,listBottom-listTop};
         fillRect(ren,aiList.x,aiList.y,aiList.w,aiList.h,22,24,32);
         const auto rows=aiVisibleRows();
@@ -714,7 +893,7 @@ void cart::Editor::drawAiProfiles() {
             const SDL_Rect nameArea{x0+46,y,182,kRowH};SDL_Rect nameClip{};SDL_IntersectRect(&nameArea,&aiList,&nameClip);
             SDL_RenderSetClipRect(ren,&nameClip);
             cart::drawText(ren,(locked?"(lock) ":"")+row.label,x0+46,y+3,1,locked?150:235,locked?150:230,locked?150:200);
-            cart::drawText(ren,row.key+" - "+row.group+(row.side.empty()?"":" - "+row.side)+(row.variant?" - variant":""),x0+46,y+14,1,150,165,185);
+            cart::drawText(ren,row.key+" - "+row.group+(row.side.empty()?"":" - "+row.side)+(row.variant?" - variant":"")+(row.fromPack?" - pack":""),x0+46,y+14,1,row.fromPack?235:150,row.fromPack?205:165,row.fromPack?140:185);
             SDL_RenderSetClipRect(ren,&aiList);
             if(locked) {
                 cart::drawText(ren,"can't be set alone (?)",x0+234,y+9,1,150,150,150);
@@ -723,7 +902,7 @@ void cart::Editor::drawAiProfiles() {
                 continue;
             }
             // Effective values, from the engine's reading of the file.
-            bool builds=true;std::string value,limit,middle;
+            bool builds=true;std::string value,limit,middle,inPlay;
             bool valueSet=setWeight.count(row.key)>0,limitSet=setLimit.count(row.key)>0;
             Uint8 vr=235,vg=235,vb=240;
             if(!aiTab) {
@@ -742,6 +921,10 @@ void cart::Editor::drawAiProfiles() {
                 limit=lv!=view.level.limit.end()?std::to_string(lv->second):"no cap";
                 middle=bw==view.builtin.weight.end()?"-":std::to_string(bw->second);
                 middle+=bl==view.builtin.limit.end()?"":" / "+std::to_string(bl->second);
+                // What the level makes of the limit while it plays (Easy halves, Hard x1.5, ...).
+                const auto effective=cart::aiEffectiveLimit(*aiTabLevel(),lv==view.level.limit.end()?std::optional<int>():lv->second,row.type,&aiRegistry());
+                if(effective.changed)inPlay=effective.limit<0?"> no cap":"> "+std::to_string(effective.limit);
+                if(effective.mayRise)inPlay+=inPlay.empty()?"+":" +";
             }
             const SDL_Rect buildCell{x0+232,y+5,40,16},valueCell{x0+278,y+5,92,16},limitCell{x0+460,y+5,W-462,16};
             aiCells.push_back({buildCell,row.key,2});aiCells.push_back({valueCell,row.key,0});aiCells.push_back({limitCell,row.key,1});
@@ -756,6 +939,8 @@ void cart::Editor::drawAiProfiles() {
             cell(valueCell,0,value,valueSet,vr,vg,vb);
             cart::drawText(ren,middle,x0+378,y+10,1,140,150,165);
             cell(limitCell,1,limit,limitSet,235,235,240);
+            if(!inPlay.empty() && !(aiFocus==AI_CELL && aiCellKey==row.key && aiCellColumn==1))
+                cart::drawText(ren,inPlay,limitCell.x+limitCell.w-4-cart::textWidth(inPlay,1),limitCell.y+5,1,150,190,230);
         }
         if(rows.empty())cart::drawText(ren,aiSetOnly?"This file sets no units that match.":"No units match.",x0+6,aiList.y+6,1,205,210,220);
         SDL_RenderSetClipRect(ren,nullptr);
@@ -783,6 +968,8 @@ void cart::Editor::drawAiProfiles() {
                 for(const auto& issue:view.issues)if(issue.line==number) {aiHint=issue.message;break;}
             }
         }
+    } else if(aiView==AiView::Groups) {
+        drawAiGroups(x0,y0,W,listBottom);
     } else {
         cart::drawText(ren,std::to_string(aiIssues.size())+" AI PROFILE CHECKS. CLICK ONE TO SHOW ITS LINE. NONE BLOCK SAVING.",x0,y0+46,1,235,220,160);
         const SDL_Rect list{x0,y0+60,W,listBottom-y0-60};
@@ -825,6 +1012,9 @@ void cart::Editor::drawAiProfiles() {
     } else if(!aiSelected.empty() && aiView==AiView::Table) {
         for(const auto& row:aiRoster())if(row.key==aiSelected) {help=aiRowExplanation(row);break;}
     }
+    if(help.empty() && aiView==AiView::Groups)
+        help="A group rule changes every unit of a category word (FBI category=) or ALL. Weight rules multiply a unit's chance (50 % halves it) and combine; "
+             "the last limit rule wins. Neither touches a unit set individually: its own row comes first and locks it.";
     if(help.empty() && aiView==AiView::Table) {
         if(!aiTab && view.key.empty())help="The standard profile is shown read-only: the installed ai/default.txt (or every unit at 100 % when there is none). Choose this map's own profile to edit.";
         else if(!aiTab && view.key=="ai/default.txt")help="This map carries ai/default.txt: every map without its own profile name also reads ai/default.txt, and an installed one may be used instead. Choose this map's own profile to move it.";
@@ -849,9 +1039,11 @@ void cart::Editor::drawAiProfiles() {
     if(!aiTab && (aiMod || !standard)) {aiStartButton=cart::drawButton(ren,bx,by,96,16,"START FROM...",false);bx+=102;}
     aiViewButton=cart::drawButton(ren,bx,by,96,16,aiView==AiView::Text?"TABLE VIEW":"TEXT VIEW",aiView==AiView::Text);bx+=102;
     aiCheckButton=cart::drawButton(ren,bx,by,64,16,aiView==AiView::Issues?"TABLE":"CHECK",aiView==AiView::Issues);bx+=70;
+    aiGroupsButton={};
+    if(!aiTab) {aiGroupsButton=cart::drawButton(ren,bx,by,96,16,aiView==AiView::Groups?"TABLE":"GROUP RULES",aiView==AiView::Groups);bx+=102;}
     if(view.draft.asWritten && !view.key.empty()) {aiEditableButton=cart::drawButton(ren,bx,by,104,16,"MAKE EDITABLE",true);bx+=110;}
     if(aiView==AiView::Text && !aiTextKey.empty()) {aiInsertButton=cart::drawButton(ren,bx,by,96,16,"INSERT UNIT",false);bx+=102;}
-    cart::drawText(ren,aiMod?"Pack files: no undo. Right-click a cell: not set.":"Undo after DONE. Right-click a cell: not set.",bx+6,by+5,1,140,150,165);
+    cart::drawText(ren,aiMod?"Pack files: no undo.":"Ctrl+Z undoes.",bx+6,by+5,1,140,150,165);
     aiDoneButton=cart::drawButton(ren,ct.x+ct.w-60,by,60,16,"DONE",true);
 
     if(aiStartOpen) {
@@ -866,8 +1058,9 @@ void cart::Editor::drawAiProfiles() {
         aiStartEmpty=cart::drawButton(ren,pc.x+196,pc.y+pc.h-20,80,18,"EMPTY",false);
         aiStartCancel=cart::drawButton(ren,pc.x+pc.w-74,pc.y+pc.h-20,70,18,"CANCEL",false);
     }
+    drawAiWordPicker();
     drawAiModDialogs();
-    if(!aiHint.empty() && !aiStartOpen && !aiModSaveOpen && !aiModOpenOpen && modal==M_NONE)cart::drawTooltip(ren,w,h,pointerX,pointerY,aiHint);
+    if(!aiHint.empty() && !aiStartOpen && !aiModSaveOpen && !aiModOpenOpen && aiWordPick==-2 && modal==M_NONE)cart::drawTooltip(ren,w,h,pointerX,pointerY,aiHint);
 }
 
 // ---- game mods (design 3.5, 7.2) -------------------------------------------------
@@ -943,6 +1136,7 @@ void cart::Editor::aiModSave() {
         aiModSaveOpen=false;aiModPack=plan.pack;
         try {aiPacks=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
         aiPack=0;aiPackFiles.reset();   // the preview reads packs again when picked
+        aiUseRoster(aiMod?aiMod->pack:"");
         std::string text="Saved to "+pathText(plan.folder)+": "+std::to_string(written)+" written";
         if(same)text+=", "+std::to_string(same)+" identical (skipped)";
         if(deleted)text+=", "+std::to_string(deleted)+" deleted";
@@ -968,6 +1162,7 @@ void cart::Editor::aiOpenPack(const std::string& pack) {
         }
         const auto count=set.files.size();
         aiMod=std::move(set);
+        aiUseRoster(pack);   // this pack's units are listed (its additions too)
         aiViewCache=AiTabView{};aiIssues.clear();aiView=AiView::Table;aiFocus=AI_NONE;aiScroll=0;
         aiNote="Opened game mod "+pack+" ("+std::to_string(count)+" AI file"+(count==1?"":"s")+"). Edits here are the pack's, not the map's, and have no undo.";
     } catch(const std::exception& error) {aiNote="Could not open game mod "+pack+": "+error.what();}
@@ -977,6 +1172,7 @@ void cart::Editor::aiClosePack(std::function<void()> then) {
     if(!aiMod) {if(then)then();return;}
     auto close=[this,then] {
         aiMod.reset();aiModSaveOpen=false;aiViewCache=AiTabView{};aiIssues.clear();aiView=AiView::Table;aiFocus=AI_NONE;aiNote.clear();
+        if(aiOpen)aiUseRoster(aiPack?aiPacks[size_t(aiPack-1)]:"");
         if(then)then();
     };
     if(aiModDirty())openConfirm("CLOSE PACK","Discard the unsaved changes to game mod "+aiMod->pack+
@@ -1130,11 +1326,152 @@ void cart::Editor::drawAiModDialogs() {
     y+=12*drawWrapped(ren,"! A game mod's file replaces the same file on every map; for the levels the whole file, not line by line. "
         "It applies only when the pack is ticked (multiplayer: the host turns Game mods On and ticks it). "
         "A game mod's default.txt does not replace a map's own profile.",pc.x,y,pc.w,4,255,205,140)+4;
-    y+=12*drawWrapped(ren,"Units this pack adds are not listed. Levels never build a unit their file does not name; the DEFAULT AI builds them at full chance.",
-        pc.x,y,pc.w,2,150,160,175)+4;
+    // The roster note: the units listed are this pack's when the window reads them (editing or previewing it).
+    const std::string target=aiModPlan.pack.empty()?trimmed(aiModPack):aiModPlan.pack;
+    if(aiRosterLists(target))
+        y+=12*drawWrapped(ren,"The units listed are this pack's, its "+std::to_string(aiPackRoster->added.size())+" additions included.",pc.x,y,pc.w,2,150,160,175)+4;
+    else
+        y+=12*drawWrapped(ren,"Units this pack adds are not listed (PREVIEW WITH GAME MOD lists a pack's units). Levels never build a unit their file does not name; the DEFAULT AI builds them at full chance.",
+            pc.x,y,pc.w,2,150,160,175)+4;
     if(!aiModPlanError.empty())drawWrapped(ren,aiModPlanError,pc.x,y,pc.w,3,255,150,135);
     else if(!aiModNote.empty())drawWrapped(ren,aiModNote,pc.x,y,pc.w,2,255,200,130);
     cart::drawText(ren,"Backups go to the Cartographer profile folder, not the pack.",pc.x,pc.y+pc.h-14,1,140,150,165);
     aiModWriteButton=cart::drawButton(ren,pc.x+pc.w-150,pc.y+pc.h-20,70,18,"SAVE",aiModPlanError.empty());
     aiModCancelButton=cart::drawButton(ren,pc.x+pc.w-74,pc.y+pc.h-20,70,18,"CANCEL",false);
+}
+
+// ---- group rules: the DEFAULT tab's Advanced view (design 4) ------------------------------
+
+void cart::Editor::drawAiGroups(int x0,int y0,int W,int listBottom) {
+    using cart::AiGroupUnit;
+    const auto& view=aiTabView();const auto& catalogue=*aiCatalogue;
+    const bool editable=aiGroupsEditable();
+    struct Shown {bool weight;std::string word,value;std::vector<AiGroupUnit> units;};
+    std::vector<Shown> rules;
+    if(editable) {
+        for(size_t i=0;i<view.draft.groups.size();++i) {
+            const auto& g=view.draft.groups[i];
+            rules.push_back({g.weight,g.word,g.value,cart::aiGroupRuleUnits(view.draft,i,catalogue)});
+        }
+    } else {   // the file's own group lines, read only
+        for(size_t i=0;i<view.lines.size();++i)if(view.lines[i].what==AiLine::What::Group) {
+            const auto& line=view.lines[i];
+            rules.push_back({line.weight,line.word,line.value,cart::aiGroupLineUnits(view.lines,i,catalogue)});
+        }
+    }
+    aiGroupSelected=rules.empty()?-1:std::clamp(aiGroupSelected,0,int(rules.size())-1);
+    auto valueText=[](const Shown& r) {
+        const AiGroupRule g{r.weight,r.word,r.value};
+        if(r.weight) {
+            const int p=cart::aiGroupRuleChance(g);
+            return std::to_string(p)+" %"+(r.value==cart::classicChanceText(p)?"":" ("+(r.value.empty()?std::string("none"):r.value)+")");
+        }
+        const int n=cart::aiGroupRuleLimit(g);
+        return n<0?std::string("no limit"):std::to_string(n);
+    };
+    cart::drawText(ren,"GROUP RULES: THEY APPLY AFTER THE UNIT ROWS AND NEVER CHANGE A UNIT SET INDIVIDUALLY.",x0,y0+46,1,235,220,160);
+    if(!editable)cart::drawText(ren,view.key.empty()?"The installed standard profile: read only. Choose this map's own profile to add rules.":
+        "Written by hand: read only until MAKE EDITABLE (the Text view edits it).",x0,y0+58,1,150,160,175);
+    cart::drawText(ren,"KEYWORD",x0+4,y0+72,1,150,200,150);
+    cart::drawText(ren,"WORD",x0+70,y0+72,1,150,200,150);
+    cart::drawText(ren,"VALUE",x0+196,y0+72,1,150,200,150);
+    cart::drawText(ren,"COVERS",x0+290,y0+72,1,150,200,150);
+    aiGroupList={x0,y0+82,W,6*20+4};
+    fillRect(ren,aiGroupList.x,aiGroupList.y,aiGroupList.w,aiGroupList.h,22,24,32);
+    aiGroupScroll=std::clamp(aiGroupScroll,0,std::max(0,int(rules.size())*20+4-aiGroupList.h));
+    SDL_RenderSetClipRect(ren,&aiGroupList);
+    for(int i=0;i<int(rules.size());++i) {
+        const auto& r=rules[size_t(i)];const int y=aiGroupList.y+2+i*20-aiGroupScroll;
+        AiGroupRow row;row.row={x0,y,W,19};
+        if(i==aiGroupSelected)fillRect(ren,x0,y,W,19,50,60,82);
+        if(editable) {
+            row.keyword=cart::drawButton(ren,x0+4,y+1,60,17,r.weight?"WEIGHT":"LIMIT",false);
+            row.word=cart::drawButton(ren,x0+70,y+1,120,17,upperText(r.word),false);
+        } else {
+            cart::drawText(ren,r.weight?"WEIGHT":"LIMIT",x0+8,y+6,1,200,205,215);
+            cart::drawText(ren,upperText(r.word),x0+74,y+6,1,200,205,215);
+        }
+        row.value={x0+196,y+1,88,17};
+        if(aiFocus==AI_GROUP && aiGroupCell==i)inlineField(ren,row.value.x,row.value.y,row.value.w,aiCellText,true,&aiCellEdit);
+        else {
+            SDL_SetRenderDrawColor(ren,editable?62:44,editable?66:46,editable?82:54,255);SDL_RenderDrawRect(ren,&row.value);
+            cart::drawText(ren,valueText(r),row.value.x+4,row.value.y+6,1,235,235,240);
+        }
+        int skipped=0;bool twice=false;
+        for(const auto& u:r.units) {skipped+=u.skipped;twice|=u.times>1;}
+        std::string covers=std::to_string(r.units.size())+(r.units.size()==1?" unit":" units");
+        if(skipped)covers+=", "+std::to_string(skipped)+" set individually (skipped)";
+        if(twice && r.weight)covers+=", some twice";
+        cart::drawText(ren,covers,x0+290,y+6,1,170,185,200);
+        if(editable) {
+            row.up=i>0?cart::drawButton(ren,x0+W-46,y+1,20,17,"^",false):SDL_Rect{};
+            row.remove=cart::drawButton(ren,x0+W-22,y+1,20,17,"X",false);
+        }
+        aiGroupRows.push_back(row);
+    }
+    if(rules.empty())cart::drawText(ren,editable?"No group rules. ADD GROUP RULE picks one of this install's category words, or ALL.":"This file has no group rules.",x0+6,aiGroupList.y+6,1,205,210,220);
+    SDL_RenderSetClipRect(ren,nullptr);
+    SDL_SetRenderDrawColor(ren,70,74,90,255);SDL_RenderDrawRect(ren,&aiGroupList);
+    const int ay=aiGroupList.y+aiGroupList.h+4;
+    aiAddGroupButton=cart::drawButton(ren,x0,ay,150,16,"+ ADD GROUP RULE",editable);
+    cart::drawText(ren,"Words from this install's unit categories, or ALL.",x0+158,ay+5,1,140,150,165);
+
+    // The units the selected rule covers, with the ones its keyword's lock skips.
+    const int uy=ay+24;
+    if(aiGroupSelected<0)return;
+    const auto& r=rules[size_t(aiGroupSelected)];
+    cart::drawText(ren,"UNITS COVERED BY \""+std::string(r.weight?"weight ":"limit ")+r.word+"\" ("+valueText(r)+"): NOW",x0,uy,1,150,200,150);
+    aiGroupUnits={x0,uy+12,W,std::max(24,listBottom-uy-12)};
+    fillRect(ren,aiGroupUnits.x,aiGroupUnits.y,aiGroupUnits.w,aiGroupUnits.h,22,24,32);
+    const int columns=2,colW=W/columns,rowsShown=int(r.units.size()+columns-1)/columns;
+    aiGroupUnitScroll=std::clamp(aiGroupUnitScroll,0,std::max(0,rowsShown*12+6-aiGroupUnits.h));
+    SDL_RenderSetClipRect(ren,&aiGroupUnits);
+    for(size_t k=0;k<r.units.size();++k) {
+        const auto& u=r.units[k];
+        const int cx=x0+4+int(k%columns)*colW,cy=aiGroupUnits.y+3+int(k/columns)*12-aiGroupUnitScroll;
+        if(cy<aiGroupUnits.y-12 || cy>aiGroupUnits.y+aiGroupUnits.h)continue;
+        const auto* type=catalogue.types[u.index];
+        std::string label=type && !type->name.empty()?type->name:catalogue.names[u.index];
+        if(label.size()>18)label=label.substr(0,17)+".";
+        label+=" ("+catalogue.names[u.index]+")";
+        std::string state;
+        if(u.skipped)state="set individually, skipped";
+        else if(r.weight)state=std::to_string(view.classic.pref[u.index])+" %"+(u.times>1?" (x"+std::to_string(u.times)+")":"");
+        else state=view.classic.limit[u.index]<0?"no limit":"limit "+std::to_string(view.classic.limit[u.index]);
+        cart::drawText(ren,label,cx,cy,1,u.skipped?150:215,u.skipped?150:225,u.skipped?160:240);
+        cart::drawText(ren,state,cx+colW-12-cart::textWidth(state,1),cy,1,u.skipped?150:170,u.skipped?150:200,u.skipped?160:175);
+    }
+    if(r.units.empty())cart::drawText(ren,"No unit of this install has this word.",x0+4,aiGroupUnits.y+3,1,205,210,220);
+    SDL_RenderSetClipRect(ren,nullptr);
+    SDL_SetRenderDrawColor(ren,70,74,90,255);SDL_RenderDrawRect(ren,&aiGroupUnits);
+}
+
+void cart::Editor::drawAiWordPicker() {
+    if(aiWordPick==-2)return;
+    const auto pc=cart::drawPanel(ren,w,h,520,380,aiWordPick<0?"ADD GROUP RULE":"GROUP RULE WORD");
+    cart::drawText(ren,"Category words of this install's units (FBI category=), and ALL. The number counts the units.",pc.x,pc.y,1,220,225,235);
+    aiWordSearchBox=cart::drawField(ren,pc.x,pc.y+14,200,"FIND",aiWordSearch,aiFocus==AI_WORD,aiFocus==AI_WORD?&aiWordSearchEdit:nullptr);
+    const auto query=lowerText(trimmed(aiWordSearch));
+    std::vector<std::string> words;
+    for(auto& word:cart::aiGroupWords(*aiCatalogue))if(query.empty() || word.find(query)!=std::string::npos)words.push_back(std::move(word));
+    aiWordList={pc.x,pc.y+50,pc.w,pc.h-50-26};
+    fillRect(ren,aiWordList.x,aiWordList.y,aiWordList.w,aiWordList.h,22,24,32);
+    constexpr int columns=3;const int colW=aiWordList.w/columns;
+    aiWordScroll=std::clamp(aiWordScroll,0,std::max(0,int(words.size()+columns-1)/columns*20+4-aiWordList.h));
+    aiWordRows.clear();
+    SDL_RenderSetClipRect(ren,&aiWordList);
+    for(size_t i=0;i<words.size();++i) {
+        const SDL_Rect r{aiWordList.x+4+int(i%columns)*colW,aiWordList.y+3+int(i/columns)*20-aiWordScroll,colW-8,17};
+        const auto& ids=aiCatalogue->categories.at(words[i]);
+        const size_t count=std::set<uint16_t>(ids.begin(),ids.end()).size();
+        fillRect(ren,r.x,r.y,r.w,r.h,36,40,52);
+        std::string label=upperText(words[i]);if(label.size()>16)label=label.substr(0,15)+".";
+        cart::drawText(ren,label+" ("+std::to_string(count)+")",r.x+4,r.y+6,1,215,225,240);
+        aiWordRows.push_back({r,words[i]});
+    }
+    if(words.empty())cart::drawText(ren,"No category word matches.",aiWordList.x+6,aiWordList.y+6,1,205,210,220);
+    SDL_RenderSetClipRect(ren,nullptr);
+    SDL_SetRenderDrawColor(ren,70,74,90,255);SDL_RenderDrawRect(ren,&aiWordList);
+    cart::drawText(ren,"Enter picks the only match.",pc.x,pc.y+pc.h-14,1,140,150,165);
+    aiWordCancel=cart::drawButton(ren,pc.x+pc.w-74,pc.y+pc.h-20,70,18,"CANCEL",false);
 }
