@@ -1521,6 +1521,103 @@ the test install). Screenshots of the save dialog and the pack banner were inspe
 `ctest -R "cartographer|ai_profile"` 51/51, `ctest -L quick` 494/494. No src/ outside
 src/cartographer changed, so no gates.
 
+## AI profile editor, phase 5: extras
+
+Four separable additions to the AI Profiles window (design 10, row 5).
+
+- Group rules (design 4, DEFAULT AI only): a GROUP RULES button in the footer of the
+  DEFAULT tab (the Advanced disclosure) swaps the unit table for the draft's
+  category-word lines. Each row has its keyword (click WEIGHT / LIMIT to switch; a
+  switched rule starts at 50 % or 2), its word, its value (a weight as the percentage
+  it makes of a unit at 100 %, the raw token shown beside a hand-written value; a
+  limit as a number or "no limit"), how many units it covers and how many of them are
+  set individually and skipped, and `^` / `X` to move it up or remove it. ADD GROUP
+  RULE and a click on a word open a picker that lists only `aiGroupWords`: this
+  install's `ClassicCatalogue.categories` words, ALL first, less any word that is also
+  a unit name (the engine reads it as that unit). The selected rule lists every unit
+  it covers, two columns, with its value now or "set individually, skipped". The
+  model (`aiGroupRuleUnits` for a draft, `aiGroupLineUnits` for any file's lines)
+  marks a unit skipped when it has its own row (lines) for the rule's keyword, the
+  engine's per-keyword lock. Hand-written and standard files show their group lines
+  read only. Each change is one undo step through `aiEdit`.
+- Pack roster: while a pack is edited (OPEN FROM GAME MOD) or picked under PREVIEW
+  WITH GAME MOD, the window lists units from an AI-window-only registry,
+  `hpi::mountRetailRoot(root, {pack})` + `sim::setupRegistry`. It is cached for one
+  pack, read again each time the window opens, and never touches the map's
+  `unitRegistry`. The catalogue, rosters, reachability and checks follow it. Units
+  the pack adds carry a "pack" tag and a help-strip note. SAVE AS GAME MOD drops the
+  "units this pack adds are not listed" warning when the target is the listed pack
+  (`aiRosterLists`), and otherwise points to PREVIEW WITH GAME MOD. A pack whose
+  units cannot be read falls back to the base install, with a note.
+- Ctrl+Z / Ctrl+Y inside the window. Every committed edit was already its own map
+  history step, so the window steps the map history itself (`aiUndo`): text is
+  committed, the history is committed, `restoreHistory` runs, and the window
+  re-syncs (name, Text view, caches). Undo stops at the revision the window opened
+  at ("Nothing to undo in this window. Map edits made before it opened undo after
+  DONE."). Redo only replays steps the window undid. A pack's set still has no undo,
+  and says so.
+- Limits in play on the level tabs: the LIMIT column shows `> n` when a level
+  changes the number, and `+` when Hard/Absurd may raise it in long games. The help
+  strip says, for example, "In play on Hard: 4 in play, more in long games."
+  `aiEffectiveLimit` follows `ai::paramsFor` and the AI's build pick:
+  - Easy halves a limit and Hard/Absurd multiply it by 1.5, minimum 1.
+  - The defensive levels ignore every limit except 0.
+  - A mobile builder never goes over its own number.
+  - Hard/Absurd lift economy buildings with income.
+  - Army, factory and defence limits (and Zhon-style mobile production) may rise.
+
+Deviations from the design:
+
+- The Advanced disclosure is a footer button that switches the right side to a
+  Groups view, rather than an inline expander under the unit table, which has no
+  room.
+- `aiLevelLimitScale` / `aiLevelIgnoresLimits` restate `paramsFor`'s two fields
+  instead of linking `ai.cpp` into the editor. `cartographer_aiprofile_test` now
+  links `TAK_AI_SOURCES` and compares them for every level.
+- Ctrl+Z goes no further back than where the window opened, instead of reaching the
+  whole map history.
+- No reorder beyond "move up", and no cap on the number of rules.
+
+Validation:
+
+- `cartographer_aiprofile`, new cases:
+  - Group words are this catalogue's, with a unit-name clash excluded.
+  - A fixed draft checks per-keyword skipping, a repeated category word counted twice,
+    and ALL.
+  - 3000 random drafts: `aiGroupRuleUnits` equals `aiGroupLineUnits` on the written
+    file.
+  - The random scripts and the hand corpus are checked against
+    `ClassicProfile::execute`. A sentinel value on each group line must reach exactly
+    the unskipped covered units and leave the others as the earlier lines left them.
+  - Limit scale and defensive rule equal `paramsFor` for all six levels, plus values
+    for Easy, Hard, Absurd, builders, income buildings and the defensive levels.
+  - Mutations that drop the lock, or set Easy to 60 %, fail it.
+- `cartographer_aiprofile_extras_ui` (`cartographer_ui_test <data> aiprofile-extras`)
+  uses a scratch data root whose pack "Extra" adds one synthetic FBI unit. The steps:
+  1. A map edit is made before the window opens.
+  2. PREVIEW WITH GAME MOD lists the pack's unit, tagged; stepping back drops it.
+  3. Own profile, then GROUP RULES and ADD GROUP RULE: the picker lists exactly the
+     catalogue's words. A real word is picked and written at 50 %.
+  4. One covered unit is set to 80 % in the table and shows as skipped, while the
+     others read 50 %.
+  5. The value is edited to 25 %.
+  6. Ctrl+Z / Ctrl+Y inside the window work. Five Ctrl+Z stop at the window's start
+     with the note, and the earlier map edit survives. Four Ctrl+Y restore everything.
+  7. WEIGHT is switched to LIMIT.
+  8. Hard's limit 3 shows "4 in play".
+  9. OPEN FROM GAME MOD lists the pack's units, and Ctrl+Z there says "no undo".
+     CLOSE PACK returns to the base units.
+  10. SAVE AS GAME MOD to "extra" while it is previewed lists its units, with no
+      warning. Escape writes nothing.
+
+  A mutation that ignores the undo floor fails it at frame 20. One that never lists
+  the pack fails it at frame 2.
+- `cartographer_ui_smoke` also clicks GROUP RULES and ADD GROUP RULE, and closes the
+  picker with Escape.
+- I inspected screenshots of the Groups view, the word picker and Hard's limit column.
+- On build-o2: `ctest -R "cartographer|ai_profile"` 52/52, `ctest -L quick` 495/495.
+  Nothing in src/ outside src/cartographer changed, so no gates were run.
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop
