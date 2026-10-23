@@ -2070,28 +2070,29 @@ then ticked cosmetic packs.
 ### AI profiles in game mods
 
 A game pack can change the build profile of each AI level except Classic with a
-file of its own at the pack's top level, loose (`mods/game/My AI/n_ai.txt`) or
-at the top of an archive in the pack:
+file of its own in the pack's `ai` folder, loose (`mods/game/My AI/ai/n_ai.txt`)
+or in the `ai` folder inside an archive in the pack. A file of that name anywhere
+else, such as directly in the pack folder, is not read.
 
 | File | Level |
 | --- | --- |
-| `d_ai.txt` | Defensive |
-| `e_ai.txt` | Easy |
-| `n_ai.txt` | Normal |
-| `h_ai.txt` | Hard |
-| `a_ai.txt` | Absurd |
-| `ad_ai.txt` | Absurdly Defensive |
+| `ai/d_ai.txt` | Defensive |
+| `ai/e_ai.txt` | Easy |
+| `ai/n_ai.txt` | Normal |
+| `ai/h_ai.txt` | Hard |
+| `ai/a_ai.txt` | Absurd |
+| `ai/ad_ai.txt` | Absurdly Defensive |
 
 Each line is `weight <unit> <number>` or `limit <unit> <number>`, with the
 unit's file name (`arabow`, `tarcage`); lines starting with `//` are comments.
 A file changes only the units it names; every other unit keeps the level's
 built-in values. `limit <unit> 0` stops that level building the unit. Only the
-level a file is named for reads it: `n_ai.txt` changes Normal (and the Normal
+level a file is named for reads it: `ai/n_ai.txt` changes Normal (and the Normal
 AI that takes over a disconnected player's seat), never Easy. Names are not
 case-sensitive. When two ticked packs have the same file, the alphabetically
 later pack wins, as for any file. In multiplayer the files travel with the
 host's game packs. Cosmetic packs, maps and the install itself cannot change
-these levels' profiles. Classic reads none of these files: it reads the map's
+these levels' profiles, even with an `ai/n_ai.txt` of their own. Classic reads none of these files: it reads the map's
 own AI profile, which a game pack can replace (see [Classic](#classic)).
 
 The old `overrides/` folder is no longer read. Nothing in it is moved or

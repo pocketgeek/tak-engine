@@ -48,10 +48,11 @@ See [Classic](user-guide.md#classic) in the user guide.
   values of the original default profile they were tuned on, so they play
   exactly as before.
 - **Game mods can change them, one level at a time.** A game pack with
-  `d_ai.txt`, `e_ai.txt`, `n_ai.txt`, `h_ai.txt`, `a_ai.txt` or `ad_ai.txt` at
-  its top level (loose, or at the top of an archive in the pack) adjusts that
-  level only (`n_ai.txt`: Normal); units the file does not name keep the
-  built-in values, and `limit <unit> 0` stops the level building one. The files
+  `ai/d_ai.txt`, `ai/e_ai.txt`, `ai/n_ai.txt`, `ai/h_ai.txt`, `ai/a_ai.txt` or
+  `ai/ad_ai.txt` (in the pack's `ai` folder, loose or inside an archive in the
+  pack) adjusts that level only (`ai/n_ai.txt`: Normal); units the file does not
+  name keep the built-in values, and `limit <unit> 0` stops the level building
+  one. A file of that name directly in the pack folder is not read. The files
   travel with the host's game packs in multiplayer; cosmetic packs, maps and the
   install cannot supply them. See
   [AI profiles in game mods](user-guide.md#ai-profiles-in-game-mods).
@@ -120,8 +121,10 @@ See [Building](user-guide.md#building).
   `ai::levelProfile`); the server builds each data set's per-level profiles from
   them and the room's game-mod package. New tests: `ai_profile`,
   `ai_profile_data` (the built-in Normal table still equals the install's
-  `ai/default.txt`) and `ai_mod_profile` (a game pack's `n_ai.txt` reaches the
-  server's Normal AI through the real mod transfer).
+  `ai/default.txt`) and `ai_mod_profile` (a game pack's `ai/n_ai.txt` reaches
+  the server's Normal AI, and only it, through the real mod transfer; misplaced
+  `n_ai.txt` files are not read). The headless harness takes `TAK_AI_LEVELS`
+  (`1,2`: one level per seated AI) for mixed-level games.
 - Retail AI comparison harness under `tools/re` (`retail_ai_harness.py`,
   `retail_ai_poll.py`, `tak_ai_run.py`, `compare_ai.py`) and a debug-only
   `TAK_ROSTER_DUMP` on `takserver`; optional developer tooling, not a gate.

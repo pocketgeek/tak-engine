@@ -1667,8 +1667,9 @@ HPI/UFO/KMP archives:
   automatically to the server and all players, with checksum verification
   before start. Downloads stay in `ModCache/`; they do not replace installed
   files. A game pack can also adjust our AI levels' built-in build profiles
-  with `d_ai.txt`, `e_ai.txt`, `n_ai.txt`, `h_ai.txt`, `a_ai.txt` or
-  `ad_ai.txt` at its top level ([AI profiles in game mods](docs/user-guide.md#ai-profiles-in-game-mods)).
+  with `ai/d_ai.txt`, `ai/e_ai.txt`, `ai/n_ai.txt`, `ai/h_ai.txt`,
+  `ai/a_ai.txt` or `ai/ad_ai.txt` in its `ai/` folder
+  ([AI profiles in game mods](docs/user-guide.md#ai-profiles-in-game-mods)).
 
 Other files directly in `mods/`, `mods/cosmetic/` or `mods/game/` never load.
 Campaigns and Crusades battles use neither game packs nor ticked cosmetic packs. Alphabetically later

@@ -53,9 +53,9 @@ map package carries the map archive's own file). The same branch gave our own
 AI levels (Defensive to Absurdly Defensive) built-in build profiles
 (`src/ai/builtinprofile.{h,cpp}`, the values of the default profile they had
 always read, so they play exactly as before) and stopped them reading
-`ai/*.txt`; a game pack's `d_ai.txt`, `e_ai.txt`, `n_ai.txt`, `h_ai.txt`,
-`a_ai.txt` or `ad_ai.txt` at its top level adjusts that one level (cosmetic
-packs cannot carry them). Besides `src/ai/`, `src/client/`, `src/net/` and
+`ai/*.txt`; a game pack's `ai/d_ai.txt`, `ai/e_ai.txt`, `ai/n_ai.txt`,
+`ai/h_ai.txt`, `ai/a_ai.txt` or `ai/ad_ai.txt` (in its `ai` folder) adjusts that
+one level (cosmetic packs cannot carry them; a root `n_ai.txt` is not read). Besides `src/ai/`, `src/client/`, `src/net/` and
 `src/server/`, it touches `src/hpi/` (`hpi.cpp`, `hpi.h`: the game-mod file list
 and the cosmetic filter) and `src/net/mappackage.cpp` (a map package may carry
 the map's AI profile). See branch `task-ai-profiles`.
@@ -116,7 +116,7 @@ Debug builds of the tag), or state that it was not run this release.
   `mods/` packs and `ModCache/*.takmods` carry over. No settings key was added
   or removed (the prereleases' `campaignAi` key is ignored if present). Campaign
   missions now play Classic opponents. A game pack written for 0.8.10 that
-  happens to carry a root `d_ai.txt` ... `ad_ai.txt` would now adjust that AI
+  happens to carry an `ai/d_ai.txt` ... `ai/ad_ai.txt` would now adjust that AI
   level; a game pack's `ai/default.txt` no longer changes our levels (it now
   changes Classic only).
 
@@ -181,7 +181,8 @@ Testing was reduced for this release, by the user's rule (minimal testing):
   (`TAK_AI_LEVEL=6`) 60 s `14849c00bc6e2a19`, twice, unchanged. `ai_profile`,
   `ai_profile_data` (the built-in Normal table equals the install's
   `ai/default.txt`), `ai_mod_profile` (a real hosted game: a game pack's
-  `n_ai.txt` reaches only the server's Normal AI), `classic_ai_map_profile`
+  `n_ai.txt` reaches only the server's Normal AI; since `task-ai-dir` the file is
+  `ai/n_ai.txt`), `classic_ai_map_profile`
   (base, game-pack and map-package profiles each win in turn;
   `takmission08_dh` reads `ai/mission08.txt`), every `classic_ai*` test,
   `ai_behavior`, `ai_behavior_data`, `naval_ai`, `retail_ai`, `settings`,
