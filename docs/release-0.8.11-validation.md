@@ -147,10 +147,22 @@ TODO-LEAD: publication line (`gh release edit v0.8.11 --draft=false --latest`).
 
 ## Screenshots
 
-TODO-LEAD: list what was retaken (at least `docs/img/title.jpg` with VERSION
-0.8.11; candidates: the room with a CLASSIC AI seat, the campaign book with the
-Opponent AI line, a wrapped build menu) and update the README title alt text,
-gallery footnote and `docs/img/README.md` to match.
+Retaken by the 0.8.11 build (version set to 0.8.11 locally; no capture patch),
+committed on the screenshots branch (`task-release-0811-shots`, `f16e61c7`) and
+each inspected by eye: `docs/img/title.jpg` (VERSION 0.8.11, same 1440 × 1080
+crop), `docs/img/campaign.jpg` (fresh profile, chapter 1, with **Opponent AI:
+NORMAL (A)** under the always-on mods note) and the new
+`docs/img/guide/build-menu-wrap.jpg` (a Zhon Beast Tamer's nine-icon conjure menu
+in two rows, five above four, left of the command panel and mana orb; 1024 × 768
+at Build Menu Scale 150%, not scaled). The README title alt text, gallery
+footnote ("0.7.25 to 0.8.11 builds"), campaign alt text, the user guide's
+Building and Campaigns pictures and `docs/img/README.md` were updated to match.
+Not retaken: no game picture with bases shows the removed blue production bar;
+the lobby and room pictures show each AI seat's level, not the list of levels,
+so CLASSIC would not appear; `guide/chat-box.jpg` crops out its Barracks (its
+gauge's small early fill reads the same); `guide/campaign-briefing.jpg` is the
+briefing, not the book. Scripts: `~/tak-tmp/scratch/release-0811/shots`.
+TODO-LEAD: confirm the screenshots commit's sha after it lands on main.
 
 ## Limits
 
