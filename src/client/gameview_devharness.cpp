@@ -1403,6 +1403,43 @@
             selection_={builder};mapView_.setOffset(offX,offY);point(site);
             drawPanel(winW_,winH_);
             std::fprintf(stderr,"PASS: build controls cover world picking and require one builder\n");
+            // A menu too long for one row wraps into rows above the bar (client/buildrow.h),
+            // all left of the command panel; an icon on the bottom row is hovered and clicked
+            // like any other. Narrow the window until the builder's menu wraps.
+            {
+                const int fullW=winW_;
+                int rows=1;
+                for (winW_=1000;winW_>=480;winW_-=40) {
+                    drawPanel(winW_,winH_);
+                    rows=1;
+                    for (size_t i=1;i<iconRects_.size();++i)
+                        if (iconRects_[i].first.y>iconRects_[i-1].first.y+1) ++rows;
+                    if (rows>1) break;
+                }
+                if (rows<2) throw std::runtime_error("build menu never wrapped into a second row");
+                for (const auto& [r,bt]:iconRects_)
+                    if (r.x<0 || r.x+r.w>float(mapViewW(winW_))-10+0.01f || r.y+r.h>float(winH_-barH()))
+                        throw std::runtime_error("a wrapped build icon covers the command panel or bar");
+                if (buildMenuRect_.y>iconRects_.front().first.y || buildRowTop_>buildMenuRect_.y)
+                    throw std::runtime_error("the build menu container or band misses the top row");
+                const auto last=std::find_if(iconRects_.rbegin(),iconRects_.rend(),
+                    [](const auto& entry){return entry.second && !entry.second->onMana;});
+                if (last==iconRects_.rend() || last->first.y<=iconRects_.front().first.y+1)
+                    throw std::runtime_error("no buildable icon on the bottom row");
+                const int lx=int(last->first.x+last->first.w*.5f),ly=int(last->first.y+last->first.h*.5f);
+                SDL_WarpMouseInWindow(SDL_RenderGetWindow(ren_),lx,ly);
+                SDL_PumpEvents();
+                if (unitInfoSubject()!=last->second)
+                    throw std::runtime_error("hovering a bottom-row build icon did not pick its unit");
+                SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;
+                e.button.x=lx;e.button.y=ly;input(e,winW_,winH_);
+                if (placing_!=last->second)
+                    throw std::runtime_error("a bottom-row build icon did not start its build");
+                std::fprintf(stderr,"PASS: %d-row build menu at %dx%d clear of the panel; bottom-row %s hovered and armed\n",
+                             rows,winW_,winH_,last->second->id.c_str());
+                placing_=nullptr;shiftBuildPlaced_=false;
+                winW_=fullW;drawPanel(winW_,winH_);
+            }
             // Real icon / mouse / key events: queued placement must leave the
             // builder selected, and only commit the Shift-release reset after
             // at least one accepted placement. These are client input checks;

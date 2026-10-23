@@ -462,6 +462,8 @@ and it recharges over time.
 ### Building
 
 Select a builder and its build menu appears along the bottom of the screen.
+A long menu that does not fit beside the command panel wraps into a second row
+(or more) above the first, so it never covers the panel or the mana orb.
 
 - **Structures**: click an icon, then click the map to place it. Placement shows
   whether the spot is valid. Right-click or **Esc** cancels.

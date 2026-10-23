@@ -1290,6 +1290,9 @@ reclaimable obstacles from a valid site before construction starts. Terrain,
 other units, and unreclaimable obstacles can still prevent placement.
 
 The build menu appears only with one builder or production building selected.
+It stays left of the command panel: a menu too long for one row wraps into
+balanced rows stacked above the information bar (icons keep their size; the
+BUILD MENU option aligns each row left, centred or right).
 Hovering its icons or frame uses the normal UI cursor, including when a map
 target is underneath it. Mixed selections use the ordinary command controls.
 

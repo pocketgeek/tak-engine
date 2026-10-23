@@ -1969,6 +1969,11 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(chatbox_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(chatbox_test PRIVATE tak-formats ${_tak_sdl2})
     add_test(NAME chatbox COMMAND chatbox_test)
+    # The conjure (build) menu's layout (client/buildrow.h): wrapping into rows left of
+    # the command panel, never under it, and one row exactly as before where it fits.
+    add_executable(buildrow_test tools/buildrow_test.cpp)
+    target_include_directories(buildrow_test PRIVATE src)
+    add_test(NAME buildrow COMMAND buildrow_test)
     add_executable(crusades_ui_test tools/crusades_ui_test.cpp src/client/crusadesscreen.cpp)
     target_compile_definitions(crusades_ui_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(crusades_ui_test PRIVATE tak-crusades-map tak-uifont ${_tak_sdl2})

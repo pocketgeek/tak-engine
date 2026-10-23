@@ -6,6 +6,7 @@
 // these return.
 // Display only: nothing here touches the simulation or the network.
 
+#include "client/buildrow.h"
 #include "client/utf8.h"
 
 #include <algorithm>
@@ -72,19 +73,14 @@ inline std::vector<std::string> wrap(const std::string& text, float firstW, floa
 }
 
 // The top of the conjure (build) row GameView::drawPanel draws above the information
-// bar for a selected builder, mirroring its sizing: icons (barH - 10) x BUILD MENU SCALE
-// tall (shrunk to fit over the bar), 5 px above it, the TRAINING line drawn at
-// 24 x scale over the icons and a hovered icon's tooltip at 28 x scale, the highest.
-// `barTop` is the bar's top, `barH` its height. The row spans the screen's width at
-// most and may sit left, centre or right, so the band is the whole width.
+// bar for a selected builder, as one row (client/buildrow.h): icons (barH - 10) x BUILD
+// MENU SCALE tall (shrunk to fit over the bar), 5 px above it, the TRAINING line drawn
+// at 24 x scale over the icons and a hovered icon's tooltip at 28 x scale, the highest.
+// `barTop` is the bar's top, `barH` its height. The row may sit left, centre or right,
+// so the band is the whole width. A long menu that wraps into more rows is higher; that
+// is the drawn row's own top (`rowTop` below), not this estimate.
 inline float buildRowTop(float barTop, float barH, float buildScale) {
-    float iconSz = (barH - 10.0f) * buildScale, scale = buildScale;
-    const float availH = std::max(barTop - 10.0f, 24.0f);
-    if (iconSz > availH) {
-        scale *= availH / iconSz;
-        iconSz = availH;
-    }
-    return barTop - 5.0f - iconSz - 28.0f * scale;
+    return buildrow::layout(1, barTop, barH, buildScale, 1e6f, 1e6f, buildrow::Centered).bandTop;
 }
 
 // The smallest box worth drawing: two lines and the composer at the 10 px floor text
@@ -96,9 +92,9 @@ inline float minRoom(float margin) { return 52.0f + 2 * margin; }
 // row (26 px buttons 8 px over the bar). `rowTop` is the top of the build row drawn
 // this frame (0: none is up); with none up, the room a row of BUILD MENU SCALE
 // `buildScale` would take is kept anyway (buildRowTop), so the box never covers the row
-// when it appears. The two agree unless the row is shrunk to fit a narrow window, which
-// only lowers it. A row that is not drawn never takes the box's last `minRoom(margin)`
-// of height, though (a big build scale on a short window would otherwise reserve the
+// when it appears. The two agree for a menu that fits one row; a long menu wrapped
+// into more rows is higher (the drawn top wins). A row that is not drawn never takes the box's last `minRoom(margin)` of
+// height, though (a big build scale on a short window would otherwise reserve the
 // whole screen and hide chat with nothing there). `hudRow` is false for a spectator,
 // who gets no bottom HUD.
 inline float hudFloor(float barTop, float barH, float buildScale, float rowTop, bool hudRow,

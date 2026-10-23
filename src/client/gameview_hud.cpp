@@ -10,6 +10,7 @@
 #include "client/renderdriver.h"
 #include "client/uitext.h"
 #include "client/chatbox.h"
+#include "client/buildrow.h"
 #include "client/statsfit.h"
 #include "net/protocol.h"
 #include "sim/retailtransport.h"
@@ -2254,57 +2255,35 @@ namespace {
         }
 
         // Conjure menu: clickable build icons for the selected builder, in a
-        // horizontal row just above the info bar. Where it sits along the bottom is
+        // horizontal row just above the info bar -- or several, stacked upward, when a
+        // long menu does not fit left of the command panel (client/buildrow.h, the one
+        // place the row's geometry is computed). Where the rows sit along the bottom is
         // a user preference (Options "BUILD MENU": left / centered / right).
         iconRects_.clear();
         buildMenuRect_ = {};
         buildRowTop_ = 0;
         const auto* b = selectedBuilder();
         if (b) {
-            const auto menu = conjureMenu(b->type->id);   // mission-filtered
+            // Mission-filtered; an entry naming no known type takes no slot.
+            std::vector<const tak::sim::UnitType*> menu;
+            for (const auto& id : conjureMenu(b->type->id))
+                if (const auto* bt = registry_.find(id)) menu.push_back(bt);
             int n = int(menu.size());
             // Row size: the bar height (already uiScale-scaled) times the user's
             // extra BUILD MENU SCALE, so the row can grow independently of the HUD.
-            float bScale = buildBarScale_;   // effective scale after the fit clamp below
-            float iconSz = (float(barH()) - 10.0f) * buildBarScale_;
-            // Retail build portraits are 64 x 48; keep their landscape shape.
-            float iconW = iconSz * (4.0f / 3.0f);
-            float gap = 6.0f * buildBarScale_;
-            float rowW = n > 0 ? (n - 1) * (iconW + gap) + iconW : 0;
-            // BUILD MENU SCALE goes to 400%, which is more than a wide menu can spend
-            // on a narrow window: 13 icons at 4x is several thousand pixels. Rather
-            // than let the row run off the screen (where the icons are unreachable),
-            // shrink it to whatever actually fits and keep the requested scale as a
-            // ceiling. The same clamp covers the vertical: the row sits above the
-            // command bar, so it must not grow past the space over it.
+            const auto lay = tak::buildrow::layout(n, bar.y, float(barH()), buildBarScale_,
+                                                   float(winW), float(mapViewW(winW)),
+                                                   buildBarAlign_);
+            // Everything drawn INSIDE an icon (the +++ badge, the queue count, the
+            // tooltip) is sized from the scale in effect, so a shrunken icon does not
+            // get full-size furniture spilling out of it.
+            const float bScale = lay.scale;
+            const float iconTop = lay.top;   // the top row: the tooltip and TRAINING sit over it
             if (n > 0) {
-                const float availW = float(winW) - 20.0f;
-                const float availH = std::max(bar.y - 10.0f, 24.0f);
-                float fit = 1.0f;
-                if (rowW > availW) fit = std::min(fit, availW / rowW);
-                if (iconSz > availH) fit = std::min(fit, availH / iconSz);
-                if (fit < 1.0f) {
-                    iconSz *= fit;
-                    iconW *= fit;
-                    gap *= fit;
-                    rowW = (n - 1) * (iconW + gap) + iconW;
-                }
-                // Everything drawn INSIDE an icon (the +++ badge, the queue count, the
-                // tooltip) is sized from the scale too, so it has to follow the clamp
-                // or a shrunken icon gets full-size furniture spilling out of it.
-                bScale = buildBarScale_ * fit;
+                buildMenuRect_ = {lay.box.x, lay.box.y, lay.box.w, lay.box.h};
+                buildRowTop_ = lay.bandTop;
             }
-            float x0 = buildBarAlign_ == 1 ? (float(winW) - rowW) / 2.0f
-                     : buildBarAlign_ == 2 ? float(winW) - rowW - 10.0f
-                                           : 10.0f;
-            x0 = std::max(x0, 10.0f);               // a huge menu never runs off-screen left
-            // (tak::chatbox::buildRowTop mirrors this sizing: the chat box's floor while
-            // no row is up.)
-            float iconY = bar.y - iconSz - 5;       // sit just above the bar
-            float x = x0;
-            if (n > 0) buildMenuRect_ = {x0 - 5, iconY - 5, rowW + 10, iconSz + 10};
-            if (n > 0) buildRowTop_ = iconY - 28 * bScale;   // the tooltip's top (TRAINING: 24)
-            // A recessed container behind the row so the conjure menu reads as one HUD
+            // A recessed container behind the rows so the conjure menu reads as one HUD
             // strip (matching the InfoPanel bar's dark inset + bronze frame).
             if (n > 0 && guiBar) {
                 const SDL_FRect& box = buildMenuRect_;
@@ -2314,9 +2293,9 @@ namespace {
                 SDL_RenderDrawRectF(ren_, &box);
             }
             for (int i = 0; i < n; ++i) {
-                const auto* bt = registry_.find(menu[size_t(i)]);
-                if (!bt) continue;
-                SDL_FRect r{x, iconY, iconW, iconSz};
+                const auto* bt = menu[size_t(i)];
+                const auto& li = lay.icons[size_t(i)];
+                SDL_FRect r{li.x, li.y, li.w, li.h};
                 SDL_SetRenderDrawColor(ren_, 20, 18, 14, 235);
                 SDL_FRect rb{r.x - 1, r.y - 1, r.w + 2, r.h + 2};
                 SDL_RenderFillRectF(ren_, &rb);
@@ -2379,20 +2358,19 @@ namespace {
                     float tw = blockWidth(tip, px);
                     float tipx = std::clamp(r.x + r.w / 2 - tw / 2, 6.0f, winW - tw - 6);
                     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 210);
-                    SDL_FRect tb{tipx - 6, iconY - 28 * bScale,
+                    SDL_FRect tb{tipx - 6, iconTop - 28 * bScale,
                                  tw + 12, 26 * bScale};
                     SDL_RenderFillRectF(ren_, &tb);
-                    blockText(tip, tipx, iconY - 24 * bScale, px, {255, 240, 190, 255});
+                    blockText(tip, tipx, iconTop - 24 * bScale, px, {255, 240, 190, 255});
                 }
                 iconRects_.push_back({r, bt});
-                x += iconW + gap;
             }
             if (!b->buildQueue.empty()) {
                 char q[64];
                 std::snprintf(q, sizeof q, "TRAINING %s (%zu)",
                               b->buildQueue.front()->name.c_str(),
                               b->buildQueue.size());
-                blockText(q, x0, iconY - 24 * bScale, 1.8f * bScale,
+                blockText(q, lay.textX, iconTop - 24 * bScale, 1.8f * bScale,
                           {160, 210, 255, 255});
             }
         }
