@@ -865,20 +865,23 @@ static void classicLevel() {
         check(same && a.rand(1)==0 && a.rand(0)==0 && a.seed()==before,"the stream repeats per seed, and n < 2 draws nothing");
     }
     // The Normal Controller attacks with this army at its first think (main's loop);
-    // the Classic one is handed every tick and, up to P3, only gives each unit
-    // retail's standing orders (Stance 0) as it joins a base squad.
+    // the Classic one is handed every tick and gives each unit retail's standing
+    // orders (Stance 0) as it joins a base squad, then (P5) sends the idle ones
+    // on patrol around the base (Move, then a queued Patrol); waves are P6.
     auto soldier=fighter();sim::TypeRegistry empty;ai::Profile profile;
     sim::World w;terrain(w);w.player(0).income=100;
     for (int i=0;i<35;++i) w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
     ai::Controller classic(0,empty,profile,1,ai::Difficulty::Classic,{{3400,800}});
-    size_t emitted=0,stances=0;
+    size_t stances=0,patrols=0,other=0;
     for (uint32_t tick=0;tick<300;++tick)
         for (const auto& c:think(classic,w,tick)) {
-            ++emitted;stances+=c.kind==net::Cmd::Stance && c.targetId==0;
+            if (c.kind==net::Cmd::Stance && c.targetId==0) ++stances;
+            else if (c.kind==net::Cmd::Patrol && c.queue) ++patrols;
+            else if (c.kind!=net::Cmd::Move) ++other;
         }
     ai::Controller normal(0,empty,profile,1,ai::Difficulty::Normal,{{3400,800}});
-    check(emitted==35 && stances==35 && attacks(think(normal,w))==35,
-          "the P3 Classic brain only gives each unit its standing orders where Normal attacks");
+    check(stances==35 && patrols>=1 && other==0 && attacks(think(normal,w))==35,
+          "the Classic brain gives each unit its standing orders and idle patrols where Normal attacks");
 }
 
 int main(int argc,char** argv) {

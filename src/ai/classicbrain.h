@@ -27,8 +27,12 @@
 // constructor planner (ai/classicproduction.h) with the Monarch's gates, and
 // what it picks is placed by retail's placers (ai/classicplacement.h) on the
 // block grids the build manager draws as it is built, and ordered with a Build
-// command. Combat members and the defence planner (P5) are not planned yet, and
-// nothing after the member loop runs yet.
+// command. P5: the base think's threat test 0x412000 over the World's
+// visible-enemy list, and retail's combat-member planner 0x40d370 for every
+// other mobile member (ai/classicdefence.h: idle units patrol inside the base
+// ring, armed ones under threat are sent at the intruders) and the Monarch's
+// retreat 0x40d010, both also reached from the constructor planner, as Move and
+// Patrol commands. Nothing after the member loop runs yet (waves are P6).
 
 #include <cstdint>
 #include <functional>
@@ -36,6 +40,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "ai/classicdefence.h"
 #include "ai/classicplacement.h"
 #include "ai/classicprofile.h"
 #include "ai/classicsquads.h"
@@ -96,6 +101,10 @@ public:
     // were lodestones (tests).
     uint32_t builds() const { return builds_; }
     uint32_t lodestoneBuilds() const { return lodestoneBuilds_; }
+    // Move and Patrol commands the combat planner has issued, and how many
+    // times the Monarch's retreat ran (tests).
+    uint32_t combatOrders() const { return combatOrders_; }
+    uint32_t retreats() const { return retreats_; }
     // The block grids the build manager drew as it was built (0x4110f0).
     const ClassicBlockGrids& blockGrids() const { return grids_; }
     // Retail's per-type cache (mgr+0x85 / +0x95, recounted every tick by 0x4119d0):
@@ -159,6 +168,15 @@ private:
     // 0x40c890 for units[i], a ready mobile builder of base `slot`.
     void planConstructor(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
                          size_t i, bool threat, const std::function<void(const tak::net::Command&)>& sink);
+    // 0x40d370 (the combat-member planner) for a ready member of base `slot`
+    // with the base think's threat answer, or with `retreat` 0x40d010 (the
+    // Monarch's retreat); the orders update the member's first mission in the
+    // think's snapshot, as retail's do at once.
+    void planCombat(const tak::sim::World& world, int slot, const std::vector<ClassicSquadUnit>& units,
+                    ClassicSquadUnit& member, bool threat, bool retreat,
+                    const std::function<void(const tak::net::Command&)>& sink);
+    // The player's visible-enemy list (0x411700's +5) as the AI reads it.
+    std::vector<ClassicEnemy> visibleEnemies(const tak::sim::World& world) const;
     // The map's sacred-site records (0x62dbcc) and which feature-plane types are
     // sacred, read from the World once.
     void readSites(const tak::sim::World& world);
@@ -184,7 +202,7 @@ private:
     ClassicProfile profile_;
     std::vector<ClassicTypeInfo> info_;
     std::vector<std::vector<uint16_t>> menu_;
-    uint32_t queues_ = 0, builds_ = 0, lodestoneBuilds_ = 0;
+    uint32_t queues_ = 0, builds_ = 0, lodestoneBuilds_ = 0, combatOrders_ = 0, retreats_ = 0;
     ClassicBlockGrids grids_;
     bool sitesRead_ = false;
     std::vector<std::optional<ClassicCell>> sites_;

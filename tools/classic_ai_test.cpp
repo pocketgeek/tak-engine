@@ -8,6 +8,8 @@
 //   classic_ai_test <retail-root>   + the shipped data checks
 //   classic_ai_test --bases <retail-root>   the P4b games: a Classic seat of each
 //       faction builds its base on Abnar's Terrace for 10 game-minutes
+//   classic_ai_test --raid <retail-root>    the P5 game: a scripted raid into a
+//       Classic base (defenders sent at the raiders, the Monarch's retreat)
 //   classic_ai_test --profile       oracle mode for tools/re/check_ai_profile.py:
 //       stdin  "types <n>" then n lines "<name> <category words...>", then any
 //              number of "case <hex script>" lines
@@ -28,9 +30,13 @@
 //   classic_ai_test --placement     oracle mode for tools/re/check_ai_placement.py
 //   classic_ai_test --constructor   oracle mode for tools/re/check_ai_constructor.py
 //   classic_ai_test --static-grade  oracle mode for tools/re/check_ai_static_grade.py
+//   classic_ai_test --threat        oracle mode for tools/re/check_ai_threat.py
+//   classic_ai_test --defence       oracle mode for tools/re/check_ai_defence.py
+//   classic_ai_test --retreat       oracle mode for tools/re/check_ai_retreat.py
 //       (line layouts in those scripts and in the oracle functions below)
 #include "ai/ai.h"
 #include "ai/classicbrain.h"
+#include "ai/classicdefence.h"
 #include "ai/classicprofile.h"
 #include "ai/classicplacement.h"
 #include "ai/classicproduction.h"
@@ -769,6 +775,120 @@ static void classicBases(const char* root) {
     }
 }
 
+// The engine game test for P5: a scripted raid into a Classic base on Abnar's
+// Terrace. An Aramon seat (the Monarch and six armed soldiers given at its
+// start) against an idle Veruna seat whose raiders the test places. Before the
+// raid the soldiers are idle base members: they patrol inside the base ring
+// (0x40d370 without a threat: points rand(r/2)+rand(r) from the centre). Raiders
+// put inside the ring-0 radius, where the seat sees them, are a threat (0x412000):
+// the soldiers are sent at them (points around a candidate, within its sight or
+// weapon range), while the Monarch at full HP with that ground army around it
+// does not flee. Below its HP threshold (1/8 with full mana and a castable
+// weapon) it retreats (0x40d010): a move to a point inside the ring-0 radius
+// farther from the raiders than it stands.
+static void classicRaid(const char* root) {
+    auto vfs=hpi::mountRetailRoot(root);
+    sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
+    const auto map=hpi::findMap(vfs,"Abnar's Terrace");
+    sim::World w;w.setVisPlayer(-1);
+    sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
+    config.slots={{true,2,0,1.0f},{true,0,1,1.0f,true,false}};
+    const auto starts=sim::setupMatch(w,reg,config);
+    if (starts.size()<2) { check(false,"Abnar's Terrace seats two players");return; }
+    ai::Controller controller(1,reg,ai::Profile{},0x5a1du,ai::Difficulty::Classic,{starts[0]});
+    // No building at all, so the Monarch's own choices do not muddy the test.
+    controller.setClassicProfile(ai::ClassicProfileScript{"test","limit ALL 0\n"});
+    controller.setClassicStart(1,starts[1].first,starts[1].second);
+    const ai::ClassicBrain& brain=*controller.classicBrain();
+    const auto* soldier=reg.find("arasword");   // Aramon Swordsman
+    const auto* raider=reg.find("verman");      // Veruna Man-at-arms
+    if (!soldier || !raider) { check(false,"the Swordsman and Man-at-arms types exist");return; }
+    int monarch=0;
+    for (const auto& u:w.units()) if (u.player==1 && u.type && u.type->commander) monarch=u.id;
+    const float sx=starts[1].first,sz=starts[1].second;
+    // Toward the map's middle.
+    const float dx=sx<w.mapW()*8.0f ? 1.f : -1.f,dz=sz<w.mapH()*8.0f ? 1.f : -1.f;
+    std::vector<int> defenders,raiders;
+    const float centreX=std::floor(sx/16)*16+8,centreZ=std::floor(sz/16)*16+8;   // base 1's anchor cell
+    auto distance=[](float ax,float az,float bx,float bz){return std::hypot(ax-bx,az-bz);};
+    auto nearestRaider=[&](float x,float z){
+        float best=1e9f;
+        for (int id:raiders) if (const auto* r=w.unit(id);r && r->alive()) best=std::min(best,distance(x,z,r->x.toFloat(),r->z.toFloat()));
+        return best;
+    };
+    // The ring radii with no structures in the base: 1120 / 800 px (rings 0 / 1).
+    const float ring0=float(sim::retailAiBaseRadius(0,0)),ring1=float(sim::retailAiBaseRadius(0,1));
+    int idlePatrols=0,idleOutside=0,threatOrders=0,threatNear=0,threatFar=0,earlyRetreats=0;
+    std::set<int> reacted;
+    struct Retreat { uint32_t tick;float x,z;float from; } retreat{0,0,0,0};
+    constexpr uint32_t kRaid=900,kWound=1200,kEnd=1500;
+    for (uint32_t tick=0;tick<kEnd;++tick) {
+        if (tick==40)
+            for (int k=0;k<6;++k)
+                defenders.push_back(w.spawn(soldier,sx+dx*(60+40*float(k%3)),sz+dz*(80+60*float(k/3)),0.0f,1));
+        if (tick==kRaid)
+            // Between the Monarch and the map's middle, inside the ring-0 radius
+            // and the Monarch's sight. They hold their ground and fire (passive
+            // stance), so they stay where the seat sees them.
+            for (int k=0;k<4;++k) {
+                raiders.push_back(w.spawn(raider,sx+dx*(300+30*float(k)),sz+dz*(280-30*float(k)),0.0f,0));
+                net::Command hold;hold.kind=net::Cmd::Stance;hold.player=0;hold.unitId=raiders.back();hold.targetId=2;
+                sim::applyCommand(w,reg,hold);
+            }
+        if (tick==kWound) if (auto* m=w.unit(monarch)) m->hp=sim::Fixed::fromInt(m->type->maxHp/12);
+        controller.tick(w,tick,[&](const net::Command& c) {
+            const bool defender=std::find(defenders.begin(),defenders.end(),c.unitId)!=defenders.end();
+            if (defender && (c.kind==net::Cmd::Move || c.kind==net::Cmd::Patrol)) {
+                if (tick<kRaid) {
+                    // 0x40d370 with no threat: around the centre.
+                    if (c.kind==net::Cmd::Patrol) { ++idlePatrols;idleOutside+=distance(c.x,c.z,centreX,centreZ)>1.5f*ring1; }
+                } else if (c.kind==net::Cmd::Move) {
+                    // The first point: around a candidate raider (within its
+                    // reach), unless it fell back to the centre. (The centre leg
+                    // is dropped inside the ring, where retail's ends at once.)
+                    ++threatOrders;
+                    const float near=nearestRaider(c.x,c.z);
+                    const auto* d=w.unit(c.unitId);
+                    const float reach=d ? float(std::max(w.sightDistance(*d->type),d->type->weapons.front().range)) : 0.f;
+                    if (near<=reach+16) { ++threatNear;reacted.insert(c.unitId); } else ++threatFar;
+                }
+            }
+            if (c.unitId==monarch && c.kind==net::Cmd::Move && !c.queue && tick>=kRaid) {
+                if (tick<kWound) ++earlyRetreats;
+                else if (!retreat.tick) {
+                    const auto* m=w.unit(monarch);
+                    retreat={tick,c.x,c.z,m ? nearestRaider(m->x.toFloat(),m->z.toFloat()) : 0.f};
+                }
+            }
+            sim::applyCommand(w,reg,c);
+        });
+        w.tick(1.f/30.f);
+        if (std::getenv("TAK_CLASSIC_TRACE") && tick>=kRaid-30 && tick%15==0) {
+            std::printf("t%u visible %zu:",tick,w.visibleEnemies(1).size());
+            for (int id:defenders) if (const auto* d=w.unit(id))
+                std::printf(" [%d d%.0f c%.0f o%zu%s]",id,double(nearestRaider(d->x.toFloat(),d->z.toFloat())),
+                            double(distance(d->x.toFloat(),d->z.toFloat(),centreX,centreZ)),d->orders.size(),
+                            d->orders.empty() ? "" : d->orders.front().autoTarget ? "A" : d->orders.front().patrol ? "P" : "M");
+            std::printf("\n");
+        }
+    }
+    std::printf("  raid on Abnar's Terrace: %d idle patrols before it (%d outside 1.5 x ring 1), %d defenders sent "
+                "(%d first points within reach of a raider, %d not), %u retreats; ring 0 %.0f px\n",idlePatrols,
+                idleOutside,int(reacted.size()),threatNear,threatFar,brain.retreats(),double(ring0));
+    check(idlePatrols>=6 && idleOutside==0,"before the raid every idle soldier patrols inside the base ring");
+    check(reacted.size()>=4,"raiders inside the ring-0 radius send the soldiers at them");
+    check(threatNear>=threatFar,"most of the defenders' first points lie within reach of a raider");
+    check(earlyRetreats==0,"the Monarch at full HP does not retreat with its ground army around it");
+    check(retreat.tick>0 && retreat.tick<kWound+120,"below its HP threshold the Monarch retreats within 4 s");
+    if (retreat.tick) {
+        const float from=distance(retreat.x,retreat.z,centreX,centreZ);
+        std::printf("    the Monarch retreats at tick %u to %.0f px from the centre; its nearest raider %.0f px -> %.0f px\n",
+                    retreat.tick,double(from),double(retreat.from),double(nearestRaider(retreat.x,retreat.z)));
+        check(from<=ring0+8,"the retreat point is inside the ring-0 radius");
+        check(nearestRaider(retreat.x,retreat.z)>retreat.from,"the retreat point is farther from the raiders");
+    }
+}
+
 // The port's side of tools/re/check_ai_assignment.py: 0x40fe80 then 0x40eeb0 on
 // the case's units and squads (see the script for the line layout).
 static int assignmentOracle() {
@@ -1135,6 +1255,133 @@ static int constructorOracle() {
     return 0;
 }
 
+// The port's side of tools/re/check_ai_threat.py: ai::classicThreat then
+// ai::classicEnemiesNear on the case's lists (see the script for the layout).
+static int threatOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        int32_t cx,cz,radius;int upgrade;size_t n;
+        in>>cx>>cz>>radius>>upgrade>>n;
+        std::vector<ai::ClassicEnemy> all(n);
+        for (size_t i=0;i<n;++i) { auto& e=all[i];uint32_t f;in>>f>>e.x>>e.z;e.flags=f;e.id=int(i); }
+        auto list=[&]{ size_t k;in>>k;std::vector<ai::ClassicEnemy> l(k);for (auto& e:l) { size_t i;in>>i;e=all[i]; }return l; };
+        const auto visible=list(),upgraded=list();
+        const bool threat=ai::classicThreat(visible,{cx,cz},radius);
+        const auto out=ai::classicEnemiesNear(visible,{cx,cz},radius,upgrade!=0,&upgraded);
+        std::printf("%d %zu",int(threat),out.size());
+        for (const auto& e:out) std::printf(" %d",e.id);
+        std::printf("\n");
+    }
+    return 0;
+}
+
+// The port's side of tools/re/check_ai_defence.py (--defence: 0x40d370) and
+// check_ai_retreat.py (--retreat: 0x40d010): ai::classicPlanCombat /
+// ai::classicRetreat with the brain's squad helpers on the case's base, units,
+// enemies and answers (see check_ai_defence.py for the line layout).
+static int defenceOracle(bool retreat) {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        int w,h,threat,upgrade;int32_t anchor;uint32_t seed;
+        in>>w>>h>>anchor>>threat>>seed>>upgrade;
+        ai::ClassicSquads s;
+        auto table=[&](std::vector<std::optional<ai::ClassicCell>>& t) {
+            size_t k;in>>k;t.resize(k);
+            for (auto& c:t) { int valid,x,z;in>>valid>>x>>z;if (valid) c=ai::ClassicCell{int16_t(x),int16_t(z)}; }
+        };
+        table(s.sites);table(s.starts);
+        constexpr int slot=1;
+        size_t n;in>>n;
+        std::vector<ai::ClassicSquadUnit> units(n);
+        for (size_t i=0;i<n;++i) {
+            auto& u=units[i];u.id=int(i);
+            int fx,fz;in>>u.flags>>u.x>>u.z>>fx>>fz;
+            u.footX=int16_t(fx);u.footZ=int16_t(fz);u.squad=slot;u.mover=true;
+        }
+        auto& base=s.squads[size_t(slot)];
+        base.kind=sim::RetailAiSquadKind::Base;base.parameters[0]=anchor;
+        in>>n;base.members.resize(n);
+        for (auto& id:base.members) in>>id;
+        ai::ClassicCombatUnit u;
+        int commander,builder,canFly,hp,sight,melee,has,target;int64_t maxDamage;
+        in>>commander>>builder>>canFly>>maxDamage>>hp>>sight>>u.range>>melee>>u.at[0]>>u.at[1]>>u.at[2];
+        in>>has>>u.missionFlags>>target>>u.goalX>>u.goalZ;
+        u.armed=units[0].flags&0x8000000u;u.commander=commander!=0;u.builder=builder!=0;u.canFly=canFly!=0;
+        u.maxDamage=uint32_t(maxDamage);u.hp=int16_t(hp);u.sight=int16_t(sight);u.melee=melee!=0;
+        u.mission=has!=0;u.missionTarget=target>=0 ? 1000+target : 0;
+        size_t nen,nen2;in>>nen>>nen2;
+        std::vector<ai::ClassicEnemy> visible,upgraded;std::map<int,int32_t> damage;
+        for (size_t k=0;k<nen+nen2;++k) {
+            ai::ClassicEnemy e;int cloak;int32_t d;
+            in>>e.flags>>e.x>>e.y>>e.z>>cloak>>d;
+            e.id=1000+int(k);e.cloaked=cloak!=0;damage[e.id]=d;
+            (k<nen ? visible : upgraded).push_back(e);
+        }
+        std::vector<int> place,kinds;
+        in>>n;place.resize(n);for (auto& a:place) in>>a;
+        in>>n;kinds.resize(n);for (auto& a:kinds) in>>a;
+
+        std::vector<std::vector<int>> log;
+        const ai::detail::ClassicUnitIndex index(units);
+        size_t nextPlace=0,nextKind=0;
+        struct Host {
+            std::function<std::optional<ai::ClassicPoint>()> centre;
+            std::function<std::optional<int32_t>(unsigned)> radius;
+            std::function<std::vector<ai::ClassicEnemy>(std::pair<int32_t,int32_t>,int32_t)> enemies;
+            std::function<int32_t(const ai::ClassicEnemy&)> damage;
+            std::function<int(int)> random;
+            std::function<bool(int32_t,int32_t)> placeable;
+            int w,h;
+            std::function<uint8_t(int,const ai::ClassicPoint&)> resolve;
+            std::function<void(uint8_t,bool,const ai::ClassicPoint&,int32_t,int32_t)> order;
+            int width() const { return w; }
+            int height() const { return h; }
+        } host;
+        host.centre=[&]()->std::optional<ai::ClassicPoint> {
+            const auto c=ai::classicBaseCentre(s,units,index,slot);
+            if (!c) return std::nullopt;
+            return ai::ClassicPoint{c->first,0,c->second};
+        };
+        host.radius=[&](unsigned ring){return ai::classicBaseRadius(s,units,index,slot,ring);};
+        host.enemies=[&](std::pair<int32_t,int32_t> at,int32_t r){return ai::classicEnemiesNear(visible,at,r,upgrade!=0,&upgraded);};
+        host.damage=[&](const ai::ClassicEnemy& e){return damage[e.id];};
+        host.random=[&](int k){log.push_back({0,k});return int(sim::retailRandom(seed,k));};
+        host.placeable=[&](int32_t x,int32_t z){
+            log.push_back({1,ai::classicFootprintCell(x,units[0].footX),ai::classicFootprintCell(z,units[0].footZ)});
+            return nextPlace<place.size() && place[nextPlace++]!=0;
+        };
+        host.w=w;host.h=h;
+        host.resolve=[&](int command,const ai::ClassicPoint& p){
+            log.push_back({2,command,p[0],p[1],p[2]});
+            return uint8_t(nextKind<kinds.size() ? kinds[nextKind++] : 0);
+        };
+        host.order=[&](uint8_t kind,bool queue,const ai::ClassicPoint& p,int32_t a6,int32_t a7){
+            log.push_back({3,int(kind),int(queue),p[0],p[1],p[2],a6,a7});
+        };
+        struct Calls {
+            Host& h;
+            std::optional<ai::ClassicPoint> centre(){return h.centre();}
+            std::optional<int32_t> radius(unsigned ring){return h.radius(ring);}
+            std::vector<ai::ClassicEnemy> enemies(std::pair<int32_t,int32_t> at,int32_t r){return h.enemies(at,r);}
+            int32_t damage(const ai::ClassicEnemy& e){return h.damage(e);}
+            int random(int k){return h.random(k);}
+            bool placeable(int32_t x,int32_t z){return h.placeable(x,z);}
+            int width(){return h.width();}
+            int height(){return h.height();}
+            uint8_t resolve(int c,const ai::ClassicPoint& p){return h.resolve(c,p);}
+            void order(uint8_t k,bool q,const ai::ClassicPoint& p,int32_t a6,int32_t a7){h.order(k,q,p,a6,a7);}
+        } calls{host};
+        if (retreat) ai::classicRetreat(calls,u);
+        else ai::classicPlanCombat(calls,u,threat!=0);
+        std::printf("%u %zu",seed,log.size());
+        for (const auto& e:log) for (int v:e) std::printf(" %d",v);
+        std::printf("\n");
+    }
+    return 0;
+}
+
 // The port's side of tools/re/check_ai_static_grade.py: "<width> <height> <footX>
 // <footZ> <rating>*" per line (each cell's own rating, row-major) -> the static
 // bit of every cell (ai::classicStaticPlane), row-major.
@@ -1228,6 +1475,14 @@ int main(int argc,char** argv) {
     if (argc==2 && std::strcmp(argv[1],"--placement")==0) return placementOracle();
     if (argc==2 && std::strcmp(argv[1],"--constructor")==0) return constructorOracle();
     if (argc==2 && std::strcmp(argv[1],"--static-grade")==0) return staticGradeOracle();
+    if (argc==2 && std::strcmp(argv[1],"--threat")==0) return threatOracle();
+    if (argc==2 && std::strcmp(argv[1],"--defence")==0) return defenceOracle(false);
+    if (argc==2 && std::strcmp(argv[1],"--retreat")==0) return defenceOracle(true);
+    if (argc==3 && std::strcmp(argv[1],"--raid")==0) {
+        classicRaid(argv[2]);
+        std::printf("%s\n",fails ? "FAILED" : "all passed");
+        return fails ? 1 : 0;
+    }
     if (argc==3 && std::strcmp(argv[1],"--bases")==0) {
         classicBases(argv[2]);
         std::printf("%s\n",fails ? "FAILED" : "all passed");

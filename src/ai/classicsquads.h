@@ -80,7 +80,10 @@ struct ClassicSquadUnit {
     uint32_t secondaryFlags = 0;   // type +0x264 (0x40000 commander, bit 31 mana site)
     int16_t minWaterDepth = -10000;   // type +0x194
     bool mission = false;       // +0x60: it has a first mission ...
-    uint8_t missionFlags = 0;   // ... whose flags byte (+0x5a) is this (8 = a build)
+    uint32_t missionFlags = 0;  // ... whose flags (+0x5a) are these (8 a build, 0x200 a target
+                                //     unit, 0x400 a goal point, 0x2000 the default mission) ...
+    int missionTarget = 0;      // ... its target unit (+0x16) ...
+    int32_t goalX = 0, goalZ = 0;   // ... and goal point (+0x22 / +0x2a, 16.16)
     bool buildingBuild = false; // ... which is BuildingBuild (a factory at work)
     bool buildsManaSite = false;   // ... which builds a mana-site type (0x40c830)
     uint16_t weaponDamage = 0, weaponReload = 0;   // its current weapon (+0xc): +0x88, +0x9c ticks
@@ -88,7 +91,7 @@ struct ClassicSquadUnit {
     sim::RetailAiUnitClass unitClass() const {
         sim::RetailAiUnitClass c;
         c.flags = flags; c.typeFlags = typeFlags; c.secondaryFlags = secondaryFlags;
-        c.constructor = menu != 0; c.mover = mover; c.mission = mission; c.missionFlags = missionFlags;
+        c.constructor = menu != 0; c.mover = mover; c.mission = mission; c.missionFlags = uint8_t(missionFlags);
         c.capacity = minWaterDepth;
         return c;
     }

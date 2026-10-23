@@ -1,5 +1,6 @@
 #include "ai/classicbrain.h"
 
+#include "ai/classicdefence.h"
 #include "ai/classicproduction.h"
 #include "sim/footprint.h"
 #include "sim/retailai.h"
@@ -24,24 +25,34 @@ namespace {
 // A unit's first mission (retail unit +0x60) as the AI reads it, from its orders
 // (docs/classic-ai-plan.md U1): the class byte of the mission's descriptor
 // (descriptor +0x10: 1 the attack kinds, 2 AirStrike, 0 MobileBuild, 6 HelpBuild
-// and RepairUnit, 19 BuildingBuild ...) and the low byte of the flags it copies
-// from the descriptor's +0x11 (8 on MobileBuild, HelpBuild and BuildingBuild).
+// and RepairUnit, 19 BuildingBuild ...), the flags it copies from the
+// descriptor's +0x11 (8 on MobileBuild, HelpBuild and BuildingBuild; 0x200 a
+// target unit, 0x400 a goal point), its target and its goal. Run-time flag
+// 0x2000 marks the type's default mission, which the mission stepper (0x4d8597
+// -> 0x4d83b0) pushes onto an AI or human unit left with none, and any mission
+// later pushed in front of it (0x4d7709 copies the bit): our empty queue, and a
+// queue holding only the World's own auto-attack (and its return leg) on top of
+// one.
 struct FirstMission {
     bool any = false;
-    uint8_t cls = 0, flags = 0;
+    uint8_t cls = 0;
+    uint32_t flags = 0;
     bool buildingBuild = false;
     const tak::sim::UnitType* builds = nullptr;   // what its build mission makes
+    int target = 0;
+    int32_t goalX = 0, goalZ = 0;
 };
 FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u) {
     FirstMission m;
     if (u.type->isStructure()) {
         // A factory at work has a BuildingBuild mission per queued unit.
-        if (!u.buildQueue.empty()) { m.any = true; m.cls = 19; m.flags = 0x0c; m.buildingBuild = true; m.builds = u.buildQueue.front(); }
+        if (!u.buildQueue.empty()) { m.any = true; m.cls = 19; m.flags = 0x8010c; m.buildingBuild = true; m.builds = u.buildQueue.front(); }
         return m;
     }
     if (u.buildSiteId) {
         const auto* site = world.unit(u.buildSiteId);
-        m.any = true; m.cls = 0; m.flags = 8; m.builds = site ? site->type : nullptr;
+        m.any = true; m.cls = 0; m.flags = 0x80508; m.builds = site ? site->type : nullptr;
+        if (site) { m.goalX = site->x.v; m.goalZ = site->z.v; }
         return m;
     }
     if (u.orders.empty()) return m;
@@ -52,15 +63,27 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
         if (u.orders[k].goal) { leg = k; break; }
     const auto& o = u.orders[leg];
     m.any = true;
-    if (o.buildType) { m.cls = 0; m.flags = 8; m.builds = o.buildType; }
-    else if (o.repairTarget) m.cls = 6;
-    else if (o.reclaimFeat || o.reclaimArea) m.cls = 11;
-    else if (o.load) m.cls = 12;
-    else if (o.unload) m.cls = 13;
-    else if (o.guard) m.cls = 5;
-    else if (o.targetId) { m.cls = 1; m.flags = 0x80; }
-    else if (o.patrol) { m.cls = 7; m.flags = 0x10; }
-    else m.cls = 14;   // a move
+    m.goalX = o.x.v; m.goalZ = o.z.v;
+    if (o.buildType) { m.cls = 0; m.flags = 0x80508; m.builds = o.buildType; m.goalX = o.buildX.v; m.goalZ = o.buildZ.v; }
+    else if (o.repairTarget) { m.cls = 6; m.flags = 0x80200; m.target = o.repairTarget; }
+    else if (o.reclaimFeat || o.reclaimArea) { m.cls = 11; m.flags = 0x800; }
+    else if (o.load) { m.cls = 12; m.flags = 0x1000200; m.target = o.targetId; }
+    else if (o.unload) { m.cls = 13; m.flags = 0x1000400; }
+    else if (o.guard) { m.cls = 5; m.flags = 0x3000200; m.target = o.targetId; }
+    else if (o.targetId) { m.cls = 1; m.flags = 0x1000280; m.target = o.targetId; }
+    else if (o.patrol) { m.cls = 7; m.flags = 0x3000410; }
+    else { m.cls = 14; m.flags = 0x3000400; }   // a move
+    // Only the World's auto-attacks (and the return move behind a leashed one):
+    // they sit on the default mission, so they carry its 0x2000.
+    bool automatic = true, leash = false;
+    for (const auto& q : u.orders) {
+        if (!q.goal) continue;
+        if (q.autoTarget) { leash = q.chaseLeashed; continue; }
+        if (leash && !q.targetId && !q.patrol && !q.buildType && !q.guard && !q.load && !q.unload) { leash = false; continue; }
+        automatic = false;
+        break;
+    }
+    if (automatic) m.flags |= 0x2000;
     return m;
 }
 const tak::sim::Weapon* currentWeapon(const tak::sim::Unit& u) {
@@ -223,6 +246,7 @@ std::vector<ClassicSquadUnit> ClassicBrain::squadUnits(const tak::sim::World& wo
         s.minWaterDepth = info ? info->minWaterDepth : int16_t(-10000);
         const FirstMission m = firstMission(world, u);
         s.mission = m.any; s.missionClass = m.cls; s.missionFlags = m.flags; s.buildingBuild = m.buildingBuild;
+        s.missionTarget = m.target; s.goalX = m.goalX; s.goalZ = m.goalZ;
         if (m.builds && (m.flags & 8))
             if (const auto bt = index_.find(m.builds); bt != index_.end()) s.buildsManaSite = info_[bt->second].manaSite;
         if (const auto* w = currentWeapon(u)) {
@@ -289,12 +313,13 @@ uint16_t ClassicBrain::population(const tak::sim::World& world) const {
 void ClassicBrain::baseThink(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
                              const std::function<void(const tak::net::Command&)>& sink) {
     classicBaseMembers(squads_, units, slot,
-        // 0x412000 (the threat test, P5) answers no threat until then; it feeds
-        // only the constructor and combat planners.
-        [](const std::pair<int32_t, int32_t>&, int32_t) { return false; },
+        // 0x412000: a unit of the visible-enemy list inside the ring-0 radius.
+        [&](const std::pair<int32_t, int32_t>& centre, int32_t radius) {
+            return classicThreat(visibleEnemies(world), centre, radius);
+        },
         [&](size_t i) { planFactory(world, units[i], sink); },
         [&](size_t i, bool danger) { planConstructor(world, slot, units, i, danger, sink); },
-        [](size_t, bool) {});   // 0x40d370: P5
+        [&](size_t i, bool danger) { planCombat(world, slot, units, units[i], danger, false, sink); });
 }
 
 void ClassicBrain::planFactory(const tak::sim::World& world, ClassicSquadUnit& unit,
@@ -319,7 +344,7 @@ void ClassicBrain::planFactory(const tak::sim::World& world, ClassicSquadUnit& u
             ++queues_;
             // Its first mission is now that BuildingBuild (firstMission's reading).
             unit.producing = unit.mission = unit.buildingBuild = true;
-            unit.missionClass = 19; unit.missionFlags = 0x0c;
+            unit.missionClass = 19; unit.missionFlags = 0x8010c;
             unit.buildsManaSite = info_[t].manaSite;
         });
 }
@@ -492,8 +517,9 @@ void ClassicBrain::planConstructor(const tak::sim::World& world, int slot, std::
             ++b.builds_;
             if (b.info_[t].lodestoneClass) ++b.lodestoneBuilds_;
             // 0x4d78a0 clears its missions and puts the build first: MobileBuild.
-            member.mission = true; member.missionClass = 0; member.missionFlags = 8;
+            member.mission = true; member.missionClass = 0; member.missionFlags = 0x80508;
             member.buildingBuild = false; member.buildsManaSite = b.info_[t].manaSite;
+            member.missionTarget = 0; member.goalX = at.first; member.goalZ = at.second;
         }
         void cancel() {
             tak::net::Command c;
@@ -501,12 +527,133 @@ void ClassicBrain::planConstructor(const tak::sim::World& world, int slot, std::
             sink(c);
             // 0x4d6a50(unit, 0): its missions are gone (our Stop keeps none).
             member.mission = member.buildingBuild = member.buildsManaSite = false;
-            member.missionClass = 0; member.missionFlags = 0;
+            member.missionClass = 0; member.missionFlags = 0; member.missionTarget = 0;
         }
-        void retreat() {}   // 0x40d010: P5
-        void combat() {}    // 0x40d370: P5
-    } host{*this, world, units, index, slot, member, *unit, *builder, *centre, random, siteType, sink};
+        void retreat() { b.planCombat(world, slot, units, member, threat, true, sink); }
+        void combat() { b.planCombat(world, slot, units, member, threat, false, sink); }
+        bool threat;
+    } host{*this, world, units, index, slot, member, *unit, *builder, *centre, random, siteType, sink, threat};
     classicPlanConstructor(host, u, threat);
+}
+
+std::vector<ClassicEnemy> ClassicBrain::visibleEnemies(const tak::sim::World& world) const {
+    // 411700's list +5 as the World last rebuilt it (it re-checks nothing, so a
+    // unit that has since died is still listed, as dying). Its 0x2000 is our
+    // underConstruction (U10: the World leaves those off the list already).
+    std::vector<ClassicEnemy> out;
+    for (const int id : world.visibleEnemies(player_)) {
+        const auto* e = world.unit(id);
+        if (!e || !e->type) continue;
+        ClassicEnemy c;
+        c.id = id;
+        c.flags = ClassicEnemy::kLive | (e->alive() && e->hp > tak::sim::Fixed() ? 0u : ClassicEnemy::kDying) |
+                  (e->underConstruction ? ClassicEnemy::kUnready : 0u) | (e->type->canFly ? 2u : 1u);
+        c.x = e->x.v; c.y = (e->type->canFly ? e->flightY : e->groundY).v; c.z = e->z.v;
+        c.cloaked = e->cloaked;
+        out.push_back(c);
+    }
+    return out;
+}
+
+void ClassicBrain::planCombat(const tak::sim::World& world, int slot, const std::vector<ClassicSquadUnit>& units,
+                              ClassicSquadUnit& member, bool threat, bool retreat,
+                              const std::function<void(const tak::net::Command&)>& sink) {
+    const auto* unit = world.unit(member.id);
+    if (!unit || !unit->type) return;
+    const auto* type = unit->type;
+    const detail::ClassicUnitIndex index(units);
+    ClassicCombatUnit u;
+    u.armed = member.flags & ClassicSquadUnit::kArmed;
+    u.commander = member.commander;
+    u.builder = member.typeFlags & 0x100u;
+    u.canFly = type->canFly;
+    u.hp = int16_t(unit->hp.floorInt());
+    u.maxDamage = uint32_t(type->maxHp);
+    u.at = {unit->x.v, (type->canFly ? unit->flightY : unit->groundY).v, unit->z.v};
+    u.sight = int16_t(world.sightDistance(*type));
+    const auto* weapon = currentWeapon(*unit);
+    u.range = weapon ? weapon->range : 0;
+    u.melee = weapon && weapon->melee;
+    u.mission = member.mission;
+    u.missionFlags = member.missionFlags;
+    u.missionTarget = member.missionTarget;
+    u.goalX = member.goalX; u.goalZ = member.goalZ;
+    const std::vector<ClassicEnemy> visible = visibleEnemies(world);
+    struct Host {
+        ClassicBrain& b;
+        const tak::sim::World& world;
+        const std::vector<ClassicSquadUnit>& units;
+        const detail::ClassicUnitIndex& index;
+        int slot;
+        ClassicSquadUnit& member;
+        const tak::sim::Unit& unit;
+        const tak::sim::Weapon* weapon;
+        const std::vector<ClassicEnemy>& visible;
+        const std::function<void(const tak::net::Command&)>& sink;
+        bool replaced = false;
+
+        std::optional<ClassicPoint> centre() const {
+            // The base think plans members only with a centre (0x412c10, the
+            // profile home it would fall back on, is never reached from it).
+            const auto c = classicBaseCentre(b.squads_, units, index, slot);
+            if (!c) return std::nullopt;
+            return ClassicPoint{c->first, 0, c->second};
+        }
+        std::optional<int32_t> radius(unsigned ring) const { return classicBaseRadius(b.squads_, units, index, slot, ring); }
+        std::vector<ClassicEnemy> enemies(std::pair<int32_t, int32_t> at, int32_t r) const {
+            return classicEnemiesNear(visible, at, r);
+        }
+        int32_t damage(const ClassicEnemy& e) const {
+            const auto* t = world.unit(e.id);
+            return weapon && t && t->type ? int32_t(weapon->damageVs(t->type)) : 0;
+        }
+        int random(int n) { return b.rand(n); }
+        bool placeable(int32_t x, int32_t z) const {
+            // 0x507d10(type, self, cell, 1, 0): its own footprint, top-left cell
+            // of a footprint centred there, by the mobile placement rule.
+            const int cx = classicFootprintCell(x, int16_t(unit.type->footX));
+            const int cz = classicFootprintCell(z, int16_t(unit.type->footZ));
+            const auto& cells = world.mapPlacementCells();
+            if (!cells.empty()) return world.mobilePlacement(unit, cx, cz, false);
+            // A World without map feature data (synthetic tests): the building test.
+            return world.canPlace(unit.type, float(cx * 16 + unit.type->footX * 8), float(cz * 16 + unit.type->footZ * 8), b.player_);
+        }
+        int width() const { return world.mapW() * 16; }
+        int height() const { return world.mapH() * 16; }
+        uint8_t resolve(int command, const ClassicPoint&) const { return uint8_t(command); }
+        void order(uint8_t kind, bool queue, const ClassicPoint& at, int32_t a6, int32_t) {
+            // A retail MOVE with mission +0x4e = a6 > 0 ends as soon as the unit
+            // is within a6 of its point (the centre leg's r, the retreat's 16):
+            // a unit already that close skips the leg, one farther off heads for
+            // the circle's edge on its way in.
+            float x = float(at[0]) / 65536.0f, z = float(at[2]) / 65536.0f;
+            if (kind == kClassicMove && a6 > 0) {
+                const float ux = unit.x.toFloat(), uz = unit.z.toFloat();
+                const float dx = ux - x, dz = uz - z, d = std::sqrt(dx * dx + dz * dz);
+                if (d <= float(a6)) return;
+                x += dx * float(a6) / d; z += dz * float(a6) / d;
+            }
+            tak::net::Command c;
+            c.kind = kind == kClassicPatrol ? tak::net::Cmd::Patrol : tak::net::Cmd::Move;
+            c.player = uint8_t(b.player_); c.unitId = member.id;
+            c.x = x; c.z = z;
+            // queue 0 clears its missions first (0x4d6a50); a skipped first leg
+            // must not let a queued one append to the old missions.
+            c.queue = queue && replaced ? 1 : 0;
+            sink(c);
+            replaced = true;
+            ++b.combatOrders_;
+            // Its first mission is now that move (or patrol); a build is gone.
+            if (!c.queue) {
+                member.mission = true; member.missionClass = kind == kClassicPatrol ? 7 : 14;
+                member.missionFlags = kind == kClassicPatrol ? 0x3000410u : 0x3000400u;
+                member.buildingBuild = member.buildsManaSite = false; member.missionTarget = 0;
+                member.goalX = at[0]; member.goalZ = at[2];
+            }
+        }
+    } host{*this, world, units, index, slot, member, *unit, weapon, visible, sink};
+    if (retreat) { ++retreats_; classicRetreat(host, u); }
+    else classicPlanCombat(host, u, threat);
 }
 
 void ClassicBrain::tick(const tak::sim::World& world, uint32_t simTick,
