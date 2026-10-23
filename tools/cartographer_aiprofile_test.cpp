@@ -1,0 +1,663 @@
+// The Cartographer AI-profile model (src/cartographer/aiprofiles.h): the chance
+// encoding, the canonical form, byte-identical hand files, line attribution checked
+// against the engine's own parsers (ai::ClassicProfile::execute, ai::applyProfileText),
+// verification that can fail, Make editable, the 6.2 checks, the aiprofile name rules
+// and which file plays. Every corpus here is synthetic: no retail text or data.
+#include "cartographer/aiprofiles.h"
+#include "ai/builtinprofile.h"
+#include "net/mappackage.h"
+#include "sim/sim.h"
+
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <random>
+#include <stdexcept>
+
+namespace fs = std::filesystem;
+using tak::ai::ClassicCatalogue;
+using tak::ai::Difficulty;
+using cart::AiKind;
+using cart::AiLine;
+
+static void check(bool value, const std::string& message) { if (!value) throw std::runtime_error(message); }
+static std::vector<uint8_t> bytesOf(std::string_view s) { return {s.begin(), s.end()}; }
+
+static ClassicCatalogue sample() {
+    return ClassicCatalogue::synthetic({
+        {"araarch", {"ARA", "LAND"}}, {"arabuild", {"ARA", "builder"}}, {"aracastl", {"ARA"}},
+        {"aradrag", {"ARA", "fly"}}, {"araldy", {"ARA", "fly"}}, {"tararch", {"TAR", "LAND"}},
+        {"tarbuild", {"TAR", "builder"}}, {"tarnecr2", {"TAR"}}, {"vercut", {"VER", "ship"}},
+        {"verwyv", {"VER", "fly", "fly"}},   // a repeated category word: the engine scales it twice
+    });
+}
+
+// ---- the chance encoding -------------------------------------------------------------
+
+static void chanceEncoding() {
+    int naiveWrong = 0;
+    for (int p = 0; p <= 100; ++p) {
+        const auto text = cart::classicChanceText(p);
+        check(tak::ai::classicScaledPref(100, tak::ai::classicAtof(text)) == p, "chance " + std::to_string(p) + " -> " + text);
+        char naive[16];
+        std::snprintf(naive, sizeof naive, "%d.%02d", p / 100, p % 100);
+        if (tak::ai::classicScaledPref(100, tak::ai::classicAtof(naive)) != p) ++naiveWrong;
+    }
+    check(cart::classicChanceText(100) == "1" && cart::classicChanceText(0) == "0" && cart::classicChanceText(29) == "0.295" &&
+          cart::classicChanceText(5) == "0.055" && cart::classicChanceText(1) == "0.015" && cart::classicChanceText(99) == "0.995" &&
+          cart::classicChanceText(150) == "1" && cart::classicChanceText(-3) == "0",
+          "p=100 -> 1, p=0 -> 0, else 0. + three digits of p*10+5");
+    check(naiveWrong > 0, "plain p/100 loses values to the float store (the reason for the half step)");
+    std::cout << "chance: all 101 round-trip; p/100 would get " << naiveWrong << " wrong\n";
+}
+
+// ---- attribution agrees with the engine ------------------------------------------------
+
+static std::string reducedText(const std::vector<AiLine>& lines, std::initializer_list<AiLine::What> keep) {
+    std::string out;
+    for (const auto& l : lines)
+        if (std::find(keep.begin(), keep.end(), l.what) != keep.end()) { out += l.text; out += '\n'; }
+    return out;
+}
+static size_t lineCount(std::string_view text) {
+    size_t n = 0;
+    for (size_t start = 0; start < text.size(); ++n) {
+        const auto end = text.find('\n', start);
+        if (end == std::string_view::npos) { ++n; break; }
+        start = end + 1;
+    }
+    return n;
+}
+static bool sameClassic(const tak::ai::ClassicProfile& a, const tak::ai::ClassicProfile& b, bool locks) {
+    return a.pref == b.pref && a.limit == b.limit && (!locks || (a.prefLocked == b.prefLocked && a.limitLocked == b.limitLocked));
+}
+
+static void defaultAgrees(const std::string& text, const ClassicCatalogue& c) {
+    const auto lines = cart::attributeAiLines(text, AiKind::Default, c);
+    check(lines.size() == lineCount(text), "attribution covers every line");
+    tak::ai::ClassicProfile engine(c.size());
+    engine.execute(text, c);
+    // Replaying the attribution gives the engine's table, locks included.
+    tak::ai::ClassicProfile replay(c.size());
+    std::vector<int> prefBy(c.size()), limitBy(c.size());
+    for (const auto& l : lines) {
+        const float w = l.hasValue ? tak::ai::classicAtof(l.value) : 0.0f;
+        const int32_t n = l.hasValue ? tak::ai::classicAtoi(l.value) : 0;
+        if (l.what == AiLine::What::Exact) {
+            auto& by = l.weight ? prefBy : limitBy;
+            check(l.unit != 0 && !by[l.unit], "an exact line sets an unlocked unit: " + text);
+            by[l.unit] = l.number;
+            if (l.weight) { replay.pref[l.unit] = tak::ai::classicScaledPref(replay.pref[l.unit], w); replay.prefLocked[l.unit] = 1; }
+            else { replay.limit[l.unit] = n; replay.limitLocked[l.unit] = 1; }
+        } else if (l.what == AiLine::What::Shadowed) {
+            check(l.unit != 0 && (l.weight ? prefBy : limitBy)[l.unit] == l.by && l.by < l.number, "a shadowed line names its winner");
+        } else if (l.what == AiLine::What::Group) {
+            for (uint16_t i : c.categories.at(l.word)) {
+                if (l.weight && !replay.prefLocked[i]) replay.pref[i] = tak::ai::classicScaledPref(replay.pref[i], w);
+                if (!l.weight && !replay.limitLocked[i]) replay.limit[i] = n;
+            }
+        }
+    }
+    check(sameClassic(engine, replay, true), "attribution replay differs from ClassicProfile::execute:\n" + text);
+    // Every line it calls a no-op is one: dropping them changes nothing.
+    tak::ai::ClassicProfile reduced(c.size());
+    reduced.execute(reducedText(lines, {AiLine::What::Exact, AiLine::What::Group}), c);
+    check(sameClassic(engine, reduced, true), "a line marked as doing nothing does something:\n" + text);
+}
+
+static void levelAgrees(const std::string& text) {
+    static const ClassicCatalogue none;
+    const auto lines = cart::attributeAiLines(text, AiKind::Level, none);
+    check(lines.size() == lineCount(text), "level attribution covers every line");
+    tak::ai::Profile engine, replay, everySet;
+    tak::ai::applyProfileText(text, engine);
+    for (const auto& l : lines) {
+        if (l.what == AiLine::What::Exact) {
+            auto& table = l.weight ? replay.weight : replay.limit;
+            check(!table.count(l.word), "one winning line per unit and keyword");
+            table[l.word] = l.levelValue;
+        }
+        if (l.what == AiLine::What::Exact || l.what == AiLine::What::Overridden)
+            (l.weight ? everySet.weight : everySet.limit)[l.word] = l.levelValue;
+        if (l.what == AiLine::What::Overridden)
+            check(l.by > l.number && lines[size_t(l.by - 1)].what == AiLine::What::Exact &&
+                  lines[size_t(l.by - 1)].word == l.word && lines[size_t(l.by - 1)].weight == l.weight,
+                  "an overridden line names the later line that wins");
+    }
+    check(engine.weight == replay.weight && engine.limit == replay.limit, "level attribution differs from applyProfileText:\n" + text);
+    check(engine.weight == everySet.weight && engine.limit == everySet.limit, "overridden lines are sets the engine reads");
+    tak::ai::Profile reduced;
+    tak::ai::applyProfileText(reducedText(lines, {AiLine::What::Exact}), reduced);
+    check(engine.weight == reduced.weight && engine.limit == reduced.limit, "a level line marked as doing nothing does something:\n" + text);
+}
+
+// Make editable: equal effect by the engine, then canonical and idempotent.
+static void editableAgrees(const std::string& text, AiKind kind, const ClassicCatalogue& c) {
+    auto draft = cart::parseAiDraft(text, kind, c);
+    check(cart::writeAiDraft(draft) == text, "an untouched file re-saves byte for byte");
+    std::string why;
+    check(cart::makeEditable(draft, c, &why), "Make editable refused (" + why + "):\n" + text);
+    check(!draft.asWritten, "converted draft is editable");
+    std::string bytes, error;
+    check(cart::saveAiDraft(draft, c, bytes, error), error);
+    if (kind == AiKind::Default) {
+        tak::ai::ClassicProfile before(c.size()), after(c.size());
+        before.execute(text, c);
+        after.execute(bytes, c);
+        check(sameClassic(before, after, false), "Make editable changed the DEFAULT effect:\n" + text + "\n--\n" + bytes);
+    } else {
+        tak::ai::Profile before, after;
+        tak::ai::applyProfileText(text, before);
+        tak::ai::applyProfileText(bytes, after);
+        check(before.weight == after.weight && before.limit == after.limit, "Make editable changed the level effect:\n" + text);
+    }
+    if (bytes.empty()) return;   // nothing but blank or shadowed lines
+    const auto again = cart::parseAiDraft(bytes, kind, c);
+    check(!again.asWritten && cart::writeAiDraft(again) == bytes, "canonical idempotence: write(parse(x)) == x\n" + bytes);
+    check(bytes.find('\r') == std::string::npos && bytes.back() == '\n', "canonical form: LF endings and a final newline");
+}
+
+static std::string randomScript(std::mt19937& rng, const ClassicCatalogue& c) {
+    auto pick = [&](std::initializer_list<const char*> list) { return std::string(*(list.begin() + rng() % list.size())); };
+    std::string out;
+    const int lines = int(rng() % 14);
+    for (int i = 0; i < lines; ++i) {
+        const auto roll = rng() % 100;
+        std::string line;
+        if (roll < 6) line = pick({"", "   ", "\t", "// note", "/x", "# weight araarch 0", "x", "plan attack 3", "//weight araarch 0"});
+        else {
+            line = pick({"weight", "weight", "weight", "limit", "limit", "WEIGHT", "Weight", "Limit", "plan", "w"});
+            const auto kind = rng() % 10;
+            std::string word;
+            if (kind < 5) word = c.names[1 + rng() % (c.size() - 1)];
+            else if (kind < 8) word = pick({"ara", "tar", "ver", "fly", "land", "builder", "ship", "all", "ALL"});
+            else word = pick({"araboman", "araärch", "#araarch", "", "zzz"});
+            if (rng() % 4 == 0 && !word.empty()) word[0] = char(std::toupper(static_cast<unsigned char>(word[0])));
+            const std::string sep = pick({" ", " ", "\t", "  ", " \v"});
+            if (!word.empty()) line += sep + word;
+            if (rng() % 8 != 0)
+                line += sep + pick({"0", "1", "2", "5", "-1", "0.5", "0.295", "0.505", "0.25", "1e2", "3abc", "+4", "#5",
+                                    "0.5#x", "99999999999", "0.0099", "25", "12"});
+            if (rng() % 10 == 0) line += pick({" extra", " # comment", "#", " 7"});
+            if (rng() % 12 == 0) line = pick({" ", "  ", "\t"}) + line;
+        }
+        out += line;
+        if (i + 1 < lines || rng() % 3) out += rng() % 4 == 0 ? "\r\n" : "\n";
+    }
+    return out;
+}
+
+static const std::vector<std::string>& handCorpus() {
+    static const std::vector<std::string> corpus = {
+        "weight araarch 0.5\r\nlimit arabuild 3\r\nweight all 0.5",                     // CRLF, no final newline
+        "// my profile\nweight araarch 0.25 # a quarter\n#weight aradrag 0\nlimit fly 2 # flyers\n",
+        "WEIGHT\tAraArch\t0.5\nweight araarch 1\nLimit aradrag\nplan attack 3\n// caf\xc3\xa9 \xc3\xbcnits\nweight verwyv\n",
+        "\n\n   \nweight tararch 0\n\n",
+        "weight all 0.5\nweight araarch 0.5\nweight ara 2\nlimit ALL 4\nlimit tarnecr2 -1\nlimit ship 0\n",
+        "weight araarch 5\nlimit araarch 3\n/comment\nweight araarch 7\nWeight tararch 2\nweight tararch 0.5\nweight vercut #3\n",
+        "weight fly 0.5\nweight verwyv 0.5\nweight araboman 0\nweight\nlimit\n  weight aradrag 0.019\n",
+        std::string(cart::kAiProfileMagic) + "\n// Units not listed are built at full chance with no limit.\nweight verwyv 0.5\n",
+        std::string(cart::kAiProfileMagic) + "\n// Units not listed are built at full chance with no limit.\nweight verwyv 0.505\n"
+            "// kept from the original file (no effect)\nweight araarch 0\n",                // an effective "kept" line
+        "weight araarch 0.5\x0b\x0c\nlimit\x0b" "arabuild 2\n",
+        "plan\rattack\r\nweight\raraarch\r0.5\r\n\rweight tararch 2\n",                     // a CR inside a line
+    };
+    return corpus;
+}
+
+static void attribution() {
+    const auto c = sample();
+    for (const auto& text : handCorpus()) {
+        defaultAgrees(text, c);
+        levelAgrees(text);
+        editableAgrees(text, AiKind::Default, c);
+        editableAgrees(text, AiKind::Level, c);
+        for (AiKind kind : {AiKind::Default, AiKind::Level}) {
+            const auto draft = cart::parseAiDraft(text, kind, c);
+            check(draft.asWritten && draft.original == text, "a hand-written file opens as written");
+            std::string bytes, error;
+            check(cart::saveAiDraft(draft, c, bytes, error) && bytes == text, "an as-written file saves its bytes unchanged");
+        }
+    }
+    std::mt19937 rng(20261023);
+    for (int i = 0; i < 10000; ++i) {
+        const auto text = randomScript(rng, c);
+        defaultAgrees(text, c);
+        levelAgrees(text);
+        editableAgrees(text, AiKind::Default, c);
+        editableAgrees(text, AiKind::Level, c);
+    }
+    // The attribution itself, on one file.
+    const auto lines = cart::attributeAiLines(
+        "weight all 0.5\nweight araarch 0.5\nweight araarch 1\nlimit fly 2\nplan x\nweight bogus 1\n// c\n\n", AiKind::Default, c);
+    using W = AiLine::What;
+    check(lines.size() == 8 && lines[0].what == W::Group && lines[1].what == W::Exact && lines[1].combines == std::vector<int>{1} &&
+          lines[2].what == W::Shadowed && lines[2].by == 2 && lines[3].what == W::Group && lines[4].what == W::Other &&
+          lines[5].what == W::Unknown && lines[6].what == W::Comment && lines[7].what == W::Blank,
+          "DEFAULT attribution: group, exact (combines with line 1), shadowed by line 2, other, unknown, comment, blank");
+    const auto level = cart::attributeAiLines("weight a 1\nWeight a 2\nweight a 0.5\nweight b #1\n/c\nweight a 3\n", AiKind::Level, c);
+    check(level.size() == 6 && level[0].what == W::Overridden && level[0].by == 6 && level[1].what == W::Other &&
+          level[2].what == W::Overridden && level[2].levelValue == 0 && level[3].what == W::Skipped && level[4].what == W::Comment &&
+          level[5].what == W::Exact && level[5].levelValue == 3,
+          "level attribution: later line wins, case-sensitive keyword, 0.5 reads 0, '#' value skipped, '/' comment");
+    std::cout << "attribution: corpus + 10000 random scripts agree with both parsers\n";
+}
+
+// ---- the canonical form, verification, Make editable --------------------------------------
+
+static void canonical() {
+    const auto c = sample();
+    cart::AiDraft d;
+    d.header = "DEFAULT AI profile for map \"Islands\" (ai/islands.txt). Edit in Cartographer: SCENARIO > AI Profiles.";
+    d.units["araldy"] = {0, {}, 0};
+    d.units["verwyv"] = {50, {}, 2};
+    d.groups.push_back({false, "fly", "2"});
+    d.kept.push_back("plan attack 3");
+    const std::string golden =
+        "// TAK Cartographer AI profile 1\n"
+        "// DEFAULT AI profile for map \"Islands\" (ai/islands.txt). Edit in Cartographer: SCENARIO > AI Profiles.\n"
+        "// Units not listed are built at full chance with no limit.\n"
+        "weight araldy 0\nlimit araldy 0\nweight verwyv 0.505\nlimit verwyv 2\n"
+        "// group rules\nlimit fly 2\n"
+        "// kept from the original file (no effect)\nplan attack 3\n";
+    std::string bytes, error;
+    check(cart::saveAiDraft(d, c, bytes, error) && bytes == golden, "the canonical form (design 5.3):\n" + bytes);
+    const auto back = cart::parseAiDraft(bytes, AiKind::Default, c);
+    check(!back.asWritten && back.header == d.header && back.units.size() == 2 && back.units.at("verwyv").chance == 50 &&
+          back.units.at("verwyv").limit == 2 && back.groups.size() == 1 && back.kept == d.kept && cart::writeAiDraft(back) == golden,
+          "a canonical file opens editable and re-writes to the same bytes");
+    {
+        tak::ai::ClassicProfile p(c.size());
+        p.execute(bytes, c);
+        const auto at = [&](const char* n) { return size_t(c.byName.at(n)); };
+        check(p.pref[at("verwyv")] == 50 && p.limit[at("verwyv")] == 2 && p.limit[at("aradrag")] == 2 && p.pref[at("araldy")] == 0 &&
+              p.limit[at("araldy")] == 0, "the engine reads the rows exactly; the group rule reaches only units without a row");
+    }
+    // Every chance value through a whole file.
+    for (int p = 0; p <= 100; ++p) {
+        cart::AiDraft one;
+        one.units["tararch"].chance = p;
+        one.groups.push_back({true, "all", "0.5"});
+        check(cart::saveAiDraft(one, c, bytes, error), error);
+        tak::ai::ClassicProfile prof(c.size());
+        prof.execute(bytes, c);
+        check(prof.pref[c.byName.at("tararch")] == p && prof.pref[c.byName.at("tarbuild")] == 50,
+              "a typed chance means exactly that value, measured from 100");
+    }
+    // Levels: whole numbers, no group section.
+    cart::AiDraft lv;
+    lv.kind = AiKind::Level;
+    lv.units["araarch"] = {{}, 0, {}};
+    lv.units["verwyv"] = {{}, 12, 3};
+    check(cart::saveAiDraft(lv, c, bytes, error) &&
+          bytes == "// TAK Cartographer AI profile 1\n// Units not listed keep the built-in values.\n"
+                   "weight araarch 0\nweight verwyv 12\nlimit verwyv 3\n", "the level canonical form:\n" + bytes);
+    check(!cart::parseAiDraft(bytes, AiKind::Level, c).asWritten, "a canonical level file opens editable");
+    // Empty means deleted.
+    cart::AiDraft empty;
+    empty.header = "only a header";
+    empty.units["araarch"];
+    check(empty.empty() && cart::writeAiDraft(empty).empty() && cart::saveAiDraft(empty, c, bytes, error) && bytes.empty(),
+          "an empty draft writes nothing (the file is removed, never written empty)");
+    check(!cart::parseAiDraft("", AiKind::Default, c).asWritten, "no file opens as an empty editable draft");
+}
+
+static void verification() {
+    const auto c = sample();
+    cart::AiDraft d;
+    d.units["verwyv"].chance = 29;
+    d.units["araarch"].limit = -1;
+    d.groups.push_back({true, "fly", "0.5"});
+    d.groups.push_back({false, "all", "3"});
+    const auto good = cart::writeAiDraft(d);
+    std::string unit;
+    check(cart::verifyAiDraft(d, good, c, &unit), "the written file verifies: " + unit);
+    auto seeded = [&](std::string bytes, const char* what) {
+        unit.clear();
+        check(!cart::verifyAiDraft(d, bytes, c, &unit), std::string("verify missed a seeded mismatch: ") + what);
+        return unit;
+    };
+    // A plain p/100 encoder (one of the 50 values it truncates).
+    auto naive = good;
+    naive.replace(naive.find("0.295"), 5, "0.29");
+    check(seeded(naive, "p/100 encoding").starts_with("verwyv"), "the mismatch names the unit");
+    // Group rules written before the rows: they would scale the rows too.
+    auto reordered = good;
+    reordered.replace(reordered.find("// group rules\n"), std::string::npos, "");
+    reordered.insert(reordered.find("limit araarch"), "weight fly 0.5\nlimit all 3\n");
+    seeded(reordered, "group lines before unit rows");
+    // "no limit" must still be written: it locks the unit against `limit all 3`.
+    auto dropped = good;
+    dropped.erase(dropped.find("limit araarch -1\n"), 17);
+    check(seeded(dropped, "a missing -1 limit row").starts_with("araarch"), "the unlocked unit is named");
+    // An extra effective line anywhere.
+    seeded(good + "weight tararch 0\n", "an effective kept line");
+    std::string bytes, error;
+    cart::AiDraft bad;
+    bad.units["nosuchunit"].chance = 10;
+    check(!cart::saveAiDraft(bad, c, bytes, error) && error.starts_with("AI profile could not be written exactly") &&
+          error.find("nosuchunit") != std::string::npos, "save refuses a draft the engine does not read back: " + error);
+    // Levels.
+    cart::AiDraft lv;
+    lv.kind = AiKind::Level;
+    lv.units["araarch"] = {{}, 5, 2};
+    const auto lvBytes = cart::writeAiDraft(lv);
+    check(cart::verifyAiDraft(lv, lvBytes, c), "level file verifies");
+    auto lvBad = lvBytes;
+    lvBad.replace(lvBad.find("weight araarch 5"), 16, "weight araarch 6");
+    check(!cart::verifyAiDraft(lv, lvBad, c, &unit) && unit.starts_with("araarch"), "level mismatch caught");
+    check(!cart::verifyAiDraft(lv, lvBytes + "weight other 1\n", c, &unit) && unit.starts_with("other"), "level extra unit caught");
+    // As written: only the same bytes.
+    const auto hand = cart::parseAiDraft("weight araarch 0.5\r\n", AiKind::Default, c);
+    check(cart::verifyAiDraft(hand, "weight araarch 0.5\r\n", c) && !cart::verifyAiDraft(hand, "weight araarch 0.5\n", c),
+          "an as-written draft verifies only its own bytes");
+    // Make editable: an exact conversion, and a clean refusal.
+    auto conv = cart::parseAiDraft("weight all 0.5\nweight araarch 0.5\nlimit fly 2\nweight araarch 1\nplan x\nlimit aradrag 1\n",
+                                   AiKind::Default, c);
+    check(cart::makeEditable(conv, c) && conv.units.at("araarch").chance == 25 && conv.units.at("aradrag").limit == 1 &&
+          !conv.units.count("arabuild") && conv.groups.size() == 2 && conv.kept == std::vector<std::string>{"plan x"},
+          "Make editable: a row from the engine's value (25 %), group rules in order, shadowed line dropped, plan kept");
+    auto huge = cart::parseAiDraft(std::string(cart::kAiFileMaxBytes + 1, '\n'), AiKind::Default, c);
+    std::string why;
+    check(!cart::makeEditable(huge, c, &why) && huge.asWritten && huge.original.size() == cart::kAiFileMaxBytes + 1 && !why.empty(),
+          "Make editable refuses cleanly and leaves the file as written");
+    std::cout << "verify: seeded mismatches caught\n";
+}
+
+// ---- index 0 ----------------------------------------------------------------------
+
+static void indexZero() {
+    // The design's fact 3 assumed the alphabetically first unit is index 0. In this
+    // engine index 0 is retail's empty sentinel: the first unit is index 1 and an
+    // exact line sets it like any other.
+    auto c = sample();
+    check(c.names[0].empty() && c.byName.at("araarch") == 1 && cart::classicCanSingleOut(c, "araarch") &&
+          cart::classicCanSingleOut(c, "ARAARCH") && !cart::classicCanSingleOut(c, ""), "the first unit is index 1");
+    tak::ai::ClassicProfile p(c.size());
+    p.execute("weight araarch 0\n", c);
+    check(p.pref[1] == 0 && p.prefLocked[1], "an exact line sets the alphabetically first unit");
+    // The engine's `index != 0` rule itself: a name that resolved to slot 0 falls
+    // through to the category lookup. The model follows it.
+    c.byName["ghost"] = 0;
+    c.byName["fly"] = 0;
+    check(!cart::classicCanSingleOut(c, "ghost"), "a slot-0 name cannot be singled out");
+    const auto lines = cart::attributeAiLines("weight ghost 0\nweight fly 0.5\n", AiKind::Default, c);
+    check(lines[0].what == AiLine::What::Unknown && lines[1].what == AiLine::What::Group, "a slot-0 name acts as its category word");
+    defaultAgrees("weight ghost 0\nweight fly 0.5\nweight araarch 1\n", c);
+    const auto issues = cart::checkAiFile("ai/islands.txt", "weight ghost 0\n", {&c, nullptr});
+    check(issues.size() == 1 && issues[0].message.find("cannot single out ghost") != std::string::npos, "the slot-0 line is flagged");
+    cart::AiDraft d;
+    d.units["ghost"].chance = 5;
+    std::string bytes, error;
+    check(!cart::saveAiDraft(d, c, bytes, error), "a row for a slot-0 name is refused");
+}
+
+// ---- checks -------------------------------------------------------------------------
+
+static tak::sim::TypeRegistry syntheticRegistry() {
+    auto files = std::make_shared<tak::hpi::Vfs::Files>();
+    auto file = [&](const std::string& path, const std::string& text) {
+        std::string lines;
+        for (char ch : text) { lines += ch; if (ch == ';' || ch == '{' || ch == '}') lines += '\n'; }
+        (*files)[path] = {lines.begin(), lines.end()};
+    };
+    auto type = [&](const char* id, const char* side, const char* fields) {
+        file(std::string("units/") + id + ".fbi", std::string("[UNITINFO]{unitname=") + id + ";objectname=" + id + ";side=" + side +
+             ";name=" + id + ";maxdamage=100;footprintx=2;footprintz=2;buildtime=30;buildcost=10;" + fields + "}");
+    };
+    type("aramon", "ARA", "commander=1;builder=1;workertime=30;canmove=1;maxvelocity=1;category=ARA LAND;");
+    type("arabuild", "ARA", "builder=1;workertime=30;canmove=1;maxvelocity=1;category=ARA builder;");
+    type("aralode", "ARA", "yardmap=S;category=ARA;");
+    type("araarch", "ARA", "canmove=1;maxvelocity=1;category=ARA LAND;");
+    type("aradrag", "ARA", "canmove=1;maxvelocity=1;canfly=1;category=ARA fly;");
+    type("aramod", "ARA", "canmove=1;maxvelocity=1;category=ARA LAND;");      // in no built-in level table
+    type("araorphan", "ARA", "canmove=1;maxvelocity=1;category=ARA LAND;");   // no builder makes it
+    type("tarmon", "TAR", "commander=1;builder=1;workertime=30;canmove=1;maxvelocity=1;category=TAR;");
+    type("tararch", "TAR", "canmove=1;maxvelocity=1;category=TAR LAND;");
+    for (const char* edge : {"aramon/arabuild", "aramon/araarch", "aramon/aradrag", "aramon/aramod", "arabuild/aralode", "tarmon/tararch"})
+        file(std::string("canbuild/") + edge + ".tdf", "[CANBUILD]{sortbias=0;}");
+    tak::hpi::Vfs vfs;
+    vfs.setMapFiles(files);
+    tak::sim::TypeRegistry reg;
+    reg.loadDir(vfs, "units");
+    reg.loadBuildTree(vfs, "canbuild");
+    return reg;
+}
+
+static bool has(const std::vector<cart::AiIssue>& issues, int line, const std::string& text,
+                cart::AiIssue::Severity severity = cart::AiIssue::Severity::Warning) {
+    return std::any_of(issues.begin(), issues.end(), [&](const auto& i) {
+        return i.line == line && i.severity == severity && i.message.find(text) != std::string::npos;
+    });
+}
+static std::string dump(const std::vector<cart::AiIssue>& issues) {
+    std::string out;
+    for (const auto& i : issues) out += i.file + ":" + std::to_string(i.line) + " " + i.message + "\n";
+    return out;
+}
+
+static void checks() {
+    using S = cart::AiIssue::Severity;
+    const auto reg = syntheticRegistry();
+    check(reg.find("aramon") && reg.find("aramon")->commander && reg.find("aralode")->onMana, "synthetic registry loaded");
+    const auto c = ClassicCatalogue::from(reg);
+    const cart::AiRoster roster{&c, &reg};
+    const auto def = cart::checkAiFile("ai/islands.txt",
+        "weight araarc 0\nweight araarch 0.5\nweight araarch 1\nweight all 0.5\nweight arabuild 0.5\nlimit aradrag\n"
+        "plan attack 3\nweight araorphan 0.5\nweight fly\n", roster);
+    const auto d = dump(def);
+    check(has(def, 1, "'araarc' matches nothing, so the line does nothing. Did you mean 'araarch'?"), "unknown word + suggestion\n" + d);
+    check(has(def, 3, "line 3 is ignored: line 2 already set this unit"), "shadowed exact line\n" + d);
+    check(has(def, 5, "line 5 combines with line 4 ('weight all 0.5'): result 25 %", S::Info), "combines with a group line\n" + d);
+    check(has(def, 6, "no value: reads as 0 and locks the unit (never built)"), "missing value (exact)\n" + d);
+    check(has(def, 9, "no value: reads as 0 for every unit 'fly' covers"), "missing value (group)\n" + d);
+    check(has(def, 7, "'plan' does nothing", S::Info), "other command\n" + d);
+    check(has(def, 8, "no builder of its side can make araorphan", S::Info), "unit no builder can make\n" + d);
+    check(!has(def, 0, "cannot", S::Error), "nothing is switched off for a whole side\n" + d);
+
+    check(has(cart::checkAiFile("ai/islands.txt", "weight ara 0\n", roster), 0, "this AI cannot build anything for ARA", S::Error),
+          "every buildable unit of a side off");
+    check(has(cart::checkAiFile("ai/islands.txt", "limit arabuild 0\n", roster), 0, "cannot grow its economy for ARA: every builder", S::Error),
+          "every builder off");
+    check(has(cart::checkAiFile("ai/default.txt", "weight aralode 0\n", roster), 0, "every lodestone is off", S::Error), "every lodestone off");
+    check(cart::checkAiFile("ai/islands.txt", std::string(cart::kAiFileMaxBytes + 1, '\n'), roster).at(0).severity == S::Error,
+          "a file over 256 KiB is an error");
+
+    const auto lv = cart::checkAiFile("ai/n.txt",
+        "Weight araarch 5\nweight araarch 0.5\nweight arabuild #5\nweight aralode\nweight all 3\nweight araarch 4\n"
+        "weight araarc 2\nplan attack 3\nweight ARA 1\nlimit tararch 2\n", roster);
+    const auto l = dump(lv);
+    check(has(lv, 1, "levels need lowercase 'weight'; this line does nothing"), "capital keyword\n" + l);
+    check(has(lv, 2, "'0.5' reads as 0: never built"), "decimal value\n" + l);
+    check(has(lv, 2, "line 2 is replaced by line 6 (later line wins)"), "earlier line overridden\n" + l);
+    check(has(lv, 3, "'#' is not a comment for levels; this line is skipped"), "'#' before the value\n" + l);
+    check(has(lv, 4, "no value; the line is skipped"), "missing value (level)\n" + l);
+    check(has(lv, 5, "levels read unit names only") && has(lv, 9, "levels read unit names only"), "category word or ALL\n" + l);
+    check(has(lv, 7, "Did you mean 'araarch'?"), "unknown unit (level)\n" + l);
+    check(has(lv, 8, "'plan' does nothing", S::Info), "other command (level)\n" + l);
+    check(has(lv, 0, "aramod (aramod) is never built by this level (not named)") && !has(lv, 0, "araarch (araarch) is never"),
+          "a unit outside the built-in table and the file is never built\n" + l);
+    check(!has(cart::checkAiFile("ai/n.txt", "weight aramod 3\n", roster), 0, "aramod (aramod) is never built"), "naming it fixes that");
+    check(has(cart::checkAiFile("ai/h.txt", "limit arabuild 0\n", roster), 0, "every builder is off", S::Error),
+          "the side checks read the level through applyProfileText on its built-in table");
+
+    // Map-level rows.
+    tak::hpi::Vfs base;
+    cart::AiFiles files{{"ai/notes.txt", bytesOf("plan\n")}, {"ai/default.txt", bytesOf("weight all 1\n")}};
+    const auto map = cart::checkAiMap(files, "islands", base, roster);
+    const auto m = dump(map);
+    check(has(map, 0, "no ai/islands.txt in this map or the install; the AI falls back to ai/default.txt"), "aiprofile without a file\n" + m);
+    check(has(map, 0, "ai/notes.txt is kept in the .kmp but not sent to other players or into Test Map"), "file outside the travel list\n" + m);
+    check(has(map, 0, "every map without its own profile name also reads ai/default.txt", S::Info), "a map's ai/default.txt\n" + m);
+    files["ai/islands.txt"] = bytesOf("weight all 1\n");
+    check(!has(cart::checkAiMap(files, "islands", base, roster), 0, "no ai/islands.txt"), "the map's own file is found");
+    check(has(cart::checkAiMap({}, "n", base, roster), 0, "makes the DEFAULT AI read the Normal level's file ai/n.txt", S::Error) &&
+          has(cart::checkAiMap({}, "AD.x", base, roster), 0, "Absurdly Defensive level's file", S::Error) &&
+          has(cart::checkAiMap({}, "a/b", base, roster), 0, "names a file in another folder", S::Error),
+          "aiprofile names that collide with level files or folders are errors");
+    check(has(cart::checkAiMap({{"ai/my.txt", bytesOf("weight all 1\n")}}, "my.map", base, roster), 0, "the part after the last '.' is dropped") &&
+          !has(cart::checkAiMap({{"ai/my.txt", bytesOf("weight all 1\n")}}, "my.map", base, roster), 0, "no ai/my.txt"),
+          "a '.' name reads the extension-dropped file");
+    check(cart::checkAiMap({}, "DEFAULT", base, roster).empty() && cart::checkAiMap({}, "", base, roster).empty(),
+          "the standard profile (retail's aiprofile=DEFAULT) raises nothing");
+    std::cout << "checks: every 6.2 row\n";
+}
+
+// ---- names --------------------------------------------------------------------------
+
+static void names() {
+    check(cart::proposeAiProfileName("Islands") == "islands" && cart::proposeAiProfileName("My Map v1.2!") == "my map v12" &&
+          cart::proposeAiProfileName("  Isle_of-Fire  ") == "isle_of-fire" && cart::proposeAiProfileName("Default") == "default-map" &&
+          cart::proposeAiProfileName("N") == "n-map" && cart::proposeAiProfileName("AD") == "ad-map" &&
+          cart::proposeAiProfileName("...") == "map" && cart::proposeAiProfileName("CON") == "con-map" &&
+          cart::proposeAiProfileName(std::string(40, 'x')) == std::string(32, 'x') &&
+          cart::proposeAiProfileName("\xc3\x9c" "ber Land") == "ber land",
+          "proposed name: lowercased [a-z0-9 _-], at most 32 characters, never reserved");
+    for (const char* bad : {"my.map", "a/b", "a\\b", "d", "E", "n", "h", "a", "ad", "default", "DEFAULT", "", "con",
+                            "thirty-three-characters-long-xxxx"})
+        check(!cart::aiProfileNameError(bad).empty(), std::string("name accepted: ") + bad);
+    for (const char* good : {"islands", "mission 19", "Isle_of-Fire", "nn", "ade", "defaults"})
+        check(cart::aiProfileNameError(good).empty(), std::string("name refused: ") + good + " " + cart::aiProfileNameError(good));
+    // aiProfileFileKey follows the engine's own lookup.
+    tak::hpi::Vfs none;
+    for (const char* name : {"islands", "My.Map", "mission 19", "a.b.c", "x.", "DEFAULT", ".hidden", "ISLANDS.ota"}) {
+        const auto key = cart::aiProfileFileKey(name);
+        if (key.empty()) continue;
+        tak::ai::ClassicFiles mapFiles{{key, bytesOf("weight all 1\n")}};
+        tak::ai::ClassicProfileLayer layer;
+        const auto script = tak::ai::classicProfileScript(none, name, nullptr, &mapFiles, &layer);
+        check(layer == tak::ai::ClassicProfileLayer::Map && tak::hpi::MountSet::key(script.path) == key,
+              std::string("aiProfileFileKey disagrees with classicProfileScript for ") + name);
+    }
+    check(cart::aiProfileFileKey("my.map") == "ai/my.txt" && cart::aiProfileFileKey("").empty() && cart::standardAiProfile("") &&
+          cart::standardAiProfile("DEFAULT") && cart::standardAiProfile("default.ota") && !cart::standardAiProfile("islands"),
+          "file keys and the standard profile");
+    // Rename re-keys, empty deletes.
+    cart::AiFiles files{{"ai/old.txt", bytesOf("weight all 1\n")}, {"ai/n.txt", bytesOf("weight x 1\n")}};
+    check(cart::renameAiProfile(files, "old", "New") && files.count("ai/new.txt") && !files.count("ai/old.txt") &&
+          files.at("ai/new.txt") == bytesOf("weight all 1\n"), "rename moves ai/<old>.txt to ai/<new>.txt");
+    check(!cart::renameAiProfile(files, "new", "n") && !cart::renameAiProfile(files, "new", "default") && files.count("ai/new.txt"),
+          "rename never moves onto a level file or ai/default.txt");
+    cart::setAiFile(files, "AI/N.txt", "");
+    cart::setAiFile(files, "ai/e.txt", "weight y 2\n");
+    check(!files.count("ai/n.txt") && files.at("ai/e.txt") == bytesOf("weight y 2\n"), "an empty draft deletes its file");
+    check(cart::aiLevelOf("AI/N.TXT") == Difficulty::Normal && cart::aiLevelOf("ai/ad.txt") == Difficulty::AbsurdlyDefensive &&
+          !cart::aiLevelOf("ai/default.txt") && cart::aiKindOf("ai/islands.txt") == AiKind::Default,
+          "level files from ai::levelProfileFile");
+}
+
+// What travels agrees with the game's own import (net::maps, Test Map's --play-map).
+static void travel(const fs::path& root) {
+    tak::tnt::Map map;
+    map.width = map.height = 32;
+    map.blocksX = map.blocksY = 16;
+    map.heights.assign(1024, 40);
+    map.features.assign(1024, 0xffff);
+    map.tileKeys.assign(256, 1);
+    map.tileCols.assign(256, 0);
+    map.tileRows.assign(256, 0);
+    tak::hpi::Vfs base;
+    auto art = std::make_shared<tak::hpi::Vfs::Files>();
+    (*art)["terrain/00000001.jpg"] = {1};
+    base.setModFiles(art);
+    const cart::AiFiles files{{"ai/default.txt", bytesOf("a\n")}, {"ai/n.txt", bytesOf("b\n")}, {"ai/ad.txt", bytesOf("c\n")},
+                              {"ai/islands.txt", bytesOf("d\n")}, {"ai/my.txt", bytesOf("e\n")}, {"ai/notes.txt", bytesOf("f\n")},
+                              {"ai/mission 19.txt", bytesOf("g\n")}, {"ai/x.txt", {}}};
+    int n = 0;
+    for (const char* profile : {"DEFAULT", "", "islands", "ISLANDS", "my.map", "notes.txt", "mission 19", "x", "n"}) {
+        tak::tnt::Scenario metadata;
+        metadata.aiProfile = profile;
+        const auto doc = cart::documentFiles(map, metadata, {}, {}, {}, files, "Travel");
+        const auto path = root / ("travel" + std::to_string(n++) + ".kmp");
+        std::string error;
+        check(cart::writeDocumentBundle(path, doc, error), error);
+        const auto package = tak::net::maps::importSnapshot(base, path);
+        const auto travelling = cart::travellingAiFiles(files, profile);
+        for (const auto& [key, bytes] : files)
+            check(package->files->count(key) == travelling.count(key),
+                  "aiFileTravels disagrees with the map package for " + key + " (aiprofile=" + profile + ")");
+    }
+}
+
+// ---- which file plays ----------------------------------------------------------------
+
+static void writeFile(const fs::path& p, const std::string& text) {
+    fs::create_directories(p.parent_path());
+    std::ofstream(p, std::ios::binary) << text;
+}
+
+static void whichFileMatrix(const fs::path& root) {
+    using F = cart::AiFileChoice::From;
+    writeFile(root / "base" / "ai" / "default.txt", "weight all 1\n");
+    writeFile(root / "base" / "ai" / "installed.txt", "weight all 1\n");
+    writeFile(root / "base" / "ai" / "n.txt", "weight araarch 1\n");   // the install never supplies level files
+    writeFile(root / "mods" / "game" / "pack" / "ai" / "default.txt", "weight all 0.5\n");
+    writeFile(root / "mods" / "game" / "pack" / "ai" / "h.txt", "weight araarch 2\n");
+    writeFile(root / "mods" / "game" / "pack2" / "ai" / "islands.txt", "weight all 0.25\n");
+    writeFile(root / "mods" / "game" / "pack2" / "ai" / "n.txt", "weight araarch 3\n");
+    tak::hpi::Vfs base;
+    base.addLayer(tak::hpi::MountSet(root / "base"));
+    tak::hpi::Vfs nothing;
+    const auto pack = tak::hpi::modFiles(root, tak::hpi::ModKind::Game, {"pack"});
+    const auto pack2 = tak::hpi::modFiles(root, tak::hpi::ModKind::Game, {"pack2"});
+    check(pack.count("ai/default.txt") && pack2.count("ai/islands.txt"), "game-mod fixtures mounted");
+    const cart::AiFiles map{{"ai/islands.txt", bytesOf("weight all 0.75\n")}, {"ai/n.txt", bytesOf("weight araarch 4\n")},
+                            {"ai/notes.txt", bytesOf("plan\n")}};
+    auto is = [](const cart::AiFileChoice& c, F from, const std::string& path, const std::string& text) {
+        check(c.from == from && c.path == path && c.message == text, "whichFile: got [" + c.path + "] " + c.message + "\nwant [" + path + "] " + text);
+    };
+    is(cart::whichFile(Difficulty::Classic, base, map, "islands", &pack), F::Map, "ai/islands.txt",
+       "DEFAULT AI on this map reads ai/islands.txt from this map.");   // the map's ai/<key> beats a mod's ai/default.txt
+    is(cart::whichFile(Difficulty::Classic, base, map, "islands"), F::Map, "ai/islands.txt",
+       "DEFAULT AI on this map reads ai/islands.txt from this map. A ticked game mod's ai/islands.txt would replace it; "
+       "a game mod's ai/default.txt would not.");
+    is(cart::whichFile(Difficulty::Classic, base, map, "islands", &pack2), F::GameMod, "ai/islands.txt",
+       "DEFAULT AI reads ai/islands.txt from the game mod, which replaces this map's.");
+    is(cart::whichFile(Difficulty::Classic, base, {}, "islands"), F::Base, "ai/default.txt",
+       "DEFAULT AI reads the installed ai/default.txt (no ai/islands.txt in this map or the install).");
+    is(cart::whichFile(Difficulty::Classic, base, {}, "islands", &pack), F::GameMod, "ai/default.txt",
+       "DEFAULT AI reads ai/default.txt from the game mod.");
+    is(cart::whichFile(Difficulty::Classic, base, {}, "installed"), F::Base, "ai/installed.txt",
+       "DEFAULT AI reads the installed ai/installed.txt.");
+    is(cart::whichFile(Difficulty::Classic, base, map, "DEFAULT"), F::Base, "ai/default.txt",
+       "DEFAULT AI reads the installed ai/default.txt (this map has no profile name).");
+    is(cart::whichFile(Difficulty::Classic, base, {{"ai/default.txt", bytesOf("weight all 1\n")}}, ""), F::Map, "ai/default.txt",
+       "DEFAULT AI on this map reads ai/default.txt from this map. A ticked game mod's ai/default.txt would replace it.");
+    is(cart::whichFile(Difficulty::Classic, nothing, map, "other"), F::None, "",
+       "DEFAULT AI: no profile file, so every unit is built at full chance with no limit.");   // ai/notes.txt does not travel
+    is(cart::whichFile(Difficulty::Classic, nothing, map, "notes"), F::Map, "ai/notes.txt",
+       "DEFAULT AI on this map reads ai/notes.txt from this map. A ticked game mod's ai/notes.txt would replace it; "
+       "a game mod's ai/default.txt would not.");   // ... until the map names it
+    is(cart::whichFile(Difficulty::Classic, nothing, {{"ai/islands.txt", {}}}, "islands"), F::None, "",
+       "DEFAULT AI: no profile file, so every unit is built at full chance with no limit.");   // an empty file is dropped
+    is(cart::whichFile(Difficulty::Normal, base, map, "islands"), F::Map, "ai/n.txt",
+       "Normal reads ai/n.txt from this map unless a ticked game mod has ai/n.txt, which then replaces it entirely.");
+    is(cart::whichFile(Difficulty::Normal, base, map, "islands", &pack), F::Map, "ai/n.txt", "Normal reads ai/n.txt from this map.");
+    is(cart::whichFile(Difficulty::Normal, base, map, "islands", &pack2), F::GameMod, "ai/n.txt",
+       "Normal reads ai/n.txt from the game mod; it replaces this map's file entirely.");
+    is(cart::whichFile(Difficulty::Hard, base, map, "islands", &pack), F::GameMod, "ai/h.txt", "Hard reads ai/h.txt from the game mod.");
+    is(cart::whichFile(Difficulty::Easy, base, map, "islands", &pack), F::None, "", "Easy: built-in table (no file).");
+    is(cart::whichFile(Difficulty::Normal, base, {}, ""), F::None, "", "Normal: built-in table (no file).");   // never the install's
+}
+
+int main() try {
+    const auto root = fs::temp_directory_path() /
+                      ("tak-aiprofile-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directories(root);
+    struct Cleanup { fs::path p; ~Cleanup() { std::error_code e; fs::remove_all(p, e); } } cleanup{root};
+    chanceEncoding();
+    canonical();
+    verification();
+    indexZero();
+    attribution();
+    checks();
+    names();
+    travel(root);
+    whichFileMatrix(root);
+    std::cout << "cartographer_aiprofile: all passed\n";
+    return 0;
+} catch (const std::exception& e) {
+    std::cerr << "FAIL: " << e.what() << '\n';
+    return 1;
+}

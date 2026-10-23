@@ -2818,6 +2818,12 @@ if(TAK_BUILD_CLIENT)
       src/cartographer/validation.cpp src/cartographer/triggers.cpp src/cartographer/regions.cpp src/cartographer/generator.cpp src/cartographer/overlay.cpp src/cartographer/ruleedit.cpp)
     target_link_libraries(cartographer_validation_test PRIVATE tak-formats)
     add_test(NAME cartographer_validation COMMAND cartographer_validation_test)
+    # The AI-profile editor's model, checked against the engine's own profile parsers.
+    add_executable(cartographer_aiprofile_test tools/cartographer_aiprofile_test.cpp
+      src/cartographer/aiprofiles.cpp src/cartographer/document.cpp src/cartographer/units.cpp
+      src/ai/classicprofile.cpp src/ai/builtinprofile.cpp)
+    target_link_libraries(cartographer_aiprofile_test PRIVATE tak-formats)
+    add_test(NAME cartographer_aiprofile COMMAND cartographer_aiprofile_test)
     add_executable(cartographer_features_test tools/cartographer_features_test.cpp src/cartographer/features.cpp)
     target_link_libraries(cartographer_features_test PRIVATE tak-formats)
     add_test(NAME cartographer_feature_art COMMAND cartographer_features_test)
@@ -2825,7 +2831,7 @@ if(TAK_BUILD_CLIENT)
     # Cartographer -- the clean-room map editor (docs/cartographer-port.md).
     # Shares the engine's terrain render stack (mapview + tak-formats) so maps
     # look byte-identical to the game.
-    add_executable(cartographer src/client/modelview.cpp src/util/relaunch.cpp src/cartographer/savejob.cpp src/cartographer/playtest.cpp src/cartographer/editorfont.cpp src/cartographer/thumbnails.cpp src/cartographer/recovery.cpp src/cartographer/preferences.cpp src/cartographer/ruleedit.cpp src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/session.cpp src/cartographer/headless.cpp src/cartographer/palette.cpp src/cartographer/canvas.cpp src/cartographer/chrome.cpp src/cartographer/dialogs.cpp src/cartographer/scripting.cpp src/cartographer/symmetrytools.cpp src/cartographer/symmetry.cpp src/cartographer/sections.cpp src/cartographer/sectiongroups.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
+    add_executable(cartographer src/client/modelview.cpp src/util/relaunch.cpp src/cartographer/savejob.cpp src/cartographer/playtest.cpp src/cartographer/editorfont.cpp src/cartographer/thumbnails.cpp src/cartographer/recovery.cpp src/cartographer/preferences.cpp src/cartographer/ruleedit.cpp src/cartographer/overlay.cpp src/cartographer/generator.cpp src/cartographer/regions.cpp src/cartographer/validation.cpp src/cartographer/history.cpp src/client/settings.cpp src/cartographer/document.cpp src/cartographer/main.cpp src/cartographer/session.cpp src/cartographer/headless.cpp src/cartographer/palette.cpp src/cartographer/canvas.cpp src/cartographer/chrome.cpp src/cartographer/dialogs.cpp src/cartographer/scripting.cpp src/cartographer/symmetrytools.cpp src/cartographer/symmetry.cpp src/cartographer/sections.cpp src/cartographer/sectiongroups.cpp src/cartographer/newmap.cpp src/cartographer/features.cpp src/cartographer/units.cpp src/cartographer/triggers.cpp src/cartographer/aiprofiles.cpp src/ai/classicprofile.cpp src/ai/builtinprofile.cpp src/client/mapview.cpp src/client/terrainchunks.cpp)
     target_link_libraries(cartographer PRIVATE tak-formats ${_tak_sdl2})
     target_compile_definitions(cartographer PRIVATE SDL_MAIN_HANDLED TAK_PRODUCT)   # see takclient
     get_target_property(_cartographer_sources cartographer SOURCES)
