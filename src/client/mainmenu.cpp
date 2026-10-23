@@ -781,7 +781,8 @@ struct MainMenu::Impl {
                 if (settings)
                     campaign_ = std::make_unique<CampaignScreen>(ren, vfs, *settings, 0,
                         [this](const std::string& sound) { loadSfx(sound); playSfx(sound); },
-                        std::filesystem::u8path(install));
+                        std::filesystem::u8path(install),
+                        [settings](int level) { settings->campaignAi = level; saveSettings(*settings); });
                 break;
             case FailTo::Notice: case FailTo::Exit: break;
         }
@@ -1254,7 +1255,9 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             // rows and the next-up highlight (nothing is locked either way).
             if (tab == 1)
                 for (int i = 0; i < 12; ++i) tmp.campaignCompleted["the iron plague"].insert(i);
-            CampaignScreen cs(d_->ren, d_->vfs, tmp, tab, {}, std::filesystem::u8path(d_->install));
+            // TAK_SHOT_CAMPAIGN_AI=classic shows the OPPONENT AI line set to CLASSIC.
+            if (const char* ai = tak::devEnv("TAK_SHOT_CAMPAIGN_AI")) tmp.campaignAi = std::string(ai) == "classic" ? 6 : 2;
+            CampaignScreen cs(d_->ren, d_->vfs, tmp, tab, {}, std::filesystem::u8path(d_->install), [](int) {});
             cs.render(w, h);
         }
         // Debug: TAK_SHOT_SERVER captures the CONNECT dropdown (2 = CUSTOM selected,
@@ -1626,7 +1629,8 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     // returns Choice::Campaign (handled by the campaign_ router above).
                     d_->campaign_ = std::make_unique<CampaignScreen>(d_->ren, d_->vfs, *settings,0,
                         [this](const std::string& sound){d_->loadSfx(sound);d_->playSfx(sound);},
-                        std::filesystem::u8path(d_->install));
+                        std::filesystem::u8path(d_->install),
+                        [settings](int level){settings->campaignAi=level;saveSettings(*settings);});
                 }
                 else if (c != Choice::None && c != Choice::Campaign) {
                     d_->flushSfx(w, h);   // let the click sound finish before we tear down

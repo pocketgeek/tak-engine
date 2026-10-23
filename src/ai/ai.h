@@ -169,6 +169,12 @@ public:
     // Difficulty::Classic only: every start location of the map, in start order
     // (ClassicBrain::setStartTable); call it before setClassicStart.
     void setClassicStarts(const std::vector<std::pair<float, float>>& positions);
+    // Difficulty::Classic only: this player is a campaign mission's computer
+    // player (retail's scenario mode 1: the first assignment pass's pre-placed
+    // rules, base 1 not anchored on a start); `otaPlayer` is its .ota Player<N>
+    // value, whose `massattack <n>` keyword (if any) starts the mass attack at
+    // n x 30 ticks (classicMassAttackTicks).
+    void setClassicCampaign(const std::string& otaPlayer);
     const ClassicBrain* classicBrain() const { return classic_.get(); }
 
     // Read-only identity, for the debug roster dump (server/rosterdump.h).

@@ -342,6 +342,9 @@ struct Room {
     bool campaignResultRecorded = false;
     bool campaignResigned[2] = {}, campaignDisconnected[2] = {}, campaignTimeout[2] = {}, campaignLoaded[2] = {};
     std::string mission;           // campaign mission stem (empty = ordinary skirmish/MP)
+    // The mission's opponent AI, as an AI level: Normal (the default) or Classic,
+    // the campaign screen's OPPONENT AI choice. Nothing else is accepted.
+    uint8_t missionAiLevel = uint8_t(tak::ai::Difficulty::Normal);
     GameOptions opts;
     uint32_t hostId = 0;
     SlotInfo slots[kMaxSlots];
@@ -2005,6 +2008,9 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
             uint8_t priv = r.u8();       // private (single-player): hidden from the list
+            // A mission room may add its opponent AI level (the campaign screen's choice);
+            // without it, and for anything but Classic, the mission plays Normal.
+            const uint8_t missionAi = !mission.empty() && r.ok && r.p < r.end ? r.u8() : 0;
             if (!r.ok || r.p!=r.end || name.size()>128 || pass.size()>128 || mapId.size()>4096 || mission.size()>256) return;
             if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark || !mission.empty())) {
                 sendReject(c,"public servers do not accept benchmark, stress or campaign mission requests");return;
@@ -2017,6 +2023,8 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             room.password = pass;
             room.mapId = mapId;
             room.mission = mission;
+            if (tak::ai::difficultyFromLevel(missionAi) == tak::ai::Difficulty::Classic)
+                room.missionAiLevel = missionAi;
             room.opts = o;
             room.priv = priv != 0;
             room.cap = cap;
@@ -2685,6 +2693,17 @@ void Server::tryStart(Client& c) {
                 const tak::ai::Profile& prof =
                     ms.aiProfile.empty() ? aiProfile_
                                          : missionProfile(ds->vfs, ms.aiProfile);
+                // The campaign screen's OPPONENT AI: Normal, or Classic (retail's own AI,
+                // which bakes the same aiprofile file its own way and plays the mission
+                // as retail's scenario mode 1, massattack included).
+                const auto missionDiff = tak::ai::difficultyFromLevel(r->missionAiLevel);
+                const bool classic = missionDiff == tak::ai::Difficulty::Classic;
+                std::optional<tak::ai::ClassicProfileScript> classicProfile;
+                std::vector<std::pair<float, float>> classicStarts;
+                if (classic) {
+                    classicProfile = tak::ai::classicProfileScript(ds->vfs, ms.aiProfile);
+                    classicStarts = tak::sim::parseStartPositions(ds->vfs, "missions/" + r->mission + ".tnt");
+                }
                 for (int slot : ms.aiSlots) {
                     std::vector<std::pair<float, float>> enemyStarts;
                     for (size_t j = 0; j < ms.slotPos.size(); ++j) {
@@ -2693,13 +2712,21 @@ void Server::tryStart(Client& c) {
                         enemyStarts.push_back(ms.slotPos[j]);
                     }
                     r->ai.emplace_back(slot, *r->reg, prof, r->seed + uint32_t(slot),
-                                       tak::ai::Difficulty::Normal, std::move(enemyStarts));
+                                       missionDiff, std::move(enemyStarts));
+                    if (classic) {
+                        r->ai.back().setClassicProfile(*classicProfile);
+                        r->ai.back().setClassicStarts(classicStarts);
+                        r->ai.back().setClassicCampaign(size_t(slot) < ms.playerDefs.size()
+                                                            ? ms.playerDefs[size_t(slot)] : std::string());
+                    }
                 }
                 r->slotPos = ms.slotPos;
                 if (!ms.aiSlots.empty())
-                    std::fprintf(stderr, "takserver: mission '%s' -- %zu strategic AI player(s)%s\n",
+                    std::fprintf(stderr, "takserver: mission '%s' -- %zu strategic AI player(s)%s%s\n",
                                  r->mission.c_str(), ms.aiSlots.size(),
-                                 ms.aiProfile.empty() ? "" : (" profile=" + ms.aiProfile).c_str());
+                                 ms.aiProfile.empty() ? "" : (" profile=" + ms.aiProfile).c_str(),
+                                 classic ? (" CLASSIC (" + (classicProfile->path.empty() ? std::string("no profile")
+                                                            : classicProfile->path) + ")").c_str() : "");
             }
         } else {
             // The same builder every client mirrors (net/matchconfig.h): the Absurd and

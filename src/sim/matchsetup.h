@@ -158,6 +158,9 @@ struct MissionSetup {
     std::vector<int> aiSlots;                        // world slots to drive with AI
     std::vector<std::pair<float, float>> slotPos;    // per-slot centroid of placed units
     std::string aiProfile;                           // .ota aiprofile= (ai/<name>.txt)
+    // Per world slot, the .ota Player<N> value as written (empty for none): the
+    // Classic AI reads a computer player's `massattack` keyword from it.
+    std::vector<std::string> playerDefs;
     bool fullVision = false;   // .ota lineofsight=0: the mission is played revealed
     bool preMapped = false;    // .ota mapping=1: terrain starts explored (units still fogged)
 };

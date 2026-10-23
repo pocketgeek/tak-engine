@@ -31,6 +31,7 @@ struct CampaignScreen::Impl {
     bool picked=false;
     std::string stem,campaign;
     std::function<void(const std::string&)> playSound;
+    std::function<void(int)> setOpponentAi;
     // Not retail: the always-on mods/cosmetic/*.hpi archives every game loads,
     // campaigns included, named on the left page (they cannot be switched off here).
     std::string alwaysOn;
@@ -152,6 +153,11 @@ struct CampaignScreen::Impl {
             if(value.ends_with(".wav")){playSound(value);return;}
         }
     }
+    // The OPPONENT AI line's box on the left page, under the always-on mods.
+    static SDL_FRect opponentBox(const GuiLayout& lay) {return lay.rect(100,326,220,14);}
+    void flipOpponentAi() {
+        if(setOpponentAi)setOpponentAi(settings.campaignAi==6?2:6);
+    }
     void choose() {
         if(camps.empty() || !count())return;
         const auto& c=camps[size_t(tab)];
@@ -161,8 +167,11 @@ struct CampaignScreen::Impl {
 };
 CampaignScreen::CampaignScreen(SDL_Renderer* r,const hpi::Vfs& v,const Settings& s,int tab,
                                std::function<void(const std::string&)> sound,
-                               const std::filesystem::path& install)
-    :d_(std::make_unique<Impl>(r,v,s,tab,install)){d_->playSound=std::move(sound);}
+                               const std::filesystem::path& install,
+                               std::function<void(int)> setOpponentAi)
+    :d_(std::make_unique<Impl>(r,v,s,tab,install)){
+    d_->playSound=std::move(sound);d_->setOpponentAi=std::move(setOpponentAi);
+}
 CampaignScreen::~CampaignScreen()=default;
 bool CampaignScreen::picked()const{return d_->picked;}
 const std::string& CampaignScreen::pickedStem()const{return d_->stem;}
@@ -179,6 +188,7 @@ bool CampaignScreen::input(const SDL_Event& e,int w,int h) {
         if(key==SDLK_HOME)d.page=0;
         if(key==SDLK_END)d.page=std::max(0,d.count()-1);
         if(key==SDLK_TAB && !d.camps.empty())d.selectCampaign((d.tab+1)%int(d.camps.size()));
+        if(key==SDLK_a)d.flipOpponentAi();
     }
     if(e.type==SDL_MOUSEWHEEL)d.page=std::clamp(d.page-e.wheel.y,0,std::max(0,d.count()-1));
     if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_RIGHT) {
@@ -192,6 +202,7 @@ bool CampaignScreen::input(const SDL_Event& e,int w,int h) {
         if(Impl::inside(d.rect(lay,"Play"),x,y)){if(d.count())d.click("Play");d.choose();return d.picked;}
         if(Impl::inside(d.rect(lay,"PreviousPage"),x,y))d.page=std::max(0,d.page-1);
         if(Impl::inside(d.rect(lay,"NextPage"),x,y))d.page=std::min(std::max(0,d.count()-1),d.page+1);
+        if(d.setOpponentAi && Impl::inside(Impl::opponentBox(lay),x,y))d.flipOpponentAi();
         for(size_t i=0;i<d.camps.size();++i) {
             auto r=lay.rect(188+float(i)*266.f/float(d.camps.size()),412,266.f/float(d.camps.size()),32);
             if(Impl::inside(r,x,y))d.selectCampaign(int(i));
@@ -252,11 +263,21 @@ void CampaignScreen::render(int w,int h) {
     std::string help="Enter: Play    Esc: Back";
     if(d.settings.missionCompleted(c.id,alternate?kAltMission:d.page))help="Completed - "+help;
     d.text(lay,d.label,help,d.rect(lay,"HelpText"),true,1.f);
+    constexpr float kSize=.8f;
+    constexpr SDL_Color kInk{72,56,32,255};   // darker than the title's ink: smaller text
+    if(d.setOpponentAi) {
+        // OPPONENT AI: the level the mission's computer players get. CLASSIC is the
+        // retail game's own AI; the line is the button (and A flips it).
+        const auto box=Impl::opponentBox(lay);
+        if(Impl::inside(box,float(mx),float(my))) {
+            SDL_SetRenderDrawColor(d.ren,120,90,40,90);SDL_RenderFillRectF(d.ren,&box);
+        }
+        d.text(lay,d.label,std::string("Opponent AI: ")+(d.settings.campaignAi==6?"CLASSIC":"NORMAL")+"  (A)",
+               box,true,kSize,kInk);
+    }
     if(!d.alwaysOn.empty()) {
         // Two short lines on the left page, under the chapter title; the names
         // shorten with "..." rather than shrink past legibility.
-        constexpr float kSize=.8f;
-        constexpr SDL_Color kInk{72,56,32,255};   // darker than the title's ink: smaller text
         const auto names=lay.rect(100,310,220,12);
         const auto fits=[&](const std::string& t){
             const float scale=lay.scale*kSize;

@@ -171,6 +171,10 @@ struct Settings {
     // (the lowercased camps/*.tdf stem). Missions are NEVER locked -- this only records
     // what's been beaten, for the DONE marker and the "play next" hint. See src/campaign.
     std::map<std::string, std::set<int>> campaignCompleted;
+    // The campaign screen's OPPONENT AI: the AI level every mission's computer
+    // players get -- 2 = NORMAL (the default) or 6 = CLASSIC (the retail game's own
+    // AI, docs/classic-ai-plan.md). Persisted as campaignAi = normal | classic.
+    int campaignAi = 2;
     bool missionCompleted(const std::string& id, int mission) const {
         auto it = campaignCompleted.find(id);
         return it != campaignCompleted.end() && it->second.count(mission) > 0;
@@ -215,7 +219,7 @@ struct Settings {
             && a.voiceMicVolume == b.voiceMicVolume && a.voiceOutputVolume == b.voiceOutputVolume
             && a.ignoreDpiScaling == b.ignoreDpiScaling && a.dpiMigrated == b.dpiMigrated
             && a.hotkeys == b.hotkeys
-            && a.campaignCompleted == b.campaignCompleted;
+            && a.campaignCompleted == b.campaignCompleted && a.campaignAi == b.campaignAi;
     }
     friend bool operator!=(const Settings& a, const Settings& b) { return !(a == b); }
 };
@@ -283,6 +287,7 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.dataDir = cur.dataDir;
     d.dataManifest = cur.dataManifest;
     d.campaignCompleted = cur.campaignCompleted;
+    d.campaignAi = cur.campaignAi;                // set on the campaign screen, not Options
     d.knownServers = cur.knownServers;
     d.dpiMigrated = cur.dpiMigrated;              // bookkeeping, not a preference
     // Voice chat has its own screen and its own DEFAULTS (voiceDefaults below).

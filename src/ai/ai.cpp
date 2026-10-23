@@ -92,6 +92,12 @@ void Controller::setClassicStarts(const std::vector<std::pair<float, float>>& po
     if (classic_) classic_->setStartTable(positions);
 }
 
+void Controller::setClassicCampaign(const std::string& otaPlayer) {
+    if (!classic_) return;
+    classic_->setScenarioMode(1);
+    classic_->setMassAttack(classicMassAttackTicks(otaPlayer));
+}
+
 Controller::Controller(Controller&&) noexcept = default;
 Controller::~Controller() = default;
 

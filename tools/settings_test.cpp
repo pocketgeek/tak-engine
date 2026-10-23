@@ -115,6 +115,7 @@ int main() {
     flips("gameModPacks", [](Settings& s){s.gameModPacks={"Pack A"};});
     flips("cosmeticModPacks", [](Settings& s){s.cosmeticModPacks={"Pack B"};});
     flips("lastMap",         [](Settings& s) { s.lastMap = "Inner Circle"; });
+    flips("campaignAi",      [](Settings& s) { s.campaignAi = 6; });
     flips("dataDir",         [](Settings& s) { s.dataDir = "/somewhere/else"; });
     flips("dataManifest",    [](Settings& s) { s.dataManifest = "deadbeef"; });
 
@@ -166,6 +167,7 @@ int main() {
         cur.streamRememberKey = true;
         cur.streamLocalCopy = true;
         cur.lastMap = "Inner Circle";
+        cur.campaignAi = 6;
         cur.gameCreate.crusades = true;
         cur.gameCreate.generator = "saved recipe";
         cur.hotkeys["selectAll"] = "ctrl+a";
@@ -209,6 +211,7 @@ int main() {
         keep("streamRememberKey", d.streamRememberKey);
         keep("streamLocalCopy",   d.streamLocalCopy);
         keep("lastMap",           d.lastMap == cur.lastMap);
+        keep("campaign opponent", d.campaignAi == 6);
         keep("hotkeys",           d.hotkeys == cur.hotkeys);
         keep("voice chat",        d.voiceEnabled && d.voiceMicDevice == "a-mic" && !d.voiceOutputSameAsGame &&
                                   d.voiceOutputDevice == "headset" && d.voiceMicVolume == 40 &&

@@ -1311,6 +1311,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
         std::transform(def.begin(), def.end(), def.begin(), ::tolower);
         int slot = int(slots.size());
         otaToWorld[n] = slot;
+        if (out) { out->playerDefs.resize(size_t(slot) + 1); out->playerDefs[size_t(slot)] = v ? *v : std::string(); }
         MatchSlot s;
         s.used = false;   // no monarch spawn -- units come from [Map Data][units]
         for (int f = 0; f < 5; ++f) if (def.find(kingdoms[f]) != std::string::npos) s.faction = f;

@@ -179,6 +179,7 @@ Settings loadSettings() {
         else if (key == "gameCreate.name") s.gameCreate.name = val;
         else if (key == "gameCreate.generator") s.gameCreate.generator = val;
         else if (key == "lastMap")         s.lastMap = val;
+        else if (key == "campaignAi")      s.campaignAi = val == "classic" ? 6 : 2;
         else if (key == "knownServers") {  // comma-joined, most recent first
             std::stringstream ks(val);
             std::string tok;
@@ -294,6 +295,7 @@ std::string serializeSettings(const Settings& s) {
     o << "dataDir = " << s.dataDir << "\n";
     o << "dataManifest = " << s.dataManifest << "\n";
     for (const auto& [id, chord] : s.hotkeys) o << "hotkey." << id << " = " << chord << "\n";
+    o << "campaignAi = " << (s.campaignAi == 6 ? "classic" : "normal") << "\n";
     for (const auto& [id, done] : s.campaignCompleted) {
         if (done.empty()) continue;
         o << "campaigndone." << id << " = ";

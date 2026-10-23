@@ -166,7 +166,8 @@ public:
     // skirmish, and reports MissionOutcome; see docs/campaign-design.md.
     void createGame(const std::string& name, const std::string& password,
                     const std::string& mapId, const GameOptions& opts, uint8_t capacity,
-                    bool spectate = false, bool priv = false, const std::string& mission = "");
+                    bool spectate = false, bool priv = false, const std::string& mission = "",
+                    uint8_t missionAiLevel = 2);
     void joinGame(uint32_t id, const std::string& password);
     void leaveGame();
     void setSlot(int slot, uint8_t type, uint8_t faction, uint8_t color,
