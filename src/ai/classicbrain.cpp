@@ -245,10 +245,11 @@ std::vector<ClassicSquadUnit> ClassicBrain::squadUnits(const tak::sim::World& wo
         const bool structure = t->isStructure();
         const bool armed = info ? info->armed : !t->weapons.empty();
         // The port's readings of the unit bits (docs/classic-ai-plan.md U6): a unit
-        // in the World is a live slot, a dead one still listed is dying; a finished
-        // unit is selectable (retail sets that once it has left its factory).
+        // in the World is a live slot, a dead one still listed is dying; every unit
+        // is selectable, as retail creates each one with 0x20 (0x511990, U16; every
+        // test of it here also asks for a finished unit).
         s.flags = ClassicSquadUnit::kLive | (u.alive() ? 0u : ClassicSquadUnit::kDying) |
-                  (u.underConstruction ? 0u : ClassicSquadUnit::kSelectable) |
+                  ClassicSquadUnit::kSelectable |
                   (structure ? ClassicSquadUnit::kStructure : 0u) | (armed ? ClassicSquadUnit::kArmed : 0u);
         s.commander = info ? info->commander : t->commander;
         s.sacredSite = info && info->manaSite;
@@ -621,14 +622,18 @@ void ClassicBrain::planConstructor(const tak::sim::World& world, int slot, std::
 
 ClassicEnemy ClassicBrain::enemyView(const tak::sim::World&, const tak::sim::Unit& e) const {
     // Unit +0x130 as the AI tests it: a unit still in the World is a live slot,
-    // a dead one dying; its 0x2000 is our underConstruction (U6 / U10); its low
-    // bits 1 on the ground, 2 in the air, 0 carried; 0x8000000 armed.
+    // a dead one dying; its low bits 1 on the ground, 2 in the air, 0 carried;
+    // 0x8000000 armed. 0x2000 is never set (U16): retail sets it only on a
+    // scenario placement whose record asks for it (0x514c92..0x514cb3) until a
+    // MakeSelectable mission clears it; a unit or site being built is created
+    // with 0x20 and without 0x2000 (0x512060 -> 0x511990), so it is listed,
+    // threatens, and is picked with the unfinished divisor (+0x108 != 0).
     const auto it = index_.find(e.type);
     const ClassicTypeInfo* info = it == index_.end() ? nullptr : &info_[it->second];
     ClassicEnemy c;
     c.id = e.id;
     c.flags = ClassicEnemy::kLive | (e.alive() && e.hp > tak::sim::Fixed() ? 0u : ClassicEnemy::kDying) |
-              (e.underConstruction ? ClassicEnemy::kUnready : 0u) | (e.embarked() ? 0u : e.type->canFly ? 2u : 1u) |
+              (e.embarked() ? 0u : e.type->canFly ? 2u : 1u) |
               ((info ? info->armed : !e.type->weapons.empty()) ? ClassicSquadUnit::kArmed : 0u);
     c.x = e.x.v; c.y = (e.type->canFly ? e.flightY : e.groundY).v; c.z = e.z.v;
     c.cloaked = e.cloaked;
@@ -640,13 +645,33 @@ ClassicEnemy ClassicBrain::enemyView(const tak::sim::World&, const tak::sim::Uni
 }
 
 std::vector<ClassicEnemy> ClassicBrain::visibleEnemies(const tak::sim::World& world) const {
-    // 411700's list +5 as the World last rebuilt it (it re-checks nothing, so a
-    // unit that has since died is still listed, as dying). Its 0x2000 is our
-    // underConstruction (U10: the World leaves those off the list already).
+    // 411700's list +5 as of the last rebuild (it re-checks nothing, so a unit
+    // that has since died is still listed, as dying).
     std::vector<ClassicEnemy> out;
-    for (const int id : world.visibleEnemies(player_))
+    for (const int id : visible_)
         if (const auto* e = world.unit(id); e && e->type) out.push_back(enemyView(world, *e));
     return out;
+}
+
+void ClassicBrain::refreshVisible(const tak::sim::World& world) {
+    // The World rebuilds its lists on the bookkeeping clock (every >= 7 ticks)
+    // and leaves sites still being built off its enemy list; retail's 0x411700
+    // drops only 0x2000 (U10), which such a site does not carry (U16). So when
+    // the World's stamp moves, take its list and add the enemies it skipped for
+    // being unfinished, under the same test (alive, hp > 0, not allied, not
+    // neutral, seen), as of the brain's tick.
+    if (player_ < 0 || player_ >= world.numPlayers()) return;
+    const auto& owner = world.player(player_);
+    const uint32_t stamp = owner.cacheClock.enabled ? owner.cacheClock.lastRefresh : owner.visibleRefresh;
+    if (stamp == visibleStamp_) return;
+    visibleStamp_ = stamp;
+    const auto listed = world.visibleEnemies(player_);
+    visible_.assign(listed.begin(), listed.end());
+    for (const auto& u : world.units())
+        if (u.underConstruction && u.alive() && u.hp > tak::sim::Fixed() && u.type && !world.allied(player_, u.player) &&
+            !world.isNeutralPlayer(u.player) && world.playerSees(player_, u))
+            visible_.push_back(u.id);
+    std::sort(visible_.begin(), visible_.end());
 }
 
 bool ClassicBrain::sendOrder(const tak::sim::World& world, ClassicSquadUnit& member, bool patrol, bool queue,
@@ -1005,6 +1030,7 @@ void ClassicBrain::tick(const tak::sim::World& world, uint32_t simTick,
     // bookkeeping (0x4121c0 -> 0x411a90). The sacred-site table is the map's,
     // read once (retail builds it at load, 0x4e0810).
     if (!sitesRead_) readSites(world);
+    refreshVisible(world);
     scheduler(world, simTick, sink);
     bookkeeping(world, simTick);
 #ifndef NDEBUG

@@ -205,6 +205,8 @@ private:
                     const std::function<void(const tak::net::Command&)>& sink);
     // The player's visible-enemy list (0x411700's +5) as the AI reads it.
     std::vector<ClassicEnemy> visibleEnemies(const tak::sim::World& world) const;
+    // Rebuilds visible_ when the World has just rebuilt its own lists (U16).
+    void refreshVisible(const tak::sim::World& world);
     // Any unit as the AI reads an enemy (the lists, the picker, a strike's p4).
     ClassicEnemy enemyView(const tak::sim::World& world, const tak::sim::Unit& e) const;
     // The army squads' thinks (ai/classicwaves.h) for squad `slot`, after the
@@ -293,6 +295,11 @@ private:
     tak::sim::RetailPlayerCacheClock clock_{true, 0};
     uint32_t refreshes_ = 0;
     ClassicSquads squads_;
+    // 0x411700's list +5 for this player, as of the World's last rebuild: the
+    // World's own list plus the enemies it leaves off as still being built,
+    // which retail lists (U16); id order. visibleStamp_ is that rebuild's tick.
+    std::vector<int> visible_;
+    uint32_t visibleStamp_ = 0;
     std::unordered_map<int, int32_t> squadOf_;
     int32_t startIndex_ = -1;
     int32_t scenarioMode_ = 2;   // retail's skirmish map mode

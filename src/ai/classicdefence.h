@@ -36,7 +36,7 @@ namespace tak::ai {
 struct ClassicEnemy {
     static constexpr uint32_t kLive = 0x1000000u;     // unit +0x130: the slot holds a unit ...
     static constexpr uint32_t kDying = 0x1000u;       // ... that is dying
-    static constexpr uint32_t kUnready = 0x2000u;     // not yet selectable
+    static constexpr uint32_t kUnready = 0x2000u;     // a scenario placement not yet selectable (U16)
     int id = 0;
     uint32_t flags = 0;                 // unit +0x130 (its low two bits: 1 = on the ground)
     int32_t x = 0, y = 0, z = 0;        // +0x68 / +0x6c / +0x70, 16.16 pixels

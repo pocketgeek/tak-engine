@@ -54,7 +54,7 @@ constexpr int32_t kClassicMassCohesion = 1000000;
 struct ClassicSquadUnit {
     static constexpr uint32_t kLive = 0x1000000u;       // the slot holds a unit
     static constexpr uint32_t kDying = 0x1000u;         // ... that is dying
-    static constexpr uint32_t kSelectable = 0x20u;      // set by the MakeSelectable mission
+    static constexpr uint32_t kSelectable = 0x20u;      // set at creation (0x511990) and by MakeSelectable
     static constexpr uint32_t kStructure = 0x2000000u;  // AI category 1
     static constexpr uint32_t kArmed = 0x8000000u;
     int id = 0;
