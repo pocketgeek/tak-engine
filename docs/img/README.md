@@ -1,6 +1,21 @@
 # README and user-guide screenshots
 
-Refreshed on 2026-10-22 for **0.8.10**. 0.8.10 added the **SAVE A LOCAL COPY**
+Refreshed on 2026-10-23 for **0.8.11**. 0.8.11 added the **Opponent AI** line
+to the campaign book's left page, wraps a build menu too long for one row into
+more rows left of the command panel, and drops the blue production bar over a
+factory or conjurer. The 0.8.11 build (version set to 0.8.11 locally, ahead of
+the release commit; no capture patch was needed) retook `title.jpg` (VERSION
+0.8.11) and `campaign.jpg` (OPPONENT AI: NORMAL (A), the default), and added
+`guide/build-menu-wrap.jpg`. No picture showed the blue production bar (the
+game pictures with AI or player bases were checked by eye; the spawned scenes
+produce nothing), and the lobby and room pictures show each AI seat's level but
+not the list of levels, so CLASSIC does not appear in them; they keep their
+earlier captures. `guide/chat-box.jpg` shows a Barracks training Horsemen, but
+its crop leaves out the Barracks; its information bar's Horseman gauge now
+follows the new unit's health instead of build progress, a small early fill
+either way, so it is kept too (retaking it needs the 0.8.9 capture patch).
+
+0.8.10 added the **SAVE A LOCAL COPY**
 row to the YouTube Streaming panel and changed the disconnect wait (each seat has
 one 30 s budget per game, counted from the player's last contact, so a first stop
 shows 22 when the banner appears). The 0.8.10 build (version set to 0.8.10
@@ -109,7 +124,7 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.8.10 (0.8.10 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
+| `title.jpg` | Title menu showing version 0.8.11 (0.8.11 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
 | `battle.jpg` | **Benchmark** run (Settings → Benchmark, Absurd intensity) on Ulasem Arena, 55 game seconds in. Eight server AIs fight, all five sides. The camera, at 1.3× zoom, shows Aramon (magenta) and Taros (yellow) armies, with Black Dragons, clashing at a sandy arena; damaged units of every side show health bars. A real feature with no fixture; spectator view, so no fog. Rendered by the 0.8.8 build |
 | `dragons.jpg` | **Development scene.** Five server AIs, one per side, from a stress-test start (300-unit cap) with gods on, 90 game seconds in. Creon Neo Dragons breathe fire on an Aramon siege column; health bars show for every side. Spectator view, 1.4× zoom. Rendered by the 0.8.8 build |
 | `flyers.jpg` | **Development scene, spawned.** Legion pathfinding, 22 s after one move order east-south-east. A 44-unit Zhon formation: Trolls, Stone Giants and Jungle Orcs, with Gryphons, Harpies and Drakes holding rows of stations over the front of the ground (new in 0.8.0, protocol 254; before, over its middle). `1F`, solid green, marks members of formation 1. Nothing is selected, so the information bar is empty (0.8.1). Fog off, 1.45× zoom. Rendered by the 0.8.8 build (protocol 288) |
@@ -119,7 +134,7 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 | `lobby.jpg` | Single-player create screen with Ulasem Arena selected (the title from the map's translate table, in the list and on the MAP line): the preview numbers the map's eight start positions, MAP SCENARIO under it is greyed (THIS MAP HAS NO SCENARIO), and POWER CODES: OFF is among the options, which are all one width with one label size (0.8.9). Retail pathfinding, other options at their defaults. Rendered by the 0.8.9 build, 1600 × 1000 (see *Lobby captures* below) |
 | `lobby-scenario.jpg` | Single-player create screen on King of the Hill with **MAP SCENARIO** turned on: the gold **S** marks the maps with a playable scenario in the list, the lines under the button say what the scenario changes, Monarch Expendable and Start Locations are greyed, and the preview numbers the four start positions. 1024 × 768, cropped to the lobby panel; the map row and the button were clicked with `TAK_SHOT_CLICKS`, then the pointer moved off the panel. Rendered by the 0.8.9 build (one button width in the option column). Used only by the user guide |
 | `room.jpg` | Single-player room on Ulasem Arena with three Normal AIs (Taros, Veruna, Zhon) added by clicks, Crusades and Double Sight on, Legion pathfinding and both example cosmetic packs ticked (empty folders in the scratch install); under the COSMETIC MODS heading ALWAYS ON: click.hpi, then the pack names at the column's text size, the GAME MODS list below (no game pack ticked, so no GAME MODS VERIFIED line, new in 0.8.9). The open rows 5 to 8 each have a **MOVE HERE** button. The match rules end with MAP SCENARIO: OFF at the others' size (0.8.9). The map at the top of the right column marks starts 1 to 4 in the colours of the four seated players. The AI names are the lobby's own random picks. Rendered by the 0.8.9 build, 1600 × 1000; the CREATE screen's toggles, slot types, sides and pack boxes were clicked with `TAK_SHOT_CLICKS`, then the pointer moved off the panel |
-| `campaign.jpg` | Book of Darien campaign picker with a fresh profile, chapter 1. The CHAPTER heading and numeral are retail lettering in both UI fonts; the chapter title and the always-on mods note (click.hpi, in dark ink on the parchment) are in the UI font. Rendered by the 0.8.8 build, 1600 × 1000, with `TAK_SHOT_CAMPAIGN=0` |
+| `campaign.jpg` | Book of Darien campaign picker with a fresh profile, chapter 1. The CHAPTER heading and numeral are retail lettering in both UI fonts; the chapter title, the always-on mods note (click.hpi, in dark ink on the parchment) and the **Opponent AI: NORMAL (A)** line under it (new in 0.8.11, at its default) are in the UI font. Rendered by the 0.8.11 build, 1600 × 1000, with `TAK_SHOT_CAMPAIGN=0` |
 | `crusades.jpg` | Imported Darien Crusades definition (`crusades_import` from the retail `Darien.def`) on an authenticated local server, account *Gallery*; Torcairn selected in the territory list after joining Honor, so the territory panel lists its details and the map marks it. No authored battle maps or ownership. Rendered by the 0.8.8 build, 1600 × 1000 |
 | `streaming.jpg` | Streaming setup with no key or broadcast, showing the **Remember Key** row (off; the Secret Service is available) and the **Save a Local Copy** row (off, the default; MP4 IN THE VIDEOS FOLDER), new in 0.8.10. Rendered by the 0.8.10 build at 1600 × 1000, with the debug `TAK_CREDSTORE=test` store so no real key could appear |
 | `diplomacy.jpg` | Built-in input-test fixture (the debug `TAK_DIPLOMACY_TEST` harness, `--testbuild`) after gifting, 1600 × 1000, in a profile with voice chat on. The VOICE column ticks every other player (your own box is shown, greyed); VOLUME has sliders for the two other humans, left by the fixture at 50% (ALLY) and 25% (DEFEATED), and none for the computer player (ENEMY). Elsin stays selected, so the bar shows her portrait, name and health and mana only. Rendered by the 0.8.8 build |
@@ -155,6 +170,7 @@ replace them. The unchanged views contain no version text.
 | `room-mods-power-codes.jpg` | Recaptured by the 0.8.9 build. Single-player room on Ulasem Arena, 1600 × 1000: POWER CODES clicked on in the create screen, two Normal AIs; under the COSMETIC MODS heading ALWAYS ON: click.hpi, then the packs at the column's text size (Classic Sounds ticked, Alternate Cursors not) and the GAME MODS list (Big Battles ticked, so GAME MODS VERIFIED shows); the match rules read POWER CODES: ON, and MAP SCENARIO: OFF is a rules line at the others' size. Clicked with `TAK_SHOT_CLICKS` |
 | `build-line.jpg` | New in 0.8.9. A Shift-drag wall line in progress: the committed debug `TAK_BUILDLINE_SHOT=560,0,2` fixture (`--testbuild`, Ulasem Arena) selects Elsin, chooses the Aramon wall, holds Shift, presses the left button, drags 560 px east and turns the mouse wheel up two notches, so the preview shows nine wall sites two cells apart and the **GAP 2** label by the pointer. 1.5× zoom, fog off; 1600 × 900, scaled |
 | `disconnect-wait.jpg` | Recaptured by the 0.8.10 build (first taken during 0.8.10 development). Two humans on Inner Circle through a local `takserver --local --no-auth --seed 1` at the default 8 s stall threshold (data: a copy of the retail archives); the second client (Brannoc, headless) was stopped with `SIGSTOP` 40 s in, and the first (Aldric, 1600 × 900, scaled) was captured about 4 s after the banner appeared: the game is paused and reads WAITING FOR Brannoc 18 (a first stop's countdown starts at 22, as the 8 silent seconds are already spent). Nothing is selected. Capture script `~/tak-tmp/scratch/release-0810/shots/dw.sh` |
+| `build-menu-wrap.jpg` | New in 0.8.11. A Zhon Beast Tamer's nine-icon conjure menu wrapped into two rows (five above four, centred, the container over both) left of the command panel and the mana orb. **Selection still life** (`--testbuild --side zon`, `TAK_SELPORTRAITS=zontrain:1`, local server), Ulasem Arena, a 1024 × 768 window at Build Menu Scale 150% (the menu fits one row at 100%), hardware cursor on so no pointer is drawn; not scaled |
 
 The guide also uses `title.jpg`, `lobby.jpg`, `room.jpg`, `campaign.jpg`,
 `diplomacy.jpg`, `generated.jpg` and `cartographer.png` from the gallery, and
@@ -309,7 +325,7 @@ Capture scripts, job lists and the encoder are in the release-preparation
 scratch directories, `$SCR/shared/release-0.7.26/shots`,
 `$SCR/shared/release-0.7.27/shots`, `$SCR/shared/release-0.7.28/shots`,
 `$SCR/shared/release-0.8.0/shots`, `$SCR/shared/release-0.8.1/shots`,
-`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots`, `~/tak-tmp/scratch/release-086/shots`, `~/tak-tmp/scratch/release-087/shots`, `~/tak-tmp/scratch/release-088/shots`, `~/tak-tmp/scratch/release-089/shots` and `~/tak-tmp/scratch/release-0810/shots`. Raw PNGs, logs, profiles
+`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots`, `~/tak-tmp/scratch/release-086/shots`, `~/tak-tmp/scratch/release-087/shots`, `~/tak-tmp/scratch/release-088/shots`, `~/tak-tmp/scratch/release-089/shots`, `~/tak-tmp/scratch/release-0810/shots` and `~/tak-tmp/scratch/release-0811/shots`. Raw PNGs, logs, profiles
 and the SHA-256 manifest are kept locally in the worktree's ignored
 `build-o2/capture` folder. Keep retail archives, extracted assets and temporary
 capture files out of Git. When refreshing, rerender and inspect every view, then

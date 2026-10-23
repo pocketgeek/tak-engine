@@ -493,6 +493,10 @@ Select a builder and its build menu appears along the bottom of the screen.
 A long menu that does not fit beside the command panel wraps into a second row
 (or more) above the first, so it never covers the panel or the mana orb.
 
+![A Zhon Beast Tamer's nine-icon conjure menu wrapped into two rows, five above four, left of the command panel in a 1024 by 768 window](img/guide/build-menu-wrap.jpg)
+
+*A Beast Tamer's menu at Build Menu Scale 150% in a 1024 × 768 window: two rows, clear of the command panel and the mana orb.*
+
 - **Structures**: click an icon, then click the map to place it. Placement shows
   whether the spot is valid. Right-click or **Esc** cancels.
 - **Lines and queues**: hold **Shift** while placing to queue several sites, or
@@ -1925,9 +1929,9 @@ In the book:
 - **Enter** plays the selected chapter. **Escape** returns to the menu.
 - Every chapter can be selected, including the *Iron Plague* alternate ending.
 
-![The campaign book open at Book of Darien chapter 1, All Hell Broken Loose](img/campaign.jpg)
+![The campaign book open at Book of Darien chapter 1, All Hell Broken Loose, with Opponent AI: NORMAL (A) on the left page](img/campaign.jpg)
 
-*The campaign book, with tabs for both campaigns at the bottom.*
+*The campaign book, with the Opponent AI line on the left page and tabs for both campaigns at the bottom.*
 
 Each mission plays its intro movie, then shows the briefing over the paused
 battlefield. **Enter**, **Space**, **Escape** or a left click starts the
