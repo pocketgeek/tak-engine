@@ -23,7 +23,7 @@ void cart::Session::persistPreferences() {
 
 void cart::Session::invalidateMinimap() {minimapCancel->store(true,std::memory_order_relaxed);++minimapRevision;minimapPreviewPending=true;minimapDue=SDL_GetTicks64()+250;}
 
-cart::HistoryState cart::Session::historySnapshot() {return cart::historyState(mapViewPtr->map(),scenario,scen,units,useOnly,mapName);}
+cart::HistoryState cart::Session::historySnapshot() {return cart::historyState(mapViewPtr->map(),scenario,scen,units,useOnly,aiFiles,mapName);}
 
 void cart::Session::commitHistory() {
     if(resetHistory) {history.reset(historySnapshot(),false);resetHistory=false;}
@@ -37,7 +37,8 @@ bool cart::Session::saveDocument(const std::string& destination,bool bundle) {
         commitHistory();
         cart::SaveSnapshot snapshot;
         snapshot.map=mapView.map();snapshot.metadata=scenario;snapshot.scenario=scen;
-        snapshot.units=units;snapshot.useOnly=useOnly;snapshot.vfs=&vfs;
+        snapshot.units=units;snapshot.useOnly=useOnly;snapshot.aiFiles=aiFiles;snapshot.vfs=&vfs;
+        snapshot.installMaps=cart::installMapsFolder(std::filesystem::u8path(dataRoot));
         snapshot.destination=std::filesystem::u8path(destination);
         snapshot.bundle=bundle;snapshot.rebuildMinimaps=edited;
         const auto path=snapshot.destination;
@@ -91,17 +92,22 @@ bool cart::Editor::openDocument(const std::string& request) {
     try {
         auto nextVfs=tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot));
         std::string path,chosen=request;
+        cart::AiFiles nextAiFiles;
         const auto disk=std::filesystem::u8path(request);
         if(std::filesystem::is_regular_file(disk)) {
             auto files=std::make_shared<tak::hpi::Vfs::Files>();
             if(lowerText(pathText(disk.extension()))==".kmp") {
                 tak::hpi::Archive archive(disk);
+                nextAiFiles=cart::aiFilesFromArchive(archive);   // root ai/ members, all of them
                 for(const auto& entry:archive.entries()) if(!entry.isDirectory && entry.path.starts_with("kmap/")) {
                     (*files)[tak::hpi::MountSet::key(entry.path)]=archive.read(entry);
                     if(tak::vpath::extension(entry.path)==".tnt")path=tak::hpi::MountSet::key(entry.path);
                 }
             } else if(lowerText(pathText(disk.extension()))==".tnt") {
                 const auto base=pathText(disk.stem());path="kmap/"+base+".tnt";
+                // A sibling ai/ folder, except the install's Maps/ai (read for every map).
+                const auto folder=disk.parent_path();
+                if(!cart::insideFolder(folder,cart::installMapsFolder(std::filesystem::u8path(dataRoot))))nextAiFiles=cart::aiFilesFromFolder(folder);
                 for(const char* ext:{".tnt",".ota",".crt",".tdf",".recipe",".editor"}) {
                     const auto input=disk.parent_path()/std::filesystem::u8path(base+ext);std::ifstream stream(input,std::ios::binary);
                     if(stream)(*files)[tak::hpi::MountSet::key("kmap/"+base+ext)]={std::istreambuf_iterator<char>(stream),{}};
@@ -125,6 +131,7 @@ bool cart::Editor::openDocument(const std::string& request) {
         thumbs.reset();unitPortraits.reset();features.quiesce();
         mapView.quiesce();vfs=std::move(nextVfs);mapView.reload(vfs,path);mapView.setOffset(0,0);minimapSource=nullptr;invalidateMinimap();
         scenario=std::move(nextMetadata);scen=std::move(nextScenario);units=std::move(nextUnits);useOnly=std::move(nextUseOnly);
+        aiFiles=std::move(nextAiFiles);
         mapName=chosen;mapPath=path;world=scenario.kingdom.empty()?"aramon":scenario.kingdom;
         sections.scan(vfs,world);features.scan(vfs,world);
         for(auto& [key,t]:featTex)if(t)SDL_DestroyTexture(t);
@@ -154,8 +161,8 @@ void cart::Editor::testMap() {
             mapView.quiesce();
             cart::generateMinimaps(snapshot,mapView.compositor(),cart::loadWorldPalette(vfs,world));
         }
-        auto files=cart::documentFiles(snapshot,scenario,scen,units,useOnly,name);
-        if(preferences.tracePlaytest)for(auto& file:files)if(file.path.ends_with(".ota")) {
+        auto files=cart::documentFiles(snapshot,scenario,scen,units,useOnly,aiFiles,name);
+        if(preferences.tracePlaytest)for(auto& file:files.members)if(file.path.ends_with(".ota")) {
             const std::string marker="\n[TAKPlaytest]\n{\nauthoredscenario=1;\ntrace=1;\n}\n";
             file.data.insert(file.data.end(),marker.begin(),marker.end());
         }
@@ -193,8 +200,8 @@ void cart::Editor::autosaveRecovery() {
         else if(!recoveryJob.valid() && recoveryClock()>=nextRecovery && !historyPending) {
             nextRecovery=recoveryClock()+60000;
             try {
-                auto files=cart::documentFiles(mapView.map(),scenario,scen,units,useOnly,mapName);
-                files.push_back(cart::recoveryInfo(mapName,std::filesystem::u8path(outDir)));
+                auto files=cart::documentFiles(mapView.map(),scenario,scen,units,useOnly,aiFiles,mapName);
+                files.members.push_back(cart::recoveryInfo(mapName,std::filesystem::u8path(outDir)));
                 recoveryFilesPresent=true;
                 recoveryJob=std::async(std::launch::async,[files=std::move(files),path=recoverySession->path()]() {
                     std::string error;cart::writeDocumentBundle(path,files,error);return error;
@@ -214,7 +221,7 @@ void cart::Editor::restoreHistory(const cart::HistoryState* state) {
     scenario=tak::tnt::Scenario::parse(state->metadata);
     scen=tak::crt::parse(state->scenario);cart::applyScenarioInfo(scen,state->editorMetadata);units=cart::toPlaced(scen,&unitRegistry);
     regionDrag.cancel();regionSelected=-1;
-    useOnly=state->useOnly;mapName=state->name;dirty=history.dirty();edited=true;
+    useOnly=state->useOnly;aiFiles=state->aiFiles;mapName=state->name;dirty=history.dirty();edited=true;
     selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();selectedFeatures.clear();
     editRule=nullptr;draggingUnit=draggingStart=-1;scrGroup=-1;
     const auto nextWorld=scenario.kingdom.empty()?"aramon":scenario.kingdom;

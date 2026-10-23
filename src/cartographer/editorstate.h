@@ -146,6 +146,9 @@ struct Session {
     // Use-only restriction: the allowed unit types (UPPERCASE). Loaded from the
     // sibling <map>.tdf when the OTA references one; empty = unrestricted.
     std::set<std::string> useOnly;
+    // The map's ai/<x>.txt profiles (document.h AiFiles), carried byte for byte
+    // through open, save, Test Map, recovery and undo.
+    AiFiles aiFiles;
     // Set when the terrain is painted, so Save regenerates the minimaps (an
     // unedited save stays byte-identical to the source; an edited one gets a
     // fresh overview reflecting the paint).

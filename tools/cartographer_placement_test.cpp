@@ -1330,7 +1330,7 @@ bool featureOpsSession(const std::string& data,const std::string& world) {
     s.then([&](Editor& e,const Input& in) {
         try {
             const auto path=fs::path(ops.root)/"Test snapshot.kmp";std::string error;
-            if(!cart::writeDocumentBundle(path,cart::documentFiles(e.mapView.map(),e.scenario,e.scen,e.units,e.useOnly,"Test snapshot"),error))throw std::runtime_error(error);
+            if(!cart::writeDocumentBundle(path,cart::documentFiles(e.mapView.map(),e.scenario,e.scen,e.units,e.useOnly,{},"Test snapshot"),error))throw std::runtime_error(error);
             const auto package=tak::net::maps::importSnapshot(e.vfs,path);
             tak::hpi::Vfs view(&e.vfs);view.setMapFiles(package->files);
             const auto map=tak::tnt::Map::load(package->files->at(package->mapPath),package->mapPath);

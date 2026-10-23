@@ -15,11 +15,12 @@ struct HistoryState {
     int seaLevel=0;
     bool stockTerrain=false;
     std::string editorMetadata;
+    AiFiles aiFiles;   // small; kept whole per entry like the .ota text
     bool operator==(const HistoryState&) const = default;
 };
 HistoryState historyState(const tak::tnt::Map&,const tak::tnt::Scenario&,
                           const tak::crt::Scenario&,const std::vector<PlacedUnit>&,
-                          const std::set<std::string>&,const std::string&);
+                          const std::set<std::string>&,const AiFiles&,const std::string&);
 
 class History {
 public:

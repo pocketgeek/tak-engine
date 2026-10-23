@@ -183,6 +183,7 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
                     recoveredMapPath=snapshot.mapPath;mapName=tak::vpath::stem(snapshot.mapPath);
                     if(snapshot.destination) {mapName=snapshot.destination->name;if(!explicitOutput)outDir=snapshot.destination->directory;}
                     if(snapshot.fromBackup)recoveryStatus="Recovered previous snapshot; newest recovery was unreadable";
+                    aiFiles=cart::liftAiFiles(*snapshot.files);   // root ai/ members back into the document
                     vfs.setMapFiles(std::move(snapshot.files));recoveredFrom=recoveredSession->path();
                 } catch(const std::exception& e) {SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Recovery failed",e.what(),win);throw Exit{1};}
             }

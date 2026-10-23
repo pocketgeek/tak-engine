@@ -22,10 +22,10 @@ std::future<SaveResult> saveInBackground(SaveSnapshot snapshot,std::shared_ptr<S
             if(progress->cancel.load())throw std::runtime_error("Save cancelled");
             progress->phase=SaveProgress::Serializing;
             const auto text=snapshot.destination.stem().u8string();const std::string name(text.begin(),text.end());
-            const auto files=documentFiles(snapshot.map,snapshot.metadata,snapshot.scenario,snapshot.units,snapshot.useOnly,name);
+            const auto files=documentFiles(snapshot.map,snapshot.metadata,snapshot.scenario,snapshot.units,snapshot.useOnly,snapshot.aiFiles,name);
             progress->phase=SaveProgress::Writing;
             result.ok=snapshot.bundle?writeDocumentBundle(snapshot.destination,files,result.error,&progress->cancel):
-                writeDocumentFiles(snapshot.destination.parent_path(),files,result.error,&progress->cancel);
+                writeDocumentLoose(snapshot.destination.parent_path(),files,snapshot.installMaps,result.error,&progress->cancel);
         } catch(const std::exception& e) {result.error=e.what();}
         progress->phase=SaveProgress::Finished;
         return result;

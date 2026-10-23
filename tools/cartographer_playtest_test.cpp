@@ -19,6 +19,14 @@ static int runTest(int argc,char** argv) try {
         check(fs::u8path(argv[2]).filename()==fs::u8path("data spaces ü & $"),"data path quoting/Unicode changed");
         tak::hpi::Archive snapshot(fs::u8path(argv[4]));
         check(!snapshot.entries().empty(),"child could not read snapshot");
+        // The game's own import (takclient --play-map): the whitelisted AI profiles
+        // reach the test room; a stray ai/ file stays behind.
+        tak::hpi::Vfs base;auto art=std::make_shared<tak::hpi::Vfs::Files>();
+        (*art)["terrain/00000001.jpg"]={1};base.setModFiles(art);   // the tile art a real install supplies
+        const auto package=tak::net::maps::importSnapshot(base,fs::u8path(argv[4]));
+        check(package->files->count("ai/n.txt") && package->files->at("ai/n.txt")==std::vector<uint8_t>({'w',' ','x',' ','0','\n'}),"test room lost ai/n.txt");
+        check(package->files->count("ai/islands.txt"),"test room lost the map's own DEFAULT profile");
+        check(!package->files->count("ai/notes.txt"),"a stray ai/ file travelled into the test room");
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         return 0;
     }
@@ -52,7 +60,9 @@ static int runTest(int argc,char** argv) try {
     tak::tnt::Map map;map.width=map.height=32;map.blocksX=map.blocksY=16;
     map.heights.assign(1024,40);map.features.assign(1024,0xffff);
     map.tileKeys.assign(256,1);map.tileCols.assign(256,0);map.tileRows.assign(256,0);
-    const auto files=cart::documentFiles(map,{}, {},{}, {},"Snapshot");
+    tak::tnt::Scenario metadata;metadata.aiProfile="islands";
+    const auto files=cart::documentFiles(map,metadata, {},{}, {},
+        {{"ai/n.txt",{'w',' ','x',' ','0','\n'}},{"ai/islands.txt",{'l','i','m','i','t',' ','f','l','y',' ','2','\n'}},{"ai/notes.txt",{'p','l','a','n','\n'}}},"Snapshot");
     const auto root=fs::temp_directory_path()/fs::u8path("data spaces ü & $");
     std::string error;
     check(!test.start(root/"nonexistent",root,files,error) && !error.empty() && !test.running(),"missing executable did not fail cleanly");
@@ -66,8 +76,8 @@ static int runTest(int argc,char** argv) try {
     }
     check(result && *result==0,"child launch/argument test failed or timed out");
     check(!fs::exists(path.parent_path()) && !test.running(),"finished snapshot not cleaned up");
-    check(map.width==32 && files.front().data==map.save(),"playtest modified source document");
-    std::cout<<"PASS: temporary playtest snapshot, Unicode arguments, single child, launch failure and cleanup\n";
+    check(map.width==32 && files.members.front().data==map.save(),"playtest modified source document");
+    std::cout<<"PASS: temporary playtest snapshot, AI profiles in the test room, Unicode arguments, single child, launch failure and cleanup\n";
     return 0;
 } catch(const std::exception& e) {std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}
 

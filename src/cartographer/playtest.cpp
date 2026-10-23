@@ -52,7 +52,7 @@ Playtest::~Playtest() {
     if(!process_)cleanup();
 }
 bool Playtest::start(const fs::path& client,const fs::path& data,
-                     const std::vector<tak::hpi::PackFile>& files,std::string& error) {
+                     const DocumentFiles& files,std::string& error) {
     error.clear();poll();
     if(running()) {error="A map test is already running. Close its game window before starting another.";return false;}
     try {

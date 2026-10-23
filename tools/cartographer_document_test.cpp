@@ -268,9 +268,9 @@ static void blockerTests(const std::filesystem::path& root) {
     map=blankMap(4,4);map.featureNames={"Tree"};map.features[9]=0;map.features[10]=0xFFFB;map.features[12]=0xFFFE;
     cart::applyBlockers(map,0,2,7,3,cart::BlockOp::Paint);
     tak::tnt::Scenario meta;tak::crt::Scenario scenario;
-    const auto files=cart::documentFiles(map,meta,scenario,{},{},"Blocked");
-    const auto tnt=std::find_if(files.begin(),files.end(),[](const auto& f){return f.path.ends_with(".tnt");});
-    check(tnt!=files.end() && tak::tnt::Map::load(tnt->data).features==map.features,"blocked cells survive save and load");
+    const auto files=cart::documentFiles(map,meta,scenario,{},{},{},"Blocked");
+    const auto tnt=std::find_if(files.members.begin(),files.members.end(),[](const auto& f){return f.path.ends_with(".tnt");});
+    check(tnt!=files.members.end() && tak::tnt::Map::load(tnt->data).features==map.features,"blocked cells survive save and load");
     {
         auto recovery=cart::RecoveryFile::create(root);std::string error;
         check(cart::writeDocumentBundle(recovery->path(),files,error),error.c_str());
@@ -279,10 +279,10 @@ static void blockerTests(const std::filesystem::path& root) {
         check(recovery->discard(error),error.c_str());
     }
     // One stroke is one undo step.
-    cart::History history;history.reset(cart::historyState(map,meta,scenario,{},{},"Blocked"),true);
+    cart::History history;history.reset(cart::historyState(map,meta,scenario,{},{},{},"Blocked"),true);
     const auto before=map.features;
     cart::applyBlockerLine(map,0,0,7,0,2,cart::BlockOp::Paint);
-    check(history.commit(cart::historyState(map,meta,scenario,{},{},"Blocked")),"a stroke commits to the history");
+    check(history.commit(cart::historyState(map,meta,scenario,{},{},{},"Blocked")),"a stroke commits to the history");
     const auto* undone=history.undo();
     check(undone && tak::tnt::Map::load(undone->terrain).features==before,"undo restores the blocked cells");
     const auto* redone=history.redo();
@@ -321,6 +321,87 @@ static void blockerTests(const std::filesystem::path& root) {
     const auto objects=cart::symmetrize(leave,noStarts,noScenario,noUnits,request,{},nullptr);
     check(objects.blocked==3 && leave.features[size_t(3)*16+11]==0xFFFC && leave.features[size_t(3)*16+13]==0xFFFC,"Symmetrize without terrain copies blocked cells too");
     std::cout<<"PASS: BLOCKED brush paint/erase rules, clipping, strokes, save, recovery, undo, live symmetry and Symmetrize\n";
+}
+// AI profiles (root ai/<x>.txt): a .kmp's files re-save byte for byte, travel at
+// the archive root, survive undo/redo and recovery, and export loose beside the
+// map except into the install's Maps folder. Synthetic file contents only.
+static void aiFileTests(const std::filesystem::path& root) {
+    namespace fs=std::filesystem;
+    auto bytes=[](std::string_view text){return std::vector<uint8_t>(text.begin(),text.end());};
+    const auto map=blankMap(4,4);
+    tak::tnt::Scenario meta;meta.aiProfile="islands";
+    const auto n=bytes("// level file\r\nweight testarch 0\r\nlimit testarch 2"),          // CRLF, no final newline
+               islands=bytes("weight all 0.5 # tail\n// caf\xc3\xa9 \xe2\x80\x94 note\nlimit fly 2\n"),
+               notes=bytes("plan attack 3\n");
+    check(cart::aiFileKey("ai/n.txt") && cart::aiFileKey("AI/Islands.TXT") && !cart::aiFileKey("ai/sub/x.txt") &&
+          !cart::aiFileKey("kmap/x/ai/n.txt") && !cart::aiFileKey("ai/.txt") && !cart::aiFileKey("ai/n.tdf"),"AI file keys are root ai/<name>.txt only");
+    // A hand-packed source map, member names in mixed case.
+    const auto source=root/"Islands.kmp";
+    {
+        const auto base=cart::documentFiles(map,meta,{},{},{},{},"Islands");
+        std::vector<tak::hpi::PackFile> members;
+        for(auto member:base.members) {member.path="kmap/Islands/"+member.path;members.push_back(member);}
+        members.push_back({"AI/N.txt",n});members.push_back({"ai/islands.txt",islands});members.push_back({"ai/Notes.txt",notes});
+        members.push_back({"ai/sub/deep.txt",notes});members.push_back({"ai/empty.txt",{}});
+        const auto packed=tak::hpi::pack(members);
+        std::ofstream out(source,std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<const char*>(packed.data()),std::streamsize(packed.size()));
+    }
+    auto opened=cart::aiFilesFromArchive(tak::hpi::Archive(source));
+    check(opened.size()==4 && opened.at("ai/n.txt")==n && opened.at("ai/islands.txt")==islands && opened.at("ai/notes.txt")==notes &&
+          opened.count("ai/empty.txt"),"open keeps every root ai/ file, stray ones included, and nothing nested");
+    const cart::AiFiles expected{{"ai/n.txt",n},{"ai/islands.txt",islands},{"ai/notes.txt",notes}};
+    auto files=cart::documentFiles(map,meta,{},{},{},opened,"Islands");
+    check(files.rootMembers.size()==3,"an empty AI file is dropped, never written");
+    std::string error;
+    const auto resaved=root/"Resaved.kmp";
+    check(cart::writeDocumentBundle(resaved,files,error),error.c_str());
+    {
+        tak::hpi::Archive archive(resaved);bool profile=false;
+        for(const auto& entry:archive.entries()) if(!entry.isDirectory) {
+            const auto key=tak::hpi::MountSet::key(entry.path);
+            check(!(key.starts_with("kmap/") && key.find("/ai/")!=std::string::npos),"AI files are not under kmap/");
+            if(key.ends_with(".ota")) {const auto ota=archive.read(entry);profile=tak::tnt::Scenario::parse(std::string(ota.begin(),ota.end())).aiProfile=="islands";}
+        }
+        check(profile,"aiprofile= survives the save");
+    }
+    check(cart::aiFilesFromArchive(tak::hpi::Archive(resaved))==expected,"all three AI files re-save byte for byte");
+    // Undo/redo.
+    cart::History history;history.reset(cart::historyState(map,meta,{},{},{},expected,"Islands"),true);
+    auto edited=expected;edited["ai/n.txt"]=bytes("weight testarch 5\n");edited.erase("ai/notes.txt");
+    check(history.commit(cart::historyState(map,meta,{},{},{},edited,"Islands")) && history.dirty(),"an AI file edit is an undo step");
+    check(history.undo()->aiFiles==expected && !history.dirty(),"undo restores the AI files");
+    check(history.redo()->aiFiles==edited,"redo reapplies the AI file edit");
+    // Recovery: written by the autosave serializer, lifted back out of the snapshot.
+    {
+        auto recovery=cart::RecoveryFile::create(root);
+        auto autosave=cart::documentFiles(map,meta,{},{},{},expected,"Islands");
+        autosave.members.push_back(cart::recoveryInfo("Islands",root));
+        check(cart::writeDocumentBundle(recovery->path(),autosave,error),error.c_str());
+        auto snapshot=cart::readRecoverySnapshot(recovery->path());
+        check(cart::liftAiFiles(*snapshot.files)==expected,"recovery carries the AI files");
+        for(const auto& [key,data]:*snapshot.files)check(!key.starts_with("ai/"),"lifted AI files leave the map files");
+        check(snapshot.files->count(snapshot.mapPath) && snapshot.destination,"the rest of the recovery is intact");
+        check(recovery->discard(error),error.c_str());
+    }
+    // Loose export: a sibling ai/ folder, read back by a loose open.
+    const auto loose=root/"loose";fs::create_directory(loose);
+    check(cart::writeDocumentLoose(loose,files,{},error),error.c_str());
+    check(fs::is_regular_file(loose/"Islands.tnt") && cart::aiFilesFromFolder(loose)==expected,"loose export writes <dir>/ai/<x>.txt");
+    check(cart::writeDocumentLoose(loose,files,{},error) && read(loose/"ai"/"n.txt.bak")==n,"a loose re-export keeps backups like the map files");
+    const auto data=root/"install";fs::create_directories(data/"MAPS"/"mine");
+    const auto maps=cart::installMapsFolder(data);
+    check(maps==data/"MAPS","the install's Maps folder is found in any case");
+    for(const auto& folder:{maps,maps/"mine"}) {
+        check(!cart::writeDocumentLoose(folder,files,maps,error) && error.find("Save as .kmp")!=std::string::npos,"loose AI profiles are refused in the Maps folder");
+        check(!fs::exists(folder/"Islands.tnt") && !fs::exists(folder/"ai"),"a refused loose export writes nothing");
+    }
+    check(cart::insideFolder(maps/"mine",maps) && !cart::insideFolder(root,maps) && !cart::insideFolder(data/"MAPS2",maps),"folder containment is by component");
+    const auto plain=cart::documentFiles(map,meta,{},{},{},{},"Islands");
+    check(cart::writeDocumentLoose(maps,plain,maps,error) && !fs::exists(maps/"ai"),"a map without AI profiles still exports into Maps");
+    bool rejected=false;
+    try {cart::documentFiles(map,meta,{},{},{},{{"ai/../x.txt",notes}},"Islands");} catch(const std::exception&) {rejected=true;}
+    check(rejected,"an invalid AI file name cannot be saved");
+    std::cout<<"PASS: AI profiles re-save byte for byte at the .kmp root, undo/redo, recovery, loose ai/ export and the Maps-folder refusal\n";
 }
 int main() {
     namespace fs=std::filesystem;
@@ -430,13 +511,13 @@ int main() {
         const auto names=cart::scenarioInfo(scenario);auto named=tak::crt::parse(unnamedCrt);
         check(cart::applyScenarioInfo(named,names) && named.players[0][0].editorName==scenario.players[0][0].editorName,"Unicode rule names roundtrip in sidecar");
         check(!cart::applyScenarioInfo(named,"TAK_EDITOR_RULE_NAMES 1\n99 0 \"bad\"\n") && named.players[0][0].editorName==scenario.players[0][0].editorName,"invalid rule metadata is atomic");
-        cart::History namedHistory;namedHistory.reset(cart::historyState(map,meta,scenario,{}, {},"Review"),true);
-        scenario.players[0][0].editorName="Victory";namedHistory.commit(cart::historyState(map,meta,scenario,{}, {},"Review"));
+        cart::History namedHistory;namedHistory.reset(cart::historyState(map,meta,scenario,{}, {},{},"Review"),true);
+        scenario.players[0][0].editorName="Victory";namedHistory.commit(cart::historyState(map,meta,scenario,{}, {},{},"Review"));
         check(cart::applyScenarioInfo(named,namedHistory.undo()->editorMetadata) && named.players[0][0].editorName=="Defend the bridge — été","rule name undo restores metadata");
         check(cart::applyScenarioInfo(named,namedHistory.redo()->editorMetadata) && named.players[0][0].editorName=="Victory","rule name redo restores metadata");
-        auto files=cart::documentFiles(map,meta,scenario,{}, {},"Review");
+        auto files=cart::documentFiles(map,meta,scenario,{}, {},{},"Review");
         std::string error;
-        check(cart::writeDocumentFiles(root,files,error),error.c_str());
+        check(cart::writeDocumentFiles(root,files.members,error),error.c_str());
         auto crt=tak::crt::parse(read(root/"Review.crt"));
         tak::hpi::Vfs namedVfs;auto namedFiles=std::make_shared<tak::hpi::Vfs::Files>();
         (*namedFiles)["review.crt"]=read(root/"Review.crt");(*namedFiles)["review.editor"]=read(root/"Review.editor");namedVfs.setMapFiles(namedFiles);
@@ -461,12 +542,12 @@ int main() {
             check(recovery && recovery->path()==file && cart::readRecoverySnapshot(file).fromBackup,"backup-only abandoned session is recoverable");
             check(recovery->discard(error),error.c_str());
             auto broken=files;
-            for(auto& member:broken)if(member.path.ends_with(".crt"))member.data={1,2,3};
+            for(auto& member:broken.members)if(member.path.ends_with(".crt"))member.data={1,2,3};
             check(cart::writeDocumentBundle(file,broken,error),error.c_str());
             bool rejected=false;try {cart::readRecoverySnapshot(file);}catch(const std::exception&) {rejected=true;}
             check(rejected && fs::exists(file),"damaged scenario rejected without deleting snapshot");
             broken=files;
-            for(auto& member:broken)if(member.path.ends_with(".tnt"))member.data={1,2,3};
+            for(auto& member:broken.members)if(member.path.ends_with(".tnt"))member.data={1,2,3};
             check(cart::writeDocumentBundle(file,broken,error),error.c_str());
             rejected=false;try {cart::readRecoverySnapshot(file);}catch(const std::exception&) {rejected=true;}
             check(rejected && fs::exists(file.string()+".bak"),"damaged terrain and scenario generations remain available for diagnosis");
@@ -478,11 +559,11 @@ int main() {
         tak::hpi::Archive openArchive(root/"Review.kmp"); // editor may retain a mapped archive while saving over it
         const auto oldEntry=*std::find_if(openArchive.entries().begin(),openArchive.entries().end(),[](const auto& entry){return !entry.isDirectory;});const auto oldBytes=openArchive.read(oldEntry);
         scenario.players[0].clear();
-        files=cart::documentFiles(map,meta,scenario,{}, {},"Review");
+        files=cart::documentFiles(map,meta,scenario,{}, {},{},"Review");
         check(cart::writeDocumentBundle(root/"Review.kmp",files,error),error.c_str());
         check(read(root/"Review.kmp.bak")==original,"previous bundle retained");
         check(openArchive.read(oldEntry)==oldBytes,"open archive remains a stable snapshot after replacement");
-        check(cart::writeDocumentFiles(root,files,error),error.c_str());
+        check(cart::writeDocumentFiles(root,files.members,error),error.c_str());
         check(tak::crt::parse(read(root/"Review.crt")).players[0].empty(),"deletion replaces stale scenario");
         check(tak::crt::parse(read(root/"Review.crt.bak")).players[0].size()==1,"loose backup preserved");
         const auto unicodeDir=root/std::filesystem::path(u8"Cartes été");fs::create_directory(unicodeDir);
@@ -532,7 +613,7 @@ int main() {
         selectionUnits[1].x=200;selection.indices={0,1};selection.beginDrag(selectionUnits,0,0);
         check(!selection.drag(selectionUnits,50,50,100,100),"oversize selection cannot distort group");
         cart::History history;
-        auto initial=cart::historyState(map,meta,scenario,{}, {},"Review");
+        auto initial=cart::historyState(map,meta,scenario,{}, {},{},"Review");
         history.reset(initial,true);
         auto changed=initial;changed.terrain[500]^=7;changed.metadata+="changed";
         changed.scenario.resize(changed.scenario.size()+500,17);
@@ -558,6 +639,7 @@ int main() {
         check(bounded.retainedBytes()<2500,"history respects memory budget");
         symmetryTests();
         blockerTests(root);
+        aiFileTests(root);
         scrollingTests();
         // Section browser naming: retail names decompose into kind/direction/corner
         // and numbered or lettered variants collapse into one piece.

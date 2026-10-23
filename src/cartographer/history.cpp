@@ -6,8 +6,8 @@
 namespace cart {
 HistoryState historyState(const tak::tnt::Map& map,const tak::tnt::Scenario& metadata,
                           const tak::crt::Scenario& scenario,const std::vector<PlacedUnit>& units,
-                          const std::set<std::string>& useOnly,const std::string& name) {
-    return {map.save(),metadata.write(),saveScenario(scenario,units),useOnly,name,map.seaLevel,map.stockTerrain,scenarioInfo(scenario)};
+                          const std::set<std::string>& useOnly,const AiFiles& aiFiles,const std::string& name) {
+    return {map.save(),metadata.write(),saveScenario(scenario,units),useOnly,name,map.seaLevel,map.stockTerrain,scenarioInfo(scenario),aiFiles};
 }
 
 History::Patch History::Patch::make(const std::vector<uint8_t>& before,const std::vector<uint8_t>& after) {
@@ -49,11 +49,13 @@ bool History::commit(HistoryState state) {
     // Move the previous arrays away before retaining metadata in the entry.
     auto oldTerrain=std::move(current_.terrain),oldScenario=std::move(current_.scenario);
     e.before=std::move(current_);
-    e.after={ {},state.metadata,{},state.useOnly,state.name,state.seaLevel,state.stockTerrain,state.editorMetadata};
+    e.after={ {},state.metadata,{},state.useOnly,state.name,state.seaLevel,state.stockTerrain,state.editorMetadata,state.aiFiles};
     e.beforeRevision=revision_;e.afterRevision=++serial_;revision_=e.afterRevision;
     e.cost=sizeof(Entry)+e.terrain.cost+e.scenario.cost+e.before.metadata.size()+e.after.metadata.size()+e.before.editorMetadata.size()+e.after.editorMetadata.size();
     for(const auto& s:e.before.useOnly)e.cost+=sizeof(std::string)+s.size();
     for(const auto& s:e.after.useOnly)e.cost+=sizeof(std::string)+s.size();
+    for(const auto* files:{&e.before.aiFiles,&e.after.aiFiles})
+        for(const auto& [path,data]:*files)e.cost+=sizeof(std::string)+path.size()+data.size();
     bytes_+=e.cost;entries_.push_back(std::move(e));position_=entries_.size();current_=std::move(state);
     // Keep at least the most recent edit, even when a whole-map replacement is large.
     while(bytes_>budget_ && entries_.size()>1) {bytes_-=entries_.front().cost;entries_.pop_front();--position_;}

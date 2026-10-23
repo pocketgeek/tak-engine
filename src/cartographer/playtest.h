@@ -1,5 +1,5 @@
 #pragma once
-#include "hpi/hpi.h"
+#include "cartographer/document.h"
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -15,7 +15,7 @@ public:
     Playtest& operator=(const Playtest&) = delete;
     static std::filesystem::path clientPath(const std::filesystem::path& executableDirectory);
     bool start(const std::filesystem::path& client, const std::filesystem::path& data,
-               const std::vector<tak::hpi::PackFile>& files, std::string& error);
+               const DocumentFiles& files, std::string& error);
     std::optional<int> poll();
     bool running() const { return process_ != 0; }
     const std::filesystem::path& snapshot() const { return snapshot_; }

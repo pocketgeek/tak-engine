@@ -10,6 +10,8 @@ struct SaveSnapshot {
     tak::crt::Scenario scenario;
     std::vector<PlacedUnit> units;
     std::set<std::string> useOnly;
+    AiFiles aiFiles;
+    std::filesystem::path installMaps;   // loose AI profiles are refused in (or under) it
     const tak::hpi::Vfs* vfs=nullptr; // immutable asset source; caller retains it until completion
     std::filesystem::path destination;
     bool bundle=true, rebuildMinimaps=false;

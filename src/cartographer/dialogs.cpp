@@ -162,7 +162,7 @@ void cart::Editor::adoptFreshMap(FreshMap fm,const std::string& nm,const std::st
     mapName = nm;
     selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();selectedFeatures.clear();
     regionDrag.cancel();regionSelected=-1;
-    units.clear(); scen = tak::crt::Scenario{}; useOnly.clear();
+    units.clear(); scen = tak::crt::Scenario{}; useOnly.clear(); aiFiles.clear();
     resetHistory=!regeneratingCurrent;regeneratingCurrent=false;
     selected = sections.list().empty() ? -1 : 0;
     selectedFeat = features.list().empty() ? -1 : 0;

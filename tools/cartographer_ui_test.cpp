@@ -57,7 +57,7 @@ static int objectsWorkflow(const char* data) {
     const auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
     std::vector<cart::PlacedUnit> units{{"ARAARCH",0,168,168},{"ARAARCH",1,808,808}};
     units[0].name="East watch";units[1].name="West watch";std::string error;
-    if(!cart::writeDocumentBundle(root/"Objects.kmp",cart::documentFiles(map,metadata,{},units,{},"Objects"),error))throw std::runtime_error(error);
+    if(!cart::writeDocumentBundle(root/"Objects.kmp",cart::documentFiles(map,metadata,{},units,{},{},"Objects"),error))throw std::runtime_error(error);
     std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
     bool failed=false;int lastFrame=0;
     const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
@@ -291,7 +291,7 @@ static int resizeSaveWorkflow(const char* data) {
     const auto width=std::to_string(map.width/32),height=std::to_string(map.height/32);
     const auto wider=std::to_string(map.width/32+1),higher=std::to_string(map.height/32+1);
     std::string error;
-    const auto files=cart::documentFiles(map,metadata,scenario,{}, {},"Resize");
+    const auto files=cart::documentFiles(map,metadata,scenario,{}, {},{},"Resize");
     if(!cart::writeDocumentBundle(root/"Resize.kmp",files,error) || !cart::writeDocumentBundle(root/"Existing.kmp",files,error))throw std::runtime_error(error);
     auto read=[&](const fs::path& file) {std::ifstream in(file,std::ios::binary);return std::vector<uint8_t>(std::istreambuf_iterator<char>(in),{});};
     const auto existing=read(root/"Existing.kmp");
@@ -352,7 +352,7 @@ static int templateWorkflow(const char* data) {
     auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
     tak::crt::Scenario scenario;scenario.players.resize(9);scenario.regions.push_back({"Bridge",10,10,20,20});
     std::string error;
-    if(!cart::writeDocumentBundle(root/"Templates.kmp",cart::documentFiles(map,metadata,scenario,{}, {},"Templates"),error))throw std::runtime_error(error);
+    if(!cart::writeDocumentBundle(root/"Templates.kmp",cart::documentFiles(map,metadata,scenario,{}, {},{},"Templates"),error))throw std::runtime_error(error);
     std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
     bool failed=false;int lastFrame=0;
@@ -414,7 +414,7 @@ static int ruleTextWorkflow(const char* data) {
     for(int i=0;i<12;++i)group.actions.push_back({25,{"Player 1","Message "+std::to_string(i)+" "+std::string(45,'x'),"progress",std::string(63,'y')}});
     const auto expected=cart::ruleDetails(group,cart::RuleColumn::Group,0);
     std::string error;
-    if(!cart::writeDocumentBundle(root/"Rules.kmp",cart::documentFiles(map,metadata,scenario,{}, {},"Rules"),error))throw std::runtime_error(error);
+    if(!cart::writeDocumentBundle(root/"Rules.kmp",cart::documentFiles(map,metadata,scenario,{}, {},{},"Rules"),error))throw std::runtime_error(error);
     std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
     bool failed=false;int lastFrame=0;std::vector<uint8_t> before;
@@ -745,7 +745,7 @@ static int featureWorkflow(const char* data) {
     map.features.assign(map.features.size(),0xFFFF);map.features[10*map.width+10]=0;map.features[10*map.width+12]=0;
     tak::tnt::Scenario metadata;metadata.kingdom="zhon";
     std::string error;
-    if(!cart::writeDocumentBundle(root/"Features.kmp",cart::documentFiles(map,metadata,{}, {},{},"Features"),error))throw std::runtime_error(error);
+    if(!cart::writeDocumentBundle(root/"Features.kmp",cart::documentFiles(map,metadata,{}, {},{},{},"Features"),error))throw std::runtime_error(error);
     std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
     bool failed=false;int lastFrame=0;
@@ -808,7 +808,7 @@ static int validationWorkflow(const char* data,const char* mapName="Ulasem Arena
     map.featureNames.push_back("MissingEditorTestFeature");
     tak::tnt::Scenario metadata;metadata.kingdom="aramon";metadata.starts={{1,10,10},{2,20,20}};
     std::string error;
-    if(!cart::writeDocumentBundle(root/"Validation.kmp",cart::documentFiles(map,metadata,{}, {},{},"Validation"),error))throw std::runtime_error(error);
+    if(!cart::writeDocumentBundle(root/"Validation.kmp",cart::documentFiles(map,metadata,{}, {},{},{},"Validation"),error))throw std::runtime_error(error);
     std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
     int stage=0;bool failed=false;auto began=std::chrono::steady_clock::now();
@@ -1079,7 +1079,7 @@ static int symmetryWorkflow(const char* data) {
     if(const auto* type=registry.find("araarch")) {guard.footX=type->footX;guard.footZ=type->footZ;}
     guard.x=100*16+guard.footX*8.f;guard.z=50*16+guard.footZ*8.f;
     std::string error;
-    if(!cart::writeDocumentBundle(root/"Symmetry.kmp",cart::documentFiles(map,metadata,{},{guard},{},"Symmetry"),error))throw std::runtime_error(error);
+    if(!cart::writeDocumentBundle(root/"Symmetry.kmp",cart::documentFiles(map,metadata,{},{guard},{},{},"Symmetry"),error))throw std::runtime_error(error);
     // The expected result, computed outside the editor.
     cart::SectionLibrary sections;sections.scan(vfs,"zhon");cart::FeatureLibrary features;features.scan(vfs,"zhon");
     cart::SectionMatcher matcher;matcher.build(sections.list(),[&](size_t i){return sections.load(vfs,sections.list()[i].path);});
@@ -1153,7 +1153,7 @@ static int terrainClipboardWorkflow(const char* data) {
     const auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
     const auto map=tak::tnt::Map::load(vfs.read(path),path);
     tak::tnt::Scenario metadata;metadata.kingdom="zhon";std::string error;
-    if(!cart::writeDocumentBundle(root/"Clip.kmp",cart::documentFiles(map,metadata,{},{},{},"Clip"),error))throw std::runtime_error(error);
+    if(!cart::writeDocumentBundle(root/"Clip.kmp",cart::documentFiles(map,metadata,{},{},{},{},"Clip"),error))throw std::runtime_error(error);
     // Another world's map to paste into after File > Open.
     std::string other;
     for(const auto& [name,mapPath]:tak::hpi::listMaps(vfs)) {
@@ -1242,7 +1242,7 @@ static int paletteScrollWorkflow(const char* data) {
     tak::tnt::Scenario metadata;metadata.kingdom="zhon";
     for(int i=0;i<30;++i)metadata.starts.push_back({i+1,40+(i%6)*60,40+(i/6)*60});   // 30 rows overflow the STARTS list
     std::string error;
-    if(!cart::writeDocumentBundle(root/"Scroll.kmp",cart::documentFiles(map,metadata,{},{},{},"Scroll"),error))throw std::runtime_error(error);
+    if(!cart::writeDocumentBundle(root/"Scroll.kmp",cart::documentFiles(map,metadata,{},{},{},{},"Scroll"),error))throw std::runtime_error(error);
     std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
     std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
     const char* shots=std::getenv("TAK_CARTO_SHOT_DIR");
