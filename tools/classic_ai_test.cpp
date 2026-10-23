@@ -9,12 +9,23 @@
 //       stdin  "types <n>" then n lines "<name> <category words...>", then any
 //              number of "case <hex script>" lines
 //       stdout per case, for each catalogue index 1..n: "pref limit prefLock limitLock"
+//   classic_ai_test --printweights <retail-root>
+//       oracle mode for tools/re/check_ai_printweights.py: the shipped types and
+//       Abnar's Terrace's profile, as a Classic seat sees them. stdin lines:
+//         facts <name>   -> "<found> <flags> <secondary> <minwaterdepth> <cost bits> <pref> <limit>"
+//         state <population> <stored> <capacity> <n> (<name> <count> <completed>)*n
+//               <30 x (income usage)>   -> no output; sets the table (retail's order)
+//         creation <0|1> -> 1: the manager's creation pass, before the profile
+//                           file is read (every limit still -1)
+//         seed <s>       -> one priority pass over that table from seed s:
+//                           "<priority>*n <final seed> <draws>"
 #include "ai/classicbrain.h"
 #include "ai/classicprofile.h"
 #include "ai/classictypes.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
+#include <bit>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -209,9 +220,10 @@ static void typeInfoAndPriorities() {
     think(0);
     const auto& pr=brain.priorities();
     check(brain.priorityRefreshes()==1 && pr[idx("soldier")]==84 && pr[idx("tower")]==84 &&
-          pr[idx("worker")]==64 && pr[idx("lode")]==100 && pr[idx("ship")]==12 && pr[idx("plain")]==0,
-          "the creation pass sees empty caches: armed 21x4, a builder under a quarter of its limit (+30, halved short of mana) x4, "
-          "a dry store wants lodestones, naval x3, isfeature 0");
+          pr[idx("worker")]==24 && pr[idx("lode")]==100 && pr[idx("ship")]==12 && pr[idx("plain")]==0,
+          "the creation pass (in the constructor, before the profile) sees empty caches, no limits and no store: "
+          "armed 21x4, a builder with limit -1 (+15, a third short of mana) x4, the empty store wants lodestones, "
+          "naval x3, isfeature 0");
     check(brain.counts()[idx("tower")]==1 && brain.completed()[idx("tower")]==1 &&
           brain.counts()[idx("worker")]==1 && brain.completed()[idx("worker")]==0 && brain.counts()[idx("soldier")]==0,
           "the per-tick recount: own live units by type, and the finished ones");
@@ -220,10 +232,10 @@ static void typeInfoAndPriorities() {
     uint32_t mirror=ai::ClassicBrain::seedFor(0,11);
     for (size_t t=1;t<c.size();++t)
         if (info[t].cost>500.0f) { // the creation pass's draws (only the castle costs > 500)
-            sim::RetailBuildPriority in=info[t].priorityInputs(0,0,brain.profile().limit[t]);
-            sim::retailBuildPriority(in,uint16_t(2),0.0f,true,[&](int n){return sim::retailRandom(mirror,n);});
+            sim::RetailBuildPriority in=info[t].priorityInputs(0,0,-1);
+            sim::retailBuildPriority(in,uint16_t(0),0.0f,true,[&](int n){return sim::retailRandom(mirror,n);});
         }
-    check(mirror==brain.seed(),"the creation pass draws only for types costing over 500");
+    check(mirror==brain.seed(),"the creation pass draws only for types costing over 500, at population 0");
     uint32_t refreshAt=0;
     for (uint32_t tick=7;tick<10000 && !refreshAt;tick+=7) {
         if (sim::retailRandom(mirror,30)==0) refreshAt=tick;
@@ -272,8 +284,56 @@ static void shippedData(const char* root) {
           "categories come from the FBI category= words, plus ALL");
 }
 
+// The port's side of the PrintWeights check: the brain's own facts, profile and
+// priority pass (ClassicBrain::recomputePriorities' steps) over retail's table.
+static int printWeightsOracle(const char* root) {
+    auto vfs=hpi::mountRetailRoot(root);
+    sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
+    ai::ClassicBrain brain(1,7,reg);
+    brain.useProfile(ai::classicProfileScript(vfs,ai::classicMapAiProfile(vfs,hpi::findMap(vfs,"Abnar's Terrace"))));
+    const auto& c=brain.catalogue();const auto& p=brain.profile();const auto& info=brain.typeInfo();
+    auto find=[&](const std::string& n){auto it=c.byName.find(n);return it==c.byName.end() ? size_t(0) : size_t(it->second);};
+    struct Row { size_t t; int count,completed; };
+    std::vector<Row> table;
+    unsigned population=0;float ratio=0;bool shortfall=false,creation=false;
+    std::string line,word;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);in>>word;
+        if (word=="facts") {
+            std::string name;in>>name;const size_t t=find(name);
+            if (!t) { std::printf("0 0 0 0 0 0 0\n");continue; }
+            const auto f=info[t].priorityInputs(0,0,p.limit[t]);
+            std::printf("1 %u %u %d %u %u %d\n",f.flags,f.secondaryFlags,int(f.weapon),
+                        std::bit_cast<uint32_t>(f.cost),unsigned(p.pref[t]),p.limit[t]);
+        } else if (word=="state") {
+            float stored,capacity;size_t n;in>>population>>stored>>capacity>>n;
+            table.clear();
+            for (size_t i=0;i<n;++i) { std::string name;Row r{};in>>name>>r.count>>r.completed;r.t=find(name);table.push_back(r); }
+            sim::RetailResourceHistory h;
+            for (auto& s : h.samples) in>>s[0]>>s[1];
+            ratio=ai::ClassicBrain::storeFill(stored,capacity);
+            shortfall=h.shortfall(stored);
+        } else if (word=="creation") {
+            int on=0;in>>on;creation=on!=0;
+        } else if (word=="seed") {
+            uint32_t seed;in>>seed;unsigned draws=0;
+            for (const auto& r : table) {
+                // A name the port has no type for (retail's own table entry) prints -1.
+                if (!r.t) { std::printf("-1 ");continue; }
+                const auto in2=info[r.t].priorityInputs(r.count,r.completed,creation ? -1 : p.limit[r.t]);
+                const unsigned v=sim::retailBuildPriority(in2,uint16_t(population),ratio,shortfall,
+                    [&](int n){if (n>=2) ++draws;return sim::retailRandom(seed,n);});
+                std::printf("%u ",v);
+            }
+            std::printf("%u %u\n",seed,draws);
+        }
+    }
+    return 0;
+}
+
 int main(int argc,char** argv) {
     if (argc==2 && std::strcmp(argv[1],"--profile")==0) return profileOracle();
+    if (argc==3 && std::strcmp(argv[1],"--printweights")==0) return printWeightsOracle(argv[2]);
     profileRules();
     typeFacts();
     typeInfoAndPriorities();

@@ -55,6 +55,11 @@ public:
     // The draw weight of a type for this player (0x412c90): 0 at its limit, else
     // pref * priority / 100.
     int buildWeight(size_t type) const;
+    // 0x410810's store fill: stored / capacity, or 0 when the capacity is at most
+    // 0.01 (a double compare).
+    static float storeFill(float stored, float capacity) {
+        return double(capacity) > 0.01 ? stored / capacity : 0.0f;
+    }
 
     // Runs every sim tick (the brain keeps retail's own clocks, not a think period).
     void tick(const tak::sim::World& world, uint32_t simTick,
@@ -83,7 +88,9 @@ private:
     // priorities from the cache as the previous tick left it; then the recount.
     void bookkeeping(const tak::sim::World& world, uint32_t simTick);
     void recount(const tak::sim::World& world);
-    void recomputePriorities(const tak::sim::World& world, bool atCreation);
+    void recomputePriorities(const tak::sim::World& world);
+    // 0x4102f0's pass at the manager's creation (from the registry constructor).
+    void creationPass();
 #ifndef NDEBUG
     void debugDump(uint32_t simTick);
     bool dumped_ = false;
@@ -98,7 +105,6 @@ private:
     std::vector<int16_t> count_, completed_;
     std::vector<uint8_t> priority_;
     tak::sim::RetailPlayerCacheClock clock_{true, 0};
-    bool created_ = false;
     uint32_t refreshes_ = 0;
 };
 

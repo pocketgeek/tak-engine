@@ -507,6 +507,7 @@ struct UnitType {
     // and "armed" is any [WEAPONn] block, damage or not). Load-time data that
     // nothing in the simulation reads.
     struct ClassicFbi {
+        std::string unitName;    // `unitname=` lowercased (else the file stem): retail's table key
         std::string category;    // the `category=` value alone
         std::string yardMap;     // the `yardmap=` value as written
         int32_t bmcode = 0;      // `bmcode=`, retail's default 0
@@ -565,6 +566,11 @@ public:
     // Full type table in deterministic (name-sorted) order -- corpse interning
     // walks it so every peer builds identical FeatType indices.
     const std::map<std::string, UnitType>& types() const { return types_; }
+    // FBIs that lost their objectname to another file (the Iron Plague's
+    // tarnecr2.fbi, objectname TARNECRO): retail keeps each as its own unit-type
+    // entry under its unitname, so the Classic AI's catalogue lists them too.
+    // Keyed by lowercased unitname. Nothing in the simulation reads them.
+    const std::map<std::string, UnitType>& classicVariants() const { return classicVariants_; }
     // Category token -> small int. Assigned while walking types_ in its name-sorted
     // order, so every peer interns the same tokens to the same ids.
     int categoryId(const std::string& tok) const {
@@ -593,6 +599,7 @@ private:
     std::map<std::string, int> catIds_;
     std::map<std::string, UnitType> types_;
     std::set<std::string> canonicalTypes_;   // ids whose defining .fbi filename == objectname
+    std::map<std::string, UnitType> classicVariants_;
     std::map<std::string, std::vector<std::string>> buildTree_;
     std::map<std::string, MoveClass> moveClasses_;   // lowercased name -> limits
 };

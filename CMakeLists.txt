@@ -1705,12 +1705,23 @@ if(TAK_TEST_DATA)
 endif()
 
 # The Classic level's pieces (profile baker, type info, priority clock); with
-# --profile it is the native side of tools/re/check_ai_profile.py.
+# --profile it is the native side of tools/re/check_ai_profile.py, with
+# --printweights that of tools/re/check_ai_printweights.py.
 add_executable(classic_ai_test tools/classic_ai_test.cpp ${TAK_AI_SOURCES})
 target_link_libraries(classic_ai_test PRIVATE tak-formats)
 add_test(NAME classic_ai COMMAND classic_ai_test)
 if(TAK_TEST_DATA)
     add_test(NAME classic_ai_data COMMAND classic_ai_test "${TAK_TEST_DATA}")
+endif()
+# Opt-in (it needs the retail binary for emulation, Python's unicorn, and a
+# directory of captured retail PrintWeights dumps, none of which CI has):
+# -DTAK_CLASSIC_PRINTWEIGHTS=<dumps dir with index.json>.
+set(TAK_CLASSIC_PRINTWEIGHTS "" CACHE PATH "captured retail PrintWeights dumps for classic_ai_printweights")
+if(TAK_TEST_DATA AND TAK_CLASSIC_PRINTWEIGHTS AND Python3_Interpreter_FOUND)
+    add_test(NAME classic_ai_printweights
+             COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/re/check_ai_printweights.py
+                     --binary $<TARGET_FILE:classic_ai_test> --data "${TAK_TEST_DATA}"
+                     --dumps "${TAK_CLASSIC_PRINTWEIGHTS}")
 endif()
 
 add_executable(aitool tools/aitool.cpp ${TAK_AI_SOURCES})

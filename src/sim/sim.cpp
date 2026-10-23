@@ -178,10 +178,19 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // keep the first def UNLESS this is the canonical file and the existing def
             // was only a variant -- then replace it.
             bool canonical = (stem == t.id);
+            // A file that loses its objectname is still parsed, into
+            // classicVariants_ (the Classic AI's catalogue only).
+            bool variant = false;
             if (types_.count(t.id)) {
-                if (!canonical || canonicalTypes_.count(t.id)) continue;   // keep existing
+                if (!canonical || canonicalTypes_.count(t.id)) variant = true;   // keep existing
+                else {
+                    auto& displaced = types_[t.id];
+                    if (displaced.classicFbi.unitName != t.id)
+                        classicVariants_.try_emplace(displaced.classicFbi.unitName, displaced);
+                }
             }
             if (canonical) canonicalTypes_.insert(t.id);
+            t.classicFbi.unitName = lower(info->valueOr("unitname", stem));
             t.name = info->valueOr("name", t.id);
             t.orientation=uint16_t(int32_t(info->numberOr("orientation",0)));
             t.buildAngle=uint16_t(int32_t(info->numberOr("buildangle",0)));
@@ -716,7 +725,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     } else tok.push_back(c);
                 }
             }
-            types_[t.id] = std::move(t);
+            if (variant) {
+                if (t.classicFbi.unitName != t.id) classicVariants_.try_emplace(t.classicFbi.unitName, std::move(t));
+            } else types_[t.id] = std::move(t);
         } catch (const std::exception&) {
             // Skip malformed definitions rather than fail the registry.
         }

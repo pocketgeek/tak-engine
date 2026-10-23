@@ -25,6 +25,22 @@ ClassicBrain::ClassicBrain(int player, uint32_t roomSeed, const tak::sim::TypeRe
         info_[t] = ClassicTypeInfo::from(*catalogue_.types[t], &registry);
         index_.emplace(catalogue_.types[t], uint16_t(t));
     }
+    creationPass();
+}
+
+void ClassicBrain::creationPass() {
+    // The build manager computes its priorities once as it is created at game
+    // start (0x4102f0 -> 0x410810), before the profile file is read and before
+    // the player has units or a store: every limit is still -1, every count and
+    // the population 0, the store empty (fill 0) with an empty income history,
+    // which reads as a shortfall. Reproduced exactly against a captured retail
+    // PrintWeights table (tools/re/check_ai_printweights.py, Taros at tick 16).
+    const tak::sim::RetailResourceHistory none;
+    const bool shortfall = none.shortfall(0.0f);
+    for (size_t t = 1; t < catalogue_.size(); ++t)
+        priority_[t] = tak::sim::retailBuildPriority(info_[t].priorityInputs(0, 0, -1), 0, storeFill(0, 0),
+                                                     shortfall, [&](int n) { return rand(n); });
+    ++refreshes_;
 }
 
 void ClassicBrain::useProfile(const ClassicProfileScript& script) {
@@ -52,7 +68,7 @@ void ClassicBrain::recount(const tak::sim::World& world) {
     }
 }
 
-void ClassicBrain::recomputePriorities(const tak::sim::World& world, bool atCreation) {
+void ClassicBrain::recomputePriorities(const tak::sim::World& world) {
     // The owner's live unit count (player+0xe8) and its store: fill = stored /
     // capacity (0 under 0.01 capacity), shortfall from the 29-of-30-tick income
     // and spend history the World keeps for every player (displayResources).
@@ -62,13 +78,10 @@ void ClassicBrain::recomputePriorities(const tak::sim::World& world, bool atCrea
     const auto& me = world.player(player_);
     const float stored = float(me.mana);
     const float capacity = me.manaCapacity();
-    const float ratio = double(capacity) > 0.01 ? stored / capacity : 0.0f;
+    const float ratio = storeFill(stored, capacity);
     const bool shortfall = me.displayResources.shortfall(stored);
-    // At creation (the manager's constructor, 0x4102f0) the cache arrays are
-    // fresh, so every count is 0 there; the owner count is read live.
     for (size_t t = 1; t < catalogue_.size(); ++t) {
-        const auto in = info_[t].priorityInputs(atCreation ? 0 : count_[t], atCreation ? 0 : completed_[t],
-                                                profile_.limit[t]);
+        const auto in = info_[t].priorityInputs(count_[t], completed_[t], profile_.limit[t]);
         priority_[t] = tak::sim::retailBuildPriority(in, uint16_t(population), ratio, shortfall,
                                                      [&](int n) { return rand(n); });
     }
@@ -77,18 +90,12 @@ void ClassicBrain::recomputePriorities(const tak::sim::World& world, bool atCrea
 
 void ClassicBrain::bookkeeping(const tak::sim::World& world, uint32_t simTick) {
     if (tak::sim::retailTickPlayerCache(clock_, simTick, [&](int n) { return rand(n); }))
-        recomputePriorities(world, false);
+        recomputePriorities(world);
     recount(world);
 }
 
 void ClassicBrain::tick(const tak::sim::World& world, uint32_t simTick,
                         const std::function<void(const tak::net::Command&)>&) {
-    // The manager is created at game start and computes its priorities once
-    // right away (0x4102f0 -> 0x410810), before any bookkeeping tick.
-    if (!created_) {
-        created_ = true;
-        recomputePriorities(world, true);
-    }
     // Retail's player loop: the AI scheduler (0x40fe00 -> 0x40fd80, P3 onward),
     // then the bookkeeping (0x4121c0 -> 0x411a90).
     bookkeeping(world, simTick);

@@ -4,6 +4,7 @@
 #include <climits>
 #include <cmath>
 #include <cstdlib>
+#include <map>
 
 #include "hpi/hpi.h"
 #include "sim/sim.h"
@@ -103,9 +104,14 @@ void ClassicCatalogue::add(const tak::sim::UnitType* type, std::string name,
 }
 
 ClassicCatalogue ClassicCatalogue::from(const tak::sim::TypeRegistry& registry) {
+    // Retail's table holds one entry per FBI, keyed and sorted by unitname: the
+    // registry's types plus the variants that lost their objectname (tarnecr2).
+    std::map<std::string, const tak::sim::UnitType*> table;
+    for (const auto& [id, type] : registry.types())
+        table.emplace(type.classicFbi.unitName.empty() ? id : type.classicFbi.unitName, &type);
+    for (const auto& [name, type] : registry.classicVariants()) table.emplace(name, &type);
     ClassicCatalogue c;
-    // types() iterates by lowercased objectname, which is retail's table order.
-    for (const auto& [id, type] : registry.types()) c.add(&type, id, type.classicFbi.category);
+    for (const auto& [name, type] : table) c.add(type, name, type->classicFbi.category);
     return c;
 }
 

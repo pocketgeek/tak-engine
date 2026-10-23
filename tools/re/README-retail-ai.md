@@ -19,6 +19,7 @@ directory (default `~/tak-tmp/retail-ai`). They are never committed.
 | `retail_ai_poll.py` | The JSONL poller the harness uses; it also works on its own against a PID |
 | `tak_ai_run.py` | One headless tak `--mpai` game with the debug roster dump on |
 | `compare_ai.py` | Metrics and distribution tests over two sets of captures |
+| `check_ai_printweights.py` | Checks the CLASSIC brain's pref, limit and priority tables against captured PrintWeights dumps and the polls around them, and emulates retail's 0x410810 on the same tables (no retail run) |
 
 ## What it needs
 
@@ -125,10 +126,15 @@ in the takserver's environment, each Classic seat writes `<path>.p<seat>` once,
 at the first tick at or past T, one row per unit type in PrintWeights' column
 layout (`<limit|n/a> - <priority> = <preference> - '<UNIT>\t\t:<name>'`). It is
 debug-only as well, and only writes a file. Two differences are expected: our
-table holds every type of the data (retail's held only the sides in play in the
-dumps seen so far), and the cost-penalty draws of the priorities come from a
-different random stream, so only the deterministic rows (and distributions over
-seeds) compare.
+table holds every type of the data (retail's held only the sides in play, plus
+MONGHOUL, in the dumps seen so far), and the cost-penalty draws of the
+priorities come from a different random stream, so only the deterministic rows
+(and distributions over seeds) compare. For an exact comparison, use
+`check_ai_printweights.py`: it runs our brain's own facts, profile and priority
+pass over retail's table, in retail's order, on the state and seed polled
+around each dump (`--dumps`, default `~/tak-tmp/retail-ai/baseline/printweights`,
+read only). On the 20 baseline dumps every row matches and every dump is
+reproduced exactly.
 
 ## The capture schema (both engines)
 
