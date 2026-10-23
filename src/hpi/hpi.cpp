@@ -1001,11 +1001,11 @@ std::vector<std::string> modPacks(const std::filesystem::path& root,ModKind kind
 namespace {
 // Feature definitions contain simulation keys; cosmetic files must never replace
 // them, even though their art fields also affect presentation. AI profiles are
-// game-mod business too: ai/ and our levels' root <x>_ai.txt files (ai/builtinprofile.h).
+// game-mod business too: ai/, which holds retail's profiles and our levels'
+// ai/<x>_ai.txt files (ai/builtinprofile.h).
 bool cosmeticKeep(const std::string& p) {
     const auto k=MountSet::key(p);
-    static const std::set<std::string> levelProfiles{"d_ai.txt","e_ai.txt","n_ai.txt","h_ai.txt","a_ai.txt","ad_ai.txt"};
-    return !affectsGameplay(p) && !k.starts_with("features/") && !k.starts_with("ai/") && !levelProfiles.count(k);
+    return !affectsGameplay(p) && !k.starts_with("features/") && !k.starts_with("ai/");
 }
 // Copy every winning path of `mount` into `files` (later copies win), within the
 // per-layer budget every mod layer shares.

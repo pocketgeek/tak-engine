@@ -106,12 +106,12 @@ const Profile& builtinProfile(Difficulty d) {
 
 const char* levelProfileFile(Difficulty d) {
     switch (d) {
-        case Difficulty::Passive: return "d_ai.txt";
-        case Difficulty::Easy: return "e_ai.txt";
-        case Difficulty::Normal: return "n_ai.txt";
-        case Difficulty::Hard: return "h_ai.txt";
-        case Difficulty::Absurd: return "a_ai.txt";
-        case Difficulty::AbsurdlyDefensive: return "ad_ai.txt";
+        case Difficulty::Passive: return "ai/d_ai.txt";
+        case Difficulty::Easy: return "ai/e_ai.txt";
+        case Difficulty::Normal: return "ai/n_ai.txt";
+        case Difficulty::Hard: return "ai/h_ai.txt";
+        case Difficulty::Absurd: return "ai/a_ai.txt";
+        case Difficulty::AbsurdlyDefensive: return "ai/ad_ai.txt";
         default: return nullptr;
     }
 }

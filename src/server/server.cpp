@@ -323,7 +323,7 @@ static_assert(tak::srv::TickPacer::kHz == kServerHz, "TickPacer paces kServerHz 
         uint64_t hash = 0;
         bool built = false;
         // Our levels' build profiles, by wire aiLevel (ai/builtinprofile.h): the
-        // built-in tables, each adjusted by its own <x>_ai.txt from this set's game
+        // built-in tables, each adjusted by its own ai/<x>_ai.txt from this set's game
         // mods. Classic's stays empty (its brain bakes ai/default.txt itself). A
         // Controller holds a reference, so these live as long as the data set.
         std::array<tak::ai::Profile, tak::ai::kAiLevels> aiProfiles;

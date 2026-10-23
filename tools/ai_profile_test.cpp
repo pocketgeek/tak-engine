@@ -7,7 +7,8 @@
 //                             retail default profile (the base install's winning
 //                             ai/default.txt) the levels were tuned on; and the
 //                             Classic AI's profile file travels in a map's package
-//                             when the map's own archive carries it
+//                             when the map's own archive carries it, but a level's
+//                             ai/n_ai.txt there does not
 #include "ai/ai.h"
 #include "ai/builtinprofile.h"
 #include "ai/classicprofile.h"
@@ -63,11 +64,12 @@ static void tables() {
     check(classic.weight.empty() && classic.limit.empty() && !ai::levelProfileFile(ai::Difficulty::Classic),
           "Classic has no built-in table and no mod file");
     const std::pair<ai::Difficulty, const char*> names[] = {
-        {ai::Difficulty::Passive, "d_ai.txt"}, {ai::Difficulty::Easy, "e_ai.txt"}, {ai::Difficulty::Normal, "n_ai.txt"},
-        {ai::Difficulty::Hard, "h_ai.txt"}, {ai::Difficulty::Absurd, "a_ai.txt"}, {ai::Difficulty::AbsurdlyDefensive, "ad_ai.txt"}};
+        {ai::Difficulty::Passive, "ai/d_ai.txt"}, {ai::Difficulty::Easy, "ai/e_ai.txt"},
+        {ai::Difficulty::Normal, "ai/n_ai.txt"}, {ai::Difficulty::Hard, "ai/h_ai.txt"},
+        {ai::Difficulty::Absurd, "ai/a_ai.txt"}, {ai::Difficulty::AbsurdlyDefensive, "ai/ad_ai.txt"}};
     bool ok = true;
     for (const auto& [d, file] : names) ok = ok && ai::levelProfileFile(d) && std::string(ai::levelProfileFile(d)) == file;
-    check(ok, "each level names its own file (d/e/n/h/a/ad_ai.txt)");
+    check(ok, "each level names its own file (ai/d/e/n/h/a/ad_ai.txt)");
 
     ai::Profile p;
     ai::applyProfileText("// comment\r\nweight AraBow 3\r\nlimit arabow 0\nlimit arabow 2 trailing\nplan x 1\n/weight arafly 9\nweight arafly\n", p);
@@ -90,24 +92,29 @@ static void modLayers() {
     namespace fs = std::filesystem;
     const auto root = fs::temp_directory_path() / ("tak-ai-profiles-" + crypto::toHex(crypto::randomVec(8)));
     const std::string normalFile = "// a game mod's Normal profile\nlimit arabow 0\nweight AraBow 2\nweight modunit 7\n";
-    // A loose file at a game pack's root, and one at the root of an archive in another.
-    put(root / "mods/game/my_ai/N_AI.TXT", normalFile);
-    archive(root / "mods/game/archived/ai.hpi", {{"n_ai.txt", "limit arafly 0\n"}, {"h_ai.txt", "limit arafly 1\n"}});
-    // Not a level file: nested under a folder, and the old per-file ai/ path.
+    // A loose file in a game pack's ai/ folder, and ai/ inside an archive in another.
+    put(root / "mods/game/my_ai/AI/N_AI.TXT", normalFile);
+    archive(root / "mods/game/archived/ai.hpi", {{"ai/n_ai.txt", "limit arafly 0\n"}, {"ai/h_ai.txt", "limit arafly 1\n"}});
+    // Not a level file: at a pack's root (loose or an archive's), or in another folder.
+    put(root / "mods/game/rooted/n_ai.txt", "limit arabow 0\n");
+    archive(root / "mods/game/rooted/root.hpi", {{"h_ai.txt", "limit arabow 0\n"}});
     put(root / "mods/game/nested/sub/n_ai.txt", "limit arabow 0\n");
-    put(root / "mods/game/nested/ai/n_ai.txt", "limit arabow 0\n");
+    put(root / "mods/game/nested/sub/ai/n_ai.txt", "limit arabow 0\n");
     // Cosmetic packs and the always-on cosmetic archives can never supply one.
-    put(root / "mods/cosmetic/skin/n_ai.txt", "limit arabow 0\n");
+    put(root / "mods/cosmetic/skin/ai/n_ai.txt", "limit arabow 0\n");
     put(root / "mods/cosmetic/skin/sounds/x.wav", "x");
-    archive(root / "mods/cosmetic/always.hpi", {{"n_ai.txt", "limit arabow 0\n"}, {"sounds/y.wav", "y"}});
+    archive(root / "mods/cosmetic/always.hpi", {{"ai/n_ai.txt", "limit arabow 0\n"}, {"sounds/y.wav", "y"}});
+    // The base install's own ai/ folder (in a root archive) is not a game mod.
+    archive(root / "data.hpi", {{"ai/n_ai.txt", "limit arabow 0\n"}, {"ai/h_ai.txt", "limit arabow 0\n"},
+                                {"gamedata/x.tdf", "x"}});
     const auto& builtin = ai::builtinProfile(ai::Difficulty::Normal);
     try {
         const auto loose = hpi::modFiles(root, hpi::ModKind::Game, {"my_ai"});
-        check(loose.count("n_ai.txt") == 1, "a game pack's loose root n_ai.txt is in its files (case-insensitive name)");
+        check(loose.count("ai/n_ai.txt") == 1, "a game pack's loose ai/n_ai.txt is in its files (case-insensitive name)");
         std::string source;
         const auto normal = ai::levelProfile(ai::Difficulty::Normal, &loose, &source);
-        check(source == "n_ai.txt" && normal.limit.at("arabow") == 0 && normal.weight.at("arabow") == 2 &&
-              normal.weight.at("modunit") == 7, "n_ai.txt adjusts the Normal profile");
+        check(source == "ai/n_ai.txt" && normal.limit.at("arabow") == 0 && normal.weight.at("arabow") == 2 &&
+              normal.weight.at("modunit") == 7, "ai/n_ai.txt adjusts the Normal profile");
         ai::Profile expect = builtin;
         expect.limit["arabow"] = 0; expect.weight["arabow"] = 2; expect.weight["modunit"] = 7;
         check(same(normal, expect), "units the file does not name keep their built-in values");
@@ -118,33 +125,48 @@ static void modLayers() {
             std::string s;
             othersUnchanged = othersUnchanged && same(ai::levelProfile(d, &loose, &s), ai::builtinProfile(d)) && s.empty();
         }
-        check(othersUnchanged, "n_ai.txt leaves every other level (Easy included) on its built-in table");
+        check(othersUnchanged, "ai/n_ai.txt leaves every other level (Easy included) on its built-in table");
 
         const auto archived = hpi::modFiles(root, hpi::ModKind::Game, {"archived"});
         const auto viaArchive = ai::levelProfile(ai::Difficulty::Normal, &archived);
         check(viaArchive.limit.at("arafly") == 0 && viaArchive.limit.at("arabow") == builtin.limit.at("arabow"),
-              "an n_ai.txt at an archive's root inside a game pack adjusts Normal");
+              "an ai/n_ai.txt inside an archive in a game pack adjusts Normal");
         check(ai::levelProfile(ai::Difficulty::Hard, &archived).limit.at("arafly") == 1 &&
               same(ai::levelProfile(ai::Difficulty::Easy, &archived), ai::builtinProfile(ai::Difficulty::Easy)),
-              "the same archive's h_ai.txt adjusts Hard only");
+              "the same archive's ai/h_ai.txt adjusts Hard only");
 
+        const auto rooted = hpi::modFiles(root, hpi::ModKind::Game, {"rooted"});
+        check(rooted.count("n_ai.txt") && rooted.count("h_ai.txt") &&
+              same(ai::levelProfile(ai::Difficulty::Normal, &rooted), builtin) &&
+              same(ai::levelProfile(ai::Difficulty::Hard, &rooted), ai::builtinProfile(ai::Difficulty::Hard)),
+              "a root n_ai.txt / h_ai.txt (loose or an archive's) is not read");
         const auto nested = hpi::modFiles(root, hpi::ModKind::Game, {"nested"});
-        check(same(ai::levelProfile(ai::Difficulty::Normal, &nested), builtin), "n_ai.txt below a pack's root is not a level file");
+        check(same(ai::levelProfile(ai::Difficulty::Normal, &nested), builtin),
+              "n_ai.txt in another folder (sub/, sub/ai/) is not a level file");
 
         const auto cosmetic = hpi::modFiles(root, hpi::ModKind::Cosmetic, {"skin"});
         const auto always = hpi::alwaysOnModFiles(root);
-        check(cosmetic.count("sounds/x.wav") && !cosmetic.count("n_ai.txt") && always.count("sounds/y.wav") && !always.count("n_ai.txt"),
-              "cosmetic packs and always-on archives cannot carry n_ai.txt");
-        const auto play = hpi::mountPlayVfs(root, {}, {"skin"});
-        check(play.has("sounds/x.wav") && !play.has("n_ai.txt"), "a played VFS with a cosmetic pack has no n_ai.txt");
+        check(cosmetic.count("sounds/x.wav") && !cosmetic.count("ai/n_ai.txt") && always.count("sounds/y.wav") &&
+              !always.count("ai/n_ai.txt"), "cosmetic packs and always-on archives cannot carry ai/n_ai.txt");
 
         // The real transfer codec: the host's package, decoded as the server receives it.
         const auto package = net::mods::build(root, {"my_ai", "archived"});
         const auto received = net::mods::decode(package->bytes, package->digest);
         const auto served = ai::levelProfile(ai::Difficulty::Normal, received->files.get());
         // Packs layer alphabetically (later wins): my_ai's file replaces archived's.
-        check(received->files->count("n_ai.txt") && received->files->count("h_ai.txt") && same(served, normal),
-              "the game-mod package carries the root files to the server (later pack wins)");
+        check(received->files->count("ai/n_ai.txt") && received->files->count("ai/h_ai.txt") && same(served, normal),
+              "the game-mod package carries ai/*_ai.txt to the server (later pack wins)");
+        // The base install's ai/ folder: in the played data, never in the package.
+        const auto play = hpi::mountPlayVfs(root, {}, {"skin"});
+        check(play.has("ai/n_ai.txt") && play.has("ai/h_ai.txt") && play.has("sounds/x.wav"),
+              "the played data holds the base install's ai/n_ai.txt and ai/h_ai.txt");
+        const auto none = net::mods::build(root, {"rooted"});
+        const auto noneReceived = net::mods::decode(none->bytes, none->digest);
+        check(!received->files->count("gamedata/x.tdf") && !noneReceived->files->count("ai/n_ai.txt") &&
+              !noneReceived->files->count("ai/h_ai.txt") &&
+              same(ai::levelProfile(ai::Difficulty::Normal, noneReceived->files.get()), builtin) &&
+              same(ai::levelProfile(ai::Difficulty::Hard, noneReceived->files.get()), ai::builtinProfile(ai::Difficulty::Hard)),
+              "the base install's ai/<x>_ai.txt never reaches the package, so no level reads it");
         // No game mods (the base install, a map package): only the built-in table.
         check(same(ai::levelProfile(ai::Difficulty::Normal, nullptr), builtin), "no game-mod files: the built-in table");
     } catch (const std::exception& e) {
@@ -178,7 +200,9 @@ static void mapPackages(const char* data) {
             if (e.is_regular_file() && isHpi(e.path())) fs::create_symlink(fs::absolute(e.path()), root / e.path().filename());
         const auto base = hpi::mountRetailRoot(data);
         const std::string own = "// the map's own profile\nlimit tarcage 0\n";
-        std::vector<std::pair<std::string, std::string>> entries{{"ai/default.txt", own}};
+        // The map archive also carries an ai/n_ai.txt: not a Classic file, so it stays home.
+        std::vector<std::pair<std::string, std::string>> entries{{"ai/default.txt", own},
+                                                                 {"ai/n_ai.txt", "limit tarcage 0\n"}};
         for (const char* ext : {".tnt", ".ota", ".crt", ".txt"})
             if (auto b = base.tryRead(std::string("maps/Inner Circle") + ext))
                 entries.push_back({std::string("kmap/AI Circle") + ext, std::string(b->begin(), b->end())});
@@ -188,6 +212,7 @@ static void mapPackages(const char* data) {
         check(pkg->files->count("ai/default.txt") &&
               std::string(pkg->files->at("ai/default.txt").begin(), pkg->files->at("ai/default.txt").end()) == own,
               "a map archive's own ai/default.txt travels in its package");
+        check(!pkg->files->count("ai/n_ai.txt"), "a map archive's ai/n_ai.txt does not (map packages cannot adjust a level)");
         const auto stock = net::maps::build(vfs, "Inner Circle");
         bool noAi = true;
         for (const auto& [name, bytes] : *stock->files) noAi = noAi && !name.starts_with("ai/");

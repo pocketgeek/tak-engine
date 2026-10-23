@@ -1360,7 +1360,7 @@ void GameView::autoplayStep() {
                 int nAi = benchmarkMode_ ? int(tak::net::kMaxSlots)
                                          : std::clamp(ai ? std::atoi(ai) : 2, 2, int(tak::net::kMaxSlots));
                 for (int k = 0; k < nAi; ++k)
-                    mp_->setSlot(k, 2, uint8_t(k % 5), uint8_t(k), uint8_t(k), 1, aiLevelEnv());
+                    mp_->setSlot(k, 2, uint8_t(k % 5), uint8_t(k), uint8_t(k), 1, aiLevelEnv(k));
                 mpReadied_ = true;
             } else if (autoMode == 8 && r.mySlot >= 0) {
                 // Campaign mission: seat the human ready and start; the mission's own
@@ -1387,7 +1387,7 @@ void GameView::autoplayStep() {
                     for (int k = 0; k < n && k + 1 < int(tak::net::kMaxSlots); ++k) {
                         int slot = k + 1;
                         mp_->setSlot(slot, 2, uint8_t((facIdx(aiSide_) + k) % 5),
-                                     uint8_t(slot), uint8_t(slot), 1, aiLevelEnv());
+                                     uint8_t(slot), uint8_t(slot), 1, aiLevelEnv(k));
                     }
                     mp_->startGame();
                     mpStarted_ = true;
@@ -1407,7 +1407,7 @@ void GameView::autoplayStep() {
                         for (int k = 0; k < nAi; ++k) {
                             int slot = tak::net::kMaxSlots - 1 - k;
                             mp_->setSlot(slot, 2, uint8_t(slot % 5), uint8_t(slot),
-                                         uint8_t(slot), 1, aiLevelEnv());   // AI, distinct colour/team
+                                         uint8_t(slot), 1, aiLevelEnv(k));   // AI, distinct colour/team
                         }
                     }
                 mpReadied_ = true;
