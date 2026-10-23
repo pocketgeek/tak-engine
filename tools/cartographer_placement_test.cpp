@@ -1699,7 +1699,7 @@ bool settle(Editor& e,const Input& in) {
     if(e.modal==Editor::M_ANALYZING || e.modal==Editor::M_CHECKING || e.modal==Editor::M_MODEL_LOADING || e.modal==Editor::M_GENERATING)return false;
     if(e.menuOpen>=0 || e.sectionMenuOpen || e.paletteFocus) {in.key(SDLK_ESCAPE);return false;}
     if(e.modal==Editor::M_MESSAGE) {in.key(SDLK_RETURN);return false;}
-    if(e.modal!=Editor::M_NONE || e.scriptOpen || e.useOnlyOpen || e.regionsOpen || e.regionCanvas || e.clearArm) {
+    if(e.modal!=Editor::M_NONE || e.scriptOpen || e.aiOpen || e.useOnlyOpen || e.regionsOpen || e.regionCanvas || e.clearArm) {
         if(e.clearArm)in.key(SDLK_k);else in.key(SDLK_ESCAPE);
         return false;
     }
@@ -1769,7 +1769,7 @@ bool smokeSession(const std::string& data,const std::string& label,std::vector<s
         for(const auto& [key,mod]:std::vector<std::pair<SDL_Keycode,Uint16>>{
                 {SDLK_g,0},{SDLK_g,0},{SDLK_TAB,0},{SDLK_TAB,0},{SDLK_TAB,0},{SDLK_TAB,0},{SDLK_1,0},{SDLK_2,0},{SDLK_3,0},{SDLK_4,0},{SDLK_5,0},
                 {SDLK_LEFTBRACKET,0},{SDLK_RIGHTBRACKET,0},{SDLK_k,0},{SDLK_p,0},{SDLK_r,0},{SDLK_u,0},{SDLK_c,0},{SDLK_t,0},{SDLK_m,0},{SDLK_m,0},
-                {SDLK_m,KMOD_SHIFT},{SDLK_F6,0},{SDLK_l,KMOD_CTRL},{SDLK_l,KMOD_CTRL},{SDLK_f,KMOD_CTRL},{SDLK_z,KMOD_CTRL},{SDLK_y,KMOD_CTRL},
+                {SDLK_m,KMOD_SHIFT},{SDLK_a,0},{SDLK_F6,0},{SDLK_l,KMOD_CTRL},{SDLK_l,KMOD_CTRL},{SDLK_f,KMOD_CTRL},{SDLK_z,KMOD_CTRL},{SDLK_y,KMOD_CTRL},
                 {SDLK_o,KMOD_CTRL},{SDLK_n,0},{SDLK_s,KMOD_CTRL|KMOD_SHIFT},{SDLK_b,KMOD_CTRL},{SDLK_s,KMOD_CTRL}})
             action([key=key,mod=mod](Editor&,const Input& in) {in.key(key,mod);});
         // The scripting overlay's buttons (pickers they open take a row or close).
@@ -1781,6 +1781,19 @@ bool smokeSession(const std::string& data,const std::string& label,std::vector<s
                 const auto p=rect(buttons[b]);if(buttons[b].w>0)in.click(p.x,p.y);++actions;return true;
             });
             s.then([](Editor& e,const Input& in) {if(e.modal!=Editor::M_NONE || (e.pickOpen && e.pickTemplate))in.key(SDLK_ESCAPE);return true;});
+        }
+        s.then(settle);
+        // The AI Profiles window's controls (confirmations and Start from close again).
+        s.then([](Editor&,const Input& in) {in.key(SDLK_a);return true;});
+        for(int b=0;b<20;++b) {
+            s.then([=,&actions](Editor& e,const Input& in) {
+                if(!e.aiOpen) {in.key(SDLK_a);return true;}
+                const SDL_Rect buttons[]={e.aiTabRects[3],e.aiSideBox,e.aiGroupBox,e.aiSetOnlyBox,e.aiUnbuildableBox,e.aiPresetRects[0],e.aiPresetRects[1],
+                    e.aiViewButton,e.aiViewButton,e.aiCheckButton,e.aiCheckButton,e.aiPackButton,e.aiTabRects[0],e.aiOwnRadio,e.aiStartButton,e.aiPresetRects[2],
+                    e.aiSearchBox,e.aiStandardRadio,e.aiList,e.aiDoneButton};
+                const auto p=rect(buttons[b]);if(buttons[b].w>0)in.click(p.x,p.y);++actions;return true;
+            });
+            s.then([](Editor& e,const Input& in) {if(e.modal!=Editor::M_NONE || e.aiStartOpen)in.key(SDLK_ESCAPE);return true;});
         }
         s.then(settle);
         // The regions list and Use Only.

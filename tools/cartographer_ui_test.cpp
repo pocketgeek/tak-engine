@@ -281,6 +281,88 @@ static int overlayWorkflow(const char* data) {
     if(result || failed || stage!=3) {std::cerr<<"overlay menu workflow failed\n";return 1;}
     std::cout<<"PASS: background water overlay, unchanged document and hide control\n";return 0;
 }
+// SCENARIO > AI Profiles (A) end to end through real input: a level row edited in its
+// cell, the map's own DEFAULT profile chosen and started empty, a preset applied
+// after its confirmation, undo/redo after closing, and Save As writing the files at
+// the .kmp root with aiprofile= in the .ota. TAK_EDITOR_TEST_CAPTURE=<prefix> also
+// writes <prefix>-level.png and <prefix>-default.png of the window.
+static int aiProfileWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-aiprofile-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);isolateProfile(root.string().c_str());
+    const auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
+    const auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
+    std::string error;
+    if(!cart::writeDocumentBundle(root/"AiTest.kmp",cart::documentFiles(map,metadata,{},{},{},{},"AiTest"),error))throw std::runtime_error(error);
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    cart::Editor* editor=nullptr;cart::EditorHooks hooks;hooks.attached=[&](cart::Editor& e){editor=&e;};
+    std::string failure;int lastFrame=0;
+    auto check=[&](bool value,const std::string& message) {if(!value && failure.empty())failure=message;};
+    auto file=[&](const std::string& key) {
+        const auto it=editor->aiFiles.find(key);return it==editor->aiFiles.end()?std::string():std::string(it->second.begin(),it->second.end());
+    };
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;const std::string title=SDL_GetWindowTitle(window);const bool dirty=title.ends_with(" *");
+        float sx=1,sy=1;SDL_RenderGetScale(renderer,&sx,&sy);
+        auto click=[&](const SDL_Rect& r) {
+            if(r.w<=0) {check(false,"frame "+std::to_string(frame)+": target not drawn");return;}
+            SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.clicks=1;
+            e.button.x=int((r.x+r.w/2)*sx);e.button.y=int((r.y+r.h/2)*sy);SDL_PushEvent(&e);e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
+        };
+        auto capture=[&](const char* suffix) {
+            const char* prefix=SDL_getenv("TAK_EDITOR_TEST_CAPTURE");if(!prefix)return;
+            int pw=0,ph=0;SDL_GetRendererOutputSize(renderer,&pw,&ph);std::vector<uint8_t> rgba(size_t(pw)*ph*4);
+            if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),pw*4)==0)tak::png::write(std::string(prefix)+suffix,pw,ph,rgba);
+        };
+        auto cell=[&](const std::string& key,int column) {
+            for(const auto& c:editor->aiCells)if(c.key==key && c.column==column)return c.rect;
+            return SDL_Rect{};
+        };
+        switch(frame) {
+        case 0:key(SDLK_o,KMOD_CTRL);break;
+        case 1:text((root/"AiTest.kmp").string());key(SDLK_RETURN);break;
+        case 2:check(!dirty,"opening the fixture marked it dirty");key(SDLK_a);break;
+        case 3:check(editor->aiOpen && title.find("[AI]")!=std::string::npos,"A did not open the AI Profiles window");click(editor->aiTabRects[3]);break;
+        case 4:check(editor->aiTab==3,"the Normal tab was not selected");click(editor->aiSearchBox);break;
+        case 5:text("araarch");break;
+        case 6:click(cell("araarch",0));break;
+        case 7:check(editor->aiFocus==cart::Editor::AI_CELL,"the weight cell did not take focus");text("0");key(SDLK_RETURN);break;
+        case 8:check(file("ai/n.txt").find("\nweight araarch 0\n")!=std::string::npos,"Normal's archer weight 0 was not written to ai/n.txt");
+            check(file("ai/n.txt").starts_with(cart::kAiProfileMagic),"ai/n.txt is not in the canonical form");
+            capture("-level.png");click(editor->aiTabRects[0]);break;
+        case 9:check(editor->aiTab==0,"the DEFAULT tab was not selected");click(editor->aiOwnRadio);break;
+        case 10:check(editor->aiStartOpen,"choosing an own profile did not ask where to start");click(editor->aiStartEmpty);break;
+        case 11:check(editor->scenario.aiProfile=="aitest","own profile name was not proposed from the map name");
+            check(!file("ai/aitest.txt").empty() && file("ai/aitest.txt").find("\nlimit ")==std::string::npos,"Empty did not write ai/aitest.txt");
+            click(editor->aiSearchBox);key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);click(editor->aiPresetRects[0]);break;
+        case 12:check(editor->aiSearch.empty(),"the search field did not clear");check(editor->modal==cart::Editor::M_CONFIRM,"No flyers did not ask first");key(SDLK_RETURN);break;
+        case 13:check(file("ai/aitest.txt").find("\nlimit ")!=std::string::npos,"No flyers set no rows");
+            capture("-default.png");click(editor->aiDoneButton);break;
+        case 14:check(!editor->aiOpen && dirty,"DONE did not close the window, or the edits were lost");key(SDLK_z,KMOD_CTRL);break;
+        case 15:check(file("ai/aitest.txt").find("\nlimit ")==std::string::npos && !file("ai/aitest.txt").empty(),"undo did not take back only the preset");key(SDLK_y,KMOD_CTRL);break;
+        case 16:check(file("ai/aitest.txt").find("\nlimit ")!=std::string::npos && editor->scenario.aiProfile=="aitest","redo did not restore the preset");key(SDLK_s,KMOD_CTRL|KMOD_SHIFT);break;
+        case 17:text("AiSaved");key(SDLK_RETURN);break;
+        case 18:check(!dirty,"Save As left the map dirty");key(SDLK_RETURN);break;
+        case 19:{SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        default:if(frame>22) {failure="AI profile workflow did not exit";std::_Exit(3);}
+        }
+    },hooks);
+    if(failure.empty()) {
+        std::set<std::string> entries;std::string ota;
+        tak::hpi::Archive archive(root/"AiSaved.kmp");
+        for(const auto& entry:archive.entries()) {
+            entries.insert(tak::hpi::MountSet::key(entry.path));
+            if(entry.path.ends_with(".ota")) {const auto bytes=archive.read(entry);ota.assign(bytes.begin(),bytes.end());}
+        }
+        check(entries.count("ai/n.txt") && entries.count("ai/aitest.txt"),"the saved .kmp lacks root ai/n.txt or ai/aitest.txt");
+        for(const auto& entry:entries)check(!(entry.starts_with("kmap/") && entry.find("/ai/")!=std::string::npos),"an AI file was written under kmap/");
+        check(ota.find("aiprofile=aitest;")!=std::string::npos,"the saved .ota does not say aiprofile=aitest");
+    }
+    fs::remove_all(root);
+    if(result || !failure.empty() || lastFrame>22) {std::cerr<<failure<<'\n';return 1;}
+    std::cout<<"PASS: AI Profiles window: level cell, own DEFAULT profile, preset, undo/redo, Save As with root ai/ files and aiprofile=\n";return 0;
+}
 static int resizeSaveWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-resize-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -1624,6 +1706,7 @@ int main(int argc,char** argv) {
     if((argc==3 || argc==4) && std::string(argv[2])=="minimap")return minimapWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
     if(argc==3 && std::string(argv[2])=="features")return featureWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="resize-save")return resizeSaveWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="aiprofile")return aiProfileWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="templates")return templateWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="rules")return ruleTextWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);
