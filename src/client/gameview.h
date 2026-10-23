@@ -732,9 +732,9 @@ public:
     // same order, or draw() threw. passes = checked passes (painter list + overlays);
     // live/candidates/accepted are summed over them.
     // overlays[k] = units drawn by overlay k (health bars, self-destruct, squad
-    // markers, production bars) over the checked passes; ghosts = units that drew
-    // queued-build ghosts (taken from Frame::buildGhostUnits).
-    struct UnitIndexVerifyTotals { uint64_t frames=0, passes=0, live=0, candidates=0, accepted=0, overlays[4]{}, ghosts=0; };
+    // markers) over the checked passes; ghosts = units that drew queued-build
+    // ghosts (taken from Frame::buildGhostUnits).
+    struct UnitIndexVerifyTotals { uint64_t frames=0, passes=0, live=0, candidates=0, accepted=0, overlays[3]{}, ghosts=0; };
     const UnitIndexVerifyTotals& unitIndexVerifyTotals() const { return unitIndexVerifyStats_; }
     // TAK_SCHEDULE_VERIFY (workstream I): every geometry pass built each visible
     // unit exactly once under a well-formed plan; the shadow point checks, shadow

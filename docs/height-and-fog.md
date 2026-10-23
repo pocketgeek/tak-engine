@@ -20,7 +20,7 @@ terrain skew). Everything below lives in `src/client/main.cpp` unless noted.
   retail-faithful choice; the residual "east offset" on diagonal walls is the
   accepted limit). Live-tunable via `TAK_HSCALE` / `TAK_HSCALEX`.
 - Applied to **every height-anchored draw** of a mobile unit: sprite, shadow,
-  HP/production bars, selection brackets, order rings, build ghosts, projectiles,
+  HP bars, selection brackets, order rings, build ghosts, projectiles,
   particles, effects.
 - **Buildings are exempt.** Use `isStructure(type) = type->maxVel <= 0` (the FBI
   `canmove` flag is unreliable — the Keep sets `canmove=1` with no velocity). A

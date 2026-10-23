@@ -2988,19 +2988,24 @@
 #endif
             for (uint32_t i : indices) accept(*live[i], true);
         };
-        // Squad markers sit below the unit and production bars above it by a
-        // footprint-dependent offset: their bands cover every type's footprint depth.
+        // Squad markers sit below the unit by a footprint-dependent offset: their
+        // band covers every type's footprint depth.
         const auto [footMin, footMax] = unitFootZRange();
 
-        // Health bars for damaged or selected units -- viewport-culled and batched
-        // into one draw call (each was two state-changing FillRects, so a damaged
-        // crowd used to break the render batch thousands of times a frame).
+        // Health bars -- viewport-culled and batched into one draw call (each was two
+        // state-changing FillRects, so a damaged crowd used to break the render batch
+        // thousands of times a frame). A unit being built or conjured gets its bar
+        // like any other (its HP grows with the work), and it is the ONLY progress
+        // shown in the world: retail draws no bar over a factory or a builder (the
+        // KINGDOMS.icd unit-overlay loop draws only the damage bar and the squad
+        // number), so the producer's progress lives in the info panel instead.
         overlayBatch_.clear();
 #ifndef NDEBUG
         debugHealthBarIds_.clear();
 #endif
         // Tactical Dots: no per-unit bars. Options "HEALTH BARS": 0 = never, 1 = only
-        // damaged units (default, the retail behaviour), 2 = every unit, full HP included.
+        // damaged units (default), 2 = every unit, full HP included. (Retail has one
+        // toggle, off by default, that bars every own unit on screen.)
         if (!dotsFrame_ && healthBars_ != 0)
             overlayPass(0, unitpass::healthBarBand(overlayView), [&](const UnitR& u, bool draw) {
             if (!u.alive() || u.embarked() || !u.type) return false;
@@ -3029,7 +3034,7 @@
         }
 
         // Self-destruct countdown: a pulsing red number over each armed unit. This and
-        // the squad numbers and production bars below are UI, left out of a poster.
+        // the squad numbers below are UI, left out of a poster.
         if (hudFont_.ok() && !posterFrame_)
             overlayPass(1, unitpass::selfDestructBand(overlayView), [&](const UnitR& u, bool draw) {
                 if (!u.alive() || u.embarked() || !u.type || u.selfDestructT < 0) return false;
@@ -3069,34 +3074,6 @@
                                    SDL_Color{70, 240, 90, 255});   // the selection-UI green
                 return true;
             });
-
-        // Production progress above busy buildings -- viewport-culled and batched
-        // into one draw call, same treatment as the health bars above (the two
-        // state-changing FillRects per building broke the render batch each time,
-        // and map-wide AI production drew bars at off-screen coordinates).
-        overlayBatch_.clear();
-        if (!dotsFrame_ && !posterFrame_)   // Tactical Dots: no per-unit bars
-            overlayPass(3, unitpass::productionBarBand(overlayView, footMin, footMax), [&](const UnitR& u, bool draw) {
-            if (!u.alive() || u.buildQueue.empty() || !u.type) return false;
-            if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) return false;
-            float total = u.buildQueue.front()->buildTime /
-                          std::max(u.type->workerTime, 0.01f);
-            float frac = std::clamp(u.buildProgress / total, 0.0f, 1.0f);
-            float bw = 40 * zm, bh = std::max(3.0f, 4 * zm);
-            const auto [bx, by] = unitpass::productionBar(u.x, u.z, uLiftX(u), uLiftY(u), u.type->footZ, overlayView);
-            if (!unitpass::productionBarInView({bx, by}, overlayView)) return false;
-            if (!draw) return true;
-            pushQuad(overlayBatch_, bx - 1, by - 1, bw + 2, bh + 2,
-                     SDL_Color{10, 10, 10, 220});
-            pushQuad(overlayBatch_, bx, by, bw * frac, bh,
-                     SDL_Color{90, 170, 255, 255});
-            return true;
-        });
-        if (!overlayBatch_.empty()) {
-            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-            SDL_RenderGeometry(ren_, nullptr, overlayBatch_.data(),
-                               int(overlayBatch_.size()), nullptr, 0);
-        }
 
         // Player mana bar top left (legacy; only without the bottom bar). A spectator
         // isn't a player -- no personal mana readout.

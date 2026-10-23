@@ -254,20 +254,6 @@ inline ScreenBand squadMarkerBand(const AnchorView& v, int footMin, int footMax)
     return {-20.0f, -30 - (float(std::max(footMax, 1)) * 8.0f + 7.0f) * zm, float(v.viewW + 20),
             float(v.viewH + 30) - (float(std::max(footMin, 1)) * 8.0f + 7.0f) * zm};
 }
-// Production bar: its top-left corner, above the building by its footprint depth.
-inline ScreenPoint productionBar(float x, float z, float liftX, float liftY, int footZ, const AnchorView& v) {
-    const float zm = v.zoom, bw = 40 * zm;
-    return {(x - v.offX) * zm - bw / 2 - liftX * zm,
-            (z - v.offY) * zm - float(footZ) * 8 * zm - 14 * zm - liftY * zm};
-}
-inline bool productionBarInView(ScreenPoint p, const AnchorView& v) {
-    return !(p.x < -60 || p.x > v.viewW + 60 || p.y < -60 || p.y > v.viewH + 60);
-}
-inline ScreenBand productionBarBand(const AnchorView& v, int footMin, int footMax) {
-    const float zm = v.zoom;
-    return {-60 + 40 * zm / 2, -60 + (float(footMin) * 8 + 14) * zm,
-            float(v.viewW + 60) + 40 * zm / 2, float(v.viewH + 60) + (float(footMax) * 8 + 14) * zm};
-}
 }  // namespace unitpass
 
 }  // namespace tak::render

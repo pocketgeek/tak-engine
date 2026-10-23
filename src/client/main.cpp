@@ -2162,9 +2162,9 @@ int main(int argc, char** argv) {
                 const auto& t=gameView->unitIndexVerifyTotals();
                 using ull=unsigned long long;
                 std::printf("UNIT_INDEX_VERIFY frames=%llu passes=%llu live=%llu candidates=%llu accepted=%llu "
-                            "health=%llu selfdestruct=%llu squads=%llu production=%llu ghosts=%llu\n",
+                            "health=%llu selfdestruct=%llu squads=%llu ghosts=%llu\n",
                     ull(t.frames),ull(t.passes),ull(t.live),ull(t.candidates),ull(t.accepted),
-                    ull(t.overlays[0]),ull(t.overlays[1]),ull(t.overlays[2]),ull(t.overlays[3]),ull(t.ghosts));
+                    ull(t.overlays[0]),ull(t.overlays[1]),ull(t.overlays[2]),ull(t.ghosts));
                 if(!t.passes)throw std::runtime_error("unit index verify ran no checks");
             }
             if(tak::devFlag("TAK_DISTANT_VERIFY")) {

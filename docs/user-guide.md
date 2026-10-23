@@ -1470,7 +1470,7 @@ flickers between the two at the boundary. Dots follow the
 minimap's rules exactly: enemies show only where you can currently see them.
 Buildings are bigger squares than soldiers, flyers sit at their flying height,
 and selected units get a white outline. Click and box selection work on the
-dots. Health bars, production bars and unit shadows are hidden while dots are
+dots. Health bars and unit shadows are hidden while dots are
 showing, and so are the battle's effects: fire, smoke, particles, explosions,
 spell glows, beams and lightning, wandering storms and every projectile, which at that zoom
 would be drawn far bigger than the dots and bury them. They come back, already

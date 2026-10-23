@@ -2215,7 +2215,7 @@ if(TAK_BUILD_CLIENT)
           set(_scene TAK_SHADOW_BENCH=300 TAK_RENDER_SPACING=120 TAK_RENDER_BATTLE=1 TAK_RENDER_EXTRAS=1
               TAK_RENDER_OVERLAYS=1 TAK_PROFILE_FOG=1 TAK_RENDER_MOTION=1 TAK_RENDER_CAMERA=1
               TAK_RENDER_ZOOM=1 TAK_RENDER_SHAKE=37 TAK_RENDER_CHURN=40 TAK_RENDER_EPOCH=90 TAK_RENDER_FRAMES=200)
-          set(_expect "health=[1-9][0-9]* selfdestruct=[1-9][0-9]* squads=[1-9][0-9]* production=[1-9][0-9]* ghosts=[1-9]")
+          set(_expect "health=[1-9][0-9]* selfdestruct=[1-9][0-9]* squads=[1-9][0-9]* ghosts=[1-9]")
         else()
           set(_scene TAK_SHADOW_BENCH=3000 TAK_RENDER_OVERLAYS=1 TAK_PROFILE_ZOOM=1 TAK_RENDER_JUMP=15
               TAK_RENDER_SHAKE=23 TAK_RENDER_FRAMES=120)

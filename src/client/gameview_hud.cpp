@@ -1703,8 +1703,14 @@ namespace {
                         tProg = s->hp / std::max(1.0f, float(s->type->maxHp));
                     }
                 } else if (!u->buildQueue.empty() && u->buildQueue.front()) {
+                    // The unit being produced shows its own HP, as for a site above (and
+                    // as the bar over that unit does). buildProgress/buildTime ignored
+                    // the producer's workertime, and retail-resource production does
+                    // not advance buildProgress at all.
                     tName = u->buildQueue.front()->name;
-                    tProg = u->buildProgress / std::max(0.01f, u->buildQueue.front()->buildTime);
+                    if (const auto* s = u->productionSiteId ? frameUnitP(u->productionSiteId) : nullptr;
+                        s && s->type)
+                        tProg = s->hp / std::max(1.0f, float(s->type->maxHp));
                 }
             }
 

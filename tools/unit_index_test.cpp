@@ -230,7 +230,6 @@ const Pass kPasses[] = {
     {"selfdestruct", false, [](float x, float z, float lx, float ly, int, const AnchorView& v) { return up::selfDestruct(x, z, lx, ly, v); },
      up::selfDestructInView, [](const AnchorView& v, int, int) { return up::selfDestructBand(v); }},
     {"squad", true, up::squadMarker, up::squadMarkerInView, up::squadMarkerBand},
-    {"production", true, up::productionBar, up::productionBarInView, up::productionBarBand},
 };
 
 // The float at which `inside(f)` flips between a (inside) and b (outside): the last
