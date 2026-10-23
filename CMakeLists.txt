@@ -3095,6 +3095,16 @@ if(TAK_TEST_DATA)
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --hpitool "$<TARGET_FILE:hpitool>"
         --data "${TAK_TEST_DATA}")
       set_tests_properties(classic_ai_map_profile PROPERTIES TIMEOUT 900)
+      # Cartographer --bundle maps carrying a DEFAULT profile and ai/n.txt: the server
+      # plays each map's own files (two colliding maps), a ticked pack's files win, and
+      # the stock map's hash is unchanged.
+      if(TARGET cartographer)
+        add_test(NAME cartographer_ai_profile_e2e COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_SOURCE_DIR}/tools/cartographer_ai_profile_e2e_test.py"
+          --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>"
+          --cartographer "$<TARGET_FILE:cartographer>" --hpitool "$<TARGET_FILE:hpitool>" --data "${TAK_TEST_DATA}")
+        set_tests_properties(cartographer_ai_profile_e2e PROPERTIES TIMEOUT 600)
+      endif()
     endif()
     add_test(NAME crusades_hardening_network COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/crusades_hardening_network_test.py"

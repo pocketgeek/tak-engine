@@ -3,6 +3,7 @@
 legion_parallel 257
 legion_sched_inflight 100
 classic_ai_map_profile 63
+cartographer_ai_profile_e2e 60
 legion_choke 60
 mapgen_themes 85
 legion_situation_r10-104540_legion 83
