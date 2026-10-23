@@ -7,10 +7,11 @@ random player: up to 16 units with random flags (live, dying, selectable,
 structure, armed, plus unrelated bits), commanders, sacred-site types and
 builders, finished or not (+0x108 0, -0, 0.5 or a NaN), held (+0x104), carried
 by a holder or not, with or without a navigator and a build menu, at random
-positions and footprints, already in squads or not; random base anchors (start
-and sacred-site records, valid, empty or out of range), the first-pass flag, the
-tick (around the tick <= 30 window and the unsigned wrap), the scenario mode
-(1 = a campaign mission, with its own first-pass rules) and the massattack tick.
+positions and footprints, already in squads or not (97 and 98, the mass
+attack's, among them); random base anchors (start and sacred-site records,
+valid, empty or out of range), the first-pass flag, the tick (around the tick
+<= 30 window and the unsigned wrap), the scenario mode (1 = a campaign mission,
+with its own first-pass rules) and the massattack tick.
 
 Everything under the two routines is retail's own code: set-squad 0x50b4f0
 with the member vector's insert 0x409510 and swap-remove 0x50b300/0x50b2c0,
@@ -177,7 +178,10 @@ def main():
             fx, fz = rng.choice([1, 2, 3, 4, 6, 8, 12, -3, 32767]), rng.choice([1, 2, 3, 4, 6, 8, 12, -3, 32767])
             if flags & 0x1000000:
                 r = rng.random()
-                squad = 0 if r < 0.45 else -1 if r < 0.55 else rng.randrange(1, 21) if r < 0.85 else rng.randrange(21, 99)
+                # 97/98 get a share of their own, so the massattack's skip of units
+                # already there is exercised.
+                squad = (0 if r < 0.45 else -1 if r < 0.55 else rng.randrange(1, 21) if r < 0.85 else
+                         rng.choice([97, 98]) if r < 0.9 else rng.randrange(21, 99))
             else:
                 squad = rng.choice([0, -1])
             if squad > 0: members[squad].append(i)
