@@ -1,5 +1,6 @@
 #include "ai/ai.h"
 #include "ai/classicbrain.h"
+#include "ai/classicprofile.h"
 
 #include <cstdlib>
 #include <climits>
@@ -76,7 +77,11 @@ Controller::Controller(int player, const tak::sim::TypeRegistry& registry,
       // a --mpai run repeatable, not for lockstep.
       rng_(seed), diff_(difficulty), dp_(paramsFor(difficulty)),
       enemyStarts_(std::move(enemyStarts)) {
-    if (diff_ == Difficulty::Classic) classic_ = std::make_unique<ClassicBrain>(player, seed);
+    if (diff_ == Difficulty::Classic) classic_ = std::make_unique<ClassicBrain>(player, seed, registry);
+}
+
+void Controller::setClassicProfile(const ClassicProfileScript& script) {
+    if (classic_) classic_->useProfile(script);
 }
 
 Controller::Controller(Controller&&) noexcept = default;

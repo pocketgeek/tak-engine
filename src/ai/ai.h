@@ -26,6 +26,7 @@
 namespace tak::ai {
 
 class ClassicBrain;   // ai/classicbrain.h: the Classic level's brain
+struct ClassicProfileScript;   // ai/classicprofile.h
 
 // Retail AI profile weights and policy limits. Normal/Easy retain scaled limits;
 // sustained-growth modes raise them to their force/production targets. A zero
@@ -155,6 +156,13 @@ public:
     // A Classic controller hands every tick to its ClassicBrain instead.
     // Reads `world` (never mutates it) and emits any orders through `sink`.
     void tick(const tak::sim::World& world, uint32_t simTick, const CommandSink& sink);
+
+    // Difficulty::Classic only (a no-op otherwise): the AI profile script the
+    // ClassicBrain bakes its per-type preferences and limits from -- the map's
+    // aiprofile file, chosen by the server (ai/classicprofile.h). Without one the
+    // brain keeps retail's defaults (every type 100 / unlimited).
+    void setClassicProfile(const ClassicProfileScript& script);
+    const ClassicBrain* classicBrain() const { return classic_.get(); }
 
     // Read-only identity, for the debug roster dump (server/rosterdump.h).
     int player() const { return player_; }

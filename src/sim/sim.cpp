@@ -193,6 +193,10 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.canMove = info->numberOr("canmove", 0) != 0 &&
                         info->numberOr("bmcode", 1) != 0;
             t.buildMovementCode=uint8_t(int32_t(info->numberOr("bmcode",1)));
+            t.classicFbi.bmcode=int32_t(info->numberOr("bmcode",0));
+            t.classicFbi.isFeature=(int32_t(info->numberOr("isfeature",0))&1)!=0;
+            t.classicFbi.category=info->valueOr("category","");
+            t.classicFbi.yardMap=info->valueOr("yardmap","");
             t.maxVel = Fixed::fromRetailNumber(info->numberOr("maxvelocity", 0));
             // 4bfd8e: absent moverate1/2 both default to twice maxvelocity.
             t.animationMoveRate1=info->value("moverate1")
@@ -652,6 +656,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             for (int slot = 1; slot <= 3; ++slot) {
                 const auto* w = root.child("WEAPON" + std::to_string(slot));
                 if (!w) continue;
+                t.classicFbi.weaponBlocks |= uint8_t(1u << (slot - 1));
                 Weapon wp = parseWeapon(w);
                 // 5307e9 truncates reloadtime*30 into a 16-bit tick count;
                 // 52aae0 takes the maximum over all three slots, even when a

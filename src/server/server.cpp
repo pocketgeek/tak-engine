@@ -63,6 +63,7 @@
 #include <vector>
 
 #include "ai/ai.h"
+#include "ai/classicprofile.h"
 #include "hpi/hpi.h"
 #include "net/auth.h"
 #include "util/storagequota.h"
@@ -2726,6 +2727,9 @@ void Server::tryStart(Client& c) {
                 }
             r->slotPos = slotPos;
             r->ai.reserve(size_t(maxSlot + 1));
+            // The Classic level bakes retail's profile from the map's own aiprofile
+            // file (every shipped skirmish map names DEFAULT); read once per game.
+            std::optional<tak::ai::ClassicProfileScript> classicProfile;
             for (int i = 0; i <= maxSlot; ++i)
                 if (r->slots[i].type == 2) {
                     // The enemy start positions this AI marches on before it has spotted
@@ -2739,6 +2743,16 @@ void Server::tryStart(Client& c) {
                     auto diff = tak::ai::difficultyFromLevel(r->slots[i].aiLevel);
                     r->ai.emplace_back(i, *r->reg, aiProfile_, r->seed,
                                        diff, std::move(enemyStarts));
+                    if (diff == tak::ai::Difficulty::Classic) {
+                        if (!classicProfile) {
+                            classicProfile = tak::ai::classicProfileScript(
+                                *cfg.vfs, tak::ai::classicMapAiProfile(*cfg.vfs, mapPath));
+                            std::fprintf(stderr, "game %u: Classic AI profile %s\n", r->id,
+                                         classicProfile->path.empty() ? "(none: every type 100, unlimited)"
+                                                                      : classicProfile->path.c_str());
+                        }
+                        r->ai.back().setClassicProfile(*classicProfile);
+                    }
                 }
             if (r->ref->hasScenarioOutcomes())
                 std::fprintf(stderr, "game %u: plays its map scenario (%s) -- %zu units at the start\n", r->id,

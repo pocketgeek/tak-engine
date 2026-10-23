@@ -501,6 +501,18 @@ struct UnitType {
     // totalallowed: per-player cap on LIVE units of this type (dragons/gods/
     // juggernaut carry 1). 0 = unlimited.
     int totalAllowed = 0;
+    // Raw FBI words only the Classic AI reads (src/ai/classictypes.cpp derives
+    // retail's own type flags from them, which differ in detail from the fields
+    // above: retail's default bmcode is 0, its yardmap is read only for bmcode 0,
+    // and "armed" is any [WEAPONn] block, damage or not). Load-time data that
+    // nothing in the simulation reads.
+    struct ClassicFbi {
+        std::string category;    // the `category=` value alone
+        std::string yardMap;     // the `yardmap=` value as written
+        int32_t bmcode = 0;      // `bmcode=`, retail's default 0
+        bool isFeature = false;  // `isfeature=` low bit
+        uint8_t weaponBlocks = 0;// bit n-1: a [WEAPONn] block is present
+    } classicFbi;
     float maxRange() const {
         float r = 0;
         for (const auto& w : weapons) r = std::max(r, float(w.range));

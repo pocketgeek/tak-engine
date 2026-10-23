@@ -9,7 +9,15 @@ dump (`TAK_ROSTER_DUMP`, `src/server/rosterdump.{h,cpp}`). C's self-test gate as
 not met: plain `-AutoStop` re-seeds retail every tick (every seed plays the same game), so the
 harness turns that off at tick 1, and after that same-seed retail runs agree only until the first
 building is placed. A seed varies retail runs but cannot replay one; fidelity is judged on
-distributions only. Baseline retail distributions and P1 onward are open.
+distributions only. P1 (profile) is on the branch too: `src/ai/classicprofile.{h,cpp}` bakes
+retail's pref/limit tables from the map's `aiprofile` file (server-side, read once per game), checked
+by `classic_ai_test` and by `tools/re/check_ai_profile.py`, which runs retail's own script executor
+over random scripts (8000 scripts, 0 mismatches). Notes from that oracle: retail's tokenizer also ends
+a line at `#`; the weight product is truncated at 53-bit x87 precision (Unicorn's default control
+word would round `100 x 0.29f` up to 29, so the oracle sets the C runtime's 0x027f, which is an
+assumption about retail's live control word; shipped weights are all integers, where it cannot
+matter). `ClassicBrain::seedFor` also steps off the Park-Miller fixed point 0x7fffffff, a deliberate
+divergence from retail's seeding. Baseline retail distributions and P2 onward are open.
 
 2026-10-22. The research behind this plan (the phase-1 audit) was written before any code. The new
 level is called **Classic** (lobby name CLASSIC, `Difficulty::Classic`, `ClassicBrain`); "retail"
