@@ -2,8 +2,8 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.10** (network protocol **289**, replay format
-**14**; 0.8.10 does not play with 0.8.9 or earlier, nor their replays). It is
+This guide covers **TAK Engine 0.8.11** (network protocol **290**, replay format
+**14**; 0.8.11 does not play with 0.8.10 or earlier, nor their replays). It is
 written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -490,8 +490,11 @@ and it recharges over time.
 ### Building
 
 Select a builder and its build menu appears along the bottom of the screen.
-A long menu that does not fit beside the command panel wraps into a second row
-(or more) above the first, so it never covers the panel or the mana orb.
+A long menu that does not fit beside the command panel wraps into more rows,
+stacked upward in menu order and balanced (13 icons make rows of 7 and 6), so it
+never covers the panel or the mana orb; the hover tooltip and the **TRAINING**
+line stay clear of the panel too. The icons keep their size unless the Build Menu
+Scale is too big for the window, which is then lowered just enough to fit.
 
 ![A Zhon Beast Tamer's nine-icon conjure menu wrapped into two rows, five above four, left of the command panel in a 1024 by 768 window](img/guide/build-menu-wrap.jpg)
 
@@ -547,7 +550,9 @@ build icons:
 | Right-click (with the same modifiers) | remove one, five or ten |
 | Ctrl + left-click | start or stop **infinite production** |
 
-Each icon shows how many are queued. A new unit is started on the building's pad
+Each icon shows how many are queued. No progress bar is drawn over the building
+(the original game drew none): the unit being made shows its own health bar as it
+grows, and the information panel shows its progress. A new unit is started on the building's pad
 only when there is room for its whole body there; if the last unit has not
 cleared the pad yet, the building waits a moment and tries again, as in the
 original game. Give the building a **move** or **patrol**
@@ -1553,7 +1558,7 @@ available on your system appear.
 | **Health Bars** | Damaged | Off, only on damaged units, or always. |
 | **Stats Panel** | On | Live statistics in the space under the minimap. |
 | **Build Menu** | Center | Where the build icons sit: left, centre or right. |
-| **Build Menu Scale** | 100% | Extra size for the build icons (75–400%). |
+| **Build Menu Scale** | 100% | Extra size for the build icons (75–400%). Lowered automatically when the window is too small to fit the menu at that size. |
 | **Chat Position** | Centered | Where the in-game chat box sits: left, or centred over the battlefield. |
 | **Chat Scale** | 100% | Size of the in-game chat box, on top of UI Scale (50–300%, in 10% steps). |
 
@@ -1738,10 +1743,10 @@ others. In single-player there is nobody to wait for, so none of this applies.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.10 uses network protocol **289**. It cannot play with 0.8.9 or
-0.8.8 (protocol 288) or any earlier version: the server turns away a client whose
+Version 0.8.11 uses network protocol **290**. It cannot play with 0.8.10
+(protocol 289) or any earlier version: the server turns away a client whose
 protocol differs from its own, so a server and all of its players must update to
-0.8.10 together.
+0.8.11 together.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
 This should not happen between matching versions with matching game data; if it
@@ -1992,8 +1997,8 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.10 plays protocol-289 recordings only, so replays recorded by
-  0.8.9, 0.8.8 or earlier need the version that recorded them);
+  recorded it (0.8.11 plays protocol-290 recordings only, so replays recorded by
+  0.8.10, 0.8.9 or earlier need the version that recorded them);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -2165,8 +2170,8 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together when the protocol changes.** A server
-only accepts clients of the same protocol version (0.8.10 uses protocol 289; 0.8.9
-and 0.8.8 use 288, 0.8.7 uses 284).
+only accepts clients of the same protocol version (0.8.11 uses protocol 290; 0.8.10
+uses 289, 0.8.9 and 0.8.8 use 288).
 
 ---
 
@@ -2271,8 +2276,8 @@ the system's permission to use the microphone.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.10 uses protocol 289, 0.8.9 and 0.8.8 use 288, 0.8.7
-uses 284). See
+one that recorded them (0.8.11 uses protocol 290, 0.8.10 uses 289, 0.8.9 and 0.8.8
+use 288). See
 [Replays](#replays).
 
 ### Where files are kept

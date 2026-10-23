@@ -100,7 +100,7 @@ and cloakers a cloak button; units with several weapons get weapon buttons.*
 
 | Action | How |
 | --- | --- |
-| Open the build menu | Select **one** builder (or one production building). Its icons appear along the bottom. |
+| Open the build menu | Select **one** builder (or one production building). Its icons appear along the bottom; a menu too long for one row wraps into more rows. |
 | Place a building | Click an icon, then left-click the map. The ghost shows the building where it would go. |
 | Cancel placement | Right-click or **Esc**. |
 | Queue several / a line | Hold **Shift**: Shift-click sites one by one, or Shift-drag a line of them. A line packs the buildings edge to edge (corner to corner on a diagonal). While dragging, turn the mouse wheel: up widens the gap one cell per notch (0–12, shown as **GAP** by the pointer), down tightens it. The gap stays for the rest of the game. Release Shift to stop placing. |
