@@ -776,8 +776,9 @@ static void unboundedLevels() {
 // to end: the level, the multiplier and stance every peer derives from it, and
 // the room and replay records that carry it.
 static void levelWiring() {
-    check(ai::difficultyFromLevel(5)==ai::Difficulty::AbsurdlyDefensive && ai::difficultyFromLevel(6)==ai::Difficulty::Normal,
-          "aiLevel 5 is Absurdly Defensive; an unknown level is Normal");
+    check(ai::difficultyFromLevel(5)==ai::Difficulty::AbsurdlyDefensive && ai::difficultyFromLevel(7)==ai::Difficulty::Normal &&
+          ai::difficultyFromLevel(255)==ai::Difficulty::Normal,
+          "aiLevel 5 is Absurdly Defensive; an unknown level (7 and up) is Normal");
     check(ai::incomeMultFor(ai::Difficulty::AbsurdlyDefensive)==2.0f && ai::incomeMultFor(ai::Difficulty::Absurd)==2.0f &&
           ai::incomeMultFor(ai::Difficulty::Passive)==1.0f,"Absurdly Defensive earns Absurd's double income");
     const auto a=ai::paramsFor(ai::Difficulty::AbsurdlyDefensive),d=ai::paramsFor(ai::Difficulty::Passive);

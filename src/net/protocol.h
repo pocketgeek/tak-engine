@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 289;      // 289: campaign human seat: the .ota's Player1 is always world slot 0 and its keywords are ignored
+constexpr uint32_t kNetVersion = 290;      // 290: AI level 6, Classic (SlotInfo.aiLevel): the retail AI's port (ai::ClassicBrain,
+                                           //      docs/classic-ai-plan.md). Its seat gets a Normal seat's sim config (no income
+                                           //      multiplier, no defensive stance); a 289 peer or server would clamp 6 to Normal and
+                                           //      play a different AI. Sim unchanged; 289 replays refused
+                                           // 289: campaign human seat: the .ota's Player1 is always world slot 0 and its keywords are ignored
                                            //      (retail 0x4d290c), so takx22_mt/takx24_mt no longer give the player an AI and an Aramon team;
                                            //      hashed state changes for those two missions only (skirmish unchanged).
                                            //      Target-score turn penalty uses the terrain-scaled turn rate (412a77: road, else water
@@ -803,7 +807,7 @@ struct SlotInfo {
     uint8_t team = 0;      // 0..kMaxSlots-1
     uint8_t ready = 0;
     uint8_t aiLevel = 2;   // AI difficulty: 0=passive (Defensive) 1=easy 2=normal 3=hard 4=absurd
-                           // 5=absurdly defensive (ai::Difficulty)
+                           // 5=absurdly defensive 6=classic (ai::Difficulty)
     std::string name;      // player display name ("" for open/ai)
 };
 

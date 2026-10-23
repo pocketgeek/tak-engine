@@ -471,11 +471,11 @@ public:
     // auto-drive the lobby (a real UI will), 1 = auto-host (create + start at 2+
     // ready), 2 = auto-join the first game. Returns false when the session ends.
     // (M3 uses the auto modes; the interactive lobby UI is follow-on work.)
-    // AI difficulty for the headless / auto seat paths: TAK_AI_LEVEL (0-5), default
+    // AI difficulty for the headless / auto seat paths: TAK_AI_LEVEL (0-6), default
     // Normal. The interactive lobby sets it per-slot via the Room UI instead.
     static uint8_t aiLevelEnv() {
         const char* e = tak::devEnv("TAK_AI_LEVEL");
-        int v = e ? std::atoi(e) : 2;   // default normal (0=passive..4=absurd, 5=absurdly defensive)
+        int v = e ? std::atoi(e) : 2;   // default normal (0=passive..4=absurd, 5=absurdly defensive, 6=classic)
         return uint8_t(std::clamp(v, 0, int(tak::ai::kAiLevels) - 1));
     }
 

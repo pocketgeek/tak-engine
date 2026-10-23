@@ -46,11 +46,14 @@ Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name = "default
 // threats, without scouting or attacking enemy bases, and keeps building in step
 // with its income with no AI-imposed limit on how much. Absurd = Hard with a
 // mana-income cheat (see incomeMultFor). AbsurdlyDefensive (5, added under protocol
-// 273) = Defensive with Absurd's cheat. Renumbering is versioned by kNetVersion.
+// 273) = Defensive with Absurd's cheat. Classic (6, added under protocol 290) is a
+// port of the retail game's own AI (docs/classic-ai-plan.md): a separate brain
+// (ClassicBrain) with no difficulty knobs and no income cheat, so the sim gives its
+// seat exactly a Normal seat's config. Renumbering is versioned by kNetVersion.
 enum class Difficulty : uint8_t {
-    Passive = 0, Easy = 1, Normal = 2, Hard = 3, Absurd = 4, AbsurdlyDefensive = 5
+    Passive = 0, Easy = 1, Normal = 2, Hard = 3, Absurd = 4, AbsurdlyDefensive = 5, Classic = 6
 };
-inline constexpr uint8_t kAiLevels = 6;
+inline constexpr uint8_t kAiLevels = 7;
 
 // Map a wire aiLevel to a Difficulty, clamping anything out of range to Normal.
 inline Difficulty difficultyFromLevel(uint8_t lvl) {

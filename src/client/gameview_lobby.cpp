@@ -1122,17 +1122,18 @@ float createOptionPx(float maxW) {
             else if (s.type == 2) {
                 cell(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f, 74, {210, 200, 150, 255});
                 // AI difficulty (host cycles DEFENSIVE -> EASY -> NORMAL -> HARD -> ABSURD
-                // -> ABSURDLY DEFENSIVE, the wire aiLevel order).
+                // -> ABSURDLY DEFENSIVE -> CLASSIC, the wire aiLevel order).
                 constexpr int kLevels = tak::ai::kAiLevels;
                 static const char* diffName[kLevels] = {"DEFENSIVE", "EASY", "NORMAL", "HARD", "ABSURD",
-                                                        "ABSURDLY DEFENSIVE"};
+                                                        "ABSURDLY DEFENSIVE", "CLASSIC"};
                 static const SDL_Color diffCol[kLevels] = {
                     {150, 180, 210, 255},   // passive  (calm blue)
                     {150, 200, 150, 255},   // easy     (green)
                     {210, 200, 150, 255},   // normal   (neutral gold)
                     {225, 150, 140, 255},   // hard     (red)
                     {230, 120, 220, 255},   // absurd   (magenta)
-                    {165, 140, 245, 255}};  // absurdly defensive (violet)
+                    {165, 140, 245, 255},   // absurdly defensive (violet)
+                    {205, 165, 105, 255}};  // classic  (bronze): the retail AI's port
                 const uint8_t lvl = uint8_t(s.aiLevel % kLevels);
                 // Two words that overrun the 82 px column stack in two smaller lines.
                 if (const char* gap = std::strchr(diffName[lvl], ' ')) {

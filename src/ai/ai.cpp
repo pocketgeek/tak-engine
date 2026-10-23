@@ -57,6 +57,7 @@ DiffParams paramsFor(Difficulty d) {
         case Difficulty::Hard:   return {20, 6, 8, 150, true,  true,  4, false};
         // Hard's behaviour, plus a 2x income cheat applied to the sim (incomeMultFor).
         case Difficulty::Absurd: return {20, 6, 8, 150, true,  true,  4, false};
+        // Classic takes Normal's (unused) knobs: its ClassicBrain has none.
         case Difficulty::Normal:
         default:                 return {30, 5, 3, 100, true,  true,  3, false};
     }
