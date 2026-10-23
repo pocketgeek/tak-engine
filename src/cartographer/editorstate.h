@@ -565,7 +565,7 @@ struct Editor : Session {
     void drawAiProfiles();
     // Group rules (design 4, DEFAULT only): rows of the draft's category-word lines,
     // each listing the units it covers, words only from this install's catalogue.
-    struct AiGroupRow {SDL_Rect row{},keyword{},word{},value{},up{},remove{};};
+    struct AiGroupRow {SDL_Rect row{},keyword{},word{},value{},up{},down{},remove{};};
     std::vector<AiGroupRow> aiGroupRows;
     std::vector<std::pair<SDL_Rect,std::string>> aiWordRows;
     int aiGroupSelected=-1,aiGroupCell=-1,aiGroupScroll=0,aiGroupUnitScroll=0,aiWordScroll=0;
@@ -575,7 +575,7 @@ struct Editor : Session {
     bool aiGroupsEditable();
     void aiPickWord(const std::string& word);
     void aiCommitGroupCell();
-    void aiGroupAction(int rule,int what);       // 0 keyword, 1 move up, 2 remove
+    void aiGroupAction(int rule,int what);       // 0 keyword, 1 move up, 2 remove, 3 move down
     void drawAiGroups(int x0,int y0,int W,int listBottom);
     void drawAiWordPicker();
     // The unit roster of a game mod (design 7.2, phase 5): when a pack is edited or

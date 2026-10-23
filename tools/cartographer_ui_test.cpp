@@ -618,7 +618,8 @@ static int aiPackListWorkflow(const char* data) {
 // adds one synthetic unit: the pack roster (PREVIEW WITH GAME MOD and OPEN FROM GAME
 // MOD list the pack's units; back to the base install without it), the DEFAULT group
 // rules (a word from this install's catalogue picked, a unit set individually shown
-// as skipped, the value edited), Ctrl+Z / Ctrl+Y inside the window down to where it
+// as skipped, the value edited; a second rule moved down and back up, one undo step
+// each, to the same bytes), Ctrl+Z / Ctrl+Y inside the window down to where it
 // opened, and a level's limit in play (Hard raises 3 to 4). TAK_EDITOR_TEST_CAPTURE=
 // <prefix> also writes <prefix>-groups.png and <prefix>-hard.png.
 static int aiExtrasWorkflow(const char* data) {
@@ -642,6 +643,7 @@ static int aiExtrasWorkflow(const char* data) {
         return nullptr;
     };
     std::string word,unit,unitId,own;   // the group word, a unit it covers (DEFAULT key, UnitType id)
+    std::string word2,ordered;std::vector<uint16_t> covered;   // the move down / up check
     const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window*,SDL_Renderer* renderer,int frame) {
         lastFrame=frame;
         float sx=1,sy=1;SDL_RenderGetScale(renderer,&sx,&sy);
@@ -738,41 +740,65 @@ static int aiExtrasWorkflow(const char* data) {
                       "redo did not bring every step back");
             click(editor->aiGroupRows.empty()?SDL_Rect{}:editor->aiGroupRows[0].keyword);break;
         case 22:check(groups().size()==1 && !groups()[0].weight && file(own).find("\nlimit "+word+" 2\n")!=std::string::npos,"WEIGHT did not turn into a limit rule");
+            click(editor->aiAddGroupButton);break;
+        case 23:{   // a second rule, then MOVE DOWN / MOVE UP: one undo step each, back to the same bytes
+            SDL_Rect row{};
+            for(const auto& [r,w]:editor->aiWordRows)if(w!=word && w!="all") {row=r;word2=w;break;}
+            click(row);break;
+        }
+        case 24:check(groups().size()==2 && groups()[1].word==word2 && editor->aiGroupSelected==1,"the second rule was not added last and selected");
+            check(editor->aiGroupRows.size()==2 && editor->aiGroupRows[0].up.w==0 && editor->aiGroupRows[0].down.w>0 &&
+                  editor->aiGroupRows[1].up.w>0 && editor->aiGroupRows[1].down.w==0,"move up / move down are not offered exactly where a rule can move");
+            ordered=file(own);covered.clear();
+            for(const auto& u:cart::aiGroupRuleUnits(editor->aiTabView().draft,0,*editor->aiCatalogue))covered.push_back(u.index);
+            click(editor->aiGroupRows.empty()?SDL_Rect{}:editor->aiGroupRows[0].down);break;
+        case 25:{
+            check(groups().size()==2 && groups()[0].word==word2 && groups()[1].word==word && file(own)!=ordered,"MOVE DOWN did not swap the rules in the file");
+            check(editor->aiGroupSelected==1 && editor->aiGroupUnitScroll==0,"the moved rule is not still selected");
+            std::vector<uint16_t> now;
+            for(const auto& u:cart::aiGroupRuleUnits(editor->aiTabView().draft,size_t(std::max(0,editor->aiGroupSelected)),*editor->aiCatalogue))now.push_back(u.index);
+            check(now==covered,"the covered-units list does not follow the moved rule");
+            key(SDLK_z,KMOD_CTRL);break;
+        }
+        case 26:check(file(own)==ordered,"one Ctrl+Z did not take back MOVE DOWN");key(SDLK_y,KMOD_CTRL);break;
+        case 27:check(groups().size()==2 && groups()[0].word==word2,"Ctrl+Y did not redo MOVE DOWN");
+            click(editor->aiGroupRows.size()<2?SDL_Rect{}:editor->aiGroupRows[1].up);break;
+        case 28:check(file(own)==ordered && editor->aiGroupSelected==0,"MOVE DOWN then MOVE UP did not give back the same bytes");
             click(editor->aiTabRects[4]);break;   // Hard
-        case 23:click(editor->aiSearchBox);key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);text(unitId);break;
-        case 24:click(cell(unitId,1));break;
-        case 25:text("3");key(SDLK_RETURN);break;
-        case 26:{
+        case 29:click(editor->aiSearchBox);key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);text(unitId);break;
+        case 30:click(cell(unitId,1));break;
+        case 31:text("3");key(SDLK_RETURN);break;
+        case 32:{
             check(file("ai/h.txt").find("\nlimit "+unitId+" 3\n")!=std::string::npos,"Hard's limit was not written");
             const auto* row=listed(editor->aiLevelRoster,unitId);
             const auto why=row?editor->aiRowExplanation(*row):std::string();
             check(why.find("In play on Hard: 4 in play")!=std::string::npos,"Hard's limit in play is not shown: "+why);
             capture("-hard.png");click(editor->aiModOpenButton);break;
         }
-        case 27:{
+        case 33:{
             SDL_Rect row{};for(const auto& [r,p]:editor->aiModPackRows)if(p=="Extra")row=r;
             click(row);break;
         }
-        case 28:check(editor->aiMod && editor->aiRosterPack=="Extra" && listed(editor->aiLevelRoster,"zzpack"),"OPEN FROM GAME MOD does not list the pack's units");
+        case 34:check(editor->aiMod && editor->aiRosterPack=="Extra" && listed(editor->aiLevelRoster,"zzpack"),"OPEN FROM GAME MOD does not list the pack's units");
             key(SDLK_z,KMOD_CTRL);break;
-        case 29:check(editor->aiNote.find("no undo")!=std::string::npos,"Ctrl+Z on a pack's files did not say they have no undo");
+        case 35:check(editor->aiNote.find("no undo")!=std::string::npos,"Ctrl+Z on a pack's files did not say they have no undo");
             click(editor->aiModOpenButton);break;   // CLOSE PACK
-        case 30:check(!editor->aiMod && editor->aiRosterPack.empty() && !listed(editor->aiLevelRoster,"zzpack"),"closing the pack did not go back to the base units");
+        case 36:check(!editor->aiMod && editor->aiRosterPack.empty() && !listed(editor->aiLevelRoster,"zzpack"),"closing the pack did not go back to the base units");
             click(editor->aiPackButton);break;   // preview Extra, then save the map's files into it
-        case 31:click(editor->aiModSaveButton);break;
-        case 32:check(editor->aiModSaveOpen,"SAVE AS GAME MOD did not open");click(editor->aiModPackBox);break;
-        case 33:key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);text("extra");break;
-        case 34:check(editor->aiRosterLists(editor->aiModPlan.pack) && editor->aiModPlan.pack=="Extra","the dialog still warns that the pack's units are not listed");
+        case 37:click(editor->aiModSaveButton);break;
+        case 38:check(editor->aiModSaveOpen,"SAVE AS GAME MOD did not open");click(editor->aiModPackBox);break;
+        case 39:key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);text("extra");break;
+        case 40:check(editor->aiRosterLists(editor->aiModPlan.pack) && editor->aiModPlan.pack=="Extra","the dialog still warns that the pack's units are not listed");
             key(SDLK_ESCAPE);key(SDLK_ESCAPE);break;
-        case 35:check(!editor->aiModSaveOpen && !fs::exists(pack/"ai"),"Escape wrote into the pack");click(editor->aiDoneButton);break;
-        case 36:{SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
-        case 37:if(editor->modal==cart::Editor::M_QUITSAVE)click(editor->mQuit);break;
-        default:if(frame>42) {failure+=" (AI extras workflow did not exit)";std::_Exit(3);}
+        case 41:check(!editor->aiModSaveOpen && !fs::exists(pack/"ai"),"Escape wrote into the pack");click(editor->aiDoneButton);break;
+        case 42:{SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        case 43:if(editor->modal==cart::Editor::M_QUITSAVE)click(editor->mQuit);break;
+        default:if(frame>48) {failure+=" (AI extras workflow did not exit)";std::_Exit(3);}
         }
     },hooks);
     fs::remove_all(root);
-    if(result || !failure.empty() || lastFrame>42) {std::cerr<<failure<<'\n';return 1;}
-    std::cout<<"PASS: AI Profiles extras: pack roster, group rules with the lock shown, undo inside the window, Hard's limit in play\n";return 0;
+    if(result || !failure.empty() || lastFrame>48) {std::cerr<<failure<<'\n';return 1;}
+    std::cout<<"PASS: AI Profiles extras: pack roster, group rules with the lock shown and move down / up, undo inside the window, Hard's limit in play\n";return 0;
 }
 static int resizeSaveWorkflow(const char* data) {
     namespace fs=std::filesystem;

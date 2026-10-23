@@ -1576,7 +1576,8 @@ Deviations from the design:
   links `TAK_AI_SOURCES` and compares them for every level.
 - Ctrl+Z goes no further back than where the window opened, instead of reaching the
   whole map history.
-- No reorder beyond "move up", and no cap on the number of rules.
+- No cap on the number of rules. (Rules reorder one step at a time, up or down; move
+  down came in the 2026-10-23 follow-ups.)
 
 Validation:
 
@@ -1725,6 +1726,21 @@ Validation:
   Mutations that ignore the wheel (frame 3) or keyboard selection (frame 4) fail it.
   I inspected a capture of the list scrolled to the end, with
   `TAK_EDITOR_TEST_CAPTURE=<prefix>`, which writes `<prefix>-packs.png`.
+
+- GROUP RULES has a move-down control, `v`, beside move up (`^`). It mirrors move up:
+  `aiGroupAction(rule, 3)` swaps the rule with the next one as one `aiEdit`, so one
+  undo step (a pack edit has none, as for every pack edit), and it is not drawn on the
+  last rule, as `^` is not on the first. The moved rule stays selected, so the
+  covered-units list follows it. Order matters to the engine: later limit rules win,
+  and a chance is clamped to 0..100 after each rule.
+
+Validation:
+
+- `cartographer_aiprofile_extras_ui`, frames 22-28: a second rule is added; `^` and
+  `v` are drawn only where a rule can move; `v` on the first rule swaps the two in the
+  file and keeps the moved rule selected, with the same covered units; one Ctrl+Z
+  restores the bytes and Ctrl+Y redoes it; `^` then gives back the original bytes.
+  With the click on `v` disabled, it fails at frame 25.
 
 ## Scope and remaining limitations
 

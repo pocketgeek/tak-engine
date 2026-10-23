@@ -1475,7 +1475,11 @@ own row, so the rule skips it.*
 
 - **+ ADD GROUP RULE** picks a word from a list of this install's categories.
   Click a rule's keyword to switch it between **WEIGHT** (a chance) and
-  **LIMIT**, and its value to change it. `^` moves a rule up, **X** removes it.
+  **LIMIT**, and its value to change it. `^` moves a rule up, `v` moves it
+  down, and **X** removes it. Each move is one Undo step.
+- **Order matters.** Rules apply from the top down: for limits the last rule
+  wins, and a chance is worked out (and kept between 0 and 100 %) after each
+  rule in turn.
 - The selected rule lists every unit it covers, with its value now.
 - **A group rule never changes a unit that has its own row** for the same
   thing (chance or limit): the unit's own row comes first and locks it. The
@@ -2147,7 +2151,7 @@ Start Cartographer from its shortcut and choose **Recover**. See
   window, which lists a game mod's units while that pack is previewed or
   opened there.
 - **AI profiles.** Each level is edited on its own tab; there is no "copy to
-  other levels". Group rules can only be moved up one step at a time.
+  other levels".
 - **Display names** are cut to 31 bytes in the game.
 - **Text.** The editor's own font covers Latin (including Vietnamese), Greek,
   Cyrillic, Armenian and Georgian letters, common symbols, Japanese kana, Korean

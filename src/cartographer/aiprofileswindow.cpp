@@ -511,15 +511,17 @@ void cart::Editor::aiCommitGroupCell() {
 void cart::Editor::aiGroupAction(int rule,int what) {
     if(rule<0 || rule>=int(aiTabView().draft.groups.size()))return;
     if(what==1 && rule==0)return;
+    if(what==3 && rule+1==int(aiTabView().draft.groups.size()))return;
     aiEdit([&](AiDraft& d) {
         auto& g=d.groups[size_t(rule)];
         if(what==0) {g.weight=!g.weight;g.value=g.weight?cart::classicChanceText(50):"2";}
         else if(what==1)std::swap(d.groups[size_t(rule)],d.groups[size_t(rule-1)]);
+        else if(what==3)std::swap(d.groups[size_t(rule)],d.groups[size_t(rule+1)]);
         else d.groups.erase(d.groups.begin()+rule);
         return true;
     });
     if(what==0)aiNote=aiTabView().draft.groups[size_t(rule)].weight?"Now a weight rule, at 50 %.":"Now a limit rule, at 2.";
-    aiGroupSelected=what==1?rule-1:what==2?std::min(rule,int(aiTabView().draft.groups.size())-1):rule;aiGroupUnitScroll=0;
+    aiGroupSelected=what==1?rule-1:what==3?rule+1:what==2?std::min(rule,int(aiTabView().draft.groups.size())-1):rule;aiGroupUnitScroll=0;
 }
 
 std::string cart::Editor::aiRowExplanation(const AiRosterRow& row) {
@@ -720,6 +722,7 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
             if(!editable)return;
             if(cart::pointIn(mx,my,row.keyword))aiGroupAction(i,0);
             else if(cart::pointIn(mx,my,row.up))aiGroupAction(i,1);
+            else if(cart::pointIn(mx,my,row.down))aiGroupAction(i,3);
             else if(cart::pointIn(mx,my,row.remove))aiGroupAction(i,2);
             else if(cart::pointIn(mx,my,row.word)) {aiWordPick=i;aiWordSearch.clear();aiWordScroll=0;aiFocus=AI_WORD;aiWordSearchEdit.focus(aiWordSearch);}
             else if(cart::pointIn(mx,my,row.value)) {
@@ -1472,7 +1475,8 @@ void cart::Editor::drawAiGroups(int x0,int y0,int W,int listBottom) {
         if(twice && r.weight)covers+=", some twice";
         cart::drawText(ren,covers,x0+290,y+6,1,170,185,200);
         if(editable) {
-            row.up=i>0?cart::drawButton(ren,x0+W-46,y+1,20,17,"^",false):SDL_Rect{};
+            row.up=i>0?cart::drawButton(ren,x0+W-70,y+1,20,17,"^",false):SDL_Rect{};
+            row.down=i+1<int(rules.size())?cart::drawButton(ren,x0+W-46,y+1,20,17,"v",false):SDL_Rect{};
             row.remove=cart::drawButton(ren,x0+W-22,y+1,20,17,"X",false);
         }
         aiGroupRows.push_back(row);
