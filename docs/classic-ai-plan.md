@@ -566,7 +566,7 @@ defensiveAi; and the Controller LCG.
 - **Byte-identity gate**: every phase must keep `--mpai` 60 s/300 s hashes unchanged in both
   pathfinding modes (they seat a Normal AI), `tools/check-determinism.sh` unchanged, `ai_behavior_test`
   all PASS, and `naval_ai` PASS. Classic runs: `TAK_AI_LEVEL=6 --mpai --seed 1` twice -> same hash.
-- **Disconnect takeover** stays Normal; **campaign missions** are Normal unless the player picks Classic in the campaign book (P8, D3).
+- **Disconnect takeover** stays Normal; **campaign missions** are Classic by default since 0.8.11's release, and Normal when the player picks it in the campaign book (P8, D3).
 
 ### 4.3 World/sim support the brain needs
 Most of it exists. "new" means an addition. Any new **sim** field must be unhashed or derived, or every
