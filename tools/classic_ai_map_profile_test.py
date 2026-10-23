@@ -4,7 +4,7 @@
 Retail's file choice (ai/<aiprofile>.txt, else ai/default.txt) is looked up in the
 room's layers, for ai/ files: a game mod's file wins over the map package's, which
 wins over the base install's. Headless --mpai games on Inner Circle, seed 1, the AI
-seat on Classic (shown to players as DEFAULT):
+seat on Classic (shown to players as RETAIL):
 
   control   the base install's ai/default.txt; the AI builds the watched units
   game mod  a game pack carrying ai/default.txt that starts `limit <unit> 0` for them

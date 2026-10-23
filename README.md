@@ -1112,7 +1112,7 @@ enemy units outside current sight remain untargetable.
 | Hard | Keeps expanding income and production, spending on raids and larger attack waves |
 | Absurd | Hard behavior with double mana income, including reclaim |
 | Absurdly Defensive | Defensive behavior with Absurd's double mana income ([details](docs/ai-defensive-2026-10-17.md)) |
-| Default | The DEFAULT AI: the 1999 game's own AI, driven by `ai/default.txt`, ported routine by routine and checked against the original in emulation ([plan](docs/classic-ai-plan.md), [acceptance](docs/classic-ai-acceptance.md)): it reads the map's AI profile (`ai/default.txt` on every shipped skirmish map; 30 campaign missions name their own), has no difficulty setting or income bonus, keeps the original's quirks, and plays weaker than Normal. A game pack or a map archive that carries the profile file replaces the install's. Always plays the campaign opponents |
+| Retail | The Retail AI: the original 1999 game's own AI, driven by `ai/default.txt`, ported routine by routine and checked against the original in emulation ([plan](docs/classic-ai-plan.md), [acceptance](docs/classic-ai-acceptance.md)): it reads the map's AI profile (`ai/default.txt` on every shipped skirmish map; 30 campaign missions name their own), has no difficulty setting or income bonus, keeps the original's quirks, and plays weaker than Normal. A game pack or a map archive that carries the profile file replaces the install's. Always plays the campaign opponents |
 
 Choose **Generate Random Map** under the map preview to configure a Mainland,
 Lakes, or Islands map, up to **64×64**. Every new mana site has surrounding ruins.
@@ -1432,7 +1432,7 @@ one of them falls back to Retail.
 Use the **same network protocol and compatible game data** on every participant.
 Version **0.8.11 uses protocol 290**, including authoritative pathfinding
 selection, shared game-mod pack transfer, Darien Crusades campaign messages, the
-disconnect wait with its AI takeover, and the DEFAULT AI level. **0.8.11 does not
+disconnect wait with its AI takeover, and the Retail AI level. **0.8.11 does not
 play with 0.8.10 (protocol 289) or any earlier version, and does not play their
 replays**: a 0.8.11 client cannot join an older server, nor an older client a
 0.8.11 server. Update the server

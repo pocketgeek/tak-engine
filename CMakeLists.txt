@@ -3151,7 +3151,7 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_seat_move_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_seat_move PROPERTIES TIMEOUT 120)
-    # AI levels through the lobby (protocol 290): CLASSIC (6) round-trips, 7+ store Normal.
+    # AI levels through the lobby (protocol 290): RETAIL (6, Classic) round-trips, 7+ store Normal.
     add_test(NAME server_ai_level COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_ai_level_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")

@@ -298,9 +298,9 @@ scenario.
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
 | **Absurd** | Plays like Hard, with **double mana income**. |
 | **Absurdly Defensive** | Plays like Defensive, with Absurd's **double mana income**. |
-| **Default** | The DEFAULT AI: the 1999 game's own AI, driven by `ai/default.txt`, as it played in 1999. No difficulty setting and no income bonus. Weaker than Normal. Despite the name, a new AI seat starts on Normal. See [Default](#default). |
+| **Retail** | The Retail AI: the original 1999 game's own AI, driven by `ai/default.txt`, as it played in 1999. No difficulty setting and no income bonus. Weaker than Normal. A new AI seat starts on Normal. See [Retail AI](#retail-ai). |
 
-At every difficulty except Default, the AI's Monarch fights back when it is attacked, or when
+At every difficulty except Retail, the AI's Monarch fights back when it is attacked, or when
 an armed enemy comes within its reach, instead of carrying on with a build.
 
 Defensive, Easy and Normal also build another lodestone whenever they run short
@@ -327,18 +327,20 @@ builders building income rather than leaving them idle.
 The AI runs on the game server, never in your client. In single-player, the game
 starts a private server on your own computer for you.
 
-Every level except Default has its own **build profile** built into the game: a
+Every level except Retail has its own **build profile** built into the game: a
 weight and a limit for each unit, which decide how often it picks that unit and
 how many of it it may have. (The values are the original game's default AI
 profile, the one these levels were tuned on.) These levels never read the install's
 `ai/*.txt` files; a map or a game mod can change their profiles instead (see
 [AI profiles in game mods](#ai-profiles-in-game-mods)).
 
-#### Default
+<a id="default"></a>
 
-The DEFAULT AI is the original game's computer player, named for the
-`ai/default.txt` profile that drives it (developer documents call it the Classic
-AI). Every decision it makes (what to build, where to put it, which units guard
+#### Retail AI
+
+The Retail AI is the original 1999 game's own computer player, driven by its
+`ai/default.txt` profile (developer documents call it the Classic AI; it is not
+the same thing as **Retail** pathfinding, which is chosen separately). Every decision it makes (what to build, where to put it, which units guard
 the base, when a wave leaves and what it marches on) follows the 1999 game's own AI, which was read from the original
 program and checked against it piece by piece
 ([acceptance](classic-ai-acceptance.md)). So it plays the way the original did,
@@ -356,7 +358,7 @@ quirks included:
   [Making AI profiles](#making-ai-profiles)).
 - It has no difficulty setting and no income bonus.
 - It is **weaker than Normal**. It builds a few lodestones at a time and often
-  runs low on mana; a **Taros** DEFAULT AI in particular can grow slowly.
+  runs low on mana; a **Taros** Retail AI in particular can grow slowly.
 - Its base defenders patrol around the base and walk through intruders; its
   attack waves walk to their target and fight on the way and when they arrive.
   It knows where your units are even when it cannot see them, and prefers your
@@ -364,7 +366,7 @@ quirks included:
 - Its Monarch keeps building only while the base is short of builders, and runs
   for a safe spot when badly hurt instead of fighting back.
 
-The DEFAULT AI always plays the campaign's computer opponents: see
+The Retail AI always plays the campaign's computer opponents: see
 [Campaigns](#campaigns).
 
 ### Random maps
@@ -1961,8 +1963,8 @@ mission. The mouse wheel and **Up/Down** scroll long briefings. During play,
 When you win, **Next** goes to the next chapter and **Retry** replays this one.
 Campaigns always use Retail pathfinding.
 
-The missions' computer players are always the **DEFAULT AI**, the original
-game's own AI (see [Default](#default)), which plays a mission as the 1999 game
+The missions' computer players are always the **Retail AI**, the original
+game's own AI (see [Retail AI](#retail-ai)), which plays a mission as the 1999 game
 did: it builds from the AI profile the mission names and makes the timed mass attack
 some *Iron Plague* missions set. There is no choice of AI level for a mission.
 
@@ -2071,7 +2073,7 @@ then ticked cosmetic packs.
 
 ### AI profiles in game mods
 
-A game pack can change the build profile of each AI level except Default with a
+A game pack can change the build profile of each AI level except Retail with a
 file of its own in the pack's `ai` folder, loose (`mods/game/My AI/ai/n.txt`)
 or in the `ai` folder inside an archive in the pack. A map can too: the map's
 own archive in `Maps/` (a `.kmp` map, for example) may carry the same files in
@@ -2098,9 +2100,9 @@ AI that takes over a disconnected player's seat), never Easy. Names are not
 case-sensitive. When two ticked packs have the same file, the alphabetically
 later pack wins, as for any file. In multiplayer the files travel with the
 host's game packs. Cosmetic packs and the install itself cannot change these
-levels' profiles, even with an `ai/n.txt` of their own. The DEFAULT AI
+levels' profiles, even with an `ai/n.txt` of their own. The Retail AI
 reads none of these files: it reads the map's own AI profile, which a game pack
-or the map's archive can replace (see [Default](#default)).
+or the map's archive can replace (see [Retail AI](#retail-ai)).
 
 The old `overrides/` folder is no longer read. Nothing in it is moved or
 changed; move your packs into `mods/cosmetic/` or `mods/game/` yourself, each
@@ -2112,13 +2114,13 @@ not carried over, so tick the packs again in the room.
 ### Making AI profiles
 
 The Cartographer makes these files for you: **Scenario → AI Profiles...**
-(**A**) opens a window with a tab for the DEFAULT AI and one for each level, a
+(**A**) opens a window with a **DEFAULT AI** tab (the Retail AI's profile) and one for each level, a
 table of units in which you switch units off, change how often they are built
 and set limits, and presets such as **No flyers** and **No ships**. See
 [AI profiles](cartographer-guide.md#ai-profiles) in the Cartographer guide.
 
 - **For one map**: the files are saved inside the map's `.kmp` and travel with
-  it. The DEFAULT AI gets the map's own profile (`ai/<name>.txt`, which the map
+  it. The Retail AI gets the map's own profile (`ai/<name>.txt`, which the map
   names), usually started from the game's standard profile; each level you change gets
   its file (`ai/n.txt` for Normal, and so on).
 - **For every map**: **SAVE AS GAME MOD...** writes the files into a game pack,
@@ -2129,10 +2131,10 @@ and set limits, and presets such as **No flyers** and **No ships**. See
 | AI | Looks for, first to last |
 | --- | --- |
 | A level (Normal, say) | `ai/n.txt` in a ticked game pack, then in the map. Neither: the level's built-in profile. The file it finds replaces the other one whole; the two are never mixed. |
-| DEFAULT | The map's own profile name (`ai/islands.txt`) in a ticked game pack, then the map, then the install; only if there is none, `ai/default.txt` in the same order. A game pack's `ai/default.txt` therefore does not replace a map's own profile, but a game pack's `ai/islands.txt` does. |
+| Retail AI | The map's own profile name (`ai/islands.txt`) in a ticked game pack, then the map, then the install; only if there is none, `ai/default.txt` in the same order. A game pack's `ai/default.txt` therefore does not replace a map's own profile, but a game pack's `ai/islands.txt` does. |
 
 Two maps that carry the same file name (both `ai/n.txt`, say) each keep and
-send their own. Campaign missions always use the DEFAULT AI with the mission's
+send their own. Campaign missions always use the Retail AI with the mission's
 own profile.
 
 ---

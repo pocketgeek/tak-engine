@@ -1122,12 +1122,12 @@ float createOptionPx(float maxW) {
             else if (s.type == 2) {
                 cell(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f, 74, {210, 200, 150, 255});
                 // AI difficulty (host cycles DEFENSIVE -> EASY -> NORMAL -> HARD -> ABSURD
-                // -> ABSURDLY DEFENSIVE -> DEFAULT, the wire aiLevel order). DEFAULT is
+                // -> ABSURDLY DEFENSIVE -> RETAIL, the wire aiLevel order). RETAIL is
                 // level 6, internally Classic: the 1999 game's own AI, driven by its
-                // ai/default.txt -- hence the name; a new AI seat still starts NORMAL.
+                // ai/default.txt; a new AI seat still starts NORMAL.
                 constexpr int kLevels = tak::ai::kAiLevels;
                 static const char* diffName[kLevels] = {"DEFENSIVE", "EASY", "NORMAL", "HARD", "ABSURD",
-                                                        "ABSURDLY DEFENSIVE", "DEFAULT"};
+                                                        "ABSURDLY DEFENSIVE", "RETAIL"};
                 static const SDL_Color diffCol[kLevels] = {
                     {150, 180, 210, 255},   // passive  (calm blue)
                     {150, 200, 150, 255},   // easy     (green)
@@ -1135,7 +1135,7 @@ float createOptionPx(float maxW) {
                     {225, 150, 140, 255},   // hard     (red)
                     {230, 120, 220, 255},   // absurd   (magenta)
                     {165, 140, 245, 255},   // absurdly defensive (violet)
-                    {205, 165, 105, 255}};  // default (Classic, bronze): the retail AI's port
+                    {205, 165, 105, 255}};  // retail (Classic, bronze): the retail AI's port
                 const uint8_t lvl = uint8_t(s.aiLevel % kLevels);
                 // Two words that overrun the 82 px column stack in two smaller lines.
                 if (const char* gap = std::strchr(diffName[lvl], ' ')) {
