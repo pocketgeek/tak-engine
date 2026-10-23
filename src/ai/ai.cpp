@@ -1,4 +1,5 @@
 #include "ai/ai.h"
+#include "ai/classicbrain.h"
 
 #include <cstdlib>
 #include <climits>
@@ -74,7 +75,12 @@ Controller::Controller(int player, const tak::sim::TypeRegistry& registry,
       // by map position. The AI runs server-side only, so this RNG exists just to make
       // a --mpai run repeatable, not for lockstep.
       rng_(seed), diff_(difficulty), dp_(paramsFor(difficulty)),
-      enemyStarts_(std::move(enemyStarts)) {}
+      enemyStarts_(std::move(enemyStarts)) {
+    if (diff_ == Difficulty::Classic) classic_ = std::make_unique<ClassicBrain>(player, seed);
+}
+
+Controller::Controller(Controller&&) noexcept = default;
+Controller::~Controller() = default;
 
 void Controller::emit(const CommandSink& sink, tak::net::Cmd kind, int unitId,
                       const std::string& type, float x, float z) const {
@@ -1739,6 +1745,9 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
 
 void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                       const CommandSink& sink) {
+    // Classic runs retail's own clocks and bookkeeping: hand it every tick before
+    // any of the other levels' cadence, home or ally setup runs.
+    if (classic_) { classic_->tick(world, simTick, sink); return; }
     // Think cadence (per difficulty), staggered by player so several AIs don't all
     // fire on the same tick. Sim-tick driven so a --mpai run is repeatable. Hard
     // reacts more often (thinkPeriod=20) than Easy (60).

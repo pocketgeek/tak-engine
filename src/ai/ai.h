@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -23,6 +24,8 @@
 #include "sim/sim.h"
 
 namespace tak::ai {
+
+class ClassicBrain;   // ai/classicbrain.h: the Classic level's brain
 
 // Retail AI profile weights and policy limits. Normal/Easy retain scaled limits;
 // sustained-growth modes raise them to their force/production targets. A zero
@@ -145,8 +148,11 @@ public:
                const Profile& profile, uint32_t seed,
                Difficulty difficulty = Difficulty::Normal,
                std::vector<std::pair<float, float>> enemyStarts = {});
+    Controller(Controller&&) noexcept;
+    ~Controller();
 
     // Evaluate the AI for sim tick `simTick`. Does nothing off its think cadence.
+    // A Classic controller hands every tick to its ClassicBrain instead.
     // Reads `world` (never mutates it) and emits any orders through `sink`.
     void tick(const tak::sim::World& world, uint32_t simTick, const CommandSink& sink);
 
@@ -288,6 +294,9 @@ private:
     std::unordered_map<int, QueueWait> queueWait_;
     std::unordered_map<int, QueueWait> refused_;   // since = the tick it may try again
     void unqueueStalled(const tak::sim::World&, uint32_t simTick, const CommandSink&);
+    // Difficulty::Classic only: the retail-AI port that drives this player in place
+    // of everything above (which then stays idle).
+    std::unique_ptr<ClassicBrain> classic_;
     uint32_t now_ = 0;
     int raidersSincePush_ = 0;
     bool scouted_ = false;        // one-shot early scout sent

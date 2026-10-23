@@ -1,5 +1,6 @@
 // Command-level AI policy tests; movement continues through the normal World API.
 #include "ai/ai.h"
+#include "ai/classicbrain.h"
 #include "net/matchconfig.h"
 #include "net/replayhdr.h"
 #include "sim/matchsetup.h"
@@ -814,6 +815,58 @@ static void levelWiring() {
     check(!net::supportedReplayProtocol(fmt,272),"a protocol 272 replay, which had no level 5, is refused");
 }
 
+// Classic (wire level 6, protocol 290): the retail AI's port. Its seat's sim config
+// is exactly a Normal seat's, the level survives the room and replay records, and
+// the P0 brain takes every tick from the Controller and does nothing with it.
+static void classicLevel() {
+    check(ai::kAiLevels==7 && ai::difficultyFromLevel(6)==ai::Difficulty::Classic,"aiLevel 6 is Classic");
+    check(ai::incomeMultFor(ai::Difficulty::Classic)==1.0f && !ai::defensiveLevel(ai::Difficulty::Classic),
+          "Classic has no income cheat and no defensive stance");
+    net::SlotInfo slots[net::kMaxSlots]{};
+    slots[0].type=1;slots[0].aiLevel=2;
+    slots[1].type=2;slots[1].aiLevel=6;slots[1].faction=2;slots[1].team=1;
+    slots[2].type=2;slots[2].aiLevel=2;slots[2].faction=2;slots[2].team=2;
+    {
+        net::Writer wr;net::put(wr,slots[1]);net::Reader rd(wr.b.data(),wr.b.size());net::SlotInfo back;
+        net::get(rd,back);
+        check(rd.ok && back.aiLevel==6,"the room's slot record carries level 6");
+    }
+    auto sameAsNormal=[](const sim::MatchConfig& cfg) {
+        const auto& c=cfg.slots[1];const auto& n=cfg.slots[2];
+        return cfg.slots.size()==3 && c.used && c.manaMult==n.manaMult && c.manaMult==1 &&
+            c.automaticGates==n.automaticGates && c.automaticGates && c.defensiveAi==n.defensiveAi && !c.defensiveAi;
+    };
+    net::GameOptions opts;
+    check(sameAsNormal(net::matchConfigFor(opts,slots,7)),"a Classic seat gets exactly a Normal seat's match config");
+    net::Writer wr;net::writeReplayHeader(wr,net::replayHeaderFor(opts,"Inner Circle","",slots,7));
+    net::Reader rd(wr.b.data()+4,wr.b.size()-4);
+    net::ReplayHeader h;uint32_t fmt=0,proto=0;
+    const bool read=net::readReplayHeader(rd,h,fmt,proto);
+    net::GameOptions o2;net::SlotInfo back[net::kMaxSlots];net::matchInputsFrom(h,o2,back);
+    check(read && proto==net::kNetVersion && back[1].aiLevel==6 && sameAsNormal(net::matchConfigFor(o2,back,7)),
+          "a replay header keeps level 6");
+    check(net::kNetVersion>=290 && !net::supportedReplayProtocol(fmt,289),"a protocol 289 replay, which had no level 6, is refused");
+    check(ai::ClassicBrain::seedFor(1,7)!=ai::ClassicBrain::seedFor(2,7) &&
+          ai::ClassicBrain::seedFor(1,7)==ai::ClassicBrain(1,7).seed() && (ai::ClassicBrain::seedFor(1,7)&1),
+          "each Classic seat of a game gets its own Park-Miller stream");
+    {
+        ai::ClassicBrain a(1,7),b(1,7);bool same=true;
+        for (int i=0;i<64;++i) same=same && a.rand(1000)==b.rand(1000);
+        const auto before=a.seed();
+        check(same && a.rand(1)==0 && a.rand(0)==0 && a.seed()==before,"the stream repeats per seed, and n < 2 draws nothing");
+    }
+    // The Normal Controller attacks with this army at its first think (main's loop);
+    // the Classic one is handed every tick and, in P0, emits nothing.
+    auto soldier=fighter();sim::TypeRegistry empty;ai::Profile profile;
+    sim::World w;terrain(w);w.player(0).income=100;
+    for (int i=0;i<35;++i) w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
+    ai::Controller classic(0,empty,profile,1,ai::Difficulty::Classic,{{3400,800}});
+    size_t emitted=0;
+    for (uint32_t tick=0;tick<300;++tick) emitted+=think(classic,w,tick).size();
+    ai::Controller normal(0,empty,profile,1,ai::Difficulty::Normal,{{3400,800}});
+    check(emitted==0 && attacks(think(normal,w))==35,"the P0 Classic brain idles where Normal attacks");
+}
+
 int main(int argc,char** argv) {
     sim::TypeRegistry empty;ai::Profile profile;auto soldier=fighter();
     for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd,
@@ -964,6 +1017,7 @@ int main(int argc,char** argv) {
               "Absurd doubles recurring, feature, ordered-corpse and automatic-corpse income");
     }
     levelWiring();
+    classicLevel();
     {
         // Self-contained production tree: profile caps must not stop a defensive
         // or aggressive AI while mana and the actual game cap allow more troops.
