@@ -883,6 +883,12 @@ clamp level 6 to Normal, hence the bump. A campaign mission's strategic computer
 players are always Classic (`CreateGame` carries no AI choice). 289 replays are refused.
 0.8.11 ships protocol 290; it plays with neither 0.8.10 nor any earlier version,
 nor their replays.
+Game options
+and every lobby/start/spectate snapshot carry the choice. The server validates the
+value, includes it in the authoritative rules digest, and retains it when a
+host sends later option updates. Both clients and the referee apply that choice
+through shared match setup. Campaign missions and Crusades battle rooms remain
+Retail. The lobby reports the selected mode without changing it.
 Protocol 291 changes which AI files a map package carries, not the messages: a
 map's `ai/<aiprofile>.txt`, `ai/default.txt` and level files now come from the
 map's own archive (`Vfs::readFromMapArchive`). Before, the package took only the
@@ -891,12 +897,6 @@ file name (the Cartographer stamps every entry with date 0) one map silently sen
 none, and a ticked game mod's copy kept the map's out of its package. Hosts and
 clients both build packages, so a 290 peer could compute a different digest for
 such a map; the simulation is 290's. 290 replays are refused.
-Game options
-and every lobby/start/spectate snapshot carry the choice. The server validates the
-value, includes it in the authoritative rules digest, and retains it when a
-host sends later option updates. Both clients and the referee apply that choice
-through shared match setup. Campaign missions and Crusades battle rooms remain
-Retail. The lobby reports the selected mode without changing it.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
