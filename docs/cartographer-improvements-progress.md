@@ -1447,6 +1447,80 @@ mutation (edits not marked for history) fails it. `cartographer_ui_smoke` now pr
 A and clicks every window control; `cartographer_validation` checks the Check Map
 entries. Screenshots of both tabs were inspected: no overlap or clipping.
 
+## AI profile editor, phase 4: game mods
+
+The AI Profiles window's GAME MOD buttons (left column) save the map's AI files into
+a game-mod pack, or open one pack's files for editing (design 3.5, 7.2).
+
+- Writer (`document.{h,cpp}`, SDL-free): `planModProfiles` resolves
+  `<data>/mods/game/<pack>/ai/`, reusing existing `mods`, `game`, pack and `ai` folders
+  and files whatever their case (the pack's own spelling is kept), refusing a
+  symlinked or non-folder component (`hpi::modPacks` would not list the pack) and a
+  symlinked file. Per file it says new, identical (skipped), replaces or deletes, and
+  names a pack archive that also holds the path (the loose file replaces it).
+  `writeModProfiles` re-checks the plan against the disk (a file changed since the
+  compare is an error), copies every replaced or deleted file to
+  `<profile>/mod-backups/<pack>/<UTC stamp>/ai/` first (the Cartographer profile
+  folder, `<prefPath>/Cartographer`; never the pack, whose every file travels),
+  creates the missing folders, installs each file atomically from a stage directly
+  in `mods/game/` (never mounted) and rolls back on failure. Other pack files are
+  never touched. A read-only install says so in plain words ("the data folder is
+  read-only (for example a game installed under Program Files)"), shown as SAVE
+  FAILED. `readModProfiles` reads a pack's `ai/` as the game does (loose over its
+  archives). `compareAiFiles` (aiprofiles) is the overwrite compare: line counts, the
+  first changed line, and how many units play differently by the engine's parsers.
+- SAVE AS GAME MOD: pack name (new, or `< >` through the existing packs; 1-128
+  bytes, a valid file name, no leading '.'), the full folder, a row per map file
+  (levels ticked; DEFAULT AI unticked, written as `ai/default.txt` or the map's
+  profile name, with what each means), each row's status, the precedence warning
+  (7.3) and the roster note (units a pack adds are not listed). A replace or delete
+  shows the compare in a confirmation; a new or identical file does not ask. After
+  saving: "Saved to <folder>: n written, k identical (skipped). The previous files
+  are in <backup>. Tick <pack> under Mods. A game already running shows the new pack
+  the next time a room opens."
+- OPEN FROM GAME MOD lists `hpi::modPacks(Game)`; the pack's files become a separate
+  edit set (`Editor::aiMod`) with a pack banner and the title "GAME MOD PACK:": not
+  the map's, not in map undo, the map never marked unsaved. Tabs show `pack` and `*`;
+  the DEFAULT tab edits the pack's `ai/default.txt`, or steps (click the file name)
+  to the map's profile name or another non-level file in the pack; START FROM works
+  there too. The footer's which-file line treats the set as a ticked pack. SAVE TO
+  PACK writes back to that pack, ticking only files changed since opening; an emptied
+  draft is offered as "Delete ai/x.txt from the pack", unticked. CLOSE PACK, DONE,
+  Esc and quitting the editor ask before discarding unsaved pack edits.
+
+Deviations from the design:
+
+- The dialogs live in `aiprofileswindow.cpp` with the rest of the window, not in
+  `dialogs.cpp`; the writer is in `document.{h,cpp}` as planned.
+- The pack chooser is a text field with `< >` stepping (no drop-down widget exists);
+  Open from game mod lists at most 14 packs.
+- Map mode offers a delete only for a level file emptied in this window session;
+  open-from-pack mode offers one for every pack file emptied since opening.
+- SAVE TO PACK ticks only changed files, so an unchanged file that lives in a pack
+  archive is not copied out as a loose file.
+- Files saved into a pack keep their bytes, header included (the header names the
+  source map); a DEFAULT profile written as `ai/default.txt` keeps the header that
+  names its map file.
+
+Validation: `cartographer_aiprofile` (writer: case-variant folders and file reused,
+identical skipped, archive copy named, stale plan refused with nothing written,
+backup outside the pack holding only replaced/deleted files, no staging left, fresh
+data root creates the folders and the game lists and reads the pack, symlinked
+folder/pack/file refused, read-only `mods/game` reported with nothing left behind,
+the compare text). A mutation that puts the backup inside the pack fails it.
+`cartographer_aiprofile_mod_ui` (`cartographer_ui_test <data> aiprofile-mod`) links
+the install into a scratch data root with a real `Mods/Game/Harder/AI/N.TXT`: Normal's
+weight edited, SAVE AS GAME MOD to "harder" reuses `Harder/AI/N.TXT`, asks with the
+compare, backs the old file up under the profile's `mod-backups/Harder/`; OPEN FROM
+GAME MOD, a Hard edit stays in the pack set (not the map), SAVE TO PACK creates
+`h.txt` without asking and ticks only it; clearing the row offers the delete unticked,
+ticking it deletes after a confirmation and backs it up; CLOSE PACK leaves the map's
+files unchanged. A mutation ticking unchanged files fails it. `cartographer_ui_smoke`
+clicks both new buttons and closes the dialogs with Escape (nothing is written into
+the test install). Screenshots of the save dialog and the pack banner were inspected. On build-o2:
+`ctest -R "cartographer|ai_profile"` 51/51, `ctest -L quick` 494/494. No src/ outside
+src/cartographer changed, so no gates.
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop
