@@ -216,6 +216,8 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     }
     if (!mapName.empty()) {
         mapViewPtr = std::make_unique<MapView>(ren, vfs, mapPath);
+        // An installed map by name: its own archive's ai/ files (recovery lifted its own).
+        if (recoveredMapPath.empty()) aiFiles = cart::aiFilesFromMapArchive(vfs, mapPath);
         // Companion .ota (metadata + start positions), so a Save round-trips the
         // whole map. Missing/parse-fail = defaults.
         std::string otaPath = mapPath.substr(0, mapPath.rfind('.')) + ".ota";

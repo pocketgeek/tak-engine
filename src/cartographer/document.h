@@ -21,6 +21,10 @@ bool aiFileKey(const std::string& path);
 AiFiles aiFilesFromArchive(const tak::hpi::Archive&);
 // <mapFolder>/ai/*.txt beside a loose .tnt (the folder name in any case).
 AiFiles aiFilesFromFolder(const std::filesystem::path& mapFolder);
+// An installed map opened by name: the root ai/<name>.txt files of its own archive
+// (Vfs::readFromMapArchive), not another installed map's that wins the same path.
+// None for a loose map or one in the base install.
+AiFiles aiFilesFromMapArchive(const tak::hpi::Vfs&, const std::string& mapPath);
 // Moves the root ai/ entries out of a recovery snapshot's files.
 AiFiles liftAiFiles(tak::hpi::Vfs::Files&);
 

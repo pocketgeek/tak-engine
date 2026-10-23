@@ -71,6 +71,13 @@ AiFiles aiFilesFromFolder(const fs::path& mapFolder) {
     return result;
 }
 
+AiFiles aiFilesFromMapArchive(const tak::hpi::Vfs& vfs, const std::string& mapPath) {
+    AiFiles result;
+    for(const auto& path:vfs.mapArchivePaths(mapPath)) if(aiFileKey(path))
+        if(auto data=vfs.readFromMapArchive(mapPath,path))result[tak::hpi::MountSet::key(path)]=std::move(*data);
+    return result;
+}
+
 AiFiles liftAiFiles(tak::hpi::Vfs::Files& files) {
     AiFiles result;
     for(auto it=files.begin();it!=files.end();) {

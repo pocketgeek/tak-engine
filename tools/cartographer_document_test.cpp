@@ -401,7 +401,26 @@ static void aiFileTests(const std::filesystem::path& root) {
     bool rejected=false;
     try {cart::documentFiles(map,meta,{},{},{},{{"ai/../x.txt",notes}},"Islands");} catch(const std::exception&) {rejected=true;}
     check(rejected,"an invalid AI file name cannot be saved");
-    std::cout<<"PASS: AI profiles re-save byte for byte at the .kmp root, undo/redo, recovery, loose ai/ export and the Maps-folder refusal\n";
+    // By name: two installed maps carrying the same AI file names (date 0, as saved
+    // here). Each opens with its own archive's files, not the mount's winner.
+    {
+        const auto clash=root/"clash";fs::create_directories(clash/"Maps");
+        for(const char* name:{"Clash A","Clash B"}) {
+            auto own=cart::documentFiles(map,meta,{},{},{},{{"ai/n.txt",bytes(std::string("// ")+name+"\n")},{"ai/islands.txt",bytes(name)}},name);
+            check(cart::writeDocumentBundle(clash/"Maps"/(std::string(name)+".kmp"),own,error),error.c_str());
+        }
+        fs::create_directories(clash/"Maps"/"ai");std::ofstream(clash/"Maps"/"ai"/"h.txt")<<"limit x 0\n";
+        const auto vfs=tak::hpi::mountRetailRoot(clash);
+        for(const char* name:{"Clash A","Clash B"}) {
+            const auto path=tak::hpi::findMap(vfs,name);
+            const cart::AiFiles want{{"ai/n.txt",bytes(std::string("// ")+name+"\n")},{"ai/islands.txt",bytes(name)}};
+            check(!path.empty() && cart::aiFilesFromMapArchive(vfs,path)==want,"an installed map opens by name with its own archive's AI files");
+        }
+        tak::hpi::Vfs view(&vfs);view.setMapFiles(std::make_shared<tak::hpi::Vfs::Files>(tak::hpi::Vfs::Files{{"kmap/x.tnt",{1}},{"ai/e.txt",{2}}}));
+        check(cart::aiFilesFromMapArchive(view,"kmap/x.tnt")==cart::AiFiles{{"ai/e.txt",{2}}},"a view's own map files are its archive");
+        check(cart::aiFilesFromMapArchive(tak::hpi::Vfs(&vfs,true),tak::hpi::findMap(vfs,"Clash A")).empty(),"a view without map resources has none");
+    }
+    std::cout<<"PASS: AI profiles re-save byte for byte at the .kmp root, undo/redo, recovery, loose ai/ export, the Maps-folder refusal and by-name opens of clashing maps\n";
 }
 int main() {
     namespace fs=std::filesystem;
