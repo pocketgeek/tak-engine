@@ -110,7 +110,7 @@ def main():
         control, levels, log = play(a, install(root, a.data, 'control-data'), root / 'control')
         ai = [v for v in levels.values() if v >= 0]
         assert ai and all(v == 6 for v in ai), levels
-        assert re.search(r'Classic AI profile ai/default\.txt from the base data', log, re.I), log
+        assert re.search(r'DEFAULT AI profile ai/default\.txt from the base data', log, re.I), log
         watched = sorted(control)[:2]
         assert len(watched) == 2, 'the control Classic AI built too little: %s' % sorted(control)
         profile = ''.join('limit %s 0\n' % u for u in watched).encode() + base_profile
@@ -120,7 +120,7 @@ def main():
         pack.mkdir(parents=True)
         (pack / 'default.txt').write_bytes(profile)
         modded, _, log = play(a, data, root / 'mod', settings='mods.gamePack = ' + 'my_ai'.encode().hex() + '\n')
-        assert re.search(r'Classic AI profile ai/default\.txt from the game mods', log, re.I), log
+        assert re.search(r'DEFAULT AI profile ai/default\.txt from the game mods', log, re.I), log
         banned = [u for u in watched if u in modded]
         assert not banned, 'the Classic AI built %s despite the game mod\'s ai/default.txt' % banned
 
@@ -135,12 +135,12 @@ def main():
                        check=True, capture_output=True)
         a.map = MAP
         mapped, _, log = play(a, data, root / 'map')
-        assert re.search(r'Classic AI profile ai/default\.txt from the map package', log, re.I), log
+        assert re.search(r'DEFAULT AI profile ai/default\.txt from the map package', log, re.I), log
         banned = [u for u in watched if u in mapped]
         assert not banned, 'the Classic AI built %s despite the map\'s ai/default.txt' % banned
 
         _, _, log = play(a, install(root, a.data, 'mission-data'), root / 'mission', mission='takmission08_dh')
-        assert re.search(r"mission 'takmission08_dh' -- \d+ strategic AI player\(s\) profile=\S+ CLASSIC \(ai/\S+\.txt\)",
+        assert re.search(r"mission 'takmission08_dh' -- \d+ strategic AI player\(s\) profile=\S+ DEFAULT AI \(ai/\S+\.txt\)",
                          log, re.I), log
         print('PASS: Classic reads the room\'s ai/default.txt (base, game mod, map package; %s never built '
               'from the mod or map file); a campaign mission plays Classic with no settings' % ', '.join(watched))

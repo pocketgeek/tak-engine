@@ -2,8 +2,11 @@
 // how its economy + army develop and whether it marches on the enemy. A dev harness
 // for tuning the AI -- not shipped in a game.
 //
-//   aitool <retail-install-dir> [map] [defensive|easy|normal|hard|absurd|absurdly-defensive|classic] [seconds]
+//   aitool <retail-install-dir> [map] [defensive|easy|normal|hard|absurd|absurdly-defensive|default] [seconds]
 //          [standard|crusades]
+//
+// `default` is the lobby's DEFAULT level (internally Classic, the retail AI); the
+// older spelling `classic` is still accepted.
 
 #include <cstdlib>
 #include "ai/ai.h"
@@ -22,7 +25,7 @@
 using namespace tak;
 
 int main(int argc, char** argv) {
-    if (argc < 2) { std::fprintf(stderr, "usage: aitool <install> [map] [defensive|easy|normal|hard|absurd|absurdly-defensive|classic] [seconds] [standard|crusades]\n"); return 2; }
+    if (argc < 2) { std::fprintf(stderr, "usage: aitool <install> [map] [defensive|easy|normal|hard|absurd|absurdly-defensive|default] [seconds] [standard|crusades]\n"); return 2; }
     std::string dataRoot = argv[1];
     std::string map = argc >= 3 ? argv[2] : "Inner Circle";
     std::string dstr = argc >= 4 ? argv[3] : "normal";
@@ -32,7 +35,7 @@ int main(int argc, char** argv) {
                         : dstr == "hard"    ? ai::Difficulty::Hard
                         : dstr == "absurd"  ? ai::Difficulty::Absurd
                         : dstr == "absurdly-defensive" ? ai::Difficulty::AbsurdlyDefensive
-                        : dstr == "classic" ? ai::Difficulty::Classic
+                        : (dstr == "default" || dstr == "classic") ? ai::Difficulty::Classic
                                             : ai::Difficulty::Normal;
 
     hpi::Vfs vfs = hpi::mountRetailRoot(dataRoot);

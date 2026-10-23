@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """AI levels through a real server's lobby (protocol 290).
 
-  classic     the host seats an AI at level 6 (CLASSIC): the room's table shows 6
+  classic     the host seats an AI at level 6 (DEFAULT, internally Classic): the room's table shows 6
   every level each of 0..6 round-trips through SlotUpdate -> LobbyState
   unknown     level 7 or more is stored as Normal (2), as an older peer's clamp did
 """
@@ -44,14 +44,14 @@ def main():
             r = host.receive('JoinResult')
             assert r.num('<B') == 1, 'CreateGame refused'
             lobby(host.receive('LobbyState'))
-            assert level(host, CLASSIC) == CLASSIC, 'the room did not keep level 6 (CLASSIC)'
+            assert level(host, CLASSIC) == CLASSIC, 'the room did not keep level 6 (DEFAULT)'
             for value in range(LEVELS):
                 assert level(host, value) == value, ('level did not round-trip', value)
             for value in (LEVELS, 200, 255):
                 assert level(host, value) == 2, ('an unknown level was not stored as Normal', value)
             assert level(host, CLASSIC) == CLASSIC
             assert process.poll() is None, 'server exited'
-    print('PASS: AI levels -- CLASSIC (6) and every level round-trip the lobby; 7 and up store Normal')
+    print('PASS: AI levels -- DEFAULT (6, Classic) and every level round-trip the lobby; 7 and up store Normal')
 
 
 if __name__ == '__main__':

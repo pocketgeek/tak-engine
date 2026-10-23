@@ -2565,7 +2565,7 @@ static tak::ai::ClassicProfileScript classicProfileFor(const Room& r, const std:
     else if (r.mapPackage && r.mapVfs && r.mapPackage->files && r.mapPackage->files->count(file)) from = "the map package";
     else if (r.modData && r.modPackage && r.modPackage->files && r.modPackage->files->count(file))
         from = "the game mods";
-    std::fprintf(stderr, "game %u: Classic AI profile %s%s%s\n", r.id,
+    std::fprintf(stderr, "game %u: DEFAULT AI profile %s%s%s\n", r.id,
                  script.path.empty() ? "(none: every type 100, unlimited)" : script.path.c_str(),
                  *from ? " from " : "", from);
     return script;
@@ -2737,7 +2737,7 @@ void Server::tryStart(Client& c) {
                 }
                 r->slotPos = ms.slotPos;
                 if (!ms.aiSlots.empty())
-                    std::fprintf(stderr, "takserver: mission '%s' -- %zu strategic AI player(s)%s CLASSIC (%s)\n",
+                    std::fprintf(stderr, "takserver: mission '%s' -- %zu strategic AI player(s)%s DEFAULT AI (%s)\n",
                                  r->mission.c_str(), ms.aiSlots.size(),
                                  ms.aiProfile.empty() ? "" : (" profile=" + ms.aiProfile).c_str(),
                                  classicProfile.path.empty() ? "no profile" : classicProfile.path.c_str());
@@ -2887,7 +2887,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             s.color = color % 10;
             s.team = uint8_t(team % kMaxSlots);
             s.ready = ready ? 1 : 0;
-            // 0=passive 1=easy 2=normal 3=hard 4=absurd 5=absurdly defensive 6=classic
+            // 0=passive 1=easy 2=normal 3=hard 4=absurd 5=absurdly defensive 6=classic (DEFAULT)
             s.aiLevel = aiLevel >= tak::ai::kAiLevels ? 2 : aiLevel;
             broadcastLobby(*r);
             break;

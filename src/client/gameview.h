@@ -477,7 +477,7 @@ public:
     // sets it per-slot via the Room UI instead.
     static uint8_t aiLevelEnv(int seat = 0) {
         const char* e = tak::devEnv("TAK_AI_LEVEL");
-        int v = e ? std::atoi(e) : 2;   // default normal (0=passive..4=absurd, 5=absurdly defensive, 6=classic)
+        int v = e ? std::atoi(e) : 2;   // default normal (0=passive..4=absurd, 5=absurdly defensive, 6=classic, shown as DEFAULT)
         if (const char* list = tak::devEnv("TAK_AI_LEVELS")) {
             for (int k = 0; *list; ++k) {
                 if (k == seat) { v = std::atoi(list); break; }
