@@ -1618,6 +1618,60 @@ Validation:
 - On build-o2: `ctest -R "cartographer|ai_profile"` 52/52, `ctest -L quick` 495/495.
   Nothing in src/ outside src/cartographer changed, so no gates were run.
 
+## AI profile editor, phase 6: docs and end to end
+
+- `docs/cartographer-guide.md`: a new **AI profiles** chapter after Scenario maps
+  (the window, setting a unit, presets, the DEFAULT AI's own profile, group rules,
+  Text view and Check, files written by hand, which file plays, saving as a game
+  mod, undo in the window, testing), in the contents; Scenario properties shows the
+  profile line and EDIT AI PROFILES...; Undo (AI profiles covered, Ctrl+Z inside
+  the window); Check Map's AI row; Testing; Files in a map; `mod-backups` in Where
+  Cartographer keeps its files; **A** and the window's keys in the reference; Known
+  limits (the window's pack roster is the one place the editor reads a mod; the
+  phase 5 limits).
+- `docs/user-guide.md`: the levels' paragraph and Default point to the editor; a new
+  **Making AI profiles** section under Mods (one map or every map, and a "which file
+  wins" table for the levels and the DEFAULT AI); the map editor overview mentions
+  Scenario → AI Profiles.
+- Two guide pictures, `docs/img/cartographer/ai-profiles.jpg` and
+  `ai-group-rules.jpg`, from the `aiprofile` and `aiprofile-extras` UI workflows'
+  window captures (offscreen 921 x 691, cropped to the window), inspected by eye;
+  rows and capture notes in `docs/img/README.md`.
+- `tools/cartographer_ai_profile_e2e_test.py` (ctest `cartographer_ai_profile_e2e`,
+  debug builds with test data; listed in `tools/ctest_costs.txt`, so not `quick`):
+  1. Headless `cartographer "E2E Source" --bundle` opens a source map by name in a
+     scratch author root (Inner Circle's terrain, `aiprofile=e2e`, canonical
+     `ai/e2e.txt` and `ai/n.txt` that limit every FACTORY-category unit, found in
+     the install's FBIs at run time) and writes *E2E Alpha* (limit 0) and *E2E Beta*
+     (limit 2): both files at the `.kmp` root, byte for byte, none under `kmap/`,
+     and `aiprofile=e2e` in the `.ota`.
+  2. Both maps go into one scratch `Maps/`, so their files collide, with an unticked
+     game pack. `takserver --local --no-auth --seed 1`, `--mpai --time 60`,
+     `TAK_AI_LEVEL=6`, scratch `HOME`/`XDG_DATA_HOME`.
+  3. Inner Circle: the same hash as in a plain scratch install (14849c00bc6e2a19,
+     the DEFAULT gate's value), the install's `ai/default.txt`, no level file.
+  4. Each map: the server log names `ai/e2e.txt` and `ai/n.txt` from the map
+     package, and the `TAK_CLASSIC_WEIGHTS` dump shows its own limit (0, 2) on
+     every factory.
+  5. Alpha with the pack ticked (`ai/e2e.txt` and `ai/n.txt`, limit 1): both from
+     the game mods, and the dump shows 1.
+
+  Proved it can fail: map packages reading AI files through the mount (the
+  pre-phase-1 winner, `vfs.read`) in place of `readFromMapArchive` fails it (the
+  stock map picks up an installed map's files). About 60 s on build-o2.
+
+Deviations from the design:
+
+- The editor has no CLI for editing profiles (no new flags, design 11.13), so the
+  test writes the source map's two files in the editor's canonical form and packs
+  them with `hpitool` into an installed source `.kmp`; the Cartographer opens it by
+  name (its own archive's `ai/` files, phase 1) and `--bundle` writes the tested
+  maps. The window's own editing is covered by the UI workflows.
+- The limits cover every side's factories (whichever side the seeded AI plays),
+  checked in the weight dump rather than by what the AI built in 60 s.
+- One stock-map run with the AI maps and an unticked pack installed is compared
+  with one in a plain scratch install, instead of a fixed hash in the test.
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop
