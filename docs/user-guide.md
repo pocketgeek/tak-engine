@@ -2072,8 +2072,9 @@ then ticked cosmetic packs.
 
 A game pack can change the build profile of each AI level except Default with a
 file of its own in the pack's `ai` folder, loose (`mods/game/My AI/ai/n.txt`)
-or in the `ai` folder inside an archive in the pack. A map can too: a `.kmp` map
-in `Maps/` may carry the same files in its own `ai` folder, and they apply to
+or in the `ai` folder inside an archive in the pack. A map can too: the map's
+own archive in `Maps/` (a `.kmp` map, for example) may carry the same files in
+its own `ai` folder, and they apply to
 games on that map (in multiplayer they travel with the map). When a game pack and
 the map both have a level's file, the game pack's is used. A file of that name
 anywhere else, such as directly in the pack folder, is not read.

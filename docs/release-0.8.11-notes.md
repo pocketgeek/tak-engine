@@ -55,8 +55,9 @@ and the source call this level **Classic** (`ai::Difficulty::Classic`,
   `ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt` or `ai/ad.txt` (in
   the pack's `ai` folder, loose or inside an archive in the pack) adjusts that
   level only (`ai/n.txt`: Normal); units the file does not name keep the
-  built-in values, and `limit <unit> 0` stops the level building one. A `.kmp`
-  map may carry the same files in its own `ai` folder; when a game pack has the
+  built-in values, and `limit <unit> 0` stops the level building one. A map's
+  own archive in `Maps/` (a `.kmp` map, for example) may carry the same files in
+  its `ai` folder; when a game pack has the
   same file, the game pack's wins. A file of that name directly in the pack
   folder is not read. The files travel with the host's game packs, or with the
   map, in multiplayer; cosmetic packs and the install cannot supply them. See

@@ -1669,8 +1669,8 @@ HPI/UFO/KMP archives:
   before start. Downloads stay in `ModCache/`; they do not replace installed
   files. A game pack can also adjust our AI levels' built-in build profiles
   with `ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt` or
-  `ai/ad.txt` in its `ai/` folder, and so can a `.kmp` map's own `ai/`
-  folder (a game pack's file wins)
+  `ai/ad.txt` in its `ai/` folder, and so can a map archive's own `ai/`
+  folder (a `.kmp`, for example) (a game pack's file wins)
   ([AI profiles in game mods](docs/user-guide.md#ai-profiles-in-game-mods)).
 
 Other files directly in `mods/`, `mods/cosmetic/` or `mods/game/` never load.
