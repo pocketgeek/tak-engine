@@ -29,6 +29,18 @@ Classic row, this report's Screenshots section) and the commit filling this
 report; nothing else landed on main after `d86d5904` (checked with
 `git fetch` before landing).
 
+One more change landed after that, before the tag, by the user's decision
+("Campaigns should default to classic"): branch `task-campaign-classic-default`
+(`c44968dd` code and `settings_test`, `654ba4d4` docs, `bfbb40ee`
+`campaign.jpg`, and this note). `Settings::campaignAi` now defaults to Classic
+(6); a settings file with no `campaignAi` key (every 0.8.10 profile) or an
+unknown value reads Classic, and `normal` still reads Normal. Options DEFAULTS
+still leaves it alone. The client sends the setting with every mission room;
+the server is unchanged (it still plays a missing or unknown room byte as
+Normal), and the debug `--mpmission` harness still sends Normal unless
+`TAK_AI_LEVEL` picks. Only `src/client/` changed (`settings.h`,
+`settings.cpp`, `mainmenu.cpp`, `campaignscreen.h`, `gameview.h`).
+
 The changes:
 
 - Classic AI (AI level 6, server only; protocol 290): `dbcda124` (level 6
@@ -46,7 +58,8 @@ The changes:
   `56247c26`, `b69dfe89`, `d4349eea`, `becd6fb9`.
 - Campaign: `e89d1f1a` (Opponent AI NORMAL / CLASSIC on the book's left page,
   key A, `campaignAi` setting; the choice rides as an optional byte after
-  `CreateGame`'s private flag).
+  `CreateGame`'s private flag), then `c44968dd` (the setting defaults to
+  CLASSIC).
 - Build menu: `f76a9ce1` (wrap into rows, `client/buildrow.h`, `buildrow_test`,
   `build_controls`), `3351056b` (tooltip and TRAINING line clamped to the play
   area), `7f21e860` (comment).
@@ -82,7 +95,9 @@ Debug builds of the tag), or state that it was not run this release.
   and checks that `supportedReplayProtocol(14, 289)` is refused.
 - **Maps, mods and settings.** Saved `.kmp` maps, generator-8/9 recipes,
   `mods/` packs and `ModCache/*.takmods` carry over. One settings key was added
-  (`campaignAi`, default `normal`); none was removed.
+  (`campaignAi`, default `classic`; an existing profile without it reads
+  `classic`, so its campaign missions switch to Classic opponents until the
+  book is set to Normal); none was removed.
 
 ## Local preparation checks
 
@@ -124,6 +139,19 @@ Testing was reduced for this release, by the user's rule (minimal testing):
 - **Campaign Normal byte-identity** (from `e89d1f1a`): `takmission08_dh` 300 s
   `68a4b1588012db76` and `takx11_mt` 240 s `c5e3b08d1f08ba9e`, the same before
   and after the Opponent AI change.
+- **Campaign Classic default** (`c44968dd`, `build-o2`, all targets rebuilt):
+  `settings_test` checks the Classic default, the missing-key / unknown-value
+  fallback, `normal` and the written forms; `ctest -L quick` 489/489 (186 s)
+  and the campaign and settings tests (`campaign*`, `settings`,
+  `mod_settings`, `crusades_campaign`, 12 tests) passed. A fresh-profile
+  `takclient game --campaign takmission08_dh` (scratch HOME, local takserver)
+  saved `campaignAi = classic` and its server logged `... profile=mission08
+  CLASSIC (ai/mission08.txt)`; the same launch with `campaignAi = normal` logged
+  no CLASSIC. Headless `--mpmission takmission08_dh`, 300 s, `takserver
+  --local --no-auth --seed 1`: Normal (harness default, and again with
+  `TAK_AI_LEVEL=2`) `68a4b1588012db76` both, unchanged; Classic
+  (`TAK_AI_LEVEL=6`) `5c35c83f41cbae5f`, `err=none end=timelimit`. Logs:
+  `~/tak-tmp/scratch/campaign-classic/`.
 - **Detmath guard** (`tools/check-detmath.sh`) at `d86d5904`: OK, no direct
   libm transcendentals in the sim path and no `std::atomic_ref`.
 - **Cross-compiler golden hash** (`tools/check-determinism.sh`) at `d86d5904`:
@@ -167,8 +195,11 @@ Retaken by the 0.8.11 build (version set to 0.8.11 locally; no capture patch),
 committed on the screenshots branch (`task-release-0811-shots`, `f16e61c7`,
 landed on main as `df0c5eef`) and
 each inspected by eye: `docs/img/title.jpg` (VERSION 0.8.11, same 1440 × 1080
-crop), `docs/img/campaign.jpg` (fresh profile, chapter 1, with **Opponent AI:
-NORMAL (A)** under the always-on mods note) and the new
+crop), `docs/img/campaign.jpg` (fresh profile, chapter 1, with the **Opponent AI**
+line under the always-on mods note; retaken after the Classic default with the
+same framing, so it reads **Opponent AI: CLASSIC (A)**; only that line
+differs from the NORMAL picture, which a Normal capture of the new build
+matched exactly) and the new
 `docs/img/guide/build-menu-wrap.jpg` (a Zhon Beast Tamer's nine-icon conjure menu
 in two rows, five above four, left of the command panel and mana orb; 1024 × 768
 at Build Menu Scale 150%, not scaled). The README title alt text, gallery
