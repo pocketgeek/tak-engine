@@ -166,6 +166,9 @@ public:
     // start number `index` at (x, z) pixels, which the brain anchors its home
     // base on (ClassicBrain::setStart).
     void setClassicStart(int index, float x, float z);
+    // Difficulty::Classic only: every start location of the map, in start order
+    // (ClassicBrain::setStartTable); call it before setClassicStart.
+    void setClassicStarts(const std::vector<std::pair<float, float>>& positions);
     const ClassicBrain* classicBrain() const { return classic_.get(); }
 
     // Read-only identity, for the debug roster dump (server/rosterdump.h).

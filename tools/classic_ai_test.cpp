@@ -46,6 +46,7 @@
 #include "ai/ai.h"
 #include "ai/classicbrain.h"
 #include "ai/classicdefence.h"
+#include "ai/classicexpand.h"
 #include "ai/classicprofile.h"
 #include "ai/classicplacement.h"
 #include "ai/classicproduction.h"
@@ -54,6 +55,7 @@
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include "sim/retailconstruction.h"
+#include "sim/retailreach.h"
 #include "sim/sim.h"
 #include <algorithm>
 #include <array>
@@ -553,18 +555,20 @@ static void abnarSquads(const char* root) {
     check(gone,"a destroyed unit is in no squad");
     // Member counts per kind, of the test's units and the Monarch: every unit
     // joins base 1 (the only occupied base); since P6 a wave the base launches
-    // takes some of them on into a strike, its backup or a VTOL squad.
-    int bases=0,strikes=0,vtol=0,other=0,inBase1=0;
+    // takes some of them on into a strike, its backup or a VTOL squad, and since
+    // P7 the spare builder founds a base on a sacred site, its escort with it.
+    int bases=0,strikes=0,vtol=0,other=0,inBase1=0,expansion=0;
     for (int slot=1;slot<=98;++slot)
         for (int id:sq.squads[size_t(slot)].members) {
             if (id!=monarch && !spawned.count(id)) continue;
             (slot<=20 ? bases : slot<=80 || slot==97 || slot==98 ? strikes : slot<=95 ? vtol : other)+=1;
             inBase1+=slot==1;
+            expansion+=slot>=2 && slot<=20 && sq.squads[size_t(slot)].parameters[0]<0;
         }
-    std::printf("  members: bases %d (base 1: %d), strikes/backups %d, VTOL %d, homeless %d\n",bases,
-                inBase1,strikes,vtol,other);
-    check(bases==inBase1 && other==0 && bases+strikes+vtol==units+1 && brain.squadOf(monarch)==1,
-          "all of them are in base 1, the only occupied base, or in a wave it launched");
+    std::printf("  members: bases %d (base 1: %d, expansions: %d), strikes/backups %d, VTOL %d, homeless %d\n",bases,
+                inBase1,expansion,strikes,vtol,other);
+    check(bases==inBase1+expansion && other==0 && bases+strikes+vtol==units+1 && brain.squadOf(monarch)==1,
+          "all of them are in base 1, an expansion base on a sacred site, or in a wave it launched");
 }
 
 // The engine game test for P4a: a Classic seat of each faction with a factory
@@ -655,6 +659,17 @@ static void classicFactories(const char* root) {
     }
 }
 
+// A Classic seat's start table as the server gives it: the map's starts in
+// StartPos order, and the seat's own record, the one it opened at.
+static void setClassicStarts(ai::Controller& c,const hpi::Vfs& vfs,const std::string& map,std::pair<float,float> at) {
+    auto table=sim::parseStartPositions(vfs,map);
+    int index=-1;
+    for (size_t k=0;k<table.size() && index<0;++k) if (table[k]==at) index=int(k);
+    if (index<0) { index=int(table.size());table.push_back(at); }
+    c.setClassicStarts(table);
+    c.setClassicStart(index,at.first,at.second);
+}
+
 // The engine game test for P4b: a Classic seat of each of the five factions on
 // Abnar's Terrace from a bare start (its Monarch only), against an idle seat, for
 // 10 game-minutes of the World's own economy. Its Monarch and builders run
@@ -686,9 +701,8 @@ static void classicBases(const char* root) {
         if (starts.size()<2) { check(false,"Abnar's Terrace seats two players");return; }
         ai::Controller controller(1,reg,ai::Profile{},seed,ai::Difficulty::Classic,{starts[0]});
         controller.setClassicProfile(ai::classicProfileScript(vfs,ai::classicMapAiProfile(vfs,map)));
-        controller.setClassicStart(1,starts[1].first,starts[1].second);
+        setClassicStarts(controller,vfs,map,starts[1]);
         const ai::ClassicBrain& brain=*controller.classicBrain();
-        const float sx=starts[1].first,sz=starts[1].second;
         int builds=0,trains=0,outside=0,offDeposit=0,duplicate=0,refused=0,doubleDeposit=0;
         // A type's mana-site bit (type +0x264 bit 31), from the brain's own facts.
         auto manaSite=[&](const sim::UnitType* t) {
@@ -720,15 +734,21 @@ static void classicBases(const char* root) {
                 if (c.kind==net::Cmd::Build) {
                     ++builds;
                     const auto* t=reg.find(c.type);
-                    // The ring radius from the seat's structures (all in base 1).
-                    int32_t foot=0;
-                    for (const auto& u:w.units())
-                        if (u.player==1 && u.alive() && u.type && u.type->isStructure() && !u.underConstruction)
-                            foot+=u.type->footX+u.type->footZ;
-                    const int32_t ring1=sim::retailAiBaseRadius(foot,1);
-                    const float d=std::hypot(c.x-(std::floor(sx/16)*16+8),c.z-(std::floor(sz/16)*16+8));
-                    worst=std::max(worst,int32_t(d));
-                    if (d>float(ring1)+40*16) ++outside;
+                    // The ring radius from the structures of the builder's base,
+                    // around its anchor (home on the start, an expansion on its site).
+                    const int slot=brain.squadOf(c.unitId);
+                    const auto cell=slot>=1 && slot<=20
+                        ? ai::classicAnchor(brain.squads(),brain.squads().squads[size_t(slot)].parameters[0]) : std::nullopt;
+                    if (cell) {
+                        int32_t foot=0;
+                        for (const auto& u:w.units())
+                            if (u.player==1 && u.alive() && u.type && u.type->isStructure() && brain.squadOf(u.id)==slot)
+                                foot+=u.type->footX+u.type->footZ;
+                        const int32_t ring1=sim::retailAiBaseRadius(foot,1);
+                        const float d=std::hypot(c.x-(float(cell->first)*16+8),c.z-(float(cell->second)*16+8));
+                        worst=std::max(worst,int32_t(d));
+                        if (d>float(ring1)+40*16) ++outside;
+                    }
                     if (t && t->onMana && w.hasManaSpots() && !w.canPlace(t,c.x,c.z,1)) ++offDeposit;
                     // The rule reads the base's members (finished units the
                     // assignment pass has placed in base 1..20).
@@ -783,6 +803,109 @@ static void classicBases(const char* root) {
         check(offDeposit==0,(what+"every lodestone is ordered onto a free deposit").c_str());
         check(duplicate==0,(what+"no factory type is ordered while an idle one stands in the base").c_str());
         check(doubleDeposit==0,(what+"no lodestone is ordered while another base member builds a mana site").c_str());
+    }
+}
+
+// The engine game test for P7: one Classic seat of each faction from a bare
+// start against an idle seat, 20 game-minutes on Abnar's Terrace. The base
+// think's transfers and expansion run (ai/classicexpand.h): with a builder to
+// spare a free builder founds a new base anchored on the nearest free sacred
+// site in its zone (outside every base's ring-2 radius, no enemy within 50 px)
+// and builds lodestones around it; units the bases are short of are sent to
+// them. Recorded at 5, 10 and 20 minutes: occupied bases (and how many are
+// anchored on a site), finished lodestones (and how many stand in an expansion
+// base), the expansions and transfers so far. Every expansion base must be
+// anchored on its own site, and every Build order must lie within its builder's
+// base ring (plus a grid block).
+static void classicExpansion(const char* root) {
+    auto vfs=hpi::mountRetailRoot(root);
+    sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
+    const char* mapName=std::getenv("TAK_EXPAND_MAP") ? std::getenv("TAK_EXPAND_MAP") : "Abnar's Terrace";
+    const auto map=hpi::findMap(vfs,mapName);
+    static const char* const kNames[5]={"Aramon","Taros","Veruna","Zhon","Creon"};
+    const uint32_t minutes=std::getenv("TAK_EXPAND_MINUTES") ? uint32_t(std::atoi(std::getenv("TAK_EXPAND_MINUTES"))) : 20u;
+    std::printf("  P7 games (%s, Classic seat vs an idle seat, %u min):\n",mapName,minutes);
+    for (int faction=0;faction<5;++faction) {
+        sim::World w;w.setVisPlayer(-1);
+        sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
+        config.slots={{true,0,0,1.0f},{true,faction,1,1.0f,true,false}};
+        const auto starts=sim::setupMatch(w,reg,config);
+        if (starts.size()<2) { check(false,"the map seats two players");return; }
+        ai::Controller controller(1,reg,ai::Profile{},0xe7a0u+uint32_t(faction),ai::Difficulty::Classic,{starts[0]});
+        controller.setClassicProfile(ai::classicProfileScript(vfs,ai::classicMapAiProfile(vfs,map)));
+        setClassicStarts(controller,vfs,map,starts[1]);
+        const ai::ClassicBrain& brain=*controller.classicBrain();
+        const std::string name=kNames[faction];
+        int outside=0,builds=0;
+        // A base's centre and ring-1 radius from the brain's squads (anchored
+        // bases only: home on its start, expansions on their site).
+        auto anchorCentre=[&](int slot) -> std::optional<std::pair<float,float>> {
+            if (slot<1 || slot>20) return std::nullopt;
+            const auto cell=ai::classicAnchor(brain.squads(),brain.squads().squads[size_t(slot)].parameters[0]);
+            if (!cell) return std::nullopt;
+            return std::pair{float(cell->first)*16+8,float(cell->second)*16+8};
+        };
+        auto baseFootprint=[&](int slot) {
+            int32_t foot=0;
+            for (const auto& u:w.units())
+                if (u.player==1 && u.alive() && u.type && u.type->isStructure() && brain.squadOf(u.id)==slot)
+                    foot+=u.type->footX+u.type->footZ;
+            return foot;
+        };
+        struct Snapshot { uint32_t minute;int bases,sited,lodes,lodesAway,units;ai::ClassicBrain::WaveStats st; };
+        std::vector<Snapshot> snaps;
+        std::set<int> sitesUsed;bool sharedSite=false;
+        for (uint32_t tick=0;tick<minutes*1800u;++tick) {
+            controller.tick(w,tick,[&](const net::Command& c) {
+                if (c.kind==net::Cmd::Build) {
+                    ++builds;
+                    const int slot=brain.squadOf(c.unitId);
+                    if (const auto centre=anchorCentre(slot)) {
+                        const float d=std::hypot(c.x-centre->first,c.z-centre->second);
+                        if (d>float(sim::retailAiBaseRadius(baseFootprint(slot),1))+40*16) ++outside;
+                    }
+                }
+                sim::applyCommand(w,reg,c);
+            });
+            w.tick(1.f/30.f);
+            const uint32_t now=tick+1;
+            if (now==5u*1800u || now==10u*1800u || now==minutes*1800u) {
+                Snapshot snap{now/1800u,0,0,0,0,0,brain.waveStats()};
+                std::set<int32_t> anchors;
+                for (int b=1;b<=20;++b) {
+                    const auto& q=brain.squads().squads[size_t(b)];
+                    if (q.members.empty()) continue;
+                    ++snap.bases;
+                    if (q.parameters[0]<0) {
+                        ++snap.sited;
+                        if (!anchors.insert(q.parameters[0]).second) sharedSite=true;
+                        sitesUsed.insert(q.parameters[0]);
+                    }
+                }
+                for (const auto& u:w.units()) {
+                    if (u.player!=1 || !u.alive() || !u.type) continue;
+                    if (!u.type->isStructure()) { if (!u.underConstruction) ++snap.units; continue; }
+                    if (u.underConstruction || !u.type->onMana) continue;
+                    ++snap.lodes;
+                    const int slot=brain.squadOf(u.id);
+                    if (slot>=2 && slot<=20 && brain.squads().squads[size_t(slot)].parameters[0]<0) ++snap.lodesAway;
+                }
+                snaps.push_back(snap);
+            }
+        }
+        for (const auto& s:snaps)
+            std::printf("    %s %2u min: %d bases (%d on a sacred site), %d lodestones (%d in an expansion base), %d units; "
+                        "expansions %u, transfers %u builders / %u ground / %u air\n",name.c_str(),s.minute,s.bases,
+                        s.sited,s.lodes,s.lodesAway,s.units,s.st.expansions,s.st.builderTransfers,s.st.groundTransfers,
+                        s.st.airTransfers);
+        std::printf("    %s: %d Build commands, %d outside their base ring\n",name.c_str(),builds,outside);
+        const auto& first=snaps.front();const auto& last=snaps.back();
+        const std::string what=name+": ";
+        check(last.st.expansions>=1 && last.sited>=1,(what+"a builder founds a base on a sacred site").c_str());
+        check(last.bases>first.bases || last.bases>=2,(what+"the bases grow").c_str());
+        check(last.lodes>first.lodes,(what+"the lodestones grow").c_str());
+        check(!sharedSite,(what+"no two bases are anchored on one site").c_str());
+        check(outside==0,(what+"every site is inside its builder's base ring plus a grid block").c_str());
     }
 }
 
@@ -1117,8 +1240,8 @@ static void classicDuels(const char* root) {
         ai::Controller c0(0,reg,ai::Profile{},pair.seed,ai::Difficulty::Classic,{starts[1]});
         ai::Controller c1(1,reg,ai::Profile{},pair.seed+7,ai::Difficulty::Classic,{starts[0]});
         for (auto* c:{&c0,&c1}) c->setClassicProfile(ai::classicProfileScript(vfs,ai::classicMapAiProfile(vfs,map)));
-        c0.setClassicStart(0,starts[0].first,starts[0].second);
-        c1.setClassicStart(1,starts[1].first,starts[1].second);
+        setClassicStarts(c0,vfs,map,starts[0]);
+        setClassicStarts(c1,vfs,map,starts[1]);
         int winner=-1;uint32_t end=0;
         int peak[2]={0,0};
         for (uint32_t tick=0;tick<kCap && winner<0;++tick) {
@@ -2002,6 +2125,172 @@ static int printWeightsOracle(const char* root) {
     return 0;
 }
 
+// The manager tools/re/classic_base_env.py builds, as the port reads it: the
+// anchor tables, bases 1..20's p0..p8, the units (with their navigator grid
+// and squad), every squad's members, three grids' zone labels and the
+// visible-enemy list.
+struct BaseEnv {
+    ai::ClassicSquads s;
+    std::vector<ai::ClassicSquadUnit> units;
+    std::vector<int> nav;   // per unit: 0 no ground grid, else 1..3
+    std::array<ai::ClassicZoneLabels,3> labels;
+    std::vector<ai::ClassicEnemy> enemies;
+};
+static BaseEnv readBaseEnv(std::istringstream& in) {
+    BaseEnv e;
+    {
+        uint32_t dummy=1;
+        ai::classicConstructSquads(e.s,0,[&](int n){return sim::retailRandom(dummy,n);});
+        for (auto& q:e.s.squads) { q.parameters={};q.members.clear();q.active=q.dirty=0; }
+    }
+    auto table=[&](std::vector<std::optional<ai::ClassicCell>>& t) {
+        size_t k;in>>k;t.resize(k);
+        for (auto& c:t) { int valid,x,z;in>>valid>>x>>z;if (valid) c=ai::ClassicCell{int16_t(x),int16_t(z)}; }
+    };
+    table(e.s.sites);table(e.s.starts);
+    for (int b=1;b<=20;++b) for (auto& v:e.s.squads[size_t(b)].parameters) in>>v;
+    size_t n;in>>n;
+    e.units.resize(n);e.nav.resize(n);
+    for (size_t k=0;k<n;++k) {
+        auto& u=e.units[k];
+        int fx,fz,hp,menu,depth,mover,held,carrier,has,mclass;int64_t maxd;uint32_t f108;
+        in>>u.id>>u.flags>>u.x>>u.z>>fx>>fz>>hp>>maxd>>u.typeFlags>>u.secondaryFlags>>menu>>depth>>mover
+          >>f108>>held>>carrier>>has>>u.missionFlags>>mclass>>e.nav[k]>>u.squad;
+        u.footX=int16_t(fx);u.footZ=int16_t(fz);u.hp=int16_t(hp);u.maxDamage=uint32_t(maxd);u.menu=menu;
+        u.minWaterDepth=int16_t(depth);u.mover=mover!=0;u.navigator=e.nav[k]!=0;
+        const float remaining=std::bit_cast<float>(f108);
+        u.finished=!(remaining<0.0f || remaining>0.0f);
+        u.held=held!=0;u.carried=carrier!=0;u.carrierHolds=carrier==1;
+        u.mission=has!=0;u.missionClass=uint8_t(mclass);u.commander=(u.secondaryFlags&0x40000u)!=0;
+    }
+    for (int k=1;k<=98;++k) {
+        size_t c;in>>c;auto& m=e.s.squads[size_t(k)].members;m.resize(c);
+        for (auto& id:m) in>>id;
+    }
+    for (auto& z:e.labels)
+        for (auto* v:{&z.starts,&z.sites}) { size_t c;in>>c;v->resize(c);for (auto& x:*v) in>>x; }
+    in>>n;e.enemies.resize(n);
+    for (auto& en:e.enemies) in>>en.flags>>en.x>>en.z;
+    return e;
+}
+static void printBaseEnv(const BaseEnv& e) {
+    for (const auto& u:e.units) std::printf(" %d",u.squad);
+    for (int k=1;k<=98;++k) {
+        const auto& q=e.s.squads[size_t(k)];
+        std::printf(" %zu",q.members.size());
+        for (int id:q.members) std::printf(" %d",id);
+        for (int32_t v:q.parameters) std::printf(" %d",v);
+    }
+    std::printf("\n");
+}
+struct BaseEnvHost {
+    BaseEnv& e;uint32_t& seed;std::vector<std::vector<int>>& log;
+    int random(int k) { log.push_back({0,k});return int(sim::retailRandom(seed,k)); }
+    void clear(size_t i) { log.push_back({4,e.units[i].id,0}); }
+    const ai::ClassicZoneLabels* labels(size_t i) const { return e.nav[i] ? &e.labels[size_t(e.nav[i]-1)] : nullptr; }
+    size_t enemies(std::pair<int32_t,int32_t> at,int32_t r) const { return ai::classicEnemiesNear(e.enemies,at,r).size(); }
+};
+
+// The port's side of tools/re/check_ai_transfer.py: "<seed> <slot> <to> <n>
+// <category> <clear> <manager>" -> the three transfer targets
+// (ai::classicShortBase), then ai::classicTransfer's draws, clears and the
+// manager after it.
+static int transferOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        uint32_t seed;int slot,to,n,category,clear;
+        in>>seed>>slot>>to>>n>>category>>clear;
+        BaseEnv e=readBaseEnv(in);
+        const int t[3]={ai::classicShortBase(e.s,e.units,slot,2,1),ai::classicShortBase(e.s,e.units,slot,4,2),
+                        ai::classicShortBase(e.s,e.units,slot,5,3)};
+        std::vector<std::vector<int>> log;
+        BaseEnvHost h{e,seed,log};
+        ai::classicTransfer(e.s,e.units,slot,to,n,unsigned(category),clear!=0,h);
+        std::printf("%d %d %d %u %zu",t[0],t[1],t[2],seed,log.size());
+        for (const auto& v:log) for (int x:v) std::printf(" %d",x);
+        printBaseEnv(e);
+    }
+    return 0;
+}
+
+// The port's side of tools/re/check_ai_expand.py: "<seed> <slot> <newSlot>
+// <escort> <manager>" -> ai::classicExpand's answer, draws and the manager after it.
+static int expandOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        uint32_t seed;int slot,to,escort;
+        in>>seed>>slot>>to>>escort;
+        BaseEnv e=readBaseEnv(in);
+        std::vector<std::vector<int>> log;
+        BaseEnvHost h{e,seed,log};
+        const bool founded=ai::classicExpand(e.s,e.units,slot,to,escort,h);
+        std::printf("%d %u %zu",int(founded),seed,log.size());
+        for (const auto& v:log) for (int x:v) std::printf(" %d",x);
+        printBaseEnv(e);
+    }
+    return 0;
+}
+
+// The port's side of tools/re/check_ai_zone_labels.py: one navigator grid and
+// map per line -- "<w> <h> <grade>*w*h <nstarts> (<valid> <x> <z>)* <nsites>
+// (<valid> <x> <z>)* <ntypes> (<sacredsite bits> <footX> <footZ>)* (<feature>
+// <backX> <backZ>)*w*h" -> the zone count, the start and site labels
+// (ai::classicZoneLabels over sim::retailRectangleReachable, static grade), and
+// every reachability query in order (source and target rectangles).
+static int zoneLabelsOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        int w,h;in>>w>>h;
+        std::vector<int> grade(size_t(w)*size_t(h));
+        for (int& g:grade) in>>g;
+        auto table=[&](std::vector<std::optional<ai::ClassicCell>>& t) {
+            size_t k;in>>k;t.resize(k);
+            for (auto& c:t) { int valid,x,z;in>>valid>>x>>z;if (valid) c=ai::ClassicCell{int16_t(x),int16_t(z)}; }
+        };
+        std::vector<std::optional<ai::ClassicCell>> starts,sites;
+        table(starts);table(sites);
+        size_t nt;in>>nt;
+        std::vector<bool> sacred(nt);std::vector<std::pair<int16_t,int16_t>> foot(nt);
+        for (size_t k=0;k<nt;++k) {
+            uint32_t bits;int fx,fz;in>>bits>>fx>>fz;
+            sacred[k]=ai::classicSacredValue(std::bit_cast<float>(bits));
+            foot[k]={int16_t(fx),int16_t(fz)};
+        }
+        std::vector<ai::ClassicFeatureCell> plane(size_t(w)*size_t(h));
+        for (auto& c:plane) { int f,bx,bz;in>>f>>bx>>bz;c={uint16_t(f),uint8_t(bx),uint8_t(bz)}; }
+        std::vector<std::array<int,8>> log;
+        const auto z=ai::classicZoneLabels(starts,sites,
+            [&](const ai::ClassicCell& c) -> std::pair<int16_t,int16_t> {
+                const auto f=ai::classicSacredFeature(c.first,c.second,uint32_t(nt),
+                    [&](int x,int zz) {
+                        if (x<0 || zz<0 || x>=w || zz>=h) return ai::ClassicFeatureCell{};
+                        return plane[size_t(zz)*size_t(w)+size_t(x)];
+                    },
+                    [&](uint16_t t) { return t<nt && sacred[t]; });
+                if (!f || *f>=nt) return {1,1};
+                return foot[*f];
+            },
+            [&](int sx,int sz,int sw,int sh,int tx,int tz,int tw,int th) {
+                log.push_back({sx,sz,sw,sh,tx,tz,tw,th});
+                return sim::retailRectangleReachable(w,h,sx,sz,sw,sh,tx,tz,tw,th,true,false,
+                    [&](int x,int zz) { return grade[size_t(zz)*size_t(w)+size_t(x)]; });
+            });
+        int32_t zones=0;
+        for (int32_t v:z.starts) zones=std::max(zones,v);
+        for (int32_t v:z.sites) zones=std::max(zones,v);
+        std::printf("%d",zones);
+        for (int32_t v:z.starts) std::printf(" %d",v);
+        for (int32_t v:z.sites) std::printf(" %d",v);
+        std::printf(" %zu",log.size());
+        for (const auto& e:log) for (int v:e) std::printf(" %d",v);
+        std::printf("\n");
+    }
+    return 0;
+}
+
 int main(int argc,char** argv) {
     if (argc==2 && std::strcmp(argv[1],"--profile")==0) return profileOracle();
     if (argc==3 && std::strcmp(argv[1],"--printweights")==0) return printWeightsOracle(argv[2]);
@@ -2016,6 +2305,9 @@ int main(int argc,char** argv) {
     if (argc==2 && std::strcmp(argv[1],"--retreat")==0) return defenceOracle(true);
     if (argc==2 && std::strcmp(argv[1],"--pick")==0) return pickOracle();
     if (argc==2 && std::strcmp(argv[1],"--launch")==0) return launchOracle();
+    if (argc==2 && std::strcmp(argv[1],"--zone-labels")==0) return zoneLabelsOracle();
+    if (argc==2 && std::strcmp(argv[1],"--transfer")==0) return transferOracle();
+    if (argc==2 && std::strcmp(argv[1],"--expand")==0) return expandOracle();
     if (argc==2 && (std::strcmp(argv[1],"--strike")==0 || std::strcmp(argv[1],"--backup")==0 ||
                     std::strcmp(argv[1],"--vtol")==0)) return strikeOracle(argv[1]+2);
     if (argc==3 && std::strcmp(argv[1],"--raid")==0) {
@@ -2035,6 +2327,11 @@ int main(int argc,char** argv) {
     }
     if (argc==3 && std::strcmp(argv[1],"--duels")==0) {
         classicDuels(argv[2]);
+        std::printf("%s\n",fails ? "FAILED" : "all passed");
+        return fails ? 1 : 0;
+    }
+    if (argc==3 && std::strcmp(argv[1],"--expansion")==0) {
+        classicExpansion(argv[2]);
         std::printf("%s\n",fails ? "FAILED" : "all passed");
         return fails ? 1 : 0;
     }

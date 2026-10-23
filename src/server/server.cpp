@@ -2730,6 +2730,7 @@ void Server::tryStart(Client& c) {
             // The Classic level bakes retail's profile from the map's own aiprofile
             // file (every shipped skirmish map names DEFAULT); read once per game.
             std::optional<tak::ai::ClassicProfileScript> classicProfile;
+            std::optional<std::vector<std::pair<float, float>>> classicStarts;
             for (int i = 0; i <= maxSlot; ++i)
                 if (r->slots[i].type == 2) {
                     // The enemy start positions this AI marches on before it has spotted
@@ -2752,9 +2753,19 @@ void Server::tryStart(Client& c) {
                                                                       : classicProfile->path.c_str());
                         }
                         r->ai.back().setClassicProfile(*classicProfile);
-                        // Its start: the k-th used slot's, where setupMatch put it.
-                        int start = 0;
-                        for (int j = 0; j < i; ++j) start += r->slots[j].type == 1 || r->slots[j].type == 2;
+                        // The map's start table (its authored starts in StartPos order,
+                        // else -- a generated map -- the spots setupMatch used), and
+                        // this seat's record in it: the one it opened at.
+                        if (!classicStarts) {
+                            classicStarts = tak::sim::parseStartPositions(*cfg.vfs, mapPath);
+                            if (classicStarts->empty()) classicStarts = spots;
+                        }
+                        int start = -1;
+                        for (size_t k = 0; k < classicStarts->size() && start < 0; ++k)
+                            if ((*classicStarts)[k] == slotPos[size_t(i)]) start = int(k);
+                        std::vector<std::pair<float, float>> table = *classicStarts;
+                        if (start < 0) { start = int(table.size()); table.push_back(slotPos[size_t(i)]); }
+                        r->ai.back().setClassicStarts(table);
                         r->ai.back().setClassicStart(start, slotPos[size_t(i)].first, slotPos[size_t(i)].second);
                     }
                 }

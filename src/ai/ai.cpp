@@ -88,6 +88,10 @@ void Controller::setClassicStart(int index, float x, float z) {
     if (classic_) classic_->setStart(index, x, z);
 }
 
+void Controller::setClassicStarts(const std::vector<std::pair<float, float>>& positions) {
+    if (classic_) classic_->setStartTable(positions);
+}
+
 Controller::Controller(Controller&&) noexcept = default;
 Controller::~Controller() = default;
 

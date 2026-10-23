@@ -37,8 +37,12 @@
 // squad or a naval strike) and the army squads' own thinks -- the strike's
 // cohesion, dissolve, target pick over every enemy unit, withdrawals and its
 // contact / march moves, the backup's move to its strike, the VTOL squad's
-// random patrols -- as Move, Patrol and Stop commands. The base think's
-// transfers and expansion (P7) answer "none" for now.
+// random patrols -- as Move, Patrol and Stop commands. P7: the base think's
+// transfers and expansion (ai/classicexpand.h): a builder, ground or air unit
+// sent to the nearest base short of them, and a free builder founding a new
+// base anchored on the nearest free sacred site in its zone (the zone labels
+// retail gives each start and site of a navigator grid at map load), with the
+// escort following it.
 
 #include <cstdint>
 #include <functional>
@@ -47,6 +51,7 @@
 #include <vector>
 
 #include "ai/classicdefence.h"
+#include "ai/classicexpand.h"
 #include "ai/classicplacement.h"
 #include "ai/classicprofile.h"
 #include "ai/classicsquads.h"
@@ -78,6 +83,10 @@ public:
     // anchored on it by the first assignment pass. Without one base 1 is not
     // anchored and its centre is its members' centroid.
     void setStart(int index, float x, float z);
+    // Every start location of the map in start order (retail's ten start
+    // records, 0x4e0810: an empty one past the map's own), which the zone labels
+    // read; call it before setStart.
+    void setStartTable(const std::vector<std::pair<float, float>>& positions);
     // A campaign mission's `massattack` for this player, in ticks (0 = none;
     // classicMassAttackTicks parses the .ota keyword), and the scenario mode the
     // first assignment pass reads (1 = a campaign mission with preplaced units).
@@ -119,6 +128,8 @@ public:
         uint32_t groundLaunches = 0, vtolLaunches = 0, navalLaunches = 0;
         uint32_t strikeMoves = 0, contactMoves = 0, dissolves = 0, withdrawals = 0;
         uint32_t picks = 0, targets = 0, backupMoves = 0, vtolPatrols = 0;
+        // P7: units moved by the transfers (builders, ground, air) and new bases.
+        uint32_t builderTransfers = 0, groundTransfers = 0, airTransfers = 0, expansions = 0;
     };
     const WaveStats& waveStats() const { return waves_; }
     // The block grids the build manager drew as it was built (0x4110f0).
@@ -230,6 +241,15 @@ private:
     // sacred, read from the World once.
     void readSites(const tak::sim::World& world);
     bool sacredCell(const tak::sim::World& world, int x, int z) const;
+    // A sacred-site record's footprint as the zone labelling reads it (its
+    // sacred feature's, else 1 x 1).
+    std::pair<int16_t, int16_t> siteFootprint(const tak::sim::World& world, const ClassicCell& cell) const;
+    // The zone labels (0x4e0a20) of the navigator grid a `footX` x `footZ` mover
+    // on `nav` uses, built once per grid over its static bit.
+    const ClassicZoneLabels& zoneLabels(const tak::sim::World& world, const tak::sim::NavGrid& nav, int footX, int footZ);
+    // A unit's grid labels (unit +8 -> +4), or null for one without a ground
+    // navigator (a flyer).
+    const ClassicZoneLabels* unitLabels(const tak::sim::World& world, const ClassicSquadUnit& unit);
     // The navigator grid's static bit (what 0x4e1570's mode 1 reads) for a
     // `footX` x `footZ` mover on `nav`: 1 where the grid build set it at load.
     const std::vector<uint8_t>& staticBlocked(const tak::sim::World& world, const tak::sim::NavGrid& nav,
@@ -261,6 +281,8 @@ private:
     std::vector<std::pair<ClassicCell, ClassicCell>> sacredRects_;   // without a feature plane
     struct StaticPlane { const tak::sim::NavGrid* nav; int footX, footZ; std::vector<uint8_t> blocked; };
     std::vector<StaticPlane> staticPlanes_;
+    struct ZonePlane { const tak::sim::NavGrid* nav; int footX, footZ; ClassicZoneLabels labels; };
+    std::vector<ZonePlane> zonePlanes_;
     std::unordered_map<const tak::sim::UnitType*, uint16_t> index_;
     std::vector<int16_t> count_, completed_;
     std::vector<uint8_t> priority_;

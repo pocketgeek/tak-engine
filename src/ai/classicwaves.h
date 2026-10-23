@@ -221,8 +221,9 @@ inline int classicFreeVtol(const ClassicSquads& s) {
 // The rest of the base think 0x40b320 after its member loop (0x40b4cf to the
 // end). `population` is the owner's unit count (0x410e40: the build manager's
 // +0x7d, last tick's recount), `enemyPopulation` what the ground wave roll reads
-// as E. The host supplies random(n), clear(i) (0x4d6a50(u, 0)), and the four
-// P7 routines this phase calls but does not port: builderBase() (0x40b050),
+// as E. The host supplies random(n), clear(i) (0x4d6a50(u, 0)), and the
+// routines of ai/classicexpand.h this one calls (the brain runs those; the
+// launch oracle answers them from its case): builderBase() (0x40b050),
 // groundBase() (0x40b140), airBase() (0x40b230) -- a base to send one unit to,
 // or 0 -- transfer(base, n, cat, clear) (0x40b9e0) and expand(slot, escort)
 // (0x40bc20, whether a new base was founded).

@@ -1722,6 +1722,8 @@ if(TAK_TEST_DATA)
     add_test(NAME classic_ai_waves COMMAND classic_ai_test --waves "${TAK_TEST_DATA}")
     # Classic against Classic: three faction pairs on Edmont's Field end with a winner.
     add_test(NAME classic_ai_duels COMMAND classic_ai_test --duels "${TAK_TEST_DATA}")
+    # A Classic seat of each faction founds bases on sacred sites and its lodestones grow (20 game-minutes each).
+    add_test(NAME classic_ai_expansion COMMAND classic_ai_test --expansion "${TAK_TEST_DATA}")
 endif()
 # Opt-in (it needs the retail binary for emulation, Python's unicorn, and a
 # directory of captured retail PrintWeights dumps, none of which CI has):
@@ -1741,13 +1743,14 @@ endif()
 # constructor planner and the static grade its reachability reads, the threat
 # test and enemy query, the combat-member planner and the Monarch's retreat,
 # the base think's wave launch, the strike, backup and VTOL thinks and the
-# target picker through classic_ai_test; the scheduler, squad clocks, nearest-base selection,
+# target picker, the zone labels, the transfers and the expansion through
+# classic_ai_test; the scheduler, squad clocks, nearest-base selection,
 # factory planner, menu draw, entry weight and patrol points through the shared
 # templates in retail_ai_test.
 option(TAK_CLASSIC_ORACLES "run the Classic AI emulation oracles (needs KINGDOMS.icd and unicorn)" OFF)
 if(TAK_CLASSIC_ORACLES AND Python3_Interpreter_FOUND)
     foreach(oracle squad_ctor assignment factory_think placement constructor static_grade threat defence retreat
-            launch target_pick)
+            launch target_pick zone_labels transfer expand)
         add_test(NAME classic_ai_${oracle}
                  COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/re/check_ai_${oracle}.py
                          --binary $<TARGET_FILE:classic_ai_test>)

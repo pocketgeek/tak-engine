@@ -209,13 +209,26 @@ void ClassicBrain::bookkeeping(const tak::sim::World& world, uint32_t simTick) {
     recount(world);
 }
 
+namespace {
+// 0x4e0810: a start's 16.16 position shifted down to its 16-pixel cell.
+int16_t startCell(float v) { return int16_t(uint32_t(int32_t(std::lround(double(v) * 65536.0))) >> 20); }
+}
+
+void ClassicBrain::setStartTable(const std::vector<std::pair<float, float>>& positions) {
+    // Retail always holds ten start records; those past the map's own are empty.
+    squads_.starts.assign(std::max<size_t>(positions.size(), 10), std::nullopt);
+    for (size_t k = 0; k < positions.size(); ++k)
+        squads_.starts[k] = ClassicCell{startCell(positions[k].first), startCell(positions[k].second)};
+    zonePlanes_.clear();
+}
+
 void ClassicBrain::setStart(int index, float x, float z) {
     if (index < 0) return;
-    // 0x4e0810: the start's 16.16 position shifted down to its 16-pixel cell.
-    auto cell = [](float v) { return int16_t(uint32_t(int32_t(std::lround(double(v) * 65536.0))) >> 20); };
+    auto cell = startCell;
     if (squads_.starts.size() <= size_t(index)) squads_.starts.resize(size_t(index) + 1);
     squads_.starts[size_t(index)] = ClassicCell{cell(x), cell(z)};
     startIndex_ = index;
+    zonePlanes_.clear();
 }
 
 std::vector<ClassicSquadUnit> ClassicBrain::squadUnits(const tak::sim::World& world) {
@@ -380,8 +393,11 @@ void ClassicBrain::planFactory(const tak::sim::World& world, ClassicSquadUnit& u
 
 void ClassicBrain::readSites(const tak::sim::World& world) {
     sitesRead_ = true;
+    zonePlanes_.clear();
     // 0x4e0810's sacred-site table: one record per sacred feature, its anchor
     // cell, in the map's scan order (the World's list is built the same way).
+    // Retail clears a record when its feature is deleted (0x496380); the World's
+    // sacred features are never removed, so every record stays.
     const auto& cells = world.mapPlacementCells();
     const bool plane = !cells.empty() && cells.size() == size_t(world.mapW()) * size_t(world.mapH());
     sacredTypes_.assign(plane ? world.mapPlacementTypes().size() : 0, false);
@@ -394,6 +410,51 @@ void ClassicBrain::readSites(const tak::sim::World& world) {
             if (f < sacredTypes_.size()) sacredTypes_[f] = true;
         }
     }
+    // The expansion bases' anchors (p0 = -(k+1)) index the same table.
+    squads_.sites = sites_;
+}
+
+std::pair<int16_t, int16_t> ClassicBrain::siteFootprint(const tak::sim::World& world, const ClassicCell& cell) const {
+    const auto& cells = world.mapPlacementCells();
+    const int w = world.mapW(), h = world.mapH();
+    if (cells.empty() || cells.size() != size_t(w) * size_t(h)) {
+        for (const auto& [at, foot] : sacredRects_)
+            if (at == cell) return foot;
+        return {1, 1};
+    }
+    const auto& types = world.mapPlacementTypes();
+    const auto f = classicSacredFeature(cell.first, cell.second, uint32_t(types.size()),
+        [&](int cx, int cz) {
+            if (cx < 0 || cz < 0 || cx >= w || cz >= h) return ClassicFeatureCell{};
+            const auto& c = cells[size_t(cz) * size_t(w) + size_t(cx)];
+            return ClassicFeatureCell{c.feature, c.backX, c.backZ};
+        },
+        [&](uint16_t t) { return t < sacredTypes_.size() && sacredTypes_[t]; });
+    if (!f || *f >= types.size()) return {1, 1};
+    return {int16_t(types[*f].footX), int16_t(types[*f].footZ)};
+}
+
+const ClassicZoneLabels& ClassicBrain::zoneLabels(const tak::sim::World& world, const tak::sim::NavGrid& nav,
+                                                  int footX, int footZ) {
+    for (const auto& p : zonePlanes_)
+        if (p.nav == &nav && p.footX == footX && p.footZ == footZ) return p.labels;
+    if (!sitesRead_) readSites(world);
+    // 0x4e0a20 at map load, over the grid's static bit (mode 1, unbounded).
+    const auto& blocked = staticBlocked(world, nav, footX, footZ);
+    auto labels = classicZoneLabels(squads_.starts, squads_.sites,
+        [&](const ClassicCell& c) { return siteFootprint(world, c); },
+        [&](int sx, int sz, int sw, int sh, int tx, int tz, int tw, int th) {
+            return tak::sim::retailRectangleReachable(nav.width(), nav.height(), sx, sz, sw, sh, tx, tz, tw, th,
+                true, false, [&](int x, int z) { return blocked[size_t(z) * size_t(nav.width()) + size_t(x)] ? 8 : 0; });
+        });
+    zonePlanes_.push_back({&nav, footX, footZ, std::move(labels)});
+    return zonePlanes_.back().labels;
+}
+
+const ClassicZoneLabels* ClassicBrain::unitLabels(const tak::sim::World& world, const ClassicSquadUnit& unit) {
+    const auto* u = world.unit(unit.id);
+    if (!u || !u->type || u->type->isStructure() || u->type->canFly) return nullptr;
+    return &zoneLabels(world, world.navFor(u->type), u->type->footX, u->type->footZ);
 }
 
 bool ClassicBrain::sacredCell(const tak::sim::World& world, int x, int z) const {
@@ -743,12 +804,15 @@ struct WaveHost {
     void clear(size_t i) { clearer(units[i]); }
     int width() const { return world.mapW() * 16; }
     int height() const { return world.mapH() * 16; }
-    // The P7 routines the base think calls: no transfer target, no expansion.
-    int builderBase() const { return 0; }
-    int groundBase() const { return 0; }
-    int airBase() const { return 0; }
-    void transfer(int, int, int, int) {}
-    bool expand(int, int32_t) { return false; }
+    // The P7 routines the base think calls (ai/classicexpand.h, set by baseLaunch).
+    std::function<int(unsigned, int)> shortBase{};
+    std::function<void(int, int, int, int)> transferer{};
+    std::function<bool(int, int32_t)> expander{};
+    int builderBase() { return shortBase ? shortBase(2, 1) : 0; }
+    int groundBase() { return shortBase ? shortBase(4, 2) : 0; }
+    int airBase() { return shortBase ? shortBase(5, 3) : 0; }
+    void transfer(int to, int n, int category, int clear) { if (transferer) transferer(to, n, category, clear); }
+    bool expand(int at, int32_t escort) { return expander && expander(at, escort); }
 };
 }  // namespace
 
@@ -814,6 +878,32 @@ void ClassicBrain::baseLaunch(const tak::sim::World& world, int slot, std::vecto
     WaveHost h{*this, world, units, sink};
     h.rnd = [&](int n) { return rand(n); };
     h.clearer = [&](ClassicSquadUnit& m) { clearMissions(m, sink); };
+    // The transfers' and the expansion's host: the founder's or a mover's grid
+    // labels, and the enemy query 0x411ae0 over the visible-enemy list.
+    struct MoveHost {
+        ClassicBrain& b;
+        const tak::sim::World& world;
+        std::vector<ClassicSquadUnit>& units;
+        const std::function<void(const tak::net::Command&)>& sink;
+        int random(int n) { return b.rand(n); }
+        void clear(size_t i) { b.clearMissions(units[i], sink); }
+        const ClassicZoneLabels* labels(size_t i) { return b.unitLabels(world, units[i]); }
+        size_t enemies(std::pair<int32_t, int32_t> at, int32_t r) {
+            return classicEnemiesNear(b.visibleEnemies(world), at, r).size();
+        }
+    } move{*this, world, units, sink};
+    h.shortBase = [&](unsigned category, int quota) { return classicShortBase(squads_, units, slot, category, quota); };
+    h.transferer = [&](int to, int n, int category, int clear) {
+        const size_t before = squads_.squads[size_t(to)].members.size();
+        classicTransfer(squads_, units, slot, to, n, unsigned(category), clear != 0, move);
+        const uint32_t moved = uint32_t(squads_.squads[size_t(to)].members.size() - before);
+        (category == 2 ? waves_.builderTransfers : category == 4 ? waves_.groundTransfers : waves_.airTransfers) += moved;
+    };
+    h.expander = [&](int at, int32_t escort) {
+        const bool founded = classicExpand(squads_, units, slot, at, escort, move);
+        waves_.expansions += founded ? 1u : 0u;
+        return founded;
+    };
     // A launch fills a free squad of its family (counted for the tests).
     std::array<bool, 100> empty{};
     for (size_t k = 0; k < empty.size(); ++k) empty[k] = squads_.squads[k].members.empty();
@@ -912,7 +1002,9 @@ void ClassicBrain::planCombat(const tak::sim::World& world, int slot, const std:
 void ClassicBrain::tick(const tak::sim::World& world, uint32_t simTick,
                         const std::function<void(const tak::net::Command&)>& sink) {
     // Retail's player loop: the AI scheduler (0x40fe00 -> 0x40fd80), then the
-    // bookkeeping (0x4121c0 -> 0x411a90).
+    // bookkeeping (0x4121c0 -> 0x411a90). The sacred-site table is the map's,
+    // read once (retail builds it at load, 0x4e0810).
+    if (!sitesRead_) readSites(world);
     scheduler(world, simTick, sink);
     bookkeeping(world, simTick);
 #ifndef NDEBUG
