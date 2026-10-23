@@ -49,7 +49,16 @@ and the `--mpmission` harness now plays Classic with no settings:
 `takmission08_dh` 300 s gives `5c35c83f41cbae5f` (the Classic hash above), and
 the Normal mission hashes below no longer apply. The Classic AI's profile file
 is looked up in the server's view of the room (base, game mods, map package; a
-map package carries the map archive's own file). See branch `task-ai-profiles`.
+map package carries the map archive's own file). The same branch gave our own
+AI levels (Defensive to Absurdly Defensive) built-in build profiles
+(`src/ai/builtinprofile.{h,cpp}`, the values of the default profile they had
+always read, so they play exactly as before) and stopped them reading
+`ai/*.txt`; a game pack's `d_ai.txt`, `e_ai.txt`, `n_ai.txt`, `h_ai.txt`,
+`a_ai.txt` or `ad_ai.txt` at its top level adjusts that one level (cosmetic
+packs cannot carry them). Besides `src/ai/`, `src/client/`, `src/net/` and
+`src/server/`, it touches `src/hpi/` (`hpi.cpp`, `hpi.h`: the game-mod file list
+and the cosmetic filter) and `src/net/mappackage.cpp` (a map package may carry
+the map's AI profile). See branch `task-ai-profiles`.
 
 The changes:
 
@@ -104,10 +113,12 @@ Debug builds of the tag), or state that it was not run this release.
   `tools/replay_test.cpp` pins `kNetVersion == 290` and `kReplayFormat == 14`
   and checks that `supportedReplayProtocol(14, 289)` is refused.
 - **Maps, mods and settings.** Saved `.kmp` maps, generator-8/9 recipes,
-  `mods/` packs and `ModCache/*.takmods` carry over. One settings key was added
-  (`campaignAi`, default `classic`; an existing profile without it reads
-  `classic`, so its campaign missions switch to Classic opponents until the
-  book is set to Normal); none was removed.
+  `mods/` packs and `ModCache/*.takmods` carry over. No settings key was added
+  or removed (the prereleases' `campaignAi` key is ignored if present). Campaign
+  missions now play Classic opponents. A game pack written for 0.8.10 that
+  happens to carry a root `d_ai.txt` ... `ad_ai.txt` would now adjust that AI
+  level; a game pack's `ai/default.txt` no longer changes our levels (it now
+  changes Classic only).
 
 ## Local preparation checks
 
@@ -162,6 +173,20 @@ Testing was reduced for this release, by the user's rule (minimal testing):
   `TAK_AI_LEVEL=2`) `68a4b1588012db76` both, unchanged; Classic
   (`TAK_AI_LEVEL=6`) `5c35c83f41cbae5f`, `err=none end=timelimit`. Logs:
   `~/tak-tmp/scratch/campaign-classic/`.
+- **AI profiles and Classic-only campaigns** (branch `task-ai-profiles`,
+  `build-o2`, all targets rebuilt): `--mpai` Inner Circle, seed 1, Retail 60 s
+  `b353410003e98dd5` and 300 s `a3d953803a064191`, Legion 60 s
+  `0825aeb9e8139203` and 300 s `ce5c4ba7562e53b9`, all unchanged (the built-in
+  tables reproduce the profile the levels read before); Classic
+  (`TAK_AI_LEVEL=6`) 60 s `14849c00bc6e2a19`, twice, unchanged. `ai_profile`,
+  `ai_profile_data` (the built-in Normal table equals the install's
+  `ai/default.txt`), `ai_mod_profile` (a real hosted game: a game pack's
+  `n_ai.txt` reaches only the server's Normal AI), `classic_ai_map_profile`
+  (base, game-pack and map-package profiles each win in turn;
+  `takmission08_dh` reads `ai/mission08.txt`), every `classic_ai*` test,
+  `ai_behavior`, `ai_behavior_data`, `naval_ai`, `retail_ai`, `settings`,
+  `mod_packs`, `mod_transfer`, `map_transfer`, `match_codec` and the campaign
+  tests passed; `ctest -L quick` 491/491; `check-detmath.sh` OK.
 - **Detmath guard** (`tools/check-detmath.sh`) at `d86d5904`: OK, no direct
   libm transcendentals in the sim path and no `std::atomic_ref`.
 - **Cross-compiler golden hash** (`tools/check-determinism.sh`) at `d86d5904`:
@@ -220,6 +245,10 @@ the lobby and room pictures show each AI seat's level, not the list of levels,
 so CLASSIC would not appear; `guide/chat-box.jpg` crops out its Barracks (its
 gauge's small early fill reads the same); `guide/campaign-briefing.jpg` is the
 briefing, not the book. Scripts: `~/tak-tmp/scratch/release-0811/shots`.
+When the Opponent AI line was removed (branch `task-ai-profiles`),
+`campaign.jpg` was retaken with the same framing (fresh profile,
+`TAK_SHOT_CAMPAIGN=0`, 1600 × 1000, quality 88) and no longer shows the line;
+the book's alt text and caption were updated.
 
 ## Limits
 

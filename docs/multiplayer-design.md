@@ -792,6 +792,11 @@ room with game mods on: an offer or chunk from a guest or in a campaign or
 Crusades room, and an offer while game mods are off, are answered with ModError. Replay
 format 10 records the shared package digest (`ReplayHeader::modDigest`, with the
 `gameMods` byte where `overridePolicy` was) and loads it from `ModCache/`.
+The package also carries any `d_ai.txt` ... `ad_ai.txt` at a pack's root (loose
+or at an archive's root); the server's AI levels 0-5 read their own file from
+it over the built-in profile tables (`src/ai/builtinprofile.h`), and cosmetic
+packs can never supply these names. Classic reads the map's `ai/<aiprofile>.txt`
+/ `ai/default.txt` from the room's whole view (base, game mods, map package).
 
 ### Match pathfinding selection
 

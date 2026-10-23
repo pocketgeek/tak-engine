@@ -2025,7 +2025,7 @@ Mods replace game files. There are two kinds, each in its own folder inside
 | Folder | Kind | What it may change |
 | --- | --- | --- |
 | `mods/cosmetic/` | **Cosmetic mods** | Textures, sprites, sounds, music, fonts and interface art. Never units, rules or anything else that changes the game. |
-| `mods/game/` | **Game mods** | Everything, including units, weapons, build menus, maps, scripts and models. |
+| `mods/game/` | **Game mods** | Everything, including units, weapons, build menus, maps, scripts, models and the AI levels' build profiles ([AI profiles in game mods](#ai-profiles-in-game-mods)). |
 
 Put each pack in its own folder, for example
 `mods/cosmetic/New Sounds/sounds/click.wav` or `mods/game/Big Units/units/...`.
