@@ -1993,6 +1993,9 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if (!mission.empty()) { o.pathfindingMode = tak::sim::PathfindingMode::Retail; o.doubleSight = 0; }
             // POWER CODES: on or off, never in a campaign mission (retail 0x499610).
             o.powerCodes = o.powerCodes && mission.empty() ? 1 : 0;
+            // A campaign mission is played alone on a private local server: its player may
+            // always change the game speed with -/+.
+            if (!mission.empty()) o.speedUnlock = 1;
             // MAP SCENARIO: only an ordinary file-map room can play a map's scenario. The map
             // itself is checked at START -- its package has not arrived yet.
             o.mapScenario = (o.mapScenario && mission.empty() && !tak::mapgen::isGeneratedMapId(mapId) &&
