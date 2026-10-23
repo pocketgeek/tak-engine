@@ -45,7 +45,7 @@ std::set<std::string> companionPaths(const std::string& path) {
 // [Map Data] key, any extension dropped), else ai/default.txt, and each of our levels
 // its own ai/<x>.txt (ai/builtinprofile.h). The server reads them from the room's
 // map package (a game mod's copy wins), so when the map's own archive carries one it
-// travels here.
+// travels here -- that archive's copy, whichever installed map wins the path in the mount.
 std::set<std::string> aiProfilePaths(const hpi::Vfs::Files& files, const std::string& mapPath) {
     // ai::levelProfileFile's names (src/ai is not linked here; ai_profile_test checks
     // the two lists agree).
@@ -160,9 +160,10 @@ static std::shared_ptr<Package> buildUncached(const hpi::Vfs& vfs, const std::st
         (*files)[tile] = vfs.read(tile);
     }
     for (const auto& resource : featureResources(map, vfs)) (*files)[resource] = vfs.read(resource);
+    // From the map's own archive: another installed map carrying the same file name
+    // must not take it (nor a game mod's copy, which the server's lookup prefers anyway).
     for (const auto& ai : aiProfilePaths(*files, path))
-        if (vfs.sameMapArchive(path, ai))
-            if (auto data = vfs.tryRead(ai); data && !data->empty()) (*files)[ai] = std::move(*data);
+        if (auto data = vfs.readFromMapArchive(path, ai); data && !data->empty()) (*files)[ai] = std::move(*data);
     return decode(encode(path, files)->bytes, "");
 }
 

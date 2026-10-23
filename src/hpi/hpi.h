@@ -174,6 +174,10 @@ public:
     // The archive (index into archiveFiles()) `path` resolves to, or -1 when it is
     // absent, filtered out or a loose file.
     int archiveOf(const std::string& path) const;
+    // That archive's own copy of `path` (after this set's filter), even where another
+    // archive's copy wins the mount; and every file path it holds (keyed).
+    std::optional<std::vector<uint8_t>> readFromArchive(int archive, const std::string& path) const;
+    std::vector<std::string> archivePaths(int archive) const;
 
     const std::vector<std::filesystem::path>& archiveFiles() const { return archiveFiles_; }
     static std::string key(std::string p);       // lowercased, '/'-separated
@@ -225,10 +229,14 @@ public:
     std::vector<uint8_t> read(const std::string& path, bool skipMapResources = false) const; // throws if absent
     std::optional<std::vector<uint8_t>> tryRead(const std::string& path, bool skipMapResources = false) const;
     std::vector<std::string> list(const std::string& prefix, bool skipMapResources = false) const;    // union, deduped
-    // Whether `path` resolves to the same single-map archive as the map `mapPath` (an
-    // archive under Maps/, or this view's map files). A map's other files, such as its
-    // own AI profile, travel in its package only then.
-    bool sameMapArchive(const std::string& mapPath, const std::string& path) const;
+    // The map `mapPath`'s own copy of `path`: the entry in the single-map archive under
+    // Maps/ that holds the map (or in this view's map files), even where another
+    // installed map's archive wins that path in the mount (they all share Maps/, and
+    // the Cartographer stamps every entry with date 0). A game mod's copy does not hide
+    // it. nullopt when the map is loose, in no map archive, or the archive lacks it.
+    std::optional<std::vector<uint8_t>> readFromMapArchive(const std::string& mapPath, const std::string& path) const;
+    // Every file path (keyed) in that archive or view, for a lossless copy of it.
+    std::vector<std::string> mapArchivePaths(const std::string& mapPath) const;
 
 private:
     const Vfs* base_ = nullptr;
@@ -238,6 +246,8 @@ private:
     std::shared_ptr<const Files> mapFiles_, modFiles_;
     struct Layer { MountSet ms; std::string prefix; bool mapResources = false; };   // prefix keyed, "" or trailing '/'
     std::vector<Layer> layers_;                          // back = highest precedence
+    enum class MapArchive { None, Files, Mounted, Base };
+    MapArchive mapArchive(const std::string& mapPath, const Layer*& layer, int& archive) const;
 };
 
 // The two kinds of mod pack under <install>/mods/. Cosmetic packs live in

@@ -9,7 +9,9 @@
 //                             AI files (ai/default.txt, a level's ai/n.txt) travel
 //                             in a map's package when the map's own archive
 //                             carries them, and a game mod's copy wins over the
-//                             map's (the map's over the base install's)
+//                             map's (the map's over the base install's); two
+//                             installed maps carrying the same AI file names each
+//                             send their own
 #include "ai/ai.h"
 #include "ai/builtinprofile.h"
 #include "ai/classicprofile.h"
@@ -17,6 +19,7 @@
 #include "net/crypto.h"
 #include "net/mappackage.h"
 #include "net/modpackage.h"
+#include "tnt/ota.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -275,10 +278,70 @@ static void mapPackages(const char* data) {
     fs::remove_all(root, ec);
 }
 
+// Two installed single-map archives that carry the same AI file names (ai/n.txt and
+// the same ai/<aiprofile>.txt), stamped with date 0 as the Cartographer writes them:
+// the Maps/ mount gives only one archive each path, yet each map's package carries
+// the file from ITS OWN archive. A ticked game mod's copy does not change what a map's
+// package carries (the server's lookup lets the mod's file win); a stock map's carries
+// none.
+static void mapClash(const char* data) {
+    namespace fs = std::filesystem;
+    const auto root = fs::temp_directory_path() / ("tak-ai-clash-" + crypto::toHex(crypto::randomVec(8)));
+    try {
+        fs::create_directories(root);
+        for (const auto& e : fs::directory_iterator(data))
+            if (e.is_regular_file() && isHpi(e.path())) fs::create_symlink(fs::absolute(e.path()), root / e.path().filename());
+        const auto base = hpi::mountRetailRoot(data);
+        const auto ota = base.read("maps/Inner Circle.ota");
+        auto scenario = tnt::Scenario::parse(std::string(ota.begin(), ota.end()));
+        scenario.aiProfile = "islands";
+        const auto otaText = scenario.write();
+        auto text = [](const std::vector<uint8_t>& b) { return std::string(b.begin(), b.end()); };
+        for (const char* name : {"Clash A", "Clash B"}) {
+            std::vector<std::pair<std::string, std::string>> entries{
+                {"ai/n.txt", std::string("// ") + name + "'s Normal\nlimit tarcage 0\n"},
+                {"ai/islands.txt", std::string("// ") + name + "'s DEFAULT\nlimit tarcage 0\n"},
+                {std::string("kmap/") + name + ".ota", otaText}};
+            for (const char* ext : {".tnt", ".crt", ".txt"})
+                if (auto b = base.tryRead(std::string("maps/Inner Circle") + ext))
+                    entries.push_back({std::string("kmap/") + name + ext, text(*b)});
+            archive(root / "Maps" / (std::string(name) + ".kmp"), entries);
+        }
+        put(root / "mods/game/aimod/ai/n.txt", "// the mod's Normal\nlimit tarcage 5\n");
+        for (const bool modded : {false, true}) {
+            const auto vfs = modded ? hpi::mountRetailRoot(root, {"aimod"}) : hpi::mountRetailRoot(root);
+            const std::string how = modded ? " (with a game mod's ai/n.txt ticked)" : "";
+            for (const char* name : {"Clash A", "Clash B"}) {
+                const auto pkg = net::maps::build(vfs, name);
+                const auto& files = *pkg->files;
+                const auto own = [&](const char* path, const char* what) {
+                    return files.count(path) && text(files.at(path)) == std::string("// ") + name + "'s " + what + "\nlimit tarcage 0\n";
+                };
+                check(own("ai/n.txt", "Normal"), std::string(name) + "'s package carries its own ai/n.txt" + how);
+                check(own("ai/islands.txt", "DEFAULT"), std::string(name) + "'s package carries its own ai/islands.txt" + how);
+                if (modded) {
+                    const auto received = net::maps::decode(pkg->bytes, pkg->digest);
+                    const hpi::Vfs::Files mods{{"ai/n.txt", {'l', 'i', 'm', 'i', 't', ' ', 't', 'a', 'r', 'c', 'a', 'g', 'e', ' ', '5'}}};
+                    check(ai::levelProfile(ai::Difficulty::Normal, &mods, received->files.get()).limit.at("tarcage") == 5,
+                          std::string(name) + ": the game mod's ai/n.txt still wins in the room");
+                }
+            }
+            const auto stock = net::maps::build(vfs, "Inner Circle");
+            bool noAi = true;
+            for (const auto& [path, bytes] : *stock->files) noAi = noAi && !path.starts_with("ai/");
+            check(noAi, "a stock map's package carries no AI file" + how);
+        }
+    } catch (const std::exception& e) {
+        check(false, std::string("map clash threw: ") + e.what());
+    }
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
 int main(int argc, char** argv) {
     tables();
     modLayers();
-    if (argc > 1) { retailDefault(argv[1]); mapPackages(argv[1]); }
+    if (argc > 1) { retailDefault(argv[1]); mapPackages(argv[1]); mapClash(argv[1]); }
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

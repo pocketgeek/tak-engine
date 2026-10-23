@@ -19,7 +19,12 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 290;      // 290: AI level 6, Classic (SlotInfo.aiLevel): the retail AI's port (ai::ClassicBrain,
+constexpr uint32_t kNetVersion = 291;      // 291: a map's package carries the AI files (ai/<aiprofile>.txt, ai/default.txt, the
+                                           //      level files) from the map's OWN archive (Vfs::readFromMapArchive), even where
+                                           //      another installed .kmp wins that path in Maps/ or a ticked game mod has a copy.
+                                           //      Hosts and clients both build packages, so a 290 peer could compute a different
+                                           //      digest for such a map. Sim unchanged; 290 replays refused.
+                                           // 290: AI level 6, Classic (SlotInfo.aiLevel): the retail AI's port (ai::ClassicBrain,
                                            //      docs/classic-ai-plan.md). Its seat gets a Normal seat's sim config (no income
                                            //      multiplier, no defensive stance); a 289 peer or server would clamp 6 to Normal and
                                            //      play a different AI. Sim unchanged; 289 replays refused. A campaign mission's

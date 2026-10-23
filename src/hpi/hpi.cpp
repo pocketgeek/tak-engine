@@ -591,6 +591,21 @@ int MountSet::archiveOf(const std::string& path) const {
     return it == map_.end() ? -1 : it->second.archive;
 }
 
+std::optional<std::vector<uint8_t>> MountSet::readFromArchive(int archive, const std::string& path) const {
+    if (archive < 0 || size_t(archive) >= archives_.size()) return std::nullopt;
+    const Entry* entry = archives_[size_t(archive)].find(key(path));
+    if (!entry || (cfg_.keep && !cfg_.keep(entry->path))) return std::nullopt;
+    return archives_[size_t(archive)].read(*entry);
+}
+
+std::vector<std::string> MountSet::archivePaths(int archive) const {
+    std::vector<std::string> paths;
+    if (archive < 0 || size_t(archive) >= archives_.size()) return paths;
+    for (const auto& e : archives_[size_t(archive)].entries())
+        if (!e.isDirectory && (!cfg_.keep || cfg_.keep(e.path))) paths.push_back(key(e.path));
+    return paths;
+}
+
 // ---- Vfs: layered runtime read-path over a retail install root -------------
 
 void Vfs::refreshMapCache(const std::filesystem::path& root) {
@@ -657,22 +672,57 @@ std::optional<std::vector<uint8_t>> Vfs::tryRead(const std::string& path, bool s
     return base_ ? base_->tryRead(path, skipMapResources || bool(mapFiles_)) : std::nullopt;
 }
 
-bool Vfs::sameMapArchive(const std::string& mapPath, const std::string& path) const {
-    if (skipMaps_) return false;
-    const std::string mk = MountSet::key(mapPath), kp = MountSet::key(path);
-    if (mapFiles_) return mapFiles_->count(mk) && mapFiles_->count(kp);   // the view's own map
-    if (modFiles_ && modFiles_->count(kp)) return false;                  // a game mod's copy wins
-    // The highest layer that has `path` holds its winning copy.
-    for (auto it = layers_.rbegin(); it != layers_.rend(); ++it) {
-        if (!it->prefix.empty() && kp.compare(0, it->prefix.size(), it->prefix) != 0) continue;
-        const std::string sub = path.substr(it->prefix.size());
-        if (!it->ms.has(sub)) continue;
-        if (!it->mapResources || (!it->prefix.empty() && mk.compare(0, it->prefix.size(), it->prefix) != 0))
-            return false;
-        const int archive = it->ms.archiveOf(sub);
-        return archive >= 0 && archive == it->ms.archiveOf(mapPath.substr(it->prefix.size()));
+std::optional<std::vector<uint8_t>> Vfs::readFromMapArchive(const std::string& mapPath, const std::string& path) const {
+    int archive = -1;
+    const Layer* layer = nullptr;
+    switch (mapArchive(mapPath, layer, archive)) {
+    case MapArchive::Files: {
+        const auto found = mapFiles_->find(MountSet::key(path));
+        if (found == mapFiles_->end()) return std::nullopt;
+        return found->second;
     }
-    return base_ && base_->sameMapArchive(mapPath, path);
+    case MapArchive::Mounted:
+        if (MountSet::key(path).compare(0, layer->prefix.size(), layer->prefix) != 0) return std::nullopt;
+        return layer->ms.readFromArchive(archive, path.substr(layer->prefix.size()));
+    case MapArchive::Base: return base_->readFromMapArchive(mapPath, path);
+    case MapArchive::None: break;
+    }
+    return std::nullopt;
+}
+
+std::vector<std::string> Vfs::mapArchivePaths(const std::string& mapPath) const {
+    int archive = -1;
+    const Layer* layer = nullptr;
+    std::vector<std::string> paths;
+    switch (mapArchive(mapPath, layer, archive)) {
+    case MapArchive::Files: for (const auto& [name, bytes] : *mapFiles_) paths.push_back(name); break;
+    case MapArchive::Mounted:
+        for (auto& sub : layer->ms.archivePaths(archive)) paths.push_back(layer->prefix + sub);
+        break;
+    case MapArchive::Base: return base_->mapArchivePaths(mapPath);
+    case MapArchive::None: break;
+    }
+    return paths;
+}
+
+// Where the map `mapPath` lives: this view's map files, a single-map archive in a
+// Maps/ layer (the highest layer that has the map, as tryRead resolves it), the base
+// view, or nowhere a map's own files can come from (a loose map, the base install's
+// maps/, a view that skips map resources).
+Vfs::MapArchive Vfs::mapArchive(const std::string& mapPath, const Layer*& layer, int& archive) const {
+    if (skipMaps_) return MapArchive::None;
+    const std::string mk = MountSet::key(mapPath);
+    if (mapFiles_) return mapFiles_->count(mk) ? MapArchive::Files : MapArchive::None;
+    for (auto it = layers_.rbegin(); it != layers_.rend(); ++it) {
+        if (!it->prefix.empty() && mk.compare(0, it->prefix.size(), it->prefix) != 0) continue;
+        const std::string sub = mapPath.substr(it->prefix.size());
+        if (!it->ms.has(sub)) continue;
+        if (!it->mapResources) return MapArchive::None;
+        archive = it->ms.archiveOf(sub);
+        layer = &*it;
+        return archive >= 0 ? MapArchive::Mounted : MapArchive::None;
+    }
+    return base_ ? MapArchive::Base : MapArchive::None;
 }
 
 std::vector<uint8_t> Vfs::read(const std::string& path, bool skipMapResources) const {

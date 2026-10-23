@@ -169,10 +169,13 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 290, "replay format 11 is kept under protocol 290");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 290");
-    check(supportedReplayProtocol(14, kNetVersion) && kReplayFormat == 14, "replay format 14 is written under protocol 290");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 291, "replay format 11 is kept under protocol 291");
+    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 291");
+    check(supportedReplayProtocol(14, kNetVersion) && kReplayFormat == 14, "replay format 14 is written under protocol 291");
     check(!supportedReplayProtocol(15, kNetVersion), "a newer replay format is refused");
+    // 291 takes a map package's AI files from the map's own archive (a colliding installed map or a game mod's copy no
+    // longer changes the package digest). The sim is 290's.
+    check(!supportedReplayProtocol(14, 290), "previous protocol with the mount's AI files in map packages is refused");
     // 290 adds AI level 6, Classic (SlotInfo.aiLevel); a 289 peer would clamp it to Normal. The sim is 289's.
     check(!supportedReplayProtocol(14, 289), "previous protocol without the Classic AI level is refused");
     // 289 seats the campaign human at Player1 / world slot 0 whatever its keywords (takx22_mt/takx24_mt hashed state),
