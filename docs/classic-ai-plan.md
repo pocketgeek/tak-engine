@@ -236,7 +236,9 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
   class 1, a non-empty factory queue BuildingBuild (flag 0x0c), a patrol 7, guard 5, load 12, unload 13,
   reclaim 11, repair 6, a move 14 (U1). The weapon's reload for the firepower sum is the FBI reloadtime x 30
   truncated to a 16-bit tick count, as 5307e9 stores it. 0x4de530 is taken to resolve kind 14 for any
-  builder.
+  builder. Retail's orders are immediate (0x429810 and 0x4d78a0 put the mission on the unit at
+  once), so the brain updates a member's first mission in its per-tick snapshot as it orders it: a later
+  member of the same base think sees that build (the busy-deposit test 0x40c830, the idle-factory rule).
 
 ### 1.7 Waves: launch, strike, backup, VTOL
 - **Wave-size roll, ground 0x40c240** (S, re-read at the listing):

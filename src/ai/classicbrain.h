@@ -148,13 +148,16 @@ private:
     // priorities from the cache as the previous tick left it; then the recount.
     void bookkeeping(const tak::sim::World& world, uint32_t simTick);
     // 0x40b320's member loop for base `slot` (after its reschedule), and the
-    // factory planner 0x40dcb0 for one of its members.
-    void baseThink(const tak::sim::World& world, int slot, const std::vector<ClassicSquadUnit>& units,
+    // factory planner 0x40dcb0 for one of its members. Retail's orders take
+    // effect at once (0x429810 / 0x4d78a0 put the mission on the unit), so a
+    // planner that orders a member updates its first mission in `units`: later
+    // members of the same think read it (the idle-factory and busy-deposit tests).
+    void baseThink(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
                    const std::function<void(const tak::net::Command&)>& sink);
-    void planFactory(const tak::sim::World& world, const ClassicSquadUnit& unit,
+    void planFactory(const tak::sim::World& world, ClassicSquadUnit& unit,
                      const std::function<void(const tak::net::Command&)>& sink);
     // 0x40c890 for units[i], a ready mobile builder of base `slot`.
-    void planConstructor(const tak::sim::World& world, int slot, const std::vector<ClassicSquadUnit>& units,
+    void planConstructor(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
                          size_t i, bool threat, const std::function<void(const tak::net::Command&)>& sink);
     // The map's sacred-site records (0x62dbcc) and which feature-plane types are
     // sacred, read from the World once.

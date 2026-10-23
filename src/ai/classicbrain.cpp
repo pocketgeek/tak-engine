@@ -286,7 +286,7 @@ uint16_t ClassicBrain::population(const tak::sim::World& world) const {
     return uint16_t(n);
 }
 
-void ClassicBrain::baseThink(const tak::sim::World& world, int slot, const std::vector<ClassicSquadUnit>& units,
+void ClassicBrain::baseThink(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
                              const std::function<void(const tak::net::Command&)>& sink) {
     classicBaseMembers(squads_, units, slot,
         // 0x412000 (the threat test, P5) answers no threat until then; it feeds
@@ -297,7 +297,7 @@ void ClassicBrain::baseThink(const tak::sim::World& world, int slot, const std::
         [](size_t, bool) {});   // 0x40d370: P5
 }
 
-void ClassicBrain::planFactory(const tak::sim::World& world, const ClassicSquadUnit& unit,
+void ClassicBrain::planFactory(const tak::sim::World& world, ClassicSquadUnit& unit,
                                const std::function<void(const tak::net::Command&)>& sink) {
     auto random = [&](int n) { return rand(n); };
     const auto* builder = unit.type ? catalogue_.types[unit.type] : nullptr;
@@ -317,6 +317,10 @@ void ClassicBrain::planFactory(const tak::sim::World& world, const ClassicSquadU
             std::strncpy(c.type, catalogue_.types[t]->id.c_str(), sizeof c.type - 1);
             sink(c);
             ++queues_;
+            // Its first mission is now that BuildingBuild (firstMission's reading).
+            unit.producing = unit.mission = unit.buildingBuild = true;
+            unit.missionClass = 19; unit.missionFlags = 0x0c;
+            unit.buildsManaSite = info_[t].manaSite;
         });
 }
 
@@ -356,9 +360,9 @@ bool ClassicBrain::sacredCell(const tak::sim::World& world, int x, int z) const 
         [&](uint16_t f) { return f < sacredTypes_.size() && sacredTypes_[f]; });
 }
 
-void ClassicBrain::planConstructor(const tak::sim::World& world, int slot, const std::vector<ClassicSquadUnit>& units,
+void ClassicBrain::planConstructor(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
                                    size_t i, bool threat, const std::function<void(const tak::net::Command&)>& sink) {
-    const ClassicSquadUnit& member = units[i];
+    ClassicSquadUnit& member = units[i];
     const auto* unit = world.unit(member.id);
     const auto* builder = member.type ? catalogue_.types[member.type] : nullptr;
     if (!unit || !unit->type || !builder) return;
@@ -398,7 +402,7 @@ void ClassicBrain::planConstructor(const tak::sim::World& world, int slot, const
         const std::vector<ClassicSquadUnit>& units;
         const detail::ClassicUnitIndex& index;
         int slot;
-        const ClassicSquadUnit& member;
+        ClassicSquadUnit& member;
         const tak::sim::Unit& unit;
         const tak::sim::UnitType& builder;
         std::pair<int32_t, int32_t> centre;
@@ -468,11 +472,17 @@ void ClassicBrain::planConstructor(const tak::sim::World& world, int slot, const
             sink(c);
             ++b.builds_;
             if (b.info_[t].lodestoneClass) ++b.lodestoneBuilds_;
+            // 0x4d78a0 clears its missions and puts the build first: MobileBuild.
+            member.mission = true; member.missionClass = 0; member.missionFlags = 8;
+            member.buildingBuild = false; member.buildsManaSite = b.info_[t].manaSite;
         }
         void cancel() {
             tak::net::Command c;
             c.kind = tak::net::Cmd::Stop; c.player = uint8_t(b.player_); c.unitId = member.id;
             sink(c);
+            // 0x4d6a50(unit, 0): its missions are gone (our Stop keeps none).
+            member.mission = member.buildingBuild = member.buildsManaSite = false;
+            member.missionClass = 0; member.missionFlags = 0;
         }
         void retreat() {}   // 0x40d010: P5
         void combat() {}    // 0x40d370: P5

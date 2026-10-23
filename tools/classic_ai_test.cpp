@@ -645,26 +645,45 @@ static void classicFactories(const char* root) {
 // other structures by type, units produced, and the Build / Train commands. It
 // must not stall: by 10 minutes it has built lodestones and structures and
 // produced units. Every Build site lies inside the base's ring radius plus one
-// grid block, a lodestone goes on a sacred site, and no factory type is ordered
-// while an idle one of that type stands in the base.
+// grid block, a lodestone goes on a sacred site, no factory type is ordered
+// while an idle one of that type stands in the base, and no lodestone while
+// another member of the base is already building a mana site.
 static void classicBases(const char* root) {
     auto vfs=hpi::mountRetailRoot(root);
     sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
     const auto map=hpi::findMap(vfs,"Abnar's Terrace");
     static const char* const kNames[5]={"Aramon","Taros","Veruna","Zhon","Creon"};
     std::printf("  P4b games (Abnar's Terrace, Classic seat vs an idle seat):\n");
-    for (int faction=0;faction<5;++faction) {
+    // A sixth game: a Zhon seed whose builders meet the busy-deposit test inside
+    // one base think (two lodestone picks in a row), which the stale member
+    // snapshot used to miss.
+    for (int game=0;game<6;++game) {
+        const int faction=game<5 ? game : 3;
+        const uint32_t seed=game<5 ? 0xb450u+uint32_t(faction) : 32u;
+        const std::string name=game<5 ? kNames[faction] : std::string(kNames[faction])+" (seed 32)";
         sim::World w;w.setVisPlayer(-1);
         sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
         config.slots={{true,0,0,1.0f},{true,faction,1,1.0f,true,false}};
         const auto starts=sim::setupMatch(w,reg,config);
         if (starts.size()<2) { check(false,"Abnar's Terrace seats two players");return; }
-        ai::Controller controller(1,reg,ai::Profile{},0xb450u+uint32_t(faction),ai::Difficulty::Classic,{starts[0]});
+        ai::Controller controller(1,reg,ai::Profile{},seed,ai::Difficulty::Classic,{starts[0]});
         controller.setClassicProfile(ai::classicProfileScript(vfs,ai::classicMapAiProfile(vfs,map)));
         controller.setClassicStart(1,starts[1].first,starts[1].second);
         const ai::ClassicBrain& brain=*controller.classicBrain();
         const float sx=starts[1].first,sz=starts[1].second;
-        int builds=0,trains=0,outside=0,offDeposit=0,duplicate=0,refused=0;
+        int builds=0,trains=0,outside=0,offDeposit=0,duplicate=0,refused=0,doubleDeposit=0;
+        // A type's mana-site bit (type +0x264 bit 31), from the brain's own facts.
+        auto manaSite=[&](const sim::UnitType* t) {
+            const auto& types=brain.catalogue().types;
+            for (size_t i=1;i<types.size();++i) if (types[i]==t) return brain.typeInfo()[i].manaSite;
+            return false;
+        };
+        // What a unit is building or ordered to build (its first build mission).
+        auto building=[&](const sim::Unit& u) -> const sim::UnitType* {
+            if (u.buildSiteId) if (const auto* s=w.unit(u.buildSiteId)) return s->type;
+            for (const auto& o:u.orders) if (o.buildType) return o.buildType;
+            return nullptr;
+        };
         int32_t worst=0;
         struct Snapshot { uint32_t tick;int lodes,structures,units,builds,trains;std::map<std::string,int> byType; };
         std::vector<Snapshot> snaps;
@@ -699,6 +718,13 @@ static void classicBases(const char* root) {
                         for (const auto& u:w.units())
                             if (u.player==1 && u.alive() && u.type==t && u.buildQueue.empty() &&
                                 brain.squadOf(u.id)>=1 && brain.squadOf(u.id)<=20) ++duplicate;
+                    // 0x40c830: no lodestone while another member of the builder's
+                    // base is already on a mana site (an order given earlier in
+                    // the same base think counts: retail's order is immediate).
+                    if (t && manaSite(t))
+                        for (const auto& u:w.units())
+                            if (u.player==1 && u.alive() && u.id!=c.unitId && brain.squadOf(u.id)==brain.squadOf(c.unitId))
+                                if (const auto* b=building(u);b && manaSite(b)) ++doubleDeposit;
                     sim::applyCommand(w,reg,c);
                     if (const auto* b=w.unit(c.unitId);!b || b->orders.empty() || !b->orders.back().buildType) ++refused;
                     return;
@@ -725,19 +751,20 @@ static void classicBases(const char* root) {
             std::string mix;
             for (const auto& [id,n]:snap.byType) mix+=" "+id+" x"+std::to_string(n);
             std::printf("    %s %2u min: %d lodestones, %d other structures, %d units produced; %d Build, %d Train;%s\n",
-                        kNames[faction],snap.tick/1800,snap.lodes,snap.structures,snap.units,snap.builds,snap.trains,
+                        name.c_str(),snap.tick/1800,snap.lodes,snap.structures,snap.units,snap.builds,snap.trains,
                         mix.c_str());
         }
         std::printf("    %s: %u Build commands (%u lodestones), %d refused by the World, farthest site %d px\n",
-                    kNames[faction],brain.builds(),brain.lodestoneBuilds(),refused,worst);
+                    name.c_str(),brain.builds(),brain.lodestoneBuilds(),refused,worst);
         const auto& last=snaps.back();
-        const std::string what=std::string(kNames[faction])+": ";
+        const std::string what=name+": ";
         check(last.lodes>=1,(what+"lodestones are built within 10 minutes").c_str());
         check(last.structures>=1 || faction==3,(what+"basic structures are built within 10 minutes").c_str());
         check(last.units>=1,(what+"units are trained or conjured within 10 minutes").c_str());
         check(outside==0,(what+"every site is inside the ring radius plus a grid block").c_str());
         check(offDeposit==0,(what+"every lodestone is ordered onto a free deposit").c_str());
         check(duplicate==0,(what+"no factory type is ordered while an idle one stands in the base").c_str());
+        check(doubleDeposit==0,(what+"no lodestone is ordered while another base member builds a mana site").c_str());
     }
 }
 
