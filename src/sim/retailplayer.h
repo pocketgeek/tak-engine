@@ -39,6 +39,12 @@ struct RetailPlayerCacheClock {
 // One catalogue entry in 410810. The host supplies current counts, resource
 // pressure and the player's desired composition; these are not timeless type
 // properties. Kept separate from the clock until World supplies those inputs.
+// What the fields hold in retail (docs/classic-ai-plan.md §1.3): flags is type
+// +0x260 (0x10000 any weapon block, 0x100 the FBI builder flag -- "mobile" below
+// -- and 0x1000000 isfeature); secondaryFlags is +0x264 (bit 31 a yardmap 'S'
+// cell, a mana site -- "resourceProducer" below); `weapon` is the movement
+// class minwaterdepth (+0x194, >= 0 for water units); `desired` is the AI
+// profile limit. ai::ClassicTypeInfo::priorityInputs fills them by those names.
 struct RetailBuildPriority {
     uint32_t flags=0,secondaryFlags=0;
     int16_t count=0,completed=0,weapon=-1;

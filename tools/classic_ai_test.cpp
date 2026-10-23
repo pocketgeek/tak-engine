@@ -1,5 +1,7 @@
 // The Classic AI level's building blocks (src/ai/classic*): the retail AI profile
-// baker, and (with a data directory) the shipped profile through the real VFS.
+// baker, the per-type facts and the bookkeeping clock with its dynamic build
+// priorities on a fixed World, and (with a data directory) the shipped profile
+// through the real VFS.
 //
 //   classic_ai_test                 unit tests
 //   classic_ai_test <retail-root>   + the shipped data checks
@@ -9,6 +11,7 @@
 //       stdout per case, for each catalogue index 1..n: "pref limit prefLock limitLock"
 #include "ai/classicbrain.h"
 #include "ai/classicprofile.h"
+#include "ai/classictypes.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
@@ -126,6 +129,119 @@ static void profileRules() {
     }
 }
 
+static void typeFacts() {
+    bool site=false,lode=false;
+    auto flags=[&](const char* ym,int fx,int fz){ai::classicYardMapFlags(ym,fx,fz,site,lode);return std::pair{site,lode};};
+    check(flags("S",3,3)==std::pair{true,true} && flags(" S",2,2)==std::pair{true,true} &&
+          flags("oooS",2,2)==std::pair{true,false} && flags("ooo ooo ooS",3,3)==std::pair{true,false} &&
+          flags("oS",1,1)==std::pair{false,false} && flags("o",3,3)==std::pair{false,false} &&
+          flags("xSo",1,1)==std::pair{true,true} && flags("",2,2)==std::pair{false,false},
+          "yardmap walk: S anywhere in the cells = mana site, S first = lodestone class; the last char repeats, unknown chars are skipped");
+}
+
+// A self-contained registry (the same synthetic-VFS trick as ai_behavior_test).
+static sim::TypeRegistry syntheticRegistry() {
+    auto files=std::make_shared<hpi::Vfs::Files>();
+    auto file=[&](const std::string& path,const std::string& text) {
+        std::string lines;
+        for (char ch : text) { lines += ch; if (ch == ';' || ch == '{' || ch == '}') lines += '\n'; }
+        (*files)[path]={lines.begin(),lines.end()};
+    };
+    auto type=[&](const char* id,const char* fields,const char* extra="") {
+        file(std::string("units/")+id+".fbi",std::string("[UNITINFO]{unitname=")+id+";objectname="+id+
+             ";side=ARA;maxdamage=100;footprintx=2;footprintz=2;buildtime=30;buildcost=10;"+fields+"}"+extra);
+    };
+    type("soldier","canmove=1;maxvelocity=1;category=ARA LAND;","[WEAPON1]{damage=5;range=100;}");
+    type("tower","yardmap=oooo;","[WEAPON2]{range=200;}");            // a weapon block, no damage
+    type("lode","buildcost=0;buildtime=92;yardmap=S;mogriumincome=10;category=ARA;");
+    type("mobilelode","canmove=1;maxvelocity=1;bmcode=1;yardmap=S;");  // yardmap ignored: bmcode 1
+    type("ship","canmove=1;maxvelocity=1;minwaterdepth=20;floater=1;");
+    type("worker","builder=1;workertime=30;canmove=1;maxvelocity=1;builddistance=90;sightdistance=300;");
+    type("castle","builder=1;workertime=30;buildcost=2000;");
+    type("plain","isfeature=1;");
+    file("canbuild/worker/lode.tdf","[CANBUILD]{sortbias=0;}");
+    file("canbuild/castle/soldier.tdf","[CANBUILD]{sortbias=0;}");
+    hpi::Vfs vfs;vfs.setMapFiles(files);
+    sim::TypeRegistry reg;reg.loadDir(vfs,"units");reg.loadBuildTree(vfs,"canbuild");
+    return reg;
+}
+
+static void typeInfoAndPriorities() {
+    const auto reg=syntheticRegistry();
+    ai::ClassicBrain brain(0,11,reg);
+    const auto& c=brain.catalogue();
+    auto idx=[&](const char* n){return size_t(c.byName.at(n));};
+    const auto& info=brain.typeInfo();
+    check(c.size()==9 && info[idx("tower")].armed && reg.find("tower")->weapons.empty() && info[idx("soldier")].armed &&
+          !info[idx("worker")].armed,"armed = any [WEAPONn] block, even one with no damage");
+    check(info[idx("lode")].manaSite && info[idx("lode")].lodestoneClass && info[idx("lode")].cost==92 &&
+          info[idx("lode")].bmcode==0 && info[idx("tower")].structure && !info[idx("tower")].manaSite,
+          "a yardmap S building is a mana site in the lodestone class; buildcost 0 falls back to buildtime");
+    check(!info[idx("mobilelode")].manaSite && info[idx("mobilelode")].bmcode==1,
+          "the yardmap is read for bmcode 0 only (retail's default bmcode is 0)");
+    check(info[idx("ship")].minWaterDepth==20 && info[idx("ship")].floater && info[idx("soldier")].minWaterDepth==-10000,
+          "minwaterdepth (type+0x194) is carried, -10000 for land units");
+    check(info[idx("worker")].builder && info[idx("worker")].buildDistance==90 && info[idx("worker")].sight==300 &&
+          info[idx("worker")].maxDamage==100 && info[idx("castle")].menu && info[idx("worker")].menu && !info[idx("tower")].menu &&
+          info[idx("plain")].isFeature && c.categories.at("land").size()==1,
+          "builder flag, builddistance, sight, maxdamage, menus, isfeature and category words");
+    {
+        const auto in=info[idx("tower")].priorityInputs(3,2,7);
+        check(in.flags==0x10000u && in.secondaryFlags==0 && in.count==3 && in.completed==2 && in.desired==7 &&
+              in.weapon==-10000 && in.cost==10,"the adapter fills retailBuildPriority's inputs by their retail meaning");
+    }
+
+    // A fixed World: what the clock sees, and the priorities it computes. Costs
+    // stay <= 500 except the castle, so most values are fixed numbers.
+    sim::World w;
+    {
+        std::vector<uint8_t> h(64*64,100);w.setVisPlayer(-1);w.setTerrain(std::move(h),64,64,20);
+    }
+    w.spawn(reg.find("tower"),200,200,0,0);
+    const int unfinished=w.spawn(reg.find("worker"),300,300,0,0);
+    w.unit(unfinished)->underConstruction=true;
+    w.spawn(reg.find("soldier"),400,400,0,1);   // another player's: not counted
+    auto& me=w.player(0);me.mana=0;me.storage=1000;
+    for (auto& sample : me.displayResources.samples) sample={0.0f,5.0f};   // draining: shortfall
+    ai::ClassicProfileScript script{"ai/test.txt","limit worker 4\nlimit castle -1\n"};
+    brain.useProfile(script);
+    auto think=[&](uint32_t tick){brain.tick(w,tick,[](const net::Command&){});};
+    think(0);
+    const auto& pr=brain.priorities();
+    check(brain.priorityRefreshes()==1 && pr[idx("soldier")]==84 && pr[idx("tower")]==84 &&
+          pr[idx("worker")]==64 && pr[idx("lode")]==100 && pr[idx("ship")]==12 && pr[idx("plain")]==0,
+          "the creation pass sees empty caches: armed 21x4, a builder under a quarter of its limit (+30, halved short of mana) x4, "
+          "a dry store wants lodestones, naval x3, isfeature 0");
+    check(brain.counts()[idx("tower")]==1 && brain.completed()[idx("tower")]==1 &&
+          brain.counts()[idx("worker")]==1 && brain.completed()[idx("worker")]==0 && brain.counts()[idx("soldier")]==0,
+          "the per-tick recount: own live units by type, and the finished ones");
+    // Mirror the brain's stream to find the first refresh, then check the values
+    // the cache then held (the previous tick's recount).
+    uint32_t mirror=ai::ClassicBrain::seedFor(0,11);
+    for (size_t t=1;t<c.size();++t)
+        if (info[t].cost>500.0f) { // the creation pass's draws (only the castle costs > 500)
+            sim::RetailBuildPriority in=info[t].priorityInputs(0,0,brain.profile().limit[t]);
+            sim::retailBuildPriority(in,uint16_t(2),0.0f,true,[&](int n){return sim::retailRandom(mirror,n);});
+        }
+    check(mirror==brain.seed(),"the creation pass draws only for types costing over 500");
+    uint32_t refreshAt=0;
+    for (uint32_t tick=7;tick<10000 && !refreshAt;tick+=7) {
+        if (sim::retailRandom(mirror,30)==0) refreshAt=tick;
+    }
+    for (uint32_t tick=1;tick<refreshAt;++tick) think(tick);
+    check(brain.priorityRefreshes()==1,"no refresh before the first rand(30)==0 of a 7-tick window");
+    think(refreshAt);
+    check(brain.priorityRefreshes()==2 && pr[idx("tower")]==42 && pr[idx("worker")]==2 &&
+          pr[idx("soldier")]==84 && pr[idx("lode")]==100,
+          "a refresh uses the cached counts: one tower x2, an unfinished builder gets no builder bonus");
+    me.mana=900;   // 90% full: no lodestone wanted
+    for (auto& sample : me.displayResources.samples) sample={5.0f,0.0f};
+    while (brain.priorityRefreshes()==2) think(++refreshAt);
+    check(pr[idx("lode")]==0 && pr[idx("worker")]==2,"a full, growing store wants no lodestone");
+    check(brain.buildWeight(idx("soldier"))==84 && brain.buildWeight(idx("worker"))==2 &&
+          brain.buildWeight(idx("plain"))==0,"build weight = pref x priority / 100 under the limit");
+}
+
 static void shippedData(const char* root) {
     auto vfs=hpi::mountRetailRoot(root);
     sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
@@ -159,6 +275,8 @@ static void shippedData(const char* root) {
 int main(int argc,char** argv) {
     if (argc==2 && std::strcmp(argv[1],"--profile")==0) return profileOracle();
     profileRules();
+    typeFacts();
+    typeInfoAndPriorities();
     if (argc>1) shippedData(argv[1]);
     std::printf("%s\n",fails ? "FAILED" : "all passed");
     return fails ? 1 : 0;

@@ -1285,7 +1285,7 @@ add_executable(mod_packs_test tools/mod_packs_test.cpp)
 target_link_libraries(mod_packs_test PRIVATE tak-formats)
 add_test(NAME mod_packs COMMAND mod_packs_test)
 # The server-side AI (src/ai): every executable that runs a Controller links these.
-set(TAK_AI_SOURCES src/ai/ai.cpp src/ai/classicbrain.cpp src/ai/classicprofile.cpp)
+set(TAK_AI_SOURCES src/ai/ai.cpp src/ai/classicbrain.cpp src/ai/classicprofile.cpp src/ai/classictypes.cpp)
 add_executable(room_worker_test tools/room_worker_test.cpp src/server/roomtick.cpp src/server/rosterdump.cpp ${TAK_AI_SOURCES})
 target_link_libraries(room_worker_test PRIVATE tak-formats)
 add_test(NAME room_worker COMMAND room_worker_test)

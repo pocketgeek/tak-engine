@@ -11,12 +11,18 @@
 //
 // P0 (plumbing): the brain owns its random stream and is wired into
 // ai::Controller. P1: it holds retail's unit catalogue and the baked AI profile
-// (ai/classicprofile.h). tick() still issues nothing -- a Classic Monarch idles.
+// (ai/classicprofile.h). P2: per-type facts (ai/classictypes.h) and retail's
+// bookkeeping clock -- the per-tick unit count cache and the dynamic build
+// priorities recomputed on rand(30)==0 of each >= 7-tick window. tick() still
+// issues nothing -- a Classic Monarch idles.
 
 #include <cstdint>
 #include <functional>
+#include <unordered_map>
+#include <vector>
 
 #include "ai/classicprofile.h"
+#include "ai/classictypes.h"
 #include "net/lockstep.h"
 #include "sim/retailrng.h"
 
@@ -38,6 +44,17 @@ public:
     void useProfile(const ClassicProfileScript& script);
     const ClassicCatalogue& catalogue() const { return catalogue_; }
     const ClassicProfile& profile() const { return profile_; }
+    const std::vector<ClassicTypeInfo>& typeInfo() const { return info_; }
+    // Retail's per-type cache (mgr+0x85 / +0x95, recounted every tick by 0x4119d0):
+    // the player's live units of each type, and how many of those are finished.
+    const std::vector<int16_t>& counts() const { return count_; }
+    const std::vector<int16_t>& completed() const { return completed_; }
+    // Retail's dynamic build priority per type (mgr+0x69, 0x410810).
+    const std::vector<uint8_t>& priorities() const { return priority_; }
+    uint32_t priorityRefreshes() const { return refreshes_; }
+    // The draw weight of a type for this player (0x412c90): 0 at its limit, else
+    // pref * priority / 100.
+    int buildWeight(size_t type) const;
 
     // Runs every sim tick (the brain keeps retail's own clocks, not a think period).
     void tick(const tak::sim::World& world, uint32_t simTick,
@@ -61,10 +78,28 @@ public:
     }
 
 private:
+    // 0x411a90, retail's per-player bookkeeping: the >= 7-tick window (where the
+    // world rebuilds its visibility lists) draws rand(30), and 0 recomputes the
+    // priorities from the cache as the previous tick left it; then the recount.
+    void bookkeeping(const tak::sim::World& world, uint32_t simTick);
+    void recount(const tak::sim::World& world);
+    void recomputePriorities(const tak::sim::World& world, bool atCreation);
+#ifndef NDEBUG
+    void debugDump(uint32_t simTick);
+    bool dumped_ = false;
+#endif
+
     int player_;
     uint32_t seed_;
     ClassicCatalogue catalogue_;
     ClassicProfile profile_;
+    std::vector<ClassicTypeInfo> info_;
+    std::unordered_map<const tak::sim::UnitType*, uint16_t> index_;
+    std::vector<int16_t> count_, completed_;
+    std::vector<uint8_t> priority_;
+    tak::sim::RetailPlayerCacheClock clock_{true, 0};
+    bool created_ = false;
+    uint32_t refreshes_ = 0;
 };
 
 }  // namespace tak::ai

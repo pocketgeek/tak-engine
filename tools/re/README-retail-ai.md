@@ -119,6 +119,17 @@ the dump on and off. The first room writes to the given path, and any later
 room to `<path>.room<id>`. Squads are not dumped yet: the CLASSIC brain will
 add them in the retail layout.
 
+The CLASSIC brain's own weight table, for `--printweights` comparisons: with
+`TAK_CLASSIC_WEIGHTS=<path>` (and `TAK_CLASSIC_WEIGHTS_AT=<tick>`, default 600)
+in the takserver's environment, each Classic seat writes `<path>.p<seat>` once,
+at the first tick at or past T, one row per unit type in PrintWeights' column
+layout (`<limit|n/a> - <priority> = <preference> - '<UNIT>\t\t:<name>'`). It is
+debug-only as well, and only writes a file. Two differences are expected: our
+table holds every type of the data (retail's held only the sides in play in the
+dumps seen so far), and the cost-penalty draws of the priorities come from a
+different random stream, so only the deterministic rows (and distributions over
+seeds) compare.
+
 ## The capture schema (both engines)
 
 ```
