@@ -3144,6 +3144,7 @@
             profHudMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
                           (double(SDL_GetPerformanceFrequency()) / 1000.0);
         }
+        objPanelBottom_ = 0;
         if (!spectating_) {
             renderGui(winW, winH);
             drawPanel(winW, winH);
@@ -3204,7 +3205,8 @@
                               : pendingCmd_ == 'l' ? "LOAD: CLICK UNIT TO CARRY"
                               : pendingCmd_ == 'u' ? "UNLOAD: CLICK DESTINATION"
                                                    : "MOVE: CLICK DESTINATION";
-            hudBanner(msg, 100, 1.6f, {255, 200, 120, 255}, winW, 12);
+            // Left-aligned under the campaign objectives panel, which shares that corner.
+            hudBanner(msg, std::max(100.0f, objPanelBottom_ + 6), 1.6f, {255, 200, 120, 255}, winW, 12);
         }
         if (noticeTimer_ > 0 && hudFont_.ok() && !notice_.empty())
             hudBanner(notice_, 120, 2.5f, {255, 230, 120, 255}, winW);

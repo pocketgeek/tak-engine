@@ -2373,6 +2373,7 @@ private:
     std::vector<std::string> missionAllowed_;
     std::vector<std::string> missionObjectives_;   // in-game objectives panel lines
     bool showObjectives_ = true;                   // panel visible (toggle with O)
+    float objPanelBottom_ = 0;                     // this frame's objectives panel bottom (0 = none)
     std::vector<std::pair<std::string, std::string>> chatLog_;
     // In-game chat: press Enter to compose, lines fade after a while. Kept apart
     // from the lobby chatLog_ so the in-game overlay and lobby panel don't mix.
