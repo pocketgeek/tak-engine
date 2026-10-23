@@ -246,8 +246,18 @@ composed, so no browser cell or tree is a placeholder.
   `symmetry-stamp.jpg`, `terrain-clipboard.jpg` and `features-select.jpg` put two
   crops side by side under text labels, and `menus.jpg` puts six crops of the
   opened menus together (each with only its own menu title).
-- **Encoding.** JPEG, full chroma resolution, quality 86, not scaled. The 27
-  files total about 2.9 MB.
+- **Encoding.** JPEG, full chroma resolution, quality 86, not scaled. The 29
+  files total about 3.2 MB.
+- **AI Profiles.** `ai-profiles.jpg` and `ai-group-rules.jpg` were added on
+  2026-10-23 with the AI Profiles window (branch `task-carto-ai`, after
+  0.8.11), not by the capture driver: they are the window captures that the
+  `cartographer_ui_test` workflows `aiprofile` and `aiprofile-extras` write
+  when `TAK_EDITOR_TEST_CAPTURE` names a prefix, run on the build-o2 test
+  binary with SDL `offscreen` (921 × 691) and a scratch profile, and cropped to
+  the window (802 × 534). The workflows edit through the editor's own input
+  path; their documents (*AiTest*, a copy of Ulasem Arena's terrain, and
+  Ulasem Arena itself) are never saved over a shipped map. The scratch data
+  root of `aiprofile-extras` holds a synthetic game pack, not shown.
 - **Toolbar.** Every whole-window picture except `blocked.jpg` predates the
   BLOCKED tool, so its toolbar shows four tool buttons where the editor now has
   five.
@@ -280,6 +290,8 @@ composed, so no browser cell or tree is a placeholder.
 | `test-map.jpg` | King of the Hill after F5: the TEST MAP message, with TEST RUNNING on the toolbar, whole window |
 | `test-lobby.jpg` | The game's private lobby for that King of the Hill snapshot (recaptured by the 0.8.9 client for the room's rules; before that by the 0.8.8 client for the UI font and the mods lists): seats 2 to 4 open, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, the map preview numbering the four starts, ALWAYS ON: click.hpi under the COSMETIC MODS heading with no packs in either the COSMETIC MODS or the GAME MODS list (so no GAME MODS VERIFIED line), START greyed, and MAP SCENARIO: ON (TEST MAP) as a rules line at the others' size with the scenario details under both columns; 1024 × 768 cropped to the lobby panel |
 | `menus.jpg` | Composite: the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each opened over Ulasem Arena or King of the Hill and cropped to the menu |
+| `ai-profiles.jpg` | *AiTest* (Ulasem Arena's terrain), Scenario → AI Profiles, DEFAULT AI tab: the map's own profile *aitest* started Empty, then NO FLYERS after its confirmation, so every flying unit reads BUILD OFF and LIMIT 0; Normal is tagged `map *` from an earlier edit. Crop of the window |
+| `ai-group-rules.jpg` | Ulasem Arena, AI Profiles, DEFAULT AI tab in the GROUP RULES view: own profile *ulasem arena*, one rule WEIGHT ARA 50 % covering 32 units, the Archer set individually (80 %) and shown as skipped. Crop of the window |
 | `blocked.jpg` | Added with the BLOCKED tool, not by the capture driver: the editor's own `--shot` output (`cartographer "Ladron's Tarn" --shot … --shot-tool blocked`, SDL `offscreen`, fresh scratch profile), whole 921 × 691 window at 30%. The shipped map's blocked cells along its castle walls are tinted red and its road cells blue; the browser lists the five brush sizes |
 
 The native dialogs (the first-start folder picker, *Not a game folder*,

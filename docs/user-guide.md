@@ -330,8 +330,8 @@ starts a private server on your own computer for you.
 Every level except Default has its own **build profile** built into the game: a
 weight and a limit for each unit, which decide how often it picks that unit and
 how many of it it may have. (The values are the original game's default AI
-profile, the one these levels were tuned on.) These levels never read a game's
-`ai/*.txt` files; a game mod can change their profiles instead (see
+profile, the one these levels were tuned on.) These levels never read the install's
+`ai/*.txt` files; a map or a game mod can change their profiles instead (see
 [AI profiles in game mods](#ai-profiles-in-game-mods)).
 
 #### Default
@@ -352,7 +352,8 @@ quirks included:
   travels with the map in multiplayer), else from the install: a game pack's
   file wins over the map's, and the map's over the install's. That file only switches units on or off and sets how many of each it may have; the
   AI picks at random among what its builders can make, favouring what it is
-  short of.
+  short of. Mapmakers give a map its own profile in the Cartographer (see
+  [Making AI profiles](#making-ai-profiles)).
 - It has no difficulty setting and no income bonus.
 - It is **weaker than Normal**. It builds a few lodestones at a time and often
   runs low on mana; a **Taros** DEFAULT AI in particular can grow slowly.
@@ -2097,9 +2098,7 @@ AI that takes over a disconnected player's seat), never Easy. Names are not
 case-sensitive. When two ticked packs have the same file, the alphabetically
 later pack wins, as for any file. In multiplayer the files travel with the
 host's game packs. Cosmetic packs and the install itself cannot change these
-levels' profiles, even with an `ai/n.txt` of their own. The Cartographer keeps
-a `.kmp` map's `ai` folder when you open the file and save it again (see
-[Files in a map](cartographer-guide.md#files-in-a-map)). The DEFAULT AI
+levels' profiles, even with an `ai/n.txt` of their own. The DEFAULT AI
 reads none of these files: it reads the map's own AI profile, which a game pack
 or the map's archive can replace (see [Default](#default)).
 
@@ -2109,6 +2108,32 @@ in its own folder. A pack you used in **Cosmetic** mode goes in
 `mods/cosmetic/<pack>/`; a pack you used in **Full** mode, or any pack that
 changes units or rules, goes in `mods/game/<pack>/`. Your old pack choices are
 not carried over, so tick the packs again in the room.
+
+### Making AI profiles
+
+The Cartographer makes these files for you: **Scenario → AI Profiles...**
+(**A**) opens a window with a tab for the DEFAULT AI and one for each level, a
+table of units in which you switch units off, change how often they are built
+and set limits, and presets such as **No flyers** and **No ships**. See
+[AI profiles](cartographer-guide.md#ai-profiles) in the Cartographer guide.
+
+- **For one map**: the files are saved inside the map's `.kmp` and travel with
+  it. The DEFAULT AI gets the map's own profile (`ai/<name>.txt`, which the map
+  names), usually started from the game's standard profile; each level you change gets
+  its file (`ai/n.txt` for Normal, and so on).
+- **For every map**: **SAVE AS GAME MOD...** writes the files into a game pack,
+  `mods/game/<pack>/ai/`. They apply whenever that pack is ticked.
+
+**Which file wins**, when more than one could apply:
+
+| AI | Looks for, first to last |
+| --- | --- |
+| A level (Normal, say) | `ai/n.txt` in a ticked game pack, then in the map. Neither: the level's built-in profile. The file it finds replaces the other one whole; the two are never mixed. |
+| DEFAULT | The map's own profile name (`ai/islands.txt`) in a ticked game pack, then the map, then the install; only if there is none, `ai/default.txt` in the same order. A game pack's `ai/default.txt` therefore does not replace a map's own profile, but a game pack's `ai/islands.txt` does. |
+
+Two maps that carry the same file name (both `ai/n.txt`, say) each keep and
+send their own. Campaign missions always use the DEFAULT AI with the mission's
+own profile.
 
 ---
 
@@ -2179,7 +2204,9 @@ off your saved map plays as a normal skirmish map.
 **Scenario → Check map** (**C**) lists problems such as cut-off
 starts, missing mana and wrong rule values. See
 [Scenario maps](cartographer-guide.md#scenario-maps) and the
-[scenario reference](crt-triggers.md).
+[scenario reference](crt-triggers.md). **Scenario → AI Profiles** (**A**) sets
+which units the computer players build on the map (see
+[Making AI profiles](#making-ai-profiles)).
 
 ### Testing a map
 

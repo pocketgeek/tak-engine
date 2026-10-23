@@ -52,13 +52,14 @@ and the first one has numbered markers added. The maps shown are shipped maps
 13. [Symmetry](#symmetry)
 14. [Generating a random map](#generating-a-random-map)
 15. [Scenario maps](#scenario-maps)
-16. [Checking your map](#checking-your-map)
-17. [Testing a map in the game](#testing-a-map-in-the-game)
-18. [Saving, opening and sharing](#saving-opening-and-sharing)
-19. [Preferences](#preferences)
-20. [Keyboard and mouse reference](#keyboard-and-mouse-reference)
-21. [Troubleshooting and FAQ](#troubleshooting-and-faq)
-22. [Known limits](#known-limits)
+16. [AI profiles](#ai-profiles)
+17. [Checking your map](#checking-your-map)
+18. [Testing a map in the game](#testing-a-map-in-the-game)
+19. [Saving, opening and sharing](#saving-opening-and-sharing)
+20. [Preferences](#preferences)
+21. [Keyboard and mouse reference](#keyboard-and-mouse-reference)
+22. [Troubleshooting and FAQ](#troubleshooting-and-faq)
+23. [Known limits](#known-limits)
 
 ---
 
@@ -899,7 +900,8 @@ Features and units have their own selections and their own clipboards.
 
 **Ctrl+Z** undoes, **Ctrl+Y** (or **Ctrl+Shift+Z**) redoes. Undo covers every
 change to the map: terrain, features, blocked cells, units, starts, regions,
-rules, scenario properties, the Use Only list and the map name. It does not
+rules, scenario properties, the Use Only list, the map's AI profiles and the
+map name. It does not
 cover the view, the clipboards or preferences.
 
 - Each mouse gesture is one step, from pressing the button to letting go: a whole
@@ -908,7 +910,10 @@ cover the view, the clipboards or preferences.
 - The history keeps up to about 64 MB of changes; the oldest steps are dropped
   first.
 - Undo works only from the map: while a dialog or the Scripting, Use Only or
-  Regions window is open, those take the keys. Close it first.
+  Regions window is open, those take the keys. Close it first. The AI Profiles
+  window is the exception: there Ctrl+Z and Ctrl+Y undo and redo its own
+  changes, back to where it opened (see
+  [Undo in the window](#undo-in-the-window)).
 - Undo clears the current selection.
 - Undoing back to the last save shows **SAVED** again.
 - Opening a map or making a new one starts a fresh history.
@@ -1155,7 +1160,10 @@ stored with the map, and the description is also saved as the map's `.txt`
 file. The game's map list shows the map's file name, its player count (the
 number of start positions) and its size; it does not show these two fields.
 
-There are no settings here for win conditions, resources or AI; those come from
+The dialog also shows the map's DEFAULT AI profile: *standard* (the game's own
+`ai/default.txt`) or the name of the map's own profile. **EDIT AI PROFILES...**
+opens the [AI Profiles](#ai-profiles) window, where it is changed. There are no
+settings here for win conditions or resources; those come from
 [rules](#rules-and-triggers).
 
 ### Regions
@@ -1350,6 +1358,220 @@ list is set.
 
 ---
 
+## AI profiles
+
+An **AI profile** is a short text file that tells a computer player which units
+to build, how often and how many. A map can carry its own profiles, so the
+computer players on your map build what suits it: no ships on a land map, more
+flyers on an island map, no siege weapons in a scenario. The profiles travel
+with the map: in multiplayer every player and the server get the same files.
+You can also save them as a **game mod**, so that they apply on every map
+while that mod is ticked.
+
+The game has two kinds of computer player, and each reads its own file:
+
+| Computer player | File | What the file does |
+| --- | --- | --- |
+| **DEFAULT AI** (the 1999 game's own AI) | the map's **own profile**, `ai/<name>.txt`, named by the map | The whole profile: every unit the file does not name is built at full chance with no limit. |
+| **Defensive**, **Easy**, **Normal**, **Hard**, **Absurd**, **Absurdly Defensive** | `ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt`, `ai/ad.txt` | Changes only the units it names; every other unit keeps the level's built-in values. |
+
+See [AI difficulty](user-guide.md#ai-difficulty) in the game guide for how
+each level plays.
+
+### The AI Profiles window
+
+**Scenario → AI Profiles...** (**A**) opens the window. **Scenario →
+Properties** also shows the map's DEFAULT AI profile, with an **EDIT AI
+PROFILES...** button. While the window is open, the title bar shows `[AI]`.
+
+![The AI PROFILES window for map AiTest. Left: DEFAULT AI selected, with its file ai/aitest.txt and the tag map *, the six levels below it (Normal also tagged map *), the PRESETS buttons NO FLYERS, NO SHIPS and CLEAR ALL, PREVIEW WITH GAME MOD (PACK: NONE) and the GAME MOD buttons. Right: the rule line ORIGINAL-GAME RULES: THE FIRST LINE NAMING A UNIT WINS; GROUP RULES COMBINE, the choice between the standard profile and this map's own profile named aitest, the FIND, SIDE and GROUP filters, and a table of flying units, each with BUILD OFF, CHANCE 100 %, SET BY line 7 and so on, and LIMIT 0. Footer: Plays: DEFAULT AI on this map reads ai/aitest.txt from this map, and the buttons START FROM, TEXT VIEW, CHECK, GROUP RULES and DONE](img/cartographer/ai-profiles.jpg)
+
+*The DEFAULT AI tab of a map with its own profile, after **No flyers**: every
+flying unit is switched off.*
+
+- **Left column**: **DEFAULT AI** and the six levels. A profile the map carries
+  is tagged `map`; `*` means it changed since the window opened, and
+  `as written` marks a file written by hand (see below). Under them are the
+  **presets**, **PREVIEW WITH GAME MOD** and the **GAME MOD** buttons.
+- **The rule line** at the top says how this kind of file works. DEFAULT AI:
+  *the first line naming a unit wins; group rules combine*. The levels: *whole
+  numbers; units by name only; later lines win*.
+- **The unit table** lists the units the computer players can build. Type in
+  **FIND** to search by name or file name (for example *archer* or
+  *araarch*), and pick a **SIDE** or **GROUP**. **SET ONLY** shows only the
+  units this file sets. Units that no builder of their side can make are
+  hidden; tick **UNBUILDABLE** to show them too.
+- **The line under the table** explains the selected unit in words: its value
+  and which line of the file sets it, or what it gets when the file does not
+  name it.
+- **The footer** says which file the computer player will really use on this
+  map (see [Which file plays](#which-file-plays)).
+- **DONE** or **Esc** closes the window.
+
+#### Setting a unit
+
+Click a cell, type, and press **Enter** (**Esc** cancels the typing).
+**Right-click** a cell, or press **Delete**, to return it to *not set*.
+
+| Column | DEFAULT AI | Levels |
+| --- | --- | --- |
+| **BUILD** | Click to switch the unit **OFF** (never built) or back **ON**. | The same. |
+| **CHANCE** / **WEIGHT** | **CHANCE**, 0 to 100 %. 100 % is normal; a lower number makes the AI pick the unit less often against other units it wants just as much; 0 % never builds it. | **WEIGHT**, a whole number from 0 to 999. Higher means picked more often among what that builder can make; 0 never builds it. The grey **BUILT-IN** column shows the level's own value. |
+| **LIMIT** | How many of the unit the AI may have: a number, or *no limit*. 0 means never built. | A number, or blank for the built-in limit. 0 means never built. |
+
+The levels change limits as they play: Easy halves them, Hard and Absurd
+raise them by half (at least 1), and the Defensive levels ignore every limit
+except 0. The **LIMIT (IN PLAY)** column shows `> n` when the level changes your
+number, and `+` when Hard or Absurd may raise it further in a long game; the
+line under the table says it in words (*In play on Hard: 4 in play, more in
+long games*).
+
+The real odds of a unit being built also depend on what the AI needs at that
+moment, so the window never shows a final percentage.
+
+#### Presets
+
+**NO FLYERS** and **NO SHIPS** switch off every flying unit or every ship;
+**CLEAR ALL** removes every unit setting from the file. Each asks first and
+says how many units it changes. Units you already set keep their settings,
+and Undo takes a preset back.
+
+#### The DEFAULT AI's own profile
+
+A map starts with **the standard profile** (`aiprofile=DEFAULT` in its map
+settings): the DEFAULT AI reads the game's own `ai/default.txt`, as on every
+shipped skirmish map. The standard profile is shown read-only.
+
+To give the map a profile of its own, choose **This map's own profile, named**.
+Cartographer proposes a name made from the map name (lower case, letters,
+digits, spaces, `-` and `_`, at most 32 characters) and asks where to **START
+FROM**:
+
+- **STANDARD DEFAULT AI** copies your install's `ai/default.txt`, so the AI
+  plays as usual until you change something. This is the usual choice.
+- **EMPTY** starts with every unit at full chance and no limit. The AI then
+  plays worse, because the standard profile switches off units it should not
+  build.
+
+The profile is saved in the map as `ai/<name>.txt`, and the map's settings
+name it. You can rename it in the name field: the file moves with the name.
+A name cannot contain `.`, `/` or `\`, and cannot be `default` or a level's
+file name (`d`, `e`, `n`, `h`, `a`, `ad`). Choosing **the standard profile**
+again asks first, then removes the map's file. Cartographer never writes a new
+`ai/default.txt` into a map: that name is read by every map without a profile
+of its own. A map that already carries one keeps it, and choosing its own
+profile offers to move it there.
+
+#### Group rules (DEFAULT AI)
+
+**GROUP RULES** (DEFAULT AI tab) switches the right side to rules that change
+a whole group of units at once, by one of the unit categories of your install
+(*ara*, *fly*, *factory* and so on) or **ALL**.
+
+![The AI PROFILES window for Ulasem Arena in its GROUP RULES view: one rule, WEIGHT ARA 50 %, covering 32 units, 1 set individually (skipped); the + ADD GROUP RULE button; and the list UNITS COVERED BY "weight ara" (50 %): Archer (araarch) set individually, skipped, and every other Aramon unit at 50 %](img/cartographer/ai-group-rules.jpg)
+
+*A group rule that halves the chance of every Aramon unit. The Archer has its
+own row, so the rule skips it.*
+
+- **+ ADD GROUP RULE** picks a word from a list of this install's categories.
+  Click a rule's keyword to switch it between **WEIGHT** (a chance) and
+  **LIMIT**, and its value to change it. `^` moves a rule up, **X** removes it.
+- The selected rule lists every unit it covers, with its value now.
+- **A group rule never changes a unit that has its own row** for the same
+  thing (chance or limit): the unit's own row comes first and locks it. The
+  window shows such a unit as *set individually, skipped*.
+- Group chances combine: two 50 % rules leave a unit at 25 %. For limits, the
+  last rule wins.
+- **TABLE** goes back to the unit table.
+
+The levels have no group rules: they read unit names only.
+
+#### Text view and Check
+
+**TEXT VIEW** shows the file itself, and you can edit it freely. Marks in the
+margin show lines that do nothing (`!`) and lines that a line before or after
+replaces (`~`); point at a mark for the reason. **INSERT UNIT** adds the
+selected unit's name. **TABLE VIEW** goes back.
+
+**CHECK** lists problems in all the map's AI files: misspelled unit names
+(with a suggestion), lines that do nothing, a decimal or a capital `Weight` in
+a level file, a side that could build nothing at all, and more. Click a
+problem to see its line. Check Map reports the warnings and errors too (see
+[What Check Map reports](#what-check-map-reports)). None of them stops you from
+saving.
+
+#### Files written by hand
+
+A file Cartographer did not write, for example one from a downloaded map,
+opens **as written**: the window shows what it does, line by line, but the
+table is read-only, and the file is saved unchanged, byte for byte.
+**MAKE EDITABLE** rewrites it in Cartographer's own layout, but only if the
+rewritten file makes the AI do exactly the same; otherwise it stays as
+written. The Text view can always edit it.
+
+#### Which file plays
+
+The footer names the file each computer player will read, in plain words, for
+example *DEFAULT AI on this map reads ai/islands.txt from this map. A ticked
+game mod's ai/islands.txt would replace it; a game mod's ai/default.txt would
+not.* The rules:
+
+- A ticked game mod's file replaces a map's file with the same name. For a
+  level it replaces the whole file, not line by line.
+- The DEFAULT AI first looks for the map's own profile name (game mod, then
+  the map, then your install), and only then for `ai/default.txt` in the same
+  order. So a game mod's `ai/default.txt` does not replace a map's own profile.
+- Your install never supplies level files. Cosmetic mods never supply AI
+  files.
+- Campaign missions always use the DEFAULT AI.
+
+**PREVIEW WITH GAME MOD** steps through your game mods (**PACK: NONE** means
+none), so the footer can show what happens when one of them is ticked. While a
+pack is picked, the unit table also lists the units it adds, tagged `pack`.
+
+#### Saving as a game mod
+
+**SAVE AS GAME MOD...** writes the map's AI files into a game mod pack:
+`mods/game/<pack>/ai/` in your game data folder. Type a new pack name, or step
+through the existing packs with `<` and `>`. The dialog shows the full folder,
+one row per file with what it will do (new, identical, replaces), and which
+files to write: the level files are ticked; the DEFAULT AI profile is not, and
+can be written either as `ai/default.txt` (every map that uses the standard
+profile) or under the map's profile name (only maps whose profile has that
+name).
+
+- A file that would replace a different one asks first and shows what
+  changes. The old file is copied to `mod-backups` in Cartographer's settings
+  folder (see [Where Cartographer keeps its files](#where-cartographer-keeps-its-files)),
+  never into the pack, because every file in a pack is sent to other players.
+- Other files in the pack are never touched.
+- If the game data folder is read-only (for example a game installed under
+  Program Files), **SAVE FAILED** says so.
+- A game mod applies only when it is ticked: in single player in the room, in
+  multiplayer when the host turns **Game mods: On** and ticks it. A game that is
+  already running shows a new pack the next time a room opens.
+
+**OPEN FROM GAME MOD...** opens one pack's AI files for editing instead of the
+map's. The title then reads **GAME MOD PACK:**. These edits are not part of the
+map: **SAVE TO PACK...** writes them back to the pack, and **CLOSE PACK** goes
+back to the map's files, asking first about unsaved pack edits. The pack's
+units are listed, tagged `pack`.
+
+#### Undo in the window
+
+**Ctrl+Z** and **Ctrl+Y** work inside the window, one step per change, back to
+where the window opened. Earlier map edits undo after **DONE**. A pack's files
+opened with OPEN FROM GAME MOD have no undo: CLOSE PACK discards what is not
+saved.
+
+#### Testing AI profiles
+
+**Test Map** (**F5**) takes the map's AI files into the test game. In the
+room, give each computer seat the level you are testing (DEFAULT for the map's
+own profile). To test a game mod's files, tick that pack in the room.
+
+---
+
 ## Checking your map
 
 ### Check Map
@@ -1402,6 +1624,7 @@ small separate areas.
 | | *Missing feature definition: (name)* | The feature does not exist in this world; erase the red dots. |
 | Regions | *Region name is empty or duplicated*; *Region has out-of-map bounds* | Rename or resize the region. |
 | Rules | *(rule set), rule G, condition/action R: …* | A value in a rule is wrong; the message says which. |
+| AI profiles | *AI profile ai/(file) line N: …*; *AI profile aiprofile: …* | A line in one of the map's AI files does nothing, or the map's profile name has no file; open [AI Profiles](#ai-profiles) and press **CHECK** for the details. |
 
 The checks of placed ships use each shipyard's starting pose; they cannot judge
 every launch, and they cannot tell whether your rules do what you want. Test
@@ -1442,6 +1665,8 @@ The game opens a **private lobby** for the map, as for a single-player game:
 Notes:
 
 - Testing does not save your map. Save it yourself when you are happy.
+- The map's AI profiles go into the test game too. Give the computer seats the
+  level you are testing (see [Testing AI profiles](#testing-ai-profiles)).
 - Only one test can run at a time. Pressing F5 again says *A test is already
   running*.
 - If the game cannot load the test copy, it shows **Cannot test map** with the
@@ -1578,9 +1803,8 @@ A `.kmp` file is a single archive holding these files:
 | `.txt` | The description (or the name, if there is no description). |
 
 The `.kmp` can also carry **AI profiles**: `ai/<name>.txt` files at the top of
-the archive, beside the map's own folder rather than inside it (see
-[AI profiles in game mods](user-guide.md#ai-profiles-in-game-mods) and the
-DEFAULT AI's [map profile](user-guide.md#default)). When you open a `.kmp` file
+the archive, beside the map's own folder rather than inside it. You make and
+edit them in the [AI Profiles](#ai-profiles) window. When you open a `.kmp` file
 (**File → Open** with its full path or an installed map's name) or a loose
 `.tnt`, Cartographer keeps every file in its `ai` folder and saves each one again
 unchanged, byte for byte. Undo, recovery copies and **Test Map** keep them too.
@@ -1591,7 +1815,7 @@ Only some of these files go with the map to other players and into **Test
 Map**: `ai/default.txt`, the level files (`ai/d.txt`, `ai/e.txt`, `ai/n.txt`,
 `ai/h.txt`, `ai/a.txt`, `ai/ad.txt`) and the file the map's AI profile names
 (`aiprofile=islands` reads `ai/islands.txt`). Any other file, such as
-`ai/notes.txt`, stays in your `.kmp` but is not sent.
+`ai/notes.txt`, stays in your `.kmp` but is not sent; Check Map says so.
 
 ### Sharing your map
 
@@ -1641,7 +1865,9 @@ settings folder:
 It holds `preferences.txt` (window size, UI scale, which layers are shown, the
 grid, fullscreen, edge scrolling, the trigger log setting, the 12 recent maps
 and the terrain group chosen for each world), the `recovery-…` folders for
-unsaved work, and `playtest-logs` for trigger logs. The game data folder is
+unsaved work, `playtest-logs` for trigger logs, and `mod-backups`, where
+[Save as game mod](#saving-as-a-game-mod) keeps the AI files it replaced or
+deleted in a pack (one folder per pack and save). The game data folder is
 stored in the game's own `settings.ini` (see the
 [game user guide](user-guide.md#where-files-are-kept)).
 
@@ -1719,6 +1945,7 @@ and so on), except where a Ctrl combination is listed below.
 | **U** | Use Only units |
 | **C** | Check map |
 | **T** | Scenario scripting |
+| **A** | AI Profiles |
 | **K** | Clear Area on / off |
 | **G** | Grid on / off |
 | **B** | Show blocked cells with every tool on / off |
@@ -1770,6 +1997,7 @@ selected empties that clipboard.
 | Regions list | **Ctrl+N** new, **Enter** edit, **Esc** close |
 | Scripting | **Enter** edit or name the selection; **Ctrl+C** / **Ctrl+V** / **Ctrl+D** copy, paste, duplicate; **Alt+Up** / **Alt+Down** move; **PgUp** / **PgDn** scroll the full text; **Esc** close |
 | Templates | type to search, **Up** / **Down**, **Enter** insert, **Esc** close |
+| AI Profiles | click a cell, type, **Enter** set, **Esc** cancel; **Delete** or right-click returns a cell to not set; **Ctrl+Z** / **Ctrl+Y** undo, redo; **Esc** close |
 
 ### Mouse
 
@@ -1910,7 +2138,13 @@ Start Cartographer from its shortcut and choose **Recover**. See
   images or feature files, re-saving it in Cartographer writes only the map's
   own files, not that extra art.
 - **Mods** (`mods/` packs, including the always-on `mods/cosmetic/*.hpi`
-  archives) are not loaded in the editor.
+  archives) are not loaded in the editor. The one exception is the AI Profiles
+  window, which lists a game mod's units while that pack is previewed or
+  opened there.
+- **AI profiles.** Each level is edited on its own tab; there is no "copy to
+  other levels". Group rules can only be moved up one step at a time. **OPEN
+  FROM GAME MOD** lists at most 14 packs. A profile saved into a pack as
+  `ai/default.txt` keeps the comment line that names the map it came from.
 - **Display names** are cut to 31 bytes in the game.
 - **Text.** The editor's own font covers Latin (including Vietnamese), Greek,
   Cyrillic, Armenian and Georgian letters, common symbols, Japanese kana, Korean
