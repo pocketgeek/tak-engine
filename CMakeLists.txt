@@ -2820,9 +2820,10 @@ if(TAK_BUILD_CLIENT)
     target_link_libraries(cartographer_validation_test PRIVATE tak-formats)
     add_test(NAME cartographer_validation COMMAND cartographer_validation_test)
     # The AI-profile editor's model, checked against the engine's own profile parsers.
+    # It links the whole AI, so the levels' limits in play are checked against ai::paramsFor.
     add_executable(cartographer_aiprofile_test tools/cartographer_aiprofile_test.cpp
       src/cartographer/aiprofiles.cpp src/cartographer/document.cpp src/cartographer/units.cpp
-      src/ai/classicprofile.cpp src/ai/builtinprofile.cpp)
+      ${TAK_AI_SOURCES})
     target_link_libraries(cartographer_aiprofile_test PRIVATE tak-formats)
     add_test(NAME cartographer_aiprofile COMMAND cartographer_aiprofile_test)
     add_executable(cartographer_features_test tools/cartographer_features_test.cpp src/cartographer/features.cpp)

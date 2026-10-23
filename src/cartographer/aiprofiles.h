@@ -199,4 +199,50 @@ struct AiFileChoice {
 AiFileChoice whichFile(tak::ai::Difficulty, const tak::hpi::Vfs& base, const AiFiles& mapFiles,
                        const std::string& aiProfile, const tak::hpi::Vfs::Files* gameModFiles = nullptr);
 
+// ---- DEFAULT group rules (design 4, the Advanced disclosure) --------------------------
+// The words a group rule may use: this catalogue's category words ("all" first, the
+// rest sorted), less any word that is also a unit name -- the engine reads such a
+// word as that one unit, never as the group.
+std::vector<std::string> aiGroupWords(const tak::ai::ClassicCatalogue&);
+// One unit a group rule covers. `skipped`: the unit is set individually for the rule's
+// keyword (its own chance row for a weight rule, its own limit row for a limit rule),
+// so the engine's lock leaves it alone. `times` > 1 when the unit lists the word more
+// than once (FBI category= repeats), which applies a weight that many times.
+struct AiGroupUnit {
+    uint16_t index = 0;   // catalogue index
+    bool skipped = false;
+    int times = 1;
+};
+// The units `draft.groups[rule]` covers, in catalogue order (rows come before every
+// group line in the canonical form, so a row is the lock).
+std::vector<AiGroupUnit> aiGroupRuleUnits(const AiDraft&, size_t rule, const tak::ai::ClassicCatalogue&);
+// The same for any file: the units line `lines[line]` (a Group line) covers, skipped
+// when an earlier exact line of the same keyword set the unit.
+std::vector<AiGroupUnit> aiGroupLineUnits(const std::vector<AiLine>&, size_t line, const tak::ai::ClassicCatalogue&);
+// A weight rule's value as what it makes of a unit at 100 % (0..100); a limit rule's
+// value as the engine reads it (-1 = no limit; a missing value reads 0).
+int aiGroupRuleChance(const AiGroupRule&);
+int aiGroupRuleLimit(const AiGroupRule&);
+
+// ---- our levels' limits in play (design 4, the per-level preview) ----------------------
+// How a level treats a profile limit while it plays (ai::paramsFor and the AI's build
+// pick, ai.cpp): Easy halves it, Hard and Absurd raise it by half (minimum 1), Normal
+// keeps it; the defensive levels ignore every limit except 0. A mobile builder never
+// passes its own number; Hard and Absurd lift economy buildings with income and may
+// raise army, factory and defence limits to their plan in long games. The scale and
+// the defensive rule mirror ai::paramsFor (tools/cartographer_aiprofile_test checks
+// them against it).
+int aiLevelLimitScale(tak::ai::Difficulty);   // percent
+bool aiLevelIgnoresLimits(tak::ai::Difficulty);
+struct AiLevelLimit {
+    int limit = -1;         // in play: -1 = no cap from the profile, 0 = never built
+    bool changed = false;   // differs from the profile's number
+    bool mayRise = false;   // Hard / Absurd may raise it further in long games
+    std::string text;       // "4 in play", "no cap in play", ...
+};
+// `limit`: the profile's limit for the unit (the file over the built-in table), or none.
+// `registry` (may be null) tells mobile production sides apart.
+AiLevelLimit aiEffectiveLimit(tak::ai::Difficulty, std::optional<int> limit, const tak::sim::UnitType*,
+                              const tak::sim::TypeRegistry* registry = nullptr);
+
 } // namespace cart

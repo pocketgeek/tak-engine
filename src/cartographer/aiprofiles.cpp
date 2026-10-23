@@ -913,4 +913,124 @@ std::string compareAiFiles(const std::string& key, std::string_view before, std:
     return out+(changed.size()>4?", ...).":").");
 }
 
+// ---- DEFAULT group rules -----------------------------------------------------------------
+
+std::vector<std::string> aiGroupWords(const ClassicCatalogue& catalogue) {
+    std::vector<std::string> out;
+    for (const auto& [word, units] : catalogue.categories)
+        if (word != "all" && !word.empty() && !classicCanSingleOut(catalogue, word)) out.push_back(word);
+    std::sort(out.begin(), out.end());
+    if (catalogue.categories.count("all") && !classicCanSingleOut(catalogue, "all")) out.insert(out.begin(), "all");
+    return out;
+}
+
+namespace {
+template <class Locked>
+std::vector<AiGroupUnit> groupUnits(const ClassicCatalogue& catalogue, const std::string& word, Locked locked) {
+    std::vector<AiGroupUnit> out;
+    const auto ct = catalogue.categories.find(word);
+    if (ct == catalogue.categories.end() || classicCanSingleOut(catalogue, word)) return out;
+    std::map<uint16_t, int> times;
+    for (uint16_t i : ct->second) ++times[i];
+    for (const auto& [index, n] : times) out.push_back({index, locked(index), n});
+    return out;
+}
+} // namespace
+
+std::vector<AiGroupUnit> aiGroupRuleUnits(const AiDraft& draft, size_t rule, const ClassicCatalogue& catalogue) {
+    if (rule >= draft.groups.size()) return {};
+    const auto& g = draft.groups[rule];
+    return groupUnits(catalogue, g.word, [&](uint16_t i) {
+        if (!classicCanSingleOut(catalogue, catalogue.names[i])) return false;   // never has a row
+        const auto it = draft.units.find(catalogue.names[i]);
+        return it != draft.units.end() && (g.weight ? it->second.chance.has_value() : it->second.limit.has_value());
+    });
+}
+
+std::vector<AiGroupUnit> aiGroupLineUnits(const std::vector<AiLine>& lines, size_t line, const ClassicCatalogue& catalogue) {
+    if (line >= lines.size() || lines[line].what != AiLine::What::Group) return {};
+    const auto& g = lines[line];
+    std::vector<char> locked(catalogue.size());
+    for (size_t i = 0; i < line; ++i)
+        if (lines[i].what == AiLine::What::Exact && lines[i].weight == g.weight) locked[lines[i].unit] = 1;
+    return groupUnits(catalogue, g.word, [&](uint16_t i) { return locked[i] != 0; });
+}
+
+int aiGroupRuleChance(const AiGroupRule& g) {
+    return tak::ai::classicScaledPref(100, g.value.empty() ? 0.0f : tak::ai::classicAtof(g.value));
+}
+int aiGroupRuleLimit(const AiGroupRule& g) { return g.value.empty() ? 0 : tak::ai::classicAtoi(g.value); }
+
+// ---- our levels' limits in play ------------------------------------------------------------
+
+int aiLevelLimitScale(Difficulty d) {
+    switch (d) {
+        case Difficulty::Easy: return 50;
+        case Difficulty::Hard: case Difficulty::Absurd: return 150;
+        default: return 100;
+    }
+}
+bool aiLevelIgnoresLimits(Difficulty d) { return d == Difficulty::Passive || d == Difficulty::AbsurdlyDefensive; }
+
+AiLevelLimit aiEffectiveLimit(Difficulty d, std::optional<int> limit, const tak::sim::UnitType* type,
+                              const tak::sim::TypeRegistry* registry) {
+    AiLevelLimit out;
+    const int lim = limit ? *limit : -1;
+    if (lim < 0) { out.text = "no cap"; return out; }
+    if (lim == 0) { out.limit = 0; out.text = "never built"; return out; }
+    if (aiLevelIgnoresLimits(d)) {
+        out.changed = true;
+        out.text = "no cap in play (" + std::string(aiLevelName(d)) + " ignores limits except 0)";
+        return out;
+    }
+    const bool aggressive = d == Difficulty::Hard || d == Difficulty::Absurd;
+    int n = std::max(1, lim * aiLevelLimitScale(d) / 100);
+    // The AI's own sort of the unit (ai::Controller::categoryOf), for the raises.
+    enum class Cat { Economy, Factory, Builder, Army, Defense } cat = Cat::Army;
+    const bool mobileBuilder = type && !type->isStructure() && type->isBuilder;
+    if (type && registry) {
+        if (type->isStructure()) {
+            cat = !registry->buildable(type->id).empty() ? Cat::Factory
+                  : type->income > 0 || type->storage > 0 ? Cat::Economy : Cat::Defense;
+        } else if (type->isBuilder) {
+            cat = Cat::Builder;
+            if (!type->commander) {
+                int combat = 0, structs = 0;
+                for (const auto& id : registry->buildable(type->id))
+                    if (const auto* b = registry->find(id)) {
+                        if (b->isStructure()) ++structs;
+                        else if (!b->isBuilder) ++combat;
+                    }
+                if (combat > structs && combat > 0) cat = Cat::Factory;
+            }
+        }
+    } else if (type && type->isStructure()) {
+        cat = type->income > 0 || type->storage > 0 ? Cat::Economy : Cat::Defense;
+    } else if (mobileBuilder) {
+        cat = Cat::Builder;
+    }
+    if (mobileBuilder) {
+        n = std::min(n, lim);   // a builder never passes its own number
+        if (aggressive && cat == Cat::Factory && registry && !type->side.empty()) {
+            // Zhon-style production (no factory buildings on the side): the factory raise.
+            bool factories = false;
+            for (const auto& [id, t] : registry->types())
+                if (t.side == type->side && t.isStructure() && !registry->buildable(id).empty()) { factories = true; break; }
+            out.mayRise = !factories;
+        }
+    } else {
+        out.mayRise = aggressive && (cat == Cat::Army || cat == Cat::Factory || cat == Cat::Defense);
+        if (aggressive && cat == Cat::Economy && type && type->income > 0) {
+            out.changed = true;
+            out.text = "no cap in play (" + std::string(aiLevelName(d)) + " lifts limits on income buildings)";
+            return out;
+        }
+    }
+    out.limit = n;
+    out.changed = n != lim;
+    out.text = std::to_string(n) + " in play";
+    if (out.mayRise) out.text += ", more in long games";
+    return out;
+}
+
 } // namespace cart

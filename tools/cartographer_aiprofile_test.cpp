@@ -2,8 +2,10 @@
 // encoding, the canonical form, byte-identical hand files, line attribution checked
 // against the engine's own parsers (ai::ClassicProfile::execute, ai::applyProfileText),
 // verification that can fail, Make editable, the 6.2 checks, the aiprofile name rules
-// which file plays, and the game-mod writer (folders, overwrite, backups). Every corpus here is synthetic: no retail text or data.
+// which file plays, the game-mod writer (folders, overwrite, backups), the DEFAULT group
+// rules' covered units and the levels' limits in play (against ai::paramsFor). Every corpus here is synthetic: no retail text or data.
 #include "cartographer/aiprofiles.h"
+#include "ai/ai.h"
 #include "ai/builtinprofile.h"
 #include "net/mappackage.h"
 #include "sim/sim.h"
@@ -763,6 +765,136 @@ static void modWriter(const fs::path& root) {
     std::cout << "mod writer: case-variant folders reused, identical skipped, backups outside the pack, symlinks and read-only refused\n";
 }
 
+// ---- phase 5: group rules and the levels' limits in play -------------------------------
+
+// The prefix of a file's lines up to `last`, with that line replaced.
+static std::string prefixWith(const std::vector<AiLine>& lines, size_t last, const std::string& replacement) {
+    std::string out;
+    for (size_t i = 0; i < last; ++i) out += std::string(lines[i].text) + "\n";
+    return out + replacement + "\n";
+}
+
+// What the engine does to the units a group line covers, checked unit by unit: with
+// the line's value replaced by a sentinel, every covered unit not marked skipped takes
+// it, and every skipped or uncovered unit stays as the lines before left it.
+static void groupLineAgrees(const std::string& text, const ClassicCatalogue& c) {
+    const auto lines = cart::attributeAiLines(text, AiKind::Default, c);
+    for (size_t i = 0; i < lines.size(); ++i) {
+        if (lines[i].what != AiLine::What::Group) continue;
+        const auto units = cart::aiGroupLineUnits(lines, i, c);
+        check(!units.empty(), "a group line covers no unit: " + std::string(lines[i].text));
+        tak::ai::ClassicProfile before(c.size()), after(c.size());
+        before.execute(prefixWith(lines, i, ""), c);
+        after.execute(prefixWith(lines, i, std::string(lines[i].weight ? "weight " : "limit ") + lines[i].word + (lines[i].weight ? " 0" : " 4321")), c);
+        std::vector<int> covered(c.size(), -1);
+        for (const auto& u : units) covered[u.index] = u.skipped;
+        for (size_t k = 1; k < c.size(); ++k) {
+            const bool takes = covered[k] == 0;
+            if (lines[i].weight)
+                check(takes ? after.pref[k] == 0 : after.pref[k] == before.pref[k],
+                      "group weight attribution for " + c.names[k] + " differs from the engine:\n" + text);
+            else
+                check(takes ? after.limit[k] == 4321 : after.limit[k] == before.limit[k],
+                      "group limit attribution for " + c.names[k] + " differs from the engine:\n" + text);
+        }
+    }
+}
+
+static void groupRules() {
+    const auto c = sample();
+    check(cart::aiGroupWords(c) == std::vector<std::string>{"all", "ara", "builder", "fly", "land", "ship", "tar", "ver"},
+          "group words: this catalogue's categories, all first");
+    // A category word that is also a unit name is that unit to the engine: never offered.
+    const auto clash = ClassicCatalogue::synthetic({{"araarch", {"fly"}}, {"fly", {"ARA"}}, {"verwyv", {"fly"}}});
+    const auto words = cart::aiGroupWords(clash);
+    check(std::find(words.begin(), words.end(), "fly") == words.end() && std::find(words.begin(), words.end(), "ara") != words.end(),
+          "a word that names a unit is not offered as a group");
+
+    // A canonical draft: rows lock their keyword only, a repeated category word counts twice.
+    cart::AiDraft d;
+    d.units["verwyv"].chance = 50;
+    d.units["aradrag"].limit = 2;
+    d.groups = {{true, "fly", cart::classicChanceText(50)}, {false, "fly", "3"}, {true, "all", "1"}};
+    auto names = [&](const std::vector<cart::AiGroupUnit>& units, bool skipped) {
+        std::vector<std::string> out;
+        for (const auto& u : units) if (u.skipped == skipped) out.push_back(c.names[u.index]);
+        return out;
+    };
+    const auto weightFly = cart::aiGroupRuleUnits(d, 0, c), limitFly = cart::aiGroupRuleUnits(d, 1, c);
+    check(names(weightFly, false) == std::vector<std::string>{"aradrag", "araldy"} && names(weightFly, true) == std::vector<std::string>{"verwyv"},
+          "weight fly: verwyv's own chance row skips it, aradrag's limit row does not");
+    check(names(limitFly, false) == std::vector<std::string>{"araldy", "verwyv"} && names(limitFly, true) == std::vector<std::string>{"aradrag"},
+          "limit fly: aradrag's own limit row skips it");
+    for (const auto& u : weightFly) check(u.times == (c.names[u.index] == "verwyv" ? 2 : 1), "a repeated category word is counted");
+    check(cart::aiGroupRuleUnits(d, 2, c).size() == c.size() - 1, "ALL covers every unit");
+    check(cart::aiGroupRuleChance(d.groups[0]) == 50 && cart::aiGroupRuleLimit(d.groups[1]) == 3 &&
+          cart::aiGroupRuleChance({true, "fly", ""}) == 0 && cart::aiGroupRuleLimit({false, "fly", "-1"}) == -1,
+          "group values as the engine reads them");
+
+    // The draft's view agrees with the written file's, and both with the engine.
+    std::mt19937 rng(5150);
+    const auto groupWords = cart::aiGroupWords(c);
+    for (int round = 0; round < 3000; ++round) {
+        cart::AiDraft r;
+        for (size_t k = 1; k < c.size(); ++k) {
+            if (rng() % 3) continue;
+            auto& rule = r.units[c.names[k]];
+            if (rng() % 2) rule.chance = int(rng() % 101);
+            if (rng() % 2) rule.limit = int(rng() % 4) - 1;
+            if (rule.empty()) r.units.erase(c.names[k]);
+        }
+        for (int g = int(rng() % 4); g > 0; --g)
+            r.groups.push_back({rng() % 2 == 0, groupWords[rng() % groupWords.size()],
+                                rng() % 2 ? cart::classicChanceText(int(rng() % 101)) : std::to_string(int(rng() % 5) - 1)});
+        std::string bytes, error;
+        check(cart::saveAiDraft(r, c, bytes, error), error);
+        const auto lines = cart::attributeAiLines(bytes, AiKind::Default, c);
+        size_t rule = 0;
+        for (size_t i = 0; i < lines.size(); ++i) {
+            if (lines[i].what != AiLine::What::Group) continue;
+            const auto a = cart::aiGroupRuleUnits(r, rule++, c), b = cart::aiGroupLineUnits(lines, i, c);
+            check(a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](const auto& x, const auto& y) {
+                      return x.index == y.index && x.skipped == y.skipped && x.times == y.times;
+                  }), "a draft's group rule and its written line cover different units:\n" + bytes);
+        }
+        check(rule == r.groups.size(), "every group rule is written as a group line");
+        groupLineAgrees(bytes, c);
+        groupLineAgrees(randomScript(rng, c), c);
+    }
+    for (const auto& text : handCorpus()) groupLineAgrees(text, c);
+    std::cout << "group rules: words, covered units and the lock agree with ClassicProfile::execute\n";
+}
+
+static void levelLimits() {
+    // The scale and the defensive rule are paramsFor's.
+    for (const auto d : {Difficulty::Passive, Difficulty::Easy, Difficulty::Normal, Difficulty::Hard, Difficulty::Absurd,
+                         Difficulty::AbsurdlyDefensive}) {
+        const auto p = tak::ai::paramsFor(d);
+        check(cart::aiLevelLimitScale(d) == p.limitScale && cart::aiLevelIgnoresLimits(d) == p.unbounded,
+              std::string("limit scale differs from ai::paramsFor for ") + cart::aiLevelName(d));
+    }
+    tak::sim::UnitType army;army.id = "army";army.maxVel = tak::sim::Fixed::fromFloat(1.0f);
+    tak::sim::UnitType builder = army;builder.id = "builder";builder.isBuilder = true;
+    tak::sim::UnitType mine;mine.id = "mine";mine.income = 3;mine.maxVel = tak::sim::Fixed();   // a structure with income
+    auto in = [](Difficulty d, std::optional<int> lim, const tak::sim::UnitType* t) { return cart::aiEffectiveLimit(d, lim, t); };
+    check(in(Difficulty::Normal, 5, &army).limit == 5 && !in(Difficulty::Normal, 5, &army).changed, "Normal keeps a limit");
+    check(in(Difficulty::Easy, 3, &army).limit == 1 && in(Difficulty::Easy, 1, &army).limit == 1 && in(Difficulty::Easy, 6, &army).limit == 3,
+          "Easy halves a limit, minimum 1");
+    const auto hard = in(Difficulty::Hard, 3, &army);
+    check(hard.limit == 4 && hard.changed && hard.mayRise && hard.text == "4 in play, more in long games", "Hard raises by half: " + hard.text);
+    check(in(Difficulty::Absurd, 2, &army).limit == 3, "Absurd raises by half");
+    check(in(Difficulty::Hard, 4, &builder).limit == 4 && !in(Difficulty::Hard, 4, &builder).mayRise, "a builder never passes its own number");
+    check(in(Difficulty::Easy, 4, &builder).limit == 2, "Easy halves a builder's limit");
+    check(in(Difficulty::Hard, 2, &mine).limit == -1 && in(Difficulty::Normal, 2, &mine).limit == 2, "Hard lifts income buildings");
+    for (const auto d : {Difficulty::Passive, Difficulty::AbsurdlyDefensive}) {
+        check(in(d, 5, &army).limit == -1 && in(d, 5, &army).changed, "defensive levels ignore limits");
+        check(in(d, 0, &army).limit == 0, "defensive levels keep a limit of 0");
+    }
+    for (const auto d : {Difficulty::Easy, Difficulty::Normal, Difficulty::Hard})
+        check(in(d, 0, &army).limit == 0 && in(d, std::nullopt, &army).limit == -1 && in(d, -1, &army).limit == -1, "0 is never, none is no cap");
+    std::cout << "level limits in play: paramsFor's scale, builders, income buildings, defensive levels\n";
+}
+
 int main() try {
     const auto root = fs::temp_directory_path() /
                       ("tak-aiprofile-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -778,6 +910,8 @@ int main() try {
     travel(root);
     whichFileMatrix(root);
     modWriter(root);
+    groupRules();
+    levelLimits();
     std::cout << "cartographer_aiprofile: all passed\n";
     return 0;
 } catch (const std::exception& e) {
