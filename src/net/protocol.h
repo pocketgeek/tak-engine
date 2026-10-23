@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 291;      // 291: a map's package carries the AI files (ai/<aiprofile>.txt, ai/default.txt, the
+constexpr uint32_t kNetVersion = 292;      // 292: a Shift-queued patrol of an armed or builder flyer closes its loop when it starts
+                                           //      (World::openFlightPatrol, Order::patrolOpen), as on the ground: "move A,
+                                           //      Shift-patrol B" laps A<->B where 291 flew to B and hovered there. Hashed
+                                           //      sim change; 291 replays refused.
+                                           // 291: a map's package carries the AI files (ai/<aiprofile>.txt, ai/default.txt, the
                                            //      level files) from the map's OWN archive (Vfs::readFromMapArchive), even where
                                            //      another installed .kmp wins that path in Maps/ or a ticked game mod has a copy.
                                            //      Hosts and clients both build packages, so a 290 peer could compute a different

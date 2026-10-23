@@ -897,6 +897,12 @@ file name (the Cartographer stamps every entry with date 0) one map silently sen
 none, and a ticked game mod's copy kept the map's out of its package. Hosts and
 clients both build packages, so a 290 peer could compute a different digest for
 such a map; the simulation is 290's. 290 replays are refused.
+Protocol 292 changes the simulation: a Shift-queued patrol of an armed or
+builder flyer now closes its loop when the leg starts (`World::openFlightPatrol`,
+`Order::patrolOpen`), adding the return point where the flyer then stands, as
+ground units and unarmed flyers already did. Under 291 such a flyer (drakes, say)
+flew "move A, Shift-patrol B" to B and hovered there until its next order. 291
+replays are refused.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte

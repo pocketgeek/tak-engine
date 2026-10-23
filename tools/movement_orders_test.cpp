@@ -404,6 +404,68 @@ void queuedMoves(PathfindingMode mode) {
         check(visits(w,id,{{1200,320},{1200,1200},{320,1200}},9000)==3,"fight-move legs queue with moves in order");
     }
 }
+// Shift-queued patrols for aircraft, the same routes as the ground cases in
+// queuedMoves. A patrol leg that starts with no loop behind it adds a return
+// point where the flyer then stands. Armed and builder flyers (ordinary
+// VTOL_Move, not the unarmed patrol handler) used to fly to a lone queued
+// point and hover there for good. A flight point is accepted well short of
+// its centre, so arrival here is within 200px.
+UnitType aircraft(bool weapon,bool builder) {
+    UnitType t=weapon?armed():soldier();t.id=t.name="order-test-flyer";
+    t.canFly=t.canMove=true;t.maxVel=Fixed::fromInt(4);t.accel=t.brake=Fixed::fromInt(1);
+    t.turnRate=1200;t.cruiseAlt=80;
+    if(builder) {t.isBuilder=true;t.workerTime=100;t.buildDist=48;}
+    return t;
+}
+std::vector<int> flyRoute(World& w,int id,const std::vector<std::pair<float,float>>& points,size_t count,int limit) {
+    std::vector<int> seen;int at=-1;
+    for(int n=0;n<limit&&seen.size()<count;++n) {
+        w.tick(1.f/30);int here=-1;
+        for(size_t k=0;k<points.size();++k)if(near(*w.unit(id),points[k].first,points[k].second,200))here=int(k);
+        if(here>=0&&here!=at)seen.push_back(here);
+        if(here>=0)at=here;
+    }
+    return seen;
+}
+void queuedFlyerPatrols(PathfindingMode mode) {
+    using tak::net::Cmd;
+    const std::vector<std::pair<float,float>> square{{320,320},{1200,320},{1200,1200},{320,1200}};
+    const struct {bool weapon,builder;const char* name;} kinds[]{
+        {false,false,"unarmed flyer"},{true,false,"armed flyer"},{false,true,"flying builder"}};
+    for(const auto& kind:kinds) {
+        char label[160];
+        auto report=[&](const std::vector<int>& got,const char* what) {
+            std::printf("  %s %s:",kind.name,what);for(int k:got)std::printf(" %d",k);std::printf("\n");
+        };
+        {   World w;setup(w,mode);auto type=aircraft(kind.weapon,kind.builder);const int id=w.spawn(&type,320,320,0,0);
+            send(w,Cmd::Move,id,1200,320,false);send(w,Cmd::Patrol,id,1200,1200,true);
+            const auto got=flyRoute(w,id,square,7,15000);report(got,"move+shift-patrol");
+            std::snprintf(label,sizeof label,"%s: a Shift-patrol after a move laps between the move's end and the patrol point",kind.name);
+            check(got==std::vector<int>{0,1,2,1,2,1,2},label);
+        }
+        {   World w;setup(w,mode);auto type=aircraft(kind.weapon,kind.builder);const int id=w.spawn(&type,320,320,0,0);
+            send(w,Cmd::Patrol,id,1200,1200,true);
+            const auto got=flyRoute(w,id,square,5,15000);report(got,"lone shift-patrol");
+            std::snprintf(label,sizeof label,"%s: a lone Shift-patrol from idle laps between its start and the patrol point",kind.name);
+            check(got==std::vector<int>{0,2,0,2,0},label);
+        }
+        {   World w;setup(w,mode);auto type=aircraft(kind.weapon,kind.builder);const int id=w.spawn(&type,320,320,0,0);
+            send(w,Cmd::Patrol,id,1200,320,true);send(w,Cmd::Patrol,id,1200,1200,true);
+            const auto got=flyRoute(w,id,square,7,18000);report(got,"two shift-patrols");
+            std::snprintf(label,sizeof label,"%s: Shift-patrols from idle lap start, B, C in order",kind.name);
+            check(got==std::vector<int>{0,1,2,0,1,2,0},label);
+        }
+        // The unarmed handler appends its own return point to a running
+        // (non-queued) patrol and laps start, B, start, C; not covered here.
+        if(!kind.weapon&&!kind.builder)continue;
+        {   World w;setup(w,mode);auto type=aircraft(kind.weapon,kind.builder);const int id=w.spawn(&type,320,320,0,0);
+            send(w,Cmd::Patrol,id,1200,320,false);send(w,Cmd::Patrol,id,1200,1200,true);
+            const auto got=flyRoute(w,id,square,7,18000);report(got,"patrol+shift-patrol");
+            std::snprintf(label,sizeof label,"%s: a Shift-patrol joins a running patrol loop at its tail",kind.name);
+            check(got==std::vector<int>{0,1,0,2,1,0,2},label);
+        }
+    }
+}
 // A selection's Shift-queued group moves: every member is sent the SAME
 // point per click (Legion packs it into arrival slots), and every leg is
 // a group leg when it becomes current.
@@ -567,7 +629,7 @@ int main(int argc,char** argv) {
         attackChase(mode,false);attackChase(mode,true);guardFollow(mode);workApproach(mode);
         const auto patrolHash=groupPatrol(mode,true);
         check(patrolHash==groupPatrol(mode,false),"group patrol hashes match serial and threaded preparation");
-        queuedMoves(mode);
+        queuedMoves(mode);queuedFlyerPatrols(mode);
         const auto queuedHash=queuedGroupMoves(mode,true);
         check(queuedHash==queuedGroupMoves(mode,false),"queued group move hashes match serial and threaded preparation");
     }

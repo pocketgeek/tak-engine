@@ -2182,6 +2182,18 @@ void World::tickFlightPatrol(Unit& u) {
     noteOrders(u.id);
 }
 
+void World::openFlightPatrol(Unit& u) {
+    const size_t current=currentLeg(u.orders);
+    if (current>=u.orders.size() || !u.orders[current].patrol || !u.orders[current].patrolOpen) return;
+    // As the ground host's initializer: a patrol leg that starts with no
+    // closed patrol leg behind it adds the return point where the flyer stands.
+    u.orders[current].patrolOpen=false;
+    bool loop=false;
+    for (size_t i=current+1;i<u.orders.size();++i)
+        loop|=u.orders[i].goal && u.orders[i].patrol && !u.orders[i].patrolOpen;
+    if (!loop) patrolTo(u.id,u.x.toFloat(),u.z.toFloat(),true,u.orders[current].identity());
+}
+
 // World holds a flyer in place by skipping its flight body, so the flyer does
 // not move -- and a retail mover's velocity is what moves it (tickFlightBody
 // keeps speed as its length). Every hold stops both: shooters lead a target by
@@ -4485,9 +4497,13 @@ void World::queuePatrol(int unitId, float x, float z) {
     if (!u || !u->alive() || !u->type) return;
     const size_t before = u->orders.size();
     patrolTo(unitId, x, z, true);
-    // Producers keep rally lists and flyers their own patrol handler, which
-    // already appends its return point when the patrol starts.
-    if (u->type->isStructure() || u->repeatType || u->type->canFly) return;
+    // Producers keep rally lists and unarmed flyers the VTOL patrol handler
+    // (plainFlightPatrol), which appends its return point when the patrol
+    // starts. Armed and builder flyers fly patrols on the ordinary VTOL_Move
+    // path and close the loop in openFlightPatrol; without it a lone queued
+    // point was reached once and then hovered over for good.
+    if (u->type->isStructure() || u->repeatType ||
+        (u->type->canFly && !u->type->isBuilder && u->type->weapons.empty())) return;
     for (size_t i = before; i < u->orders.size(); ++i) u->orders[i].patrolOpen = true;
 }
 
@@ -12386,6 +12402,8 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
                 notifyFlightOccupancy(u);
                 return;
             }
+            // May grow the queue: `leg` is not read past this point.
+            openFlightPatrol(u);
             tickFlightMovement(u); notifyFlightOccupancy(u); return;
         }
         if(legion_&&isLegionPathfinding(pathfindingMode_)&&legion_->supports(u)) {

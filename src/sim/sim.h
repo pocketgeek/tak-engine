@@ -2954,6 +2954,9 @@ private:
     void beginStandby(Unit& u);
     Order* navigationMissionOrder(Unit& u);
     void tickGuardNoMove(Unit& u);
+    // A Shift-queued patrol leg of an armed or builder flyer (Order::patrolOpen)
+    // closes its loop when it starts, as the ground patrol mission does.
+    void openFlightPatrol(Unit& u);
     void tickFlightMovement(Unit& u, bool persistent = false);
     void tickRetainedFlightMovement(Unit& u);
     void tickFlightBody(Unit& u);
