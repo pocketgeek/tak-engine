@@ -350,6 +350,11 @@ int cart::Editor::run() {
             if(handleGeneratedPreview(e))continue;
             if (e.type == SDL_QUIT) {
                 restartAfterQuit=false;   // closing the window is an exit, whatever was pending
+                // A game-mod pack edited in the AI window is not the map: ask about it on its own.
+                if(aiModDirty() && modal==M_NONE) {
+                    aiClosePack([] {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);});
+                    continue;
+                }
                 if (dirty) {
                     // Close any transient overlay so the quit prompt gets input.
                     useOnlyOpen = false; scriptOpen = false; pickOpen = false;regionsOpen=false;closeAiProfiles();

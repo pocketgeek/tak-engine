@@ -512,7 +512,7 @@ struct Editor : Session {
         tak::ai::ClassicProfile classic;tak::ai::Profile level,builtin;
     };
     enum class AiView {Table,Text,Issues};
-    enum AiFocus {AI_NONE,AI_SEARCH,AI_NAME,AI_CELL,AI_TEXT};
+    enum AiFocus {AI_NONE,AI_SEARCH,AI_NAME,AI_CELL,AI_TEXT,AI_PACK};
     bool aiOpen=false,aiStartOpen=false,aiSetOnly=false,aiShowUnbuildable=false,aiTextFollow=true;
     std::string aiPendingName;                   // own profile chosen, waiting for Start from (one undo step with its file)
     std::map<std::string,std::pair<std::string,bool>> aiWrittenCache;   // key -> (bytes, opens as written)
@@ -562,6 +562,33 @@ struct Editor : Session {
     std::string aiRowExplanation(const AiRosterRow&);
     void handleAiProfiles(SDL_Event& e);
     void drawAiProfiles();
+    // Game mods (design 3.5, 7.2). OPEN FROM GAME MOD edits one pack's ai/ files as
+    // a separate set with a pack banner: not the map's, not in map undo (a file
+    // operation, like Save); SAVE TO PACK writes them back. SAVE AS GAME MOD writes
+    // the map's files into <data>/mods/game/<pack>/ai/ (document.h writeModProfiles).
+    struct AiModSet {std::string pack;AiFiles files,opened;std::string defaultKey="ai/default.txt";};
+    std::optional<AiModSet> aiMod;
+    AiFiles& aiSet() {return aiMod?aiMod->files:aiFiles;}   // the files the window edits
+    bool aiModDirty() const {return aiMod && aiMod->files!=aiMod->opened;}
+    struct AiModRow {std::string label,source,target;bool tick=false,isDefault=false;SDL_Rect box{};};
+    bool aiModSaveOpen=false,aiModOpenOpen=false;
+    std::string aiModPack;TextEdit aiModPackEdit;
+    int aiModDefaultAs=0;                        // DEFAULT written as 0 = ai/default.txt, 1 = ai/<aiprofile>.txt
+    std::vector<AiModRow> aiModRows;
+    std::vector<std::string> aiModDeletes;       // emptied drafts the pack still has (offered, unticked)
+    std::set<std::string> aiModDeleteTicked;
+    std::vector<std::pair<SDL_Rect,std::string>> aiModDeleteBoxes,aiModPackRows;
+    ModProfilePlan aiModPlan;std::string aiModPlanError,aiModNote;
+    SDL_Rect aiModSaveButton{},aiModOpenButton{},aiModDefaultButton{},aiModPackBox{},aiModPackPrev{},aiModPackNext{},
+             aiModDefaultAsBox{},aiModWriteButton{},aiModCancelButton{};
+    void aiOpenModSave();
+    void aiModReplan();
+    void aiModSave();
+    void aiOpenPack(const std::string& pack);
+    void aiClosePack(std::function<void()> then={});
+    void aiStepModDefault();
+    bool handleAiModDialogs(SDL_Event& e);
+    void drawAiModDialogs();
 
     // --- Document commands (session.cpp) --------------------------------------
     bool openDocument(const std::string& request);
