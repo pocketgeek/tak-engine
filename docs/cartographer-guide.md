@@ -1513,9 +1513,15 @@ Afterwards the map has the new name and Ctrl+S saves there.
 **File → Export loose files** writes the map as separate files in the save
 folder instead of one `.kmp`: `<name>.tnt` (terrain), `.ota` (map settings and
 start positions), `.crt` (placed units, rules and regions), `.editor` (rule
-names), `.tdf` (the Use Only list) and `.txt` (the description). Use it when
+names), `.tdf` (the Use Only list) and `.txt` (the description). The map's AI
+profiles go in an `ai` folder in the save folder (`ai/n.txt`). Use it when
 you want the individual files, for example to look at them or to use them with
 other tools.
+
+A map with AI profiles cannot be exported as loose files into the game's `Maps`
+folder (or a folder inside it): the game reads a loose `Maps/ai/<name>.txt` for
+every map, not as this map's own. **EXPORT FAILED** says *Save as .kmp to keep
+AI profiles with the map*; save a `.kmp`, or export to another folder.
 
 Loose files in the `Maps` folder are **not** listed by the game or found by name
 in Cartographer. To open them again, use **File → Open** with the full path of
@@ -1570,6 +1576,21 @@ A `.kmp` file is a single archive holding these files:
 | `.editor` | Rule names (used only by Cartographer). |
 | `.tdf` | The Use Only list (written even when empty). |
 | `.txt` | The description (or the name, if there is no description). |
+
+The `.kmp` can also carry **AI profiles**: `ai/<name>.txt` files at the top of
+the archive, beside the map's own folder rather than inside it (see
+[AI profiles in game mods](user-guide.md#ai-profiles-in-game-mods) and the
+DEFAULT AI's [map profile](user-guide.md#default)). When you open a `.kmp` file
+(**File → Open** with its full path) or a loose `.tnt`, Cartographer keeps every
+file in its `ai` folder and saves each one again unchanged, byte for byte. Undo,
+recovery copies and **Test Map** keep them too. Opening an installed map by name
+does not read them yet; open the `.kmp` file by its path instead.
+
+Only some of these files go with the map to other players and into **Test
+Map**: `ai/default.txt`, the level files (`ai/d.txt`, `ai/e.txt`, `ai/n.txt`,
+`ai/h.txt`, `ai/a.txt`, `ai/ad.txt`) and the file the map's AI profile names
+(`aiprofile=islands` reads `ai/islands.txt`). Any other file, such as
+`ai/notes.txt`, stays in your `.kmp` but is not sent.
 
 ### Sharing your map
 

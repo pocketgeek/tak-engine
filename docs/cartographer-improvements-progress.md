@@ -1231,6 +1231,46 @@ terrain images or feature files writes only its `kmap/` members. The editor moun
 override packs, so no browser item comes from one. Click placement overwrites a road or
 blocker marker; moves and pastes refuse such cells.
 
+## AI profile editor, phase 0: keep `ai/`
+
+Design: the accepted AI-profile editor design (phases 0-6). Phase 0 fixes the
+0.8.11 gap: the Cartographer dropped a map's root `ai/` folder on open and save.
+
+Implemented:
+
+- `Session::aiFiles` (`cart::AiFiles`, `MountSet::key("ai/<x>.txt")` to raw
+  bytes). Opening a `.kmp` keeps every root `ai/<name>.txt` (no deeper path),
+  whitelisted or not; a loose `.tnt` reads a sibling `ai/` folder (any case);
+  recovery lifts the root `ai/` entries out of the snapshot; New Map clears them.
+- `documentFiles` returns `DocumentFiles{members, rootMembers}`. The bundle
+  writer prefixes only `members` with `kmap/<stem>/` and packs `rootMembers` at
+  the archive root. Empty AI files are dropped (a map package rejects them);
+  an invalid key refuses the save.
+- `writeDocumentLoose` writes `<dir>/ai/<x>.txt` (the profiles first, so a
+  failure leaves the map files untouched) and refuses AI files in or under the
+  install's Maps folder ("Save as .kmp to keep AI profiles with the map").
+- Threaded through `SaveSnapshot` (with `installMaps`), Test Map (`Playtest::start`
+  takes `DocumentFiles`), recovery autosave, headless `--save`/`--bundle` (via
+  the save job) and `HistoryState::aiFiles` (undo/redo; restored in `restoreHistory`).
+
+Deviations from the design:
+
+- `HistoryState::aiFiles` uses the session's `AiFiles` type (bytes), not
+  `std::map<std::string, std::string>`; no conversion either way.
+- A loose `.tnt` inside the install's Maps folder does not read `Maps/ai/`: those
+  files apply to every map and are not this map's own.
+- Opening an installed map by name does not read its `ai/` files yet; that waits
+  for phase 1's own-archive lookup, as the design says (no `sameMapArchive`).
+
+Validation: `cartographer_document` (a hand-packed `.kmp` with `AI/N.txt` (CRLF,
+no final newline), `ai/islands.txt` (with `aiprofile=islands`, UTF-8 and `#`),
+a stray `ai/Notes.txt`, a nested and an empty file: all three re-save byte for
+byte at the root, none under `kmap/`; undo/redo; recovery; loose export and the
+Maps refusal; fails with root members not packed), `cartographer_savejob` (root
+members; loose `ai/`; Maps refusal), `cartographer_playtest` (the child stub runs
+the game's `importSnapshot`: `ai/n.txt` and `ai/islands.txt` reach the test room,
+`ai/notes.txt` does not).
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop

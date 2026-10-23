@@ -2097,9 +2097,9 @@ AI that takes over a disconnected player's seat), never Easy. Names are not
 case-sensitive. When two ticked packs have the same file, the alphabetically
 later pack wins, as for any file. In multiplayer the files travel with the
 host's game packs. Cosmetic packs and the install itself cannot change these
-levels' profiles, even with an `ai/n.txt` of their own. The Cartographer does
-not add an `ai` folder to the maps it saves, and saving a map again in it drops
-one; add the folder to the finished `.kmp` with an HPI packer. The DEFAULT AI
+levels' profiles, even with an `ai/n.txt` of their own. The Cartographer keeps
+a `.kmp` map's `ai` folder when you open the file and save it again (see
+[Files in a map](cartographer-guide.md#files-in-a-map)). The DEFAULT AI
 reads none of these files: it reads the map's own AI profile, which a game pack
 or the map's archive can replace (see [Default](#default)).
 
