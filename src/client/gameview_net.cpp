@@ -1325,9 +1325,8 @@ void GameView::autoplayStep() {
             uint8_t cap = (autoMode == 8 || benchmarkMode_) ? tak::net::kMaxSlots : mpCapacity(o.mapScenario != 0);
             // Exact stem match (findMap): the map file is "ulasem arena.tnt".
             std::string createMap = benchmarkMode_ ? std::string("Ulasem Arena") : mapId;
-            const uint8_t missionAi = tak::devEnv("TAK_AI_LEVEL") ? aiLevelEnv() : missionAiLevel_;
             mp_->createGame(benchmarkMode_ ? "Benchmark" : (priv ? "Single Player" : "headless"),
-                            "", createMap, o, cap, watch, priv, mission, missionAi);
+                            "", createMap, o, cap, watch, priv, mission);
         } else if (st == S::Lobby && autoMode == 6) {
             // Spectate: poll the list and watch the first running game. Ask once
             // per refusal, not every frame: a room with ALLOW SPECTATORS off says no,

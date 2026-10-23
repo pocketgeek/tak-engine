@@ -585,6 +585,12 @@ std::string MountSet::sourceOf(const std::string& path) const {
            "!" + it->second.entry.path;
 }
 
+int MountSet::archiveOf(const std::string& path) const {
+    if (!has(path) || looseFiles_.count(key(path)) || (cfg_.includeLoose && looseFile(dir_,path))) return -1;
+    auto it = map_.find(key(path));
+    return it == map_.end() ? -1 : it->second.archive;
+}
+
 // ---- Vfs: layered runtime read-path over a retail install root -------------
 
 void Vfs::refreshMapCache(const std::filesystem::path& root) {
@@ -649,6 +655,24 @@ std::optional<std::vector<uint8_t>> Vfs::tryRead(const std::string& path, bool s
         }
     }
     return base_ ? base_->tryRead(path, skipMapResources || bool(mapFiles_)) : std::nullopt;
+}
+
+bool Vfs::sameMapArchive(const std::string& mapPath, const std::string& path) const {
+    if (skipMaps_) return false;
+    const std::string mk = MountSet::key(mapPath), kp = MountSet::key(path);
+    if (mapFiles_) return mapFiles_->count(mk) && mapFiles_->count(kp);   // the view's own map
+    if (modFiles_ && modFiles_->count(kp)) return false;                  // a game mod's copy wins
+    // The highest layer that has `path` holds its winning copy.
+    for (auto it = layers_.rbegin(); it != layers_.rend(); ++it) {
+        if (!it->prefix.empty() && kp.compare(0, it->prefix.size(), it->prefix) != 0) continue;
+        const std::string sub = path.substr(it->prefix.size());
+        if (!it->ms.has(sub)) continue;
+        if (!it->mapResources || (!it->prefix.empty() && mk.compare(0, it->prefix.size(), it->prefix) != 0))
+            return false;
+        const int archive = it->ms.archiveOf(sub);
+        return archive >= 0 && archive == it->ms.archiveOf(mapPath.substr(it->prefix.size()));
+    }
+    return base_ && base_->sameMapArchive(mapPath, path);
 }
 
 std::vector<uint8_t> Vfs::read(const std::string& path, bool skipMapResources) const {

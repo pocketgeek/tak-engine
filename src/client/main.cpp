@@ -1324,10 +1324,7 @@ int main(int argc, char** argv) {
                 gameView->setMpMapId(args[0]);
                 if (fromMenu) { gameView->setExternalLobbyMusic();  // front-end owns the lobby BGM
                                 gameView->setCanReturnToMenu(); }   // in-game menu can return to it
-                if (!campaignStem.empty()) {
-                    gameView->setMissionStem(campaignStem);         // autoMode 8 hosts this mission
-                    gameView->setMissionAiLevel(uint8_t(settings.campaignAi));   // the campaign screen's OPPONENT AI
-                }
+                if (!campaignStem.empty()) gameView->setMissionStem(campaignStem);   // autoMode 8 hosts this mission
                 else if (menuInteractive) gameView->setSinglePlayer();  // menu SP: SP-flavoured lobby, Create-first
                 else if (benchmarkLaunch) {   // menu Benchmark: all-AI watch run + metrics
                     gameView->setBenchmark(benchmarkLevel);

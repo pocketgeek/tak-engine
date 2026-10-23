@@ -2030,6 +2030,10 @@ if(TAK_BUILD_CLIENT)
     target_link_libraries(voice_test PRIVATE tak-voice tak-uifont tak-formats ${_tak_sdl2})
     add_test(NAME voice COMMAND voice_test)
     set_tests_properties(voice PROPERTIES TIMEOUT 60 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    # With SDL, settings_test also loads a settings file (an old campaignAi key is ignored).
+    target_sources(settings_test PRIVATE src/client/settings.cpp)
+    target_compile_definitions(settings_test PRIVATE TAK_SETTINGS_FILE_TEST)
+    target_link_libraries(settings_test PRIVATE ${_tak_sdl2})
     if(UNIX AND NOT APPLE)
       add_executable(mod_settings_test tools/mod_settings_test.cpp src/client/settings.cpp)
       target_link_libraries(mod_settings_test PRIVATE tak-formats ${_tak_sdl2})
@@ -3071,6 +3075,12 @@ if(TAK_TEST_DATA)
       add_test(NAME ai_mod_profile COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/ai_mod_profile_test.py"
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
       set_tests_properties(ai_mod_profile PROPERTIES TIMEOUT 600)
+      # The Classic AI reads ai/default.txt from the room's view: base, game mod, map
+      # package (a single-map archive's own file); a campaign mission plays Classic.
+      add_test(NAME classic_ai_map_profile COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/classic_ai_map_profile_test.py"
+        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --hpitool "$<TARGET_FILE:hpitool>"
+        --data "${TAK_TEST_DATA}")
+      set_tests_properties(classic_ai_map_profile PROPERTIES TIMEOUT 900)
     endif()
     add_test(NAME crusades_hardening_network COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/crusades_hardening_network_test.py"

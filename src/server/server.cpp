@@ -357,9 +357,6 @@ struct Room {
     bool campaignResultRecorded = false;
     bool campaignResigned[2] = {}, campaignDisconnected[2] = {}, campaignTimeout[2] = {}, campaignLoaded[2] = {};
     std::string mission;           // campaign mission stem (empty = ordinary skirmish/MP)
-    // The mission's opponent AI, as an AI level: Normal (the default) or Classic,
-    // the campaign screen's OPPONENT AI choice. Nothing else is accepted.
-    uint8_t missionAiLevel = uint8_t(tak::ai::Difficulty::Normal);
     GameOptions opts;
     uint32_t hostId = 0;
     SlotInfo slots[kMaxSlots];
@@ -632,14 +629,6 @@ private:
     // registries, and the gameplay-data fingerprint peers are held to.
     DataSet retail_;                   // shared immutable retail data; game-mod sets are room-local
     bool haveCb_ = false;
-    // Per-mission build profiles (ai/<name>.txt), cached by name -- a Controller
-    // holds a reference to its Profile, so these must outlive the room.
-    std::map<std::string, tak::ai::Profile> missionProfiles_;
-    const tak::ai::Profile& missionProfile(const tak::hpi::Vfs& vfs, const std::string& name) {
-        auto it = missionProfiles_.find(name);
-        if (it != missionProfiles_.end()) return it->second;
-        return missionProfiles_.emplace(name, tak::ai::loadProfile(vfs, name)).first->second;
-    }
     std::vector<std::string> aiNames_;   // retail's gamedata/ainames.tdf pool
 
     static std::vector<std::string> loadAiNames(const tak::hpi::Vfs& vfs) {
@@ -2022,9 +2011,6 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             int cap = int(r.u8());
             uint8_t spectate = r.u8();   // host watches, taking no slot (all-AI game)
             uint8_t priv = r.u8();       // private (single-player): hidden from the list
-            // A mission room may add its opponent AI level (the campaign screen's choice);
-            // without it, and for anything but Classic, the mission plays Normal.
-            const uint8_t missionAi = !mission.empty() && r.ok && r.p < r.end ? r.u8() : 0;
             if (!r.ok || r.p!=r.end || name.size()>128 || pass.size()>128 || mapId.size()>4096 || mission.size()>256) return;
             if(!(testWork_ || (loopbackOnly_ && !requireAuth_)) && (o.stressTest || o.benchmark || !mission.empty())) {
                 sendReject(c,"public servers do not accept benchmark, stress or campaign mission requests");return;
@@ -2037,8 +2023,6 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             room.password = pass;
             room.mapId = mapId;
             room.mission = mission;
-            if (tak::ai::difficultyFromLevel(missionAi) == tak::ai::Difficulty::Classic)
-                room.missionAiLevel = missionAi;
             room.opts = o;
             room.priv = priv != 0;
             room.cap = cap;
@@ -2564,6 +2548,29 @@ void Server::refuseStart(Client& c, const Room& r, const std::string& why) {
     std::fprintf(stderr, "game %u: start refused -- %s\n", r.id, why.c_str());
 }
 
+// The Classic AI's profile script for a room: retail's file choice (ai/<aiprofile>.txt,
+// else ai/default.txt) by normal precedence over the room's own view -- the base data,
+// then the room's game mods, then its map package, each winning over the one before --
+// so a map, campaign or game mod that carries its own file plays it. A view with no
+// map package (a mission, a generated map) skips the install's Maps/ archives: an AI
+// file in a .kmp belongs to that map and reaches a game only in the map's package.
+// Logged once per game with the layer the file came from.
+static tak::ai::ClassicProfileScript classicProfileFor(const Room& r, const std::string& key,
+                                                        const tak::hpi::Vfs& vfs, bool skipMapArchives) {
+    const tak::hpi::Vfs view(&vfs, skipMapArchives);
+    auto script = tak::ai::classicProfileScript(view, key);
+    const std::string file = tak::hpi::MountSet::key(script.path);   // package files are keyed
+    const char* from = "the base data";
+    if (script.path.empty()) from = "";
+    else if (r.mapPackage && r.mapVfs && r.mapPackage->files && r.mapPackage->files->count(file)) from = "the map package";
+    else if (r.modData && r.modPackage && r.modPackage->files && r.modPackage->files->count(file))
+        from = "the game mods";
+    std::fprintf(stderr, "game %u: Classic AI profile %s%s%s\n", r.id,
+                 script.path.empty() ? "(none: every type 100, unlimited)" : script.path.c_str(),
+                 *from ? " from " : "", from);
+    return script;
+}
+
 void Server::tryStart(Client& c) {
     Room* r = roomOf(c);
     if (!r || r->hostId != c.id || r->running) return;
@@ -2705,20 +2712,15 @@ void Server::tryStart(Client& c) {
                 // lockstep is unaffected. A "passive neutral" gets nothing: it is
                 // scenery. Mana income is deliberately NOT multiplied here -- a
                 // mission is balanced around its placements, not a skirmish curve.
-                const tak::ai::Profile& prof =
-                    ms.aiProfile.empty() ? ds->aiProfiles[size_t(tak::ai::Difficulty::Normal)]
-                                         : missionProfile(ds->vfs, ms.aiProfile);
-                // The campaign screen's OPPONENT AI: Normal, or Classic (retail's own AI,
-                // which bakes the same aiprofile file its own way and plays the mission
-                // as retail's scenario mode 1, massattack included).
-                const auto missionDiff = tak::ai::difficultyFromLevel(r->missionAiLevel);
-                const bool classic = missionDiff == tak::ai::Difficulty::Classic;
-                std::optional<tak::ai::ClassicProfileScript> classicProfile;
-                std::vector<std::pair<float, float>> classicStarts;
-                if (classic) {
-                    classicProfile = tak::ai::classicProfileScript(ds->vfs, ms.aiProfile);
-                    classicStarts = tak::sim::parseStartPositions(ds->vfs, "missions/" + r->mission + ".tnt");
-                }
+                // Mission opponents always play Classic, retail's own AI: it bakes the
+                // mission's aiprofile file (ai/<aiprofile>.txt, else ai/default.txt, by
+                // the data set's precedence) and plays the mission as retail's scenario
+                // mode 1, massattack included. There is no choice of level.
+                constexpr auto missionDiff = tak::ai::Difficulty::Classic;
+                const tak::ai::Profile& prof = ds->aiProfiles[size_t(missionDiff)];
+                const auto classicProfile = classicProfileFor(*r, ms.aiProfile, ds->vfs, true);
+                const auto classicStarts =
+                    tak::sim::parseStartPositions(ds->vfs, "missions/" + r->mission + ".tnt");
                 for (int slot : ms.aiSlots) {
                     std::vector<std::pair<float, float>> enemyStarts;
                     for (size_t j = 0; j < ms.slotPos.size(); ++j) {
@@ -2728,20 +2730,17 @@ void Server::tryStart(Client& c) {
                     }
                     r->ai.emplace_back(slot, *r->reg, prof, r->seed + uint32_t(slot),
                                        missionDiff, std::move(enemyStarts));
-                    if (classic) {
-                        r->ai.back().setClassicProfile(*classicProfile);
-                        r->ai.back().setClassicStarts(classicStarts);
-                        r->ai.back().setClassicCampaign(size_t(slot) < ms.playerDefs.size()
-                                                            ? ms.playerDefs[size_t(slot)] : std::string());
-                    }
+                    r->ai.back().setClassicProfile(classicProfile);
+                    r->ai.back().setClassicStarts(classicStarts);
+                    r->ai.back().setClassicCampaign(size_t(slot) < ms.playerDefs.size()
+                                                        ? ms.playerDefs[size_t(slot)] : std::string());
                 }
                 r->slotPos = ms.slotPos;
                 if (!ms.aiSlots.empty())
-                    std::fprintf(stderr, "takserver: mission '%s' -- %zu strategic AI player(s)%s%s\n",
+                    std::fprintf(stderr, "takserver: mission '%s' -- %zu strategic AI player(s)%s CLASSIC (%s)\n",
                                  r->mission.c_str(), ms.aiSlots.size(),
                                  ms.aiProfile.empty() ? "" : (" profile=" + ms.aiProfile).c_str(),
-                                 classic ? (" CLASSIC (" + (classicProfile->path.empty() ? std::string("no profile")
-                                                            : classicProfile->path) + ")").c_str() : "");
+                                 classicProfile.path.empty() ? "no profile" : classicProfile.path.c_str());
             }
         } else {
             // The same builder every client mirrors (net/matchconfig.h): the Absurd and
@@ -2787,13 +2786,9 @@ void Server::tryStart(Client& c) {
                     r->ai.emplace_back(i, *r->reg, ds->aiProfiles[size_t(diff)], r->seed,
                                        diff, std::move(enemyStarts));
                     if (diff == tak::ai::Difficulty::Classic) {
-                        if (!classicProfile) {
-                            classicProfile = tak::ai::classicProfileScript(
-                                *cfg.vfs, tak::ai::classicMapAiProfile(*cfg.vfs, mapPath));
-                            std::fprintf(stderr, "game %u: Classic AI profile %s\n", r->id,
-                                         classicProfile->path.empty() ? "(none: every type 100, unlimited)"
-                                                                      : classicProfile->path.c_str());
-                        }
+                        if (!classicProfile)
+                            classicProfile = classicProfileFor(*r, tak::ai::classicMapAiProfile(*cfg.vfs, mapPath),
+                                                               *cfg.vfs, !r->mapVfs);
                         r->ai.back().setClassicProfile(*classicProfile);
                         // The map's start table (its authored starts in StartPos order,
                         // else -- a generated map -- the spots setupMatch used), and

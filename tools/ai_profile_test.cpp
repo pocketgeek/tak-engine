@@ -5,11 +5,15 @@
 //                             supply a level's file (scratch mod folders, no data)
 //   ai_profile_test <data>    also: the built-in Normal table still equals the
 //                             retail default profile (the base install's winning
-//                             ai/default.txt) the levels were tuned on
+//                             ai/default.txt) the levels were tuned on; and the
+//                             Classic AI's profile file travels in a map's package
+//                             when the map's own archive carries it
 #include "ai/ai.h"
 #include "ai/builtinprofile.h"
+#include "ai/classicprofile.h"
 #include "hpi/hpi.h"
 #include "net/crypto.h"
+#include "net/mappackage.h"
 #include "net/modpackage.h"
 
 #include <cstdio>
@@ -150,6 +154,8 @@ static void modLayers() {
     fs::remove_all(root, ec);
 }
 
+static bool isHpi(const std::filesystem::path& p) { return hpi::MountSet::key(p.extension().string()) == ".hpi"; }
+
 static void retailDefault(const char* data) {
     const auto vfs = hpi::mountRetailRoot(data);
     check(vfs.has("ai/default.txt"), "the install has ai/default.txt");
@@ -159,10 +165,60 @@ static void retailDefault(const char* data) {
                                firstDifference(file, builtin) + ")");
 }
 
+// A single-map archive under Maps/ that carries its own ai/default.txt: the map's
+// package carries the file (and only that map's package does), the server's view of
+// the room (base + package) gives it to the Classic AI, and a package naming an AI
+// file the map's .ota does not choose is refused.
+static void mapPackages(const char* data) {
+    namespace fs = std::filesystem;
+    const auto root = fs::temp_directory_path() / ("tak-ai-map-" + crypto::toHex(crypto::randomVec(8)));
+    try {
+        fs::create_directories(root);
+        for (const auto& e : fs::directory_iterator(data))
+            if (e.is_regular_file() && isHpi(e.path())) fs::create_symlink(fs::absolute(e.path()), root / e.path().filename());
+        const auto base = hpi::mountRetailRoot(data);
+        const std::string own = "// the map's own profile\nlimit tarcage 0\n";
+        std::vector<std::pair<std::string, std::string>> entries{{"ai/default.txt", own}};
+        for (const char* ext : {".tnt", ".ota", ".crt", ".txt"})
+            if (auto b = base.tryRead(std::string("maps/Inner Circle") + ext))
+                entries.push_back({std::string("kmap/AI Circle") + ext, std::string(b->begin(), b->end())});
+        archive(root / "Maps/AI Circle.kmp", entries);
+        const auto vfs = hpi::mountRetailRoot(root);
+        const auto pkg = net::maps::build(vfs, "AI Circle");
+        check(pkg->files->count("ai/default.txt") &&
+              std::string(pkg->files->at("ai/default.txt").begin(), pkg->files->at("ai/default.txt").end()) == own,
+              "a map archive's own ai/default.txt travels in its package");
+        const auto stock = net::maps::build(vfs, "Inner Circle");
+        bool noAi = true;
+        for (const auto& [name, bytes] : *stock->files) noAi = noAi && !name.starts_with("ai/");
+        check(noAi, "another map's package carries no AI file (nor the base's)");
+        const auto received = net::maps::decode(pkg->bytes, pkg->digest);
+        hpi::Vfs room(&base);
+        room.setMapFiles(received->files);
+        const auto script = ai::classicProfileScript(room, ai::classicMapAiProfile(room, received->mapPath));
+        check(hpi::MountSet::key(script.path) == "ai/default.txt" && script.text == own, "the room's view gives Classic the map's file");
+        const hpi::Vfs noMaps(&vfs, true);
+        const auto plain = ai::classicProfileScript(noMaps, "");
+        check(!plain.text.empty() && plain.text != own, "a view without the map package skips Maps/ archives' AI files");
+        // The same package with an AI file the .ota does not choose.
+        auto files = *received->files;
+        files["ai/other.txt"] = {'x'};
+        net::Writer w; w.u32(2); w.str(received->mapPath); w.u32(uint32_t(files.size()));
+        for (const auto& [name, bytes] : files) { w.str(name); w.u32(uint32_t(bytes.size())); w.b.insert(w.b.end(), bytes.begin(), bytes.end()); }
+        bool refused = false;
+        try { net::maps::decode(w.b, ""); } catch (const std::exception&) { refused = true; }
+        check(refused, "a package carrying an AI file its map does not name is refused");
+    } catch (const std::exception& e) {
+        check(false, std::string("map packages threw: ") + e.what());
+    }
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
 int main(int argc, char** argv) {
     tables();
     modLayers();
-    if (argc > 1) retailDefault(argv[1]);
+    if (argc > 1) { retailDefault(argv[1]); mapPackages(argv[1]); }
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

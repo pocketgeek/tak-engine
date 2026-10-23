@@ -32,7 +32,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/room.jpg"><img src="docs/img/room.jpg" alt="Game lobby with AI slots, MOVE HERE buttons on the open slots, start markers in the players' colours, mod-pack selections and read-only match settings"></a><br><sub>Lobby settings and mod packs</sub></td>
-    <td width="50%"><a href="docs/img/campaign.jpg"><img src="docs/img/campaign.jpg" alt="The Book of Darien campaign mission picker, with the Opponent AI line on the left page"></a><br><sub>Campaign selection</sub></td>
+    <td width="50%"><a href="docs/img/campaign.jpg"><img src="docs/img/campaign.jpg" alt="The Book of Darien campaign mission picker"></a><br><sub>Campaign selection</sub></td>
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/streaming.jpg"><img src="docs/img/streaming.jpg" alt="YouTube streaming panel with Max 3840 and 60 FPS selected and the Save a Local Copy box off"></a><br><sub>Built-in YouTube streaming</sub></td>
@@ -71,12 +71,9 @@ player together. The existing AI levels and the game itself play exactly as in
   It is **weaker than Normal**, and a Taros Classic AI often grows slowly. A
   dropped player's seat is still taken over by a Normal AI. See
   [Classic](docs/user-guide.md#classic).
-- **Classic campaign opponents.** The campaign book's left page has an
-  **Opponent AI: CLASSIC / NORMAL** line: click it or press **A**. It starts
-  at **Classic**, whose opponents use each mission's own AI profile and its
-  timed mass attack, and is remembered; switch to Normal to play the missions
-  exactly as before.
-  See [Campaigns](docs/user-guide.md#campaigns).
+- **Classic campaign opponents.** Campaign missions' computer players are
+  always **Classic**: they use each mission's own AI profile and its timed mass
+  attack. See [Campaigns](docs/user-guide.md#campaigns).
 - **Long build menus wrap.** A builder whose build menu does not fit beside the
   command panel (a long menu, a small window or a big Build Menu Scale) now
   wraps its icons into extra rows instead of running under the command panel
@@ -1114,7 +1111,7 @@ enemy units outside current sight remain untargetable.
 | Hard | Keeps expanding income and production, spending on raids and larger attack waves |
 | Absurd | Hard behavior with double mana income, including reclaim |
 | Absurdly Defensive | Defensive behavior with Absurd's double mana income ([details](docs/ai-defensive-2026-10-17.md)) |
-| Classic | The original 1999 game's own AI, ported routine by routine and checked against the original in emulation ([plan](docs/classic-ai-plan.md), [acceptance](docs/classic-ai-acceptance.md)): it reads the map's AI profile (`ai/default.txt` on every shipped skirmish map; 30 campaign missions name their own), has no difficulty setting or income bonus, keeps the original's quirks, and plays weaker than Normal. Also offered for campaign opponents (the campaign book's **Opponent AI**) |
+| Classic | The original 1999 game's own AI, ported routine by routine and checked against the original in emulation ([plan](docs/classic-ai-plan.md), [acceptance](docs/classic-ai-acceptance.md)): it reads the map's AI profile (`ai/default.txt` on every shipped skirmish map; 30 campaign missions name their own), has no difficulty setting or income bonus, keeps the original's quirks, and plays weaker than Normal. A game pack or a map archive that carries the profile file replaces the install's. Always plays the campaign opponents |
 
 Choose **Generate Random Map** under the map preview to configure a Mainland,
 Lakes, or Islands map, up to **64×64**. Every new mana site has surrounding ruins.

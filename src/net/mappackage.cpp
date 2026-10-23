@@ -41,6 +41,25 @@ std::set<std::string> companionPaths(const std::string& path) {
         result.insert(vpath::replaceExtension(path, extension));
     return result;
 }
+// The map's AI profile files: the Classic AI reads ai/<aiprofile>.txt (the .ota's
+// [Map Data] key, any extension dropped), else ai/default.txt. The server reads them
+// from the room's view, so when the map's own archive carries one it travels here.
+std::set<std::string> aiProfilePaths(const hpi::Vfs::Files& files, const std::string& mapPath) {
+    std::set<std::string> result{"ai/default.txt"};
+    const auto ota = files.find(vpath::replaceExtension(mapPath, ".ota"));
+    if (ota == files.end()) return result;
+    std::string key;
+    try { key = tnt::Scenario::parse(std::string(ota->second.begin(), ota->second.end())).aiProfile; }
+    catch (const std::exception&) { return result; }
+    if (const auto dot = key.find_last_of('.');
+        dot != std::string::npos && key.find_first_of("/\\", dot) == std::string::npos)
+        key.erase(dot);
+    if (!key.empty()) {
+        const auto path = hpi::MountSet::key("ai/" + key + ".txt");
+        if (safePath(path) && path.find('/', 3) == std::string::npos) result.insert(path);
+    }
+    return result;
+}
 // Follow feature burn/death chains as well as their sprites and palettes. A
 // feature file may define several names, so include dependencies of every
 // definition it brings into the room, not only the initially placed feature.
@@ -136,6 +155,9 @@ static std::shared_ptr<Package> buildUncached(const hpi::Vfs& vfs, const std::st
         (*files)[tile] = vfs.read(tile);
     }
     for (const auto& resource : featureResources(map, vfs)) (*files)[resource] = vfs.read(resource);
+    for (const auto& ai : aiProfilePaths(*files, path))
+        if (vfs.sameMapArchive(path, ai))
+            if (auto data = vfs.tryRead(ai); data && !data->empty()) (*files)[ai] = std::move(*data);
     return decode(encode(path, files)->bytes, "");
 }
 
@@ -232,8 +254,10 @@ std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& d
         const bool art = (name.starts_with("anims/") && (name.ends_with(".gaf") || name.ends_with(".taf"))) ||
                          (name.starts_with("palettes/") && name.ends_with(".pcx"));
         const bool companion = companions.count(name) != 0;
+        // The map's AI profile (aiProfilePaths); which name it may use is checked below.
+        const bool ai = name.starts_with("ai/") && name.ends_with(".txt") && name.find('/', 3) == std::string::npos;
         // Empty descriptions/restrictions are meaningful; geometry and art are not.
-        if (!r.ok || !safePath(name) || (name != path && !companion && !terrain && !feature && !art) ||
+        if (!r.ok || !safePath(name) || (name != path && !companion && !terrain && !feature && !art && !ai) ||
             !r.avail(size) || (!size && !companion) || files->count(name)) throw std::runtime_error("invalid map resource");
         (*files)[name] = std::vector<uint8_t>(r.p, r.p + size); r.p += size;
     }
@@ -247,6 +271,8 @@ std::shared_ptr<Package> decode(std::vector<uint8_t> bytes, const std::string& d
     std::set<std::string> required{path};
     for (const auto& companion : companions)
         if (files->count(companion)) required.insert(companion);
+    for (const auto& ai : aiProfilePaths(*files, path))
+        if (files->count(ai)) required.insert(ai);
     for (auto key : map.tileKeys) required.insert(tilePath(key));
     hpi::Vfs view; view.setMapFiles(files);
     const auto features = featureResources(map, view, stop);

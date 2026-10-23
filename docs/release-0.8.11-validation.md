@@ -41,6 +41,16 @@ Normal), and the debug `--mpmission` harness still sends Normal unless
 `TAK_AI_LEVEL` picks. Only `src/client/` changed (`settings.h`,
 `settings.cpp`, `mainmenu.cpp`, `campaignscreen.h`, `gameview.h`).
 
+Later, still before the tag, the user's decisions of 2026-10-23 replaced that
+choice: campaign opponents are always Classic. The book's Opponent AI line and
+A key, `Settings::campaignAi` (an old key is ignored), `TAK_SHOT_CAMPAIGN_AI`
+and CreateGame's optional AI byte are gone (protocol stays 290, unreleased),
+and the `--mpmission` harness now plays Classic with no settings:
+`takmission08_dh` 300 s gives `5c35c83f41cbae5f` (the Classic hash above), and
+the Normal mission hashes below no longer apply. The Classic AI's profile file
+is looked up in the server's view of the room (base, game mods, map package; a
+map package carries the map archive's own file). See branch `task-ai-profiles`.
+
 The changes:
 
 - Classic AI (AI level 6, server only; protocol 290): `dbcda124` (level 6

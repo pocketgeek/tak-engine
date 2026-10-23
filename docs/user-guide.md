@@ -345,7 +345,11 @@ quirks included:
 
 - It builds from the map's **AI profile**, the file the map names
   (`ai/default.txt` for every shipped skirmish map; many campaign missions name
-  their own, and a missing one falls back to `ai/default.txt`). That file only switches units on or off and sets how many of each it may have; the
+  their own, and a missing one falls back to `ai/default.txt`). The file is
+  looked up like any game file, so a ticked game pack that carries its own
+  `ai/default.txt` (or the file the map names) replaces the install's, and a map
+  whose own archive in `Maps/` carries one plays with that one; it travels with
+  the map in multiplayer. That file only switches units on or off and sets how many of each it may have; the
   AI picks at random among what its builders can make, favouring what it is
   short of.
 - It has no difficulty setting and no income bonus.
@@ -358,7 +362,7 @@ quirks included:
 - Its Monarch keeps building only while the base is short of builders, and runs
   for a safe spot when badly hurt instead of fighting back.
 
-Classic can also play the campaign's computer opponents: see
+Classic always plays the campaign's computer opponents: see
 [Campaigns](#campaigns).
 
 ### Random maps
@@ -1936,14 +1940,12 @@ In the book:
 - Choose a campaign tab, then use the page arrows, **Left/Right** or
   **Page Up/Page Down** to browse chapters.
 - **Home/End** jumps to the first or last chapter. **Tab** switches campaigns.
-- **A** (or a click on the **Opponent AI** line) switches the computer
-  opponents between Classic (the default) and Normal.
 - **Enter** plays the selected chapter. **Escape** returns to the menu.
 - Every chapter can be selected, including the *Iron Plague* alternate ending.
 
-![The campaign book open at Book of Darien chapter 1, All Hell Broken Loose, with Opponent AI: CLASSIC (A) on the left page](img/campaign.jpg)
+![The campaign book open at Book of Darien chapter 1, All Hell Broken Loose](img/campaign.jpg)
 
-*The campaign book, with the Opponent AI line on the left page and tabs for both campaigns at the bottom.*
+*The campaign book, with tabs for both campaigns at the bottom.*
 
 Each mission plays its intro movie, then shows the briefing over the paused
 battlefield. **Enter**, **Space**, **Escape** or a left click starts the
@@ -1957,14 +1959,10 @@ mission. The mouse wheel and **Up/Down** scroll long briefings. During play,
 When you win, **Next** goes to the next chapter and **Retry** replays this one.
 Campaigns always use Retail pathfinding.
 
-**Opponent AI**, on the left page of the book, chooses who plays the missions'
-computer players: **Classic** (the default), the original game's own AI (see
-[Classic](#classic)), which plays a mission as the 1999 game did, including the
-timed mass attack some *Iron Plague* missions set, or **Normal**, the engine's
-own AI, which played every mission before 0.8.11. Click the line, or press
-**A**, to switch to Normal and back; the choice is remembered (`campaignAi =
-normal` or `classic` in `settings.ini`) and applies from the next mission you
-start.
+The missions' computer players are always **Classic**, the original game's
+own AI (see [Classic](#classic)), which plays a mission as the 1999 game did:
+it builds from the AI profile the mission names and makes the timed mass attack
+some *Iron Plague* missions set. There is no choice of AI level for a mission.
 
 You always play the mission's first player, as in the original game, even where
 the mission file describes that player as a computer opponent (*The Iron Plague*
@@ -2093,7 +2091,8 @@ AI that takes over a disconnected player's seat), never Easy. Names are not
 case-sensitive. When two ticked packs have the same file, the alphabetically
 later pack wins, as for any file. In multiplayer the files travel with the
 host's game packs. Cosmetic packs, maps and the install itself cannot change
-an AI profile.
+these levels' profiles. Classic reads none of these files: it reads the map's
+own AI profile, which a game pack can replace (see [Classic](#classic)).
 
 The old `overrides/` folder is no longer read. Nothing in it is moved or
 changed; move your packs into `mods/cosmetic/` or `mods/game/` yourself, each

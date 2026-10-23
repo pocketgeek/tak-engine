@@ -171,6 +171,9 @@ public:
     std::vector<std::string> list(const std::string& prefix) const;
     // Human-readable winning source of `path` (for tooling/debug).
     std::string sourceOf(const std::string& path) const;
+    // The archive (index into archiveFiles()) `path` resolves to, or -1 when it is
+    // absent, filtered out or a loose file.
+    int archiveOf(const std::string& path) const;
 
     const std::vector<std::filesystem::path>& archiveFiles() const { return archiveFiles_; }
     static std::string key(std::string p);       // lowercased, '/'-separated
@@ -222,6 +225,10 @@ public:
     std::vector<uint8_t> read(const std::string& path, bool skipMapResources = false) const; // throws if absent
     std::optional<std::vector<uint8_t>> tryRead(const std::string& path, bool skipMapResources = false) const;
     std::vector<std::string> list(const std::string& prefix, bool skipMapResources = false) const;    // union, deduped
+    // Whether `path` resolves to the same single-map archive as the map `mapPath` (an
+    // archive under Maps/, or this view's map files). A map's other files, such as its
+    // own AI profile, travel in its package only then.
+    bool sameMapArchive(const std::string& mapPath, const std::string& path) const;
 
 private:
     const Vfs* base_ = nullptr;

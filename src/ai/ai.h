@@ -40,8 +40,8 @@ struct Profile {
 // builtinprofile.h line format. One file covers every faction. Never throws; a
 // missing file yields an empty profile (the AI then builds nothing). Our levels
 // never read these files -- they play their built-in tables (builtinProfile) --
-// so this serves the campaign missions' named profiles and the check that the
-// built-in tables still reproduce the shipped default profile.
+// and the Classic AI bakes them its own way (classicprofile.h), so this serves only
+// the check that the built-in tables still reproduce the shipped default profile.
 Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name = "default");
 
 // Opponent skill, loosely modelled on retail's easy/normal/hard. It scales HOW the

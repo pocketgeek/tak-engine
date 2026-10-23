@@ -15,15 +15,12 @@ struct Settings;
 // Not retail: with <install> given, the left page names the always-on
 // mods/cosmetic/*.hpi archives the mission will load. Campaigns offer no mod
 // selection: game mods and cosmetic pack folders are never used there.
-// Also not retail: with setOpponentAi given, the left page carries an OPPONENT AI
-// line (Settings::campaignAi, CLASSIC by default or NORMAL) that a click or the A key flips;
-// the callback stores and saves the new AI level.
+// Mission opponents always play the Classic AI (retail's own); there is no choice.
 class CampaignScreen {
 public:
     CampaignScreen(SDL_Renderer*, const hpi::Vfs&, const Settings&, int initialTab=0,
                    std::function<void(const std::string&)> playSound={},
-                   const std::filesystem::path& install={},
-                   std::function<void(int)> setOpponentAi={});
+                   const std::filesystem::path& install={});
     ~CampaignScreen();
     bool input(const SDL_Event&, int winW, int winH);
     void render(int winW, int winH);

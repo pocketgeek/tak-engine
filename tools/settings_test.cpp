@@ -20,6 +20,11 @@
 
 #include <cstdio>
 #include <string>
+#ifdef TAK_SETTINGS_FILE_TEST
+#include <filesystem>
+#include <fstream>
+#include <random>
+#endif
 
 using tak::Settings;
 
@@ -115,7 +120,6 @@ int main() {
     flips("gameModPacks", [](Settings& s){s.gameModPacks={"Pack A"};});
     flips("cosmeticModPacks", [](Settings& s){s.cosmeticModPacks={"Pack B"};});
     flips("lastMap",         [](Settings& s) { s.lastMap = "Inner Circle"; });
-    flips("campaignAi",      [](Settings& s) { s.campaignAi = 2; });
     flips("dataDir",         [](Settings& s) { s.dataDir = "/somewhere/else"; });
     flips("dataManifest",    [](Settings& s) { s.dataManifest = "deadbeef"; });
 
@@ -167,7 +171,6 @@ int main() {
         cur.streamRememberKey = true;
         cur.streamLocalCopy = true;
         cur.lastMap = "Inner Circle";
-        cur.campaignAi = 2;   // NORMAL: away from the CLASSIC default
         cur.gameCreate.crusades = true;
         cur.gameCreate.generator = "saved recipe";
         cur.hotkeys["selectAll"] = "ctrl+a";
@@ -211,7 +214,6 @@ int main() {
         keep("streamRememberKey", d.streamRememberKey);
         keep("streamLocalCopy",   d.streamLocalCopy);
         keep("lastMap",           d.lastMap == cur.lastMap);
-        keep("campaign opponent", d.campaignAi == 2);
         keep("hotkeys",           d.hotkeys == cur.hotkeys);
         keep("voice chat",        d.voiceEnabled && d.voiceMicDevice == "a-mic" && !d.voiceOutputSameAsGame &&
                                   d.voiceOutputDevice == "headset" && d.voiceMicVolume == 40 &&
@@ -347,24 +349,26 @@ int main() {
         check("gpu: no Auto entry", noAuto);
     }
 
-    // Campaign OPPONENT AI: CLASSIC (6) by default -- the struct, and a settings file
-    // with no campaignAi key (which keeps the struct default) or an unknown value;
-    // "normal" still reads NORMAL (2), and both written forms round-trip.
+#ifdef TAK_SETTINGS_FILE_TEST
+    // The campaign book's OPPONENT AI line is gone (missions always play Classic). The
+    // 0.8.11 prereleases saved it as campaignAi = classic | normal: such a file still
+    // loads, the key is ignored like any unknown key, and the next save leaves it out.
     {
         auto check = [&](const char* what, bool ok) {
             std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
             if (!ok) ++g_fail;
         };
-        using tak::parseCampaignAi; using tak::campaignAiValue;
-        check("campaignAi: default 6", Settings{}.campaignAi == 6);
-        check("campaignAi: values", parseCampaignAi("normal") == 2 && parseCampaignAi("classic") == 6);
-        check("campaignAi: junk -> 6", parseCampaignAi("") == 6 && parseCampaignAi("hard") == 6 &&
-                                       parseCampaignAi("Normal ") == 6);
-        check("campaignAi: written", std::string(campaignAiValue(2)) == "normal" &&
-                                     std::string(campaignAiValue(6)) == "classic");
-        check("campaignAi: round-trip", parseCampaignAi(campaignAiValue(2)) == 2 &&
-                                        parseCampaignAi(campaignAiValue(6)) == 6);
+        const auto path = std::filesystem::temp_directory_path() /
+                          ("settings_test_" + std::to_string(std::random_device{}()) + ".ini");
+        { std::ofstream(path) << "lastMap = Inner Circle\ncampaignAi = normal\nmasterVol = 7\n"; }
+        tak::setSettingsPath(path.string());
+        const Settings s = tak::loadSettings();
+        check("campaignAi: loads", s.lastMap == "Inner Circle" && s.masterVol == 7);
+        check("campaignAi: dropped", tak::serializeSettings(s).find("campaignAi") == std::string::npos);
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
     }
+#endif
 
     std::printf(g_fail ? "settings_test: %d FAILURE(S)\n" : "settings_test: all passed\n",
                 g_fail);

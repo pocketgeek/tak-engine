@@ -171,11 +171,6 @@ struct Settings {
     // (the lowercased camps/*.tdf stem). Missions are NEVER locked -- this only records
     // what's been beaten, for the DONE marker and the "play next" hint. See src/campaign.
     std::map<std::string, std::set<int>> campaignCompleted;
-    // The campaign screen's OPPONENT AI: the AI level every mission's computer
-    // players get -- 6 = CLASSIC (the default: the retail game's own AI,
-    // docs/classic-ai-plan.md) or 2 = NORMAL. Persisted as campaignAi = classic | normal;
-    // a missing or unknown value reads as CLASSIC.
-    int campaignAi = 6;
     bool missionCompleted(const std::string& id, int mission) const {
         auto it = campaignCompleted.find(id);
         return it != campaignCompleted.end() && it->second.count(mission) > 0;
@@ -220,7 +215,7 @@ struct Settings {
             && a.voiceMicVolume == b.voiceMicVolume && a.voiceOutputVolume == b.voiceOutputVolume
             && a.ignoreDpiScaling == b.ignoreDpiScaling && a.dpiMigrated == b.dpiMigrated
             && a.hotkeys == b.hotkeys
-            && a.campaignCompleted == b.campaignCompleted && a.campaignAi == b.campaignAi;
+            && a.campaignCompleted == b.campaignCompleted;
     }
     friend bool operator!=(const Settings& a, const Settings& b) { return !(a == b); }
 };
@@ -288,7 +283,6 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.dataDir = cur.dataDir;
     d.dataManifest = cur.dataManifest;
     d.campaignCompleted = cur.campaignCompleted;
-    d.campaignAi = cur.campaignAi;                // set on the campaign screen, not Options
     d.knownServers = cur.knownServers;
     d.dpiMigrated = cur.dpiMigrated;              // bookkeeping, not a preference
     // Voice chat has its own screen and its own DEFAULTS (voiceDefaults below).
@@ -337,11 +331,6 @@ inline int resolveTextureFilter(int textureFilter, int bilinearFilter, int legac
 // GPU MEMORY LIMIT choices, in Options order (MiB; -1 = UNLIMITED). 1280 is the default.
 inline constexpr int kGpuMemoryLimits[] = {512, 768, 1024, 1280, 1536, 2048, 3072, 4096, -1};
 inline constexpr int kGpuMemoryDefaultMiB = 1280;   // gpuvram::kDefaultLimit
-
-// The campaign OPPONENT AI settings-file value (Settings::campaignAi): "normal" = 2,
-// anything else -- "classic", unknown, and a missing key -- = 6, CLASSIC, the default.
-inline int parseCampaignAi(const std::string& v) { return v == "normal" ? 2 : 6; }
-inline const char* campaignAiValue(int level) { return level == 2 ? "normal" : "classic"; }
 
 // Any stored value onto a listed choice: -1 stays; a number of MiB becomes the nearest
 // listed size (a hand-edited 900 -> 1024, 100 -> 512); 0 (what AUTO was stored as before

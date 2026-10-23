@@ -217,9 +217,6 @@ public:
     void setMpMapId(const std::string& id) { mpMapId_ = id; }
     void setScenarioTrace(tak::sim::ScenarioScript::TraceSink sink) {scenarioTrace_=std::move(sink);}
     void setMissionStem(const std::string& s) { missionStem_ = s; }
-    // The campaign screen's OPPONENT AI for that mission, as an AI level (Normal 2 or
-    // Classic 6); a debug TAK_AI_LEVEL overrides it for a headless --mpmission run.
-    void setMissionAiLevel(uint8_t level) { missionAiLevel_ = level; }
     // Single-player from the menu: it's a private local game, so open the lobby on
     // the Create screen (the browser is empty by design) and mark it single-player
     // (labels change, no password / no game browser).
@@ -2361,9 +2358,6 @@ private:
     bool createGameMods_ = false;   // multiplayer create-dialog GAME MODS toggle (default off)
     std::string mpMapId_;   // set from the launched map basename
     std::string missionStem_;   // campaign mission to host (headless --mpmission)
-    uint8_t missionAiLevel_ = 2;   // its opponents' AI level: a campaign launch sets Settings::campaignAi
-                                   // (CLASSIC by default); the --mpmission harness keeps NORMAL
-                                   // unless TAK_AI_LEVEL picks
     // Per-mission unit whitelist from missions/<stem>.tdf (lowercased ids). When set,
     // the human's conjure menu is filtered to it (a UI restriction; empty = anything).
     std::vector<std::string> missionAllowed_;

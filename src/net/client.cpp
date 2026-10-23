@@ -1100,8 +1100,7 @@ void MpClient::listGames() { send(Msg::ListGames); }
 
 void MpClient::createGame(const std::string& name, const std::string& password,
                           const std::string& mapId, const GameOptions& o, uint8_t capacity,
-                          bool spectate, bool priv, const std::string& mission,
-                          uint8_t missionAiLevel) {
+                          bool spectate, bool priv, const std::string& mission) {
     if(roomRequestPending_)return;
     joinError_.clear();
     resetModTransfer();resetMapTransfer();
@@ -1117,9 +1116,6 @@ void MpClient::createGame(const std::string& name, const std::string& password,
     w.u8(capacity);   // map's start-position count (the server has no map data)
     w.u8(spectate ? 1 : 0);   // host watches, taking no slot
     w.u8(priv ? 1 : 0);       // private (single-player): not in the public game list
-    // A campaign mission's opponent AI level (Normal 2 or Classic 6; the server
-    // plays anything else as Normal).
-    if (!mission.empty()) w.u8(missionAiLevel);
     roomRequestPending_=true;
     send(Msg::CreateGame, w);
 }
