@@ -2356,7 +2356,10 @@ namespace {
                                   int(bt->buildCost));
                     float px = 2.0f * bScale;
                     float tw = blockWidth(tip, px);
-                    float tipx = std::clamp(r.x + r.w / 2 - tw / 2, 6.0f, winW - tw - 6);
+                    // Kept left of the command panel like the icons (a right-aligned
+                    // row's last tooltip would otherwise hang over the mana bulb).
+                    float tipx = std::max(6.0f, std::min(r.x + r.w / 2 - tw / 2,
+                                                         float(mapViewW(winW)) - tw - 6));
                     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 210);
                     SDL_FRect tb{tipx - 6, iconTop - 28 * bScale,
                                  tw + 12, 26 * bScale};
@@ -2370,7 +2373,12 @@ namespace {
                 std::snprintf(q, sizeof q, "TRAINING %s (%zu)",
                               b->buildQueue.front()->name.c_str(),
                               b->buildQueue.size());
-                blockText(q, lay.textX, iconTop - 24 * bScale, 1.8f * bScale,
+                // From the top row's first icon, but never on into the command panel
+                // (a short right-aligned menu leaves the line little room).
+                const float qx = std::max(tak::buildrow::kEdge,
+                    std::min(lay.textX, float(mapViewW(winW)) - tak::buildrow::kEdge -
+                                            blockWidth(q, 1.8f * bScale)));
+                blockText(q, qx, iconTop - 24 * bScale, 1.8f * bScale,
                           {160, 210, 255, 255});
             }
         }
