@@ -561,6 +561,7 @@ struct Editor : Session {
     void aiCheck();
     void aiSelectTab(int tab);
     std::string aiRowExplanation(const AiRosterRow&);
+    std::string aiHeaderFor(int tab) const;      // the header line a new file of this tab gets
     void handleAiProfiles(SDL_Event& e);
     void drawAiProfiles();
     // Group rules (design 4, DEFAULT only): rows of the draft's category-word lines,
@@ -576,6 +577,17 @@ struct Editor : Session {
     void aiPickWord(const std::string& word);
     void aiCommitGroupCell();
     void aiGroupAction(int rule,int what);       // 0 keyword, 1 move up, 2 remove, 3 move down
+    // Copy to other levels (design 3.3, levels only): the shown level's unit settings
+    // written into each level the user ticks (none by default), after the dialog says
+    // what each file becomes. One undo step for all of them (a pack edit has none).
+    // The DEFAULT AI's file is never a target: it reads another grammar.
+    struct AiCopyRow {int tab=0;std::string key,bytes,status,error;bool tick=false,same=false;SDL_Rect box{};};
+    bool aiCopyOpen=false;
+    std::vector<AiCopyRow> aiCopyRows;
+    SDL_Rect aiCopyButton{},aiCopyGo{},aiCopyCancel{};
+    void aiOpenCopyLevels();
+    void aiCopyLevels();
+    void drawAiCopyLevels();
     void drawAiGroups(int x0,int y0,int W,int listBottom);
     void drawAiWordPicker();
     // The unit roster of a game mod (design 7.2, phase 5): when a pack is edited or

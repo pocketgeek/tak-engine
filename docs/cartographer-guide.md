@@ -1436,6 +1436,22 @@ moment, so the window never shows a final percentage.
 says how many units it changes. Units you already set keep their settings,
 and Undo takes a preset back.
 
+#### Copy to other levels
+
+On a level's tab, **COPY TO OTHER LEVELS...** copies that level's unit
+settings to other levels. The dialog lists the five other levels, none ticked,
+and says what each file becomes: a *new file*, or that it *replaces* the
+level's own settings (or a file written by hand). Tick the levels you want and
+press **COPY** (or **Enter**); **CANCEL** or **Esc** closes it.
+
+- Each ticked level then sets exactly the units the copied level sets, with the
+  same weights and limits. Its other unit settings go.
+- The DEFAULT AI is never a target: its file works by different rules.
+- One **Undo** takes back the whole copy. In a game mod's pack there is no undo,
+  as for every pack edit.
+- Each extra level file is one more fixed name that a ticked game mod's file of
+  the same name replaces, so copy only to the levels you mean to change.
+
 #### The DEFAULT AI's own profile
 
 A map starts with **the standard profile** (`aiprofile=DEFAULT` in its map
@@ -2150,8 +2166,6 @@ Start Cartographer from its shortcut and choose **Recover**. See
   archives) are not loaded in the editor. The one exception is the AI Profiles
   window, which lists a game mod's units while that pack is previewed or
   opened there.
-- **AI profiles.** Each level is edited on its own tab; there is no "copy to
-  other levels".
 - **Display names** are cut to 31 bytes in the game.
 - **Text.** The editor's own font covers Latin (including Vietnamese), Greek,
   Cyrillic, Armenian and Georgian letters, common symbols, Japanese kana, Korean

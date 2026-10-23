@@ -1434,7 +1434,8 @@ Deviations from the design:
   once and keeps only its `ai/` files.
 - Check Map shows warnings and errors only; notes stay in the window's CHECK.
 - "Copy to other levels..." (3.3) and group-rule rows are not in this phase (group
-  rules are phase 5); levels are edited one tab at a time.
+  rules are phase 5); levels are edited one tab at a time. (Copy to other levels came
+  in the 2026-10-23 follow-ups.)
 - `whichFile` keeps the install view as the server builds it (an installed `.kmp`
   under `Maps/` can supply the "installed" `ai/default.txt`, as in a room).
 
@@ -1741,6 +1742,31 @@ Validation:
   file and keeps the moved rule selected, with the same covered units; one Ctrl+Z
   restores the bytes and Ctrl+Y redoes it; `^` then gives back the original bytes.
   With the click on `v` disabled, it fails at frame 25.
+
+- "Copy to other levels..." (design 3.3) is built for our levels' tabs. COPY TO OTHER
+  LEVELS... (footer, level tabs only) opens a dialog listing the five other levels,
+  none ticked (fact 7: each extra level file is one more fixed name that can collide),
+  each with what its file becomes: new file, replaces its settings for n units,
+  replaces a file written by hand, or already the same. COPY writes each ticked level's
+  file as the shown level's unit rows under that level's own header (its kept lines
+  stay; a hand-written file is replaced whole), through `saveAiDraft`
+  (`writeAiDraft` + `verifyAiDraft`, levels grammar). All files are set in one frame,
+  so one undo step; a pack edit has no undo, as elsewhere. The DEFAULT AI's file is
+  never a target (another grammar). A hand-written source must be made editable first,
+  and a level that sets nothing has nothing to copy.
+
+Validation:
+
+- `cartographer_aiprofile_copy_ui` (`cartographer_ui_test <data> aiprofile-copy`): a
+  fixture map carries a hand-written `ai/h.txt`. Normal gets two rows through its
+  cells. The dialog offers exactly the five other levels, unticked, with Hard
+  "replaces a file written by hand" and Absurd "new file"; COPY with nothing ticked
+  changes nothing. Ticking Hard and Absurd and pressing COPY writes both in the
+  canonical form with their own level's header, and `applyProfileText` reads the same
+  weights and limits from them as from `ai/n.txt`; no other file is written. One Ctrl+Z
+  restores Hard's hand-written bytes and removes Absurd's file; Ctrl+Y brings both
+  back. A mutation that copies no rows fails it at frame 11. I inspected the dialog in
+  a `TAK_EDITOR_TEST_CAPTURE` capture (`<prefix>-copy.png`).
 
 ## Scope and remaining limitations
 

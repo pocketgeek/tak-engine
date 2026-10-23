@@ -112,14 +112,17 @@ bool cart::Editor::aiEdit(const std::function<bool(AiDraft&)>& change,const std:
     const auto& view=aiTabView();
     if(view.draft.asWritten) {aiNote="This file was written by hand. Press MAKE EDITABLE first, or edit it in the Text view.";return false;}
     AiDraft draft=view.draft;
-    if(draft.header.empty())draft.header=!header.empty()?header:
-        std::string(aiTab?cart::aiLevelName(*aiTabLevel()):"DEFAULT AI")+" profile for "+(aiMod?"game mod \""+aiMod->pack:"map \""+mapName)+
-        "\" ("+key+"). Edit in Cartographer: SCENARIO > AI Profiles.";
+    if(draft.header.empty())draft.header=!header.empty()?header:aiHeaderFor(aiTab);
     if(!change(draft))return false;
     std::erase_if(draft.units,[](const auto& unit){return unit.second.empty();});
     std::string bytes,error;
     if(!cart::saveAiDraft(draft,*aiCatalogue,bytes,error)) {aiNote=error;std::fprintf(stderr,"cartographer: %s\n",error.c_str());return false;}
     aiSetFile(key,bytes);aiNote.clear();return true;
+}
+
+std::string cart::Editor::aiHeaderFor(int tab) const {
+    return std::string(tab?cart::aiLevelName(Difficulty(tab-1)):"DEFAULT AI")+" profile for "+(aiMod?"game mod \""+aiMod->pack:"map \""+mapName)+
+        "\" ("+aiKeyFor(tab)+"). Edit in Cartographer: SCENARIO > AI Profiles.";
 }
 
 // The window's catalogue and unit rows, from the base install's registry or, while a
@@ -186,7 +189,7 @@ void cart::Editor::openAiProfiles() {
     aiMod.reset();aiModSaveOpen=aiModOpenOpen=false;aiView=AiView::Table;
     aiUseRoster(aiPack?aiPacks[size_t(aiPack-1)]:"");
     commitHistory();aiUndoFloor=history.revision();aiRedoRevisions.clear();aiRedoAt=0;
-    aiOpened=aiFiles;aiOpen=true;aiStartOpen=false;aiFocus=AI_NONE;aiWordPick=-2;aiGroupSelected=-1;aiGroupCell=-1;
+    aiOpened=aiFiles;aiOpen=true;aiStartOpen=aiCopyOpen=false;aiFocus=AI_NONE;aiWordPick=-2;aiGroupSelected=-1;aiGroupCell=-1;
     if(aiNote.find("Could not read the units")!=0)aiNote.clear();
     aiName=scenario.aiProfile;aiPendingName.clear();aiScroll=0;aiGroupScroll=aiGroupUnitScroll=0;aiIssues.clear();
     aiViewCache=AiTabView{};menuOpen=-1;
@@ -198,7 +201,7 @@ void cart::Editor::closeAiProfiles() {
     aiCommitText();
     if(aiModDirty()) {aiClosePack([this] {closeAiProfiles();});return;}   // asks first; closes after
     aiMod.reset();aiModSaveOpen=aiModOpenOpen=false;
-    aiOpen=aiStartOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();aiWordPick=-2;aiGroupCell=-1;
+    aiOpen=aiStartOpen=aiCopyOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();aiWordPick=-2;aiGroupCell=-1;
     SDL_StopTextInput();
 }
 
@@ -524,6 +527,83 @@ void cart::Editor::aiGroupAction(int rule,int what) {
     aiGroupSelected=what==1?rule-1:what==3?rule+1:what==2?std::min(rule,int(aiTabView().draft.groups.size())-1):rule;aiGroupUnitScroll=0;
 }
 
+// ---- copy to other levels (design 3.3) ------------------------------------------------------
+// Each ticked level's file becomes the shown level's unit rows under its own header
+// (its kept lines stay; a file written by hand is replaced whole), written and checked
+// by saveAiDraft in the levels grammar. The dialog is the asking: it lists what each
+// file becomes before COPY, and nothing is ticked until the user ticks it.
+void cart::Editor::aiOpenCopyLevels() {
+    aiCommitText();
+    if(!aiTab)return;   // never the DEFAULT AI: another grammar
+    const auto& view=aiTabView();
+    const std::string name=cart::aiLevelName(*aiTabLevel());
+    if(view.draft.asWritten) {aiNote="This file was written by hand. Press MAKE EDITABLE first, then copy its rows.";return;}
+    if(view.draft.units.empty()) {aiNote=name+" sets no units in this "+(aiMod?"pack":"map")+": nothing to copy.";return;}
+    const auto& catalogue=*aiCatalogue;
+    aiCopyRows.clear();
+    for(int t=1;t<7;++t) {
+        if(t==aiTab)continue;
+        AiCopyRow row;row.tab=t;row.key=aiKeyFor(t);
+        const auto it=aiSet().find(row.key);
+        const std::string before=it==aiSet().end()?std::string():bytesText(it->second);
+        AiDraft draft=cart::parseAiDraft(before,AiKind::Level,catalogue);
+        const bool byHand=draft.asWritten;
+        size_t had=0;for(const auto& [unit,rule]:draft.units)had+=!rule.empty();
+        if(byHand)draft=AiDraft{};
+        draft.kind=AiKind::Level;
+        if(draft.header.empty())draft.header=aiHeaderFor(t);
+        draft.units=view.draft.units;
+        if(!cart::saveAiDraft(draft,catalogue,row.bytes,row.error))row.status=row.error;
+        else if(row.bytes==before) {row.same=true;row.status="already the same";}
+        else if(before.empty())row.status="new file";
+        else if(byHand)row.status="replaces a file written by hand";
+        else row.status="replaces its settings for "+std::to_string(had)+" unit"+(had==1?"":"s");
+        aiCopyRows.push_back(std::move(row));
+    }
+    aiCopyOpen=true;if(aiFocus!=AI_NONE)aiFocus=AI_NONE;aiNote.clear();
+}
+
+void cart::Editor::aiCopyLevels() {
+    std::vector<std::string> names;
+    for(const auto& row:aiCopyRows)if(row.tick && row.error.empty() && !row.same)names.push_back(cart::aiLevelName(Difficulty(row.tab-1)));
+    if(names.empty()) {
+        bool any=false;for(const auto& row:aiCopyRows)any|=row.tick;
+        if(any) {aiCopyOpen=false;aiNote="The ticked levels already have these settings: nothing changed.";}
+        return;   // nothing ticked: the dialog stays open
+    }
+    for(const auto& row:aiCopyRows)if(row.tick && row.error.empty() && !row.same)aiSetFile(row.key,row.bytes);   // one undo step: the same frame
+    aiCopyOpen=false;
+    std::string list;
+    for(size_t i=0;i<names.size();++i)list+=(i?i+1==names.size()?" and ":", ":"")+names[i];
+    aiNote="Copied "+std::string(cart::aiLevelName(*aiTabLevel()))+"'s unit settings to "+list+"."+(aiMod?" A pack edit has no undo: CLOSE PACK discards what is not saved.":" Ctrl+Z takes it back.");
+}
+
+void cart::Editor::drawAiCopyLevels() {
+    if(!aiCopyOpen)return;
+    const auto pc=cart::drawPanel(ren,w,h,500,226,"COPY TO OTHER LEVELS");
+    const auto& view=aiTabView();
+    const std::string name=cart::aiLevelName(*aiTabLevel());
+    const size_t rows=view.draft.units.size();
+    cart::drawText(ren,"Copies "+name+"'s settings for "+std::to_string(rows)+" unit"+(rows==1?"":"s")+" ("+aiTabKey()+") to the levels you tick.",pc.x,pc.y,1,220,225,235);
+    cart::drawText(ren,"Each ticked level then sets exactly these units; its other unit settings go.",pc.x,pc.y+12,1,170,185,200);
+    int y=pc.y+32;
+    for(auto& row:aiCopyRows) {
+        row.box={pc.x,y,16,14};
+        SDL_SetRenderDrawColor(ren,96,98,112,255);SDL_RenderDrawRect(ren,&row.box);
+        if(row.tick)cart::drawText(ren,"x",pc.x+5,y+4,1,255,235,200);
+        cart::drawText(ren,std::string(cart::aiLevelName(Difficulty(row.tab-1)))+" -> "+row.key,pc.x+22,y+4,1,220,225,235);
+        const bool warn=!row.error.empty() || row.status.starts_with("replaces");
+        cart::drawText(ren,row.status,pc.x+232,y+4,1,warn?235:160,warn?200:200,warn?130:170);
+        y+=18;
+    }
+    y+=4;
+    y+=12*drawWrapped(ren,"Each extra level file is one more fixed name: a game mod's file of the same name replaces it on every map.",pc.x,y,pc.w,2,150,160,175)+4;
+    drawWrapped(ren,aiMod?"A pack edit has no undo: CLOSE PACK discards what is not saved.":"One Ctrl+Z takes back the whole copy.",pc.x,y,pc.w,1,150,160,175);
+    bool any=false;for(const auto& row:aiCopyRows)any|=row.tick;
+    aiCopyGo=cart::drawButton(ren,pc.x+pc.w-150,pc.y+pc.h-20,70,18,"COPY",any);
+    aiCopyCancel=cart::drawButton(ren,pc.x+pc.w-74,pc.y+pc.h-20,70,18,"CANCEL",false);
+}
+
 std::string cart::Editor::aiRowExplanation(const AiRosterRow& row) {
     const auto& view=aiTabView();
     std::string out=row.label+" ("+row.key+")";
@@ -591,6 +671,19 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
             const int mx=e.button.x,my=e.button.y;
             if(cart::pointIn(mx,my,aiWordCancel)) {aiWordPick=-2;aiFocus=AI_NONE;return;}
             if(cart::pointIn(mx,my,aiWordList))for(const auto& [rect,word]:aiWordRows)if(cart::pointIn(mx,my,rect)) {aiPickWord(word);return;}
+        }
+        return;
+    }
+    if(aiCopyOpen) {   // copy to other levels: ticks, COPY (Enter), CANCEL (Esc)
+        if(e.type==SDL_KEYDOWN) {
+            const auto key=e.key.keysym.sym;
+            if(key==SDLK_ESCAPE)aiCopyOpen=false;
+            else if(key==SDLK_RETURN || key==SDLK_KP_ENTER)aiCopyLevels();
+        } else if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
+            const int mx=e.button.x,my=e.button.y;
+            if(cart::pointIn(mx,my,aiCopyGo))aiCopyLevels();
+            else if(cart::pointIn(mx,my,aiCopyCancel))aiCopyOpen=false;
+            else for(auto& row:aiCopyRows)if(cart::pointIn(mx,my,{row.box.x,row.box.y,224,row.box.h}) && row.error.empty())row.tick=!row.tick;
         }
         return;
     }
@@ -688,6 +781,7 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
               if(aiGroupSelected<0 && !aiTabView().draft.groups.empty())aiGroupSelected=0;}
         return;
     }
+    if(aiTab && cart::pointIn(mx,my,aiCopyButton)) {aiOpenCopyLevels();return;}
     if(cart::pointIn(mx,my,aiEditableButton)) {aiCommitText();aiMakeEditable();return;}
     if(cart::pointIn(mx,my,aiStartButton)) {aiCommitText();if(!aiTab && (aiMod || !cart::standardAiProfile(scenario.aiProfile)))aiStartOpen=true;return;}
     if(cart::pointIn(mx,my,aiInsertButton)) {
@@ -1046,6 +1140,8 @@ void cart::Editor::drawAiProfiles() {
     aiCheckButton=cart::drawButton(ren,bx,by,64,16,aiView==AiView::Issues?"TABLE":"CHECK",aiView==AiView::Issues);bx+=70;
     aiGroupsButton={};
     if(!aiTab) {aiGroupsButton=cart::drawButton(ren,bx,by,96,16,aiView==AiView::Groups?"TABLE":"GROUP RULES",aiView==AiView::Groups);bx+=102;}
+    aiCopyButton={};
+    if(aiTab) {aiCopyButton=cart::drawButton(ren,bx,by,150,16,"COPY TO OTHER LEVELS...",false);bx+=156;}
     if(view.draft.asWritten && !view.key.empty()) {aiEditableButton=cart::drawButton(ren,bx,by,104,16,"MAKE EDITABLE",true);bx+=110;}
     if(aiView==AiView::Text && !aiTextKey.empty()) {aiInsertButton=cart::drawButton(ren,bx,by,96,16,"INSERT UNIT",false);bx+=102;}
     cart::drawText(ren,aiMod?"Pack files: no undo.":"Ctrl+Z undoes.",bx+6,by+5,1,140,150,165);
@@ -1064,8 +1160,9 @@ void cart::Editor::drawAiProfiles() {
         aiStartCancel=cart::drawButton(ren,pc.x+pc.w-74,pc.y+pc.h-20,70,18,"CANCEL",false);
     }
     drawAiWordPicker();
+    drawAiCopyLevels();
     drawAiModDialogs();
-    if(!aiHint.empty() && !aiStartOpen && !aiModSaveOpen && !aiModOpenOpen && aiWordPick==-2 && modal==M_NONE)cart::drawTooltip(ren,w,h,pointerX,pointerY,aiHint);
+    if(!aiHint.empty() && !aiStartOpen && !aiCopyOpen && !aiModSaveOpen && !aiModOpenOpen && aiWordPick==-2 && modal==M_NONE)cart::drawTooltip(ren,w,h,pointerX,pointerY,aiHint);
 }
 
 // ---- game mods (design 3.5, 7.2) -------------------------------------------------

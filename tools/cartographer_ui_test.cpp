@@ -1,6 +1,7 @@
 #include <fstream>
 #include "cartographer/editor.h"
 #include "cartographer/editorstate.h"
+#include "ai/builtinprofile.h"
 #include "client/modelview.h"
 #include "sim/matchsetup.h"
 #include "cartographer/document.h"
@@ -363,6 +364,105 @@ static int aiProfileWorkflow(const char* data) {
     fs::remove_all(root);
     if(result || !failure.empty() || lastFrame>22) {std::cerr<<failure<<'\n';return 1;}
     std::cout<<"PASS: AI Profiles window: level cell, own DEFAULT profile, preset, undo/redo, Save As with root ai/ files and aiprofile=\n";return 0;
+}
+// Copy to other levels (design 3.3) through real input: Normal's two rows (set in its
+// cells) copied to Hard, whose map file was written by hand, and to Absurd, which has
+// none. Nothing is ticked at first and COPY then does nothing; after it, both files are
+// canonical and the engine's applyProfileText reads the same unit values from them as
+// from ai/n.txt; the DEFAULT AI's file is never written; one Ctrl+Z restores Hard's
+// hand-written bytes and removes Absurd's file, and Ctrl+Y brings both back.
+// TAK_EDITOR_TEST_CAPTURE=<prefix> also writes <prefix>-copy.png of the dialog.
+static int aiCopyLevelsWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-aicopy-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);isolateProfile(root.string().c_str());
+    const auto vfs=tak::hpi::mountRetailRoot(data);const auto path=tak::hpi::findMap(vfs,"Ulasem Arena");
+    const auto map=tak::tnt::Map::load(vfs.read(path),path);tak::tnt::Scenario metadata;metadata.kingdom="zhon";
+    const std::string handHard="// my own Hard\nweight araarch 7\nlimit araarch 1\n";   // no magic: opens as written
+    cart::AiFiles fixture;fixture["ai/h.txt"].assign(handHard.begin(),handHard.end());
+    std::string error;
+    if(!cart::writeDocumentBundle(root/"AiCopy.kmp",cart::documentFiles(map,metadata,{},{},{},fixture,"AiCopy"),error))throw std::runtime_error(error);
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    cart::Editor* editor=nullptr;cart::EditorHooks hooks;hooks.attached=[&](cart::Editor& e){editor=&e;};
+    std::string failure,normal,hard,absurd;int lastFrame=0;
+    auto check=[&](bool value,const std::string& message) {if(!value && failure.empty())failure="frame "+std::to_string(lastFrame)+": "+message;};
+    auto file=[&](const std::string& key) {
+        const auto it=editor->aiFiles.find(key);return it==editor->aiFiles.end()?std::string():std::string(it->second.begin(),it->second.end());
+    };
+    auto plays=[](const std::string& text) {tak::ai::Profile p;tak::ai::applyProfileText(text,p);return p;};
+    auto rowFor=[&](int tab)->cart::Editor::AiCopyRow* {
+        for(auto& row:editor->aiCopyRows)if(row.tab==tab)return &row;
+        return nullptr;
+    };
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window*,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;
+        float sx=1,sy=1;SDL_RenderGetScale(renderer,&sx,&sy);
+        auto click=[&](const SDL_Rect& r) {
+            if(r.w<=0) {check(false,"target not drawn");return;}
+            SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.clicks=1;
+            e.button.x=int((r.x+r.w/2)*sx);e.button.y=int((r.y+r.h/2)*sy);SDL_PushEvent(&e);e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
+        };
+        auto capture=[&](const char* suffix) {
+            const char* prefix=SDL_getenv("TAK_EDITOR_TEST_CAPTURE");if(!prefix)return;
+            int pw=0,ph=0;SDL_GetRendererOutputSize(renderer,&pw,&ph);std::vector<uint8_t> rgba(size_t(pw)*ph*4);
+            if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),pw*4)==0)tak::png::write(std::string(prefix)+suffix,pw,ph,rgba);
+        };
+        auto cell=[&](const std::string& key,int column) {
+            for(const auto& c:editor->aiCells)if(c.key==key && c.column==column)return c.rect;
+            return SDL_Rect{};
+        };
+        switch(frame) {
+        case 0:key(SDLK_o,KMOD_CTRL);break;
+        case 1:text((root/"AiCopy.kmp").string());key(SDLK_RETURN);break;
+        case 2:check(file("ai/h.txt")==handHard,"the fixture's hand-written ai/h.txt did not open");key(SDLK_a);break;
+        case 3:check(editor->aiOpen,"A did not open the AI Profiles window");click(editor->aiTabRects[3]);break;
+        case 4:check(editor->aiTab==3 && editor->aiCopyButton.w>0,"Normal has no COPY TO OTHER LEVELS button");click(editor->aiSearchBox);break;
+        case 5:text("araarch");break;
+        case 6:click(cell("araarch",0));break;
+        case 7:text("0");key(SDLK_RETURN);break;
+        case 8:click(cell("araarch",1));break;
+        case 9:text("3");key(SDLK_RETURN);break;
+        case 10:normal=file("ai/n.txt");
+            check(normal.find("\nweight araarch 0\n")!=std::string::npos && normal.find("\nlimit araarch 3\n")!=std::string::npos,"Normal's two rows were not written");
+            click(editor->aiCopyButton);break;
+        case 11:{
+            check(editor->aiCopyOpen && editor->aiCopyRows.size()==5 && !rowFor(3) && rowFor(1) && rowFor(6),"the dialog does not offer exactly the five other levels");
+            bool ticked=false;for(const auto& row:editor->aiCopyRows)ticked|=row.tick;
+            check(!ticked,"a level is ticked before the user ticks it");
+            check(rowFor(4) && rowFor(4)->status=="replaces a file written by hand" && rowFor(5) && rowFor(5)->status=="new file","the dialog does not say what Hard's and Absurd's files become");
+            click(editor->aiCopyGo);break;   // nothing ticked: nothing happens
+        }
+        case 12:check(editor->aiCopyOpen && file("ai/h.txt")==handHard && file("ai/a.txt").empty(),"COPY with nothing ticked changed something");
+            if(rowFor(4))click(rowFor(4)->box);
+            if(rowFor(5))click(rowFor(5)->box);
+            break;
+        case 13:check(rowFor(4) && rowFor(4)->tick && rowFor(5) && rowFor(5)->tick && !rowFor(2)->tick,"the ticks do not follow the clicks");
+            capture("-copy.png");click(editor->aiCopyGo);break;
+        case 14:{
+            hard=file("ai/h.txt");absurd=file("ai/a.txt");
+            check(!editor->aiCopyOpen && editor->aiTab==3,"COPY did not close the dialog on Normal");
+            check(hard.starts_with(cart::kAiProfileMagic) && absurd.starts_with(cart::kAiProfileMagic),"the copies are not in the canonical form");
+            check(hard.find("Hard profile for map")!=std::string::npos && absurd.find("Absurd profile for map")!=std::string::npos,"a copy does not carry its own level's header");
+            const auto n=plays(normal),hp=plays(hard),ap=plays(absurd);
+            check(!n.weight.empty() && !n.limit.empty() && hp.weight==n.weight && hp.limit==n.limit && ap.weight==n.weight && ap.limit==n.limit,
+                  "the engine does not read the same unit values from the copies");
+            check(file("ai/n.txt")==normal && file("ai/e.txt").empty() && file("ai/d.txt").empty() && file("ai/ad.txt").empty(),"COPY touched a level it was not asked to");
+            for(const auto& [key,bytes]:editor->aiFiles)check(cart::aiLevelOf(key).has_value(),"COPY wrote a non-level file: "+key);
+            key(SDLK_z,KMOD_CTRL);break;
+        }
+        case 15:check(file("ai/h.txt")==handHard && file("ai/a.txt").empty() && file("ai/n.txt")==normal,"one Ctrl+Z did not take back the whole copy");
+            key(SDLK_y,KMOD_CTRL);break;
+        case 16:check(file("ai/h.txt")==hard && file("ai/a.txt")==absurd,"Ctrl+Y did not bring the copy back");
+            click(editor->aiDoneButton);break;
+        case 17:{SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        case 18:if(editor->modal==cart::Editor::M_QUITSAVE)click(editor->mQuit);break;
+        default:if(frame>24) {failure+=" (AI copy workflow did not exit)";std::_Exit(3);}
+        }
+    },hooks);
+    fs::remove_all(root);
+    if(result || !failure.empty() || lastFrame>24) {std::cerr<<failure<<'\n';return 1;}
+    std::cout<<"PASS: AI Profiles copy to other levels: nothing ticked first, Normal to Hard (hand-written) and Absurd read the same, one undo step\n";return 0;
 }
 // The AI window's game-mod half, against a SCRATCH data root (the install's entries
 // linked in, a fresh real mods/ folder): Save as game mod into an existing pack in
@@ -2147,6 +2247,7 @@ int main(int argc,char** argv) {
     if(argc==3 && std::string(argv[2])=="aiprofile-mod")return aiModWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="aiprofile-extras")return aiExtrasWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="aiprofile-packs")return aiPackListWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="aiprofile-copy")return aiCopyLevelsWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="templates")return templateWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="rules")return ruleTextWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);
