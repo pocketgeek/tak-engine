@@ -1723,6 +1723,12 @@ if(TAK_TEST_DATA AND TAK_CLASSIC_PRINTWEIGHTS AND Python3_Interpreter_FOUND)
                      --binary $<TARGET_FILE:classic_ai_test> --data "${TAK_TEST_DATA}"
                      --dumps "${TAK_CLASSIC_PRINTWEIGHTS}")
 endif()
+# The retail AI harness's teardown, against a fake kwin_wayland (no retail, no
+# Proton): the display-holder and everything else of the run must be gone.
+if(Python3_Interpreter_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME retail_ai_harness_teardown
+             COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/re/retail_ai_harness_test.py)
+endif()
 
 add_executable(aitool tools/aitool.cpp ${TAK_AI_SOURCES})
 target_link_libraries(aitool PRIVATE tak-formats)

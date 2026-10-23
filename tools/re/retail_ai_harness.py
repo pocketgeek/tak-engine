@@ -13,8 +13,10 @@ template prefix, and per run a reflink copy of the game, a copy of the prefix,
 a private kwin_wayland --virtual display, logs and the JSONL capture. The
 user's own install and Faugus prefixes are never touched: the game is copied
 from --game (default assets/game, the v4.0BB build every RE address is
-verified against). Teardown kills only the PIDs this run started (the kwin it
-launched and every process whose environment names this run's prefix).
+verified against). Teardown kills only the PIDs this run started: the
+display-holder by the PID it recorded, the kwin it launched, GDB, and every
+process whose environment names this run's prefix or its private
+XDG_RUNTIME_DIR (kwin, Xwayland, umu, Proton and the game all carry one).
 
 How a run works (details in tools/re/README-retail-ai.md):
  1. kwin_wayland --virtual --xwayland gives an off-screen X display.
@@ -118,6 +120,8 @@ class Run:
         self.launcher = None
         self.display = None
         self.game_pid = None
+        self.holder_pid = None   # the display-holder's `sleep`, recorded at start
+        self.helpers = []        # other Popen children to stop at teardown (GDB)
 
     # ---- environment -------------------------------------------------
     def env(self):
@@ -133,8 +137,15 @@ class Run:
         self.xdg.mkdir(mode=0o700, parents=True, exist_ok=True)
         marker = self.dir / 'display.txt'
         marker.unlink(missing_ok=True)
+        pid_file = self.dir / 'display-holder.pid'
+        pid_file.unlink(missing_ok=True)
+        # kwin runs this as its client; `exec` keeps the shell's PID for the
+        # sleep, so the PID written first is the one teardown has to stop (kwin
+        # does not keep it in its own process group, and it outlives a kwin
+        # that has already exited).
         holder = self.dir / 'display-holder.sh'
-        holder.write_text('#!/bin/sh\necho "$DISPLAY" > "$1"\nexec sleep 1000000\n')
+        holder.write_text('#!/bin/sh\necho "$$" > "$2.tmp" && mv "$2.tmp" "$2"\n'
+                          'echo "$DISPLAY" > "$1"\nexec sleep 1000000\n')
         holder.chmod(0o755)
         env = dict(os.environ, XDG_RUNTIME_DIR=str(self.xdg))
         env.pop('WAYLAND_DISPLAY', None)
@@ -143,12 +154,13 @@ class Run:
             self.kwin = subprocess.Popen(
                 [*taskset(self.args.cores), 'kwin_wayland', '--virtual', '--xwayland',
                  '--socket', f'tak-rai-{os.getpid()}', '--width', '1024', '--height', '768',
-                 f'{holder} {marker}'], stdout=out, stderr=subprocess.STDOUT, env=env,
+                 f'{holder} {marker} {pid_file}'], stdout=out, stderr=subprocess.STDOUT, env=env,
                 start_new_session=True)
         for _ in range(100):
             if marker.exists() and marker.read_text().strip():
                 self.display = marker.read_text().strip()
-                log(f'virtual display {self.display} (kwin pid {self.kwin.pid})')
+                self.holder_pid = int(pid_file.read_text())
+                log(f'virtual display {self.display} (kwin pid {self.kwin.pid}, holder pid {self.holder_pid})')
                 return
             if self.kwin.poll() is not None:
                 break
@@ -167,13 +179,18 @@ class Run:
         return process
 
     # ---- process ownership ------------------------------------------
-    def owned_pids(self):
-        """PIDs whose environment names this run's prefix (Proton, wine, the game)."""
+    def owned_pids(self, display=False):
+        """PIDs whose environment names this run's prefix (Proton, wine, the game);
+        with display=True also those whose XDG_RUNTIME_DIR is this run's private
+        one (kwin, Xwayland, the display-holder; the wine side carries it too)."""
         # umu passes WINEPREFIX=<prefix>; inside Proton it becomes <prefix>/pfx/ and
         # STEAM_COMPAT_DATA_PATH=<prefix>.
         prefix = str(self.prefix).encode()
+        xdg = str(self.xdg).encode()
         found = []
         for proc in Path('/proc').glob('[0-9]*'):
+            if int(proc.name) == os.getpid():
+                continue
             try:
                 environ = (proc / 'environ').read_bytes()
             except OSError:
@@ -184,7 +201,35 @@ class Run:
                         value.rstrip(b'/') == prefix or value.startswith(prefix + b'/')):
                     found.append(int(proc.name))
                     break
+                if display and key == b'XDG_RUNTIME_DIR' and value.rstrip(b'/') == xdg:
+                    found.append(int(proc.name))
+                    break
         return found
+
+    def _is_holder(self, pid):
+        """The recorded PID is still this run's display-holder sleep (not a reused PID)."""
+        try:
+            argv = Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')
+        except OSError:
+            return False
+        return len(argv) >= 2 and os.path.basename(argv[0]) == b'sleep' and argv[1] == b'1000000'
+
+    @staticmethod
+    def _gone(pid, timeout):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return True
+            # A zombie child of ours counts as gone (nothing left running).
+            try:
+                if Path(f'/proc/{pid}/stat').read_text().split(') ')[-1].startswith('Z'):
+                    return True
+            except OSError:
+                return True
+            time.sleep(0.1)
+        return False
 
     def find_game(self, timeout=90):
         deadline = time.monotonic() + timeout
@@ -214,8 +259,22 @@ class Run:
             time.sleep(2)
         if self.launcher and self.launcher.poll() is None:
             self.launcher.kill()
+        for helper in self.helpers:
+            if helper.poll() is None:
+                helper.kill()
+                helper.wait()
+        # The display-holder by the PID it wrote: it is not in kwin's process
+        # group, and it is left behind whenever kwin has already gone.
+        if self.holder_pid and self._is_holder(self.holder_pid):
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.kill(self.holder_pid, sig)
+                except OSError:
+                    break
+                if self._gone(self.holder_pid, 2):
+                    break
         if self.kwin and self.kwin.poll() is None:
-            # kwin and its display-holder child share the session kwin leads.
+            # kwin leads the session it was started in (Xwayland stays in it).
             try:
                 os.killpg(self.kwin.pid, signal.SIGTERM)
             except OSError:
@@ -224,9 +283,19 @@ class Run:
                 self.kwin.wait(10)
             except subprocess.TimeoutExpired:
                 os.killpg(self.kwin.pid, signal.SIGKILL)
-        left = self.owned_pids()
+                self.kwin.wait()
+        # Anything else that still carries this run's prefix or private
+        # XDG_RUNTIME_DIR is this run's by construction: stop it too.
+        left = self.owned_pids(display=True)
         if left:
-            log(f'warning: processes still alive after teardown: {left}')
+            log(f'warning: processes still alive after teardown, killing: {left}')
+            for pid in left:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            for pid in left:
+                self._gone(pid, 2)
 
     # ---- driving -----------------------------------------------------
     def windows(self):
@@ -413,6 +482,7 @@ class TickPoke:
         # SIGINT interrupts a pending continue so the script still detaches.
         self.process = subprocess.Popen(['timeout', '--signal=INT', '--kill-after=5s', '600s', *commands],
                                         env=env, stdout=self.log, stderr=subprocess.STDOUT)
+        run.helpers.append(self.process)
         deadline = time.monotonic() + 60
         while not self.armed.exists():
             if self.process.poll() is not None or time.monotonic() > deadline:

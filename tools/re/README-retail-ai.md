@@ -97,8 +97,14 @@ How a run works:
    `+PrintWeights <seat> pw<seat>.txt` for every seat. That gives retail's baked
    limit, preference and priority table per unit type. The game keeps running
    while this is typed, so the dump's own `gametime` header is the real time.
-8. Teardown kills only this run's PIDs: the kwin it started, and every process
-   whose `WINEPREFIX`/`STEAM_COMPAT_DATA_PATH` names this run's prefix.
+8. Teardown kills only this run's PIDs: every process whose
+   `WINEPREFIX`/`STEAM_COMPAT_DATA_PATH` names this run's prefix, GDB, the
+   display-holder `sleep` by the PID it wrote to `display-holder.pid` (it is
+   not in kwin's process group, and it outlived kwin whenever kwin had already
+   exited: before this fix every run left one behind), the kwin it started, and
+   last anything still carrying the run's private `XDG_RUNTIME_DIR`.
+   `retail_ai_harness_test.py` (ctest `retail_ai_harness_teardown`) checks this
+   against a fake kwin, without retail.
 
 `--stop-at-lobby` leaves the game in the battle room so you can inspect it.
 Touch `<run>/release` to tear it down.
