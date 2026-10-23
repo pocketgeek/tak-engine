@@ -1,10 +1,12 @@
 #include "ai/classicbrain.h"
 
+#include "ai/classicproduction.h"
 #include "sim/retailai.h"
 #include "sim/sim.h"
 
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <unordered_set>
 
@@ -17,8 +19,8 @@ namespace tak::ai {
 
 ClassicBrain::ClassicBrain(int player, uint32_t roomSeed)
     : player_(player), seed_(seedFor(player, roomSeed)), profile_(catalogue_.size()),
-      info_(catalogue_.size()), count_(catalogue_.size()), completed_(catalogue_.size()),
-      priority_(catalogue_.size()) {
+      info_(catalogue_.size()), menu_(catalogue_.size()), count_(catalogue_.size()),
+      completed_(catalogue_.size()), priority_(catalogue_.size()) {
     classicConstructSquads(squads_, 0, [&](int n) { return rand(n); });
 }
 
@@ -26,13 +28,26 @@ ClassicBrain::ClassicBrain(int player, uint32_t roomSeed, const tak::sim::TypeRe
                            int32_t largestEnemyPopulation)
     : player_(player), seed_(seedFor(player, roomSeed)),
       catalogue_(ClassicCatalogue::from(registry)), profile_(catalogue_.size()),
-      info_(catalogue_.size()), count_(catalogue_.size()), completed_(catalogue_.size()),
-      priority_(catalogue_.size()) {
+      info_(catalogue_.size()), menu_(catalogue_.size()), count_(catalogue_.size()),
+      completed_(catalogue_.size()), priority_(catalogue_.size()) {
     // 0x4f6660: the AI manager (0x40fed0) before the build manager (0x4121e0).
     classicConstructSquads(squads_, largestEnemyPopulation, [&](int n) { return rand(n); });
     for (size_t t = 1; t < catalogue_.size(); ++t) {
         info_[t] = ClassicTypeInfo::from(*catalogue_.types[t], &registry);
         index_.emplace(catalogue_.types[t], uint16_t(t));
+    }
+    // 0x4c1d35: an FBI builder type's menu is CanBuild\<unitname>\*.tdf, each file
+    // name looked up as a unit name (unknown ones dropped), sorted by [Menu]
+    // Priority. The registry's build tree is already in that order, ties by name
+    // (retail keeps ties in its archive listing's order, assumed to be by name;
+    // the order only maps draws to types, not the odds).
+    for (size_t t = 1; t < catalogue_.size(); ++t) {
+        const auto* type = catalogue_.types[t];
+        if (!type || !info_[t].builder) continue;
+        const std::string& name = type->classicFbi.unitName.empty() ? type->id : type->classicFbi.unitName;
+        for (const auto& entry : registry.buildable(name))
+            if (const auto it = catalogue_.byName.find(entry); it != catalogue_.byName.end())
+                menu_[t].push_back(it->second);
     }
     creationPass();
 }
@@ -137,7 +152,11 @@ std::vector<ClassicSquadUnit> ClassicBrain::squadUnits(const tak::sim::World& wo
         s.finished = !u.underConstruction;
         s.carried = u.embarked();
         s.mover = !structure;
-        s.menu = info && info->menu ? 1 : 0;
+        s.type = it == index_.end() ? 0 : it->second;
+        s.menu = int32_t(menu(s.type).size());
+        // A factory's BuildingBuild mission is our production queue. The first
+        // mission's class (U1) matters only to the constructor planner (P4b).
+        s.producing = !u.buildQueue.empty();
         s.x = u.x.v; s.z = u.z.v;
         s.footX = int16_t(t->footX); s.footZ = int16_t(t->footZ);
         s.squad = squadOf(u.id);
@@ -176,16 +195,59 @@ void ClassicBrain::scheduler(const tak::sim::World& world, uint32_t simTick,
         },
         [&](unsigned slot, auto& clock) {
             // Each kind's think reschedules itself (and an empty strike or VTOL
-            // squad goes inactive). Strike recruitment (0x40abd0) is P6, and the
-            // occupied squads' plans come in P4-P7.
-            tak::sim::retailTickAiSquad(squads_.squads[slot], clock, simTick, random,
-                                        [](auto&) {}, [](auto&) {});
+            // squad goes inactive). An occupied base runs its member loop; strike
+            // recruitment (0x40abd0) is P6, and the other squads' plans come in P5-P7.
+            tak::sim::retailTickAiSquad(squads_.squads[slot], clock, simTick, random, [](auto&) {},
+                [&](auto& squad) {
+                    if (squad.kind == tak::sim::RetailAiSquadKind::Base) baseThink(world, int(slot), units, sink);
+                });
         });
     if (!snapshot) return;
     for (const auto& u : units) {
         if (u.squad) squadOf_[u.id] = u.squad;
         else squadOf_.erase(u.id);
     }
+}
+
+uint16_t ClassicBrain::population(const tak::sim::World& world) const {
+    unsigned n = 0;
+    for (const auto& u : world.units())
+        if (u.player == player_ && u.alive() && u.type) ++n;
+    return uint16_t(n);
+}
+
+void ClassicBrain::baseThink(const tak::sim::World& world, int slot, const std::vector<ClassicSquadUnit>& units,
+                             const std::function<void(const tak::net::Command&)>& sink) {
+    classicBaseMembers(squads_, units, slot,
+        // 0x412000 (the threat test) feeds only the constructor and combat
+        // planners, which come with P4b and P5.
+        [](const std::pair<int32_t, int32_t>&, int32_t) { return false; },
+        [&](size_t i) { planFactory(world, units[i], sink); },
+        [](size_t, bool) {},    // 0x40c890: P4b
+        [](size_t, bool) {});   // 0x40d370: P5
+}
+
+void ClassicBrain::planFactory(const tak::sim::World& world, const ClassicSquadUnit& unit,
+                               const std::function<void(const tak::net::Command&)>& sink) {
+    auto random = [&](int n) { return rand(n); };
+    const auto* builder = unit.type ? catalogue_.types[unit.type] : nullptr;
+    if (!builder) return;
+    // Our World's per-player construction allocation is retail's: the store over
+    // the tick's full-rate construction demand, capped at 1 (sim.cpp, 0x51d837).
+    const float allocation = float(world.player(player_).constructionAllocation);
+    classicPlanFactory(allocation, unit.producing, population(world), menu(unit.type),
+        [&](uint16_t t) { return buildWeight(t); },
+        [&](uint16_t t) { return info_[t].lodestoneClass; },
+        [&](uint16_t t) { return catalogue_.types[t] && catalogue_.types[t]->side == builder->side; },
+        [&](uint16_t t) { return info_[t].cost; }, random,
+        [&](uint16_t t) {
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Train; c.player = uint8_t(player_);
+            c.unitId = unit.id; c.targetId = 1;
+            std::strncpy(c.type, catalogue_.types[t]->id.c_str(), sizeof c.type - 1);
+            sink(c);
+            ++queues_;
+        });
 }
 
 void ClassicBrain::tick(const tak::sim::World& world, uint32_t simTick,

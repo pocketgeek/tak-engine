@@ -19,8 +19,11 @@
 // deadline has come), the dying-unit cleanup and the assignment pass: the
 // Monarch into base 1 anchored on its start, every other finished unit into the
 // nearest base with retail's standing orders (a Stance 0 command), and the
-// campaign mass attack. The squads' own thinks still only reschedule, so apart
-// from those Stance (and mass-attack Stop) commands a Classic seat idles.
+// campaign mass attack. P4a: the base think's member loop (ai/classicsquads.h)
+// with retail's factory planner behind it (ai/classicproduction.h): a ready
+// factory in a base draws from its menu with the brain's weights and queues one
+// unit at a time with a Train command. Mobile builders and combat members (P4b,
+// P5) are not planned yet, and nothing after the member loop runs yet.
 
 #include <cstdint>
 #include <functional>
@@ -74,6 +77,14 @@ public:
     const ClassicCatalogue& catalogue() const { return catalogue_; }
     const ClassicProfile& profile() const { return profile_; }
     const std::vector<ClassicTypeInfo>& typeInfo() const { return info_; }
+    // A builder type's menu as retail loads it (0x4c1d35, only for FBI builder
+    // types): its canbuild entries in [Menu] Priority order, as catalogue types.
+    const std::vector<uint16_t>& menu(size_t type) const {
+        static const std::vector<uint16_t> none;
+        return type < menu_.size() ? menu_[type] : none;
+    }
+    // Train commands the factory planner has issued (tests and the debug dump).
+    uint32_t factoryQueues() const { return queues_; }
     // Retail's per-type cache (mgr+0x85 / +0x95, recounted every tick by 0x4119d0):
     // the player's live units of each type, and how many of those are finished.
     const std::vector<int16_t>& counts() const { return count_; }
@@ -123,6 +134,14 @@ private:
     // world rebuilds its visibility lists) draws rand(30), and 0 recomputes the
     // priorities from the cache as the previous tick left it; then the recount.
     void bookkeeping(const tak::sim::World& world, uint32_t simTick);
+    // 0x40b320's member loop for base `slot` (after its reschedule), and the
+    // factory planner 0x40dcb0 for one of its members.
+    void baseThink(const tak::sim::World& world, int slot, const std::vector<ClassicSquadUnit>& units,
+                   const std::function<void(const tak::net::Command&)>& sink);
+    void planFactory(const tak::sim::World& world, const ClassicSquadUnit& unit,
+                     const std::function<void(const tak::net::Command&)>& sink);
+    // The owner's unit count as retail keeps it (player +0xe8): its live units.
+    uint16_t population(const tak::sim::World& world) const;
     void recount(const tak::sim::World& world);
     void recomputePriorities(const tak::sim::World& world);
     // 0x4102f0's pass at the manager's creation (from the registry constructor).
@@ -137,6 +156,8 @@ private:
     ClassicCatalogue catalogue_;
     ClassicProfile profile_;
     std::vector<ClassicTypeInfo> info_;
+    std::vector<std::vector<uint16_t>> menu_;
+    uint32_t queues_ = 0;
     std::unordered_map<const tak::sim::UnitType*, uint16_t> index_;
     std::vector<int16_t> count_, completed_;
     std::vector<uint8_t> priority_;

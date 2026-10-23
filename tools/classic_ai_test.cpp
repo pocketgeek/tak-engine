@@ -2,7 +2,7 @@
 // baker, the per-type facts and the bookkeeping clock with its dynamic build
 // priorities on a fixed World, the squad layer (constructor rolls, assignment),
 // and (with a data directory) the shipped profile through the real VFS and a
-// Classic seat's squads in a game on Abnar's Terrace.
+// Classic seat's squads and its factories' production in games on Abnar's Terrace.
 //
 //   classic_ai_test                 unit tests
 //   classic_ai_test <retail-root>   + the shipped data checks
@@ -22,21 +22,26 @@
 //                           "<priority>*n <final seed> <draws>"
 //   classic_ai_test --squad-ctor    oracle mode for tools/re/check_ai_squad_ctor.py
 //   classic_ai_test --assignment    oracle mode for tools/re/check_ai_assignment.py
+//   classic_ai_test --factory-think oracle mode for tools/re/check_ai_factory_think.py
 //       (line layouts in those scripts and in the oracle functions below)
 #include "ai/ai.h"
 #include "ai/classicbrain.h"
 #include "ai/classicprofile.h"
+#include "ai/classicproduction.h"
 #include "ai/classictypes.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
+#include "sim/retailconstruction.h"
 #include "sim/sim.h"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 
@@ -532,6 +537,92 @@ static void abnarSquads(const char* root) {
           "all of them are in base 1, the only occupied base");
 }
 
+// The engine game test for P4a: a Classic seat of each faction with a factory
+// (Aramon keep, Veruna keep, Taros dungeon) given at the start on Abnar's
+// Terrace, against an idle seat, for 2 minutes of the World's own economy. The
+// factory joins base 1 and is planned by the base think: every Train is one unit
+// of a same-side type from its menu with a draw weight > 0 (so under its profile
+// limit), queued only while the factory has nothing in production; live counts
+// never pass a profile limit; and trained units come out and join the base.
+static void classicFactories(const char* root) {
+    auto vfs=hpi::mountRetailRoot(root);
+    sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
+    const auto map=hpi::findMap(vfs,"Abnar's Terrace");
+    // The last seat runs its own profile: the Swordsman locked at 2 (the first,
+    // exact line wins), every other type at 0, so only Swordsmen may come out.
+    struct Seat { int faction;const char* factory;const char* label;const char* script; };
+    for (const Seat seat:{Seat{0,"arakeep","Aramon keep",nullptr},Seat{2,"verkeep","Veruna keep",nullptr},
+                          Seat{1,"tardung","Taros dungeon",nullptr},
+                          Seat{0,"arakeep","Aramon keep, limits 2 Swordsmen / 0 others","limit arasword 2\nlimit ALL 0\n"}}) {
+        sim::World w;w.setVisPlayer(-1);
+        sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
+        config.slots={{true,0,0,1.0f},{true,seat.faction,1,1.0f,true,false}};
+        const auto starts=sim::setupMatch(w,reg,config);
+        const auto* factoryType=reg.find(seat.factory);
+        if (starts.size()<2 || !factoryType) { check(false,"Abnar's Terrace seats two players, and the factory type exists");return; }
+        ai::Controller controller(1,reg,ai::Profile{},0x5eed+uint32_t(seat.faction),ai::Difficulty::Classic,{starts[0]});
+        controller.setClassicProfile(seat.script ? ai::ClassicProfileScript{"test",seat.script}
+                                                 : ai::classicProfileScript(vfs,ai::classicMapAiProfile(vfs,map)));
+        controller.setClassicStart(1,starts[1].first,starts[1].second);
+        const ai::ClassicBrain& brain=*controller.classicBrain();
+        const auto& cat=brain.catalogue();
+        const float sx=starts[1].first,sz=starts[1].second;
+        // Toward the map's middle, clear of the Monarch.
+        const float dx=sx<w.mapW()*8.0f ? 1.f : -1.f,dz=sz<w.mapH()*8.0f ? 1.f : -1.f;
+        const int factory=w.spawn(factoryType,sx+dx*192,sz+dz*192,0.0f,1);
+        const size_t ft=[&]{auto it=cat.byName.find(seat.factory);return it==cat.byName.end() ? size_t(0) : size_t(it->second);}();
+        const auto& menu=brain.menu(ft);
+        int trains=0,offMenu=0,busy=0,unweighted=0,wrongUnit=0,overLimit=0,produced=0;
+        std::map<std::string,int> byType;
+        std::set<int> seen;std::map<int,uint32_t> born;
+        uint32_t firstOut=0,joined=0;
+        for (uint32_t tick=0;tick<3600;++tick) {
+            controller.tick(w,tick,[&](const net::Command& c) {
+                if (c.kind==net::Cmd::Train) {
+                    ++trains;
+                    if (c.unitId!=factory || c.targetId!=1) ++wrongUnit;
+                    const std::string id=c.type;++byType[id];
+                    const auto* t=reg.find(id);
+                    const auto it=t ? cat.byName.find(t->classicFbi.unitName.empty() ? t->id : t->classicFbi.unitName)
+                                    : cat.byName.end();
+                    if (it==cat.byName.end() || std::find(menu.begin(),menu.end(),it->second)==menu.end() ||
+                        t->side!=factoryType->side) ++offMenu;
+                    else if (brain.buildWeight(it->second)<=0) ++unweighted;
+                    if (const auto* f=w.unit(factory);!f || !f->buildQueue.empty()) ++busy;
+                }
+                sim::applyCommand(w,reg,c);
+            });
+            w.tick(1.f/30.f);
+            std::map<const sim::UnitType*,int> live;
+            for (const auto& u:w.units()) {
+                if (u.player!=1 || !u.alive() || !u.type) continue;
+                ++live[u.type];
+                if (u.id!=factory && !u.type->commander && seen.insert(u.id).second) { ++produced;born[u.id]=tick; }
+                if (!firstOut && born.count(u.id) && !u.underConstruction) firstOut=tick;
+                if (!joined && born.count(u.id) && brain.squadOf(u.id)>=1 && brain.squadOf(u.id)<=20) joined=tick;
+            }
+            for (const auto& [t,n]:live) {
+                const auto it=cat.byName.find(t->classicFbi.unitName.empty() ? t->id : t->classicFbi.unitName);
+                if (it!=cat.byName.end() && t!=factoryType && !t->commander && !brain.profile().allows(it->second,n-1)) ++overLimit;
+            }
+        }
+        std::string mix;
+        for (const auto& [id,n]:byType) mix+=" "+id+" x"+std::to_string(n);
+        std::printf("  %s: menu %zu, %d Train commands (%u queues),%s; %d units produced, first out at tick %u, "
+                    "first in a base at %u\n",seat.label,menu.size(),trains,brain.factoryQueues(),mix.c_str(),produced,
+                    firstOut,joined);
+        const std::string what=std::string(seat.label)+": ";
+        check(!menu.empty() && trains>=2 && wrongUnit==0,(what+"the factory trains, one unit per Train command").c_str());
+        check(offMenu==0 && unweighted==0,(what+"every pick is a same-side type of its menu with a draw weight > 0").c_str());
+        check(busy==0,(what+"a unit is queued only while the factory has nothing in production").c_str());
+        check(overLimit==0,(what+"live counts stay within the profile's limits").c_str());
+        check(produced>=1 && firstOut>0 && joined>=firstOut,(what+"trained units come out and join a base squad").c_str());
+        if (seat.script)
+            check(byType.size()==1 && byType.count("arasword") && byType["arasword"]==2,
+                  (what+"exactly two Swordsmen are trained, nothing else").c_str());
+    }
+}
+
 // The port's side of tools/re/check_ai_assignment.py: 0x40fe80 then 0x40eeb0 on
 // the case's units and squads (see the script for the line layout).
 static int assignmentOracle() {
@@ -579,6 +670,84 @@ static int assignmentOracle() {
         }
         std::printf(" %zu",log.size());
         for (const auto& [i,k]:log) std::printf(" %d %d",i,k);
+        std::printf("\n");
+    }
+    return 0;
+}
+
+// The port's side of tools/re/check_ai_factory_think.py: the economy step's
+// allocation (sim::RetailConstructionResources), then one base think through
+// the brain's own templates -- the squad clock, classicBaseMembers and
+// classicPlanFactory -- with the case's build-manager and type tables (see the
+// script for the line layout).
+static int factoryThinkOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        uint32_t tick,seed,storedBits,overrideBits,producedBits,incomeBits,storageBits,demandBits;
+        int slot,limited,population,threat;int32_t anchor;double total,excess;
+        in>>tick>>slot>>anchor>>seed>>limited>>population>>threat>>storedBits>>overrideBits>>producedBits
+          >>total>>excess>>incomeBits>>storageBits>>demandBits;
+        sim::RetailConstructionResources r;
+        r.stored=std::bit_cast<float>(storedBits);r.capacityOverride=std::bit_cast<float>(overrideBits);
+        r.produced=std::bit_cast<float>(producedBits);r.totalProduced=total;r.excess=excess;
+        r.beginTick(std::bit_cast<float>(incomeBits),std::bit_cast<float>(storageBits),std::bit_cast<float>(demandBits));
+        ai::ClassicSquads s;
+        auto table=[&](std::vector<std::optional<ai::ClassicCell>>& t) {
+            size_t n;in>>n;t.resize(n);
+            for (auto& c:t) { int valid,x,z;in>>valid>>x>>z;if (valid) c=ai::ClassicCell{int16_t(x),int16_t(z)}; }
+        };
+        table(s.starts);table(s.sites);
+        struct Type { int pref,prio,limit,count,lode,side,commander,menuField;float cost;std::vector<uint16_t> menu; };
+        size_t ntypes;in>>ntypes;
+        std::vector<Type> types(ntypes);
+        for (auto& t:types) {
+            uint32_t cost;size_t k;
+            in>>t.pref>>t.prio>>t.limit>>t.count>>t.lode>>t.side>>cost>>t.commander>>t.menuField>>k;
+            t.cost=std::bit_cast<float>(cost);t.menu.resize(k);
+            for (auto& e:t.menu) in>>e;
+        }
+        size_t n;in>>n;
+        std::vector<ai::ClassicSquadUnit> units(n);
+        for (size_t i=0;i<n;++i) {
+            auto& u=units[i];u.id=int(i);
+            uint32_t flags,f108;int t,held,carrier,mover,fx,fz,producing,first;
+            in>>flags>>t>>f108>>held>>carrier>>mover>>u.x>>u.z>>fx>>fz>>producing>>first;
+            u.flags=flags;u.type=uint16_t(t);u.commander=types[size_t(t)].commander!=0;
+            const float remaining=std::bit_cast<float>(f108);
+            u.finished=!(remaining<0.0f || remaining>0.0f);   // fcomp: equal or unordered
+            u.held=held!=0;u.carried=carrier!=0;u.carrierHolds=carrier==1;u.mover=mover!=0;
+            u.menu=types[size_t(t)].menuField;u.footX=int16_t(fx);u.footZ=int16_t(fz);
+            u.producing=producing!=0;u.missionClass=uint8_t(first);u.squad=slot;
+        }
+        auto& base=s.squads[size_t(slot)];
+        base.kind=sim::RetailAiSquadKind::Base;base.parameters[0]=anchor;
+        size_t m;in>>m;base.members.resize(m);
+        for (auto& id:base.members) in>>id;
+        std::vector<int> draws;
+        std::vector<std::array<int,3>> log;
+        auto random=[&](int k){draws.push_back(k);return sim::retailRandom(seed,k);};
+        sim::RetailAiGroupClock clock{true,0};
+        sim::retailTickAiSquad(base,clock,tick,random,[](auto&){},[&](auto&) {
+            ai::classicBaseMembers(s,units,slot,
+                [&](const std::pair<int32_t,int32_t>&,int32_t){log.push_back({0,0,0});return threat!=0;},
+                [&](size_t i) {
+                    const auto& b=types[units[i].type];
+                    ai::classicPlanFactory(r.allocation,units[i].producing,uint16_t(population),b.menu,
+                        [&](uint16_t t){const auto& e=types[t];
+                            return sim::retailAiBuildWeight(limited!=0,e.limit,int16_t(e.count),uint8_t(e.pref),int8_t(e.prio));},
+                        [&](uint16_t t){return types[t].lode!=0;},
+                        [&](uint16_t t){return types[t].side==b.side;},
+                        [&](uint16_t t){return types[t].cost;},random,
+                        [&](uint16_t t){log.push_back({1,int(i),int(t)});});
+                },
+                [&](size_t i,bool danger){log.push_back({2,int(i),int(danger)});},
+                [&](size_t i,bool danger){log.push_back({3,int(i),int(danger)});});
+        });
+        std::printf("%u %d %u %zu",clock.deadline,base.parameters[0],seed,draws.size());
+        for (int d:draws) std::printf(" %d",d);
+        std::printf(" %zu",log.size());
+        for (const auto& e:log) std::printf(" %d %d %d",e[0],e[1],e[2]);
         std::printf("\n");
     }
     return 0;
@@ -656,12 +825,13 @@ int main(int argc,char** argv) {
     if (argc==3 && std::strcmp(argv[1],"--printweights")==0) return printWeightsOracle(argv[2]);
     if (argc==2 && std::strcmp(argv[1],"--assignment")==0) return assignmentOracle();
     if (argc==2 && std::strcmp(argv[1],"--squad-ctor")==0) return squadCtorOracle();
+    if (argc==2 && std::strcmp(argv[1],"--factory-think")==0) return factoryThinkOracle();
     profileRules();
     typeFacts();
     typeInfoAndPriorities();
     squadConstruction();
     squadAssignment();
-    if (argc>1) { shippedData(argv[1]);abnarSquads(argv[1]); }
+    if (argc>1) { shippedData(argv[1]);abnarSquads(argv[1]);classicFactories(argv[1]); }
     std::printf("%s\n",fails ? "FAILED" : "all passed");
     return fails ? 1 : 0;
 }

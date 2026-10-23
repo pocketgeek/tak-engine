@@ -71,6 +71,10 @@ struct ClassicSquadUnit {
     int32_t x = 0, z = 0;       // +0x68 / +0x70, 16.16 pixels
     int16_t footX = 0, footZ = 0;   // +0x78 / +0x7a
     int32_t squad = 0;          // +0xc8: 0 unassigned, -1 dropped while dying, else a slot
+    // Read by the base think's member loop (0x40b320):
+    uint16_t type = 0;          // the unit's catalogue type (unit +0xb4)
+    bool producing = false;     // a BuildingBuild mission is in its list (the factory planner's "busy")
+    uint8_t missionClass = 0;   // its first mission's class byte (descriptor +0x10); 0 = no mission
     bool live() const { return (flags & kLive) && !(flags & kDying); }
     sim::RetailAiUnitClass unitClass() const { sim::RetailAiUnitClass c; c.flags = flags; return c; }
 };
@@ -369,6 +373,50 @@ void classicAssign(ClassicSquads& s, std::vector<ClassicSquadUnit>& units, const
         standing(i);
         const unsigned slot = classicNearestBase(s, units, index, u.x, u.z);
         classicSetSquad(s, units, i, slot ? int32_t(slot) : 2);
+    }
+}
+
+// --- the base think ---------------------------------------------------------------
+
+// 0x40b320 after its reschedule and empty-base test (retailTickAiSquad), up to
+// the end of its member loop:
+//  - a base anchored on a record that no longer exists loses its anchor;
+//  - no centre (0x40c610) or ring-0 radius (0x40cf30): nothing more this think;
+//  - `threat(centre, radius)` is 0x412000, "a listed enemy inside the ring";
+//  - then each member, in member order, that is live, selectable, finished
+//    (+0x108 == 0; unordered counts as equal), not held (+0x104) and not carried
+//    by a non-holder is planned: a type with a build menu goes to the factory
+//    planner 0x40dcb0 if it is a structure, else -- unless it is a non-commander
+//    whose first mission has class 1 or 2 -- to the constructor planner 0x40c890
+//    if it has a navigator; a type without a menu goes to the combat planner
+//    0x40d370 if it has a navigator. Planners get units[i] (and the threat).
+// The rest of the think (quota growth, surpluses, transfers, expansion, waves)
+// comes after the loop and is not part of this function.
+template<class Threat, class Factory, class Constructor, class Combat>
+void classicBaseMembers(ClassicSquads& s, const std::vector<ClassicSquadUnit>& units, int slot,
+                        Threat threat, Factory factory, Constructor constructor, Combat combat) {
+    auto& base = s.squads[size_t(slot)];
+    if (base.parameters[0] != 0 && !classicAnchor(s, base.parameters[0])) base.parameters[0] = 0;
+    const detail::ClassicUnitIndex index(units);
+    const auto centre = classicBaseCentre(s, units, index, slot);
+    if (!centre) return;
+    const auto radius = classicBaseRadius(s, units, index, slot, 0);
+    if (!radius) return;
+    const bool danger = threat(*centre, *radius);
+    for (size_t k = 0; k < base.members.size(); ++k) {
+        const auto it = index.at.find(base.members[k]);
+        if (it == index.at.end()) continue;
+        const size_t i = it->second;
+        const auto& u = units[i];
+        if (!(u.flags & ClassicSquadUnit::kLive) || (u.flags & ClassicSquadUnit::kDying) ||
+            !(u.flags & ClassicSquadUnit::kSelectable) || !u.finished || u.held || (u.carried && !u.carrierHolds))
+            continue;
+        if (u.menu != 0) {
+            if (u.flags & ClassicSquadUnit::kStructure) factory(i);
+            else if ((u.commander || (u.missionClass != 1 && u.missionClass != 2)) && u.mover) constructor(i, danger);
+        } else if (u.mover) {
+            combat(i, danger);
+        }
     }
 }
 

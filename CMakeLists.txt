@@ -1725,17 +1725,19 @@ if(TAK_TEST_DATA AND TAK_CLASSIC_PRINTWEIGHTS AND Python3_Interpreter_FOUND)
 endif()
 # Opt-in (it needs the retail binary at assets/game and Python's unicorn, which
 # CI has neither of): -DTAK_CLASSIC_ORACLES=ON runs the Classic brain's squad
-# layer against retail's routines in emulation -- the manager constructor and
-# the assignment pass through classic_ai_test, the scheduler, squad clocks and
-# nearest-base selection through the shared templates in retail_ai_test.
+# and production layers against retail's routines in emulation -- the manager
+# constructor, the assignment pass and the base think's factory path (with the
+# economy step's allocation) through classic_ai_test; the scheduler, squad
+# clocks, nearest-base selection, factory planner, menu draw and entry weight
+# through the shared templates in retail_ai_test.
 option(TAK_CLASSIC_ORACLES "run the Classic AI emulation oracles (needs KINGDOMS.icd and unicorn)" OFF)
 if(TAK_CLASSIC_ORACLES AND Python3_Interpreter_FOUND)
-    foreach(oracle squad_ctor assignment)
+    foreach(oracle squad_ctor assignment factory_think)
         add_test(NAME classic_ai_${oracle}
                  COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/re/check_ai_${oracle}.py
                          --binary $<TARGET_FILE:classic_ai_test>)
     endforeach()
-    foreach(oracle scheduler squads base_selection)
+    foreach(oracle scheduler squads base_selection factory_plan build_choice build_weight)
         add_test(NAME classic_ai_${oracle}
                  COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/re/check_ai_${oracle}.py
                          --binary $<TARGET_FILE:retail_ai_test>)

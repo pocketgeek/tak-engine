@@ -1,6 +1,6 @@
 # Classic AI level: retail AI synthesis and implementation plan
 
-**Status:** P0, phase C, P1 and P2 are on `task-classic-ai` (not yet on main). Since 2026-10-22 the
+**Status:** P0, phase C, P1, P2, P3 and P4a are on `task-classic-ai` (not yet on main). Since 2026-10-22 the
 retail game is no longer run: each routine is checked by an emulation oracle and our own game tests
 (§5); phase C stays as optional tooling. P0 (plumbing, protocol
 290): `Difficulty::Classic` = 6, the lobby's CLASSIC entry, and a `ClassicBrain` stub
@@ -42,7 +42,21 @@ massattack path (Stance, Stop, slot 98) is in, wired to nothing until P8. Checke
 (0x40fe80 + 0x40eeb0 with retail's own set-squad/nearest-base/centre/radius code, 4000 passes), each
 shown to fail on planted bugs, plus the reused scheduler/squads/base-selection oracles (opt-in ctest
 `-DTAK_CLASSIC_ORACLES=ON`), and by an Abnar's Terrace game test (classic_ai_data). The squads' own
-thinks still only reschedule, so a Classic seat still builds nothing. P4a onward are open.
+thinks still only reschedule, so a Classic seat still builds nothing. P4a (factory planner) is on the
+branch too: each occupied base's think runs retail's member loop (`classicBaseMembers` in
+`classicsquads.h`: stale anchors dropped, no centre or ring-0 radius -> nothing, then the ready-member
+filter and the dispatch by menu/structure/navigator), and a ready factory goes to retail's factory planner
+(`src/ai/classicproduction.h`: `classicPlanFactory` over `classicMenuDraw`, the shared
+`retailAiPlanFactory`/`retailAiChooseBuild`/`retailAiBuildWeight` underneath) on the brain's stream, which
+queues one unit at a time with a Train command. The brain keeps each FBI builder type's menu in canbuild
+[Menu] Priority order. Checked by `tools/re/check_ai_factory_think.py` (retail's economy step 0x51d837 then
+0x40b320 to the end of its member loop, with the real 0x40dcb0/0x412d00/0x412c90/0x409890/0x410de0 under
+it; 4000 cases, shown to fail on four planted bugs), the reused check_ai_factory_plan/build_choice/
+build_weight (now in the opt-in oracle set), and an Abnar's Terrace game test (classic_ai_data: an
+Aramon keep, a Veruna keep and a Taros dungeon given at the start train menu units one at a time within
+the profile limits; a custom profile limiting all but two Swordsmen to 0 gets exactly two Swordsmen). U3
+and U4 are settled. Mobile builders and combat members are dispatched but not planned yet (P4b, P5),
+and nothing after the member loop runs yet. P4b onward are open.
 
 2026-10-22. The research behind this plan (the phase-1 audit) was written before any code. The new
 level is called **Classic** (lobby name CLASSIC, `Difficulty::Classic`, `ClassicBrain`); "retail"
@@ -141,10 +155,28 @@ built: 21 x 4 = 84).
 7. **Launch** (§1.7) when groundReady or airReady; naval separately. (S)
 
 ### 1.6 Production planners
-**Factory planner 0x40dcb0** (repo-E, check_ai_factory_plan):
-- It does nothing if allocation < 0.7/3 (~0.2333) or anything is queued (one unit at a time).
+**Factory planner 0x40dcb0** (repo-E, check_ai_factory_plan; P4a E: check_ai_factory_think):
+- It does nothing if allocation < 0.7/3 (~0.2333) or the factory has a `BuildingBuild` mission anywhere in
+  its mission list (the name at 0x605064, resolved by 0x4d4bf0; one unit at a time). Allocation is the
+  owner's resource object +8, which the economy step 0x51d837 sets to stored / (demand x 0.03333333) when
+  that is below 1, else 1 (U4). The port reads it as our World's `constructionAllocation` (the store over
+  the tick's full-rate construction demand, capped at 1) and takes "a BuildingBuild mission" as a
+  non-empty production queue.
 - It picks with 0x412d00(special=0). If allocation < 0.7 and cost > 500: b = int((cost-500)/300+2),
-  and it defers when rand(b) != 0 AND population < rand(30)+30. Otherwise it queues one.
+  and it defers when rand(b) != 0 AND population < rand(30)+30. Otherwise it queues one: 0x429810(type,
+  factory, 1), the same call a player's build button makes, which for a unit without a navigator adds one
+  BuildingBuild mission of one unit (our Train command, count 1). It has no unit-cap check (U8 is
+  elsewhere).
+- It is reached from the base think's member loop (0x40b320) for a ready member (live, not dying,
+  selectable 0x20, +0x108 == 0 where an unordered compare counts as equal, +0x104 == 0, not carried by a
+  non-holder) whose type has a menu (+0x12e != 0) and that is a structure. A mobile member with a menu goes
+  to 0x40c890 unless it is a non-commander whose first mission has class 1 or 2; one without a menu goes to
+  0x40d370 if it has a navigator. Before the loop: a stale anchor (0x40c750 fails) is cleared, and with no
+  centre or ring-0 radius the think ends; the threat test 0x412000 runs once, after the radius.
+- The menu (0x4c1d35) exists only for FBI builder types: CanBuild\<unitname>\*.tdf, each file name looked
+  up as a unit name (unknown ones dropped), a missing [Menu] Priority read as 9999999999, then a bubble sort
+  ascending by Priority that keeps ties in listing order. Our build tree sorts by Priority with ties by name
+  and defaults a missing Priority to 99 (the order only maps RNG values to types, not the odds).
 - There is **no rally point**. The unit leaves by its exit, joins the base, and patrols (§1.8).
 
 **Constructor planner 0x40c890(unit, threat)** (E via an emulation of the planner, plus S):
@@ -283,7 +315,7 @@ transfers (0x40b9e0) happen only between anchored bases on a shared zone.
 | Wave roll ground terms: E/5 then E/2 (squads) vs E/10 then E/5 (targeting) | **E/10, then E/5** | S: re-read at 0x40c2cc..0x40c31e: the two divisions are by 10 and by 5 |
 | 0x40d010 pick: "fewest enemies" (squads) vs "maximise min distance" (placement) | **max-min squared distance; the first valid point when no enemies** | S: re-read at 0x40d1be..0x40d263 |
 | Monarch retreat: can cast -> 1/4 (squads) vs 1/8 (build, placement) | **castable halves the threshold (1/8 at full mana)** | the build note's planner emulation is E, the squads note is S only |
-| lowFunds quantity: stored fraction (targeting) vs allocation (build, placement) | **allocation (`player+0x10c -> +8`)** | 2 of 3, and it matches the ported 0x51d837 object. Still open: U4 |
+| lowFunds quantity: stored fraction (targeting) vs allocation (build, placement) | **allocation (`player+0x10c -> +8`)** | 2 of 3, and it matches the ported 0x51d837 object; settled by emulation in P4a (U4) |
 | Category 6 = transports (targeting) vs naval combat (squads, build) | **naval combat** | squads decoded the FBI flag map |
 | The "reserve" squad is slot 0 (targeting) vs slot 96 (squads) | **96** | live poll: one kind-4 squad; the ctor loops in squads |
 | Weight debug print columns: the comparison note read col2 = pref, col3 = priority | **col2 = priority, col3 = pref** | the config note read the printer 0x413030; col3's on/off values match the weight-switch rule, col2 matches 0x410810 |
@@ -351,8 +383,8 @@ defensiveAi; and the Controller LCG.
 |---|---|---|---|
 | U1 | Mission class bytes 1/2 (attack-type), 7; flags 0x2000 (idle-ish), 0x10000 (interruptible), 8 (build), 0x200/0x400 | contact test, 1/50 re-plan, busy builders | Read the mission descriptor table (0x4df87c, getter 0x4d4cc0 -> +0x10) statically, and emulate the mission constructors the AI calls to see which class bytes and flags they set (no retail run). Then write a mapping table to our `Order` kinds and `autoTarget` |
 | U2 | Whether the 1/50 guard at the end of 0x40c890 can replace the build just issued | builders abandoning sites | Emulate 0x40c890 -> 0x40d370 with 0x4d78a0 instrumented (the planner emulation); check 0x4d78a0's replace/queue argument |
-| U3 | Factory guard byte at 0x604914 (which mission counts as "busy factory") | duplicate-factory rule | Read the data at 0x604914 and match it against the mission table (static, minutes) |
-| U4 | Confirm that `[player+0x10c]+8` is the allocation (min(1, stored/demand)), not stored/capacity | lowFunds 0.7 gate, factory 0.2333 gate | Emulate 0x51d837's store (and the economy step that calls it) on synthetic stores and demands |
+| U3 | Factory guard byte at 0x604914 (which mission counts as "busy factory") | duplicate-factory rule | **RESOLVED (S, P4a):** 0x604914 and the factory planner's 0x605064 are both the mission name "BuildingBuild", resolved to its kind by 0x4d4bf0 (a binary search of the 25-byte mission table at 0x62db84); a busy factory is one with a BuildingBuild mission, which 0x429810 adds for every queued unit of a unit without a navigator |
+| U4 | Confirm that `[player+0x10c]+8` is the allocation (min(1, stored/demand)), not stored/capacity | lowFunds 0.7 gate, factory 0.2333 gate | **RESOLVED (S + E, P4a):** 0x51d837 writes resource +0 stored, +4 capacity (storage, or 1), +8 = stored / (demand x 0.03333333) when that demand exceeds the store, else 1. `check_ai_factory_think.py` runs that block and then 0x40dcb0 reading the same object: 4000 cases match the port's allocation (sim::RetailConstructionResources), and the same port gated on stored/capacity instead differs in 110 of 1000. The constructor planner's lowFunds reads the same field (0x40c890) |
 | U5 | Expansion gate details 0x40b5c0..0x40b695; units of the "radius 50" in 0x411ae0 for the enemy check | expansion frequency | Static read, then emulate 0x40bc20 on synthetic sites/enemies (new check_ai_expand) |
 | U6 | Unit `+0x130 & 0x2000` (excluded from threats and targets) and `+0x104` (must be 0 for a member) | filters | Find the setters by xref and read them statically; emulate a setter where the static reading is unclear (I: dying/being-built-by-transport, or teleporting). **P3 (S):** 0x2000 is cleared and 0x20 ("selectable") set by the MakeSelectable mission handler 0x401450, so 0x2000 reads as "not yet selectable" (a unit still leaving its factory). The port takes 0x20 as "finished" and +0x104 as always 0, and treats a carried unit as never in a holder (+0xa8 -> 0x4000000); still open: +0x104's setter and the holder bit |
 | U7 | List +0x25 (enemies with +0x130 0x100) used when the AI owns an `istargetingupgrade` unit | defence candidates | `tdftool` grep shipped FBIs for istargetingupgrade. If none ship, ignore it |
@@ -465,7 +497,7 @@ follows the unseeded C-runtime `rand`), so a seed varies retail games but cannot
 | **P1 Profile** (on the branch) | `ClassicProfile`: pref/locks/categories/limits/first-writer-wins/unlisted defaults; aiprofile selection | unit tests from config's emulated cases (classic_ai, classic_ai_data) | `check_ai_profile.py` (0x538f00 -> 0x410c80/0x410d50 on random scripts); `check_ai_printweights.py` pref and limit columns of all 20 captured tables |
 | **P2 Type info + priority clock** (on the branch) | `ClassicTypeInfo`, the 7-tick count/completed cache, the rand(30) priority refresh, shortfall/fill from World, the creation pass | classic_ai (a fixed World: creation pass, clock, recount, priorities) | check_build_priority (0x410810), check_player_cache (0x4121c0/0x411a90), check_resource_history; `check_ai_printweights.py` (every captured table reproduced exactly; 0x410810 emulated over whole tables = port) |
 | **P3 Squads + assignment** (on the branch) | 100-slot model, base ctor rolls, scheduler rand(7)+3, tick<=30 Monarch->base 1 anchored at the start location, nearest-base assignment + Stance 0 | check_ai_scheduler / check_ai_squads / check_ai_base_selection reused; classic_ai (constructor, rolls, assignment cases) | `check_ai_squad_ctor.py` (0x40fed0) and `check_ai_assignment.py` (0x40fe80 + 0x40eeb0), opt-in ctest `-DTAK_CLASSIC_ORACLES=ON`; game test (classic_ai_data, Abnar's Terrace): every finished unit is in a base squad within 10 ticks (the Monarch by tick 30, anchored on its start), Stance 0 applied, a destroyed unit leaves its squad, member counts per kind |
-| **P4a Factory planner** | 0x40dcb0 (allocation gates, cost deferral, one queued) + the menu draw with faction rejection | check_ai_factory_plan + check_ai_build_choice + check_ai_build_weight (shared templates) | those oracles on the brain's own call path; game test: Classic factories queue one unit at a time, stay within limits, and field a first army unit |
+| **P4a Factory planner** (on the branch) | 0x40dcb0 (allocation gates, cost deferral, one queued) + the menu draw with faction rejection, reached from the base think's member loop (0x40b320 to 0x40b4cf); FBI-builder menus in Priority order; Train commands | check_ai_factory_plan + check_ai_build_choice + check_ai_build_weight (shared templates, now in the opt-in set); classic_ai --factory-think | new `check_ai_factory_think.py` (0x51d837 + 0x40b320's member loop with the real planner, draw, weight and limit code; settles U4), shown to fail on planted bugs (side rejection dropped, the commander exception dropped, gates on the store fill, the stale-anchor rule dropped); game test (classic_ai_data, Abnar's Terrace): Aramon/Veruna keeps and a Taros dungeon given at the start train same-side menu units one at a time within the profile limits and they join the base; a 2-Swordsmen/0-others profile gets exactly two Swordsmen |
 | **P4b Constructor planner + placement** | 0x40c890 (Monarch gates, p1 builders and growth, duplicate-factory, 4-tower cap, lodestone pass every think, reachability), block grid 0x4110f0, scatter 0x411200, deposits 0x411510 | new `check_ai_placement.py` (grid draws, lot windows, tower distance, 30-attempt failure, deposit choice) + `check_ai_constructor.py` (the planner's cases) | those two + check_ai_base_radius; game test: a Classic seat builds lodestones, a keep and a castle on Abnar's Terrace and Inner Circle, placements inside the ring radius, no duplicate factory while one is busy |
 | **P5 Base defence, idle, Monarch** | 0x40d370 (rings, wounded radius, threat candidates, patrol points), the 0x412000 threat test, Monarch retreat 0x40d010, alarm 0x409a50 (hp tracking) | check_ai_patrol_points; new `check_ai_defence.py` (candidate points) and `check_ai_retreat.py` (0x40d010 point choice) | those + a threat-test oracle (0x412000); game test: a scripted raid into a Classic base, defenders react inside the ring radius, the Monarch retreats below its HP threshold |
 | **P6 Waves** | wave rolls 0x40c240/3c0/490, launch, backup 0x40ea30, strike 0x40e180 (cohesion, dissolve, re-pick, withdrawals, contact/march), picker 0x40a200, VTOL 0x40eb40, naval strikes | `check_ai_wave_roll.py`, `check_ai_target_pick.py`, check_ai_squads strike cases; U13 settled first | those + a strike-think oracle (0x40e180); game tests: waves launch, march by MOVE, dissolve and retreat; Classic AI-vs-AI games end |
@@ -555,8 +587,8 @@ folder.
 
 **Refuted text, fixed in place:** V12 (tower distance wording). **Additions to §1:** V8 nesting, V9 strike
 p2/p3 reset, V10 dissolve clears missions, and massattack repeats every assignment pass (0x40f1a1..0x40f239,
-per player, not one-shot). **Still UNCONFIRMED** (unchanged from §3): lowFunds is `[player+0x10c]+8`
-(U4), the meaning of unit flag 0x8000000 ("armed"), whether the own player counts in the wave-size E, and
-the exact factory "busy" mission kind (0x605064, see U3). The wave roll, the picker and placement were not emulated
+per player, not one-shot). **Still UNCONFIRMED** (as of this pass): the meaning of unit flag 0x8000000 ("armed") and whether the
+own player counts in the wave-size E. (lowFunds = `[player+0x10c]+8` and the factory "busy" mission
+kind, BuildingBuild, were settled in P4a: U4, U3.) The wave roll, the picker and placement were not emulated
 end to end in this pass. Static reading only for those, so they match the area notes'
 emulations without independently replacing them.
