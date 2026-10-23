@@ -72,9 +72,10 @@ player together. The existing AI levels and the game itself play exactly as in
   dropped player's seat is still taken over by a Normal AI. See
   [Classic](docs/user-guide.md#classic).
 - **Classic campaign opponents.** The campaign book's left page has an
-  **Opponent AI: NORMAL / CLASSIC** line: click it or press **A**. It is
-  remembered and starts at Normal, which plays the missions exactly as before.
-  Classic opponents use each mission's own AI profile and its timed mass attack.
+  **Opponent AI: CLASSIC / NORMAL** line: click it or press **A**. It starts
+  at **Classic**, whose opponents use each mission's own AI profile and its
+  timed mass attack, and is remembered; switch to Normal to play the missions
+  exactly as before.
   See [Campaigns](docs/user-guide.md#campaigns).
 - **Long build menus wrap.** A builder whose build menu does not fit beside the
   command panel (a long menu, a small window or a big Build Menu Scale) now

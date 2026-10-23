@@ -159,8 +159,10 @@ Everything still open at P8, in one place:
 
 ## Campaign
 
-The campaign book's **Opponent AI** line picks Normal (the default) or Classic for every
-mission's computer players (`Settings::campaignAi`, saved as `campaignAi`). The choice
+The campaign book's **Opponent AI** line picks Classic (the default; a settings file with
+no `campaignAi` key, or an unknown value, reads Classic) or Normal for every mission's
+computer players (`Settings::campaignAi`, saved as `campaignAi`). The client always sends
+the choice, so a fresh profile's missions play Classic. The choice
 travels with the mission room (an optional byte after CreateGame's private flag; the
 server accepts only Classic and plays anything else as Normal). With Classic each
 strategic player gets a Classic brain over the mission's `aiprofile` file, the .ota's
@@ -171,7 +173,9 @@ from that tick sends every armed mobile unit to slots 98 / 97. The disconnect ta
 stays Normal.
 
 Headless runs (`takclient --mpmission`, takserver `--seed 1`, build-o2; a debug
-`TAK_AI_LEVEL=6` stands in for the book's choice, as the room byte comes from it):
+`TAK_AI_LEVEL=6` stands in for the book's choice, as the room byte comes from it; the
+`--mpmission` harness itself still sends Normal without it, so its Normal hashes need no
+flag):
 
 | Mission | Opponent | Time | Result |
 |---|---|---|---|

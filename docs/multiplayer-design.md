@@ -869,8 +869,9 @@ CLASSIC (`SlotInfo.aiLevel` 6): a server-side port of the retail AI
 (`ai::ClassicBrain`, [classic-ai-plan.md](classic-ai-plan.md)). Its seat gets
 exactly a Normal seat's match config, so the simulation is 289's; a 289 peer would
 clamp level 6 to Normal, hence the bump. A campaign mission room's `CreateGame`
-may carry one more byte after its private flag, the book's opponent AI: the
-server takes Classic and plays anything else as Normal. 289 replays are refused.
+may carry one more byte after its private flag, the book's opponent AI (the
+client sends Classic unless the book is set to Normal): the server takes Classic
+and plays anything else, or a missing byte, as Normal. 289 replays are refused.
 0.8.11 ships protocol 290; it plays with neither 0.8.10 nor any earlier version,
 nor their replays.
 Game options

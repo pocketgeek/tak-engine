@@ -7,7 +7,9 @@ screens, and the blue production bar over factories is gone. A Classic seat is
 a new value on the wire, so the network protocol moves to **290** (replays stay
 at format **14**): **0.8.11 does not play with 0.8.10 or any earlier version,
 and does not play their replays.** Servers and every player must update
-together. The existing AI levels and the game itself play exactly as in 0.8.10.
+together. The existing AI levels and the game itself play exactly as in 0.8.10,
+but campaign missions now default to **Classic** opponents: switch the campaign
+book's **Opponent AI** line to **Normal** to play them as before.
 
 ## Classic AI
 
@@ -41,12 +43,15 @@ See [Classic](user-guide.md#classic) in the user guide.
 
 ## Campaigns
 
-- **Opponent AI: NORMAL / CLASSIC.** The campaign book's left page has a new
-  **Opponent AI** line. Click it or press **A** to switch the missions' computer
-  players between **Normal** (the default) and **Classic**. The choice is
-  remembered (`campaignAi` in `settings.ini`), applies from the next mission
-  you start, and is left alone by **Defaults** in Options.
-- **Normal plays the missions exactly as before.**
+- **Opponent AI: CLASSIC / NORMAL.** The campaign book's left page has a new
+  **Opponent AI** line. Campaign missions now default to **Classic** opponents,
+  the original game's own AI; this includes existing profiles, since 0.8.10
+  settings files have no `campaignAi` key. Click the line or press **A** to
+  switch to **Normal** (and back). The choice is remembered (`campaignAi` in
+  `settings.ini`, `normal` or `classic`), applies from the next mission you
+  start, and is left alone by **Defaults** in Options.
+- **To play the missions as before, switch to Normal**: Normal plays them
+  exactly as 0.8.10 did.
 - **Classic opponents play a mission as the 1999 game did**: each uses the AI
   profile the mission names (30 of the shipped missions name their own, the
   rest fall back to `ai/default.txt`) and the mission's timed mass attack, when
@@ -101,7 +106,10 @@ See [Building](user-guide.md#building).
 - New tests: `buildrow_test` (icon count x window x UI scale x build scale x
   alignment); `build_controls` narrows the window until a menu wraps, then
   hovers and clicks a bottom-row icon.
-- New setting: `campaignAi` (`normal` or `classic`) in `settings.ini`.
+- New setting: `campaignAi` (`classic`, the default, or `normal`) in
+  `settings.ini`; a missing or unknown value reads `classic`. The client sends
+  the choice with every mission room; the server still plays a missing or
+  unknown byte as Normal.
 - The `--mpai` Inner Circle seed 1 hashes are unchanged from 0.8.10: at 60 s
   Retail `b353410003e98dd5`, Legion `0825aeb9e8139203`; at 300 s Retail
   `a3d953803a064191`, Legion `ce5c4ba7562e53b9`. A Classic seat
@@ -178,7 +186,8 @@ and `kSchemaVersion` (`src/server/crusades/store.cpp`) are unchanged.
   replays follow the same rule.
 - **Maps, mods and settings.** Saved `.kmp` maps, generated-map recipes,
   `mods/` packs, `ModCache/` downloads and 0.8.10 settings files carry over
-  unchanged. The one new setting, `campaignAi`, starts at Normal.
+  unchanged. The one new setting, `campaignAi`, starts at Classic, so campaign
+  missions play Classic opponents until the book is switched to Normal.
 
 No new runtime dependencies or retail assets are included. See the
 [release validation report](release-0.8.11-validation.md).

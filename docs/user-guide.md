@@ -1930,11 +1930,11 @@ In the book:
   **Page Up/Page Down** to browse chapters.
 - **Home/End** jumps to the first or last chapter. **Tab** switches campaigns.
 - **A** (or a click on the **Opponent AI** line) switches the computer
-  opponents between Normal and Classic.
+  opponents between Classic (the default) and Normal.
 - **Enter** plays the selected chapter. **Escape** returns to the menu.
 - Every chapter can be selected, including the *Iron Plague* alternate ending.
 
-![The campaign book open at Book of Darien chapter 1, All Hell Broken Loose, with Opponent AI: NORMAL (A) on the left page](img/campaign.jpg)
+![The campaign book open at Book of Darien chapter 1, All Hell Broken Loose, with Opponent AI: CLASSIC (A) on the left page](img/campaign.jpg)
 
 *The campaign book, with the Opponent AI line on the left page and tabs for both campaigns at the bottom.*
 
@@ -1951,11 +1951,13 @@ When you win, **Next** goes to the next chapter and **Retry** replays this one.
 Campaigns always use Retail pathfinding.
 
 **Opponent AI**, on the left page of the book, chooses who plays the missions'
-computer players: **Normal** (the default) or **Classic**, the original game's
-own AI (see [Classic](#classic)), which plays a mission as the 1999 game did,
-including the timed mass attack some *Iron Plague* missions set. Click the line,
-or press **A**, to switch; the choice is remembered (`campaignAi` in
-`settings.ini`) and applies from the next mission you start.
+computer players: **Classic** (the default), the original game's own AI (see
+[Classic](#classic)), which plays a mission as the 1999 game did, including the
+timed mass attack some *Iron Plague* missions set, or **Normal**, the engine's
+own AI, which played every mission before 0.8.11. Click the line, or press
+**A**, to switch to Normal and back; the choice is remembered (`campaignAi =
+normal` or `classic` in `settings.ini`) and applies from the next mission you
+start.
 
 You always play the mission's first player, as in the original game, even where
 the mission file describes that player as a computer opponent (*The Iron Plague*
