@@ -70,6 +70,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 
 using namespace tak;
 static int fails=0;
@@ -1219,7 +1220,13 @@ static void classicWaves(const char* root) {
 // with nothing but the retail AI's own decisions, until one side wins or the
 // 90-minute cap (TAK_DUEL_MAP / TAK_DUEL_MINUTES pick another map or cap; on
 // Abnar's Terrace the same pairs take 59 to 227 minutes, its terraces leaving
-// many members' reachability walks without a target).
+// many members' reachability walks without a target). By hand: TAK_DUEL_PAIRS
+// ("0v2,1v3", factions 0-4) picks the pairs, TAK_DUEL_LEVEL gives the second
+// seat another level (2 = Normal), TAK_DUEL_TRACE prints both seats every
+// TAK_DUEL_TRACE game-minutes (default 10), TAK_DUEL_LOG=<seat> prints every
+// command that seat gives, TAK_DUEL_WATCH=<unit id> that unit's orders every 10
+// game-seconds, and a pair that ends without a winner is reported rather than
+// failed when TAK_DUEL_PAIRS is set.
 static void classicDuels(const char* root) {
     auto vfs=hpi::mountRetailRoot(root);
     sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
@@ -1227,35 +1234,83 @@ static void classicDuels(const char* root) {
     const auto map=hpi::findMap(vfs,mapName);
     static const char* const kNames[5]={"Aramon","Taros","Veruna","Zhon","Creon"};
     struct Pair { int a,b;uint32_t seed; };
-    const Pair pairs[]={{0,2,0xd0e1u},{1,3,0xd0e2u},{4,0,0xd0e3u}};
+    std::vector<Pair> pairs={{0,2,0xd0e1u},{1,3,0xd0e2u},{4,0,0xd0e3u}};
+    const char* chosen=std::getenv("TAK_DUEL_PAIRS");
+    if (chosen) {
+        pairs.clear();
+        std::istringstream list(chosen);
+        for (std::string item;std::getline(list,item,',');) {
+            int a=0,b=0;
+            if (std::sscanf(item.c_str(),"%dv%d",&a,&b)==2)
+                pairs.push_back({std::clamp(a,0,4),std::clamp(b,0,4),0xd0e1u+uint32_t(pairs.size())});
+        }
+    }
+    const ai::Difficulty levelB=std::getenv("TAK_DUEL_LEVEL") ? ai::Difficulty(std::clamp(std::atoi(std::getenv("TAK_DUEL_LEVEL")),0,6))
+                                                              : ai::Difficulty::Classic;
+    const ai::Profile normalProfile=ai::loadProfile(vfs);
     const uint32_t minutes=std::getenv("TAK_DUEL_MINUTES") ? uint32_t(std::atoi(std::getenv("TAK_DUEL_MINUTES"))) : 90u;
+    const uint32_t traceEvery=std::getenv("TAK_DUEL_TRACE") ? uint32_t(std::max(1,std::atoi(std::getenv("TAK_DUEL_TRACE"))))*1800u : 18000u;
     const uint32_t kCap=minutes*1800u;
-    std::printf("  Classic vs Classic (%s, the Monarch not expendable, cap %u min):\n",mapName,minutes);
+    if (levelB==ai::Difficulty::Classic)
+        std::printf("  Classic vs Classic (%s, the Monarch not expendable, cap %u min):\n",mapName,minutes);
+    else std::printf("  Classic vs level %d (%s, the Monarch not expendable, cap %u min):\n",int(levelB),mapName,minutes);
     for (const auto& pair:pairs) {
         sim::World w;w.setVisPlayer(-1);
         sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;config.monarchExpendable=false;
         config.slots={{true,pair.a,0,1.0f,true,false},{true,pair.b,1,1.0f,true,false}};
         const auto starts=sim::setupMatch(w,reg,config);
         if (starts.size()<2) { check(false,"Abnar's Terrace seats two players");return; }
-        ai::Controller c0(0,reg,ai::Profile{},pair.seed,ai::Difficulty::Classic,{starts[1]});
-        ai::Controller c1(1,reg,ai::Profile{},pair.seed+7,ai::Difficulty::Classic,{starts[0]});
+        // (A Controller keeps a reference to its profile.)
+        ai::Controller c0(0,reg,normalProfile,pair.seed,ai::Difficulty::Classic,{starts[1]});
+        ai::Controller c1(1,reg,normalProfile,pair.seed+7,levelB,{starts[0]});
         for (auto* c:{&c0,&c1}) c->setClassicProfile(ai::classicProfileScript(vfs,ai::classicMapAiProfile(vfs,map)));
         setClassicStarts(c0,vfs,map,starts[0]);
         setClassicStarts(c1,vfs,map,starts[1]);
         int winner=-1;uint32_t end=0;
         int peak[2]={0,0};
+        // Order spam: the most commands a seat gave in one game-minute, and to one unit.
+        uint32_t minuteOrders[2]={0,0},peakMinute[2]={0,0},total[2]={0,0};
+        std::unordered_map<int,uint32_t> perUnit[2];
         for (uint32_t tick=0;tick<kCap && winner<0;++tick) {
-            auto apply=[&](const net::Command& c){sim::applyCommand(w,reg,c);};
+            static const int logSeat=std::getenv("TAK_DUEL_LOG") ? std::atoi(std::getenv("TAK_DUEL_LOG")) : -1;
+            auto apply=[&](const net::Command& c){
+                const int p=c.player ? 1 : 0;
+                ++minuteOrders[p];++total[p];++perUnit[p][c.unitId];
+                if (p==logSeat) {
+                    const auto* u=w.unit(c.unitId);
+                    std::printf("      cmd t%u p%d %d unit %d (%s at %.0f,%.0f) -> %.0f,%.0f q%d %s\n",tick,p,int(c.kind),c.unitId,
+                                u && u->type ? u->type->id.c_str() : "?",u ? u->x.toFloat() : 0.f,u ? u->z.toFloat() : 0.f,
+                                double(c.x),double(c.z),int(c.queue),c.type);
+                }
+                sim::applyCommand(w,reg,c);
+            };
             c0.tick(w,tick,apply);
             c1.tick(w,tick,apply);
             w.tick(1.f/30.f);
             winner=w.updateOutcome();
             end=tick+1;
             if (tick%300==0) for (int p=0;p<2;++p) peak[p]=std::max(peak[p],w.player(p).unitCount);
+            if (tick%1800==1799) for (int p=0;p<2;++p) { peakMinute[p]=std::max(peakMinute[p],minuteOrders[p]);minuteOrders[p]=0; }
+            static const int watch=std::getenv("TAK_DUEL_WATCH") ? std::atoi(std::getenv("TAK_DUEL_WATCH")) : 0;
+            if (watch && tick%300==0)
+                if (const auto* u=w.unit(watch)) {
+                    std::printf("      watch t%u unit %d %s at %.0f,%.0f hp %d site %d orders %zu",tick,watch,u->type->id.c_str(),
+                                u->x.toFloat(),u->z.toFloat(),u->hp.floorInt(),u->buildSiteId,u->orders.size());
+                    for (const auto& o:u->orders)
+                        if (o.goal) std::printf(" [%s %.0f,%.0f%s]",o.buildType ? o.buildType->id.c_str() : o.patrol ? "patrol" : o.targetId ? "target" : "move",
+                                                o.x.toFloat(),o.z.toFloat(),o.autoTarget ? " auto" : "");
+                    std::printf(" | mana %.0f\n",w.player(u->player).mana);
+                }
             static const bool trace=std::getenv("TAK_DUEL_TRACE")!=nullptr;
-            if (trace && tick%18000==0) {
+            if (trace && tick%traceEvery==0) {
                 for (int p=0;p<2;++p) {
-                    const auto& b=*(p ? c1 : c0).classicBrain();const auto& st=b.waveStats();
+                    const ai::Controller& owner=p ? c1 : c0;
+                    if (!owner.classicBrain()) {
+                        std::printf("      t%5.1f p%d units %d mana %.0f (level %d)\n",double(tick)/1800.0,p,w.player(p).unitCount,
+                                    w.player(p).mana,int(levelB));
+                        continue;
+                    }
+                    const auto& b=*owner.classicBrain();const auto& st=b.waveStats();
                     int army=0,base=0,mhp=0;
                     for (const auto& u:w.units()) if (u.player==p && u.alive() && u.type) {
                         const int q=b.squadOf(u.id);
@@ -1269,14 +1324,20 @@ static void classicDuels(const char* root) {
                 }
             }
         }
-        const auto& s0=c0.classicBrain()->waveStats();const auto& s1=c1.classicBrain()->waveStats();
+        const ai::ClassicBrain::WaveStats none{};
+        const auto& s0=c0.classicBrain()->waveStats();const auto& s1=c1.classicBrain() ? c1.classicBrain()->waveStats() : none;
         std::printf("    %s vs %s: %s after %.1f game-minutes; peak units %d / %d; ground waves %u / %u, VTOL %u / %u, "
-                    "dissolves %u / %u\n",kNames[pair.a],kNames[pair.b],
+                    "dissolves %u / %u, expansions %u / %u\n",kNames[pair.a],kNames[pair.b],
                     winner<0 ? "no winner" : winner==0 ? (std::string(kNames[pair.a])+" wins").c_str()
                                                        : (std::string(kNames[pair.b])+" wins").c_str(),
                     double(end)/1800.0,peak[0],peak[1],s0.groundLaunches,s1.groundLaunches,s0.vtolLaunches,
-                    s1.vtolLaunches,s0.dissolves,s1.dissolves);
-        check(winner>=0,(std::string(kNames[pair.a])+" vs "+kNames[pair.b]+": the game ends with a winner within the cap").c_str());
+                    s1.vtolLaunches,s0.dissolves,s1.dissolves,s0.expansions,s1.expansions);
+        uint32_t busiest[2]={0,0};
+        for (int p=0;p<2;++p) for (const auto& [id,n]:perUnit[p]) busiest[p]=std::max(busiest[p],n);
+        std::printf("      commands %u / %u (%.1f / %.1f a minute, peak minute %u / %u, most to one unit %u / %u)\n",
+                    total[0],total[1],double(total[0])*1800.0/double(end),double(total[1])*1800.0/double(end),
+                    std::max(peakMinute[0],minuteOrders[0]),std::max(peakMinute[1],minuteOrders[1]),busiest[0],busiest[1]);
+        if (!chosen) check(winner>=0,(std::string(kNames[pair.a])+" vs "+kNames[pair.b]+": the game ends with a winner within the cap").c_str());
     }
 }
 
