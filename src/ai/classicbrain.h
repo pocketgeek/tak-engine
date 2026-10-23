@@ -43,7 +43,7 @@
 #include "net/lockstep.h"
 #include "sim/retailrng.h"
 
-namespace tak::sim { class World; class TypeRegistry; }
+namespace tak::sim { class World; class TypeRegistry; class NavGrid; }
 
 namespace tak::ai {
 
@@ -163,6 +163,10 @@ private:
     // sacred, read from the World once.
     void readSites(const tak::sim::World& world);
     bool sacredCell(const tak::sim::World& world, int x, int z) const;
+    // The navigator grid's static bit (what 0x4e1570's mode 1 reads) for a
+    // `footX` x `footZ` mover on `nav`: 1 where the grid build set it at load.
+    const std::vector<uint8_t>& staticBlocked(const tak::sim::World& world, const tak::sim::NavGrid& nav,
+                                              int footX, int footZ);
     // The owner's unit count as retail keeps it (player +0xe8): its live units.
     uint16_t population(const tak::sim::World& world) const;
     void recount(const tak::sim::World& world);
@@ -186,6 +190,8 @@ private:
     std::vector<std::optional<ClassicCell>> sites_;
     std::vector<bool> sacredTypes_;
     std::vector<std::pair<ClassicCell, ClassicCell>> sacredRects_;   // without a feature plane
+    struct StaticPlane { const tak::sim::NavGrid* nav; int footX, footZ; std::vector<uint8_t> blocked; };
+    std::vector<StaticPlane> staticPlanes_;
     std::unordered_map<const tak::sim::UnitType*, uint16_t> index_;
     std::vector<int16_t> count_, completed_;
     std::vector<uint8_t> priority_;

@@ -30,6 +30,7 @@ directory (default `~/tak-tmp/retail-ai`). They are never committed.
 | `check_ai_assignment.py` | Emulates retail's dying-unit cleanup 0x40fe80 and assignment pass 0x40eeb0, with retail's own set-squad, nearest-base, centre and radius code under them, on random players against the CLASSIC brain's `classicDropDying` / `classicAssign` |
 | `check_ai_placement.py` | Emulates retail's block-grid draw 0x4110f0 and site search 0x412f80 (nearest free deposit 0x411510, block-grid scatter 0x411200 with its own trig and cell lookup) on random seeds, feature planes and sacred-site tables against the CLASSIC brain's placers (`classicDrawBlockGrids`, `classicPlaceSite`) |
 | `check_ai_constructor.py` | Emulates retail's constructor planner 0x40c890, with its centre, radius, counts, firepower, shot cost, menu draw, busy-deposit test and placers running, on random bases, builders and Monarchs against the CLASSIC brain's `classicPlanConstructor` |
+| `check_ai_static_grade.py` | Emulates the navigator-grid build 0x4dfee0 on random ratings and footprints and reads back each cell's static bit (what 0x4e1570's mode 1 tests) against the CLASSIC brain's `classicStaticPlane`, which its constructor planner's reachability walks |
 
 ## What it needs
 

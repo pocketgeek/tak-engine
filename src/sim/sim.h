@@ -1911,6 +1911,9 @@ public:
                                  std::vector<RetailMapFeatureType> types);
     const std::vector<RetailMapFeatureCell>& mapPlacementCells() const { return mapPlacementCells_; }
     const std::vector<RetailMapFeatureType>& mapPlacementTypes() const { return mapPlacementTypes_; }
+    // A map cell's feature grade as the search planes rate it (0 blocked, 1 a
+    // clearable blocker, 7 free); needs the feature plane (mapPlacementCells).
+    int mapFeatureGrade(int,int) const;
     void updateNavigationExploration();
     // 4f6a40/4c6a70/4c6800 for the per-player current-view counters: one pass
     // after each tick, beside updateNavigationExploration.
@@ -2918,7 +2921,6 @@ private:
     bool gatePassageAt(int,int,const std::vector<int>* gates=nullptr) const;
     bool gateWantsOpen(const Unit&,const std::vector<int>& gates) const;
     void tickAutomaticGates();
-    int mapFeatureGrade(int,int) const;
     int rawSearchGrade(const SearchGradePlane&,int,int,int,int,const SearchBodyRect* = nullptr) const;
     static void setSearchCell(SearchGradePlane&,size_t,uint8_t);
     void refreshSearchRect(SearchGradePlane&,int,int,int,int);

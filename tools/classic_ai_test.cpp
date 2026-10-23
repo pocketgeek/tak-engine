@@ -27,6 +27,7 @@
 //   classic_ai_test --factory-think oracle mode for tools/re/check_ai_factory_think.py
 //   classic_ai_test --placement     oracle mode for tools/re/check_ai_placement.py
 //   classic_ai_test --constructor   oracle mode for tools/re/check_ai_constructor.py
+//   classic_ai_test --static-grade  oracle mode for tools/re/check_ai_static_grade.py
 //       (line layouts in those scripts and in the oracle functions below)
 #include "ai/ai.h"
 #include "ai/classicbrain.h"
@@ -659,8 +660,8 @@ static void classicBases(const char* root) {
     // snapshot used to miss.
     for (int game=0;game<6;++game) {
         const int faction=game<5 ? game : 3;
-        const uint32_t seed=game<5 ? 0xb450u+uint32_t(faction) : 32u;
-        const std::string name=game<5 ? kNames[faction] : std::string(kNames[faction])+" (seed 32)";
+        const uint32_t seed=game<5 ? 0xb450u+uint32_t(faction) : 36u;
+        const std::string name=game<5 ? kNames[faction] : std::string(kNames[faction])+" (seed 36)";
         sim::World w;w.setVisPlayer(-1);
         sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
         config.slots={{true,0,0,1.0f},{true,faction,1,1.0f,true,false}};
@@ -1134,6 +1135,23 @@ static int constructorOracle() {
     return 0;
 }
 
+// The port's side of tools/re/check_ai_static_grade.py: "<width> <height> <footX>
+// <footZ> <rating>*" per line (each cell's own rating, row-major) -> the static
+// bit of every cell (ai::classicStaticPlane), row-major.
+static int staticGradeOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        int w,h,fx,fz;in>>w>>h>>fx>>fz;
+        std::vector<int> rating(size_t(w)*size_t(h));
+        for (auto& r:rating) in>>r;
+        const auto plane=ai::classicStaticPlane(w,h,fx,fz,[&](int x,int z){return rating[size_t(z)*w+x]==0;});
+        for (size_t i=0;i<plane.size();++i) std::printf(i ? " %d" : "%d",int(plane[i]));
+        std::printf("\n");
+    }
+    return 0;
+}
+
 // The port's side of tools/re/check_ai_squad_ctor.py: "<seed> <E>" per line ->
 // the manager's squads as 0x40fed0 leaves them, then the final seed.
 static int squadCtorOracle() {
@@ -1209,6 +1227,7 @@ int main(int argc,char** argv) {
     if (argc==2 && std::strcmp(argv[1],"--factory-think")==0) return factoryThinkOracle();
     if (argc==2 && std::strcmp(argv[1],"--placement")==0) return placementOracle();
     if (argc==2 && std::strcmp(argv[1],"--constructor")==0) return constructorOracle();
+    if (argc==2 && std::strcmp(argv[1],"--static-grade")==0) return staticGradeOracle();
     if (argc==3 && std::strcmp(argv[1],"--bases")==0) {
         classicBases(argv[2]);
         std::printf("%s\n",fails ? "FAILED" : "all passed");

@@ -1730,12 +1730,13 @@ endif()
 # and production layers against retail's routines in emulation -- the manager
 # constructor, the assignment pass, the base think's factory path (with the
 # economy step's allocation), the block grids and site search, and the
-# constructor planner through classic_ai_test; the scheduler, squad
-# clocks, nearest-base selection, factory planner, menu draw and entry weight
-# through the shared templates in retail_ai_test.
+# constructor planner and the static grade its reachability reads through
+# classic_ai_test; the scheduler, squad clocks, nearest-base selection, factory
+# planner, menu draw and entry weight through the shared templates in
+# retail_ai_test.
 option(TAK_CLASSIC_ORACLES "run the Classic AI emulation oracles (needs KINGDOMS.icd and unicorn)" OFF)
 if(TAK_CLASSIC_ORACLES AND Python3_Interpreter_FOUND)
-    foreach(oracle squad_ctor assignment factory_think placement constructor)
+    foreach(oracle squad_ctor assignment factory_think placement constructor static_grade)
         add_test(NAME classic_ai_${oracle}
                  COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/re/check_ai_${oracle}.py
                          --binary $<TARGET_FILE:classic_ai_test>)

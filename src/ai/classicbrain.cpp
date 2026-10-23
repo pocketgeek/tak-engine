@@ -360,6 +360,24 @@ bool ClassicBrain::sacredCell(const tak::sim::World& world, int x, int z) const 
         [&](uint16_t f) { return f < sacredTypes_.size() && sacredTypes_[f]; });
 }
 
+const std::vector<uint8_t>& ClassicBrain::staticBlocked(const tak::sim::World& world, const tak::sim::NavGrid& nav,
+                                                        int footX, int footZ) {
+    for (const auto& p : staticPlanes_)
+        if (p.nav == &nav && p.footX == footX && p.footZ == footZ) return p.blocked;
+    // The grid's static bit is set at map load only (classicStaticPlane), so the
+    // buildings and units that come later never count. A cell's own rating is
+    // the World's search grade without bodies (searchCellGrade: the map feature,
+    // then the terrain); without a feature plane (synthetic Worlds) the terrain
+    // grade counts the obstacle overlay, as the World's does.
+    const auto& cells = world.mapPlacementCells();
+    const bool features = !cells.empty() && cells.size() == size_t(nav.width()) * size_t(nav.height());
+    staticPlanes_.push_back({&nav, footX, footZ,
+        classicStaticPlane(nav.width(), nav.height(), footX, footZ, [&](int x, int z) {
+            return features ? world.mapFeatureGrade(x, z) == 0 || !nav.terrainWalkable(x, z) : !nav.walkable(x, z);
+        })});
+    return staticPlanes_.back().blocked;
+}
+
 void ClassicBrain::planConstructor(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
                                    size_t i, bool threat, const std::function<void(const tak::net::Command&)>& sink) {
     ClassicSquadUnit& member = units[i];
@@ -453,15 +471,16 @@ void ClassicBrain::planConstructor(const tak::sim::World& world, int slot, std::
         }
         bool reachable(uint16_t t, std::pair<int32_t, int32_t> at) const {
             // 0x4e1570 from the builder's cell (1 x 1) to the site's footprint grown
-            // by its builddistance, over the static grade (a cell the World's nav
-            // grid for the builder blocks counts as statically blocked).
+            // by its builddistance, over the grid's static bit (mode 1).
             const ClassicTypeInfo& f = b.info_[t];
             const ClassicReachRect r = classicReachRect(at, int16_t(f.footX), int16_t(f.footZ),
                                                         uint16_t(b.info_[member.type].buildDistance));
             const auto& nav = world.navFor(unit.type);
+            const auto& blocked = b.staticBlocked(world, nav, unit.type->footX, unit.type->footZ);
             return tak::sim::retailRectangleReachable(nav.width(), nav.height(),
                 tak::sim::footprintOrigin(unit.x, unit.type->footX), tak::sim::footprintOrigin(unit.z, unit.type->footZ),
-                1, 1, r.x, r.z, r.w, r.h, true, false, [&](int x, int z) { return nav.walkable(x, z) ? 0 : 8; });
+                1, 1, r.x, r.z, r.w, r.h, true, false,
+                [&](int x, int z) { return blocked[size_t(z) * size_t(nav.width()) + size_t(x)] ? 8 : 0; });
         }
         bool lodestoneBusy() const { return classicLodestoneBusy(b.squads_, units, index, slot); }
         void build(uint16_t t, std::pair<int32_t, int32_t> at) {

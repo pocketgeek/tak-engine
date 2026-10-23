@@ -16,6 +16,7 @@
 //
 // Server-side only, like the rest of the brain.
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <utility>
@@ -106,6 +107,29 @@ inline ClassicReachRect classicReachRect(std::pair<int32_t, int32_t> site, int16
     const int16_t grow = int16_t(buildDistance >> 4), span = int16_t((2 * int32_t(buildDistance)) >> 4);
     return {int16_t(cell(site.first, footX) - grow), int16_t(cell(site.second, footZ) - grow),
             int16_t(footX + span), int16_t(footZ + span)};
+}
+
+// The static bit of a navigator grid (cell nibble bit 8), which 0x4e1570's mode 1
+// (the static grade) tests. The grid build 0x4dfee0 sets it once, at map load:
+// it rates every cell (0x508660), takes the minimum over the class footprint
+// [x, x + footX) x [z, z + footZ), and marks the cell where that is 0 (0x4e017c ->
+// 0x4dfe90, its only caller) -- so where the footprint holds a cell rated 0, or
+// runs past the map's right or bottom edge. `zero(x, z)` is whether a cell's own
+// rating is 0. Returns one byte per cell (row-major), 1 where the bit is set.
+template<class Zero>
+std::vector<uint8_t> classicStaticPlane(int width, int height, int footX, int footZ, Zero zero) {
+    const size_t w = size_t(std::max(width, 0)), h = size_t(std::max(height, 0));
+    std::vector<uint8_t> rated(w * h), plane(w * h, 1);
+    for (size_t z = 0; z < h; ++z)
+        for (size_t x = 0; x < w; ++x) rated[z * w + x] = zero(int(x), int(z)) ? 1 : 0;
+    for (int z = 0; z + footZ <= height; ++z)
+        for (int x = 0; x + footX <= width; ++x) {
+            uint8_t blocked = 0;
+            for (int dz = 0; dz < footZ && !blocked; ++dz)
+                for (int dx = 0; dx < footX && !blocked; ++dx) blocked = rated[size_t(z + dz) * w + size_t(x + dx)];
+            plane[size_t(z) * w + size_t(x)] = blocked;
+        }
+    return plane;
 }
 
 // 0x40c890, the constructor planner, for a ready mobile builder of a base, with
