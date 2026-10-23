@@ -337,8 +337,8 @@ program and checked against it piece by piece
 quirks included:
 
 - It builds from the map's **AI profile**, the file the map names
-  (`ai/default.txt` for every shipped skirmish map and campaign mission). That
-  file only switches units on or off and sets how many of each it may have; the
+  (`ai/default.txt` for every shipped skirmish map; many campaign missions name
+  their own, and a missing one falls back to `ai/default.txt`). That file only switches units on or off and sets how many of each it may have; the
   AI picks at random among what its builders can make, favouring what it is
   short of.
 - It has no difficulty setting and no income bonus.

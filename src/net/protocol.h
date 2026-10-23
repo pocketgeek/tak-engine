@@ -22,7 +22,9 @@ namespace tak::net {
 constexpr uint32_t kNetVersion = 290;      // 290: AI level 6, Classic (SlotInfo.aiLevel): the retail AI's port (ai::ClassicBrain,
                                            //      docs/classic-ai-plan.md). Its seat gets a Normal seat's sim config (no income
                                            //      multiplier, no defensive stance); a 289 peer or server would clamp 6 to Normal and
-                                           //      play a different AI. Sim unchanged; 289 replays refused
+                                           //      play a different AI. Sim unchanged; 289 replays refused. A campaign mission's
+                                           //      CreateGame may end with one more byte, its opponents' AI level (Classic 6;
+                                           //      anything else plays Normal).
                                            // 289: campaign human seat: the .ota's Player1 is always world slot 0 and its keywords are ignored
                                            //      (retail 0x4d290c), so takx22_mt/takx24_mt no longer give the player an AI and an Aramon team;
                                            //      hashed state changes for those two missions only (skirmish unchanged).
