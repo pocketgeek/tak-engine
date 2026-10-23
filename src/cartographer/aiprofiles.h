@@ -104,6 +104,16 @@ bool saveAiDraft(const AiDraft&, const tak::ai::ClassicCatalogue&, std::string& 
 // kept verbatim, shadowed lines dropped. Accepted only if the converted file has
 // exactly the original's effect on every unit; otherwise `draft` is unchanged.
 bool makeEditable(AiDraft&, const tak::ai::ClassicCatalogue&, std::string* why = nullptr);
+// `bytes` with only its header line (the comment after the magic) replaced by `header`,
+// when they are in the canonical form and the result verifies; every other file --
+// written by hand, empty, or one whose new bytes would not verify -- comes back
+// unchanged. Save as game mod gives a DEFAULT profile written as ai/default.txt the
+// header aiModDefaultHeader makes.
+std::string aiFileWithHeader(std::string_view bytes, AiKind, const std::string& header,
+                             const tak::ai::ClassicCatalogue&);
+// "DEFAULT AI profile for game mod "<pack>" (ai/default.txt), saved from map "<map>"
+// (<from>). Edit in Cartographer: SCENARIO > AI Profiles."
+std::string aiModDefaultHeader(const std::string& pack, const std::string& mapName, const std::string& from);
 
 // One line of a file and what it does in its grammar.
 struct AiLine {

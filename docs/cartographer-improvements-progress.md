@@ -1499,8 +1499,8 @@ Deviations from the design:
 - SAVE TO PACK ticks only changed files, so an unchanged file that lives in a pack
   archive is not copied out as a loose file.
 - Files saved into a pack keep their bytes, header included (the header names the
-  source map); a DEFAULT profile written as `ai/default.txt` keeps the header that
-  names its map file.
+  source map). A DEFAULT profile written as `ai/default.txt` now gets a header that
+  names that file and the pack (see the follow-ups below).
 
 Validation: `cartographer_aiprofile` (writer: case-variant folders and file reused,
 identical skipped, archive copy named, stale plan refused with nothing written,
@@ -1671,6 +1671,36 @@ Deviations from the design:
   checked in the weight dump rather than by what the AI built in 60 s.
 - One stock-map run with the AI maps and an unticked pack installed is compared
   with one in a plain scratch install, instead of a fixed hash in the test.
+
+## AI profile editor, follow-ups (2026-10-23)
+
+Two items from phase 4's deviations, decided on 2026-10-23.
+
+- A DEFAULT AI profile saved from a map into a game mod as `ai/default.txt` now names
+  the file it becomes. Before, it kept the map's header line, for example `// DEFAULT
+  AI profile for map "Ulasem Arena" (ai/ulasem arena.txt). Edit in Cartographer:
+  SCENARIO > AI Profiles.`. `aiModReplan` now writes that row's bytes through
+  `aiFileWithHeader` with `aiModDefaultHeader`: `DEFAULT AI profile for game mod
+  "<pack>" (ai/default.txt), saved from map "<map>" (<source>). Edit in Cartographer:
+  SCENARIO > AI Profiles.`. An existing pack is named in its on-disk spelling.
+  - Only the header line changes. The file is parsed as a draft, its header is
+    replaced, and `saveAiDraft` writes and verifies it.
+  - A hand-written file, or one whose new bytes would not verify, is saved unchanged.
+  - Other save paths are unchanged: level files, DEFAULT written under the profile
+    name, and SAVE TO PACK from an opened pack.
+  - The map's own file is never changed.
+
+Validation:
+
+- `cartographer_aiprofile` `modDefaultHeader`: the header text; every byte except
+  line 2 is identical; the result parses editable and passes `verifyAiDraft`;
+  `ClassicProfile::execute` gives the same result, locks included. Hand-written,
+  empty and non-canonical files come back byte for byte.
+- `cartographer_aiprofile_mod_ui`, frames 27-33: own profile (Start empty), then SAVE
+  AS GAME MOD with the DEFAULT row ticked as `ai/default.txt`. That creates
+  `Harder/AI/default.txt`, whose line 2 is the new header and whose other lines equal
+  the map's `ai/ulasem arena.txt`, which itself is unchanged. With the rewrite
+  disabled, the test fails at frame 33 on the old header.
 
 ## Scope and remaining limitations
 

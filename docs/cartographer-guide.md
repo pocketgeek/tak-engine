@@ -1545,6 +1545,9 @@ name).
   folder (see [Where Cartographer keeps its files](#where-cartographer-keeps-its-files)),
   never into the pack, because every file in a pack is sent to other players.
 - Other files in the pack are never touched.
+- A DEFAULT AI profile written as `ai/default.txt` gets a new comment line at
+  the top that names that file and the pack (and the map it was saved from);
+  nothing else in it changes. A file written by hand is saved exactly as it is.
 - If the game data folder is read-only (for example a game installed under
   Program Files), **SAVE FAILED** says so.
 - A game mod applies only when it is ticked: in single player in the room, in
@@ -2143,8 +2146,7 @@ Start Cartographer from its shortcut and choose **Recover**. See
   opened there.
 - **AI profiles.** Each level is edited on its own tab; there is no "copy to
   other levels". Group rules can only be moved up one step at a time. **OPEN
-  FROM GAME MOD** lists at most 14 packs. A profile saved into a pack as
-  `ai/default.txt` keeps the comment line that names the map it came from.
+  FROM GAME MOD** lists at most 14 packs.
 - **Display names** are cut to 31 bytes in the game.
 - **Text.** The editor's own font covers Latin (including Vietnamese), Greek,
   Cyrillic, Armenian and Georgian letters, common symbols, Japanese kana, Korean

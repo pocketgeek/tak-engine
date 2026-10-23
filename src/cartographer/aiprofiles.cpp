@@ -487,6 +487,21 @@ bool makeEditable(AiDraft& draft, const ClassicCatalogue& catalogue, std::string
     return true;
 }
 
+std::string aiFileWithHeader(std::string_view bytes, AiKind kind, const std::string& header,
+                             const ClassicCatalogue& catalogue) {
+    auto draft = parseAiDraft(bytes, kind, catalogue);
+    if (draft.asWritten || draft.empty()) return std::string(bytes);
+    draft.header = header;
+    std::string out, error;
+    if (!saveAiDraft(draft, catalogue, out, error)) return std::string(bytes);
+    return out;
+}
+
+std::string aiModDefaultHeader(const std::string& pack, const std::string& mapName, const std::string& from) {
+    return "DEFAULT AI profile for game mod \"" + pack + "\" (ai/default.txt), saved from map \"" + mapName + "\" (" + from +
+           "). Edit in Cartographer: SCENARIO > AI Profiles.";
+}
+
 // ---- checks ---------------------------------------------------------------------------
 
 namespace {

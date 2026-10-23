@@ -37,6 +37,7 @@ bool whole(std::string_view s,int& v) {
     return r.ec==std::errc() && r.ptr==s.data()+s.size();
 }
 std::string bytesText(const std::vector<uint8_t>& b) {return {b.begin(),b.end()};}
+std::vector<uint8_t> bytesOf(std::string_view s) {return {s.begin(),s.end()};}
 std::string lineText(std::string_view line) {
     std::string out(line);
     while(!out.empty() && (out.back()=='\r' || out.back()==' '))out.pop_back();
@@ -1098,15 +1099,27 @@ void cart::Editor::aiOpenModSave() {
 }
 
 void cart::Editor::aiModReplan() {
-    AiFiles write;const auto& files=aiSet();
+    const auto& files=aiSet();
     const bool own=!cart::standardAiProfile(scenario.aiProfile);
-    for(auto& row:aiModRows) {
+    for(auto& row:aiModRows)
         if(row.isDefault)row.target=aiModDefaultAs==1 && own && row.source!="ai/default.txt"?cart::aiProfileFileKey(scenario.aiProfile):"ai/default.txt";
-        if(row.tick)if(const auto it=files.find(row.source);it!=files.end())write[row.target]=it->second;
-    }
-    aiModPlanError.clear();
     const std::set<std::string> remove(aiModDeletes.begin(),aiModDeletes.end());
-    if(!cart::planModProfiles(std::filesystem::u8path(dataRoot),trimmed(aiModPack),write,remove,aiModPlan,aiModPlanError))aiModPlan=ModProfilePlan{};
+    auto plan=[&](const std::string pack) {   // a copy: planning resets aiModPlan.pack
+        AiFiles write;
+        for(const auto& row:aiModRows)if(row.tick)if(const auto it=files.find(row.source);it!=files.end()) {
+            // A map's DEFAULT profile written as the pack's ai/default.txt names that file in
+            // its header, not the map's; a hand-written file keeps its bytes.
+            if(row.isDefault && !aiMod && row.target=="ai/default.txt")
+                write[row.target]=bytesOf(cart::aiFileWithHeader(bytesText(it->second),AiKind::Default,
+                    cart::aiModDefaultHeader(pack,mapName,row.source),*aiCatalogue));
+            else write[row.target]=it->second;
+        }
+        aiModPlanError.clear();
+        if(!cart::planModProfiles(std::filesystem::u8path(dataRoot),pack,write,remove,aiModPlan,aiModPlanError))aiModPlan=ModProfilePlan{};
+    };
+    plan(trimmed(aiModPack));
+    // An existing pack keeps its own spelling on disk; the header names it that way.
+    if(aiModPlanError.empty() && !aiModPlan.pack.empty() && aiModPlan.pack!=trimmed(aiModPack))plan(aiModPlan.pack);
 }
 
 void cart::Editor::aiModSave() {

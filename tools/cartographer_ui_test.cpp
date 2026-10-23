@@ -398,6 +398,7 @@ static int aiModWorkflow(const char* data) {
     std::string failure;int lastFrame=0;
     auto check=[&](bool value,const std::string& message) {if(!value && failure.empty())failure="frame "+std::to_string(lastFrame)+": "+message;};
     auto mapFile=[&](const std::string& key) {const auto it=editor->aiFiles.find(key);return it==editor->aiFiles.end()?std::string():std::string(it->second.begin(),it->second.end());};
+    std::string own,ownBytes;   // the map's own DEFAULT profile, before it is saved into the pack
     auto packFile=[&](const std::string& key) {
         if(!editor->aiMod)return std::string();
         const auto it=editor->aiMod->files.find(key);return it==editor->aiMod->files.end()?std::string():std::string(it->second.begin(),it->second.end());
@@ -490,15 +491,43 @@ static int aiModWorkflow(const char* data) {
         case 26:click(editor->aiModOpenButton);break;   // CLOSE PACK: nothing unsaved, so no question
         case 27:check(!editor->aiMod && editor->modal==cart::Editor::M_NONE,"CLOSE PACK did not return to the map's profiles");
             check(mapFile("ai/n.txt").find("\nweight araarch 0\n")!=std::string::npos && mapFile("ai/h.txt").empty(),"the map's files changed");
-            click(editor->aiDoneButton);break;
-        case 28:{SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
-        case 29:if(editor->modal==cart::Editor::M_QUITSAVE)click(editor->mQuit);break;
-        default:if(frame>34) {failure+=" (AI game-mod workflow did not exit)";std::_Exit(3);}
+            click(editor->aiTabRects[0]);break;
+        case 28:click(editor->aiOwnRadio);break;
+        // The map's own DEFAULT profile saved into the pack as ai/default.txt: its header
+        // names that file and the pack; the map's file is left as it was.
+        case 29:check(editor->aiStartOpen,"no Start from");click(editor->aiStartEmpty);break;
+        case 30:own=cart::aiProfileFileKey(editor->scenario.aiProfile);ownBytes=mapFile(own);
+            check(own!="ai/default.txt" && ownBytes.find("(ai/default.txt)")==std::string::npos,"no own profile file: "+own);
+            click(editor->aiModSaveButton);break;
+        case 31:{
+            const cart::Editor::AiModRow* def=nullptr;for(const auto& row:editor->aiModRows)if(row.isDefault)def=&row;
+            check(editor->aiModSaveOpen && def && def->source==own && def->target=="ai/default.txt" && !def->tick,"the DEFAULT row is not offered as ai/default.txt, unticked");
+            click(def?def->box:SDL_Rect{});break;
+        }
+        case 32:{
+            const auto* d=change("ai/default.txt");
+            check(editor->aiModPlan.pack=="Harder" && d && d->action==A::Create,"ai/default.txt is not planned as a new file in Harder");
+            click(editor->aiModWriteButton);break;
+        }
+        case 33:{
+            check(editor->modal==cart::Editor::M_MESSAGE && editor->mTitle=="SAVED","saving ai/default.txt failed");
+            const auto saved=slurp(ai/"default.txt");
+            auto afterHeader=[](const std::string& t) {const auto a=t.find('\n');const auto b=a==std::string::npos?a:t.find('\n',a+1);return b==std::string::npos?std::string():t.substr(b+1);};
+            const auto line2=saved.substr(saved.find('\n')+1,saved.find('\n',saved.find('\n')+1)-saved.find('\n')-1);
+            check(line2=="// "+cart::aiModDefaultHeader("Harder",editor->mapName,own),"the pack's default.txt header does not name it: "+line2);
+            check(afterHeader(saved)==afterHeader(ownBytes) && saved.substr(0,saved.find('\n'))==ownBytes.substr(0,ownBytes.find('\n')),"more than the header changed");
+            check(mapFile(own)==ownBytes,"the map's own profile changed");
+            key(SDLK_RETURN);break;
+        }
+        case 34:click(editor->aiDoneButton);break;
+        case 35:{SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        case 36:if(editor->modal==cart::Editor::M_QUITSAVE)click(editor->mQuit);break;
+        default:if(frame>40) {failure+=" (AI game-mod workflow did not exit)";std::_Exit(3);}
         }
     },hooks);
     fs::remove_all(root);
-    if(result || !failure.empty() || lastFrame>34) {std::cerr<<failure<<'\n';return 1;}
-    std::cout<<"PASS: AI Profiles game mod: save into an existing case-variant pack (compare, backup outside the pack), open from the pack, save back, emptied draft deleted\n";return 0;
+    if(result || !failure.empty() || lastFrame>40) {std::cerr<<failure<<'\n';return 1;}
+    std::cout<<"PASS: AI Profiles game mod: save into an existing case-variant pack (compare, backup outside the pack), open from the pack, save back, emptied draft deleted, DEFAULT as default.txt names its file\n";return 0;
 }
 // The AI window's phase-5 extras, against a SCRATCH data root whose game mod "Extra"
 // adds one synthetic unit: the pack roster (PREVIEW WITH GAME MOD and OPEN FROM GAME

@@ -895,6 +895,36 @@ static void levelLimits() {
     std::cout << "level limits in play: paramsFor's scale, builders, income buildings, defensive levels\n";
 }
 
+// Save as game mod, DEFAULT written as ai/default.txt: only the header line changes,
+// naming the file it now is and the pack; a hand-written file keeps its bytes.
+static void modDefaultHeader() {
+    const auto c = sample();
+    cart::AiDraft d;
+    d.header = "DEFAULT AI profile for map \"Islands\" (ai/islands.txt). Edit in Cartographer: SCENARIO > AI Profiles.";
+    d.units["verwyv"] = {50, {}, 2};
+    d.groups.push_back({false, "fly", "2"});
+    d.kept.push_back("plan attack 3");
+    std::string source, error;
+    check(cart::saveAiDraft(d, c, source, error), error);
+    const auto header = cart::aiModDefaultHeader("Harder", "Islands", "ai/islands.txt");
+    check(header == "DEFAULT AI profile for game mod \"Harder\" (ai/default.txt), saved from map \"Islands\" (ai/islands.txt). "
+                    "Edit in Cartographer: SCENARIO > AI Profiles.", "the game mod default header: " + header);
+    const auto out = cart::aiFileWithHeader(source, AiKind::Default, header, c);
+    const auto lineEnd = [](const std::string& s) { return s.find('\n', s.find('\n') + 1) + 1; };   // past line 2
+    check(out.substr(0, out.find('\n') + 1) == source.substr(0, source.find('\n') + 1) &&
+          out.substr(out.find('\n') + 1, lineEnd(out) - out.find('\n') - 1) == "// " + header + "\n" &&
+          out.substr(lineEnd(out)) == source.substr(lineEnd(source)), "only the header line changes:\n" + out);
+    const auto back = cart::parseAiDraft(out, AiKind::Default, c);
+    check(!back.asWritten && back.header == header && cart::verifyAiDraft(back, out, c), "the new file is canonical and verifies");
+    tak::ai::ClassicProfile before(c.size()), after(c.size());
+    before.execute(source, c);
+    after.execute(out, c);
+    check(sameClassic(before, after, true), "the header change changes no unit");
+    for (const std::string hand : {"weight verwyv 0.5\n", "// TAK Cartographer AI profile 1\n// x\nweight verwyv 0.5\n", ""})
+        check(cart::aiFileWithHeader(hand, AiKind::Default, header, c) == hand, "a hand-written file is saved unchanged: " + hand);
+    std::cout << "game mod default.txt: the header names ai/default.txt and the pack; nothing else changes\n";
+}
+
 int main() try {
     const auto root = fs::temp_directory_path() /
                       ("tak-aiprofile-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -902,6 +932,7 @@ int main() try {
     struct Cleanup { fs::path p; ~Cleanup() { std::error_code e; fs::remove_all(p, e); } } cleanup{root};
     chanceEncoding();
     canonical();
+    modDefaultHeader();
     verification();
     indexZero();
     attribution();
