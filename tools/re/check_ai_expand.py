@@ -7,11 +7,12 @@ bases anchored on start or sacred-site records or not, free and busy builders,
 their movers' navigator grids with zone labels per record -- some grids with a
 label too many or too few, flyers without one), a destination slot (usually
 the first empty base) and an escort size, with the visible-enemy list's units
-now and then put within 60 px of a sacred site. Everything is retail's own code
--- the founder filter and categories 0x40a5f0, the vector code, the base
-centre 0x40c610 and ring-2 radius 0x40cf30 of every occupied base, the 50 px
-of 0x40cfa0 / 0x40cfc0, the enemy query 0x411ae0, set-squad 0x50b4f0 and the
-anchor setter 0x40c6e0 -- except operator new and delete.
+now and then put within 60 px of a sacred site, or near the edge of the 50 px
+query around one. Everything is retail's own code -- the founder filter and
+categories 0x40a5f0, the vector code, the base centre 0x40c610 and ring-2
+radius 0x40cf30 of every occupied base, the 50 px of 0x40cfa0 / 0x40cfc0, the
+enemy query 0x411ae0, set-squad 0x50b4f0 and the anchor setter 0x40c6e0 --
+except operator new and delete.
 
 The port (classic_ai_test --expand: ai::classicExpand) must give the same
 answer, make the same draws and leave the same seed, unit squads, member lists
@@ -60,12 +61,17 @@ def main():
     for n in range(args.cases):
         slot = rng.choice([1, 1, 1, 2, 3, rng.randrange(1, 21)])
         env.build(rng, focus=slot)
-        for valid, x, z in env.sites:
-            if env.enemies and rng.random() < 0.7:
-                env.place_enemy_near(rng, (x << 20) + 0x80000, (z << 20) + 0x80000)
+        if rng.random() < 0.5:
+            for valid, x, z in env.sites:
+                if env.enemies and rng.random() < 0.7:
+                    env.place_enemy_near(rng, (x << 20) + 0x80000, (z << 20) + 0x80000)
+        else:
+            # Enemies around every site, most on the edge of the 50 px query.
+            env.ring_enemies(rng, [((x << 20) + 0x80000, (z << 20) + 0x80000) for valid, x, z in env.sites if valid],
+                             rng.choice([1, 1, 2, 3]))
         empty = [b for b in range(2, 21) if not env.members[b]]
         to = (empty[0] if rng.random() < 0.8 else rng.choice(empty)) if empty else rng.randrange(2, 21)
-        escort = rng.choice([0, 0, 1, 2, 3, 4, 5, 6, 10, 40])
+        escort = rng.choice([0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 40])
         seed = rng.getrandbits(31) | 1
         env.put(0x64186c, seed)
         env.log.clear()

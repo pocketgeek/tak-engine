@@ -245,6 +245,29 @@ class Env:
                 e = ENEMIES + k * USTRIDE
                 self.put(e + 0x68, ex); self.put(e + 0x70, ez)
 
+    def ring_enemies(self, rng, points, each=2):
+        """List `each` more live enemies per point (16.16), each within a 60 px box
+        of its point or on a ring of 44..56 px around it (the edge of a 50 px
+        query), and send the old ones far off (56 at most in all)."""
+        self.enemies = [(ef, s32(0x7f000000), s32(0x7f000000)) for ef, ex, ez in self.enemies]
+        for x, z in points:
+            for _ in range(each):
+                if rng.random() < 0.3:
+                    dx, dz = rng.randrange(-60, 61), rng.randrange(-60, 61)
+                else:
+                    r = rng.randrange(44, 57)
+                    dx = rng.randrange(-r, r + 1)
+                    dz = int(round((r * r - dx * dx) ** 0.5)) + rng.choice([-1, 0, 0, 1])
+                    if rng.random() < 0.5: dz = -dz
+                    if rng.random() < 0.5: dx, dz = dz, dx
+                self.enemies.append((0x1000000, s32(x + (dx << 16)), s32(z + (dz << 16))))
+        del self.enemies[56:]
+        for k, (ef, ex, ez) in enumerate(self.enemies):
+            e = ENEMIES + k * USTRIDE
+            self.put(e + 0x130, ef); self.put(e + 0x68, ex); self.put(e + 0x70, ez)
+            self.put(LIST + 4 * k, e)
+        self.put(BM + 9, LIST); self.put(BM + 0xd, LIST + 4 * len(self.enemies))
+
     def state(self):
         """The manager after a call: unit squads, then each squad's members and p0..p8."""
         row = [self.geti(UNITS + i * USTRIDE + 0xc8) for i in range(1, self.nunits + 1)]
