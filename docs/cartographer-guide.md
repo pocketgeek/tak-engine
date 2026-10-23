@@ -11,24 +11,15 @@ with every TAK Engine package, next to the game.
 This guide is for players and mapmakers. It explains what you see on screen and
 what each control does, from a first map to sharing a finished one.
 
-> **Version note.** This guide describes TAK Engine 0.8.3. These things are new
-> in 0.8.3 and are not in 0.8.2:
+> **Version note.** This guide describes TAK Engine 0.8.11 and the work after it
+> for the next release. New after 0.8.11, and not in 0.8.11:
 >
-> - the **View → Preferences** dialog (borderless fullscreen, edge scrolling, UI
->   scale and the game data folder), **F11** fullscreen, and the game's
->   **Options → Data folder** setting that Cartographer shares;
-> - the browser scrollbar;
-> - the check that a chosen game folder really is an installation (the **Not a
->   game folder** message and the new folder-picker title);
-> - opening a map file named on the command line;
-> - undefined features drawn as red dots;
-> - the limit of eight start positions (*START POSITIONS FULL*);
-> - the **BLOCKED** tool and **View → Show blocked cells** (**B**), for painting
->   and seeing [blocked cells](#blocked-cells);
-> - playing a map's scenario from the game's create screens with **MAP
->   SCENARIO**, and the **By slot** start locations.
+> - the [AI Profiles window](#the-ai-profiles-window) (**Scenario → AI
+>   Profiles...**, **A**), which edits a map's AI profiles and saves them as a
+>   game mod;
+> - a map keeping its own `ai/` files through open, save, Test Map and recovery.
 >
-> Apart from these and bug fixes, the guide also matches 0.8.2.
+> Apart from these, the guide matches 0.8.11.
 
 Every picture in this guide is a real Cartographer screen (the Test Map lobby is
 the game's), using the original game's art. Some put two moments side by side,

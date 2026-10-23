@@ -1776,6 +1776,13 @@ Validation:
   label could read *DEFAULT AT*. Inspected by eye at 1:1 and enlarged; the scene is
   the same. `ai-group-rules.jpg` is unchanged: its one rule shows neither `^` nor `v`.
 
+- `docs/cartographer-guide.md`'s version note said 0.8.3. It now says the guide
+  describes 0.8.11 (the CMake project version and the README) and the work after it,
+  and lists what is newer than 0.8.11: the AI Profiles window and a map keeping its
+  own `ai/` files. The 0.8.3 list is gone.
+- The guide's Known limits no longer list "no copy to other levels" or "group rules
+  only move up".
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop
