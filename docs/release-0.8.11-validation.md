@@ -60,6 +60,22 @@ one level (cosmetic packs cannot carry them; a root `n_ai.txt` is not read). Bes
 and the cosmetic filter) and `src/net/mappackage.cpp` (a map package may carry
 the map's AI profile). See branch `task-ai-profiles`.
 
+Then, by the user's decisions of 2026-10-23 ("Our files, n_ai.txt and whatever
+need to go in the ai directory in a mod or game archive"; "rename classic to
+default in the game lobby, so the default.txt naming matches that"), branch
+`task-ai-dir`: our levels' game-mod files moved to `ai/d_ai.txt` ...
+`ai/ad_ai.txt` (a root `n_ai.txt` is no longer read; still game mods only), and
+AI level 6 is shown to players as **DEFAULT**, the DEFAULT AI (the lobby's level
+name, the server log's `DEFAULT AI profile` and mission lines, `aitool default`
+(which still takes `classic`), the user documents). Its internal name stays
+Classic. No AI level is stored by name anywhere (settings, replays and the match
+codec carry the number), so nothing persisted changes. Code: `src/ai/`
+(`builtinprofile.cpp`, `builtinprofile.h`), `src/hpi/hpi.cpp` (the cosmetic
+filter's root-name list is gone; `ai/` was already dropped),
+`src/client/gameview_lobby.cpp`, `gameview.h` / `gameview_net.cpp` (the debug
+`TAK_AI_LEVELS` per-seat harness levels), `src/server/server.cpp`,
+`tools/aitool.cpp`. Protocol stays 290.
+
 The changes:
 
 - Classic AI (AI level 6, server only; protocol 290): `dbcda124` (level 6
@@ -115,7 +131,7 @@ Debug builds of the tag), or state that it was not run this release.
 - **Maps, mods and settings.** Saved `.kmp` maps, generator-8/9 recipes,
   `mods/` packs and `ModCache/*.takmods` carry over. No settings key was added
   or removed (the prereleases' `campaignAi` key is ignored if present). Campaign
-  missions now play Classic opponents. A game pack written for 0.8.10 that
+  missions now play DEFAULT AI (Classic) opponents. A game pack written for 0.8.10 that
   happens to carry an `ai/d_ai.txt` ... `ai/ad_ai.txt` would now adjust that AI
   level; a game pack's `ai/default.txt` no longer changes our levels (it now
   changes Classic only).
@@ -173,6 +189,22 @@ Testing was reduced for this release, by the user's rule (minimal testing):
   `TAK_AI_LEVEL=2`) `68a4b1588012db76` both, unchanged; Classic
   (`TAK_AI_LEVEL=6`) `5c35c83f41cbae5f`, `err=none end=timelimit`. Logs:
   `~/tak-tmp/scratch/campaign-classic/`.
+- **Game-mod files in `ai/`, level 6 shown as DEFAULT** (branch `task-ai-dir`,
+  `build-o2`, all targets rebuilt): `--mpai` Inner Circle, seed 1, 60 s: Retail
+  `b353410003e98dd5`, Legion (`TAK_LEGION=1`) `0825aeb9e8139203`, DEFAULT
+  (`TAK_AI_LEVEL=6`) `14849c00bc6e2a19` twice, all unchanged, every game
+  `err=none end=timelimit`. `ai_profile` and `ai_profile_data` (a pack's loose
+  `ai/n_ai.txt` and an archive's `ai/n_ai.txt` are read; a root `n_ai.txt`, a
+  base install archive's and a map archive's `ai/n_ai.txt` and a cosmetic pack's
+  are not; the mod codec carries `ai/*_ai.txt`), `ai_mod_profile` (a hosted
+  all-AI game, Easy Aramon + Normal Taros on AI Circle, game mods on: every
+  misplaced `n_ai.txt` banning the Normal seat's `tarcage` / `targarg` is
+  ignored; `mods/game/my_ai/ai/n_ai.txt` stops the Normal seat only, Easy still
+  builds `araat` / `aralode`), `classic_ai_map_profile` (log lines now read
+  `DEFAULT AI profile`), `server_ai_level`, `settings`, `match_codec`,
+  `ai_behavior`, `ai_behavior_data`, `classic_ai`, `classic_ai_data`,
+  `mod_transfer` and `mod_packs` passed; `ctest -L quick` 491/491;
+  `check-detmath.sh` OK.
 - **AI profiles and Classic-only campaigns** (branch `task-ai-profiles`,
   `build-o2`, all targets rebuilt): `--mpai` Inner Circle, seed 1, Retail 60 s
   `b353410003e98dd5` and 300 s `a3d953803a064191`, Legion 60 s
@@ -249,7 +281,9 @@ briefing, not the book. Scripts: `~/tak-tmp/scratch/release-0811/shots`.
 When the Opponent AI line was removed (branch `task-ai-profiles`),
 `campaign.jpg` was retaken with the same framing (fresh profile,
 `TAK_SHOT_CAMPAIGN=0`, 1600 × 1000, quality 88) and no longer shows the line;
-the book's alt text and caption were updated.
+the book's alt text and caption were updated. When level 6 became DEFAULT in
+the lobby (branch `task-ai-dir`), the lobby, room, diplomacy and scorecard
+pictures were checked again: none shows level 6, so none was retaken.
 
 ## Limits
 
@@ -266,7 +300,7 @@ the book's alt text and caption were updated.
   campaign book's chapter numeral touches "APTER"; a server-side upload stall
   longer than 1 s is charged to every seat it holds up; a reconnecting seat
   that hitches while catching up is charged as a hold.
-- Classic's accepted limits (from the
+- The DEFAULT AI's (Classic's) accepted limits (from the
   [acceptance ledger](classic-ai-acceptance.md#accepted-limits)): the
   simulation is ours, decisions land a tick later and the brain has its own RNG
   stream, so games differ from retail's even where every rule matches; the
@@ -274,8 +308,9 @@ the book's alt text and caption were updated.
   500; no Classic game test near the unit cap (U8); exact ties in the Monarch's
   retreat read statically; U6, U14 and V8 / V11 leftovers; campaign start
   records inferred; order glue (U1, U13); canbuild menu order, seeding and the
-  visible-enemy list follow our engine. Classic is weaker than Normal (loses in
-  8 to 18 game-minutes in tests) and a Taros Classic AI often grows slowly.
+  visible-enemy list follow our engine. The DEFAULT AI is weaker than Normal
+  (loses in 8 to 18 game-minutes in tests) and a Taros DEFAULT AI often grows
+  slowly.
 - Testing was reduced (above): one full `-O2` suite, the `--mpai` set, no
   other trees and no remote sweep.
 - TODO-LEAD: flakes seen in CI, if any.

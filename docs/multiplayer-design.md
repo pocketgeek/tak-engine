@@ -872,7 +872,7 @@ as retail does) and scales the target score's turn penalty by the shooter's terr
 turn rate (roads and water, as retail does). 0.8.10 ships protocol 289; it plays
 with neither 0.8.9 nor 0.8.8, nor their replays.
 Protocol 290 adds AI level 6,
-CLASSIC (`SlotInfo.aiLevel` 6): a server-side port of the retail AI
+Classic, shown to players as DEFAULT (`SlotInfo.aiLevel` 6): a server-side port of the retail AI
 (`ai::ClassicBrain`, [classic-ai-plan.md](classic-ai-plan.md)). Its seat gets
 exactly a Normal seat's match config, so the simulation is 289's; a 289 peer would
 clamp level 6 to Normal, hence the bump. A campaign mission's strategic computer

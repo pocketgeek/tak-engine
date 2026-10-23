@@ -1,5 +1,8 @@
 # Classic AI: P8 acceptance ledger
 
+Players see this level as **DEFAULT** (the lobby's name for AI level 6 since 2026-10-23, after
+the `ai/default.txt` profile that drives it); "Classic" remains its internal and developer name.
+
 2026-10-23, branch `task-classic-ai`. The acceptance rule of the plan
 ([classic-ai-plan.md](classic-ai-plan.md) §5, P8): every ported routine has a passing
 emulation oracle that was once shown to fail on a planted bug, the engine game tests
@@ -177,6 +180,6 @@ c5e3b08d1f08ba9e) no longer apply: missions no longer play Normal.
 
 | Mission | Opponent | Time | Result |
 |---|---|---|---|
-| takmission08_dh | Classic (no choice) | 300 s | hash 5c35c83f41cbae5f, the reference; server log `... profile=mission08 CLASSIC (ai/mission08.txt)` |
+| takmission08_dh | Classic (no choice) | 300 s | hash 5c35c83f41cbae5f, the reference; server log `... profile=mission08 CLASSIC (ai/mission08.txt)` (since 2026-10-23 `... DEFAULT AI (ai/mission08.txt)`) |
 | takmission08_dh | Classic | 300 s | no fault (err=none); spends its 900 mana in 30 s, builds 5 units, sends 18 units out |
 | takx13_mt (`massattack 600`) | Classic | 660 s | no fault; the 82 monsters patrol their ground until 600 s, then all 76 left march on the player (mean distance 3804 -> 2604 px in 60 s) |

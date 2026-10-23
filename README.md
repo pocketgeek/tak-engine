@@ -61,18 +61,19 @@ earlier version, and does not play their replays**. Update the server and every
 player together. The existing AI levels and the game itself play exactly as in
 0.8.10.
 
-- **Classic AI: the original game's own computer player.** A new AI level,
-  **CLASSIC**, for skirmish and multiplayer AI seats, is a port of the 1999
-  game's AI, routine by routine. It builds from the map's AI profile (the
-  original weights and limits), expands to sacred sites, defends its bases and
+- **DEFAULT AI: the original game's own computer player.** A new AI level,
+  **DEFAULT**, for skirmish and multiplayer AI seats: the 1999 game's own AI,
+  driven by `ai/default.txt`, ported routine by routine (new AI seats still
+  start on Normal). It builds from the map's AI profile (the original weights
+  and limits), expands to sacred sites, defends its bases and
   sends its waves as the original did, quirks included: its attack waves simply
   march on their target, it always knows where your units are and prefers your
   lodestones and mana buildings as targets, and its Monarch runs when badly hurt.
-  It is **weaker than Normal**, and a Taros Classic AI often grows slowly. A
+  It is **weaker than Normal**, and a Taros DEFAULT AI often grows slowly. A
   dropped player's seat is still taken over by a Normal AI. See
-  [Classic](docs/user-guide.md#classic).
-- **Classic campaign opponents.** Campaign missions' computer players are
-  always **Classic**: they use each mission's own AI profile and its timed mass
+  [Default](docs/user-guide.md#default).
+- **DEFAULT AI campaign opponents.** Campaign missions' computer players are
+  always the **DEFAULT AI**: they use each mission's own AI profile and its timed mass
   attack. See [Campaigns](docs/user-guide.md#campaigns).
 - **Long build menus wrap.** A builder whose build menu does not fit beside the
   command panel (a long menu, a small window or a big Build Menu Scale) now
@@ -1111,7 +1112,7 @@ enemy units outside current sight remain untargetable.
 | Hard | Keeps expanding income and production, spending on raids and larger attack waves |
 | Absurd | Hard behavior with double mana income, including reclaim |
 | Absurdly Defensive | Defensive behavior with Absurd's double mana income ([details](docs/ai-defensive-2026-10-17.md)) |
-| Classic | The original 1999 game's own AI, ported routine by routine and checked against the original in emulation ([plan](docs/classic-ai-plan.md), [acceptance](docs/classic-ai-acceptance.md)): it reads the map's AI profile (`ai/default.txt` on every shipped skirmish map; 30 campaign missions name their own), has no difficulty setting or income bonus, keeps the original's quirks, and plays weaker than Normal. A game pack or a map archive that carries the profile file replaces the install's. Always plays the campaign opponents |
+| Default | The DEFAULT AI: the 1999 game's own AI, driven by `ai/default.txt`, ported routine by routine and checked against the original in emulation ([plan](docs/classic-ai-plan.md), [acceptance](docs/classic-ai-acceptance.md)): it reads the map's AI profile (`ai/default.txt` on every shipped skirmish map; 30 campaign missions name their own), has no difficulty setting or income bonus, keeps the original's quirks, and plays weaker than Normal. A game pack or a map archive that carries the profile file replaces the install's. Always plays the campaign opponents |
 
 Choose **Generate Random Map** under the map preview to configure a Mainland,
 Lakes, or Islands map, up to **64×64**. Every new mana site has surrounding ruins.
@@ -1431,7 +1432,7 @@ one of them falls back to Retail.
 Use the **same network protocol and compatible game data** on every participant.
 Version **0.8.11 uses protocol 290**, including authoritative pathfinding
 selection, shared game-mod pack transfer, Darien Crusades campaign messages, the
-disconnect wait with its AI takeover, and the Classic AI level. **0.8.11 does not
+disconnect wait with its AI takeover, and the DEFAULT AI level. **0.8.11 does not
 play with 0.8.10 (protocol 289) or any earlier version, and does not play their
 replays**: a 0.8.11 client cannot join an older server, nor an older client a
 0.8.11 server. Update the server

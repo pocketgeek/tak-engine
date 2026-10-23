@@ -1,19 +1,21 @@
 # TAK Engine 0.8.11
 
-0.8.11 follows 0.8.10. It adds **Classic**, a seventh computer-player level that
-plays as the original 1999 game's own AI, for skirmish, multiplayer and
+0.8.11 follows 0.8.10. It adds **Default**, a seventh computer-player level: the
+DEFAULT AI, the 1999 game's own AI, driven by `ai/default.txt`, for skirmish, multiplayer and
 campaign opponents. Long build menus now wrap into extra rows on small
-screens, and the blue production bar over factories is gone. A Classic seat is
+screens, and the blue production bar over factories is gone. A DEFAULT AI seat is
 a new value on the wire, so the network protocol moves to **290** (replays stay
 at format **14**): **0.8.11 does not play with 0.8.10 or any earlier version,
 and does not play their replays.** Servers and every player must update
 together. The existing AI levels and the game itself play exactly as in 0.8.10,
-but campaign missions now always play **Classic** opponents.
+but campaign missions now always play **DEFAULT AI** opponents.
 
-## Classic AI
+## The DEFAULT AI
 
-- **A new AI level, CLASSIC.** In a skirmish or multiplayer room the host can
-  now set an AI seat to **Classic**, after Absurdly Defensive. It is a port of
+- **A new AI level, DEFAULT.** In a skirmish or multiplayer room the host can
+  now set an AI seat to **DEFAULT**, after Absurdly Defensive (a new AI seat
+  still starts on Normal). It is named for `ai/default.txt`, the original
+  profile that drives it, and is a port of
   the original game's computer player, routine by routine: what it builds,
   where it puts it, which units guard its bases, when a wave leaves and what it
   marches on all follow the 1999 game. Each ported routine was checked against
@@ -33,12 +35,14 @@ but campaign missions now always play **Classic** opponents.
 - **It has no difficulty setting and no income bonus**, and it is **weaker than
   Normal**: in our tests it loses to a Normal AI within 8 to 18 game-minutes.
   It builds a few lodestones at a time and often runs short of mana. A **Taros**
-  Classic AI often grows slowly, because its Monarch keeps choosing expensive
+  DEFAULT AI often grows slowly, because its Monarch keeps choosing expensive
   Caged Demons.
 - **The disconnect takeover is still Normal.** When a dropped player's time runs
   out, a Normal AI takes the seat, as in 0.8.10.
 
-See [Classic](user-guide.md#classic) in the user guide.
+See [Default](user-guide.md#default) in the user guide. Developer documents
+and the source call this level **Classic** (`ai::Difficulty::Classic`,
+`classic-ai-plan.md`); only its player-visible name is DEFAULT.
 
 ## AI profiles
 
@@ -59,19 +63,19 @@ See [Classic](user-guide.md#classic) in the user guide.
 
 ## Campaigns
 
-- **Campaign opponents are always Classic**, the original game's own AI. There
+- **Campaign opponents are always the DEFAULT AI**, the original game's own AI. There
   is no choice of level: missions no longer play the Normal AI they had in
   0.8.10.
-- **Classic opponents play a mission as the 1999 game did**: each uses the AI
+- **DEFAULT AI opponents play a mission as the 1999 game did**: each uses the AI
   profile the mission names (30 of the shipped missions name their own, the
   rest fall back to `ai/default.txt`) and the mission's timed mass attack, when
   every armed mobile unit marches on you.
 
 See [Campaigns](user-guide.md#campaigns).
 
-## Classic AI profile files
+## DEFAULT AI profile files
 
-- **Classic reads the room's own profile file.** The file the map names
+- **The DEFAULT AI reads the room's own profile file.** The file the map names
   (`ai/<name>.txt`, else `ai/default.txt`) is looked up like any game file: a
   ticked game pack that carries one replaces the install's, and a map whose own
   archive in `Maps/` carries one plays with it (the file travels in the map's
@@ -102,8 +106,10 @@ See [Building](user-guide.md#building).
 
 ## For contributors
 
-- The Classic level lives in `src/ai/classic*.{h,cpp}` (`ai::ClassicBrain`, one
-  per Classic seat, run by the server). The design and phases are in
+- The Classic level (shown to players as **DEFAULT**: the lobby's level name,
+  the user documents and the server log's `DEFAULT AI profile` line; `aitool`
+  takes `default`, and still `classic`) lives in `src/ai/classic*.{h,cpp}`
+  (`ai::ClassicBrain`, one per Classic seat, run by the server). The design and phases are in
   [classic-ai-plan.md](classic-ai-plan.md); every ported routine, its emulation
   oracle and the planted bug it was shown to catch are in
   [classic-ai-acceptance.md](classic-ai-acceptance.md). The oracles are opt-in:
@@ -182,9 +188,9 @@ All of 0.8.10's known limits carry over:
   sweep, Retail `h-cramped` ends early because the idle seat starts with only
   its Monarch.
 
-New with Classic:
+New with the DEFAULT AI:
 
-- **A Classic game is not a replay of a 1999 game.** Its decisions follow the
+- **A DEFAULT AI game is not a replay of a 1999 game.** Its decisions follow the
   original's rules, but the world they act in is this engine's (economy, build
   times, sight, pathfinding and combat), its orders take effect a tick later,
   and it draws its own random numbers. So games go differently from the
@@ -192,7 +198,7 @@ New with Classic:
 - **It weighs targets against this game's unit cap** (2,000 per player by
   default), not the original's smaller one, and it has not been tested in games
   that reach the unit cap.
-- **Weak and slow-growing**, as described above; a Taros Classic AI in
+- **Weak and slow-growing**, as described above; a Taros DEFAULT AI in
   particular can fall far behind.
 - **In campaigns, its start positions come from the mission map's start
   markers**, as on a skirmish map; this is inferred, not read from the original

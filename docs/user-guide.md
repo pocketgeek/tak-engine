@@ -298,9 +298,9 @@ scenario.
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
 | **Absurd** | Plays like Hard, with **double mana income**. |
 | **Absurdly Defensive** | Plays like Defensive, with Absurd's **double mana income**. |
-| **Classic** | The original game's own computer player, as it played in 1999. No difficulty setting and no income bonus. Weaker than Normal. See [Classic](#classic). |
+| **Default** | The DEFAULT AI: the 1999 game's own AI, driven by `ai/default.txt`, as it played in 1999. No difficulty setting and no income bonus. Weaker than Normal. Despite the name, a new AI seat starts on Normal. See [Default](#default). |
 
-At every difficulty except Classic, the AI's Monarch fights back when it is attacked, or when
+At every difficulty except Default, the AI's Monarch fights back when it is attacked, or when
 an armed enemy comes within its reach, instead of carrying on with a build.
 
 Defensive, Easy and Normal also build another lodestone whenever they run short
@@ -327,18 +327,19 @@ builders building income rather than leaving them idle.
 The AI runs on the game server, never in your client. In single-player, the game
 starts a private server on your own computer for you.
 
-Every level except Classic has its own **build profile** built into the game: a
+Every level except Default has its own **build profile** built into the game: a
 weight and a limit for each unit, which decide how often it picks that unit and
 how many of it it may have. (The values are the original game's default AI
 profile, the one these levels were tuned on.) These levels never read a game's
 `ai/*.txt` files; a game mod can change their profiles instead (see
 [AI profiles in game mods](#ai-profiles-in-game-mods)).
 
-#### Classic
+#### Default
 
-Classic is the original game's computer player. Every decision it makes (what to
-build, where to put it, which units guard the base, when a wave leaves and what
-it marches on) follows the 1999 game's own AI, which was read from the original
+The DEFAULT AI is the original game's computer player, named for the
+`ai/default.txt` profile that drives it (developer documents call it the Classic
+AI). Every decision it makes (what to build, where to put it, which units guard
+the base, when a wave leaves and what it marches on) follows the 1999 game's own AI, which was read from the original
 program and checked against it piece by piece
 ([acceptance](classic-ai-acceptance.md)). So it plays the way the original did,
 quirks included:
@@ -354,7 +355,7 @@ quirks included:
   short of.
 - It has no difficulty setting and no income bonus.
 - It is **weaker than Normal**. It builds a few lodestones at a time and often
-  runs low on mana; a **Taros** Classic AI in particular can grow slowly.
+  runs low on mana; a **Taros** DEFAULT AI in particular can grow slowly.
 - Its base defenders patrol around the base and walk through intruders; its
   attack waves walk to their target and fight on the way and when they arrive.
   It knows where your units are even when it cannot see them, and prefers your
@@ -362,7 +363,7 @@ quirks included:
 - Its Monarch keeps building only while the base is short of builders, and runs
   for a safe spot when badly hurt instead of fighting back.
 
-Classic always plays the campaign's computer opponents: see
+The DEFAULT AI always plays the campaign's computer opponents: see
 [Campaigns](#campaigns).
 
 ### Random maps
@@ -1959,9 +1960,9 @@ mission. The mouse wheel and **Up/Down** scroll long briefings. During play,
 When you win, **Next** goes to the next chapter and **Retry** replays this one.
 Campaigns always use Retail pathfinding.
 
-The missions' computer players are always **Classic**, the original game's
-own AI (see [Classic](#classic)), which plays a mission as the 1999 game did:
-it builds from the AI profile the mission names and makes the timed mass attack
+The missions' computer players are always the **DEFAULT AI**, the original
+game's own AI (see [Default](#default)), which plays a mission as the 1999 game
+did: it builds from the AI profile the mission names and makes the timed mass attack
 some *Iron Plague* missions set. There is no choice of AI level for a mission.
 
 You always play the mission's first player, as in the original game, even where
@@ -2069,7 +2070,7 @@ then ticked cosmetic packs.
 
 ### AI profiles in game mods
 
-A game pack can change the build profile of each AI level except Classic with a
+A game pack can change the build profile of each AI level except Default with a
 file of its own in the pack's `ai` folder, loose (`mods/game/My AI/ai/n_ai.txt`)
 or in the `ai` folder inside an archive in the pack. A file of that name anywhere
 else, such as directly in the pack folder, is not read.
@@ -2092,8 +2093,8 @@ AI that takes over a disconnected player's seat), never Easy. Names are not
 case-sensitive. When two ticked packs have the same file, the alphabetically
 later pack wins, as for any file. In multiplayer the files travel with the
 host's game packs. Cosmetic packs, maps and the install itself cannot change
-these levels' profiles, even with an `ai/n_ai.txt` of their own. Classic reads none of these files: it reads the map's
-own AI profile, which a game pack can replace (see [Classic](#classic)).
+these levels' profiles, even with an `ai/n_ai.txt` of their own. The DEFAULT AI reads none of these files: it reads the
+map's own AI profile, which a game pack can replace (see [Default](#default)).
 
 The old `overrides/` folder is no longer read. Nothing in it is moved or
 changed; move your packs into `mods/cosmetic/` or `mods/game/` yourself, each
