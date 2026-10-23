@@ -115,7 +115,7 @@ int main() {
     flips("gameModPacks", [](Settings& s){s.gameModPacks={"Pack A"};});
     flips("cosmeticModPacks", [](Settings& s){s.cosmeticModPacks={"Pack B"};});
     flips("lastMap",         [](Settings& s) { s.lastMap = "Inner Circle"; });
-    flips("campaignAi",      [](Settings& s) { s.campaignAi = 6; });
+    flips("campaignAi",      [](Settings& s) { s.campaignAi = 2; });
     flips("dataDir",         [](Settings& s) { s.dataDir = "/somewhere/else"; });
     flips("dataManifest",    [](Settings& s) { s.dataManifest = "deadbeef"; });
 
@@ -167,7 +167,7 @@ int main() {
         cur.streamRememberKey = true;
         cur.streamLocalCopy = true;
         cur.lastMap = "Inner Circle";
-        cur.campaignAi = 6;
+        cur.campaignAi = 2;   // NORMAL: away from the CLASSIC default
         cur.gameCreate.crusades = true;
         cur.gameCreate.generator = "saved recipe";
         cur.hotkeys["selectAll"] = "ctrl+a";
@@ -211,7 +211,7 @@ int main() {
         keep("streamRememberKey", d.streamRememberKey);
         keep("streamLocalCopy",   d.streamLocalCopy);
         keep("lastMap",           d.lastMap == cur.lastMap);
-        keep("campaign opponent", d.campaignAi == 6);
+        keep("campaign opponent", d.campaignAi == 2);
         keep("hotkeys",           d.hotkeys == cur.hotkeys);
         keep("voice chat",        d.voiceEnabled && d.voiceMicDevice == "a-mic" && !d.voiceOutputSameAsGame &&
                                   d.voiceOutputDevice == "headset" && d.voiceMicVolume == 40 &&
@@ -345,6 +345,25 @@ int main() {
         for (int mib : tak::kGpuMemoryLimits)
             noAuto = noAuto && gpuMemoryLimitLabel(mib).find("Auto") == std::string::npos;
         check("gpu: no Auto entry", noAuto);
+    }
+
+    // Campaign OPPONENT AI: CLASSIC (6) by default -- the struct, and a settings file
+    // with no campaignAi key (which keeps the struct default) or an unknown value;
+    // "normal" still reads NORMAL (2), and both written forms round-trip.
+    {
+        auto check = [&](const char* what, bool ok) {
+            std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++g_fail;
+        };
+        using tak::parseCampaignAi; using tak::campaignAiValue;
+        check("campaignAi: default 6", Settings{}.campaignAi == 6);
+        check("campaignAi: values", parseCampaignAi("normal") == 2 && parseCampaignAi("classic") == 6);
+        check("campaignAi: junk -> 6", parseCampaignAi("") == 6 && parseCampaignAi("hard") == 6 &&
+                                       parseCampaignAi("Normal ") == 6);
+        check("campaignAi: written", std::string(campaignAiValue(2)) == "normal" &&
+                                     std::string(campaignAiValue(6)) == "classic");
+        check("campaignAi: round-trip", parseCampaignAi(campaignAiValue(2)) == 2 &&
+                                        parseCampaignAi(campaignAiValue(6)) == 6);
     }
 
     std::printf(g_fail ? "settings_test: %d FAILURE(S)\n" : "settings_test: all passed\n",

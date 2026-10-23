@@ -1255,8 +1255,9 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             // rows and the next-up highlight (nothing is locked either way).
             if (tab == 1)
                 for (int i = 0; i < 12; ++i) tmp.campaignCompleted["the iron plague"].insert(i);
-            // TAK_SHOT_CAMPAIGN_AI=classic shows the OPPONENT AI line set to CLASSIC.
-            if (const char* ai = tak::devEnv("TAK_SHOT_CAMPAIGN_AI")) tmp.campaignAi = std::string(ai) == "classic" ? 6 : 2;
+            // TAK_SHOT_CAMPAIGN_AI=normal|classic sets the OPPONENT AI line (unset: the
+            // saved setting, CLASSIC by default).
+            if (const char* ai = tak::devEnv("TAK_SHOT_CAMPAIGN_AI")) tmp.campaignAi = std::string(ai) == "normal" ? 2 : 6;
             CampaignScreen cs(d_->ren, d_->vfs, tmp, tab, {}, std::filesystem::u8path(d_->install), [](int) {});
             cs.render(w, h);
         }

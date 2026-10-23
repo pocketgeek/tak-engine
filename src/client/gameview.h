@@ -2361,7 +2361,9 @@ private:
     bool createGameMods_ = false;   // multiplayer create-dialog GAME MODS toggle (default off)
     std::string mpMapId_;   // set from the launched map basename
     std::string missionStem_;   // campaign mission to host (headless --mpmission)
-    uint8_t missionAiLevel_ = 2;   // its opponents' AI level (setMissionAiLevel)
+    uint8_t missionAiLevel_ = 2;   // its opponents' AI level: a campaign launch sets Settings::campaignAi
+                                   // (CLASSIC by default); the --mpmission harness keeps NORMAL
+                                   // unless TAK_AI_LEVEL picks
     // Per-mission unit whitelist from missions/<stem>.tdf (lowercased ids). When set,
     // the human's conjure menu is filtered to it (a UI restriction; empty = anything).
     std::vector<std::string> missionAllowed_;

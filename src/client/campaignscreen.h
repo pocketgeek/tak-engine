@@ -16,7 +16,7 @@ struct Settings;
 // mods/cosmetic/*.hpi archives the mission will load. Campaigns offer no mod
 // selection: game mods and cosmetic pack folders are never used there.
 // Also not retail: with setOpponentAi given, the left page carries an OPPONENT AI
-// line (Settings::campaignAi, NORMAL or CLASSIC) that a click or the A key flips;
+// line (Settings::campaignAi, CLASSIC by default or NORMAL) that a click or the A key flips;
 // the callback stores and saves the new AI level.
 class CampaignScreen {
 public:
