@@ -1716,6 +1716,12 @@ if(TAK_TEST_DATA)
     add_test(NAME classic_ai_bases COMMAND classic_ai_test --bases "${TAK_TEST_DATA}")
     # A scripted raid into a Classic base: defenders sent at the raiders, the Monarch's retreat.
     add_test(NAME classic_ai_raid COMMAND classic_ai_test --raid "${TAK_TEST_DATA}")
+    # U13: what a Move and an AttackMove do to a column walking through enemies.
+    add_test(NAME classic_ai_u13 COMMAND classic_ai_test --u13 "${TAK_TEST_DATA}")
+    # A Classic seat's waves: launch, march by Move, a member sent home, dissolve.
+    add_test(NAME classic_ai_waves COMMAND classic_ai_test --waves "${TAK_TEST_DATA}")
+    # Classic against Classic: three faction pairs on Edmont's Field end with a winner.
+    add_test(NAME classic_ai_duels COMMAND classic_ai_test --duels "${TAK_TEST_DATA}")
 endif()
 # Opt-in (it needs the retail binary for emulation, Python's unicorn, and a
 # directory of captured retail PrintWeights dumps, none of which CI has):
@@ -1733,16 +1739,23 @@ endif()
 # constructor, the assignment pass, the base think's factory path (with the
 # economy step's allocation), the block grids and site search, the
 # constructor planner and the static grade its reachability reads, the threat
-# test and enemy query, the combat-member planner and the Monarch's retreat
-# through classic_ai_test; the scheduler, squad clocks, nearest-base selection,
+# test and enemy query, the combat-member planner and the Monarch's retreat,
+# the base think's wave launch, the strike, backup and VTOL thinks and the
+# target picker through classic_ai_test; the scheduler, squad clocks, nearest-base selection,
 # factory planner, menu draw, entry weight and patrol points through the shared
 # templates in retail_ai_test.
 option(TAK_CLASSIC_ORACLES "run the Classic AI emulation oracles (needs KINGDOMS.icd and unicorn)" OFF)
 if(TAK_CLASSIC_ORACLES AND Python3_Interpreter_FOUND)
-    foreach(oracle squad_ctor assignment factory_think placement constructor static_grade threat defence retreat)
+    foreach(oracle squad_ctor assignment factory_think placement constructor static_grade threat defence retreat
+            launch target_pick)
         add_test(NAME classic_ai_${oracle}
                  COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/re/check_ai_${oracle}.py
                          --binary $<TARGET_FILE:classic_ai_test>)
+    endforeach()
+    foreach(routine strike backup vtol)
+        add_test(NAME classic_ai_${routine}
+                 COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/re/check_ai_strike.py
+                         --binary $<TARGET_FILE:classic_ai_test> --routine ${routine})
     endforeach()
     foreach(oracle scheduler squads base_selection base_radius factory_plan build_choice build_weight patrol_points)
         add_test(NAME classic_ai_${oracle}

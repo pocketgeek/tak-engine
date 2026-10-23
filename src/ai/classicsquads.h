@@ -87,6 +87,15 @@ struct ClassicSquadUnit {
     bool buildingBuild = false; // ... which is BuildingBuild (a factory at work)
     bool buildsManaSite = false;   // ... which builds a mana-site type (0x40c830)
     uint16_t weaponDamage = 0, weaponReload = 0;   // its current weapon (+0xc): +0x88, +0x9c ticks
+    // Read by the army squads (ai/classicwaves.h):
+    int16_t hp = 0;             // +0x10c
+    uint32_t maxDamage = 0;     // type +0x1be
+    int16_t sight = 0;          // type +0x226
+    int32_t range = 0;          // its current weapon's +0x90
+    bool navigator = false;     // +8 -> +4: a ground navigator (the reachability walks need one)
+    bool naval = false;         // type +0x260 0x80000 with +0x194 > 0 (the picker's reachability flag)
+    int16_t cellX = 0, cellZ = 0;   // +0x74 / +0x76: its footprint's top-left cell
+    uint8_t missionKind = 0;    // its first mission's kind byte (+4), in 0x4de530's numbering
     bool live() const { return (flags & kLive) && !(flags & kDying); }
     sim::RetailAiUnitClass unitClass() const {
         sim::RetailAiUnitClass c;
@@ -453,18 +462,19 @@ void classicAssign(ClassicSquads& s, std::vector<ClassicSquadUnit>& units, const
 //    whose first mission has class 1 or 2 -- to the constructor planner 0x40c890
 //    if it has a navigator; a type without a menu goes to the combat planner
 //    0x40d370 if it has a navigator. Planners get units[i] (and the threat).
-// The rest of the think (quota growth, surpluses, transfers, expansion, waves)
-// comes after the loop and is not part of this function.
+// The rest of the think (quota growth, surpluses, transfers, expansion, waves:
+// classicBaseLaunch in ai/classicwaves.h) runs when this returns true, as
+// retail's does only after a loop it reached.
 template<class Threat, class Factory, class Constructor, class Combat>
-void classicBaseMembers(ClassicSquads& s, const std::vector<ClassicSquadUnit>& units, int slot,
+bool classicBaseMembers(ClassicSquads& s, const std::vector<ClassicSquadUnit>& units, int slot,
                         Threat threat, Factory factory, Constructor constructor, Combat combat) {
     auto& base = s.squads[size_t(slot)];
     if (base.parameters[0] != 0 && !classicAnchor(s, base.parameters[0])) base.parameters[0] = 0;
     const detail::ClassicUnitIndex index(units);
     const auto centre = classicBaseCentre(s, units, index, slot);
-    if (!centre) return;
+    if (!centre) return false;
     const auto radius = classicBaseRadius(s, units, index, slot, 0);
-    if (!radius) return;
+    if (!radius) return false;
     const bool danger = threat(*centre, *radius);
     for (size_t k = 0; k < base.members.size(); ++k) {
         const auto it = index.at.find(base.members[k]);
@@ -481,6 +491,7 @@ void classicBaseMembers(ClassicSquads& s, const std::vector<ClassicSquadUnit>& u
             combat(i, danger);
         }
     }
+    return true;
 }
 
 // The campaign keyword: `massattack <n>` in a .ota PlayerN line (sscanf "%i", so

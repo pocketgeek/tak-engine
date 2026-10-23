@@ -867,7 +867,8 @@ static void classicLevel() {
     // The Normal Controller attacks with this army at its first think (main's loop);
     // the Classic one is handed every tick and gives each unit retail's standing
     // orders (Stance 0) as it joins a base squad, then (P5) sends the idle ones
-    // on patrol around the base (Move, then a queued Patrol); waves are P6.
+    // on patrol around the base (Move, then a queued Patrol), and (P6) its waves
+    // only Move, Patrol and Stop (retail's mission clear): never an attack.
     auto soldier=fighter();sim::TypeRegistry empty;ai::Profile profile;
     sim::World w;terrain(w);w.player(0).income=100;
     for (int i=0;i<35;++i) w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
@@ -877,11 +878,11 @@ static void classicLevel() {
         for (const auto& c:think(classic,w,tick)) {
             if (c.kind==net::Cmd::Stance && c.targetId==0) ++stances;
             else if (c.kind==net::Cmd::Patrol && c.queue) ++patrols;
-            else if (c.kind!=net::Cmd::Move) ++other;
+            else if (c.kind!=net::Cmd::Move && c.kind!=net::Cmd::Patrol && c.kind!=net::Cmd::Stop) ++other;
         }
     ai::Controller normal(0,empty,profile,1,ai::Difficulty::Normal,{{3400,800}});
     check(stances==35 && patrols>=1 && other==0 && attacks(think(normal,w))==35,
-          "the Classic brain gives each unit its standing orders and idle patrols where Normal attacks");
+          "the Classic brain gives each unit its standing orders, idle patrols and wave moves where Normal attacks");
 }
 
 int main(int argc,char** argv) {

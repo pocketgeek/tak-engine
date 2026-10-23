@@ -41,6 +41,10 @@ struct ClassicEnemy {
     uint32_t flags = 0;                 // unit +0x130 (its low two bits: 1 = on the ground)
     int32_t x = 0, y = 0, z = 0;        // +0x68 / +0x6c / +0x70, 16.16 pixels
     bool cloaked = false;               // +0x114 bit 4
+    // Read by the target picker (ai/classicwaves.h):
+    int16_t cellX = 0, cellZ = 0;       // +0x74 / +0x76: its footprint's top-left cell
+    bool unfinished = false;            // +0x108 != 0 (an unordered compare counts as 0)
+    bool manaSite = false;              // type +0x264 bit 31
     bool live() const { return (flags & kLive) && !(flags & kDying); }
 };
 

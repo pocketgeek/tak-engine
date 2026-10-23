@@ -10,6 +10,12 @@
 //       faction builds its base on Abnar's Terrace for 10 game-minutes
 //   classic_ai_test --raid <retail-root>    the P5 game: a scripted raid into a
 //       Classic base (defenders sent at the raiders, the Monarch's retreat)
+//   classic_ai_test --u13 <retail-root>     U13: a column on Move and on
+//       AttackMove walking through enemies
+//   classic_ai_test --waves <retail-root>   the P6 game: a Classic seat's wave
+//       launches, marches by Move, sends a wounded member home and dissolves
+//   classic_ai_test --duels <retail-root>   Classic against Classic, three
+//       faction pairs, until a winner (TAK_DUEL_MAP, TAK_DUEL_MINUTES)
 //   classic_ai_test --profile       oracle mode for tools/re/check_ai_profile.py:
 //       stdin  "types <n>" then n lines "<name> <category words...>", then any
 //              number of "case <hex script>" lines
@@ -33,6 +39,9 @@
 //   classic_ai_test --threat        oracle mode for tools/re/check_ai_threat.py
 //   classic_ai_test --defence       oracle mode for tools/re/check_ai_defence.py
 //   classic_ai_test --retreat       oracle mode for tools/re/check_ai_retreat.py
+//   classic_ai_test --pick          oracle mode for tools/re/check_ai_target_pick.py
+//   classic_ai_test --strike / --backup / --vtol   oracle modes for tools/re/check_ai_strike.py
+//   classic_ai_test --launch        oracle mode for tools/re/check_ai_launch.py
 //       (line layouts in those scripts and in the oracle functions below)
 #include "ai/ai.h"
 #include "ai/classicbrain.h"
@@ -41,6 +50,7 @@
 #include "ai/classicplacement.h"
 #include "ai/classicproduction.h"
 #include "ai/classictypes.h"
+#include "ai/classicwaves.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include "sim/retailconstruction.h"
@@ -541,19 +551,20 @@ static void abnarSquads(const char* root) {
     bool gone=brain.squadOf(doomed)<=0;
     for (const auto& q:sq.squads) gone=gone && std::find(q.members.begin(),q.members.end(),doomed)==q.members.end();
     check(gone,"a destroyed unit is in no squad");
-    // Member counts per kind (the squads' own thinks are later phases, so every
-    // unit is in a base), of the test's units and the Monarch.
-    int bases=0,strikes=0,other=0,inBase1=0;
+    // Member counts per kind, of the test's units and the Monarch: every unit
+    // joins base 1 (the only occupied base); since P6 a wave the base launches
+    // takes some of them on into a strike, its backup or a VTOL squad.
+    int bases=0,strikes=0,vtol=0,other=0,inBase1=0;
     for (int slot=1;slot<=98;++slot)
         for (int id:sq.squads[size_t(slot)].members) {
             if (id!=monarch && !spawned.count(id)) continue;
-            (slot<=20 ? bases : slot<=80 || slot==97 || slot==98 ? strikes : other)+=1;
+            (slot<=20 ? bases : slot<=80 || slot==97 || slot==98 ? strikes : slot<=95 ? vtol : other)+=1;
             inBase1+=slot==1;
         }
-    std::printf("  members: bases %d (base 1: %d), strikes/backups %d, VTOL/homeless %d\n",bases,
-                inBase1,strikes,other);
-    check(bases==inBase1 && strikes==0 && other==0 && bases==units+1,
-          "all of them are in base 1, the only occupied base");
+    std::printf("  members: bases %d (base 1: %d), strikes/backups %d, VTOL %d, homeless %d\n",bases,
+                inBase1,strikes,vtol,other);
+    check(bases==inBase1 && other==0 && bases+strikes+vtol==units+1 && brain.squadOf(monarch)==1,
+          "all of them are in base 1, the only occupied base, or in a wave it launched");
 }
 
 // The engine game test for P4a: a Classic seat of each faction with a factory
@@ -886,6 +897,263 @@ static void classicRaid(const char* root) {
                     retreat.tick,double(from),double(retreat.from),double(nearestRaider(retreat.x,retreat.z)));
         check(from<=ring0+8,"the retreat point is inside the ring-0 radius");
         check(nearestRaider(retreat.x,retreat.z)>retreat.from,"the retreat point is farther from the raiders");
+    }
+}
+
+// A side's cheapest ranged, walking, non-building combat type (the game tests'
+// soldiers): armed, its first weapon not melee with a range of at least 150 px.
+static const sim::UnitType* rangedType(const sim::TypeRegistry& reg,const char* side) {
+    const sim::UnitType* best=nullptr;
+    for (const auto& [id,t]:reg.types()) {
+        if (t.side!=side || t.isStructure() || t.canFly || t.commander || t.isBuilder || t.weapons.empty()) continue;
+        const auto& w=t.weapons.front();
+        if (w.melee || w.range<150 || w.damage<=0 || t.floater) continue;
+        if (!best || t.buildCost<best->buildCost || (t.buildCost==best->buildCost && id<best->id)) best=&t;
+    }
+    return best;
+}
+
+// U13, the engine half: what our Move and AttackMove do to a column walking
+// past enemies, the question a strike's MOVE-only orders turn on. Ten ranged
+// Aramon soldiers on Abnar's Terrace (both seats' standing orders: Stance 0)
+// are ordered 1000 px down a lane that runs through ten Veruna soldiers, once
+// with Move and once with AttackMove. Retail's MOVE_GROUND (the strike's order)
+// is a point move without the interruptible flag 0x10000: the idle retaliation
+// mission (0x409a50) takes only units with no mission, 0x10000 or a class-7
+// one, and the fire-at-will sweep (0x40f330) fires every unit's auto weapon
+// slots whatever its mission. So the column must walk through firing, never
+// stop to engage, and arrive; AttackMove is what stops and fights.
+static void classicMoveVsAttackMove(const char* root) {
+    auto vfs=hpi::mountRetailRoot(root);
+    sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
+    const auto map=hpi::findMap(vfs,"Abnar's Terrace");
+    const auto* mine=rangedType(reg,"ARA");
+    const auto* theirs=rangedType(reg,"VER");
+    if (!mine || !theirs) { check(false,"ranged Aramon and Veruna soldiers exist");return; }
+    std::printf("  U13 (Abnar's Terrace, 10 %s through 10 %s):\n",mine->id.c_str(),theirs->id.c_str());
+    for (int mode=0;mode<2;++mode) {
+        sim::World w;w.setVisPlayer(-1);
+        sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
+        config.slots={{true,2,0,1.0f},{true,0,1,1.0f}};
+        const auto starts=sim::setupMatch(w,reg,config);
+        if (starts.size()<2) { check(false,"Abnar's Terrace seats two players");return; }
+        // The lane: from beside the Aramon start toward the other start.
+        const float sx=starts[1].first,sz=starts[1].second;
+        float dx=starts[0].first-sx,dz=starts[0].second-sz;
+        const float len=std::hypot(dx,dz);dx/=len;dz/=len;
+        const float px=-dz,pz=dx;   // across the lane
+        std::vector<int> column,enemies;
+        for (int k=0;k<10;++k) {
+            const float off=float(k%5-2)*36.0f,back=float(k/5)*36.0f;
+            column.push_back(w.spawn(mine,sx+dx*(200-back)+px*off,sz+dz*(200-back)+pz*off,std::nullopt,1));
+            enemies.push_back(w.spawn(theirs,sx+dx*(700+back)+px*(off+60),sz+dz*(700+back)+pz*(off+60),std::nullopt,0));
+        }
+        for (int id:column) { net::Command c;c.kind=net::Cmd::Stance;c.player=1;c.unitId=id;c.targetId=0;sim::applyCommand(w,reg,c); }
+        for (int id:enemies) { net::Command c;c.kind=net::Cmd::Stance;c.player=0;c.unitId=id;c.targetId=0;sim::applyCommand(w,reg,c); }
+        const float gx=sx+dx*1200,gz=sz+dz*1200;
+        for (int k=0;k<10;++k) {
+            net::Command c;c.kind=mode==0 ? net::Cmd::Move : net::Cmd::AttackMove;c.player=1;c.unitId=column[size_t(k)];
+            c.x=gx+px*float(k%5-2)*36.0f;c.z=gz+pz*float(k%5-2)*36.0f;
+            sim::applyCommand(w,reg,c);
+        }
+        auto enemyHp=[&]{ double hp=0;for (int id:enemies) if (const auto* e=w.unit(id);e && e->alive()) hp+=e->hp.toFloat();return hp; };
+        const double hp0=enemyHp();
+        double hpWhileWalking=hp0;
+        std::set<int> engaged,arrived;
+        uint32_t lastArrival=0;
+        for (uint32_t tick=0;tick<1200;++tick) {
+            w.tick(1.f/30.f);
+            bool walking=false;
+            for (int id:column) {
+                const auto* u=w.unit(id);
+                if (!u || !u->alive()) continue;
+                // Its own order still pending (the goal leg is in the queue).
+                bool pending=false;
+                for (const auto& o:u->orders) if (o.goal && !o.autoTarget) pending=true;
+                if (pending) {
+                    walking=true;
+                    if (!u->orders.empty() && u->orders.front().autoTarget) engaged.insert(id);
+                } else if (!arrived.count(id) && std::hypot(u->x.toFloat()-gx,u->z.toFloat()-gz)<160) {
+                    arrived.insert(id);lastArrival=tick;
+                }
+            }
+            if (walking) hpWhileWalking=enemyHp();
+        }
+        int alive=0;for (int id:column) if (const auto* u=w.unit(id);u && u->alive()) ++alive;
+        const char* name=mode==0 ? "Move" : "AttackMove";
+        std::printf("    %-10s: %zu of 10 stopped to engage on the way, %zu arrived (the last at %.1f s), %d alive; "
+                    "the enemy lost %.0f of %.0f hp while the column walked\n",name,engaged.size(),arrived.size(),
+                    double(lastArrival)/30.0,alive,hp0-hpWhileWalking,hp0);
+        if (mode==0) {
+            check(engaged.empty(),"U13: a column on Move never stops to engage (retail MOVE_GROUND)");
+            check(hp0-hpWhileWalking>0,"U13: a column on Move fires while it walks (the fire-at-will sweep)");
+            check(arrived.size()>=size_t(std::max(1,alive-1)),"U13: the surviving column on Move arrives");
+        } else {
+            check(!engaged.empty(),"U13: a column on AttackMove stops to engage (not what a strike gives)");
+        }
+    }
+}
+
+// The P6 game test: a Classic Aramon seat (no building: every limit 0) with an
+// army given at the start, against an idle Veruna seat, on Abnar's Terrace.
+// The base think launches a wave into a strike's backup; the backup gathers on
+// the strike, the strike picks a target over every enemy unit (the AI is
+// omniscient) and marches on it, and every order the army squads give is a
+// Move (no Attack, no AttackMove from the brain at all). A member hurt below
+// its threshold is sent home; then most of the wave is destroyed and the strike
+// dissolves: its survivors are cleared (Stop) and rejoin a base.
+static void classicWaves(const char* root) {
+    auto vfs=hpi::mountRetailRoot(root);
+    sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
+    const auto map=hpi::findMap(vfs,"Abnar's Terrace");
+    const auto* soldier=rangedType(reg,"ARA");
+    if (!soldier) { check(false,"a ranged Aramon soldier exists");return; }
+    sim::World w;w.setVisPlayer(-1);
+    sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
+    config.slots={{true,2,0,1.0f},{true,0,1,1.0f,true,false}};
+    const auto starts=sim::setupMatch(w,reg,config);
+    if (starts.size()<2) { check(false,"Abnar's Terrace seats two players");return; }
+    ai::Controller controller(1,reg,ai::Profile{},0x3a7eu,ai::Difficulty::Classic,{starts[0]});
+    controller.setClassicProfile(ai::ClassicProfileScript{"test","limit ALL 0\n"});
+    controller.setClassicStart(1,starts[1].first,starts[1].second);
+    const ai::ClassicBrain& brain=*controller.classicBrain();
+    const float sx=starts[1].first,sz=starts[1].second,ex=starts[0].first,ez=starts[0].second;
+    const float dx=sx<w.mapW()*8.0f ? 1.f : -1.f,dz=sz<w.mapH()*8.0f ? 1.f : -1.f;
+    std::vector<int> army;
+    std::map<net::Cmd,int> kinds;
+    int armyMoves=0,armyOther=0,homeMoves=0,dissolveStops=0;
+    uint32_t launchTick=0,marchTick=0,woundTick=0,killTick=0,dissolveTick=0;
+    float closest=1e9f,startGap=0;
+    int wounded=0;
+    auto inArmy=[&](int slot){return slot>=21 && slot<=95;};
+    auto gap=[&](const sim::Unit& u){return std::hypot(u.x.toFloat()-ex,u.z.toFloat()-ez);};
+    constexpr uint32_t kEnd=27000;
+    for (uint32_t tick=0;tick<kEnd;++tick) {
+        if (tick==40)
+            for (int k=0;k<40;++k)
+                army.push_back(w.spawn(soldier,sx+dx*(80+40*float(k%8)),sz+dz*(120+50*float(k/8)),std::nullopt,1));
+        // Once the wave marches: wound one strike member, then destroy all but
+        // two of the wave so the strike and backup fall to its gate p2.
+        if (marchTick && !woundTick && tick>marchTick+300) {
+            for (int id:army) if (const auto* u=w.unit(id);u && u->alive() && brain.squadOf(id)>=21 && brain.squadOf(id)<=49 && brain.squadOf(id)%2) {
+                w.unit(id)->hp=sim::Fixed::fromInt(std::max(1,u->type->maxHp/10));wounded=id;woundTick=tick;break;
+            }
+        }
+        if (woundTick && !killTick && tick>woundTick+300) {
+            killTick=tick;
+            int keep=2;
+            for (int id:army) if (const auto* u=w.unit(id);u && u->alive() && inArmy(brain.squadOf(id))) {
+                if (keep>0) { --keep;continue; }
+                net::Command c;c.kind=net::Cmd::Destroy;c.player=1;c.unitId=id;sim::applyCommand(w,reg,c);
+            }
+        }
+        controller.tick(w,tick,[&](const net::Command& c) {
+            ++kinds[c.kind];
+            const int slot=brain.squadOf(c.unitId);
+            const auto* u=w.unit(c.unitId);
+            if (u && inArmy(slot)) {
+                if (c.kind==net::Cmd::Move) ++armyMoves; else if (c.kind!=net::Cmd::Stop) ++armyOther;
+                if (c.kind==net::Cmd::Move && !marchTick && slot%2) marchTick=tick;
+            }
+            if (c.kind==net::Cmd::Move && c.unitId==wounded && woundTick && tick>=woundTick &&
+                std::hypot(c.x-sx,c.z-sz)<std::hypot(u ? u->x.toFloat()-sx : 0.f,u ? u->z.toFloat()-sz : 0.f)) ++homeMoves;
+            if (c.kind==net::Cmd::Stop && killTick && tick>killTick && inArmy(slot) && !dissolveTick) { dissolveTick=tick; }
+            if (c.kind==net::Cmd::Stop && dissolveTick==tick) ++dissolveStops;
+            sim::applyCommand(w,reg,c);
+        });
+        w.tick(1.f/30.f);
+        if (!launchTick && brain.waveStats().groundLaunches) launchTick=tick;
+        if (marchTick)
+            for (int id:army) if (const auto* u=w.unit(id);u && u->alive() && inArmy(brain.squadOf(id))) {
+                if (!startGap) startGap=gap(*u);
+                closest=std::min(closest,gap(*u));
+            }
+    }
+    const auto& st=brain.waveStats();
+    int home=0;for (int id:army) if (const auto* u=w.unit(id);u && u->alive() && brain.squadOf(id)>=1 && brain.squadOf(id)<=20) ++home;
+    std::printf("  waves on Abnar's Terrace (40 %s): %u ground, %u VTOL, %u naval launches; %u target picks (%u found one); "
+                "%u march and %u contact moves, %u backup moves, %u members sent home, %u dissolves\n",
+                soldier->id.c_str(),st.groundLaunches,st.vtolLaunches,st.navalLaunches,st.picks,st.targets,st.strikeMoves,
+                st.contactMoves,st.backupMoves,st.withdrawals,st.dissolves);
+    std::printf("    first launch at %.1f s, first march order at %.1f s; the army came from %.0f px to %.0f px of the "
+                "enemy start; the wounded member was sent home %d time(s); the dissolve at %.1f s stopped %d; %d of the "
+                "army back in a base; the brain's commands:",double(launchTick)/30.0,double(marchTick)/30.0,
+                double(startGap),double(closest),homeMoves,double(dissolveTick)/30.0,dissolveStops,home);
+    for (const auto& [k,n]:kinds) std::printf(" %d:%d",int(k),n);
+    std::printf("\n");
+    check(st.groundLaunches>=1,"waves: the base launches a ground wave");
+    check(st.targets>=1,"waves: the strike picks a target");
+    check(armyOther==0 && armyMoves>0,"waves: the army squads only ever give Move orders (and Stop)");
+    check(!kinds.count(net::Cmd::Attack) && !kinds.count(net::Cmd::AttackMove),"waves: the brain gives no Attack or AttackMove");
+    check(startGap>0 && closest<startGap*0.6f,"waves: the wave marches toward the enemy");
+    check(homeMoves>=1,"waves: a wounded strike member is sent home with a Move");
+    check(st.dissolves>=1 && dissolveStops>=1,"waves: a wave cut down to its gate dissolves (its survivors are stopped)");
+    check(home>=1,"waves: the dissolved wave's survivors rejoin a base");
+}
+
+// Classic against Classic (P6): two Classic seats on Edmont's Field, the
+// Monarch not expendable (losing it loses the game), building and fighting
+// with nothing but the retail AI's own decisions, until one side wins or the
+// 90-minute cap (TAK_DUEL_MAP / TAK_DUEL_MINUTES pick another map or cap; on
+// Abnar's Terrace the same pairs take 59 to 227 minutes, its terraces leaving
+// many members' reachability walks without a target).
+static void classicDuels(const char* root) {
+    auto vfs=hpi::mountRetailRoot(root);
+    sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
+    const char* mapName=std::getenv("TAK_DUEL_MAP") ? std::getenv("TAK_DUEL_MAP") : "Edmont's Field";
+    const auto map=hpi::findMap(vfs,mapName);
+    static const char* const kNames[5]={"Aramon","Taros","Veruna","Zhon","Creon"};
+    struct Pair { int a,b;uint32_t seed; };
+    const Pair pairs[]={{0,2,0xd0e1u},{1,3,0xd0e2u},{4,0,0xd0e3u}};
+    const uint32_t minutes=std::getenv("TAK_DUEL_MINUTES") ? uint32_t(std::atoi(std::getenv("TAK_DUEL_MINUTES"))) : 90u;
+    const uint32_t kCap=minutes*1800u;
+    std::printf("  Classic vs Classic (%s, the Monarch not expendable, cap %u min):\n",mapName,minutes);
+    for (const auto& pair:pairs) {
+        sim::World w;w.setVisPlayer(-1);
+        sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;config.monarchExpendable=false;
+        config.slots={{true,pair.a,0,1.0f,true,false},{true,pair.b,1,1.0f,true,false}};
+        const auto starts=sim::setupMatch(w,reg,config);
+        if (starts.size()<2) { check(false,"Abnar's Terrace seats two players");return; }
+        ai::Controller c0(0,reg,ai::Profile{},pair.seed,ai::Difficulty::Classic,{starts[1]});
+        ai::Controller c1(1,reg,ai::Profile{},pair.seed+7,ai::Difficulty::Classic,{starts[0]});
+        for (auto* c:{&c0,&c1}) c->setClassicProfile(ai::classicProfileScript(vfs,ai::classicMapAiProfile(vfs,map)));
+        c0.setClassicStart(0,starts[0].first,starts[0].second);
+        c1.setClassicStart(1,starts[1].first,starts[1].second);
+        int winner=-1;uint32_t end=0;
+        int peak[2]={0,0};
+        for (uint32_t tick=0;tick<kCap && winner<0;++tick) {
+            auto apply=[&](const net::Command& c){sim::applyCommand(w,reg,c);};
+            c0.tick(w,tick,apply);
+            c1.tick(w,tick,apply);
+            w.tick(1.f/30.f);
+            winner=w.updateOutcome();
+            end=tick+1;
+            if (tick%300==0) for (int p=0;p<2;++p) peak[p]=std::max(peak[p],w.player(p).unitCount);
+            static const bool trace=std::getenv("TAK_DUEL_TRACE")!=nullptr;
+            if (trace && tick%18000==0) {
+                for (int p=0;p<2;++p) {
+                    const auto& b=*(p ? c1 : c0).classicBrain();const auto& st=b.waveStats();
+                    int army=0,base=0,mhp=0;
+                    for (const auto& u:w.units()) if (u.player==p && u.alive() && u.type) {
+                        const int q=b.squadOf(u.id);
+                        if (q>=21 && q<=95) ++army; else if (q>=1 && q<=20) ++base;
+                        if (u.type->commander) mhp=u.hp.floorInt();
+                    }
+                    std::printf("      t%5.1f p%d units %d (army %d, base %d) mana %.0f monarch %d | launches %u picks %u/%u "
+                                "march %u contact %u home %u dissolves %u builds %u trains %u\n",double(tick)/1800.0,p,
+                                w.player(p).unitCount,army,base,w.player(p).mana,mhp,st.groundLaunches,st.targets,st.picks,
+                                st.strikeMoves,st.contactMoves,st.withdrawals,st.dissolves,b.builds(),b.factoryQueues());
+                }
+            }
+        }
+        const auto& s0=c0.classicBrain()->waveStats();const auto& s1=c1.classicBrain()->waveStats();
+        std::printf("    %s vs %s: %s after %.1f game-minutes; peak units %d / %d; ground waves %u / %u, VTOL %u / %u, "
+                    "dissolves %u / %u\n",kNames[pair.a],kNames[pair.b],
+                    winner<0 ? "no winner" : winner==0 ? (std::string(kNames[pair.a])+" wins").c_str()
+                                                       : (std::string(kNames[pair.b])+" wins").c_str(),
+                    double(end)/1800.0,peak[0],peak[1],s0.groundLaunches,s1.groundLaunches,s0.vtolLaunches,
+                    s1.vtolLaunches,s0.dissolves,s1.dissolves);
+        check(winner>=0,(std::string(kNames[pair.a])+" vs "+kNames[pair.b]+": the game ends with a winner within the cap").c_str());
     }
 }
 
@@ -1382,6 +1650,274 @@ static int defenceOracle(bool retreat) {
     return 0;
 }
 
+// The port's side of tools/re/check_ai_target_pick.py: ai::classicPickTarget
+// over the case's player records (retail's filter: active, kind 1-3, an index
+// that is not 10 and not allied), with the case's damage, visibility and
+// reachability answers (see the script for the line layout).
+static int pickOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        int cap;int32_t cx,cz;uint32_t seed;
+        in>>cap>>cx>>cz>>seed;
+        int allied[16];for (int& a:allied) in>>a;
+        ai::ClassicSquadUnit m;
+        int mover,nav,floater,depth,mfx,mfz,mcx,mcz;
+        in>>m.flags>>mover>>nav>>floater>>depth>>m.range>>m.x>>m.z>>mcx>>mcz>>mfx>>mfz;
+        m.mover=mover!=0;m.navigator=m.mover && nav!=0;m.naval=m.mover && floater && int16_t(depth)>0;
+        m.cellX=int16_t(mcx);m.cellZ=int16_t(mcz);m.footX=int16_t(mfx);m.footZ=int16_t(mfz);
+        std::vector<ai::ClassicPickPlayer> players;
+        std::map<int,int32_t> damage;std::map<int,int> visible;
+        for (int r=0;r<10;++r) {
+            int active,kind,idx,pop;size_t n;in>>active>>kind>>idx>>pop>>n;
+            ai::ClassicPickPlayer player;player.population=uint16_t(pop);
+            for (size_t k=0;k<n;++k) {
+                ai::ClassicEnemy e;int ecx,ecz,cloak,mana,vis;uint32_t f108;int32_t d;
+                in>>e.id>>e.flags>>e.x>>e.z>>ecx>>ecz>>cloak>>f108>>mana>>d>>vis;
+                e.cellX=int16_t(ecx);e.cellZ=int16_t(ecz);e.cloaked=cloak!=0;e.manaSite=mana!=0;
+                const float remaining=std::bit_cast<float>(f108);
+                e.unfinished=remaining<0.0f || remaining>0.0f;   // fcomp: equal or unordered is finished
+                damage[e.id]=d;visible[e.id]=vis;
+                player.units.push_back(e);
+            }
+            if (active && kind>=1 && kind<=3 && idx!=10 && !allied[idx]) players.push_back(std::move(player));
+        }
+        std::vector<int> reach;size_t n;in>>n;reach.resize(n);for (int& r:reach) in>>r;
+        std::vector<std::vector<int>> log;size_t nextReach=0;
+        struct Host {
+            std::vector<ai::ClassicPickPlayer>& players;
+            int cap;uint32_t& seed;std::vector<std::vector<int>>& log;
+            std::map<int,int32_t>& damages;std::map<int,int>& visibles;
+            std::vector<int>& reach;size_t& next;
+            const std::vector<ai::ClassicPickPlayer>& pickPlayers() const { return players; }
+            uint16_t unitCap() const { return uint16_t(cap); }
+            int random(int k) { log.push_back({0,k});return int(sim::retailRandom(seed,k)); }
+            int32_t damage(const ai::ClassicSquadUnit&,const ai::ClassicEnemy& e) { log.push_back({1,e.id});return damages[e.id]; }
+            bool visible(const ai::ClassicEnemy& e) { log.push_back({2,e.id});return visibles[e.id]!=0; }
+            bool reachable(const ai::ClassicSquadUnit& u,const ai::ClassicEnemy& e,int16_t range,bool naval) {
+                log.push_back({3,u.cellX,u.cellZ,u.footX,u.footZ,e.cellX,e.cellZ,range,range,1,int(naval)});
+                const int ok=next<reach.size() ? reach[next] : 1;++next;return ok!=0;
+            }
+        } host{players,cap,seed,log,damage,visible,reach,nextReach};
+        const int picked=ai::classicPickTarget(host,m,{cx,cz});
+        std::printf("%d %u %zu",picked,seed,log.size());
+        for (const auto& e:log) for (int v:e) std::printf(" %d",v);
+        std::printf("\n");
+    }
+    return 0;
+}
+
+// The port's side of tools/re/check_ai_strike.py (--strike: 0x40e180, --backup:
+// 0x40ea30, --vtol: 0x40eb40): the shared clock template sim::retailTickAiSquad
+// with ai::classicStrikeRecruit and the army squads' thinks under it, on the
+// case's squads, units, targets and answers (see the script for the layout).
+static int strikeOracle(const char* routine) {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        uint32_t tick,seed;int w,h,side,strike,vtol;
+        in>>tick>>w>>h>>side>>seed>>strike>>vtol;
+        ai::ClassicSquads s;
+        {
+            uint32_t dummy=1;
+            ai::classicConstructSquads(s,0,[&](int n){return sim::retailRandom(dummy,n);});
+            for (auto& q:s.squads) { q.parameters={};q.members.clear();q.active=q.dirty=0; }
+        }
+        auto table=[&](std::vector<std::optional<ai::ClassicCell>>& t) {
+            size_t k;in>>k;t.resize(k);
+            for (auto& c:t) { int valid,x,z;in>>valid>>x>>z;if (valid) c=ai::ClassicCell{int16_t(x),int16_t(z)}; }
+        };
+        table(s.sites);table(s.starts);
+        for (int b=1;b<=20;++b) in>>s.squads[size_t(b)].parameters[0];
+        int nown,nen;in>>nown>>nen;
+        std::vector<ai::ClassicSquadUnit> units;
+        std::map<int,ai::ClassicEnemy> all;
+        for (int k=0;k<nown+nen;++k) {
+            ai::ClassicSquadUnit u;int own,cx,cz,fx,fz,hp,sight,menu,depth,dmg,reload,mover,nav,has,mkind,mclass;
+            int64_t maxd;int32_t y;
+            in>>u.id>>own>>u.squad>>u.flags>>u.x>>y>>u.z>>cx>>cz>>fx>>fz>>hp>>maxd>>sight>>u.typeFlags>>u.secondaryFlags
+              >>menu>>depth>>u.range>>dmg>>reload>>mover>>nav>>has>>mkind>>u.missionFlags>>mclass>>u.goalX>>u.goalZ;
+            u.cellX=int16_t(cx);u.cellZ=int16_t(cz);u.footX=int16_t(fx);u.footZ=int16_t(fz);
+            u.hp=int16_t(hp);u.maxDamage=uint32_t(maxd);u.sight=int16_t(sight);u.menu=menu;u.minWaterDepth=int16_t(depth);
+            u.weaponDamage=uint16_t(dmg);u.weaponReload=uint16_t(reload);u.mover=mover!=0;u.navigator=u.mover && nav!=0;
+            u.mission=has!=0;u.missionKind=uint8_t(mkind);u.missionClass=uint8_t(mclass);
+            u.commander=(u.secondaryFlags&0x40000u)!=0;
+            ai::ClassicEnemy e;e.id=u.id;e.flags=u.flags;e.x=u.x;e.y=y;e.z=u.z;e.cellX=u.cellX;e.cellZ=u.cellZ;
+            all[u.id]=e;
+            if (own) units.push_back(u);
+        }
+        const int total=nown+nen;
+        for (int slot=1;slot<=98;++slot) {
+            size_t k;in>>k;auto& m=s.squads[size_t(slot)].members;m.resize(k);
+            for (auto& id:m) in>>id;
+        }
+        auto& sp=s.squads[size_t(strike)].parameters;
+        uint32_t active,dirty;
+        in>>sp[0]>>sp[1]>>sp[2]>>sp[3]>>sp[4]>>sp[5]>>active>>dirty;
+        s.squads[size_t(strike+1)].parameters[0]=strike;
+        const int slot=std::strcmp(routine,"strike")==0 ? strike : std::strcmp(routine,"backup")==0 ? strike+1 : vtol;
+        s.squads[size_t(slot)].active=active;s.squads[size_t(slot)].dirty=dirty;
+        std::vector<ai::ClassicEnemy> visible;
+        size_t n;in>>n;for (size_t k=0;k<n;++k) { int id;in>>id;visible.push_back(all[id]); }
+        int pick;in>>pick;
+        std::vector<int> kinds,reach;
+        in>>n;kinds.resize(n);for (int& v:kinds) in>>v;
+        in>>n;reach.resize(n);for (int& v:reach) in>>v;
+
+        std::vector<std::vector<int>> log;
+        size_t nextKind=0,nextReach=0;
+        struct Host {
+            std::vector<ai::ClassicSquadUnit>& units;std::map<int,ai::ClassicEnemy>& all;int total;
+            std::vector<ai::ClassicEnemy>& visible;int pick;std::vector<int>& kinds;std::vector<int>& reach;
+            size_t& nextKind;size_t& nextReach;std::vector<std::vector<int>>& log;uint32_t& seed;int w,h;
+            int random(int k) { log.push_back({0,k});return int(sim::retailRandom(seed,k)); }
+            int pick_(const ai::ClassicPoint& c,size_t i) { log.push_back({6,units[i].id,c[0],c[2]});return pick; }
+            const ai::ClassicEnemy* target(int id) {
+                if (id<=0 || id>total) return nullptr;
+                const auto& e=all.at(id);
+                return (e.flags&ai::ClassicEnemy::kLive) ? &e : nullptr;
+            }
+            bool threat(std::pair<int32_t,int32_t> c,int32_t r) { return ai::classicThreat(visible,c,r); }
+            bool reachable(const ai::ClassicSquadUnit& m,const ai::ClassicEnemy& t,int16_t range,bool naval) {
+                log.push_back({5,m.cellX,m.cellZ,m.footX,m.footZ,t.cellX,t.cellZ,range,range,1,int(naval)});
+                const int ok=nextReach<reach.size() ? reach[nextReach] : 1;++nextReach;return ok!=0;
+            }
+            uint8_t resolve(int command,size_t i,const ai::ClassicPoint& at) {
+                log.push_back({2,command,units[i].id,0,at[0],at[2]});
+                return uint8_t(nextKind<kinds.size() ? kinds[nextKind++] : 0);
+            }
+            void order(uint8_t kind,bool queue,size_t i,const ai::ClassicPoint& at,int32_t a6,int32_t a7) {
+                log.push_back({3,int(kind),int(queue),units[i].id,0,at[0],at[2],a6,a7});
+            }
+            void clear(size_t i) { log.push_back({4,units[i].id,0}); }
+            int width() const { return w; }
+            int height() const { return h; }
+        } host{units,all,total,visible,pick,kinds,reach,nextKind,nextReach,log,seed,w,h};
+        struct Calls {
+            Host& h;
+            int random(int k) { return h.random(k); }
+            int pick(const ai::ClassicPoint& c,size_t i) { return h.pick_(c,i); }
+            const ai::ClassicEnemy* target(int id) { return h.target(id); }
+            bool threat(std::pair<int32_t,int32_t> c,int32_t r) { return h.threat(c,r); }
+            bool reachable(const ai::ClassicSquadUnit& m,const ai::ClassicEnemy& t,int16_t r,bool f) { return h.reachable(m,t,r,f); }
+            uint8_t resolve(int c,size_t i,const ai::ClassicPoint& at) { return h.resolve(c,i,at); }
+            void order(uint8_t k,bool q,size_t i,const ai::ClassicPoint& at,int32_t a6,int32_t a7) { h.order(k,q,i,at,a6,a7); }
+            void clear(size_t i) { h.clear(i); }
+            int width() const { return h.width(); }
+            int height() const { return h.height(); }
+        } calls{host};
+        sim::RetailAiGroupClock clock{true,0};
+        auto& squad=s.squads[size_t(slot)];
+        sim::retailTickAiSquad(squad,clock,tick,[&](int k){return host.random(k);},
+            [&](auto&) { ai::classicStrikeRecruit(s,units,slot); },
+            [&](auto&) {
+                if (squad.kind==sim::RetailAiSquadKind::Strike) ai::classicStrikeThink(s,units,slot,clock,tick,calls);
+                else if (squad.kind==sim::RetailAiSquadKind::Backup) ai::classicBackupThink(s,units,slot,calls);
+                else if (squad.kind==sim::RetailAiSquadKind::Vtol) ai::classicVtolThink(s,units,slot,calls);
+            });
+        std::printf("%u %u %zu",seed,clock.deadline,log.size());
+        for (const auto& e:log) for (int v:e) std::printf(" %d",v);
+        for (const auto& u:units) std::printf(" %d",u.squad);
+        for (int k=1;k<=98;++k) {
+            std::printf(" %zu",s.squads[size_t(k)].members.size());
+            for (int id:s.squads[size_t(k)].members) std::printf(" %d",id);
+        }
+        for (int k:{strike,strike+1,vtol}) {
+            for (int32_t v:s.squads[size_t(k)].parameters) std::printf(" %d",v);
+            std::printf(" %u %u",s.squads[size_t(k)].active,s.squads[size_t(k)].dirty);
+        }
+        for (int b=1;b<=20;++b) std::printf(" %d",s.squads[size_t(b)].parameters[0]);
+        std::printf("\n");
+    }
+    return 0;
+}
+
+// The port's side of tools/re/check_ai_launch.py: one base think through the
+// shared clock template sim::retailTickAiSquad, ai::classicBaseMembers (its
+// planners logged) and ai::classicBaseLaunch, with the case's squads, units,
+// population, records (the ground roll's E by retail's player filter) and P7
+// answers (see the script for the line layout).
+static int launchOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        uint32_t tick,seed;int own,slot;int32_t population;
+        in>>tick>>own>>seed>>slot>>population;
+        int allied[12];for (int& a:allied) in>>a;
+        int32_t enemy=0;
+        for (int r=0;r<10;++r) {
+            int active,kind,idx,pop;in>>active>>kind>>idx>>pop;
+            if (active && kind>=1 && kind<=3 && idx!=10 && !allied[idx]) enemy=std::max(enemy,int32_t(pop));
+        }
+        ai::ClassicSquads s;
+        {
+            uint32_t dummy=1;
+            ai::classicConstructSquads(s,0,[&](int n){return sim::retailRandom(dummy,n);});
+            for (auto& q:s.squads) { q.parameters={};q.members.clear();q.active=q.dirty=0; }
+        }
+        auto table=[&](std::vector<std::optional<ai::ClassicCell>>& t) {
+            size_t k;in>>k;t.resize(k);
+            for (auto& c:t) { int valid,x,z;in>>valid>>x>>z;if (valid) c=ai::ClassicCell{int16_t(x),int16_t(z)}; }
+        };
+        table(s.sites);table(s.starts);
+        for (auto& v:s.squads[size_t(slot)].parameters) in>>v;
+        size_t n;in>>n;
+        std::vector<ai::ClassicSquadUnit> units(n);
+        for (auto& u:units) {
+            int fx,fz,hp,menu,depth,mover,held,carrier,has,mclass;int64_t maxd;uint32_t f108;
+            in>>u.id>>u.flags>>u.x>>u.z>>fx>>fz>>hp>>maxd>>u.typeFlags>>u.secondaryFlags>>menu>>depth>>mover
+              >>f108>>held>>carrier>>has>>u.missionFlags>>mclass;
+            u.footX=int16_t(fx);u.footZ=int16_t(fz);u.hp=int16_t(hp);u.maxDamage=uint32_t(maxd);u.menu=menu;
+            u.minWaterDepth=int16_t(depth);u.mover=mover!=0;
+            const float remaining=std::bit_cast<float>(f108);
+            u.finished=!(remaining<0.0f || remaining>0.0f);
+            u.held=held!=0;u.carried=carrier!=0;u.carrierHolds=carrier==1;
+            u.mission=has!=0;u.missionClass=uint8_t(mclass);u.commander=(u.secondaryFlags&0x40000u)!=0;
+            u.squad=(u.flags&ai::ClassicSquadUnit::kLive) ? slot : 0;
+        }
+        for (int k=1;k<=98;++k) {
+            size_t c;in>>c;auto& m=s.squads[size_t(k)].members;m.resize(c);
+            for (auto& id:m) in>>id;
+        }
+        int bases[3],expand;in>>bases[0]>>bases[1]>>bases[2]>>expand;
+        std::vector<std::vector<int>> log;
+        struct Host {
+            std::vector<ai::ClassicSquadUnit>& units;std::vector<std::vector<int>>& log;uint32_t& seed;
+            int* bases;int expansion;
+            int random(int k) { log.push_back({0,k});return int(sim::retailRandom(seed,k)); }
+            void clear(size_t i) { log.push_back({4,units[i].id,0}); }
+            int builderBase() { log.push_back({8,0});return bases[0]; }
+            int groundBase() { log.push_back({8,1});return bases[1]; }
+            int airBase() { log.push_back({8,2});return bases[2]; }
+            void transfer(int b,int a,int c,int d) { log.push_back({9,b,a,c,d}); }
+            bool expand(int at,int32_t escort) { log.push_back({10,at,escort});return expansion!=0; }
+        } host{units,log,seed,bases,expand};
+        sim::RetailAiGroupClock clock{true,0};
+        auto& squad=s.squads[size_t(slot)];
+        sim::retailTickAiSquad(squad,clock,tick,[&](int k){return host.random(k);},[](auto&){},
+            [&](auto&) {
+                const bool planned=ai::classicBaseMembers(s,units,slot,
+                    [](const std::pair<int32_t,int32_t>&,int32_t){return false;},
+                    [&](size_t i){log.push_back({7,0,units[i].id});},
+                    [&](size_t i,bool){log.push_back({7,1,units[i].id});},
+                    [&](size_t i,bool){log.push_back({7,2,units[i].id});});
+                if (planned) ai::classicBaseLaunch(s,units,slot,population,enemy,host);
+            });
+        std::printf("%u %u %zu",seed,clock.deadline,log.size());
+        for (const auto& e:log) for (int v:e) std::printf(" %d",v);
+        for (const auto& u:units) std::printf(" %d",u.squad);
+        for (int k=1;k<=98;++k) {
+            const auto& q=s.squads[size_t(k)];
+            std::printf(" %zu",q.members.size());
+            for (int id:q.members) std::printf(" %d",id);
+            for (int32_t v:q.parameters) std::printf(" %d",v);
+            std::printf(" %u %u",q.active,q.dirty);
+        }
+        std::printf("\n");
+    }
+    return 0;
+}
+
 // The port's side of tools/re/check_ai_static_grade.py: "<width> <height> <footX>
 // <footZ> <rating>*" per line (each cell's own rating, row-major) -> the static
 // bit of every cell (ai::classicStaticPlane), row-major.
@@ -1478,8 +2014,27 @@ int main(int argc,char** argv) {
     if (argc==2 && std::strcmp(argv[1],"--threat")==0) return threatOracle();
     if (argc==2 && std::strcmp(argv[1],"--defence")==0) return defenceOracle(false);
     if (argc==2 && std::strcmp(argv[1],"--retreat")==0) return defenceOracle(true);
+    if (argc==2 && std::strcmp(argv[1],"--pick")==0) return pickOracle();
+    if (argc==2 && std::strcmp(argv[1],"--launch")==0) return launchOracle();
+    if (argc==2 && (std::strcmp(argv[1],"--strike")==0 || std::strcmp(argv[1],"--backup")==0 ||
+                    std::strcmp(argv[1],"--vtol")==0)) return strikeOracle(argv[1]+2);
     if (argc==3 && std::strcmp(argv[1],"--raid")==0) {
         classicRaid(argv[2]);
+        std::printf("%s\n",fails ? "FAILED" : "all passed");
+        return fails ? 1 : 0;
+    }
+    if (argc==3 && std::strcmp(argv[1],"--u13")==0) {
+        classicMoveVsAttackMove(argv[2]);
+        std::printf("%s\n",fails ? "FAILED" : "all passed");
+        return fails ? 1 : 0;
+    }
+    if (argc==3 && std::strcmp(argv[1],"--waves")==0) {
+        classicWaves(argv[2]);
+        std::printf("%s\n",fails ? "FAILED" : "all passed");
+        return fails ? 1 : 0;
+    }
+    if (argc==3 && std::strcmp(argv[1],"--duels")==0) {
+        classicDuels(argv[2]);
         std::printf("%s\n",fails ? "FAILED" : "all passed");
         return fails ? 1 : 0;
     }

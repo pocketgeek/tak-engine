@@ -22,6 +22,13 @@
 namespace tak::ai {
 
 namespace {
+// Mission kinds as the brain's 0x4de530 numbers them: the army squads compare
+// a member's first mission with the move they would give (equal or not is all
+// that matters). Every other mission is 0x40 | its class.
+constexpr uint8_t kKindMoveGround = 0x31, kKindMoveVtol = 0x32, kKindPatrol = 0x33;
+constexpr uint8_t otherKind(uint8_t cls) { return uint8_t(0x40u | cls); }
+uint8_t moveKind(bool canFly) { return canFly ? kKindMoveVtol : kKindMoveGround; }
+
 // A unit's first mission (retail unit +0x60) as the AI reads it, from its orders
 // (docs/classic-ai-plan.md U1): the class byte of the mission's descriptor
 // (descriptor +0x10: 1 the attack kinds, 2 AirStrike, 0 MobileBuild, 6 HelpBuild
@@ -36,6 +43,7 @@ namespace {
 struct FirstMission {
     bool any = false;
     uint8_t cls = 0;
+    uint8_t kind = 0;
     uint32_t flags = 0;
     bool buildingBuild = false;
     const tak::sim::UnitType* builds = nullptr;   // what its build mission makes
@@ -46,12 +54,12 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     FirstMission m;
     if (u.type->isStructure()) {
         // A factory at work has a BuildingBuild mission per queued unit.
-        if (!u.buildQueue.empty()) { m.any = true; m.cls = 19; m.flags = 0x8010c; m.buildingBuild = true; m.builds = u.buildQueue.front(); }
+        if (!u.buildQueue.empty()) { m.any = true; m.cls = 19; m.kind = otherKind(19); m.flags = 0x8010c; m.buildingBuild = true; m.builds = u.buildQueue.front(); }
         return m;
     }
     if (u.buildSiteId) {
         const auto* site = world.unit(u.buildSiteId);
-        m.any = true; m.cls = 0; m.flags = 0x80508; m.builds = site ? site->type : nullptr;
+        m.any = true; m.cls = 0; m.kind = otherKind(0); m.flags = 0x80508; m.builds = site ? site->type : nullptr;
         if (site) { m.goalX = site->x.v; m.goalZ = site->z.v; }
         return m;
     }
@@ -73,6 +81,7 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     else if (o.targetId) { m.cls = 1; m.flags = 0x1000280; m.target = o.targetId; }
     else if (o.patrol) { m.cls = 7; m.flags = 0x3000410; }
     else { m.cls = 14; m.flags = 0x3000400; }   // a move
+    m.kind = m.cls == 14 ? moveKind(u.type->canFly) : m.cls == 7 ? kKindPatrol : otherKind(m.cls);
     // Only the World's auto-attacks (and the return move behind a leashed one):
     // they sit on the default mission, so they carry its 0x2000.
     bool automatic = true, leash = false;
@@ -163,8 +172,10 @@ int ClassicBrain::buildWeight(size_t t) const {
 void ClassicBrain::recount(const tak::sim::World& world) {
     std::fill(count_.begin(), count_.end(), int16_t(0));
     std::fill(completed_.begin(), completed_.end(), int16_t(0));
+    ownTotal_ = 0;
     for (const auto& u : world.units()) {
         if (u.player != player_ || !u.alive() || !u.type) continue;
+        ++ownTotal_;
         const auto it = index_.find(u.type);
         if (it == index_.end()) continue;
         ++count_[it->second];
@@ -253,7 +264,16 @@ std::vector<ClassicSquadUnit> ClassicBrain::squadUnits(const tak::sim::World& wo
             // 5307e9 stores the reload as a 16-bit tick count.
             s.weaponDamage = uint16_t(w->damage);
             s.weaponReload = uint16_t(int32_t(double(w->reload) * 30.0));
+            s.range = w->range;
         }
+        s.missionKind = m.kind;
+        s.hp = int16_t(u.hp.floorInt());
+        s.maxDamage = uint32_t(t->maxHp);
+        s.sight = int16_t(world.sightDistance(*t));
+        s.navigator = !structure && !t->canFly;
+        s.naval = info && info->floater && info->minWaterDepth > 0;
+        s.cellX = int16_t(tak::sim::footprintOrigin(u.x, t->footX));
+        s.cellZ = int16_t(tak::sim::footprintOrigin(u.z, t->footZ));
         units.push_back(s);
     }
     // A member that is no longer the player's unit (removed from the World, or
@@ -288,12 +308,20 @@ void ClassicBrain::scheduler(const tak::sim::World& world, uint32_t simTick,
                 [&](size_t i) { command(tak::net::Cmd::Stop, units[i].id); });    // 0x4d6a50(u, 0)
         },
         [&](unsigned slot, auto& clock) {
-            // Each kind's think reschedules itself (and an empty strike or VTOL
-            // squad goes inactive). An occupied base runs its member loop; strike
-            // recruitment (0x40abd0) is P6, and the other squads' plans come in P5-P7.
-            tak::sim::retailTickAiSquad(squads_.squads[slot], clock, simTick, random, [](auto&) {},
+            // Each kind's think reschedules itself (a strike then runs its
+            // cohesion pass 0x40abd0, and an empty strike or VTOL squad goes
+            // inactive); an occupied squad runs its own think.
+            using K = tak::sim::RetailAiSquadKind;
+            tak::sim::retailTickAiSquad(squads_.squads[slot], clock, simTick, random,
+                [&](auto&) { classicStrikeRecruit(squads_, units, int(slot)); },
                 [&](auto& squad) {
-                    if (squad.kind == tak::sim::RetailAiSquadKind::Base) baseThink(world, int(slot), units, sink);
+                    switch (squad.kind) {
+                    case K::Base: baseThink(world, int(slot), units, sink); break;
+                    case K::Strike: strikeThink(world, int(slot), clock, units, simTick, sink); break;
+                    case K::Backup: backupThink(world, int(slot), units, sink); break;
+                    case K::Vtol: vtolThink(world, int(slot), units, sink); break;
+                    case K::Reserve: break;
+                    }
                 });
         });
     if (!snapshot) return;
@@ -312,7 +340,7 @@ uint16_t ClassicBrain::population(const tak::sim::World& world) const {
 
 void ClassicBrain::baseThink(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
                              const std::function<void(const tak::net::Command&)>& sink) {
-    classicBaseMembers(squads_, units, slot,
+    const bool planned = classicBaseMembers(squads_, units, slot,
         // 0x412000: a unit of the visible-enemy list inside the ring-0 radius.
         [&](const std::pair<int32_t, int32_t>& centre, int32_t radius) {
             return classicThreat(visibleEnemies(world), centre, radius);
@@ -320,6 +348,7 @@ void ClassicBrain::baseThink(const tak::sim::World& world, int slot, std::vector
         [&](size_t i) { planFactory(world, units[i], sink); },
         [&](size_t i, bool danger) { planConstructor(world, slot, units, i, danger, sink); },
         [&](size_t i, bool danger) { planCombat(world, slot, units, units[i], danger, false, sink); });
+    if (planned) baseLaunch(world, slot, units, sink);
 }
 
 void ClassicBrain::planFactory(const tak::sim::World& world, ClassicSquadUnit& unit,
@@ -344,7 +373,7 @@ void ClassicBrain::planFactory(const tak::sim::World& world, ClassicSquadUnit& u
             ++queues_;
             // Its first mission is now that BuildingBuild (firstMission's reading).
             unit.producing = unit.mission = unit.buildingBuild = true;
-            unit.missionClass = 19; unit.missionFlags = 0x8010c;
+            unit.missionClass = 19; unit.missionKind = otherKind(19); unit.missionFlags = 0x8010c;
             unit.buildsManaSite = info_[t].manaSite;
         });
 }
@@ -517,18 +546,11 @@ void ClassicBrain::planConstructor(const tak::sim::World& world, int slot, std::
             ++b.builds_;
             if (b.info_[t].lodestoneClass) ++b.lodestoneBuilds_;
             // 0x4d78a0 clears its missions and puts the build first: MobileBuild.
-            member.mission = true; member.missionClass = 0; member.missionFlags = 0x80508;
+            member.mission = true; member.missionClass = 0; member.missionKind = otherKind(0); member.missionFlags = 0x80508;
             member.buildingBuild = false; member.buildsManaSite = b.info_[t].manaSite;
             member.missionTarget = 0; member.goalX = at.first; member.goalZ = at.second;
         }
-        void cancel() {
-            tak::net::Command c;
-            c.kind = tak::net::Cmd::Stop; c.player = uint8_t(b.player_); c.unitId = member.id;
-            sink(c);
-            // 0x4d6a50(unit, 0): its missions are gone (our Stop keeps none).
-            member.mission = member.buildingBuild = member.buildsManaSite = false;
-            member.missionClass = 0; member.missionFlags = 0; member.missionTarget = 0;
-        }
+        void cancel() { b.clearMissions(member, sink); }
         void retreat() { b.planCombat(world, slot, units, member, threat, true, sink); }
         void combat() { b.planCombat(world, slot, units, member, threat, false, sink); }
         bool threat;
@@ -536,24 +558,276 @@ void ClassicBrain::planConstructor(const tak::sim::World& world, int slot, std::
     classicPlanConstructor(host, u, threat);
 }
 
+ClassicEnemy ClassicBrain::enemyView(const tak::sim::World&, const tak::sim::Unit& e) const {
+    // Unit +0x130 as the AI tests it: a unit still in the World is a live slot,
+    // a dead one dying; its 0x2000 is our underConstruction (U6 / U10); its low
+    // bits 1 on the ground, 2 in the air, 0 carried; 0x8000000 armed.
+    const auto it = index_.find(e.type);
+    const ClassicTypeInfo* info = it == index_.end() ? nullptr : &info_[it->second];
+    ClassicEnemy c;
+    c.id = e.id;
+    c.flags = ClassicEnemy::kLive | (e.alive() && e.hp > tak::sim::Fixed() ? 0u : ClassicEnemy::kDying) |
+              (e.underConstruction ? ClassicEnemy::kUnready : 0u) | (e.embarked() ? 0u : e.type->canFly ? 2u : 1u) |
+              ((info ? info->armed : !e.type->weapons.empty()) ? ClassicSquadUnit::kArmed : 0u);
+    c.x = e.x.v; c.y = (e.type->canFly ? e.flightY : e.groundY).v; c.z = e.z.v;
+    c.cloaked = e.cloaked;
+    c.cellX = int16_t(tak::sim::footprintOrigin(e.x, e.type->footX));
+    c.cellZ = int16_t(tak::sim::footprintOrigin(e.z, e.type->footZ));
+    c.unfinished = e.underConstruction;
+    c.manaSite = info && info->manaSite;
+    return c;
+}
+
 std::vector<ClassicEnemy> ClassicBrain::visibleEnemies(const tak::sim::World& world) const {
     // 411700's list +5 as the World last rebuilt it (it re-checks nothing, so a
     // unit that has since died is still listed, as dying). Its 0x2000 is our
     // underConstruction (U10: the World leaves those off the list already).
     std::vector<ClassicEnemy> out;
-    for (const int id : world.visibleEnemies(player_)) {
-        const auto* e = world.unit(id);
-        if (!e || !e->type) continue;
-        ClassicEnemy c;
-        c.id = id;
-        c.flags = ClassicEnemy::kLive | (e->alive() && e->hp > tak::sim::Fixed() ? 0u : ClassicEnemy::kDying) |
-                  (e->underConstruction ? ClassicEnemy::kUnready : 0u) | (e->type->canFly ? 2u : 1u);
-        c.x = e->x.v; c.y = (e->type->canFly ? e->flightY : e->groundY).v; c.z = e->z.v;
-        c.cloaked = e->cloaked;
-        out.push_back(c);
-    }
+    for (const int id : world.visibleEnemies(player_))
+        if (const auto* e = world.unit(id); e && e->type) out.push_back(enemyView(world, *e));
     return out;
 }
+
+bool ClassicBrain::sendOrder(const tak::sim::World& world, ClassicSquadUnit& member, bool patrol, bool queue,
+                             const ClassicPoint& at, int32_t a6, const std::function<void(const tak::net::Command&)>& sink) {
+    const auto* unit = world.unit(member.id);
+    if (!unit || !unit->type) return false;
+    // A retail MOVE with mission +0x4e = a6 > 0 ends as soon as the unit is
+    // within a6 of its point (the centre leg's r, the retreat's 16, a member
+    // sent home): a unit already that close skips the leg, one farther off
+    // heads for the circle's edge on its way in.
+    float x = float(at[0]) / 65536.0f, z = float(at[2]) / 65536.0f;
+    if (!patrol && a6 > 0) {
+        const float ux = unit->x.toFloat(), uz = unit->z.toFloat();
+        const float dx = ux - x, dz = uz - z, d = std::sqrt(dx * dx + dz * dz);
+        if (d <= float(a6)) return false;
+        x += dx * float(a6) / d; z += dz * float(a6) / d;
+    }
+    tak::net::Command c;
+    c.kind = patrol ? tak::net::Cmd::Patrol : tak::net::Cmd::Move;
+    c.player = uint8_t(player_); c.unitId = member.id;
+    c.x = x; c.z = z;
+    c.queue = queue ? 1 : 0;
+    sink(c);
+    // Its first mission is now that move (or patrol); a build is gone.
+    if (!queue) {
+        member.mission = true; member.missionClass = patrol ? 7 : 14;
+        member.missionKind = patrol ? kKindPatrol : moveKind(unit->type->canFly);
+        member.missionFlags = patrol ? 0x3000410u : 0x3000400u;
+        member.buildingBuild = member.buildsManaSite = false; member.missionTarget = 0;
+        member.goalX = at[0]; member.goalZ = at[2];
+    }
+    return true;
+}
+
+void ClassicBrain::clearMissions(ClassicSquadUnit& member, const std::function<void(const tak::net::Command&)>& sink) {
+    tak::net::Command c;
+    c.kind = tak::net::Cmd::Stop; c.player = uint8_t(player_); c.unitId = member.id;
+    sink(c);
+    // 0x4d6a50(unit, 0): its missions are gone (our Stop keeps none).
+    member.mission = member.buildingBuild = member.buildsManaSite = false;
+    member.missionClass = 0; member.missionKind = 0; member.missionFlags = 0; member.missionTarget = 0;
+}
+
+int32_t ClassicBrain::largestEnemyPopulation(const tak::sim::World& world) const {
+    // 0x40c240's E: each active record of kind 1-3 with an index that is not
+    // allied to this player (a player is allied to itself), by +0xe8.
+    std::vector<int32_t> count(size_t(std::max(world.numPlayers(), 0)), 0);
+    for (const auto& u : world.units())
+        if (u.alive() && u.type && u.player >= 0 && u.player < int(count.size())) ++count[size_t(u.player)];
+    int32_t most = 0;
+    for (int p = 0; p < int(count.size()); ++p)
+        if (!world.isNeutralPlayer(p) && !world.allied(p, player_)) most = std::max(most, int32_t(uint16_t(count[size_t(p)])));
+    return most;
+}
+
+bool ClassicBrain::reachTarget(const tak::sim::World& world, const ClassicSquadUnit& member, const ClassicEnemy& target,
+                               int16_t range, bool limited) {
+    const auto* unit = world.unit(member.id);
+    if (!unit || !unit->type) return false;
+    // 0x4e1570(member +0x74, member +0x78, target +0x74, (range, range), 1, flag):
+    // from the member's footprint to a range x range block at the target's
+    // cell, over the grid's static bit (mode 1), as the constructor's walk.
+    const auto& nav = world.navFor(unit->type);
+    const auto& blocked = staticBlocked(world, nav, unit->type->footX, unit->type->footZ);
+    return tak::sim::retailRectangleReachable(nav.width(), nav.height(), member.cellX, member.cellZ,
+        unit->type->footX, unit->type->footZ, target.cellX, target.cellZ, range, range, true, limited,
+        [&](int x, int z) { return blocked[size_t(z) * size_t(nav.width()) + size_t(x)] ? 8 : 0; });
+}
+
+int ClassicBrain::pickTarget(const tak::sim::World& world, const ClassicSquadUnit& member,
+                             std::pair<int32_t, int32_t> centre) {
+    const auto* self = world.unit(member.id);
+    if (!self || !self->type) return 0;
+    const tak::sim::Weapon* weapon = currentWeapon(*self);
+    // 0x40a200's player loop: every player not allied to this one (neutral
+    // owners are not players of kind 1-3), its units in the World's order.
+    std::vector<ClassicPickPlayer> players(size_t(std::max(world.numPlayers(), 0)));
+    std::vector<bool> listed(players.size(), false);
+    for (int p = 0; p < int(players.size()); ++p) listed[size_t(p)] = !world.isNeutralPlayer(p) && !world.allied(p, player_);
+    std::unordered_map<int, const tak::sim::Unit*> byId;
+    for (const auto& u : world.units()) {
+        if (!u.type || u.player < 0 || u.player >= int(players.size()) || !listed[size_t(u.player)]) continue;
+        auto& owner = players[size_t(u.player)];
+        if (u.alive()) owner.population = uint16_t(owner.population + 1);
+        owner.units.push_back(enemyView(world, u));
+        byId.emplace(u.id, &u);
+    }
+    std::erase_if(players, [](const ClassicPickPlayer& p) { return p.units.empty(); });
+    struct Host {
+        ClassicBrain& b;
+        const tak::sim::World& world;
+        const tak::sim::Weapon* weapon;
+        const std::vector<ClassicPickPlayer>& players;
+        const std::unordered_map<int, const tak::sim::Unit*>& byId;
+        const std::vector<ClassicPickPlayer>& pickPlayers() const { return players; }
+        // U12: the lobby's cap; an uncapped World reads as retail's options default.
+        uint16_t unitCap() const { return uint16_t(world.unitCap() > 0 ? world.unitCap() : 250); }
+        int random(int n) { return b.rand(n); }
+        int32_t damage(const ClassicSquadUnit&, const ClassicEnemy& e) const {
+            const auto it = byId.find(e.id);
+            return weapon && it != byId.end() ? int32_t(weapon->damageVs(it->second->type)) : 0;
+        }
+        bool visible(const ClassicEnemy& e) const {
+            const auto it = byId.find(e.id);
+            return it != byId.end() && world.playerSees(b.player_, *it->second);
+        }
+        bool reachable(const ClassicSquadUnit& m, const ClassicEnemy& t, int16_t range, bool naval) {
+            return b.reachTarget(world, m, t, range, naval);
+        }
+    } host{*this, world, weapon, players, byId};
+    return classicPickTarget(host, member, centre);
+}
+
+namespace {
+// The army squads' host (ai/classicwaves.h) over the brain and the World.
+struct WaveHost {
+    ClassicBrain& b;
+    const tak::sim::World& world;
+    std::vector<ClassicSquadUnit>& units;
+    const std::function<void(const tak::net::Command&)>& sink;
+    std::function<int(int)> rnd{};
+    std::function<bool(ClassicSquadUnit&, bool, const ClassicPoint&, int32_t)> send{};
+    std::function<void(ClassicSquadUnit&)> clearer{};
+    std::function<int(const ClassicPoint&, size_t)> picker{};
+    std::function<ClassicEnemy(const tak::sim::Unit&)> view{};
+    std::function<bool(std::pair<int32_t, int32_t>, int32_t)> threatTest{};
+    std::function<bool(const ClassicSquadUnit&, const ClassicEnemy&, int16_t, bool)> reach{};
+    std::unordered_map<int, ClassicEnemy> seen{};
+    uint32_t orders = 0, patrols = 0;
+
+    int random(int n) { return rnd(n); }
+    int pick(const ClassicPoint& c, size_t i) { return picker(c, i); }
+    const ClassicEnemy* target(int id) {
+        // 0x40ddd0: a unit the World still holds (live slot; dead ones read as dying).
+        if (!id) return nullptr;
+        const auto* u = world.unit(id);
+        if (!u || !u->type) return nullptr;
+        return &(seen[id] = view(*u));
+    }
+    bool threat(std::pair<int32_t, int32_t> c, int32_t r) { return threatTest(c, r); }
+    bool reachable(const ClassicSquadUnit& m, const ClassicEnemy& t, int16_t range, bool limited) {
+        return reach(m, t, range, limited);
+    }
+    uint8_t resolve(int command, size_t i, const ClassicPoint&) const {
+        // 0x4de530 for a mobile unit: MOVE_GROUND / VTOL_MOVE, or a patrol.
+        const auto* u = world.unit(units[i].id);
+        if (!u || !u->type || u->type->isStructure()) return 0;
+        return command == kClassicSquadPatrol ? kKindPatrol : moveKind(u->type->canFly);
+    }
+    void order(uint8_t kind, bool, size_t i, const ClassicPoint& at, int32_t a6, int32_t) {
+        // The army squads' orders are all unqueued (queue 0).
+        if (!send(units[i], kind == kKindPatrol, at, a6)) return;
+        ++(kind == kKindPatrol ? patrols : orders);
+    }
+    void clear(size_t i) { clearer(units[i]); }
+    int width() const { return world.mapW() * 16; }
+    int height() const { return world.mapH() * 16; }
+    // The P7 routines the base think calls: no transfer target, no expansion.
+    int builderBase() const { return 0; }
+    int groundBase() const { return 0; }
+    int airBase() const { return 0; }
+    void transfer(int, int, int, int) {}
+    bool expand(int, int32_t) { return false; }
+};
+}  // namespace
+
+void ClassicBrain::strikeThink(const tak::sim::World& world, int slot, tak::sim::RetailAiGroupClock& clock,
+                               std::vector<ClassicSquadUnit>& units, uint32_t simTick,
+                               const std::function<void(const tak::net::Command&)>& sink) {
+    auto& squad = squads_.squads[size_t(slot)];
+    const int backup = squad.parameters[0];
+    const size_t reserve = backup >= 1 && backup <= classic_slot::kMassBackup ? squads_.squads[size_t(backup)].members.size() : 0;
+    // The think dissolves the strike when it has a centroid and the strike and
+    // its backup are down to p2 members (counted for the tests only).
+    const bool dissolving = classicSquadCentroid(squads_, units, detail::ClassicUnitIndex(units), slot) &&
+                            int32_t(squad.members.size() + reserve) <= squad.parameters[2];
+    WaveHost h{*this, world, units, sink};
+    h.rnd = [&](int n) { return rand(n); };
+    h.send = [&](ClassicSquadUnit& m, bool patrol, const ClassicPoint& at, int32_t a6) {
+        return sendOrder(world, m, patrol, false, at, a6, sink);
+    };
+    uint32_t cleared = 0;
+    h.clearer = [&](ClassicSquadUnit& m) { ++cleared; clearMissions(m, sink); };
+    h.picker = [&](const ClassicPoint& c, size_t i) {
+        ++waves_.picks;
+        const int t = pickTarget(world, units[i], {c[0], c[2]});
+        if (t) ++waves_.targets;
+        return t;
+    };
+    h.view = [&](const tak::sim::Unit& u) { return enemyView(world, u); };
+    h.threatTest = [&](std::pair<int32_t, int32_t> c, int32_t r) { return classicThreat(visibleEnemies(world), c, r); };
+    h.reach = [&](const ClassicSquadUnit& m, const ClassicEnemy& t, int16_t range, bool limited) {
+        return reachTarget(world, m, t, range, limited);
+    };
+    classicStrikeThink(squads_, units, slot, clock, simTick, h);
+    if (dissolving) ++waves_.dissolves;
+    else waves_.withdrawals += cleared;
+    waves_.strikeMoves += squad.parameters[5] == 2 ? h.orders : 0;
+    waves_.contactMoves += squad.parameters[5] == 1 ? h.orders : 0;
+}
+
+void ClassicBrain::backupThink(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
+                               const std::function<void(const tak::net::Command&)>& sink) {
+    WaveHost h{*this, world, units, sink};
+    h.send = [&](ClassicSquadUnit& m, bool patrol, const ClassicPoint& at, int32_t a6) {
+        return sendOrder(world, m, patrol, false, at, a6, sink);
+    };
+    classicBackupThink(squads_, units, slot, h);
+    waves_.backupMoves += h.orders;
+}
+
+void ClassicBrain::vtolThink(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
+                             const std::function<void(const tak::net::Command&)>& sink) {
+    WaveHost h{*this, world, units, sink};
+    h.rnd = [&](int n) { return rand(n); };
+    h.send = [&](ClassicSquadUnit& m, bool patrol, const ClassicPoint& at, int32_t a6) {
+        return sendOrder(world, m, patrol, false, at, a6, sink);
+    };
+    h.clearer = [&](ClassicSquadUnit& m) { ++waves_.withdrawals; clearMissions(m, sink); };
+    classicVtolThink(squads_, units, slot, h);
+    waves_.vtolPatrols += h.patrols;
+}
+
+void ClassicBrain::baseLaunch(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
+                              const std::function<void(const tak::net::Command&)>& sink) {
+    WaveHost h{*this, world, units, sink};
+    h.rnd = [&](int n) { return rand(n); };
+    h.clearer = [&](ClassicSquadUnit& m) { clearMissions(m, sink); };
+    // A launch fills a free squad of its family (counted for the tests).
+    std::array<bool, 100> empty{};
+    for (size_t k = 0; k < empty.size(); ++k) empty[k] = squads_.squads[k].members.empty();
+    classicBaseLaunch(squads_, units, slot, ownTotal_, largestEnemyPopulation(world), h);
+    auto gained = [&](int first, int last, int step) {
+        int n = 0;
+        for (int k = first; k <= last; k += step) n += empty[size_t(k)] && !squads_.squads[size_t(k)].members.empty();
+        return n;
+    };
+    waves_.groundLaunches += uint32_t(gained(classic_slot::kFirstStrike + 1, classic_slot::kFirstNavalStrike - 1, 2));
+    waves_.navalLaunches += uint32_t(gained(classic_slot::kFirstNavalStrike + 1, classic_slot::kFirstVtol - 1, 2));
+    waves_.vtolLaunches += uint32_t(gained(classic_slot::kFirstVtol, classic_slot::kLastVtol, 1));
+}
+
 
 void ClassicBrain::planCombat(const tak::sim::World& world, int slot, const std::vector<ClassicSquadUnit>& units,
                               ClassicSquadUnit& member, bool threat, bool retreat,
@@ -622,33 +896,12 @@ void ClassicBrain::planCombat(const tak::sim::World& world, int slot, const std:
         int height() const { return world.mapH() * 16; }
         uint8_t resolve(int command, const ClassicPoint&) const { return uint8_t(command); }
         void order(uint8_t kind, bool queue, const ClassicPoint& at, int32_t a6, int32_t) {
-            // A retail MOVE with mission +0x4e = a6 > 0 ends as soon as the unit
-            // is within a6 of its point (the centre leg's r, the retreat's 16):
-            // a unit already that close skips the leg, one farther off heads for
-            // the circle's edge on its way in.
-            float x = float(at[0]) / 65536.0f, z = float(at[2]) / 65536.0f;
-            if (kind == kClassicMove && a6 > 0) {
-                const float ux = unit.x.toFloat(), uz = unit.z.toFloat();
-                const float dx = ux - x, dz = uz - z, d = std::sqrt(dx * dx + dz * dz);
-                if (d <= float(a6)) return;
-                x += dx * float(a6) / d; z += dz * float(a6) / d;
-            }
-            tak::net::Command c;
-            c.kind = kind == kClassicPatrol ? tak::net::Cmd::Patrol : tak::net::Cmd::Move;
-            c.player = uint8_t(b.player_); c.unitId = member.id;
-            c.x = x; c.z = z;
             // queue 0 clears its missions first (0x4d6a50); a skipped first leg
             // must not let a queued one append to the old missions.
-            c.queue = queue && replaced ? 1 : 0;
-            sink(c);
-            replaced = true;
-            ++b.combatOrders_;
-            // Its first mission is now that move (or patrol); a build is gone.
-            if (!c.queue) {
-                member.mission = true; member.missionClass = kind == kClassicPatrol ? 7 : 14;
-                member.missionFlags = kind == kClassicPatrol ? 0x3000410u : 0x3000400u;
-                member.buildingBuild = member.buildsManaSite = false; member.missionTarget = 0;
-                member.goalX = at[0]; member.goalZ = at[2];
+            if (b.sendOrder(world, member, kind == kClassicPatrol, queue && replaced, at,
+                            kind == kClassicMove ? a6 : 0, sink)) {
+                replaced = true;
+                ++b.combatOrders_;
             }
         }
     } host{*this, world, units, index, slot, member, *unit, weapon, visible, sink};

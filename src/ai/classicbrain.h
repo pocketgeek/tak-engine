@@ -32,7 +32,13 @@
 // other mobile member (ai/classicdefence.h: idle units patrol inside the base
 // ring, armed ones under threat are sent at the intruders) and the Monarch's
 // retreat 0x40d010, both also reached from the constructor planner, as Move and
-// Patrol commands. Nothing after the member loop runs yet (waves are P6).
+// Patrol commands. P6: the rest of the base think (ai/classicwaves.h: quota
+// growth, ready counts, the launch of a wave into a strike's backup, a VTOL
+// squad or a naval strike) and the army squads' own thinks -- the strike's
+// cohesion, dissolve, target pick over every enemy unit, withdrawals and its
+// contact / march moves, the backup's move to its strike, the VTOL squad's
+// random patrols -- as Move, Patrol and Stop commands. The base think's
+// transfers and expansion (P7) answer "none" for now.
 
 #include <cstdint>
 #include <functional>
@@ -45,10 +51,11 @@
 #include "ai/classicprofile.h"
 #include "ai/classicsquads.h"
 #include "ai/classictypes.h"
+#include "ai/classicwaves.h"
 #include "net/lockstep.h"
 #include "sim/retailrng.h"
 
-namespace tak::sim { class World; class TypeRegistry; class NavGrid; }
+namespace tak::sim { class World; class TypeRegistry; class NavGrid; struct Unit; }
 
 namespace tak::ai {
 
@@ -105,6 +112,15 @@ public:
     // times the Monarch's retreat ran (tests).
     uint32_t combatOrders() const { return combatOrders_; }
     uint32_t retreats() const { return retreats_; }
+    // The army squads' work (tests): waves launched (ground, VTOL, naval), the
+    // moves strikes gave, strikes dissolved, members sent home, target picks
+    // and the picks that found one, backup and VTOL group orders.
+    struct WaveStats {
+        uint32_t groundLaunches = 0, vtolLaunches = 0, navalLaunches = 0;
+        uint32_t strikeMoves = 0, contactMoves = 0, dissolves = 0, withdrawals = 0;
+        uint32_t picks = 0, targets = 0, backupMoves = 0, vtolPatrols = 0;
+    };
+    const WaveStats& waveStats() const { return waves_; }
     // The block grids the build manager drew as it was built (0x4110f0).
     const ClassicBlockGrids& blockGrids() const { return grids_; }
     // Retail's per-type cache (mgr+0x85 / +0x95, recounted every tick by 0x4119d0):
@@ -177,6 +193,39 @@ private:
                     const std::function<void(const tak::net::Command&)>& sink);
     // The player's visible-enemy list (0x411700's +5) as the AI reads it.
     std::vector<ClassicEnemy> visibleEnemies(const tak::sim::World& world) const;
+    // Any unit as the AI reads an enemy (the lists, the picker, a strike's p4).
+    ClassicEnemy enemyView(const tak::sim::World& world, const tak::sim::Unit& e) const;
+    // The army squads' thinks (ai/classicwaves.h) for squad `slot`, after the
+    // shared clock template's reschedule (and, for a strike, its cohesion pass).
+    void strikeThink(const tak::sim::World& world, int slot, tak::sim::RetailAiGroupClock& clock,
+                     std::vector<ClassicSquadUnit>& units, uint32_t simTick,
+                     const std::function<void(const tak::net::Command&)>& sink);
+    void backupThink(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
+                     const std::function<void(const tak::net::Command&)>& sink);
+    void vtolThink(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
+                   const std::function<void(const tak::net::Command&)>& sink);
+    // 0x40a200 for `member` around `centre` over every enemy unit
+    // (classicPickTarget), and the reachability walk it and the strike's
+    // withdrawal test use (0x4e1570 from the member's cell and footprint to
+    // range x range cells at the target's cell, over the static grade).
+    int pickTarget(const tak::sim::World& world, const ClassicSquadUnit& member, std::pair<int32_t, int32_t> centre);
+    bool reachTarget(const tak::sim::World& world, const ClassicSquadUnit& member, const ClassicEnemy& target,
+                     int16_t range, bool limited);
+    // 0x40b320 after its member loop: the launch (classicBaseLaunch).
+    void baseLaunch(const tak::sim::World& world, int slot, std::vector<ClassicSquadUnit>& units,
+                    const std::function<void(const tak::net::Command&)>& sink);
+    // The largest unit count among the players not allied to this one (the
+    // ground wave roll's E, before its floor of 10).
+    int32_t largestEnemyPopulation(const tak::sim::World& world) const;
+    // A squad member's order (0x4d78a0) as a Move or Patrol command: queue 0
+    // replaces its missions, and a Move whose mission +0x4e is a6 > 0 ends
+    // within that distance (dropped when the unit is already inside, else aimed
+    // at the circle's edge). Updates the member's first mission in the snapshot
+    // when it replaces them. Whether a command was sent.
+    bool sendOrder(const tak::sim::World& world, ClassicSquadUnit& member, bool patrol, bool queue,
+                   const ClassicPoint& at, int32_t a6, const std::function<void(const tak::net::Command&)>& sink);
+    // 0x4d6a50(u, 0) as a Stop command; the member's snapshot loses its missions.
+    void clearMissions(ClassicSquadUnit& member, const std::function<void(const tak::net::Command&)>& sink);
     // The map's sacred-site records (0x62dbcc) and which feature-plane types are
     // sacred, read from the World once.
     void readSites(const tak::sim::World& world);
@@ -203,6 +252,8 @@ private:
     std::vector<ClassicTypeInfo> info_;
     std::vector<std::vector<uint16_t>> menu_;
     uint32_t queues_ = 0, builds_ = 0, lodestoneBuilds_ = 0, combatOrders_ = 0, retreats_ = 0;
+    WaveStats waves_;
+    int32_t ownTotal_ = 0;   // the build manager's +0x7d: live units at the last recount
     ClassicBlockGrids grids_;
     bool sitesRead_ = false;
     std::vector<std::optional<ClassicCell>> sites_;
