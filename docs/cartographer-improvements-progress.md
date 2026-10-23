@@ -1309,6 +1309,72 @@ files; with the mod, both maps lacked `ai/n.txt`), all pass now; a stock map's
 package still carries no AI file. `cartographer_document`: two installed clashing
 bundles each open by name with their own files (fails with the mount's winner).
 
+## AI profile editor, phase 2: the model
+
+`src/cartographer/aiprofiles.{h,cpp}` (SDL-free, no UI yet) is the editor's model of
+a map's AI files. It never computes what a file does on its own: effective values come
+from the engine's parsers (`ai::ClassicProfile::execute` for the DEFAULT AI,
+`ai::applyProfileText` for the levels), now linked into `cartographer` and its tests
+(`src/ai/classicprofile.cpp`, `src/ai/builtinprofile.cpp`; no `ai.cpp`).
+
+- `attributeAiLines`: per line, in its grammar: blank, comment, other command,
+  unknown word, skipped (level value unreadable), exact, group, shadowed (DEFAULT:
+  an earlier exact line set the unit), overridden (levels: a later line wins), with
+  the lines a DEFAULT exact weight combines with.
+- `parseAiDraft` / `writeAiDraft`: the canonical form of design 5.3 (magic line,
+  optional header, the kind's note, unit rows sorted by key, `// group rules`, `// kept
+  from the original file (no effect)`). A file opens editable only if it re-writes to
+  the same bytes and verifies; any other opens as written and saves unchanged.
+  `classicChanceText`: p=100 -> `1`, p=0 -> `0`, else `0.` + three digits of p*10+5
+  (plain p/100 gets 50 of the 101 values wrong). An empty draft writes nothing.
+- `verifyAiDraft` / `saveAiDraft`: re-run the engine on the bytes; each row's value
+  exactly, every other unit what the group lines alone give it (DEFAULT) or nothing
+  (levels); refuses with "AI profile could not be written exactly: <unit>".
+- `makeEditable`: DEFAULT keeps category lines in order as group rules and writes a
+  row (the engine's value) for each unit an effective exact line set; levels keep the
+  last line per unit and keyword; no-op lines kept, shadowed and overridden lines
+  dropped; accepted only if the engine reads the same table, else the draft is left
+  as written.
+- `checkAiFile` / `checkAiMap`: the 6.2 rows (see deviations), sides from
+  `TypeRegistry::buildable` reached from each side's Monarch.
+- Names: `proposeAiProfileName`, `aiProfileNameError`, `aiProfileFileKey`,
+  `standardAiProfile`, `renameAiProfile`, `setAiFile` (empty = delete),
+  `aiFileTravels` / `travellingAiFiles`.
+- `whichFile`: the real `ai::classicProfileScript` and `ai::levelProfile` over the
+  map's travelling files, an optional game mod's files and the base install, with the
+  footer messages of 6.1.
+
+Deviations from the design:
+
+- Index-0 quirk (fact 3) does not exist in this engine: `ClassicCatalogue` keeps
+  retail's empty sentinel at index 0, so the alphabetically first unit is index 1 and
+  an exact line sets it (tested). The model still follows the engine's `index != 0`
+  rule (`classicCanSingleOut`; a slot-0 name acts as its category word and is
+  flagged), tested with a hand-made slot-0 name. Phase 3 needs no locked row.
+- `parseAiDraft` takes the catalogue only (the level grammar needs no roster);
+  checks take an `AiRoster{catalogue, registry}`. The header is a draft field
+  (`AiDraft::header`), not a `writeAiDraft` argument, so parse/write round-trip it.
+- Kept lines are verbatim (only a CR becomes a space), so a canonical file is ASCII
+  and `#`-free except in its kept block.
+- The 6.2 row "map carries level files or ai/default.txt: another installed map can
+  replace it" is left out: phase 1 fixed that collision. The aiprofile name check is
+  an error for a level file name or a folder, a warning for a '.' name; retail's
+  `aiprofile=DEFAULT` raises nothing.
+
+Validation: `cartographer_aiprofile` -- all 101 chance values through the engine; the
+5.3 golden file; idempotence; a synthetic hand corpus (CRLF, no final newline, `#`,
+`//`, tabs, `\v`/`\f`, `plan`, mixed case, duplicates, missing values, UTF-8, an
+almost-canonical file, a canonical file with an effective kept line) re-saves byte
+for byte; attribution replayed against both parsers and no-op lines dropped without
+changing either parser's result, on the corpus and 10,000 random scripts, each also
+converted by Make editable (equal effect, canonical, idempotent); seeded verify
+mismatches (p/100 encoding, group lines first, a dropped `-1` limit, an extra line);
+every 6.2 row on a synthetic registry; name rules against `classicProfileScript`;
+`aiFileTravels` against `net::maps::importSnapshot`; the `whichFile` matrix over a
+loose base folder and real `mods/game/<pack>/ai/` fixtures. Mutations (no shadow
+detection, no override detection, p*10 encoding, verify always true, Make editable
+rows at 100 %) each fail the test.
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop
