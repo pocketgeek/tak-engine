@@ -1375,6 +1375,78 @@ loose base folder and real `mods/game/<pack>/ai/` fixtures. Mutations (no shadow
 detection, no override detection, p*10 encoding, verify always true, Make editable
 rows at 100 %) each fail the test.
 
+## AI profile editor, phase 3: the window
+
+SCENARIO > AI Profiles... (shortcut A; no Cartographer binding used plain A) opens a
+780x520 panel like Scripting (`src/cartographer/aiprofileswindow.cpp`), title tag
+`[AI]`. Scenario Properties shows the `aiprofile=` line read-only with EDIT AI
+PROFILES....
+
+- Left: DEFAULT AI (its file, or "standard profile") and the six levels, tagged `map`
+  (the map carries the file), `*` (changed since the window opened) and `as written`;
+  presets No flyers / No ships / Clear all, each confirmed first; PREVIEW WITH GAME
+  MOD steps through `hpi::modPacks(Game)` for the footer.
+- DEFAULT tab: the standard profile or "This map's own profile, named [..]". Choosing
+  own proposes the map name (7.1) and asks Start from: the installed `ai/default.txt`
+  (read at run time, converted by Make editable when it plays the same, else kept as
+  written) or Empty; the name and the file are one undo step. Renaming re-keys the
+  file in the same step; going back to the standard profile confirms and deletes the
+  map's file. A map's existing `ai/default.txt` stays editable, and choosing own offers
+  to move it. The editor never writes a new `ai/default.txt`.
+- Unit table: search, side, group, SET ONLY and UNBUILDABLE (hidden by default:
+  `aiReachableUnits`, i.e. `TypeRegistry::buildable` from each side's Monarch; a unit
+  the file sets is never hidden), buildpics, BUILD on/off, CHANCE (DEFAULT, %) or
+  WEIGHT with the grey BUILT-IN column (levels), LIMIT. Click a cell to edit
+  (`drawField`), Enter commits, Esc cancels, right-click or Delete returns it to not
+  set. Each commit goes through `saveAiDraft` (engine-verified) and is one undo step.
+  Undo waits until the window closes. A hand-written file is read-only in the table,
+  with the "written by hand" summary and MAKE EDITABLE.
+- Help strip: the selected row in words, from the engine's reading ("file says 0.5 =
+  50 % (after 'weight all 0.5')", "never built by this level (not named)"), or the
+  kind's help line. Footer: `whichFile` for the tab (and the chosen pack) plus the Test
+  Map hint.
+- Text view (`drawTextArea`, Enter = new line): gutter `!` (does nothing) and `~`
+  (shadowed/overridden), the reason on hover; INSERT UNIT adds the selected row's key.
+  The text is stored when leaving the view, changing profile, CHECK or DONE.
+- CHECK lists `checkAiMap` in the window (click a line to open it in the Text view);
+  Check Map (`validateAiProfiles` in validation.{h,cpp}) adds the warnings and errors.
+- `aiOpen` is in every overlay gate (main.cpp event routing and quit, chrome.cpp Esc
+  quit / edge scroll / hints, canvas.cpp placement and BLOCKED, palette.cpp section
+  menu, dialogs.cpp restart).
+
+Deviations from the design:
+
+- The index-0 locked row is built generically (a row `classicCanSingleOut` refuses is
+  drawn locked, disabled on the DEFAULT tab, with the tooltip), but it never shows in
+  this engine (phase 2, deviation 1).
+- Presets always keep the user's own rows (no checkbox); the confirmation says so.
+  BUILD off writes `limit <unit> 0` in both grammars; BUILD on removes this file's
+  zeros and, for the DEFAULT AI, names the unit at 100 % / no limit if a group rule
+  would still keep it off.
+- Start from Empty writes a canonical file whose kept block is `// Started empty.`:
+  an empty draft deletes the file, and the AI would then fall back to ai/default.txt
+  instead of "every unit at full chance".
+- Switching back to the standard profile always deletes the map's file (one
+  confirmation, undoable); keeping it would leave a file that never travels.
+- The mock's group headings are a sort order (group, then name) with the group shown
+  in each row; the DEFAULT tab's third column is SET BY (the line that sets the unit).
+- The pack chooser is a button that steps through the packs; each pick reads the pack
+  once and keeps only its `ai/` files.
+- Check Map shows warnings and errors only; notes stay in the window's CHECK.
+- "Copy to other levels..." (3.3) and group-rule rows are not in this phase (group
+  rules are phase 5); levels are edited one tab at a time.
+- `whichFile` keeps the install view as the server builds it (an installed `.kmp`
+  under `Maps/` can supply the "installed" `ai/default.txt`, as in a room).
+
+Validation: `cartographer_aiprofile_ui` (`cartographer_ui_test <data> aiprofile`):
+open a fixture `.kmp`, A, Normal's `araarch` weight 0 through its cell, own DEFAULT
+profile started Empty, No flyers after its confirmation, DONE, Ctrl+Z takes back only
+the preset, Ctrl+Y restores it, Save As; the archive holds root `ai/n.txt` and
+`ai/aitest.txt` (none under `kmap/`) and the `.ota` says `aiprofile=aitest;`. A
+mutation (edits not marked for history) fails it. `cartographer_ui_smoke` now presses
+A and clicks every window control; `cartographer_validation` checks the Check Map
+entries. Screenshots of both tabs were inspected: no overlap or clipping.
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop
