@@ -17,6 +17,7 @@
 #include "cartographer/textedit.h"
 #include "hpi/hpi.h"
 #include "tnt/ota.h"
+#include <algorithm>
 #include <chrono>
 #include <functional>
 #include <filesystem>
@@ -362,6 +363,142 @@ static int aiProfileWorkflow(const char* data) {
     fs::remove_all(root);
     if(result || !failure.empty() || lastFrame>22) {std::cerr<<failure<<'\n';return 1;}
     std::cout<<"PASS: AI Profiles window: level cell, own DEFAULT profile, preset, undo/redo, Save As with root ai/ files and aiprofile=\n";return 0;
+}
+// The AI window's game-mod half, against a SCRATCH data root (the install's entries
+// linked in, a fresh real mods/ folder): Save as game mod into an existing pack in
+// case-variant folders (its own spelling reused, the different file replaced after the
+// compare, the old copy backed up in the profile folder, never in the pack), then
+// Open from game mod: an edit that is the pack's and not the map's, SAVE TO PACK
+// creating a file without asking, an emptied draft offered for deletion unticked,
+// and the ticked delete confirmed and backed up. TAK_EDITOR_TEST_CAPTURE=<prefix> also
+// writes <prefix>-modsave.png and <prefix>-pack.png.
+static int aiModWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-aimod-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);isolateProfile(root.string().c_str());
+    const auto install=root/"data";fs::create_directory(install);
+    for(const auto& entry:fs::directory_iterator(data))
+        if(tak::hpi::MountSet::key(entry.path().filename().string())!="mods")fs::create_symlink(fs::absolute(entry.path()),install/entry.path().filename());
+    const auto ai=install/"Mods"/"Game"/"Harder"/"AI";fs::create_directories(ai);
+    auto put=[](const fs::path& p,const std::string& text) {std::ofstream(p,std::ios::binary)<<text;};
+    auto slurp=[](const fs::path& p) {std::ifstream f(p,std::ios::binary);return std::string(std::istreambuf_iterator<char>(f),{});};
+    put(ai/"N.TXT","weight araarch 7\n");put(ai/"notes.txt","keep\n");
+    const auto backups=root/"TAKengine"/"Cartographer"/"mod-backups"/"Harder";
+    auto backedUp=[&](const std::string& name) {   // every backup copy of `name`, oldest first
+        std::vector<std::string> out;std::error_code ec;std::vector<fs::path> stamps;
+        for(const auto& d:fs::directory_iterator(backups,ec))stamps.push_back(d.path());
+        std::sort(stamps.begin(),stamps.end());
+        for(const auto& d:stamps)if(fs::exists(d/"ai"/name))out.push_back(slurp(d/"ai"/name));
+        return out;
+    };
+    auto listing=[](const fs::path& dir) {std::set<std::string> out;std::error_code ec;for(const auto& e:fs::directory_iterator(dir,ec))out.insert(e.path().filename().string());return out;};
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",install.string(),"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    cart::Editor* editor=nullptr;cart::EditorHooks hooks;hooks.attached=[&](cart::Editor& e){editor=&e;};
+    std::string failure;int lastFrame=0;
+    auto check=[&](bool value,const std::string& message) {if(!value && failure.empty())failure="frame "+std::to_string(lastFrame)+": "+message;};
+    auto mapFile=[&](const std::string& key) {const auto it=editor->aiFiles.find(key);return it==editor->aiFiles.end()?std::string():std::string(it->second.begin(),it->second.end());};
+    auto packFile=[&](const std::string& key) {
+        if(!editor->aiMod)return std::string();
+        const auto it=editor->aiMod->files.find(key);return it==editor->aiMod->files.end()?std::string():std::string(it->second.begin(),it->second.end());
+    };
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;const std::string title=SDL_GetWindowTitle(window);
+        float sx=1,sy=1;SDL_RenderGetScale(renderer,&sx,&sy);
+        auto press=[&](const SDL_Rect& r,Uint8 button) {
+            if(r.w<=0) {check(false,"target not drawn");return;}
+            SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=button;e.button.clicks=1;
+            e.button.x=int((r.x+r.w/2)*sx);e.button.y=int((r.y+r.h/2)*sy);SDL_PushEvent(&e);e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
+        };
+        auto click=[&](const SDL_Rect& r) {press(r,SDL_BUTTON_LEFT);};
+        auto capture=[&](const char* suffix) {
+            const char* prefix=SDL_getenv("TAK_EDITOR_TEST_CAPTURE");if(!prefix)return;
+            int pw=0,ph=0;SDL_GetRendererOutputSize(renderer,&pw,&ph);std::vector<uint8_t> rgba(size_t(pw)*ph*4);
+            if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),pw*4)==0)tak::png::write(std::string(prefix)+suffix,pw,ph,rgba);
+        };
+        auto cell=[&](const std::string& key,int column) {
+            for(const auto& c:editor->aiCells)if(c.key==key && c.column==column)return c.rect;
+            return SDL_Rect{};
+        };
+        auto change=[&](const std::string& key)->const cart::ModProfileChange* {
+            for(const auto& c:editor->aiModPlan.changes)if(c.key==key)return &c;
+            return nullptr;
+        };
+        using A=cart::ModProfileChange::Action;
+        switch(frame) {
+        case 0:key(SDLK_a);break;
+        case 1:check(editor->aiOpen,"A did not open the AI Profiles window");click(editor->aiTabRects[3]);break;
+        case 2:click(editor->aiSearchBox);break;
+        case 3:text("araarch");break;
+        case 4:click(cell("araarch",0));break;
+        case 5:text("0");key(SDLK_RETURN);break;
+        case 6:check(mapFile("ai/n.txt").find("\nweight araarch 0\n")!=std::string::npos,"Normal's weight was not written to the map");
+            click(editor->aiModSaveButton);break;
+        case 7:check(editor->aiModSaveOpen,"SAVE AS GAME MOD did not open its dialog");
+            check(editor->aiModRows.size()==1 && editor->aiModRows[0].target=="ai/n.txt" && editor->aiModRows[0].tick,"the dialog does not offer Normal's ai/n.txt, ticked");
+            click(editor->aiModPackBox);break;
+        case 8:key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);text("harder");break;
+        case 9:{
+            const auto* n=change("ai/n.txt");
+            check(editor->aiModPlanError.empty(),"plan error: "+editor->aiModPlanError);
+            check(editor->aiModPlan.pack=="Harder" && editor->aiModPlan.folder==ai,"the existing Mods/Game/Harder/AI was not reused in its own case");
+            check(n && n->action==A::Replace && n->path==ai/"N.TXT","the pack's different N.TXT is not planned as a replace");
+            capture("-modsave.png");click(editor->aiModWriteButton);break;
+        }
+        case 10:check(editor->modal==cart::Editor::M_CONFIRM && editor->mTitle=="REPLACE PACK FILES","a different pack file was replaced without the compare");key(SDLK_RETURN);break;
+        case 11:check(editor->modal==cart::Editor::M_MESSAGE && editor->mTitle=="SAVED","no after-save notice");
+            check(slurp(ai/"N.TXT")==mapFile("ai/n.txt"),"N.TXT does not hold the map's ai/n.txt");
+            check(listing(ai)==std::set<std::string>{"N.TXT","notes.txt"},"the pack's ai/ gained or lost files");
+            check(slurp(ai/"notes.txt")=="keep\n","another pack file was touched");
+            check(backedUp("N.TXT")==std::vector<std::string>{"weight araarch 7\n"},"the replaced file was not backed up in the profile folder");
+            check(listing(install/"Mods"/"Game")==std::set<std::string>{"Harder"} && listing(install/"Mods"/"Game"/"Harder")==std::set<std::string>{"AI"},"staging or backups were left beside the pack");
+            key(SDLK_RETURN);break;
+        case 12:click(editor->aiModOpenButton);break;
+        case 13:{
+            check(editor->aiModOpenOpen,"OPEN FROM GAME MOD did not list the packs");
+            SDL_Rect row{};for(const auto& [r,pack]:editor->aiModPackRows)if(pack=="Harder")row=r;
+            click(row);break;
+        }
+        case 14:check(editor->aiMod && editor->aiMod->pack=="Harder" && packFile("ai/n.txt")==mapFile("ai/n.txt"),"the pack's files were not opened");
+            check(title.find("[AI]")!=std::string::npos,"the window closed");click(editor->aiTabRects[4]);break;
+        case 15:capture("-pack.png");click(cell("araarch",0));break;
+        case 16:text("5");key(SDLK_RETURN);break;
+        case 17:check(packFile("ai/h.txt").find("\nweight araarch 5\n")!=std::string::npos,"the Hard edit did not go to the pack's set");
+            check(mapFile("ai/h.txt").empty(),"a pack edit leaked into the map");
+            check(editor->aiModDirty(),"the pack set is not marked unsaved");
+            click(editor->aiModSaveButton);break;
+        case 18:{
+            bool hTicked=false,nTicked=true;
+            for(const auto& row:editor->aiModRows) {if(row.target=="ai/h.txt")hTicked=row.tick;if(row.target=="ai/n.txt")nTicked=row.tick;}
+            check(editor->aiModSaveOpen && hTicked && !nTicked,"SAVE TO PACK should tick only the changed file");
+            check(editor->aiModPackBox.w==0,"the pack name is editable when saving back to the pack");
+            click(editor->aiModWriteButton);break;
+        }
+        case 19:check(editor->modal==cart::Editor::M_MESSAGE && editor->mTitle=="SAVED","a new file asked first or failed");
+            check(slurp(ai/"h.txt")==packFile("ai/h.txt") && !editor->aiModDirty(),"ai/h.txt was not created, or the set stays unsaved");
+            key(SDLK_RETURN);break;
+        case 20:press(cell("araarch",0),SDL_BUTTON_RIGHT);break;   // Hard's only row: the draft is now empty
+        case 21:check(packFile("ai/h.txt").empty() && editor->aiModDirty(),"clearing the row did not empty ai/h.txt");click(editor->aiModSaveButton);break;
+        case 22:check(editor->aiModSaveOpen && editor->aiModDeleteBoxes.size()==1 && editor->aiModDeleteTicked.empty(),"the emptied draft is not offered for deletion, unticked");
+            click(editor->aiModDeleteBoxes.empty()?SDL_Rect{}:editor->aiModDeleteBoxes[0].first);break;
+        case 23:check(editor->aiModDeleteTicked.count("ai/h.txt")==1,"the delete box did not tick");click(editor->aiModWriteButton);break;
+        case 24:check(editor->modal==cart::Editor::M_CONFIRM,"deleting a pack file did not ask");key(SDLK_RETURN);break;
+        case 25:check(editor->modal==cart::Editor::M_MESSAGE && !fs::exists(ai/"h.txt"),"ai/h.txt was not deleted");
+            check(backedUp("h.txt").size()==1 && backedUp("h.txt")[0].find("weight araarch 5")!=std::string::npos,"the deleted file was not backed up");
+            check(!editor->aiModDirty(),"the set stays unsaved after the delete");
+            key(SDLK_RETURN);break;
+        case 26:click(editor->aiModOpenButton);break;   // CLOSE PACK: nothing unsaved, so no question
+        case 27:check(!editor->aiMod && editor->modal==cart::Editor::M_NONE,"CLOSE PACK did not return to the map's profiles");
+            check(mapFile("ai/n.txt").find("\nweight araarch 0\n")!=std::string::npos && mapFile("ai/h.txt").empty(),"the map's files changed");
+            click(editor->aiDoneButton);break;
+        case 28:{SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        case 29:if(editor->modal==cart::Editor::M_QUITSAVE)click(editor->mQuit);break;
+        default:if(frame>34) {failure+=" (AI game-mod workflow did not exit)";std::_Exit(3);}
+        }
+    },hooks);
+    fs::remove_all(root);
+    if(result || !failure.empty() || lastFrame>34) {std::cerr<<failure<<'\n';return 1;}
+    std::cout<<"PASS: AI Profiles game mod: save into an existing case-variant pack (compare, backup outside the pack), open from the pack, save back, emptied draft deleted\n";return 0;
 }
 static int resizeSaveWorkflow(const char* data) {
     namespace fs=std::filesystem;
@@ -1707,6 +1844,7 @@ int main(int argc,char** argv) {
     if(argc==3 && std::string(argv[2])=="features")return featureWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="resize-save")return resizeSaveWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="aiprofile")return aiProfileWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="aiprofile-mod")return aiModWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="templates")return templateWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="rules")return ruleTextWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);

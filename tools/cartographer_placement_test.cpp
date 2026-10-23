@@ -1785,15 +1785,16 @@ bool smokeSession(const std::string& data,const std::string& label,std::vector<s
         s.then(settle);
         // The AI Profiles window's controls (confirmations and Start from close again).
         s.then([](Editor&,const Input& in) {in.key(SDLK_a);return true;});
-        for(int b=0;b<20;++b) {
+        // The game-mod dialogs open and close with Escape: nothing is written into the install.
+        for(int b=0;b<22;++b) {
             s.then([=,&actions](Editor& e,const Input& in) {
                 if(!e.aiOpen) {in.key(SDLK_a);return true;}
                 const SDL_Rect buttons[]={e.aiTabRects[3],e.aiSideBox,e.aiGroupBox,e.aiSetOnlyBox,e.aiUnbuildableBox,e.aiPresetRects[0],e.aiPresetRects[1],
-                    e.aiViewButton,e.aiViewButton,e.aiCheckButton,e.aiCheckButton,e.aiPackButton,e.aiTabRects[0],e.aiOwnRadio,e.aiStartButton,e.aiPresetRects[2],
-                    e.aiSearchBox,e.aiStandardRadio,e.aiList,e.aiDoneButton};
+                    e.aiViewButton,e.aiViewButton,e.aiCheckButton,e.aiCheckButton,e.aiPackButton,e.aiModSaveButton,e.aiModOpenButton,e.aiTabRects[0],e.aiOwnRadio,
+                    e.aiStartButton,e.aiPresetRects[2],e.aiSearchBox,e.aiStandardRadio,e.aiList,e.aiDoneButton};
                 const auto p=rect(buttons[b]);if(buttons[b].w>0)in.click(p.x,p.y);++actions;return true;
             });
-            s.then([](Editor& e,const Input& in) {if(e.modal!=Editor::M_NONE || e.aiStartOpen)in.key(SDLK_ESCAPE);return true;});
+            s.then([](Editor& e,const Input& in) {if(e.modal!=Editor::M_NONE || e.aiStartOpen || e.aiModSaveOpen || e.aiModOpenOpen)in.key(SDLK_ESCAPE);return true;});
         }
         s.then(settle);
         // The regions list and Use Only.
