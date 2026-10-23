@@ -45,6 +45,7 @@
 // escort following it.
 
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <optional>
 #include <unordered_map>
@@ -279,10 +280,13 @@ private:
     std::vector<std::optional<ClassicCell>> sites_;
     std::vector<bool> sacredTypes_;
     std::vector<std::pair<ClassicCell, ClassicCell>> sacredRects_;   // without a feature plane
+    // staticBlocked / zoneLabels hand out references into these caches and add
+    // to them while one may be held (zoneLabels builds a static plane first), so
+    // they are deques: an append never moves an existing entry.
     struct StaticPlane { const tak::sim::NavGrid* nav; int footX, footZ; std::vector<uint8_t> blocked; };
-    std::vector<StaticPlane> staticPlanes_;
+    std::deque<StaticPlane> staticPlanes_;
     struct ZonePlane { const tak::sim::NavGrid* nav; int footX, footZ; ClassicZoneLabels labels; };
-    std::vector<ZonePlane> zonePlanes_;
+    std::deque<ZonePlane> zonePlanes_;
     std::unordered_map<const tak::sim::UnitType*, uint16_t> index_;
     std::vector<int16_t> count_, completed_;
     std::vector<uint8_t> priority_;
