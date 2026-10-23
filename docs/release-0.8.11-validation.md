@@ -23,8 +23,11 @@ TODO-LEAD: Tagged `v0.8.11` at `<sha>` (annotated tag object `<obj>`) and publis
 `src/sim/` (`matchsetup.cpp`, `matchsetup.h`, `retailplayer.h`, `sim.cpp`,
 `sim.h`). Nothing under `src/campaign/`, `src/tnt/`, `src/terrain/`,
 `src/cob/`, `src/crt/`, `src/video/`, `src/hpi/` or `src/cartographer/`
-changed. TODO-LEAD: list the preparation commits (screenshots, version and
-docs, this report) and confirm nothing else landed on main after `d86d5904`.
+changed. The preparation commits on top of `d86d5904` are `df0c5eef`
+(screenshots), `614ffbaf` (version 0.8.11, notes, docs), `f0198b13` (README
+Classic row, this report's Screenshots section) and the commit filling this
+report; nothing else landed on main after `d86d5904` (checked with
+`git fetch` before landing).
 
 The changes:
 
@@ -110,15 +113,28 @@ Testing was reduced for this release, by the user's rule (minimal testing):
   | Legion | 60 s | `0825aeb9e8139203` (4) | `0825aeb9e8139203` |
   | Legion | 300 s | `ce5c4ba7562e53b9` (18) | `ce5c4ba7562e53b9` |
   | Classic (Retail) | 60 s | `14849c00bc6e2a19` (4), twice | new level |
+  | Classic (Retail) | 300 s | `30483dcba73d108f` (16), twice | new level |
+
+  The Retail, Legion and Classic 60 s games and the Retail and Legion 300 s
+  games come from the landing run at `d86d5904`; the two Classic 300 s games
+  were run for this report (`build-o2` rebuilt at `d86d5904`, `--version`
+  `v0.8.10-36-gd86d5904fa47`; logs `~/tak-tmp/scratch/release-0811/mpai/`).
+  Every pair reproduced. The Classic pair is the 0.8.11 reference.
 
 - **Campaign Normal byte-identity** (from `e89d1f1a`): `takmission08_dh` 300 s
   `68a4b1588012db76` and `takx11_mt` 240 s `c5e3b08d1f08ba9e`, the same before
   and after the Opponent AI change.
-- TODO-LEAD: `tools/check-detmath.sh` and `tools/check-determinism.sh` (golden
-  `dcef618cd2e4d558` at 0.8.10), if run; else say they were covered by CI's
-  Determinism workflow only.
-- TODO-LEAD: final source after the preparation commits (rebuild every target,
-  `takclient --version`, `ctest -L quick`).
+- **Detmath guard** (`tools/check-detmath.sh`) at `d86d5904`: OK, no direct
+  libm transcendentals in the sim path and no `std::atomic_ref`.
+- **Cross-compiler golden hash** (`tools/check-determinism.sh`) at `d86d5904`:
+  g++ and clang++ at -O0/-O2/-O3 all give `dcef618cd2e4d558`, the same golden
+  as 0.8.10. The aarch64 legs were skipped (no target libc/headers locally);
+  ARM64 parity is covered by the macOS CI leg. Log
+  `~/tak-tmp/scratch/release-0811/check-determinism.log`.
+- **Final source** (the preparation commits on `d86d5904`; only this report
+  differed from the built tree): every `build-o2` target rebuilt (681 steps,
+  clean), `takclient --version` reports `0.8.11`, and `ctest -L quick` passed
+  489/489 (141 s; log `~/tak-tmp/scratch/release-0811/land-ctest-quick.out`).
 
 ## Remote multiplayer sweep
 
@@ -148,7 +164,8 @@ TODO-LEAD: publication line (`gh release edit v0.8.11 --draft=false --latest`).
 ## Screenshots
 
 Retaken by the 0.8.11 build (version set to 0.8.11 locally; no capture patch),
-committed on the screenshots branch (`task-release-0811-shots`, `f16e61c7`) and
+committed on the screenshots branch (`task-release-0811-shots`, `f16e61c7`,
+landed on main as `df0c5eef`) and
 each inspected by eye: `docs/img/title.jpg` (VERSION 0.8.11, same 1440 × 1080
 crop), `docs/img/campaign.jpg` (fresh profile, chapter 1, with **Opponent AI:
 NORMAL (A)** under the always-on mods note) and the new
@@ -162,7 +179,6 @@ the lobby and room pictures show each AI seat's level, not the list of levels,
 so CLASSIC would not appear; `guide/chat-box.jpg` crops out its Barracks (its
 gauge's small early fill reads the same); `guide/campaign-briefing.jpg` is the
 briefing, not the book. Scripts: `~/tak-tmp/scratch/release-0811/shots`.
-TODO-LEAD: confirm the screenshots commit's sha after it lands on main.
 
 ## Limits
 
