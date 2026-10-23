@@ -1581,10 +1581,11 @@ The `.kmp` can also carry **AI profiles**: `ai/<name>.txt` files at the top of
 the archive, beside the map's own folder rather than inside it (see
 [AI profiles in game mods](user-guide.md#ai-profiles-in-game-mods) and the
 DEFAULT AI's [map profile](user-guide.md#default)). When you open a `.kmp` file
-(**File → Open** with its full path) or a loose `.tnt`, Cartographer keeps every
-file in its `ai` folder and saves each one again unchanged, byte for byte. Undo,
-recovery copies and **Test Map** keep them too. Opening an installed map by name
-does not read them yet; open the `.kmp` file by its path instead.
+(**File → Open** with its full path or an installed map's name) or a loose
+`.tnt`, Cartographer keeps every file in its `ai` folder and saves each one again
+unchanged, byte for byte. Undo, recovery copies and **Test Map** keep them too.
+Each map keeps its own files: two installed maps that both carry `ai/n.txt` (or
+name the same profile) each open, play and travel with their own copy.
 
 Only some of these files go with the map to other players and into **Test
 Map**: `ai/default.txt`, the level files (`ai/d.txt`, `ai/e.txt`, `ai/n.txt`,

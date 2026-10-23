@@ -1271,6 +1271,44 @@ members; loose `ai/`; Maps refusal), `cartographer_playtest` (the child stub run
 the game's `importSnapshot`: `ai/n.txt` and `ai/islands.txt` reach the test room,
 `ai/notes.txt` does not).
 
+## AI profile editor, phase 1: own-archive lookup
+
+Two installed `.kmp` files carrying the same AI file name (`ai/n.txt`, or the same
+`ai/<aiprofile>.txt`; the Cartographer stamps every entry with date 0) shared one
+`Maps/` mount, and only the winning archive passed `Vfs::sameMapArchive`: the other
+map's package silently carried no file (design fact 7, confirmed). A ticked game
+mod's copy also kept the map's own file out of its package.
+
+- `Vfs::readFromMapArchive(mapPath, path)` reads `path` from the archive that holds
+  the map's `.tnt` (`MountSet::archiveOf` + the new `MountSet::readFromArchive`),
+  or from a view's map files; `nullopt` for a loose map, a base-install map or a
+  view that skips map resources. `Vfs::mapArchivePaths` lists that archive.
+- `net::maps` `buildUncached` takes the whitelisted AI files through it in place of
+  the `sameMapArchive` gate; `sameMapArchive` (no other caller) is removed.
+- Cartographer: an installed map opened by name (File → Open by name, the startup
+  map name, headless `--save`/`--bundle` by name) reads every root `ai/<name>.txt`
+  of its own archive (`cart::aiFilesFromMapArchive`), lossless like a `.kmp` opened
+  by path. The phase 0 guide sentence "does not read them yet" is gone.
+- Protocol 291: hosts and clients both build packages, so a 290 peer could compute
+  a different digest for a colliding map (or one a ticked mod shadows). Sim
+  unchanged; 290 replays refused (`replay_test`).
+
+Deviations from the design:
+
+- The package now carries the map's own AI files even when a ticked game mod has
+  the same path (the old gate left them out). The server's lookup already lets the
+  mod's file win, so play is unchanged and the digest no longer depends on mods.
+- Added `Vfs::mapArchivePaths`/`MountSet::archivePaths` so a by-name open is
+  lossless (stray `ai/*.txt` kept, as for a `.kmp` opened by path), not only the
+  whitelisted names.
+
+Validation: `ai_profile_test <data>` `mapClash` (two date-0 `.kmp` files, different
+`ai/n.txt` and `ai/islands.txt`, `aiprofile=islands`; with and without a ticked
+mod's `ai/n.txt`): on the old code 5 checks failed (Clash B's package lacked both
+files; with the mod, both maps lacked `ai/n.txt`), all pass now; a stock map's
+package still carries no AI file. `cartographer_document`: two installed clashing
+bundles each open by name with their own files (fails with the mount's winner).
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop
