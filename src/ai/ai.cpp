@@ -84,6 +84,10 @@ void Controller::setClassicProfile(const ClassicProfileScript& script) {
     if (classic_) classic_->useProfile(script);
 }
 
+void Controller::setClassicStart(int index, float x, float z) {
+    if (classic_) classic_->setStart(index, x, z);
+}
+
 Controller::Controller(Controller&&) noexcept = default;
 Controller::~Controller() = default;
 

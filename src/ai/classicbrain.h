@@ -13,8 +13,14 @@
 // ai::Controller. P1: it holds retail's unit catalogue and the baked AI profile
 // (ai/classicprofile.h). P2: per-type facts (ai/classictypes.h) and retail's
 // bookkeeping clock -- the per-tick unit count cache and the dynamic build
-// priorities recomputed on rand(30)==0 of each >= 7-tick window. tick() still
-// issues nothing -- a Classic Monarch idles.
+// priorities recomputed on rand(30)==0 of each >= 7-tick window. P3: retail's
+// AI manager (ai/classicsquads.h) -- the 100 squad slots the constructor builds
+// and rolls, the scheduler (the assignment countdown, then every squad whose
+// deadline has come), the dying-unit cleanup and the assignment pass: the
+// Monarch into base 1 anchored on its start, every other finished unit into the
+// nearest base with retail's standing orders (a Stance 0 command), and the
+// campaign mass attack. The squads' own thinks still only reschedule, so apart
+// from those Stance (and mass-attack Stop) commands a Classic seat idles.
 
 #include <cstdint>
 #include <functional>
@@ -22,6 +28,7 @@
 #include <vector>
 
 #include "ai/classicprofile.h"
+#include "ai/classicsquads.h"
 #include "ai/classictypes.h"
 #include "net/lockstep.h"
 #include "sim/retailrng.h"
@@ -36,8 +43,30 @@ public:
     // player keeps two Classic AIs of one game from mirroring each other.
     // Retail creates the build manager at game start with every type reset to
     // 100 / unlimited (0x4102f0 -> 0x410670); the profile file comes after.
-    ClassicBrain(int player, uint32_t roomSeed, const tak::sim::TypeRegistry& registry);
+    // Retail builds the AI manager first (0x4f6660: 0x40fed0, its squads and
+    // their rolls), then the build manager. `largestEnemyPopulation` is what the
+    // ground wave roll reads as E; at a skirmish start every player has at most a
+    // Monarch, so any value under 10 gives retail's E = 10.
+    ClassicBrain(int player, uint32_t roomSeed, const tak::sim::TypeRegistry& registry,
+                 int32_t largestEnemyPopulation = 0);
     ClassicBrain(int player, uint32_t roomSeed);   // an empty catalogue (tests)
+
+    // The player's start location (player+0xec and its record in 0x62dbdc):
+    // start record `index` is the 16-pixel cell holding (x, z) pixels. Base 1 is
+    // anchored on it by the first assignment pass. Without one base 1 is not
+    // anchored and its centre is its members' centroid.
+    void setStart(int index, float x, float z);
+    // A campaign mission's `massattack` for this player, in ticks (0 = none;
+    // classicMassAttackTicks parses the .ota keyword), and the scenario mode the
+    // first assignment pass reads (1 = a campaign mission with preplaced units).
+    void setMassAttack(uint32_t ticks) { squads_.massAttack = ticks; }
+    void setScenarioMode(int32_t mode) { scenarioMode_ = mode; }
+    const ClassicSquads& squads() const { return squads_; }
+    // A unit's squad slot (retail unit +0xc8): 0 unassigned, -1 dropped while dying.
+    int32_t squadOf(int unitId) const {
+        const auto it = squadOf_.find(unitId);
+        return it == squadOf_.end() ? 0 : it->second;
+    }
 
     // Retail's profile loader (0x4f6860): runs the map's profile script over the
     // reset tables.
@@ -83,6 +112,13 @@ public:
     }
 
 private:
+    // 0x40fe00 -> 0x40fd80, retail's AI scheduler: the assignment countdown, then
+    // each squad whose deadline has come (the shared sim templates).
+    void scheduler(const tak::sim::World& world, uint32_t simTick,
+                   const std::function<void(const tak::net::Command&)>& sink);
+    // The player's units as the manager reads them, in unit order, with their
+    // squads; members that left the world (or the player) are dropped first.
+    std::vector<ClassicSquadUnit> squadUnits(const tak::sim::World& world);
     // 0x411a90, retail's per-player bookkeeping: the >= 7-tick window (where the
     // world rebuilds its visibility lists) draws rand(30), and 0 recomputes the
     // priorities from the cache as the previous tick left it; then the recount.
@@ -106,6 +142,10 @@ private:
     std::vector<uint8_t> priority_;
     tak::sim::RetailPlayerCacheClock clock_{true, 0};
     uint32_t refreshes_ = 0;
+    ClassicSquads squads_;
+    std::unordered_map<int, int32_t> squadOf_;
+    int32_t startIndex_ = -1;
+    int32_t scenarioMode_ = 2;   // retail's skirmish map mode
 };
 
 }  // namespace tak::ai

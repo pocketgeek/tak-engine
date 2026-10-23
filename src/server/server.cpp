@@ -2752,6 +2752,10 @@ void Server::tryStart(Client& c) {
                                                                       : classicProfile->path.c_str());
                         }
                         r->ai.back().setClassicProfile(*classicProfile);
+                        // Its start: the k-th used slot's, where setupMatch put it.
+                        int start = 0;
+                        for (int j = 0; j < i; ++j) start += r->slots[j].type == 1 || r->slots[j].type == 2;
+                        r->ai.back().setClassicStart(start, slotPos[size_t(i)].first, slotPos[size_t(i)].second);
                     }
                 }
             if (r->ref->hasScenarioOutcomes())

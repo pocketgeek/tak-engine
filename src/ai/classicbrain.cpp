@@ -3,10 +3,14 @@
 #include "sim/retailai.h"
 #include "sim/sim.h"
 
+#include <cmath>
+#include <cstdlib>
+#include <string>
+#include <unordered_set>
+
 #ifndef NDEBUG
 #include <cctype>
 #include <cstdio>
-#include <cstdlib>
 #endif
 
 namespace tak::ai {
@@ -14,13 +18,18 @@ namespace tak::ai {
 ClassicBrain::ClassicBrain(int player, uint32_t roomSeed)
     : player_(player), seed_(seedFor(player, roomSeed)), profile_(catalogue_.size()),
       info_(catalogue_.size()), count_(catalogue_.size()), completed_(catalogue_.size()),
-      priority_(catalogue_.size()) {}
+      priority_(catalogue_.size()) {
+    classicConstructSquads(squads_, 0, [&](int n) { return rand(n); });
+}
 
-ClassicBrain::ClassicBrain(int player, uint32_t roomSeed, const tak::sim::TypeRegistry& registry)
+ClassicBrain::ClassicBrain(int player, uint32_t roomSeed, const tak::sim::TypeRegistry& registry,
+                           int32_t largestEnemyPopulation)
     : player_(player), seed_(seedFor(player, roomSeed)),
       catalogue_(ClassicCatalogue::from(registry)), profile_(catalogue_.size()),
       info_(catalogue_.size()), count_(catalogue_.size()), completed_(catalogue_.size()),
       priority_(catalogue_.size()) {
+    // 0x4f6660: the AI manager (0x40fed0) before the build manager (0x4121e0).
+    classicConstructSquads(squads_, largestEnemyPopulation, [&](int n) { return rand(n); });
     for (size_t t = 1; t < catalogue_.size(); ++t) {
         info_[t] = ClassicTypeInfo::from(*catalogue_.types[t], &registry);
         index_.emplace(catalogue_.types[t], uint16_t(t));
@@ -94,10 +103,96 @@ void ClassicBrain::bookkeeping(const tak::sim::World& world, uint32_t simTick) {
     recount(world);
 }
 
+void ClassicBrain::setStart(int index, float x, float z) {
+    if (index < 0) return;
+    // 0x4e0810: the start's 16.16 position shifted down to its 16-pixel cell.
+    auto cell = [](float v) { return int16_t(uint32_t(int32_t(std::lround(double(v) * 65536.0))) >> 20); };
+    if (squads_.starts.size() <= size_t(index)) squads_.starts.resize(size_t(index) + 1);
+    squads_.starts[size_t(index)] = ClassicCell{cell(x), cell(z)};
+    startIndex_ = index;
+}
+
+std::vector<ClassicSquadUnit> ClassicBrain::squadUnits(const tak::sim::World& world) {
+    std::vector<ClassicSquadUnit> units;
+    std::unordered_set<int> own;
+    for (const auto& u : world.units()) {
+        if (u.player != player_ || !u.type) continue;
+        own.insert(u.id);
+        const auto* t = u.type;
+        const auto it = index_.find(t);
+        const ClassicTypeInfo* info = it == index_.end() ? nullptr : &info_[it->second];
+        ClassicSquadUnit s;
+        s.id = u.id;
+        const bool structure = t->isStructure();
+        const bool armed = info ? info->armed : !t->weapons.empty();
+        // The port's readings of the unit bits (docs/classic-ai-plan.md U6): a unit
+        // in the World is a live slot, a dead one still listed is dying; a finished
+        // unit is selectable (retail sets that once it has left its factory).
+        s.flags = ClassicSquadUnit::kLive | (u.alive() ? 0u : ClassicSquadUnit::kDying) |
+                  (u.underConstruction ? 0u : ClassicSquadUnit::kSelectable) |
+                  (structure ? ClassicSquadUnit::kStructure : 0u) | (armed ? ClassicSquadUnit::kArmed : 0u);
+        s.commander = info ? info->commander : t->commander;
+        s.sacredSite = info && info->manaSite;
+        s.builder = info && info->builder;
+        s.finished = !u.underConstruction;
+        s.carried = u.embarked();
+        s.mover = !structure;
+        s.menu = info && info->menu ? 1 : 0;
+        s.x = u.x.v; s.z = u.z.v;
+        s.footX = int16_t(t->footX); s.footZ = int16_t(t->footZ);
+        s.squad = squadOf(u.id);
+        units.push_back(s);
+    }
+    // A member that is no longer the player's unit (removed from the World, or
+    // given away) leaves its squad the way set-squad removes one.
+    for (auto& squad : squads_.squads)
+        for (size_t k = 0; k < squad.members.size();)
+            if (!own.count(squad.members[k])) { squad.members[k] = squad.members.back(); squad.members.pop_back(); }
+            else ++k;
+    std::erase_if(squadOf_, [&](const auto& e) { return !own.count(e.first); });
+    return units;
+}
+
+void ClassicBrain::scheduler(const tak::sim::World& world, uint32_t simTick,
+                             const std::function<void(const tak::net::Command&)>& sink) {
+    std::vector<ClassicSquadUnit> units;
+    bool snapshot = false;
+    auto random = [&](int n) { return rand(n); };
+    auto command = [&](tak::net::Cmd kind, int unitId) {
+        tak::net::Command c;
+        c.kind = kind; c.player = uint8_t(player_); c.unitId = unitId; c.targetId = 0;
+        sink(c);
+    };
+    tak::sim::retailTickAiSchedule(squads_.schedule, simTick, random,
+        [&] {   // 0x40fe80
+            units = squadUnits(world); snapshot = true;
+            classicDropDying(squads_, units);
+        },
+        [&] {   // 0x40eeb0
+            const ClassicAssignContext ctx{simTick, scenarioMode_, startIndex_};
+            classicAssign(squads_, units, ctx,
+                [&](size_t i) { command(tak::net::Cmd::Stance, units[i].id); },   // 0x5198a0(u, 2)
+                [&](size_t i) { command(tak::net::Cmd::Stop, units[i].id); });    // 0x4d6a50(u, 0)
+        },
+        [&](unsigned slot, auto& clock) {
+            // Each kind's think reschedules itself (and an empty strike or VTOL
+            // squad goes inactive). Strike recruitment (0x40abd0) is P6, and the
+            // occupied squads' plans come in P4-P7.
+            tak::sim::retailTickAiSquad(squads_.squads[slot], clock, simTick, random,
+                                        [](auto&) {}, [](auto&) {});
+        });
+    if (!snapshot) return;
+    for (const auto& u : units) {
+        if (u.squad) squadOf_[u.id] = u.squad;
+        else squadOf_.erase(u.id);
+    }
+}
+
 void ClassicBrain::tick(const tak::sim::World& world, uint32_t simTick,
-                        const std::function<void(const tak::net::Command&)>&) {
-    // Retail's player loop: the AI scheduler (0x40fe00 -> 0x40fd80, P3 onward),
-    // then the bookkeeping (0x4121c0 -> 0x411a90).
+                        const std::function<void(const tak::net::Command&)>& sink) {
+    // Retail's player loop: the AI scheduler (0x40fe00 -> 0x40fd80), then the
+    // bookkeeping (0x4121c0 -> 0x411a90).
+    scheduler(world, simTick, sink);
     bookkeeping(world, simTick);
 #ifndef NDEBUG
     debugDump(simTick);
@@ -145,5 +240,17 @@ void ClassicBrain::debugDump(uint32_t simTick) {
     std::fclose(f);
 }
 #endif
+
+uint32_t classicMassAttackTicks(const std::string& line) {
+    // strstr(line, "massattack"), then sscanf(at, "massattack %i"): the format's
+    // space takes any whitespace, %i a sign and a 0x / 0 prefix.
+    const size_t at = line.find("massattack");
+    if (at == std::string::npos) return 0;
+    const char* p = line.c_str() + at + 10;
+    char* end = nullptr;
+    const long v = std::strtol(p, &end, 0);
+    if (end == p) return 0;
+    return uint32_t(v) * 30u;   // the stored dword: n x 30, wrapping
+}
 
 }  // namespace tak::ai

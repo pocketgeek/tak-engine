@@ -1723,6 +1723,24 @@ if(TAK_TEST_DATA AND TAK_CLASSIC_PRINTWEIGHTS AND Python3_Interpreter_FOUND)
                      --binary $<TARGET_FILE:classic_ai_test> --data "${TAK_TEST_DATA}"
                      --dumps "${TAK_CLASSIC_PRINTWEIGHTS}")
 endif()
+# Opt-in (it needs the retail binary at assets/game and Python's unicorn, which
+# CI has neither of): -DTAK_CLASSIC_ORACLES=ON runs the Classic brain's squad
+# layer against retail's routines in emulation -- the manager constructor and
+# the assignment pass through classic_ai_test, the scheduler, squad clocks and
+# nearest-base selection through the shared templates in retail_ai_test.
+option(TAK_CLASSIC_ORACLES "run the Classic AI emulation oracles (needs KINGDOMS.icd and unicorn)" OFF)
+if(TAK_CLASSIC_ORACLES AND Python3_Interpreter_FOUND)
+    foreach(oracle squad_ctor assignment)
+        add_test(NAME classic_ai_${oracle}
+                 COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/re/check_ai_${oracle}.py
+                         --binary $<TARGET_FILE:classic_ai_test>)
+    endforeach()
+    foreach(oracle scheduler squads base_selection)
+        add_test(NAME classic_ai_${oracle}
+                 COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/re/check_ai_${oracle}.py
+                         --binary $<TARGET_FILE:retail_ai_test>)
+    endforeach()
+endif()
 # The retail AI harness's teardown, against a fake kwin_wayland (no retail, no
 # Proton): the display-holder and everything else of the run must be gone.
 if(Python3_Interpreter_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")

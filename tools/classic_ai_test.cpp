@@ -1,7 +1,8 @@
 // The Classic AI level's building blocks (src/ai/classic*): the retail AI profile
 // baker, the per-type facts and the bookkeeping clock with its dynamic build
-// priorities on a fixed World, and (with a data directory) the shipped profile
-// through the real VFS.
+// priorities on a fixed World, the squad layer (constructor rolls, assignment),
+// and (with a data directory) the shipped profile through the real VFS and a
+// Classic seat's squads in a game on Abnar's Terrace.
 //
 //   classic_ai_test                 unit tests
 //   classic_ai_test <retail-root>   + the shipped data checks
@@ -19,16 +20,23 @@
 //                           file is read (every limit still -1)
 //         seed <s>       -> one priority pass over that table from seed s:
 //                           "<priority>*n <final seed> <draws>"
+//   classic_ai_test --squad-ctor    oracle mode for tools/re/check_ai_squad_ctor.py
+//   classic_ai_test --assignment    oracle mode for tools/re/check_ai_assignment.py
+//       (line layouts in those scripts and in the oracle functions below)
+#include "ai/ai.h"
 #include "ai/classicbrain.h"
 #include "ai/classicprofile.h"
 #include "ai/classictypes.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
+#include <algorithm>
 #include <bit>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
 
@@ -180,6 +188,7 @@ static sim::TypeRegistry syntheticRegistry() {
 static void typeInfoAndPriorities() {
     const auto reg=syntheticRegistry();
     ai::ClassicBrain brain(0,11,reg);
+    const uint32_t built=brain.seed();
     const auto& c=brain.catalogue();
     auto idx=[&](const char* n){return size_t(c.byName.at(n));};
     const auto& info=brain.typeInfo();
@@ -227,22 +236,24 @@ static void typeInfoAndPriorities() {
     check(brain.counts()[idx("tower")]==1 && brain.completed()[idx("tower")]==1 &&
           brain.counts()[idx("worker")]==1 && brain.completed()[idx("worker")]==0 && brain.counts()[idx("soldier")]==0,
           "the per-tick recount: own live units by type, and the finished ones");
-    // Mirror the brain's stream to find the first refresh, then check the values
-    // the cache then held (the previous tick's recount).
+    // Mirror the brain's stream through its construction: the AI manager's
+    // squads and rolls first (0x40fed0), then the creation pass.
     uint32_t mirror=ai::ClassicBrain::seedFor(0,11);
+    {
+        ai::ClassicSquads squads;
+        ai::classicConstructSquads(squads,0,[&](int n){return sim::retailRandom(mirror,n);});
+    }
     for (size_t t=1;t<c.size();++t)
         if (info[t].cost>500.0f) { // the creation pass's draws (only the castle costs > 500)
             sim::RetailBuildPriority in=info[t].priorityInputs(0,0,-1);
             sim::retailBuildPriority(in,uint16_t(0),0.0f,true,[&](int n){return sim::retailRandom(mirror,n);});
         }
-    check(mirror==brain.seed(),"the creation pass draws only for types costing over 500, at population 0");
-    uint32_t refreshAt=0;
-    for (uint32_t tick=7;tick<10000 && !refreshAt;tick+=7) {
-        if (sim::retailRandom(mirror,30)==0) refreshAt=tick;
-    }
-    for (uint32_t tick=1;tick<refreshAt;++tick) think(tick);
-    check(brain.priorityRefreshes()==1,"no refresh before the first rand(30)==0 of a 7-tick window");
-    think(refreshAt);
+    check(mirror==built,"the brain is built in retail's order: the manager's squad rolls, then the creation "
+          "pass, which draws only for types costing over 500, at population 0");
+    // The scheduler's draws now share the stream, so watch for the refresh.
+    uint32_t refreshAt=1;
+    while (refreshAt<10000) { think(refreshAt);if (brain.priorityRefreshes()>1) break;++refreshAt; }
+    check(brain.priorityRefreshes()==2 && refreshAt%7==0,"a refresh comes only in a 7-tick window");
     check(brain.priorityRefreshes()==2 && pr[idx("tower")]==42 && pr[idx("worker")]==2 &&
           pr[idx("soldier")]==84 && pr[idx("lode")]==100,
           "a refresh uses the cached counts: one tower x2, an unfinished builder gets no builder bonus");
@@ -282,6 +293,315 @@ static void shippedData(const char* root) {
     check(onOff,"every shipped weight is an integer, so every preference is 0 or 100");
     check(c.categories.count("ara") && c.categories.count("all") && c.categories.at("all").size()==c.size()-1,
           "categories come from the FBI category= words, plus ALL");
+}
+
+
+// --- P3: the squad layer -----------------------------------------------------
+
+static void squadConstruction() {
+    using K=sim::RetailAiSquadKind;
+    uint32_t seed=12345;
+    ai::ClassicSquads s;
+    ai::classicConstructSquads(s,0,[&](int n){return sim::retailRandom(seed,n);});
+    bool kinds=s.schedule.assignmentCountdown==30 && !s.schedule.groups[0].present && !s.schedule.groups[99].present &&
+               !s.firstPassDone;
+    for (int i=1;i<=98;++i) {
+        const auto& q=s.squads[size_t(i)];
+        const K want=i<=20 ? K::Base : i<=80 ? (i%2 ? K::Strike : K::Backup) : i<=95 ? K::Vtol : i==96 ? K::Reserve :
+                     i==97 ? K::Strike : K::Backup;
+        kinds=kinds && s.schedule.groups[size_t(i)].present && s.schedule.groups[size_t(i)].deadline==0 && q.kind==want;
+        if (want==K::Strike)
+            kinds=kinds && q.parameters[0]==i+1 && q.parameters[3]==6 &&
+                  q.parameters[1]==(i<51 ? 200000 : i<97 ? 500000 : 1000000);
+        if (want==K::Backup) kinds=kinds && q.parameters[0]==i-1;
+    }
+    check(kinds,"0x40fed0: bases 1..20, ground strike/backup pairs 21..50, naval 51..80, VTOL 81..95, homeless 96, "
+                "mass attack 97/98; every clock at 0, the countdown at 30");
+    // The quota ranges and the wave rolls' shape over many constructions.
+    bool ranges=true,negative=false,positive=false,capped=true;
+    for (uint32_t k=1;k<400;++k) {
+        uint32_t r=k*2654435761u|1u;
+        ai::classicConstructSquads(s,k%300,[&](int n){return sim::retailRandom(r,n);});
+        for (int i=1;i<=20;++i) {
+            const auto& p=s.squads[size_t(i)].parameters;
+            if (i==1) ranges=ranges && p[1]>=1 && p[1]<=2 && p[2]>=2 && p[2]<=5 && p[3]>=0 && p[3]<=3 && p[4]>=0 && p[4]<=3;
+            else ranges=ranges && p[1]>=1 && p[1]<=2 && p[2]>=1 && p[2]<=2 && p[3]>=0 && p[3]<=1 && p[4]>=0 && p[4]<=1;
+            for (int w=5;w<=7;++w) { capped=capped && p[w]!=0 && std::abs(p[w])<=50;negative|=p[w]<0;positive|=p[w]>0; }
+        }
+    }
+    check(ranges,"0x40c560 quotas: home base p1 1..2, p2 2..5, p3/p4 0..3; other bases 1..2, 1..2, 0..1, 0..1");
+    check(capped && negative && positive,"wave sizes are never 0, at most 50 in size, and either sign");
+    // Draw counts of the rolls, by hand: rand(4)==0 skips the added terms.
+    {
+        std::vector<int> script{0,0, 59, 1, 1};   // rand(max(p2,2)), rand(4)=0, rand(60)!=0, rand(6)!=0, rand(2)!=0, sign
+        size_t at=0;std::vector<int> asked;
+        auto fake=[&](int n){asked.push_back(n);return at<script.size() ? script[at++]%std::max(n,1) : 1;};
+        const int32_t p=ai::classicGroundWave(3,120,fake);
+        check(p==1 && asked==std::vector<int>({3,4,60,6,2,2}),"ground roll: rand(4)==0 skips both enemy-size terms");
+        asked.clear();at=0;script={1,1,1,0,1,0,0};
+        // rand(3) 1, rand(4) 1 -> +rand(E/10=12) 1 -> rand(3) 0: no E/5 term; rand(60) 1, rand(6) 0 -> x5; sign 0
+        const int32_t q=ai::classicGroundWave(3,120,fake);
+        check(q==-15 && asked==std::vector<int>({3,4,12,3,60,6,2}),"ground roll: the E/5 term only inside the E/10 branch; x5; negated");
+        asked.clear();at=0;script={1,1,1,1,1,1,1};
+        const int32_t a=ai::classicAirWave(0,fake);
+        check(a==3 && asked==std::vector<int>({2,4,2,100,10,2,2}),"air roll: a second rand(max(p3,2)), multipliers 1/100, 1/10, 1/2");
+        asked.clear();at=0;
+        ai::classicNavalWave(5,fake);
+        check(asked==std::vector<int>({5,4,5,100,20,3,2,2}) || asked==std::vector<int>({5,4,5,100,20,3,2}),
+              "naval roll: multipliers 1/100, 1/20, 1/3");
+    }
+    check(ai::classicMassAttackTicks("strategic opponent aramon massattack 90 logo 2")==2700 &&
+          ai::classicMassAttackTicks("massattack0x10")==480 && ai::classicMassAttackTicks("massattack 010")==240 &&
+          ai::classicMassAttackTicks("massattack x")==0 && ai::classicMassAttackTicks("opponent")==0,
+          "massattack n: sscanf %i (0x and 0 prefixes), x30 ticks; none or no number is 0");
+}
+
+static ai::ClassicSquadUnit squadUnit(int id,int32_t x,int32_t z) {
+    ai::ClassicSquadUnit u;u.id=id;
+    u.flags=ai::ClassicSquadUnit::kLive|ai::ClassicSquadUnit::kSelectable;
+    u.x=x<<16;u.z=z<<16;u.mover=true;
+    return u;
+}
+
+static void squadAssignment() {
+    uint32_t seed=7;
+    ai::ClassicSquads s;
+    ai::classicConstructSquads(s,0,[&](int n){return sim::retailRandom(seed,n);});
+    s.starts={ai::ClassicCell{3,4},std::nullopt,ai::ClassicCell{60,60}};
+    std::vector<ai::ClassicSquadUnit> u;
+    u.push_back(squadUnit(10,100,100));u[0].commander=true;u[0].mover=true;
+    u.push_back(squadUnit(11,900,900));u[1].flags|=ai::ClassicSquadUnit::kArmed;
+    u.push_back(squadUnit(12,950,950));u[2].finished=false;u[2].flags&=~ai::ClassicSquadUnit::kSelectable;
+    u.push_back(squadUnit(13,400,400));u[3].carried=true;
+    std::vector<std::pair<char,int>> log;
+    auto standing=[&](size_t i){log.push_back({'s',u[i].id});};
+    auto clear=[&](size_t i){log.push_back({'c',u[i].id});};
+    ai::classicAssign(s,u,{20,2,2},standing,clear);
+    check(s.firstPassDone && u[0].squad==1 && s.squads[1].parameters[0]==3 && u[1].squad==1 && u[2].squad==0 &&
+          u[3].squad==0 && log==std::vector<std::pair<char,int>>({{'s',11}}),
+          "first pass (tick 20): the Monarch joins base 1 without standing orders and anchors it on start 2; "
+          "a finished unit gets standing orders and joins the nearest base; unfinished and carried units wait");
+    {
+        const ai::detail::ClassicUnitIndex index(u);
+        const auto c=ai::classicBaseCentre(s,u,index,1);
+        check(c && c->first==(60<<20)+0x80000 && c->second==(60<<20)+0x80000,
+              "an anchored base's centre is its start cell's centre, whatever its members' positions");
+    }
+    // Later passes: a second base, the swap-remove order and the dying cleanup.
+    u.push_back(squadUnit(14,10,10));u.push_back(squadUnit(15,20,20));
+    u[2].finished=true;u[2].flags|=ai::ClassicSquadUnit::kSelectable;
+    log.clear();
+    ai::classicAssign(s,u,{500,2,2},standing,clear);
+    check(s.squads[1].members==std::vector<int>({10,11,12,14,15}) && log.size()==3,
+          "later passes append newly finished units to the nearest occupied base");
+    u[1].flags|=ai::ClassicSquadUnit::kDying;
+    ai::classicDropDying(s,u);
+    check(u[1].squad==-1 && s.squads[1].members==std::vector<int>({10,15,12,14}),
+          "0x40fe80: a dying member leaves (squad -1); the squad's last member takes its place");
+    ai::classicAssign(s,u,{510,2,2},standing,clear);
+    check(u[1].squad==-1,"a dropped unit is never assigned again");
+    {
+        // No first pass after tick 30 and no occupied base: base 2.
+        ai::ClassicSquads late=s;late.firstPassDone=false;for (auto& q:late.squads) q.members.clear();
+        late.squads[1].parameters[0]=0;
+        std::vector<ai::ClassicSquadUnit> v{squadUnit(1,5,5),squadUnit(2,6,6)};v[0].commander=true;
+        ai::classicAssign(late,v,{31,2,0},[](size_t){},[](size_t){});
+        check(late.firstPassDone && late.squads[1].parameters[0]==0 && v[0].squad==2 && v[1].squad==2,
+              "a brain whose first pass comes after tick 30 never anchors base 1; with no occupied base units join base 2");
+    }
+    {
+        // The campaign mass attack: armed movers without a menu go to 98, every pass.
+        ai::ClassicSquads m=s;m.massAttack=600;
+        std::vector<ai::ClassicSquadUnit> v=u;
+        for (auto& w:v) w.flags|=ai::ClassicSquadUnit::kArmed;
+        v[4].menu=2;v[5].mover=false;v[3].finished=false;
+        log.clear();
+        ai::classicAssign(m,v,{599,2,2},standing,clear);
+        const bool before=log.empty();
+        ai::classicAssign(m,v,{600,2,2},standing,clear);
+        check(before && v[0].squad==98 && v[3].squad==98 && v[2].squad==98 && v[4].squad==1 && v[5].squad==1 &&
+              log.front()==std::pair<char,int>{'s',10} && log[1]==std::pair<char,int>{'c',10},
+              "from the massattack tick: standing orders, missions cleared, slot 98 -- the Monarch and unfinished "
+              "units too, not a unit with a menu or without a mover");
+        ai::classicAssign(m,v,{900,2,2},standing,clear);
+        check(m.squads[98].members.size()==3,"the mass attack takes nobody twice");
+    }
+}
+
+
+// The engine game test for P3: a Classic Taros seat on Abnar's Terrace against
+// an idle seat. Units appear for it (finished ones, one that finishes later, a
+// building), one is destroyed; every finished unit must be in a base squad
+// within 10 ticks of being finished, the Monarch in base 1 anchored on its start
+// with no Stance order, every other one given Stance 0 (applied by the World).
+static void abnarSquads(const char* root) {
+    auto vfs=hpi::mountRetailRoot(root);
+    sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
+    sim::World w;w.setVisPlayer(-1);
+    sim::MatchConfig config;config.vfs=&vfs;
+    const auto map=hpi::findMap(vfs,"Abnar's Terrace");
+    config.mapPath=map;
+    config.slots={{true,0,0,1.0f},{true,1,1,1.0f,true,false}};
+    const auto starts=sim::setupMatch(w,reg,config);
+    if (starts.size()<2) { check(false,"Abnar's Terrace seats two players");return; }
+    ai::Controller controller(1,reg,ai::Profile{},0x5eed,ai::Difficulty::Classic,{starts[0]});
+    controller.setClassicProfile(ai::classicProfileScript(vfs,ai::classicMapAiProfile(vfs,map)));
+    controller.setClassicStart(1,starts[1].first,starts[1].second);
+    const ai::ClassicBrain& brain=*controller.classicBrain();
+    auto pick=[&](auto want)->const sim::UnitType* {
+        for (const auto& [id,t]:reg.types()) if (t.side=="TAR" && want(t)) return &t;
+        return nullptr;
+    };
+    const auto* soldier=pick([](const sim::UnitType& t){return !t.isStructure() && !t.weapons.empty() && !t.isBuilder && !t.canFly;});
+    const auto* worker=pick([](const sim::UnitType& t){return !t.isStructure() && t.isBuilder && !t.commander;});
+    const auto* flyer=pick([](const sim::UnitType& t){return t.canFly && !t.weapons.empty();});
+    const auto* tower=pick([](const sim::UnitType& t){return t.isStructure() && !t.weapons.empty();});
+    if (!soldier || !worker || !flyer || !tower) { check(false,"Taros has a soldier, a builder, a flyer and a tower");return; }
+    int monarch=0;
+    for (const auto& u:w.units()) if (u.player==1 && u.type && u.type->commander) monarch=u.id;
+    const float sx=starts[1].first,sz=starts[1].second;
+    std::map<int,uint32_t> finishedAt;   // unit -> tick it was first seen finished
+    std::map<int,uint32_t> joinedAt;     // unit -> tick it was first seen in a base squad
+    std::map<int,int> stances;
+    int late=0,doomed=0;
+    for (uint32_t tick=0;tick<400;++tick) {
+        if (tick==40) {
+            w.spawn(soldier,sx+120,sz,0.0f,1);w.spawn(soldier,sx-120,sz+40,0.0f,1);
+            w.spawn(worker,sx,sz+120,0.0f,1);w.spawn(flyer,sx+60,sz-120,0.0f,1);
+            doomed=w.spawn(soldier,sx+200,sz+200,0.0f,1);
+        }
+        if (tick==55) w.spawn(tower,sx-200,sz-160,0.0f,1);
+        if (tick==60) { late=w.spawn(soldier,sx-60,sz-60,0.0f,1);w.unit(late)->underConstruction=true; }
+        if (tick==131) w.unit(late)->underConstruction=false;
+        if (tick==200) {
+            net::Command kill;kill.kind=net::Cmd::Destroy;kill.player=1;kill.unitId=doomed;
+            sim::applyCommand(w,reg,kill);
+        }
+        controller.tick(w,tick,[&](const net::Command& c) {
+            if (c.kind==net::Cmd::Stance) ++stances[c.unitId];
+            sim::applyCommand(w,reg,c);
+        });
+        w.tick(1.f/30.f);
+        for (const auto& u:w.units()) {
+            if (u.player!=1 || !u.alive()) continue;
+            if (!u.underConstruction) finishedAt.emplace(u.id,tick);
+            const int32_t q=brain.squadOf(u.id);
+            if (q>=1 && q<=20) joinedAt.emplace(u.id,tick);
+        }
+    }
+    bool within=true;uint32_t worst=0;int units=0;
+    for (const auto& [id,at]:finishedAt) {
+        // The Monarch is there from tick 0 and waits for the first pass, which
+        // the manager's 30-tick initial countdown holds back (checked below).
+        if (id==doomed || id==monarch) continue;
+        const auto j=joinedAt.find(id);
+        const uint32_t delay=j==joinedAt.end() ? 9999 : j->second-at;
+        within=within && delay<=10;worst=std::max(worst,delay);++units;
+    }
+    std::printf("  Abnar's Terrace: %d finished units besides the Monarch, worst delay to a base squad %u ticks\n",units,worst);
+    check(units==6 && within,"every finished unit of the Classic seat is in a base squad within 10 ticks of being finished");
+    const auto& sq=brain.squads();
+    check(brain.squadOf(monarch)==1 && joinedAt.at(monarch)<=30 && sq.squads[1].parameters[0]==2 && !stances.count(monarch),
+          "the Monarch joins base 1 by tick 30, base 1 is anchored on start 2, and it gets no Stance order");
+    {
+        const auto cell=*sq.starts[1];
+        const int cx=cell.first*16+8,cz=cell.second*16+8;
+        check(std::abs(cx-int(sx))<=8 && std::abs(cz-int(sz))<=8,"the anchor is the start location's 16-pixel cell");
+    }
+    bool stanced=true;
+    for (const auto& [id,at]:finishedAt) {
+        if (id==monarch || id==doomed) continue;
+        const auto* u=w.unit(id);
+        stanced=stanced && stances[id]==1 && u &&
+                (!u->type->canSetStance || (u->stance==0 && u->moveState==1 && u->fireState==2));
+    }
+    check(stanced,"every other unit got exactly one Stance 0 order, and the World applied it (move 1, fire 2)");
+    bool gone=brain.squadOf(doomed)<=0;
+    for (const auto& q:sq.squads) gone=gone && std::find(q.members.begin(),q.members.end(),doomed)==q.members.end();
+    check(gone,"a destroyed unit is in no squad");
+    // Member counts per kind (the squads' own thinks are later phases, so every
+    // unit is in a base).
+    int bases=0,strikes=0,other=0;
+    for (int slot=1;slot<=98;++slot) {
+        const size_t n=sq.squads[size_t(slot)].members.size();
+        (slot<=20 ? bases : slot<=80 || slot==97 || slot==98 ? strikes : other)+=int(n);
+    }
+    std::printf("  members: bases %d (base 1: %zu), strikes/backups %d, VTOL/homeless %d\n",bases,
+                sq.squads[1].members.size(),strikes,other);
+    check(bases==int(sq.squads[1].members.size()) && strikes==0 && other==0 && bases==units+1,
+          "all of them are in base 1, the only occupied base");
+}
+
+// The port's side of tools/re/check_ai_assignment.py: 0x40fe80 then 0x40eeb0 on
+// the case's units and squads (see the script for the line layout).
+static int assignmentOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        uint32_t tick,mass;int32_t mode,start;int first;
+        in>>tick>>mode>>mass>>start>>first;
+        ai::ClassicSquads s;
+        uint32_t seed=1;
+        ai::classicConstructSquads(s,0,[&](int n){return sim::retailRandom(seed,n);});
+        s.firstPassDone=first!=0;s.massAttack=mass;
+        auto table=[&](std::vector<std::optional<ai::ClassicCell>>& t) {
+            size_t n;in>>n;t.resize(n);
+            for (auto& r:t) { int valid,x,z;in>>valid>>x>>z;if (valid) r=ai::ClassicCell{int16_t(x),int16_t(z)}; }
+        };
+        table(s.starts);table(s.sites);
+        for (int i=1;i<=20;++i) in>>s.squads[size_t(i)].parameters[0];
+        size_t n;in>>n;
+        std::vector<ai::ClassicSquadUnit> units(n);
+        for (size_t i=0;i<n;++i) {
+            auto& u=units[i];u.id=int(i);
+            uint32_t flags,f108;int commander,sacred,builder,held,carrier,mover,fx,fz;
+            in>>flags>>commander>>sacred>>builder>>f108>>held>>carrier>>mover>>u.menu>>u.x>>u.z>>fx>>fz>>u.squad;
+            u.flags=flags;u.commander=commander;u.sacredSite=sacred;u.builder=builder;
+            const float remaining=std::bit_cast<float>(f108);
+            u.finished=!(remaining<0.0f || remaining>0.0f);   // fcomp: equal or unordered
+            u.held=held!=0;u.carried=carrier!=0;u.carrierHolds=carrier==1;u.mover=mover!=0;
+            u.footX=int16_t(fx);u.footZ=int16_t(fz);
+        }
+        for (int slot=1;slot<=98;++slot) {
+            size_t k;in>>k;auto& m=s.squads[size_t(slot)].members;m.resize(k);
+            for (auto& id:m) in>>id;
+        }
+        std::vector<std::pair<int,int>> log;
+        ai::classicDropDying(s,units);
+        ai::classicAssign(s,units,{tick,mode,start},
+            [&](size_t i){log.push_back({int(i),2});},[&](size_t i){log.push_back({int(i),0});});
+        std::printf("%d",int(s.firstPassDone));
+        for (int i=1;i<=20;++i) std::printf(" %d",s.squads[size_t(i)].parameters[0]);
+        for (const auto& u:units) std::printf(" %d",u.squad);
+        for (int slot=1;slot<=98;++slot) {
+            std::printf(" %zu",s.squads[size_t(slot)].members.size());
+            for (int id:s.squads[size_t(slot)].members) std::printf(" %d",id);
+        }
+        std::printf(" %zu",log.size());
+        for (const auto& [i,k]:log) std::printf(" %d %d",i,k);
+        std::printf("\n");
+    }
+    return 0;
+}
+
+// The port's side of tools/re/check_ai_squad_ctor.py: "<seed> <E>" per line ->
+// the manager's squads as 0x40fed0 leaves them, then the final seed.
+static int squadCtorOracle() {
+    uint32_t seed;int32_t e;
+    while (std::cin>>seed>>e) {
+        ai::ClassicSquads s;
+        ai::classicConstructSquads(s,e,[&](int n){return sim::retailRandom(seed,n);});
+        std::printf("%d",s.schedule.assignmentCountdown);
+        for (int i=0;i<100;++i) {
+            const auto& q=s.squads[size_t(i)];
+            if (!s.schedule.groups[size_t(i)].present) { std::printf(" -1");continue; }
+            std::printf(" %d %u",int(q.kind),s.schedule.groups[size_t(i)].deadline);
+            for (int k=0;k<9;++k) std::printf(" %d",q.parameters[size_t(k)]);
+            std::printf(" %u",q.active);
+        }
+        std::printf(" %u\n",seed);
+    }
+    return 0;
 }
 
 // The port's side of the PrintWeights check: the brain's own facts, profile and
@@ -334,10 +654,14 @@ static int printWeightsOracle(const char* root) {
 int main(int argc,char** argv) {
     if (argc==2 && std::strcmp(argv[1],"--profile")==0) return profileOracle();
     if (argc==3 && std::strcmp(argv[1],"--printweights")==0) return printWeightsOracle(argv[2]);
+    if (argc==2 && std::strcmp(argv[1],"--assignment")==0) return assignmentOracle();
+    if (argc==2 && std::strcmp(argv[1],"--squad-ctor")==0) return squadCtorOracle();
     profileRules();
     typeFacts();
     typeInfoAndPriorities();
-    if (argc>1) shippedData(argv[1]);
+    squadConstruction();
+    squadAssignment();
+    if (argc>1) { shippedData(argv[1]);abnarSquads(argv[1]); }
     std::printf("%s\n",fails ? "FAILED" : "all passed");
     return fails ? 1 : 0;
 }

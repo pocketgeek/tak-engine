@@ -162,6 +162,10 @@ public:
     // aiprofile file, chosen by the server (ai/classicprofile.h). Without one the
     // brain keeps retail's defaults (every type 100 / unlimited).
     void setClassicProfile(const ClassicProfileScript& script);
+    // Difficulty::Classic only (a no-op otherwise): this seat's start location,
+    // start number `index` at (x, z) pixels, which the brain anchors its home
+    // base on (ClassicBrain::setStart).
+    void setClassicStart(int index, float x, float z);
     const ClassicBrain* classicBrain() const { return classic_.get(); }
 
     // Read-only identity, for the debug roster dump (server/rosterdump.h).

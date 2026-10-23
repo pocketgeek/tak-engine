@@ -26,6 +26,8 @@ directory (default `~/tak-tmp/retail-ai`). They are never committed.
 | `tak_ai_run.py` | One headless tak `--mpai` game with the debug roster dump on |
 | `compare_ai.py` | Metrics and distribution tests over two sets of captures |
 | `check_ai_printweights.py` | Checks the CLASSIC brain's pref, limit and priority tables against captured PrintWeights dumps and the polls around them, and emulates retail's 0x410810 on the same tables (no retail run) |
+| `check_ai_squad_ctor.py` | Emulates retail's AI manager constructor 0x40fed0 (squads, base quotas, the three wave-size rolls) on random seeds and player tables against the CLASSIC brain's `classicConstructSquads` |
+| `check_ai_assignment.py` | Emulates retail's dying-unit cleanup 0x40fe80 and assignment pass 0x40eeb0, with retail's own set-squad, nearest-base, centre and radius code under them, on random players against the CLASSIC brain's `classicDropDying` / `classicAssign` |
 
 ## What it needs
 
