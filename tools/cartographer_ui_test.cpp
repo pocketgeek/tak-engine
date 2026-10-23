@@ -500,6 +500,166 @@ static int aiModWorkflow(const char* data) {
     if(result || !failure.empty() || lastFrame>34) {std::cerr<<failure<<'\n';return 1;}
     std::cout<<"PASS: AI Profiles game mod: save into an existing case-variant pack (compare, backup outside the pack), open from the pack, save back, emptied draft deleted\n";return 0;
 }
+// The AI window's phase-5 extras, against a SCRATCH data root whose game mod "Extra"
+// adds one synthetic unit: the pack roster (PREVIEW WITH GAME MOD and OPEN FROM GAME
+// MOD list the pack's units; back to the base install without it), the DEFAULT group
+// rules (a word from this install's catalogue picked, a unit set individually shown
+// as skipped, the value edited), Ctrl+Z / Ctrl+Y inside the window down to where it
+// opened, and a level's limit in play (Hard raises 3 to 4). TAK_EDITOR_TEST_CAPTURE=
+// <prefix> also writes <prefix>-groups.png and <prefix>-hard.png.
+static int aiExtrasWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-aiextras-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);isolateProfile(root.string().c_str());
+    const auto install=root/"data";fs::create_directory(install);
+    for(const auto& entry:fs::directory_iterator(data))
+        if(tak::hpi::MountSet::key(entry.path().filename().string())!="mods")fs::create_symlink(fs::absolute(entry.path()),install/entry.path().filename());
+    const auto pack=install/"mods"/"game"/"Extra";fs::create_directories(pack/"units");
+    // A synthetic unit: no retail text.
+    std::ofstream(pack/"units"/"zzpack.fbi",std::ios::binary)<<"[UNITINFO]\n{\n\tUnitName=zzpack;\n\tName=Pack Test Unit;\n\tSide=ARAMON;\n\tCategory=ARA LAND;\n\tMaxVelocity=1;\n}\n";
+    std::vector<std::string> args={"cartographer","Ulasem Arena","--data",install.string(),"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    cart::Editor* editor=nullptr;cart::EditorHooks hooks;hooks.attached=[&](cart::Editor& e){editor=&e;};
+    std::string failure;int lastFrame=0;
+    auto check=[&](bool value,const std::string& message) {if(!value && failure.empty())failure="frame "+std::to_string(lastFrame)+": "+message;};
+    auto file=[&](const std::string& key) {const auto it=editor->aiFiles.find(key);return it==editor->aiFiles.end()?std::string():std::string(it->second.begin(),it->second.end());};
+    auto listed=[&](const std::vector<cart::Editor::AiRosterRow>& roster,const std::string& key)->const cart::Editor::AiRosterRow* {
+        for(const auto& row:roster)if(row.key==key)return &row;
+        return nullptr;
+    };
+    std::string word,unit,unitId,own;   // the group word, a unit it covers (DEFAULT key, UnitType id)
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window*,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;
+        float sx=1,sy=1;SDL_RenderGetScale(renderer,&sx,&sy);
+        auto click=[&](const SDL_Rect& r) {
+            if(r.w<=0) {check(false,"target not drawn");return;}
+            SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.clicks=1;
+            e.button.x=int((r.x+r.w/2)*sx);e.button.y=int((r.y+r.h/2)*sy);SDL_PushEvent(&e);e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
+        };
+        auto capture=[&](const char* suffix) {
+            const char* prefix=SDL_getenv("TAK_EDITOR_TEST_CAPTURE");if(!prefix)return;
+            int pw=0,ph=0;SDL_GetRendererOutputSize(renderer,&pw,&ph);std::vector<uint8_t> rgba(size_t(pw)*ph*4);
+            if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),pw*4)==0)tak::png::write(std::string(prefix)+suffix,pw,ph,rgba);
+        };
+        auto cell=[&](const std::string& key,int column) {
+            for(const auto& c:editor->aiCells)if(c.key==key && c.column==column)return c.rect;
+            return SDL_Rect{};
+        };
+        auto groups=[&]() {return editor->aiTabView().draft.groups;};
+        switch(frame) {
+        case 0:   // a map edit from before the window: Ctrl+Z inside it must not reach this
+            editor->useOnly.insert("araarch");editor->dirty=editor->historyPending=true;key(SDLK_a);break;
+        case 1:check(editor->aiOpen && editor->aiRosterPack.empty(),"the window did not open on the base install's units");
+            check(!listed(editor->aiLevelRoster,"zzpack"),"a pack unit is listed without the pack");
+            check(editor->aiPacks==std::vector<std::string>{"Extra"},"the scratch pack is not found");
+            click(editor->aiPackButton);break;
+        case 2:{
+            const auto* level=listed(editor->aiLevelRoster,"zzpack");const auto* def=listed(editor->aiDefaultRoster,"zzpack");
+            check(editor->aiRosterPack=="Extra" && level && level->fromPack && def && def->fromPack,"PREVIEW WITH GAME MOD does not list the pack's unit");
+            check(!listed(editor->aiLevelRoster,"araarch") || !listed(editor->aiLevelRoster,"araarch")->fromPack,"a base unit is marked as the pack's");
+            click(editor->aiPackButton);break;
+        }
+        case 3:check(editor->aiRosterPack.empty() && !listed(editor->aiLevelRoster,"zzpack"),"the base roster did not come back");
+            click(editor->aiTabRects[0]);click(editor->aiOwnRadio);break;
+        case 4:check(editor->aiStartOpen,"no Start from");click(editor->aiStartEmpty);break;
+        case 5:own=cart::aiProfileFileKey(editor->scenario.aiProfile);
+            check(!file(own).empty(),"no own profile file");click(editor->aiGroupsButton);break;
+        case 6:{
+            check(editor->aiView==cart::Editor::AiView::Groups && editor->aiGroupRows.empty(),"GROUP RULES did not open on an empty list");
+            // A real category word of this install covering at least two buildable units.
+            const auto& c=*editor->aiCatalogue;
+            for(const auto& w:cart::aiGroupWords(c)) {
+                if(w=="all")continue;
+                std::vector<std::string> reach;
+                for(const auto i:c.categories.at(w))if(const auto* row=listed(editor->aiDefaultRoster,c.names[i]);row && row->reachable && !row->lockedForDefault && row->type)reach.push_back(row->key);
+                if(reach.size()>=2) {word=w;unit=reach[0];break;}
+            }
+            check(!word.empty(),"no category word covers two buildable units");
+            if(!word.empty())unitId=listed(editor->aiDefaultRoster,unit)->type->id;
+            click(editor->aiAddGroupButton);break;
+        }
+        case 7:check(editor->aiWordPick==-1,"ADD GROUP RULE did not open the word picker");capture("-words.png");
+            check(editor->aiWordRows.size()==cart::aiGroupWords(*editor->aiCatalogue).size(),"the picker does not list exactly this install's category words");
+            text(word);break;
+        case 8:{
+            SDL_Rect row{};for(const auto& [r,w]:editor->aiWordRows)if(w==word)row=r;
+            click(row);break;
+        }
+        case 9:check(editor->aiWordPick==-2 && groups().size()==1 && groups()[0].word==word && groups()[0].weight,"the word did not add a weight rule");
+            check(file(own).find("\nweight "+word+" "+cart::classicChanceText(50)+"\n")!=std::string::npos,"the group rule was not written at 50 %");
+            click(editor->aiGroupsButton);break;   // back to the table
+        case 10:click(editor->aiSearchBox);break;
+        case 11:text(unit);break;
+        case 12:click(cell(unit,0));break;
+        case 13:text("80");key(SDLK_RETURN);break;
+        case 14:check(file(own).find("\nweight "+unit+" "+cart::classicChanceText(80)+"\n")!=std::string::npos,"the unit row was not written");
+            click(editor->aiGroupsButton);break;
+        case 15:{
+            const auto& view=editor->aiTabView();const auto& c=*editor->aiCatalogue;
+            const auto units=cart::aiGroupRuleUnits(view.draft,0,c);
+            int skipped=0,halved=0;
+            for(const auto& u:units) {
+                if(c.names[u.index]==unit)check(u.skipped && view.classic.pref[u.index]==80,"the unit set individually is not skipped, or not at 80 %");
+                else if(!u.skipped && u.times==1 && view.classic.pref[u.index]==50)++halved;
+                skipped+=u.skipped;
+            }
+            check(skipped==1 && halved>=1,"the rule's covered units are wrong");
+            check(editor->aiGroupRows.size()==1 && editor->aiGroupUnits.w>0,"the rule row or its unit list is not drawn");
+            capture("-groups.png");click(editor->aiGroupRows.empty()?SDL_Rect{}:editor->aiGroupRows[0].value);break;
+        }
+        case 16:check(editor->aiFocus==cart::Editor::AI_GROUP,"the value did not take focus");
+            key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);text("25");key(SDLK_RETURN);break;
+        case 17:check(groups().size()==1 && groups()[0].value==cart::classicChanceText(25),"the value edit was not written");key(SDLK_z,KMOD_CTRL);break;
+        case 18:check(editor->aiOpen && groups().size()==1 && groups()[0].value==cart::classicChanceText(50),"Ctrl+Z in the window did not take back the value");
+            key(SDLK_y,KMOD_CTRL);break;
+        case 19:check(groups().size()==1 && groups()[0].value==cart::classicChanceText(25),"Ctrl+Y did not restore the value");
+            for(int i=0;i<5;++i)key(SDLK_z,KMOD_CTRL);   // four steps, then the floor
+            break;
+        case 20:check(editor->aiOpen && cart::standardAiProfile(editor->scenario.aiProfile) && editor->aiFiles.empty(),"undo did not walk back to the window's start");
+            check(editor->aiNote.starts_with("Nothing to undo in this window"),"undo went past where the window opened: "+editor->aiNote);
+            check(editor->useOnly.count("araarch")==1,"undo in the window took back a map edit from before it opened");
+            for(int i=0;i<4;++i)key(SDLK_y,KMOD_CTRL);
+            break;
+        case 21:check(!cart::standardAiProfile(editor->scenario.aiProfile) && file(own).find("\nweight "+word+" "+cart::classicChanceText(25)+"\n")!=std::string::npos,
+                      "redo did not bring every step back");
+            click(editor->aiGroupRows.empty()?SDL_Rect{}:editor->aiGroupRows[0].keyword);break;
+        case 22:check(groups().size()==1 && !groups()[0].weight && file(own).find("\nlimit "+word+" 2\n")!=std::string::npos,"WEIGHT did not turn into a limit rule");
+            click(editor->aiTabRects[4]);break;   // Hard
+        case 23:click(editor->aiSearchBox);key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);text(unitId);break;
+        case 24:click(cell(unitId,1));break;
+        case 25:text("3");key(SDLK_RETURN);break;
+        case 26:{
+            check(file("ai/h.txt").find("\nlimit "+unitId+" 3\n")!=std::string::npos,"Hard's limit was not written");
+            const auto* row=listed(editor->aiLevelRoster,unitId);
+            const auto why=row?editor->aiRowExplanation(*row):std::string();
+            check(why.find("In play on Hard: 4 in play")!=std::string::npos,"Hard's limit in play is not shown: "+why);
+            capture("-hard.png");click(editor->aiModOpenButton);break;
+        }
+        case 27:{
+            SDL_Rect row{};for(const auto& [r,p]:editor->aiModPackRows)if(p=="Extra")row=r;
+            click(row);break;
+        }
+        case 28:check(editor->aiMod && editor->aiRosterPack=="Extra" && listed(editor->aiLevelRoster,"zzpack"),"OPEN FROM GAME MOD does not list the pack's units");
+            key(SDLK_z,KMOD_CTRL);break;
+        case 29:check(editor->aiNote.find("no undo")!=std::string::npos,"Ctrl+Z on a pack's files did not say they have no undo");
+            click(editor->aiModOpenButton);break;   // CLOSE PACK
+        case 30:check(!editor->aiMod && editor->aiRosterPack.empty() && !listed(editor->aiLevelRoster,"zzpack"),"closing the pack did not go back to the base units");
+            click(editor->aiPackButton);break;   // preview Extra, then save the map's files into it
+        case 31:click(editor->aiModSaveButton);break;
+        case 32:check(editor->aiModSaveOpen,"SAVE AS GAME MOD did not open");click(editor->aiModPackBox);break;
+        case 33:key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);text("extra");break;
+        case 34:check(editor->aiRosterLists(editor->aiModPlan.pack) && editor->aiModPlan.pack=="Extra","the dialog still warns that the pack's units are not listed");
+            key(SDLK_ESCAPE);key(SDLK_ESCAPE);break;
+        case 35:check(!editor->aiModSaveOpen && !fs::exists(pack/"ai"),"Escape wrote into the pack");click(editor->aiDoneButton);break;
+        case 36:{SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        case 37:if(editor->modal==cart::Editor::M_QUITSAVE)click(editor->mQuit);break;
+        default:if(frame>42) {failure+=" (AI extras workflow did not exit)";std::_Exit(3);}
+        }
+    },hooks);
+    fs::remove_all(root);
+    if(result || !failure.empty() || lastFrame>42) {std::cerr<<failure<<'\n';return 1;}
+    std::cout<<"PASS: AI Profiles extras: pack roster, group rules with the lock shown, undo inside the window, Hard's limit in play\n";return 0;
+}
 static int resizeSaveWorkflow(const char* data) {
     namespace fs=std::filesystem;
     const auto root=fs::temp_directory_path()/("tak-editor-resize-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -1845,6 +2005,7 @@ int main(int argc,char** argv) {
     if(argc==3 && std::string(argv[2])=="resize-save")return resizeSaveWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="aiprofile")return aiProfileWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="aiprofile-mod")return aiModWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="aiprofile-extras")return aiExtrasWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="templates")return templateWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="rules")return ruleTextWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="regions")return regionWorkflow(argv[1]);
