@@ -41,6 +41,22 @@ book's **Opponent AI** line to **Normal** to play them as before.
 
 See [Classic](user-guide.md#classic) in the user guide.
 
+## AI profiles
+
+- **Our AI levels carry their own build profiles.** Defensive, Easy, Normal,
+  Hard, Absurd and Absurdly Defensive no longer read the game's
+  `ai/default.txt`: each has a built-in weight and limit per unit, today the
+  values of the original default profile they were tuned on, so they play
+  exactly as before.
+- **Game mods can change them, one level at a time.** A game pack with
+  `d_ai.txt`, `e_ai.txt`, `n_ai.txt`, `h_ai.txt`, `a_ai.txt` or `ad_ai.txt` at
+  its top level (loose, or at the top of an archive in the pack) adjusts that
+  level only (`n_ai.txt`: Normal); units the file does not name keep the
+  built-in values, and `limit <unit> 0` stops the level building one. The files
+  travel with the host's game packs in multiplayer; cosmetic packs, maps and the
+  install cannot supply them. See
+  [AI profiles in game mods](user-guide.md#ai-profiles-in-game-mods).
+
 ## Campaigns
 
 - **Opponent AI: CLASSIC / NORMAL.** The campaign book's left page has a new
@@ -98,6 +114,12 @@ See [Building](user-guide.md#building).
   match config, so the simulation is 289's. `replay_test` refuses protocol-289
   replays.
 - `tools/check-detmath.sh` now also guards the Classic brain's sources.
+- Our levels' tables are `src/ai/builtinprofile.{h,cpp}` (`ai::builtinProfile`,
+  `ai::levelProfile`); the server builds each data set's per-level profiles from
+  them and the room's game-mod package. New tests: `ai_profile`,
+  `ai_profile_data` (the built-in Normal table still equals the install's
+  `ai/default.txt`) and `ai_mod_profile` (a game pack's `n_ai.txt` reaches the
+  server's Normal AI through the real mod transfer).
 - Retail AI comparison harness under `tools/re` (`retail_ai_harness.py`,
   `retail_ai_poll.py`, `tak_ai_run.py`, `compare_ai.py`) and a debug-only
   `TAK_ROSTER_DUMP` on `takserver`; optional developer tooling, not a gate.

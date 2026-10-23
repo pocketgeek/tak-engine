@@ -63,6 +63,7 @@
 #include <vector>
 
 #include "ai/ai.h"
+#include "ai/builtinprofile.h"
 #include "ai/classicprofile.h"
 #include "hpi/hpi.h"
 #include "net/auth.h"
@@ -321,6 +322,20 @@ static_assert(tak::srv::TickPacer::kHz == kServerHz, "TickPacer paces kServerHz 
         bool haveCb = false;
         uint64_t hash = 0;
         bool built = false;
+        // Our levels' build profiles, by wire aiLevel (ai/builtinprofile.h): the
+        // built-in tables, each adjusted by its own <x>_ai.txt from this set's game
+        // mods. Classic's stays empty (its brain bakes ai/default.txt itself). A
+        // Controller holds a reference, so these live as long as the data set.
+        std::array<tak::ai::Profile, tak::ai::kAiLevels> aiProfiles;
+        void loadAiProfiles(const tak::hpi::Vfs::Files* gameModFiles, uint32_t room = 0) {
+            for (uint8_t level = 0; level < tak::ai::kAiLevels; ++level) {
+                std::string source;
+                aiProfiles[level] = tak::ai::levelProfile(tak::ai::Difficulty(level), gameModFiles, &source);
+                if (!source.empty())
+                    std::fprintf(stderr, "game %u: AI level %u plays the built-in profile adjusted by "
+                                 "the game mods' %s\n", room, unsigned(level), source.c_str());
+            }
+        }
     };
 
 struct Room {
@@ -520,7 +535,7 @@ public:
         // check + every game without game mods); a game-mod set is built lazily
         // per room the first time such a game starts.
         buildDataSet(retail_);
-        aiProfile_ = tak::ai::loadProfile(retail_.vfs);
+        retail_.loadAiProfiles(nullptr);
         aiNames_ = loadAiNames(retail_.vfs);
         haveCb_ = retail_.haveCb;
         std::fprintf(stderr, "takserver: loaded game data from %s (referee sim + AI%s), "
@@ -617,7 +632,6 @@ private:
     // registries, and the gameplay-data fingerprint peers are held to.
     DataSet retail_;                   // shared immutable retail data; game-mod sets are room-local
     bool haveCb_ = false;
-    tak::ai::Profile aiProfile_;
     // Per-mission build profiles (ai/<name>.txt), cached by name -- a Controller
     // holds a reference to its Profile, so these must outlive the room.
     std::map<std::string, tak::ai::Profile> missionProfiles_;
@@ -2616,7 +2630,8 @@ void Server::tryStart(Client& c) {
             ds->vfs.setModFiles(r->modPackage->files);
             tak::sim::setupRegistry(ds->reg,ds->vfs,false);
             if(retail_.haveCb){tak::sim::setupRegistry(ds->regCb,ds->vfs,true);ds->haveCb=true;}
-            ds->hash=tak::hpi::gameplayHash(ds->vfs);ds->built=true;r->modData=std::move(ds);
+            ds->hash=tak::hpi::gameplayHash(ds->vfs);ds->loadAiProfiles(r->modPackage->files.get(),r->id);
+            ds->built=true;r->modData=std::move(ds);
             if(r->mapPackage){r->mapVfs=std::make_unique<tak::hpi::Vfs>(&r->modData->vfs);r->mapVfs->setMapFiles(r->mapPackage->files);}
         }catch(const std::exception& e){sendReject(c,std::string("cannot load game mods: ")+e.what());return;}
     }
@@ -2691,7 +2706,7 @@ void Server::tryStart(Client& c) {
                 // scenery. Mana income is deliberately NOT multiplied here -- a
                 // mission is balanced around its placements, not a skirmish curve.
                 const tak::ai::Profile& prof =
-                    ms.aiProfile.empty() ? aiProfile_
+                    ms.aiProfile.empty() ? ds->aiProfiles[size_t(tak::ai::Difficulty::Normal)]
                                          : missionProfile(ds->vfs, ms.aiProfile);
                 // The campaign screen's OPPONENT AI: Normal, or Classic (retail's own AI,
                 // which bakes the same aiprofile file its own way and plays the mission
@@ -2769,7 +2784,7 @@ void Server::tryStart(Client& c) {
                         enemyStarts.push_back(slotPos[size_t(j)]);
                     }
                     auto diff = tak::ai::difficultyFromLevel(r->slots[i].aiLevel);
-                    r->ai.emplace_back(i, *r->reg, aiProfile_, r->seed,
+                    r->ai.emplace_back(i, *r->reg, ds->aiProfiles[size_t(diff)], r->seed,
                                        diff, std::move(enemyStarts));
                     if (diff == tak::ai::Difficulty::Classic) {
                         if (!classicProfile) {
@@ -3605,7 +3620,8 @@ void Server::takeOver(Room& r, int slot) {
                 if (r.slotPos[size_t(j)].first == 0.0f && r.slotPos[size_t(j)].second == 0.0f) continue;
                 enemyStarts.push_back(r.slotPos[size_t(j)]);
             }
-            r.ai.emplace_back(slot, *r.reg, aiProfile_, r.seed + uint32_t(slot),
+            r.ai.emplace_back(slot, *r.reg, roomData(r).aiProfiles[size_t(tak::ai::Difficulty::Normal)],
+                              r.seed + uint32_t(slot),
                               tak::ai::Difficulty::Normal, std::move(enemyStarts));
         }
         std::fprintf(stderr, "game %u: player %d stopped communicating -- AI (Normal) takes over\n", r.id, slot);

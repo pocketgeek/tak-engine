@@ -1285,7 +1285,7 @@ add_executable(mod_packs_test tools/mod_packs_test.cpp)
 target_link_libraries(mod_packs_test PRIVATE tak-formats)
 add_test(NAME mod_packs COMMAND mod_packs_test)
 # The server-side AI (src/ai): every executable that runs a Controller links these.
-set(TAK_AI_SOURCES src/ai/ai.cpp src/ai/classicbrain.cpp src/ai/classicprofile.cpp src/ai/classictypes.cpp)
+set(TAK_AI_SOURCES src/ai/ai.cpp src/ai/builtinprofile.cpp src/ai/classicbrain.cpp src/ai/classicprofile.cpp src/ai/classictypes.cpp)
 add_executable(room_worker_test tools/room_worker_test.cpp src/server/roomtick.cpp src/server/rosterdump.cpp ${TAK_AI_SOURCES})
 target_link_libraries(room_worker_test PRIVATE tak-formats)
 add_test(NAME room_worker COMMAND room_worker_test)
@@ -1779,6 +1779,14 @@ add_executable(naval_ai_test tools/naval_ai_test.cpp ${TAK_AI_SOURCES})
 target_link_libraries(naval_ai_test PRIVATE tak-formats)
 if(TAK_TEST_DATA)
     add_test(NAME naval_ai COMMAND naval_ai_test "${TAK_TEST_DATA}")
+endif()
+# Our AI levels' built-in profiles + their per-level game-mod files (ai/builtinprofile.h);
+# with data, the built-in Normal table is re-checked against the shipped ai/default.txt.
+add_executable(ai_profile_test tools/ai_profile_test.cpp ${TAK_AI_SOURCES})
+target_link_libraries(ai_profile_test PRIVATE tak-formats)
+add_test(NAME ai_profile COMMAND ai_profile_test)
+if(TAK_TEST_DATA)
+    add_test(NAME ai_profile_data COMMAND ai_profile_test "${TAK_TEST_DATA}")
 endif()
 add_executable(simperf tools/simperf.cpp ${TAK_AI_SOURCES})
 target_link_libraries(simperf PRIVATE tak-formats)
@@ -3057,6 +3065,13 @@ if(TAK_TEST_DATA)
     add_test(NAME mod_transfer COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/mod_transfer_test.py"
       --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:mod_transfer_test>" --data "${TAK_TEST_DATA}")
     set_tests_properties(mod_transfer PROPERTIES TIMEOUT 150)
+    # A game mod's n_ai.txt rides the real mod transfer to the server's Normal AI
+    # (ai/builtinprofile.h); needs the debug client's --mpai harness and the roster dump.
+    if(TARGET takclient AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+      add_test(NAME ai_mod_profile COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/ai_mod_profile_test.py"
+        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
+      set_tests_properties(ai_mod_profile PROPERTIES TIMEOUT 600)
+    endif()
     add_test(NAME crusades_hardening_network COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/crusades_hardening_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --admin "$<TARGET_FILE:crusades_admin>")

@@ -36,9 +36,12 @@ struct Profile {
     std::unordered_map<std::string, int> weight, limit;
 };
 
-// Parse ai/default.txt from the runtime VFS (base + IP merged). One file covers
-// every faction. Never throws; a missing file yields an empty profile (the AI
-// then builds nothing).
+// Parse a game's ai/<name>.txt (else ai/default.txt) from `vfs` in the
+// builtinprofile.h line format. One file covers every faction. Never throws; a
+// missing file yields an empty profile (the AI then builds nothing). Our levels
+// never read these files -- they play their built-in tables (builtinProfile) --
+// so this serves the campaign missions' named profiles and the check that the
+// built-in tables still reproduce the shipped default profile.
 Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name = "default");
 
 // Opponent skill, loosely modelled on retail's easy/normal/hard. It scales HOW the

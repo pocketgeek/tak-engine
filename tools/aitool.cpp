@@ -7,6 +7,7 @@
 
 #include <cstdlib>
 #include "ai/ai.h"
+#include "ai/builtinprofile.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include "sim/sim.h"
@@ -37,7 +38,7 @@ int main(int argc, char** argv) {
     hpi::Vfs vfs = hpi::mountRetailRoot(dataRoot);
     sim::TypeRegistry reg;
     sim::setupRegistry(reg, vfs, argc>5 && std::string(argv[5])=="crusades");
-    ai::Profile profile = ai::loadProfile(vfs);
+    const ai::Profile& profile = ai::builtinProfile(diff);
 
     // 2-player 1v1: slot 0 = idle human (Aramon), slot 1 = the AI under test (Taros).
     sim::World w;

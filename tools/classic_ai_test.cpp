@@ -44,6 +44,7 @@
 //   classic_ai_test --launch        oracle mode for tools/re/check_ai_launch.py
 //       (line layouts in those scripts and in the oracle functions below)
 #include "ai/ai.h"
+#include "ai/builtinprofile.h"
 #include "ai/classicbrain.h"
 #include "ai/classicdefence.h"
 #include "ai/classicexpand.h"
@@ -1247,7 +1248,7 @@ static void classicDuels(const char* root) {
     }
     const ai::Difficulty levelB=std::getenv("TAK_DUEL_LEVEL") ? ai::Difficulty(std::clamp(std::atoi(std::getenv("TAK_DUEL_LEVEL")),0,6))
                                                               : ai::Difficulty::Classic;
-    const ai::Profile normalProfile=ai::loadProfile(vfs);
+    const ai::Profile& normalProfile=ai::builtinProfile(levelB);
     const uint32_t minutes=std::getenv("TAK_DUEL_MINUTES") ? uint32_t(std::atoi(std::getenv("TAK_DUEL_MINUTES"))) : 90u;
     const uint32_t traceEvery=std::getenv("TAK_DUEL_TRACE") ? uint32_t(std::max(1,std::atoi(std::getenv("TAK_DUEL_TRACE"))))*1800u : 18000u;
     const uint32_t kCap=minutes*1800u;

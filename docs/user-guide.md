@@ -319,13 +319,20 @@ stuck builders to other work.
 Normal starts with its Monarch and one builder and adds builders as its income
 grows, up to the Monarch and four; Easy keeps two. Defensive and Absurdly
 Defensive add one per 50 income with no ceiling. No other AI builds more of one
-builder type than the original game's AI file allows. Zhon has no factory
+builder type than its build profile allows. Zhon has no factory
 buildings, so its AI counts its Beast Handlers, Tamers, Lords and Shamans as
 both producers and builders. An AI whose mana store is nearly full keeps its
 builders building income rather than leaving them idle.
 
 The AI runs on the game server, never in your client. In single-player, the game
 starts a private server on your own computer for you.
+
+Every level except Classic has its own **build profile** built into the game: a
+weight and a limit for each unit, which decide how often it picks that unit and
+how many of it it may have. (The values are the original game's default AI
+profile, the one these levels were tuned on.) These levels never read a game's
+`ai/*.txt` files; a game mod can change their profiles instead (see
+[AI profiles in game mods](#ai-profiles-in-game-mods)).
 
 #### Classic
 
@@ -2061,6 +2068,32 @@ then ticked cosmetic packs.
   Transfers are limited to 256 MB.
 - **Campaigns** and **Crusades battles** use the original game data plus your
   always-on cosmetic archives only: no game packs and no ticked cosmetic packs.
+
+### AI profiles in game mods
+
+A game pack can change the build profile of each AI level except Classic with a
+file of its own at the pack's top level, loose (`mods/game/My AI/n_ai.txt`) or
+at the top of an archive in the pack:
+
+| File | Level |
+| --- | --- |
+| `d_ai.txt` | Defensive |
+| `e_ai.txt` | Easy |
+| `n_ai.txt` | Normal |
+| `h_ai.txt` | Hard |
+| `a_ai.txt` | Absurd |
+| `ad_ai.txt` | Absurdly Defensive |
+
+Each line is `weight <unit> <number>` or `limit <unit> <number>`, with the
+unit's file name (`arabow`, `tarcage`); lines starting with `//` are comments.
+A file changes only the units it names; every other unit keeps the level's
+built-in values. `limit <unit> 0` stops that level building the unit. Only the
+level a file is named for reads it: `n_ai.txt` changes Normal (and the Normal
+AI that takes over a disconnected player's seat), never Easy. Names are not
+case-sensitive. When two ticked packs have the same file, the alphabetically
+later pack wins, as for any file. In multiplayer the files travel with the
+host's game packs. Cosmetic packs, maps and the install itself cannot change
+an AI profile.
 
 The old `overrides/` folder is no longer read. Nothing in it is moved or
 changed; move your packs into `mods/cosmetic/` or `mods/game/` yourself, each

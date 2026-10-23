@@ -1,4 +1,5 @@
 #include "ai/ai.h"
+#include "ai/builtinprofile.h"
 #include "ai/classicbrain.h"
 #include "ai/classicprofile.h"
 
@@ -12,7 +13,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <sstream>
 #include <unordered_map>
 #include <vector>
 
@@ -28,17 +28,7 @@ Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name) {
     if (name.empty() || !vfs.has(path)) path = "ai/default.txt";
     if (!vfs.has(path)) return prof;
     auto b = vfs.read(path);
-    std::istringstream f(std::string(b.begin(), b.end()));
-    std::string kw, unit;
-    int v;
-    for (std::string line; std::getline(f, line);) {
-        if (line.size() < 2 || line[0] == '/') continue;
-        std::istringstream ss(line);
-        if (!(ss >> kw >> unit >> v)) continue;
-        std::transform(unit.begin(), unit.end(), unit.begin(), ::tolower);
-        if (kw == "weight") prof.weight[unit] = v;
-        else if (kw == "limit") prof.limit[unit] = v;
-    }
+    applyProfileText(std::string_view(reinterpret_cast<const char*>(b.data()), b.size()), prof);
     return prof;
 }
 

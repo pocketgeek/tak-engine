@@ -1,6 +1,7 @@
 // Use the shipped build trees, scripts and movement profiles. A naval planner
 // that merely emits Train can still leave every ship stuck inside its factory.
 #include "ai/ai.h"
+#include "ai/builtinprofile.h"
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include <algorithm>
@@ -17,7 +18,7 @@ static bool waterFighter(const sim::UnitType* t) {
 int main(int argc,char** argv) {
     if (argc!=2) return 2;
     auto vfs=hpi::mountRetailRoot(argv[1]);
-    const auto retailProfile=ai::loadProfile(vfs);
+    const auto& retailProfile=ai::builtinProfile(ai::Difficulty::Normal);
     int failures=0,cases=0;
     auto check=[&](bool ok,const char* label) {
         std::printf("[%s] %s\n",ok?"PASS":"FAIL",label);

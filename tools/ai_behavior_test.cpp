@@ -1,5 +1,6 @@
 // Command-level AI policy tests; movement continues through the normal World API.
 #include "ai/ai.h"
+#include "ai/builtinprofile.h"
 #include "ai/classicbrain.h"
 #include "ai/classicsquads.h"
 #include "net/matchconfig.h"
@@ -1564,7 +1565,7 @@ int main(int argc,char** argv) {
                 config.mapPath=hpi::findMap(vfs,"ulasem arena");
                 config.slots={{true,0,0,1.0f},{true,0,1,2.0f,true,false}};
                 const auto starts=sim::setupMatch(w,reg,config);
-                const auto openingProfile=ai::loadProfile(vfs);
+                const auto& openingProfile=ai::builtinProfile(ai::Difficulty::Absurd);
                 ai::Controller controller(1,reg,openingProfile,0x1234,
                                           ai::Difficulty::Absurd,{starts.front()});
                 bool started=false;
@@ -1705,7 +1706,7 @@ int main(int argc,char** argv) {
                 config.mapPath=hpi::findMap(vfs,"Varro Passage");
                 config.slots={{true,2,0,1.0f},{true,0,1,1.0f}};config.startSeed=1;
                 const auto starts=sim::setupMatch(naval,reg,config);
-                const auto p=ai::loadProfile(vfs);
+                const auto& p=ai::builtinProfile(ai::Difficulty::Normal);
                 ai::Controller controller(0,reg,p,1,ai::Difficulty::Normal,{starts.back()});
                 bool ship=false;
                 for(uint32_t tick=0;tick<12000 && !ship;++tick) {

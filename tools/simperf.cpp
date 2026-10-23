@@ -1,6 +1,7 @@
 // Explicit performance harness, not a CTest: the full workloads take minutes.
 #include "sim/matchsetup.h"
 #include "ai/ai.h"
+#include "ai/builtinprofile.h"
 #include "hpi/hpi.h"
 #include "tnt/mapgen.h"
 #include <algorithm>
@@ -104,7 +105,7 @@ int main(int argc,char** argv) try {
                 if (u.type && !u.type->isStructure())
                     world.order(u.id,crowdGoals[size_t(u.player)].first,crowdGoals[size_t(u.player)].second,false);
         }
-        profile=ai::loadProfile(vfs);
+        profile=ai::builtinProfile(ai::Difficulty::Absurd);
         for (int p=0;p<8 && mode=="match";++p) {
             std::vector<std::pair<float,float>> enemies;
             for (const auto& u:world.units())
