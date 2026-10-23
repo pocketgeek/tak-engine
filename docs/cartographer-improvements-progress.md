@@ -1678,6 +1678,8 @@ Deviations from the design:
 
 Two items from phase 4's deviations, decided on 2026-10-23: the header a DEFAULT
 profile gets as a pack's `ai/default.txt`, and the 14-pack limit of OPEN FROM GAME MOD.
+Later the same day: move down for group rules, "Copy to other levels...", a sharper
+`ai-profiles.jpg`, and the guide's version note.
 
 - A DEFAULT AI profile saved from a map into a game mod as `ai/default.txt` now names
   the file it becomes. Before, it kept the map's header line, for example `// DEFAULT
@@ -1767,6 +1769,12 @@ Validation:
   restores Hard's hand-written bytes and removes Absurd's file; Ctrl+Y brings both
   back. A mutation that copies no rows fails it at frame 11. I inspected the dialog in
   a `TAK_EDITOR_TEST_CAPTURE` capture (`<prefix>-copy.png`).
+
+- `docs/img/cartographer/ai-profiles.jpg` was recaptured as before (`aiprofile`
+  workflow, `TAK_EDITOR_TEST_CAPTURE`, SDL `offscreen` 921 x 691, cropped 802 x 534
+  at 60,78) and encoded at quality 98 with full chroma instead of 86, where the tab
+  label could read *DEFAULT AT*. Inspected by eye at 1:1 and enlarged; the scene is
+  the same. `ai-group-rules.jpg` is unchanged: its one rule shows neither `^` nor `v`.
 
 ## Scope and remaining limitations
 

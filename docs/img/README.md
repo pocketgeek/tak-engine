@@ -258,6 +258,9 @@ composed, so no browser cell or tree is a placeholder.
   path; their documents (*AiTest*, a copy of Ulasem Arena's terrain, and
   Ulasem Arena itself) are never saved over a shipped map. The scratch data
   root of `aiprofile-extras` holds a synthetic game pack, not shown.
+  `ai-profiles.jpg` was recaptured the same way later on 2026-10-23 and
+  encoded at quality 98 (full chroma) instead of 86, because at 86 the tab
+  label *DEFAULT AI* could read as *DEFAULT AT*; the scene is unchanged.
 - **Toolbar.** Every whole-window picture except `blocked.jpg` predates the
   BLOCKED tool, so its toolbar shows four tool buttons where the editor now has
   five.
