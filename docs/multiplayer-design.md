@@ -864,6 +864,11 @@ except that 289 also seats the campaign human at the mission's Player1 (world sl
 as retail does) and scales the target score's turn penalty by the shooter's terrain
 turn rate (roads and water, as retail does). 0.8.10 ships protocol 289; it plays
 with neither 0.8.9 nor 0.8.8, nor their replays.
+Protocol 290 (source builds after 0.8.10; not in a release yet) adds AI level 6,
+CLASSIC (`SlotInfo.aiLevel` 6): a server-side port of the retail AI
+(`ai::ClassicBrain`, [classic-ai-plan.md](classic-ai-plan.md)). Its seat gets
+exactly a Normal seat's match config, so the simulation is 289's; a 289 peer would
+clamp level 6 to Normal, hence the bump. 289 replays are refused.
 Game options
 and every lobby/start/spectate snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a

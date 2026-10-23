@@ -1076,6 +1076,7 @@ enemy units outside current sight remain untargetable.
 | Hard | Keeps expanding income and production, spending on raids and larger attack waves |
 | Absurd | Hard behavior with double mana income, including reclaim |
 | Absurdly Defensive | Defensive behavior with Absurd's double mana income ([details](docs/ai-defensive-2026-10-17.md)) |
+| Classic | In development: a port of the original game's own AI ([plan](docs/classic-ai-plan.md)); it does nothing yet (its Monarch idles) |
 
 Choose **Generate Random Map** under the map preview to configure a Mainland,
 Lakes, or Islands map, up to **64×64**. Every new mana site has surrounding ruins.

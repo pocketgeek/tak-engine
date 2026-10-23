@@ -298,8 +298,9 @@ scenario.
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
 | **Absurd** | Plays like Hard, with **double mana income**. |
 | **Absurdly Defensive** | Plays like Defensive, with Absurd's **double mana income**. |
+| **Classic** | **In development, not playable yet.** It will play as the original game's own computer player does, without a difficulty setting or any income bonus. For now it does nothing: its Monarch stands idle. |
 
-At every difficulty, the AI's Monarch fights back when it is attacked, or when
+At every difficulty except Classic, the AI's Monarch fights back when it is attacked, or when
 an armed enemy comes within its reach, instead of carrying on with a build.
 
 Defensive, Easy and Normal also build another lodestone whenever they run short
