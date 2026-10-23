@@ -1,4 +1,5 @@
 #pragma once
+#include "cartographer/document.h"
 #include "cartographer/units.h"
 #include "tnt/ota.h"
 #include "tnt/tnt.h"
@@ -19,6 +20,11 @@ std::vector<MapIssue> validateTerrainResources(const tak::tnt::Map& map,const ta
 // Shared by Check Map and the rule form; warnings permit intentional scripts.
 std::vector<MapIssue> validateRuleOperands(bool action,const tak::crt::Rule& rule,
     const tak::crt::Scenario& scenario,const tak::sim::TypeRegistry& registry);
+// The map's AI profiles (aiprofiles.h checkAiMap: the aiprofile= name, files that do
+// not travel, each file's lines), worded for Check Map. Notes (Info) stay in the
+// AI Profiles window's own Check; none of these block saving.
+std::vector<MapIssue> validateAiProfiles(const AiFiles& files,const std::string& aiProfile,
+    const tak::sim::TypeRegistry& registry,const tak::hpi::Vfs& vfs);
 // Observational: builds a private engine world; never modifies the document.
 std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
     const tak::tnt::Scenario& metadata,const tak::crt::Scenario& scenario,

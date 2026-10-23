@@ -1,4 +1,5 @@
 #include "cartographer/validation.h"
+#include "cartographer/aiprofiles.h"
 #include "cartographer/triggers.h"
 #include "terrain/terrain.h"
 #include "hpi/hpi.h"
@@ -290,6 +291,19 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
                 }
             }
         }
+    }
+    return issues;
+}
+std::vector<MapIssue> validateAiProfiles(const AiFiles& files,const std::string& aiProfile,
+    const tak::sim::TypeRegistry& registry,const tak::hpi::Vfs& vfs) {
+    std::vector<MapIssue> issues;
+    const auto catalogue=tak::ai::ClassicCatalogue::from(registry);
+    for(const auto& issue:checkAiMap(files,aiProfile,vfs,{&catalogue,&registry})) {
+        if(issue.severity==AiIssue::Severity::Info)continue;
+        std::string where=issue.file.empty()?"aiprofile":issue.file;
+        if(issue.line && issue.message.rfind("line ",0)!=0)where+=" line "+std::to_string(issue.line);
+        issues.push_back({issue.severity==AiIssue::Severity::Error?MapIssue::Severity::Error:MapIssue::Severity::Warning,
+                          "AI profile "+where+": "+issue.message});
     }
     return issues;
 }

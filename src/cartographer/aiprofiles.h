@@ -27,6 +27,7 @@
 #include "cartographer/document.h"
 
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -140,6 +141,10 @@ struct AiRoster {
     const tak::ai::ClassicCatalogue* catalogue = nullptr;
     const tak::sim::TypeRegistry* registry = nullptr;
 };
+// The units some builder of their side can make, from each side's Monarch
+// (TypeRegistry::buildable, which counts the Zhon's mobile builders); Monarchs
+// themselves are not included. The window hides the rest by default.
+std::set<std::string> aiReachableUnits(const tak::sim::TypeRegistry&);
 struct AiIssue {
     enum class Severity { Info, Warning, Error };
     Severity severity = Severity::Warning;

@@ -570,7 +570,7 @@ void cart::Editor::drawCanvas() {
     }
     // Preview the actual snapped stamp / feature / footprint before committing.
     int previewX,previewZ;SDL_GetMouseState(&previewX,&previewZ);previewX=int(previewX/kUIScale);previewZ=int(previewZ/kUIScale);
-    if(toolVisible() && tool!=BLOCKED && editMode==MODE_PLACE && !regionCanvas && modal==M_NONE && !scriptOpen && !useOnlyOpen && !regionsOpen && menuOpen<0 &&
+    if(toolVisible() && tool!=BLOCKED && editMode==MODE_PLACE && !regionCanvas && modal==M_NONE && !scriptOpen && !aiOpen && !useOnlyOpen && !regionsOpen && menuOpen<0 &&
        previewX>=kPaletteW && previewZ>=kMenuH && previewZ<h-kStatusH && !cart::pointIn(previewX,previewZ,miniRect)) {
         const float wx=mapView.offX()+(previewX-kPaletteW)/mapView.zoom(),wz=mapView.offY()+(previewZ-kMenuH)/mapView.zoom();
         SDL_FRect box{};SDL_Texture* ghost=nullptr;
@@ -601,7 +601,7 @@ void cart::Editor::drawCanvas() {
     }
     // BLOCKED: the brush under the pointer (red paints, white erases), or the
     // rectangle a Shift+drag will fill.
-    if(tool==BLOCKED && (editMode==MODE_PLACE || editMode==MODE_ERASE) && !regionCanvas && !clearArm && modal==M_NONE && !scriptOpen && !useOnlyOpen && !regionsOpen && menuOpen<0) {
+    if(tool==BLOCKED && (editMode==MODE_PLACE || editMode==MODE_ERASE) && !regionCanvas && !clearArm && modal==M_NONE && !scriptOpen && !aiOpen && !useOnlyOpen && !regionsOpen && menuOpen<0) {
         const float zoom=mapView.zoom();
         auto cells=[&](int x0,int z0,int x1,int z1) {
             return SDL_FRect{(std::min(x0,x1)*16-mapView.offX())*zoom,(std::min(z0,z1)*16-mapView.offY())*zoom,(std::abs(x1-x0)+1)*16*zoom,(std::abs(z1-z0)+1)*16*zoom};

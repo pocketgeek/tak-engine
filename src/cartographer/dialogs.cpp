@@ -462,8 +462,10 @@ void cart::Editor::showMapIssue() {
 
 void cart::Editor::checkMap() {
     commitHistory();checkRevision=history.revision();discardCheck=quitAfterCheck=false;
-    checkJob=std::async(std::launch::async,[&,map=mapView.map(),metadata=scenario,scenario=scen,placed=units,restrictions=useOnly] {
-        return cart::validateMap(map,metadata,scenario,placed,restrictions,unitRegistry,vfs);
+    checkJob=std::async(std::launch::async,[&,map=mapView.map(),metadata=scenario,scenario=scen,placed=units,restrictions=useOnly,profiles=aiFiles] {
+        auto issues=cart::validateMap(map,metadata,scenario,placed,restrictions,unitRegistry,vfs);
+        for(auto& issue:cart::validateAiProfiles(profiles,metadata.aiProfile,unitRegistry,vfs))issues.push_back(std::move(issue));
+        return issues;
     });
     modal=M_CHECKING;SDL_StopTextInput();
 }
@@ -735,6 +737,7 @@ void cart::Editor::handleModal(SDL_Event& e) {
             return;
         }
         if (cart::pointIn(mx, my, mOK)) { applyModal(); return; }
+        if(modal==M_SCENARIO && cart::pointIn(mx,my,mAiProfiles)) {applyModal();if(modal==M_NONE)openAiProfiles();return;}
         if(modal==M_PREFERENCES && cart::pointIn(mx,my,mFolderChange)) {clickDataFolder();return;}
         if(modal==M_PREFERENCES && cart::pointIn(mx,my,mFolderRestart)) {   // apply the fields, as OK would, then restart
             applyModal();if(modal==M_NONE)requestRestart();return;
@@ -914,8 +917,16 @@ void cart::Editor::drawModal() {
                 mBox[i] = cart::drawField(ren, ct.x, ct.y + i * 40, ct.w, mLabel[i],
                                           mf[i], mfocus == i,mfocus==i?&fieldEditor:nullptr);
         }
-        mFolderChange=mFolderRestart={};
+        mFolderChange=mFolderRestart={};mAiProfiles={};
         if(modal==M_PREFERENCES)drawDataFolder(ct);
+        if(modal==M_SCENARIO) {   // the aiprofile= line: read-only here, edited in the AI Profiles window
+            const std::string profile=cart::standardAiProfile(scenario.aiProfile)?"standard (aiprofile="+scenario.aiProfile+")":
+                scenario.aiProfile+" -> "+cart::aiProfileFileKey(scenario.aiProfile)+(aiFiles.count(cart::aiProfileFileKey(scenario.aiProfile))?" in the map":" (not in the map)");
+            std::string line="DEFAULT AI PROFILE: "+profile;
+            if(line.size()>size_t(ct.w/6))line=line.substr(0,size_t(ct.w/6)-2)+"..";
+            cart::drawText(ren,line,ct.x,ct.y+218,1,190,195,205);
+            mAiProfiles=cart::drawButton(ren,ct.x,ct.y+ct.h-20,150,18,"EDIT AI PROFILES...",false);
+        }
         // New Map gets a RANDOM shortcut (procedural terrain, jump straight in).
         if (modal == M_NEW) {
             mOK = cart::drawButton(ren, ct.x, ct.y + ct.h - 20, 74, 18, "CREATE", true);
@@ -1001,7 +1012,7 @@ void cart::Editor::pollDataFolder() {
 // leave run(); runEditor relaunches with cart::restartArguments.
 void cart::Editor::requestRestart() {
     restartAfterQuit=true;
-    if(dirty) {useOnlyOpen=scriptOpen=pickOpen=regionsOpen=false;modal=M_QUITSAVE;SDL_StopTextInput();}
+    if(dirty) {useOnlyOpen=scriptOpen=pickOpen=regionsOpen=false;closeAiProfiles();modal=M_QUITSAVE;SDL_StopTextInput();}
     else running=false;
 }
 

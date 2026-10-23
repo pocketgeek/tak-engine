@@ -135,10 +135,12 @@ void cart::Editor::menuAction(int menu,int row) {
         if(row==8)openGeneratorRecipe();
         if(row==9) {preferences.tracePlaytest=!preferences.tracePlaytest;persistPreferences();}
         if(row==10)openObjects();
+        if(row==11)openAiProfiles();
         if(row==5) {if(!mapIssues.empty())issueIndex=(issueIndex+1)%mapIssues.size();showMapIssue();}
     } else if(menu==4)symmetryMenu(row);
     else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
         "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move selected units or features. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute. "
+        "Scenario > AI Profiles (A) edits the map's DEFAULT AI profile and the AI level files it carries. "
         "Symmetry: M mirrors placements, moves and erasures live across the chosen axis; Shift+M (Symmetrize) copies one half or quadrant onto the rest, using mirror-twin terrain sections. "
         "Terrain tool + Select: drag a block rectangle, Ctrl+C copies it, Ctrl+V makes it a click-to-paste brush (Esc returns to sections). "
         "BLOCKED tool: Place paints impassable, unbuildable cells on empty ground only; Erase clears blocked cells; features and roads are never touched. "
@@ -184,7 +186,7 @@ bool cart::Editor::handleShortcuts(SDL_Event& e) {
     if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
         if (dirty) {
             // Close any transient overlay so the quit prompt gets input.
-            useOnlyOpen = false; scriptOpen = false; pickOpen = false;regionsOpen=false;
+            useOnlyOpen = false; scriptOpen = false; pickOpen = false;regionsOpen=false;closeAiProfiles();
             modal = M_QUITSAVE; SDL_StopTextInput();
         } else running = false;
     } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI)) &&
@@ -233,6 +235,8 @@ bool cart::Editor::handleShortcuts(SDL_Event& e) {
         checkMap();              // Scenario -> Check Map
     } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_t) {
         openScripting();         // Scenario -> Scripting (triggers)
+    } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_a && !(e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI|KMOD_ALT))) {
+        openAiProfiles();        // Scenario -> AI Profiles
     } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_LEFTBRACKET) {
         currentPlayer = (currentPlayer + 7) % 8;   // UNITS: pick placement player
     } else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_RIGHTBRACKET) {
@@ -379,7 +383,7 @@ void cart::Editor::edgeScroll() {
     int px,py;const Uint32 buttons=SDL_GetMouseState(&px,&py);const int x=int(px/kUIScale),y=int(py/kUIScale);
     int ww=0,wh=0;SDL_GetWindowSize(win,&ww,&wh);   // the pointer's own (window) coordinates
     const bool idle=preferences.edgeScroll && SDL_GetMouseFocus()==win && (SDL_GetWindowFlags(win)&SDL_WINDOW_INPUT_FOCUS) && !buttons &&
-        modal==M_NONE && menuOpen<0 && !scriptOpen && !useOnlyOpen && !regionsOpen && !sectionMenuOpen && !minimapDrag && !paletteThumbDrag && !cart::pointIn(x,y,miniRect);
+        modal==M_NONE && menuOpen<0 && !scriptOpen && !aiOpen && !useOnlyOpen && !regionsOpen && !sectionMenuOpen && !minimapDrag && !paletteThumbDrag && !cart::pointIn(x,y,miniRect);
     auto d=idle?cart::edgeScrollDirection(x,y,kPaletteW,kMenuH,canvasW,canvasH,cart::kEdgeScrollBand):cart::EdgeDirection{};
     if(const auto rim=idle?cart::windowRimDirection(px,py,ww,wh):cart::EdgeDirection{};rim.any()) {if(rim.x)d.x=rim.x;if(rim.z)d.z=rim.z;}
     if(!d.any()) {edgeSince=0;return;}
@@ -394,7 +398,7 @@ void cart::Editor::drawHints() {
     // Delayed hover help stays out of the way during gestures and dialogs.
     std::string hint;
     int hx,hy;const auto mouseButtons=SDL_GetMouseState(&hx,&hy);hx=int(hx/kUIScale);hy=int(hy/kUIScale);
-    if(modal==M_NONE && menuOpen<0 && !scriptOpen && !regionsOpen && !useOnlyOpen && !mouseButtons) {
+    if(modal==M_NONE && menuOpen<0 && !scriptOpen && !aiOpen && !regionsOpen && !useOnlyOpen && !mouseButtons) {
         if(hy>=25 && hy<41) {
             if(hx>=kToolX && hx<kToolX+kToolCount*kToolW) {
                 const char* hints[]={

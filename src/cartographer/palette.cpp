@@ -31,13 +31,7 @@ SDL_Texture* cart::Editor::thumbFor(const std::string& path) {return thumbs.get(
 const tak::sim::UnitType* cart::Editor::unitInfo(int index) {return index>=0 && index<int(unitTypes.size())?unitRegistry.find(lowerText(unitTypes[size_t(index)])):nullptr;}
 
 std::string cart::Editor::unitCategory(int index) {
-    const auto* type=unitInfo(index);if(!type)return "OTHER";
-    if(type->onMana)return "MANA";
-    if(type->isBuilder)return "BUILDERS";
-    if(type->isStructure())return "BUILDINGS";
-    if(type->canFly)return "AIR";
-    if(type->domain==tak::sim::UnitType::Domain::Water)return "NAVAL";
-    return "GROUND";
+    return cart::unitGroupOf(unitInfo(index));
 }
 
 std::string cart::Editor::paletteLabel(int index) {
@@ -345,7 +339,7 @@ bool cart::Editor::handleSectionMenu(SDL_Event& e) {
 }
 
 void cart::Editor::drawSectionMenu() {
-    if(menuOpen>=0 || modal!=M_NONE || scriptOpen || useOnlyOpen || regionsOpen)sectionMenuOpen=false;   // they take over input
+    if(menuOpen>=0 || modal!=M_NONE || scriptOpen || aiOpen || useOnlyOpen || regionsOpen)sectionMenuOpen=false;   // they take over input
     if(!sectionMenuOpen || tool!=TERRAIN)return;
     const int top=kMenuH+53,bottom=h-kStatusH;
     const auto& groups=sectionCatalog.groups();

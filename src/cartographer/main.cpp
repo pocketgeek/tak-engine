@@ -352,17 +352,18 @@ int cart::Editor::run() {
                 restartAfterQuit=false;   // closing the window is an exit, whatever was pending
                 if (dirty) {
                     // Close any transient overlay so the quit prompt gets input.
-                    useOnlyOpen = false; scriptOpen = false; pickOpen = false;regionsOpen=false;
+                    useOnlyOpen = false; scriptOpen = false; pickOpen = false;regionsOpen=false;closeAiProfiles();
                     modal = M_QUITSAVE; SDL_StopTextInput();
                 } else running = false;
                 continue;
             }
-            if(modal==M_NONE && !scriptOpen && !useOnlyOpen && !regionsOpen && handleMenuInput(e))continue;
-            if(modal==M_NONE && !scriptOpen && !useOnlyOpen && !regionsOpen && (handleMinimapInput(e) || handlePaletteScrollbar(e) || handlePaletteFocus(e)))continue;
+            if(modal==M_NONE && !scriptOpen && !aiOpen && !useOnlyOpen && !regionsOpen && handleMenuInput(e))continue;
+            if(modal==M_NONE && !scriptOpen && !aiOpen && !useOnlyOpen && !regionsOpen && (handleMinimapInput(e) || handlePaletteScrollbar(e) || handlePaletteFocus(e)))continue;
             if(regionsOpen && modal==M_NONE) {handleRegionsList(e);continue;}
             if (useOnlyOpen) {handleUseOnly(e);continue;}
             if (modal != M_NONE) {handleModal(e);continue;}
             if (scriptOpen) {handleScripting(e);continue;}
+            if (aiOpen) {handleAiProfiles(e);continue;}
             // Toolbar, canvas keys, global shortcuts, then palette and canvas
             // pointer input; the first handler that takes the event wins.
             if(handleToolbarModes(e) || handleCanvasKeys(e) || handleShortcuts(e) ||
@@ -379,7 +380,7 @@ int cart::Editor::run() {
         if(overlayInvalidated || historyPending || resetHistory) {overlayTexture.reset();overlayLegend.clear();overlayInvalidated=false;}
         if((historyPending || resetHistory) && !(SDL_GetMouseState(nullptr,nullptr)&(SDL_BUTTON_LMASK|SDL_BUTTON_RMASK)))
             commitHistory();
-        const std::string title="Cartographer -- "+mapName+(modal==M_OBJECTS?" [Placed units]":modal==M_MODEL_LOADING?" [Loading model]":modal==M_MODEL?" [Unit model]":modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":modal==M_CHECKING?" [Checking map]":modal==M_ISSUES?" [Validation results]":modal==M_ANALYZING?" [Analyzing]":overlayTexture?" [Terrain overlay]":"")+(dirty?" *":"");
+        const std::string title="Cartographer -- "+mapName+(modal==M_OBJECTS?" [Placed units]":modal==M_MODEL_LOADING?" [Loading model]":modal==M_MODEL?" [Unit model]":modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":modal==M_CHECKING?" [Checking map]":modal==M_ISSUES?" [Validation results]":modal==M_ANALYZING?" [Analyzing]":aiOpen?" [AI]":overlayTexture?" [Terrain overlay]":"")+(dirty?" *":"");
         SDL_SetWindowTitle(win,title.c_str());
         autosaveRecovery();
         refreshMinimap();updateLiveMinimap();
@@ -396,6 +397,7 @@ int cart::Editor::run() {
         drawClearArea();
         drawRegionsList();
         drawScripting();
+        drawAiProfiles();
         drawModal();
         drawUseOnly();
         drawHints();

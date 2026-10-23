@@ -10,10 +10,12 @@
 //   chrome.cpp    menus, toolbar, keyboard shortcuts, status bar, minimap, hints
 //   dialogs.cpp   modal dialogs, regions/use-only/placed-unit lists, async jobs
 //   scripting.cpp the trigger-rule overlay
+//   aiprofileswindow.cpp the AI Profiles window (SCENARIO > AI Profiles, A)
 //   symmetrytools.cpp Symmetry menu, Symmetrize, live mirroring, terrain clipboard
 // Declaration order is the old local order, so destruction order is unchanged.
 
 #include "cartographer/editor.h"
+#include "cartographer/aiprofiles.h"
 #include "cartographer/blockers.h"
 #include "cartographer/editorfont.h"
 #include "cartographer/featureselection.h"
@@ -72,6 +74,17 @@ inline void fillRect(SDL_Renderer* r, int x, int y, int w, int h, Uint8 cr, Uint
     SDL_SetRenderDrawColor(r, cr, cg, cb, 255);
     SDL_Rect rc{x, y, w, h};
     SDL_RenderFillRect(r, &rc);
+}
+
+// The browser's unit groups (the Units palette and the AI Profiles window).
+inline std::string unitGroupOf(const tak::sim::UnitType* type) {
+    if(!type)return "OTHER";
+    if(type->onMana)return "MANA";
+    if(type->isBuilder)return "BUILDERS";
+    if(type->isStructure())return "BUILDINGS";
+    if(type->canFly)return "AIR";
+    if(type->domain==tak::sim::UnitType::Domain::Water)return "NAVAL";
+    return "GROUND";
 }
 
 // A fresh map for the New dialog / --new launch: either a flat ground stamp or
@@ -357,6 +370,7 @@ struct Editor : Session {
     std::vector<SDL_Rect> mDropRects;         // hit rects of the open list's rows
     SDL_Rect mRandom{};                       // New Map: the RANDOM button rect
     SDL_Rect mRegenerate{};
+    SDL_Rect mAiProfiles{};                   // Scenario Properties: EDIT AI PROFILES...
     // Dropdown option lists (New Map): map sizes in units, and the four worlds.
     const std::vector<std::string> kSizeOpts = {"8", "16", "24", "32", "48", "64"};
     const std::vector<std::string> kWorldOpts = {"aramon", "veruna", "taros", "zhon", "creon"};
@@ -482,6 +496,73 @@ struct Editor : Session {
     void handleScripting(SDL_Event& e);
     void drawScripting();
 
+    // --- AI Profiles window (aiprofileswindow.cpp) ------------------------------
+    // The map's ai/ files (Session::aiFiles) are the truth; the window parses the
+    // shown file into a draft (aiprofiles.h) and every committed edit writes the
+    // bytes back, one undo step each. Undo itself waits until the window closes.
+    struct AiRosterRow {
+        std::string key;                         // DEFAULT: FBI unitname; levels: UnitType::id
+        const tak::sim::UnitType* type=nullptr;
+        std::string label,group,side;
+        bool variant=false,reachable=true,lockedForDefault=false;
+    };
+    struct AiTabView {                           // the shown file and what it does
+        bool built=false;std::string key,bytes;bool readOnly=false;
+        AiDraft draft;std::vector<AiLine> lines;std::vector<AiIssue> issues;
+        tak::ai::ClassicProfile classic;tak::ai::Profile level,builtin;
+    };
+    enum class AiView {Table,Text,Issues};
+    enum AiFocus {AI_NONE,AI_SEARCH,AI_NAME,AI_CELL,AI_TEXT};
+    bool aiOpen=false,aiStartOpen=false,aiSetOnly=false,aiShowUnbuildable=false,aiTextFollow=true;
+    std::string aiPendingName;                   // own profile chosen, waiting for Start from (one undo step with its file)
+    std::map<std::string,std::pair<std::string,bool>> aiWrittenCache;   // key -> (bytes, opens as written)
+    int aiTab=0;                                 // 0 = DEFAULT AI, 1..6 = Defensive .. Absurdly Defensive
+    AiView aiView=AiView::Table;
+    AiFocus aiFocus=AI_NONE;
+    int aiSide=0,aiGroup=0,aiScroll=0,aiTextScroll=0,aiIssueScroll=0,aiPack=0;
+    std::string aiSearch,aiName,aiCellText,aiText,aiTextKey,aiSelected,aiCellKey,aiNote,aiHint;
+    int aiCellColumn=-1;                         // 0 = chance/weight, 1 = limit
+    TextEdit aiSearchEdit,aiNameEdit,aiCellEdit,aiTextEdit;
+    std::optional<tak::ai::ClassicCatalogue> aiCatalogue;
+    std::vector<AiRosterRow> aiDefaultRoster,aiLevelRoster;
+    std::vector<std::string> aiPacks;
+    std::optional<tak::hpi::Vfs::Files> aiPackFiles;
+    AiFiles aiOpened;                            // the files as the window opened ('*' = edited since)
+    AiTabView aiViewCache;
+    std::vector<AiIssue> aiIssues;
+    std::vector<std::pair<SDL_Rect,size_t>> aiIssueRows;
+    struct AiCell {SDL_Rect rect;std::string key;int column;};   // column 0/1 = value/limit, 2 = BUILD
+    std::vector<AiCell> aiCells;
+    std::vector<std::pair<SDL_Rect,std::string>> aiRows;
+    SDL_Rect aiTabRects[7]{},aiPresetRects[3]{},aiSearchBox{},aiSideBox{},aiGroupBox{},aiSetOnlyBox{},aiUnbuildableBox{},
+             aiList{},aiStandardRadio{},aiOwnRadio{},aiNameBox{},aiStartButton{},aiViewButton{},aiCheckButton{},
+             aiEditableButton{},aiInsertButton{},aiPackButton{},aiDoneButton{},aiTextBox{},aiStartStandard{},aiStartEmpty{},aiStartCancel{};
+    std::optional<tak::ai::Difficulty> aiTabLevel() const;
+    std::string aiKeyFor(int tab) const;
+    std::string aiTabKey() const {return aiKeyFor(aiTab);}   // the file this tab edits ("" = DEFAULT on the standard profile, no map file)
+    const AiTabView& aiTabView();
+    const std::vector<AiRosterRow>& aiRoster() const {return aiTab?aiLevelRoster:aiDefaultRoster;}
+    std::vector<const AiRosterRow*> aiVisibleRows();
+    bool aiEdit(const std::function<bool(AiDraft&)>& change,const std::string& header={});
+    void aiSetFile(const std::string& key,std::string_view bytes);
+    void openAiProfiles();
+    void closeAiProfiles();
+    void aiCommitText();
+    void aiCommitCell();
+    void aiCommitName();
+    void aiClearCell(const std::string& key,int column);
+    void aiToggleBuild(const std::string& key);
+    void aiPreset(int which);
+    void aiStartFrom(bool standard);
+    void aiChooseStandard();
+    void aiChooseOwn();
+    void aiMakeEditable();
+    void aiCheck();
+    void aiSelectTab(int tab);
+    std::string aiRowExplanation(const AiRosterRow&);
+    void handleAiProfiles(SDL_Event& e);
+    void drawAiProfiles();
+
     // --- Document commands (session.cpp) --------------------------------------
     bool openDocument(const std::string& request);
     Playtest playtest;
@@ -498,7 +579,7 @@ struct Editor : Session {
         {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)","Terrain brush: protect objects","Copy terrain selection (Ctrl+C)","Paste terrain clipboard (Ctrl+V)"},
         {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selection","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay","Smaller UI","Larger UI","Show features","Show units","Show starts","Unit model preview (F6)","Preferences (F11 fullscreen)",
          "Show blocked cells (B)"},
-        {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions","Validation results","Regenerate from recipe","Log Test Map triggers","Placed units"},
+        {"Properties (P)","Resize (R)","Use Only units (U)","Check map (C)","Scripting (T)","Next issue","Regions","Validation results","Regenerate from recipe","Log Test Map triggers","Placed units","AI Profiles... (A)"},
         {"Live symmetry (M)","Symmetrize map (Shift+M)","Axis: vertical (left | right)","Axis: horizontal (top / bottom)","Axis: diagonal \\ (square maps)",
          "Axis: diagonal / (square maps)","Rotate 2-way (180)","Rotate 4-way (90, square maps)","Mirror 4-way (both axes)","Locate unmirrored terrain"},
         {"Editor controls","About"}};

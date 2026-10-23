@@ -524,6 +524,14 @@ std::string unitLabel(const tak::sim::UnitType& t) { return t.name.empty() ? t.i
 
 } // namespace
 
+std::set<std::string> aiReachableUnits(const tak::sim::TypeRegistry& registry) {
+    std::set<std::string> out;
+    for (const auto& side : sideRosters(registry))
+        for (const auto* t : side.units)
+            if (!t->commander) out.insert(t->id);
+    return out;
+}
+
 std::vector<AiIssue> checkAiFile(const std::string& key, std::string_view bytes, const AiRoster& roster) {
     using S = AiIssue::Severity;
     std::vector<AiIssue> out;
