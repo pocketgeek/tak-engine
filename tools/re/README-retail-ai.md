@@ -28,6 +28,8 @@ directory (default `~/tak-tmp/retail-ai`). They are never committed.
 | `check_ai_printweights.py` | Checks the CLASSIC brain's pref, limit and priority tables against captured PrintWeights dumps and the polls around them, and emulates retail's 0x410810 on the same tables (no retail run) |
 | `check_ai_squad_ctor.py` | Emulates retail's AI manager constructor 0x40fed0 (squads, base quotas, the three wave-size rolls) on random seeds and player tables against the CLASSIC brain's `classicConstructSquads` |
 | `check_ai_assignment.py` | Emulates retail's dying-unit cleanup 0x40fe80 and assignment pass 0x40eeb0, with retail's own set-squad, nearest-base, centre and radius code under them, on random players against the CLASSIC brain's `classicDropDying` / `classicAssign` |
+| `check_ai_placement.py` | Emulates retail's block-grid draw 0x4110f0 and site search 0x412f80 (nearest free deposit 0x411510, block-grid scatter 0x411200 with its own trig and cell lookup) on random seeds, feature planes and sacred-site tables against the CLASSIC brain's placers (`classicDrawBlockGrids`, `classicPlaceSite`) |
+| `check_ai_constructor.py` | Emulates retail's constructor planner 0x40c890, with its centre, radius, counts, firepower, shot cost, menu draw, busy-deposit test and placers running, on random bases, builders and Monarchs against the CLASSIC brain's `classicPlanConstructor` |
 
 ## What it needs
 

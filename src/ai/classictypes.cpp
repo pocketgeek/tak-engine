@@ -45,6 +45,7 @@ ClassicTypeInfo ClassicTypeInfo::from(const tak::sim::UnitType& t, const tak::si
     info.buildDistance = t.buildDist;
     info.maxDamage = t.maxHp;
     info.sight = t.sight;
+    info.firstWeaponRange = t.weapons.empty() ? 0 : t.weapons.front().range;
     // Menus are canbuild/<unitname>/ (a variant such as tarnecr2 has none of its own).
     info.menu = registry &&
                 !registry->buildable(t.classicFbi.unitName.empty() ? t.id : t.classicFbi.unitName).empty();

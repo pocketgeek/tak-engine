@@ -34,6 +34,7 @@ struct ClassicTypeInfo {
     int footX = 1, footZ = 1;
     int32_t buildDistance = 0, maxDamage = 0, sight = 0;
     bool menu = false;        // has a canbuild menu (type+0x132)
+    int32_t firstWeaponRange = 0;   // the first weapon's range (type+0x1aa -> +0x90), 0 without one
 
     static ClassicTypeInfo from(const tak::sim::UnitType& type, const tak::sim::TypeRegistry* registry);
 

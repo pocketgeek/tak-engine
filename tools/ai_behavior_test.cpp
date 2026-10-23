@@ -848,10 +848,12 @@ static void classicLevel() {
           "a replay header keeps level 6");
     check(net::kNetVersion>=290 && !net::supportedReplayProtocol(fmt,289),"a protocol 289 replay, which had no level 6, is refused");
     {
-        // The brain's constructor already draws (the AI manager's squad rolls).
+        // The brain's constructor already draws (the AI manager's squad rolls,
+        // then the build manager's block grids).
         uint32_t mirror=ai::ClassicBrain::seedFor(1,7);
         ai::ClassicSquads squads;
         ai::classicConstructSquads(squads,0,[&](int n){return sim::retailRandom(mirror,n);});
+        ai::classicDrawBlockGrids([&](int n){return sim::retailRandom(mirror,n);});
         check(ai::ClassicBrain::seedFor(1,7)!=ai::ClassicBrain::seedFor(2,7) &&
               mirror==ai::ClassicBrain(1,7).seed() && (ai::ClassicBrain::seedFor(1,7)&1),
               "each Classic seat of a game gets its own Park-Miller stream");

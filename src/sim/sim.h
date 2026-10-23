@@ -1898,6 +1898,9 @@ public:
     bool hasManaSpots() const { return !manaSpots_.empty(); }
     const std::vector<std::pair<float, float>>& manaSpots() const { return manaSpots_; }
     void setSacredSites(std::vector<SacredSite> sites) { sacredSites_=std::move(sites); }
+    // The map's sacred-site features (each anchor, in map scan order); read-only,
+    // for the server-side Classic AI's deposit search.
+    const std::vector<SacredSite>& sacredSites() const { return sacredSites_; }
     float sacredIncomeMultiplier(int x,int z,int fx,int fz) const;
     // Reclaimable features (trees/rocks/houses). Populated only by setupMatch (the
     // one deterministic per-peer walk); never from the viewer. See struct Feature.

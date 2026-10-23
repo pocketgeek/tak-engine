@@ -1,9 +1,12 @@
 #include "ai/classicbrain.h"
 
 #include "ai/classicproduction.h"
+#include "sim/footprint.h"
 #include "sim/retailai.h"
+#include "sim/retailreach.h"
 #include "sim/sim.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -17,11 +20,63 @@
 
 namespace tak::ai {
 
+namespace {
+// A unit's first mission (retail unit +0x60) as the AI reads it, from its orders
+// (docs/classic-ai-plan.md U1): the class byte of the mission's descriptor
+// (descriptor +0x10: 1 the attack kinds, 2 AirStrike, 0 MobileBuild, 6 HelpBuild
+// and RepairUnit, 19 BuildingBuild ...) and the low byte of the flags it copies
+// from the descriptor's +0x11 (8 on MobileBuild, HelpBuild and BuildingBuild).
+struct FirstMission {
+    bool any = false;
+    uint8_t cls = 0, flags = 0;
+    bool buildingBuild = false;
+    const tak::sim::UnitType* builds = nullptr;   // what its build mission makes
+};
+FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u) {
+    FirstMission m;
+    if (u.type->isStructure()) {
+        // A factory at work has a BuildingBuild mission per queued unit.
+        if (!u.buildQueue.empty()) { m.any = true; m.cls = 19; m.flags = 0x0c; m.buildingBuild = true; m.builds = u.buildQueue.front(); }
+        return m;
+    }
+    if (u.buildSiteId) {
+        const auto* site = world.unit(u.buildSiteId);
+        m.any = true; m.cls = 0; m.flags = 8; m.builds = site ? site->type : nullptr;
+        return m;
+    }
+    if (u.orders.empty()) return m;
+    // The current order is the first issued goal: path waypoints the sim splices
+    // in ahead of it belong to it (retail's mission navigates on its own).
+    size_t leg = u.orders.size() - 1;
+    for (size_t k = 0; k < u.orders.size(); ++k)
+        if (u.orders[k].goal) { leg = k; break; }
+    const auto& o = u.orders[leg];
+    m.any = true;
+    if (o.buildType) { m.cls = 0; m.flags = 8; m.builds = o.buildType; }
+    else if (o.repairTarget) m.cls = 6;
+    else if (o.reclaimFeat || o.reclaimArea) m.cls = 11;
+    else if (o.load) m.cls = 12;
+    else if (o.unload) m.cls = 13;
+    else if (o.guard) m.cls = 5;
+    else if (o.targetId) { m.cls = 1; m.flags = 0x80; }
+    else if (o.patrol) { m.cls = 7; m.flags = 0x10; }
+    else m.cls = 14;   // a move
+    return m;
+}
+const tak::sim::Weapon* currentWeapon(const tak::sim::Unit& u) {
+    const auto& w = u.type->weapons;
+    if (w.empty()) return nullptr;
+    const int slot = u.type->weaponSwitching ? std::clamp(u.weaponSlot, 0, int(std::min<size_t>(3, w.size())) - 1) : 0;
+    return &w[size_t(slot)];
+}
+}  // namespace
+
 ClassicBrain::ClassicBrain(int player, uint32_t roomSeed)
     : player_(player), seed_(seedFor(player, roomSeed)), profile_(catalogue_.size()),
       info_(catalogue_.size()), menu_(catalogue_.size()), count_(catalogue_.size()),
       completed_(catalogue_.size()), priority_(catalogue_.size()) {
     classicConstructSquads(squads_, 0, [&](int n) { return rand(n); });
+    grids_ = classicDrawBlockGrids([&](int n) { return rand(n); });
 }
 
 ClassicBrain::ClassicBrain(int player, uint32_t roomSeed, const tak::sim::TypeRegistry& registry,
@@ -30,8 +85,10 @@ ClassicBrain::ClassicBrain(int player, uint32_t roomSeed, const tak::sim::TypeRe
       catalogue_(ClassicCatalogue::from(registry)), profile_(catalogue_.size()),
       info_(catalogue_.size()), menu_(catalogue_.size()), count_(catalogue_.size()),
       completed_(catalogue_.size()), priority_(catalogue_.size()) {
-    // 0x4f6660: the AI manager (0x40fed0) before the build manager (0x4121e0).
+    // 0x4f6660: the AI manager (0x40fed0) before the build manager (0x4121e0),
+    // whose constructor draws the block grids (0x4110f0) before its creation pass.
     classicConstructSquads(squads_, largestEnemyPopulation, [&](int n) { return rand(n); });
+    grids_ = classicDrawBlockGrids([&](int n) { return rand(n); });
     for (size_t t = 1; t < catalogue_.size(); ++t) {
         info_[t] = ClassicTypeInfo::from(*catalogue_.types[t], &registry);
         index_.emplace(catalogue_.types[t], uint16_t(t));
@@ -160,6 +217,19 @@ std::vector<ClassicSquadUnit> ClassicBrain::squadUnits(const tak::sim::World& wo
         s.x = u.x.v; s.z = u.z.v;
         s.footX = int16_t(t->footX); s.footZ = int16_t(t->footZ);
         s.squad = squadOf(u.id);
+        s.typeFlags = (info && info->builder ? 0x100u : 0u) | (t->canFly ? 0x800u : 0u) |
+                      (armed ? 0x10000u : 0u) | (t->floater ? 0x80000u : 0u);
+        s.secondaryFlags = (s.commander ? 0x40000u : 0u) | (s.sacredSite ? 0x80000000u : 0u);
+        s.minWaterDepth = info ? info->minWaterDepth : int16_t(-10000);
+        const FirstMission m = firstMission(world, u);
+        s.mission = m.any; s.missionClass = m.cls; s.missionFlags = m.flags; s.buildingBuild = m.buildingBuild;
+        if (m.builds && (m.flags & 8))
+            if (const auto bt = index_.find(m.builds); bt != index_.end()) s.buildsManaSite = info_[bt->second].manaSite;
+        if (const auto* w = currentWeapon(u)) {
+            // 5307e9 stores the reload as a 16-bit tick count.
+            s.weaponDamage = uint16_t(w->damage);
+            s.weaponReload = uint16_t(int32_t(double(w->reload) * 30.0));
+        }
         units.push_back(s);
     }
     // A member that is no longer the player's unit (removed from the World, or
@@ -219,11 +289,11 @@ uint16_t ClassicBrain::population(const tak::sim::World& world) const {
 void ClassicBrain::baseThink(const tak::sim::World& world, int slot, const std::vector<ClassicSquadUnit>& units,
                              const std::function<void(const tak::net::Command&)>& sink) {
     classicBaseMembers(squads_, units, slot,
-        // 0x412000 (the threat test) feeds only the constructor and combat
-        // planners, which come with P4b and P5.
+        // 0x412000 (the threat test, P5) answers no threat until then; it feeds
+        // only the constructor and combat planners.
         [](const std::pair<int32_t, int32_t>&, int32_t) { return false; },
         [&](size_t i) { planFactory(world, units[i], sink); },
-        [](size_t, bool) {},    // 0x40c890: P4b
+        [&](size_t i, bool danger) { planConstructor(world, slot, units, i, danger, sink); },
         [](size_t, bool) {});   // 0x40d370: P5
 }
 
@@ -248,6 +318,166 @@ void ClassicBrain::planFactory(const tak::sim::World& world, const ClassicSquadU
             sink(c);
             ++queues_;
         });
+}
+
+void ClassicBrain::readSites(const tak::sim::World& world) {
+    sitesRead_ = true;
+    // 0x4e0810's sacred-site table: one record per sacred feature, its anchor
+    // cell, in the map's scan order (the World's list is built the same way).
+    const auto& cells = world.mapPlacementCells();
+    const bool plane = !cells.empty() && cells.size() == size_t(world.mapW()) * size_t(world.mapH());
+    sacredTypes_.assign(plane ? world.mapPlacementTypes().size() : 0, false);
+    for (const auto& site : world.sacredSites()) {
+        sites_.push_back(ClassicCell{int16_t(site.x), int16_t(site.z)});
+        sacredRects_.push_back({ClassicCell{int16_t(site.x), int16_t(site.z)}, ClassicCell{int16_t(site.fx), int16_t(site.fz)}});
+        // The feature type at the anchor is a sacred one (sacredsite != 0).
+        if (plane && site.x >= 0 && site.z >= 0 && site.x < world.mapW() && site.z < world.mapH()) {
+            const uint16_t f = cells[size_t(site.z) * size_t(world.mapW()) + size_t(site.x)].feature;
+            if (f < sacredTypes_.size()) sacredTypes_[f] = true;
+        }
+    }
+}
+
+bool ClassicBrain::sacredCell(const tak::sim::World& world, int x, int z) const {
+    const auto& cells = world.mapPlacementCells();
+    const int w = world.mapW(), h = world.mapH();
+    if (cells.empty() || cells.size() != size_t(w) * size_t(h)) {
+        // A World without a feature plane (synthetic tests): the sites' footprints.
+        for (const auto& [at, foot] : sacredRects_)
+            if (x >= at.first && z >= at.second && x < at.first + foot.first && z < at.second + foot.second) return true;
+        return false;
+    }
+    return classicSacredCell(x, z, uint32_t(world.mapPlacementTypes().size()),
+        [&](int cx, int cz) {
+            if (cx < 0 || cz < 0 || cx >= w || cz >= h) return ClassicFeatureCell{};
+            const auto& c = cells[size_t(cz) * size_t(w) + size_t(cx)];
+            return ClassicFeatureCell{c.feature, c.backX, c.backZ};
+        },
+        [&](uint16_t f) { return f < sacredTypes_.size() && sacredTypes_[f]; });
+}
+
+void ClassicBrain::planConstructor(const tak::sim::World& world, int slot, const std::vector<ClassicSquadUnit>& units,
+                                   size_t i, bool threat, const std::function<void(const tak::net::Command&)>& sink) {
+    const ClassicSquadUnit& member = units[i];
+    const auto* unit = world.unit(member.id);
+    const auto* builder = member.type ? catalogue_.types[member.type] : nullptr;
+    if (!unit || !unit->type || !builder) return;
+    if (!sitesRead_) readSites(world);
+    const detail::ClassicUnitIndex index(units);
+    auto random = [&](int n) { return rand(n); };
+    const auto centre = classicBaseCentre(squads_, units, index, slot);
+    if (!centre) return;   // the base think stops before its members without one
+
+    ClassicConstructorUnit u;
+    u.commander = member.commander;
+    u.hp = int16_t(unit->hp.floorInt());
+    u.maxDamage = int32_t(unit->type->maxHp);
+    u.mana = float(unit->mana);
+    u.maxMana = unit->type->maxMana;
+    if (const auto* w = currentWeapon(*unit)) {
+        // 0x531ea0: mana per shot over the unit's cost multiplier (0x5193c0).
+        u.weapon = true;
+        u.shotCost = classicShotCost(w->manaCost, unit->type->noVeteran ? 1.0f : unit->vetMul());
+    }
+    u.mission = member.mission;
+    u.missionClass = member.missionClass;
+    u.building = member.mission && (member.missionFlags & 8);
+    u.navigator = !unit->type->canFly;
+
+    auto siteType = [&](uint16_t t) {
+        const ClassicTypeInfo& f = info_[t];
+        ClassicSiteType s;
+        s.footX = int16_t(f.footX); s.footZ = int16_t(f.footZ); s.minWaterDepth = f.minWaterDepth;
+        s.tower = classicSiteTower(uint8_t(f.bmcode), f.armed, f.firstWeaponRange, int32_t(menu(t).size()));
+        s.lodestone = f.lodestoneClass;
+        return s;
+    };
+    struct Host {
+        ClassicBrain& b;
+        const tak::sim::World& world;
+        const std::vector<ClassicSquadUnit>& units;
+        const detail::ClassicUnitIndex& index;
+        int slot;
+        const ClassicSquadUnit& member;
+        const tak::sim::Unit& unit;
+        const tak::sim::UnitType& builder;
+        std::pair<int32_t, int32_t> centre;
+        decltype(random)& rnd;
+        decltype(siteType)& placeType;
+        const std::function<void(const tak::net::Command&)>& sink;
+
+        float allocation() const { return float(world.player(b.player_).constructionAllocation); }
+        int32_t firepower() const { return classicBaseFirepower(b.squads_, units, index, slot, 4); }
+        int32_t builders() const { return classicBaseCount(b.squads_, units, index, slot, 2); }
+        int32_t desiredBuilders() const { return b.squads_.squads[size_t(slot)].parameters[1]; }
+        uint32_t tick() const { return world.tickCount(); }
+        uint32_t alarm() const { return world.player(b.player_).aiThreatUntil; }
+        uint16_t draw(bool special) {
+            return classicMenuDraw(b.menu(member.type), special,
+                [&](uint16_t t) { return b.buildWeight(t); },
+                [&](uint16_t t) { return b.info_[t].lodestoneClass; },
+                [&](uint16_t t) { return b.catalogue_.types[t] && b.catalogue_.types[t]->side == builder.side; },
+                rnd);
+        }
+        ClassicConstructorType type(uint16_t t) const {
+            const ClassicTypeInfo& f = b.info_[t];
+            return {uint8_t(f.bmcode), int32_t(b.menu(t).size()), f.armed};
+        }
+        bool idleFactory(uint16_t t) const { return classicIdleFactory(b.squads_, units, index, slot, t); }
+        int32_t typeCount(uint16_t t) const { return t >= 1 && t < b.count_.size() ? b.count_[t] : 0; }
+        std::optional<int32_t> radius(unsigned ring) const {
+            return classicBaseRadius(b.squads_, units, index, slot, ring);
+        }
+        std::optional<std::pair<int32_t, int32_t>> site(uint16_t t, int32_t r) {
+            const ClassicSiteType s = placeType(t);
+            const auto* type = b.catalogue_.types[t];
+            auto valid = [&](int16_t x, int16_t z) {
+                // 0x507d10(type, 0, cell, 1, 0): the World's placement test at the
+                // footprint's centre.
+                const auto c = classicSiteCentre({x, z}, s.footX, s.footZ);
+                return type && world.canPlace(type, float(c.first) / 65536.0f, float(c.second) / 65536.0f, b.player_);
+            };
+            return classicPlaceSite(s,
+                [&] {
+                    return classicDepositSite(b.sites_, centre, r, s.footX, s.footZ,
+                        [&](int16_t x, int16_t z) { return b.sacredCell(world, x, z); }, valid);
+                },
+                [&] {
+                    return classicScatterSite(b.grids_, centre, r, s, rnd, valid,
+                        [&](int x, int z) { return b.sacredCell(world, x, z); });
+                });
+        }
+        bool reachable(uint16_t t, std::pair<int32_t, int32_t> at) const {
+            // 0x4e1570 from the builder's cell (1 x 1) to the site's footprint grown
+            // by its builddistance, over the static grade (a cell the World's nav
+            // grid for the builder blocks counts as statically blocked).
+            const ClassicTypeInfo& f = b.info_[t];
+            const ClassicReachRect r = classicReachRect(at, int16_t(f.footX), int16_t(f.footZ),
+                                                        uint16_t(b.info_[member.type].buildDistance));
+            const auto& nav = world.navFor(unit.type);
+            return tak::sim::retailRectangleReachable(nav.width(), nav.height(),
+                tak::sim::footprintOrigin(unit.x, unit.type->footX), tak::sim::footprintOrigin(unit.z, unit.type->footZ),
+                1, 1, r.x, r.z, r.w, r.h, true, false, [&](int x, int z) { return nav.walkable(x, z) ? 0 : 8; });
+        }
+        bool lodestoneBusy() const { return classicLodestoneBusy(b.squads_, units, index, slot); }
+        void build(uint16_t t, std::pair<int32_t, int32_t> at) {
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Build; c.player = uint8_t(b.player_); c.unitId = member.id;
+            c.x = float(at.first) / 65536.0f; c.z = float(at.second) / 65536.0f;
+            std::strncpy(c.type, b.catalogue_.types[t]->id.c_str(), sizeof c.type - 1);
+            sink(c);
+            ++b.builds_;
+            if (b.info_[t].lodestoneClass) ++b.lodestoneBuilds_;
+        }
+        void cancel() {
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Stop; c.player = uint8_t(b.player_); c.unitId = member.id;
+            sink(c);
+        }
+        void retreat() {}   // 0x40d010: P5
+        void combat() {}    // 0x40d370: P5
+    } host{*this, world, units, index, slot, member, *unit, *builder, *centre, random, siteType, sink};
+    classicPlanConstructor(host, u, threat);
 }
 
 void ClassicBrain::tick(const tak::sim::World& world, uint32_t simTick,

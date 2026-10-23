@@ -75,8 +75,23 @@ struct ClassicSquadUnit {
     uint16_t type = 0;          // the unit's catalogue type (unit +0xb4)
     bool producing = false;     // a BuildingBuild mission is in its list (the factory planner's "busy")
     uint8_t missionClass = 0;   // its first mission's class byte (descriptor +0x10); 0 = no mission
+    // Read by the categories (0x40a5f0) and the constructor planner (0x40c890):
+    uint32_t typeFlags = 0;     // type +0x260 (0x100 builder, 0x800 canfly, 0x10000 armed, 0x80000 floater)
+    uint32_t secondaryFlags = 0;   // type +0x264 (0x40000 commander, bit 31 mana site)
+    int16_t minWaterDepth = -10000;   // type +0x194
+    bool mission = false;       // +0x60: it has a first mission ...
+    uint8_t missionFlags = 0;   // ... whose flags byte (+0x5a) is this (8 = a build)
+    bool buildingBuild = false; // ... which is BuildingBuild (a factory at work)
+    bool buildsManaSite = false;   // ... which builds a mana-site type (0x40c830)
+    uint16_t weaponDamage = 0, weaponReload = 0;   // its current weapon (+0xc): +0x88, +0x9c ticks
     bool live() const { return (flags & kLive) && !(flags & kDying); }
-    sim::RetailAiUnitClass unitClass() const { sim::RetailAiUnitClass c; c.flags = flags; return c; }
+    sim::RetailAiUnitClass unitClass() const {
+        sim::RetailAiUnitClass c;
+        c.flags = flags; c.typeFlags = typeFlags; c.secondaryFlags = secondaryFlags;
+        c.constructor = menu != 0; c.mover = mover; c.mission = mission; c.missionFlags = missionFlags;
+        c.capacity = minWaterDepth;
+        return c;
+    }
 };
 
 using ClassicCell = std::pair<int16_t, int16_t>;
@@ -261,6 +276,51 @@ inline std::optional<int32_t> classicBaseRadius(const ClassicSquads& s, const st
         if (const auto* u = index.find(units, id); u && sim::retailAiCategory(u->unitClass(), 1))
             footprint = int32_t(uint32_t(footprint) + uint32_t(int32_t(u->footX)) + uint32_t(int32_t(u->footZ)));
     return sim::retailAiBaseRadius(footprint, ring);
+}
+
+// 0x40a880: how many of a base's members are in category `category` (0x40a5f0).
+inline int32_t classicBaseCount(const ClassicSquads& s, const std::vector<ClassicSquadUnit>& units,
+                                const detail::ClassicUnitIndex& index, int slot, unsigned category) {
+    int32_t n = 0;
+    for (int id : s.squads[size_t(slot)].members)
+        if (const auto* u = index.find(units, id); u && sim::retailAiCategory(u->unitClass(), category)) ++n;
+    return n;
+}
+
+// 0x40a9b0: a base's firepower in category `category`: over its armed members
+// there (+0x130 0x8000000), the sum of their current weapon's damage per reload
+// tick (integer division; the damage itself at a reload of 0).
+inline int32_t classicBaseFirepower(const ClassicSquads& s, const std::vector<ClassicSquadUnit>& units,
+                                    const detail::ClassicUnitIndex& index, int slot, unsigned category) {
+    int32_t sum = 0;
+    for (int id : s.squads[size_t(slot)].members) {
+        const auto* u = index.find(units, id);
+        if (!u || !sim::retailAiCategory(u->unitClass(), category) || !(u->flags & ClassicSquadUnit::kArmed)) continue;
+        sum = int32_t(uint32_t(sum) + uint32_t(u->weaponReload ? int32_t(u->weaponDamage) / int32_t(u->weaponReload)
+                                                                : int32_t(u->weaponDamage)));
+    }
+    return sum;
+}
+
+// 0x40c890's duplicate-factory test: a member of the base of catalogue type
+// `type` (unit +0) that has no first mission, or whose first mission is not
+// BuildingBuild -- an idle factory of that type.
+inline bool classicIdleFactory(const ClassicSquads& s, const std::vector<ClassicSquadUnit>& units,
+                               const detail::ClassicUnitIndex& index, int slot, uint16_t type) {
+    for (int id : s.squads[size_t(slot)].members)
+        if (const auto* u = index.find(units, id); u && u->type == type && (!u->mission || !u->buildingBuild))
+            return true;
+    return false;
+}
+
+// 0x40c830: a member of the base whose first mission is a build (flag 8) of a
+// mana-site type (type +0x264 bit 31) -- a builder already on a deposit.
+inline bool classicLodestoneBusy(const ClassicSquads& s, const std::vector<ClassicSquadUnit>& units,
+                                 const detail::ClassicUnitIndex& index, int slot) {
+    for (int id : s.squads[size_t(slot)].members)
+        if (const auto* u = index.find(units, id); u && u->mission && (u->missionFlags & 8) && u->buildsManaSite)
+            return true;
+    return false;
 }
 
 // 0x40af70 with no minimum: the occupied base 1..20 whose centre is nearest.

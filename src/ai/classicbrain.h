@@ -22,14 +22,21 @@
 // campaign mass attack. P4a: the base think's member loop (ai/classicsquads.h)
 // with retail's factory planner behind it (ai/classicproduction.h): a ready
 // factory in a base draws from its menu with the brain's weights and queues one
-// unit at a time with a Train command. Mobile builders and combat members (P4b,
-// P5) are not planned yet, and nothing after the member loop runs yet.
+// unit at a time with a Train command. P4b: a ready mobile builder of a base
+// (the Monarch, its builders, Zhon's and Creon's conjurers) goes to retail's
+// constructor planner (ai/classicproduction.h) with the Monarch's gates, and
+// what it picks is placed by retail's placers (ai/classicplacement.h) on the
+// block grids the build manager draws as it is built, and ordered with a Build
+// command. Combat members and the defence planner (P5) are not planned yet, and
+// nothing after the member loop runs yet.
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
+#include "ai/classicplacement.h"
 #include "ai/classicprofile.h"
 #include "ai/classicsquads.h"
 #include "ai/classictypes.h"
@@ -85,6 +92,12 @@ public:
     }
     // Train commands the factory planner has issued (tests and the debug dump).
     uint32_t factoryQueues() const { return queues_; }
+    // Build commands the constructor planner has issued, and how many of them
+    // were lodestones (tests).
+    uint32_t builds() const { return builds_; }
+    uint32_t lodestoneBuilds() const { return lodestoneBuilds_; }
+    // The block grids the build manager drew as it was built (0x4110f0).
+    const ClassicBlockGrids& blockGrids() const { return grids_; }
     // Retail's per-type cache (mgr+0x85 / +0x95, recounted every tick by 0x4119d0):
     // the player's live units of each type, and how many of those are finished.
     const std::vector<int16_t>& counts() const { return count_; }
@@ -140,6 +153,13 @@ private:
                    const std::function<void(const tak::net::Command&)>& sink);
     void planFactory(const tak::sim::World& world, const ClassicSquadUnit& unit,
                      const std::function<void(const tak::net::Command&)>& sink);
+    // 0x40c890 for units[i], a ready mobile builder of base `slot`.
+    void planConstructor(const tak::sim::World& world, int slot, const std::vector<ClassicSquadUnit>& units,
+                         size_t i, bool threat, const std::function<void(const tak::net::Command&)>& sink);
+    // The map's sacred-site records (0x62dbcc) and which feature-plane types are
+    // sacred, read from the World once.
+    void readSites(const tak::sim::World& world);
+    bool sacredCell(const tak::sim::World& world, int x, int z) const;
     // The owner's unit count as retail keeps it (player +0xe8): its live units.
     uint16_t population(const tak::sim::World& world) const;
     void recount(const tak::sim::World& world);
@@ -157,7 +177,12 @@ private:
     ClassicProfile profile_;
     std::vector<ClassicTypeInfo> info_;
     std::vector<std::vector<uint16_t>> menu_;
-    uint32_t queues_ = 0;
+    uint32_t queues_ = 0, builds_ = 0, lodestoneBuilds_ = 0;
+    ClassicBlockGrids grids_;
+    bool sitesRead_ = false;
+    std::vector<std::optional<ClassicCell>> sites_;
+    std::vector<bool> sacredTypes_;
+    std::vector<std::pair<ClassicCell, ClassicCell>> sacredRects_;   // without a feature plane
     std::unordered_map<const tak::sim::UnitType*, uint16_t> index_;
     std::vector<int16_t> count_, completed_;
     std::vector<uint8_t> priority_;

@@ -6,6 +6,8 @@
 //
 //   classic_ai_test                 unit tests
 //   classic_ai_test <retail-root>   + the shipped data checks
+//   classic_ai_test --bases <retail-root>   the P4b games: a Classic seat of each
+//       faction builds its base on Abnar's Terrace for 10 game-minutes
 //   classic_ai_test --profile       oracle mode for tools/re/check_ai_profile.py:
 //       stdin  "types <n>" then n lines "<name> <category words...>", then any
 //              number of "case <hex script>" lines
@@ -23,10 +25,13 @@
 //   classic_ai_test --squad-ctor    oracle mode for tools/re/check_ai_squad_ctor.py
 //   classic_ai_test --assignment    oracle mode for tools/re/check_ai_assignment.py
 //   classic_ai_test --factory-think oracle mode for tools/re/check_ai_factory_think.py
+//   classic_ai_test --placement     oracle mode for tools/re/check_ai_placement.py
+//   classic_ai_test --constructor   oracle mode for tools/re/check_ai_constructor.py
 //       (line layouts in those scripts and in the oracle functions below)
 #include "ai/ai.h"
 #include "ai/classicbrain.h"
 #include "ai/classicprofile.h"
+#include "ai/classicplacement.h"
 #include "ai/classicproduction.h"
 #include "ai/classictypes.h"
 #include "hpi/hpi.h"
@@ -36,9 +41,11 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <set>
@@ -247,14 +254,16 @@ static void typeInfoAndPriorities() {
     {
         ai::ClassicSquads squads;
         ai::classicConstructSquads(squads,0,[&](int n){return sim::retailRandom(mirror,n);});
+        ai::classicDrawBlockGrids([&](int n){return sim::retailRandom(mirror,n);});
     }
     for (size_t t=1;t<c.size();++t)
         if (info[t].cost>500.0f) { // the creation pass's draws (only the castle costs > 500)
             sim::RetailBuildPriority in=info[t].priorityInputs(0,0,-1);
             sim::retailBuildPriority(in,uint16_t(0),0.0f,true,[&](int n){return sim::retailRandom(mirror,n);});
         }
-    check(mirror==built,"the brain is built in retail's order: the manager's squad rolls, then the creation "
-          "pass, which draws only for types costing over 500, at population 0");
+    check(mirror==built,"the brain is built in retail's order: the manager's squad rolls, then the build "
+          "manager's block grids (eight draws), then the creation pass, which draws only for types costing over "
+          "500, at population 0");
     // The scheduler's draws now share the stream, so watch for the refresh.
     uint32_t refreshAt=1;
     while (refreshAt<10000) { think(refreshAt);if (brain.priorityRefreshes()>1) break;++refreshAt; }
@@ -468,15 +477,16 @@ static void abnarSquads(const char* root) {
     std::map<int,uint32_t> finishedAt;   // unit -> tick it was first seen finished
     std::map<int,uint32_t> joinedAt;     // unit -> tick it was first seen in a base squad
     std::map<int,int> stances;
+    std::set<int> spawned;   // the test's own units (the Monarch also builds, since P4b)
     int late=0,doomed=0;
     for (uint32_t tick=0;tick<400;++tick) {
         if (tick==40) {
-            w.spawn(soldier,sx+120,sz,0.0f,1);w.spawn(soldier,sx-120,sz+40,0.0f,1);
-            w.spawn(worker,sx,sz+120,0.0f,1);w.spawn(flyer,sx+60,sz-120,0.0f,1);
-            doomed=w.spawn(soldier,sx+200,sz+200,0.0f,1);
+            spawned.insert(w.spawn(soldier,sx+120,sz,0.0f,1));spawned.insert(w.spawn(soldier,sx-120,sz+40,0.0f,1));
+            spawned.insert(w.spawn(worker,sx,sz+120,0.0f,1));spawned.insert(w.spawn(flyer,sx+60,sz-120,0.0f,1));
+            doomed=w.spawn(soldier,sx+200,sz+200,0.0f,1);spawned.insert(doomed);
         }
-        if (tick==55) w.spawn(tower,sx-200,sz-160,0.0f,1);
-        if (tick==60) { late=w.spawn(soldier,sx-60,sz-60,0.0f,1);w.unit(late)->underConstruction=true; }
+        if (tick==55) spawned.insert(w.spawn(tower,sx-200,sz-160,0.0f,1));
+        if (tick==60) { late=w.spawn(soldier,sx-60,sz-60,0.0f,1);w.unit(late)->underConstruction=true;spawned.insert(late); }
         if (tick==131) w.unit(late)->underConstruction=false;
         if (tick==200) {
             net::Command kill;kill.kind=net::Cmd::Destroy;kill.player=1;kill.unitId=doomed;
@@ -488,7 +498,7 @@ static void abnarSquads(const char* root) {
         });
         w.tick(1.f/30.f);
         for (const auto& u:w.units()) {
-            if (u.player!=1 || !u.alive()) continue;
+            if (u.player!=1 || !u.alive() || (u.id!=monarch && !spawned.count(u.id))) continue;
             if (!u.underConstruction) finishedAt.emplace(u.id,tick);
             const int32_t q=brain.squadOf(u.id);
             if (q>=1 && q<=20) joinedAt.emplace(u.id,tick);
@@ -525,15 +535,17 @@ static void abnarSquads(const char* root) {
     for (const auto& q:sq.squads) gone=gone && std::find(q.members.begin(),q.members.end(),doomed)==q.members.end();
     check(gone,"a destroyed unit is in no squad");
     // Member counts per kind (the squads' own thinks are later phases, so every
-    // unit is in a base).
-    int bases=0,strikes=0,other=0;
-    for (int slot=1;slot<=98;++slot) {
-        const size_t n=sq.squads[size_t(slot)].members.size();
-        (slot<=20 ? bases : slot<=80 || slot==97 || slot==98 ? strikes : other)+=int(n);
-    }
-    std::printf("  members: bases %d (base 1: %zu), strikes/backups %d, VTOL/homeless %d\n",bases,
-                sq.squads[1].members.size(),strikes,other);
-    check(bases==int(sq.squads[1].members.size()) && strikes==0 && other==0 && bases==units+1,
+    // unit is in a base), of the test's units and the Monarch.
+    int bases=0,strikes=0,other=0,inBase1=0;
+    for (int slot=1;slot<=98;++slot)
+        for (int id:sq.squads[size_t(slot)].members) {
+            if (id!=monarch && !spawned.count(id)) continue;
+            (slot<=20 ? bases : slot<=80 || slot==97 || slot==98 ? strikes : other)+=1;
+            inBase1+=slot==1;
+        }
+    std::printf("  members: bases %d (base 1: %d), strikes/backups %d, VTOL/homeless %d\n",bases,
+                inBase1,strikes,other);
+    check(bases==inBase1 && strikes==0 && other==0 && bases==units+1,
           "all of them are in base 1, the only occupied base");
 }
 
@@ -578,9 +590,11 @@ static void classicFactories(const char* root) {
         uint32_t firstOut=0,joined=0;
         for (uint32_t tick=0;tick<3600;++tick) {
             controller.tick(w,tick,[&](const net::Command& c) {
-                if (c.kind==net::Cmd::Train) {
+                // Since P4b the Monarch builds too; only the given factory's
+                // production is checked here (classicBases covers the rest).
+                if (c.kind==net::Cmd::Train && c.unitId==factory) {
                     ++trains;
-                    if (c.unitId!=factory || c.targetId!=1) ++wrongUnit;
+                    if (c.targetId!=1) ++wrongUnit;
                     const std::string id=c.type;++byType[id];
                     const auto* t=reg.find(id);
                     const auto it=t ? cat.byName.find(t->classicFbi.unitName.empty() ? t->id : t->classicFbi.unitName)
@@ -620,6 +634,110 @@ static void classicFactories(const char* root) {
         if (seat.script)
             check(byType.size()==1 && byType.count("arasword") && byType["arasword"]==2,
                   (what+"exactly two Swordsmen are trained, nothing else").c_str());
+    }
+}
+
+// The engine game test for P4b: a Classic seat of each of the five factions on
+// Abnar's Terrace from a bare start (its Monarch only), against an idle seat, for
+// 10 game-minutes of the World's own economy. Its Monarch and builders run
+// retail's constructor planner and placers; factories (and Zhon's conjurers) the
+// production planners. Recorded at 3, 6 and 10 minutes: finished lodestones,
+// other structures by type, units produced, and the Build / Train commands. It
+// must not stall: by 10 minutes it has built lodestones and structures and
+// produced units. Every Build site lies inside the base's ring radius plus one
+// grid block, a lodestone goes on a sacred site, and no factory type is ordered
+// while an idle one of that type stands in the base.
+static void classicBases(const char* root) {
+    auto vfs=hpi::mountRetailRoot(root);
+    sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
+    const auto map=hpi::findMap(vfs,"Abnar's Terrace");
+    static const char* const kNames[5]={"Aramon","Taros","Veruna","Zhon","Creon"};
+    std::printf("  P4b games (Abnar's Terrace, Classic seat vs an idle seat):\n");
+    for (int faction=0;faction<5;++faction) {
+        sim::World w;w.setVisPlayer(-1);
+        sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
+        config.slots={{true,0,0,1.0f},{true,faction,1,1.0f,true,false}};
+        const auto starts=sim::setupMatch(w,reg,config);
+        if (starts.size()<2) { check(false,"Abnar's Terrace seats two players");return; }
+        ai::Controller controller(1,reg,ai::Profile{},0xb450u+uint32_t(faction),ai::Difficulty::Classic,{starts[0]});
+        controller.setClassicProfile(ai::classicProfileScript(vfs,ai::classicMapAiProfile(vfs,map)));
+        controller.setClassicStart(1,starts[1].first,starts[1].second);
+        const ai::ClassicBrain& brain=*controller.classicBrain();
+        const float sx=starts[1].first,sz=starts[1].second;
+        int builds=0,trains=0,outside=0,offDeposit=0,duplicate=0,refused=0;
+        int32_t worst=0;
+        struct Snapshot { uint32_t tick;int lodes,structures,units,builds,trains;std::map<std::string,int> byType; };
+        std::vector<Snapshot> snaps;
+        std::set<int> producedIds;
+        static const bool trace=std::getenv("TAK_CLASSIC_TRACE")!=nullptr;   // per-command log
+        for (uint32_t tick=0;tick<18000;++tick) {
+            controller.tick(w,tick,[&](const net::Command& c) {
+                if (c.kind==net::Cmd::Train) ++trains;
+                if (trace && (c.kind==net::Cmd::Build || c.kind==net::Cmd::Train || c.kind==net::Cmd::Stop)) {
+                    const auto* b=w.unit(c.unitId);
+                    std::printf("      t%u %s %s -> %s (%.0f,%.0f) mana %.0f alloc %.2f\n",tick,
+                                c.kind==net::Cmd::Build ? "Build" : c.kind==net::Cmd::Train ? "Train" : "Stop",
+                                b && b->type ? b->type->id.c_str() : "?",c.type,c.x,c.z,w.player(1).mana,
+                                double(w.player(1).constructionAllocation));
+                }
+                if (c.kind==net::Cmd::Build) {
+                    ++builds;
+                    const auto* t=reg.find(c.type);
+                    // The ring radius from the seat's structures (all in base 1).
+                    int32_t foot=0;
+                    for (const auto& u:w.units())
+                        if (u.player==1 && u.alive() && u.type && u.type->isStructure() && !u.underConstruction)
+                            foot+=u.type->footX+u.type->footZ;
+                    const int32_t ring1=sim::retailAiBaseRadius(foot,1);
+                    const float d=std::hypot(c.x-(std::floor(sx/16)*16+8),c.z-(std::floor(sz/16)*16+8));
+                    worst=std::max(worst,int32_t(d));
+                    if (d>float(ring1)+40*16) ++outside;
+                    if (t && t->onMana && w.hasManaSpots() && !w.canPlace(t,c.x,c.z,1)) ++offDeposit;
+                    // The rule reads the base's members (finished units the
+                    // assignment pass has placed in base 1..20).
+                    if (t && t->isStructure() && !reg.buildable(t->id).empty())
+                        for (const auto& u:w.units())
+                            if (u.player==1 && u.alive() && u.type==t && u.buildQueue.empty() &&
+                                brain.squadOf(u.id)>=1 && brain.squadOf(u.id)<=20) ++duplicate;
+                    sim::applyCommand(w,reg,c);
+                    if (const auto* b=w.unit(c.unitId);!b || b->orders.empty() || !b->orders.back().buildType) ++refused;
+                    return;
+                }
+                sim::applyCommand(w,reg,c);
+            });
+            w.tick(1.f/30.f);
+            for (const auto& u:w.units())
+                if (u.player==1 && u.alive() && u.type && !u.type->isStructure() && !u.type->commander && !u.underConstruction)
+                    producedIds.insert(u.id);
+            if (tick+1==5400 || tick+1==10800 || tick+1==18000) {
+                Snapshot snap{tick+1,0,0,int(producedIds.size()),builds,trains,{}};
+                for (const auto& u:w.units()) {
+                    if (u.player!=1 || !u.alive() || !u.type || u.underConstruction) continue;
+                    if (u.type->isStructure()) {
+                        (u.type->onMana ? snap.lodes : snap.structures)++;
+                        ++snap.byType[u.type->id];
+                    } else if (!u.type->commander) ++snap.byType[u.type->id];
+                }
+                snaps.push_back(snap);
+            }
+        }
+        for (const auto& snap:snaps) {
+            std::string mix;
+            for (const auto& [id,n]:snap.byType) mix+=" "+id+" x"+std::to_string(n);
+            std::printf("    %s %2u min: %d lodestones, %d other structures, %d units produced; %d Build, %d Train;%s\n",
+                        kNames[faction],snap.tick/1800,snap.lodes,snap.structures,snap.units,snap.builds,snap.trains,
+                        mix.c_str());
+        }
+        std::printf("    %s: %u Build commands (%u lodestones), %d refused by the World, farthest site %d px\n",
+                    kNames[faction],brain.builds(),brain.lodestoneBuilds(),refused,worst);
+        const auto& last=snaps.back();
+        const std::string what=std::string(kNames[faction])+": ";
+        check(last.lodes>=1,(what+"lodestones are built within 10 minutes").c_str());
+        check(last.structures>=1 || faction==3,(what+"basic structures are built within 10 minutes").c_str());
+        check(last.units>=1,(what+"units are trained or conjured within 10 minutes").c_str());
+        check(outside==0,(what+"every site is inside the ring radius plus a grid block").c_str());
+        check(offDeposit==0,(what+"every lodestone is ordered onto a free deposit").c_str());
+        check(duplicate==0,(what+"no factory type is ordered while an idle one stands in the base").c_str());
     }
 }
 
@@ -753,6 +871,242 @@ static int factoryThinkOracle() {
     return 0;
 }
 
+// The port's side of tools/re/check_ai_placement.py: the build manager's block
+// grids (classicDrawBlockGrids, 0x4110f0) from a seed, then one 0x412f80 with
+// them (classicPlaceSite over classicDepositSite / classicScatterSite) on the
+// case's feature plane, sacred-site records and placement answers. Line:
+//   seed width height ntypes <sacredsite bits>*ntypes ncells (x z feature backX backZ)*ncells
+//   nsites (valid x z)*nsites centreX centreZ radius footX footZ minwaterdepth
+//   bmcode armed range menu yardmap(-1 none, else its first byte) nanswers answer*nanswers
+// Out: the ten grid fields, the seed after them, then "ok x z" (or "0"), the final
+// seed, the draws (count then each n) and the placement test's cells (count then x z).
+static int placementOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        uint32_t seed;int w,h;size_t ntypes;
+        in>>seed>>w>>h>>ntypes;
+        std::vector<bool> sacred(ntypes);
+        for (size_t i=0;i<ntypes;++i) { uint32_t b;in>>b;sacred[i]=ai::classicSacredValue(std::bit_cast<float>(b)); }
+        std::vector<ai::ClassicFeatureCell> plane(size_t(w)*size_t(h));
+        size_t n;in>>n;
+        for (size_t i=0;i<n;++i) { int x,z,f,bx,bz;in>>x>>z>>f>>bx>>bz;plane[size_t(z)*w+x]={uint16_t(f),uint8_t(bx),uint8_t(bz)}; }
+        std::vector<std::optional<std::pair<int16_t,int16_t>>> sites;
+        in>>n;
+        for (size_t i=0;i<n;++i) { int valid,x,z;in>>valid>>x>>z;sites.push_back(valid ? std::optional{std::pair{int16_t(x),int16_t(z)}} : std::nullopt); }
+        int32_t cx,cz,radius;int fx,fz,mwd,bm,armed,range,menu,yard;
+        in>>cx>>cz>>radius>>fx>>fz>>mwd>>bm>>armed>>range>>menu>>yard;
+        std::vector<int> answers;in>>n;answers.resize(n);
+        for (auto& a:answers) in>>a;
+        std::vector<int> draws;
+        auto random=[&](int k){draws.push_back(k);return sim::retailRandom(seed,k);};
+        const auto grids=ai::classicDrawBlockGrids(random);
+        const uint32_t gridSeed=seed;
+        draws.clear();
+        ai::ClassicSiteType type;
+        type.footX=int16_t(fx);type.footZ=int16_t(fz);type.minWaterDepth=int16_t(mwd);
+        type.tower=ai::classicSiteTower(uint8_t(bm),armed!=0,range,menu);
+        type.lodestone=yard>=0 && (yard&0x80);
+        std::vector<std::pair<int,int>> asked;size_t next=0;
+        auto valid=[&](int16_t x,int16_t z){asked.push_back({x,z});return next<answers.size() && answers[next++]!=0;};
+        auto cellAt=[&](int x,int z){
+            if (x<0 || z<0 || x>=w || z>=h) return ai::ClassicFeatureCell{};
+            return plane[size_t(z)*w+x];
+        };
+        auto isSacred=[&](int x,int z){
+            return ai::classicSacredCell(x,z,uint32_t(ntypes),cellAt,[&](uint16_t f){return f<sacred.size() && sacred[f];});
+        };
+        const auto site=ai::classicPlaceSite(type,
+            [&]{return ai::classicDepositSite(sites,{cx,cz},radius,type.footX,type.footZ,
+                    [&](int16_t x,int16_t z){return x>=0 && z>=0 && x<w && z<h && isSacred(x,z);},valid);},
+            [&]{return ai::classicScatterSite(grids,{cx,cz},radius,type,random,valid,isSacred);});
+        for (const auto& g:{grids.land,grids.water})
+            std::printf("%d %d %d %d %d ",g.stepX,g.stepZ,g.offX,g.offZ,g.margin);
+        std::printf("%u",gridSeed);
+        if (site) std::printf(" 1 %d %d",site->first,site->second); else std::printf(" 0");
+        std::printf(" %u %zu",seed,draws.size());
+        for (int d:draws) std::printf(" %d",d);
+        std::printf(" %zu",asked.size());
+        for (const auto& [x,z]:asked) std::printf(" %d %d",x,z);
+        std::printf("\n");
+    }
+    return 0;
+}
+
+// The port's side of tools/re/check_ai_constructor.py: one constructor planner
+// call (ai::classicPlanConstructor) for a base member, over the case's base,
+// build manager, types, map and answers, with the brain's squad helpers and
+// placers under it. Line layout (see the script):
+//   tick alarm allocBits threat limited slot anchor p1 seed builder
+//   grids(10) width height nft <sacredsite bits>*nft ncells (x z f bx bz)* nsites (valid x z)*
+//   nstarts (valid x z)* ntypes (pref prio limit count yard side costBits commander menuField k menu*k
+//     bmcode armed range footX footZ mwd buildDistance maxDamage manaSite unitCost canFly floater)*ntypes
+//   nunits (flags type x z fx fz mission class flags5a buildingBuild buildsManaSite mover damage reload)*nunits
+//   hp manaBits maxManaBits weapon costBits multBits cellX cellZ navigator
+//   nmembers member* nplace answer* nreach answer*
+// Out: the final seed, then the event log: 0 n (a draw), 1 x z (placement test),
+// 2 sx sz x z w h (reachability), 3 type x z (build), 4 threat (defence),
+// 5 (retreat), 6 (cancel).
+static int constructorOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        uint32_t tick,alarm,allocBits,seed;int threat,limited,slot,p1;int32_t anchor;size_t builder;
+        in>>tick>>alarm>>allocBits>>threat>>limited>>slot>>anchor>>p1>>seed>>builder;
+        ai::ClassicBlockGrids grids;
+        for (auto* g:{&grids.land,&grids.water}) { int a,b,c,d,e;in>>a>>b>>c>>d>>e;*g={int16_t(a),int16_t(b),int16_t(c),int16_t(d),e}; }
+        int w,h;size_t nft;in>>w>>h>>nft;
+        std::vector<bool> sacred(nft);
+        for (size_t i=0;i<nft;++i) { uint32_t b;in>>b;sacred[i]=ai::classicSacredValue(std::bit_cast<float>(b)); }
+        std::vector<ai::ClassicFeatureCell> plane(size_t(w)*size_t(h));
+        size_t n;in>>n;
+        for (size_t i=0;i<n;++i) { int x,z,f,bx,bz;in>>x>>z>>f>>bx>>bz;plane[size_t(z)*w+x]={uint16_t(f),uint8_t(bx),uint8_t(bz)}; }
+        ai::ClassicSquads s;
+        auto table=[&](std::vector<std::optional<ai::ClassicCell>>& t) {
+            size_t k;in>>k;t.resize(k);
+            for (auto& c:t) { int valid,x,z;in>>valid>>x>>z;if (valid) c=ai::ClassicCell{int16_t(x),int16_t(z)}; }
+        };
+        table(s.sites);table(s.starts);
+        struct Type { int pref,prio,limit,count,yard,side,commander,menuField,bmcode,armed,range,fx,fz,mwd,reach,maxDamage,manaSite,unitCost,canFly,floater;float cost;std::vector<uint16_t> menu; };
+        size_t ntypes;in>>ntypes;
+        std::vector<Type> types(ntypes);
+        for (auto& t:types) {
+            uint32_t cost;size_t k;
+            in>>t.pref>>t.prio>>t.limit>>t.count>>t.yard>>t.side>>cost>>t.commander>>t.menuField>>k;
+            t.cost=std::bit_cast<float>(cost);t.menu.resize(k);
+            for (auto& e:t.menu) in>>e;
+            in>>t.bmcode>>t.armed>>t.range>>t.fx>>t.fz>>t.mwd>>t.reach>>t.maxDamage>>t.manaSite>>t.unitCost>>t.canFly>>t.floater;
+        }
+        in>>n;
+        std::vector<ai::ClassicSquadUnit> units(n);
+        for (size_t i=0;i<n;++i) {
+            auto& u=units[i];u.id=int(i);
+            uint32_t flags;int t,fx,fz,mission,cls,f5a,bb,ms,mover,damage,reload;
+            in>>flags>>t>>u.x>>u.z>>fx>>fz>>mission>>cls>>f5a>>bb>>ms>>mover>>damage>>reload;
+            const Type& ty=types[size_t(t)];
+            u.flags=flags;u.type=uint16_t(t);u.footX=int16_t(fx);u.footZ=int16_t(fz);
+            u.commander=ty.commander!=0;u.menu=ty.menuField;u.mover=mover!=0;
+            u.typeFlags=(ty.armed ? 0x10000u : 0u)|(ty.canFly ? 0x800u : 0u)|(ty.floater ? 0x80000u : 0u);
+            u.secondaryFlags=(ty.commander ? 0x40000u : 0u)|(ty.manaSite ? 0x80000000u : 0u);
+            u.minWaterDepth=int16_t(ty.mwd);
+            u.mission=mission!=0;u.missionClass=uint8_t(cls);u.missionFlags=uint8_t(f5a);
+            u.buildingBuild=bb!=0;u.buildsManaSite=ms!=0;
+            u.weaponDamage=uint16_t(damage);u.weaponReload=uint16_t(reload);u.squad=slot;
+        }
+        int hp,weapon,cellX,cellZ,navigator;uint32_t manaBits,maxManaBits,costBits,multBits;
+        in>>hp>>manaBits>>maxManaBits>>weapon>>costBits>>multBits>>cellX>>cellZ>>navigator;
+        auto& base=s.squads[size_t(slot)];
+        base.kind=sim::RetailAiSquadKind::Base;base.parameters[0]=anchor;base.parameters[1]=p1;
+        in>>n;base.members.resize(n);
+        for (auto& id:base.members) in>>id;
+        std::vector<int> place,reach;
+        in>>n;place.resize(n);for (auto& a:place) in>>a;
+        in>>n;reach.resize(n);for (auto& a:reach) in>>a;
+
+        std::vector<std::vector<int>> log;
+        auto random=[&](int k){log.push_back({0,k});return sim::retailRandom(seed,k);};
+        const ai::detail::ClassicUnitIndex index(units);
+        const auto centre=*ai::classicBaseCentre(s,units,index,slot);
+        const auto& me=units[builder];
+        const Type& bt=types[me.type];
+        ai::ClassicConstructorUnit u;
+        u.commander=bt.commander!=0;u.hp=int16_t(hp);u.maxDamage=bt.maxDamage;
+        u.mana=std::bit_cast<float>(manaBits);u.maxMana=std::bit_cast<float>(maxManaBits);
+        u.weapon=weapon!=0;
+        u.shotCost=ai::classicShotCost(std::bit_cast<float>(costBits),bt.unitCost ? 1.0f : std::bit_cast<float>(multBits));
+        u.mission=me.mission;u.missionClass=me.missionClass;u.building=me.mission && (me.missionFlags&8);
+        u.navigator=navigator!=0;
+        size_t nextPlace=0,nextReach=0;
+        auto cellAt=[&](int x,int z){
+            if (x<0 || z<0 || x>=w || z>=h) return ai::ClassicFeatureCell{};
+            return plane[size_t(z)*w+x];
+        };
+        auto isSacred=[&](int x,int z){
+            return ai::classicSacredCell(x,z,uint32_t(nft),cellAt,[&](uint16_t f){return f<sacred.size() && sacred[f];});
+        };
+        struct Host {
+            std::function<float()> allocation;
+            std::function<int32_t()> firepower,builders,desiredBuilders;
+            std::function<uint32_t()> tick,alarm;
+            std::function<uint16_t(bool)> draw;
+            std::function<ai::ClassicConstructorType(uint16_t)> type;
+            std::function<bool(uint16_t)> idleFactory;
+            std::function<int32_t(uint16_t)> typeCount;
+            std::function<std::optional<int32_t>(unsigned)> radius;
+            std::function<std::optional<std::pair<int32_t,int32_t>>(uint16_t,int32_t)> site;
+            std::function<bool(uint16_t,std::pair<int32_t,int32_t>)> reachable;
+            std::function<bool()> lodestoneBusy;
+            std::function<void(uint16_t,std::pair<int32_t,int32_t>)> build;
+            std::function<void()> cancel,retreat,combat;
+        } host;
+        host.allocation=[&]{return std::bit_cast<float>(allocBits);};
+        host.firepower=[&]{return ai::classicBaseFirepower(s,units,index,slot,4);};
+        host.builders=[&]{return ai::classicBaseCount(s,units,index,slot,2);};
+        host.desiredBuilders=[&]{return base.parameters[1];};
+        host.tick=[&]{return tick;};host.alarm=[&]{return alarm;};
+        host.draw=[&](bool special){
+            return ai::classicMenuDraw(bt.menu,special,
+                [&](uint16_t t){const auto& e=types[t];
+                    return sim::retailAiBuildWeight(limited!=0,e.limit,int16_t(e.count),uint8_t(e.pref),int8_t(e.prio));},
+                [&](uint16_t t){return types[t].yard>=0 && (types[t].yard&0x80);},
+                [&](uint16_t t){return types[t].side==bt.side;},random);
+        };
+        host.type=[&](uint16_t t){const auto& e=types[t];return ai::ClassicConstructorType{uint8_t(e.bmcode),e.menuField,e.armed!=0};};
+        host.idleFactory=[&](uint16_t t){return ai::classicIdleFactory(s,units,index,slot,t);};
+        host.typeCount=[&](uint16_t t){return t>=1 && t<types.size() ? int32_t(int16_t(types[t].count)) : 0;};
+        host.radius=[&](unsigned ring){return ai::classicBaseRadius(s,units,index,slot,ring);};
+        host.site=[&](uint16_t t,int32_t r){
+            const auto& e=types[t];
+            ai::ClassicSiteType st;
+            st.footX=int16_t(e.fx);st.footZ=int16_t(e.fz);st.minWaterDepth=int16_t(e.mwd);
+            st.tower=ai::classicSiteTower(uint8_t(e.bmcode),e.armed!=0,e.range,e.menuField);
+            st.lodestone=e.yard>=0 && (e.yard&0x80);
+            auto valid=[&](int16_t x,int16_t z){log.push_back({1,x,z});return nextPlace<place.size() && place[nextPlace++]!=0;};
+            return ai::classicPlaceSite(st,
+                [&]{return ai::classicDepositSite(s.sites,centre,r,st.footX,st.footZ,
+                        [&](int16_t x,int16_t z){return x>=0 && z>=0 && x<w && z<h && isSacred(x,z);},valid);},
+                [&]{return ai::classicScatterSite(grids,centre,r,st,random,valid,isSacred);});
+        };
+        host.reachable=[&](uint16_t t,std::pair<int32_t,int32_t> at){
+            const auto& e=types[t];
+            const auto r=ai::classicReachRect(at,int16_t(e.fx),int16_t(e.fz),uint16_t(bt.reach));
+            log.push_back({2,cellX,cellZ,r.x,r.z,r.w,r.h});
+            return nextReach<reach.size() && reach[nextReach++]!=0;
+        };
+        host.lodestoneBusy=[&]{return ai::classicLodestoneBusy(s,units,index,slot);};
+        host.build=[&](uint16_t t,std::pair<int32_t,int32_t> at){log.push_back({3,int(t),at.first,at.second});};
+        host.cancel=[&]{log.push_back({6});};
+        host.retreat=[&]{log.push_back({5});};
+        host.combat=[&]{log.push_back({4,threat});};
+        struct Calls {
+            Host& h;
+            float allocation(){return h.allocation();}
+            int32_t firepower(){return h.firepower();}
+            int32_t builders(){return h.builders();}
+            int32_t desiredBuilders(){return h.desiredBuilders();}
+            uint32_t tick(){return h.tick();}
+            uint32_t alarm(){return h.alarm();}
+            uint16_t draw(bool special){return h.draw(special);}
+            ai::ClassicConstructorType type(uint16_t t){return h.type(t);}
+            bool idleFactory(uint16_t t){return h.idleFactory(t);}
+            int32_t typeCount(uint16_t t){return h.typeCount(t);}
+            std::optional<int32_t> radius(unsigned ring){return h.radius(ring);}
+            std::optional<std::pair<int32_t,int32_t>> site(uint16_t t,int32_t r){return h.site(t,r);}
+            bool reachable(uint16_t t,std::pair<int32_t,int32_t> at){return h.reachable(t,at);}
+            bool lodestoneBusy(){return h.lodestoneBusy();}
+            void build(uint16_t t,std::pair<int32_t,int32_t> at){h.build(t,at);}
+            void cancel(){h.cancel();}
+            void retreat(){h.retreat();}
+            void combat(){h.combat();}
+        } calls{host};
+        ai::classicPlanConstructor(calls,u,threat!=0);
+        std::printf("%u %zu",seed,log.size());
+        for (const auto& e:log) for (int v:e) std::printf(" %d",v);
+        std::printf("\n");
+    }
+    return 0;
+}
+
 // The port's side of tools/re/check_ai_squad_ctor.py: "<seed> <E>" per line ->
 // the manager's squads as 0x40fed0 leaves them, then the final seed.
 static int squadCtorOracle() {
@@ -826,6 +1180,13 @@ int main(int argc,char** argv) {
     if (argc==2 && std::strcmp(argv[1],"--assignment")==0) return assignmentOracle();
     if (argc==2 && std::strcmp(argv[1],"--squad-ctor")==0) return squadCtorOracle();
     if (argc==2 && std::strcmp(argv[1],"--factory-think")==0) return factoryThinkOracle();
+    if (argc==2 && std::strcmp(argv[1],"--placement")==0) return placementOracle();
+    if (argc==2 && std::strcmp(argv[1],"--constructor")==0) return constructorOracle();
+    if (argc==3 && std::strcmp(argv[1],"--bases")==0) {
+        classicBases(argv[2]);
+        std::printf("%s\n",fails ? "FAILED" : "all passed");
+        return fails ? 1 : 0;
+    }
     profileRules();
     typeFacts();
     typeInfoAndPriorities();

@@ -1,6 +1,6 @@
 # Classic AI level: retail AI synthesis and implementation plan
 
-**Status:** P0, phase C, P1, P2, P3 and P4a are on `task-classic-ai` (not yet on main). Since 2026-10-22 the
+**Status:** P0, phase C, P1, P2, P3, P4a and P4b are on `task-classic-ai` (not yet on main). Since 2026-10-22 the
 retail game is no longer run: each routine is checked by an emulation oracle and our own game tests
 (§5); phase C stays as optional tooling. P0 (plumbing, protocol
 290): `Difficulty::Classic` = 6, the lobby's CLASSIC entry, and a `ClassicBrain` stub
@@ -55,8 +55,22 @@ it; 4000 cases, shown to fail on four planted bugs), the reused check_ai_factory
 build_weight (now in the opt-in oracle set), and an Abnar's Terrace game test (classic_ai_data: an
 Aramon keep, a Veruna keep and a Taros dungeon given at the start train menu units one at a time within
 the profile limits; a custom profile limiting all but two Swordsmen to 0 gets exactly two Swordsmen). U3
-and U4 are settled. Mobile builders and combat members are dispatched but not planned yet (P4b, P5),
-and nothing after the member loop runs yet. P4b onward are open.
+and U4 are settled. P4b (constructor planner + placement) is on the branch too: a ready mobile builder of a
+base (the Monarch, builders, Zhon's and Creon's conjurers) runs retail's constructor planner
+(`classicPlanConstructor` in `src/ai/classicproduction.h`: the Monarch's retreat threshold, threat and
+firepower branches, the builder gate against p1 and the alarm deadline the sim already keeps
+(`Player::aiThreatUntil`, 0x409a50), the ordinary draw with the duplicate-factory rule and the 4-tower cap,
+the lodestone draw on every think, reachability, a Build command), and the picked type is placed by
+retail's placers (`src/ai/classicplacement.h`: the block grids the build manager's constructor draws, the
+30-attempt scatter with the tower distance and the sacred-deposit refusal, the nearest free deposit).
+Checked by `tools/re/check_ai_placement.py` (0x4110f0 + 0x412f80 -> 0x411510 / 0x411200 with retail's own
+trig and cell lookup; 4000 cases) and `tools/re/check_ai_constructor.py` (0x40c890 with the real centre,
+radius, counts, firepower, shot cost, menu draw, busy-deposit test and placers under it; 4000 cases), each
+shown to fail on planted bugs, plus check_ai_base_radius in the opt-in set, and by an Abnar's Terrace game
+test of all five factions from a bare start (classic_ai_bases, 10 game-minutes each: lodestones, structures
+and units, sites within the ring radius, no stall). U1 is settled for the class bytes and the build flag.
+Combat members, the defence planner 0x40d370 and the Monarch's retreat 0x40d010 are reached but not
+planned yet (P5), and nothing after the member loop runs yet. P5 onward are open.
 
 2026-10-22. The research behind this plan (the phase-1 audit) was written before any code. The new
 level is called **Classic** (lobby name CLASSIC, `Difficulty::Classic`, `ClassicBrain`); "retail"
@@ -179,29 +193,50 @@ built: 21 x 4 = 84).
   and defaults a missing Priority to 99 (the order only maps RNG values to types, not the odds).
 - There is **no rally point**. The unit leaves by its exit, joins the base, and patrols (§1.8).
 
-**Constructor planner 0x40c890(unit, threat)** (E via an emulation of the planner, plus S):
-- lowFunds = allocation < 0.7. Allocation = min(1, stored / this tick's construction demand) (0x51d837,
-  already ported as `RetailConstructionResources`). When nothing is being built it is 1.
-- **Commander branch**: retreat threshold = maxHP x k / (4 x m), with k = 2 if its own mana/maxMana <= 0.5
-  (const 0.5 @0x5ebb38) and m = 2 if its current weapon is castable now. So with full mana and able to cast
-  it flees below 1/8 HP; with one of the two below 1/4; with neither below 1/2 (E). This applies only when
-  the base has ground firepower (cat 4). Below the threshold with a threat it cancels its build and
-  retreats (0x40d010). If it is fighting, it is left alone. With a threat and no ground army it cancels
-  and fights itself (0x40d370). It builds only while cat-2 builders < p1 and the tick is past the
-  **monarch alarm** (`mgr+0xd`). Otherwise it acts as a combat member on the tight ring 3.
+**Constructor planner 0x40c890(unit, threat)** (S; P4b E: check_ai_constructor, 4000 calls with the real
+centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placers under it):
+- lowFunds = allocation < 0.7 (a double compare, so 0.7f itself and NaN count as low). Allocation =
+  min(1, stored / this tick's construction demand) (0x51d837, U4), the factory planner's quantity.
+- **Commander branch**: retreat threshold = maxdamage x k / (4 x m) (unsigned, maxdamage the type's dword),
+  with k = 2 if its own mana/maxMana <= 0.5 (const 0.5 @0x5ebb38; NaN counts) and m = 2 if its current
+  weapon is castable now (mana per shot over the cost multiplier 0x531ea0 below 0.01, or within its mana).
+  So with full mana and able to cast it flees below 1/8 HP; with one of the two below 1/4; with neither
+  below 1/2 (HP compared unsigned, so a negative HP is never low). This applies only when the base has
+  ground firepower (0x40a9b0(4) > 0: damage per reload tick over its armed cat-4 members). Low with a
+  threat: it cancels a build (0x4d6a50 if its first mission has flag 8) and retreats (0x40d010). Low
+  without one: straight to the builder gate. Not low: a first mission of class 1 or 2 (attack, AirStrike)
+  returns at once (no 0x40d370); with a threat and no ground firepower it cancels a build and defends
+  (0x40d370). **Builder gate**: with cat-2 builders >= p1 it defends; before the **monarch alarm**
+  (`mgr+0xd`) it retreats if it was low, else defends. Past both it builds like any builder.
 - **Monarch alarm** 0x409a50 (from the damage path 0x51a340): when an AI commander is hit, deadline =
-  now + 30 + rand(300)+rand(300)+rand(300) (30..927, mean ~478 ticks) and its build is cancelled. (E)
-- Every builder: if it already has a build mission, return. Otherwise (unless lowFunds) the ordinary pick:
-  - A factory type is dropped if the base already has an idle one of that type (S/E).
-  - For the Monarch, an armed non-factory structure (a "tower") is dropped at >= 4 of that type (E).
-  - Site radius category: Monarch 2 for the first of a type, 3 for later ones; others 1 for a tower and
-    2 otherwise (S).
-  - Site = 0x412f80 (§1.10). Reachability = 0x4e1570 within builddistance (ported `retailreach.h`).
-- **Lodestone pick, drawn every think**: 0x412d00(special=1), radius category 2 for the Monarch and 1
-  otherwise. It is used unless a base builder is already building one (0x40c830). The site is the
-  nearest free deposit (0x411510). If found and reachable, it **replaces** the ordinary pick.
-- It issues build order kind 14 (0x4de530/0x4d78a0), then **always** calls 0x40d370.
+  now + 30 + rand(300)+rand(300)+rand(300) (30..927, mean ~478 ticks) and its build is cancelled. (E) The
+  sim already runs this for every computer-owned Monarch (`World::retailHitResponse`, `Player::aiThreatUntil`,
+  on the shared game stream); the brain reads the deadline.
+- Every builder: if its first mission has flag 8 (a build), return (no 0x40d370). Otherwise (unless
+  lowFunds) the ordinary pick 0x412d00(special=0):
+  - A factory type (bmcode 0, menu count > 0) is dropped if a base member of that type has no first
+    mission, or a first mission other than BuildingBuild: an idle factory of that type (S, E).
+  - For the Monarch, a "tower" (bmcode 0, armed, menu count 0; no range test here) is dropped at >= 4 of
+    that type (the owner's count 0x410e60, unfinished included) (E).
+  - Site ring: Monarch 2 for the first of a type (owner's count 0), 3 for later ones; others 1 for a tower
+    and 2 otherwise (S, E).
+  - Site = 0x412f80 (§1.10). Reachability = 0x4e1570 (ported `retailreach.h`) from the builder's cell
+    (unit +0x74, 1 x 1) to the site's footprint less builddistance/16 cells, sized footprint +
+    (2 x builddistance)/16 cells, mode 1 (static grade), unbounded; a builder without a ground navigator
+    (unit +8 -> +4 == 0, a flyer) skips it.
+- **Lodestone pick, drawn every think** (lowFunds too): 0x412d00(special=1), ring 2 for the Monarch and 1
+  otherwise. It is skipped while a base member's first mission has flag 8 and builds a mana-site type
+  (0x40c830: type +0x264 bit 31, so a mana building counts, not only the lodestone class). The site is
+  the nearest free deposit (0x411510). If found and reachable, it **replaces** the ordinary pick.
+- It issues build order kind 14 (0x4de530/0x4d78a0) for the pick, then **always** calls 0x40d370.
 - The AI issues no repair, assist, reclaim or guard orders anywhere (S, order-kind census).
+- Port (P4b): a Build command at the site's footprint centre; the cancel is a Stop command; 0x40d370 and
+  0x40d010 are P5. A unit's first mission is its first issued goal order (path waypoints spliced in front
+  belong to it): a build order or a site it is building is MobileBuild (class 0, flag 8), an attack order
+  class 1, a non-empty factory queue BuildingBuild (flag 0x0c), a patrol 7, guard 5, load 12, unload 13,
+  reclaim 11, repair 6, a move 14 (U1). The weapon's reload for the firepower sum is the FBI reloadtime x 30
+  truncated to a 16-bit tick count, as 5307e9 stores it. 0x4de530 is taken to resolve kind 14 for any
+  builder.
 
 ### 1.7 Waves: launch, strike, backup, VTOL
 - **Wave-size roll, ground 0x40c240** (S, re-read at the listing):
@@ -285,22 +320,33 @@ base. The move is refused if 3 x enemiesNear(site) > escort size. The builder mo
 slot anchored at that site (anchor -(i+1)). Later placements scatter around the site. Base-to-base
 transfers (0x40b9e0) happen only between anchored bases on a shared zone.
 
-### 1.10 Placement 0x412f80 (S + E, five placement emulation runs)
-- **Block grid 0x4110f0**, drawn once per AI at the profile reset with 8 draws. Land grid A: stepX
-  14+rand(10), stepZ 14+rand(3), offset rand(step)-step/2, margin 6. Water grid B (minwaterdepth >= 0):
-  17+rand(20), 17+rand(3), margin 9.
+### 1.10 Placement 0x412f80 (S + E, five placement emulation runs; P4b E: check_ai_placement, 4000 cases)
+- **Block grid 0x4110f0**, drawn once per AI by the build manager's constructor (0x4102f0 at 0x41048b, after
+  the AI manager's squads and before the creation priority pass; the profile reset 0x410670 draws nothing),
+  8 draws. Land grid A: stepX 14+rand(10), stepZ 14+rand(3), offset rand(step)-step/2 per axis, margin 6.
+  Water grid B (minwaterdepth >= 0): 17+rand(20), 17+rand(3), margin 9. Draw order: stepX, stepZ, offX,
+  offZ of A, then of B.
 - **Ordinary 0x411200**, up to 30 attempts. d = rand(R), or for a tower (a building with bmcode 0, armed
   (+0x260 0x10000), first weapon range < 1000, no menu) d = rand(R/2)+rand(R/2)+rand(R/2) (the SUM of
   three draws, not 3 x one draw), redrawn while > R, which rings the base. **[verify-edit: was
   "rand(R/2)x3", ambiguous; re-read at 0x4112a0..0x4112c6]** The angle is rand(65536) BAM and the point is
-  centre + (-d sin a, -d cos a). Snap the top-left cell to the grid lot and jitter by rand(step-foot-m),
-  which leaves "streets" of >= 7 free cells on land and >= 10 on water. Validate with the yardmap test
-  (0x507d10 -> 0x507400) and reject any footprint covering a sacred deposit. Distance is uniform, not by
-  area, so buildings cluster near the centre. There is no outward search, no memory of failures, and no
-  growth of R on failure.
-- **Lodestone 0x411510**: the nearest deposit cell (measured from the top-left footprint cell of a
-  building centred on the base centre) within R that still holds a sacred feature and passes 0x507d10.
-  Its top-left cell goes on the deposit. No randomness.
+  centre + (-d sin a, -d cos a) through 0x5360bf/0x5360f3 (ported `retailScaledSine/Cosine`). The top-left
+  cell of a footprint centred there, (p - foot x 8 px + 8 px) >> 4 px, is snapped to its grid block:
+  trunc(cell/step) x step + offset + rand(step-foot-m) per axis (X's jitter drawn before Z's), which leaves
+  "streets" of >= 7 free cells on land and >= 10 on water. Validate with the yardmap test (0x507d10 ->
+  0x507400) and then reject any footprint cell holding a sacred feature (a feature index below 0xfffa and
+  below the type count, or a 0xfffe tail resolved to its anchor; sacredsite 0 or NaN is not sacred).
+  Distance is uniform, not by area, so buildings cluster near the centre. There is no outward search, no
+  memory of failures, and no growth of R on failure. The result is the footprint centre
+  ((2 x cell + foot) x 8 px).
+- **Lodestone 0x411510** (a type whose yardmap[0] & 0x80): over the sacred-site records (0x62dbcc, one per
+  sacred feature anchor), the nearest whose distance from the top-left footprint cell of a building centred
+  on the base centre, trunc(sqrt(dx^2+dz^2) x 16 px), is <= R, whose cell still holds a sacred feature
+  (0x50e600; off the map: none), and that passes 0x507d10 (asked only when nearer than the best so far,
+  which starts at 2R; ties keep the first record). Its top-left cell goes on the deposit. No randomness.
+- Port (P4b): the placement test is `World::canPlace` at the footprint centre; the feature plane is the
+  World's map placement cells, with the sacred types those at the anchors of `World::sacredSites()` (in a
+  World without a feature plane, the sites' footprints).
 
 ### 1.11 Retail sim behaviour the AI relies on (not AI code)
 - The threat lists 0x411700, rebuilt every >= 7 ticks: **visible** enemies (32-px vision grid,
@@ -381,7 +427,7 @@ defensiveAi; and the Controller LCG.
 ## 3. Open unknowns and how to resolve each
 | ID | Unknown | Matters for | How to resolve |
 |---|---|---|---|
-| U1 | Mission class bytes 1/2 (attack-type), 7; flags 0x2000 (idle-ish), 0x10000 (interruptible), 8 (build), 0x200/0x400 | contact test, 1/50 re-plan, busy builders | Read the mission descriptor table (0x4df87c, getter 0x4d4cc0 -> +0x10) statically, and emulate the mission constructors the AI calls to see which class bytes and flags they set (no retail run). Then write a mapping table to our `Order` kinds and `autoTarget` |
+| U1 | Mission class bytes 1/2 (attack-type), 7; flags 0x2000 (idle-ish), 0x10000 (interruptible), 8 (build), 0x200/0x400 | contact test, 1/50 re-plan, busy builders | **PARTLY RESOLVED (S, P4b):** the mission table is four static arrays of 25-byte descriptors registered at start-up (0x5f27d8, 0x5eb7f0, 0x5ebc88, 0x5eb528; name at +0x15, class byte at +0x10, flags dword at +0x11), and a mission's +0x5a flags are copied from its descriptor's +0x11 when it is made (0x4d6d3b). Class 1 = Suppress, Attack_Chase/Melee/Kamikaze, AttackSpecial, AirToAir, AirToGround(Hover), Attack_NoMove; class 2 = AirStrike; MobileBuild 0, HelpBuild/RepairUnit 6, Patrol 7, Guard 5, moves 14, BuildingBuild and the command missions 19. Flag 8 is set by MobileBuild, HelpBuild (both kinds) and BuildingBuild (0x0c). No descriptor sets 0x2000 at +0x11 (it must be set at run time; P5), 0x10000 is the Standby family's. The port's mapping from our orders is in §1.6 |
 | U2 | Whether the 1/50 guard at the end of 0x40c890 can replace the build just issued | builders abandoning sites | Emulate 0x40c890 -> 0x40d370 with 0x4d78a0 instrumented (the planner emulation); check 0x4d78a0's replace/queue argument |
 | U3 | Factory guard byte at 0x604914 (which mission counts as "busy factory") | duplicate-factory rule | **RESOLVED (S, P4a):** 0x604914 and the factory planner's 0x605064 are both the mission name "BuildingBuild", resolved to its kind by 0x4d4bf0 (a binary search of the 25-byte mission table at 0x62db84); a busy factory is one with a BuildingBuild mission, which 0x429810 adds for every queued unit of a unit without a navigator |
 | U4 | Confirm that `[player+0x10c]+8` is the allocation (min(1, stored/demand)), not stored/capacity | lowFunds 0.7 gate, factory 0.2333 gate | **RESOLVED (S + E, P4a):** 0x51d837 writes resource +0 stored, +4 capacity (storage, or 1), +8 = stored / (demand x 0.03333333) when that demand exceeds the store, else 1. `check_ai_factory_think.py` runs that block and then 0x40dcb0 reading the same object: 4000 cases match the port's allocation (sim::RetailConstructionResources), and the same port gated on stored/capacity instead differs in 110 of 1000. The constructor planner's lowFunds reads the same field (0x40c890) |
@@ -498,7 +544,7 @@ follows the unseeded C-runtime `rand`), so a seed varies retail games but cannot
 | **P2 Type info + priority clock** (on the branch) | `ClassicTypeInfo`, the 7-tick count/completed cache, the rand(30) priority refresh, shortfall/fill from World, the creation pass | classic_ai (a fixed World: creation pass, clock, recount, priorities) | check_build_priority (0x410810), check_player_cache (0x4121c0/0x411a90), check_resource_history; `check_ai_printweights.py` (every captured table reproduced exactly; 0x410810 emulated over whole tables = port) |
 | **P3 Squads + assignment** (on the branch) | 100-slot model, base ctor rolls, scheduler rand(7)+3, tick<=30 Monarch->base 1 anchored at the start location, nearest-base assignment + Stance 0 | check_ai_scheduler / check_ai_squads / check_ai_base_selection reused; classic_ai (constructor, rolls, assignment cases) | `check_ai_squad_ctor.py` (0x40fed0) and `check_ai_assignment.py` (0x40fe80 + 0x40eeb0), opt-in ctest `-DTAK_CLASSIC_ORACLES=ON`; game test (classic_ai_data, Abnar's Terrace): every finished unit is in a base squad within 10 ticks (the Monarch by tick 30, anchored on its start), Stance 0 applied, a destroyed unit leaves its squad, member counts per kind |
 | **P4a Factory planner** (on the branch) | 0x40dcb0 (allocation gates, cost deferral, one queued) + the menu draw with faction rejection, reached from the base think's member loop (0x40b320 to 0x40b4cf); FBI-builder menus in Priority order; Train commands | check_ai_factory_plan + check_ai_build_choice + check_ai_build_weight (shared templates, now in the opt-in set); classic_ai --factory-think | new `check_ai_factory_think.py` (0x51d837 + 0x40b320's member loop with the real planner, draw, weight and limit code; settles U4), shown to fail on planted bugs (side rejection dropped, the commander exception dropped, gates on the store fill, the stale-anchor rule dropped); game test (classic_ai_data, Abnar's Terrace): Aramon/Veruna keeps and a Taros dungeon given at the start train same-side menu units one at a time within the profile limits and they join the base; a 2-Swordsmen/0-others profile gets exactly two Swordsmen |
-| **P4b Constructor planner + placement** | 0x40c890 (Monarch gates, p1 builders and growth, duplicate-factory, 4-tower cap, lodestone pass every think, reachability), block grid 0x4110f0, scatter 0x411200, deposits 0x411510 | new `check_ai_placement.py` (grid draws, lot windows, tower distance, 30-attempt failure, deposit choice) + `check_ai_constructor.py` (the planner's cases) | those two + check_ai_base_radius; game test: a Classic seat builds lodestones, a keep and a castle on Abnar's Terrace and Inner Circle, placements inside the ring radius, no duplicate factory while one is busy |
+| **P4b Constructor planner + placement** (on the branch) | 0x40c890 (Monarch gates, p1 builders, duplicate-factory, 4-tower cap, lodestone pass every think, reachability), block grid 0x4110f0, scatter 0x411200, deposits 0x411510; Build commands | classic_ai (the construction mirror now includes the grid draws); classic_ai_test --placement / --constructor | new `check_ai_placement.py` (grid draws, lot windows, tower distance, 30-attempt failure, sacred refusal, deposit choice) + `check_ai_constructor.py` (the planner's branches) + check_ai_base_radius, opt-in; each new oracle shown to fail on planted bugs; game test classic_ai_bases (Abnar's Terrace, all five factions from a bare start, 10 game-minutes): lodestones, structures and units, sites within the ring radius plus a block, lodestones onto free deposits, no factory type ordered while an idle one is in the base |
 | **P5 Base defence, idle, Monarch** | 0x40d370 (rings, wounded radius, threat candidates, patrol points), the 0x412000 threat test, Monarch retreat 0x40d010, alarm 0x409a50 (hp tracking) | check_ai_patrol_points; new `check_ai_defence.py` (candidate points) and `check_ai_retreat.py` (0x40d010 point choice) | those + a threat-test oracle (0x412000); game test: a scripted raid into a Classic base, defenders react inside the ring radius, the Monarch retreats below its HP threshold |
 | **P6 Waves** | wave rolls 0x40c240/3c0/490, launch, backup 0x40ea30, strike 0x40e180 (cohesion, dissolve, re-pick, withdrawals, contact/march), picker 0x40a200, VTOL 0x40eb40, naval strikes | `check_ai_wave_roll.py`, `check_ai_target_pick.py`, check_ai_squads strike cases; U13 settled first | those + a strike-think oracle (0x40e180); game tests: waves launch, march by MOVE, dissolve and retreat; Classic AI-vs-AI games end |
 | **P7 Expansion + transfers** | 0x40bc20, 0x40b9e0/0x40b050/0x40b140/0x40b230 | new `check_ai_expand.py` after U5 | that + transfer oracles; game test: bases and lodestones grow over a 20-minute Classic game |
@@ -589,6 +635,7 @@ folder.
 p2/p3 reset, V10 dissolve clears missions, and massattack repeats every assignment pass (0x40f1a1..0x40f239,
 per player, not one-shot). **Still UNCONFIRMED** (as of this pass): the meaning of unit flag 0x8000000 ("armed") and whether the
 own player counts in the wave-size E. (lowFunds = `[player+0x10c]+8` and the factory "busy" mission
-kind, BuildingBuild, were settled in P4a: U4, U3.) The wave roll, the picker and placement were not emulated
-end to end in this pass. Static reading only for those, so they match the area notes'
+kind, BuildingBuild, were settled in P4a: U4, U3; placement 0x4110f0/0x412f80/0x411200/0x411510 and the
+constructor planner 0x40c890 were emulated end to end against the port in P4b.) The wave roll and the picker
+were not emulated end to end in this pass. Static reading only for those, so they match the area notes'
 emulations without independently replacing them.
