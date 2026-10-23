@@ -53,6 +53,45 @@ bool writeDocumentBundle(const std::filesystem::path&, const DocumentFiles&,
 bool writeDocumentLoose(const std::filesystem::path& directory, const DocumentFiles&,
                         const std::filesystem::path& installMaps,
                         std::string& error, const std::atomic_bool* cancel = nullptr);
+// ---- AI profiles as a game mod (design 7.2): <dataRoot>/mods/game/<pack>/ai/<x>.txt ----
+// The same place on every OS: mods live in the data folder, never in prefPath.
+// Why `name` cannot name a pack ("" = it can): 1-128 bytes, a valid file name, no
+// leading '.' (hpi::modPacks lists nothing else).
+std::string modPackNameError(const std::string& name);
+struct ModProfileChange {
+    enum class Action { Create, Same, Replace, Delete };
+    std::string key;                    // ai/n.txt
+    Action action = Action::Create;
+    std::filesystem::path path;         // the file on disk (an existing file's own spelling)
+    std::vector<uint8_t> data;          // the new bytes (Create/Replace/Same)
+    std::vector<uint8_t> existing;      // the bytes on disk (Same/Replace/Delete)
+    std::string archive;                // a pack archive that also holds the path ("" = none); the loose file wins
+};
+struct ModProfilePlan {
+    std::string pack;                   // as spelled on disk for an existing pack (matched ignoring case)
+    std::filesystem::path packFolder, folder;   // <...>/<pack> and its ai/ folder (either may not exist yet)
+    std::vector<std::filesystem::path> create;  // folders a write makes, outermost first
+    std::vector<ModProfileChange> changes;      // sorted by key
+    bool writes() const;                // anything other than Same
+};
+// What writing `files` (empty bytes are left out) and deleting `remove` would do to
+// one pack, without touching the disk. Existing mods/, game/, <pack>/ and ai/ folders
+// and files are reused whatever their case; a symlinked or non-folder component is
+// refused (hpi::modPacks would never list the pack), as is a symlinked file.
+bool planModProfiles(const std::filesystem::path& dataRoot, const std::string& pack, const AiFiles& files,
+                     const std::set<std::string>& remove, ModProfilePlan&, std::string& error);
+// Carries out a plan: re-checks it against the disk (a file changed since is an
+// error), copies every file it replaces or deletes to
+// <backupRoot>/<pack>/<UTC stamp>/ai/ first (never into the pack: every pack file
+// travels in the mod transfer), creates the missing folders, then installs each file
+// atomically (staged beside the packs in mods/game/, which is never mounted) and
+// rolls back on failure. Same files and every other pack file are left alone.
+bool writeModProfiles(const std::filesystem::path& dataRoot, const ModProfilePlan&, const std::filesystem::path& backupRoot,
+                      std::string& error, std::filesystem::path* backupFolder = nullptr);
+// A pack's root ai/<x>.txt files as the game reads them (loose over its archives),
+// for Open from game mod. Throws when the pack is not listed by hpi::modPacks.
+AiFiles readModProfiles(const std::filesystem::path& dataRoot, const std::string& pack);
+
 // The data root's Maps folder (any case), or empty.
 std::filesystem::path installMapsFolder(const std::filesystem::path& dataRoot);
 bool insideFolder(const std::filesystem::path& path, const std::filesystem::path& folder);

@@ -2,7 +2,7 @@
 // encoding, the canonical form, byte-identical hand files, line attribution checked
 // against the engine's own parsers (ai::ClassicProfile::execute, ai::applyProfileText),
 // verification that can fail, Make editable, the 6.2 checks, the aiprofile name rules
-// and which file plays. Every corpus here is synthetic: no retail text or data.
+// which file plays, and the game-mod writer (folders, overwrite, backups). Every corpus here is synthetic: no retail text or data.
 #include "cartographer/aiprofiles.h"
 #include "ai/builtinprofile.h"
 #include "net/mappackage.h"
@@ -14,6 +14,9 @@
 #include <iostream>
 #include <random>
 #include <stdexcept>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 using tak::ai::ClassicCatalogue;
@@ -641,6 +644,125 @@ static void whichFileMatrix(const fs::path& root) {
     is(cart::whichFile(Difficulty::Normal, base, {}, ""), F::None, "", "Normal: built-in table (no file).");   // never the install's
 }
 
+// ---- the game-mod writer -------------------------------------------------------------
+
+static std::string readText(const fs::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    return {std::istreambuf_iterator<char>(f), {}};
+}
+static std::set<std::string> namesIn(const fs::path& dir) {
+    std::set<std::string> out;
+    for (const auto& e : fs::directory_iterator(dir)) out.insert(e.path().filename().string());
+    return out;
+}
+
+static void modWriter(const fs::path& root) {
+    using A = cart::ModProfileChange::Action;
+    // Names.
+    check(cart::modPackNameError("harder-ai").empty(), "a plain pack name is accepted");
+    for (const std::string& bad : std::vector<std::string>{"", ".hidden", "a/b", "a\\b", "con", "x.", std::string(129, 'p')})
+        check(!cart::modPackNameError(bad).empty(), "pack name '" + bad + "' is refused");
+    std::string error;
+    cart::ModProfilePlan plan;
+    check(!cart::planModProfiles(root / "absent", "p", {}, {}, plan, error), "a missing data folder is refused");
+
+    // An existing pack in case-variant folders: Mods/Game/Harder/AI.
+    const auto data = root / "moddata", pack = data / "Mods" / "Game" / "Harder", ai = pack / "AI";
+    writeFile(ai / "N.TXT", "weight araarch 1\n");
+    writeFile(ai / "e.txt", "weight araarch 5\n");
+    writeFile(ai / "a.txt", "weight araarch 7\n");
+    writeFile(ai / "notes.txt", "keep\n");
+    writeFile(pack / "readme.txt", "keep\n");
+    {
+        const auto archive = tak::hpi::pack({{"ai/h.txt", bytesOf("weight araarch 9\n")}});
+        std::ofstream(pack / "base.hpi", std::ios::binary).write(reinterpret_cast<const char*>(archive.data()), std::streamsize(archive.size()));
+    }
+    const cart::AiFiles files{{"ai/n.txt", bytesOf("weight araarch 2\n")}, {"ai/e.txt", bytesOf("weight araarch 5\n")},
+                              {"ai/h.txt", bytesOf("weight araarch 3\n")}, {"ai/d.txt", {}}};
+    check(cart::planModProfiles(data, "harder", files, {"ai/a.txt", "ai/ad.txt"}, plan, error), "plan: " + error);
+    check(plan.pack == "Harder" && plan.folder == ai && plan.create.empty(), "the existing pack and folders are reused in their own case");
+    check(plan.changes.size() == 4, "four changes planned (an empty draft and an absent delete add none)");
+    const auto& del = plan.changes[0]; const auto& same = plan.changes[1]; const auto& create = plan.changes[2]; const auto& rep = plan.changes[3];
+    check(del.key == "ai/a.txt" && del.action == A::Delete, "a ticked delete of an existing file");
+    check(same.key == "ai/e.txt" && same.action == A::Same, "an identical file is skipped");
+    check(create.key == "ai/h.txt" && create.action == A::Create && create.archive == "base.hpi", "a new loose file over the pack archive's copy");
+    check(rep.key == "ai/n.txt" && rep.action == A::Replace && rep.path == ai / "N.TXT" && readText(rep.path) == "weight araarch 1\n",
+          "a different file replaces the existing spelling");
+    check(plan.writes(), "the plan writes");
+
+    // A file changed after the compare: nothing is written.
+    writeFile(ai / "N.TXT", "weight araarch 4\n");
+    check(!cart::writeModProfiles(data, plan, root / "profile", error) && error.find("changed on disk") != std::string::npos,
+          "a stale plan is refused: " + error);
+    check(readText(ai / "N.TXT") == "weight araarch 4\n" && !fs::exists(ai / "h.txt") && fs::exists(ai / "a.txt"), "the stale plan changed nothing");
+    check(!fs::exists(root / "profile" / "mod-backups"), "the stale plan made no backup");
+    check(cart::planModProfiles(data, "Harder", files, {"ai/a.txt"}, plan, error), "re-plan: " + error);
+
+    fs::path backup;
+    const auto before = fs::last_write_time(ai / "e.txt");
+    check(cart::writeModProfiles(data, plan, root / "profile", error, &backup), "write: " + error);
+    check(readText(ai / "N.TXT") == "weight araarch 2\n" && readText(ai / "h.txt") == "weight araarch 3\n" && !fs::exists(ai / "a.txt"),
+          "replaced, created and deleted");
+    check(namesIn(ai) == std::set<std::string>{"N.TXT", "e.txt", "h.txt", "notes.txt"}, "no second spelling, staging or .bak in ai/");
+    check(fs::last_write_time(ai / "e.txt") == before && readText(ai / "notes.txt") == "keep\n" && readText(pack / "readme.txt") == "keep\n",
+          "identical and other pack files are untouched");
+    check(namesIn(pack) == std::set<std::string>{"AI", "base.hpi", "readme.txt"}, "nothing else was added to the pack");
+    check(namesIn(data / "Mods" / "Game") == std::set<std::string>{"Harder"}, "the staging folder is gone");
+    check(backup.parent_path() == root / "profile" / "mod-backups" / "Harder", "the backup sits in the profile folder, per pack: " + backup.string());
+    check(readText(backup / "ai" / "N.TXT") == "weight araarch 4\n" && readText(backup / "ai" / "a.txt") == "weight araarch 7\n" &&
+          namesIn(backup / "ai").size() == 2, "the backup holds the replaced and deleted files only");
+    const auto read = cart::readModProfiles(data, "Harder");
+    check(read.size() == 4 && read.at("ai/n.txt") == bytesOf("weight araarch 2\n") && read.at("ai/h.txt") == bytesOf("weight araarch 3\n"),
+          "Open from game mod reads the pack as the game does (loose over archive)");
+    // Saving the same again writes nothing.
+    check(cart::planModProfiles(data, "Harder", read, {}, plan, error) && !plan.writes(), "an unchanged pack plans no writes");
+    check(cart::writeModProfiles(data, plan, root / "profile", error, &backup) && backup.empty(), "nothing to back up when nothing changes");
+
+    // A data root with no mods folder: everything is created; no backup is needed.
+    const auto fresh = root / "freshdata";
+    fs::create_directories(fresh);
+    check(cart::planModProfiles(fresh, "new pack", {{"ai/n.txt", bytesOf("weight araarch 2\n")}}, {}, plan, error), "fresh plan: " + error);
+    check(plan.create.size() == 4 && plan.create.front() == fresh / "mods" && plan.folder == fresh / "mods" / "game" / "new pack" / "ai", "missing folders planned");
+    check(cart::writeModProfiles(fresh, plan, root / "profile", error, &backup) && backup.empty(), "fresh write: " + error);
+    check(tak::hpi::modPacks(fresh, tak::hpi::ModKind::Game) == std::vector<std::string>{"new pack"}, "the new pack is listed by the game");
+    check(tak::hpi::modFiles(fresh, tak::hpi::ModKind::Game, {"new pack"}).count("ai/n.txt"), "the game reads the new file");
+
+#ifndef _WIN32
+    // Symlinked components are refused: the game would never list the pack.
+    const auto linked = root / "linkdata";
+    fs::create_directories(linked / "mods" / "real");
+    fs::create_directory_symlink(linked / "mods" / "real", linked / "mods" / "game");
+    check(!cart::planModProfiles(linked, "p", {{"ai/n.txt", bytesOf("x\n")}}, {}, plan, error) && error.find("symbolic link") != std::string::npos,
+          "a symlinked game folder is refused: " + error);
+    fs::create_directories(fresh / "elsewhere");
+    fs::create_directory_symlink(fresh / "elsewhere", fresh / "mods" / "game" / "linked");
+    check(!cart::planModProfiles(fresh, "Linked", {{"ai/n.txt", bytesOf("x\n")}}, {}, plan, error) && error.find("symbolic link") != std::string::npos,
+          "a symlinked pack is refused");
+    fs::create_symlink(fresh / "elsewhere", fresh / "mods" / "game" / "new pack" / "ai" / "h.txt");
+    check(!cart::planModProfiles(fresh, "new pack", {{"ai/h.txt", bytesOf("x\n")}}, {}, plan, error), "a symlinked file is not written through");
+    // A read-only install: SAVE FAILED in plain words, nothing created.
+    if (geteuid() != 0) {
+        const auto locked = root / "lockeddata";
+        fs::create_directories(locked / "mods" / "game");
+        fs::permissions(locked / "mods" / "game", fs::perms::owner_read | fs::perms::owner_exec);
+        check(cart::planModProfiles(locked, "p", {{"ai/n.txt", bytesOf("x\n")}}, {}, plan, error), "locked plan: " + error);
+        check(!cart::writeModProfiles(locked, plan, root / "profile", error) && error.find("read-only") != std::string::npos,
+              "a read-only data folder says so: " + error);
+        fs::permissions(locked / "mods" / "game", fs::perms::owner_all);
+        check(fs::is_empty(locked / "mods" / "game"), "the read-only failure left nothing behind");
+    }
+#endif
+
+    // The overwrite compare names the first changed line and the units that change.
+    const auto c = sample();
+    const auto text = cart::compareAiFiles("ai/x.txt", "weight araarch 1\nlimit aradrag 2\n", "weight araarch 0.505\nlimit aradrag 2\n", c);
+    check(text.find("line 1 \"weight araarch 1\" becomes \"weight araarch 0.505\"") != std::string::npos &&
+          text.find("1 unit plays differently (araarch)") != std::string::npos, "DEFAULT compare: " + text);
+    const auto level = cart::compareAiFiles("ai/n.txt", "weight araarch 5\n", "weight araarch 5\n// note\n", c);
+    check(level.find("Every unit plays the same") != std::string::npos, "level compare: " + level);
+    std::cout << "mod writer: case-variant folders reused, identical skipped, backups outside the pack, symlinks and read-only refused\n";
+}
+
 int main() try {
     const auto root = fs::temp_directory_path() /
                       ("tak-aiprofile-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -655,6 +777,7 @@ int main() try {
     names();
     travel(root);
     whichFileMatrix(root);
+    modWriter(root);
     std::cout << "cartographer_aiprofile: all passed\n";
     return 0;
 } catch (const std::exception& e) {

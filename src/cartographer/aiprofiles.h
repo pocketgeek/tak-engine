@@ -181,6 +181,12 @@ void setAiFile(AiFiles&, const std::string& key, std::string_view bytes);
 // file of the new name is replaced). False when either name has no file of its own.
 bool renameAiProfile(AiFiles&, const std::string& oldName, const std::string& newName);
 
+// The overwrite compare for one file (design 7.2, Save as game mod): the line
+// counts, the first changed line, and -- from the engine's own parsers -- how many
+// units play differently (levels measured over their built-in table).
+std::string compareAiFiles(const std::string& key, std::string_view before, std::string_view after,
+                           const tak::ai::ClassicCatalogue&);
+
 // Which file a profile plays (design 6.1), from the engine's own lookup
 // (ai::classicProfileScript for DEFAULT, ai::levelProfile for the levels) over this
 // map's travelling files, an optional game mod's files and the base install.

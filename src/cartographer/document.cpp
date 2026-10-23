@@ -1,9 +1,13 @@
 #include "cartographer/document.h"
 #include "cartographer/scenarioinfo.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <ctime>
 #include <fstream>
+#include <memory>
 #include <stdexcept>
 #ifdef _WIN32
 #define NOMINMAX
@@ -84,6 +88,185 @@ AiFiles liftAiFiles(tak::hpi::Vfs::Files& files) {
         if(aiFileKey(it->first)) {result[tak::hpi::MountSet::key(it->first)]=std::move(it->second);it=files.erase(it);}
         else ++it;
     }
+    return result;
+}
+
+namespace {
+std::string fileText(const fs::path& path) {const auto text=path.u8string();return {text.begin(),text.end()};}
+std::string nameOf(const fs::path& path) {return fileText(path.filename());}
+std::vector<uint8_t> readAll(const fs::path& path) {
+    std::ifstream f(path,std::ios::binary);
+    if(!f)throw std::runtime_error("Cannot read "+fileText(path));
+    return {std::istreambuf_iterator<char>(f),{}};
+}
+// A whole file, failing as a filesystem_error so the read-only case reads plainly.
+void writeOrThrow(const fs::path& path,const std::vector<uint8_t>& data) {
+    errno=0;
+    std::ofstream f(path,std::ios::binary|std::ios::trunc);
+    if(f)f.write(reinterpret_cast<const char*>(data.data()),std::streamsize(data.size()));
+    if(f)f.close();
+    if(!f)throw fs::filesystem_error("write",path,std::error_code(errno?errno:EIO,std::generic_category()));
+}
+// What a failed write says (SAVE FAILED): a read-only install in plain words.
+std::string writeFailure(const fs::filesystem_error& e) {
+    const auto where=fileText(e.path1().empty()?e.path2():e.path1());
+    const auto code=e.code();
+    if(code==std::errc::permission_denied || code==std::errc::read_only_file_system || code==std::errc::operation_not_permitted)
+        return "Cannot write "+where+": the data folder is read-only (for example a game installed under Program Files). "
+               "Nothing in the pack was changed. Give your account write access to the game's mods folder, or use a copy of the game in a folder you can write to.";
+    return "Cannot write "+where+": "+code.message()+". Nothing in the pack was changed.";
+}
+}
+
+std::string modPackNameError(const std::string& name) {
+    if(name.empty())return "Type a pack name.";
+    if(name.size()>128)return "A pack name has at most 128 bytes.";
+    if(name[0]=='.')return "A pack name cannot start with '.' (the game skips such folders).";
+    if(!validDocumentName(name))return "A pack name cannot contain / \\ : * ? \" < > |, end in '.' or a space, or be a reserved device name.";
+    return {};
+}
+
+bool ModProfilePlan::writes() const {
+    return std::any_of(changes.begin(),changes.end(),[](const ModProfileChange& c){return c.action!=ModProfileChange::Action::Same;});
+}
+
+bool planModProfiles(const fs::path& dataRoot, const std::string& packName, const AiFiles& files,
+                     const std::set<std::string>& remove, ModProfilePlan& plan, std::string& error) {
+    using tak::hpi::MountSet;using Action=ModProfileChange::Action;
+    plan=ModProfilePlan{};error.clear();
+    try {
+        if(const auto why=modPackNameError(packName);!why.empty()) {error=why;return false;}
+        std::error_code ec;
+        if(dataRoot.empty() || !fs::is_directory(dataRoot,ec)) {error="The data folder does not exist: "+fileText(dataRoot);return false;}
+        // mods/, game/, <pack>/, ai/: an existing real folder of that name in any case
+        // (the one hpi's realSubdir mounts), else a folder to create.
+        fs::path dir=dataRoot;bool missing=false;
+        const std::string parts[]={"mods","game",packName,"ai"};
+        for(int i=0;i<4;++i) {
+            fs::path next,other;
+            if(!missing)for(const auto& entry:fs::directory_iterator(dir,ec)) {
+                if(MountSet::key(nameOf(entry.path()))!=MountSet::key(parts[i]))continue;
+                std::error_code e;
+                if(!entry.is_symlink(e) && entry.is_directory(e)) {next=entry.path();break;}
+                if(other.empty())other=entry.path();
+            }
+            if(next.empty() && !other.empty()) {
+                std::error_code e;
+                error=fs::is_symlink(fs::symlink_status(other,e))?
+                    fileText(other)+" is a symbolic link. The game never reads game mods through links; use a real folder.":
+                    fileText(other)+" is not a folder.";
+                return false;
+            }
+            if(next.empty()) {missing=true;next=dir/fs::u8path(parts[i]);plan.create.push_back(next);}
+            dir=next;
+            if(i==2) {plan.packFolder=dir;plan.pack=nameOf(dir);}
+        }
+        plan.folder=dir;
+        std::map<std::string,fs::path> onDisk;std::set<std::string> links;
+        if(!missing)for(const auto& entry:fs::directory_iterator(dir,ec)) {
+            const auto key=MountSet::key("ai/"+nameOf(entry.path()));std::error_code e;
+            if(entry.is_symlink(e))links.insert(key);
+            else if(entry.is_regular_file(e) && !onDisk.emplace(key,entry.path()).second) {
+                error=fileText(dir)+" holds two files named "+key.substr(3)+" in different case; remove one first.";return false;
+            }
+        }
+        std::unique_ptr<MountSet> archives;
+        if(fs::is_directory(plan.packFolder,ec))
+            try {archives=std::make_unique<MountSet>(plan.packFolder,tak::hpi::MountConfig{false,{".hpi",".ufo",".kmp"},{},{}});} catch(const std::exception&) {}
+        auto add=[&](const std::string& key,const std::vector<uint8_t>* data) {
+            if(key!=MountSet::key(key) || !aiFileKey(key)) {error="Invalid AI profile file name: "+key;return false;}
+            if(links.count(key)) {error=fileText(dir/fs::u8path(key.substr(3)))+" is a symbolic link; it was not replaced.";return false;}
+            ModProfileChange change;change.key=key;
+            const auto found=onDisk.find(key);const bool exists=found!=onDisk.end();
+            change.path=exists?found->second:dir/fs::u8path(key.substr(3));
+            if(exists)change.existing=readAll(change.path);
+            if(data) {change.data=*data;change.action=!exists?Action::Create:change.existing==change.data?Action::Same:Action::Replace;}
+            else if(exists)change.action=Action::Delete;
+            else return true;   // nothing to delete
+            if(archives)if(const int a=archives->archiveOf(key);a>=0)change.archive=nameOf(archives->archiveFiles()[size_t(a)]);
+            plan.changes.push_back(std::move(change));return true;
+        };
+        for(const auto& [key,data]:files)if(!data.empty() && !add(key,&data))return false;
+        for(const auto& key:remove) {
+            const auto it=files.find(key);
+            if((it==files.end() || it->second.empty()) && !add(key,nullptr))return false;
+        }
+        std::sort(plan.changes.begin(),plan.changes.end(),[](const auto& a,const auto& b){return a.key<b.key;});
+    } catch(const std::exception& e) {error=e.what();return false;}
+    return true;
+}
+
+bool writeModProfiles(const fs::path& dataRoot, const ModProfilePlan& plan, const fs::path& backupRoot,
+                      std::string& error, fs::path* backupFolder) {
+    using Action=ModProfileChange::Action;
+    error.clear();if(backupFolder)backupFolder->clear();
+    // The plan the user confirmed must still describe the disk.
+    AiFiles files;std::set<std::string> remove;
+    for(const auto& change:plan.changes) {if(change.action==Action::Delete)remove.insert(change.key);else files[change.key]=change.data;}
+    ModProfilePlan now;
+    if(!planModProfiles(dataRoot,plan.pack,files,remove,now,error))return false;
+    bool same=now.folder==plan.folder && now.changes.size()==plan.changes.size();
+    for(size_t i=0;same && i<now.changes.size();++i)
+        same=now.changes[i].key==plan.changes[i].key && now.changes[i].action==plan.changes[i].action && now.changes[i].existing==plan.changes[i].existing;
+    if(!same) {error="The pack's files changed on disk since they were compared. Nothing was written; save again to see the new comparison.";return false;}
+    if(!now.writes())return true;
+    fs::path stage,backup;
+    std::vector<size_t> installed;
+    bool preserveStage=false;
+    try {
+        // Backups first, outside the pack: a failure here changes nothing.
+        if(std::any_of(now.changes.begin(),now.changes.end(),[](const auto& c){return c.action==Action::Replace || c.action==Action::Delete;})) {
+            if(backupRoot.empty())throw std::runtime_error("There is no Cartographer profile folder for the backups, so nothing was replaced.");
+            char stamp[32]{};const std::time_t t=std::time(nullptr);
+            if(const std::tm* utc=std::gmtime(&t))std::strftime(stamp,sizeof stamp,"%Y%m%d-%H%M%SZ",utc);
+            const auto base=backupRoot/"mod-backups"/fs::u8path(now.pack);
+            backup=base/stamp;
+            for(int n=2;fs::exists(backup);++n)backup=base/(std::string(stamp)+"-"+std::to_string(n));
+            fs::create_directories(backup/"ai");
+            for(const auto& change:now.changes)if(change.action==Action::Replace || change.action==Action::Delete)
+                writeOrThrow(backup/"ai"/change.path.filename(),change.existing);
+        }
+        for(const auto& folder:now.create)fs::create_directory(folder);
+        // Staged beside the packs: files directly in mods/game/ are never mounted.
+        const auto game=now.packFolder.parent_path();
+        static std::atomic<unsigned> serial{0};
+        do stage=game/(".tak-ai-stage-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+"-"+std::to_string(serial++));
+        while(!fs::create_directory(stage));
+        for(size_t i=0;i<now.changes.size();++i) {
+            const auto& change=now.changes[i];
+            if(change.action==Action::Create || change.action==Action::Replace)writeOrThrow(stage/(std::to_string(i)+".new"),change.data);
+            if(change.action==Action::Replace)writeOrThrow(stage/(std::to_string(i)+".old"),change.existing);
+        }
+        for(size_t i=0;i<now.changes.size();++i) {
+            const auto& change=now.changes[i];
+            if(change.action==Action::Same)continue;
+            if(change.action==Action::Delete)replace(change.path,stage/(std::to_string(i)+".old"));
+            else replace(stage/(std::to_string(i)+".new"),change.path);
+            installed.push_back(i);
+        }
+    } catch(const fs::filesystem_error& e) {error=writeFailure(e);}
+    catch(const std::exception& e) {error=e.what();}
+    if(!error.empty())for(auto it=installed.rbegin();it!=installed.rend();++it) {
+        const auto& change=now.changes[*it];
+        try {
+            if(change.action==Action::Create)fs::remove(change.path);
+            else replace(stage/(std::to_string(*it)+".old"),change.path);
+        } catch(const std::exception& restore) {
+            preserveStage=true;
+            error+="\nRollback failed: "+std::string(restore.what())+". Copies remain in "+fileText(stage)+" and "+fileText(backup);
+        }
+    }
+    std::error_code ec;
+    if(!stage.empty() && !preserveStage)fs::remove_all(stage,ec);
+    if(!error.empty() && !preserveStage && !backup.empty())fs::remove_all(backup,ec);   // nothing was replaced after all
+    if(error.empty() && backupFolder)*backupFolder=backup;
+    return error.empty();
+}
+
+AiFiles readModProfiles(const fs::path& dataRoot, const std::string& pack) {
+    AiFiles result;
+    for(auto& [path,data]:tak::hpi::modFiles(dataRoot,tak::hpi::ModKind::Game,{pack}))
+        if(aiFileKey(path))result[tak::hpi::MountSet::key(path)]=std::move(data);
     return result;
 }
 

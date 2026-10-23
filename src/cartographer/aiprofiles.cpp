@@ -866,4 +866,51 @@ AiFileChoice whichFile(Difficulty d, const tak::hpi::Vfs& base, const AiFiles& m
     return out;
 }
 
+std::string compareAiFiles(const std::string& key, std::string_view before, std::string_view after,
+                           const ClassicCatalogue& catalogue) {
+    auto split=[](std::string_view text) {
+        std::vector<std::string_view> lines;
+        while(!text.empty()) {
+            const auto end=text.find('\n');auto line=text.substr(0,end);
+            if(!line.empty() && line.back()=='\r')line.remove_suffix(1);
+            lines.push_back(line);
+            if(end==std::string_view::npos)break;
+            text.remove_prefix(end+1);
+        }
+        return lines;
+    };
+    auto quoted=[](std::string_view line) {
+        std::string out(line.substr(0,56));if(line.size()>56)out+="...";
+        return "\""+out+"\"";
+    };
+    const auto a=split(before),b=split(after);
+    std::string out=key+": "+std::to_string(a.size())+" lines in the pack, "+std::to_string(b.size())+" to save";
+    for(size_t i=0;i<std::max(a.size(),b.size());++i) {
+        if(i<a.size() && i<b.size() && a[i]==b[i])continue;
+        out+="; line "+std::to_string(i+1)+" "+(i<a.size()?quoted(a[i]):std::string("(none)"))+" becomes "+(i<b.size()?quoted(b[i]):std::string("(none)"));
+        break;
+    }
+    std::vector<std::string> changed;
+    if(const auto level=aiLevelOf(key)) {
+        auto x=tak::ai::builtinProfile(*level),y=x;
+        tak::ai::applyProfileText(before,x);tak::ai::applyProfileText(after,y);
+        std::set<std::string> units;
+        for(const auto* p:{&x,&y})for(const auto* m:{&p->weight,&p->limit})for(const auto& [unit,v]:*m)units.insert(unit);
+        auto get=[](const std::unordered_map<std::string,int>& m,const std::string& unit) {
+            const auto it=m.find(unit);return it==m.end()?std::optional<int>():std::optional<int>(it->second);
+        };
+        for(const auto& unit:units)
+            if(get(x.weight,unit)!=get(y.weight,unit) || get(x.limit,unit)!=get(y.limit,unit))changed.push_back(unit);
+    } else {
+        tak::ai::ClassicProfile x(catalogue.size()),y(catalogue.size());
+        x.execute(before,catalogue);y.execute(after,catalogue);
+        for(size_t i=0;i<catalogue.size();++i)
+            if(x.pref[i]!=y.pref[i] || x.limit[i]!=y.limit[i])changed.push_back(catalogue.names[i]);
+    }
+    if(changed.empty())return out+". Every unit plays the same.";
+    out+=". "+std::to_string(changed.size())+(changed.size()==1?" unit plays":" units play")+" differently (";
+    for(size_t i=0;i<changed.size() && i<4;++i)out+=(i?", ":"")+changed[i];
+    return out+(changed.size()>4?", ...).":").");
+}
+
 } // namespace cart
