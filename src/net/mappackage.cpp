@@ -42,10 +42,15 @@ std::set<std::string> companionPaths(const std::string& path) {
     return result;
 }
 // The map's AI profile files: the Classic AI reads ai/<aiprofile>.txt (the .ota's
-// [Map Data] key, any extension dropped), else ai/default.txt. The server reads them
-// from the room's view, so when the map's own archive carries one it travels here.
+// [Map Data] key, any extension dropped), else ai/default.txt, and each of our levels
+// its own ai/<x>.txt (ai/builtinprofile.h). The server reads them from the room's
+// map package (a game mod's copy wins), so when the map's own archive carries one it
+// travels here.
 std::set<std::string> aiProfilePaths(const hpi::Vfs::Files& files, const std::string& mapPath) {
-    std::set<std::string> result{"ai/default.txt"};
+    // ai::levelProfileFile's names (src/ai is not linked here; ai_profile_test checks
+    // the two lists agree).
+    std::set<std::string> result{"ai/default.txt", "ai/d.txt", "ai/e.txt", "ai/n.txt",
+                                 "ai/h.txt", "ai/a.txt", "ai/ad.txt"};
     const auto ota = files.find(vpath::replaceExtension(mapPath, ".ota"));
     if (ota == files.end()) return result;
     std::string key;

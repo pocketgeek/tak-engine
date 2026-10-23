@@ -322,20 +322,6 @@ static_assert(tak::srv::TickPacer::kHz == kServerHz, "TickPacer paces kServerHz 
         bool haveCb = false;
         uint64_t hash = 0;
         bool built = false;
-        // Our levels' build profiles, by wire aiLevel (ai/builtinprofile.h): the
-        // built-in tables, each adjusted by its own ai/<x>_ai.txt from this set's game
-        // mods. Classic's stays empty (its brain bakes ai/default.txt itself). A
-        // Controller holds a reference, so these live as long as the data set.
-        std::array<tak::ai::Profile, tak::ai::kAiLevels> aiProfiles;
-        void loadAiProfiles(const tak::hpi::Vfs::Files* gameModFiles, uint32_t room = 0) {
-            for (uint8_t level = 0; level < tak::ai::kAiLevels; ++level) {
-                std::string source;
-                aiProfiles[level] = tak::ai::levelProfile(tak::ai::Difficulty(level), gameModFiles, &source);
-                if (!source.empty())
-                    std::fprintf(stderr, "game %u: AI level %u plays the built-in profile adjusted by "
-                                 "the game mods' %s\n", room, unsigned(level), source.c_str());
-            }
-        }
     };
 
 struct Room {
@@ -344,6 +330,11 @@ struct Room {
     std::string name, password, mapId;
     std::shared_ptr<tak::net::maps::Package> mapPackage;
     std::unique_ptr<tak::hpi::Vfs> mapVfs;
+    // Our levels' build profiles for this game, by wire aiLevel (ai/builtinprofile.h):
+    // the built-in tables, each adjusted by its own ai/<x>.txt from the room's game mods,
+    // else from its map package. Classic's stays empty (its brain bakes ai/default.txt
+    // itself). Set at start; a Controller holds a reference, so they live with the room.
+    std::array<tak::ai::Profile, tak::ai::kAiLevels> aiProfiles;
 
     // Persistent Crusades identity is server-owned, never part of CreateGame.
     std::string campaignBattleId, campaignLaunchToken, campaignRoomToken, campaignId;
@@ -532,7 +523,6 @@ public:
         // check + every game without game mods); a game-mod set is built lazily
         // per room the first time such a game starts.
         buildDataSet(retail_);
-        retail_.loadAiProfiles(nullptr);
         aiNames_ = loadAiNames(retail_.vfs);
         haveCb_ = retail_.haveCb;
         std::fprintf(stderr, "takserver: loaded game data from %s (referee sim + AI%s), "
@@ -2548,23 +2538,45 @@ void Server::refuseStart(Client& c, const Room& r, const std::string& why) {
     std::fprintf(stderr, "game %u: start refused -- %s\n", r.id, why.c_str());
 }
 
+// The room's game-mod and map-package files, where its AI reads its own ai/ files
+// (null when the room plays without that layer).
+static const tak::hpi::Vfs::Files* roomModFiles(const Room& r) {
+    return r.modData && r.modPackage && r.modPackage->files ? r.modPackage->files.get() : nullptr;
+}
+static const tak::hpi::Vfs::Files* roomMapFiles(const Room& r) {
+    return r.mapPackage && r.mapVfs && r.mapPackage->files ? r.mapPackage->files.get() : nullptr;
+}
+
+// Our levels' profiles for a room (Room::aiProfiles), each file applied logged once.
+static void loadAiProfiles(Room& r) {
+    for (uint8_t level = 0; level < tak::ai::kAiLevels; ++level) {
+        std::string source;
+        bool fromMap = false;
+        r.aiProfiles[level] = tak::ai::levelProfile(tak::ai::Difficulty(level), roomModFiles(r), roomMapFiles(r),
+                                                    &source, &fromMap);
+        if (!source.empty())
+            std::fprintf(stderr, "game %u: AI level %u plays the built-in profile adjusted by "
+                         "the %s %s\n", r.id, unsigned(level), fromMap ? "map package's" : "game mods'",
+                         source.c_str());
+    }
+}
+
 // The Classic AI's profile script for a room: retail's file choice (ai/<aiprofile>.txt,
-// else ai/default.txt) by normal precedence over the room's own view -- the base data,
-// then the room's game mods, then its map package, each winning over the one before --
-// so a map, campaign or game mod that carries its own file plays it. A view with no
-// map package (a mission, a generated map) skips the install's Maps/ archives: an AI
-// file in a .kmp belongs to that map and reaches a game only in the map's package.
-// Logged once per game with the layer the file came from.
+// else ai/default.txt), each file taken from the room's game mods, else its map
+// package, else the base data (a game mod wins over the map for ai/ files, whatever
+// the view's precedence for other map content), so a map, campaign or game mod that
+// carries its own file plays it. A view with no map package (a mission, a generated
+// map) skips the install's Maps/ archives: an AI file in a .kmp belongs to that map
+// and reaches a game only in the map's package. Logged once per game with the layer
+// the file came from.
 static tak::ai::ClassicProfileScript classicProfileFor(const Room& r, const std::string& key,
                                                         const tak::hpi::Vfs& vfs, bool skipMapArchives) {
     const tak::hpi::Vfs view(&vfs, skipMapArchives);
-    auto script = tak::ai::classicProfileScript(view, key);
-    const std::string file = tak::hpi::MountSet::key(script.path);   // package files are keyed
-    const char* from = "the base data";
-    if (script.path.empty()) from = "";
-    else if (r.mapPackage && r.mapVfs && r.mapPackage->files && r.mapPackage->files->count(file)) from = "the map package";
-    else if (r.modData && r.modPackage && r.modPackage->files && r.modPackage->files->count(file))
-        from = "the game mods";
+    tak::ai::ClassicProfileLayer layer;
+    auto script = tak::ai::classicProfileScript(view, key, roomModFiles(r), roomMapFiles(r), &layer);
+    const char* from = layer == tak::ai::ClassicProfileLayer::GameMods ? "the game mods"
+                     : layer == tak::ai::ClassicProfileLayer::Map      ? "the map package"
+                     : layer == tak::ai::ClassicProfileLayer::Base     ? "the base data" : "";
     std::fprintf(stderr, "game %u: DEFAULT AI profile %s%s%s\n", r.id,
                  script.path.empty() ? "(none: every type 100, unlimited)" : script.path.c_str(),
                  *from ? " from " : "", from);
@@ -2637,7 +2649,7 @@ void Server::tryStart(Client& c) {
             ds->vfs.setModFiles(r->modPackage->files);
             tak::sim::setupRegistry(ds->reg,ds->vfs,false);
             if(retail_.haveCb){tak::sim::setupRegistry(ds->regCb,ds->vfs,true);ds->haveCb=true;}
-            ds->hash=tak::hpi::gameplayHash(ds->vfs);ds->loadAiProfiles(r->modPackage->files.get(),r->id);
+            ds->hash=tak::hpi::gameplayHash(ds->vfs);
             ds->built=true;r->modData=std::move(ds);
             if(r->mapPackage){r->mapVfs=std::make_unique<tak::hpi::Vfs>(&r->modData->vfs);r->mapVfs->setMapFiles(r->mapPackage->files);}
         }catch(const std::exception& e){sendReject(c,std::string("cannot load game mods: ")+e.what());return;}
@@ -2677,6 +2689,7 @@ void Server::tryStart(Client& c) {
     // that mounted the same game mods.
     DataSet* ds = &dataSet;
     const bool isMission = wantMission;
+    loadAiProfiles(*r);
     // A campaign mission builds its own world (placements + the in-sim god script) and
     // needs no map id; a skirmish resolves its map by name (resolved above, where a
     // failure refuses the start).
@@ -2717,7 +2730,7 @@ void Server::tryStart(Client& c) {
                 // the data set's precedence) and plays the mission as retail's scenario
                 // mode 1, massattack included. There is no choice of level.
                 constexpr auto missionDiff = tak::ai::Difficulty::Classic;
-                const tak::ai::Profile& prof = ds->aiProfiles[size_t(missionDiff)];
+                const tak::ai::Profile& prof = r->aiProfiles[size_t(missionDiff)];
                 const auto classicProfile = classicProfileFor(*r, ms.aiProfile, ds->vfs, true);
                 const auto classicStarts =
                     tak::sim::parseStartPositions(ds->vfs, "missions/" + r->mission + ".tnt");
@@ -2783,7 +2796,7 @@ void Server::tryStart(Client& c) {
                         enemyStarts.push_back(slotPos[size_t(j)]);
                     }
                     auto diff = tak::ai::difficultyFromLevel(r->slots[i].aiLevel);
-                    r->ai.emplace_back(i, *r->reg, ds->aiProfiles[size_t(diff)], r->seed,
+                    r->ai.emplace_back(i, *r->reg, r->aiProfiles[size_t(diff)], r->seed,
                                        diff, std::move(enemyStarts));
                     if (diff == tak::ai::Difficulty::Classic) {
                         if (!classicProfile)
@@ -3615,7 +3628,7 @@ void Server::takeOver(Room& r, int slot) {
                 if (r.slotPos[size_t(j)].first == 0.0f && r.slotPos[size_t(j)].second == 0.0f) continue;
                 enemyStarts.push_back(r.slotPos[size_t(j)]);
             }
-            r.ai.emplace_back(slot, *r.reg, roomData(r).aiProfiles[size_t(tak::ai::Difficulty::Normal)],
+            r.ai.emplace_back(slot, *r.reg, r.aiProfiles[size_t(tak::ai::Difficulty::Normal)],
                               r.seed + uint32_t(slot),
                               tak::ai::Difficulty::Normal, std::move(enemyStarts));
         }

@@ -106,12 +106,12 @@ const Profile& builtinProfile(Difficulty d) {
 
 const char* levelProfileFile(Difficulty d) {
     switch (d) {
-        case Difficulty::Passive: return "ai/d_ai.txt";
-        case Difficulty::Easy: return "ai/e_ai.txt";
-        case Difficulty::Normal: return "ai/n_ai.txt";
-        case Difficulty::Hard: return "ai/h_ai.txt";
-        case Difficulty::Absurd: return "ai/a_ai.txt";
-        case Difficulty::AbsurdlyDefensive: return "ai/ad_ai.txt";
+        case Difficulty::Passive: return "ai/d.txt";
+        case Difficulty::Easy: return "ai/e.txt";
+        case Difficulty::Normal: return "ai/n.txt";
+        case Difficulty::Hard: return "ai/h.txt";
+        case Difficulty::Absurd: return "ai/a.txt";
+        case Difficulty::AbsurdlyDefensive: return "ai/ad.txt";
         default: return nullptr;
     }
 }
@@ -130,17 +130,24 @@ void applyProfileText(std::string_view text, Profile& prof) {
     }
 }
 
-Profile levelProfile(Difficulty d, const tak::hpi::Vfs::Files* gameModFiles, std::string* source) {
+Profile levelProfile(Difficulty d, const tak::hpi::Vfs::Files* gameModFiles,
+                     const tak::hpi::Vfs::Files* mapFiles, std::string* source, bool* fromMap) {
     Profile prof = builtinProfile(d);
     if (source) source->clear();
+    if (fromMap) *fromMap = false;
     const char* file = levelProfileFile(d);
-    if (!file || !gameModFiles) return prof;
-    // Game-mod package keys are already lowercased (MountSet::key), so this is the
-    // case-insensitive lookup every VFS read makes.
-    const auto it = gameModFiles->find(file);
-    if (it == gameModFiles->end()) return prof;
-    applyProfileText(std::string_view(reinterpret_cast<const char*>(it->second.data()), it->second.size()), prof);
-    if (source) *source = file;
+    if (!file) return prof;
+    // Package keys are already lowercased (MountSet::key), so this is the
+    // case-insensitive lookup every VFS read makes. A game mod's file wins.
+    for (const auto* files : {gameModFiles, mapFiles}) {
+        if (!files) continue;
+        const auto it = files->find(file);
+        if (it == files->end()) continue;
+        applyProfileText(std::string_view(reinterpret_cast<const char*>(it->second.data()), it->second.size()), prof);
+        if (source) *source = file;
+        if (fromMap) *fromMap = files == mapFiles;
+        return prof;
+    }
     return prof;
 }
 

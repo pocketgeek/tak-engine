@@ -25,6 +25,7 @@
 // Server-side only (an AI input, never part of the gameplay-data hash).
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -92,5 +93,16 @@ struct ClassicProfileScript { std::string path, text; };
 // (ai/<key>_<variant>.txt) is not tried: no such file ships. The VFS applies
 // retail's archive precedence, so IPData.hpi's default.txt wins.
 ClassicProfileScript classicProfileScript(const tak::hpi::Vfs& vfs, const std::string& key);
+// The same choice over a room's layers, for ai/ files only: each candidate file is
+// taken from the room's game mods (`gameModFiles`), else its map package
+// (`mapFiles`), else `vfs` (the base data) -- a game mod wins over the map, which
+// wins over the base, whatever the view's own precedence for other map content.
+// Both file sets are keyed by lowercased path, or null for none. `layer`, when
+// given, receives where the chosen file came from.
+enum class ClassicProfileLayer : uint8_t { None, Base, GameMods, Map };
+using ClassicFiles = std::map<std::string, std::vector<uint8_t>>;   // == hpi::Vfs::Files
+ClassicProfileScript classicProfileScript(const tak::hpi::Vfs& vfs, const std::string& key,
+                                          const ClassicFiles* gameModFiles, const ClassicFiles* mapFiles,
+                                          ClassicProfileLayer* layer = nullptr);
 
 }  // namespace tak::ai

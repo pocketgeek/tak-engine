@@ -1002,7 +1002,7 @@ namespace {
 // Feature definitions contain simulation keys; cosmetic files must never replace
 // them, even though their art fields also affect presentation. AI profiles are
 // game-mod business too: ai/, which holds retail's profiles and our levels'
-// ai/<x>_ai.txt files (ai/builtinprofile.h).
+// ai/<x>.txt files (ai/builtinprofile.h).
 bool cosmeticKeep(const std::string& p) {
     const auto k=MountSet::key(p);
     return !affectsGameplay(p) && !k.starts_with("features/") && !k.starts_with("ai/");

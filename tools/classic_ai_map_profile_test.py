@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""The Classic AI reads its profile from the room's own data, by normal precedence.
+"""The Classic AI reads its profile from the room's own data: game mod > map > base.
 
 Retail's file choice (ai/<aiprofile>.txt, else ai/default.txt) is looked up in the
-server's view of the room: the base install, then the room's game mods, then its map
-package. Headless --mpai games on Inner Circle, seed 1, the AI seat on Classic:
+room's layers, for ai/ files: a game mod's file wins over the map package's, which
+wins over the base install's. Headless --mpai games on Inner Circle, seed 1, the AI
+seat on Classic (shown to players as DEFAULT):
 
   control   the base install's ai/default.txt; the AI builds the watched units
   game mod  a game pack carrying ai/default.txt that starts `limit <unit> 0` for them
@@ -11,6 +12,8 @@ package. Headless --mpai games on Inner Circle, seed 1, the AI seat on Classic:
   map       the same file inside a single-map archive under Maps/ (Inner Circle's
             map under another name): it travels in the room's map package, and the
             watched units are never built
+  both      that map archive, and a game pack whose ai/default.txt is the base
+            install's: the game mod's file is used, and the watched units are built
 
 The server log names the file and the layer it came from in each game. Last, a
 campaign mission hosted with no settings plays its opponents on Classic over the
@@ -139,11 +142,21 @@ def main():
         banned = [u for u in watched if u in mapped]
         assert not banned, 'the Classic AI built %s despite the map\'s ai/default.txt' % banned
 
+        both_pack = data / 'mods' / 'game' / 'my_ai' / 'ai'
+        both_pack.mkdir(parents=True)
+        (both_pack / 'default.txt').write_bytes(base_profile)
+        both, _, log = play(a, data, root / 'both', settings='mods.gamePack = ' + 'my_ai'.encode().hex() + '\n')
+        assert re.search(r'DEFAULT AI profile ai/default\.txt from the game mods', log, re.I), log
+        assert any(u in both for u in watched), \
+            'the Classic AI built none of %s: the map\'s ai/default.txt won over the game mod\'s (built: %s)' % (
+                watched, sorted(both))
+
         _, _, log = play(a, install(root, a.data, 'mission-data'), root / 'mission', mission='takmission08_dh')
         assert re.search(r"mission 'takmission08_dh' -- \d+ strategic AI player\(s\) profile=\S+ DEFAULT AI \(ai/\S+\.txt\)",
                          log, re.I), log
         print('PASS: Classic reads the room\'s ai/default.txt (base, game mod, map package; %s never built '
-              'from the mod or map file); a campaign mission plays Classic with no settings' % ', '.join(watched))
+              'from the mod or map file; a game mod\'s file wins over the map\'s); a campaign mission plays Classic '
+              'with no settings' % ', '.join(watched))
 
 
 if __name__ == '__main__':

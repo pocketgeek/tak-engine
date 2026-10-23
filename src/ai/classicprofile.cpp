@@ -192,18 +192,37 @@ std::string classicMapAiProfile(const tak::hpi::Vfs& vfs, const std::string& map
 }
 
 ClassicProfileScript classicProfileScript(const tak::hpi::Vfs& vfs, const std::string& key) {
+    return classicProfileScript(vfs, key, nullptr, nullptr);
+}
+
+ClassicProfileScript classicProfileScript(const tak::hpi::Vfs& vfs, const std::string& key,
+                                          const ClassicFiles* gameModFiles, const ClassicFiles* mapFiles,
+                                          ClassicProfileLayer* layer) {
     std::string name = key;
     // 0x53ae10 drops the extension (the last '.' after the last path separator).
     if (const auto dot = name.find_last_of('.');
         dot != std::string::npos && name.find_first_of("/\\", dot) == std::string::npos)
         name.erase(dot);
     ClassicProfileScript out;
+    if (layer) *layer = ClassicProfileLayer::None;
     for (const std::string& path : {name.empty() ? std::string() : "ai/" + name + ".txt",
                                     std::string("ai/default.txt")}) {
         if (path.empty()) continue;
+        const std::string k = tak::hpi::MountSet::key(path);
+        for (auto [files, from] : {std::pair{gameModFiles, ClassicProfileLayer::GameMods},
+                                   std::pair{mapFiles, ClassicProfileLayer::Map}}) {
+            if (!files) continue;
+            const auto it = files->find(k);
+            if (it == files->end()) continue;
+            out.path = path;
+            out.text.assign(it->second.begin(), it->second.end());
+            if (layer) *layer = from;
+            return out;
+        }
         if (auto b = vfs.tryRead(path)) {
             out.path = path;
             out.text.assign(b->begin(), b->end());
+            if (layer) *layer = ClassicProfileLayer::Base;
             return out;
         }
     }

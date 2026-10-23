@@ -3069,16 +3069,17 @@ if(TAK_TEST_DATA)
     add_test(NAME mod_transfer COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/mod_transfer_test.py"
       --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:mod_transfer_test>" --data "${TAK_TEST_DATA}")
     set_tests_properties(mod_transfer PROPERTIES TIMEOUT 150)
-    # A game mod's ai/n_ai.txt rides the real mod transfer to the server's Normal AI
-    # only, and misplaced n_ai.txt files (pack root, cosmetic, base, map) are not read
+    # A game mod's ai/n.txt (the real mod transfer) or the map's (its .kmp, the map
+    # package) reaches the server's Normal AI only, the game mod's winning; misplaced
+    # n.txt files (pack root, cosmetic, base) are not read
     # (ai/builtinprofile.h); needs the debug client's --mphost harness and the roster dump.
     if(TARGET takclient AND CMAKE_BUILD_TYPE STREQUAL "Debug")
       add_test(NAME ai_mod_profile COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/ai_mod_profile_test.py"
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --hpitool "$<TARGET_FILE:hpitool>"
         --data "${TAK_TEST_DATA}")
       set_tests_properties(ai_mod_profile PROPERTIES TIMEOUT 600)
-      # The Classic AI reads ai/default.txt from the room's view: base, game mod, map
-      # package (a single-map archive's own file); a campaign mission plays Classic.
+      # The Classic AI reads ai/default.txt from the room's layers: game mod over map
+      # package (a single-map archive's own file) over base; a mission plays Classic.
       add_test(NAME classic_ai_map_profile COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/classic_ai_map_profile_test.py"
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --hpitool "$<TARGET_FILE:hpitool>"
         --data "${TAK_TEST_DATA}")

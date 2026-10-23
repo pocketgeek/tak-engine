@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""A game mod's ai/n_ai.txt reaches the server's Normal AI through the real mod transfer.
+"""Our levels' ai/n.txt: a game mod's (through the real mod transfer) or the map's (in
+its .kmp, through the room's map package) reaches the server's Normal AI.
 
 Headless all-AI games on AI Circle (Inner Circle's map in a single-map archive under
 Maps/), seed 1, a spectating host: seat 0 Aramon on Easy, seat 1 Taros on Normal.
-Both games tick a game pack, uploaded with the room's game mods and applied by the
-server (the only place the AI runs).
+Every game ticks a game pack, uploaded with the room's game mods and applied by the
+server (the only place the AI runs). Misplaced n.txt files say `limit <unit> 0` for
+the Normal seat's watched units in every game -- at the game pack's root, in a
+cosmetic pack's ai/ and in a base install archive's ai/ -- and are never read.
 
-  control  the pack's ai/n_ai.txt only carries a comment. Every misplaced n_ai.txt
-           says `limit <unit> 0` for the Normal seat's watched units -- at the pack's
-           root, in a cosmetic pack's ai/, in a base install archive's ai/ and in the
-           map archive's ai/ -- and none is read: the Normal AI builds them
-  modded   the pack's ai/n_ai.txt says `limit <unit> 0` for both seats' watched
-           units: the Normal AI never builds its own, the Easy AI still builds its
+  control  the map's ai/n.txt bans the Normal seat's watched units, but the game
+           pack's ai/n.txt (a comment only) wins over it: the Normal AI builds them
+  map      the game pack has no ai/n.txt; the map's bans both seats' watched units:
+           the Normal AI never builds its own, the Easy AI still builds its
+  modded   the game pack's ai/n.txt bans both seats' watched units (the map's says
+           nothing): the same
 """
 import argparse
 import json
@@ -43,8 +46,9 @@ def pack(hpitool, folder, out):
     subprocess.run([str(hpitool), 'pack', str(folder), str(out)], check=True, capture_output=True)
 
 
-def install(a, root, name, n_ai):
-    """A scratch install over the real one, with the game pack my_ai and the decoys."""
+def install(a, root, name, mod_n, map_n):
+    """A scratch install over the real one, with the game pack my_ai and the decoys.
+    mod_n / map_n: the game pack's / the map archive's ai/n.txt (None = no such file)."""
     target = root / name
     target.mkdir()
     jersey = None
@@ -63,34 +67,37 @@ def install(a, root, name, n_ai):
             for m in f.iterdir():
                 (maps / m.name).symlink_to(m)
     decoy = ban(WATCHED[NORMAL_SEAT])
-    # The base install: a root archive that also carries ai/n_ai.txt.
+    # The base install: a root archive that also carries ai/n.txt.
     base = root / (name + '-jersey')
     subprocess.run([str(a.hpitool), 'extract', str(jersey), str(base)], check=True, capture_output=True)
     (base / 'ai').mkdir()
-    (base / 'ai' / 'n_ai.txt').write_text(decoy)
+    (base / 'ai' / 'n.txt').write_text(decoy)
     pack(a.hpitool, base, target / jersey.name)
-    # The map: Inner Circle under another name, its archive carrying ai/n_ai.txt.
+    # The map: Inner Circle under another name, its archive maybe carrying ai/n.txt.
     kmp = root / (name + '-kmp')
     (kmp / 'kmap').mkdir(parents=True)
-    (kmp / 'ai').mkdir()
-    (kmp / 'ai' / 'n_ai.txt').write_text(decoy)
+    if map_n is not None:
+        (kmp / 'ai').mkdir()
+        (kmp / 'ai' / 'n.txt').write_text(map_n)
     for ext in ('.tnt', '.ota'):
         (kmp / 'kmap' / (MAP + ext)).write_bytes(hpi_read(a.hpitool, a.data, 'maps/Inner Circle' + ext))
     pack(a.hpitool, kmp, maps / (MAP + '.kmp'))
-    # The game pack: its ai/n_ai.txt is the one file read; a root n_ai.txt is not.
+    # The game pack: only its ai/n.txt is a level file; a root n.txt is not.
     game = target / 'mods' / 'game' / 'my_ai'
-    (game / 'ai').mkdir(parents=True)
-    (game / 'ai' / 'n_ai.txt').write_text(n_ai)
-    (game / 'n_ai.txt').write_text(decoy)
+    game.mkdir(parents=True)
+    if mod_n is not None:
+        (game / 'ai').mkdir()
+        (game / 'ai' / 'n.txt').write_text(mod_n)
+    (game / 'n.txt').write_text(decoy)
     # A cosmetic pack's ai/ never reaches a game.
     skin = target / 'mods' / 'cosmetic' / 'skin' / 'ai'
     skin.mkdir(parents=True)
-    (skin / 'n_ai.txt').write_text(decoy)
+    (skin / 'n.txt').write_text(decoy)
     return target
 
 
-def play(a, root, name, n_ai):
-    data = install(a, root, name, n_ai)
+def play(a, root, name, mod_n, map_n):
+    data = install(a, root, name, mod_n, map_n)
     work = root / (name + '-run')
     work.mkdir()
     roster = work / 'roster.jsonl'
@@ -145,27 +152,37 @@ def main():
     p.add_argument('--verbose', action='store_true')
     a = p.parse_args()
     a.data = a.data.resolve()
-    adjusted = "AI level 2 plays the built-in profile adjusted by the game mods' ai/n_ai.txt"
+    from_mod = "AI level 2 plays the built-in profile adjusted by the game mods' ai/n.txt"
+    from_map = "AI level 2 plays the built-in profile adjusted by the map package's ai/n.txt"
+    nothing = '// a Normal profile that changes nothing\n'
+    both = ban(WATCHED[EASY_SEAT] + WATCHED[NORMAL_SEAT])
+
+    def obeyed(built, name):
+        banned = [u for u in WATCHED[NORMAL_SEAT] + WATCHED[EASY_SEAT] if u in built.get(NORMAL_SEAT, set())]
+        assert not banned, 'the Normal AI built %s despite the %s ai/n.txt' % (banned, name)
+        missing = [u for u in WATCHED[EASY_SEAT] if u not in built.get(EASY_SEAT, set())]
+        assert not missing, 'the Easy AI stopped building %s: only Normal reads ai/n.txt' % missing
+
     with tempfile.TemporaryDirectory(prefix='tak-ai-mod-') as tmp:
         root = Path(tmp)
-        control, log = play(a, root, 'control', '// a Normal profile that changes nothing\n')
-        assert adjusted in log, log
+        control, log = play(a, root, 'control', nothing, ban(WATCHED[NORMAL_SEAT]))
+        assert from_mod in log, log
         assert log.count(' plays the built-in profile adjusted') == 1, log   # Normal only
         for seat, units in WATCHED.items():
             missing = [u for u in units if u not in control.get(seat, set())]
             assert not missing, 'the control game\'s seat %d never built %s (built: %s)' % (
                 seat, missing, sorted(control.get(seat, set())))
-        modded, log = play(a, root, 'modded', ban(WATCHED[EASY_SEAT] + WATCHED[NORMAL_SEAT]))
-        assert adjusted in log, log
+        mapped, log = play(a, root, 'map', None, both)
+        assert from_map in log, log
         assert log.count(' plays the built-in profile adjusted') == 1, log
-        banned = [u for u in WATCHED[NORMAL_SEAT] + WATCHED[EASY_SEAT] if u in modded.get(NORMAL_SEAT, set())]
-        assert not banned, 'the Normal AI built %s despite the mod\'s ai/n_ai.txt' % banned
-        missing = [u for u in WATCHED[EASY_SEAT] if u not in modded.get(EASY_SEAT, set())]
-        assert not missing, 'the Easy AI stopped building %s: only Normal reads ai/n_ai.txt' % missing
-        print('PASS: ai/n_ai.txt travels with the game mods to the Normal seat only (it never built %s; '
-              'Easy still built %s); root, cosmetic, base install and map n_ai.txt are not read'
-              % (', '.join(WATCHED[NORMAL_SEAT]), ', '.join(WATCHED[EASY_SEAT])))
-
+        obeyed(mapped, "map's")
+        modded, log = play(a, root, 'modded', both, nothing)
+        assert from_mod in log, log
+        assert log.count(' plays the built-in profile adjusted') == 1, log
+        obeyed(modded, "mod's")
+        print('PASS: ai/n.txt from the game mods or the map package reaches the Normal seat only (it never '
+              'built %s; Easy still built %s); a game mod\'s wins over the map\'s; root, cosmetic and base '
+              'install n.txt are not read' % (', '.join(WATCHED[NORMAL_SEAT]), ', '.join(WATCHED[EASY_SEAT])))
 
 if __name__ == '__main__':
     main()
