@@ -298,7 +298,7 @@ scenario.
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
 | **Absurd** | Plays like Hard, with **double mana income**. |
 | **Absurdly Defensive** | Plays like Defensive, with Absurd's **double mana income**. |
-| **Classic** | **In development, not playable yet.** It will play as the original game's own computer player does, without a difficulty setting or any income bonus. For now it does nothing: its Monarch stands idle. |
+| **Classic** | The original game's own computer player, as it played in 1999. No difficulty setting and no income bonus. Weaker than Normal. See [Classic](#classic). |
 
 At every difficulty except Classic, the AI's Monarch fights back when it is attacked, or when
 an armed enemy comes within its reach, instead of carrying on with a build.
@@ -326,6 +326,33 @@ builders building income rather than leaving them idle.
 
 The AI runs on the game server, never in your client. In single-player, the game
 starts a private server on your own computer for you.
+
+#### Classic
+
+Classic is the original game's computer player. Every decision it makes (what to
+build, where to put it, which units guard the base, when a wave leaves and what
+it marches on) follows the 1999 game's own AI, which was read from the original
+program and checked against it piece by piece
+([acceptance](classic-ai-acceptance.md)). So it plays the way the original did,
+quirks included:
+
+- It builds from the map's **AI profile**, the file the map names
+  (`ai/default.txt` for every shipped skirmish map and campaign mission). That
+  file only switches units on or off and sets how many of each it may have; the
+  AI picks at random among what its builders can make, favouring what it is
+  short of.
+- It has no difficulty setting and no income bonus.
+- It is **weaker than Normal**. It builds a few lodestones at a time and often
+  runs low on mana; a **Taros** Classic AI in particular can grow slowly.
+- Its base defenders patrol around the base and walk through intruders; its
+  attack waves walk to their target and fight on the way and when they arrive.
+  It knows where your units are even when it cannot see them, and prefers your
+  lodestones and mana buildings as targets.
+- Its Monarch keeps building only while the base is short of builders, and runs
+  for a safe spot when badly hurt instead of fighting back.
+
+Classic can also play the campaign's computer opponents: see
+[Campaigns](#campaigns).
 
 ### Random maps
 
@@ -1893,6 +1920,8 @@ In the book:
 - Choose a campaign tab, then use the page arrows, **Left/Right** or
   **Page Up/Page Down** to browse chapters.
 - **Home/End** jumps to the first or last chapter. **Tab** switches campaigns.
+- **A** (or a click on the **Opponent AI** line) switches the computer
+  opponents between Normal and Classic.
 - **Enter** plays the selected chapter. **Escape** returns to the menu.
 - Every chapter can be selected, including the *Iron Plague* alternate ending.
 
@@ -1911,6 +1940,13 @@ mission. The mouse wheel and **Up/Down** scroll long briefings. During play,
 
 When you win, **Next** goes to the next chapter and **Retry** replays this one.
 Campaigns always use Retail pathfinding.
+
+**Opponent AI**, on the left page of the book, chooses who plays the missions'
+computer players: **Normal** (the default) or **Classic**, the original game's
+own AI (see [Classic](#classic)), which plays a mission as the 1999 game did,
+including the timed mass attack some *Iron Plague* missions set. Click the line,
+or press **A**, to switch; the choice is remembered (`campaignAi` in
+`settings.ini`) and applies from the next mission you start.
 
 You always play the mission's first player, as in the original game, even where
 the mission file describes that player as a computer opponent (*The Iron Plague*
