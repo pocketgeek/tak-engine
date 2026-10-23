@@ -1,8 +1,15 @@
 # Classic AI level: retail AI synthesis and implementation plan
 
-**Status:** P0 (plumbing) landed on `task-classic-ai` (protocol 290): `Difficulty::Classic` = 6,
-the lobby's CLASSIC entry, and a `ClassicBrain` stub (`src/ai/classicbrain.{h,cpp}`) that takes
-every tick and does nothing yet, so a Classic Monarch idles. P1 onward is open.
+**Status:** P0 and phase C are on `task-classic-ai` (not yet on main). P0 (plumbing, protocol
+290): `Difficulty::Classic` = 6, the lobby's CLASSIC entry, and a `ClassicBrain` stub
+(`src/ai/classicbrain.{h,cpp}`) that takes every tick and does nothing yet, so a Classic Monarch
+idles. Phase C (comparison harness): `tools/re/retail_ai_harness.py`, `retail_ai_poll.py`,
+`tak_ai_run.py`, `compare_ai.py` and `README-retail-ai.md`, plus a debug-only takserver roster
+dump (`TAK_ROSTER_DUMP`, `src/server/rosterdump.{h,cpp}`). C's self-test gate as written in §5 is
+not met: plain `-AutoStop` re-seeds retail every tick (every seed plays the same game), so the
+harness turns that off at tick 1, and after that same-seed retail runs agree only until the first
+building is placed. A seed varies retail runs but cannot replay one; fidelity is judged on
+distributions only. Baseline retail distributions and P1 onward are open.
 
 2026-10-22. The research behind this plan (the phase-1 audit) was written before any code. The new
 level is called **Classic** (lobby name CLASSIC, `Difficulty::Classic`, `ClassicBrain`); "retail"
