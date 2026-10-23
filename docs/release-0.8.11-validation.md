@@ -3,7 +3,7 @@
 Protocol **290** (was 289), replay format **14**, generator version **9**,
 campaign payload **4**, database schema **9**.
 
-TODO-LEAD: Tagged `v0.8.11` at `<sha>` (annotated tag object `<obj>`) and published on `<date> <time> UTC`.
+Tagged `v0.8.11` at `ab9e6c40` (annotated tag object `24212a13`) and published on 2026-10-23 15:00 UTC.
 
 ## Scope and compatibility
 
@@ -126,8 +126,24 @@ without a Classic seat. The registry change in `src/sim/sim.cpp` only keeps
 variant FBI files in a Classic-only side table that nothing in the sim reads;
 `setupMission` additionally hands back each slot's Player line. `--mpai`
 Inner Circle seed 1 is unchanged from 0.8.10 at 60 s and 300 s in both modes
-(see the local checks). TODO-LEAD: `--mpai` on Windows and macOS (optimized
-Debug builds of the tag), or state that it was not run this release.
+(see the local checks).
+
+`--mpai` on Windows and macOS was run on optimized Debug builds (`-O2`) of the
+tag `ab9e6c40`, built on oden-win (MSYS2 MINGW64, GCC) and on the arm64
+MacBook (Apple Clang). The settings were Inner Circle, `takserver --local
+--no-auth --seed 1`, a scratch profile, `TAK_LEGION=1` for Legion and
+`TAK_AI_LEVEL=6` for DEFAULT. All ten games ended `err=none end=timelimit`
+and match Linux on both hosts:
+- Retail: 60 s `b353410003e98dd5` (4 units), 300 s `a3d953803a064191`
+  (13 units).
+- Legion: 60 s `0825aeb9e8139203` (4 units), 300 s `ce5c4ba7562e53b9`
+  (18 units).
+- DEFAULT: 60 s `14849c00bc6e2a19` (4 units). Each host's server logged
+  `DEFAULT AI profile ai/DEFAULT.txt from the base data`.
+
+Neither host logged a desync or referee-suspect line. The tag's dispatched
+Determinism run (39966281528) runs no `--mpai` game. Its cross-build check
+agrees on golden `dcef618cd2e4d558`.
 
 **Compatibility.** `kNetVersion` is **290** in `src/net/protocol.h` at
 `d86d5904` (289 at `v0.8.10`). `kReplayFormat` is **14** in
@@ -293,15 +309,146 @@ not published", the known flake; `gh run rerun --failed`); Determinism (sim)
 `src/sim` (`dc4a78e0` is docs only, so the path-filtered workflow did not run on
 it). Earlier main heads' runs that were superseded by later pushes were cancelled.
 
-TODO-LEAD: tag CI (Determinism dispatched on the tag, Linux, Windows, macOS
-with Sign + notarize) and the asset checks as in 0.8.10: 29 assets, digests
-and sizes, build ids `v0.8.11`, Windows Authenticode (9 files), macOS
-notarization and stapling, no new `NEEDED` entries, Opus static, licence
-files, no `mods/`/`overrides/`/`click.hpi`, microphone entitlement, Retina
-flag, MP4 muxer still present; `docs/release-0.8.11-notes.md` and this report
-in the tree at the tag with `kNetVersion` 290.
+On the exact tag (`ab9e6c40`, annotated tag object `24212a13`), all four
+workflows passed on the first attempt, with no reruns and no force-cancels.
+The duplicate main-CI runs for the same commit (39966239634, 39966239336,
+39966239286) were cancelled as duplicates of the tag runs.
 
-TODO-LEAD: publication line (`gh release edit v0.8.11 --draft=false --latest`).
+- [Determinism and core tests](https://github.com/pocketgeek/tak-engine/actions/runs/39966281528):
+  started manually on the tag because the workflow is path-filtered.
+  `unit-tests` (8/8), `detmath` and `sim-equiv` passed. The GCC and Clang
+  x86-64 builds at O0/O2/O3 all agree on golden `dcef618cd2e4d558`, the same as
+  0.8.10. This workflow runs no `--mpai` game.
+- [Linux](https://github.com/pocketgeek/tak-engine/actions/runs/39966271088):
+  all 16 native package jobs and the release attachment, first attempt.
+- [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/39966270956):
+  x64, ARM64 and the x64 signing/package job, first attempt.
+- [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/39966271219):
+  both builds plus the **Sign + notarize** job for each architecture, first
+  attempt. That job replaced the unsigned macOS ZIPs and DMGs in the draft
+  with signed, notarized and stapled ones (14:38 UTC).
+
+The release was created as a draft with these notes, and tagged CI attached
+the packages. All **29 assets** were downloaded after the macOS signing
+finished.
+- They are the same set as 0.8.10 with the version swapped. None has size 0 or
+  an upload state other than "uploaded". Each one matched GitHub's SHA-256
+  digest and byte size before publication.
+- Every release asset is 0.39% to 0.92% larger than its 0.8.10 counterpart
+  (+93 KB to +261 KB). The debug archives grew 1.13% to 2.19% (+308 KB to
+  +2.7 MB), almost all of it the debug `takserver`.
+- The release `takserver` grew by 233 KB to 340 KB, which is the Classic
+  (DEFAULT) AI that runs server-side. The release `takclient` grew by 2 KB to
+  35 KB.
+- There are no new dependencies. Debian and Ubuntu packages still depend only
+  on `libc6`, RPMs require only libc, libm and the loader, and the Windows x64
+  import tables are identical to 0.8.10's.
+- Each package, installer and ZIP ships the same file list as its 0.8.10
+  counterpart (no file added or removed), and the DMGs hold the same two apps
+  and `Applications` link.
+
+- **Build ids.** The client and server in every Linux package carry
+  `v0.8.11`. That covers Debian 12 and 13, Ubuntu 22.04, 24.04 and 26.04,
+  Fedora 44 and openSUSE Leap 16.0 (each for both architectures), plus Arch,
+  Slackware and both Linux debug tarballs. Installer, DMG and ZIP names carry
+  `0.8.11`.
+  - On Linux, the x86-64 `takclient` and `takserver` report
+    `0.8.11 (build v0.8.11)`. That holds for Debian 12 and 13, Ubuntu 22.04,
+    24.04 and 26.04, Fedora 44, openSUSE Leap 16.0, Slackware and the x64
+    debug tarball. So does the Arch `takserver`. The Arch `takclient` needs
+    glibc 2.44, newer than the checking host's 2.43, so only its build string
+    was checked. For the arm64 binaries, only the build string `v0.8.11` was
+    checked.
+  - On Windows 11, the x64 Windows ZIP's `takclient.exe` and `takserver.exe`
+    report `0.8.11 (build v0.8.11)`. For the ARM64 `takclient.exe` and
+    `takserver.exe`, and for the installer's, only the build string `v0.8.11`
+    was checked.
+  - On the arm64 MacBook, `takclient` and `takserver` report
+    `0.8.11 (build v0.8.11)` for both architectures. This holds for the bare
+    programs from the ZIPs, for the copies inside the game app from each DMG
+    and each ZIP, and for the debug ZIPs' `takclient`. The x64 copies ran
+    under Rosetta.
+- **Windows signatures.** `Get-AuthenticodeSignature` on oden-win reports
+  **Valid** (CN=Curtis Edge, timestamped) for 9 signed files, the same count
+  as 0.8.10. They are the setup `.exe`, plus `takclient.exe`, `takserver.exe`,
+  `cartographer.exe` and `crusades_admin.exe` in both the x64 and ARM64 ZIPs.
+  The debug ZIPs were not checked.
+- **macOS notarization.** On the MacBook, both DMGs pass `xcrun stapler
+  validate` and `spctl` (open, primary signature) as **accepted,
+  source=Notarized Developer ID, origin=Developer ID Application: Curtis Edge
+  (L479Y59RN8)**.
+  - Both apps (the game and TAK Cartographer) pass both checks the same way,
+    from each DMG and from each ZIP, and pass `codesign --verify --strict
+    --deep`.
+  - Every bare ZIP `takclient`, `takserver`, `cartographer` and
+    `crusades_admin` passes `codesign --verify --strict` (TeamIdentifier
+    L479Y59RN8). `spctl` says those bare programs do not seem to be an app,
+    which is expected for unstapled command-line tools.
+- **Packaged server runs the DEFAULT AI.** The Fedora 44 x86-64 RPM's
+  `takserver` (extracted, reporting `0.8.11 (build v0.8.11)`) was started on
+  the Linux checking host against the retail install. The flags were
+  `--data <retail> --local --no-auth --seed 1` on a loopback-only scratch
+  port, with a scratch `HOME` and `XDG_DATA_HOME`.
+  - One headless harness client from the `-O2` Debug build of the tag source
+    joined it with `TAK_AI_LEVEL=6 --mpai --time 60` on Inner Circle.
+  - The server logged `game 1: DEFAULT AI profile ai/DEFAULT.txt from the base
+    data`, and the game ended `hash=14849c00bc6e2a19 units=4 err=none
+    end=timelimit`. That is the Linux DEFAULT 60 s hash.
+  - No desync or referee-suspect line appeared.
+- **Streaming local copy in packages.** Every shipped `takclient` contains
+  FFmpeg's MP4 muxer: all 29 copies in the Linux packages and tarballs, the
+  Windows installer and ZIPs, and the macOS ZIPs and debug ZIPs, plus the game
+  apps from both DMGs.
+  - Each has the muxer's `video/mp4` MIME string and the `frag_keyframe`
+    movflags option, next to the FLV muxer's `video/x-flv`.
+  - Functionally, the tag CI's "Streaming encode test" ran `stream_test` on
+    all 16 Linux package jobs and on the Windows x64, Windows ARM64, macOS x64
+    and macOS arm64 builds.
+  - Each run wrote a fragmented local copy (`2 fragments, video 57-76 samples
+    2.52-2.56s, audio 2.53-2.55s`). No run printed the `SKIP local copy` line.
+- **Opus is static.**
+  - No packaged Linux `takclient` or `takserver` has a `NEEDED` entry beyond
+    libc, libm and the loader (Slackware also lists libdl and libpthread), so
+    none needs libopus.
+  - No Windows `.exe` imports or names an Opus DLL, and the ZIPs ship no DLLs
+    (the installer has only its NSIS plugin DLLs).
+  - No macOS binary links a libopus dylib (`otool -L`).
+  - `OPUS-LICENSE.txt` is in every Debian, RPM, Arch and Slackware package, in
+    both Linux debug tarballs, in the Windows installer, in all four release
+    ZIPs (inside the game app's Resources on macOS) and in the four debug
+    ZIPs.
+- **Font licences.** `CHAT-FONT-LICENSE.txt` sits beside
+  `EDITOR-FONT-LICENSE.txt` in every place the game ships:
+  - every Debian, RPM, Arch and Slackware package (`share/licenses/tak-engine`)
+    and both Linux debug tarballs;
+  - the Windows installer, both Windows release ZIPs and both Windows debug
+    ZIPs;
+  - both macOS debug ZIPs;
+  - the game app's `Contents/Resources` from both DMGs and both ZIPs.
+
+  As in 0.8.10, TAK Cartographer's app has only `EDITOR-FONT-LICENSE.txt`,
+  which covers its Noto Sans Mono editor font.
+- **Mods folder.** No package, installer, ZIP, DMG or app contains an
+  `overrides/` or `mods/` directory, and none contains `click.hpi`.
+- **macOS microphone.** The game app's `Info.plist` carries
+  `NSMicrophoneUsageDescription` in both DMGs and both ZIPs. The
+  `com.apple.security.device.audio-input` entitlement is on the game app's
+  `takclient` (DMG and ZIP, both architectures) and on the bare ZIP
+  `takclient`. It is absent from `takserver`, `crusades_admin` and
+  `cartographer`.
+- **macOS Retina.** `NSHighResolutionCapable` is `true` in the `Info.plist` of
+  both apps, from both DMGs and both ZIPs.
+- As in 0.8.1 to 0.8.10, no packaged Linux `takclient` has a `NEEDED` entry
+  for libsecret, GLib, GIO or GObject.
+- `docs/release-0.8.11-notes.md`, this report, `docs/classic-ai-acceptance.md`
+  and `docs/img/campaign.jpg` are in the source tree at the tag. `kNetVersion`
+  there is 290.
+- Every `blob/v0.8.11/docs/...` link in the release body resolves to a file at
+  the tag, including the four `user-guide.md` section anchors. The files are
+  `classic-ai-acceptance.md`, `classic-ai-plan.md`,
+  `release-0.8.11-validation.md` and `user-guide.md`.
+
+Published with `gh release edit v0.8.11 --draft=false --latest` on 2026-10-23 15:00 UTC; it is the latest release, with 29 assets.
 
 ## Screenshots
 
@@ -363,4 +510,6 @@ pictures were checked again: none shows level 6, so none was retaken.
   published" (known flake; passed on rerun).
 - Local full suite: `ai_mod_profile` load timeout beside the Legion scenario tests
   (passed alone in 56 s).
-- TODO-LEAD: flakes seen in tag CI, if any.
+- Tag CI: no flakes. All four workflows passed on the first attempt with no
+  reruns or force-cancels. None of the known flakes appeared, and no setup
+  step hung.
