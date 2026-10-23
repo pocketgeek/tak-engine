@@ -156,6 +156,10 @@ public:
     // Reads `world` (never mutates it) and emits any orders through `sink`.
     void tick(const tak::sim::World& world, uint32_t simTick, const CommandSink& sink);
 
+    // Read-only identity, for the debug roster dump (server/rosterdump.h).
+    int player() const { return player_; }
+    Difficulty difficulty() const { return diff_; }
+
 private:
     friend struct PlacementProbe;
     std::vector<std::pair<float,float>> plannedManaSites_; // reservations until emitted orders reach the world

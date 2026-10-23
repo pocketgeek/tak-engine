@@ -57,8 +57,10 @@ def target_pid(requested):
 def runtime_for(pid):
     proc = Path(f"/proc/{pid}")
     executable = os.readlink(proc / "exe")
-    marker = "/files/bin/"
-    if marker not in executable:
+    # Proton's wine preloader lives in files/bin/ (older builds) or in
+    # files/lib/wine/<arch>-unix/ (umu + Proton-CachyOS and newer).
+    marker = next((m for m in ("/files/bin/", "/files/lib/") if m in executable), None)
+    if marker is None:
         raise RuntimeError(f"game process does not appear to use Proton: {executable}")
     proton = Path(executable.split(marker, 1)[0]) / "proton"
     if not proton.is_file():

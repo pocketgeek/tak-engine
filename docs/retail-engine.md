@@ -636,6 +636,31 @@ Still deviating:
   off-map cell's height 0 plus cruisealt), and its velocity kernel keeps the
   vertical control that `4dab71` skips for an off-map unit.
 
+## Benchmark switches and RNG seeding (icd, 2026-10-22)
+
+Found while building the retail AI comparison harness (`tools/re/README-retail-ai.md`).
+- **`-AutoStop[=N]`** (parser 0x524f60, argument cached at 0x6411cc, default 60). At
+  start-up it latches an "unpaced" flag (0x641806). With that flag set, each frame
+  advances by a fixed frame time (0x6411a4) instead of the measured one, and the
+  game runs as fast as it can. While N is non-zero, the per-tick step (0x526310)
+  reseeds both the game RNG (0x535d30: `(seed ^ 0x66e29572) | 1` into 0x64186c) and
+  the C runtime's `srand` with 1234 before every tick. After N wall seconds it writes
+  `c:\TAKTimings.txt` and quits. Without the switch, the game seeds once at start from
+  QueryPerformanceCounter (0x527060) and never reseeds.
+- **`-LockRatio=N`** (0..5, default 2, 0x525fd0) is the fixed frame time used when
+  unpaced. The console command `+lockupdates [1..5]` (0x426050) sets the same value
+  and the unpaced flag at run time.
+- Clearing the cached N after start keeps the unpaced ticks and stops the reseeding.
+  The harness does that at a tick boundary and writes its own seed.
+- Retail's sim also draws from the C runtime's `rand` (129 call sites; one is a
+  `random_shuffle` at 0x4d44a0). Inferred: the entity slot a new building gets
+  follows that stream. With the per-tick reseed, slots repeat across runs and
+  seeds. Without it they differ from run to run, even for runs made one after
+  another, so something consumes the stream a varying number of times. As a
+  result, same-seed games drift apart once the first building is placed. Game
+  speed also changes the sim: the same seed at speed 0 and at +10 diverges within
+  10 s.
+
 ## Ship / no-walk mover animation (icd + COB, 2026-09-10)
 
 Ships have no `walk` script. The engine drives them with the **`MoveRate`**

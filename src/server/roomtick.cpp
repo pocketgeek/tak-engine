@@ -1,4 +1,5 @@
 #include "server/roomtick.h"
+#include "server/rosterdump.h"
 #include "ai/ai.h"
 #include "sim/matchsetup.h"
 #include <algorithm>
@@ -33,6 +34,9 @@ TickResult simulateRoomTick(sim::World& world,const sim::TypeRegistry& registry,
     for(const auto& command:input.commands)sim::applyCommand(world,registry,command);
     for(const auto& event:input.events)sim::applyEvent(world,event);
     world.tick(1.0f/kServerHz);
+#ifndef NDEBUG
+    rosterDump(input.roomId,world,controllers);
+#endif
     if(input.tick%uint32_t(kHashPeriod)==0) {
         result.hash=world.stateHash();
         if((input.tick/uint32_t(kHashPeriod))%10==0)result.posDigest=world.posDigest();
