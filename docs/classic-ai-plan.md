@@ -1,15 +1,18 @@
 # Classic AI level: retail AI synthesis and implementation plan
 
-**Status:** P0 and phase C are on `task-classic-ai` (not yet on main). P0 (plumbing, protocol
+**Status:** P0, phase C, P1 and P2 are on `task-classic-ai` (not yet on main). Since 2026-10-22 the
+retail game is no longer run: each routine is checked by an emulation oracle and our own game tests
+(§5); phase C stays as optional tooling. P0 (plumbing, protocol
 290): `Difficulty::Classic` = 6, the lobby's CLASSIC entry, and a `ClassicBrain` stub
 (`src/ai/classicbrain.{h,cpp}`) that takes every tick and does nothing yet, so a Classic Monarch
 idles. Phase C (comparison harness): `tools/re/retail_ai_harness.py`, `retail_ai_poll.py`,
 `tak_ai_run.py`, `compare_ai.py` and `README-retail-ai.md`, plus a debug-only takserver roster
-dump (`TAK_ROSTER_DUMP`, `src/server/rosterdump.{h,cpp}`). C's self-test gate as written in §5 is
-not met: plain `-AutoStop` re-seeds retail every tick (every seed plays the same game), so the
+dump (`TAK_ROSTER_DUMP`, `src/server/rosterdump.{h,cpp}`); its teardown no longer leaks the
+display-holder (ctest `retail_ai_harness_teardown`). C's original self-test gate (two same-seed
+retail runs give the same build sequence) cannot be met: plain `-AutoStop` re-seeds retail every tick (every seed plays the same game), so the
 harness turns that off at tick 1, and after that same-seed retail runs agree only until the first
-building is placed. A seed varies retail runs but cannot replay one; fidelity is judged on
-distributions only. P1 (profile) is on the branch too: `src/ai/classicprofile.{h,cpp}` bakes
+building is placed. A seed varies retail runs but cannot replay one (U9), which is one reason
+whole-game retail runs are no longer a gate. P1 (profile) is on the branch too: `src/ai/classicprofile.{h,cpp}` bakes
 retail's pref/limit tables from the map's `aiprofile` file (server-side, read once per game), checked
 by `classic_ai_test` and by `tools/re/check_ai_profile.py`, which runs retail's own script executor
 over random scripts (8000 scripts, 0 mismatches). Notes from that oracle: retail's tokenizer also ends
@@ -28,8 +31,7 @@ renamed, so no existing caller changes). A debug-only `TAK_CLASSIC_WEIGHTS` dump
 PrintWeights' layout. All 20 captured retail PrintWeights tables (5 factions) are reproduced exactly,
 pref, limit and priority, without running retail (U11: `tools/re/check_ai_printweights.py`, opt-in
 ctest `classic_ai_printweights`); that check found and fixed the creation pass's inputs and retail's
-`tarnecr2` table entry. The brain still issues no command. Baseline retail distributions and P3 onward
-are open.
+`tarnecr2` table entry. The brain still issues no command. P3 onward are open.
 
 2026-10-22. The research behind this plan (the phase-1 audit) was written before any code. The new
 level is called **Classic** (lobby name CLASSIC, `Difficulty::Classic`, `ClassicBrain`); "retail"
@@ -333,19 +335,19 @@ defensiveAi; and the Controller LCG.
 ## 3. Open unknowns and how to resolve each
 | ID | Unknown | Matters for | How to resolve |
 |---|---|---|---|
-| U1 | Mission class bytes 1/2 (attack-type), 7; flags 0x2000 (idle-ish), 0x10000 (interruptible), 8 (build), 0x200/0x400 | contact test, 1/50 re-plan, busy builders | Read the mission descriptor table (0x4df87c, getter 0x4d4cc0 -> +0x10) statically. Live-poll the missions of retail units while they patrol, attack and build (comparison poller + mission pointer). Then write a mapping table to our `Order` kinds and `autoTarget` |
+| U1 | Mission class bytes 1/2 (attack-type), 7; flags 0x2000 (idle-ish), 0x10000 (interruptible), 8 (build), 0x200/0x400 | contact test, 1/50 re-plan, busy builders | Read the mission descriptor table (0x4df87c, getter 0x4d4cc0 -> +0x10) statically, and emulate the mission constructors the AI calls to see which class bytes and flags they set (no retail run). Then write a mapping table to our `Order` kinds and `autoTarget` |
 | U2 | Whether the 1/50 guard at the end of 0x40c890 can replace the build just issued | builders abandoning sites | Emulate 0x40c890 -> 0x40d370 with 0x4d78a0 instrumented (the planner emulation); check 0x4d78a0's replace/queue argument |
 | U3 | Factory guard byte at 0x604914 (which mission counts as "busy factory") | duplicate-factory rule | Read the data at 0x604914 and match it against the mission table (static, minutes) |
-| U4 | Confirm that `[player+0x10c]+8` is the allocation (min(1, stored/demand)), not stored/capacity | lowFunds 0.7 gate, factory 0.2333 gate | Live poll in retail during heavy construction: compare +8 with +0/+4 and with demand. Or emulate 0x51d837's store |
+| U4 | Confirm that `[player+0x10c]+8` is the allocation (min(1, stored/demand)), not stored/capacity | lowFunds 0.7 gate, factory 0.2333 gate | Emulate 0x51d837's store (and the economy step that calls it) on synthetic stores and demands |
 | U5 | Expansion gate details 0x40b5c0..0x40b695; units of the "radius 50" in 0x411ae0 for the enemy check | expansion frequency | Static read, then emulate 0x40bc20 on synthetic sites/enemies (new check_ai_expand) |
-| U6 | Unit `+0x130 & 0x2000` (excluded from threats and targets) and `+0x104` (must be 0 for a member) | filters | Find the setters by xref; live-poll units that carry them (I: dying/being-built-by-transport, or teleporting) |
+| U6 | Unit `+0x130 & 0x2000` (excluded from threats and targets) and `+0x104` (must be 0 for a member) | filters | Find the setters by xref and read them statically; emulate a setter where the static reading is unclear (I: dying/being-built-by-transport, or teleporting) |
 | U7 | List +0x25 (enemies with +0x130 0x100) used when the AI owns an `istargetingupgrade` unit | defence candidates | `tdftool` grep shipped FBIs for istargetingupgrade. If none ship, ignore it |
-| U8 | Where the AI meets the unit cap (not in the planner) | late-game behaviour | Static: the build/queue path 0x429810 and 0x4d78a0 for a cap check; live test near cap |
-| U9 | Whether `-AutoStop` + a GDB seed poke gives tick-identical retail games per seed | comparison noise floor | GDB tick-boundary capture (the existing capture-reload script) on two runs |
+| U8 | Where the AI meets the unit cap (not in the planner) | late-game behaviour | Static: the build/queue path 0x429810 and 0x4d78a0 for a cap check; emulate the check; a Classic game test near the cap |
+| U9 | Whether `-AutoStop` + a GDB seed poke gives tick-identical retail games per seed | comparison noise floor | **SETTLED (no):** with `-AutoStop`'s per-tick reseed off, same-seed runs diverge from about tick 180-300 (the first building's entity slot follows the unseeded C-runtime `rand`); with it on, every seed plays one game. Retail games are no longer run (§5) |
 | U10 | Our `visibleEnemies` excludes `underConstruction` enemies; retail's list +5 excludes 0x2000 instead | threat test, defence | Confirm what retail does with unfinished enemy buildings in list +5 (static 0x411700). If retail includes them, the Classic brain filters its own copy (not the sim list, which is hashed) |
 | U11 | A live weight debug print vs our `retailBuildPriority` (e.g. why the mana building shows no lodestone +60) | priority fidelity | **RESOLVED (E, no retail run):** `tools/re/check_ai_printweights.py` reads the 20 captured PrintWeights dumps (5 factions x 4 ticks, Abnar's Terrace) and the manager polls around them. All 1176 rows match: pref 1176/1176, limit 1176/1176, priority 1176/1176, and every dump is reproduced exactly by our port (classic_ai_test --printweights: the brain's type facts, profile limits and priority pass over retail's table) from the polled state and seed plus 5..1238 unknown in-between draws; retail's 0x410810, emulated on the same tables, equals the port on 1300/1300 table passes. Three things had to be right for that, two of them port bugs now fixed: (1) retail's table keeps `tarnecr2` (unitname TARNECR2, objectname TARNECRO) as its own entry, which draws for its 100000 cost at every refresh; the registry now keeps such files in a Classic-only side table and the catalogue is keyed by unitname; (2) the creation pass runs before the profile and before any unit or store exists: every limit -1, counts and population 0 (any population under 10 gives the same draws), fill 0 and an empty history (so a shortfall), which is why Taros's tick-16 table wants lodestones (100) and gives builders +5; the brain now runs it in its constructor that way; (3) the dump's table can be older than the poll before it (Taros 5400: it came in at tick 4590), so the check finds the refresh in the polls itself. Aramana: both 'S' flags set (bmcode default 0), so it is a mana site and a lodestone-class type, as the P2 reading said |
 | U12 | Unit cap used by the picker divisor and comparisons: v4.0 default 150 vs v4.1 500 | target bias | Decision: use our lobby cap; comparisons set it explicitly on both sides |
-| U13 | How an AI-issued MOVE behaves in our sim compared with retail's MOVE_GROUND under standing fire orders (fire while moving, stop and engage?) | the strike's whole fighting style | Experiment: a scripted 10-v-10 in both engines; record whether movers stop to fight. Map retail MOVE to our Move vs AttackMove accordingly |
+| U13 | How an AI-issued MOVE behaves in our sim compared with retail's MOVE_GROUND under standing fire orders (fire while moving, stop and engage?) | the strike's whole fighting style | Static reading of retail's MOVE_GROUND mission and the standing-fire-order checks it makes (emulate the per-tick mission step where unclear); then our own scripted 10-v-10 game test shows what our Move / AttackMove does. Map retail MOVE accordingly. No retail run |
 | U14 | Retail's per-player kind on disconnect / whether the AI ever ignores limits in skirmish (+0xe3 always 1) | none for skirmish | Static only, low priority |
 | U15 | The `unsupported("strike recruitment")` and other sim-port branches: whether the server brain reuses the same templates unchanged | code reuse | Code reading while implementing P3 |
 
@@ -418,7 +420,8 @@ baseline moves. Prefer brain-side derivation.
 Decisions arrive one tick later than retail's in-tick position (they are applied in tick N's bundle).
 RNG interleaving differs (a private stream). Unit scan order differs (affects ties only). Mission flags
 are approximated through commands (U1/U13). Our economy, build times and pathing differ from retail's,
-so outcomes, not only decisions, will differ. Fidelity is measured as distributions (§5, phase C).
+so outcomes, not only decisions, will differ. Fidelity is checked routine by routine, by emulation
+oracles, and shown by our own game tests (§5); retail games are not run.
 
 ---------------------------------------------------------------------------------------------------
 ## 5. Phased implementation plan
@@ -427,22 +430,37 @@ its own test + `ai_behavior` + **--mpai baselines unchanged** (both pathfinding 
 `TAK_AI_LEVEL=6 --mpai --seed 1` repeatability pair (from P1 on). Per memory, use build-o2 and
 minimal testing.
 
-| Phase | Content | Its test | Checked against retail |
-|---|---|---|---|
-| **P0 Plumbing** (landed on task-classic-ai) | Difficulty::Classic, kAiLevels 7, lobby label CLASSIC, aitool, TAK_AI_LEVEL, docs, protocol 290; `ClassicBrain` stub (does nothing, so the Monarch idles) | levelWiring updated + `classicLevel` (ai_behavior_test); `server_ai_level` (a lobby round-trip of level 6) | n/a |
-| **C Comparison harness** (parallel track) | Productionize the comparison scratch scripts (outside the repo) under `tools/re`: kwin virtual + umu + `-AutoStop=999999`, the GDB seed poke at tick 1, the `+AI`-equivalent poke for AI-vs-AI, a 30-60 Hz JSONL poller (units, mana, squads); a debug-only matching JSONL roster dump in takclient/takserver; `tools/re/compare_ai.py` metrics (build order and timings, composition at 3/6/10/15/20 min, mana curves, lodestones over time, wave times and sizes, placement distance/angle, outcome). Scripts only, nothing from the binary in the repo | harness self-test: two retail runs with the same seed give the same build sequence | baseline retail distributions, N >= 20 seeds x (Abnar's Terrace + 2 maps) x 5 factions vs idle, and mirror AI-vs-AI |
-| **P1 Profile** | `ClassicProfile`: pref/locks/categories/limits/first-writer-wins/unlisted defaults; aiprofile selection | unit tests from config's emulated cases; new `check_ai_profile.py` driving 0x538f00 -> 0x410c80/0x410d50 on random scripts | the live weight debug print's pref + limit columns for all 5 factions equal ours |
-| **P2 Type info + priority clock** | `ClassicTypeInfo`, the 7-tick count/completed cache, the rand(30) priority refresh, shortfall/fill from World | existing check_build_priority / check_player_cache via the shared templates; U11 experiment | the debug print's priority column at a polled state = ours (U11) |
-| **P3 Squads + assignment** | 100-slot model, base ctor rolls, scheduler rand(7)+3, tick<=30 Monarch->base 1 anchored at the start location, nearest-base assignment + Stance 0 | check_ai_scheduler / check_ai_squads / check_ai_base_selection reused; a game test: every finished unit is in a base squad within 10 ticks | live squad poll: member counts per kind over time |
-| **P4a Factory planner** | 0x40dcb0 (allocation gates, cost deferral, one queued) + the menu draw with faction rejection | check_ai_factory_plan + check_ai_build_choice (shared templates) | composition and first-army-unit timing distributions |
-| **P4b Constructor planner + placement** | 0x40c890 (Monarch gates, p1 builders and growth, duplicate-factory, 4-tower cap, lodestone pass every think, reachability), block grid 0x4110f0, scatter 0x411200, deposits 0x411510 | new `check_ai_placement.py` (from the placement emulation runs: grid draws, lot windows, tower distance, 30-attempt failure, deposit choice) + the planner emulation's cases into `check_ai_constructor.py` | build order + timings (first lodestone/keep/castle, 2nd/4th/7th lodestone); placement distance/angle histograms vs retail |
-| **P5 Base defence, idle, Monarch** | 0x40d370 (rings, wounded radius, threat candidates, patrol points), the 0x412000 threat test, Monarch retreat 0x40d010, alarm 0x409a50 (hp tracking) | check_ai_patrol_points; new `check_ai_defence.py` (candidate points) and `check_ai_retreat.py` (0x40d010 point choice) | poke a raid into the retail base in both engines: reaction radius and time, Monarch retreat HP |
-| **P6 Waves** | wave rolls 0x40c240/3c0/490, launch, backup 0x40ea30, strike 0x40e180 (cohesion, dissolve, re-pick, withdrawals, contact/march), picker 0x40a200, VTOL 0x40eb40, naval strikes | `check_ai_wave_roll.py` (from the squads note's wave-roll emulation), `check_ai_target_pick.py` (from the picker emulation and its Python model), check_ai_squads strike cases; U13 experiment first | first-wave time, wave sizes, intervals, first target types (lodestone share), distance travelled; AI-vs-AI win rate and game length |
-| **P7 Expansion + transfers** | 0x40bc20, 0x40b9e0/0x40b050/0x40b140/0x40b230 | new `check_ai_expand.py` after U5 | base count and lodestones over time, expansion times |
-| **P8 Acceptance + docs** | Tune nothing that retail doesn't do; fix fidelity gaps found by C; user guide, README level table, memory | full comparison report (an artifact for the lead) | per-metric median of ours within the retail IQR; KS p > 0.05 on build timings at N >= 20 |
+**How fidelity is checked (user direction, 2026-10-22): the retail game is not run any more.** No
+Proton or whole-game retail runs and no new captures. Each ported routine is checked by static
+reading of the disassembly plus an **emulation oracle**: the retail routine run in Unicorn
+(`tools/re/emu.py`) against our port on random inputs, the `tools/re/check_ai_*` pattern, each shown
+to fail once on a planted bug (then reverted) and run like the existing oracles (by hand against the
+gitignored binary; opt-in ctest where it has one). Behaviour is then shown by **our own engine game
+tests** (ai_behavior / classic_ai / headless `--mpai` Classic games). The PrintWeights dumps already
+captured (`~/tak-tmp/retail-ai/baseline/printweights`, 5 factions) stay usable read-only
+(`check_ai_printweights.py`). The comparison harness (phase C) is kept in `tools/re` as optional
+tooling and is not a gate. Why whole-game retail runs could not be a gate anyway: plain `-AutoStop`
+reseeds both RNGs with 1234 before every tick, so every seed plays the same game; with that turned
+off at tick 1, same-seed runs still diverge from about tick 180-300 (the first building's entity slot
+follows the unseeded C-runtime `rand`), so a seed varies retail games but cannot replay one (U9).
 
-Ordering: P0 -> P1 -> P2 -> P3 -> P4a -> P4b -> P5 -> P6 -> P7 -> P8, with C started alongside P0 and
-needed by P4b. After P4b the level already builds a retail-like base, which is a usable checkpoint.
+| Phase | Content | Its test | Emulation oracle(s) + our game tests |
+|---|---|---|---|
+| **P0 Plumbing** (landed on task-classic-ai) | Difficulty::Classic, kAiLevels 7, lobby label CLASSIC, aitool, TAK_AI_LEVEL, docs, protocol 290; `ClassicBrain` stub (does nothing, so the Monarch idles) | levelWiring updated + `classicLevel` (ai_behavior_test); `server_ai_level` (a lobby round-trip of level 6) | none (no ported routine); the --mpai Classic pair repeats |
+| **C Comparison harness** (on the branch; **optional tooling, not a gate**) | `tools/re`: kwin virtual + umu + `-AutoStop=999999`, the GDB seed poke at tick 1, the `+AI`-equivalent poke for AI-vs-AI, a JSONL poller (units, mana, squads, the build manager); a debug-only matching roster dump in takserver; `compare_ai.py` metrics. Scripts only, nothing from the binary in the repo | `retail_ai_harness_teardown` (fake kwin: nothing of a run is left) | none. Its captured PrintWeights dumps feed `check_ai_printweights.py` read-only |
+| **P1 Profile** (on the branch) | `ClassicProfile`: pref/locks/categories/limits/first-writer-wins/unlisted defaults; aiprofile selection | unit tests from config's emulated cases (classic_ai, classic_ai_data) | `check_ai_profile.py` (0x538f00 -> 0x410c80/0x410d50 on random scripts); `check_ai_printweights.py` pref and limit columns of all 20 captured tables |
+| **P2 Type info + priority clock** (on the branch) | `ClassicTypeInfo`, the 7-tick count/completed cache, the rand(30) priority refresh, shortfall/fill from World, the creation pass | classic_ai (a fixed World: creation pass, clock, recount, priorities) | check_build_priority (0x410810), check_player_cache (0x4121c0/0x411a90), check_resource_history; `check_ai_printweights.py` (every captured table reproduced exactly; 0x410810 emulated over whole tables = port) |
+| **P3 Squads + assignment** | 100-slot model, base ctor rolls, scheduler rand(7)+3, tick<=30 Monarch->base 1 anchored at the start location, nearest-base assignment + Stance 0 | check_ai_scheduler / check_ai_squads / check_ai_base_selection reused | an oracle for the assignment pass (0x40eebb..0x40f2be: one-shot anchor, nearest base, slot 2); game test: every finished unit is in a base squad within 10 ticks, member counts per kind over a Classic --mpai game |
+| **P4a Factory planner** | 0x40dcb0 (allocation gates, cost deferral, one queued) + the menu draw with faction rejection | check_ai_factory_plan + check_ai_build_choice + check_ai_build_weight (shared templates) | those oracles on the brain's own call path; game test: Classic factories queue one unit at a time, stay within limits, and field a first army unit |
+| **P4b Constructor planner + placement** | 0x40c890 (Monarch gates, p1 builders and growth, duplicate-factory, 4-tower cap, lodestone pass every think, reachability), block grid 0x4110f0, scatter 0x411200, deposits 0x411510 | new `check_ai_placement.py` (grid draws, lot windows, tower distance, 30-attempt failure, deposit choice) + `check_ai_constructor.py` (the planner's cases) | those two + check_ai_base_radius; game test: a Classic seat builds lodestones, a keep and a castle on Abnar's Terrace and Inner Circle, placements inside the ring radius, no duplicate factory while one is busy |
+| **P5 Base defence, idle, Monarch** | 0x40d370 (rings, wounded radius, threat candidates, patrol points), the 0x412000 threat test, Monarch retreat 0x40d010, alarm 0x409a50 (hp tracking) | check_ai_patrol_points; new `check_ai_defence.py` (candidate points) and `check_ai_retreat.py` (0x40d010 point choice) | those + a threat-test oracle (0x412000); game test: a scripted raid into a Classic base, defenders react inside the ring radius, the Monarch retreats below its HP threshold |
+| **P6 Waves** | wave rolls 0x40c240/3c0/490, launch, backup 0x40ea30, strike 0x40e180 (cohesion, dissolve, re-pick, withdrawals, contact/march), picker 0x40a200, VTOL 0x40eb40, naval strikes | `check_ai_wave_roll.py`, `check_ai_target_pick.py`, check_ai_squads strike cases; U13 settled first | those + a strike-think oracle (0x40e180); game tests: waves launch, march by MOVE, dissolve and retreat; Classic AI-vs-AI games end |
+| **P7 Expansion + transfers** | 0x40bc20, 0x40b9e0/0x40b050/0x40b140/0x40b230 | new `check_ai_expand.py` after U5 | that + transfer oracles; game test: bases and lodestones grow over a 20-minute Classic game |
+| **P8 Acceptance + docs** | Tune nothing that retail doesn't do; user guide, README level table, memory; Classic for campaign opponents (the campaign switch) | every oracle and game test above | **acceptance = every ported routine has a passing emulation oracle (each once shown to fail on a planted bug) + the engine game tests pass + docs and user guide + the campaign switch.** Retail-run distributions (phase C) are optional evidence, not a gate |
+
+Ordering: P0 -> P1 -> P2 -> P3 -> P4a -> P4b -> P5 -> P6 -> P7 -> P8. After P4b the level already
+builds a retail-like base, which is a usable checkpoint.
+
 
 ---------------------------------------------------------------------------------------------------
 ## 6. Corrections to the earlier retail AI notes (agent memory)

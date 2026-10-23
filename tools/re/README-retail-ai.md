@@ -2,8 +2,14 @@
 
 Plays whole retail TA:Kingdoms skirmishes headless, records what the retail AI
 does, records the same thing from our engine, and compares the two as
-distributions. It is the measuring stick for the CLASSIC AI level. Retail AI
-openings vary a lot with the RNG, so compare many seeds, not single games.
+distributions. Retail AI openings vary a lot with the RNG, so compare many
+seeds, not single games.
+
+Since 2026-10-22 this is **optional tooling, not a gate** for the CLASSIC AI
+level: the retail game is no longer run for it. Each ported routine is checked
+by an emulation oracle (`check_ai_*.py`) and by our own game tests
+(`docs/classic-ai-plan.md` §5); the PrintWeights dumps captured earlier are
+still read by `check_ai_printweights.py`.
 
 Nothing here contains code or data from `KINGDOMS.icd`. The scripts read and
 poke a running retail process through `/proc/<pid>/mem` and GDB, at addresses
