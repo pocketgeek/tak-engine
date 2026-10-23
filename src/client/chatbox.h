@@ -93,10 +93,10 @@ inline float minRoom(float margin) { return 52.0f + 2 * margin; }
 // this frame (0: none is up); with none up, the room a row of BUILD MENU SCALE
 // `buildScale` would take is kept anyway (buildRowTop), so the box never covers the row
 // when it appears. The two agree for a menu that fits one row; a long menu wrapped
-// into more rows is higher (the drawn top wins). A row that is not drawn never takes the box's last `minRoom(margin)` of
-// height, though (a big build scale on a short window would otherwise reserve the
-// whole screen and hide chat with nothing there). `hudRow` is false for a spectator,
-// who gets no bottom HUD.
+// into more rows is higher (the drawn top wins). A row that is not drawn never takes
+// the box's last `minRoom(margin)` of height, though (a big build scale on a short
+// window would otherwise reserve the whole screen and hide chat with nothing there).
+// `hudRow` is false for a spectator, who gets no bottom HUD.
 inline float hudFloor(float barTop, float barH, float buildScale, float rowTop, bool hudRow,
                       float margin) {
     if (!hudRow) return barTop;
