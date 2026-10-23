@@ -82,7 +82,7 @@ bool planModProfiles(const std::filesystem::path& dataRoot, const std::string& p
                      const std::set<std::string>& remove, ModProfilePlan&, std::string& error);
 // Carries out a plan: re-checks it against the disk (a file changed since is an
 // error), copies every file it replaces or deletes to
-// <backupRoot>/<pack>/<UTC stamp>/ai/ first (never into the pack: every pack file
+// <backupRoot>/mod-backups/<pack>/<UTC stamp>/ai/ first (never into the pack: every pack file
 // travels in the mod transfer), creates the missing folders, then installs each file
 // atomically (staged beside the packs in mods/game/, which is never mounted) and
 // rolls back on failure. Same files and every other pack file are left alone.

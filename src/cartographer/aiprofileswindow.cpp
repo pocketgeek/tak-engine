@@ -417,7 +417,8 @@ void cart::Editor::aiCommitName() {
     const auto typed=trimmed(aiName);
     if(typed==scenario.aiProfile)return;
     if(const auto error=cart::aiProfileNameError(typed);!error.empty()) {aiNote=error;aiName=scenario.aiProfile;return;}
-    if(aiFiles.count(cart::aiProfileFileKey(typed))) {aiNote=cart::aiProfileFileKey(typed)+" already exists in this map; choose another name.";aiName=scenario.aiProfile;return;}
+    if(cart::aiProfileFileKey(typed)!=cart::aiProfileFileKey(scenario.aiProfile) && aiFiles.count(cart::aiProfileFileKey(typed))) {aiNote=cart::aiProfileFileKey(typed)+" already exists in this map; choose another name.";aiName=scenario.aiProfile;return;}
+    // A case-only rename names the same file, so it passes the clash check above.
     cart::renameAiProfile(aiFiles,scenario.aiProfile,typed);   // ai/<old>.txt -> ai/<new>.txt, same undo step
     scenario.aiProfile=aiName=typed;dirty=historyPending=true;aiNote.clear();
 }
