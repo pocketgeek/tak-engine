@@ -266,9 +266,17 @@ Testing was reduced for this release, by the user's rule (minimal testing):
   clean), `takclient --version` reports `0.8.11`, and `ctest -L quick` passed
   489/489 (141 s; log `~/tak-tmp/scratch/release-0811/land-ctest-quick.out`).
 
+Final source (`dc4a78e0`, after every AI-profile change above): `build-o2`
+(`-O2 -g`) and the Release `build/` rebuilt all targets cleanly, and the full
+`ctest` suite ran once on `build-o2`: 759 of 760 passed (973 s; log
+`~/tak-tmp/scratch/release-0811/ctest-o2-final.log`). The one failure,
+`ai_mod_profile` (three hosted all-AI games at `TAK_SPEED` 80), hit its 600 s
+limit while the long Legion scenario tests were running beside it; run again
+alone it passed in 56 s. It is a load timeout, not a fault in the change.
+
 ## Remote multiplayer sweep
 
-**Not run for this release.** TODO-LEAD: confirm the justification: the
+**Not run for this release.** The
 existing AI levels and the simulation's hashed state are byte-identical to
 0.8.10 (the `--mpai` hashes at 60 s and 300 s, Retail and Legion, are
 unchanged above), and the sweep's 37 scenarios seat no Classic AI, so it would
@@ -277,9 +285,13 @@ itself is covered by its emulation oracles and game tests, not by the sweep.
 
 ## CI and packages
 
-TODO-LEAD: main CI on the final source (Windows, Linux packages, macOS,
-Determinism), noting reruns and known flakes (GitHub runner hang in "Install
-build deps", macOS `hdiutil` busy, mirror flakes).
+Main CI on the final source (`dc4a78e0`): Windows build 39959971626 and macOS
+build 39959971943 green first try; Linux packages 39959971493 green on attempt 2
+(attempt 1: Debian 12 x64 `crusades_client_network_test` "FAIL: complete replay
+not published", the known flake; `gh run rerun --failed`); Determinism (sim)
+39959667390 green on `5384daf0`, the last commit touching `src/ai`, `src/net` or
+`src/sim` (`dc4a78e0` is docs only, so the path-filtered workflow did not run on
+it). Earlier main heads' runs that were superseded by later pushes were cancelled.
 
 TODO-LEAD: tag CI (Determinism dispatched on the tag, Linux, Windows, macOS
 with Sign + notarize) and the asset checks as in 0.8.10: 29 assets, digests
@@ -347,4 +359,8 @@ pictures were checked again: none shows level 6, so none was retaken.
   slowly.
 - Testing was reduced (above): one full `-O2` suite, the `--mpai` set, no
   other trees and no remote sweep.
-- TODO-LEAD: flakes seen in CI, if any.
+- Main CI: Debian 12 x64 `crusades_client_network_test` "complete replay not
+  published" (known flake; passed on rerun).
+- Local full suite: `ai_mod_profile` load timeout beside the Legion scenario tests
+  (passed alone in 56 s).
+- TODO-LEAD: flakes seen in tag CI, if any.
