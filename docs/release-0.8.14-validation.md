@@ -121,9 +121,11 @@ ASan suite was run, and no repeat runs.
 - **`--mpai` golden hashes.** Inner Circle, `takserver --local --no-auth
   --seed 1`, a clean scratch profile per game, optimized Debug binaries at
   `5fa673d0`, `TAK_LEGION=1` for Legion and `TAK_AI_LEVEL=6` for the Retail AI.
-  TODO-LEAD: confirm the retail install used has no `mods/*/always_enabled/`
-  pack (a host's always-enabled game packs would enter these games), then confirm all five ended `err=none
-  end=timelimit` with no desync or referee-suspect line, and fill the hashes.
+  The retail install (`TAK_TEST_DATA`, `/home/pocket_geek/TAK/assets/game`,
+  which a worktree's `assets` symlink points at) has no `mods/` folder, so no
+  always-enabled game pack (which a host would apply) enters these games.
+  TODO-LEAD: confirm all five ended `err=none end=timelimit` with no desync or
+  referee-suspect line, and fill the hashes.
 
   | Mode | Length | Hash (units) | 0.8.13 |
   | --- | --- | --- | --- |
@@ -187,12 +189,27 @@ date and time UTC, asset count, release URL).
 
 ## Screenshots
 
-TODO-LEAD: the pictures retaken for 0.8.14 (at least `docs/img/title.jpg` for
-VERSION 0.8.14, and those `docs/img/README.md` flags for the always-enabled
-folders: rooms showing **ALWAYS ON: click.hpi** and the create screen's GAME
-MODS option), the branch and landing commit, how they were captured, and the
-README title alt text and gallery footnote ("0.7.25 to 0.8.14 builds") that
-follow `title.jpg`.
+Six pictures were retaken on branch `task-release-0814-shots` (`8a7a1fb3`,
+one commit on `5fa673d0`) with a local `-O2` Debug build whose CMake version
+was set to 0.8.14 for the capture and reverted (no capture patch):
+`docs/img/title.jpg` (VERSION 0.8.14), and every picture that named the old
+always-on archive, which now reads **ALWAYS ON: click**: `room.jpg`,
+`guide/room-mods-power-codes.jpg` (now also **ALWAYS ON: House Rules** under
+GAME MODS, from a scratch `mods/game/always_enabled/House Rules/`, with Big
+Battles ticked and GAME MODS VERIFIED), `campaign.jpg` and
+`guide/campaign-briefing.jpg` (*Always-on mods: click*), and
+`cartographer/test-lobby.jpg`. The scratch installs' packs are placeholder
+folders with one tiny sound file each, plus a copy of the repository's
+`click.hpi`; nothing from them is committed. Kept after a look:
+`quick/lobby-move-here.jpg` (its install had no packs), and `lobby.jpg`,
+`lobby-scenario.jpg` and `guide/random-map-lobby.jpg` (the single-player
+create screen, which never had a GAME MODS option). No shipped picture shows
+the multiplayer create screen, so none showed the removed option. The README
+title alt text (version 0.8.14), gallery footnote ("0.7.25 to 0.8.14 builds"),
+the user guide's `room-mods-power-codes.jpg` alt text and `docs/img/README.md`
+were updated with them. Scripts and raw captures:
+`~/tak-tmp/scratch/release-0814/shots/`.
+TODO-LEAD: the landing commit of the screenshots.
 
 ## Limits
 
