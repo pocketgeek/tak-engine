@@ -22,9 +22,11 @@ TODO-LEAD: Tagged `v0.8.12` at `<sha>` (annotated tag object `<obj>`) and publis
 `src/server/server.cpp`; and `src/sim/` (`sim.cpp`, `sim.h`). Nothing under
 `src/campaign/`, `src/tnt/`, `src/terrain/`, `src/cob/`, `src/crt/`,
 `src/video/` or `src/net/replayhdr.h` changed.
-TODO-LEAD: list the preparation commits on top of `450a10b6` (screenshots,
-version 0.8.12 / notes / docs, this report's fill) and confirm nothing else
-landed on main (checked with `git fetch` before landing).
+The preparation commits on top of `450a10b6` are `ea38fa99` (title
+screenshot, capture notes), `e3b54d08` (version 0.8.12, notes, this report's
+skeleton, docs), `a549ed5c` (campaign speed in quick-start/README, notes
+wording) and this report's fill. `git fetch` before landing showed
+`origin/main` still at `450a10b6`, so nothing else landed.
 
 The changes:
 
@@ -61,9 +63,8 @@ game-mod packages, not the simulation; `c51dc03a` only sets a campaign
 mission room's speed-change option on the server. With no `ai/takengine.txt` in play our
 levels play their built-in tables, as in 0.8.11. The commits themselves checked
 `--mpai` Inner Circle seed 1 at 60 s only (Retail, Legion and a Retail AI seat
-unchanged from 0.8.11).
-TODO-LEAD: confirm from the local checks that 60 s and 300 s in both modes and
-the Retail AI seat at 60 s are unchanged from 0.8.11.
+unchanged from 0.8.11). The release's local checks confirm 60 s and 300 s
+in both modes and the Retail AI seat at 60 s unchanged (below).
 
 TODO-LEAD: `--mpai` on Windows and macOS (optimized Debug builds of the tag,
 oden-win and the arm64 MacBook): Retail 60 s `b353410003e98dd5` / 300 s
@@ -98,30 +99,53 @@ oden-win and the arm64 MacBook): Retail 60 s `b353410003e98dd5` / 300 s
 
 Testing is reduced for this release, by the user's rule (minimal testing):
 
-- TODO-LEAD: **Full CTest, once, on optimized Debug (`-O2`) at `450a10b6`:
-  `<n>/<n>` passed** (`<time>` real). Log: `<path>`.
+- **Full CTest, once, on optimized Debug (`-O2`) at `450a10b6`: 606/606
+  passed** (`-LE nightly -j16`, 353 s real, `rc=0`, scratch HOME and
+  XDG_DATA_HOME). 768 tests are defined; the 164 `nightly`-labelled ones were
+  excluded. No test timed out and nothing was rerun. The new and changed AI and
+  Cartographer tests passed inside this run: `cartographer_aiprofile`,
+  `cartographer_aiprofile_ui`, `_mod_ui`, `_extras_ui`, `_packs_ui`,
+  `_merge_ui`, `cartographer_aimod_ui`, `cartographer_ai_profile_e2e`,
+  `ai_profile`, `ai_profile_data`, `ai_mod_profile`, `classic_ai_map_profile`,
+  `server_ai_level`, `flyer_combat`, `replay`, `replay_file`, `replay_writer`
+  and `replay_always`. The build was fresh, all targets, in a detached worktree
+  at `450a10b6` (ccache + mold, `TAK_TEST_DATA` = the retail install). Log:
+  `~/tak-tmp/scratch/release-0812/ctest.out`.
 - No Release, `-O0` Debug, Clang or ASan suite was run, and no repeat runs.
-- TODO-LEAD: **`--mpai` golden hashes.** Inner Circle, `takserver --local
-  --no-auth --seed 1`, scratch profile, optimized Debug binaries at
-  `450a10b6`, `TAK_LEGION=1` for Legion and `TAK_AI_LEVEL=6` for the Retail AI.
+- **Detmath guard** (`tools/check-detmath.sh`): OK.
+- **Cross-compiler golden hash** (`tools/check-determinism.sh`): g++ and
+  clang++ at -O0/-O2/-O3 all give `dcef618cd2e4d558`, the same golden as
+  0.8.11. The aarch64 legs were skipped (no target libc locally); the macOS CI
+  leg covers ARM64 parity. Log:
+  `~/tak-tmp/scratch/release-0812/check-determinism.log`.
+- **`--mpai` golden hashes.** Inner Circle, `takserver --local
+  --no-auth --seed 1`, a clean scratch profile per game, optimized Debug
+  binaries at `450a10b6`, `TAK_LEGION=1` for Legion and `TAK_AI_LEVEL=6` for
+  the Retail AI. Every game ended `err=none end=timelimit`, with no desync or
+  referee-suspect line.
 
   | Mode | Length | Hash (units) | 0.8.11 |
   | --- | --- | --- | --- |
-  | Retail | 60 s | TODO-LEAD | `b353410003e98dd5` |
-  | Retail | 300 s | TODO-LEAD | `a3d953803a064191` |
-  | Legion | 60 s | TODO-LEAD | `0825aeb9e8139203` |
-  | Legion | 300 s | TODO-LEAD | `ce5c4ba7562e53b9` |
-  | Retail AI | 60 s | TODO-LEAD | `14849c00bc6e2a19` |
+  | Retail | 60 s | `b353410003e98dd5` (4) | `b353410003e98dd5` |
+  | Retail | 300 s | `a3d953803a064191` (13) | `a3d953803a064191` |
+  | Legion | 60 s | `0825aeb9e8139203` (4) | `0825aeb9e8139203` |
+  | Legion | 300 s | `ce5c4ba7562e53b9` (18) | `ce5c4ba7562e53b9` |
+  | Retail AI | 60 s | `14849c00bc6e2a19` (4) | `14849c00bc6e2a19` |
 
-  Logs: `<path>`.
+  Every hash matches 0.8.11: 291 and 293 change only map- and game-mod package
+  contents, and 292's flyer-patrol fix does not come up in these games. The
+  Retail AI server still logs `DEFAULT AI profile ai/DEFAULT.txt from the base
+  data` (the 0.8.11 name; log wording only). Logs:
+  `~/tak-tmp/scratch/release-0812/mpai/`.
 - Landing checks recorded in the commits: `40958301` and `1e9d7df3` each
   report `--mpai` Inner Circle seed 1 60 s unchanged (Retail
   `b353410003e98dd5`, Legion `0825aeb9e8139203`, Retail AI
   `14849c00bc6e2a19`); `ca9b612d` reports `ctest -L quick` 497/497 and
   `cartographer_ai_profile_e2e` passing on `build-o2`.
-- TODO-LEAD: **Final source** (the preparation commits on `450a10b6`): every
-  `build-o2` target rebuilt, `takclient --version` reports `0.8.12`, and
-  `ctest -L quick` `<n>/<n>`.
+- **Final source** (the preparation commits on `450a10b6`): every `build-o2`
+  target rebuilt, `takclient --version` reports `0.8.12 (build
+  v0.8.11-41-ga549ed5c5650)`, and `ctest -L quick` passed 498/498 (139 s).
+  Log: `~/tak-tmp/scratch/release-0812/land-quick.out`.
 
 ## Remote multiplayer sweep
 
@@ -153,8 +177,8 @@ TODO-LEAD: Published with `gh release edit v0.8.12 --draft=false --latest` on
 
 ## Screenshots
 
-Only `docs/img/title.jpg` was retaken (branch `task-release-0812-shots`,
-`0b6f29ef`): an optimized Debug build with the version set to 0.8.12 locally,
+Only `docs/img/title.jpg` was retaken (`ea38fa99`, from branch
+`task-release-0812-shots`): an optimized Debug build with the version set to 0.8.12 locally,
 1920 × 1080 offscreen, cropped to 1440 × 1080, JPEG quality 90; it reads
 VERSION 0.8.12. The README title alt text, the gallery footnote ("0.7.25 to
 0.8.12 builds") and `docs/img/README.md` follow. Checked and kept: the lobby and
@@ -166,8 +190,9 @@ no speed change shown); the Cartographer AI window captures
 tests' capture mode as the features landed (see
 `docs/cartographer-improvements-progress.md`) and matching the window text at
 `450a10b6` (one TAK ENGINE AI tab; the AI mod footer saying the install never
-supplies `ai/takengine.txt`). No picture shows the flyer patrol fix.
-TODO-LEAD: confirm the shots branch landed as described.
+supplies `ai/takengine.txt`). No picture shows the flyer patrol fix. The shots commit landed on main as
+`ea38fa99` unchanged (`title.jpg`, the README alt text and footnote,
+`docs/img/README.md`).
 
 ## Limits
 

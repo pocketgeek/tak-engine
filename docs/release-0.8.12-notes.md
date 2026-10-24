@@ -141,7 +141,6 @@ See [AI profiles in game mods](user-guide.md#ai-profiles-in-game-mods).
   Retail `b353410003e98dd5`, Legion `0825aeb9e8139203`; at 300 s Retail
   `a3d953803a064191`, Legion `ce5c4ba7562e53b9`; a Retail AI seat
   (`TAK_AI_LEVEL=6`) `14849c00bc6e2a19` at 60 s.
-  <!-- TODO-LEAD: confirm against the release validation's --mpai results. -->
 
 ## Known limits
 
