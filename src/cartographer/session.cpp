@@ -189,6 +189,7 @@ void cart::Editor::testMap() {
         }
         std::string error;
         if(!playtest.start(client,std::filesystem::u8path(dataRoot),files,error))throw std::runtime_error(error);
+        playtestAiMod=false;
         const auto log=preferences.tracePlaytest?" Trigger log: "+pathText(tak::scenarioTracePath(preferencesFolder,playtest.snapshot())):std::string{};
         openMessage("TEST MAP", "Opened a private game lobby from a snapshot. Seat the players used by your scenario, then start. Close the game to return here. Your document and save destination are unchanged."+log);
     } catch(const std::exception& e) {openMessage("TEST MAP FAILED",e.what());}

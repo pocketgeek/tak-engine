@@ -195,6 +195,8 @@ bool cart::Editor::handleToolbarModes(SDL_Event& e) {
 bool cart::Editor::handleShortcuts(SDL_Event& e) {
     if(noMap()) {   // no map: File's map-free commands through the menu's own checks, F11, Esc to leave
         if(e.type!=SDL_KEYDOWN)return false;
+        // A held key's repeats: Esc held past closing a dialog must not then quit (nothing asks first).
+        if(e.key.repeat)return true;
         const auto key=e.key.keysym.sym;const auto mod=e.key.keysym.mod;const bool ctrl=(mod&(KMOD_CTRL|KMOD_GUI))!=0;
         if(ctrl && (mod&KMOD_SHIFT) && (key==SDLK_n || key==SDLK_o))menuAction(0,key==SDLK_n?6:7);
         else if(ctrl && key==SDLK_o)menuAction(0,1);

@@ -1500,6 +1500,7 @@ void cart::Editor::aiLaunchTest(const std::string& mapPath) {
         const auto files=installedMapFiles(mapPath,name);
         std::string error;
         if(!playtest.start(client,std::filesystem::u8path(dataRoot),files,error,aiMod->pack))throw std::runtime_error(error);
+        playtestAiMod=true;
         openMessage("TEST IN GAME","Opened a private game lobby on a test copy of "+label+" with game mod "+aiMod->pack+
             " ticked for that room only (your own ticks are kept). Seat AIs at the levels to test (RETAIL for the DEFAULT AI), then start. Close the game to return here.");
     } catch(const std::exception& e) {openMessage("TEST IN GAME FAILED",e.what());}

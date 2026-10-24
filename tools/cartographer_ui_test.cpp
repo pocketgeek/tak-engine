@@ -2523,21 +2523,56 @@ static int blankLaunchWorkflow(const char* data) {
         case 4:empty("cancelling New Map left the empty editor");key(SDLK_o,KMOD_CTRL);break;
         case 5:check(editor->modal==M::M_OPENPATH,"Ctrl+O did not open Open Map");key(SDLK_ESCAPE);break;
         case 6:empty("cancelling Open Map left the empty editor");key(SDLK_n,KMOD_CTRL);break;
-        case 7:check(editor->modal==M::M_NEW,"Ctrl+N did not open New Map");key(SDLK_ESCAPE);now=10*60000;break;   // well past the recovery minute
-        case 8:empty("cancelling Ctrl+N's New Map left the empty editor");check(!editor->recoveryFilesPresent && !editor->recoveryJob.valid(),"a recovery copy was written for no document");
+        case 7:{
+            check(editor->modal==M::M_NEW,"Ctrl+N did not open New Map");now=10*60000;   // well past the recovery minute
+            key(SDLK_ESCAPE);   // held Esc: its repeats after New Map closes must not quit
+            for(int i=0;i<3;++i) {SDL_Event e{};e.type=SDL_KEYDOWN;e.key.keysym.sym=SDLK_ESCAPE;e.key.repeat=1;SDL_PushEvent(&e);}
+            break;
+        }
+        case 8:empty("cancelling Ctrl+N's New Map left the empty editor");break;   // a quit the repeats pushed lands this frame
+        case 9:empty("held Esc's repeats changed the empty editor");check(editor->running,"held Esc's repeats quit the editor");check(!editor->recoveryFilesPresent && !editor->recoveryJob.valid(),"a recovery copy was written for no document");
             {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}break;
         default:check(!editor->running,"quitting the empty editor asked something ("+std::to_string(int(editor->modal))+")");break;   // the quit's own frame
         }
         ++stage;
     },hooks);
     fs::remove_all(root);
-    if(result || !failure.empty() || stage!=10) {std::cerr<<"FAIL: "<<(failure.empty()?"the editor did not quit (stage "+std::to_string(stage)+")":failure)<<'\n';return 1;}
+    if(result || !failure.empty() || stage!=11) {std::cerr<<"FAIL: "<<(failure.empty()?"the editor did not quit (stage "+std::to_string(stage)+")":failure)<<'\n';return 1;}
     std::cout<<"PASS: bare launch opens empty (welcome, no New Map, clean, map commands off and inert), New/Open map cancel back to empty, no recovery, quit asks nothing\n";return 0;
+}
+
+// A map named at launch that cannot be opened: OPEN FAILED, then the same empty editor as a bare launch.
+static int failedOpenWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-failopen-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);isolateProfile(root.string().c_str());
+    std::vector<std::string> args={"cartographer","--data",data,"--out",root.string(),"No Such Map Here"};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    cart::Editor* editor=nullptr;cart::EditorHooks hooks;hooks.attached=[&](cart::Editor& e){editor=&e;};
+    std::string failure;int stage=0;
+    auto check=[&](bool value,const std::string& message) {if(!value && failure.empty())failure="stage "+std::to_string(stage)+": "+message;};
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer*,int frame) {
+        const std::string title=SDL_GetWindowTitle(window);
+        if(!failure.empty() || frame>30) {if(frame>30)failure+=" (did not finish)";std::cerr<<"FAIL: "<<failure<<'\n';std::_Exit(3);}
+        switch(stage) {
+        case 0:check(editor->modal==cart::Editor::M_MESSAGE && editor->mTitle=="OPEN FAILED","a missing map did not say OPEN FAILED");key(SDLK_RETURN);break;
+        case 1:
+            check(editor->modal==cart::Editor::M_NONE && editor->noDocument && !editor->dirty && !editor->history.canUndo() && title=="Cartographer" &&
+                  !editor->menuRowEnabled(0,2),"a failed launch-time open left an editable map (title \""+title+"\")");
+            {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}break;
+        default:check(!editor->running,"quitting after a failed open asked something");break;
+        }
+        ++stage;
+    },hooks);
+    fs::remove_all(root);
+    if(result || !failure.empty() || stage!=3) {std::cerr<<"FAIL: "<<(failure.empty()?"the editor did not quit (stage "+std::to_string(stage)+")":failure)<<'\n';return 1;}
+    std::cout<<"PASS: a failed launch-time open ends on the empty editor, clean, quit asks nothing\n";return 0;
 }
 
 int main(int argc,char** argv) {
     if(argc>1 && std::string(argv[1])=="--data")return recordTestClient(argc,argv);   // TEST IN GAME's client
     if(argc==3 && std::string(argv[2])=="blank-launch")return blankLaunchWorkflow(argv[1]);
+    if(argc==3 && std::string(argv[2])=="failed-open")return failedOpenWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="aimod-nomap")return aiModNoMapWorkflow(argv[1],argv[0]);
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");

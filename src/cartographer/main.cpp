@@ -309,7 +309,8 @@ cart::Editor::Editor(int argc,char** argv,const FrameHook& frameHook,const Edito
     prepareShot();
     // A bare launch (no map named, no --new size) opens with no document: the File
     // menu makes or opens a map, or an AI mod.
-    if(!pendingOpen.empty()) openDocument(pendingOpen);   // a failure says why (OPEN FAILED) over the blank map
+    // A failure says why (OPEN FAILED) over no document, as a bare launch would show.
+    if(!pendingOpen.empty() && !openDocument(pendingOpen)) {noDocument=true;dirty=historyPending=false;history.reset(historySnapshot(),true);}
 }
 
 int cart::Editor::run() {
@@ -317,7 +318,9 @@ int cart::Editor::run() {
     if(hooks.attached)hooks.attached(*this);
     while (running) {
         if(const auto result=playtest.poll();result && *result!=0)
-            openMessage(aiModOnly?"TEST IN GAME ENDED":"TEST MAP ENDED", "The game exited with an error ("+std::to_string(*result)+")."+(aiModOnly?" Your AI mod is still open here.":" Your map is still open here."));
+            // Worded by what was tested and what is still open (an AI mod closed mid-test leaves no document).
+            openMessage(playtestAiMod?"TEST IN GAME ENDED":"TEST MAP ENDED", "The game exited with an error ("+std::to_string(*result)+")."+
+                        (aiModOnly?" Your AI mod is still open here.":noDocument?std::string():" Your map is still open here."));
         SDL_GetRendererOutputSize(ren, &w, &h);
         kUIScale=std::max(.5f,std::min({preferences.scalePercent/100.f,float(w)/900.0f,float(h)/600.0f}));
         SDL_RenderSetScale(ren,kUIScale,kUIScale);

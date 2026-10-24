@@ -676,6 +676,7 @@ struct Editor : Session {
     // --- Document commands (session.cpp) --------------------------------------
     bool openDocument(const std::string& request);
     Playtest playtest;
+    bool playtestAiMod=false;                    // the running test is an AI mod's TEST IN GAME, not TEST MAP
     void testMap();
     std::filesystem::path gameClient() const;    // takclient beside the editor (a test hook may stand in)
 

@@ -138,7 +138,9 @@ until a map is open. Start from the **File** menu:
 Until then only these File commands, **Exit**, the UI size under **View**,
 **View → Preferences** and **Help** are available; everything else is greyed
 out. Cancelling either dialog returns to the empty window. There is nothing to
-save, so closing Cartographer straight away asks nothing.
+save, so closing Cartographer straight away asks nothing. A map named when Cartographer
+starts that cannot be opened shows **OPEN FAILED** and then the same empty
+window.
 
 ### The New Map dialog
 
