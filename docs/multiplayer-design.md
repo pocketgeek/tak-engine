@@ -1161,6 +1161,11 @@ byte: bit 0 the option, bit 1 the map started revealed (FOG OF WAR Explored or F
 Vision, which +Mapping starts from); a format-13 file reads it as 0. With power codes
 off the simulation and the `--mpai` hashes are 287's, but 287 recordings no longer
 play.
+Protocol 294 makes the room's FOG OF WAR option sim-affecting for area clear only
+(`MatchConfig::roomMapRevealed` / `roomLosOff`, `World::setRoomVision`: retail's
+explored allowance reads the Mapping plane, which Map Revealed fills). Replay
+format 15 appends the option byte (0..2) after POWER CODES; an older file takes it
+from the POWER CODES byte when power codes were on, else the default EXPLORED.
 Older recordings require their original engine.
 Campaign playback forces Retail even if a header supplies another mode.
 Replay format 13 adds the room's MAP SCENARIO byte after the slot table (0 when

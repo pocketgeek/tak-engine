@@ -663,10 +663,19 @@ selected.
 
 A builder that can reclaim turns trees, rocks and wrecks into mana.
 
-- Right-click a single object to reclaim it.
-- **Right-drag a box** to reclaim a whole area. The builder works through it
-  closest first, picking the nearest remaining object again after each one, as
-  the original game does. Mana spots are left alone. The box has to be at least
+- Right-click a single object to reclaim it. Every selected builder that can
+  reclaim goes for it; other selected units keep their orders.
+- **Right-drag a box** to reclaim a whole area. As in the original game, every
+  selected builder that can reclaim gets the same box (Shift queues it behind
+  each builder's own orders), and each works through it closest first, picking
+  the nearest remaining object again after each one. Nothing shares the work
+  out, so builders sometimes head for the same tree. Mana spots are left alone.
+- Objects under the fog still count if your side has explored that ground
+  (wrecks of fallen units only while you can see them), as in the original.
+- A builder gives up on an object it cannot reach and moves on to the next; an
+  area order ends when its nearest remaining object is one it already failed
+  to reach.
+- The box has to be at least
   about 32 pixels wide and 32 tall (at 100% UI scale); a smaller or thinner
   drag is an ordinary right-click order. The orange box and the broom cursor
   appear once the drag is big enough, and the box stays on the ground you
@@ -1945,7 +1954,7 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-<!-- VERSION-0.9.0: confirm protocol/replay format at cut (main: 293/14) -->
+<!-- VERSION-0.9.0: confirm protocol/replay format at cut (main: 294/15) -->
 TAK Engine 0.9.0 uses network protocol **293** and replay format **14**, the
 same as 0.8.12, 0.8.13 and 0.8.14. So:
 

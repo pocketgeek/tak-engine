@@ -37,7 +37,7 @@ interface art and sound straight from its installation folder.
   pictures.
 
 Compatibility: see the [0.9.0 entry in the CHANGELOG](CHANGELOG.md#090).
-<!-- VERSION-0.9.0: confirm protocol/replay format at cut (main: 293/14) -->
+<!-- VERSION-0.9.0: confirm protocol/replay format at cut (main: 294/15) -->
 Full history: [CHANGELOG](CHANGELOG.md).
 
 ## Features

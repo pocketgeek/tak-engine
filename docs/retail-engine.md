@@ -636,6 +636,45 @@ Still deviating:
   off-map cell's height 0 plus cruisealt), and its velocity kernel keeps the
   vertical control that `4dab71` skips for an off-map unit.
 
+## Map feature install and area clear (icd, 2026-10-24, protocol 294)
+
+**Overlapping TNT features.** The loader (`0x50f6c0..0x50f948`) initialises
+every 14-byte cell (+8 = 0xffff, +7 = 0xa), installs 0xfffc blockers, then
+calls `0x495360(cell, index, ..., 0xa)` for every TNT feature in row-major
+order. `0x495360` first removes whatever the new footprint covers through
+`0x496380` (anchor and 0xfffe tails cleared, any object torn down and its pool
+slot freed, a sacred record at the same spot deactivated); an indestructible
+(0x100) or marker cell refuses the install, keeping removals already made. The
+temporary TNT buffer is then freed, so a removed feature exists nowhere: the
+draw scan (`0x4fc8d9..0x4fc963`), movement grades and the area selector all read
+the installed plane. Emulating the native install loop and draw scan over 1,360
+maps matched `retailMapInstall`'s plane exactly (16 cells on 5 maps differ, all
+TNT names without a TDF); 481 maps lose 18,660 features, including 88 Sacred
+Stones and 345 mana features. We now register only the survivors
+(`World::installedMapFeatures`, `retailInstalledMapFeatures`) in matchsetup and
+the client.
+
+**Cell +7 is the feature owner.** `0x495360` writes its fifth argument at the
+anchor only, on success. Every map-feature caller passes 0xa (no player); the
+corpse spawn `0x512ee0` passes the dying unit's owner. The area selector
+(`0x509d9f..0x509e6d`) accepts an unseen cell when +7 == 0xa and the Mapping
+plane (`game+0x19ef4`) has the player's bit; `0x4c6540` fills that plane with
+0xffff when MappingOn is off. Emulated over 4,000 cases with the real
+`0x50e660` and `0x4223f0`. The port reads the builder owner's bit of our hashed
+`navigationExplored_` (retail reads the local human's, which is not
+deterministic).
+
+**Exits** (`0x406670` RECLAIMAREA, `0x406250` RECLAIM; static reading). The
+area approach is a radius-4 circle (`0x4d4da0`) waited on mask 0x700, so
+arrival (0x500) and failure (0x200) both lead to the next pick. 0x200 is raised
+only at `0x4e4ec4`: a zero-point route delivery whose controller rejects the
+unit. A pick in the same `0x50e660` cell as the last target retires the order
+(8); RECLAIM returns 8 on 0x200 in stage 1. Retail's reclaim approach is a
+footprint-adjacency rectangle (`0x4d4e80`/`0x4e3590`, no builddistance) and its
+work countdown is `ftol(energy + 15.0)` ticks; ours still uses a reach radius
+and 120 work/s, not yet changed. Details:
+[guessed-area-clear-2026-09-26.md](guessed-area-clear-2026-09-26.md).
+
 ## Benchmark switches and RNG seeding (icd, 2026-10-22)
 
 Found while building the retail AI comparison harness (`tools/re/README-retail-ai.md`).

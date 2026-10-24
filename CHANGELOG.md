@@ -20,7 +20,7 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
 ## 0.9.0
-*Unreleased* <!-- VERSION-0.9.0: confirm date, protocol and replay format at cut (main: 293/14), and which versions it plays with -->
+*Unreleased* <!-- VERSION-0.9.0: confirm date, protocol and replay format at cut (main: 294/15: NOT compatible with 0.8.x or its replays), and which versions it plays with -->
 
 <!-- WHATS-NEW-0.9.0: add the 0.9.0 gameplay and engine changes here before the cut. -->
 - **AI and the Rolling Tower:** the shipped AI profiles misspell the Aramon
@@ -43,6 +43,26 @@ their validation reports; both live in [`docs/`](docs/).
   repairing or attacking the gate. A closed gate, the gate's posts and units
   standing in the doorway are still selected as before. This is a mouse change
   only, so it changes nothing about who can play together.
+- **Area clear (right-drag box) and reclaim:** every selected builder that can
+  reclaim now takes the order, each working through the same box, as in the
+  original game; before, only the first one did. The same goes for a
+  right-click or **CLEAR** click on a single tree or rock.
+- **Area clear no longer skips trees:** where two of a map's trees, rocks or
+  other objects overlap, the original game removes the earlier one when the map
+  loads. We kept it, drawn and blocking but never picked by an area clear. It
+  is now gone, as in the original, which can open small gaps in some forests
+  (Inner Circle loses one tree; 481 of 1,360 maps checked lose some). Such an
+  object no longer makes a sacred site or a lodestone deposit either.
+- **Area clear under the fog:** trees and rocks on ground your side has
+  explored are cleared even while you cannot see them, as in the original;
+  wrecks still have to be in sight. The room's FOG OF WAR option counts:
+  **EXPLORED** and **FULL VISION** make the whole map count as explored.
+- **Unreachable objects:** a builder now gives up on a tree or rock it cannot
+  reach, and an area clear ends when the nearest object left is one it could
+  not reach, as in the original. Before, the builder could keep trying forever.
+- **Not compatible with 0.8.x:** these changes alter the game itself, so 0.9.0
+  uses protocol 294 and replay format 15. It does not play with 0.8.14 or any
+  earlier version, nor their replays.
 - **Documentation:** the release history moved out of the README into this
   changelog; the README, quick start, user guide, map editor guide, server
   guide and streaming guide were rewritten and their pictures retaken.

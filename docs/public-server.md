@@ -11,7 +11,7 @@ independent security audit or protection against a volumetric DDoS.
 
 ## Versions
 
-<!-- VERSION-0.9.0: confirm protocol/replay format at cut (main: 293/14) -->
+<!-- VERSION-0.9.0: confirm protocol/replay format at cut (main: 294/15) -->
 Server and clients must speak the same gameplay protocol; update the server and
 every client together when it changes. Which versions play together is listed in
 the [user guide](user-guide.md#versions) and in the [CHANGELOG](../CHANGELOG.md).
