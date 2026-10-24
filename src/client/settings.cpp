@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -46,6 +47,16 @@ std::string& pathOverride() { static std::string p; return p; }
 // The data-folder keys as this process last read or wrote them (see saveSettings).
 struct DiskDataFolder { bool known = false; std::string dir, manifest; };
 DiskDataFolder& diskDataFolder() { static DiskDataFolder d; return d; }
+// setLaunchGameModPacks: this run's own pack selection, never saved over the player's.
+std::optional<std::vector<std::string>>& launchGameModPacks() { static std::optional<std::vector<std::string>> p; return p; }
+
+// One mods.gamePack / mods.cosmeticPack value (hex of the pack name) into `names`.
+void readPackValue(const std::string& val, std::vector<std::string>& names) {
+    std::string name;bool valid=val.size()%2==0 && val.size()<=256;
+    auto digit=[](char c){return c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:-1;};
+    for(size_t i=0;valid && i<val.size();i+=2){int a=digit(val[i]),b=digit(val[i+1]);if(a<0 || b<0)valid=false;else name+=char(a*16+b);}
+    if(valid && !name.empty() && name.find_first_of("/\\\r\n") == name.npos && name.find('\0')==name.npos && names.size()<64 && std::find(names.begin(),names.end(),name)==names.end())names.push_back(name);
+}
 
 }  // namespace
 
@@ -98,11 +109,7 @@ Settings loadSettings() {
         auto asBool  = [&] { return val == "1" || val == "true" || val == "on"; };
 
         if(key=="mods.gamePack" || key=="mods.cosmeticPack") {
-            std::string name;bool valid=val.size()%2==0 && val.size()<=256;
-            auto digit=[](char c){return c>='0'&&c<='9'?c-'0':c>='a'&&c<='f'?c-'a'+10:-1;};
-            for(size_t i=0;valid && i<val.size();i+=2){int a=digit(val[i]),b=digit(val[i+1]);if(a<0 || b<0)valid=false;else name+=char(a*16+b);}
-            auto& names=key=="mods.gamePack"?s.gameModPacks:s.cosmeticModPacks;
-            if(valid && !name.empty() && name.find_first_of("/\\\r\n") == name.npos && name.find('\0')==name.npos && names.size()<64 && std::find(names.begin(),names.end(),name)==names.end())names.push_back(name);
+            readPackValue(val,key=="mods.gamePack"?s.gameModPacks:s.cosmeticModPacks);
             continue;
         }
         if      (key == "fullscreen")      s.fullscreen = asBool();
@@ -309,15 +316,21 @@ bool saveSettings(const Settings& s) {
     if (path.empty()) return false;
     Settings out = s;
     auto& seen = diskDataFolder();
-    if (seen.known && s.dataDir == seen.dir && s.dataManifest == seen.manifest) {
+    auto& launch = launchGameModPacks();
+    if (launch && s.gameModPacks != *launch) launch.reset();   // the player's own ticks now
+    const bool keepDataFolder = seen.known && s.dataDir == seen.dir && s.dataManifest == seen.manifest;
+    if (keepDataFolder || launch) {
         // Unchanged by this process since it last read or wrote the file, so the file's
         // CURRENT value wins: another program (Cartographer, a second game) may have set it.
+        // A launch-only pack selection likewise leaves the file's ticks as they are.
         std::ifstream in(path);
         std::string line, key, val;
+        if (launch) out.gameModPacks.clear();
         while (in && std::getline(in, line))
             if (splitLine(line, key, val)) {
-                if (key == "dataDir") out.dataDir = val;
-                else if (key == "dataManifest") out.dataManifest = val;
+                if (keepDataFolder && key == "dataDir") out.dataDir = val;
+                else if (keepDataFolder && key == "dataManifest") out.dataManifest = val;
+                else if (launch && key == "mods.gamePack") readPackValue(val, out.gameModPacks);
             }
     }
     const std::string text = serializeSettings(out);
@@ -328,6 +341,11 @@ bool saveSettings(const Settings& s) {
     if (std::rename(tmp.c_str(), path.c_str()) != 0) return false;
     seen = {true, out.dataDir, out.dataManifest};
     return true;
+}
+
+void setLaunchGameModPacks(std::vector<std::string> packs) {
+    if (packs.empty()) launchGameModPacks().reset();
+    else launchGameModPacks() = std::move(packs);
 }
 
 bool saveDataFolderSetting(const std::string& folder, const std::string& manifest) {

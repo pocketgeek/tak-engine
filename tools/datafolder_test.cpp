@@ -159,6 +159,8 @@ int main() {
     {
         check(clientRestartArguments({"--data", "/x", "--play-map", "/t/m.kmp"}) == Args{"--data", "/x"},
               "takclient drops the one-shot --play-map handoff");
+        check(clientRestartArguments({"--data", "/x", "--play-map", "/t/m.kmp", "--game-mod", "My AI"}) == Args{"--data", "/x"},
+              "takclient drops the --game-mod that came with --play-map");
         check(clientRestartArguments({"game", "Ulasem Arena", "--side", "zon"}) == Args{"game", "Ulasem Arena", "--side", "zon"},
               "takclient keeps everything else, in order");
         check(clientRestartArguments({}).empty(), "a bare launch restarts bare");

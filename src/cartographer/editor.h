@@ -23,6 +23,9 @@ struct EditorHooks {
     // folder, which receives the restart arguments instead of the process exec'ing.
     std::function<std::string(const std::string&,const std::string&)> pickFolder;
     std::function<void(const std::vector<std::string>&)> relaunch;
+    // Test Map / TEST IN GAME: the game client to start instead of the takclient beside
+    // the editor (a stub that records its arguments).
+    std::function<std::string()> gameClient;
 };
 // The frame hook drives real SDL input in workflow tests. It is empty in the app.
 int runEditor(int argc,char** argv,

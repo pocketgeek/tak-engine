@@ -161,9 +161,9 @@ inline std::vector<std::string> withoutOptions(const std::vector<std::string>& a
 // takclient's restart arguments: the launch's own arguments (so a debug launch keeps
 // its mode and flags, and the working directory and --data rules apply as before),
 // minus --play-map, a one-shot Cartographer handoff that imported a snapshot into the
-// OLD install's map cache.
+// OLD install's map cache, and the --game-mod that went with it (a pack of that install).
 inline std::vector<std::string> clientRestartArguments(const std::vector<std::string>& args) {
-    return withoutOptions(args, {{"--play-map", 1}});
+    return withoutOptions(args, {{"--play-map", 1}, {"--game-mod", 1}});
 }
 
 }  // namespace tak

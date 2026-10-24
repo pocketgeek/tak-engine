@@ -5,7 +5,8 @@
 // every rule about the two grammars live in aiprofiles.h; this file only draws,
 // routes input and writes the bytes back (one undo step per committed edit).
 // Opened from a game mod, the same window edits that pack's files instead (no undo;
-// SAVE TO PACK writes them back), and SAVE AS GAME MOD writes into a pack.
+// SAVE TO PACK writes them back), and SAVE AS GAME MOD writes into a pack. File > New
+// AI mod / Open AI mod opens it with a pack as the only document: no map (aiModOnly).
 
 #include "cartographer/editorstate.h"
 #include "cartographer/dialog.h"
@@ -14,6 +15,7 @@
 #include "sim/sim.h"
 
 #include <charconv>
+#include <chrono>
 #include <cstdio>
 #include <tuple>
 
@@ -205,6 +207,7 @@ void cart::Editor::closeAiProfiles() {
     if(!aiOpen)return;
     aiCommitText();
     if(aiModDirty()) {aiClosePack([this] {closeAiProfiles();});return;}   // asks first; closes after
+    if(aiModOnly) {finishAiModWorkspace(true);return;}   // closing the pack ends an AI mod without a map
     aiMod.reset();aiModSaveOpen=aiModOpenOpen=false;
     aiOpen=aiStartOpen=aiMergeOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();aiWordPick=-2;aiGroupCell=-1;
     SDL_StopTextInput();
@@ -422,7 +425,7 @@ void cart::Editor::aiChooseOwn() {
 
 void cart::Editor::aiCommitName() {
     aiFocus=AI_NONE;
-    if(aiMod)return;
+    if(aiMod) {aiCommitModName();return;}
     const auto typed=trimmed(aiName);
     if(typed==scenario.aiProfile)return;
     if(const auto error=cart::aiProfileNameError(typed);!error.empty()) {aiNote=error;aiName=scenario.aiProfile;return;}
@@ -437,7 +440,7 @@ void cart::Editor::aiMakeEditable() {
     if(view.key.empty() || !view.draft.asWritten)return;
     AiDraft draft=view.draft;std::string why;
     if(!cart::makeEditable(draft,*aiCatalogue,&why)) {aiNote="Not converted: "+why+". The file stays as written.";return;}
-    if(draft.header.empty())draft.header="Converted by Cartographer for map \""+mapName+"\" ("+view.key+"). Edit in Cartographer: SCENARIO > AI Profiles.";
+    if(draft.header.empty())draft.header="Converted by Cartographer for "+(aiMod?"game mod \""+aiMod->pack:"map \""+mapName)+"\" ("+view.key+"). Edit in Cartographer: SCENARIO > AI Profiles.";
     std::string bytes,error;
     if(!cart::saveAiDraft(draft,*aiCatalogue,bytes,error)) {aiNote=error;return;}
     aiSetFile(view.key,bytes);aiNote="Converted: every unit plays exactly as before.";
@@ -718,6 +721,7 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
         const auto key=e.key.keysym.sym;const bool ctrl=(e.key.keysym.mod&(KMOD_CTRL|KMOD_GUI))!=0;
         const bool enter=key==SDLK_RETURN || key==SDLK_KP_ENTER;
         if(ctrl && (key==SDLK_z || key==SDLK_y)) {aiUndo(key==SDLK_y || (e.key.keysym.mod&KMOD_SHIFT));return;}
+        if(aiModOnly && ctrl && (e.key.keysym.mod&KMOD_SHIFT) && (key==SDLK_n || key==SDLK_o)) {requestAiMod(key==SDLK_n);return;}
         if(aiFocus==AI_CELL) {if(key==SDLK_ESCAPE)aiFocus=AI_NONE;else if(enter)aiCommitCell();else typeInto(e);return;}
         if(aiFocus==AI_GROUP) {if(key==SDLK_ESCAPE) {aiFocus=AI_NONE;aiGroupCell=-1;} else if(enter)aiCommitGroupCell();else typeInto(e);return;}
         if(aiFocus==AI_NAME) {if(key==SDLK_ESCAPE) {aiFocus=AI_NONE;aiName=scenario.aiProfile;} else if(enter)aiCommitName();else typeInto(e);return;}
@@ -762,9 +766,16 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
     for(int p=0;p<3;++p)if(cart::pointIn(mx,my,aiPresetRects[p])) {aiPreset(p);return;}
     if(cart::pointIn(mx,my,aiDoneButton)) {closeAiProfiles();return;}
     if(cart::pointIn(mx,my,aiModSaveButton)) {aiCommitText();aiOpenModSave();return;}
+    if(aiModOnly && cart::pointIn(mx,my,aiTestButton)) {aiTestInGame();return;}
+    if(aiMod && cart::pointIn(mx,my,aiModNewNameButton)) {
+        aiCommitText();
+        if(aiTab)aiSelectTab(0);
+        aiFocus=AI_NAME;aiName.clear();aiNameEdit.focus(aiName);aiNote.clear();return;
+    }
     if(cart::pointIn(mx,my,aiModOpenButton)) {
         aiCommitText();
-        if(aiMod)aiClosePack();
+        if(aiModOnly)closeAiProfiles();   // CLOSE PACK ends an AI mod without a map (asking about its edits)
+        else if(aiMod)aiClosePack();
         else if(aiPacks.empty())aiNote="This install has no game mods yet (mods/game/<pack>/). SAVE AS GAME MOD makes one.";
         else {aiOpenPackList();aiNote.clear();}
         return;
@@ -880,7 +891,8 @@ void cart::Editor::drawAiProfiles() {
     if(!aiOpen)return;
     int pointerX,pointerY;SDL_GetMouseState(&pointerX,&pointerY);pointerX=int(pointerX/kUIScale);pointerY=int(pointerY/kUIScale);
     aiHint.clear();
-    const auto ct=cart::drawPanel(ren,w,h,780,520,aiMod?"AI PROFILES - GAME MOD PACK: "+upperText(aiMod->pack):"AI PROFILES - "+upperText(mapName));
+    const auto ct=cart::drawPanel(ren,w,h,780,520,aiModOnly && aiMod?"AI MOD (NO MAP) - GAME MOD PACK: "+upperText(aiMod->pack):
+        aiMod?"AI PROFILES - GAME MOD PACK: "+upperText(aiMod->pack):"AI PROFILES - "+upperText(mapName));
     const auto& view=aiTabView();
     const auto& catalogue=*aiCatalogue;
     const bool standard=cart::standardAiProfile(scenario.aiProfile);
@@ -940,24 +952,29 @@ void cart::Editor::drawAiProfiles() {
         // The pack banner: these files are the pack's, edited apart from the map.
         fillRect(ren,ct.x,ly-2,kLeftW,60,70,52,28);
         cart::drawText(ren,"PACK: "+(aiMod->pack.size()>20?aiMod->pack.substr(0,18)+"..":aiMod->pack),ct.x+3,ly,1,255,215,150);
-        drawWrapped(ren,"Game-mod files, not the map's. No undo; SAVE TO PACK writes them."+std::string(aiRosterPack==aiMod->pack && aiPackRoster?
+        drawWrapped(ren,std::string(aiModOnly?"An AI mod: no map is open. No undo; SAVE TO PACK writes the files.":"Game-mod files, not the map's. No undo; SAVE TO PACK writes them.")+std::string(aiRosterPack==aiMod->pack && aiPackRoster?
             " Units listed with the pack ("+std::to_string(aiPackRoster->added.size())+" added).":""),ct.x+3,ly+14,kLeftW-6,4,235,205,160);
     }
     ly+=64;
     cart::drawText(ren,"GAME MOD",ct.x,ly,1,150,200,150);
     aiModSaveButton=cart::drawButton(ren,ct.x,ly+12,kLeftW,18,aiMod?(aiModDirty()?"SAVE TO PACK... *":"SAVE TO PACK..."):"SAVE AS GAME MOD...",aiModDirty());
     aiModOpenButton=cart::drawButton(ren,ct.x,ly+34,kLeftW,18,aiMod?"CLOSE PACK":"OPEN FROM GAME MOD...",false);
+    aiTestButton=aiModOnly?cart::drawButton(ren,ct.x,ly+56,kLeftW,18,playtest.running()?"TEST RUNNING":"TEST IN GAME...",true):SDL_Rect{};
 
     // ---- right side ----
     const int x0=ct.x+kLeftW+10,W=ct.x+ct.w-x0,y0=ct.y;
     cart::drawText(ren,aiTab?"TAK ENGINE RULES: WHOLE NUMBERS; UNITS BY NAME ONLY; LATER LINES WIN.":"ORIGINAL-GAME RULES: THE FIRST LINE NAMING A UNIT WINS; GROUP RULES COMBINE.",x0,y0,1,235,220,160);
-    aiStandardRadio=aiOwnRadio=aiNameBox=aiModDefaultButton={};
+    aiStandardRadio=aiOwnRadio=aiNameBox=aiModDefaultButton=aiModNewNameButton={};
     if(!aiTab && aiMod) {
         cart::drawText(ren,"This pack's DEFAULT AI file:",x0,y0+17,1,220,225,235);
         aiModDefaultButton=cart::drawButton(ren,x0+174,y0+13,180,16,aiMod->defaultKey,false);
-        cart::drawText(ren,aiMod->defaultKey=="ai/default.txt"?"every map using the standard profile":
-            "only maps whose profile name is \""+aiMod->defaultKey.substr(3,aiMod->defaultKey.size()-7)+"\"",x0+362,y0+17,1,160,175,195);
-        cart::drawText(ren,"Click the file name to switch. A game mod's file replaces the same file on every map.",x0,y0+31,1,150,160,175);
+        // NEW NAME...: a named profile ai/<name>.txt, for maps that ask for it by name.
+        if(aiFocus==AI_NAME)aiNameBox=inlineField(ren,x0+360,y0+13,W-360,aiName,true,&aiNameEdit);
+        else aiModNewNameButton=cart::drawButton(ren,x0+360,y0+13,96,16,"NEW NAME...",false);
+        cart::drawText(ren,aiFocus==AI_NAME?"Type a profile name, then Enter (Esc cancels): maps with aiprofile=<name> read ai/<name>.txt.":
+            (aiMod->defaultKey=="ai/default.txt"?std::string("Read by every map using the standard profile."):
+             "Read only by maps whose profile name is \""+aiMod->defaultKey.substr(3,aiMod->defaultKey.size()-7)+"\".")+" Click the file name to switch.",
+            x0,y0+31,1,150,160,175);
     } else if(!aiTab) {
         aiStandardRadio={x0,y0+13,300,12};
         cart::drawText(ren,std::string(standard?"(o)":"( )")+" The standard profile (aiprofile=DEFAULT)",x0,y0+15,1,220,225,235);
@@ -1114,7 +1131,7 @@ void cart::Editor::drawAiProfiles() {
                 cart::drawText(ren,text.substr(lines[l].begin,lines[l].end-lines[l].begin),list.x+4,y+int(l)*12,1,error?255:info?170:235,error?145:info?190:215,error?140:info?205:180);
             y+=height;total+=height;
         }
-        if(aiIssues.empty())cart::drawText(ren,"No problems found in this map's AI files.",list.x+4,list.y+4,1,200,230,205);
+        if(aiIssues.empty())cart::drawText(ren,aiMod?"No problems found in this pack's AI files.":"No problems found in this map's AI files.",list.x+4,list.y+4,1,200,230,205);
         aiIssueScroll=std::clamp(aiIssueScroll,0,std::max(0,total-list.h+8));
         SDL_RenderSetClipRect(ren,nullptr);
         SDL_SetRenderDrawColor(ren,70,74,90,255);SDL_RenderDrawRect(ren,&list);
@@ -1142,7 +1159,7 @@ void cart::Editor::drawAiProfiles() {
              "the last limit rule wins. Neither touches a unit set individually: its own row comes first and locks it.";
     if(help.empty() && aiView==AiView::Table) {
         if(!aiTab && view.key.empty())help="The standard profile is shown read-only: the installed ai/default.txt (or every unit at 100 % when there is none). Choose this map's own profile to edit.";
-        else if(!aiTab && view.key=="ai/default.txt")help="This map carries ai/default.txt: every map without its own profile name also reads ai/default.txt, and an installed one may be used instead. Choose this map's own profile to move it.";
+        else if(!aiTab && !aiMod && view.key=="ai/default.txt")help="This map carries ai/default.txt: every map without its own profile name also reads ai/default.txt, and an installed one may be used instead. Choose this map's own profile to move it.";
         else help=aiTab?"One file for all six levels: a row replaces that unit's value in every level; blank keeps each level's built-in. WEIGHT: 0 never builds it. LIMIT: 0 means never. Easy halves limits, Hard and Absurd raise them by half (minimum 1); Defensive levels ignore limits except 0.":
             "CHANCE: 100 % is normal; lower numbers make the AI pick this unit less often against others it wants equally; 0 % never builds it. The real odds also depend on what the AI needs during play. LIMIT: a number, or no limit.";
     }
@@ -1151,13 +1168,28 @@ void cart::Editor::drawAiProfiles() {
     // ---- footer: which file plays, the Test Map hint, buttons ----
     const int footY=ct.y+ct.h-64;
     fillRect(ren,ct.x,footY-3,ct.w,1,70,74,90);
-    const auto* modFiles=aiMod?&aiMod->files:aiPackFiles?&*aiPackFiles:nullptr;
-    const auto choice=cart::whichFile(aiTab?*aiTabLevel():Difficulty::Classic,vfs,aiFiles,scenario.aiProfile,modFiles);
-    std::string plays="Plays: "+choice.message;
-    if(aiMod)plays+=" (on this map, with pack "+aiMod->pack+" ticked)";
-    else if(aiPack)plays+=" (with pack "+aiPacks[size_t(aiPack-1)]+" ticked)";
+    std::string plays;
+    if(aiModOnly && aiMod) {   // no map: what the pack's file does wherever the pack is ticked
+        const auto key=aiTabKey();const bool has=aiMod->files.count(key)>0;
+        const std::string pack=aiMod->pack;
+        if(aiTab)plays=has?"Plays: with "+pack+" ticked, all six levels read this pack's "+key+" over their own built-in tables, on every map; "
+            "a game mod wins over a map's own copy and over the install. Without the pack nothing changes.":
+            "Plays: this pack has no "+key+" yet, so with "+pack+" ticked our levels read the map's copy, else their built-in tables.";
+        else if(key=="ai/default.txt")plays=has?"Plays: with "+pack+" ticked, RETAIL reads this pack's ai/default.txt on every map using the standard profile, "
+            "over the map's and the install's. A map with its own profile name reads ai/<name>.txt instead.":
+            "Plays: this pack has no ai/default.txt yet, so with "+pack+" ticked RETAIL reads the map's or the install's.";
+        else plays="Plays: with "+pack+" ticked, RETAIL reads this pack's "+key+" on maps whose profile name asks for it, over the map's own copy"+
+            (has?".":" (the pack has no such file yet).");
+    } else {
+        const auto* modFiles=aiMod?&aiMod->files:aiPackFiles?&*aiPackFiles:nullptr;
+        const auto choice=cart::whichFile(aiTab?*aiTabLevel():Difficulty::Classic,vfs,aiFiles,scenario.aiProfile,modFiles);
+        plays="Plays: "+choice.message;
+        if(aiMod)plays+=" (on this map, with pack "+aiMod->pack+" ticked)";
+        else if(aiPack)plays+=" (with pack "+aiPacks[size_t(aiPack-1)]+" ticked)";
+    }
     drawWrapped(ren,plays,ct.x,footY+2,ct.w,2,180,220,190);
-    cart::drawText(ren,aiTab?"Test Map: every level you pick in the room reads ai/takengine.txt. Game-mod files are tested by ticking that pack.":
+    cart::drawText(ren,aiModOnly?"TEST IN GAME: pick a map; its room ticks this pack. RETAIL plays the DEFAULT AI, other levels ai/takengine.txt.":
+        aiTab?"Test Map: every level you pick in the room reads ai/takengine.txt. Game-mod files are tested by ticking that pack.":
         "Test Map: pick RETAIL for the DEFAULT AI in the room. Game-mod files are tested by ticking that pack.",ct.x,footY+28,1,150,160,175);
     const int by=ct.y+ct.h-18;
     aiStartButton=aiEditableButton=aiInsertButton={};
@@ -1170,7 +1202,7 @@ void cart::Editor::drawAiProfiles() {
     if(view.draft.asWritten && !view.key.empty()) {aiEditableButton=cart::drawButton(ren,bx,by,104,16,"MAKE EDITABLE",true);bx+=110;}
     if(aiView==AiView::Text && !aiTextKey.empty()) {aiInsertButton=cart::drawButton(ren,bx,by,96,16,"INSERT UNIT",false);bx+=102;}
     cart::drawText(ren,aiMod?"Pack files: no undo.":"Ctrl+Z undoes.",bx+6,by+5,1,140,150,165);
-    aiDoneButton=cart::drawButton(ren,ct.x+ct.w-60,by,60,16,"DONE",true);
+    aiDoneButton=cart::drawButton(ren,ct.x+ct.w-60,by,60,16,aiModOnly?"CLOSE":"DONE",true);
 
     if(aiStartOpen) {
         const auto pc=cart::drawPanel(ren,w,h,460,136,"START FROM");
@@ -1264,7 +1296,7 @@ void cart::Editor::aiModSave() {
     }
     auto write=[this,plan] {
         std::string error;std::filesystem::path backup;
-        if(!cart::writeModProfiles(std::filesystem::u8path(dataRoot),plan,preferencesFolder,error,&backup)) {openMessage("SAVE FAILED",error);return;}
+        if(!cart::writeModProfiles(std::filesystem::u8path(dataRoot),plan,preferencesFolder,error,&backup)) {aiAfterSave=nullptr;openMessage("SAVE FAILED",error);return;}
         int written=0,same=0,deleted=0;
         for(const auto& change:plan.changes) {
             if(change.action==A::Same)++same;else if(change.action==A::Delete)++deleted;else ++written;
@@ -1284,6 +1316,10 @@ void cart::Editor::aiModSave() {
         text+=".";
         if(!backup.empty())text+=" The previous files are in "+pathText(backup)+".";
         text+=" Tick "+plan.pack+" under Mods. A game already running shows the new pack the next time a room opens.";
+        if(aiAfterSave) {   // TEST IN GAME asked for this save: carry on to its map picker
+            auto next=std::move(aiAfterSave);aiAfterSave=nullptr;
+            aiNote="Saved to "+pathText(plan.folder)+".";next();return;
+        }
         openMessage("SAVED",text);
     };
     if(replaces)openConfirm("REPLACE PACK FILES",compare+"The old files are kept in "+pathText(preferencesFolder/"mod-backups"/std::filesystem::u8path(plan.pack))+
@@ -1293,25 +1329,28 @@ void cart::Editor::aiModSave() {
 
 void cart::Editor::aiOpenPack(const std::string& pack) {
     aiModOpenOpen=false;
+    if(aiModPickWorkspace && !aiOpen) {aiModPickWorkspace=false;startAiModWorkspace(pack,false);return;}   // File > Open AI mod
     try {
         auto files=cart::readModProfiles(std::filesystem::u8path(dataRoot),pack);
         AiModSet set;set.pack=pack;set.files=files;set.opened=std::move(files);
         // The DEFAULT tab shows ai/default.txt, or the pack's file for this map's profile name.
         if(!set.files.count("ai/default.txt")) {
-            if(const auto own=cart::aiProfileFileKey(scenario.aiProfile);!cart::standardAiProfile(scenario.aiProfile) && set.files.count(own))set.defaultKey=own;
+            if(const auto own=cart::aiProfileFileKey(scenario.aiProfile);!aiModOnly && !cart::standardAiProfile(scenario.aiProfile) && set.files.count(own))set.defaultKey=own;
             else for(const auto& [key,bytes]:set.files)if(cart::aiKindOf(key)==AiKind::Default) {set.defaultKey=key;break;}
         }
         const auto count=set.files.size();
         aiMod=std::move(set);
         aiUseRoster(pack);   // this pack's units are listed (its additions too)
         aiViewCache=AiTabView{};aiIssues.clear();aiView=AiView::Table;aiFocus=AI_NONE;aiScroll=0;
-        aiNote="Opened game mod "+pack+" ("+std::to_string(count)+" AI file"+(count==1?"":"s")+"). Edits here are the pack's, not the map's, and have no undo.";
+        aiNote="Opened game mod "+pack+" ("+std::to_string(count)+" AI file"+(count==1?"":"s")+")."+
+            (aiModOnly?" No map is open; edits have no undo.":" Edits here are the pack's, not the map's, and have no undo.");
     } catch(const std::exception& error) {aiNote="Could not open game mod "+pack+": "+error.what();}
 }
 
 void cart::Editor::aiClosePack(std::function<void()> then) {
     if(!aiMod) {if(then)then();return;}
     auto close=[this,then] {
+        if(aiModOnly) {finishAiModWorkspace(true);if(then)then();return;}   // no map to return to inside the window
         aiMod.reset();aiModSaveOpen=false;aiViewCache=AiTabView{};aiIssues.clear();aiView=AiView::Table;aiFocus=AI_NONE;aiNote.clear();
         if(aiOpen)aiUseRoster(aiPack?aiPacks[size_t(aiPack-1)]:"");
         if(then)then();
@@ -1324,8 +1363,9 @@ void cart::Editor::aiClosePack(std::function<void()> then) {
 void cart::Editor::aiStepModDefault() {
     if(!aiMod)return;
     std::vector<std::string> keys{"ai/default.txt"};
-    if(!cart::standardAiProfile(scenario.aiProfile))keys.push_back(cart::aiProfileFileKey(scenario.aiProfile));
+    if(!aiModOnly && !cart::standardAiProfile(scenario.aiProfile))keys.push_back(cart::aiProfileFileKey(scenario.aiProfile));
     for(const auto& [key,bytes]:aiMod->files)if(cart::aiKindOf(key)==AiKind::Default)keys.push_back(key);
+    keys.push_back(aiMod->defaultKey);   // a name given with NEW NAME... stays until the file switches
     std::vector<std::string> unique;for(const auto& key:keys)if(std::find(unique.begin(),unique.end(),key)==unique.end())unique.push_back(key);
     const auto at=std::find(unique.begin(),unique.end(),aiMod->defaultKey);
     aiMod->defaultKey=at==unique.end() || at+1==unique.end()?unique.front():*(at+1);
@@ -1335,6 +1375,136 @@ void cart::Editor::aiStepModDefault() {
 
 void cart::Editor::aiOpenPackList() {
     aiModOpenOpen=true;aiModPackScroll=aiModPackSel=0;aiModPackThumbDrag=false;
+    aiModPickWorkspace=!aiOpen;   // from File > Open AI mod (the window is not up)
+}
+
+// NEW NAME...: the DEFAULT tab edits a named profile ai/<name>.txt of the pack, which a
+// map reads when its aiprofile= names it (the map's own-profile name rules).
+void cart::Editor::aiCommitModName() {
+    if(!aiMod)return;
+    const auto name=trimmed(aiName);aiName.clear();
+    if(name.empty())return;
+    if(const auto why=cart::aiProfileNameError(name);!why.empty()) {aiNote=why;return;}
+    const auto key=cart::aiProfileFileKey(name);
+    aiMod->defaultKey=key;aiViewCache=AiTabView{};aiScroll=0;
+    if(aiView==AiView::Text) {aiTextKey.clear();aiSelectTab(0);}
+    aiNote=aiMod->files.count(key)?"The DEFAULT tab shows the pack's "+key+".":
+        "The DEFAULT tab now edits "+key+": maps whose profile name is \""+name+"\" read it when the pack is ticked. "
+        "START FROM... fills it, or set units in the table.";
+}
+
+// ---- an AI mod without a map (File > New AI mod / Open AI mod) ------------------------------
+// The window opens with a game mod pack as the only document. The map is never shown: a
+// map without unsaved work is put aside as it is (and comes back when the mod closes);
+// one with unsaved work is discarded after the menu command asked, leaving a blank
+// placeholder; a new map nothing was done to counts as no work.
+bool cart::Editor::mapHasUnsavedWork() const {
+    return dirty && (historyPending || history.canUndo() || history.canRedo() || !recoveredFrom.empty() || !mapPath.empty() ||
+                     !scenario.generatorRecipe.empty());
+}
+
+void cart::Editor::requestAiMod(bool create) {
+    auto next=[this,create] {
+        if(create) {openModal(M_NEWAIMOD);return;}
+        try {aiPacks=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {aiPacks.clear();}
+        if(aiPacks.empty()) {openMessage("OPEN AI MOD","This install has no game mods yet (mods/game/<pack>/). File > New AI mod makes one.");return;}
+        aiOpenPackList();
+    };
+    if(aiModOnly) {leaveAiModThen(next);return;}
+    if(aiOpen)return;   // the map's own AI window: DONE first
+    commitHistory();
+    if(mapHasUnsavedWork())openConfirm(create?"NEW AI MOD":"OPEN AI MOD","An AI mod is edited without a map. Close map \""+mapName+
+        "\" and discard its unsaved changes?",next);
+    else next();
+}
+
+void cart::Editor::startAiModWorkspace(const std::string& pack,bool fresh) {
+    commitHistory();
+    aiModReturnNew=dirty;   // a placeholder (or a new map nothing was done to) is not returned to
+    if(dirty) {
+        if(mapHasUnsavedWork()) {   // asked already (requestAiMod): a blank placeholder replaces it
+            mapView.quiesce();
+            try {
+                cart::SectionLibrary freshSections;freshSections.scan(vfs,"aramon");
+                auto map=buildFreshMap(vfs,freshSections,mapView.compositor(),"aramon",8,8,false);
+                if(map.map.width)adoptFreshMap(std::move(map),"Untitled","aramon");
+            } catch(const std::exception& error) {openMessage("AI MOD",error.what());return;}
+            resetHistory=true;commitHistory();
+        }
+        history.markSaved();dirty=historyPending=false;
+    }
+    aiPack=0;aiPackFiles.reset();
+    openAiProfiles();
+    aiModOnly=true;aiModPickWorkspace=false;aiTab=1;aiPreviewLevel=Difficulty::Normal;
+    if(fresh) {
+        AiModSet set;set.pack=pack;aiMod=std::move(set);
+        aiNote="New AI mod "+pack+": edit TAK ENGINE AI (all six levels) and DEFAULT AI (RETAIL), then SAVE TO PACK makes mods/game/"+pack+"/ai/.";
+    } else {
+        aiOpenPack(pack);
+        if(!aiMod) {const auto why=aiNote;finishAiModWorkspace(true);openMessage("OPEN AI MOD FAILED",why);return;}
+    }
+    std::fprintf(stderr,"cartographer: AI mod %s (%s), no map open\n",pack.c_str(),fresh?"new":"opened");
+}
+
+void cart::Editor::finishAiModWorkspace(bool toMapEditor) {
+    aiMod.reset();aiModSaveOpen=aiModOpenOpen=aiModPickWorkspace=false;aiAfterSave=nullptr;
+    aiOpen=aiStartOpen=aiMergeOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();aiWordPick=-2;aiGroupCell=-1;
+    aiViewCache=AiTabView{};aiIssues.clear();aiNote.clear();
+    aiModOnly=false;
+    SDL_StopTextInput();
+    const bool placeholder=aiModReturnNew;aiModReturnNew=false;
+    if(toMapEditor && placeholder)openModal(M_NEW);   // as a bare launch: what shall we make?
+}
+
+void cart::Editor::leaveAiModThen(std::function<void()> then) {
+    aiCommitText();
+    auto leave=[this,then] {finishAiModWorkspace(false);if(then)then();};
+    if(aiModDirty())openConfirm("CLOSE AI MOD","Discard the unsaved changes to game mod "+aiMod->pack+"? They are not saved anywhere else.",leave);
+    else leave();
+}
+
+// TEST IN GAME: the pack as saved, on one of the install's maps, in the normal private
+// single-player room with this pack ticked (takclient --play-map <snapshot> --game-mod <pack>).
+void cart::Editor::aiTestInGame() {
+    aiCommitText();
+    if(!aiMod)return;
+    if(playtest.running()) {aiNote="A test is already running. Close its game window before starting another.";return;}
+    auto pick=[this] {
+        if(!aiMod)return;
+        std::vector<std::string> packs;
+        try {packs=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
+        if(std::none_of(packs.begin(),packs.end(),[&](const std::string& p){return p==aiMod->pack;})) {
+            aiNote="Save the pack first: mods/game/"+aiMod->pack+" is not in the data folder yet, so the game has nothing to tick.";return;
+        }
+        openTestMapPicker();
+    };
+    if(aiModDirty())openConfirm("TEST IN GAME","The game plays the pack as it is saved in the data folder. Save the changes to "+aiMod->pack+" first?",
+        [this,pick] {aiOpenModSave();if(aiModSaveOpen)aiAfterSave=pick;});
+    else pick();
+}
+
+void cart::Editor::openTestMapPicker() {
+    openModal(M_OPENPATH);
+    openForTest=true;mTitle="TEST IN GAME: CHOOSE A MAP";mLabel[0]="SEARCH THE INSTALL'S MAPS";
+    openCatalog.clear();
+    for(const auto& [name,path]:tak::hpi::listMaps(vfs))openCatalog.emplace_back(name,path);
+    openFilterDirty=true;filterOpenMaps();
+}
+
+void cart::Editor::aiLaunchTest(const std::string& mapPath) {
+    if(!aiMod)return;
+    std::string label=mapPath;
+    for(const auto& [name,path]:openCatalog)if(path==mapPath)label=name;
+    try {
+        const auto client=gameClient();
+        // A distinct name keeps earlier cached test copies apart, as Test Map does.
+        const auto name="Test "+std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
+        const auto files=installedMapFiles(mapPath,name);
+        std::string error;
+        if(!playtest.start(client,std::filesystem::u8path(dataRoot),files,error,aiMod->pack))throw std::runtime_error(error);
+        openMessage("TEST IN GAME","Opened a private game lobby on a test copy of "+label+" with game mod "+aiMod->pack+
+            " ticked for that room only (your own ticks are kept). Seat AIs at the levels to test (RETAIL for the DEFAULT AI), then start. Close the game to return here.");
+    } catch(const std::exception& e) {openMessage("TEST IN GAME FAILED",e.what());}
 }
 
 cart::ScrollBar cart::Editor::aiModPackBar() const {
@@ -1395,7 +1565,7 @@ bool cart::Editor::handleAiModDialogs(SDL_Event& e) {
             else if(aiModPackEdit.input(e,aiModPack))aiModReplan();
             return true;
         }
-        if(key==SDLK_ESCAPE)aiModSaveOpen=false;else if(enter)aiModSave();
+        if(key==SDLK_ESCAPE) {aiModSaveOpen=false;aiAfterSave=nullptr;} else if(enter)aiModSave();
         return true;
     }
     if(e.type!=SDL_MOUSEBUTTONDOWN || e.button.button!=SDL_BUTTON_LEFT)return true;
@@ -1410,7 +1580,7 @@ bool cart::Editor::handleAiModDialogs(SDL_Event& e) {
     }
     if(cart::pointIn(mx,my,aiModDefaultAsBox)) {aiModDefaultAs^=1;aiModReplan();return true;}
     if(cart::pointIn(mx,my,aiModWriteButton)) {aiModSave();return true;}
-    if(cart::pointIn(mx,my,aiModCancelButton)) {aiModSaveOpen=false;return true;}
+    if(cart::pointIn(mx,my,aiModCancelButton)) {aiModSaveOpen=false;aiAfterSave=nullptr;return true;}
     for(auto& row:aiModRows)if(cart::pointIn(mx,my,row.box)) {row.tick=!row.tick;aiModNote.clear();aiModReplan();return true;}
     for(const auto& [rect,key]:aiModDeleteBoxes)if(cart::pointIn(mx,my,rect)) {
         if(!aiModDeleteTicked.erase(key))aiModDeleteTicked.insert(key);
@@ -1423,8 +1593,9 @@ void cart::Editor::drawAiModDialogs() {
     using A=ModProfileChange::Action;
     if(aiModOpenOpen) {
         const int n=int(aiPacks.size()),shown=std::min(n,kAiPackRowsShown);
-        const auto pc=cart::drawPanel(ren,w,h,420,96+shown*kAiPackRowH,"OPEN FROM GAME MOD");
-        cart::drawText(ren,"Edit one pack's ai/ files. They stay the pack's: not in the map, no undo.",pc.x,pc.y,1,220,225,235);
+        const auto pc=cart::drawPanel(ren,w,h,420,96+shown*kAiPackRowH,aiModPickWorkspace?"OPEN AI MOD":"OPEN FROM GAME MOD");
+        cart::drawText(ren,aiModPickWorkspace?"Edit one game mod pack's ai/ files, without a map. No undo.":
+            "Edit one pack's ai/ files. They stay the pack's: not in the map, no undo.",pc.x,pc.y,1,220,225,235);
         aiModPackList={pc.x,pc.y+18,pc.w,shown*kAiPackRowH};
         const auto bar=aiModPackBar();
         aiModPackScroll=bar.clamp(aiModPackScroll);aiModPackSel=n?std::clamp(aiModPackSel,0,n-1):0;
@@ -1460,7 +1631,7 @@ void cart::Editor::drawAiModDialogs() {
         }
         cart::drawText(ren,aiPacks.empty()?"No game mods yet: this makes the first.":std::to_string(aiPacks.size())+" existing pack"+(aiPacks.size()==1?"":"s")+" (< > steps through them).",
                        pc.x+318,y+15,1,150,160,175);
-    } else cart::drawText(ren,"PACK: "+aiMod->pack+" (the pack these files were opened from)",pc.x,y+12,1,255,215,150);
+    } else cart::drawText(ren,"PACK: "+aiMod->pack+(aiModOnly?" (mods/game/"+aiMod->pack+" in the data folder)":" (the pack these files were opened from)"),pc.x,y+12,1,255,215,150);
     y+=34;
     const std::string folder=aiModPlan.folder.empty()?"":pathText(aiModPlan.folder)+"/";
     cart::drawText(ren,"FOLDER",pc.x,y,1,150,200,150);

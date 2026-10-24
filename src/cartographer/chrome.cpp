@@ -73,15 +73,30 @@ void cart::Editor::drawMinimap() {
     }
 }
 
+// While an AI mod is edited without a map, only the commands that need no map run:
+// File's New/Open map and New/Open AI mod, Exit, the UI scale, Preferences and Help.
+bool cart::Editor::menuRowEnabled(int menu,int row) const {
+    if(!aiModOnly)return true;
+    if(menu==0)return row==0 || row==1 || row>=6;
+    if(menu==2)return row==12 || row==13 || row==18;
+    return menu==5;
+}
+
 void cart::Editor::menuAction(int menu,int row) {
+    if(!menuRowEnabled(menu,row))return;
+    if(aiModOnly && menu==0 && (row==0 || row==1)) {   // back to maps: the pack closes first (asking about its edits)
+        leaveAiModThen([this,row] {openModal(row?M_OPENPATH:M_NEW);});
+        return;
+    }
     if(menu==0) {
+        if(row==6 || row==7)requestAiMod(row==6);
+        if(row==8) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
         if(row==5)testMap();
         if(row==0) {if(dirty)openConfirm("NEW MAP","Discard unsaved changes?",[&]{wantNew=true;});else openModal(M_NEW);}
         if(row==1)openModal(M_OPENPATH);
         if(row==2) {if(saveBundle(outDir+"/"+mapName+".kmp"))openMessage("SAVED",outDir+"/"+mapName+".kmp");else openMessage("SAVE FAILED",saveError);}
         if(row==3)openModal(M_SAVEAS);
         if(row==4) {if(saveMap(outDir+"/"+mapName+".tnt"))openMessage("EXPORTED",outDir+"/"+mapName+".tnt");else openMessage("EXPORT FAILED",saveError);}
-        if(row==6) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
     } else if(menu==1) {
         if(row<2) {SDL_Event key{};key.type=SDL_KEYDOWN;key.key.keysym.sym=row?SDLK_y:SDLK_z;key.key.keysym.mod=KMOD_CTRL;SDL_PushEvent(&key);}
         else if(row==2) {clearArm=true;editMode=MODE_PLACE;}
@@ -141,6 +156,7 @@ void cart::Editor::menuAction(int menu,int row) {
     else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
         "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move selected units or features. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute. "
         "Scenario > AI Profiles (A) edits the map's DEFAULT AI profile and ai/takengine.txt, the one file all our AI levels read. "
+        "File > New AI mod (Ctrl+Shift+N) and Open AI mod (Ctrl+Shift+O) edit a game mod's AI files without a map; TEST IN GAME plays them on a map you pick. "
         "Symmetry: M mirrors placements, moves and erasures live across the chosen axis; Shift+M (Symmetrize) copies one half or quadrant onto the rest, using mirror-twin terrain sections. "
         "Terrain tool + Select: drag a block rectangle, Ctrl+C copies it, Ctrl+V makes it a click-to-paste brush (Esc returns to sections). "
         "BLOCKED tool: Place paints impassable, unbuildable cells on empty ground only; Erase clears blocked cells; features and roads are never touched. "
@@ -152,7 +168,7 @@ bool cart::Editor::handleMenuInput(SDL_Event& e) {
     if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE && menuOpen>=0) {menuOpen=-1;return true;}
     if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
         const int mx=e.button.x,my=e.button.y;
-        if(my>=25 && my<41 && mx>=kTestX && mx<kTestX+kTestW) {testMap();return true;}
+        if(!aiModOnly && my>=25 && my<41 && mx>=kTestX && mx<kTestX+kTestW) {testMap();return true;}
         if(my<22 && mx>=96 && mx<96+int(menuNames.size())*72) {const int item=(mx-96)/72;menuOpen=menuOpen==item?-1:item;return true;}
         if(menuOpen>=0) {
             const int column=menuOpen;menuOpen=-1;
@@ -196,6 +212,9 @@ bool cart::Editor::handleShortcuts(SDL_Event& e) {
         const bool ok=loose ? saveMap(outDir+"/"+mapName+".tnt") : saveBundle(outDir+"/"+mapName+".kmp");
         if(ok) {dirty=false;openMessage("SAVED",outDir+"/"+mapName+(loose?".tnt (loose export)":".kmp"));}
         else openMessage("SAVE FAILED",saveError);
+    } else if(e.type==SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI)) && (e.key.keysym.mod & KMOD_SHIFT) &&
+              (e.key.keysym.sym==SDLK_n || e.key.keysym.sym==SDLK_o)) {
+        requestAiMod(e.key.keysym.sym==SDLK_n);   // File > New AI mod / Open AI mod
     } else if(e.type==SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI)) && e.key.keysym.sym==SDLK_o) {
         openModal(M_OPENPATH);
     } else if (e.type == SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI)) &&
@@ -270,14 +289,14 @@ void cart::Editor::drawChrome() {
     // Chrome strips.
     fillRect(ren, 0, 0, w, kMenuH, 46, 48, 58);
     fillRect(ren, 0, kMenuH - 1, w, 1, 12, 12, 16);
-    fillRect(ren, kPaletteW - 1, kMenuH, 1, canvasH, 12, 12, 16);
+    if(!aiModOnly)fillRect(ren, kPaletteW - 1, kMenuH, 1, canvasH, 12, 12, 16);
     fillRect(ren, 0, h - kStatusH, w, kStatusH, 38, 40, 50);
     fillRect(ren, 0, h - kStatusH, w, 1, 12, 12, 16);
 
     // Menu strip: title + tool buttons (active one highlighted).
     cart::drawText(ren, "CARTOGRAPHER", 6, 7, 1, 200, 200, 210);
     const auto* names = kToolNames;
-    for (int t = 0; t < kToolCount; ++t) {
+    for (int t = 0; t < kToolCount && !aiModOnly; ++t) {
         int bx = kToolX + t * kToolW;
         bool active = !regionCanvas && int(tool) == t;
         fillRect(ren, bx, 25, kToolW - 4, 16, active ? 90 : 60, active ? 80 : 62,
@@ -287,31 +306,27 @@ void cart::Editor::drawChrome() {
     }
 
     static const char* modes[]={"PLACE","SELECT","ERASE","PAN"};
-    for(int i=0;i<4;++i)cart::drawButton(ren,kModeX+i*kModeW,25,kModeW-4,16,modes[i],int(editMode)==i);
-    cart::drawButton(ren,kRegionsX,25,kRegionsW,16,"REGIONS",regionCanvas);
-    cart::drawButton(ren,kTestX,25,kTestW,16,playtest.running()?"TEST RUNNING":"TEST MAP (F5)",false);
+    if(aiModOnly) {   // no map: no tools, modes or Test Map
+        cart::drawText(ren,"AI MOD (NO MAP OPEN): "+(aiMod?aiMod->pack:std::string()),kToolX,29,1,255,215,150);
+    } else {
+        for(int i=0;i<4;++i)cart::drawButton(ren,kModeX+i*kModeW,25,kModeW-4,16,modes[i],int(editMode)==i);
+        cart::drawButton(ren,kRegionsX,25,kRegionsW,16,"REGIONS",regionCanvas);
+        cart::drawButton(ren,kTestX,25,kTestW,16,playtest.running()?"TEST RUNNING":"TEST MAP (F5)",false);
+    }
 
     for(size_t i=0;i<menuNames.size();++i) {
         const int x=96+int(i)*72;
         fillRect(ren,x,2,68,18,menuOpen==int(i)?90:46,menuOpen==int(i)?80:48,menuOpen==int(i)?40:58);
         cart::drawText(ren,menuNames[i],x+6,7,1,230,230,240);
     }
-    if(menuOpen>=0) {
-        const int x=96+menuOpen*72;const auto& rows=menuRows[size_t(menuOpen)];
-        fillRect(ren,x,22,240,int(rows.size())*20,46,48,58);
-        for(size_t i=0;i<rows.size();++i) {
-            std::string label=rows[i];
-            if(menuOpen==1 && i==3)label=std::string(stampLayers.objects?"[ ] ":"[X] ")+"Brush: protect objects";
-            if(menuOpen==3 && i==9)label=std::string(preferences.tracePlaytest?"[X] ":"[ ] ")+"Log Test Map triggers";
-            if(menuOpen==4)label=symmetryMenuLabel(i);
-            if(menuOpen==2 && (i==2 || i==3 || (i>=14 && i<=16) || i==19)) {
-                const bool shown=i==2?showGrid:i==3?showRegions:i==14?showFeatures:i==15?showUnits:i==16?showStarts:preferences.showBlocked;
-                label=std::string(shown?"[X] ":"[ ] ")+label;
-            }
-            cart::drawText(ren,label,x+8,28+int(i)*20,1,235,235,240);
-        }
-    }
+    if(!aiModOnly)drawMenuRows();   // an AI mod's window would cover them: drawn after it (main.cpp)
 
+    if(aiModOnly) {
+        const std::string pack=aiMod?aiMod->pack:"";
+        cart::drawText(ren,"AI MOD "+pack+": mods/game/"+pack+"/ai/ in the data folder"+(aiModDirty()?"   UNSAVED":"   SAVED")+
+            "   File > New map or Open map goes back to maps.",6,h-kStatusH+7,1,200,205,215);
+        return;
+    }
     // Status bar: cursor cell, tool, zoom, start count.
     int mxg, myg; SDL_GetMouseState(&mxg, &myg); mxg /= kUIScale; myg /= kUIScale;
     int ccx, ccz;
@@ -346,6 +361,25 @@ void cart::Editor::drawChrome() {
     if(!regionCanvas && !toolVisible())status="LAYER HIDDEN: choose its toolbar or palette to show it before editing.";
     if(regionCanvas)status=coord+"   REGIONS: PLACE DRAWS; SELECT MOVES/RESIZES; ENTER NAMES; ESC CANCELS"+(dirty?std::string("   UNSAVED"):std::string("   SAVED"));
     cart::drawText(ren, status, 6, h - kStatusH + 7, 1, 200, 205, 215);
+}
+
+void cart::Editor::drawMenuRows() {
+    if(menuOpen>=0) {
+        const int x=96+menuOpen*72;const auto& rows=menuRows[size_t(menuOpen)];
+        fillRect(ren,x,22,240,int(rows.size())*20,46,48,58);
+        for(size_t i=0;i<rows.size();++i) {
+            std::string label=rows[i];
+            if(menuOpen==1 && i==3)label=std::string(stampLayers.objects?"[ ] ":"[X] ")+"Brush: protect objects";
+            if(menuOpen==3 && i==9)label=std::string(preferences.tracePlaytest?"[X] ":"[ ] ")+"Log Test Map triggers";
+            if(menuOpen==4)label=symmetryMenuLabel(i);
+            if(menuOpen==2 && (i==2 || i==3 || (i>=14 && i<=16) || i==19)) {
+                const bool shown=i==2?showGrid:i==3?showRegions:i==14?showFeatures:i==15?showUnits:i==16?showStarts:preferences.showBlocked;
+                label=std::string(shown?"[X] ":"[ ] ")+label;
+            }
+            const bool enabled=menuRowEnabled(menuOpen,int(i));
+            cart::drawText(ren,label,x+8,28+int(i)*20,1,enabled?235:110,enabled?235:112,enabled?240:125);
+        }
+    }
 }
 
 // Borderless fullscreen covers the desktop at its own resolution (as the game does);

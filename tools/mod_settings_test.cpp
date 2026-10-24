@@ -53,6 +53,25 @@ int main() {
                 throw std::runtime_error("old overrides keys must be ignored (no migration)");
             if(tak::Settings{}.gameCreate.gameMods)throw std::runtime_error("GAME MODS must default off");
         }
+        {   // takclient --game-mod (Cartographer's TEST IN GAME): a launch-only selection never
+            // replaces the player's saved ticks, until the player changes the ticks themselves.
+            if(!tak::saveSettings(s))throw std::runtime_error("save failed");   // the player's ticks on disk
+            auto run=s;run.gameModPacks={"My AI"};
+            tak::setLaunchGameModPacks(run.gameModPacks);
+            run.uiScale=0.75f;
+            if(!tak::saveSettings(run))throw std::runtime_error("save failed");
+            auto back=tak::loadSettings();
+            if(back.gameModPacks!=s.gameModPacks || back.uiScale!=0.75f)
+                throw std::runtime_error("a launch-only game mod selection was saved over the player's ticks (or blocked the save)");
+            run.gameModPacks={"My AI","Textures"};   // the player ticks another pack in that room
+            if(!tak::saveSettings(run) || tak::loadSettings().gameModPacks!=run.gameModPacks)
+                throw std::runtime_error("the player's own new ticks were not saved");
+            run.gameModPacks={"My AI"};   // the launch selection ended with that change
+            if(!tak::saveSettings(run) || tak::loadSettings().gameModPacks!=run.gameModPacks)
+                throw std::runtime_error("a launch selection outlived the player's own change");
+            tak::setLaunchGameModPacks({});
+            if(!tak::saveSettings(s))throw std::runtime_error("save failed");
+        }
         if(loaded.uiScale!=0.5f || loaded.scorecardScale!=1.75f)
             throw std::runtime_error("independent scorecard scale did not persist");
         if(loaded.gameCreate.pathfindingMode!=PathMode::Legion)

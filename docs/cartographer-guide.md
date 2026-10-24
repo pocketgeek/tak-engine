@@ -20,7 +20,10 @@ what each control does, from a first map to sharing a finished one.
 > - a map keeping its own `ai/` files through open, save, Test Map and recovery;
 > - our six AI levels reading one file, `ai/takengine.txt`, instead of one file
 >   each (the window's TAK ENGINE AI tab, PREVIEW LEVEL and MERGE INTO TAK
->   ENGINE).
+>   ENGINE);
+> - [making an AI mod without a map](#making-an-ai-mod-without-a-map) (**File →
+>   New AI mod...** and **Open AI mod...**, **TEST IN GAME...**, and the game's
+>   `--game-mod` option).
 >
 > Apart from these, the guide matches 0.8.11.
 
@@ -312,7 +315,7 @@ controls** shows a summary of the controls.
 
 | Menu | Items |
 | --- | --- |
-| **FILE** | New map (Ctrl+N), Open map (Ctrl+O), Save (Ctrl+S), Save As (Ctrl+Shift+S), Export loose files, Test Map (F5), Exit |
+| **FILE** | New map (Ctrl+N), Open map (Ctrl+O), Save (Ctrl+S), Save As (Ctrl+Shift+S), Export loose files, Test Map (F5), New AI mod... (Ctrl+Shift+N), Open AI mod... (Ctrl+Shift+O), Exit |
 | **EDIT** | Undo (Ctrl+Z), Redo (Ctrl+Y), Clear area (K), Brush: protect objects (checkbox), Copy terrain selection (Ctrl+C), Paste terrain clipboard (Ctrl+V) |
 | **VIEW** | Fit map, 100% terrain zoom, Toggle grid (G), Toggle regions, Frame selection, Store view bookmark, Restore view bookmark, Overlay: movement / buildability / water depth / slopes, Hide terrain overlay, Smaller UI, Larger UI, Show features, Show units, Show starts, Unit model preview (F6), Preferences (F11 fullscreen), Show blocked cells (B) |
 | **SCENARIO** | Properties (P), Resize (R), Use Only units (U), Check map (C), Scripting (T), Next issue, Regions, Validation results, Regenerate from recipe, Log Test Map triggers (checkbox), Placed units |
@@ -1624,7 +1627,66 @@ saved.
 **Test Map** (**F5**) takes the map's AI files into the test game. In the
 room, give each computer seat the level you are testing (**RETAIL** for the
 map's DEFAULT AI profile; every other level reads `ai/takengine.txt`). To test
-a game mod's files, tick that pack in the room.
+a game mod's files, tick that pack in the room, or use **TEST IN GAME...** in
+an AI mod (below).
+
+### Making an AI mod without a map
+
+A game mod's AI files apply on every map while the pack is ticked, so making
+one needs no map. **File → New AI mod...** (**Ctrl+Shift+N**) asks for a pack
+name and opens the AI Profiles window with that pack as the only document.
+**File → Open AI mod...** (**Ctrl+Shift+O**) lists your game mods
+(`mods/game/` in the game data folder) and opens one. No map is opened or
+shown: the editor behind the window is empty, the toolbar reads **AI MOD (NO
+MAP OPEN)** with the pack's name, and the menus that need a map (Edit,
+Scenario, Symmetry, and the map commands under File and View) are greyed out.
+
+![The AI MOD (NO MAP) window for game mod pack Harder AI, over an empty editor: the toolbar reads AI MOD (NO MAP OPEN): Harder AI and the status bar AI MOD Harder AI: mods/game/Harder AI/ai/ in the data folder, UNSAVED. Left: the tabs DEFAULT AI (ai/default.txt) and TAK ENGINE AI (ai/takengine.txt, tagged pack *), PREVIEW LEVEL < NORMAL >, the presets, the banner PACK: Harder AI, An AI mod: no map is open. No undo; SAVE TO PACK writes the files, and the buttons SAVE TO PACK... *, CLOSE PACK and TEST IN GAME.... Right: the Archer (araarch) row with BUILD OFF, WEIGHT 0 *, BUILT-IN 5 / 16. Footer: Plays: with Harder AI ticked, all six levels read this pack's ai/takengine.txt over their own built-in tables, on every map; a game mod wins over a map's own copy and over the install. Buttons TEXT VIEW, CHECK and CLOSE](img/cartographer/ai-mod.jpg)
+
+*A new AI mod, Harder AI, with one TAK ENGINE AI setting: the Archer is never
+built by any of our levels while the pack is ticked. Nothing is saved yet.*
+
+- **The pack name** follows the same rules as SAVE AS GAME MOD. New AI mod
+  refuses the name of a pack you already have (open that one with Open AI mod
+  instead). Nothing is written until **SAVE TO PACK...**, which creates
+  `mods/game/<pack>/ai/`.
+- **The open map.** If it has unsaved changes, the command asks first and the
+  changes are lost. A map without unsaved changes is only put aside: it comes
+  back when the AI mod closes. A new, untouched map counts as nothing to lose;
+  closing the AI mod then shows **New Map**, as a fresh start does.
+- **TAK ENGINE AI** edits the pack's `ai/takengine.txt`, read by all six of our
+  levels over their own built-in tables, exactly as on a map's tab (PREVIEW
+  LEVEL included).
+- **DEFAULT AI** edits the pack's `ai/default.txt`, which RETAIL reads on every
+  map that uses the standard profile. **NEW NAME...** switches the tab to a
+  named profile, `ai/<name>.txt` (the same name rules as a map's own profile),
+  which RETAIL reads only on maps whose profile has that name; click the file
+  name to step between the pack's DEFAULT files. **START FROM...** fills an
+  empty file from your install's standard profile, or starts it empty. The
+  map-only choice between the standard profile and *this map's own profile* is
+  not shown.
+- **Units** are your install's plus the pack's own, tagged `pack`. Presets,
+  group rules, the text view, CHECK and MAKE EDITABLE work as they do for a
+  map, and every value is read by the game's own code.
+- **The footer** says what the file does once the pack is ticked: a game mod's
+  file wins over a map's file of the same name and over your install's.
+- **SAVE TO PACK...** writes as described in
+  [Saving as a game mod](#saving-as-a-game-mod): it asks before replacing a
+  different file, and keeps the old one in `mod-backups`, never in the pack.
+  There is no undo. **CLOSE PACK**, **CLOSE** or **Esc** ends the AI mod and
+  asks first about unsaved edits; so do quitting, **File → New map** and
+  **File → Open map**, which go back to maps.
+- **TEST IN GAME...** plays the pack as it is saved: with unsaved edits it
+  asks to save them first. Then it lists your install's maps (type to search,
+  click or **Enter** to pick). The game opens its private test lobby on a test
+  copy of that map, as **Test Map** does, with this pack ticked as the room's
+  only game mod. This applies to that run only: your own ticks under the
+  room's mod list stay saved. Seat the computer players at the levels to test
+  (**RETAIL** for the DEFAULT AI profile). The map's own AI files come along;
+  where the pack has a file of the same name, the pack's is used.
+
+From a terminal, `takclient --play-map <map.kmp> --game-mod "<pack>"` does the
+same with a map snapshot of your own (see [Sharing a scenario](#sharing-a-scenario)).
 
 ---
 
@@ -1904,7 +1966,8 @@ On Windows the program is `takclient.exe`, in the same folder as
 `cartographer.exe`; on macOS it is inside the app, at
 `Total Annihilation - Kingdoms.app/Contents/MacOS/takclient`. This opens the
 same private lobby as F5 in Cartographer. The `.kmp` must contain exactly one
-map. Afterwards the scenario's test copy stays in the player's map list (with a
+map. Add `--game-mod "<pack>"` to tick one game mod in that lobby (see
+[Making an AI mod without a map](#making-an-ai-mod-without-a-map)). Afterwards the scenario's test copy stays in the player's map list (with a
 fingerprint in brackets), so they can choose it from there next time.
 
 ### Where Cartographer keeps its files
@@ -1990,6 +2053,8 @@ and so on), except where a Ctrl combination is listed below.
 | **Ctrl+O** | Open map |
 | **Ctrl+S** or **Ctrl+B** | Save the `.kmp` |
 | **Ctrl+Shift+S** | Save As |
+| **Ctrl+Shift+N** | New AI mod (a game mod's AI files, without a map) |
+| **Ctrl+Shift+O** | Open AI mod |
 | **Ctrl+Z** | Undo |
 | **Ctrl+Y** or **Ctrl+Shift+Z** | Redo |
 | **Ctrl+F** | Search the browser |

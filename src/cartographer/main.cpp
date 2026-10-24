@@ -316,7 +316,7 @@ int cart::Editor::run() {
     if(hooks.attached)hooks.attached(*this);
     while (running) {
         if(const auto result=playtest.poll();result && *result!=0)
-            openMessage("TEST MAP ENDED", "The game exited with an error ("+std::to_string(*result)+"). Your map is still open here.");
+            openMessage(aiModOnly?"TEST IN GAME ENDED":"TEST MAP ENDED", "The game exited with an error ("+std::to_string(*result)+")."+(aiModOnly?" Your AI mod is still open here.":" Your map is still open here."));
         SDL_GetRendererOutputSize(ren, &w, &h);
         kUIScale=std::max(.5f,std::min({preferences.scalePercent/100.f,float(w)/900.0f,float(h)/600.0f}));
         SDL_RenderSetScale(ren,kUIScale,kUIScale);
@@ -351,7 +351,9 @@ int cart::Editor::run() {
             if (e.type == SDL_QUIT) {
                 restartAfterQuit=false;   // closing the window is an exit, whatever was pending
                 // A game-mod pack edited in the AI window is not the map: ask about it on its own.
-                if(aiModDirty() && modal==M_NONE) {
+                if(aiModDirty()) {
+                    if(modal==M_CONFIRM)continue;   // a question is already up
+                    modal=M_NONE;   // any other dialog gives way: unsaved pack edits are asked about first
                     aiClosePack([] {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);});
                     continue;
                 }
@@ -362,13 +364,17 @@ int cart::Editor::run() {
                 } else running = false;
                 continue;
             }
-            if(modal==M_NONE && !scriptOpen && !aiOpen && !useOnlyOpen && !regionsOpen && handleMenuInput(e))continue;
+            // An AI mod without a map keeps the menu bar (its map commands disabled) while
+            // the window has no dialog of its own up.
+            const bool workspaceMenus=aiModOnly && aiOpen && !aiStartOpen && !aiMergeOpen && !aiModSaveOpen && !aiModOpenOpen && aiWordPick==-2;
+            if(modal==M_NONE && !scriptOpen && (!aiOpen || workspaceMenus) && !useOnlyOpen && !regionsOpen && handleMenuInput(e))continue;
             if(modal==M_NONE && !scriptOpen && !aiOpen && !useOnlyOpen && !regionsOpen && (handleMinimapInput(e) || handlePaletteScrollbar(e) || handlePaletteFocus(e)))continue;
             if(regionsOpen && modal==M_NONE) {handleRegionsList(e);continue;}
             if (useOnlyOpen) {handleUseOnly(e);continue;}
             if (modal != M_NONE) {handleModal(e);continue;}
             if (scriptOpen) {handleScripting(e);continue;}
             if (aiOpen) {handleAiProfiles(e);continue;}
+            if (aiModOpenOpen) {handleAiModDialogs(e);continue;}   // File > Open AI mod's pack list
             // Toolbar, canvas keys, global shortcuts, then palette and canvas
             // pointer input; the first handler that takes the event wins.
             if(handleToolbarModes(e) || handleCanvasKeys(e) || handleShortcuts(e) ||
@@ -385,24 +391,30 @@ int cart::Editor::run() {
         if(overlayInvalidated || historyPending || resetHistory) {overlayTexture.reset();overlayLegend.clear();overlayInvalidated=false;}
         if((historyPending || resetHistory) && !(SDL_GetMouseState(nullptr,nullptr)&(SDL_BUTTON_LMASK|SDL_BUTTON_RMASK)))
             commitHistory();
-        const std::string title="Cartographer -- "+mapName+(modal==M_OBJECTS?" [Placed units]":modal==M_MODEL_LOADING?" [Loading model]":modal==M_MODEL?" [Unit model]":modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":modal==M_CHECKING?" [Checking map]":modal==M_ISSUES?" [Validation results]":modal==M_ANALYZING?" [Analyzing]":aiOpen?" [AI]":overlayTexture?" [Terrain overlay]":"")+(dirty?" *":"");
+        const std::string title=aiModOnly?"Cartographer -- AI mod "+(aiMod?aiMod->pack:std::string())+(aiModDirty()?" *":""):"Cartographer -- "+mapName+(modal==M_OBJECTS?" [Placed units]":modal==M_MODEL_LOADING?" [Loading model]":modal==M_MODEL?" [Unit model]":modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":modal==M_CHECKING?" [Checking map]":modal==M_ISSUES?" [Validation results]":modal==M_ANALYZING?" [Analyzing]":aiOpen?" [AI]":overlayTexture?" [Terrain overlay]":"")+(dirty?" *":"");
         SDL_SetWindowTitle(win,title.c_str());
         autosaveRecovery();
         refreshMinimap();updateLiveMinimap();
-        mapView.ensureChunks(canvasW, canvasH);
+        if(!aiModOnly)mapView.ensureChunks(canvasW, canvasH);
 
         SDL_SetRenderDrawColor(ren, 24, 26, 32, 255);
         SDL_RenderClear(ren);
 
-        drawCanvas();
-        drawMinimap();
-        drawPalette();
+        if(!aiModOnly) {   // an AI mod without a map: a plain backdrop behind its window
+            drawCanvas();
+            drawMinimap();
+            drawPalette();
+        }
         drawChrome();
-        drawSectionMenu();
-        drawClearArea();
-        drawRegionsList();
-        drawScripting();
+        if(!aiModOnly) {
+            drawSectionMenu();
+            drawClearArea();
+            drawRegionsList();
+            drawScripting();
+        }
         drawAiProfiles();
+        if(aiModOnly)drawMenuRows();     // over the AI mod's window
+        if(!aiOpen)drawAiModDialogs();   // File > Open AI mod's pack list
         drawModal();
         drawUseOnly();
         drawHints();

@@ -186,6 +186,9 @@ struct Session {
     bool saveDocument(const std::string& destination,bool bundle);
     bool saveMap(const std::string& path);
     bool saveBundle(const std::string& path);
+    // An installed map (a listMaps path) as the files Test Map sends, read the way the
+    // editor opens a map by name: what opening it and pressing Test Map would send.
+    DocumentFiles installedMapFiles(const std::string& mapPath,const std::string& name) const;
 
     // Section-prefab palette for this map's world (falls back to aramon).
     SectionLibrary sections;
@@ -353,7 +356,7 @@ struct Editor : Session {
     void drawDataFolder(const SDL_Rect& content);
 
     // --- Modal dialogs (dialogs.cpp) ------------------------------------------
-    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_RULENAME, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES, M_MODEL_LOADING, M_MODEL, M_OBJECTS, M_SYMMETRIZE, M_PREFERENCES };
+    enum Modal { M_NONE, M_SCENARIO, M_RESIZE, M_UNIT, M_MESSAGE, M_RULE, M_RULENAME, M_CONFIRM, M_NEW, M_QUITSAVE, M_SAVEAS, M_OPENPATH, M_REGION, M_GENERATOR, M_GENERATING, M_GENERATED, M_ANALYZING, M_CHECKING, M_ISSUES, M_MODEL_LOADING, M_MODEL, M_OBJECTS, M_SYMMETRIZE, M_PREFERENCES, M_NEWAIMOD };
     static constexpr int kMaxFields = 12;
     std::function<void()> confirmAction;   // M_CONFIRM: run on OK
     Modal modal = M_NONE;
@@ -390,6 +393,7 @@ struct Editor : Session {
     int descriptionScroll=0;bool descriptionFollowCaret=true;
     std::vector<std::pair<std::string,std::string>> openCatalog,openMatches;
     SDL_Rect openList{};int openScroll=0;std::string openFilterPrevious;bool openFilterDirty=true;
+    bool openForTest=false;                   // M_OPENPATH picks the map for an AI mod's TEST IN GAME
     void filterOpenMaps();
     bool regionsOpen=false;
     bool& showRegions=preferences.showRegions;
@@ -640,13 +644,34 @@ struct Editor : Session {
     void aiOpenPack(const std::string& pack);
     void aiClosePack(std::function<void()> then={});
     void aiStepModDefault();
+    void aiCommitModName();                      // a pack's named DEFAULT profile (NEW NAME...)
+    SDL_Rect aiModNewNameButton{};
     bool handleAiModDialogs(SDL_Event& e);
     void drawAiModDialogs();
+    // ---- an AI mod without a map (File > New AI mod / Open AI mod) ----
+    // The AI Profiles window with one game mod pack as the only document: the map is
+    // neither shown nor edited (it is put aside clean, or a blank placeholder when it had
+    // to be discarded), map menus are disabled, and closing the pack ends the mode.
+    bool aiModOnly=false;
+    bool aiModReturnNew=false;                   // leaving opens New Map (the map behind is a placeholder)
+    bool aiModPickWorkspace=false;               // the pack list was opened by File > Open AI mod
+    std::function<void()> aiAfterSave;           // TEST IN GAME: continues after SAVE TO PACK succeeded
+    SDL_Rect aiTestButton{};
+    bool mapHasUnsavedWork() const;
+    void requestAiMod(bool create);              // the menu command: asks about the map, then names or lists packs
+    void startAiModWorkspace(const std::string& pack,bool fresh);
+    void finishAiModWorkspace(bool toMapEditor);
+    void leaveAiModThen(std::function<void()> then);   // asks about unsaved pack edits first
+    bool menuRowEnabled(int menu,int row) const;
+    void aiTestInGame();
+    void openTestMapPicker();
+    void aiLaunchTest(const std::string& mapPath);
 
     // --- Document commands (session.cpp) --------------------------------------
     bool openDocument(const std::string& request);
     Playtest playtest;
     void testMap();
+    std::filesystem::path gameClient() const;    // takclient beside the editor (a test hook may stand in)
 
     // --- Menus, toolbar, shortcuts, status, hints (chrome.cpp) ----------------
     int menuOpen=-1;
@@ -655,7 +680,8 @@ struct Editor : Session {
     std::optional<ViewBookmark> viewBookmark;
     const std::vector<std::string> menuNames={"FILE","EDIT","VIEW","SCENARIO","SYMMETRY","HELP"};
     const std::vector<std::vector<std::string>> menuRows={
-        {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Test Map (F5)","Exit"},
+        {"New map (Ctrl+N)","Open map (Ctrl+O)","Save (Ctrl+S)","Save As (Ctrl+Shift+S)","Export loose files","Test Map (F5)",
+         "New AI mod... (Ctrl+Shift+N)","Open AI mod... (Ctrl+Shift+O)","Exit"},
         {"Undo (Ctrl+Z)","Redo (Ctrl+Y)","Clear area (K)","Terrain brush: protect objects","Copy terrain selection (Ctrl+C)","Paste terrain clipboard (Ctrl+V)"},
         {"Fit map","100% terrain zoom","Toggle grid (G)","Toggle regions","Frame selection","Store view bookmark","Restore view bookmark","Overlay: movement","Overlay: buildability","Overlay: water depth","Overlay: slopes","Hide terrain overlay","Smaller UI","Larger UI","Show features","Show units","Show starts","Unit model preview (F6)","Preferences (F11 fullscreen)",
          "Show blocked cells (B)"},
@@ -669,6 +695,7 @@ struct Editor : Session {
     bool handleShortcuts(SDL_Event& e);
     bool handleToolbarTools(SDL_Event& e);
     void drawChrome();
+    void drawMenuRows();   // the open menu's rows
     void drawHints();
     // Display mode and edge scrolling, both editor preferences (View > Preferences).
     std::optional<SDL_Rect> windowedRect;   // size/position to restore on leaving fullscreen

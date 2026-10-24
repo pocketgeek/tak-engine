@@ -415,6 +415,7 @@ int main(int argc, char** argv) {
             "usage: takclient --data <retail-install-dir>\n"
             "  Launches the game and its front-end menu.\n"
             "  --play-map <snapshot.kmp>   open a Cartographer snapshot in a private lobby\n"
+            "  --game-mod <pack>   with --play-map: tick only this mods/game pack in that room\n"
             "  --version, -v   print version and exit\n"
             "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ mods/.\n");
 #else
@@ -439,9 +440,9 @@ int main(int argc, char** argv) {
         std::string a = argv[i];
         if (a == "--version" || a == "-v") { std::printf("takclient (TAK engine) %s\n", tak::kVersion); return 0; }
         if (a == "--help" || a == "-h") { std::printf("usage: takclient --data <retail-install-dir>\n"); return 0; }
-        if ((a == "--data" || a == "--play-map") && i + 1 < argc) { ++i; continue; }   // its value is consumed by the parser below
+        if ((a == "--data" || a == "--play-map" || a == "--game-mod") && i + 1 < argc) { ++i; continue; }   // its value is consumed by the parser below
         std::fprintf(stderr,
-            "takclient: unknown option '%s' -- release builds accept --data, --play-map, --help and --version.\n", a.c_str());
+            "takclient: unknown option '%s' -- release builds accept --data, --play-map, --game-mod, --help and --version.\n", a.c_str());
         return 2;
     }
 #endif
@@ -462,6 +463,7 @@ int main(int argc, char** argv) {
     // Walk/attack scripts gate on an "am I moving" static whose SLOT differs per unit.
     uint32_t staticMask = 1;
     std::string serverHost, playerName, dataRoot, modsArg, playMap;
+    std::string playGameMod;   // --game-mod <pack>: Cartographer's TEST IN GAME ticks this pack (with --play-map)
     // Multiplayer account (menu-entered, or --user/--pass for the harnesses). The
     // password is used once and wiped; it is never written to settings.
     std::string loginUser, loginPass;
@@ -491,6 +493,7 @@ int main(int argc, char** argv) {
     for (int i = argStart; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--play-map" && i + 1 < argc) { playMap = argv[++i]; mode = "game"; }
+        else if (a == "--game-mod" && i + 1 < argc) playGameMod = argv[++i];
         else if (a == "--shot" && i + 1 < argc) shot = argv[++i];
         else if (a == "--cob" && i + 1 < argc) cobPath = argv[++i];
         else if (a == "--anim" && i + 1 < argc) anim = argv[++i];
@@ -707,6 +710,26 @@ int main(int argc, char** argv) {
             tak::errorBox("Cannot test map", e.what());
             std::fprintf(stderr, "Test Map: %s\n", e.what()); SDL_Quit(); return 1;
         }
+    }
+    if (!playGameMod.empty()) {
+        // --game-mod: the test room's game mods are exactly this pack, for this run only
+        // (tak::setLaunchGameModPacks keeps the player's saved ticks). Part of the
+        // --play-map handoff: Cartographer's TEST IN GAME for an AI mod.
+        std::string why;
+        if (playMap.empty()) why = "--game-mod is only used with --play-map";
+        else if (!modUse.game) why = "--mods leaves game mods out of this launch";
+        else {
+            const auto packs = tak::hpi::modPacks(std::filesystem::u8path(dataRoot), tak::hpi::ModKind::Game);
+            if (std::find(packs.begin(), packs.end(), playGameMod) == packs.end())
+                why = "There is no game mod \"" + playGameMod + "\" in " + dataRoot + "/mods/game";
+        }
+        if (!why.empty()) {
+            tak::errorBox("Cannot test game mod", why);
+            std::fprintf(stderr, "Test in game: %s\n", why.c_str()); SDL_Quit(); return 1;
+        }
+        settings.gameModPacks = {playGameMod};
+        tak::setLaunchGameModPacks(settings.gameModPacks);
+        std::fprintf(stderr, "Test in game: game mod %s ticked for this run\n", playGameMod.c_str());
     }
     if (maxFps != 60) settings.maxFps = maxFps;          // --maxfps (if given) wins the file
     bool vsyncOn = settings.vsync && !noVsync;            // --novsync forces off

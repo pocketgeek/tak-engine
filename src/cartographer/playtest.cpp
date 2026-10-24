@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cerrno>
 #include <system_error>
+#include <vector>
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
@@ -52,7 +53,7 @@ Playtest::~Playtest() {
     if(!process_)cleanup();
 }
 bool Playtest::start(const fs::path& client,const fs::path& data,
-                     const DocumentFiles& files,std::string& error) {
+                     const DocumentFiles& files,std::string& error,const std::string& gameMod) {
     error.clear();poll();
     if(running()) {error="A map test is already running. Close its game window before starting another.";return false;}
     try {
@@ -67,6 +68,7 @@ bool Playtest::start(const fs::path& client,const fs::path& data,
 #ifdef _WIN32
         std::wstring command=tak::quoteWindowsArgument(fs::absolute(client).wstring())+L" --data "+tak::quoteWindowsArgument(fs::absolute(data).wstring())+
             L" --play-map "+tak::quoteWindowsArgument(snapshot_.wstring());
+        if(!gameMod.empty())command+=L" --game-mod "+tak::quoteWindowsArgument(fs::u8path(gameMod).wstring());
         STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION process{};
         if(!CreateProcessW(fs::absolute(client).c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,
                            nullptr,nullptr,&startup,&process))
@@ -74,8 +76,11 @@ bool Playtest::start(const fs::path& client,const fs::path& data,
         CloseHandle(process.hThread);process_=reinterpret_cast<intptr_t>(process.hProcess);
 #else
         std::string executable=fs::absolute(client).string(),root=fs::absolute(data).string(),map=snapshot_.string();
-        char* args[]={executable.data(),const_cast<char*>("--data"),root.data(),const_cast<char*>("--play-map"),map.data(),nullptr};
-        pid_t pid=0;const int result=posix_spawn(&pid,executable.c_str(),nullptr,nullptr,args,environ);
+        std::string pack=gameMod;
+        std::vector<char*> args{executable.data(),const_cast<char*>("--data"),root.data(),const_cast<char*>("--play-map"),map.data()};
+        if(!pack.empty()) {args.push_back(const_cast<char*>("--game-mod"));args.push_back(pack.data());}
+        args.push_back(nullptr);
+        pid_t pid=0;const int result=posix_spawn(&pid,executable.c_str(),nullptr,nullptr,args.data(),environ);
         if(result)throw std::system_error(result,std::generic_category(),"Start map test");
         process_=pid;
 #endif

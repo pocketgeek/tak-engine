@@ -1760,9 +1760,10 @@ bool smokeSession(const std::string& data,const std::string& label,std::vector<s
             });
             action([](Editor& e,const Input& in) {for(int row=0;row<6;++row)if(const auto p=paletteRow(e,row))in.click(p->x,p->y);});
         }
-        // Every menu row but File > Test Map and Exit (Test Map starts the game).
+        // Every menu row but File > Test Map, New/Open AI mod and Exit (Test Map starts the
+        // game; an AI mod leaves the map, cartographer_aimod_ui covers it).
         for(int m=0;m<int(e.menuRows.size());++m)for(int r=0;r<int(e.menuRows[size_t(m)].size());++r) {
-            if(m==0 && (r==5 || r==6))continue;
+            if(m==0 && r>=5)continue;
             action([=](Editor&,const Input& in) {menu(in,m,r);});
         }
         // Shortcuts.
@@ -1813,7 +1814,7 @@ bool smokeSession(const std::string& data,const std::string& label,std::vector<s
         });
         s.then(settle);
         // File > Exit; a dirty map asks, DISCARD ends the editor.
-        s.then([](Editor&,const Input& in) {menu(in,0,6);return true;});
+        s.then([](Editor&,const Input& in) {menu(in,0,8);return true;});
         s.then([](Editor& e,const Input& in) {   // the quit request arrives a frame after the menu pushes it
             if(e.modal!=Editor::M_QUITSAVE)return !e.running;
             in.click(e.mQuit.x+e.mQuit.w/2,e.mQuit.y+e.mQuit.h/2);return true;

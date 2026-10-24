@@ -50,7 +50,7 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
   with the freshly-built clients and trips the referee-suspect check). Building
   all targets relinks `takclient` AND `takserver` together.
 - **Release vs debug CLI.** A RELEASE `build/takclient` is hardened: it accepts
-  `--data <dir>`, `--play-map <snapshot.kmp>`, and `--version` (`--help` lists these),
+  `--data <dir>`, `--play-map <snapshot.kmp>` (plus `--game-mod <pack>` with it), and `--version` (`--help` lists these),
   reads NO `TAK_*` env vars, and normally launches the front-end menu — every mode keyword (`game`/`map`/`replay`/`model`),
   gameplay/dev/test flag, and env hook remains debug-only (see `src/client/dev.h`).
   `--play-map` is the documented production Cartographer handoff: validate/cache

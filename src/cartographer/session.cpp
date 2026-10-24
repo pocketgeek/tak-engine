@@ -149,12 +149,32 @@ bool cart::Editor::openDocument(const std::string& request) {
     } catch(const std::exception& error) {openMessage("OPEN FAILED",error.what());return false;}
 }
 
+std::filesystem::path cart::Editor::gameClient() const {
+    if(hooks.gameClient)return std::filesystem::u8path(hooks.gameClient());
+    std::unique_ptr<char,decltype(&SDL_free)> base(SDL_GetBasePath(),SDL_free);
+    if(!base)throw std::runtime_error("Cannot locate the game executable");
+    return cart::Playtest::clientPath(std::filesystem::u8path(base.get()));
+}
+
+cart::DocumentFiles cart::Session::installedMapFiles(const std::string& path,const std::string& name) const {
+    const auto stem=path.substr(0,path.rfind('.'));
+    const auto map=tak::tnt::Map::load(vfs.read(path),path);
+    tak::tnt::Scenario metadata;
+    try {const auto b=vfs.read(stem+".ota");metadata=tak::tnt::Scenario::parse(std::string(b.begin(),b.end()));}
+    catch(const std::exception&) {}   // no .ota: defaults, as the editor opens it
+    metadata.generatorRecipe=cart::mapGeneratorRecipe(vfs,path,metadata.generatorRecipe);
+    const auto scenarioFile=cart::loadScenario(vfs,stem+".crt");
+    std::set<std::string> allowed;
+    if(!metadata.useOnlyUnits.empty())for(auto& type:cart::loadUseOnly(vfs,stem+".tdf"))allowed.insert(type);
+    return cart::documentFiles(map,metadata,scenarioFile,cart::toPlaced(scenarioFile,&unitRegistry),allowed,
+                               cart::aiFilesFromMapArchive(vfs,path),name);
+}
+
 void cart::Editor::testMap() {
+    if(aiModOnly)return;   // no map: an AI mod tests through TEST IN GAME
     if(playtest.running()) {openMessage("TEST MAP", "A test is already running. Close its game window before starting another.");return;}
     try {
-        std::unique_ptr<char,decltype(&SDL_free)> base(SDL_GetBasePath(),SDL_free);
-        if(!base)throw std::runtime_error("Cannot locate the game executable");
-        const auto client=cart::Playtest::clientPath(std::filesystem::u8path(base.get()));
+        const auto client=gameClient();
         // A distinct map name keeps earlier cached playtests from shadowing edits.
         const auto name="Test "+std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
         auto snapshot=mapView.map();

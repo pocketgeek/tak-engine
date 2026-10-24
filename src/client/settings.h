@@ -247,6 +247,12 @@ Settings loadSettings();
 // otherwise changing the folder in Cartographer while the game is open would be undone
 // by the game's next save of anything (an Options SAVE, a won campaign mission).
 bool saveSettings(const Settings&);
+// A launch-only game-mod selection (takclient --game-mod, Cartographer's TEST IN GAME):
+// this run's Settings::gameModPacks holds `packs`, the room's mods for the test. While a
+// save still holds exactly them, the file keeps the player's own ticks (as the file has
+// them then); once the player changes the ticks, the new ticks are saved as usual and
+// the launch selection is over. Empty ends it.
+void setLaunchGameModPacks(std::vector<std::string> packs);
 // Change ONLY the data folder in the file (read, set dataDir + dataManifest, write):
 // what Options and Cartographer's Preferences call on a valid pick, so unsaved edits
 // on the open Options screen are not persisted along with it.

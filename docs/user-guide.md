@@ -2127,6 +2127,11 @@ which writes one of them into `ai/takengine.txt`. See
   `ai/takengine.txt`, one file for all six.
 - **For every map**: **SAVE AS GAME MOD...** writes the files into a game pack,
   `mods/game/<pack>/ai/`. They apply whenever that pack is ticked.
+- **Without a map**: **File → New AI mod...** (**Ctrl+Shift+N**) and **File →
+  Open AI mod...** (**Ctrl+Shift+O**) open the same window with a game pack as
+  the only document, no map at all. **TEST IN GAME...** then opens the
+  single-player room on a map you pick with that pack ticked. See
+  [Making an AI mod without a map](cartographer-guide.md#making-an-ai-mod-without-a-map).
 
 **Which file wins**, when more than one could apply:
 
@@ -2380,6 +2385,7 @@ Released builds keep the command line deliberately small:
 | --- | --- |
 | `--data <folder>` | Use this game-data folder. Optional: without it, the game uses the saved folder or asks. |
 | `--play-map <map.kmp>` | Open a Cartographer map snapshot in a private game lobby. |
+| `--game-mod <pack>` | With `--play-map` only: tick this one game pack (`mods/game/<pack>`) in that lobby, for this run. Your own ticks stay saved. Cartographer's **TEST IN GAME...** uses it. |
 | `--version` | Print the version and exit. |
 
 Everything else is set in the menus. Developer builds have many more options;

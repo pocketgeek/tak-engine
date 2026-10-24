@@ -1873,6 +1873,94 @@ Validation:
   in a map, Export loose files, the version note) and `user-guide.md` (Making AI
   profiles; the game-mods paragraph points at MERGE INTO TAK ENGINE).
 
+## AI profile editor: an AI mod without a map (2026-10-23)
+
+User decision (2026-10-23): a map-free AI mod workflow. **File → New AI mod...**
+(**Ctrl+Shift+N**) and **File → Open AI mod...** (**Ctrl+Shift+O**) open the AI
+Profiles window with a game mod pack (`mods/game/<pack>/` in the data folder) as the
+only document.
+
+- **Mode** (`aiModOnly`, `editorstate.h`; `aiprofileswindow.cpp`): the window's existing
+  pack mode (`aiMod`) with no map behind it. The frame loop skips the canvas, minimap,
+  browser and map overlays (plain backdrop); the toolbar shows *AI MOD (NO MAP OPEN)*
+  and the pack, the status bar the pack's folder and SAVED/UNSAVED, the title
+  *Cartographer -- AI mod <pack>*. The menu bar stays usable while no window dialog is
+  up; `menuRowEnabled` greys and refuses everything but File's New/Open map, New/Open
+  AI mod and Exit, View's UI scale and Preferences, and Help (the menu rows are drawn
+  over the window). New/Open map close the pack first (asking about unsaved edits).
+- **The map**: `requestAiMod` commits history and asks before discarding a map with
+  unsaved work (`mapHasUnsavedWork`: dirty with undo/redo steps, a pending edit, a
+  recovery, a file or a generator recipe; a new untouched blank map is not work).
+  Discarded work is replaced by a clean blank 8x8 placeholder; a clean map is only put
+  aside and comes back when the mod closes; after a placeholder (or an untouched new
+  map), closing shows New Map like a bare launch.
+- **New**: `M_NEWAIMOD` asks for the pack name (`modPackNameError`, proposed *my-ai*,
+  *my-ai-2*, ...); a name `modPacks` already lists (any case) is refused with a pointer
+  to Open AI mod. Nothing is written until SAVE TO PACK (`planModProfiles` creates the
+  folders). **Open**: the existing scrolling pack list, titled OPEN AI MOD
+  (`aiModPickWorkspace`), handled and drawn while the window is closed.
+- **Tabs**: TAK ENGINE AI (`ai/takengine.txt`) first; DEFAULT AI (`ai/default.txt`).
+  New **NEW NAME...** (any pack, `aiCommitModName`): the DEFAULT tab edits a named
+  profile `ai/<name>.txt` (`aiProfileNameError` rules); the file button steps through
+  `ai/default.txt`, the pack's DEFAULT-grammar files and the current name. The map's
+  own-profile choice and aiprofile= are not shown, and `aiOpenPack` /
+  `aiStepModDefault` never use the map's profile name in this mode. Units are the
+  install's plus the pack's (tagged `pack`); presets, group rules, PREVIEW LEVEL, the
+  text view and CHECK are unchanged. The *Plays:* footer is generic (what the pack's
+  file does wherever it is ticked; a game mod wins over a map and the install).
+- **Save / close**: SAVE TO PACK as before (backups in the profile folder, replace
+  compare, symlink refusal, staging, rollback); no undo. CLOSE PACK, CLOSE (the DONE
+  button) and Esc end the mode, asking about unsaved edits; quitting asks too (any
+  other dialog gives way first: the quit handler used to skip the question while a
+  dialog was up).
+- **TEST IN GAME...** (`aiTestInGame`): unsaved edits ask to save first
+  (`aiAfterSave` continues after the save succeeds; cancelling the save drops it); a
+  pack not yet on disk says to save. Then M_OPENPATH in a test mode (`openForTest`,
+  the install's maps only) picks a map; `Session::installedMapFiles` reads it the way
+  the editor opens a map by name (tnt, ota, crt, Use Only, the archive's own `ai/`)
+  into the same `DocumentFiles` Test Map sends, and `Playtest::start` launches
+  `takclient --data <root> --play-map <snapshot> --game-mod <pack>`.
+- **Client handoff** (`src/client/main.cpp`, release-safe, no env reads): `--game-mod
+  <pack>` is accepted by the hardened release CLI next to `--data`/`--play-map` and
+  listed in `--help`. Only with `--play-map`; the pack must be listed by
+  `hpi::modPacks` (and `--mods` must allow game mods), else an error box and exit 1.
+  `settings.gameModPacks` becomes exactly that pack for the run, and
+  `tak::setLaunchGameModPacks` makes `saveSettings` keep the file's own ticks while
+  the in-memory list is still the launch's (a tick change by the player ends it).
+  `clientRestartArguments` drops it with `--play-map`.
+- Also: an M_CONFIRM action that asks its own question keeps it (the action is moved
+  out before it runs; it used to be cleared afterwards). Test Map's hook point
+  `EditorHooks::gameClient` names the client for tests.
+
+Validation:
+
+- `cartographer_aimod_ui` (new; `cartographer_ui_test <data> aimod-nomap`, a scratch
+  data root with a decoy pack): bare launch, New Map cancelled; a placed start makes
+  Ctrl+Shift+N ask (Cancel keeps the map, OK leaves a clean placeholder); an existing
+  pack name is refused; the window opens on the new pack alone (title, first tab, map
+  menus off, nothing on disk); a TAK ENGINE AI weight, a DEFAULT chance (Start from
+  Empty) and a named `ai/islands.txt` (NEW NAME...) are edited without touching the
+  map; SAVE TO PACK creates `mods/game/Harder AI/ai/` with exactly the three files;
+  CLOSE returns to New Map; Ctrl+Shift+O lists and reopens the pack with the same
+  values; TEST IN GAME on Ulasem Arena runs the client (the test executable itself,
+  recording its arguments) with `--play-map <test copy with one map> --game-mod
+  "Harder AI"`; with an unsaved edit it asks, saves through the replace compare and
+  then shows the map picker; quitting with an unsaved edit asks and leaves the pack as
+  saved. With the launch not passing the pack it fails.
+- `cartographer_playtest`: a second launch with `--game-mod` (a Unicode pack name)
+  through the real child.
+- `mod_settings`: a launch-only selection leaves the saved ticks (other settings still
+  saved), a tick change by the player is saved and ends it.
+- `datafolder`: the restart arguments drop `--game-mod` with `--play-map`.
+- `cartographer_placement`: the menu sweep skips the new File rows (and Exit is row 8).
+- Picture: `ai-mod.jpg`, the `aimod-nomap` capture after the first TAK ENGINE AI edit
+  (SDL `offscreen` 921 x 691, whole window to show that no map is drawn, quality 98,
+  full chroma). Inspected by eye.
+- Docs: `cartographer-guide.md` (version note, File menu row, shortcuts, *Making an
+  AI mod without a map*, Testing AI profiles, the `--play-map` paragraph),
+  `user-guide.md` (Making AI profiles, Command line), `docs/img/README.md`,
+  `CLAUDE.md` (the release CLI).
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop

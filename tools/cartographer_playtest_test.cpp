@@ -15,7 +15,9 @@ static int runTest(int argc,char** argv) try {
     // This executable also stands in for the game, exercising OS argument passing
     // and the full child lifecycle without SDL, assets, or a shell command.
     if(argc>1 && std::string(argv[1])=="--data") {
-        check(argc==5 && std::string(argv[3])=="--play-map","launch arguments lost");
+        // TEST IN GAME adds --game-mod <pack> (an AI mod without a map): this pack only.
+        check((argc==5 || (argc==7 && std::string(argv[5])=="--game-mod" && std::string(argv[6])=="My AI \xc3\xbc & $")) &&
+              std::string(argv[3])=="--play-map","launch arguments lost");
         check(fs::u8path(argv[2]).filename()==fs::u8path("data spaces ü & $"),"data path quoting/Unicode changed");
         tak::hpi::Archive snapshot(fs::u8path(argv[4]));
         check(!snapshot.entries().empty(),"child could not read snapshot");
@@ -77,7 +79,14 @@ static int runTest(int argc,char** argv) try {
     check(result && *result==0,"child launch/argument test failed or timed out");
     check(!fs::exists(path.parent_path()) && !test.running(),"finished snapshot not cleaned up");
     check(map.width==32 && files.members.front().data==map.save(),"playtest modified source document");
-    std::cout<<"PASS: temporary playtest snapshot, AI profiles in the test room, Unicode arguments, single child, launch failure and cleanup\n";
+    // An AI mod's TEST IN GAME: the same snapshot handoff plus the pack to tick.
+    check(test.start(fs::absolute(fs::u8path(argv[0])),root,files,error,"My AI \xc3\xbc & $"),error.c_str());
+    result.reset();
+    while(!result && std::chrono::steady_clock::now()<deadline+std::chrono::seconds(15)) {
+        result=test.poll();std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    check(result && *result==0,"the --game-mod launch lost an argument or timed out");
+    std::cout<<"PASS: temporary playtest snapshot, AI profiles in the test room, Unicode arguments, --game-mod, single child, launch failure and cleanup\n";
     return 0;
 } catch(const std::exception& e) {std::cerr<<"FAIL: "<<e.what()<<'\n';return 1;}
 

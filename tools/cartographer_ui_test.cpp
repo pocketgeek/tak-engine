@@ -650,6 +650,203 @@ static int aiModWorkflow(const char* data) {
     if(result || !failure.empty() || lastFrame>41) {std::cerr<<failure<<'\n';return 1;}
     std::cout<<"PASS: AI Profiles game mod: save into an existing case-variant pack (compare, backup outside the pack), open from the pack, save back, emptied draft deleted, DEFAULT as default.txt names its file\n";return 0;
 }
+// TEST IN GAME's stand-in for the game: `cartographer_ui_test --data <root> --play-map
+// <snapshot> --game-mod <pack>` (the workflow below names this executable as the client)
+// writes its arguments, and what the snapshot holds, to $TAK_AIMOD_TEST_RECORD.
+static int recordTestClient(int argc,char** argv) {
+    const char* record=SDL_getenv("TAK_AIMOD_TEST_RECORD");
+    if(!record)return 2;
+    std::string out;
+    for(int i=1;i<argc;++i)out+=std::string(argv[i])+"\n";
+    try {
+        tak::hpi::Archive snapshot(std::filesystem::u8path(argc>4?argv[4]:""));
+        int maps=0;for(const auto& entry:snapshot.entries())maps+=entry.path.ends_with(".tnt");
+        out+="snapshot maps="+std::to_string(maps)+"\n";
+    } catch(const std::exception& e) {out+=std::string("snapshot error=")+e.what()+"\n";}
+    std::ofstream(std::filesystem::u8path(std::string(record)+".tmp"),std::ios::binary)<<out;
+    std::error_code ec;std::filesystem::rename(std::filesystem::u8path(std::string(record)+".tmp"),std::filesystem::u8path(record),ec);
+    return ec?3:0;
+}
+// File > New AI mod / Open AI mod: an AI mod made and edited without a map, through real
+// input, against a SCRATCH data root. A bare launch's New Map is cancelled: its blank map
+// is no work to lose, but a start placed on it is, so Ctrl+Shift+N asks (Cancel keeps the
+// map; OK puts a blank placeholder in its place), then asks for the pack name (an existing
+// pack's is refused). The window opens with the pack as the only document: the map is not
+// drawn and map menus are off.
+// One TAK ENGINE AI cell, the DEFAULT AI's ai/default.txt (Start from Empty, one chance)
+// and a named profile ai/islands.txt (NEW NAME...) are edited; SAVE TO PACK creates
+// mods/game/Harder AI/ai/ with exactly those three files. CLOSE returns to New Map;
+// Ctrl+Shift+O lists the packs and reopens it with the same values. TEST IN GAME on
+// Ulasem Arena starts the client (this executable, see recordTestClient) with
+// --play-map <test copy> --game-mod "Harder AI"; with an unsaved edit it asks, saves (the
+// replace compare and backup) and then shows the map picker. Quitting with an unsaved
+// edit asks first and leaves the pack as saved. TAK_EDITOR_TEST_CAPTURE=<prefix> also
+// writes <prefix>-aimod.png (the TAK ENGINE AI tab) and <prefix>-aimod-default.png.
+static int aiModNoMapWorkflow(const char* data,const char* self) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-aimodnomap-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);isolateProfile(root.string().c_str());
+    const auto install=root/"data";fs::create_directory(install);
+    for(const auto& entry:fs::directory_iterator(data))
+        if(tak::hpi::MountSet::key(entry.path().filename().string())!="mods")fs::create_symlink(fs::absolute(entry.path()),install/entry.path().filename());
+    fs::create_directories(install/"mods"/"game"/"Other"/"ai");   // another pack: listed, never touched
+    std::ofstream(install/"mods"/"game"/"Other"/"ai"/"takengine.txt",std::ios::binary)<<"weight araarch 2\n";
+    const auto record=root/"client-args.txt";
+    SDL_setenv("TAK_AIMOD_TEST_RECORD",record.string().c_str(),1);
+    const auto pack=install/"mods"/"game"/"Harder AI"/"ai";
+    auto slurp=[](const fs::path& p) {std::ifstream f(p,std::ios::binary);return std::string(std::istreambuf_iterator<char>(f),{});};
+    auto listing=[](const fs::path& dir) {std::set<std::string> out;std::error_code ec;for(const auto& e:fs::directory_iterator(dir,ec))out.insert(e.path().filename().string());return out;};
+    std::vector<std::string> args={"cartographer","--data",install.string(),"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    cart::Editor* editor=nullptr;cart::EditorHooks hooks;hooks.attached=[&](cart::Editor& e){editor=&e;};
+    hooks.gameClient=[&] {return fs::absolute(self).string();};
+    std::string failure,unit,saved;int lastFrame=0,stage=0,waited=0;
+    auto check=[&](bool value,const std::string& message) {if(!value && failure.empty())failure="stage "+std::to_string(stage)+": "+message;};
+    auto packFile=[&](const std::string& key) {
+        if(!editor->aiMod)return std::string();
+        const auto it=editor->aiMod->files.find(key);return it==editor->aiMod->files.end()?std::string():std::string(it->second.begin(),it->second.end());
+    };
+    auto chance=[&](const std::string& key) {
+        const auto& view=editor->aiTabView();const auto it=editor->aiCatalogue->byName.find(key);
+        return it==editor->aiCatalogue->byName.end()?-1:view.classic.pref[it->second];
+    };
+    auto weight=[&](const std::string& key) {
+        const auto& view=editor->aiTabView();const auto it=view.level.weight.find(key);return it==view.level.weight.end()?-1:it->second;
+    };
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+        lastFrame=frame;const std::string title=SDL_GetWindowTitle(window);
+        if(!failure.empty() || frame>400) {if(frame>400)failure+=" (did not finish)";std::cerr<<"FAIL: "<<failure<<'\n';std::_Exit(3);}
+        float sx=1,sy=1;SDL_RenderGetScale(renderer,&sx,&sy);
+        auto click=[&](const SDL_Rect& r) {
+            if(r.w<=0) {check(false,"target not drawn");return;}
+            SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.clicks=1;
+            e.button.x=int((r.x+r.w/2)*sx);e.button.y=int((r.y+r.h/2)*sy);SDL_PushEvent(&e);e.type=SDL_MOUSEBUTTONUP;SDL_PushEvent(&e);
+        };
+        auto capture=[&](const char* suffix) {
+            const char* prefix=SDL_getenv("TAK_EDITOR_TEST_CAPTURE");if(!prefix)return;
+            int pw=0,ph=0;SDL_GetRendererOutputSize(renderer,&pw,&ph);std::vector<uint8_t> rgba(size_t(pw)*ph*4);
+            if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),pw*4)==0)tak::png::write(std::string(prefix)+suffix,pw,ph,rgba);
+        };
+        auto cell=[&](const std::string& key,int column) {
+            for(const auto& c:editor->aiCells)if(c.key==key && c.column==column)return c.rect;
+            return SDL_Rect{};
+        };
+        auto find=[&](const std::string& what) {click(editor->aiSearchBox);key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);text(what);};
+        using M=cart::Editor::Modal;
+        switch(stage) {
+        case 0:check(editor->modal==M::M_NEW,"a bare launch did not open New Map");key(SDLK_ESCAPE);break;
+        case 1:check(editor->modal==M::M_NONE && !editor->mapHasUnsavedWork(),"the bare launch's blank map counts as work");
+            click({cart::Editor::kToolX+3*cart::Editor::kToolW,25,cart::Editor::kToolW-4,16});   // STARTS
+            stage=99;break;
+        // A map with unsaved work: the command asks before it is put away (Cancel keeps it).
+        case 100:click({cart::Editor::kPaletteW+200,cart::Editor::kMenuH+150,4,4});break;
+        case 101:check(editor->scenario.starts.size()==1 && editor->mapHasUnsavedWork(),"no start placed");key(SDLK_n,KMOD_CTRL|KMOD_SHIFT);break;
+        case 102:check(editor->modal==M::M_CONFIRM && editor->mTitle=="NEW AI MOD","the map's unsaved work was not asked about");key(SDLK_ESCAPE);break;
+        case 103:check(editor->modal==M::M_NONE && !editor->aiModOnly && editor->scenario.starts.size()==1,"Cancel did not keep the map");
+            key(SDLK_n,KMOD_CTRL|KMOD_SHIFT);break;
+        case 104:check(editor->modal==M::M_CONFIRM,"no question the second time");key(SDLK_RETURN);stage=1;break;
+        case 2:check(editor->modal==M::M_NEWAIMOD && editor->mf[0]=="my-ai","Ctrl+Shift+N did not ask for the pack name, or asked about the map");
+            key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);text("Other");key(SDLK_RETURN);break;
+        case 3:check(editor->modal==M::M_NEWAIMOD && editor->modalError.find("already exists")!=std::string::npos,"an existing pack name was accepted for a new AI mod");
+            key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);text("Harder AI");key(SDLK_RETURN);break;
+        case 4:
+            check(editor->modal==M::M_NONE && editor->aiModOnly && editor->aiOpen && editor->aiMod && editor->aiMod->pack=="Harder AI" && editor->aiMod->files.empty(),
+                  "the window did not open on the new pack alone");
+            check(title=="Cartographer -- AI mod Harder AI" && editor->aiTab==1,"the title or the first tab is not the AI mod's");
+            check(!editor->menuRowEnabled(3,0) && !editor->menuRowEnabled(0,2) && !editor->menuRowEnabled(0,5) && editor->menuRowEnabled(0,6) && editor->menuRowEnabled(0,8),
+                  "map menus are not disabled (or the AI mod commands are)");
+            check(!fs::exists(install/"mods"/"game"/"Harder AI"),"the pack was written before SAVE");
+            check(editor->scenario.starts.empty() && !editor->dirty && editor->aiModReturnNew,"the discarded map was kept, or the placeholder is unsaved");
+            find("araarch");break;
+        case 5:click(cell("araarch",0));break;
+        case 6:text("0");key(SDLK_RETURN);break;
+        case 7:
+            check(packFile("ai/takengine.txt").find("\nweight araarch 0\n")!=std::string::npos && weight("araarch")==0,"the weight did not reach the pack's ai/takengine.txt");
+            check(editor->aiFiles.empty() && !editor->dirty,"the edit touched the map");
+            check(editor->aiModDirty() && title.ends_with(" *"),"the pack is not marked unsaved");
+            capture("-aimod.png");click(editor->aiTabRects[0]);break;
+        case 8:check(editor->aiTabKey()=="ai/default.txt" && editor->aiOwnRadio.w==0 && editor->aiStandardRadio.w==0,"the DEFAULT tab shows the map's profile choice");
+            for(const auto& row:editor->aiDefaultRoster)if(row.type && row.reachable && !row.lockedForDefault && !row.variant && row.key!="araarch") {unit=row.key;break;}
+            check(!unit.empty(),"no DEFAULT unit to set");
+            click(editor->aiStartButton);break;
+        case 9:check(editor->aiStartOpen,"no Start from");click(editor->aiStartEmpty);break;
+        case 10:check(!packFile("ai/default.txt").empty(),"Start from Empty wrote no ai/default.txt");find(unit);break;
+        case 11:click(cell(unit,0));break;
+        case 12:text("40");key(SDLK_RETURN);break;
+        case 13:check(chance(unit)==40,"the DEFAULT chance was not set to 40 %");capture("-aimod-default.png");click(editor->aiModNewNameButton);break;
+        case 14:check(editor->aiFocus==cart::Editor::AI_NAME,"NEW NAME did not open its field");text("islands");key(SDLK_RETURN);break;
+        case 15:check(editor->aiTabKey()=="ai/islands.txt","NEW NAME did not switch the DEFAULT tab to ai/islands.txt");click(editor->aiStartButton);break;
+        case 16:click(editor->aiStartEmpty);break;
+        case 17:check(!packFile("ai/islands.txt").empty() && packFile("ai/islands.txt")!=packFile("ai/default.txt"),"ai/islands.txt was not started");
+            click(editor->aiModSaveButton);break;
+        case 18:{
+            check(editor->aiModSaveOpen && editor->aiModRows.size()==3,"SAVE TO PACK does not offer the three files");
+            for(const auto& row:editor->aiModRows)check(row.tick,"a new file is not ticked: "+row.target);
+            check(editor->aiModPlanError.empty() && editor->aiModPlan.create.size()>=2,"the new pack's folders are not planned: "+editor->aiModPlanError);
+            click(editor->aiModWriteButton);break;
+        }
+        case 19:
+            check(editor->modal==M::M_MESSAGE && editor->mTitle=="SAVED","the new pack was not saved");
+            check(listing(pack)==std::set<std::string>{"default.txt","islands.txt","takengine.txt"},"the pack's ai/ does not hold exactly the three files");
+            check(slurp(pack/"takengine.txt")==packFile("ai/takengine.txt") && slurp(pack/"default.txt")==packFile("ai/default.txt") &&
+                  slurp(pack/"islands.txt")==packFile("ai/islands.txt"),"the files on disk differ from the window's");
+            check(!editor->aiModDirty() && slurp(install/"mods"/"game"/"Other"/"ai"/"takengine.txt")=="weight araarch 2\n","unsaved after the save, or another pack touched");
+            saved=packFile("ai/takengine.txt");
+            key(SDLK_RETURN);break;
+        case 20:click(editor->aiDoneButton);break;
+        case 21:check(!editor->aiModOnly && !editor->aiOpen && !editor->aiMod && editor->modal==M::M_NEW,"CLOSE did not end the AI mod (back to New Map)");
+            key(SDLK_ESCAPE);break;
+        case 22:key(SDLK_o,KMOD_CTRL|KMOD_SHIFT);break;
+        case 23:{
+            check(editor->aiModOpenOpen && editor->aiModPickWorkspace && editor->modal==M::M_NONE,"Ctrl+Shift+O did not list the packs");
+            SDL_Rect row{};for(const auto& [r,name]:editor->aiModPackRows)if(name=="Harder AI")row=r;
+            click(row);break;
+        }
+        case 24:check(editor->aiModOnly && editor->aiMod && editor->aiMod->pack=="Harder AI" && editor->aiMod->files.size()==3 && !editor->aiModDirty(),"Open AI mod did not open the saved pack");
+            check(editor->aiTab==1 && weight("araarch")==0 && packFile("ai/takengine.txt")==saved,"the reopened TAK ENGINE AI value differs");
+            click(editor->aiTabRects[0]);break;
+        case 25:check(editor->aiTabKey()=="ai/default.txt" && chance(unit)==40,"the reopened DEFAULT chance differs");
+            click(editor->aiModDefaultButton);break;
+        case 26:check(editor->aiTabKey()=="ai/islands.txt","the file button does not step to the named profile");
+            click(editor->aiTestButton);break;
+        case 27:check(editor->modal==M::M_OPENPATH && editor->openForTest && !editor->openCatalog.empty(),"TEST IN GAME did not open the map picker");
+            text("Ulasem Arena");key(SDLK_RETURN);break;
+        case 28:check(editor->modal==M::M_MESSAGE && editor->mTitle=="TEST IN GAME","the test did not start: "+editor->mTitle+" "+(editor->mMsg.empty()?"":editor->mMsg[0]));
+            key(SDLK_RETURN);break;
+        case 29:
+            if(!fs::exists(record) || editor->playtest.running()) {if(++waited>300)check(false,"the client never ran");return;}
+            {
+                const auto got=slurp(record);
+                check(got.starts_with("--data\n"+install.string()+"\n--play-map\n") && got.find("\n--game-mod\nHarder AI\nsnapshot maps=1\n")!=std::string::npos,
+                      "the client did not get --play-map <test copy> --game-mod \"Harder AI\": "+got);
+                fs::remove(record);
+            }
+            // An unsaved edit: TEST IN GAME asks, saves (replacing, so the compare), then picks.
+            click(editor->aiTabRects[1]);break;
+        case 30:find("araarch");break;
+        case 31:click(cell("araarch",0));break;
+        case 32:text("3");key(SDLK_RETURN);break;
+        case 33:check(editor->aiModDirty(),"the edit is not unsaved");click(editor->aiTestButton);break;
+        case 34:check(editor->modal==M::M_CONFIRM && editor->mTitle=="TEST IN GAME","an unsaved pack was tested without asking");key(SDLK_RETURN);break;
+        case 35:check(editor->aiModSaveOpen,"the save dialog did not open");click(editor->aiModWriteButton);break;
+        case 36:check(editor->modal==M::M_CONFIRM && editor->mTitle=="REPLACE PACK FILES","replacing the pack's file did not show the compare");key(SDLK_RETURN);break;
+        case 37:check(editor->modal==M::M_OPENPATH && editor->openForTest && !editor->aiModDirty() && slurp(pack/"takengine.txt").find("\nweight araarch 3\n")!=std::string::npos,
+                      "after the save the map picker did not follow, or the pack was not saved");
+            key(SDLK_ESCAPE);break;
+        // Quitting with an unsaved edit asks first; the pack stays as saved.
+        case 38:saved=slurp(pack/"takengine.txt");click(cell("araarch",0));break;
+        case 39:text("8");key(SDLK_RETURN);break;
+        case 40:{check(editor->aiModDirty(),"the last edit is not unsaved");SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);break;}
+        case 41:check(editor->modal==M::M_CONFIRM && editor->mTitle=="CLOSE PACK" && editor->running,"quitting did not ask about the pack");key(SDLK_RETURN);break;
+        default:if(++waited>60)check(false,"the editor did not quit");break;
+        }
+        ++stage;
+    },hooks);
+    const bool unchanged=slurp(pack/"takengine.txt")==saved;
+    fs::remove_all(root);
+    if(result || !failure.empty() || !unchanged) {std::cerr<<failure<<(unchanged?"":" (the quit wrote the unsaved edit)")<<'\n';return 1;}
+    std::cout<<"PASS: AI mod without a map: New AI mod (no map shown, map menus off), TAK ENGINE + DEFAULT + named profile saved into a new pack, reopened by Open AI mod, TEST IN GAME --game-mod (asks and saves first), quit asks\n";return 0;
+}
 // OPEN FROM GAME MOD with more packs than its 14 rows, against a SCRATCH data root
 // with 22 synthetic game packs (an ai/takengine.txt each): the wheel, a track click, a thumb
 // drag and End all reach the last pack, the selection stays in view, Enter opens it.
@@ -2255,6 +2452,8 @@ static int dataFolderWorkflow(const char* data) {
 }
 
 int main(int argc,char** argv) {
+    if(argc>1 && std::string(argv[1])=="--data")return recordTestClient(argc,argv);   // TEST IN GAME's client
+    if(argc==3 && std::string(argv[2])=="aimod-nomap")return aiModNoMapWorkflow(argv[1],argv[0]);
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");
     if(argc==2 && std::string(argv[1])=="font")return fontWorkflow();

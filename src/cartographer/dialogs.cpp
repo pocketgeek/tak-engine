@@ -93,12 +93,21 @@ void cart::Editor::openModal(Modal m, int unitIdx) {
         mLabel[0]="MAP FILE NAME";mf[0]=mapName;mfNumeric[0]=false;
         mLabel[1]="FOLDER";mf[1]=outDir;mfNumeric[1]=false;
     } else if (m == M_OPENPATH) {
-        mTitle="OPEN MAP";mN=1;
+        mTitle="OPEN MAP";mN=1;openForTest=false;
         mLabel[0]="SEARCH MAPS OR ENTER KMP / TNT PATH";mf[0]="";mfNumeric[0]=false;
         openCatalog.clear();openScroll=0;openFilterDirty=true;
         for(const auto& recent:preferences.recent)openCatalog.emplace_back("Recent: "+recent,recent);
         for(const auto& [name,path]:tak::hpi::listMaps(vfs))openCatalog.emplace_back(name,path);
         filterOpenMaps();
+    } else if(m==M_NEWAIMOD) {
+        // A pack name the install does not have yet (Open AI mod edits an existing one).
+        std::vector<std::string> packs;
+        try {packs=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
+        auto taken=[&](const std::string& name) {return std::any_of(packs.begin(),packs.end(),[&](const std::string& p){return lowerText(p)==lowerText(name);});};
+        std::string name="my-ai";
+        for(int n=2;taken(name);++n)name="my-ai-"+std::to_string(n);
+        mTitle="NEW AI MOD";mN=1;
+        mLabel[0]="GAME MOD PACK NAME (MODS/GAME/<NAME>)";mf[0]=name;mfNumeric[0]=false;
     } else if (m == M_RESIZE) {
         mTitle = "RESIZE MAP"; mN = 2;
         mLabel[0] = "WIDTH (UNITS)";  mf[0] = std::to_string(mapView.map().width / 32);  mfNumeric[0] = true;
@@ -255,6 +264,30 @@ void cart::Editor::applyModal() {
             openConfirm("REPLACE MAP", "Replace the existing map? Its previous version will be retained as a .bak file.",performSave);return;
         }
         performSave();return;
+    } else if(modal==M_OPENPATH && openForTest) {
+        // TEST IN GAME: one of the install's maps, picked from the list or typed in full.
+        std::string request=mf[0];
+        while(!request.empty() && request.back()==' ')request.pop_back();
+        std::string path;
+        for(const auto& [name,mapPath]:openCatalog)if(mapPath==request || lowerText(name)==lowerText(request))path=mapPath;
+        if(path.empty() && openMatches.size()==1)path=openMatches.front().second;
+        if(path.empty()) {modalError="Pick one of the install's maps from the list.";return;}
+        modal=M_NONE;openForTest=false;
+        aiLaunchTest(path);
+        return;
+    } else if(modal==M_NEWAIMOD) {
+        std::string name=mf[0];
+        while(!name.empty() && name.back()==' ')name.pop_back();
+        while(!name.empty() && name.front()==' ')name.erase(name.begin());
+        if(const auto why=cart::modPackNameError(name);!why.empty()) {modalError=why;return;}
+        std::vector<std::string> packs;
+        try {packs=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
+        for(const auto& pack:packs)if(lowerText(pack)==lowerText(name)) {
+            modalError="mods/game/"+pack+" already exists: File > Open AI mod edits its AI files.";return;
+        }
+        modal=M_NONE;
+        startAiModWorkspace(name,true);
+        return;
     } else if(modal==M_OPENPATH) {
         const auto request=mf[0];
         if(dirty) {openConfirm("OPEN MAP","Discard unsaved changes and open this map?",[&,request] {openDocument(request);});return;}
@@ -349,8 +382,9 @@ void cart::Editor::applyModal() {
         if(changed) {*editRule=std::move(candidate);dirty=true;historyPending=true;}
         editRule = nullptr;
     } else if (modal == M_CONFIRM) {
-        if (confirmAction) confirmAction();
-        confirmAction = nullptr;
+        // Taken out first: an action may ask its own question (a new confirmAction).
+        auto action=std::move(confirmAction);confirmAction=nullptr;
+        if(action)action();
     } else if (modal == M_SYMMETRIZE) {
         applySymmetrize();   // opens its confirmation, or reports why not
         if(!modalError.empty())return;
@@ -882,8 +916,8 @@ void cart::Editor::drawModal() {
         }
     } else if (modal != M_NONE) {
         // N-field dialog; height fits the field count.
-        int ph = modal==M_OPENPATH?420:modal==M_SCENARIO?300:70+mN*40+(modal==M_PREFERENCES?84:0);
-        const int panelWidth=(modal==M_OPENPATH || modal==M_SCENARIO)?560:modal==M_PREFERENCES?460:320;
+        int ph = modal==M_OPENPATH?420:modal==M_SCENARIO?300:70+mN*40+(modal==M_PREFERENCES?84:modal==M_NEWAIMOD?36:0);
+        const int panelWidth=(modal==M_OPENPATH || modal==M_SCENARIO)?560:modal==M_PREFERENCES || modal==M_NEWAIMOD?460:320;
         const auto errorLines=cart::TextEdit::lines(modalError,(panelWidth-36)/6);
         const int errorHeight=modalError.empty()?0:int(errorLines.size())*12+8;
         ph+=errorHeight;
@@ -891,7 +925,7 @@ void cart::Editor::drawModal() {
         if(errorHeight)for(size_t i=0;i<errorLines.size();++i)
             cart::drawText(ren,modalError.substr(errorLines[i].begin,errorLines[i].end-errorLines[i].begin),ct.x,ct.y+ct.h-24-errorHeight+int(i)*12,1,255,150,135);
         if(modal==M_OPENPATH) {
-            openList={ct.x,ct.y+40,ct.w,ct.h-70-errorHeight};filterOpenMaps();
+            openList={ct.x,ct.y+40,ct.w,ct.h-(openForTest?86:70)-errorHeight};filterOpenMaps();
             SDL_RenderSetClipRect(ren,&openList);
             for(int i=0;i<int(openMatches.size());++i) {
                 const int y=openList.y+i*20-openScroll;if(y+20<openList.y || y>openList.y+openList.h)continue;
@@ -917,6 +951,12 @@ void cart::Editor::drawModal() {
                 mBox[i] = cart::drawField(ren, ct.x, ct.y + i * 40, ct.w, mLabel[i],
                                           mf[i], mfocus == i,mfocus==i?&fieldEditor:nullptr);
         }
+        if(modal==M_NEWAIMOD) {
+            cart::drawText(ren,"No map is opened: the AI Profiles window edits this pack's ai/ files.",ct.x,ct.y+42,1,190,200,215);
+            cart::drawText(ren,"Nothing is written until SAVE TO PACK makes mods/game/<name>/ai/.",ct.x,ct.y+56,1,190,200,215);
+        }
+        if(modal==M_OPENPATH && openForTest)
+            cart::drawText(ren,"The map is sent as a test copy, as Test Map does; the pack is ticked for that room only.",ct.x,ct.y+ct.h-34-errorHeight,1,170,185,200);
         mFolderChange=mFolderRestart={};mAiProfiles={};
         if(modal==M_PREFERENCES)drawDataFolder(ct);
         if(modal==M_SCENARIO) {   // the aiprofile= line: read-only here, edited in the AI Profiles window
