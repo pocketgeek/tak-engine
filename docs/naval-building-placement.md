@@ -28,7 +28,7 @@ A headless check of the original executable covered 34 cases, including:
 - Different cell minimum and maximum heights, confirming that water placement
   tests the maximum.
 
-This agrees with the earlier [live Sea Fort observation](transport-animation-audit-2026-09-21.md#retail-driver-and-live-sea-carrier-round-trip):
+This agrees with the earlier [live Sea Fort observation](transport-animation-audit-2026-09-21.md#retail-driver-and-live-sea-carrier-round-trip-2026-09-23):
 retail accepted and completed the building in open water on Aibel's Seaport.
 No retail game launch was needed for this correction.
 

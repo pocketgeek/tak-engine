@@ -87,8 +87,8 @@ You do **not** need to download or copy a service unit from the source repositor
    Players then enter just your hostname in the multiplayer connection screen.
    Press Ctrl+C to leave the log viewer; this does not stop the server.
 
-   ![The multiplayer server and sign-in screen with a server hostname typed in](img/mp-connect.jpg)
-   <!-- SHOT-0.9.0: mp-connect -- NEW file docs/img/mp-connect.jpg -- multiplayer server and sign-in screen, a hostname such as tak.example.org typed in the server field -->
+   ![The Connect to Server panel with CUSTOM... selected and a server hostname typed in the address box](img/mp-connect-custom.jpg)
+   <!-- SHOT-0.9.0: mp-connect-custom -- NEW file docs/img/mp-connect-custom.jpg: the Multiplayer door's CONNECT TO SERVER panel with CUSTOM... selected and a hostname such as tak.example.org typed in the address box -->
 
 **Optional: change server defaults.** Copy and edit the settings template:
 
