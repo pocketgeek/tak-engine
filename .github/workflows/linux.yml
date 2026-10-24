@@ -142,7 +142,9 @@ jobs:
         if: matrix.family == 'slack'
         run: |
           set -eu
-          mirror=https://mirrors.slackware.com/slackware/slackware64-15.0/
+          # A fixed mirror: the mirrors.slackware.com redirector can hand out a
+          # mirror whose certificate chain the runner cannot verify.
+          mirror=https://mirrors.kernel.org/slackware/slackware64-15.0/
           printf '%s\n' "$mirror" > /etc/slackpkg/mirrors
           sed -i 's|^WGETFLAGS=.*|WGETFLAGS="--ca-certificate=/run/host-ca/ca-certificates.crt"|' /etc/slackpkg/slackpkg.conf
           wget --ca-certificate=/run/host-ca/ca-certificates.crt -O /tmp/slackware-key "${mirror}GPG-KEY"
