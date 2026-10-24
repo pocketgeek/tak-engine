@@ -1,23 +1,31 @@
 # README and user-guide screenshots
 
-**Retake at the next release (always-enabled mod folders).** After 0.8.13 the
-always-on cosmetic mods moved from `.hpi` archives directly in `mods/cosmetic/`
-(no longer loaded) to pack folders in `mods/cosmetic/always_enabled/<pack>/`
-(and `mods/game/always_enabled/<pack>/` was added), and the multiplayer create
-screen lost its GAME MODS: ON/OFF option. No picture has been retaken for this
-yet. At the next release, rebuild the scratch install with the click archive at
-`mods/cosmetic/always_enabled/click/click.hpi` (the recipes below that place
-`mods/cosmetic/click.hpi` now load nothing; the repository file moved there too),
-so the rooms read **ALWAYS ON: click** instead of **ALWAYS ON: click.hpi**, and
-retake: `guide/room-mods-power-codes.jpg` (ALWAYS ON: click.hpi under COSMETIC
-MODS), `campaign.jpg` and `guide/campaign-briefing.jpg` (they name click.hpi as
-the always-on mod), `room.jpg` and `test-lobby.jpg` (the
-cosmetic ALWAYS ON layout; check `lobby-move-here.jpg` too). None of the shipped pictures shows the multiplayer
-create screen's GAME MODS option; any future one is taken without it.
+Refreshed on 2026-10-24 for **0.8.14**. The always-on cosmetic mods moved
+from `.hpi` archives directly in `mods/cosmetic/` (no longer loaded) to pack
+folders in `mods/cosmetic/always_enabled/<pack>/`, `mods/game/always_enabled/<pack>/`
+was added, and the multiplayer create screen lost its GAME MODS: ON/OFF option.
+The 0.8.14 build (version set to 0.8.14 locally, ahead of the release commit; no
+capture patch) retook `title.jpg` (VERSION 0.8.14) and every picture that named
+the old always-on archive: `room.jpg`, `guide/room-mods-power-codes.jpg`,
+`campaign.jpg`, `guide/campaign-briefing.jpg` and `cartographer/test-lobby.jpg`,
+which now read **ALWAYS ON: click** (and *Always-on mods: click*). The scratch
+install holds the click archive at `mods/cosmetic/always_enabled/click/click.hpi`
+and the ordinary packs *Alternate Cursors*, *Classic Sounds* (cosmetic) and *Big
+Battles* (game), each a folder with one tiny placeholder sound file; for
+`guide/room-mods-power-codes.jpg` a second scratch install also has the
+always-enabled game pack *House Rules* (`mods/game/always_enabled/House
+Rules/`, one placeholder file), so both kinds show an ALWAYS ON line;
+`cartographer/test-lobby.jpg` used an install with only the click pack. No
+retail or game files were added to any pack, and none is committed. Checked by
+eye and kept: `quick/lobby-move-here.jpg` (its install had no packs, so it shows
+no ALWAYS ON line and nothing in it changed) and `lobby.jpg`,
+`lobby-scenario.jpg` and `guide/random-map-lobby.jpg` (the single-player create
+screen, which never had a GAME MODS option). No shipped picture shows the
+multiplayer create screen, so none showed its old GAME MODS option.
 
-Refreshed on 2026-10-24 for **0.8.13**. The 0.8.13 build (version set to
+**0.8.13** (2026-10-24): the 0.8.13 build (version set to
 0.8.13 locally, ahead of the release commit; no capture patch was needed for the
-game) retook `title.jpg` (VERSION 0.8.13) the same way as for 0.8.12; only the
+game) retook `title.jpg` (VERSION 0.8.13, since retaken for 0.8.14) the same way as for 0.8.12; only the
 version digits differ from the 0.8.12 file. Cartographer now opens to an empty
 window, so `cartographer/new-map.jpg` was retaken (the New Map dialog opened with
 File → New map over that window, where it used to sit over a placeholder map) and
@@ -178,7 +186,7 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.8.13 (0.8.13 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
+| `title.jpg` | Title menu showing version 0.8.14 (0.8.14 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
 | `battle.jpg` | **Benchmark** run (Settings → Benchmark, Absurd intensity) on Ulasem Arena, 55 game seconds in. Eight server AIs fight, all five sides. The camera, at 1.3× zoom, shows Aramon (magenta) and Taros (yellow) armies, with Black Dragons, clashing at a sandy arena; damaged units of every side show health bars. A real feature with no fixture; spectator view, so no fog. Rendered by the 0.8.8 build |
 | `dragons.jpg` | **Development scene.** Five server AIs, one per side, from a stress-test start (300-unit cap) with gods on, 90 game seconds in. Creon Neo Dragons breathe fire on an Aramon siege column; health bars show for every side. Spectator view, 1.4× zoom. Rendered by the 0.8.8 build |
 | `flyers.jpg` | **Development scene, spawned.** Legion pathfinding, 22 s after one move order east-south-east. A 44-unit Zhon formation: Trolls, Stone Giants and Jungle Orcs, with Gryphons, Harpies and Drakes holding rows of stations over the front of the ground (new in 0.8.0, protocol 254; before, over its middle). `1F`, solid green, marks members of formation 1. Nothing is selected, so the information bar is empty (0.8.1). Fog off, 1.45× zoom. Rendered by the 0.8.8 build (protocol 288) |
@@ -187,8 +195,8 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 | `generated.jpg` | Generated Aramon Riverlands map "Silverford" (generator v9, seed 7, 256 × 256, four players, Scattered Mana Medium: 53 mana spots). Four Hard AIs at 8× speed, seven game minutes in. Spectator view of the lake shore at 1×, with a scattered neutral mana spot among standing stones in the clearing. Rendered by the 0.8.8 build |
 | `lobby.jpg` | Single-player create screen with Ulasem Arena selected (the title from the map's translate table, in the list and on the MAP line): the preview numbers the map's eight start positions, MAP SCENARIO under it is greyed (THIS MAP HAS NO SCENARIO), and POWER CODES: OFF is among the options, which are all one width with one label size (0.8.9). Retail pathfinding, other options at their defaults. Rendered by the 0.8.9 build, 1600 × 1000 (see *Lobby captures* below) |
 | `lobby-scenario.jpg` | Single-player create screen on King of the Hill with **MAP SCENARIO** turned on: the gold **S** marks the maps with a playable scenario in the list, the lines under the button say what the scenario changes, Monarch Expendable and Start Locations are greyed, and the preview numbers the four start positions. 1024 × 768, cropped to the lobby panel; the map row and the button were clicked with `TAK_SHOT_CLICKS`, then the pointer moved off the panel. Rendered by the 0.8.9 build (one button width in the option column). Used only by the user guide |
-| `room.jpg` | Single-player room on Ulasem Arena with three Normal AIs (Taros, Veruna, Zhon) added by clicks, Crusades and Double Sight on, Legion pathfinding and both example cosmetic packs ticked (empty folders in the scratch install); under the COSMETIC MODS heading ALWAYS ON: click.hpi, then the pack names at the column's text size, the GAME MODS list below (no game pack ticked, so no GAME MODS VERIFIED line, new in 0.8.9). The open rows 5 to 8 each have a **MOVE HERE** button. The match rules end with MAP SCENARIO: OFF at the others' size (0.8.9). The map at the top of the right column marks starts 1 to 4 in the colours of the four seated players. The AI names are the lobby's own random picks. Rendered by the 0.8.9 build, 1600 × 1000; the CREATE screen's toggles, slot types, sides and pack boxes were clicked with `TAK_SHOT_CLICKS`, then the pointer moved off the panel |
-| `campaign.jpg` | Book of Darien campaign picker with a fresh profile, chapter 1. The CHAPTER heading and numeral are retail lettering in both UI fonts; the chapter title, the always-on mods note (click.hpi, in dark ink on the parchment) are in the UI font. No Opponent AI line: missions always play the Retail AI (internally Classic). Rendered by the 0.8.11 build, 1600 × 1000, with `TAK_SHOT_CAMPAIGN=0` |
+| `room.jpg` | Single-player room on Ulasem Arena with three Normal AIs (Taros, Veruna, Zhon) added by clicks, Crusades and Double Sight on, Legion pathfinding and both example cosmetic packs ticked (placeholder folders in the scratch install); under the COSMETIC MODS heading ALWAYS ON: click (the always-enabled pack folder, 0.8.14), then the pack names at the column's text size, the GAME MODS list below (no game pack ticked and no always-enabled game pack, so no GAME MODS VERIFIED line, new in 0.8.9). The open rows 5 to 8 each have a **MOVE HERE** button. The match rules end with MAP SCENARIO: OFF at the others' size (0.8.9). The map at the top of the right column marks starts 1 to 4 in the colours of the four seated players. The AI names are the lobby's own random picks. Rendered by the 0.8.14 build, 1600 × 1000; the CREATE screen's toggles, slot types, sides and pack boxes were clicked with `TAK_SHOT_CLICKS`, then the pointer moved off the panel |
+| `campaign.jpg` | Book of Darien campaign picker with a fresh profile, chapter 1. The CHAPTER heading and numeral are retail lettering in both UI fonts; the chapter title, the always-on mods note (click, the always-enabled pack folder, in dark ink on the parchment) are in the UI font. No Opponent AI line: missions always play the Retail AI (internally Classic). Rendered by the 0.8.14 build, 1600 × 1000, with `TAK_SHOT_CAMPAIGN=0` |
 | `crusades.jpg` | Imported Darien Crusades definition (`crusades_import` from the retail `Darien.def`) on an authenticated local server, account *Gallery*; Torcairn selected in the territory list after joining Honor, so the territory panel lists its details and the map marks it. No authored battle maps or ownership. Rendered by the 0.8.8 build, 1600 × 1000 |
 | `streaming.jpg` | Streaming setup with no key or broadcast, showing the **Remember Key** row (off; the Secret Service is available) and the **Save a Local Copy** row (off, the default; MP4 IN THE VIDEOS FOLDER), new in 0.8.10. Rendered by the 0.8.10 build at 1600 × 1000, with the debug `TAK_CREDSTORE=test` store so no real key could appear |
 | `diplomacy.jpg` | Built-in input-test fixture (the debug `TAK_DIPLOMACY_TEST` harness, `--testbuild`) after gifting, 1600 × 1000, in a profile with voice chat on. The VOICE column ticks every other player (your own box is shown, greyed); VOLUME has sliders for the two other humans, left by the fixture at 50% (ALLY) and 25% (DEFEATED), and none for the computer player (ENEMY). Elsin stays selected, so the bar shows her portrait, name and health and mana only. Rendered by the 0.8.8 build |
@@ -213,7 +221,7 @@ replace them. The unchanged views contain no version text.
 | `fire-on-the-move.jpg` | **From the 0.8.8 build. Development scene, two-player spawned.** Ulasem Arena, Retail pathfinding, 14 s after one plain move order east (**scripted orders**). 14 Aramon Archers and 2 Mage Builders were spawned in a 4-wide grid; 6 Taros Zombies and 6 Skeleton Archers (enemy, no AI) stand south of their path. Shift is held, so the move line shows. Zombies have reached the back of the column, which keeps walking and shooting; the flashes are hits, and three of the sixteen have fallen, so the information bar shows two portraits (2 Mage Builders, 11 Archers) and 13 SELECTED. 1.4× zoom, fog off |
 | `cartographer-terrain.jpg` | Cartographer Terrain tab on Ulasem Arena (`--shot --shot-tool terrain`, fresh editor profile, 921 × 691), from the 0.8.3 build: the grouped section browser, All sections (555 pieces, 1261 sections), with readable piece names, variant badges and the scrollbar, and five tools on the toolbar |
 | `tactical-dots.jpg` | From the 0.8.5 build. **Benchmark** run (Absurd) on Ulasem Arena, 50 game seconds in, spectator view fully zoomed out (zoom 0.1875, the floor for this map in a 1920 × 1080 window), where the 0.8.5 default Tactical Dots Zoom of 0% shows dots. The deterministic run was rendered twice at the same tick and camera, with Tactical Dots off and on in otherwise identical profiles. The same 800 × 900 region (the east of the map: the blue and red armies) is cropped from each at 1:1 and placed side by side under labels. With models, fire and spell effects show among the armies; with dots none are drawn (new in 0.8.5) |
-| `campaign-briefing.jpg` | *Book of Darien* chapter 1 briefing over the paused battlefield, from a direct mission launch, by the 0.8.8 build: the PAUSED heading is retail art, the chapter, title and objectives are in the UI font, and the last line names the always-on mod (click.hpi). Nothing is selected, so the information bar is empty |
+| `campaign-briefing.jpg` | *Book of Darien* chapter 1 briefing over the paused battlefield, from a direct mission launch (`TAK_SHOT_BRIEFING`, 1600 × 900, scaled), by the 0.8.14 build: the PAUSED heading is retail art, the chapter, title and objectives are in the UI font, and the last line names the always-enabled cosmetic pack (Always-on mods: click). Nothing is selected, so the information bar is empty |
 | `replay.jpg` | Replay playback of a recorded local-server game, 9 s of 16 s, with the time bar. **Stress-test start**: an Aramon army given one Legion move order (**scripted orders**). Recorded and played back by the 0.8.8 build |
 | `benchmark.jpg` | From the 0.8.8 build. Benchmark run (Absurd), 55 s in; the BENCHMARKING badge counts down the remaining time (0:05 of 60 s): armies meet at the edge of a sandy clearing, with health bars for every side; scaled from 1920 × 1080 |
 | `scorecard.jpg` | From the 0.8.8 build. F4 scorecard over a benchmark battle (Absurd), 55 s in, at 1.1× zoom; captured at 1920 × 1080 (so the BENCHMARKING badge clears the Score column) and scaled |
@@ -221,7 +229,7 @@ replace them. The unchanged views contain no version text.
 | `random-map-lobby.jpg` | Single-player create screen with **Generate Random Map** clicked, then SIZE clicked once (12 × 12), PLAYERS twice (4) and the SCATTERED MANA slider set to HIGH (`TAK_SHOT_CLICKS`, see *Lobby captures*). The preview reads MANA: 57 and SCATTERED: 33 NEUTRAL; the option column has one button width (0.8.9). Captured live at 1600 × 1000 with `TAK_SHOT_SIZES` by the 0.8.9 build, cropped to 1500 × 900 (from x 100, as the panel now sits 50 px further right), not scaled. The seed is the lobby's own random one |
 | `chat-box.jpg` | Recaptured by the 0.8.9 build. The in-game chat box at its defaults (Chat Position Centered, Chat Scale 100%) sitting above the build row and its TRAINING Horseman (10) line, on Ulasem Arena, 1600 × 900, cropped to the box, the row and the information bar (1240 × 340, not scaled). **Selection still life** (`--testbuild`, `TAK_SELPORTRAITS=arakeep:1`): a Barracks selected, with a Horseman queue of ten started by the capture patch. Four chat lines put into the box by the capture patch with fixed names (Ludwin, Aldric, Kirenna, Pat) in their player colours, and *on my way* being typed after SAY: |
 | `options-interface.jpg` | New in 0.8.8. Options screen in a 1600 × 1100 window scrolled to the Interface section, cropped to it: UI FONT MODERN, F4 SCORECARD SCALE and UI SCALE 100%, HEALTH BARS DAMAGED, STATS PANEL ON, BUILD MENU CENTER, BUILD MENU SCALE 100%, CHAT POSITION CENTERED and CHAT SCALE 100%; a fresh profile, all defaults |
-| `room-mods-power-codes.jpg` | Recaptured by the 0.8.9 build. Single-player room on Ulasem Arena, 1600 × 1000: POWER CODES clicked on in the create screen, two Normal AIs; under the COSMETIC MODS heading ALWAYS ON: click.hpi, then the packs at the column's text size (Classic Sounds ticked, Alternate Cursors not) and the GAME MODS list (Big Battles ticked, so GAME MODS VERIFIED shows); the match rules read POWER CODES: ON, and MAP SCENARIO: OFF is a rules line at the others' size. Clicked with `TAK_SHOT_CLICKS` |
+| `room-mods-power-codes.jpg` | Recaptured by the 0.8.14 build. Single-player room on Ulasem Arena, 1600 × 1000: POWER CODES clicked on in the create screen, two Normal AIs; under the COSMETIC MODS heading ALWAYS ON: click, then the packs at the column's text size (Classic Sounds ticked, Alternate Cursors not); under the GAME MODS heading ALWAYS ON: House Rules (an always-enabled game pack in the scratch install, new in 0.8.14), then Big Battles ticked, so GAME MODS VERIFIED shows; the match rules read POWER CODES: ON, and MAP SCENARIO: OFF is a rules line at the others' size. Clicked with `TAK_SHOT_CLICKS` |
 | `build-line.jpg` | New in 0.8.9. A Shift-drag wall line in progress: the committed debug `TAK_BUILDLINE_SHOT=560,0,2` fixture (`--testbuild`, Ulasem Arena) selects Elsin, chooses the Aramon wall, holds Shift, presses the left button, drags 560 px east and turns the mouse wheel up two notches, so the preview shows nine wall sites two cells apart and the **GAP 2** label by the pointer. 1.5× zoom, fog off; 1600 × 900, scaled |
 | `disconnect-wait.jpg` | Recaptured by the 0.8.10 build (first taken during 0.8.10 development). Two humans on Inner Circle through a local `takserver --local --no-auth --seed 1` at the default 8 s stall threshold (data: a copy of the retail archives); the second client (Brannoc, headless) was stopped with `SIGSTOP` 40 s in, and the first (Aldric, 1600 × 900, scaled) was captured about 4 s after the banner appeared: the game is paused and reads WAITING FOR Brannoc 18 (a first stop's countdown starts at 22, as the 8 silent seconds are already spent). Nothing is selected. Capture script `~/tak-tmp/scratch/release-0810/shots/dw.sh` |
 | `build-menu-wrap.jpg` | New in 0.8.11. A Zhon Beast Tamer's nine-icon conjure menu wrapped into two rows (five above four, centred, the container over both) left of the command panel and the mana orb. **Selection still life** (`--testbuild --side zon`, `TAK_SELPORTRAITS=zontrain:1`, local server), Ulasem Arena, a 1024 × 768 window at Build Menu Scale 150% (the menu fits one row at 100%), hardware cursor on so no pointer is drawn; not scaled |
@@ -281,7 +289,10 @@ composed, so no browser cell or tree is a placeholder.
   in the scratch install, and once more after the 0.8.8 polish (ALWAYS ON under
   the COSMETIC MODS heading). On 2026-10-21 it was recaptured by the 0.8.9
   client the same way, for the room's rules (MAP SCENARIO as a normal rules
-  line, GAME MODS VERIFIED only with game packs in play).
+  line, GAME MODS VERIFIED only with game packs in play). On 2026-10-24 it was
+  recaptured by the 0.8.14 client the same way, with the click archive at
+  `mods/cosmetic/always_enabled/click/click.hpi` in the scratch install, so the
+  room reads ALWAYS ON: click.
 - **Markers and composites.** `window-annotated.jpg` has numbered markers drawn
   on a copy of the capture with Pillow. `random-generator.jpg`,
   `symmetry-stamp.jpg`, `terrain-clipboard.jpg` and `features-select.jpg` put two
@@ -350,7 +361,7 @@ composed, so no browser cell or tree is a placeholder.
 | `open-map.jpg` | Open Map after opening King of the Hill and saving *Twin Rivers*, so two Recent rows lead the list. Dialog crop |
 | `save-as.jpg` | Save As for the new map *Twin Rivers*. Dialog crop |
 | `test-map.jpg` | King of the Hill after F5: the TEST MAP message, with TEST RUNNING on the toolbar, whole window |
-| `test-lobby.jpg` | The game's private lobby for that King of the Hill snapshot (recaptured by the 0.8.9 client for the room's rules; before that by the 0.8.8 client for the UI font and the mods lists): seats 2 to 4 open, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, the map preview numbering the four starts, ALWAYS ON: click.hpi under the COSMETIC MODS heading with no packs in either the COSMETIC MODS or the GAME MODS list (so no GAME MODS VERIFIED line), START greyed, and MAP SCENARIO: ON (TEST MAP) as a rules line at the others' size with the scenario details under both columns; 1024 × 768 cropped to the lobby panel |
+| `test-lobby.jpg` | The game's private lobby for that King of the Hill snapshot (recaptured by the 0.8.14 client for the always-enabled pack folders; before that by the 0.8.9 client for the room's rules and the 0.8.8 client for the UI font and the mods lists): seats 2 to 4 open, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, the map preview numbering the four starts, ALWAYS ON: click under the COSMETIC MODS heading with no packs in either the COSMETIC MODS or the GAME MODS list (so no GAME MODS VERIFIED line), START greyed, and MAP SCENARIO: ON (TEST MAP) as a rules line at the others' size with the scenario details under both columns; 1024 × 768 cropped to the lobby panel |
 | `menus.jpg` | Composite: the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each opened over Ulasem Arena or King of the Hill and cropped to the menu |
 | `ai-profiles.jpg` | *AiTest* (Ulasem Arena's terrain), Scenario → AI Profiles, DEFAULT AI tab: the map's own profile *aitest* started Empty, then NO FLYERS after its confirmation, so every flying unit reads BUILD OFF and LIMIT 0; TAK ENGINE AI (`ai/takengine.txt`) is tagged `map *` from an earlier edit, and PREVIEW LEVEL reads HARD. Crop of the window |
 | `ai-group-rules.jpg` | Ulasem Arena, AI Profiles, DEFAULT AI tab in the GROUP RULES view: own profile *ulasem arena*, one rule WEIGHT ARA 50 % covering 32 units, the Archer set individually (80 %) and shown as skipped. Crop of the window |
@@ -398,23 +409,27 @@ number of game seconds. Interactive scenes (the HUD, side shots and replay) rend
 live and capture after a wall-clock wait, so their FPS reading is real. Screenshot
 timing is not a performance measurement.
 
-**Lobby captures** (`lobby.jpg`, `lobby-scenario.jpg`, `room.jpg`,
-`guide/random-map-lobby.jpg` and `guide/room-mods-power-codes.jpg`, all from 0.8.9)
+**Lobby captures** (`lobby.jpg`, `lobby-scenario.jpg` and
+`guide/random-map-lobby.jpg` from 0.8.9; `room.jpg` and
+`guide/room-mods-power-codes.jpg` from 0.8.14)
 launch the debug client's menu with `TAK_MENU_PICK=singleplayer` (the
 single-player door, with `TAK_NODOORVID=1` skipping the door video), the profile's
 `lastMap` naming the map, and the hardware cursor on so no pointer is drawn.
 `TAK_SHOT_CLICKS` clicks through the screens (CREATE, slot types and sides, pack
 boxes, the MAP SCENARIO button) and `TAK_SHOT_SIZES` captures the live window. The
 data folder is a scratch copy of the retail install (links to its archives and
-`Maps`, an empty `MapCache`) whose `mods/` holds the always-on `click.hpi`,
-the empty cosmetic packs *Alternate Cursors* and *Classic Sounds* and the empty
-game pack *Big Battles*, for the pack lists.
+`Maps`, an empty `MapCache`) whose `mods/` holds the always-enabled cosmetic
+pack *click* (`mods/cosmetic/always_enabled/click/click.hpi`; up to 0.8.13 the
+archive sat directly in `mods/cosmetic/`), the cosmetic packs *Alternate
+Cursors* and *Classic Sounds* and the game pack *Big Battles* (placeholder
+folders), for the pack lists; for `guide/room-mods-power-codes.jpg` also the
+always-enabled game pack *House Rules* (`mods/game/always_enabled/House Rules/`).
 
 Capture scripts, job lists and the encoder are in the release-preparation
 scratch directories, `$SCR/shared/release-0.7.26/shots`,
 `$SCR/shared/release-0.7.27/shots`, `$SCR/shared/release-0.7.28/shots`,
 `$SCR/shared/release-0.8.0/shots`, `$SCR/shared/release-0.8.1/shots`,
-`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots`, `~/tak-tmp/scratch/release-086/shots`, `~/tak-tmp/scratch/release-087/shots`, `~/tak-tmp/scratch/release-088/shots`, `~/tak-tmp/scratch/release-089/shots`, `~/tak-tmp/scratch/release-0810/shots`, `~/tak-tmp/scratch/release-0811/shots`, `~/tak-tmp/scratch/release-0812/shots` and `~/tak-tmp/scratch/release-0813/shots`. Raw PNGs, logs, profiles
+`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots`, `~/tak-tmp/scratch/release-086/shots`, `~/tak-tmp/scratch/release-087/shots`, `~/tak-tmp/scratch/release-088/shots`, `~/tak-tmp/scratch/release-089/shots`, `~/tak-tmp/scratch/release-0810/shots`, `~/tak-tmp/scratch/release-0811/shots`, `~/tak-tmp/scratch/release-0812/shots`, `~/tak-tmp/scratch/release-0813/shots` and `~/tak-tmp/scratch/release-0814/shots`. Raw PNGs, logs, profiles
 and the SHA-256 manifest are kept locally in the worktree's ignored
 `build-o2/capture` folder. Keep retail archives, extracted assets and temporary
 capture files out of Git. When refreshing, rerender and inspect every view, then
