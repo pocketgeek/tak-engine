@@ -1173,7 +1173,7 @@ void cart::Editor::drawAiProfiles() {
         const auto key=aiTabKey();const bool has=aiMod->files.count(key)>0;
         const std::string pack=aiMod->pack;
         if(aiTab)plays=has?"Plays: with "+pack+" ticked, all six levels read this pack's "+key+" over their own built-in tables, on every map; "
-            "a game mod wins over a map's own copy and over the install. Without the pack nothing changes.":
+            "a game mod wins over a map's own copy (the install never supplies this file). Without the pack nothing changes.":
             "Plays: this pack has no "+key+" yet, so with "+pack+" ticked our levels read the map's copy, else their built-in tables.";
         else if(key=="ai/default.txt")plays=has?"Plays: with "+pack+" ticked, RETAIL reads this pack's ai/default.txt on every map using the standard profile, "
             "over the map's and the install's. A map with its own profile name reads ai/<name>.txt instead.":
