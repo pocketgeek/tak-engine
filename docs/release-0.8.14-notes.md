@@ -182,8 +182,6 @@ New with 0.8.14:
 
 - **Old always-on archives are not moved for you**, and the game does not warn
   about a `.hpi` left directly in `mods/cosmetic/`: it is simply not loaded.
-<!-- TODO-LEAD: confirm no further 0.8.14 limit (for example from the
-mixed-version or screenshot checks) and drop this comment. -->
 
 ## Compatibility
 

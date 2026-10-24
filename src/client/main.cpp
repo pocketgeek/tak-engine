@@ -416,6 +416,7 @@ int main(int argc, char** argv) {
             "  Launches the game and its front-end menu.\n"
             "  --play-map <snapshot.kmp>   open a Cartographer snapshot in a private lobby\n"
             "  --game-mod <pack>   with --play-map: tick only this mods/game pack in that room\n"
+            "                      (mods/game/always_enabled packs apply as well)\n"
             "  --version, -v   print version and exit\n"
             "  <retail-install-dir> holds the shipped *.hpi plus Maps/ Music/ mods/.\n");
 #else
