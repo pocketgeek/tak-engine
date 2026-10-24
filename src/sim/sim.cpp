@@ -201,7 +201,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // 1 = mobile unit) is the authoritative mobility flag.
             t.canMove = info->numberOr("canmove", 0) != 0 &&
                         info->numberOr("bmcode", 1) != 0;
-            t.buildMovementCode=uint8_t(int32_t(info->numberOr("bmcode",1)));
+            t.buildMovementCode=uint8_t(int32_t(info->numberOr("bmcode",0)));   // retail's default, as below
             t.classicFbi.bmcode=int32_t(info->numberOr("bmcode",0));
             t.classicFbi.isFeature=(int32_t(info->numberOr("isfeature",0))&1)!=0;
             t.classicFbi.category=info->valueOr("category","");
@@ -9337,10 +9337,6 @@ void World::emitConstruction(Unit& u,bool rising) {
     ++u.constructionEmissions[rising ? 1 : 0];
     const UnitType* effectType=u.lodestoneReplacement && u.underConstruction &&
         u.constructionFraction()<0.5f ? u.lodestoneReplacement->type : u.type;
-    const int x=std::clamp(u.x.floorInt()/16,0,std::max(0,terW_-1));
-    const int z=std::clamp(u.z.floorInt()/16,0,std::max(0,terH_-1));
-    const int32_t y=u.type->canFly ? u.flightY.v :
-        int32_t(heights_.empty() ? 0 : heights_[size_t(z)*terW_+x])*65536;
     if (!u.constructionEmitter) {
         if (!u.cosmeticConstructionEmitter) {
             u.cosmeticConstructionEmitter.emplace();
@@ -9354,7 +9350,10 @@ void World::emitConstruction(Unit& u,bool rising) {
         emitter.height=effectType->modelTop;
         emitter.capacity=uint32_t(std::max(0,emitter.radius>>16))/(effectType->buildMovementCode==1 ? 4u : 1u);
         const size_t before=emitter.particles.size();
-        u.cosmeticConstructionEmitter->emit(1,y,rising,[&] {
+        // 4f1310: the rising ceiling is the owner's own world Y (unit+0x6c) plus
+        // the height -- the same origin the client draws the particles from.
+        const int32_t ownerY=(u.type->canFly ? u.flightY : u.groundY).v;
+        u.cosmeticConstructionEmitter->emit(1,ownerY,rising,[&] {
             u.constructionVisualRandom=u.constructionVisualRandom*0x343fdu+0x269ec3u;
             return (u.constructionVisualRandom>>16)&0x7fffu;
         });
@@ -9364,6 +9363,12 @@ void World::emitConstruction(Unit& u,bool rising) {
         }
         return;
     }
+    // Captured-retail restore path (hashed): still the nearest height corner, not
+    // the owner's world Y the cosmetic emitter uses above.
+    const int x=std::clamp(u.x.floorInt()/16,0,std::max(0,terW_-1));
+    const int z=std::clamp(u.z.floorInt()/16,0,std::max(0,terH_-1));
+    const int32_t y=u.type->canFly ? u.flightY.v :
+        int32_t(heights_.empty() ? 0 : heights_[size_t(z)*terW_+x])*65536;
     unsigned draw=0;
     u.constructionEmitter->emit(1,y,rising,[&]{return crtRand(draw++ ? 0x4f14a2u : 0x4f1467u);});
 }

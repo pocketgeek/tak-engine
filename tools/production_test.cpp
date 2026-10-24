@@ -28,6 +28,7 @@
 
 #include "sim/sim.h"
 #include "sim/legion.h"
+#include "hpi/hpi.h"
 
 #include <cmath>
 #include <cstdio>
@@ -602,6 +603,47 @@ static void repairParticles() {
           "finished repair stops emission and lets existing particles drain");
 }
 
+// Construction sparkle sizing (retail 4ee377..4ee40e) and ceiling (4f1310). A
+// building's ring sits on its nearest footprint edge, R = min(half-sides), and holds
+// R sparkles; bmcode 1 divides that by 4. The FBI parser defaults bmcode to 0 and 49
+// shipped buildings omit it, so a building with no bmcode line must take the
+// building branch. The rising ceiling is the owner's world Y plus the model height.
+static void constructionParticleSizing() {
+    auto files=std::make_shared<tak::hpi::Vfs::Files>();
+    auto fbi=[&](const char* id,const char* fields) {
+        const std::string text=std::string("[UNITINFO]\n{\nunitname=")+id+";\nobjectname="+id+
+            ";\nside=ARA;\nmaxdamage=1000;\nbuildtime=100;\nbuildcost=100;\n"+fields+"\n}\n";
+        (*files)[std::string("units/")+id+".fbi"]={text.begin(),text.end()};
+    };
+    fbi("plainhall","footprintx=4;\nfootprintz=6;");
+    tak::hpi::Vfs vfs;vfs.setMapFiles(files);
+    TypeRegistry reg;reg.loadDir(vfs,"units");
+    check(reg.find("plainhall") && reg.find("plainhall")->buildMovementCode==0,
+          "a building with no bmcode line reads bmcode 0 (retail's default)");
+    if (!reg.find("plainhall")) return;
+    UnitType target=*reg.find("plainhall");target.modelTop=32*65536;
+    World w;setTestPathfinding(w);w.setVisPlayer(-1);
+    std::vector<uint8_t> heights(64*64);
+    for (int z=0;z<64;++z) for (int x=0;x<64;++x) heights[size_t(z)*64+x]=uint8_t(40+x*3);
+    w.setTerrain(heights,64,64,20);
+    UnitType builder;builder.id="sizing-worker";builder.maxHp=100;
+    builder.isBuilder=builder.canMove=true;builder.buildDist=200;builder.workerTime=10;
+    builder.modelTop=32*65536;
+    const int bid=w.spawn(&builder,200,200),tid=w.spawn(&target,268,200);
+    w.unit(tid)->hp=Fixed::fromInt(100);w.player(0).mana=1000;
+    w.repair(bid,tid,false);
+    for(int i=0;i<20;++i)w.tick(1.f/30);
+    const auto* t=w.unit(tid);
+    const auto* e=t && t->cosmeticConstructionEmitter ? &*t->cosmeticConstructionEmitter : nullptr;
+    check(e && e->radius==32*65536 && e->capacity==32,
+          "a 4x6 building without bmcode: ring R = min half-side (32 px), capacity 32",
+          e ? "radius="+std::to_string(e->radius/65536.0)+" capacity="+std::to_string(e->capacity) : "no emitter");
+    bool ceilings=e && !e->particles.empty();
+    if (e) for (const auto& p:e->particles)
+        ceilings&=p.speed<0 || p.ceiling==int32_t(uint32_t(t->groundY.v)+uint32_t(e->height));
+    check(ceilings,"rising sparkles stop at the owner's world Y plus the model height");
+}
+
 // Structures must never reach navigation steering at the edge of weapon range.
 static void defensiveBodyStaysFixed() {
     for (bool canMove : {false, true}) for (float distance : {200.f,490.f,700.f}) {
@@ -658,6 +700,7 @@ int main(int argc,char** argv) {
     }
     defensiveBodyStaysFixed();
     repairParticles();
+    constructionParticleSizing();
     mobileProducerFacesSite();
     productionNeedsMana();
     shortIncomeIsShared();

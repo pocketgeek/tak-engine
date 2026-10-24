@@ -1807,11 +1807,6 @@ private:
     void verifyMonolithicBody(const UnitGeom& g, const std::vector<Tri>& sorted,
                               std::span<const size_t> order, const UnitGeomInputs& in);
 
-    // Sprinkle the faction build/summon nano-sparkle over a screen footprint centred at
-    // (cx,cy), fpw x fph screen px. Retail draws this over BOTH the worker unit and its
-    // build/reclaim target; kBuildFxScale enlarges the little sprites so the effect reads,
-    // and the cloud spreads a little past the footprint like the retail effect.
-
     void drawUnit(const UnitR& u);
 
     // Project model triangles relative to the unit anchor: yaw by heading,

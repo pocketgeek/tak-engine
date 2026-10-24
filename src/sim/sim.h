@@ -283,7 +283,7 @@ struct UnitType {
     int32_t maxHp = 100;        // maxdamage: readInt at +0x1be in retail
     bool canMove = false;
     bool canGuard = false, canPatrol = false; // authored command capability flags
-    uint8_t buildMovementCode=1; // Authored bmcode byte, used by construction visuals.
+    uint8_t buildMovementCode=0; // Authored bmcode byte (retail default 0), used by construction visuals.
     bool isBuilder = false;
     bool builderLimited = false; // native assist is restricted to the build menu only when set
     // Can this type train units (and therefore hold a rally)? Set for any builder

@@ -30,6 +30,13 @@ their validation reports; both live in [`docs/`](docs/).
   keeps to the profile's limit (10 in `ai/default.txt`), and our levels build up
   to 10. Only the server runs the AI, so this changes nothing about who can play
   together.
+- **Build sparkles:** the sparkles over a building going up now match the
+  original. The ring sits on the edge of the building's footprint and holds the
+  original number of sparkles; buildings whose unit file has no `bmcode` line
+  were sized like mobile units, with a wider ring and a quarter of the sparkles.
+  Rising sparkles on high ground or water also climb as far as they did in the
+  original before they fade. The sparkles are display only, so this changes
+  nothing about who can play together.
 - **Documentation:** the release history moved out of the README into this
   changelog; the README, quick start, user guide, map editor guide, server
   guide and streaming guide were rewritten and their pictures retaken.
