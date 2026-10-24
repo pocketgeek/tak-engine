@@ -68,7 +68,7 @@ def verify_replay(root, identity, digest, fingerprint):
     replay = auth.Reader(files[0].read_bytes())
     assert replay.data[:4] == b'TAKR'
     replay.pos = 4
-    assert replay.num('<I') == 14  # format 14: records POWER CODES; 13 MAP SCENARIO; 12 checkpoint position digests
+    assert replay.num('<I') == 15  # format 15: records FOG OF WAR; 14 POWER CODES; 13 MAP SCENARIO; 12 checkpoint position digests
     assert replay.num('<I') == auth.VERSION
     replay.field()  # map
     assert replay.num('<B') == 1  # Crusades Balance
@@ -82,6 +82,7 @@ def verify_replay(root, identity, digest, fingerprint):
     replay.pos += 5 * slot_count
     assert replay.num('<B') == 0  # format 13: a campaign battle never plays a map scenario
     assert replay.num('<B') == 0  # format 14: nor with power codes
+    assert replay.num('<B') == 0  # format 15: and its fog is the room's 0 (forced for a battle)
     count = replay.num('<I')
     assert count == final_tick
     for tick in range(count):

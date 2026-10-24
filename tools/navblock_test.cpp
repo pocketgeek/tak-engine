@@ -215,6 +215,25 @@ int main(int argc, char** argv) {
         for (int x = 11; x <= 14; ++x)
             anchored &= treeWorld.nav().walkable(x, z) == !(x >= 12 && x < 14 && z >= 10 && z < 12);
     check(anchored, "feature blocks from its recorded origin, with clear neighbours");
+    {
+        // Two overlapping 2x2 trees: the later one in scan order removes the
+        // earlier at install (495360), and retail keeps nothing of it -- no
+        // tracked feature, no blocker (Lake Ferrix_JM loses 287 this way).
+        tnt::Map ghost = isolated;
+        ghost.features[11 * 32 + 13] = 0;
+        sim::World ghostWorld;
+        ghostWorld.setVisPlayer(-1);
+        ghostWorld.setTerrain(ghost.heights, 32, 32, 20, &ghost.features);
+        sim::registerMapFeatures(ghostWorld, ghost, vfs, &reg);
+        const auto& installed = ghostWorld.installedMapFeatures();
+        check(installed.size() == ghost.features.size() && installed[10 * 32 + 12] == 0xffff &&
+              installed[11 * 32 + 13] == 0, "an overlapped earlier feature does not survive install");
+        check(!ghostWorld.feature(10 * 32 + 12) && ghostWorld.feature(11 * 32 + 13),
+              "and is not tracked, while the later one is");
+        check(ghostWorld.nav().walkable(12, 10) && ghostWorld.nav().walkable(13, 10) &&
+              ghostWorld.nav().walkable(12, 11) && !ghostWorld.nav().walkable(13, 11) &&
+              !ghostWorld.nav().walkable(14, 12), "only the survivor blocks");
+    }
     sim::UnitType reclaimer;
     reclaimer.id = "reclaimer"; reclaimer.maxHp = 100;
     reclaimer.isBuilder = reclaimer.canMove = reclaimer.canReclaim = true;

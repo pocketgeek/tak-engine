@@ -33,7 +33,7 @@
 namespace tak::net {
 
 // Bump when the layout changes, and handle the older values in readReplayHeader.
-inline constexpr uint32_t kReplayFormat = 14;   // 14: records the room's POWER CODES option; 13: records the room's MAP SCENARIO option; 12: checkpoints carry posDigest; 11: independent pathfinding mode
+inline constexpr uint32_t kReplayFormat = 15;   // 15: records the room's FOG OF WAR option (area clear reads it); 14: records the room's POWER CODES option; 13: records the room's MAP SCENARIO option; 12: checkpoints carry posDigest; 11: independent pathfinding mode
 
 // Simulation changes require the matching engine; do not emulate older rules.
 inline bool supportedReplayProtocol(uint32_t format, uint32_t protocol) {
@@ -62,6 +62,7 @@ struct ReplayHeader {
     uint8_t slotAiLevel[kMaxSlots] = {};
     uint8_t mapScenario = 0;      // format 13: the room's MAP SCENARIO option (0 in older files)
     uint8_t powerCodes = 0;       // format 14: bit 0 the room's POWER CODES option, bit 1 its map revealed at start (0 in older files)
+    uint8_t fogExplored = 1;      // format 15: the room's FOG OF WAR option, 0..2 (MatchConfig::roomMapRevealed/roomLosOff)
 };
 
 // One recorded (tick, hash) pair from the ORIGINAL game.
@@ -111,6 +112,7 @@ inline void writeReplayHeader(Writer& w, const ReplayHeader& h) {
     }
     w.u8(h.mapScenario);   // format 13
     w.u8(h.powerCodes);    // format 14
+    w.u8(h.fogExplored);   // format 15
 }
 
 // Reads the header. `fmt` and `proto` come back so the caller can refuse a file it
@@ -154,6 +156,7 @@ inline bool readReplayHeader(Reader& r, ReplayHeader& h, uint32_t& fmt, uint32_t
     }
     h.mapScenario = fmt >= 13 ? r.u8() : 0;
     h.powerCodes = fmt >= 14 ? r.u8() : 0;
+    h.fogExplored = fmt >= 15 ? r.u8() : (h.powerCodes & 1) ? ((h.powerCodes & 2) ? 1 : 0) : 1;
     return r.ok;
 }
 

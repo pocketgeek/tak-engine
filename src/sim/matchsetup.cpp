@@ -471,9 +471,13 @@ static void scanFeaturePlane(World& world, const tak::tnt::Map& map,
     }
     world.setMapPlacementFeatures(map.features,std::move(placementTypes));
     if (map.featureNames.empty()) { world.setSacredSites({});return; }
+    // Only the features that survived install (495360 removes the earlier of
+    // two overlapping ones): retail has no record of the others, so they make
+    // no sacred site (0x62dbc8), no deposit, no blocker and no target.
+    const auto& installed = world.installedMapFeatures();
     for (int cz = 0; cz < map.height; ++cz)
         for (int cx = 0; cx < map.width; ++cx) {
-            uint16_t v = map.features[size_t(cz) * map.width + cx];
+            uint16_t v = installed[size_t(cz) * map.width + cx];
             if (v >= map.featureNames.size()) continue;
             std::string key = map.featureNames[v];
             std::transform(key.begin(), key.end(), key.begin(), ::tolower);
@@ -728,6 +732,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
     world.setMonarchExpendable(cfg.monarchExpendable);
     world.setDoubleSight(cfg.doubleSight);
     world.setPowerCodes(cfg.powerCodes, cfg.powerMapRevealed);
+    world.setRoomVision(cfg.roomMapRevealed, cfg.roomLosOff);
 
     // Cartographer scenarios use authored placements instead of skirmish monarchs.
     // Read the same map-local CRT on every peer, before any default units spawn.
@@ -1282,6 +1287,12 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     if (!gh) { std::fprintf(stderr, "setupMission: %s no [GlobalHeader]\n", stem.c_str()); return false; }
     world.setBallisticGravityRaw(retailBallisticGravityRaw(gh->numberOr("gravity",112.0)));
     world.setPowerCodes(false);   // retail 0x499610: never in a campaign
+    // The mission's own vision: lineofsight=0 plays with LosOn off and the map
+    // revealed, mapping=1 starts with the terrain explored (area clear's fog test).
+    {
+        const bool fullVision = gh->numberOr("lineofsight", 1) == 0;
+        world.setRoomVision(fullVision || gh->numberOr("mapping", 0) != 0, fullVision);
+    }
 
     // Map the .ota's sparse, 1-based Player<N> ids to compact 0-based World slots in
     // ascending N order, so gaps (e.g. Player1,2,9,10) don't collide when clamped into

@@ -1303,6 +1303,11 @@ void World::setMapPlacementFeatures(const std::vector<uint16_t>& raw,
         if (index>=mapPlacementTypes_.size()) continue;
         retailMapInstall(hW_,hH_,x,z,index,mapPlacementTypes_,cell,[](int,int,uint16_t){});
     }
+    // 495360/496380: a feature a later overlap removed (or that was refused)
+    // has no state anywhere once the map has loaded. Snapshot the survivors
+    // before the boundary pass (which marks only empty cells and tails), so
+    // matchsetup and a late-loading viewer register exactly these.
+    installedMapFeatures_=retailSurvivingMapFeatures(hW_,hH_,raw,cell);
     if (hW_>=2 && hH_>=16)
         retailMapBoundary(hW_,hH_,hH_*16,seaLevel_,false,cell);
 }
@@ -1310,6 +1315,7 @@ void World::setMapPlacementFeatures(const std::vector<uint16_t>& raw,
 void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel,
                        const std::vector<uint16_t>* features) {
     mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
+    installedMapFeatures_.clear();
     ++placementEpoch_;
     paths_.clear();legion_.reset();
     searchGrades_.clear(); activeSearchGrade_=-1;
@@ -1738,6 +1744,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
             o.productionExit = tmpl.productionExit;
             o.groundResponse = tmpl.groundResponse;
             o.formationLevel = tmpl.formationLevel;
+            o.reclaimAreaApproach = tmpl.reclaimAreaApproach;
             o.controller = tmpl.controller;
             o.park = tmpl.park;
             o.buildType = tmpl.buildType;
@@ -3252,6 +3259,13 @@ void World::tickGroundMission(Unit& u) {
                 // alone loses this request until some later retry happens.
                 w.requestPath(u,goal.x.toFloat(),goal.z.toFloat());
             };
+            // 4067ae: RECLAIMAREA's approach installs 4d4da0(point,4) with wait
+            // mask 0x700, and its next stage runs on arrival (0x500), failure
+            // (0x200) or detachment alike. No radius growth, no group pacing.
+            if (goal.reclaimAreaApproach) {
+                if (m.stage==0) { resetGoal(4); m.waitMask=0x700; return 1; }
+                return 5;
+            }
             // Retail group pacing: Move_Ground_Formation (402880) and the
             // two group checks at the head of Move_Ground (402b00..402cd8).
             const RetailGroupRecord* group=w.retailGroupOf(u);
@@ -8670,7 +8684,9 @@ bool World::placeCorpse(Unit& corpse,int type) {
     feature.fx=definition.fx;feature.fz=definition.fz;feature.blocks=definition.blocking;
     feature.x=Fixed::fromInt(cx*16+definition.fx*8);
     feature.z=Fixed::fromInt(cz*16+definition.fz*8);
-    if (!placeMapFeature(feature)) return false;
+    // 512fbe/512fff: the corpse is installed with the dying unit's owner (cell
+    // +7), where every map feature gets 0xa. Area clear reads it under fog.
+    if (!placeMapFeature(feature,uint8_t(corpse.player))) return false;
     corpseFootprints_[corpse.id]={cx,cz,type};
     corpseAnchors_[cz*terW_+cx]=corpse.id;
     corpse.corpseBlocks=definition.blocking;
@@ -8708,7 +8724,7 @@ void World::removeMapFeature(int cx,int cz) {
     for (auto& plane:searchGrades_) refreshSearchRect(plane,cx,cz,type.footX,type.footZ);
 }
 
-bool World::placeMapFeature(const Feature& f) {
+bool World::placeMapFeature(const Feature& f,uint8_t owner) {
     if (mapPlacementCells_.empty()) return true;
     RetailMapFeatureType type;
     type.footX=f.fx;type.footZ=f.fz;type.blocking=f.blocks;type.clearable=true;
@@ -8754,7 +8770,7 @@ bool World::placeMapFeature(const Feature& f) {
             auto it=featureIdx_.find(z*hW_+x);
             if (it!=featureIdx_.end()) features_[it->second].alive=false;
             bumpFeatGen();
-        });
+        },owner);
     // Feature grades can change without changing the legacy obstacle bit (for
     // example, clearable -> indestructible). Refresh the actual search cache.
     if(placed||replaced)++placementEpoch_;
@@ -8910,13 +8926,22 @@ void World::reclaimArea(int builderId,float x0,float z0,float x1,float z1,bool q
 void World::tickReclaimArea(Unit& b) {
     if (b.orders.empty() || !b.orders.front().reclaimArea) return;
     auto& area=*b.orders.front().reclaimArea;
-    // Native ReclaimArea stage 1 first approaches the closest point of the
-    // rectangle. Use the existing movement controller, without changing routing.
-    if (!area.approached) {
-        area.approached=true;
+    // 40681b: stage 0 records where the builder stands when the order first
+    // runs (not when it was issued) as the last target, then sleeps a tick.
+    if (area.stage==0) {
+        area.lastX=b.x.v;area.lastZ=b.z.v;area.stage=1;
+        return;
+    }
+    // 4067ae: stage 1 approaches the builder's position clamped into the box,
+    // even from inside it (that circle is satisfied on the next navigator
+    // pass), and stage 2 runs when the approach arrives or fails.
+    if (area.stage==1) {
+        area.stage=2;
         const Fixed x=Fixed::raw(std::clamp(b.x.v,area.minX,area.maxX));
         const Fixed z=Fixed::raw(std::clamp(b.z.v,area.minZ,area.maxZ));
-        if (x!=b.x || z!=b.z) {
+        if (b.type->canFly) {
+            // VTOL_RECLAIMAREA (420c10) is not ported: flyers keep a plain move.
+            if (x==b.x && z==b.z) return;
             auto pending=std::move(b.orders);
             b.orders.clear();
             order(b.id,x.toFloat(),z.toFloat(),true);
@@ -8924,30 +8949,56 @@ void World::tickReclaimArea(Unit& b) {
                             std::make_move_iterator(pending.end()));
             return;
         }
+        Order approach{x,z,0};
+        approach.goal=approach.groundMission=approach.reclaimAreaApproach=true;
+        approach.issuedTick=tickCounter_;
+        approach.controller=++nextMovementController_;
+        cancelPath(b);
+        b.orders.insert(b.orders.begin(),approach);
+        resetGroundSegment(b,b.orders.front());
+        return;
     }
-    // Visibility for an authoritative order must not read the client's async
-    // display fog. Re-evaluate the existing retail sight footprints, on demand,
-    // identically on the headless server and all clients.
+    // 509cc0's fog test (509d9f..509e6d), for the builder's own player so it
+    // is the same on every peer. Current view: the allied sight footprints,
+    // re-evaluated on demand (never the client's async display fog). Explored:
+    // the simulation's Mapping plane, or the whole map when the room (or a
+    // power code) revealed it. Without line of sight only explored counts.
     const int width=hW_/2,height=hH_/2;
-    std::vector<uint8_t> visible(size_t(width)*height,0);
-    TAK_PASS();
-    for (const auto& u:units_) {
-        // Cargo footprints are live too (4f6a60 has no attachment test).
-        if (!u.alive() || !u.type || u.underConstruction || !allied(u.player,b.player)) continue;
-        RetailSightFootprint sight=u.sightFootprint;
-        sight.active=false;
-        // Before the first exploration pass, initialize the same authored sight.
-        if (sight.x<0 || sight.z<0) {
-            sight.distance=int16_t(sightDistance(*u.type));sight.sightHeight=u.type->sightHeight;
-            sight.x=int16_t(u.x.floorInt()/32);sight.z=int16_t(u.z.floorInt()/32);
-            const Fixed y=u.type->canFly?u.flightY:u.groundY;
-            sight.eyeHeight=std::max(y.floorInt(),seaLevel_+1)+sight.sightHeight;
+    const bool losOn=!roomLosOff_ && !powerLosOff(b.player);
+    const bool allExplored=(roomMapRevealed_ && !powerCodes_) || powerMappingOff(b.player);
+    const bool planeExplored=navigationExplored_.size()==size_t(width)*height;
+    std::vector<uint8_t> visible;
+    if (losOn) {
+        visible.assign(size_t(width)*height,0);
+        TAK_PASS();
+        for (const auto& u:units_) {
+            // Cargo footprints are live too (4f6a60 has no attachment test).
+            if (!u.alive() || !u.type || u.underConstruction || !allied(u.player,b.player)) continue;
+            RetailSightFootprint sight=u.sightFootprint;
+            sight.active=false;
+            // Before the first exploration pass, initialize the same authored sight.
+            if (sight.x<0 || sight.z<0) {
+                sight.distance=int16_t(sightDistance(*u.type));sight.sightHeight=u.type->sightHeight;
+                sight.x=int16_t(u.x.floorInt()/32);sight.z=int16_t(u.z.floorInt()/32);
+                const Fixed y=u.type->canFly?u.flightY:u.groundY;
+                sight.eyeHeight=std::max(y.floorInt(),seaLevel_+1)+sight.sightHeight;
+            }
+            retailSightFootprint(sight,true,false,width,height,uint8_t(b.player),
+                [&](int x,int z){return explorationHeights_[size_t(z)*width+x];},
+                [&](int x,int z,int,uint16_t){visible[size_t(z)*width+x]=1;},
+                [&](int x,int z,bool){return !visible[size_t(z)*width+x];});
         }
-        retailSightFootprint(sight,true,false,width,height,uint8_t(b.player),
-            [&](int x,int z){return explorationHeights_[size_t(z)*width+x];},
-            [&](int x,int z,int,uint16_t){visible[size_t(z)*width+x]=1;},
-            [&](int x,int z,bool){return !visible[size_t(z)*width+x];});
     }
+    const auto seen=[&](int cx,int cz) {
+        const int vx=cx/2,vz=cz/2;
+        if (vx>=width || vz>=height) return false;
+        const size_t cell=size_t(vz)*width+vx;
+        const bool explored=allExplored || (planeExplored && (navigationExplored_[cell]>>b.player & 1));
+        // The owner byte of the SAMPLED cell, before any tail resolves.
+        const uint8_t owner=mapPlacementCells_.empty() ? kRetailWorldFeatureOwner
+            : mapPlacementCells_[size_t(cz)*hW_+cx].owner;
+        return retailReclaimAreaSeen(losOn,losOn && visible[cell],explored,owner);
+    };
     // Resolve footprint cells to their actual anchor. Selecting only centres
     // misses multi-cell trees and rubble intersecting the selection rectangle.
     std::unordered_map<int,int> targets;
@@ -8965,8 +9016,7 @@ void World::tickReclaimArea(Unit& b) {
     }
     auto targetAt=[&](int32_t x,int32_t z) {
         const int cx=x>>20,cz=z>>20;
-        if (cx<0 || cz<0 || cx>=hW_ || cz>=hH_ ||
-            cx/2>=width || cz/2>=height || !visible[size_t(cz/2)*width+cx/2]) return 0;
+        if (cx<0 || cz<0 || cx>=hW_ || cz>=hH_ || !seen(cx,cz)) return 0;
         int ax=cx,az=cz;
         if (!mapPlacementCells_.empty()) {
             const auto& cell=mapPlacementCells_[size_t(cz)*hW_+cx];
@@ -8976,16 +9026,20 @@ void World::tickReclaimArea(Unit& b) {
         const auto found=targets.find(az*hW_+ax);
         return found==targets.end()?0:found->second;
     };
-    const auto point=retailReclaimAreaTarget(area,b.x.v,b.z.v,[&](int32_t x,int32_t z){return targetAt(x,z)!=0;});
-    if (!point) { b.orders.erase(b.orders.begin());return; }
-    const int target=targetAt(point->first,point->second);
-    area.approached=false;
-    // Keep the area behind one ordinary reclaim child. Completion (or another
-    // builder removing the feature) wakes it to choose from the NEW position.
+    const auto pick=retailReclaimAreaPick(area,b.x.v,b.z.v,hW_,hH_,
+        [&](int32_t x,int32_t z){return targetAt(x,z)!=0;});
+    // 5: nothing left to clear. 8: the pick is the last target's cell again
+    // (its child just ended without clearing it, say it was unreachable).
+    if (pick.step!=RetailReclaimAreaStep::Child) { b.orders.erase(b.orders.begin());return; }
+    const int target=targetAt(pick.x,pick.z);
+    area.stage=1;
+    // Keep the area behind one ordinary reclaim child. When the child ends
+    // (cleared, failed, or another builder removed the feature) stage 1
+    // approaches again and picks from the NEW position.
     const size_t oldSize=b.orders.size();
     reclaim(b.id,target,true);
     if (b.orders.size()>oldSize) std::rotate(b.orders.begin(),b.orders.end()-1,b.orders.end());
-    else b.orders.erase(b.orders.begin());
+    else b.orders.erase(b.orders.begin());   // 4de530 found no mission: 8
 }
 
 void World::reclaim(int builderId, int featureId, bool queue) {
@@ -9032,7 +9086,37 @@ void World::reclaim(int builderId, int featureId, bool queue) {
     b->orders.push_back(o);
 }
 
+// Our reclaim acceptance: the builder within reach of the target (24 px plus
+// half its footprint plus builddistance). Not retail's, which is 4d4e80's
+// footprint-adjacency rectangle; see docs/guessed-area-clear-2026-09-26.md.
+bool World::reclaimInReach(const Unit& b,int target) const {
+    Fixed x,z;int foot=0;
+    if (target<0) {
+        const Unit* c=unit(-target);
+        if (!c || !c->type) return false;
+        x=c->x;z=c->z;foot=std::max(c->type->footX,c->type->footZ);
+    } else {
+        const Feature* f=feature(target);
+        if (!f) return false;
+        x=f->x;z=f->z;foot=std::max(f->fx,f->fz);
+    }
+    const float dx=(x-b.x).toFloat(),dz=(z-b.z).toFloat();
+    const float reach=24.0f+8.0f*float(foot)+(b.type->buildDist>0 ? b.type->buildDist : 0.0f);
+    return dx*dx+dz*dz<=reach*reach;
+}
+
 void World::tickReclaim(Unit& b, float dt) {
+    // 40638e: a failed approach (0x200, a zero-point route delivery while out
+    // of reach) ends the child with no chatter (4062a5 returns 8).
+    if (!b.orders.empty()) {
+        const auto& leg=b.orders[currentLeg(b.orders)];
+        if (leg.reclaimFeat==b.reclaimId && (leg.mission.pending&0x200)) {
+            stopWorkAnimation(b);
+            dropLeg(b);
+            b.reclaimId=0;b.reclaimEffectDelay=0;
+            return;
+        }
+    }
     auto advance = [&] {
         // The job is over. Retire its order; the next one (which may be another
         // reclaim) simply becomes current.
@@ -9057,10 +9141,7 @@ void World::tickReclaim(Unit& b, float dt) {
         // Body still mid-death-anim: stand by until it settles (statues settle
         // instantly).
         if (c->deadFor < (c->corpseAnimationTicks())) return;
-        float dx = (c->x - b.x).toFloat(), dz = (c->z - b.z).toFloat();
-        float reach = 24.0f + 8.0f * float(std::max(c->type->footX, c->type->footZ)) +
-                      (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
-        if (dx * dx + dz * dz > reach * reach) return;   // still walking there
+        if (!reclaimInReach(b, b.reclaimId)) return;   // still walking there
         // Retail corpses/statues occupy the ordinary feature table, so their
         // reclaim mission requests the same work stance as a tree or rock.
         startWorkAnimation(b,c->x,c->z);
@@ -9092,9 +9173,7 @@ void World::tickReclaim(Unit& b, float dt) {
     Feature& f = features_[it->second];
     if (!f.alive) { advance(); return; }   // someone else got it (RECLAIMFAILED)
     float dx = (f.x - b.x).toFloat(), dz = (f.z - b.z).toFloat();
-    float reach = 24.0f + 8.0f * float(std::max(f.fx, f.fz)) +
-                  (b.type->buildDist > 0 ? b.type->buildDist : 0.0f);
-    if (dx * dx + dz * dz > reach * reach) return;   // still walking there
+    if (!reclaimInReach(b, b.reclaimId)) return;   // still walking there
     // Native Reclaim calls the same stance producer as RepairUnit (406411).
     startWorkAnimation(b,f.x,f.z);
     // Never the RECLAIM order itself -- that entry IS the job, and it is what
@@ -12214,6 +12293,12 @@ void World::deliverSearchRoute(int unitId,const std::vector<PathCell>& route,Fix
                     : groundMissionAccepts(*u,*goal);
                 if (!satisfied) (goal->load || goal->transportUnloadApproach
                     ? goal->transportMission : goal->mission).pending|=0x200;
+            } else if (!u->type->canFly && !u->orders.empty()) {
+                // RECLAIM's approach (406250 stage 0, 4d4e80) gets the same
+                // zero-point failure when it is still out of reach; stage 1
+                // then ends the child (40638e -> 4062a5).
+                auto& leg=u->orders[currentLeg(u->orders)];
+                if (leg.reclaimFeat && !reclaimInReach(*u,leg.reclaimFeat)) leg.mission.pending|=0x200;
             }
         }
         return;
@@ -12384,6 +12469,10 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         // They have no movement controller: even a zero-speed navigator turns
         // the body while steering. Keep script-driven turrets independent.
         if (u.type->isStructure()) return;
+        // RECLAIMAREA moves only through its own approach leg and its child
+        // reclaims. The area order is no destination (its x/z are the box's
+        // corner): never route to it, steer at it or retire it on arrival.
+        if (u.orders.front().reclaimArea && !u.type->canFly) { brakeGround(u); return; }
         // Goal satisfaction belongs to the mission, independently of the
         // navigator's next intermediate point (retail 0x4e5150). A stale
         // waypoint can be occupied even after we have reached the goal area.
@@ -14683,6 +14772,7 @@ uint64_t World::stateHash() const {
     if(isLegionPathfinding(pathfindingMode_)) {mix(0x4c4547494f4e0000ull);if(legion_)mix(legion_->checksum());}
     if(!convoys_.empty()) {mix(0x434f4e564f590000ull);mix(convoys_.checksum());}
     if (doubleSight_) mix(0x44424c5349474854ull);
+    if (roomMapRevealed_ || roomLosOff_) { mix(0x524f4f4d564953ull); mix(roomMapRevealed_); mix(roomLosOff_); }
     if (powerCodes_) {   // only in a POWER CODES match, so every other hash is unchanged
         mix(0x504f574552434f44ull);
         mix(uint8_t(damageMode_));mix(powerLosOff_);mix(powerMappingOff_);
@@ -14807,8 +14897,10 @@ uint64_t World::stateHash() const {
                 mix(0x41524541u);
                 const auto& a=*order.reclaimArea;
                 mix(uint32_t(a.minX));mix(uint32_t(a.minZ));mix(uint32_t(a.maxX));mix(uint32_t(a.maxZ));
-                mix(a.approached);
+                mix(a.stage);mix(uint32_t(a.lastX));mix(uint32_t(a.lastZ));
             }
+            if (order.reclaimAreaApproach) mix(0x52434c4d41505052ull);
+            if (order.reclaimFeat && order.mission.pending) {mix(0x52434c4d50454e44ull);mix(order.mission.pending);}
             if (order.patrolOpen) mix(0x5041544f50454eull);
             if (order.patrolRepair) {
                 mix(0x5054524c52455052ull);
@@ -15215,6 +15307,7 @@ uint64_t World::stateHash() const {
         h ^= uint8_t(cell.feature >> 8);
         h *= featureTailFactor;
         if (cell.feature==0xfffe) { mix(cell.backX);mix(cell.backZ); }
+        if (cell.owner!=kRetailWorldFeatureOwner) { mix(0x4f574e52u);mix(cell.owner); }
     }
     mix(uint64_t(gameRng_));   // shared RNG stream position must agree
     // Retail's CRT seed is per-process and not a lockstep input. World uses its

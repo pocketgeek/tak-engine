@@ -22,8 +22,16 @@ struct RetailMapFeatureType {
     bool treeOrRock=false;
 };
 
+// Cell +7: the owning player of the feature anchored there. 50f78c starts
+// every cell at 0xa (world, no player: slots are 0..9); 495360 writes its
+// fifth argument at the ANCHOR only (4958ec), on success. Every map-feature
+// caller passes 0xa; corpse spawn 512ee0 passes the dying unit's owner.
+// Tails and removal leave it alone.
+inline constexpr uint8_t kRetailWorldFeatureOwner=0xa;
+
 struct RetailMapFeatureCell : RetailMapBoundaryCell {
     uint8_t backX=0,backZ=0;
+    uint8_t owner=kRetailWorldFeatureOwner;
 };
 
 // Remove an anchor and its footprint tails. Boundary markers survive removal.
@@ -41,7 +49,7 @@ void retailMapRemove(int x,int z,const RetailMapFeatureType& type,CellAt cellAt)
 template<class CellAt,class Removed>
 bool retailMapInstall(int width,int height,int x,int z,uint16_t index,
                       const std::vector<RetailMapFeatureType>& types,
-                      CellAt cellAt,Removed removed) {
+                      CellAt cellAt,Removed removed,uint8_t owner=kRetailWorldFeatureOwner) {
     const auto& type=types.at(index);
     if (type.name.empty() || type.footX<=0 || type.footZ<=0 || x<0 || z<0 ||
         x+type.footX>width || z+type.footZ>height) return false;
@@ -55,13 +63,46 @@ bool retailMapInstall(int width,int height,int x,int z,uint16_t index,
         retailMapRemove(ox,oz,types[previous],cellAt);
         removed(ox,oz,previous);
     }
-    cellAt(x,z).feature=index;
+    cellAt(x,z).feature=index;cellAt(x,z).owner=owner;
     for (int dz=0;dz<type.footZ;++dz) for (int dx=0;dx<type.footX;++dx) {
         if (!dx && !dz) continue;
         auto& cell=cellAt(x+dx,z+dz);
         cell.feature=0xfffe;cell.backX=uint8_t(dx);cell.backZ=uint8_t(dz);
     }
     return true;
+}
+
+// The raw TNT features that survive install: raw[i] where the installed plane
+// still anchors it, else 0xffff (0xfffb/0xfffc markers kept). Retail keeps no
+// raw list past the loader (50f948 frees it), so a feature removed by a later
+// overlap (or refused) is drawn, blocked, counted and picked by nothing
+// (4fc8d9 draws only installed cells). CellAt reads the installed plane.
+template<class CellAt>
+std::vector<uint16_t> retailSurvivingMapFeatures(int width,int height,
+                                                 const std::vector<uint16_t>& raw,CellAt cellAt) {
+    std::vector<uint16_t> out(raw.size(),0xffff);
+    for (int z=0;z<height;++z) for (int x=0;x<width;++x) {
+        const size_t i=size_t(z)*width+x;
+        const uint16_t v=raw.at(i);
+        if (v==0xfffb || v==0xfffc || (v<0xfffa && cellAt(x,z).feature==v)) out[i]=v;
+    }
+    return out;
+}
+
+// Pass 2 of the map loader (50f7ff..50f898) on a scratch plane: the same
+// survivors World::installedMapFeatures() holds, for callers with no World
+// (lobby previews, map tools). raw is width*height TNT feature indices.
+inline std::vector<uint16_t> retailInstalledMapFeatures(int width,int height,
+        const std::vector<uint16_t>& raw,const std::vector<RetailMapFeatureType>& types) {
+    if (width<=0 || height<=0 || raw.size()!=size_t(width)*height) return raw;
+    std::vector<RetailMapFeatureCell> cells(raw.size());
+    auto cell=[&](int x,int z)->RetailMapFeatureCell& { return cells[size_t(z)*width+x]; };
+    for (size_t i=0;i<raw.size();++i) if (raw[i]==0xfffc) cells[i].feature=0xfffc;
+    for (int z=0;z<height;++z) for (int x=0;x<width;++x) {
+        const uint16_t index=raw[size_t(z)*width+x];
+        if (index<types.size()) retailMapInstall(width,height,x,z,index,types,cell,[](int,int,uint16_t){});
+    }
+    return retailSurvivingMapFeatures(width,height,raw,cell);
 }
 
 // 50eef0: mark the projected map boundary after feature installation. Named

@@ -49,6 +49,7 @@ static ReplayHeader sample() {
     h.dataHash = 0x0123456789abcdefull;
     h.mapScenario = 1;
     h.powerCodes = 1;
+    h.fogExplored = 2;
     for (int i = 0; i < kMaxSlots; ++i) {
         h.slotType[i] = uint8_t(i % 3);
         h.slotFaction[i] = uint8_t(i % 5);
@@ -90,6 +91,7 @@ int main() {
         check(out.gameMods == in.gameMods, "gameMods");
         check(out.mapScenario == in.mapScenario, "MAP SCENARIO (format 13)");
         check(out.powerCodes == in.powerCodes, "POWER CODES (format 14)");
+        check(out.fogExplored == in.fogExplored, "FOG OF WAR (format 15)");
         bool slotsOk = true;
         for (int i = 0; i < kMaxSlots; ++i)
             slotsOk &= out.slotType[i] == in.slotType[i] &&
@@ -105,12 +107,31 @@ int main() {
               std::to_string(out.slotAiLevel[4]));
     }
 
+    std::printf("format 14 (before FOG OF WAR):\n");
+    {
+        // A format-14 file is a format-15 header without its trailing option byte.
+        // Its room fog survives only in the POWER CODES byte (bit 1, power codes on).
+        for (uint8_t codes : {uint8_t(0), uint8_t(1), uint8_t(3)}) {
+            auto in = sample(); in.powerCodes = codes;
+            Writer w;
+            writeReplayHeader(w, in);
+            w.b.pop_back();
+            w.b[4] = 14;
+            Reader r(w.b.data() + 4, w.b.size() - 4);
+            ReplayHeader out; out.fogExplored = 7;
+            uint32_t fmt = 0, proto = 0;
+            check(readReplayHeader(r, out, fmt, proto) && fmt == 14 && r.p == r.end &&
+                  out.fogExplored == (codes == 1 ? 0 : 1),
+                  "a format-14 header reads exactly, its fog from the POWER CODES byte");
+        }
+    }
+
     std::printf("format 13 (before POWER CODES):\n");
     {
-        // A format-13 file is a format-14 header without its trailing option byte.
+        // A format-13 file is a format-15 header without its two trailing option bytes.
         Writer w;
         writeReplayHeader(w, sample());   // powerCodes = 1
-        w.b.pop_back();
+        w.b.pop_back(); w.b.pop_back();
         w.b[4] = 13;
         Reader r(w.b.data() + 4, w.b.size() - 4);
         ReplayHeader out; out.powerCodes = 7;
@@ -121,10 +142,10 @@ int main() {
 
     std::printf("format 12 (before MAP SCENARIO):\n");
     {
-        // A format-12 file is a format-14 header without its two trailing option bytes.
+        // A format-12 file is a format-15 header without its three trailing option bytes.
         Writer w;
         writeReplayHeader(w, sample());   // mapScenario = 1
-        w.b.pop_back(); w.b.pop_back();
+        w.b.pop_back(); w.b.pop_back(); w.b.pop_back();
         w.b[4] = 12;
         Reader r(w.b.data() + 4, w.b.size() - 4);
         ReplayHeader out; out.mapScenario = 7;
@@ -137,7 +158,7 @@ int main() {
     for (auto mode : {tak::sim::PathfindingMode::Retail, tak::sim::PathfindingMode::Legion}) {
         auto in = sample(); in.mission.clear(); in.pathfindingMode = mode;
         Writer w; writeReplayHeader(w, in);
-        const size_t modeAt = w.b.size() - size_t(kMaxSlots) * 5 - 4;   // ... mode, count, slots, mapScenario, powerCodes
+        const size_t modeAt = w.b.size() - size_t(kMaxSlots) * 5 - 5;   // ... mode, count, slots, mapScenario, powerCodes, fogExplored
         ReplayHeader out; uint32_t fmt=0, proto=0;
         Reader r(w.b.data()+4,w.b.size()-4);
         check(readReplayHeader(r,out,fmt,proto) && out.pathfindingMode==mode,
@@ -169,10 +190,13 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 293, "replay format 11 is kept under protocol 293");
-    check(supportedReplayProtocol(13, kNetVersion), "replay format 13 is kept under protocol 293");
-    check(supportedReplayProtocol(14, kNetVersion) && kReplayFormat == 14, "replay format 14 is written under protocol 293");
-    check(!supportedReplayProtocol(15, kNetVersion), "a newer replay format is refused");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 294, "replay format 11 is kept under protocol 294");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 294");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 294");
+    check(!supportedReplayProtocol(16, kNetVersion), "a newer replay format is refused");
+    // 294 clears areas as retail (overlapped map features removed at load, explored world features clearable
+    // under fog, the area's approach and child exits; hashed state) and records the room's fog (format 15).
+    check(!supportedReplayProtocol(14, 293), "previous protocol with ghost features and stalled area clears is refused");
     // 293 reads one ai/takengine.txt for all our AI levels (map packages carry it instead of ai/d.txt ... ai/ad.txt,
     // so their digests can differ). The sim is 292's.
     check(!supportedReplayProtocol(14, 292), "previous protocol with per-level AI files in map packages is refused");
@@ -305,7 +329,7 @@ int main() {
         Writer probe;
         ReplayHeader h = sample();
         writeReplayHeader(probe, h);
-        size_t countAt = probe.b.size() - size_t(kMaxSlots) * 5 - 3;   // ... count, slots, mapScenario, powerCodes
+        size_t countAt = probe.b.size() - size_t(kMaxSlots) * 5 - 4;   // ... count, slots, mapScenario, powerCodes, fogExplored
         w.b[countAt] = uint8_t(kMaxSlots + 9);
         Reader r(w.b.data() + 4, w.b.size() - 4);
         ReplayHeader out;

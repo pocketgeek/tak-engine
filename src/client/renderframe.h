@@ -37,7 +37,7 @@ struct RenderOrder {
         if (o.reclaimArea) {
             x=tak::sim::Fixed::raw(o.reclaimArea->minX);z=tak::sim::Fixed::raw(o.reclaimArea->minZ);
             buildX=tak::sim::Fixed::raw(o.reclaimArea->maxX);buildZ=tak::sim::Fixed::raw(o.reclaimArea->maxZ);
-            areaApproached=o.reclaimArea->approached;
+            areaApproached=o.reclaimArea->stage>=2;   // its approach leg is queued (or done)
         }
         if (o.manaBuildArea) {
             manaBuildArea=true;buildType=o.manaBuildArea->type;

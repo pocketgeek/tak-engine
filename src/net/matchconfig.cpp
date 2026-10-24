@@ -18,6 +18,8 @@ sim::MatchConfig matchConfigFor(const GameOptions& o, const SlotInfo* slots, uin
     cfg.mapScenario = !mission && o.mapScenario != 0;   // 259: the map's own scenario
     cfg.powerCodes = !mission && o.powerCodes != 0;     // never in a campaign (retail 0x499610)
     cfg.powerMapRevealed = cfg.powerCodes && o.fogExplored >= 1;   // +Mapping's start (Map Revealed)
+    cfg.roomMapRevealed = !mission && o.fogExplored >= 1;   // a mission's own .ota decides (setupMission)
+    cfg.roomLosOff = !mission && o.fogExplored == 2;
     cfg.startSeed = seed;   // the seed sent in GameStarting
     int maxSlot = 0;
     for (int i = 0; i < kMaxSlots; ++i)
@@ -53,6 +55,7 @@ ReplayHeader replayHeaderFor(const GameOptions& o, const std::string& mapId, con
     // Bit 0: POWER CODES on. Bit 1: the room started with the map revealed, the one
     // part of the display-only FOG OF WAR option the sim reads (powerMapRevealed).
     h.powerCodes = o.powerCodes ? uint8_t(1 | (o.fogExplored >= 1 ? 2 : 0)) : uint8_t(0);
+    h.fogExplored = o.fogExplored;   // format 15: area clear's fog test reads it
     h.seed = seed;
     for (int i = 0; i < kMaxSlots; ++i) {
         const SlotInfo& s = startSlots[i];   // start config, not the forfeited end state
@@ -79,7 +82,7 @@ void matchInputsFrom(const ReplayHeader& h, GameOptions& o, SlotInfo* slots) {
     o.benchmark = h.benchmark;
     o.mapScenario = h.mapScenario;
     o.powerCodes = h.powerCodes & 1;
-    if (o.powerCodes) o.fogExplored = (h.powerCodes & 2) ? 1 : 0;
+    o.fogExplored = h.fogExplored;
     for (int i = 0; i < kMaxSlots; ++i) {
         // Every field explicitly: a header without AI levels (format < 6) reads 0,
         // as the loader always did, not SlotInfo's default of 2.

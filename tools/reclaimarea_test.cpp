@@ -1,7 +1,10 @@
+#include "sim/retailmap.h"
 #include "sim/retailreclaimarea.h"
 #include "sim/sim.h"
 #include "net/protocol.h"
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -37,6 +40,19 @@ int main(int argc,char** argv) {
     check(mixedReader.ok && first.kind==net::Cmd::Move && middle.x2==command.x2 &&
           middle.z2==command.z2 && last.kind==net::Cmd::Move,
           "mixed area and ordinary replay commands retain framing");
+    // RECLAIMAREA spends a few ticks per pick (406670: stage 0 sleeps a tick,
+    // stage 1 approaches even from inside the box, stage 2 picks on arrival).
+    // Tick until the builder's job moves off `previous` or the queue empties.
+    auto untilPick=[](sim::World& w,int id,int previous=0,int limit=90) {
+        for(int t=0;t<limit;++t) {
+            const auto* u=w.unit(id);
+            if(u->orders.empty() || (u->reclaimId && u->reclaimId!=previous))return;
+            w.tick(1.0f/30);
+        }
+    };
+    auto untilIdle=[](sim::World& w,int id,int limit=600) {
+        for(int t=0;t<limit && !w.unit(id)->orders.empty();++t) w.tick(1.0f/30);
+    };
     sim::World world;world.setVisPlayer(-1);
     std::vector<uint8_t> heights(32*32,100);
     world.setTerrain(heights,32,32,20);
@@ -51,19 +67,17 @@ int main(int argc,char** argv) {
     world.reclaimArea(id,128,160,208,176,false);
     check(world.unit(id)->orders.size()==1 && world.unit(id)->orders.front().reclaimArea.has_value(),
           "area remains one persistent command rather than a precomputed queue");
-    world.tick(1.0f/30);
+    untilPick(world,id);
     check(world.unit(id)->reclaimId==12 && world.feature(11)->alive,
           "native sampled-cell distance selects the left feature first");
     // Simulate a new builder position while its next child is pending: selection
     // must use this position, not the original click's ordering.
     world.unit(id)->x=sim::Fixed::fromInt(208);
     world.updateNavigationExploration();
-    world.tick(1.0f/30);
+    untilPick(world,id,12);
     check(!world.feature(12)->alive && world.unit(id)->reclaimId==13 && world.feature(11)->alive,
           "next target is selected from current builder position");
-    world.tick(1.0f/30);
-    world.tick(1.0f/30);
-    world.tick(1.0f/30);
+    untilIdle(world,id);
     check(!world.feature(11)->alive && world.unit(id)->orders.empty(),"area completes after targets are exhausted");
     world.addFeature(14,168,168,1,4,1,1,false);
     world.order(id,160,160,false);
@@ -81,13 +95,13 @@ int main(int argc,char** argv) {
     builder.sight=1;
     const int hb=hidden.spawn(&builder,152,160,0,0);
     hidden.addFeature(20,408,408,1,4,1,1,false);
-    hidden.reclaimArea(hb,128,128,416,416,false);hidden.tick(1.0f/30);
+    hidden.reclaimArea(hb,128,128,416,416,false);untilPick(hidden,hb);
     check(hidden.unit(hb)->orders.empty() && hidden.feature(20)->alive,
           "headless authoritative area selection excludes unseen features");
     sim::UnitType ally=builder;ally.id="area-observer";
     hidden.setTeam(1,0);
     hidden.spawn(&ally,400,400,1,0);
-    hidden.reclaimArea(hb,128,128,416,416,false);hidden.tick(1.0f/30);
+    hidden.reclaimArea(hb,128,128,416,416,false);untilPick(hidden,hb);
     check(hidden.unit(hb)->reclaimId==20,"allied sight admits visible area features");
     const int other=hidden.spawn(&builder,400,400,0,0);
     hidden.reclaim(other,20,false);
@@ -96,11 +110,24 @@ int main(int argc,char** argv) {
           "a target removed while a child is active lets the area complete");
     sim::World footprint;footprint.setVisPlayer(-1);footprint.setTerrain(heights,32,32,20);
     footprint.setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
-    const int fb=footprint.spawn(&builder,184,184,0,0);
+    sim::UnitType sighted=builder;sighted.id="area-sighted";sighted.sight=500;
+    const int fb=footprint.spawn(&sighted,120,184,0,0);
     footprint.addFeature(30,176,176,1,4,2,2,false);
-    footprint.reclaimArea(fb,184,184,184,184,false);footprint.tick(1.0f/30);
+    footprint.reclaimArea(fb,184,184,184,184,false);untilPick(footprint,fb,0,600);
     check(footprint.unit(fb)->reclaimId==30,
           "area touching only a footprint tail selects the anchored feature");
+    {
+        // 4066e3: the first pick is compared with the builder's own cell
+        // (stage 0's last target), so a builder standing in the only target
+        // cell retires the order at once (a retail quirk).
+        sim::World own;own.setVisPlayer(-1);own.setTerrain(heights,32,32,20);
+        own.setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
+        const int ob=own.spawn(&sighted,184,184,0,0);
+        own.addFeature(30,176,176,1,4,2,2,false);
+        own.reclaimArea(ob,184,184,184,184,false);untilPick(own,ob);
+        check(own.unit(ob)->orders.empty() && own.feature(30)->alive,
+              "a first pick in the builder's own cell retires the area");
+    }
 
     // Whole runs: the retail selector re-chooses the nearest target from the
     // builder's current position after every reclaim (greedy nearest first).
@@ -149,7 +176,7 @@ int main(int argc,char** argv) {
         w.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
         w.addFeature(22,200,200,1,4,1,1,false);w.addFeature(21,600,200,1,4,1,1,false);
         const int b=w.spawn(&walker,392,192,0,0);
-        w.reclaimArea(b,128,128,960,960,false);w.tick(1.0f/30);
+        w.reclaimArea(b,128,128,960,960,false);untilPick(w,b);
         check(w.unit(b)->reclaimId==22,"equidistant area targets: the first sampled (west) one wins");
     }
     {
@@ -162,6 +189,210 @@ int main(int argc,char** argv) {
         bool cleared=true;for(int id:{1,2,3,4})cleared&=!w.feature(id)->alive;
         check(cleared && w.unit(a)->orders.empty() && w.unit(b)->orders.empty(),
               "two builders on one area clear it all and both finish");
+    }
+
+    // ---- map install: overlapped features do not survive (495360) ----------
+    {
+        sim::RetailMapFeatureType big{"big",2,2,true,false},small{"small",1,1,true,false},
+            wall{"wall",2,2,true,true};
+        big.clearable=small.clearable=true;
+        const std::vector<sim::RetailMapFeatureType> types{big,small,wall};
+        const int W=24,H=24;
+        std::vector<uint16_t> raw(W*H,0xffff);
+        auto at=[&](int x,int z)->uint16_t&{return raw[size_t(z)*W+x];};
+        at(2,2)=0;at(3,3)=1;              // a 2x2 overlapped by a later 1x1
+        at(6,6)=2;at(7,7)=1;              // an indestructible earlier one refuses the later
+        at(10,10)=0;at(12,10)=2;at(11,11)=0;  // removal, then a refusal: both lost
+        at(16,16)=0xfffc;
+        const auto installed=sim::retailInstalledMapFeatures(W,H,raw,types);
+        auto got=[&](int x,int z){return installed[size_t(z)*W+x];};
+        check(got(2,2)==0xffff && got(3,3)==1,"a later overlapping feature removes the earlier one");
+        check(got(6,6)==2 && got(7,7)==0xffff,"an indestructible earlier feature refuses the later one");
+        check(got(10,10)==0xffff && got(11,11)==0xffff && got(12,10)==2,
+              "a removal before a refusal stays done");
+        check(got(16,16)==0xfffc,"blocker markers are kept");
+        sim::World w;w.setVisPlayer(-1);w.setTerrain(std::vector<uint8_t>(W*H,100),W,H,20);
+        w.setMapPlacementFeatures(raw,types);
+        check(w.installedMapFeatures()==installed,"the World snapshot is the shared helper's plane");
+        // Cell +7: the anchor takes the installer's owner, tails stay 0xa, and
+        // removal leaves the byte behind (4958ec, 496380).
+        std::vector<sim::RetailMapFeatureCell> cells(W*H);
+        auto cell=[&](int x,int z)->sim::RetailMapFeatureCell&{return cells[size_t(z)*W+x];};
+        sim::retailMapInstall(W,H,4,4,0,types,cell,[](int,int,uint16_t){},3);
+        check(cell(4,4).owner==3 && cell(5,5).owner==sim::kRetailWorldFeatureOwner,
+              "a corpse owner is written at the anchor only");
+        sim::retailMapInstall(W,H,5,5,1,types,cell,[](int,int,uint16_t){});
+        check(cell(4,4).feature==0xffff && cell(4,4).owner==3 && cell(5,5).owner==sim::kRetailWorldFeatureOwner,
+              "removal keeps the old owner byte");
+    }
+    // ---- 509d9f..509e6d fog test and 4066a3 same-cell retire ---------------
+    {
+        using sim::retailReclaimAreaSeen;
+        check(retailReclaimAreaSeen(true,true,false,3) && !retailReclaimAreaSeen(true,false,false,0xa) &&
+              retailReclaimAreaSeen(true,false,true,0xa) && !retailReclaimAreaSeen(true,false,true,3) &&
+              retailReclaimAreaSeen(false,false,true,3) && !retailReclaimAreaSeen(false,true,false,0xa),
+              "seen: current view, else an explored world feature; LOS off reads explored only");
+        // Samples at 5, 21, 37, ... px; the one target sample (37,37) is in cell (2,2).
+        sim::RetailReclaimArea a{5<<16,5<<16,69<<16,69<<16};
+        a.lastX=(40<<16)+5;a.lastZ=(33<<16)+7;
+        const auto one=[](int32_t x,int32_t z){return x==(37<<16) && z==(37<<16);};
+        auto r=sim::retailReclaimAreaPick(a,8<<16,8<<16,32,32,one);
+        check(r.step==sim::RetailReclaimAreaStep::Retire,"a pick in the last target's cell retires");
+        a.lastX=a.lastZ=48<<16;
+        r=sim::retailReclaimAreaPick(a,8<<16,8<<16,32,32,one);
+        check(r.step==sim::RetailReclaimAreaStep::Child && r.x==(32<<16) && r.z==(32<<16) &&
+              a.lastX==(32<<16) && a.lastZ==(32<<16),
+              "another cell is a child at the snapped pick, which becomes the last target");
+        sim::RetailReclaimArea b{(20<<16)+3,(20<<16)+3,(20<<16)+3,(20<<16)+3};
+        b.lastX=b.lastZ=900<<16;
+        r=sim::retailReclaimAreaPick(b,0,0,1,1,[](int32_t,int32_t){return true;});
+        check(r.step==sim::RetailReclaimAreaStep::Retire,"two off-map cells compare equal (NULL == NULL)");
+        r=sim::retailReclaimAreaPick(a,0,0,32,32,[](int32_t,int32_t){return false;});
+        check(r.step==sim::RetailReclaimAreaStep::Done,"no target ends the area");
+    }
+    // ---- fog: explored world features stay clearable ------------------------
+    {
+        sim::UnitType blind=builder;blind.id="area-blind";blind.sight=1;
+        sim::UnitType scout=builder;scout.id="area-scout";scout.isBuilder=scout.canReclaim=false;scout.sight=200;
+        auto fogged=[&](sim::World& w,bool explore) {
+            w.setVisPlayer(-1);w.setTerrain(wide,64,64,20);
+            w.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
+            const int b=w.spawn(&blind,152,160,0,0);
+            w.addFeature(20*64+25,408,328,1,4,1,1,false);
+            if (explore) {
+                const int s2=w.spawn(&scout,408,328,0,0);
+                w.updateNavigationExploration();
+                w.unit(s2)->x=sim::Fixed::fromInt(152);w.unit(s2)->z=sim::Fixed::fromInt(160);
+            }
+            w.updateNavigationExploration();
+            return b;
+        };
+        {
+            sim::World w;const int b=fogged(w,true);
+            w.reclaimArea(b,384,304,432,352,false);untilPick(w,b,0,900);
+            check(w.unit(b)->reclaimId==20*64+25,"a fogged but explored map feature is picked");
+        }
+        {
+            sim::World w;const int b=fogged(w,false);
+            w.reclaimArea(b,384,304,432,352,false);untilPick(w,b,0,900);
+            check(w.unit(b)->orders.empty() && w.unit(b)->reclaimId==0,"a never-explored one is not");
+        }
+        {
+            sim::World w;const int b=fogged(w,false);w.setRoomVision(true,false);
+            w.reclaimArea(b,384,304,432,352,false);untilPick(w,b,0,900);
+            check(w.unit(b)->reclaimId==20*64+25,"a room started with the map revealed picks it");
+        }
+    }
+    // ---- retail exits on a real placement plane (path service on) ----------
+    {
+        struct Placed{int cx,cz,type;};
+        auto fixture=[&](sim::World& w,const std::vector<Placed>& placed,sim::PathfindingMode mode) {
+            const int W=192,H=192;
+            w.setVisPlayer(-1);w.setPathService(true);w.setPathfindingMode(mode);
+            w.setTerrain(std::vector<uint8_t>(W*H,100),W,H,20);
+            std::vector<uint16_t> raw(W*H,0xffff);
+            for(const auto& p:placed)raw[size_t(p.cz)*W+p.cx]=uint16_t(p.type);
+            sim::RetailMapFeatureType tree{"tree",1,1,true,false};tree.clearable=tree.treeOrRock=true;
+            sim::RetailMapFeatureType wall{"wall",1,1,true,true};
+            w.setMapPlacementFeatures(raw,{tree,wall});
+            sim::FeatType ft;ft.reclaimable=ft.blocking=true;ft.energy=250;
+            sim::FeatType fw;fw.blocking=fw.indestructible=true;
+            w.setFeatureTypes({ft,fw});
+            for(const auto& p:placed) {
+                w.blockCells(p.cx,p.cz,1,1,true);
+                if(!p.type)w.addFeature(p.cz*W+p.cx,float(p.cx*16+8),float(p.cz*16+8),250,250,1,1,true,0,false);
+            }
+        };
+        sim::UnitType worker;worker.id="area-worker";worker.maxHp=100;
+        worker.isBuilder=worker.canMove=worker.canReclaim=true;
+        worker.maxVel=sim::Fixed::fromFloat(1.35f);worker.buildDist=75;worker.sight=500;
+        worker.footX=worker.footZ=2;worker.upright=true;worker.turnRate=worker.turnInPlaceRate=800;
+        const int tcx=81,tcz=53,walled=tcz*192+tcx;
+        auto ring=[&](std::vector<Placed>& placed) {
+            for(int dz=-8;dz<=8;++dz)for(int dx=-8;dx<=8;++dx)
+                if(std::max(std::abs(dx),std::abs(dz))==8)placed.push_back({tcx+dx,tcz+dz,1});
+            placed.push_back({tcx,tcz,0});
+        };
+        // Runs until the builder is idle; counts distinct child reclaims.
+        auto drive=[&](sim::World& w,int id,int limit,int& children) {
+            int last=0,t=0;children=0;
+            for(;t<limit && !w.unit(id)->orders.empty();++t) {
+                const int r=w.unit(id)->reclaimId;
+                if(r && r!=last)++children;
+                last=r;
+                w.tick(1.0f/30);w.updateNavigationExploration();
+            }
+            return t;
+        };
+        for (auto mode:{sim::PathfindingMode::Retail,sim::PathfindingMode::Legion}) {
+            const bool legion=mode==sim::PathfindingMode::Legion;
+            {
+                sim::World w;std::vector<Placed> placed;ring(placed);fixture(w,placed,mode);
+                const int b=w.spawn(&worker,650,800,0,0);w.updateNavigationExploration();
+                w.reclaimArea(b,tcx*16-4,tcz*16-4,tcx*16+20,tcz*16+20,false);
+                int children=0;const int t=drive(w,b,3600,children);
+                check(w.unit(b)->orders.empty() && w.feature(walled)->alive && children<=2,
+                      legion ? "Legion: an unreachable area target retires the order"
+                             : "an unreachable area target retires the order (same-cell re-pick)");
+                std::printf("     (idle at t=%d, %d child reclaims)\n",t,children);
+            }
+            if (!legion) {
+                sim::World w;std::vector<Placed> placed;ring(placed);fixture(w,placed,mode);
+                const int b=w.spawn(&worker,650,800,0,0);w.updateNavigationExploration();
+                const double mana=w.player(0).mana;   // no reclaim income
+                w.reclaim(b,walled,false);
+                int children=0;const int t=drive(w,b,1500,children);
+                check(w.unit(b)->orders.empty() && w.feature(walled)->alive && w.player(0).mana<=mana,
+                      "an unreachable single reclaim ends on its failed approach");
+                std::printf("     (dropped at t=%d)\n",t);
+            }
+            {
+                sim::World w;std::vector<Placed> placed;ring(placed);
+                const int free=tcz*192+tcx-14;placed.push_back({tcx-14,tcz,0});
+                fixture(w,placed,mode);
+                const int b=w.spawn(&worker,650,860,0,0);w.updateNavigationExploration();
+                w.reclaimArea(b,(tcx-15)*16,tcz*16-4,tcx*16+20,tcz*16+20,false);
+                int children=0;const int t=drive(w,b,6000,children);
+                std::printf("     (idle at t=%d, %d child reclaims)\n",t,children);
+                check(w.unit(b)->orders.empty() && !w.feature(free)->alive && w.feature(walled)->alive,
+                      legion ? "Legion: a mixed area clears the free tree and retires on the walled one"
+                             : "a mixed area clears the free tree and retires on the walled one");
+            }
+        }
+        // Guard: a tight box over a forest still clears every tree (every one
+        // of those routes is partial, into a blocked tree cell).
+        for (float margin:{0.0f,4.0f}) {
+            sim::World w;std::vector<Placed> placed;
+            for(int j=0;j<10;++j)for(int i=0;i<10;++i)placed.push_back({(800+i*32)/16,(800+j*32)/16,0});
+            fixture(w,placed,sim::PathfindingMode::Retail);
+            const int b=w.spawn(&worker,650,800,0,0);w.updateNavigationExploration();
+            w.reclaimArea(b,800-margin,800-margin,800+9*32+16+margin,800+9*32+16+margin,false);
+            int children=0;const int t=drive(w,b,12000,children);
+            int alive=0;for(const auto& p:placed)alive+=w.feature(p.cz*192+p.cx)->alive;
+            check(w.unit(b)->orders.empty() && alive==0,
+                  margin==0 ? "forest edge, tight box: every tree cleared" : "forest edge, margin 4: every tree cleared");
+            std::printf("     (margin %.0f: %d left, idle at t=%d)\n",double(margin),alive,t);
+        }
+        // Guard: three builders on one forest box (the client's fan-out) share
+        // targets with no claims; crowding at a shared tree must not make any of
+        // them retire early on a same-cell re-pick, in either movement mode.
+        for (auto mode:{sim::PathfindingMode::Retail,sim::PathfindingMode::Legion}) {
+            sim::World w;std::vector<Placed> placed;
+            for(int j=0;j<10;++j)for(int i=0;i<10;++i)placed.push_back({(800+i*32)/16,(800+j*32)/16,0});
+            fixture(w,placed,mode);
+            std::vector<int> ids;
+            for(int k=0;k<3;++k)ids.push_back(w.spawn(&worker,650,770+30*k,0,0));
+            w.updateNavigationExploration();
+            for(int id:ids)w.reclaimArea(id,796,796,800+9*32+20,800+9*32+20,false);
+            int t=0;
+            const auto busy=[&]{for(int id:ids)if(!w.unit(id)->orders.empty())return true;return false;};
+            for(;t<12000 && busy();++t){w.tick(1.0f/30);w.updateNavigationExploration();}
+            int alive=0;for(const auto& p:placed)alive+=w.feature(p.cz*192+p.cx)->alive;
+            check(!busy() && alive==0,mode==sim::PathfindingMode::Legion
+                  ? "Legion: three builders on one forest box clear every tree"
+                  : "three builders on one forest box clear every tree");
+            std::printf("     (%d left, all idle at t=%d)\n",alive,t);
+        }
     }
     return failed?1:0;
 }

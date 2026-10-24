@@ -19,7 +19,14 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 293;      // 293: our six AI levels read ONE file, ai/takengine.txt (ai::kEngineProfileFile), each
+constexpr uint32_t kNetVersion = 294;      // 294: area clear as retail: overlapped TNT features removed at load are gone
+                                           //      everywhere (World::installedMapFeatures: no art, blocker, sacred site,
+                                           //      deposit or target); fogged-but-explored world features stay clearable
+                                           //      (cell owner byte, room FOG OF WAR in the sim, replay format 15); the
+                                           //      area's own approach ends on arrival or failure, a reclaim child ends
+                                           //      on a failed approach, and a re-pick in the last target's cell retires
+                                           //      the order. Hashed sim change; 293 replays refused.
+                                           // 293: our six AI levels read ONE file, ai/takengine.txt (ai::kEngineProfileFile), each
                                            //      over its own built-in table, in place of ai/d.txt ... ai/ad.txt. A map's
                                            //      package carries ai/takengine.txt and no longer the per-level files, so a 292
                                            //      peer could compute a different digest for such a map. Sim unchanged; 292

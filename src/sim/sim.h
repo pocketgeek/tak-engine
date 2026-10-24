@@ -774,6 +774,11 @@ struct alignas(64) Order {
     void setIdentity(const OrderIdentity& id) { convoyTick = id.convoyTick; orderSerial = id.serial; }
     uint32_t placementRetryTick = 0;
     uint8_t placementFailures = 0;
+    // RECLAIMAREA's own approach (406670 stage 1): a radius-4 circle on the
+    // builder's position clamped into the area, pushed ahead of the area order.
+    // It ends on arrival OR failure (wait mask 0x700), never widening like a
+    // Move_Ground. Hashed with a tag when set.
+    bool reclaimAreaApproach = false;
     // An auto attack issued with a return (4d7de0's leash path: the idle
     // retaliation mission, Maneuver or a patrol hit): mission +0x56 is the
     // leash (maneuverleashlength) and +0x2e/+0x30 the origin; the attack
@@ -1910,6 +1915,12 @@ public:
     void setMapPlacementFeatures(const std::vector<uint16_t>& raw,
                                  std::vector<RetailMapFeatureType> types);
     const std::vector<RetailMapFeatureCell>& mapPlacementCells() const { return mapPlacementCells_; }
+    // The raw TNT feature plane after map install (retailSurvivingMapFeatures):
+    // what retail keeps once the map has loaded. Every consumer of the map's
+    // features (matchsetup's registration, the viewer's feature art) reads this,
+    // never map.features. A load-time snapshot: runtime reclaim, burning and
+    // corpses do not change it. Empty until setMapPlacementFeatures.
+    const std::vector<uint16_t>& installedMapFeatures() const { return installedMapFeatures_; }
     const std::vector<RetailMapFeatureType>& mapPlacementTypes() const { return mapPlacementTypes_; }
     // A map cell's feature grade as the search planes rate it (0 blocked, 1 a
     // clearable blocker, 7 free); needs the feature plane (mapPlacementCells).
@@ -2085,6 +2096,7 @@ public:
         features_.clear();
         burnSequence_ = 0;
         mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
+        installedMapFeatures_.clear();
         explorationHeights_.clear();navigationExplored_.clear();viewCounts_.clear();deathSights_.clear();
         restoredNavigationViewer_=-1;
         featureIdx_.clear();
@@ -2237,6 +2249,11 @@ public:
     // Call during setup, before visibility work starts. Display-only, never hashed.
     void revealTerrain() { for (auto& v : vis_) if (v == 0) v = 1; ++visGen_; }
     void setDoubleSight(bool enabled) { doubleSight_ = enabled; }
+    // The room's (or campaign .ota's) starting vision, as retail's 4c6540 seeds it:
+    // Map Revealed fills the Mapping plane (every cell explored), and FULL VISION
+    // also turns LosOn off. Only area clear reads these (its 509cc0 fog test);
+    // the exploration plane itself still starts unexplored. Hashed when set.
+    void setRoomVision(bool mapRevealed, bool losOff) { roomMapRevealed_ = mapRevealed; roomLosOff_ = losOff; }
     // Power codes (sim/powercodes.h; the room's POWER CODES option). setPowerCodes
     // also starts every code at its off state: no damage mode, line of sight on for
     // every player, and the shroud on unless the room starts with the map revealed
@@ -3082,6 +3099,7 @@ private:
     std::vector<uint8_t> vis_;
     int visPlayer_ = 0;
     bool doubleSight_ = false;  // synchronized skirmish/MP rule; campaigns use authored sight
+    bool roomMapRevealed_ = false, roomLosOff_ = false;   // setRoomVision
     // Power codes (setPowerCodes / applyPowerCode). Hashed while powerCodes_ is on.
     bool powerCodes_ = false;
     DamageMode damageMode_ = DamageMode::Normal;   // DoubleShot / HalfShot: every player's damage
@@ -3174,6 +3192,7 @@ private:
     std::vector<SacredSite> sacredSites_;
     std::vector<Feature> features_;             // reclaimable map features
     std::vector<RetailMapFeatureCell> mapPlacementCells_;
+    std::vector<uint16_t> installedMapFeatures_;   // load-time survivors (installedMapFeatures)
     std::vector<RetailMapFeatureType> mapPlacementTypes_;
     struct CorpseFootprint { int x=0,z=0,type=-1; int32_t damage=0; };
     std::unordered_map<int,int> corpseAnchors_; // derived anchor -> unit ID, for weapon hits
@@ -3236,7 +3255,8 @@ private:
     void retireCorpse(Unit& unit);
     void removeScenarioUnits(int player);
     void removeMapFeature(int cx,int cz);
-    bool placeMapFeature(const Feature& f);
+    bool placeMapFeature(const Feature& f,uint8_t owner=kRetailWorldFeatureOwner);
+    bool reclaimInReach(const Unit& b,int target) const;
     void swapFeature(Feature& f, int newType);   // chain stage swap (burnt/dead)
     void tickBurning();
     std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_

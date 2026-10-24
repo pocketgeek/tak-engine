@@ -1246,7 +1246,7 @@ int main(int argc,char** argv) {
             o.targetId=int(bits);o.reclaimFeat=-int(bits);o.repairTarget=int(bits+1);o.issuedTick=bits*37;
             o.load=bits&1;o.unload=bits&2;o.attackMove=bits&4;o.patrol=bits&8;o.guard=bits&16;o.goal=bits&32;
             if(bits&64) {
-                o.reclaimArea=tak::sim::RetailReclaimArea{o.x.v,o.z.v,o.buildX.v,o.buildZ.v,bool(bits&1)};
+                o.reclaimArea=tak::sim::RetailReclaimArea{o.x.v,o.z.v,o.buildX.v,o.buildZ.v,uint8_t(bits&1 ? 2 : 0)};
             }
             if(bits&128){o.buildRectangle.emplace();o.buildType=&producer;}
             source.orders.push_back(o);
@@ -1263,7 +1263,7 @@ int main(int argc,char** argv) {
                r.issuedTick!=o.issuedTick || r.load!=o.load || r.unload!=o.unload || r.attackMove!=o.attackMove ||
                r.patrol!=o.patrol || r.guard!=o.guard || r.goal!=o.goal ||
                r.reclaimArea!=bool(o.reclaimArea) || r.buildRectangle!=bool(o.buildRectangle))return 1;
-            if(o.reclaimArea && r.areaApproached!=o.reclaimArea->approached)return 1;
+            if(o.reclaimArea && r.areaApproached!=(o.reclaimArea->stage>=2))return 1;
         }
         source.orders.clear();source.rally.clear();frame.repeatType=nullptr;frame.captureOrders(source);
         if(!frame.orders.empty() || !frame.rally.empty() || frame.hasQueuedWork() || frame.hasQueuedBuild() ||

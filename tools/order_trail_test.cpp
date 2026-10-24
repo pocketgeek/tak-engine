@@ -133,7 +133,7 @@ int main()try {
                     cz>=t.cellZ && cz<t.cellZ+t.footZ)return &t;
                 return nullptr;
             };
-            tak::sim::RetailReclaimArea native{sweep.x.v,sweep.z.v,sweep.buildX.v,sweep.buildZ.v,true};
+            tak::sim::RetailReclaimArea native{sweep.x.v,sweep.z.v,sweep.buildX.v,sweep.buildZ.v};
             const auto pick=tak::sim::retailReclaimAreaTarget(native,px.v,pz.v,[&](int32_t x,int32_t z){return at(x,z)!=nullptr;});
             if(!pick)break;
             const auto* t=at(pick->first,pick->second);expected.push_back(t->id);done.insert(t->id);px=t->x;pz=t->z;
