@@ -2,8 +2,8 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.11** (network protocol **290**, replay format
-**14**; 0.8.11 does not play with 0.8.10 or earlier, nor their replays). It is
+This guide covers **TAK Engine 0.8.12** (network protocol **293**, replay format
+**14**; 0.8.12 does not play with 0.8.11 or earlier, nor their replays). It is
 written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -330,7 +330,8 @@ starts a private server on your own computer for you.
 Every level except Retail has its own **build profile** built into the game: a
 weight and a limit for each unit, which decide how often it picks that unit and
 how many of it it may have. (The values are the original game's default AI
-profile, the one these levels were tuned on.) These levels never read the install's
+profile, the one these levels were tuned on, and are the same for all six
+levels today.) These levels never read the install's
 `ai/*.txt` files; a map or a game mod can change all of their profiles at once
 with one file, `ai/takengine.txt`, which each level applies on top of its own
 built-in profile (see [AI profiles in game mods](#ai-profiles-in-game-mods)).
@@ -1149,7 +1150,9 @@ repair, reclaim, area reclaim, load, unload and building.
 
 *Holding Shift shows the queued route: one move, then three Shift-queued moves.*
 
-**Patrols loop.** Patrol points keep cycling; other orders run once.
+**Patrols loop.** Patrol points keep cycling; other orders run once. Flyers
+loop the same way, armed flyers and flying builders included (before 0.8.12 an
+armed flyer told to move to A, then Shift-patrol B, flew to B and hovered there).
 
 | You issue | The unit does |
 | --- | --- |
@@ -1759,10 +1762,10 @@ others. In single-player there is nobody to wait for, so none of this applies.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.11 uses network protocol **290**. It cannot play with 0.8.10
-(protocol 289) or any earlier version: the server turns away a client whose
+Version 0.8.12 uses network protocol **293**. It cannot play with 0.8.11
+(protocol 290) or any earlier version: the server turns away a client whose
 protocol differs from its own, so a server and all of its players must update to
-0.8.11 together.
+0.8.12 together.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
 This should not happen between matching versions with matching game data; if it
@@ -2009,8 +2012,8 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.11 plays protocol-290 recordings only, so replays recorded by
-  0.8.10, 0.8.9 or earlier need the version that recorded them);
+  recorded it (0.8.12 plays protocol-293 recordings only, so replays recorded by
+  0.8.11, 0.8.10 or earlier need the version that recorded them);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -2088,10 +2091,13 @@ Each line is `weight <unit> <number>` or `limit <unit> <number>`, with the
 unit's file name (`arabow`, `tarcage`); lines starting with `//` are comments.
 Every one of our levels reads the same file, and each applies it **on top of its
 own built-in profile**: a line replaces that unit's value in every level, and
-every unit the file does not name keeps each level's own built-in values, so the
-levels stay as different from each other as they were. `limit <unit> 0` stops
-every level building the unit. The file also reaches the AI that takes over a
-disconnected player's seat. Names are not case-sensitive; when the file names a
+every unit the file does not name keeps each level's own built-in values.
+Today the six built-in profiles hold the same values, so the file sets the same
+weights and limits for every level. The levels still play differently, and
+each treats a limit its own way: Easy halves it, Hard and Absurd raise it,
+and Defensive and Absurdly Defensive ignore limits (but not a limit of
+0). `limit <unit> 0` stops every level building the unit. The file also
+reaches the AI that takes over a disconnected player's seat. Names are not case-sensitive; when the file names a
 unit twice, the later line wins. When two ticked packs have the file, the
 alphabetically later pack wins, as for any file. In multiplayer it travels with
 the host's game packs. Cosmetic packs and the install itself cannot change these
@@ -2249,8 +2255,8 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together when the protocol changes.** A server
-only accepts clients of the same protocol version (0.8.11 uses protocol 290; 0.8.10
-uses 289, 0.8.9 and 0.8.8 use 288).
+only accepts clients of the same protocol version (0.8.12 uses protocol 293; 0.8.11
+uses 290, 0.8.10 289, 0.8.9 and 0.8.8 288).
 
 ---
 
@@ -2355,8 +2361,8 @@ the system's permission to use the microphone.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.11 uses protocol 290, 0.8.10 uses 289, 0.8.9 and 0.8.8
-use 288). See
+one that recorded them (0.8.12 uses protocol 293, 0.8.11 uses 290, 0.8.10 uses 289,
+0.8.9 and 0.8.8 use 288). See
 [Replays](#replays).
 
 ### Where files are kept

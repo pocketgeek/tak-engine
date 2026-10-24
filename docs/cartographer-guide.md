@@ -11,8 +11,7 @@ with every TAK Engine package, next to the game.
 This guide is for players and mapmakers. It explains what you see on screen and
 what each control does, from a first map to sharing a finished one.
 
-> **Version note.** This guide describes TAK Engine 0.8.11 and the work after it
-> for the next release. New after 0.8.11, and not in 0.8.11:
+> **Version note.** This guide describes TAK Engine 0.8.12. New in 0.8.12:
 >
 > - the [AI Profiles window](#the-ai-profiles-window) (**Scenario → AI
 >   Profiles...**, **A**), which edits a map's AI profiles and saves them as a
@@ -24,8 +23,6 @@ what each control does, from a first map to sharing a finished one.
 > - [making an AI mod without a map](#making-an-ai-mod-without-a-map) (**File →
 >   New AI mod...** and **Open AI mod...**, **TEST IN GAME...**, and the game's
 >   `--game-mod` option).
->
-> Apart from these, the guide matches 0.8.11.
 
 Every picture in this guide is a real Cartographer screen (the Test Map lobby is
 the game's), using the original game's art. Some put two moments side by side,
@@ -1370,7 +1367,7 @@ The game has two kinds of computer player, and each reads its own file:
 | Computer player | File | What the file does |
 | --- | --- | --- |
 | **DEFAULT AI** (the 1999 game's own AI) | the map's **own profile**, `ai/<name>.txt`, named by the map | The whole profile: every unit the file does not name is built at full chance with no limit. |
-| Our levels: **Defensive**, **Easy**, **Normal**, **Hard**, **Absurd**, **Absurdly Defensive** | one file for all six, `ai/takengine.txt` | Changes only the units it names, in every level; every other unit keeps each level's own built-in values, so the levels stay different. |
+| Our levels: **Defensive**, **Easy**, **Normal**, **Hard**, **Absurd**, **Absurdly Defensive** | one file for all six, `ai/takengine.txt` | Changes only the units it names, in every level; every other unit keeps each level's own built-in values. The six built-in tables are the same today, so the file sets the same values for every level; the levels still play differently and treat limits their own way (see [One file, six levels](#one-file-six-levels-preview-level)). |
 
 The DEFAULT AI is the one the room calls **RETAIL**. See
 [AI difficulty](user-guide.md#ai-difficulty) in the game guide for how each
@@ -1428,8 +1425,8 @@ Click a cell, type, and press **Enter** (**Esc** cancels the typing).
 
 `ai/takengine.txt` is read by all six of our levels. A value you set replaces
 that unit's value in **every** level; a unit you do not set keeps **each**
-level's own built-in value, so the levels stay as different as they are
-built. The table can show only one level at a time: **PREVIEW LEVEL** (click
+level's own built-in value. (Today the six built-in tables hold the same
+values, so PREVIEW LEVEL changes only the limits in play.) The table can show only one level at a time: **PREVIEW LEVEL** (click
 for the next level, right-click for the one before) picks whose built-in
 values fill the unset cells and the **BUILT-IN** column, and whose limits in
 play are shown. Your settings (marked `*`) are the same for every level.

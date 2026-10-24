@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.8.11-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.8.12-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -53,7 +53,50 @@ assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data. New players can start with the
 [quick-start controls reference](docs/quick-start.md).
 
-## New in 0.8.11
+## New in 0.8.12
+
+0.8.12 changes how our AI levels read their build profiles, how a map's AI
+files travel, and how Shift-queued flyer patrols fly, so the protocol moves to
+**293** (replays stay at format **14**): **0.8.12 does not play with 0.8.11 or
+any earlier version, and does not play their replays**. Update the server and
+every player together.
+
+- **AI profiles in the map editor.** Cartographer's **Scenario → AI Profiles...**
+  (**A**) edits a map's AI profiles in a window instead of by hand: a **DEFAULT
+  AI** tab for the Retail AI's profile and a **TAK ENGINE AI** tab for our six
+  levels, with a unit table (build on or off, chance or weight, limit), group
+  rules, presets (**No flyers**, **No ships**, **Clear all**), a text view and
+  checks made with the game's own readers. **SAVE AS GAME MOD...** and **OPEN
+  FROM GAME MOD...** put the files in a game pack. Maps now keep their `ai/`
+  files when the Cartographer opens and saves them. See
+  [AI profiles](docs/cartographer-guide.md#ai-profiles).
+- **AI mods without a map.** **File → New AI mod...** (**Ctrl+Shift+N**) and
+  **Open AI mod...** (**Ctrl+Shift+O**) edit a game pack's AI files with no map
+  open, and **TEST IN GAME...** plays them on a map you pick. See
+  [Making an AI mod without a map](docs/cartographer-guide.md#making-an-ai-mod-without-a-map).
+- **One file for our six AI levels.** Defensive to Absurdly Defensive now all
+  read one file, `ai/takengine.txt`, from a ticked game mod or the map, each on
+  top of its own built-in profile. The old `ai/d.txt` ... `ai/ad.txt` files of
+  0.8.11 are no longer read; the Cartographer's **MERGE INTO TAK ENGINE...**
+  moves one into the new file. See
+  [AI profiles in game mods](docs/user-guide.md#ai-profiles-in-game-mods).
+- **Each map's own AI files.** Two installed maps carrying an AI file of the
+  same name now each play their own.
+- **RETAIL in the lobby.** AI level 6, the original game's own AI, is now
+  shown as **RETAIL** (it was DEFAULT in 0.8.11). See
+  [Retail AI](docs/user-guide.md#retail-ai).
+- **Campaigns.** You can always change the game speed (**+** / **−**) in a
+  mission, and the order hint (**ATTACK: CLICK TARGET...**) sits below the
+  objectives panel instead of over it.
+- **Flyer patrols.** An armed flyer or flying builder told to move, then
+  Shift-patrol, now patrols instead of flying to the point and hovering there.
+
+Saved `.kmp` maps, generated-map recipes, mods and settings carry over. No new
+runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.8.12-notes.md) and
+[validation report](docs/release-0.8.12-validation.md).
+
+### Previously in 0.8.11
 
 0.8.11 adds a seventh computer-player level, so the protocol moves to **290**
 (replays stay at format **14**): **0.8.11 does not play with 0.8.10 or any
@@ -1130,7 +1173,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.8.11 uses generator v9;
+the same named map when the game starts. Version 0.8.12 uses generator v9;
 v8 recipes still regenerate identically, older seed recipes are unsupported, and saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -1138,7 +1181,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.8.11 uses protocol **290** and generator version 9; generated-map recipes from 0.8.0 on still work.
+Version 0.8.12 uses protocol **293** and generator version 9; generated-map recipes from 0.8.0 on still work.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -1430,12 +1473,12 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same network protocol and compatible game data** on every participant.
-Version **0.8.11 uses protocol 290**, including authoritative pathfinding
+Version **0.8.12 uses protocol 293**, including authoritative pathfinding
 selection, shared game-mod pack transfer, Darien Crusades campaign messages, the
-disconnect wait with its AI takeover, and the Retail AI level. **0.8.11 does not
-play with 0.8.10 (protocol 289) or any earlier version, and does not play their
-replays**: a 0.8.11 client cannot join an older server, nor an older client a
-0.8.11 server. Update the server
+disconnect wait with its AI takeover, the Retail AI level and each map's own AI
+files. **0.8.12 does not play with 0.8.11 (protocol 290) or any earlier version,
+and does not play their replays**: a 0.8.12 client cannot join an older server,
+nor an older client a 0.8.12 server. Update the server
 and all players together.
 Replay format is **14** (checkpoints also carry a position digest, and the header
 records the Map Scenario and Power Codes options), and
@@ -1680,7 +1723,7 @@ pack names win file conflicts; game packs load first, then the always-on
 archives, then ticked cosmetic packs. Pack choices are remembered. The old
 `overrides/` folder is no longer read and is left untouched. See
 [mod details](docs/user-guide.md#mods).
-Version 0.8.11 uses protocol **290**; servers and clients must all run 0.8.11 (0.8.10 uses 289, 0.8.9 and 0.8.8 use 288).
+Version 0.8.12 uses protocol **293**; servers and clients must all run 0.8.12 (0.8.11 uses 290, 0.8.10 289, 0.8.9 and 0.8.8 288).
 
 
 ## License
