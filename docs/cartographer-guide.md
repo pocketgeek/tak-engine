@@ -142,11 +142,15 @@ save, so closing Cartographer straight away asks nothing. A map named when Carto
 starts that cannot be opened shows **OPEN FAILED** and then the same empty
 window.
 
+![The Cartographer window with no map open: the menu bar FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP over an empty toolbar and a dark, empty middle that reads NO MAP OPEN, then File > New map (Ctrl+N) or Open map (Ctrl+O), then AI mods: File > New AI mod or Open AI mod; the status bar at the bottom also reads NO MAP OPEN](img/cartographer/empty-window.jpg)
+
+*The empty window that a bare launch opens. Nothing is drawn until a map is open.*
+
 ### The New Map dialog
 
-![The NEW MAP dialog: map name Untitled, width 8, height 8, world aramon, with CREATE, RANDOM and CANCEL buttons](img/cartographer/new-map.jpg)
+![The NEW MAP dialog over the dimmed empty window, whose status bar reads NO MAP OPEN: map name Untitled, width 8, height 8, world aramon, with CREATE, RANDOM and CANCEL buttons](img/cartographer/new-map.jpg)
 
-*The **New Map** dialog.*
+*The **New Map** dialog, opened with **File → New map** over the empty window.*
 
 | Field | Choices |
 | --- | --- |

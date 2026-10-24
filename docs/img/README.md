@@ -1,12 +1,22 @@
 # README and user-guide screenshots
 
-Refreshed on 2026-10-23 for **0.8.12**. The 0.8.12 build (version set to
-0.8.12 locally, ahead of the release commit; no capture patch was needed)
-retook `title.jpg` (VERSION 0.8.12) the same way as for 0.8.11. No other
-picture shows what 0.8.12 changed. The lobby and room pictures show no AI seat
+Refreshed on 2026-10-24 for **0.8.13**. The 0.8.13 build (version set to
+0.8.13 locally, ahead of the release commit; no capture patch was needed for the
+game) retook `title.jpg` (VERSION 0.8.13) the same way as for 0.8.12; only the
+version digits differ from the 0.8.12 file. Cartographer now opens to an empty
+window, so `cartographer/new-map.jpg` was retaken (the New Map dialog opened with
+File → New map over that window, where it used to sit over a placeholder map) and
+`cartographer/empty-window.jpg` was added; see the Cartographer section below.
+0.8.13 also drops the in-game text banner shown while an order is armed (ATTACK:
+CLICK TARGET and the like); no picture showed it (every game, guide and quick-start
+picture was checked by eye where the banner drew, under the top-left corner), so
+none was retaken for it.
+
+**0.8.12** retook `title.jpg` (VERSION 0.8.12, since retaken for 0.8.13) the same
+way as for 0.8.11. No other picture showed what 0.8.12 changed. The lobby and room pictures show no AI seat
 at level 6, so the RETAIL name does not appear in them (see below). The campaign
-order hint (ATTACK: CLICK TARGET...) now sits below the objectives panel, but no
-picture shows an order armed in a mission: `guide/campaign-briefing.jpg` shows
+order hint (ATTACK: CLICK TARGET...) then sat below the objectives panel (0.8.13
+removed the hint), but no picture showed an order armed in a mission: `guide/campaign-briefing.jpg` shows
 the paused briefing with the objectives button only. The Shift-queued flyer
 patrol has no picture. The Cartographer AI Profiles pictures
 (`cartographer/ai-profiles.jpg`, `ai-group-rules.jpg`, `ai-takengine.jpg` and
@@ -153,7 +163,7 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.8.12 (0.8.12 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
+| `title.jpg` | Title menu showing version 0.8.13 (0.8.13 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
 | `battle.jpg` | **Benchmark** run (Settings → Benchmark, Absurd intensity) on Ulasem Arena, 55 game seconds in. Eight server AIs fight, all five sides. The camera, at 1.3× zoom, shows Aramon (magenta) and Taros (yellow) armies, with Black Dragons, clashing at a sandy arena; damaged units of every side show health bars. A real feature with no fixture; spectator view, so no fog. Rendered by the 0.8.8 build |
 | `dragons.jpg` | **Development scene.** Five server AIs, one per side, from a stress-test start (300-unit cap) with gods on, 90 game seconds in. Creon Neo Dragons breathe fire on an Aramon siege column; health bars show for every side. Spectator view, 1.4× zoom. Rendered by the 0.8.8 build |
 | `flyers.jpg` | **Development scene, spawned.** Legion pathfinding, 22 s after one move order east-south-east. A 44-unit Zhon formation: Trolls, Stone Giants and Jungle Orcs, with Gryphons, Harpies and Drakes holding rows of stations over the front of the ground (new in 0.8.0, protocol 254; before, over its middle). `1F`, solid green, marks members of formation 1. Nothing is selected, so the information bar is empty (0.8.1). Fog off, 1.45× zoom. Rendered by the 0.8.8 build (protocol 288) |
@@ -262,8 +272,8 @@ composed, so no browser cell or tree is a placeholder.
   `symmetry-stamp.jpg`, `terrain-clipboard.jpg` and `features-select.jpg` put two
   crops side by side under text labels, and `menus.jpg` puts six crops of the
   opened menus together (each with only its own menu title).
-- **Encoding.** JPEG, full chroma resolution, quality 86, not scaled. The 29
-  files total about 3.2 MB.
+- **Encoding.** JPEG, full chroma resolution, quality 86, not scaled (some AI
+  Profiles pictures at 98, below). The 32 files total about 3.8 MB.
 - **AI Profiles.** `ai-profiles.jpg` and `ai-group-rules.jpg` were added on
   2026-10-23 with the AI Profiles window (branch `task-carto-ai`, after
   0.8.11), not by the capture driver: they are the window captures that the
@@ -285,6 +295,15 @@ composed, so no browser cell or tree is a placeholder.
   workflow's `-aimod.png` (SDL `offscreen`, 921 × 691, scratch data root and
   profile), not cropped, so the empty editor behind the window shows; quality
   98, full chroma.
+- **Empty window.** `empty-window.jpg` and `new-map.jpg` were taken for 0.8.13
+  (on 2026-10-24, by the 0.8.13 build) from the `cartographer_ui_test`
+  workflow `blank-launch` (a bare launch, fresh scratch profile, SDL
+  `offscreen`, 921 × 691, scratch data root of linked retail archives), with
+  `TAK_EDITOR_TEST_CAPTURE` naming a prefix and a capture-only patch, not
+  committed, that also writes `<prefix>-empty.png` right after the first run's
+  welcome is closed (before the workflow's inert clicks and keys) and
+  `<prefix>-newmap.png` when File → New map has opened the dialog. Whole window,
+  quality 86, full chroma; nothing was edited or saved.
 - **Toolbar.** Every whole-window picture except `blocked.jpg` predates the
   BLOCKED tool, so its toolbar shows four tool buttons where the editor now has
   five.
@@ -292,7 +311,8 @@ composed, so no browser cell or tree is a placeholder.
 | Image | Scene |
 | --- | --- |
 | `window-annotated.jpg` | Ulasem Arena, Terrain tool, view centred on the arena at 35%, whole window. Markers 1–13: menu bar, tools, modes, REGIONS, TEST MAP, search, group button, counter line, variant badge, scrollbar, canvas, minimap, status bar |
-| `new-map.jpg` | Bare launch with a fresh profile: the New Map dialog over the blank Untitled 8 × 8 Aramon map, whole window |
+| `empty-window.jpg` | New in 0.8.13. Bare launch with a fresh profile, the first run's welcome closed: the empty window, title *Cartographer*, menu bar only, an empty toolbar, the centred NO MAP OPEN hint naming File → New map (Ctrl+N), Open map (Ctrl+O) and the AI mod commands, and NO MAP OPEN in the status bar. Whole window |
+| `new-map.jpg` | Retaken for 0.8.13. The same bare launch after File → New map: the New Map dialog (Untitled, 8 × 8, aramon) over the dimmed empty window, with NO MAP OPEN in the status bar. Whole window. Before 0.8.13 a bare launch opened this dialog by itself over an Untitled placeholder map |
 | `random-generator.jpg` | Recaptured for 0.8.5 by the same driver, linked against the 0.8.5 editor. Composite. Left: Random Map Settings (seed 2026, 4 players, Aramon Riverlands, 16 × 16, SCATTERED MANA (BY MAP AREA) set to Medium, other fields default). Right: the Generated Map Preview it produced. Dialog crops; the settings dialog is taller than before (twelve fields) |
 | `terrain-groups.jpg` | Ulasem Arena, the terrain group list open, whole window |
 | `terrain-variant.jpg` | Ulasem Arena, Cliff W clicked twice (variant 2/3) with the pointer on it, so the status bar shows its full name. Crop of the left 470 px |
@@ -379,7 +399,7 @@ Capture scripts, job lists and the encoder are in the release-preparation
 scratch directories, `$SCR/shared/release-0.7.26/shots`,
 `$SCR/shared/release-0.7.27/shots`, `$SCR/shared/release-0.7.28/shots`,
 `$SCR/shared/release-0.8.0/shots`, `$SCR/shared/release-0.8.1/shots`,
-`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots`, `~/tak-tmp/scratch/release-086/shots`, `~/tak-tmp/scratch/release-087/shots`, `~/tak-tmp/scratch/release-088/shots`, `~/tak-tmp/scratch/release-089/shots`, `~/tak-tmp/scratch/release-0810/shots`, `~/tak-tmp/scratch/release-0811/shots` and `~/tak-tmp/scratch/release-0812/shots`. Raw PNGs, logs, profiles
+`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots`, `~/tak-tmp/scratch/release-086/shots`, `~/tak-tmp/scratch/release-087/shots`, `~/tak-tmp/scratch/release-088/shots`, `~/tak-tmp/scratch/release-089/shots`, `~/tak-tmp/scratch/release-0810/shots`, `~/tak-tmp/scratch/release-0811/shots`, `~/tak-tmp/scratch/release-0812/shots` and `~/tak-tmp/scratch/release-0813/shots`. Raw PNGs, logs, profiles
 and the SHA-256 manifest are kept locally in the worktree's ignored
 `build-o2/capture` folder. Keep retail archives, extracted assets and temporary
 capture files out of Git. When refreshing, rerender and inspect every view, then
