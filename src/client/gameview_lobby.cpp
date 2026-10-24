@@ -553,7 +553,7 @@ float createOptionPx(float maxW) {
             lbField(x, y, 260, "PASSWORD (OPTIONAL)", createPass_, 2); y += 44;
         }
         blockText(std::string("MAP: ") + mapTitle(mpMapId_), x, y, 1.8f, {180, 185, 195, 255}); y += 28;
-        // Option rows (26 high at a 27 pitch): multiplayer's eleven rows, under the name
+        // Option rows (26 high at a 27 pitch): multiplayer's ten rows, under the name
         // and password fields, are 24 high at a 25 pitch to stay clear of the BACK/CREATE
         // footer. One column: every row kOptW wide (clear of the map list at x 400) and
         // every label at optPx (createOptionPx), whatever it says.
@@ -1009,7 +1009,7 @@ float createOptionPx(float maxW) {
                     const size_t locked=always.size();
                     lbBtn(winW-300.0f,py,280,20,label,!busy,[selected,name,enabled,apply,locked]{
                         auto selection=selected;
-                        if(enabled)selection.erase(std::remove(selection.begin(),selection.end(),name),selection.end());else if(selection.size()+locked<64)selection.push_back(name);
+                        if(enabled)selection.erase(std::remove(selection.begin(),selection.end(),name),selection.end());else if(selection.size()+locked+1<=64)selection.push_back(name);
                         apply(std::move(selection));
                     },{60,66,86,255},kPackPx);
                     SDL_FRect checkBox{winW-291.0f,py+4.5f,11,11};
@@ -1054,9 +1054,19 @@ float createOptionPx(float maxW) {
                     alwaysLine(alwaysGame);
                     packList(availableGameMods_,mp_->gameModPacks(),alwaysGame,gameModPage_,mp_->modBusy(),
                              "NO PACKS IN MODS/GAME","GAME PAGE",
-                             [this](std::vector<std::string> selection){
+                             [this,alwaysGame](std::vector<std::string> selection){
                         mp_->setGameModPacks(selection);
-                        if(settings_){settings_->gameModPacks=std::move(selection);saveSettings(*settings_);}
+                        if(settings_){
+                            // A saved tick hidden by a same-named always-enabled pack is not
+                            // in the room's list, so it is kept here (as the cosmetic list
+                            // keeps it): it applies again once that pack leaves always_enabled/.
+                            for(const auto& n:settings_->gameModPacks)
+                                if(std::find(selection.begin(),selection.end(),n)==selection.end() &&
+                                   std::any_of(alwaysGame.begin(),alwaysGame.end(),[&](const std::string& a){
+                                       return tak::hpi::MountSet::key(a)==tak::hpi::MountSet::key(n);}))
+                                    selection.push_back(n);
+                            settings_->gameModPacks=std::move(selection);saveSettings(*settings_);
+                        }
                     });
                 } else if(gameOn) {
                     // The host's packs, as named by the verified package (read-only here).

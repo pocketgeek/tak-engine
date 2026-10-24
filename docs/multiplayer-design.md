@@ -795,7 +795,8 @@ always-enabled pack hides an ordinary pack whose name matches ignoring case
 0.8.12/0.8.13's `mods::decode` unchanged, so the wire and package format did not
 change. A guest never adds its own always-enabled game packs: it mounts the
 host's package alone. Selections
-are merged in alphabetical order into a bounded, SHA-256-addressed package (no
+are merged with the always-enabled packs first, then the ticked ones, each in
+alphabetical order (later layers win), into a bounded, SHA-256-addressed package (no
 cosmetic file ever goes in it). Server and peers verify it before room
 readiness. Each game-mods room owns its own VFS and registries, leaving other
 rooms unchanged. The server takes a package only from the host of a skirmish

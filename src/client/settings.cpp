@@ -341,9 +341,8 @@ bool saveSettings(const Settings& s) {
     return true;
 }
 
-void setLaunchGameModPacks(std::vector<std::string> packs) {
-    if (packs.empty()) launchGameModPacks().reset();
-    else launchGameModPacks() = std::move(packs);
+void setLaunchGameModPacks(std::optional<std::vector<std::string>> packs) {
+    launchGameModPacks() = std::move(packs);
 }
 
 bool saveDataFolderSetting(const std::string& folder, const std::string& manifest) {

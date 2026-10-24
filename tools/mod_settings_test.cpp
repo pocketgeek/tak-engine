@@ -77,7 +77,16 @@ int main() {
             run.gameModPacks={"My AI"};   // the launch selection ended with that change
             if(!tak::saveSettings(run) || tak::loadSettings().gameModPacks!=run.gameModPacks)
                 throw std::runtime_error("a launch selection outlived the player's own change");
-            tak::setLaunchGameModPacks({});
+            tak::setLaunchGameModPacks(std::nullopt);
+            if(!tak::saveSettings(s))throw std::runtime_error("save failed");
+            // An EMPTY launch selection (--game-mod naming an always-enabled pack: nothing
+            // ticked for the run) still keeps the player's saved ticks.
+            auto none=s;none.gameModPacks={};
+            tak::setLaunchGameModPacks(none.gameModPacks);
+            none.lastMap="Somewhere";
+            if(!tak::saveSettings(none) || tak::loadSettings().gameModPacks!=s.gameModPacks)
+                throw std::runtime_error("an empty launch-only selection was saved over the player's ticks");
+            tak::setLaunchGameModPacks(std::nullopt);
             if(!tak::saveSettings(s))throw std::runtime_error("save failed");
         }
         if(loaded.uiScale!=0.5f || loaded.scorecardScale!=1.75f)

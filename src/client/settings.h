@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include "sim/pathmode.h"
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -253,8 +254,9 @@ bool saveSettings(const Settings&);
 // this run's Settings::gameModPacks holds `packs`, the room's mods for the test. While a
 // save still holds exactly them, the file keeps the player's own ticks (as the file has
 // them then); once the player changes the ticks, the new ticks are saved as usual and
-// the launch selection is over. Empty ends it.
-void setLaunchGameModPacks(std::vector<std::string> packs);
+// the launch selection is over. An empty list is a selection too (a --game-mod pack that
+// is already always enabled ticks nothing for the run); nullopt ends it.
+void setLaunchGameModPacks(std::optional<std::vector<std::string>> packs);
 // Change ONLY the data folder in the file (read, set dataDir + dataManifest, write):
 // what Options and Cartographer's Preferences call on a valid pick, so unsaved edits
 // on the open Options screen are not persisted along with it.
