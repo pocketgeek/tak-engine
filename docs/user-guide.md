@@ -1954,24 +1954,19 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-<!-- VERSION-0.9.0: confirm protocol/replay format at cut (main: 294/15) -->
-TAK Engine 0.9.0 uses network protocol **293** and replay format **14**, the
-same as 0.8.12, 0.8.13 and 0.8.14. So:
+TAK Engine 0.9.0 uses network protocol **294** and replay format **15**. No
+earlier release uses protocol 294, so:
 
-- **Multiplayer:** 0.9.0, 0.8.14, 0.8.13 and 0.8.12 play together: a server and
-  its players may run any of them. A server turns away a client whose protocol
-  differs from its own, so 0.9.0 does not play with 0.8.11 or any earlier
-  version. When a release changes the protocol, a server and all of its players
-  update together.
-- **Replays:** each of these versions plays the others' replays. A replay
-  recorded by 0.8.11 or earlier needs the version that recorded it; keep an old
-  copy of the engine if you want to keep watching old replays.
-- **Game mods with older hosts:** a room hosted by a 0.8.12 or 0.8.13 player may
-  still have its **Game mods** switch off; it then says **GAME MODS: OFF
-  (HOST)** and runs no game packs at all, your always-enabled ones included. A
-  0.8.12 or 0.8.13 player joining your room sees it as a room with game mods
-  on: **HOST:** names your packs, always-enabled ones included (or **NONE
-  SELECTED**), and their own game receives and verifies them as usual.
+- **Multiplayer:** 0.9.0 plays only with 0.9.0. A server turns away a client
+  whose protocol differs from its own, so a 0.8.14 or older player cannot join a
+  0.9.0 server, nor a 0.9.0 player an older one; the connection fails with a
+  *protocol version mismatch* message. When a release changes the protocol, a
+  server and all of its players update together.
+- **Replays:** 0.9.0 plays only replays recorded by 0.9.0. A replay recorded by
+  0.8.14 or earlier needs a version with that replay's protocol; keep an old
+  copy of the engine (built from its tag, see the
+  [development guide](development.md)) if you want to keep watching old
+  replays.
 
 Every release's protocol and replay format are listed in the
 [CHANGELOG](../CHANGELOG.md).

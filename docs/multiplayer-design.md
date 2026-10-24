@@ -181,9 +181,10 @@ agreed:
   [Per-room game mods](#per-room-game-mods)); every player mounts that verified
   package at game start so its registry matches the referee's. From
   0.8.14 (still protocol 293) every host sends 1, single player and
-  multiplayer alike: the create screen's GAME MODS toggle is gone. 0 comes only
-  from a 0.8.12/0.8.13 host that turned the toggle off, or a debug `--mods`
-  launch, and is honoured as before (no package, no game packs at all).
+  multiplayer alike: the create screen's GAME MODS toggle is gone. 0 came from a
+  0.8.12/0.8.13 host that turned the toggle off (from 0.9.0, protocol 294, such
+  a host can no longer connect) and still comes from a debug `--mods` launch; it
+  is honoured as before (no package, no game packs at all).
   Campaign missions and Crusades battles are forced to 0.
 - **Cosmetic mods are per player and never travel.** Each client lays on top of
   the room's package its own always-enabled `mods/cosmetic/always_enabled/<pack>`
@@ -931,6 +932,17 @@ the Cartographer; the `GameOptions` byte, the package format and the replay
 header are unchanged, so it plays with 0.8.13 and 0.8.12 and their replays, both
 ways. A 0.8.12/0.8.13 host's `gameMods=0` is still honoured, and a 0.8.14 host's
 package (always-enabled names included) decodes on 0.8.12/0.8.13.
+Protocol 294 changes the simulation: area clear follows retail. Overlapped TNT
+features that retail removes at load are gone everywhere
+(`World::installedMapFeatures`: no art, blocker, sacred site, deposit or target),
+fogged but explored world features stay clearable (the cell owner byte, the
+room's FOG OF WAR option read by the sim, replay format 15), and the area order's
+own approach, a reclaim child's failed approach and a re-pick in the last
+target's cell all end the order. 293 replays are refused.
+0.9.0 ships protocol 294; it plays with neither 0.8.14 nor any earlier version,
+nor their replays. Its other changes (the Rolling Tower spelling in the AI,
+server side; build sparkles; gate doorway picking and the reclaim fan-out,
+client side) need no protocol change of their own.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
@@ -1221,6 +1233,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.8.14 (peers and server) requires protocol 293, as 0.8.13 and 0.8.12 do; 0.8.11 required 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.9.0 (peers and server) requires protocol 294; 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

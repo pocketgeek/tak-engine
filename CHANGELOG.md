@@ -20,9 +20,8 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
 ## 0.9.0
-*Unreleased* <!-- VERSION-0.9.0: confirm date, protocol and replay format at cut (main: 294/15: NOT compatible with 0.8.x or its replays), and which versions it plays with -->
+*TODO-LEAD (release date) · protocol 294 · replay format 15 · does not play with 0.8.14 or earlier, nor their replays*
 
-<!-- WHATS-NEW-0.9.0: add the 0.9.0 gameplay and engine changes here before the cut. -->
 - **AI and the Rolling Tower:** the shipped AI profiles misspell the Aramon
   Rolling Tower (`araseige`). The original game ignores the name, so the Retail
   AI built Rolling Towers without limit, and our levels (Easy to Absurd) never
@@ -63,9 +62,14 @@ their validation reports; both live in [`docs/`](docs/).
 - **Not compatible with 0.8.x:** these changes alter the game itself, so 0.9.0
   uses protocol 294 and replay format 15. It does not play with 0.8.14 or any
   earlier version, nor their replays.
+- **Upgrading:** a server and all of its players update to 0.9.0 together;
+  public-server operators update `takserver` as well. Keep an older engine
+  (built from its tag) to watch replays recorded before 0.9.0.
 - **Documentation:** the release history moved out of the README into this
   changelog; the README, quick start, user guide, map editor guide, server
   guide and streaming guide were rewritten and their pictures retaken.
+
+[Release notes](docs/release-0.9.0-notes.md) · [Validation report](docs/release-0.9.0-validation.md) · [Source at v0.9.0](https://github.com/pocketgeek/tak-engine/tree/v0.9.0)
 
 ## 0.8.14
 *2026-10-24 · protocol 293 · replay format 14 · plays with 0.8.12 and 0.8.13, and their replays*

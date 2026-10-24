@@ -29,15 +29,26 @@ interface art and sound straight from its installation folder.
 
 ## What's new in 0.9.0
 
-<!-- WHATS-NEW-0.9.0: list up to five headline changes of 0.9.0 here (from the CHANGELOG entry) before the cut. -->
 - **A cleaner set of guides.** The release history now lives in the
   [CHANGELOG](CHANGELOG.md), and this page, the [quick start](docs/quick-start.md),
   the [user guide](docs/user-guide.md) and the
   [map editor guide](docs/cartographer-guide.md) were rewritten with new
   pictures.
+- **Area clear works as in the original.** Every selected builder takes a
+  clear order, trees on explored ground are cleared under the fog, builders
+  give up on what they cannot reach, and overlapping map objects the original
+  removes at load are gone ([Reclaiming](docs/user-guide.md#reclaiming)).
+- **Gate doorways.** Clicking an open gate's doorway picks the ground, so
+  units can be ordered through it.
+- **The Rolling Tower.** The Retail AI and our AI levels now build the Aramon
+  Rolling Tower, which the shipped AI profiles misspell.
+- **Build sparkles** sit on the building's footprint, as in the original.
 
-Compatibility: see the [0.9.0 entry in the CHANGELOG](CHANGELOG.md#090).
-<!-- VERSION-0.9.0: confirm protocol/replay format at cut (main: 294/15) -->
+**0.9.0 does not play with 0.8.x, nor play its replays** (protocol 294, replay
+format 15): a server and all of its players update together. See
+[Versions](docs/user-guide.md#versions) and the
+[0.9.0 entry in the CHANGELOG](CHANGELOG.md#090).
+
 Full history: [CHANGELOG](CHANGELOG.md).
 
 ## Features
