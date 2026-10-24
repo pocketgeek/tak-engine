@@ -105,15 +105,7 @@ const Profile& builtinProfile(Difficulty d) {
 }
 
 const char* levelProfileFile(Difficulty d) {
-    switch (d) {
-        case Difficulty::Passive: return "ai/d.txt";
-        case Difficulty::Easy: return "ai/e.txt";
-        case Difficulty::Normal: return "ai/n.txt";
-        case Difficulty::Hard: return "ai/h.txt";
-        case Difficulty::Absurd: return "ai/a.txt";
-        case Difficulty::AbsurdlyDefensive: return "ai/ad.txt";
-        default: return nullptr;
-    }
+    return size_t(d) < size_t(Difficulty::Classic) ? kEngineProfileFile : nullptr;
 }
 
 void applyProfileText(std::string_view text, Profile& prof) {
@@ -130,25 +122,36 @@ void applyProfileText(std::string_view text, Profile& prof) {
     }
 }
 
-Profile levelProfile(Difficulty d, const tak::hpi::Vfs::Files* gameModFiles,
-                     const tak::hpi::Vfs::Files* mapFiles, std::string* source, bool* fromMap) {
-    Profile prof = builtinProfile(d);
-    if (source) source->clear();
+const std::vector<uint8_t>* engineProfileText(const tak::hpi::Vfs::Files* gameModFiles,
+                                              const tak::hpi::Vfs::Files* mapFiles, bool* fromMap) {
     if (fromMap) *fromMap = false;
-    const char* file = levelProfileFile(d);
-    if (!file) return prof;
     // Package keys are already lowercased (MountSet::key), so this is the
     // case-insensitive lookup every VFS read makes. A game mod's file wins.
     for (const auto* files : {gameModFiles, mapFiles}) {
         if (!files) continue;
-        const auto it = files->find(file);
+        const auto it = files->find(kEngineProfileFile);
         if (it == files->end()) continue;
-        applyProfileText(std::string_view(reinterpret_cast<const char*>(it->second.data()), it->second.size()), prof);
-        if (source) *source = file;
         if (fromMap) *fromMap = files == mapFiles;
-        return prof;
+        return &it->second;
     }
+    return nullptr;
+}
+
+Profile levelProfileFrom(Difficulty d, const std::vector<uint8_t>* text) {
+    Profile prof = builtinProfile(d);
+    if (text && levelProfileFile(d))
+        applyProfileText(std::string_view(reinterpret_cast<const char*>(text->data()), text->size()), prof);
     return prof;
+}
+
+Profile levelProfile(Difficulty d, const tak::hpi::Vfs::Files* gameModFiles,
+                     const tak::hpi::Vfs::Files* mapFiles, std::string* source, bool* fromMap) {
+    if (source) source->clear();
+    if (fromMap) *fromMap = false;
+    if (!levelProfileFile(d)) return builtinProfile(d);
+    const auto* text = engineProfileText(gameModFiles, mapFiles, fromMap);
+    if (text && source) *source = kEngineProfileFile;
+    return levelProfileFrom(d, text);
 }
 
 } // namespace tak::ai

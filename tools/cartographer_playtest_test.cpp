@@ -24,7 +24,7 @@ static int runTest(int argc,char** argv) try {
         tak::hpi::Vfs base;auto art=std::make_shared<tak::hpi::Vfs::Files>();
         (*art)["terrain/00000001.jpg"]={1};base.setModFiles(art);   // the tile art a real install supplies
         const auto package=tak::net::maps::importSnapshot(base,fs::u8path(argv[4]));
-        check(package->files->count("ai/n.txt") && package->files->at("ai/n.txt")==std::vector<uint8_t>({'w',' ','x',' ','0','\n'}),"test room lost ai/n.txt");
+        check(package->files->count("ai/takengine.txt") && package->files->at("ai/takengine.txt")==std::vector<uint8_t>({'w',' ','x',' ','0','\n'}),"test room lost ai/takengine.txt");
         check(package->files->count("ai/islands.txt"),"test room lost the map's own DEFAULT profile");
         check(!package->files->count("ai/notes.txt"),"a stray ai/ file travelled into the test room");
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -62,7 +62,7 @@ static int runTest(int argc,char** argv) try {
     map.tileKeys.assign(256,1);map.tileCols.assign(256,0);map.tileRows.assign(256,0);
     tak::tnt::Scenario metadata;metadata.aiProfile="islands";
     const auto files=cart::documentFiles(map,metadata, {},{}, {},
-        {{"ai/n.txt",{'w',' ','x',' ','0','\n'}},{"ai/islands.txt",{'l','i','m','i','t',' ','f','l','y',' ','2','\n'}},{"ai/notes.txt",{'p','l','a','n','\n'}}},"Snapshot");
+        {{"ai/takengine.txt",{'w',' ','x',' ','0','\n'}},{"ai/islands.txt",{'l','i','m','i','t',' ','f','l','y',' ','2','\n'}},{"ai/notes.txt",{'p','l','a','n','\n'}}},"Snapshot");
     const auto root=fs::temp_directory_path()/fs::u8path("data spaces ü & $");
     std::string error;
     check(!test.start(root/"nonexistent",root,files,error) && !error.empty() && !test.running(),"missing executable did not fail cleanly");

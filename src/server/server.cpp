@@ -2550,18 +2550,17 @@ static const tak::hpi::Vfs::Files* roomMapFiles(const Room& r) {
     return r.mapPackage && r.mapVfs && r.mapPackage->files ? r.mapPackage->files.get() : nullptr;
 }
 
-// Our levels' profiles for a room (Room::aiProfiles), each file applied logged once.
+// Our levels' profiles for a room (Room::aiProfiles): the room's one ai/takengine.txt
+// (its game mods' copy, else its map package's), read once and applied over each
+// level's own built-in table; logged once when there is one.
 static void loadAiProfiles(Room& r) {
-    for (uint8_t level = 0; level < tak::ai::kAiLevels; ++level) {
-        std::string source;
-        bool fromMap = false;
-        r.aiProfiles[level] = tak::ai::levelProfile(tak::ai::Difficulty(level), roomModFiles(r), roomMapFiles(r),
-                                                    &source, &fromMap);
-        if (!source.empty())
-            std::fprintf(stderr, "game %u: AI level %u plays the built-in profile adjusted by "
-                         "the %s %s\n", r.id, unsigned(level), fromMap ? "map package's" : "game mods'",
-                         source.c_str());
-    }
+    bool fromMap = false;
+    const auto* text = tak::ai::engineProfileText(roomModFiles(r), roomMapFiles(r), &fromMap);
+    for (uint8_t level = 0; level < tak::ai::kAiLevels; ++level)
+        r.aiProfiles[level] = tak::ai::levelProfileFrom(tak::ai::Difficulty(level), text);
+    if (text)
+        std::fprintf(stderr, "game %u: our AI levels play their built-in profiles adjusted by "
+                     "the %s %s\n", r.id, fromMap ? "map package's" : "game mods'", tak::ai::kEngineProfileFile);
 }
 
 // The Classic AI's profile script for a room: retail's file choice (ai/<aiprofile>.txt,

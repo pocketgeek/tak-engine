@@ -19,7 +19,12 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 292;      // 292: a Shift-queued patrol of an armed or builder flyer closes its loop when it starts
+constexpr uint32_t kNetVersion = 293;      // 293: our six AI levels read ONE file, ai/takengine.txt (ai::kEngineProfileFile), each
+                                           //      over its own built-in table, in place of ai/d.txt ... ai/ad.txt. A map's
+                                           //      package carries ai/takengine.txt and no longer the per-level files, so a 292
+                                           //      peer could compute a different digest for such a map. Sim unchanged; 292
+                                           //      replays refused.
+                                           // 292: a Shift-queued patrol of an armed or builder flyer closes its loop when it starts
                                            //      (World::openFlightPatrol, Order::patrolOpen), as on the ground: "move A,
                                            //      Shift-patrol B" laps A<->B where 291 flew to B and hovered there. Hashed
                                            //      sim change; 291 replays refused.

@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Our levels' ai/n.txt: a game mod's (through the real mod transfer) or the map's (in
-its .kmp, through the room's map package) reaches the server's Normal AI.
+"""Our levels' ai/takengine.txt: a game mod's (through the real mod transfer) or the
+map's (in its .kmp, through the room's map package) reaches the server, and every one
+of our levels reads it, each over its own built-in table.
 
 Headless all-AI games on AI Circle (Inner Circle's map in a single-map archive under
 Maps/), seed 1, a spectating host: seat 0 Aramon on Easy, seat 1 Taros on Normal.
 Every game ticks a game pack, uploaded with the room's game mods and applied by the
-server (the only place the AI runs). Misplaced n.txt files say `limit <unit> 0` for
-the Normal seat's watched units in every game -- at the game pack's root, in a
-cosmetic pack's ai/ and in a base install archive's ai/ -- and are never read.
+server (the only place the AI runs). Misplaced takengine.txt files say `limit <unit> 0`
+for both seats' watched units in every game -- at the game pack's root, in a cosmetic
+pack's ai/ and in a base install archive's ai/ -- and are never read; nor is an old
+per-level ai/n.txt in the game pack's ai/ (or the map's) banning the Normal seat's.
 
-  control  the map's ai/n.txt bans the Normal seat's watched units, but the game
-           pack's ai/n.txt (a comment only) wins over it: the Normal AI builds them
-  map      the game pack has no ai/n.txt; the map's bans both seats' watched units:
-           the Normal AI never builds its own, the Easy AI still builds its
-  modded   the game pack's ai/n.txt bans both seats' watched units (the map's says
-           nothing): the same
+  control  the map's ai/takengine.txt bans both seats' watched units, but the game
+           pack's ai/takengine.txt (a comment only) wins over it: both AIs build them
+  map      the game pack has no ai/takengine.txt; the map's bans both seats' watched
+           units: neither the Easy nor the Normal AI builds them
+  modded   the game pack's ai/takengine.txt bans both seats' watched units (the map's
+           says nothing): the same
 """
 import argparse
 import json
@@ -48,7 +50,8 @@ def pack(hpitool, folder, out):
 
 def install(a, root, name, mod_n, map_n):
     """A scratch install over the real one, with the game pack my_ai and the decoys.
-    mod_n / map_n: the game pack's / the map archive's ai/n.txt (None = no such file)."""
+    mod_n / map_n: the game pack's / the map archive's ai/takengine.txt (None = no such
+    file)."""
     target = root / name
     target.mkdir()
     jersey = None
@@ -66,33 +69,37 @@ def install(a, root, name, mod_n, map_n):
         if f.name.lower() == 'maps' and f.is_dir():
             for m in f.iterdir():
                 (maps / m.name).symlink_to(m)
-    decoy = ban(WATCHED[NORMAL_SEAT])
-    # The base install: a root archive that also carries ai/n.txt.
+    decoy = ban(WATCHED[EASY_SEAT] + WATCHED[NORMAL_SEAT])
+    old = ban(WATCHED[NORMAL_SEAT])
+    # The base install: a root archive that also carries ai/takengine.txt.
     base = root / (name + '-jersey')
     subprocess.run([str(a.hpitool), 'extract', str(jersey), str(base)], check=True, capture_output=True)
     (base / 'ai').mkdir()
-    (base / 'ai' / 'n.txt').write_text(decoy)
+    (base / 'ai' / 'takengine.txt').write_text(decoy)
     pack(a.hpitool, base, target / jersey.name)
-    # The map: Inner Circle under another name, its archive maybe carrying ai/n.txt.
+    # The map: Inner Circle under another name, its archive maybe carrying
+    # ai/takengine.txt, and an old ai/n.txt that no longer travels.
     kmp = root / (name + '-kmp')
     (kmp / 'kmap').mkdir(parents=True)
+    (kmp / 'ai').mkdir()
+    (kmp / 'ai' / 'n.txt').write_text(old)
     if map_n is not None:
-        (kmp / 'ai').mkdir()
-        (kmp / 'ai' / 'n.txt').write_text(map_n)
+        (kmp / 'ai' / 'takengine.txt').write_text(map_n)
     for ext in ('.tnt', '.ota'):
         (kmp / 'kmap' / (MAP + ext)).write_bytes(hpi_read(a.hpitool, a.data, 'maps/Inner Circle' + ext))
     pack(a.hpitool, kmp, maps / (MAP + '.kmp'))
-    # The game pack: only its ai/n.txt is a level file; a root n.txt is not.
+    # The game pack: only its ai/takengine.txt is read; a root takengine.txt is not,
+    # nor the old per-level ai/n.txt.
     game = target / 'mods' / 'game' / 'my_ai'
-    game.mkdir(parents=True)
+    (game / 'ai').mkdir(parents=True)
+    (game / 'ai' / 'n.txt').write_text(old)
     if mod_n is not None:
-        (game / 'ai').mkdir()
-        (game / 'ai' / 'n.txt').write_text(mod_n)
-    (game / 'n.txt').write_text(decoy)
+        (game / 'ai' / 'takengine.txt').write_text(mod_n)
+    (game / 'takengine.txt').write_text(decoy)
     # A cosmetic pack's ai/ never reaches a game.
     skin = target / 'mods' / 'cosmetic' / 'skin' / 'ai'
     skin.mkdir(parents=True)
-    (skin / 'n.txt').write_text(decoy)
+    (skin / 'takengine.txt').write_text(decoy)
     return target
 
 
@@ -152,37 +159,37 @@ def main():
     p.add_argument('--verbose', action='store_true')
     a = p.parse_args()
     a.data = a.data.resolve()
-    from_mod = "AI level 2 plays the built-in profile adjusted by the game mods' ai/n.txt"
-    from_map = "AI level 2 plays the built-in profile adjusted by the map package's ai/n.txt"
-    nothing = '// a Normal profile that changes nothing\n'
+    from_mod = "our AI levels play their built-in profiles adjusted by the game mods' ai/takengine.txt"
+    from_map = "our AI levels play their built-in profiles adjusted by the map package's ai/takengine.txt"
+    adjusted = ' play their built-in profiles adjusted'
+    nothing = '// a profile for our levels that changes nothing\n'
     both = ban(WATCHED[EASY_SEAT] + WATCHED[NORMAL_SEAT])
 
     def obeyed(built, name):
-        banned = [u for u in WATCHED[NORMAL_SEAT] + WATCHED[EASY_SEAT] if u in built.get(NORMAL_SEAT, set())]
-        assert not banned, 'the Normal AI built %s despite the %s ai/n.txt' % (banned, name)
-        missing = [u for u in WATCHED[EASY_SEAT] if u not in built.get(EASY_SEAT, set())]
-        assert not missing, 'the Easy AI stopped building %s: only Normal reads ai/n.txt' % missing
+        for seat in (EASY_SEAT, NORMAL_SEAT):
+            banned = [u for u in WATCHED[NORMAL_SEAT] + WATCHED[EASY_SEAT] if u in built.get(seat, set())]
+            assert not banned, 'seat %d built %s despite the %s ai/takengine.txt' % (seat, banned, name)
 
     with tempfile.TemporaryDirectory(prefix='tak-ai-mod-') as tmp:
         root = Path(tmp)
-        control, log = play(a, root, 'control', nothing, ban(WATCHED[NORMAL_SEAT]))
+        control, log = play(a, root, 'control', nothing, both)
         assert from_mod in log, log
-        assert log.count(' plays the built-in profile adjusted') == 1, log   # Normal only
+        assert log.count(adjusted) == 1, log   # once for the room, not per level
         for seat, units in WATCHED.items():
             missing = [u for u in units if u not in control.get(seat, set())]
             assert not missing, 'the control game\'s seat %d never built %s (built: %s)' % (
                 seat, missing, sorted(control.get(seat, set())))
         mapped, log = play(a, root, 'map', None, both)
         assert from_map in log, log
-        assert log.count(' plays the built-in profile adjusted') == 1, log
+        assert log.count(adjusted) == 1, log
         obeyed(mapped, "map's")
         modded, log = play(a, root, 'modded', both, nothing)
         assert from_mod in log, log
-        assert log.count(' plays the built-in profile adjusted') == 1, log
+        assert log.count(adjusted) == 1, log
         obeyed(modded, "mod's")
-        print('PASS: ai/n.txt from the game mods or the map package reaches the Normal seat only (it never '
-              'built %s; Easy still built %s); a game mod\'s wins over the map\'s; root, cosmetic and base '
-              'install n.txt are not read' % (', '.join(WATCHED[NORMAL_SEAT]), ', '.join(WATCHED[EASY_SEAT])))
+        print('PASS: ai/takengine.txt from the game mods or the map package reaches both the Easy and the Normal '
+              'seat (neither built %s); a game mod\'s wins over the map\'s; root, cosmetic and base install '
+              'takengine.txt and the old ai/n.txt are not read' % ', '.join(WATCHED[EASY_SEAT] + WATCHED[NORMAL_SEAT]))
 
 if __name__ == '__main__':
     main()

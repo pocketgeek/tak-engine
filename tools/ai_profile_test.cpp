@@ -1,12 +1,12 @@
-// Our AI levels' built-in build profiles and their per-level game-mod files
-// (ai/builtinprofile.h).
+// Our AI levels' built-in build profiles and the one file that adjusts them all,
+// ai/takengine.txt (ai/builtinprofile.h).
 //
 //   ai_profile_test           the tables, the line format, and which mod layers may
-//                             supply a level's file (scratch mod folders, no data)
+//                             supply ai/takengine.txt (scratch mod folders, no data)
 //   ai_profile_test <data>    also: the built-in Normal table still equals the
 //                             retail default profile (the base install's winning
 //                             ai/default.txt) the levels were tuned on; and the
-//                             AI files (ai/default.txt, a level's ai/n.txt) travel
+//                             AI files (ai/default.txt, ai/takengine.txt) travel
 //                             in a map's package when the map's own archive
 //                             carries them, and a game mod's copy wins over the
 //                             map's (the map's over the base install's); two
@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 using namespace tak;
@@ -67,13 +68,14 @@ static void tables() {
     const auto& classic = ai::builtinProfile(ai::Difficulty::Classic);
     check(classic.weight.empty() && classic.limit.empty() && !ai::levelProfileFile(ai::Difficulty::Classic),
           "Classic has no built-in table and no mod file");
-    const std::pair<ai::Difficulty, const char*> names[] = {
-        {ai::Difficulty::Passive, "ai/d.txt"}, {ai::Difficulty::Easy, "ai/e.txt"},
-        {ai::Difficulty::Normal, "ai/n.txt"}, {ai::Difficulty::Hard, "ai/h.txt"},
-        {ai::Difficulty::Absurd, "ai/a.txt"}, {ai::Difficulty::AbsurdlyDefensive, "ai/ad.txt"}};
     bool ok = true;
-    for (const auto& [d, file] : names) ok = ok && ai::levelProfileFile(d) && std::string(ai::levelProfileFile(d)) == file;
-    check(ok, "each level names its own file (ai/d/e/n/h/a/ad.txt)");
+    for (uint8_t level = 0; level < ai::kAiLevels; ++level) {
+        const auto d = ai::Difficulty(level);
+        if (d == ai::Difficulty::Classic) continue;
+        ok = ok && ai::levelProfileFile(d) && std::string(ai::levelProfileFile(d)) == "ai/takengine.txt";
+    }
+    check(ok && std::string(ai::kEngineProfileFile) == "ai/takengine.txt",
+          "every one of our levels reads the one file ai/takengine.txt");
 
     ai::Profile p;
     ai::applyProfileText("// comment\r\nweight AraBow 3\r\nlimit arabow 0\nlimit arabow 2 trailing\nplan x 1\n/weight arafly 9\nweight arafly\n", p);
@@ -92,87 +94,103 @@ static void archive(const std::filesystem::path& file, std::vector<std::pair<std
     put(file, std::string(bytes.begin(), bytes.end()));
 }
 
+// The effective profile a level must have when `changes` is ai/takengine.txt: the
+// level's OWN built-in table with exactly these entries replaced.
+static ai::Profile over(ai::Difficulty d, const std::vector<std::tuple<const char*, int, int>>& changes) {
+    ai::Profile p = ai::builtinProfile(d);
+    for (const auto& [unit, weight, limit] : changes) {
+        if (weight >= 0) p.weight[unit] = weight;
+        if (limit >= 0) p.limit[unit] = limit;
+    }
+    return p;
+}
+
+// Each of our levels (Classic excluded) passes `test`.
+template <class F> static bool everyLevel(F test) {
+    bool ok = true;
+    for (uint8_t level = 0; level < ai::kAiLevels; ++level)
+        if (ai::Difficulty(level) != ai::Difficulty::Classic) ok = ok && test(ai::Difficulty(level));
+    return ok;
+}
+
 static void modLayers() {
     namespace fs = std::filesystem;
     const auto root = fs::temp_directory_path() / ("tak-ai-profiles-" + crypto::toHex(crypto::randomVec(8)));
-    const std::string normalFile = "// a game mod's Normal profile\nlimit arabow 0\nweight AraBow 2\nweight modunit 7\n";
+    const std::string engineFile = "// a game mod's profile for our levels\nlimit arabow 0\nweight AraBow 2\nweight modunit 7\n";
     // A loose file in a game pack's ai/ folder, and ai/ inside an archive in another.
-    put(root / "mods/game/my_ai/AI/N.TXT", normalFile);
-    archive(root / "mods/game/archived/ai.hpi", {{"ai/n.txt", "limit arafly 0\n"}, {"ai/h.txt", "limit arafly 1\n"}});
-    // Not a level file: at a pack's root (loose or an archive's), or in another folder.
-    put(root / "mods/game/rooted/n.txt", "limit arabow 0\n");
-    archive(root / "mods/game/rooted/root.hpi", {{"h.txt", "limit arabow 0\n"}});
-    put(root / "mods/game/nested/sub/n.txt", "limit arabow 0\n");
-    put(root / "mods/game/nested/sub/ai/n.txt", "limit arabow 0\n");
+    put(root / "mods/game/my_ai/AI/TAKENGINE.TXT", engineFile);
+    archive(root / "mods/game/archived/ai.hpi", {{"ai/takengine.txt", "limit arafly 0\n"}});
+    // The old per-level files are no longer read, in a game pack's ai/ or an archive's.
+    put(root / "mods/game/old/ai/n.txt", "limit arabow 0\n");
+    archive(root / "mods/game/old/ai.hpi", {{"ai/h.txt", "limit arabow 0\n"}, {"ai/ad.txt", "limit arabow 0\n"}});
+    // Not the file: at a pack's root (loose or an archive's), or in another folder.
+    put(root / "mods/game/rooted/takengine.txt", "limit arabow 0\n");
+    archive(root / "mods/game/rooted/root.hpi", {{"takengine.txt", "limit arabow 0\n"}});
+    put(root / "mods/game/nested/sub/takengine.txt", "limit arabow 0\n");
+    put(root / "mods/game/nested/sub/ai/takengine.txt", "limit arabow 0\n");
     // Cosmetic packs and the always-on cosmetic archives can never supply one.
-    put(root / "mods/cosmetic/skin/ai/n.txt", "limit arabow 0\n");
+    put(root / "mods/cosmetic/skin/ai/takengine.txt", "limit arabow 0\n");
     put(root / "mods/cosmetic/skin/sounds/x.wav", "x");
-    archive(root / "mods/cosmetic/always.hpi", {{"ai/n.txt", "limit arabow 0\n"}, {"sounds/y.wav", "y"}});
+    archive(root / "mods/cosmetic/always.hpi", {{"ai/takengine.txt", "limit arabow 0\n"}, {"sounds/y.wav", "y"}});
     // The base install's own ai/ folder (in a root archive) is not a game mod.
-    archive(root / "data.hpi", {{"ai/n.txt", "limit arabow 0\n"}, {"ai/h.txt", "limit arabow 0\n"},
-                                {"gamedata/x.tdf", "x"}});
-    const auto& builtin = ai::builtinProfile(ai::Difficulty::Normal);
+    archive(root / "data.hpi", {{"ai/takengine.txt", "limit arabow 0\n"}, {"gamedata/x.tdf", "x"}});
+    const auto builtinAll = [](const hpi::Vfs::Files* files) {
+        return everyLevel([&](ai::Difficulty d) {
+            std::string s;
+            return same(ai::levelProfile(d, files, nullptr, &s), ai::builtinProfile(d)) && s.empty();
+        });
+    };
     try {
         const auto loose = hpi::modFiles(root, hpi::ModKind::Game, {"my_ai"});
-        check(loose.count("ai/n.txt") == 1, "a game pack's loose ai/n.txt is in its files (case-insensitive name)");
-        std::string source;
-        const auto normal = ai::levelProfile(ai::Difficulty::Normal, &loose, nullptr, &source);
-        check(source == "ai/n.txt" && normal.limit.at("arabow") == 0 && normal.weight.at("arabow") == 2 &&
-              normal.weight.at("modunit") == 7, "ai/n.txt adjusts the Normal profile");
-        ai::Profile expect = builtin;
-        expect.limit["arabow"] = 0; expect.weight["arabow"] = 2; expect.weight["modunit"] = 7;
-        check(same(normal, expect), "units the file does not name keep their built-in values");
-        bool othersUnchanged = true;
-        for (uint8_t level = 0; level < ai::kAiLevels; ++level) {
-            const auto d = ai::Difficulty(level);
-            if (d == ai::Difficulty::Normal) continue;
-            std::string s;
-            othersUnchanged = othersUnchanged && same(ai::levelProfile(d, &loose, nullptr, &s), ai::builtinProfile(d)) && s.empty();
-        }
-        check(othersUnchanged, "ai/n.txt leaves every other level (Easy included) on its built-in table");
+        check(loose.count("ai/takengine.txt") == 1, "a game pack's loose ai/takengine.txt is in its files (case-insensitive name)");
+        const std::vector<std::tuple<const char*, int, int>> changes{{"arabow", 2, 0}, {"modunit", 7, -1}};
+        check(everyLevel([&](ai::Difficulty d) {
+                  std::string source;
+                  const auto p = ai::levelProfile(d, &loose, nullptr, &source);
+                  return source == "ai/takengine.txt" && p.limit.at("arabow") == 0 && p.weight.at("arabow") == 2 &&
+                         p.weight.at("modunit") == 7;
+              }),
+              "ai/takengine.txt adjusts every one of our levels (limit arabow 0: no level builds it)");
+        check(everyLevel([&](ai::Difficulty d) { return same(ai::levelProfile(d, &loose), over(d, changes)); }),
+              "each level applies it over its OWN built-in table; units it does not name keep that level's values");
+        check(same(ai::levelProfile(ai::Difficulty::Classic, &loose), ai::builtinProfile(ai::Difficulty::Classic)),
+              "Classic (RETAIL) never reads ai/takengine.txt");
 
         const auto archived = hpi::modFiles(root, hpi::ModKind::Game, {"archived"});
-        const auto viaArchive = ai::levelProfile(ai::Difficulty::Normal, &archived);
-        check(viaArchive.limit.at("arafly") == 0 && viaArchive.limit.at("arabow") == builtin.limit.at("arabow"),
-              "an ai/n.txt inside an archive in a game pack adjusts Normal");
-        check(ai::levelProfile(ai::Difficulty::Hard, &archived).limit.at("arafly") == 1 &&
-              same(ai::levelProfile(ai::Difficulty::Easy, &archived), ai::builtinProfile(ai::Difficulty::Easy)),
-              "the same archive's ai/h.txt adjusts Hard only");
+        check(everyLevel([&](ai::Difficulty d) { return same(ai::levelProfile(d, &archived), over(d, {{"arafly", -1, 0}})); }),
+              "an ai/takengine.txt inside an archive in a game pack adjusts every level");
 
+        const auto old = hpi::modFiles(root, hpi::ModKind::Game, {"old"});
+        check(old.count("ai/n.txt") && old.count("ai/h.txt") && old.count("ai/ad.txt") && builtinAll(&old),
+              "the old per-level files (ai/n.txt, ai/h.txt, ai/ad.txt) are no longer read");
         const auto rooted = hpi::modFiles(root, hpi::ModKind::Game, {"rooted"});
-        check(rooted.count("n.txt") && rooted.count("h.txt") &&
-              same(ai::levelProfile(ai::Difficulty::Normal, &rooted), builtin) &&
-              same(ai::levelProfile(ai::Difficulty::Hard, &rooted), ai::builtinProfile(ai::Difficulty::Hard)),
-              "a root n.txt / h.txt (loose or an archive's) is not read");
+        check(rooted.count("takengine.txt") && builtinAll(&rooted), "a root takengine.txt (loose or an archive's) is not read");
         const auto nested = hpi::modFiles(root, hpi::ModKind::Game, {"nested"});
-        check(same(ai::levelProfile(ai::Difficulty::Normal, &nested), builtin),
-              "n.txt in another folder (sub/, sub/ai/) is not a level file");
+        check(builtinAll(&nested), "takengine.txt in another folder (sub/, sub/ai/) is not read");
 
         const auto cosmetic = hpi::modFiles(root, hpi::ModKind::Cosmetic, {"skin"});
         const auto always = hpi::alwaysOnModFiles(root);
-        check(cosmetic.count("sounds/x.wav") && !cosmetic.count("ai/n.txt") && always.count("sounds/y.wav") &&
-              !always.count("ai/n.txt"), "cosmetic packs and always-on archives cannot carry ai/n.txt");
+        check(cosmetic.count("sounds/x.wav") && !cosmetic.count("ai/takengine.txt") && always.count("sounds/y.wav") &&
+              !always.count("ai/takengine.txt"), "cosmetic packs and always-on archives cannot carry ai/takengine.txt");
 
         // The real transfer codec: the host's package, decoded as the server receives it.
         const auto package = net::mods::build(root, {"my_ai", "archived"});
         const auto received = net::mods::decode(package->bytes, package->digest);
-        const auto served = ai::levelProfile(ai::Difficulty::Normal, received->files.get());
         // Packs layer alphabetically (later wins): my_ai's file replaces archived's.
-        check(received->files->count("ai/n.txt") && received->files->count("ai/h.txt") && same(served, normal),
-              "the game-mod package carries ai/*.txt to the server (later pack wins)");
+        check(received->files->count("ai/takengine.txt") &&
+                  everyLevel([&](ai::Difficulty d) { return same(ai::levelProfile(d, received->files.get()), over(d, changes)); }),
+              "the game-mod package carries ai/takengine.txt to the server (later pack wins)");
         // The base install's ai/ folder: in the played data, never in the package.
         const auto play = hpi::mountPlayVfs(root, {}, {"skin"});
-        check(play.has("ai/n.txt") && play.has("ai/h.txt") && play.has("sounds/x.wav"),
-              "the played data holds the base install's ai/n.txt and ai/h.txt");
+        check(play.has("ai/takengine.txt") && play.has("sounds/x.wav"),
+              "the played data holds the base install's ai/takengine.txt");
         const auto none = net::mods::build(root, {"rooted"});
         const auto noneReceived = net::mods::decode(none->bytes, none->digest);
-        check(!received->files->count("gamedata/x.tdf") && !noneReceived->files->count("ai/n.txt") &&
-              !noneReceived->files->count("ai/h.txt") &&
-              same(ai::levelProfile(ai::Difficulty::Normal, noneReceived->files.get()), builtin) &&
-              same(ai::levelProfile(ai::Difficulty::Hard, noneReceived->files.get()), ai::builtinProfile(ai::Difficulty::Hard)),
-              "the base install's ai/<x>.txt never reaches the package, so no level reads it");
-        // No game mods and no map package: only the built-in table.
-        check(same(ai::levelProfile(ai::Difficulty::Normal, nullptr), builtin), "no game-mod or map files: the built-in table");
+        check(!received->files->count("gamedata/x.tdf") && !noneReceived->files->count("ai/takengine.txt") &&
+              builtinAll(noneReceived->files.get()),
+              "the base install's ai/takengine.txt never reaches the package, so no level reads it");
+        // No game mods and no map package: only the built-in tables.
+        check(builtinAll(nullptr), "no game-mod or map files: the built-in tables");
     } catch (const std::exception& e) {
         check(false, std::string("mod layers threw: ") + e.what());
     }
@@ -204,12 +222,11 @@ static void mapPackages(const char* data) {
             if (e.is_regular_file() && isHpi(e.path())) fs::create_symlink(fs::absolute(e.path()), root / e.path().filename());
         const auto base = hpi::mountRetailRoot(data);
         const std::string own = "// the map's own profile\nlimit tarcage 0\n";
-        // The map archive also carries a file for each of our levels.
+        // The map archive also carries ai/takengine.txt, and the old per-level files.
         std::vector<std::pair<std::string, std::string>> entries{{"ai/default.txt", own},
-                                                                 {"ai/n.txt", "limit tarcage 0\n"}};
-        for (uint8_t level = 0; level < ai::kAiLevels; ++level)
-            if (const char* f = ai::levelProfileFile(ai::Difficulty(level)); f && std::string(f) != "ai/n.txt")
-                entries.push_back({f, "limit tarcage 1\n"});
+                                                                 {"ai/takengine.txt", "limit tarcage 0\n"}};
+        for (const char* f : {"ai/d.txt", "ai/e.txt", "ai/n.txt", "ai/h.txt", "ai/a.txt", "ai/ad.txt"})
+            entries.push_back({f, "limit tarcage 1\n"});
         for (const char* ext : {".tnt", ".ota", ".crt", ".txt"})
             if (auto b = base.tryRead(std::string("maps/Inner Circle") + ext))
                 entries.push_back({std::string("kmap/AI Circle") + ext, std::string(b->begin(), b->end())});
@@ -219,25 +236,28 @@ static void mapPackages(const char* data) {
         check(pkg->files->count("ai/default.txt") &&
               std::string(pkg->files->at("ai/default.txt").begin(), pkg->files->at("ai/default.txt").end()) == own,
               "a map archive's own ai/default.txt travels in its package");
-        bool levels = true;
-        for (uint8_t level = 0; level < ai::kAiLevels; ++level)
-            if (const char* f = ai::levelProfileFile(ai::Difficulty(level))) levels = levels && pkg->files->count(f);
-        check(levels, "so does each level's file (ai/d.txt ... ai/ad.txt), every name the package accepts");
+        check(pkg->files->count(ai::kEngineProfileFile) == 1, "so does its ai/takengine.txt (the name the package accepts)");
+        bool noOld = true;
+        for (const char* f : {"ai/d.txt", "ai/e.txt", "ai/n.txt", "ai/h.txt", "ai/a.txt", "ai/ad.txt"})
+            noOld = noOld && !pkg->files->count(f);
+        check(noOld, "the old per-level files (ai/d.txt ... ai/ad.txt) stay out of the package");
         {
             const auto received = net::maps::decode(pkg->bytes, pkg->digest);
             const auto* mapFiles = received->files.get();
             std::string source;
             bool fromMap = false;
-            const auto normal = ai::levelProfile(ai::Difficulty::Normal, nullptr, mapFiles, &source, &fromMap);
-            check(normal.limit.at("tarcage") == 0 && source == "ai/n.txt" && fromMap &&
-                  ai::levelProfile(ai::Difficulty::Hard, nullptr, mapFiles).limit.at("tarcage") == 1,
-                  "the map package's ai/n.txt adjusts Normal (and its ai/h.txt Hard)");
-            const hpi::Vfs::Files mods{{"ai/n.txt", {'l', 'i', 'm', 'i', 't', ' ', 't', 'a', 'r', 'c', 'a', 'g', 'e', ' ', '5'}},
+            check(everyLevel([&](ai::Difficulty d) {
+                      const auto p = ai::levelProfile(d, nullptr, mapFiles, &source, &fromMap);
+                      return same(p, over(d, {{"tarcage", -1, 0}})) && source == "ai/takengine.txt" && fromMap;
+                  }),
+                  "the map package's ai/takengine.txt adjusts every level (none builds tarcage)");
+            const hpi::Vfs::Files mods{{"ai/takengine.txt", {'l', 'i', 'm', 'i', 't', ' ', 't', 'a', 'r', 'c', 'a', 'g', 'e', ' ', '5'}},
                                        {"ai/default.txt", {'/', '/', 'm', 'o', 'd'}}};
-            const auto modded = ai::levelProfile(ai::Difficulty::Normal, &mods, mapFiles, &source, &fromMap);
-            check(modded.limit.at("tarcage") == 5 && !fromMap &&
-                  ai::levelProfile(ai::Difficulty::Hard, &mods, mapFiles).limit.at("tarcage") == 1,
-                  "a game mod's ai/n.txt wins over the map's; the map's ai/h.txt still adjusts Hard");
+            check(everyLevel([&](ai::Difficulty d) {
+                      const auto p = ai::levelProfile(d, &mods, mapFiles, &source, &fromMap);
+                      return same(p, over(d, {{"tarcage", -1, 5}})) && !fromMap;
+                  }),
+                  "a game mod's ai/takengine.txt wins over the map's, for every level");
             hpi::Vfs roomView(&base);
             roomView.setMapFiles(received->files);
             ai::ClassicProfileLayer layer;
@@ -263,14 +283,16 @@ static void mapPackages(const char* data) {
         const hpi::Vfs noMaps(&vfs, true);
         const auto plain = ai::classicProfileScript(noMaps, "");
         check(!plain.text.empty() && plain.text != own, "a view without the map package skips Maps/ archives' AI files");
-        // The same package with an AI file the .ota does not choose.
-        auto files = *received->files;
-        files["ai/other.txt"] = {'x'};
-        net::Writer w; w.u32(2); w.str(received->mapPath); w.u32(uint32_t(files.size()));
-        for (const auto& [name, bytes] : files) { w.str(name); w.u32(uint32_t(bytes.size())); w.b.insert(w.b.end(), bytes.begin(), bytes.end()); }
-        bool refused = false;
-        try { net::maps::decode(w.b, ""); } catch (const std::exception&) { refused = true; }
-        check(refused, "a package carrying an AI file its map does not name is refused");
+        // The same package with an AI file the .ota does not choose (an old level file too).
+        for (const char* extra : {"ai/other.txt", "ai/n.txt"}) {
+            auto files = *received->files;
+            files[extra] = {'x'};
+            net::Writer w; w.u32(2); w.str(received->mapPath); w.u32(uint32_t(files.size()));
+            for (const auto& [name, bytes] : files) { w.str(name); w.u32(uint32_t(bytes.size())); w.b.insert(w.b.end(), bytes.begin(), bytes.end()); }
+            bool refused = false;
+            try { net::maps::decode(w.b, ""); } catch (const std::exception&) { refused = true; }
+            check(refused, std::string("a package carrying an AI file its map does not name (") + extra + ") is refused");
+        }
     } catch (const std::exception& e) {
         check(false, std::string("map packages threw: ") + e.what());
     }
@@ -278,7 +300,7 @@ static void mapPackages(const char* data) {
     fs::remove_all(root, ec);
 }
 
-// Two installed single-map archives that carry the same AI file names (ai/n.txt and
+// Two installed single-map archives that carry the same AI file names (ai/takengine.txt and
 // the same ai/<aiprofile>.txt), stamped with date 0 as the Cartographer writes them:
 // the Maps/ mount gives only one archive each path, yet each map's package carries
 // the file from ITS OWN archive. A ticked game mod's copy does not change what a map's
@@ -299,7 +321,7 @@ static void mapClash(const char* data) {
         auto text = [](const std::vector<uint8_t>& b) { return std::string(b.begin(), b.end()); };
         for (const char* name : {"Clash A", "Clash B"}) {
             std::vector<std::pair<std::string, std::string>> entries{
-                {"ai/n.txt", std::string("// ") + name + "'s Normal\nlimit tarcage 0\n"},
+                {"ai/takengine.txt", std::string("// ") + name + "'s levels\nlimit tarcage 0\n"},
                 {"ai/islands.txt", std::string("// ") + name + "'s DEFAULT\nlimit tarcage 0\n"},
                 {std::string("kmap/") + name + ".ota", otaText}};
             for (const char* ext : {".tnt", ".crt", ".txt"})
@@ -307,23 +329,25 @@ static void mapClash(const char* data) {
                     entries.push_back({std::string("kmap/") + name + ext, text(*b)});
             archive(root / "Maps" / (std::string(name) + ".kmp"), entries);
         }
-        put(root / "mods/game/aimod/ai/n.txt", "// the mod's Normal\nlimit tarcage 5\n");
+        put(root / "mods/game/aimod/ai/takengine.txt", "// the mod's levels\nlimit tarcage 5\n");
         for (const bool modded : {false, true}) {
             const auto vfs = modded ? hpi::mountRetailRoot(root, {"aimod"}) : hpi::mountRetailRoot(root);
-            const std::string how = modded ? " (with a game mod's ai/n.txt ticked)" : "";
+            const std::string how = modded ? " (with a game mod's ai/takengine.txt ticked)" : "";
             for (const char* name : {"Clash A", "Clash B"}) {
                 const auto pkg = net::maps::build(vfs, name);
                 const auto& files = *pkg->files;
                 const auto own = [&](const char* path, const char* what) {
                     return files.count(path) && text(files.at(path)) == std::string("// ") + name + "'s " + what + "\nlimit tarcage 0\n";
                 };
-                check(own("ai/n.txt", "Normal"), std::string(name) + "'s package carries its own ai/n.txt" + how);
+                check(own("ai/takengine.txt", "levels"), std::string(name) + "'s package carries its own ai/takengine.txt" + how);
                 check(own("ai/islands.txt", "DEFAULT"), std::string(name) + "'s package carries its own ai/islands.txt" + how);
                 if (modded) {
                     const auto received = net::maps::decode(pkg->bytes, pkg->digest);
-                    const hpi::Vfs::Files mods{{"ai/n.txt", {'l', 'i', 'm', 'i', 't', ' ', 't', 'a', 'r', 'c', 'a', 'g', 'e', ' ', '5'}}};
-                    check(ai::levelProfile(ai::Difficulty::Normal, &mods, received->files.get()).limit.at("tarcage") == 5,
-                          std::string(name) + ": the game mod's ai/n.txt still wins in the room");
+                    const hpi::Vfs::Files mods{{"ai/takengine.txt", {'l', 'i', 'm', 'i', 't', ' ', 't', 'a', 'r', 'c', 'a', 'g', 'e', ' ', '5'}}};
+                    check(everyLevel([&](ai::Difficulty d) {
+                              return ai::levelProfile(d, &mods, received->files.get()).limit.at("tarcage") == 5;
+                          }),
+                          std::string(name) + ": the game mod's ai/takengine.txt still wins in the room");
                 }
             }
             const auto stock = net::maps::build(vfs, "Inner Circle");

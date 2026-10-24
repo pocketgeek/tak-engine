@@ -1667,10 +1667,11 @@ HPI/UFO/KMP archives:
   on at the create screen, then only the host ticks packs; they transfer
   automatically to the server and all players, with checksum verification
   before start. Downloads stay in `ModCache/`; they do not replace installed
-  files. A game pack can also adjust our AI levels' built-in build profiles
-  with `ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt` or
-  `ai/ad.txt` in its `ai/` folder, and so can a map archive's own `ai/`
-  folder (a `.kmp`, for example) (a game pack's file wins)
+  files. A game pack can also adjust our six AI levels' built-in build
+  profiles with one file, `ai/takengine.txt`, in its `ai/` folder, which every
+  level applies on top of its own built-in profile; so can a map archive's own
+  `ai/` folder (a `.kmp`, for example) (a game pack's file wins; the old
+  per-level `ai/d.txt` ... `ai/ad.txt` are no longer read)
   ([AI profiles in game mods](docs/user-guide.md#ai-profiles-in-game-mods)).
 
 Other files directly in `mods/`, `mods/cosmetic/` or `mods/game/` never load.

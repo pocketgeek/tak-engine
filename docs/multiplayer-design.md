@@ -792,12 +792,13 @@ room with game mods on: an offer or chunk from a guest or in a campaign or
 Crusades room, and an offer while game mods are off, are answered with ModError. Replay
 format 10 records the shared package digest (`ReplayHeader::modDigest`, with the
 `gameMods` byte where `overridePolicy` was) and loads it from `ModCache/`.
-The package also carries a pack's `ai/d.txt` ... `ai/ad.txt` (loose in the
-pack's `ai/` folder or under `ai/` in an archive in it), and a map package
-carries the same names when the map's own archive (its `.kmp`) has them
-(`maps::build`, checked on decode). The server's AI levels 0-5 read their own
-file over the built-in profile tables (`src/ai/builtinprofile.h`), from the
-game-mod package, else from the map package. A root `n.txt` is not read, cosmetic
+The package also carries a pack's `ai/takengine.txt` (loose in the pack's `ai/`
+folder or under `ai/` in an archive in it), and a map package carries it when
+the map's own archive (its `.kmp`) has it (`maps::build`, checked on decode). The
+server reads the room's one file, from the game-mod package, else from the map
+package, and each of its AI levels 0-5 applies it over that level's own built-in
+profile table (`src/ai/builtinprofile.h`). The old per-level files `ai/d.txt` ...
+`ai/ad.txt` are not read. A root `takengine.txt` is not read, cosmetic
 packs can never supply `ai/` files, and the base install's `ai/` folder is never
 consulted for these names. Classic reads the map's `ai/<aiprofile>.txt` /
 `ai/default.txt` with the same rule for `ai/` files: game mods, else the map
@@ -903,6 +904,12 @@ builder flyer now closes its loop when the leg starts (`World::openFlightPatrol`
 ground units and unarmed flyers already did. Under 291 such a flyer (drakes, say)
 flew "move A, Shift-patrol B" to B and hovered there until its next order. 291
 replays are refused.
+Protocol 293 changes map and game-mod packages, not the simulation: our six AI
+levels read one file, `ai/takengine.txt`, each applying it over its own built-in
+table, instead of `ai/d.txt` ... `ai/ad.txt`. A map's package carries
+`ai/takengine.txt` and no longer the per-level files (a package naming one is
+refused), so a 292 peer could compute a different digest for a map that carries
+them. 292 replays are refused.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte

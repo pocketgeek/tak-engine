@@ -340,10 +340,10 @@ int main() {
         {   // Check Map carries the AI Profiles checks (aiprofiles.h checkAiMap), notes left out.
             tak::hpi::Vfs none;tak::sim::TypeRegistry empty;
             auto bytes=[](std::string_view text){return std::vector<uint8_t>(text.begin(),text.end());};
-            const cart::AiFiles ai{{"ai/n.txt",bytes("Weight araarch 3\n")},{"ai/notes.txt",bytes("x\n")}};
+            const cart::AiFiles ai{{"ai/takengine.txt",bytes("Weight araarch 3\n")},{"ai/notes.txt",bytes("x\n")}};
             const auto issues=cart::validateAiProfiles(ai,"islands",empty,none);
             auto has=[&](std::string_view text){return std::any_of(issues.begin(),issues.end(),[&](const auto& i){return i.message.find(text)!=std::string::npos;});};
-            check(has("AI profile ai/n.txt: line 1: levels need lowercase 'weight'"),"Check Map reports a level line the parser skips");
+            check(has("AI profile ai/takengine.txt: line 1: levels need lowercase 'weight'"),"Check Map reports a level line the parser skips");
             check(has("AI profile ai/notes.txt: ai/notes.txt is kept in the .kmp but not sent"),"Check Map reports an ai/ file that does not travel");
             check(has("AI profile aiprofile: no ai/islands.txt in this map or the install"),"Check Map reports an aiprofile name with no file");
             check(cart::validateAiProfiles({},"DEFAULT",empty,none).empty(),"a map on the standard profile with no AI files has no AI issues");

@@ -331,8 +331,9 @@ Every level except Retail has its own **build profile** built into the game: a
 weight and a limit for each unit, which decide how often it picks that unit and
 how many of it it may have. (The values are the original game's default AI
 profile, the one these levels were tuned on.) These levels never read the install's
-`ai/*.txt` files; a map or a game mod can change their profiles instead (see
-[AI profiles in game mods](#ai-profiles-in-game-mods)).
+`ai/*.txt` files; a map or a game mod can change all of their profiles at once
+with one file, `ai/takengine.txt`, which each level applies on top of its own
+built-in profile (see [AI profiles in game mods](#ai-profiles-in-game-mods)).
 
 <a id="default"></a>
 
@@ -2073,36 +2074,32 @@ then ticked cosmetic packs.
 
 ### AI profiles in game mods
 
-A game pack can change the build profile of each AI level except Retail with a
-file of its own in the pack's `ai` folder, loose (`mods/game/My AI/ai/n.txt`)
-or in the `ai` folder inside an archive in the pack. A map can too: the map's
-own archive in `Maps/` (a `.kmp` map, for example) may carry the same files in
-its own `ai` folder, and they apply to
-games on that map (in multiplayer they travel with the map). When a game pack and
-the map both have a level's file, the game pack's is used. A file of that name
-anywhere else, such as directly in the pack folder, is not read.
-
-| File | Level |
-| --- | --- |
-| `ai/d.txt` | Defensive |
-| `ai/e.txt` | Easy |
-| `ai/n.txt` | Normal |
-| `ai/h.txt` | Hard |
-| `ai/a.txt` | Absurd |
-| `ai/ad.txt` | Absurdly Defensive |
+A game pack can change the build profiles of our AI levels (Defensive, Easy,
+Normal, Hard, Absurd and Absurdly Defensive; not Retail) with ONE file,
+`ai/takengine.txt`, in the pack's `ai` folder, loose
+(`mods/game/My AI/ai/takengine.txt`) or in the `ai` folder inside an archive in
+the pack. A map can too: the map's own archive in `Maps/` (a `.kmp` map, for
+example) may carry `ai/takengine.txt` in its own `ai` folder, and it applies to
+games on that map (in multiplayer it travels with the map). When a game pack and
+the map both have one, the game pack's is used. A file of that name anywhere
+else, such as directly in the pack folder, is not read.
 
 Each line is `weight <unit> <number>` or `limit <unit> <number>`, with the
 unit's file name (`arabow`, `tarcage`); lines starting with `//` are comments.
-A file changes only the units it names; every other unit keeps the level's
-built-in values. `limit <unit> 0` stops that level building the unit. Only the
-level a file is named for reads it: `ai/n.txt` changes Normal (and the Normal
-AI that takes over a disconnected player's seat), never Easy. Names are not
-case-sensitive. When two ticked packs have the same file, the alphabetically
-later pack wins, as for any file. In multiplayer the files travel with the
-host's game packs. Cosmetic packs and the install itself cannot change these
-levels' profiles, even with an `ai/n.txt` of their own. The Retail AI
-reads none of these files: it reads the map's own AI profile, which a game pack
-or the map's archive can replace (see [Retail AI](#retail-ai)).
+Every one of our levels reads the same file, and each applies it **on top of its
+own built-in profile**: a line replaces that unit's value in every level, and
+every unit the file does not name keeps each level's own built-in values, so the
+levels stay as different from each other as they were. `limit <unit> 0` stops
+every level building the unit. The file also reaches the AI that takes over a
+disconnected player's seat. Names are not case-sensitive; when the file names a
+unit twice, the later line wins. When two ticked packs have the file, the
+alphabetically later pack wins, as for any file. In multiplayer it travels with
+the host's game packs. Cosmetic packs and the install itself cannot change these
+levels' profiles, even with an `ai/takengine.txt` of their own. The older
+per-level files (`ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt`,
+`ai/ad.txt`) are no longer read. The Retail AI never reads `ai/takengine.txt`:
+it reads the map's own AI profile, else `ai/default.txt`, which a game pack or
+the map's archive can replace (see [Retail AI](#retail-ai)).
 
 The old `overrides/` folder is no longer read. Nothing in it is moved or
 changed; move your packs into `mods/cosmetic/` or `mods/game/` yourself, each
@@ -2130,10 +2127,10 @@ and set limits, and presets such as **No flyers** and **No ships**. See
 
 | AI | Looks for, first to last |
 | --- | --- |
-| A level (Normal, say) | `ai/n.txt` in a ticked game pack, then in the map. Neither: the level's built-in profile. The file it finds replaces the other one whole; the two are never mixed. |
+| Our levels (Defensive to Absurdly Defensive) | `ai/takengine.txt` in a ticked game pack, then in the map. Neither: each level's built-in profile. The file it finds replaces the other one whole (the two are never mixed), and each level applies it over its own built-in profile. |
 | Retail AI | The map's own profile name (`ai/islands.txt`) in a ticked game pack, then the map, then the install; only if there is none, `ai/default.txt` in the same order. A game pack's `ai/default.txt` therefore does not replace a map's own profile, but a game pack's `ai/islands.txt` does. |
 
-Two maps that carry the same file name (both `ai/n.txt`, say) each keep and
+Two maps that carry the same file name (both `ai/takengine.txt`, say) each keep and
 send their own. Campaign missions always use the Retail AI with the mission's
 own profile.
 
