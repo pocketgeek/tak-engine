@@ -7,6 +7,8 @@
 #include <sstream>
 #include <string>
 
+#include "ai/classicprofile.h"
+
 namespace tak::ai {
 
 namespace {
@@ -25,7 +27,7 @@ constexpr Entry kTuned[] = {
     {"arafly", 10, 4},       {"aragod", 0, 0},        {"aragren", 8, 10},
     {"arakeep", 10, 2},      {"araknigh", 5, 16},     {"aralode", 10, 7},
     {"aramana", 5, 8},       {"arangate", 0, 0},      {"arapal", 8, 12},
-    {"arapries", 10, 4},     {"arapult", 1, 8},       {"araseige", 8, 10},
+    {"arapries", 10, 4},     {"arapult", 1, 8},       {"arasiege", 8, 10},
     {"arasmith", 8, 16},     {"araspy", 4, 4},        {"arassh", 1, 12},
     {"arasword", 5, 12},     {"aratre", 1, 3},        {"arawall", 0, 0},
     {"arawar", 1, 4},        {"creacad", 10, 2},      {"creaeri", 25, 1},
@@ -117,6 +119,7 @@ void applyProfileText(std::string_view text, Profile& prof) {
         std::istringstream ss(line);
         if (!(ss >> kw >> unit >> v)) continue;
         std::transform(unit.begin(), unit.end(), unit.begin(), ::tolower);
+        unit = classicUnitSpelling(unit);   // the shipped files' araseige
         if (kw == "weight") prof.weight[unit] = v;
         else if (kw == "limit") prof.limit[unit] = v;
     }

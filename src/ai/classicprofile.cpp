@@ -45,11 +45,16 @@ std::vector<std::string_view> tokens(std::string_view line) {
 
 // Misspelt unit names in the shipped profiles, read as the unit they mean. Retail
 // ignores them: IPData's default.txt and 11 other profiles say `araseige`, so
-// its AI builds the Rolling Tower without limit. Applied only when no type has the
-// misspelt name.
+// its AI builds the Rolling Tower without limit.
 constexpr std::pair<std::string_view, std::string_view> kMisspelt[] = {{"araseige", "arasiege"}};
 
 }  // namespace
+
+std::string_view classicUnitSpelling(std::string_view name) {
+    for (const auto& [wrong, right] : kMisspelt)
+        if (name == wrong) return right;
+    return name;
+}
 
 float classicAtof(std::string_view s) {
     size_t i = 0;
@@ -160,8 +165,7 @@ void ClassicProfile::execute(std::string_view script, const ClassicCatalogue& ca
         const std::vector<uint16_t>* targets = nullptr;
         bool exact = false;
         auto it = catalogue.byName.find(word);
-        for (const auto& [wrong, right] : kMisspelt)
-            if (it == catalogue.byName.end() && word == wrong) it = catalogue.byName.find(std::string(right));
+        if (it == catalogue.byName.end()) it = catalogue.byName.find(std::string(classicUnitSpelling(word)));
         if (it != catalogue.byName.end() && it->second != 0) {
             one[0] = it->second;
             targets = &one;

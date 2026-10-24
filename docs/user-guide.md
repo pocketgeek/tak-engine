@@ -397,8 +397,8 @@ quirks included:
   short of. Mapmakers give a map its own profile in the Cartographer (see
   [Making AI profiles](#making-ai-profiles)).
 - One fix over the original: the shipped profiles misspell the Rolling Tower
-  (`araseige`), so the original AI built it without limit. TAK Engine reads that
-  name as the Rolling Tower, so the profile's limit applies (10 in
+  (`araseige`), so the original AI built it without limit. TAK Engine reads
+  either spelling as the Rolling Tower, so the profile's limit applies (10 in
   `ai/default.txt`).
 - It has no difficulty setting and no income bonus.
 - It is **weaker than Normal**. It builds a few lodestones at a time and often

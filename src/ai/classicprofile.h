@@ -76,6 +76,10 @@ struct ClassicProfile {
     }
 };
 
+// The unit a misspelt name in the shipped profiles means (lowercased in and out:
+// "araseige" -> "arasiege"), else `name` itself. Both profile readers apply it
+// to a name no type has, so either spelling works.
+std::string_view classicUnitSpelling(std::string_view name);
 // retail's C-library number readers as the profile executor uses them.
 float classicAtof(std::string_view token);
 int32_t classicAtoi(std::string_view token);

@@ -81,6 +81,11 @@ static void tables() {
     ai::applyProfileText("// comment\r\nweight AraBow 3\r\nlimit arabow 0\nlimit arabow 2 trailing\nplan x 1\n/weight arafly 9\nweight arafly\n", p);
     check(p.weight.size() == 1 && p.weight.at("arabow") == 3 && p.limit.size() == 1 && p.limit.at("arabow") == 2,
           "line format: lowercased units, CRLF, later line wins, comments/other keywords/short lines skipped");
+    ai::Profile tower;
+    ai::applyProfileText("weight AraSeige 3\nlimit arasiege 5\n", tower);
+    check(tower.weight.size() == 1 && tower.weight.at("arasiege") == 3 && tower.limit.at("arasiege") == 5 &&
+          ai::builtinProfile(ai::Difficulty::Normal).limit.at("arasiege") == 10,
+          "the Rolling Tower reads under either spelling (the shipped files say araseige); the built-in limit is 10");
 }
 
 static void put(const std::filesystem::path& file, const std::string& text) {
