@@ -13,7 +13,7 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 [Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [Quick start](docs/quick-start.md) · [User guide](docs/user-guide.md) · [Map editor guide](docs/cartographer-guide.md) · [Changelog](CHANGELOG.md) · [Build from source](docs/development.md)
 
 <a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors"></a>
-<!-- SHOT-0.9.0: title -- (must: version) title menu, three doors, VERSION 0.9.0 -->
+<!-- SHOT-0.9.0: title -- (must: current picture shows an older VERSION) title menu, three doors, VERSION 0.9.0 -->
 
 </div>
 
@@ -91,7 +91,7 @@ Full history: [CHANGELOG](CHANGELOG.md).
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/cartographer.png"><img src="docs/img/cartographer.png" alt="Cartographer editing a map, with its toolbar, terrain canvas, browser and minimap"></a><br><sub>Cartographer, the map editor</sub>
-    <!-- SHOT-0.9.0: cartographer-main -- (must: four-tool toolbar) Cartographer on Ulasem Arena with the five-tool toolbar, browser and minimap --></td>
+    <!-- SHOT-0.9.0: cartographer-main -- (must: current picture shows the old four-tool toolbar) Cartographer on Ulasem Arena with the five-tool toolbar, browser and minimap --></td>
     <td width="50%"><a href="docs/img/results.jpg"><img src="docs/img/results.jpg" alt="Post-game statistics with faction emblems and player colours"></a><br><sub>Post-game statistics</sub>
     <!-- SHOT-0.9.0: readme-results -- post-game statistics screen with faction emblems and player colours --></td>
   </tr>
@@ -105,8 +105,8 @@ Full history: [CHANGELOG](CHANGELOG.md).
 
 Get the current version from the
 [latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
-Every file name starts with `tak-engine-<version>-` (Linux packages, Windows
-installer, DMGs) or `takclient-<version>-` (ZIPs).
+Each file name starts with `tak-engine-<version>-` (Linux packages, Windows
+installer, DMGs) or `takclient-<version>-` (ZIPs), followed by:
 
 | System | File |
 | --- | --- |
@@ -142,8 +142,8 @@ provides only graphics, sound and windowing.
 
 Every package holds the game, the Cartographer map editor, the dedicated server
 `takserver` and the offline `crusades_admin` tool. No server shortcut is added
-and no server starts by itself. Updating? See what carries over in the
-[CHANGELOG](CHANGELOG.md).
+and no server starts by itself. Updating? Install the new version over the old
+one; [Updating](docs/user-guide.md#updating) says what carries over.
 
 ## Getting started
 

@@ -219,7 +219,7 @@ archive supplies a given file.
 ## The main menu
 
 ![The title menu with its three doors and the version number](img/title.jpg)
-<!-- SHOT-0.9.0: title -- (must: version) title menu, three doors, VERSION 0.9.0 -->
+<!-- SHOT-0.9.0: title -- (must: current picture shows an older VERSION) title menu, three doors, VERSION 0.9.0 -->
 
 *The title menu. The doors open Single-Player, Multiplayer and Campaign; the version is shown at the bottom.*
 
@@ -1776,8 +1776,8 @@ player's game stays in step.
   your own computer by itself.
 - **Online with friends:** everyone signs in to the same server and one of you
   creates a game, with a password if you want to keep it private; the others
-  join it from the game browser. The list opens on the official public server
-  (marked **DEFAULT**); servers you have used before are listed under it.
+  join it from the game browser. The list opens on the default server (marked
+  **DEFAULT**); servers you have used before are listed under it.
 - **On your own server:** if you would rather host, run `takserver` on a machine
   your friends can reach and give them its address to type under **CUSTOM...**.
   Only that machine needs an open port; see [Running a server](#running-a-server)
@@ -2407,7 +2407,7 @@ own profile.
 ## Map editor
 
 ![Cartographer unit browser, terrain canvas and minimap](img/cartographer.png)
-<!-- SHOT-0.9.0: cartographer-main -- (must: four-tool toolbar) editor on Ulasem Arena, five tools -->
+<!-- SHOT-0.9.0: cartographer-main -- (must: current picture shows the old four-tool toolbar) editor on Ulasem Arena, five tools -->
 
 *Cartographer's Units browser, map canvas and minimap.*
 
@@ -2443,7 +2443,7 @@ either program changes it for both.
   selected piece again steps to its next variant.
 
   ![Cartographer's terrain browser showing the All sections group (555 pieces, 1261 sections) with cliff pieces named Cliff N, Cliff E, Cliff NE out and so on, each with a variant badge such as 1/3, beside the map canvas](img/guide/cartographer-terrain.jpg)
-  <!-- SHOT-0.9.0: guide-cartographer-terrain -- (must: 0.8.3 build) grouped terrain browser on Ulasem Arena with variant badges on the pieces -->
+  <!-- SHOT-0.9.0: guide-cartographer-terrain -- (must: current picture is from the 0.8.3 build) grouped terrain browser on Ulasem Arena with variant badges on the pieces -->
 
   *The grouped terrain browser on Ulasem Arena. The badge on each piece shows
   which of its variants is chosen and how many it has.*

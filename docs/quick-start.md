@@ -37,7 +37,7 @@ expansion adds the Creon side and its campaign.
 ## Your first skirmish
 
 ![The title menu with its three doors: Single-Player, Multiplayer and Campaign](img/title.jpg)
-<!-- SHOT-0.9.0: title -- (must: version) title menu, three doors, VERSION 0.9.0 -->
+<!-- SHOT-0.9.0: title -- (must: current picture shows an older VERSION) title menu, three doors, VERSION 0.9.0 -->
 
 *The main menu. The doors open Single-Player, Multiplayer and Campaign.*
 

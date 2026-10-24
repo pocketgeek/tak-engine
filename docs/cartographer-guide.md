@@ -304,7 +304,7 @@ map. It needs no map.
 ## The editor window
 
 ![The Cartographer window on Ulasem Arena with numbered markers: 1 menu bar, 2 tool buttons, 3 mode buttons, 4 REGIONS, 5 TEST MAP, 6 browser search, 7 group button, 8 counter line, 9 variant badge, 10 browser scrollbar, 11 map canvas, 12 minimap, 13 status bar](img/cartographer/window-annotated.jpg)
-<!-- SHOT-0.9.0: carto-window-annotated -- (must: four-tool toolbar; redraw numbered markers 1-13 for the five tools) Ulasem Arena, Terrain tool, view on the arena at 35%; whole window -->
+<!-- SHOT-0.9.0: carto-window-annotated -- (must: current picture shows the old four-tool toolbar; redraw numbered markers 1-13 for the five tools) Ulasem Arena, Terrain tool, view on the arena at 35%; whole window -->
 
 *The editor on Ulasem Arena, with the Terrain tool chosen. Numbered markers were drawn onto the picture.*
 
@@ -379,7 +379,7 @@ controls** shows a summary of the controls.
 ### Menus
 
 ![The six Cartographer menus opened one at a time: FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP](img/cartographer/menus.jpg)
-<!-- SHOT-0.9.0: carto-menus -- (must: missing File > New AI mod / Open AI mod and Scenario > AI Profiles) composite of the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each cropped to the menu -->
+<!-- SHOT-0.9.0: carto-menus -- (must: current picture is missing File > New AI mod / Open AI mod and Scenario > AI Profiles) composite of the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each cropped to the menu -->
 
 *All six menus, each shown open on its own.*
 
@@ -479,7 +479,7 @@ The **TERRAIN** browser shows two columns of thumbnails with a short name under
 each. The chosen piece has a gold frame.
 
 ![The terrain group list opened over the browser: ALL SECTIONS 1261, then CLIFFS, TRANSITIONS, WATER & COAST, PATHS & ROADS, HILLS & MOUNTAINS and FLATS, each followed by indented folders such as Coast Cliffs Jungle 37 and Low Plazas Jungle 88](img/cartographer/terrain-groups.jpg)
-<!-- SHOT-0.9.0: carto-terrain-groups -- (must: four-tool toolbar) Ulasem Arena, terrain group list open, five tool buttons; whole window -->
+<!-- SHOT-0.9.0: carto-terrain-groups -- (must: current picture shows the old four-tool toolbar) Ulasem Arena, terrain group list open, five tool buttons; whole window -->
 
 *The group list for a Zhon map (Ulasem Arena). Each kind is followed by the original game's folders, with section counts.*
 
@@ -613,7 +613,7 @@ The **View** menu can colour the map to show how the game sees it:
 | **Overlay: slopes** | Darker green is flat ground; brighter orange is steeper. |
 
 ![The movement overlay for a Horseman on Ulasem Arena: the sandy arena floor and the jungle floor are green; the steep band along the edge of the arena floor, the ground around a stone ruin and the bases of trees are red; a legend at the top left reads Horseman: GREEN=allowed RED=blocked (terrain/features only)](img/cartographer/overlay-movement.jpg)
-<!-- SHOT-0.9.0: carto-overlay-movement -- (must: four-tool toolbar) Ulasem Arena at 40%, Horseman chosen, View > Overlay: movement; whole window -->
+<!-- SHOT-0.9.0: carto-overlay-movement -- (must: current picture shows the old four-tool toolbar) Ulasem Arena at 40%, Horseman chosen, View > Overlay: movement; whole window -->
 
 *Overlay: movement for the Horseman on Ulasem Arena. The steep edge of the arena floor, the stone ruin and every tree block a Horseman.*
 
@@ -633,7 +633,7 @@ does (whether it blocks units, can be reclaimed for mana and so on) from its own
 definitions; Cartographer only places them.
 
 ![The Features tool on Ulasem Arena: the browser shows the trees category with palm and jungle trees, five palm trees stand on the sand, and a see-through palm tree with a yellow outline previews the next placement](img/cartographer/features.jpg)
-<!-- SHOT-0.9.0: carto-features -- (must: four-tool toolbar) Ulasem Arena, Features tool, trees category, five palm trees placed and a sixth previewed; whole window -->
+<!-- SHOT-0.9.0: carto-features -- (must: current picture shows the old four-tool toolbar) Ulasem Arena, Features tool, trees category, five palm trees placed and a sixth previewed; whole window -->
 
 *Placing palm trees in Ulasem Arena. The see-through tree shows where the next click will put one.*
 
@@ -782,7 +782,7 @@ and special objects such as the flags in *King of the Hill*.
 > placed units are not used. See [Scenario maps](#scenario-maps).
 
 ![The Units tool on King of the Hill: the browser filtered to GROUND and ARAMON lists Archer, Mage Archer, Barbarian and other Aramon ground units with their portraits; on the map, seven of Player 1's blue units are selected, each with a gold footprint outline and a short facing line, around start 1 and its Player 1 region](img/cartographer/units.jpg)
-<!-- SHOT-0.9.0: carto-units -- (must: four-tool toolbar) King of the Hill, Units tool filtered to GROUND and ARAMON, Player 1 units box-selected at 75%; whole window -->
+<!-- SHOT-0.9.0: carto-units -- (must: current picture shows the old four-tool toolbar) King of the Hill, Units tool filtered to GROUND and ARAMON, Player 1 units box-selected at 75%; whole window -->
 
 *King of the Hill, Units tool. The browser is filtered to Aramon ground units; seven of Player 1's units are box-selected.*
 
@@ -912,7 +912,7 @@ Start positions decide where players begin. A skirmish map needs at least two;
 the game seats at most eight.
 
 ![The Starts tool on Ulasem Arena zoomed out to the whole map: eight gold diamonds numbered 1 to 8 spread around the map, and the browser lists PLAYER 5, 6, 7, 8, 2, 4, 1, 3](img/cartographer/starts.jpg)
-<!-- SHOT-0.9.0: carto-starts -- (must: four-tool toolbar) Ulasem Arena, Starts tool, View > Fit map; whole window -->
+<!-- SHOT-0.9.0: carto-starts -- (must: current picture shows the old four-tool toolbar) Ulasem Arena, Starts tool, View > Fit map; whole window -->
 
 *Ulasem Arena's eight start positions. The browser lists them in the order the map stores them.*
 
@@ -1253,7 +1253,7 @@ A **region** is a named rectangle of map cells. Rules use regions as places:
 "if I control a unit **at The Hill**", "create a Knight **at Reinforcements**".
 
 ![King of the Hill in region mode: The Hill region is selected in the middle of the map, outlined in yellow with eight square handles, with four flags (one per player) inside it; smaller Player 1 to 4 regions surround each player's start, and units in four colours stand around them](img/cartographer/regions.jpg)
-<!-- SHOT-0.9.0: carto-regions -- (must: four-tool toolbar) King of the Hill at Fit map, REGIONS on, The Hill selected with handles; whole window -->
+<!-- SHOT-0.9.0: carto-regions -- (must: current picture shows the old four-tool toolbar) King of the Hill at Fit map, REGIONS on, The Hill selected with handles; whole window -->
 
 *King of the Hill with the REGIONS button on and The Hill selected. Its handles resize it; dragging inside moves it.*
 
@@ -1870,7 +1870,7 @@ Map**. Cartographer saves a temporary copy of the map, **including unsaved
 changes**, and starts the game with it.
 
 ![Cartographer with the TEST MAP message: Opened a private game lobby from a snapshot. Seat the players used by your scenario, then start. Close the game to return here. Your document and save destination are unchanged. The toolbar button reads TEST RUNNING](img/cartographer/test-map.jpg)
-<!-- SHOT-0.9.0: carto-test-map -- (must: four-tool toolbar) King of the Hill after F5: TEST MAP message, TEST RUNNING on the toolbar; whole window -->
+<!-- SHOT-0.9.0: carto-test-map -- (must: current picture shows the old four-tool toolbar) King of the Hill after F5: TEST MAP message, TEST RUNNING on the toolbar; whole window -->
 
 *After F5 on King of the Hill. The toolbar button reads TEST RUNNING until the game closes.*
 
