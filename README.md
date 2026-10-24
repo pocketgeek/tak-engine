@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.8.13-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.8.14-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -53,26 +53,40 @@ assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data. New players can start with the
 [quick-start controls reference](docs/quick-start.md).
 
-## Since 0.8.13 (not yet released)
+## New in 0.8.14
 
-These changes keep protocol **293** and replay format **14**: they play with
-0.8.13 and 0.8.12, both ways.
+0.8.14 changes only how mods are found and chosen: the protocol stays at
+**293** and replays at format **14**, so **0.8.14 plays with 0.8.13 and 0.8.12
+and plays their replays, both ways**. A server and its players may run any of
+the three. Updating from 0.8.11 or earlier still means updating the server and
+every player together.
 
 - **Always-enabled mods, in folders.** Packs you always want go in
   `mods/cosmetic/always_enabled/<pack>/` (loaded in every game, campaigns
-  included) and `mods/game/always_enabled/<pack>/` (applied in every game you
-  host, sent to every player like ticked game packs; never in campaigns or
-  Crusades battles, and a joining player's own are not used). They are
-  ordinary pack folders, shown locked on the room's **ALWAYS ON** lines.
-  **A `.hpi` placed directly in `mods/cosmetic/` is no longer loaded: move it
-  into its own folder, for example `mods/cosmetic/always_enabled/click/click.hpi`.**
-  The game does not move it for you. See [Mods](docs/user-guide.md#mods).
+  included, never sent) and `mods/game/always_enabled/<pack>/` (applied in
+  every game you host, single player or multiplayer, and sent to every player
+  like ticked game packs; never in campaigns or Crusades battles, and a
+  joining player's own are not used). They are ordinary pack folders, shown
+  locked on the room's **ALWAYS ON** lines.
+- **Move your old always-on archives.** A `.hpi` placed directly in
+  `mods/cosmetic/` (such as `mods/cosmetic/click.hpi`) **is no longer loaded**:
+  move it into its own folder, for example
+  `mods/cosmetic/always_enabled/click/click.hpi`. The game does not move it
+  for you. See [Mods](docs/user-guide.md#mods).
 - **No GAME MODS switch.** Multiplayer works like single player: the host of
   any room except a campaign ticks game packs in the room. The setup screen's
   **GAME MODS: ON/OFF** option is gone. A room hosted by 0.8.12 or 0.8.13 with
-  it off still plays without game packs.
+  it off still plays without any game packs.
+- **Cartographer** edits ordinary game packs only, and its **TEST IN GAME**
+  and **Test Map** messages name your always-enabled game packs, which apply in
+  the test game too.
 
-## New in 0.8.13
+Saved `.kmp` maps, generated-map recipes and settings carry over (the saved
+GAME MODS choice is ignored). No new runtime dependencies or retail assets are
+included. See the [release notes](docs/release-0.8.14-notes.md) and
+[validation report](docs/release-0.8.14-validation.md).
+
+### Previously in 0.8.13
 
 0.8.13 changes only the game's interface and the Cartographer: the protocol
 stays at **293** and replays at format **14**, so **0.8.13 plays with 0.8.12 and
@@ -258,8 +272,10 @@ every player together. Retail pathfinding plays exactly as in 0.8.7.
 - **Mods replace overrides.** Packs now go in `mods/cosmetic/<pack>/` (art and
   sound, each player's own choice, never sent) or `mods/game/<pack>/` (units
   and rules: always available in single player; in multiplayer when the host
-  turns **Game mods** on, and only the host picks them). A `.hpi` placed
-  directly in `mods/cosmetic/` is always on, in every game. The old
+  turns **Game mods** on, and only the host picks them; since 0.8.14 there is
+  no switch). A `.hpi` placed directly in `mods/cosmetic/` is always on, in
+  every game (until 0.8.14, which reads `mods/cosmetic/always_enabled/<pack>/`
+  instead). The old
   `overrides/` folder is no longer read and nothing in it is moved: move your
   packs yourself. See [Mods](docs/user-guide.md#mods).
 - **Power codes.** A new **Power codes** match option, in single player and
@@ -1217,7 +1233,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.8.13 uses generator v9;
+the same named map when the game starts. Version 0.8.14 uses generator v9;
 v8 recipes still regenerate identically, older seed recipes are unsupported, and saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -1225,7 +1241,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.8.13 uses protocol **293** and generator version 9; generated-map recipes from 0.8.0 on still work.
+Version 0.8.14 uses protocol **293** and generator version 9; generated-map recipes from 0.8.0 on still work.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -1517,13 +1533,13 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same network protocol and compatible game data** on every participant.
-Version **0.8.13 uses protocol 293**, the same as 0.8.12, including authoritative pathfinding
+Version **0.8.14 uses protocol 293**, the same as 0.8.13 and 0.8.12, including authoritative pathfinding
 selection, shared game-mod pack transfer, Darien Crusades campaign messages, the
 disconnect wait with its AI takeover, the Retail AI level and each map's own AI
-files. 0.8.13 and 0.8.12 play together (a server and its players may mix the two) and play
-each other's replays. **Neither plays with 0.8.11 (protocol 290) or any earlier version,
-nor their replays**: a 0.8.13 or 0.8.12 client cannot join an older server,
-nor an older client a 0.8.13 or 0.8.12 server. Update from 0.8.11 or earlier with the server
+files. 0.8.14, 0.8.13 and 0.8.12 play together (a server and its players may mix them) and play
+each other's replays. **None of them plays with 0.8.11 (protocol 290) or any earlier version,
+nor their replays**: a 0.8.14, 0.8.13 or 0.8.12 client cannot join an older server,
+nor an older client a 0.8.14, 0.8.13 or 0.8.12 server. Update from 0.8.11 or earlier with the server
 and all players together.
 Replay format is **14** (checkpoints also carry a position digest, and the header
 records the Map Scenario and Power Codes options), and
@@ -1767,7 +1783,7 @@ HPI/UFO/KMP archives:
 
 Other files directly in `mods/`, `mods/cosmetic/`, `mods/game/` or an
 `always_enabled/` folder never load; a `.hpi` placed directly in
-`mods/cosmetic/` (always on up to 0.8.13) must move to
+`mods/cosmetic/` (always on up to 0.8.13, no longer loaded since 0.8.14) must move to
 `mods/cosmetic/always_enabled/<name>/`. An always-enabled pack hides an
 ordinary pack of the same kind and name (ignoring case).
 Campaigns and Crusades battles use neither game packs nor ticked cosmetic packs. Alphabetically later
@@ -1775,7 +1791,7 @@ pack names win file conflicts; inside each kind always-enabled packs load
 first, then ticked ones; game packs load before cosmetic packs. Pack choices are remembered. The old
 `overrides/` folder is no longer read and is left untouched. See
 [mod details](docs/user-guide.md#mods).
-Version 0.8.13 uses protocol **293**, as 0.8.12 does; servers and clients must all run 0.8.13 or 0.8.12 (0.8.11 uses 290, 0.8.10 289, 0.8.9 and 0.8.8 288).
+Version 0.8.14 uses protocol **293**, as 0.8.13 and 0.8.12 do; servers and clients must all run 0.8.14, 0.8.13 or 0.8.12 (0.8.11 uses 290, 0.8.10 289, 0.8.9 and 0.8.8 288).
 
 
 ## License

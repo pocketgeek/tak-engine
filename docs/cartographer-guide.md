@@ -11,7 +11,17 @@ with every TAK Engine package, next to the game.
 This guide is for players and mapmakers. It explains what you see on screen and
 what each control does, from a first map to sharing a finished one.
 
-> **Version note.** This guide describes TAK Engine 0.8.13. New in 0.8.13:
+> **Version note.** This guide describes TAK Engine 0.8.14. New in 0.8.14:
+>
+> - the game's always-enabled game packs (`mods/game/always_enabled/`):
+>   Cartographer lists and edits [ordinary packs only](#saving-as-a-game-mod),
+>   refuses a pack name an always-enabled pack already uses (or
+>   `always_enabled` itself), and the **TEST IN GAME** and **Test Map**
+>   messages name the always-enabled game packs that also apply in the test
+>   game. A game mod applies when the host ticks it in the room, in multiplayer
+>   as in single player (the game's GAME MODS switch is gone).
+>
+> New in 0.8.13:
 >
 > - Cartographer starts on [an empty window](#the-first-screen) with no map;
 >   everything starts from the **File** menu (it used to open the New Map

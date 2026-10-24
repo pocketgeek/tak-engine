@@ -2,9 +2,9 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.13** (network protocol **293**, replay format
-**14**, both the same as 0.8.12; 0.8.13 plays with 0.8.12 and its replays, but
-not with 0.8.11 or earlier, nor their replays). It is
+This guide covers **TAK Engine 0.8.14** (network protocol **293**, replay format
+**14**, both the same as 0.8.13 and 0.8.12; 0.8.14 plays with 0.8.13 and 0.8.12
+and their replays, but not with 0.8.11 or earlier, nor their replays). It is
 written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -284,7 +284,7 @@ change in the room, until the game starts.
 | **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. The host can change it in the room by clicking it, until the game starts; then it is fixed. See [Spectating](#spectating). |
 | **Spectate (Watch AIs)** | Single-player only: fill every slot with AIs and watch. |
 | **Power codes** | **Off** (the default) or **On**. On lets every player in the game type the original game's cheat codes in the chat box, such as **+ATM** and **+NowISee**. See [Power codes](#power-codes). Always off in campaigns and Crusades battles. It cannot be changed in the room. |
-| **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered if you have a game mod pack (ticked in the room or always enabled), in single player and multiplayer alike, with the warning *PACK NEEDED:* and the unit, in case a pack supplies it. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
+| **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered if your install has a game mod pack (one you could tick in the room, or an always-enabled one), in single player and multiplayer alike, with the warning *PACK NEEDED:* and the unit, in case a pack supplies it. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
 
 Your choices are remembered for next time, except passwords, Spectate and Map
 scenario.
@@ -1765,8 +1765,10 @@ others. In single-player there is nobody to wait for, so none of this applies.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.13 uses network protocol **293**, the same as 0.8.12, so 0.8.13 and
-0.8.12 play together: a server and its players may run either. It cannot play
+Version 0.8.14 uses network protocol **293**, the same as 0.8.13 and 0.8.12, so
+0.8.14, 0.8.13 and 0.8.12 play together: a server and its players may run any of
+them. (A room hosted by 0.8.12 or 0.8.13 may have game mods switched off; see
+[Mods](#mods).) It cannot play
 with 0.8.11 (protocol 290) or any earlier version: the server turns away a client
 whose protocol differs from its own, so when updating from 0.8.11 or earlier a
 server and all of its players must update together.
@@ -2016,8 +2018,8 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.13 and 0.8.12 both play protocol-293 recordings only, so each
-  plays the other's replays, while replays recorded by 0.8.11, 0.8.10 or earlier
+  recorded it (0.8.14, 0.8.13 and 0.8.12 all play protocol-293 recordings only,
+  so each plays the others' replays, while replays recorded by 0.8.11, 0.8.10 or earlier
   need the version that recorded them);
 - the same game data and map.
 
@@ -2070,13 +2072,20 @@ its folder out of `always_enabled/`.
   until you rename or move one of them. A saved tick of that name is kept and
   has no effect while the always-enabled pack is there.
 
-**Moving from 0.8.13 and earlier.** A `.hpi` placed directly in
+**Moving from 0.8.13 and earlier.** Since 0.8.14, a `.hpi` placed directly in
 `mods/cosmetic/` (the old always-on archives, such as `mods/cosmetic/click.hpi`)
-is **no longer loaded**. Move each one into its own folder in
-`mods/cosmetic/always_enabled/`, for example
-`mods/cosmetic/always_enabled/click/click.hpi`. The game does not move it for
-you. Likewise, anything placed loose in `mods/game/` was never loaded; put it in a
-pack folder.
+is **no longer loaded**, and the game does not move it for you. For each one:
+
+1. Make a folder for it in `mods/cosmetic/always_enabled/`, named after the
+   archive, for example `mods/cosmetic/always_enabled/click/`.
+2. Move the archive into that folder:
+   `mods/cosmetic/always_enabled/click/click.hpi`.
+3. Open a game room: the pack's folder name now shows on the **ALWAYS ON** line
+   under **COSMETIC MODS**.
+
+Anything placed loose in `mods/game/` was never loaded; put it in a pack folder.
+Your ticked packs carry over unchanged. The old **GAME MODS: ON/OFF** choice of
+the multiplayer setup screen is gone, and a saved choice is ignored.
 
 A cosmetic mod never stops a game. If an always-enabled or a ticked cosmetic
 pack cannot be loaded (more than 256 MB of mods, for example; a damaged archive
@@ -2103,7 +2112,10 @@ win when they change the same file. Game packs load first, then cosmetic packs.
   once the packs check out (nothing when the host has no game pack in play).
   Transfers are limited to 256 MB. A room hosted by a 0.8.12 or 0.8.13 player
   may still have its **Game mods** switch off; it then says **GAME MODS: OFF
-  (HOST)** and runs no game packs at all.
+  (HOST)** and runs no game packs at all, your always-enabled ones included. A
+  0.8.12 or 0.8.13 player joining your room sees it as a room with game mods
+  on: **HOST:** names your packs, always-enabled ones included (or **NONE
+  SELECTED**), and their own game receives and verifies them as usual.
 - **Campaigns** and **Crusades battles** use the original game data plus your
   always-enabled cosmetic packs only: no game packs (always-enabled ones
   included) and no ticked cosmetic packs.
@@ -2289,7 +2301,7 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together when the protocol changes.** A server
-only accepts clients of the same protocol version (0.8.13 and 0.8.12 use protocol 293;
+only accepts clients of the same protocol version (0.8.14, 0.8.13 and 0.8.12 use protocol 293;
 0.8.11 uses 290, 0.8.10 289, 0.8.9 and 0.8.8 288).
 
 ---
@@ -2395,7 +2407,7 @@ the system's permission to use the microphone.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.13 and 0.8.12 use protocol 293, 0.8.11 uses 290, 0.8.10 uses 289,
+one that recorded them (0.8.14, 0.8.13 and 0.8.12 use protocol 293, 0.8.11 uses 290, 0.8.10 uses 289,
 0.8.9 and 0.8.8 use 288). See
 [Replays](#replays).
 

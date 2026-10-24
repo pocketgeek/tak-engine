@@ -179,8 +179,8 @@ agreed:
   the host's always-enabled `mods/game/always_enabled/<pack>` folders and its
   ticked `mods/game/<pack>` folders are packaged and transferred (see
   [Per-room game mods](#per-room-game-mods)); every player mounts that verified
-  package at game start so its registry matches the referee's. After
-  0.8.13 (still protocol 293) every host sends 1, single player and
+  package at game start so its registry matches the referee's. From
+  0.8.14 (still protocol 293) every host sends 1, single player and
   multiplayer alike: the create screen's GAME MODS toggle is gone. 0 comes only
   from a 0.8.12/0.8.13 host that turned the toggle off, or a debug `--mods`
   launch, and is honoured as before (no package, no game packs at all).
@@ -925,7 +925,12 @@ them. 292 replays are refused.
 0.8.12 ships protocol 293; it plays with neither 0.8.11 nor any earlier version,
 nor their replays. 0.8.13 keeps protocol 293 (client and Cartographer changes
 only), so it plays with 0.8.12 and its replays, both ways, and likewise not with
-0.8.11 or earlier.
+0.8.11 or earlier. 0.8.14 keeps protocol 293 too: its mods changes (no GAME MODS
+toggle, `always_enabled/` pack folders) are client logic, server comments and
+the Cartographer; the `GameOptions` byte, the package format and the replay
+header are unchanged, so it plays with 0.8.13 and 0.8.12 and their replays, both
+ways. A 0.8.12/0.8.13 host's `gameMods=0` is still honoured, and a 0.8.14 host's
+package (always-enabled names included) decodes on 0.8.12/0.8.13.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
@@ -1211,6 +1216,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.8.13 (peers and server) requires protocol 293, as 0.8.12 does; 0.8.11 required 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.8.14 (peers and server) requires protocol 293, as 0.8.13 and 0.8.12 do; 0.8.11 required 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.
