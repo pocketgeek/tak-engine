@@ -1,6 +1,20 @@
 # README and user-guide screenshots
 
-Refreshed on 2026-10-23 for **0.8.11**. 0.8.11 added the **Opponent AI** line
+Refreshed on 2026-10-23 for **0.8.12**. The 0.8.12 build (version set to
+0.8.12 locally, ahead of the release commit; no capture patch was needed)
+retook `title.jpg` (VERSION 0.8.12) the same way as for 0.8.11. No other
+picture shows what 0.8.12 changed. The lobby and room pictures show no AI seat
+at level 6, so the RETAIL name does not appear in them (see below). The campaign
+order hint (ATTACK: CLICK TARGET...) now sits below the objectives panel, but no
+picture shows an order armed in a mission: `guide/campaign-briefing.jpg` shows
+the paused briefing with the objectives button only. The Shift-queued flyer
+patrol has no picture. The Cartographer AI Profiles pictures
+(`cartographer/ai-profiles.jpg`, `ai-group-rules.jpg`, `ai-takengine.jpg` and
+`ai-mod.jpg`) were taken on `main` before the release with the final window
+text (one TAK ENGINE AI tab, the AI mod footer that says the install never
+supplies `ai/takengine.txt`) and were checked by eye again; they are kept.
+
+**0.8.11** added the **Opponent AI** line
 to the campaign book's left page, wraps a build menu too long for one row into
 more rows left of the command panel, and drops the blue production bar over a
 factory or conjurer. The 0.8.11 build (version set to 0.8.11 locally, ahead of
@@ -139,7 +153,7 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.8.11 (0.8.11 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
+| `title.jpg` | Title menu showing version 0.8.12 (0.8.12 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
 | `battle.jpg` | **Benchmark** run (Settings → Benchmark, Absurd intensity) on Ulasem Arena, 55 game seconds in. Eight server AIs fight, all five sides. The camera, at 1.3× zoom, shows Aramon (magenta) and Taros (yellow) armies, with Black Dragons, clashing at a sandy arena; damaged units of every side show health bars. A real feature with no fixture; spectator view, so no fog. Rendered by the 0.8.8 build |
 | `dragons.jpg` | **Development scene.** Five server AIs, one per side, from a stress-test start (300-unit cap) with gods on, 90 game seconds in. Creon Neo Dragons breathe fire on an Aramon siege column; health bars show for every side. Spectator view, 1.4× zoom. Rendered by the 0.8.8 build |
 | `flyers.jpg` | **Development scene, spawned.** Legion pathfinding, 22 s after one move order east-south-east. A 44-unit Zhon formation: Trolls, Stone Giants and Jungle Orcs, with Gryphons, Harpies and Drakes holding rows of stations over the front of the ground (new in 0.8.0, protocol 254; before, over its middle). `1F`, solid green, marks members of formation 1. Nothing is selected, so the information bar is empty (0.8.1). Fog off, 1.45× zoom. Rendered by the 0.8.8 build (protocol 288) |
@@ -365,7 +379,7 @@ Capture scripts, job lists and the encoder are in the release-preparation
 scratch directories, `$SCR/shared/release-0.7.26/shots`,
 `$SCR/shared/release-0.7.27/shots`, `$SCR/shared/release-0.7.28/shots`,
 `$SCR/shared/release-0.8.0/shots`, `$SCR/shared/release-0.8.1/shots`,
-`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots`, `~/tak-tmp/scratch/release-086/shots`, `~/tak-tmp/scratch/release-087/shots`, `~/tak-tmp/scratch/release-088/shots`, `~/tak-tmp/scratch/release-089/shots`, `~/tak-tmp/scratch/release-0810/shots` and `~/tak-tmp/scratch/release-0811/shots`. Raw PNGs, logs, profiles
+`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots`, `~/tak-tmp/scratch/release-086/shots`, `~/tak-tmp/scratch/release-087/shots`, `~/tak-tmp/scratch/release-088/shots`, `~/tak-tmp/scratch/release-089/shots`, `~/tak-tmp/scratch/release-0810/shots`, `~/tak-tmp/scratch/release-0811/shots` and `~/tak-tmp/scratch/release-0812/shots`. Raw PNGs, logs, profiles
 and the SHA-256 manifest are kept locally in the worktree's ignored
 `build-o2/capture` folder. Keep retail archives, extracted assets and temporary
 capture files out of Git. When refreshing, rerender and inspect every view, then
