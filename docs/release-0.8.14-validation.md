@@ -42,9 +42,12 @@ TODO-LEAD: tag line: Tagged `v0.8.14` at `<sha>` (full `<full sha>`, annotated t
   (`README.md`, `CLAUDE.md`, `docs/user-guide.md`, `docs/cartographer-guide.md`,
   `docs/multiplayer-design.md`, `docs/img/README.md`).
 
-TODO-LEAD: the preparation commits on top of `5fa673d0` (screenshots, this
-docs commit, fixes, the fill commit), and whether `git fetch` before landing
-showed anything else on `origin/main`.
+The preparation commits on top of `5fa673d0`, cherry-picked linearly onto
+`origin/main` (a `git fetch` before landing showed nothing else there):
+`618021cb` (screenshots), `cf67bacd` (version 0.8.14, release notes, this
+report's skeleton), `529b5dca` (this report's screenshots section) and the
+commit filling this report's local checks, screenshots and scope. No code
+fix was needed.
 
 No hashed simulation state changed: no commit touches `src/sim/` or `src/ai/`,
 and the `src/net/` and `src/server/` changes do not reach the lockstep, the
@@ -95,50 +98,46 @@ referee or any message layout.
   screen. `.hpi` archives directly in `mods/cosmetic/` are no longer loaded
   (the player moves them; nothing is migrated).
 
-TODO-LEAD: state whether any mixed-version check was run (a 0.8.13 client in a
-0.8.14 room or the reverse, a 0.8.13 replay on 0.8.14). If none:
-**No mixed-version check was run.** Compatibility rests on the source above.
+**No mixed-version check was run.** No 0.8.13 or 0.8.12 client joined a
+0.8.14 server or host (or the reverse), and no older replay was played on
+0.8.14; compatibility rests on the source above.
 
 ## Local preparation checks
 
-Testing is reduced for this release, by the user's rule (minimal testing). The
-checks ran on Linux, cores 4-23, with an optimized Debug build (`build-o2`,
-`-O2 -g`, ccache + mold, `TAK_TEST_DATA` = the retail install), made fresh in a
-detached worktree at `5fa673d0`, all targets. No Release, `-O0` Debug, Clang or
-ASan suite was run, and no repeat runs.
+These ran on Linux, cores 4-23, with an optimized Debug build (`build-o2`, `-O2 -g`, ccache + mold, `TAK_TEST_DATA` = the retail install). The build was made fresh in a detached worktree at `5fa673d0`, all targets; `--version` reports `0.8.13 (build v0.8.13-3-g5fa673d05f08)` (the CMake version is still 0.8.13 at this commit). The Release `build/takclient` and `build/takserver` in the main checkout report the same build id, so they were already at `5fa673d0` and were not rebuilt. By the user's rule (minimal testing), no Release, `-O0` Debug, Clang or ASan suite was run, and no repeat runs.
 
-- **Full CTest, once, on optimized Debug (`-O2`) at `5fa673d0`:**
-  TODO-LEAD (filled by the lander: passed/total, `-LE nightly -j16`, wall
-  time, rc, scratch HOME and XDG_DATA_HOME, defined and excluded counts; the
-  new `no_game_mods_toggle` and the changed `mod_packs`, `mod_settings`,
-  `mod_transfer`, `ai_profile`, `cartographer_aiprofile_ui` and
-  `server_public` results; any failure and its rerun; log path under
-  `~/tak-tmp/scratch/release-0814/`). `--version` there reports
-  TODO-LEAD (the CMake version is still 0.8.13 at `5fa673d0`).
-- **Detmath guard** (`tools/check-detmath.sh`): TODO-LEAD.
-- **Cross-compiler golden hash** (`tools/check-determinism.sh`): TODO-LEAD
-  (expected `dcef618cd2e4d558`, the 0.8.13 golden).
-- **`--mpai` golden hashes.** Inner Circle, `takserver --local --no-auth
-  --seed 1`, a clean scratch profile per game, optimized Debug binaries at
-  `5fa673d0`, `TAK_LEGION=1` for Legion and `TAK_AI_LEVEL=6` for the Retail AI.
-  The retail install (`TAK_TEST_DATA`, `/home/pocket_geek/TAK/assets/game`,
-  which a worktree's `assets` symlink points at) has no `mods/` folder, so no
-  always-enabled game pack (which a host would apply) enters these games.
-  TODO-LEAD: confirm all five ended `err=none end=timelimit` with no desync or
-  referee-suspect line, and fill the hashes.
+- **Full suite.** The one full `ctest` run on `-O2` at `5fa673d0` (`-LE nightly -j16`, scratch HOME/XDG_DATA_HOME) passed **609/609** (`rc=0`, 359 s real). 771 tests are defined, the 164 `nightly`-labelled ones excluded. The mods tests passed inside this run: `no_game_mods_toggle` (new: the create screen has no GAME MODS option), `mod_packs`, `mod_settings`, `mod_transfer`, `settings`, `server_public`, `ai_profile`, `ai_mod_profile` (59.5 s; it timed out once in 0.8.13's run and did not here) and the `cartographer_aiprofile*` set. No test failed or needed a rerun. Log: `~/tak-tmp/scratch/release-0814/ctest.out`.
+- **Detmath guard** (`tools/check-detmath.sh`): OK. The sim path has no direct libm transcendentals and no `std::atomic_ref`.
+- **Cross-compiler golden hash** (`tools/check-determinism.sh`): g++ and clang++ at -O0/-O2/-O3 all give `dcef618cd2e4d558`, the same golden as 0.8.13. The aarch64 legs were SKIPPED because there is no target libc or headers locally; the macOS CI leg covers ARM64. Log: `~/tak-tmp/scratch/release-0814/check-determinism.log`.
+- **`--mpai` Inner Circle, seed 1** (`takserver --local --no-auth --seed 1`, a clean scratch HOME/XDG_DATA_HOME per game, `TAK_LEGION=1` for Legion, `TAK_AI_LEVEL=6` for the Retail AI). All five games ended `err=none end=timelimit`, and no log has a desync or referee-suspect line.
 
-  | Mode | Length | Hash (units) | 0.8.13 |
-  | --- | --- | --- | --- |
-  | Retail | 60 s | TODO-LEAD | `b353410003e98dd5` |
-  | Retail | 300 s | TODO-LEAD | `a3d953803a064191` |
-  | Legion | 60 s | TODO-LEAD | `0825aeb9e8139203` |
-  | Legion | 300 s | TODO-LEAD | `ce5c4ba7562e53b9` |
-  | Retail AI | 60 s | TODO-LEAD | `14849c00bc6e2a19` |
+| Mode | 60 s | 300 s |
+|---|---|---|
+| Retail pathfinding (Normal AI) | `b353410003e98dd5` (4 units) | `a3d953803a064191` (13 units) |
+| Legion | `0825aeb9e8139203` (4 units) | `ce5c4ba7562e53b9` (18 units) |
+| Retail AI (`TAK_AI_LEVEL=6`) | `14849c00bc6e2a19` (4 units) | not run |
 
-  Logs: `~/tak-tmp/scratch/release-0814/mpai/`.
-- **Final source** (the preparation commits on `5fa673d0`): TODO-LEAD (every
-  `build-o2` target rebuilt, `takclient --version` reports `0.8.14 (build
-  ...)`, `ctest -L quick` result, log path).
+Every hash matches 0.8.13 (and 0.8.12), as expected: `git diff --stat v0.8.13 5fa673d0` lists nothing under `src/sim`, `src/ai`, `src/tnt`, `src/campaign`, `src/server/crusades`, `src/net/replayhdr.h` or `src/net/crusades.h`. The `src/net` and `src/server` changes are client mod-selection logic (`client.cpp`/`client.h`) and comments (`protocol.h`, `server.cpp`). The Retail AI server again logged `game 1: DEFAULT AI profile ai/DEFAULT.txt from the base data`; this is log wording only, as before. Logs: `~/tak-tmp/scratch/release-0814/mpai/`.
+
+- **Compatibility constants** (checked at `5fa673d0`): `kNetVersion` **293** (`src/net/protocol.h`, unchanged from `v0.8.13`) and `kReplayFormat` **14** (`src/net/replayhdr.h`, unchanged). `tools/replay_test.cpp` still pins `kNetVersion == 293` and `kReplayFormat == 14`. Unchanged: map generator `formatVer` 9 (`src/tnt/mapgen.h`), campaign `kVersion` 4 (`src/net/crusades.h`), `kSchemaVersion` 9 (`src/server/crusades/store.cpp`).
+- **How versions are compared** (source check for the notes):
+  - *Joining a server.* `Server::handshake` (`src/server/server.cpp`) rejects a Hello only when `ver != kNetVersion`, or when the client's pure-retail gameplay-data hash differs from the referee's. The client sends an empty build id (`src/net/client.cpp`, "version-gated only") and the server discards it (`(void)build`). `tak::kVersion` is never compared. So **0.8.14, 0.8.13 and 0.8.12 clients and servers play together in any mix**; 0.8.11 or earlier (protocol 290 or lower) cannot.
+  - *Replays.* A replay loads when `supportedReplayProtocol(format, protocol)` holds (`1 <= format <= 14` and `protocol == kNetVersion`). All three builds write format 14 under protocol 293, so **replays play back in both directions** between 0.8.14 and 0.8.13/0.8.12. The replay header is unchanged.
+  - *The game-mods byte.* `GameOptions::gameMods` keeps its meaning (0 = no game packs, 1 = the host's package is sent to and mounted by every player). A 0.8.14 host always sends 1 for a non-campaign room. The server still accepts either value from any host (`o.gameMods = o.gameMods ? 1 : 0`, on create and on options updates), and forces 0 for campaign rooms (`!mission.empty()`), campaign battles (`campaignBattleId`) and Crusades rooms (`opts.crusades=1; gameMods=0`).
+  - *A 0.8.12/0.8.13 host with GAME MODS: OFF.* The room's byte is 0, so no game pack applies to anyone: the server refuses every `ModOffer` ("game mods are off in this game"), and a 0.8.14 client's `modVfs`/`roomDataVfs` mount the retail data alone. A 0.8.14 guest's own `mods/game/always_enabled/` packs never apply in any room it joins (they are used only through `hostGameModPacks()`, when it is the host), so "off" means off, always-enabled packs included. A 0.8.14 guest shows the column as **GAME MODS: OFF (HOST)**. Each player's own cosmetic packs (always-enabled and ticked) still load, as cosmetic mods always have.
+  - *A 0.8.13 joiner in a 0.8.14 host's room.* It sees an ordinary game-mods-on room: the **GAME MODS** heading and **HOST:** with the package's pack names, which are the host's always-enabled and ticked game packs merged into one sorted list (`hostGameModPacks()`), with no mark showing which are always-enabled; **NONE SELECTED** when the host has neither. Package names stay plain (no `/`, `\`, NUL or newline, strictly sorted), so `modpackage.cpp`'s 0.8.12/0.8.13 decode accepts them, and the joiner downloads, verifies and mounts the package like any other. The joiner's own 0.8.13 always-on `mods/cosmetic/*.hpi` archives still load on its own client (cosmetic, never sent).
+  - Because the sim is byte-identical, mixed games also play out the same on every build, which the unchanged `--mpai` hashes confirm.
+
+**No mixed-version check was run.** No 0.8.13 or 0.8.12 client joined a 0.8.14 server or host (or the reverse), and no older replay was played on 0.8.14; the points above rest on the source.
+
+- **Final source** (the preparation commits on `5fa673d0`, at `529b5dca`; the
+  fill commit after it changes only this report): every `build-o2` target was
+  rebuilt (`rc=0`), `takclient --version` reports `0.8.14 (build
+  v0.8.13-6-g529b5dcae9b5)`, and `ctest -L quick -LE nightly -j16` (cores
+  4-23, scratch HOME/XDG_DATA_HOME) passed **501/501** (`rc=0`, 141 s real).
+  Logs: `~/tak-tmp/scratch/release-0814/final-build.log` and `final-quick.out`.
+
+Failures: none.
 
 ## Remote multiplayer sweep
 
@@ -209,12 +208,12 @@ title alt text (version 0.8.14), gallery footnote ("0.7.25 to 0.8.14 builds"),
 the user guide's `room-mods-power-codes.jpg` alt text and `docs/img/README.md`
 were updated with them. Scripts and raw captures:
 `~/tak-tmp/scratch/release-0814/shots/`.
-TODO-LEAD: the landing commit of the screenshots.
+They landed on main as `618021cb`.
 
 ## Limits
 
-- TODO-LEAD: no game mixing 0.8.14 with 0.8.13 or 0.8.12 was attempted
-  (confirm); compatibility rests on the unchanged protocol, replay format and
+- No game mixing 0.8.14 with 0.8.13 or 0.8.12 was attempted;
+  compatibility rests on the unchanged protocol, replay format and
   source above.
 - New: a `.hpi` left directly in `mods/cosmetic/` is silently not loaded (no
   warning, no migration), by design; the notes and user guide give the move.
@@ -238,5 +237,6 @@ TODO-LEAD: the landing commit of the screenshots.
   **DEFAULT AI**.
 - `ai_mod_profile` hit its 600 s timeout in the 0.8.11 and 0.8.13 full suites
   and passed alone in 56 s each time (possible intermittent hang, not
-  investigated). TODO-LEAD: whether it recurred in this release's full suite.
+  investigated). It did not recur in this release's full suite (passed in
+  59.5 s).
 - Tag CI: TODO-LEAD (flakes, reruns, force-cancels, or none).
