@@ -139,7 +139,7 @@ player together. The existing AI levels and the game itself play exactly as in
   lodestones and mana buildings as targets, and its Monarch runs when badly hurt.
   It is **weaker than Normal**, and a Taros DEFAULT AI often grows slowly. A
   dropped player's seat is still taken over by a Normal AI. See
-  [Default](docs/user-guide.md#default).
+  [Retail AI](docs/user-guide.md#retail-ai) (shown as RETAIL since 0.8.12).
 - **DEFAULT AI campaign opponents.** Campaign missions' computer players are
   always the **DEFAULT AI**: they use each mission's own AI profile and its timed mass
   attack. See [Campaigns](docs/user-guide.md#campaigns).

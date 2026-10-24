@@ -40,7 +40,7 @@ but campaign missions now always play **DEFAULT AI** opponents.
 - **The disconnect takeover is still Normal.** When a dropped player's time runs
   out, a Normal AI takes the seat, as in 0.8.10.
 
-See [Default](user-guide.md#default) in the user guide. Developer documents
+See [Retail AI](user-guide.md#retail-ai) (named DEFAULT in 0.8.11, RETAIL since 0.8.12) in the user guide. Developer documents
 and the source call this level **Classic** (`ai::Difficulty::Classic`,
 `classic-ai-plan.md`); only its player-visible name is DEFAULT.
 
