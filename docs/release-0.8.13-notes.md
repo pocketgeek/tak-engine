@@ -121,8 +121,8 @@ in source against `v0.8.12`: `kNetVersion` in `src/net/protocol.h`,
 and `kSchemaVersion` (`src/server/crusades/store.cpp`).
 
 - **Multiplayer.** A server accepts a client whose protocol equals its own (and
-  whose original game files match the server's); the release number and build
-  id are only logged. So **0.8.13 and 0.8.12 clients and servers play together
+  whose original game files match the server's); the release number is not
+  sent, and the build id is sent but ignored. So **0.8.13 and 0.8.12 clients and servers play together
   in any mix**. 0.8.11 or older clients still cannot join a 0.8.13 or 0.8.12
   server, nor can 0.8.13 clients join an older one.
 - **Replays.** Playback requires the recording's protocol to equal the

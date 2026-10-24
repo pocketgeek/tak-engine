@@ -911,8 +911,9 @@ table, instead of `ai/d.txt` ... `ai/ad.txt`. A map's package carries
 refused), so a 292 peer could compute a different digest for a map that carries
 them. 292 replays are refused.
 0.8.12 ships protocol 293; it plays with neither 0.8.11 nor any earlier version,
-nor their replays. So does 0.8.13 (client and Cartographer changes only; it plays
-with 0.8.12 and its replays).
+nor their replays. 0.8.13 keeps protocol 293 (client and Cartographer changes
+only), so it plays with 0.8.12 and its replays, both ways, and likewise not with
+0.8.11 or earlier.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte

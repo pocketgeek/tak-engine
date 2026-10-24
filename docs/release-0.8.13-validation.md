@@ -133,13 +133,26 @@ and time, asset count).
 
 ## Screenshots
 
-TODO-LEAD: which pictures were retaken, if any (for example `docs/img/title.jpg`
-for VERSION 0.8.13, and the README title alt text, gallery footnote and
-`docs/img/README.md` that follow it), and which were checked and kept. Notes
-for the check: `docs/img/cartographer/new-map.jpg` still shows the 0.8.12
-launch (the New Map dialog over a blank brown map); it now illustrates only the
-New Map dialog section. No current picture shows the removed armed-order
-banner; confirm.
+Retaken on branch `task-release-0813-shots` (`9e42f24c`):
+
+- `docs/img/title.jpg`: VERSION 0.8.13, from an `-O2` build with the version
+  set to 0.8.13 locally (`~/tak-tmp/scratch/release-0813/shots/title.py`); a
+  pixel diff against the 0.8.12 file shows only the version digits changed.
+  The README title alt text and gallery footnote ("0.7.25 to 0.8.13 builds")
+  follow it.
+- `docs/img/cartographer/new-map.jpg`: retaken; the New Map dialog opened with
+  **File → New map** over the dimmed empty window (NO MAP OPEN in the status
+  bar), whole 921 × 691 window.
+- `docs/img/cartographer/empty-window.jpg`: new; the empty window of a bare
+  launch, added to the guide's "The first screen".
+
+Both Cartographer pictures come from the `cartographer_ui_test` workflow
+`blank-launch` (passed) with `TAK_EDITOR_TEST_CAPTURE`, SDL `offscreen` and a
+scratch profile, plus a capture-only patch, not committed
+(`~/tak-tmp/scratch/release-0813/shots/carto-capture.patch`).
+`docs/img/README.md` records both. No picture showed the removed armed-order
+banner (the top-left area of every gallery, guide and quick-start picture was
+checked), so none was retaken for it; every other picture is kept.
 
 ## Limits
 

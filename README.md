@@ -112,7 +112,7 @@ every player together.
   [Retail AI](docs/user-guide.md#retail-ai).
 - **Campaigns.** You can always change the game speed (**+** / **−**) in a
   mission, and the order hint (**ATTACK: CLICK TARGET...**) sits below the
-  objectives panel instead of over it.
+  objectives panel instead of over it (0.8.13 removes the hint).
 - **Flyer patrols.** An armed flyer or flying builder told to move, then
   Shift-patrol, now patrols instead of flying to the point and hovering there.
 
