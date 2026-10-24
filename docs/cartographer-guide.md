@@ -11,35 +11,8 @@ with every TAK Engine package, next to the game.
 This guide is for players and mapmakers. It explains what you see on screen and
 what each control does, from a first map to sharing a finished one.
 
-> **Version note.** This guide describes TAK Engine 0.8.14. New in 0.8.14:
->
-> - the game's always-enabled game packs (`mods/game/always_enabled/`):
->   Cartographer lists and edits [ordinary packs only](#saving-as-a-game-mod),
->   refuses a pack name an always-enabled pack already uses (or
->   `always_enabled` itself), and the **TEST IN GAME** and **Test Map**
->   messages name the always-enabled game packs that also apply in the test
->   game. A game mod applies when the host ticks it in the room, in multiplayer
->   as in single player (the game's GAME MODS switch is gone).
->
-> New in 0.8.13:
->
-> - Cartographer starts on [an empty window](#the-first-screen) with no map;
->   everything starts from the **File** menu (it used to open the New Map
->   dialog over a blank, unsaved map). A map that fails to open at start, or
->   cancelling New map or Open map, also ends there.
->
-> New in 0.8.12:
->
-> - the [AI Profiles window](#the-ai-profiles-window) (**Scenario → AI
->   Profiles...**, **A**), which edits a map's AI profiles and saves them as a
->   game mod;
-> - a map keeping its own `ai/` files through open, save, Test Map and recovery;
-> - our six AI levels reading one file, `ai/takengine.txt`, instead of one file
->   each (the window's TAK ENGINE AI tab, PREVIEW LEVEL and MERGE INTO TAK
->   ENGINE);
-> - [making an AI mod without a map](#making-an-ai-mod-without-a-map) (**File →
->   New AI mod...** and **Open AI mod...**, **TEST IN GAME...**, and the game's
->   `--game-mod` option).
+This guide describes Cartographer in TAK Engine 0.9.0; changes by version are in
+the [CHANGELOG](../CHANGELOG.md).
 
 Every picture in this guide is a real Cartographer screen (the Test Map lobby is
 the game's), using the original game's art. Some put two moments side by side,
@@ -51,26 +24,27 @@ and the first one has numbered markers added. The maps shown are shipped maps
 1. [What Cartographer does](#what-cartographer-does)
 2. [Getting started](#getting-started)
 3. [Walkthrough: your first 2-player map](#walkthrough-your-first-2-player-map)
-4. [The editor window](#the-editor-window)
-5. [Moving around the map](#moving-around-the-map)
-6. [Tools, modes and layers](#tools-modes-and-layers)
-7. [Terrain](#terrain)
-8. [Features: trees, rocks, mana and ruins](#features-trees-rocks-mana-and-ruins)
-9. [Blocked cells](#blocked-cells)
-10. [Units](#units)
-11. [Start positions](#start-positions)
-12. [Selecting, copying and undo](#selecting-copying-and-undo)
-13. [Symmetry](#symmetry)
-14. [Generating a random map](#generating-a-random-map)
-15. [Scenario maps](#scenario-maps)
-16. [AI profiles](#ai-profiles)
-17. [Checking your map](#checking-your-map)
-18. [Testing a map in the game](#testing-a-map-in-the-game)
-19. [Saving, opening and sharing](#saving-opening-and-sharing)
-20. [Preferences](#preferences)
-21. [Keyboard and mouse reference](#keyboard-and-mouse-reference)
-22. [Troubleshooting and FAQ](#troubleshooting-and-faq)
-23. [Known limits](#known-limits)
+4. [Quick how-tos](#quick-how-tos): [a scenario map](#make-a-scenario-map-in-6-steps), [an AI mod](#make-an-ai-mod-in-5-steps)
+5. [The editor window](#the-editor-window)
+6. [Moving around the map](#moving-around-the-map)
+7. [Tools, modes and layers](#tools-modes-and-layers)
+8. [Terrain](#terrain)
+9. [Features: trees, rocks, mana and ruins](#features-trees-rocks-mana-and-ruins)
+10. [Blocked cells](#blocked-cells)
+11. [Units](#units)
+12. [Start positions](#start-positions)
+13. [Selecting, copying and undo](#selecting-copying-and-undo)
+14. [Symmetry](#symmetry)
+15. [Generating a random map](#generating-a-random-map)
+16. [Scenario maps](#scenario-maps)
+17. [AI profiles](#ai-profiles)
+18. [Checking your map](#checking-your-map)
+19. [Testing a map in the game](#testing-a-map-in-the-game)
+20. [Saving, opening and sharing](#saving-opening-and-sharing)
+21. [Preferences](#preferences)
+22. [Keyboard and mouse reference](#keyboard-and-mouse-reference)
+23. [Troubleshooting and FAQ](#troubleshooting-and-faq)
+24. [Known limits](#known-limits)
 
 ---
 
@@ -165,12 +139,14 @@ starts that cannot be opened shows **OPEN FAILED** and then the same empty
 window.
 
 ![The Cartographer window with no map open: the menu bar FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP over an empty toolbar and a dark, empty middle that reads NO MAP OPEN, then File > New map (Ctrl+N) or Open map (Ctrl+O), then AI mods: File > New AI mod or Open AI mod; the status bar at the bottom also reads NO MAP OPEN](img/cartographer/empty-window.jpg)
+<!-- SHOT-0.9.0: carto-empty-window -- bare launch, fresh profile: empty window, NO MAP OPEN hint naming File > New map, Open map and the AI mod commands; whole window -->
 
 *The empty window that a bare launch opens. Nothing is drawn until a map is open.*
 
 ### The New Map dialog
 
 ![The NEW MAP dialog over the dimmed empty window, whose status bar reads NO MAP OPEN: map name Untitled, width 8, height 8, world aramon, with CREATE, RANDOM and CANCEL buttons](img/cartographer/new-map.jpg)
+<!-- SHOT-0.9.0: carto-new-map -- File > New map over the empty window: New Map dialog (Untitled, 8 x 8, aramon), NO MAP OPEN in the status bar; whole window -->
 
 *The **New Map** dialog, opened with **File → New map** over the empty window.*
 
@@ -200,6 +176,9 @@ shortcut, without a map named) shows a **Recover map** message:
 | **Recover** | Opens the recovered map, still unsaved, with its name and save folder. |
 | **Discard recovery** | Deletes the recovery copy and continues to the empty window. |
 | **Cancel** | Closes Cartographer and keeps the recovery copy for next time. |
+
+If the newest recovery copy is damaged, Cartographer tries the one before it. If
+neither can be read, the message says why and both copies are kept.
 
 Saving the map, or closing Cartographer normally, removes the recovery copies.
 
@@ -267,9 +246,65 @@ links to the section that explains it in full.
 
 ---
 
+## Quick how-tos
+
+Each of these is the short path; the linked sections explain every step.
+
+### Make a scenario map in 6 steps
+
+Start from a map with start positions, for example the one from the
+[walkthrough](#walkthrough-your-first-2-player-map).
+
+1. **Place the armies.** Choose **UNITS**, press **[** or **]** to set the owner
+   (the status bar's `PLAYER: 0` is Player 1), and click units onto the map.
+   Placed units replace the starting Monarchs, so give Player 1 something that can
+   fight, build or move. ([Units](#units))
+2. **Mark the places.** Click **REGIONS** and, in PLACE mode, drag a rectangle
+   for each area the rules need; press **Enter** to name it, for example
+   *The Hill*. ([Regions](#regions))
+3. **Write the rules.** Press **T** for Scenario Scripting. **TEMPLATES** inserts
+   ready-made rules (an opening message, timed victory, reaching a region,
+   eliminating opponents, losing all forces, reinforcements); check the unit,
+   region and time they name. Give every player a way to win and to lose: the
+   usual endings are off in a scenario. ([Rules and triggers](#rules-and-triggers))
+4. **Limit the units (optional).** Press **U** for Use Only units and tick the
+   types players may build. ([Use Only units](#use-only-units))
+5. **Check and test.** Press **C** for Check Map and fix what it lists, then
+   **F5** to play the scenario in a private lobby; seat every player the scenario
+   needs. ([Checking your map](#checking-your-map),
+   [Testing](#testing-a-map-in-the-game))
+6. **Save and play.** Press **Ctrl+S**. In the game, pick the map on the skirmish
+   or multiplayer create screen and turn **MAP SCENARIO** on under the map
+   preview. ([Sharing a scenario](#sharing-a-scenario))
+
+### Make an AI mod in 5 steps
+
+An AI mod is a game mod that changes how the computer players build, on every
+map. It needs no map.
+
+1. **Create the pack.** Choose **File → New AI mod...** (**Ctrl+Shift+N**) and
+   type a pack name. The AI Profiles window opens with that pack.
+   ([Making an AI mod without a map](#making-an-ai-mod-without-a-map))
+2. **Pick the AI.** The **TAK ENGINE AI** tab changes our six levels
+   (`ai/takengine.txt`); **DEFAULT AI** changes the RETAIL level
+   (`ai/default.txt`). Use **PREVIEW LEVEL** to see what one level will do.
+3. **Change units.** In a unit's row, click **BUILD** to switch it off or on, or
+   click the WEIGHT (CHANCE on DEFAULT AI) or LIMIT cell, type a value and press
+   **Enter**. A preset changes many units at once.
+   ([Setting a unit](#setting-a-unit), [Presets](#presets))
+4. **Save.** Click **SAVE TO PACK...**. It writes `mods/game/<pack>/ai/` in your
+   game data folder.
+5. **Test and play.** **TEST IN GAME...** picks a map and opens a private lobby
+   with the pack ticked; seat computer players at the levels you changed
+   (**RETAIL** for the DEFAULT AI). To play with it later, the host ticks the
+   pack under GAME MODS in the room.
+
+---
+
 ## The editor window
 
 ![The Cartographer window on Ulasem Arena with numbered markers: 1 menu bar, 2 tool buttons, 3 mode buttons, 4 REGIONS, 5 TEST MAP, 6 browser search, 7 group button, 8 counter line, 9 variant badge, 10 browser scrollbar, 11 map canvas, 12 minimap, 13 status bar](img/cartographer/window-annotated.jpg)
+<!-- SHOT-0.9.0: carto-window-annotated -- (must: four-tool toolbar; redraw numbered markers 1-13 for the five tools) Ulasem Arena, Terrain tool, view on the arena at 35%; whole window -->
 
 *The editor on Ulasem Arena, with the Terrain tool chosen. Numbered markers were drawn onto the picture.*
 
@@ -278,7 +313,7 @@ links to the section that explains it in full.
    Checkbox items show `[X]` or `[ ]`, and choices show `(*)` or `( )`.
 2. **Tool buttons**: **TERRAIN**, **FEATURES**, **UNITS**, **STARTS** and
    **BLOCKED** choose what you are editing. The active tool is gold. **Tab**
-   steps through them. (The picture predates the BLOCKED button.)
+   steps through them.
 3. **Mode buttons**: **PLACE**, **SELECT**, **ERASE** and **PAN** choose what
    the left mouse button does. The active mode is green.
 4. **REGIONS**: switches to editing named trigger areas. See
@@ -344,6 +379,7 @@ controls** shows a summary of the controls.
 ### Menus
 
 ![The six Cartographer menus opened one at a time: FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP](img/cartographer/menus.jpg)
+<!-- SHOT-0.9.0: carto-menus -- (must: missing File > New AI mod / Open AI mod and Scenario > AI Profiles) composite of the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each cropped to the menu -->
 
 *All six menus, each shown open on its own.*
 
@@ -443,6 +479,7 @@ The **TERRAIN** browser shows two columns of thumbnails with a short name under
 each. The chosen piece has a gold frame.
 
 ![The terrain group list opened over the browser: ALL SECTIONS 1261, then CLIFFS, TRANSITIONS, WATER & COAST, PATHS & ROADS, HILLS & MOUNTAINS and FLATS, each followed by indented folders such as Coast Cliffs Jungle 37 and Low Plazas Jungle 88](img/cartographer/terrain-groups.jpg)
+<!-- SHOT-0.9.0: carto-terrain-groups -- (must: four-tool toolbar) Ulasem Arena, terrain group list open, five tool buttons; whole window -->
 
 *The group list for a Zhon map (Ulasem Arena). Each kind is followed by the original game's folders, with section counts.*
 
@@ -466,6 +503,7 @@ each. The chosen piece has a gold frame.
   chosen. **Click the chosen piece again** to step to the next variant.
 
 ![The terrain browser with the Cliff W piece selected and its badge showing 2/3; the status bar shows its full name, Cliff · W · transition · variant 2, then the original name wclif2trans and the folder Coast Cliffs Jungle](img/cartographer/terrain-variant.jpg)
+<!-- SHOT-0.9.0: carto-terrain-variant -- Ulasem Arena, Cliff W clicked twice (variant 2/3), status bar shows its full name; crop of the left of the window -->
 
 *Clicking the chosen piece again moved it to variant 2 of 3. Pointing at it shows the full name in the status bar.*
 
@@ -508,6 +546,7 @@ You can copy any rectangle of the map, terrain and objects together, and stamp
 it elsewhere like a section.
 
 ![Left: a yellow rectangle labelled 15 x 15 blocks drawn over part of the arena in Select mode. Right: the copied rectangle shown as a see-through brush with a yellow outline, ready to paste further down the map](img/cartographer/terrain-clipboard.jpg)
+<!-- SHOT-0.9.0: carto-terrain-clipboard -- composite: Terrain + Select 15 x 15-block rectangle, then the clipboard brush after Ctrl+C / Ctrl+V -->
 
 *Copying a rectangle of Ulasem Arena (left) and pasting it as a brush (right).*
 
@@ -574,6 +613,7 @@ The **View** menu can colour the map to show how the game sees it:
 | **Overlay: slopes** | Darker green is flat ground; brighter orange is steeper. |
 
 ![The movement overlay for a Horseman on Ulasem Arena: the sandy arena floor and the jungle floor are green; the steep band along the edge of the arena floor, the ground around a stone ruin and the bases of trees are red; a legend at the top left reads Horseman: GREEN=allowed RED=blocked (terrain/features only)](img/cartographer/overlay-movement.jpg)
+<!-- SHOT-0.9.0: carto-overlay-movement -- (must: four-tool toolbar) Ulasem Arena at 40%, Horseman chosen, View > Overlay: movement; whole window -->
 
 *Overlay: movement for the Horseman on Ulasem Arena. The steep edge of the arena floor, the stone ruin and every tree block a Horseman.*
 
@@ -593,6 +633,7 @@ does (whether it blocks units, can be reclaimed for mana and so on) from its own
 definitions; Cartographer only places them.
 
 ![The Features tool on Ulasem Arena: the browser shows the trees category with palm and jungle trees, five palm trees stand on the sand, and a see-through palm tree with a yellow outline previews the next placement](img/cartographer/features.jpg)
+<!-- SHOT-0.9.0: carto-features -- (must: four-tool toolbar) Ulasem Arena, Features tool, trees category, five palm trees placed and a sixth previewed; whole window -->
 
 *Placing palm trees in Ulasem Arena. The see-through tree shows where the next click will put one.*
 
@@ -619,6 +660,7 @@ or that you painted (see [Blocked cells](#blocked-cells)) loses the marker too.
 ### Selecting and moving features
 
 ![Two views of the same palm trees: left, a yellow selection box being dragged around them in Select mode; right, after release, each tree has a small gold square at the base of its trunk](img/cartographer/features-select.jpg)
+<!-- SHOT-0.9.0: carto-features-select -- composite: selection box dragged round palm trees in Select mode, then the selected anchor cells -->
 
 *Box-selecting trees. A selected feature is marked by a gold square on its anchor cell, the cell it actually stands in.*
 
@@ -664,6 +706,7 @@ own blockers (see [What a stamp replaces](#what-a-stamp-replaces)); the
 such tool.
 
 ![The BLOCKED tool on Ladron's Tarn at 30%: red cells line the faces of the castle walls, a cobbled road is tinted blue, the browser lists brush sizes from 1 x 1 to 16 x 16 cells under BLOCKED CELLS: 5073, and the status bar reads TOOL: BLOCKED, BRUSH: 1 X 1, BLOCKED CELLS: 5073, SHIFT+DRAG: RECTANGLE, RED=BLOCKED BLUE=ROAD](img/cartographer/blocked.jpg)
+<!-- SHOT-0.9.0: carto-blocked -- Ladron's Tarn at 30%, BLOCKED tool: red wall cells, blue road cells, brush sizes listed; whole window -->
 
 *Ladron's Tarn with the BLOCKED tool. The red cells along the castle walls are the shipped map's own blockers; the road is blue.*
 
@@ -733,12 +776,13 @@ match on the map, Test Map included. They do not change the minimap.
 The **UNITS** tool places units on the map: buildings, armies, Monarchs, ships,
 and special objects such as the flags in *King of the Hill*.
 
-> Placed units belong to the map's **scenario**. They appear when the map is
-> played with Test Map (F5), and then they **replace the usual starting
-> Monarchs**. In an ordinary skirmish or multiplayer game, placed units are not
-> used. See [Scenario maps](#scenario-maps).
+> Placed units belong to the map's **scenario**. They appear in a scenario game
+> (Test Map, **F5**, or a game created with **MAP SCENARIO** on), and then they
+> **replace the usual starting Monarchs**. In a game with MAP SCENARIO off,
+> placed units are not used. See [Scenario maps](#scenario-maps).
 
 ![The Units tool on King of the Hill: the browser filtered to GROUND and ARAMON lists Archer, Mage Archer, Barbarian and other Aramon ground units with their portraits; on the map, seven of Player 1's blue units are selected, each with a gold footprint outline and a short facing line, around start 1 and its Player 1 region](img/cartographer/units.jpg)
+<!-- SHOT-0.9.0: carto-units -- (must: four-tool toolbar) King of the Hill, Units tool filtered to GROUND and ARAMON, Player 1 units box-selected at 75%; whole window -->
 
 *King of the Hill, Units tool. The browser is filtered to Aramon ground units; seven of Player 1's units are box-selected.*
 
@@ -816,6 +860,7 @@ In **ERASE** mode, click a unit to remove it.
 ### Unit properties
 
 ![The UNIT PROPERTIES dialog for an Aramon Archer: PLAYER 0, HEALTH % 100, ARMOR % 100, WEAPON % 100, VETERAN 0, ANGLE 180, DISPLAY NAME Captain Aldric, X (CELL) 14, Z (CELL) 99](img/cartographer/unit-properties.jpg)
+<!-- SHOT-0.9.0: carto-unit-properties -- King of the Hill, Unit Properties of a Player 1 Archer with a display name typed; dialog crop -->
 
 *Unit Properties for one of Player 1's Archers on King of the Hill, with a display name typed in. The unit's type ID, ARAARCH, is printed at the top, partly over the title bar.*
 
@@ -855,6 +900,7 @@ when exactly one is selected, otherwise of the unit chosen in the browser.
 Drag to turn it and use the wheel to zoom. **Esc** or **Enter** closes it.
 
 ![The UNIT MODEL: Knight window showing the Aramon Knight on horseback with lance and blue shield; the browser behind lists Knight, Black Knight, Sky Knight and Amazon Knight for the search knight](img/cartographer/unit-model.jpg)
+<!-- SHOT-0.9.0: carto-unit-model -- Ulasem Arena, Units browser searched for knight, F6 3D model window on the Aramon Knight -->
 
 *F6 on the Knight, after searching the browser for "knight".*
 
@@ -866,6 +912,7 @@ Start positions decide where players begin. A skirmish map needs at least two;
 the game seats at most eight.
 
 ![The Starts tool on Ulasem Arena zoomed out to the whole map: eight gold diamonds numbered 1 to 8 spread around the map, and the browser lists PLAYER 5, 6, 7, 8, 2, 4, 1, 3](img/cartographer/starts.jpg)
+<!-- SHOT-0.9.0: carto-starts -- (must: four-tool toolbar) Ulasem Arena, Starts tool, View > Fit map; whole window -->
 
 *Ulasem Arena's eight start positions. The browser lists them in the order the map stores them.*
 
@@ -991,6 +1038,7 @@ drawn on the map as a cyan line (rotations show a cross and a ring at the
 centre), and the status bar shows the mirror in use.
 
 ![Two views of the middle of Ulasem Arena with live symmetry on. Left: before clicking, a see-through sandy rock section with a yellow outline sits left of the cyan axis, and a matching outline appears to its right. Right: after clicking, the rocky section is stamped on the left and its mirror-image twin on the right](img/cartographer/symmetry-stamp.jpg)
+<!-- SHOT-0.9.0: carto-symmetry-stamp -- composite: live symmetry on Ulasem Arena, preview before the click, then the stamped section and its mirror twin -->
 
 *Live symmetry on Ulasem Arena. One click stamped a sandy rock transition on the left of the axis and its mirror twin on the right. The stamp also replaced the stone ruin that stood in the right-hand area.*
 
@@ -1019,6 +1067,7 @@ While it is on:
 ### Symmetrize
 
 ![The SYMMETRIZE dialog: MIRROR vertical axis (left \| right), SOURCE (COPIED ONTO THE OTHER SIDE) left half, TERRAIN mirror section twins, with OK and CANCEL](img/cartographer/symmetrize.jpg)
+<!-- SHOT-0.9.0: carto-symmetrize -- Ulasem Arena, Shift+M Symmetrize dialog; dialog crop -->
 
 *The Symmetrize dialog (Shift+M).*
 
@@ -1069,6 +1118,7 @@ uses for its random maps.
    the settings, or **DISCARD** (**Esc**) to keep your current map.
 
 ![Left: RANDOM MAP SETTINGS with seed 2026, 4 players, layout Aramon Riverlands, trees 128, rocks 96, mana 128, water intensity 96, relief 128, width and height 16, world aramon, scattered mana (by map area) Medium. Right: GENERATED MAP PREVIEW, 16 x 16, 4 players, a green map with small ponds and four numbered yellow start markers](img/cartographer/random-generator.jpg)
+<!-- SHOT-0.9.0: carto-random-generator -- composite: Random Map Settings (seed, players, themed layout, Scattered Mana) and the Generated Map Preview it produced -->
 
 *Generating a 4-player, 16 × 16 Aramon Riverlands map from seed 2026.*
 
@@ -1203,6 +1253,7 @@ A **region** is a named rectangle of map cells. Rules use regions as places:
 "if I control a unit **at The Hill**", "create a Knight **at Reinforcements**".
 
 ![King of the Hill in region mode: The Hill region is selected in the middle of the map, outlined in yellow with eight square handles, with four flags (one per player) inside it; smaller Player 1 to 4 regions surround each player's start, and units in four colours stand around them](img/cartographer/regions.jpg)
+<!-- SHOT-0.9.0: carto-regions -- (must: four-tool toolbar) King of the Hill at Fit map, REGIONS on, The Hill selected with handles; whole window -->
 
 *King of the Hill with the REGIONS button on and The Hill selected. Its handles resize it; dragging inside moves it.*
 
@@ -1244,6 +1295,7 @@ the map's rules. A rule is a set of **conditions** and **actions**: when all its
 conditions are true, its actions run.
 
 ![The SCENARIO SCRIPTING window for King of the Hill: ALL PLAYERS, 3 RULES; Rule 1 is selected, its condition reads I control the most ARASWORD at The Hill and its actions read I own all NPCFLAG at The Hill and Heal NPCFLAG by 10000 at The Hill; the FULL TEXT box repeats the whole rule; buttons +RULE, -RULE, NAME, +COND, -COND, +ACT, -ACT along the bottom](img/cartographer/scripting.jpg)
+<!-- SHOT-0.9.0: carto-scripting -- King of the Hill, Scenario Scripting with Rule 1 of All Players selected and FULL TEXT; crop of the window -->
 
 *King of the Hill's first rule: whoever has the most Swordsmen on the hill takes the flags.*
 
@@ -1256,8 +1308,10 @@ conditions are true, its actions run.
   **ACTIONS** columns show the selected rule. The active column is marked `*`.
 - **FULL TEXT** shows the selected rule, condition or action in words.
   **PgUp**/**PgDn** or the wheel scroll it, and **COPY TEXT** copies it.
-- **+RULE** and **-RULE** add and remove rules; **NAME** names the selected rule
-  (names are for your convenience only). **+COND**/**-COND** and
+- **+RULE** and **-RULE** add and remove rules; **NAME** (or **Enter** on a
+  rule) names the selected rule. Names are for your convenience only: they are
+  kept in the map's `.editor` file beside the scenario data, which the game reads
+  unchanged, and they survive undo, copying and reopening. **+COND**/**-COND** and
   **+ACT**/**-ACT** add and remove conditions and actions; adding one opens a
   list of the 26 kinds to choose from.
 - **COPY**, **PASTE**, **DUPLICATE**, **UP** and **DOWN** work on the selected
@@ -1272,6 +1326,7 @@ conditions are true, its actions run.
 **Enter**. A dialog shows one field per value it needs:
 
 ![A CONDITION dialog over the scripting window, titled I control the most ARASWORD at The Hill, with a UNIT TYPE field set to ARASWORD and a LOCATION list open showing Anywhere, The Hill, Player 4, Player 2, Player 3 and Player 1](img/cartographer/rule-editor.jpg)
+<!-- SHOT-0.9.0: carto-rule-editor -- the same rule with its condition open and the LOCATION list opened with Alt+Down -->
 
 *Editing a condition. The LOCATION list offers Anywhere and the map's regions.*
 
@@ -1294,6 +1349,7 @@ does nothing.
 **Templates.** **TEMPLATES** inserts a ready-made rule after the selected one:
 
 ![The OBJECTIVE TEMPLATES list: a SEARCH field at the top, then Opening message, Timed victory, Reach a region, Eliminate all opponents, Lose all forces and Timed reinforcements, each with a one-line description](img/cartographer/templates.jpg)
+<!-- SHOT-0.9.0: carto-templates -- King of the Hill, OBJECTIVE TEMPLATES list with the six templates; dialog crop -->
 
 *The six objective templates.*
 
@@ -1410,7 +1466,7 @@ The DEFAULT AI is the one the room calls **RETAIL**. See
 [AI difficulty](user-guide.md#ai-difficulty) in the game guide for how each
 level plays.
 
-Up to 0.8.11 each level read a file of its own
+Maps or mods made for 0.8.11 or earlier may carry a file for each level
 (`ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt`, `ai/ad.txt`). The
 game no longer reads those; see [Old level files](#old-level-files).
 
@@ -1421,6 +1477,7 @@ Properties** also shows the map's DEFAULT AI profile, with an **EDIT AI
 PROFILES...** button. While the window is open, the title bar shows `[AI]`.
 
 ![The AI PROFILES window for map AiTest. Left: DEFAULT AI selected, with its file ai/aitest.txt and the tag map *, then TAK ENGINE AI with ai/takengine.txt (also tagged map *), PREVIEW LEVEL (< HARD >), the PRESETS buttons NO FLYERS, NO SHIPS and CLEAR ALL, PREVIEW WITH GAME MOD (PACK: NONE) and the GAME MOD buttons. Right: the rule line ORIGINAL-GAME RULES: THE FIRST LINE NAMING A UNIT WINS; GROUP RULES COMBINE, the choice between the standard profile and this map's own profile named aitest, the FIND, SIDE and GROUP filters, and a table of flying units, each with BUILD OFF, CHANCE 100 %, SET BY line 7 and so on, and LIMIT 0. Footer: Plays: DEFAULT AI on this map reads ai/aitest.txt from this map, and the buttons START FROM, TEXT VIEW, CHECK, GROUP RULES and DONE](img/cartographer/ai-profiles.jpg)
+<!-- SHOT-0.9.0: carto-ai-profiles -- Scenario > AI Profiles on a map with its own profile, DEFAULT AI tab after the NO FLYERS preset; crop of the window -->
 
 *The DEFAULT AI tab of a map with its own profile, after **No flyers**: every
 flying unit is switched off.*
@@ -1491,13 +1548,14 @@ to all six levels.
 
 #### Old level files
 
-A map or game mod made before the change may still carry the old per-level
+A map or game mod made for 0.8.11 or earlier may still carry the old per-level
 files `ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt` or
 `ai/ad.txt`. The game no longer reads them. Cartographer keeps them in the map
 (or pack) byte for byte, as ordinary unused files, and the left column shows a
 notice naming them, with **MERGE INTO TAK ENGINE...**:
 
 ![The AI PROFILES window for map AiMerge on the TAK ENGINE AI tab, previewing NORMAL. Left: under PREVIEW LEVEL, the notice Old level files (e.txt, n.txt, h.txt) are no longer read by the game, and the button MERGE INTO TAK ENGINE.... Right: the unit table with WEIGHT, BUILT-IN and LIMIT (IN PLAY) columns, and the note Merged 2 unit settings from ai/n.txt into ai/takengine.txt; the old files stay (not read). Ctrl+Z takes it back](img/cartographer/ai-takengine.jpg)
+<!-- SHOT-0.9.0: carto-ai-takengine -- AI Profiles, TAK ENGINE AI tab on a map carrying old level files, right after MERGE INTO TAK ENGINE; crop of the window -->
 
 *After merging Normal's old file. The old files are still in the map, so the
 notice stays until you delete them.*
@@ -1546,6 +1604,7 @@ a whole group of units at once, by one of the unit categories of your install
 (*ara*, *fly*, *factory* and so on) or **ALL**.
 
 ![The AI PROFILES window for Ulasem Arena in its GROUP RULES view: one rule, WEIGHT ARA 50 %, covering 32 units, 1 set individually (skipped); the + ADD GROUP RULE button; and the list UNITS COVERED BY "weight ara" (50 %): Archer (araarch) set individually, skipped, and every other Aramon unit at 50 %](img/cartographer/ai-group-rules.jpg)
+<!-- SHOT-0.9.0: carto-ai-group-rules -- Ulasem Arena, AI Profiles, DEFAULT AI tab, GROUP RULES view with one weight rule; crop of the window -->
 
 *A group rule that halves the chance of every Aramon unit. The Archer has its
 own row, so the rule skips it.*
@@ -1685,6 +1744,7 @@ MAP OPEN)** with the pack's name, and the menus that need a map (Edit,
 Scenario, Symmetry, and the map commands under File and View) are greyed out.
 
 ![The AI MOD (NO MAP) window for game mod pack Harder AI, over an empty editor: the toolbar reads AI MOD (NO MAP OPEN): Harder AI and the status bar AI MOD Harder AI: mods/game/Harder AI/ai/ in the data folder, UNSAVED. Left: the tabs DEFAULT AI (ai/default.txt) and TAK ENGINE AI (ai/takengine.txt, tagged pack *), PREVIEW LEVEL < NORMAL >, the presets, the banner PACK: Harder AI, An AI mod: no map is open. No undo; SAVE TO PACK writes the files, and the buttons SAVE TO PACK... *, CLOSE PACK and TEST IN GAME.... Right: the Archer (araarch) row with BUILD OFF, WEIGHT 0 *, BUILT-IN 5 / 16. Footer: Plays: with Harder AI ticked, all six levels read this pack's ai/takengine.txt over their own built-in tables, on every map; a game mod wins over a map's own copy (the install never supplies this file). Buttons TEXT VIEW, CHECK and CLOSE](img/cartographer/ai-mod.jpg)
+<!-- SHOT-0.9.0: carto-ai-mod -- File > New AI mod Harder AI, no map open: AI MOD (NO MAP) window, TAK ENGINE AI tab, one edit, UNSAVED; whole window -->
 
 *A new AI mod, Harder AI, with one TAK ENGINE AI setting: the Archer is never
 built by any of our levels while the pack is ticked. Nothing is saved yet.*
@@ -1745,6 +1805,7 @@ them. It runs in the background (an **ANALYZING TERRAIN** box; **Esc**
 cancels) and then lists what it found.
 
 ![The MAP VALIDATION results for a practice map: 3 issues. WARNING: ARAWAR: engine placement rejects this terrain or feature footprint. WARNING: Fewer than two player starts; ordinary skirmishes need at least two. WARNING: No recognized mana deposits; skirmish players cannot expand their lodestone economy. Buttons CHECK MAP and CLOSE](img/cartographer/check-map.jpg)
+<!-- SHOT-0.9.0: carto-check-map -- Check Map results on a practice map (one start, no mana, a War Galley on dry land); dialog crop -->
 
 *Check Map on a practice map with one start position, no mana and a War Galley placed on dry land.*
 
@@ -1809,12 +1870,14 @@ Map**. Cartographer saves a temporary copy of the map, **including unsaved
 changes**, and starts the game with it.
 
 ![Cartographer with the TEST MAP message: Opened a private game lobby from a snapshot. Seat the players used by your scenario, then start. Close the game to return here. Your document and save destination are unchanged. The toolbar button reads TEST RUNNING](img/cartographer/test-map.jpg)
+<!-- SHOT-0.9.0: carto-test-map -- (must: four-tool toolbar) King of the Hill after F5: TEST MAP message, TEST RUNNING on the toolbar; whole window -->
 
 *After F5 on King of the Hill. The toolbar button reads TEST RUNNING until the game closes.*
 
 The game opens a **private lobby** for the map, as for a single-player game:
 
 ![The game's lobby, TA:KINGDOMS MULTIPLAYER, for map TEST followed by a number and a fingerprint, SINGLE PLAYER: seat 1 HUMAN PLAYER, seats 2 to 4 OPEN, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, seats 5 to 8 CLOSED, START greyed, the map preview with starts 1 to 4, and the match rules ending with MAP SCENARIO: ON (TEST MAP), followed under the two columns by PLACED UNITS REPLACE MONARCHS, NEEDS SEATS 1-4, ONLY 6 UNIT TYPES CAN BE BUILT and ENDS ONLY BY THE SCENARIO'S RULES](img/cartographer/test-lobby.jpg)
+<!-- SHOT-0.9.0: carto-test-lobby -- the game's private test lobby for a King of the Hill snapshot: NEEDED BY SCENARIO seats with MOVE HERE, ALWAYS ON pack line, MAP SCENARIO: ON (TEST MAP); cropped to the lobby panel -->
 
 *The game's lobby for a Test Map of King of the Hill. Its scenario needs four players, so seats 2 to 4 are tagged and START waits for them.*
 
@@ -1881,6 +1944,7 @@ folder does not exist* or *Cannot write map (disk full or write error)*).
 ### Save As
 
 ![The SAVE MAP AS dialog with MAP FILE NAME Twin Rivers and FOLDER /home/player/Games/TA Kingdoms/Maps](img/cartographer/save-as.jpg)
+<!-- SHOT-0.9.0: carto-save-as -- Save As for Twin Rivers into the Maps folder; dialog crop -->
 
 *Save As on Linux, saving into the game's Maps folder.*
 
@@ -1919,6 +1983,7 @@ the `.tnt` file; Cartographer loads the other files beside it.
 ### Opening a map
 
 ![The OPEN MAP dialog: a search field, then Recent: King of the Hill, Recent: /home/player/Games/TA Kingdoms/Maps/Twin Rivers.kmp, then installed maps in alphabetical order from Abnar's Terrace to Ladron's Tarn](img/cartographer/open-map.jpg)
+<!-- SHOT-0.9.0: carto-open-map -- Open Map with two Recent rows; dialog crop -->
 
 *Open Map lists recent maps first, then every installed map.*
 
@@ -2047,6 +2112,7 @@ Your maps are in the game data folder: `Maps` for the maps you save, and
 and saves them at once; **CANCEL** (**Esc**) leaves them unchanged.
 
 ![The PREFERENCES dialog: DISPLAY (F11 TOGGLES) WINDOWED, EDGE SCROLLING (POINTER AT THE MAP EDGE) OFF, UI SCALE (CAPPED TO FIT THE WINDOW) 200%, and GAME DATA FOLDER (SHARED WITH THE GAME) /home/player/Games/TA Kingdoms with a CHANGE... button and the note The game reads this folder too. A new one loads when Cartographer restarts.](img/cartographer/preferences.jpg)
+<!-- SHOT-0.9.0: carto-preferences -- View > Preferences with default settings; dialog crop -->
 
 *View → Preferences on Linux.*
 
@@ -2075,8 +2141,8 @@ installation in use. It is the same setting as the game's
 
 After the restart Cartographer reopens your map: the saved file, or the
 installed map by name. A new map that was never saved is not reopened. If the
-new installation does not have the map, Cartographer opens on a blank map and
-says so.
+new installation does not have the map, Cartographer says so (**OPEN FAILED**)
+and shows the empty window.
 
 The row is greyed out, and cannot be changed, when Cartographer was started with
 `--data` or from inside an installation folder; those always win.

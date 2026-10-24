@@ -1,6 +1,5 @@
 # Multiplayer map availability and transfer
 
-Map verification was introduced in protocol 193 (0.7.10 uses protocol 194).
 The selected map is checked before starting. The host supplies a canonical
 package fingerprint (SHA-256). The server checks its installed map/cache, requests the
 host's copy when missing or different, and offers that verified copy to all players.
@@ -8,12 +7,12 @@ The game cannot start until the server and every connected player/spectator have
 same package. Late spectators and reconnecting players verify/download before loading
 and catching up. A matching filename alone is never sufficient.
 
-Current checkout builds use protocol **196** and preserve the selected map's
+Packages preserve the selected map's
 same-stem OTA (starts, wind, gravity, scenario settings), CRT (placements and
 rules), TDF (Use Only restrictions), TXT description, editor rule names, and
 recipe companions, when present. Empty companions are retained. These files
 participate in the fingerprint and survive cache/archive reuse. With MAP
-SCENARIO on (protocol 259), every peer and the server run the map's scenario
+SCENARIO on, every peer and the server run the map's scenario
 from these verified files.
 
 Packages also contain the TNT, referenced terrain JPGs, and map feature definitions
@@ -34,7 +33,7 @@ Verified copies are saved under `<data root>/MapCache/`: `.takmap` is the checke
 package and `.kmp` is its archive for the map catalog. Map-picker entries have the
 original map name plus a fingerprint, so different versions remain separate and no
 installed map is overwritten. They are selectable in later games, including when that
-machine becomes the host. Replays record the package digest (replay format 9), so they
+machine becomes the host. Replays record the package digest, so they
 use the exact cached copy even if a different map with the same name is installed.
 Map caches are local to each client's/server's configured data root.
 

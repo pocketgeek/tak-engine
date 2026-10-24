@@ -41,9 +41,9 @@ You do **not** need to download or copy a service unit from the source repositor
    ```
 
    Replace **`YOUR.SERVER.NAME`** after `--acme-domain` with your actual hostname
-   (for example, `tak.example.org`), without `https://` or a port. The data path defaults to `/srv/tak-data`; use the settings template below to
-   change it. Keep the empty `LoadCredential=` and
-   `ExecStart=` lines; they replace the default manual-certificate configuration.
+   (for example, `tak.example.org`), without `https://` or a port. The data path
+   defaults to `/srv/tak-data`; use the settings template below to change it.
+   Keep the empty `LoadCredential=` and `ExecStart=` lines; they replace the default manual-certificate configuration.
    Using `--acme-agree-tos` accepts the CA subscriber agreement.
 
 5. **Enable and start the service.**
@@ -90,5 +90,16 @@ see [changing server defaults](https://github.com/pocketgeek/tak-engine/blob/mai
 The server renews its certificate automatically and opens port 80 only during
 validation. Local configuration stays in `/etc/systemd/system/takserver.service.d/`;
 accounts, maps, replays and certificate state live under `/var/lib/takserver`.
-For manual certificates and troubleshooting, see the public-server guide:
-https://github.com/pocketgeek/tak-engine/blob/main/docs/public-server.md#linux-service-setup
+Map and mod package checks run off the network loop with bounded admission and
+work limits (see [resource controls](https://github.com/pocketgeek/tak-engine/blob/main/docs/public-server.md#resource-controls)). Until the first
+certificate is issued, ACME retries automatically and the server refuses game
+connections.
+
+**Check who is playing.** On the server machine, run `takserver --status` (add
+`--port 7678` for a different game port). It prints one JSON object with
+`running_games`, `lobby_games` and `connected_clients`, then exits. It needs no
+game data, account or certificate arguments, and works with TLS and ACME servers.
+See [querying server status](https://github.com/pocketgeek/tak-engine/blob/main/docs/public-server.md#querying-server-status) for what each count includes.
+
+To use an existing certificate instead of Let's Encrypt, or if something goes
+wrong, see [Linux service setup](https://github.com/pocketgeek/tak-engine/blob/main/docs/public-server.md#linux-service-setup).

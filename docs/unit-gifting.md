@@ -57,10 +57,11 @@ overflow priority: lowest storage percentage first, equal percentages sharing
 proportionally to capacity.
 
 
-## Protocol and validation (2026-09-29)
+## Validation (2026-09-29)
 
-Version 0.7.12 uses protocol **195**. Both clients and server must be rebuilt;
-0.7.11 release binaries use protocol 194 and cannot join these matches.
+Gifting and sharing are lockstep commands, so every client and the server must
+run the same engine version; the version that introduced them is in the
+[CHANGELOG](../CHANGELOG.md).
 
 The dialogue input regression opens/closes D, checks a sparse player roster,
 exercises default and changed checkboxes, and verifies mixed selections, disabled

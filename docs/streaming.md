@@ -1,34 +1,67 @@
 # Streaming to YouTube
 
-At the title screen or in a game, press **F9**, or open **Settings → YouTube Streaming** at the title screen
-or **Esc → YouTube Streaming** during a game.
-Copy the stream key from YouTube Studio, click **Paste** beside the key field,
-select the video settings, and click
-**Start Streaming**. Follow the preview/status in YouTube Studio to make the
-broadcast public. See [YouTube's encoder setup guide](https://support.google.com/youtube/answer/2907883).
+TAK Engine can broadcast the game straight to YouTube, with no extra software.
 
-The initial settings are Max Width 3840, 60 FPS and 6,000 Kbps video. The panel also offers
-1080p, 1440p, 4K (3840×2160), Full Resolution, Max Width 3840, 60 FPS, 3,000–80,000 Kbps,
-and automatic or CPU encoding. Full Resolution uses the actual window drawable
-size at Start Streaming, including high-DPI scaling, rounded down to even pixels.
-**Max Width 3840** scales down to at most 3840 pixels wide while preserving
-the window’s aspect ratio, without adding a 16:9 border or upscaling smaller
-windows. A 7680×2160 window produces 3840×1080. Dimensions are rounded down to
-even pixels and calculated when the stream starts.
+![The YouTube Streaming panel: stream key, Remember Key, resolution, frame rate, bitrate, encoder, Save a Local Copy and Start Streaming](img/streaming.jpg)
+<!-- SHOT-0.9.0: streaming -- panel with Remember Key and Save a Local Copy rows, no key -->
 
-The output dimensions stay fixed until you stop and restart; resizing the window
-letterboxes the new image. The supported input range is 2–8192 pixels per axis,
-subject to the encoder’s limits. Selecting a larger resolution raises a lower
-bitrate to 12,000 Kbps for 1440p or 30,000 Kbps for 4K; it remains adjustable. Automatic tries
-available hardware H.264 encoders first. Above 4096 pixels on either axis, it
-then tries hardware HEVC to preserve native dimensions. If none supports that
-size, it reports failure instead of silently overloading the CPU. You can select
-CPU explicitly, or choose a smaller resolution. At smaller sizes, automatic
-CPU fallback remains available and is identified in the status line.
+## Quick start
 
-Hardware H.264 and HEVC backends:
+1. Open the panel: press **F9** at the title screen or in a game, or choose
+   **Settings → YouTube Streaming** at the title screen or **Esc → YouTube
+   Streaming** during a game.
+2. Copy the stream key from YouTube Studio and click **Paste** beside the key field
+   (Ctrl+V also pastes a key; Ctrl+A clears the field).
+3. Leave the video settings at their defaults or change them (below).
+4. Click **Start Streaming**.
+5. Watch the preview and status in YouTube Studio and make the broadcast public
+   there. See [YouTube's encoder setup guide](https://support.google.com/youtube/answer/2907883).
 
-| Platform | Hardware backends |
+**Closing the panel does not stop the stream.** Esc or F9 closes it, and a small badge
+in the corner shows the stream state while it runs. Returning to the title screen
+keeps it running too. Stop it with **Stop Streaming**, or by exiting the application.
+
+The key is masked on screen and is never written to the settings file or any other
+file, and it is left out of encoder and network diagnostics. It stays in memory for
+that session only, unless you tick [Remember Key](#remembering-the-key). The video
+settings also last for that application session only.
+
+## Video settings
+
+Click a row to step to the next value; right-click steps back. The settings cannot
+be changed while a stream runs.
+
+| Setting | Choices | Default |
+| --- | --- | --- |
+| Resolution | 720p, 1080p, 1440p, 4K (3840×2160), **FULL** (the whole window), **MAX 3840** | MAX 3840 |
+| Frame rate | 30 or 60 FPS | 60 |
+| Bitrate | 3,000, 6,000, 9,000, 12,000, 20,000, 30,000, 45,000, 60,000 or 80,000 Kbps | 6,000 |
+| Encoder | Automatic or CPU | Automatic |
+
+- **MAX 3840** scales down to at most 3840 pixels wide while keeping the window's
+  shape, without adding a 16:9 border or enlarging a smaller window. A 7680×2160
+  window sends 3840×1080. The panel shows it as `MAX 3840 / W X H`.
+- **FULL** uses the actual window size when you press Start Streaming, including
+  high-DPI scaling. It can exceed what YouTube accepts even when your GPU can
+  encode it; use MAX 3840 or 4K if YouTube reports an unsupported resolution.
+- Dimensions are rounded down to even pixels and fixed when the stream starts.
+  Stop and restart to change them; resizing the window meanwhile letterboxes the
+  picture. The supported range is 2–8192 pixels per axis, subject to the encoder's
+  limits.
+- Choosing a resolution raises a lower bitrate to at least 6,000 Kbps, 12,000 Kbps
+  for 1440p or 30,000 Kbps for 4K; you can still change it afterwards. Raise the
+  bitrate for higher-resolution video as far as your upload allows. The highest
+  value is not a YouTube recommendation.
+
+### Encoders
+
+**Automatic** tries the available hardware H.264 encoders first. Above 4096 pixels
+on either axis it then tries hardware HEVC, to keep the native size. If no hardware
+encoder supports that size it reports a failure rather than silently overloading
+the CPU; choose **CPU** explicitly or a smaller resolution. At smaller sizes it falls
+back to the bundled x264 CPU encoder, and the status line says so.
+
+| Platform | Hardware H.264 and HEVC encoders |
 | --- | --- |
 | Linux | NVIDIA NVENC; Intel/AMD VA-API |
 | Windows x64 | NVIDIA NVENC; AMD AMF; Intel Quick Sync |
@@ -39,20 +72,30 @@ not support NVENC on Windows ARM64, and Qualcomm hardware encoding is not
 implemented. AMF and Quick Sync are compiled in but require a compatible native
 driver; their availability on Windows ARM64 has not been validated.
 
-A working GPU driver with the selected codec and resolution support is required for hardware
-encoding. The panel reports the encoder actually opened, connection state,
-encoded frames, missed output frames (**DROPPED**), superseded or busy capture
-submissions (**REPLACED**), and estimated encoded-payload bitrate. Replacing a
-capture does not itself mean an output frame was missed. Unsupported hardware falls back to the bundled x264 CPU encoder. Hardware
-that fails during encoding triggers a restart using the CPU only at dimensions
+Hardware encoding needs a working GPU driver that supports the chosen codec and
+resolution. If the hardware fails during encoding, the stream restarts on the CPU,
 up to 4096 pixels per axis; larger sizes report an error.
 
-The stream contains the game view, HUD, cursor and mixed game audio, including
-music. Hardware cursors temporarily use the software drawing path so they appear
-in the stream. A differently shaped game window is letterboxed. Setup controls
-and connection badges are drawn **after capture** and stay off-stream.
-Microphone input, desktop capture, account login and broadcast scheduling are
-not included.
+### The status lines
+
+The panel shows the encoder actually opened, the connection state, encoded frames,
+missed output frames (**DROPPED**), superseded or busy capture submissions
+(**REPLACED**), and the estimated encoded bitrate. A replaced capture does not by
+itself mean an output frame was missed. Rendering slowdowns skip late frames
+without forcing a reconnect, and with VSync on, a refresh-rate pacing fallback
+keeps streaming from uncapping presentation.
+
+## What the stream contains
+
+The stream carries the game view, HUD, cursor and mixed game audio, including the
+title and lobby music. Hardware cursors temporarily use the software drawing path
+so they appear in the stream. A differently shaped game window is letterboxed.
+The setup panel, title-screen account and settings overlays, and the connection
+badges are drawn **after capture** and stay off the stream. During loading and
+modal screens the last captured frame stays on the stream.
+
+Microphone input, desktop capture, YouTube account login
+and broadcast scheduling are not included.
 
 ## Saving a local copy
 
@@ -94,13 +137,6 @@ a copy. If writing fails part-way, for example because the disk is full, the sta
 shows **LOCAL COPY STOPPED - WRITE FAILED** and the stream carries on; the file
 keeps everything up to its last finished fragment. If the game has no user folder at
 all, **Start Streaming** asks you to untick the box instead.
-
-**Stop Streaming** stops the upload; closing the F9 panel leaves it running.
-Returning to the title screen keeps it running. Exiting the application stops it.
-The video preferences last for that application session only, and so does the key
-unless you tick **Remember Key** (below). Keys are masked, never written to settings
-or any other file, and excluded from encoder and network diagnostics. Ctrl+V pastes
-a key; Ctrl+A clears the key field.
 
 ## Remembering the key
 
@@ -150,6 +186,8 @@ Credential Manager. Wine keeps the entry in the prefix's `user.reg` file, encryp
 with a key stored beside it, so anyone who can read the prefix can recover the key.
 That is less secure than native Windows or the Linux Secret Service.
 On Linux, prefer the native build if you want to remember the key.
+
+## Connection details
 
 Uploads use RTMPS with certificate and hostname verification, H.264 or HEVC video, AAC
 stereo audio at 44.1 kHz / 128 Kbps, and two-second video keyframes. After a

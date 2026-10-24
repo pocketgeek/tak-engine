@@ -1,9 +1,144 @@
 # Public server deployment
 
-The server includes native TLS, authentication, resource admission
-limits and an optional Linux service sandbox. These reduce risk; they do not
-constitute an independent security audit or protection against a volumetric DDoS.
-These features ship in 0.7.21; 0.7.20 binaries predate them.
+`takserver` is the dedicated server for internet games. Only the server needs an
+open port: players connect out to it by typing its hostname, and single-player
+games run their own private server automatically, so you only need this guide to
+host games for other people.
+
+The server includes native TLS, authentication, resource admission limits and an
+optional Linux service sandbox. These reduce risk; they do not constitute an
+independent security audit or protection against a volumetric DDoS.
+
+## Versions
+
+<!-- VERSION-0.9.0: confirm protocol/replay format at cut (main: 293/14) -->
+Server and clients must speak the same gameplay protocol; update the server and
+every client together when it changes. Which versions play together is listed in
+the [user guide](user-guide.md#versions) and in the [CHANGELOG](../CHANGELOG.md).
+
+## Quick setup: Linux package
+
+These steps use the installed Linux package and built-in Let's Encrypt support.
+You do **not** need to download or copy a service unit from the source repository.
+
+1. **Choose a hostname and configure networking.** Point a hostname you control
+   (for example, `tak.example.org`) at the server. Allow inbound TCP **80** for
+   certificate validation and **7677** for the game, plus outbound HTTPS **443**.
+   If you publish an IPv6 address, it must reach this server too. Another service
+   must not occupy port 80 when takserver validates its certificate.
+
+2. **Copy your retail game data.** Replace `/path/to/retail-install` below with
+   the actual directory containing your game's archives and maps:
+
+   ```sh
+   sudo mkdir -p /srv/tak-data
+   sudo cp -a /path/to/retail-install/. /srv/tak-data/
+   sudo chown -R root:root /srv/tak-data
+   sudo chmod -R a+rX /srv/tak-data
+   ```
+
+   The service cannot read `/home` because of its sandbox. Do not use a symlink
+   back into your home directory. Clients need matching base game data.
+
+3. **Install the ACME override template.** For a first-time setup:
+
+   ```sh
+   sudo mkdir -p /etc/systemd/system/takserver.service.d
+   sudo cp -i /usr/share/doc/tak-engine/systemd/takserver-acme.conf \
+     /etc/systemd/system/takserver.service.d/acme.conf
+   ```
+
+   If you already have `acme.conf`, keep it and edit it instead of overwriting
+   your configuration. The packaged unit is already installed at
+   `/usr/lib/systemd/system/takserver.service`.
+
+4. **Set your hostname before starting.** Open the copied override:
+
+   ```sh
+   sudoedit /etc/systemd/system/takserver.service.d/acme.conf
+   ```
+
+   Replace **`YOUR.SERVER.NAME`** after `--acme-domain` with your actual hostname
+   (for example, `tak.example.org`), without `https://` or a port. The data path
+   defaults to `/srv/tak-data`; use the settings template below to change it.
+   Keep the empty `LoadCredential=` and `ExecStart=` lines; they replace the default manual-certificate configuration.
+   Using `--acme-agree-tos` accepts the CA subscriber agreement.
+
+5. **Enable and start the service.**
+
+   ```sh
+   sudo systemctl daemon-reload
+   sudo systemd-analyze verify takserver.service
+   sudo systemctl enable --now takserver
+   ```
+
+   If it was already running, also run `sudo systemctl restart takserver` to
+   apply your changes. Systemd creates the private state directory automatically.
+
+6. **Check startup, then connect.**
+
+   ```sh
+   sudo systemctl status takserver --no-pager
+   sudo journalctl -u takserver -f
+   ```
+
+   For first-time ACME setup, wait for `ACME: certificate installed` before connecting.
+   A listening service can still be waiting for issuance or a persisted retry deadline.
+   Players then enter just your hostname in the multiplayer connection screen.
+   Press Ctrl+C to leave the log viewer; this does not stop the server.
+
+   ![The multiplayer server and sign-in screen with a server hostname typed in](img/mp-connect.jpg)
+   <!-- SHOT-0.9.0: mp-connect -- NEW file docs/img/mp-connect.jpg -- multiplayer server and sign-in screen, a hostname such as tak.example.org typed in the server field -->
+
+**Optional: change server defaults.** Copy and edit the settings template:
+
+```sh
+sudo mkdir -p /etc/systemd/system/takserver.service.d
+sudo cp -i /usr/share/doc/tak-engine/systemd/takserver-settings.conf \
+  /etc/systemd/system/takserver.service.d/settings.conf
+sudoedit /etc/systemd/system/takserver.service.d/settings.conf
+sudo systemctl daemon-reload
+sudo systemctl restart takserver
+```
+
+The template lists the default paths, port, game/account limits, storage budgets
+and systemd resource limits. Change individual values such as
+`Environment="TAK_SERVER_MAX_RUNNING_GAMES=8"` without rewriting the startup
+command. It works with both certificate modes. Restart between matches, since
+it disconnects active games. For examples and existing-installation migration,
+see [changing server defaults](#changing-server-defaults).
+
+The server renews its certificate automatically and opens port 80 only during
+validation. Local configuration stays in `/etc/systemd/system/takserver.service.d/`;
+accounts, maps, replays and certificate state live under `/var/lib/takserver`.
+Map and mod package checks run off the network loop with bounded admission and
+work limits (see [resource controls](#resource-controls)). Until the first
+certificate is issued, ACME retries automatically and the server refuses game
+connections.
+
+**Check who is playing.** On the server machine, run `takserver --status` (add
+`--port 7678` for a different game port). It prints one JSON object with
+`running_games`, `lobby_games` and `connected_clients`, then exits. It needs no
+game data, account or certificate arguments, and works with TLS and ACME servers.
+See [querying server status](#querying-server-status) for what each count includes.
+
+To use an existing certificate instead of Let's Encrypt, or if something goes
+wrong, see [Linux service setup](#linux-service-setup).
+
+## Running on Windows or macOS
+
+Every package includes `takserver`, but the supplied service unit and sandbox are
+Linux-specific: there are no Windows or macOS service installers. Run it with the
+command lines under [Encrypted connections](#encrypted-connections) (your own
+certificate) or [Built-in Let’s Encrypt certificates](#built-in-lets-encrypt-certificates).
+
+- Use a dedicated standard service account and restrict the data, account and key
+  permissions to it.
+- Open the game port (TCP 7677 by default) in the firewall, plus TCP 80 when using
+  built-in Let’s Encrypt, and configure the service account so the process may
+  bind port 80.
+- Keep the retail data, accounts file, map cache and replay directory on local
+  paths the account can read (and write, for the last three).
 
 ## Encrypted connections
 
@@ -45,11 +180,9 @@ Internet deployment setting. To use one from the multiplayer menu, explicitly
 enter `tcp://hostname` (and an optional `:port`). Bare menu hostnames always use
 TLS, with no plaintext fallback. Automatically launched single-player servers
 keep their private loopback connection. Debug command-line harness connections
-retain their explicit transport behavior. Old clients cannot connect to a TLS
-listener. Version 0.8.14 uses gameplay protocol 293, the same as 0.8.13 and 0.8.12, so 0.8.14,
-0.8.13 and 0.8.12 clients and servers mix freely. 0.8.11 clients (protocol 290) and older cannot
-join a 0.8.14, 0.8.13 or 0.8.12 server, nor 0.8.14, 0.8.13 or 0.8.12 clients an older one; when
-updating from 0.8.11 or earlier, update the server and all clients together.
+retain their explicit transport behavior. Clients too old to support TLS cannot
+connect to a TLS listener; see [Versions](#versions) for which clients a server
+accepts.
 
 The login exchange alone is not session encryption. Do not expose the old
 plaintext port alongside TLS as a compatibility fallback.
@@ -130,38 +263,14 @@ ACME is enabled automatically. Copy the `takserver-acme.conf` template to
 `/etc/systemd/system/takserver.service.d/acme.conf`, replace its hostname, and
 review the paths before restarting. It replaces the manual certificate options
 and credential entry. Do not run the game server as root just to bind port 80.
-On Windows/macOS, configure the service account and firewall so the process can
-bind TCP 80. Platform service installers are not supplied for those systems.
+On Windows and macOS, see [Running on Windows or macOS](#running-on-windows-or-macos).
 State uses private owner ACLs on Windows and owner-only Unix
 permissions. No new DLL/shared-library dependency is added; OpenSSL is static and
 the vendored JSON parser is header-only (see `ACME-LICENSES.txt`).
 
 Use `--acme-staging` with a **separate state directory** to exercise Let’s Encrypt’s
 test service before production. Staging certificates are not trusted by ordinary
-clients. For local development, `acme_test_driver` and
-`tools/acme_pebble_test.py` exercise issuance, saved-state reuse, background
-renewal, occupied-port failure, retained certificates, backoff and listener cleanup
-against [Pebble](https://github.com/letsencrypt/pebble). The test driver’s custom
-CA endpoint and challenge port are not production server options. The native
-`acme` CTest covers responder bounds, exact paths, slow peers and cleanup.
-
-For the integration script, run Pebble with its default port 5002 for HTTP
-validation, `PEBBLE_AUTHZREUSE=0`, and DNS/hosts mapping `acme.tak.test` to this
-machine. Point `--ca` at Pebble’s API root certificate:
-
-```sh
-python3 tools/acme_pebble_test.py --driver build-o2/acme_test_driver \
-  --ca /path/to/pebble.minica.pem
-```
-
-The optional integration harness needs Python’s `cryptography` package to create
-an already-due fixture; the game/server and native CTests do not need Python
-cryptography, Pebble, or a container runtime. Validation on 2026-10-01 passed the
-169-test optimized Debug suite, six focused Release and Clang checks, and both
-native and end-to-end ACME checks under AddressSanitizer/LeakSanitizer. Pebble was
-configured to reject 50% of nonces to exercise retry handling. The TLS regression
-also replaces the server context while an established connection transfers data.
-These checks do not issue a production certificate or alter any live service.
+clients.
 
 ## Resource controls
 
@@ -235,7 +344,7 @@ batch of ten, preventing a forged count from allocating billions of queue entrie
 Ownership is stamped by the server and checked by the simulation.
 
 Spectating is a per-room rule. The host's **Allow spectators** setting
-(`GameOptions.allowSpectators`, protocol 258) travels in every room snapshot and
+(`GameOptions.allowSpectators`) travels in every room snapshot and
 in the game list. When it is off, the server refuses every `Spectate` into that
 room with "spectators are not allowed in this game". That covers a browser's
 watch request, a player who left the game and asks to watch, and a reconnecting
@@ -266,7 +375,7 @@ with `TAK_STALL_MS` and `TAK_DROP_WAIT_MS` (milliseconds) in the server's
 environment; `server_disconnect_test.py` checks the wait, the takeover, a
 resume and a reconnect against a real server.
 
-Voice chat (protocol 276) is relayed, never stored or recorded: a client's
+Voice chat is relayed, never stored or recorded: a client's
 frames go only to the room members that have switched voice chat on and that
 its diplomacy mask picks (the whole room before the game starts), never back
 to the talker and never to a client still catching up. Each talker is relayed
@@ -321,8 +430,8 @@ Choose either built-in ACME or an existing certificate below before starting.
 For a packaged installation, the unit is already installed: **do not copy another
 unit into `/etc/systemd/system/`**. Follow the numbered steps below. Keep custom
 settings in `/etc/systemd/system/takserver.service.d/` so package upgrades can
-update the vendor unit without replacing your configuration. A concise
-[packaged ACME walkthrough](../README.md#linux-server-setup) is also in the README.
+update the vendor unit without replacing your configuration. The
+[quick setup](#quick-setup-linux-package) above is the short version of these steps.
 
 ### 1. Install the retail data
 
@@ -588,28 +697,9 @@ certificate and quota errors. Use filesystem quotas if needed; application
 limits do not cap the Crusades database or the system journal's total size.
 Package updates replace the vendor unit and template, not your edited drop-in.
 
-On Windows/macOS, use a dedicated standard service account, restrict data/key
-permissions, and expose the game port plus port 80 when using ACME. The supplied
-systemd service and sandbox are Linux-specific.
+## Remaining risks
 
-## Validation and remaining limits
-
-See the [2026-10-01 validation report](public-server-validation-2026-10-01.md)
-for local suites, remote TLS matches, and the deployment boundary.
-
-`tls_test` checks encrypted framing/backpressure, valid connections, wrong host,
-untrusted/expired certificates, abrupt peer closure and plaintext rejection, and
-CRL revocation through a loopback CRL host: good, revoked, cached, unreachable
-(soft-fail) and no distribution point, plus forged, stale, out-of-scope and
-malformed CRLs.
-`server_public_test.py` exercises real-server admission, map reservation,
-registration closure, floods, invalid configuration, TLS login and ordinary
-lobby traffic. `server_spectators_test.py` checks the per-room spectator rule. `server_commands_test` checks malformed command batches and
-unsafe coordinates. Existing authentication, campaign, map-transfer and multiplayer
-regressions remain required. Native platform CI runs the TLS test and verifies
-that executable imports contain no new non-system dynamic libraries.
-
-Remaining risks include malicious asset-parser inputs not covered by these
+Known limits: malicious asset-parser inputs not covered by the server's
 tests, CPU-heavy but valid maps/scenarios, distributed connection exhaustion,
 and attacks exceeding the host/network capacity. Map admission and room caps
 bound work but do not isolate each referee into its own process. The TLS client
@@ -633,6 +723,23 @@ API connection. Keep OpenSSL and operating-system trust stores updated.
 Implementation references: [OpenSSL hostname verification](https://docs.openssl.org/3.6/man3/SSL_set1_host/),
 [OpenSSL protocol minimum](https://docs.openssl.org/master/man3/SSL_CTX_set_min_proto_version/),
 and [systemd execution sandbox](https://github.com/systemd/systemd/blob/main/man/systemd.exec.xml).
+
+## Validation and testing (for developers)
+
+See the [2026-10-01 validation report](public-server-validation-2026-10-01.md)
+for local suites, remote TLS matches, and the deployment boundary.
+
+`tls_test` checks encrypted framing/backpressure, valid connections, wrong host,
+untrusted/expired certificates, abrupt peer closure and plaintext rejection, and
+CRL revocation through a loopback CRL host: good, revoked, cached, unreachable
+(soft-fail) and no distribution point, plus forged, stale, out-of-scope and
+malformed CRLs.
+`server_public_test.py` exercises real-server admission, map reservation,
+registration closure, floods, invalid configuration, TLS login and ordinary
+lobby traffic. `server_spectators_test.py` checks the per-room spectator rule. `server_commands_test` checks malformed command batches and
+unsafe coordinates. Existing authentication, campaign, map-transfer and multiplayer
+regressions remain required. Native platform CI runs the TLS test and verifies
+that executable imports contain no new non-system dynamic libraries.
 
 ### Focused untrusted-input regressions
 
@@ -659,3 +766,30 @@ future window or a CA without `renewalInfo` keeps the certificate.
 The C++ ACME test also covers long persisted backoff, prompt shutdown, strict paths
 and challenge availability while another source holds incomplete connections, and
 the RFC 9773 certID example, RFC 3339 window parsing and window selection.
+
+### ACME tests
+
+For local development, `acme_test_driver` and
+`tools/acme_pebble_test.py` exercise issuance, saved-state reuse, background
+renewal, occupied-port failure, retained certificates, backoff and listener cleanup
+against [Pebble](https://github.com/letsencrypt/pebble). The test driver’s custom
+CA endpoint and challenge port are not production server options. The native
+`acme` CTest covers responder bounds, exact paths, slow peers and cleanup.
+
+For the integration script, run Pebble with its default port 5002 for HTTP
+validation, `PEBBLE_AUTHZREUSE=0`, and DNS/hosts mapping `acme.tak.test` to this
+machine. Point `--ca` at Pebble’s API root certificate:
+
+```sh
+python3 tools/acme_pebble_test.py --driver build-o2/acme_test_driver \
+  --ca /path/to/pebble.minica.pem
+```
+
+The optional integration harness needs Python’s `cryptography` package to create
+an already-due fixture; the game/server and native CTests do not need Python
+cryptography, Pebble, or a container runtime. Validation on 2026-10-01 passed the
+169-test optimized Debug suite, six focused Release and Clang checks, and both
+native and end-to-end ACME checks under AddressSanitizer/LeakSanitizer. Pebble was
+configured to reject 50% of nonces to exercise retry handling. The TLS regression
+also replaces the server context while an established connection transfers data.
+These checks do not issue a production certificate or alter any live service.
