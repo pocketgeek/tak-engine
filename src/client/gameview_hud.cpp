@@ -2156,7 +2156,6 @@ namespace {
         SDL_RenderFillRectF(ren_, &bg);
         SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
         SDL_RenderDrawRectF(ren_, &bg);
-        objPanelBottom_ = bg.y + bg.h;
         blockText(showObjectives_ ? "OBJECTIVES" : "[O] OBJECTIVES",
                   x0, top, s, {240, 214, 148, 255});
         if (!showObjectives_) return;

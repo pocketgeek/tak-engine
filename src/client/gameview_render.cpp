@@ -3144,7 +3144,6 @@
             profHudMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
                           (double(SDL_GetPerformanceFrequency()) / 1000.0);
         }
-        objPanelBottom_ = 0;
         if (!spectating_) {
             renderGui(winW, winH);
             drawPanel(winW, winH);
@@ -3195,19 +3194,6 @@
                 hudBanner("NETWORK: " + netError_, 150, 2.0f, {255, 140, 120, 255}, winW);
         }
         if (mp_ && !replayMode_) drawNetWaiting(winW);
-        if (pendingCmd_ && hudFont_.ok()) {
-            const char* msg = pendingCmd_ == 'a'   ? "ATTACK: CLICK TARGET"
-                              : pendingCmd_ == 'f' ? "FIGHT-MOVE: CLICK DESTINATION"
-                              : pendingCmd_ == 'p' ? "PATROL: CLICK WAYPOINT"
-                              : pendingCmd_ == 'g' ? "GUARD: CLICK FRIENDLY UNIT"
-                              : pendingCmd_ == 'c' ? "RECLAIM: CLICK FEATURE"
-                              : pendingCmd_ == 'r' ? "REPAIR: CLICK DAMAGED UNIT"
-                              : pendingCmd_ == 'l' ? "LOAD: CLICK UNIT TO CARRY"
-                              : pendingCmd_ == 'u' ? "UNLOAD: CLICK DESTINATION"
-                                                   : "MOVE: CLICK DESTINATION";
-            // Left-aligned under the campaign objectives panel, which shares that corner.
-            hudBanner(msg, std::max(100.0f, objPanelBottom_ + 6), 1.6f, {255, 200, 120, 255}, winW, 12);
-        }
         if (noticeTimer_ > 0 && hudFont_.ok() && !notice_.empty())
             hudBanner(notice_, 120, 2.5f, {255, 230, 120, 255}, winW);
         if (paused_ && bigFont_.ok()) {
