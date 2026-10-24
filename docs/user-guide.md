@@ -1,11 +1,10 @@
 # TAK Engine user guide
 
-[Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
+[Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.14** (network protocol **293**, replay format
-**14**, both the same as 0.8.13 and 0.8.12; 0.8.14 plays with 0.8.13 and 0.8.12
-and their replays, but not with 0.8.11 or earlier, nor their replays). It is
-written for three kinds of reader:
+This guide covers **TAK Engine 0.9.0**. Which versions it plays with, and whose
+replays it plays: see [Versions](#versions). What changed in each release: see
+the [CHANGELOG](../CHANGELOG.md). It is written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
   the game;
@@ -15,8 +14,8 @@ written for three kinds of reader:
 
 If you only want to get going, read [Installing](#installing), [Game data](#game-data)
 and [Your first skirmish](#your-first-skirmish), then come back to the rest.
-For the controls, hotkeys and mouse actions on one page, with pictures, see the
-[quick-start controls reference](quick-start.md).
+The [quick start](quick-start.md) has the first steps (a skirmish, an online
+game, a campaign) and every control on one page, with pictures.
 
 ## Contents
 
@@ -81,37 +80,71 @@ What you can play:
 ## Installing
 
 Download TAK Engine from the
-[releases page](https://github.com/pocketgeek/tak-engine/releases/latest) and pick
-the package for your system:
+[latest release](https://github.com/pocketgeek/tak-engine/releases/latest) and pick
+the package for your system. Every file name starts with the project name and
+version, for example `tak-engine-<version>-ubuntu24.04-amd64.deb`:
 
 | System | Package |
 | --- | --- |
-| Windows x64 | the `windows-x64-setup.exe` installer, or the portable ZIP |
-| Windows 11 on ARM | the `windows-arm64.zip` portable package |
-| macOS 14 or later, Apple Silicon | `macos-arm64.dmg` |
-| macOS 14 or later, Intel | `macos-x64.dmg` |
-| Ubuntu 22.04 / 24.04 / 26.04, Debian 12 / 13 | the matching `.deb` |
-| Fedora 44 | the `.rpm` |
-| Arch Linux | the `.pkg.tar.zst` |
+| Windows x64 | `tak-engine-<version>-windows-x64-setup.exe` (installer), or `takclient-<version>-windows-x64.zip` (portable) |
+| Windows 11 on ARM | `takclient-<version>-windows-arm64.zip` (portable) |
+| macOS 14 or later, Apple Silicon | `tak-engine-<version>-macos-arm64.dmg`, or `takclient-<version>-macos-arm64.zip` |
+| macOS 14 or later, Intel | `tak-engine-<version>-macos-x64.dmg`, or `takclient-<version>-macos-x64.zip` |
+| Ubuntu 22.04 / 24.04 / 26.04 | `…-ubuntu22.04-amd64.deb` and so on; `-arm64.deb` for ARM64 |
+| Debian 12 / 13 | `…-debian12-amd64.deb`, `…-debian13-amd64.deb`; `-arm64.deb` for ARM64 |
+| Fedora 44 | `…-fedora44-x86_64.rpm`, or `…-fedora44-aarch64.rpm` for ARM64 |
+| openSUSE Leap 16.0 | `…-opensuse-leap16.0-x86_64.rpm`, or `…-aarch64.rpm` for ARM64 |
+| Arch Linux | `…-1-x86_64.pkg.tar.zst` |
+| Slackware 15.0 | `…-x86_64-1_slack15.0.txz` |
 
-Release filenames include the project name and version. Linux ARM64, openSUSE and
-Slackware packages are also available; the [README](../README.md#download) lists
-them.
+The downloads whose names end in `-debug` are for diagnosing problems; you do
+not need them to play.
 
 **Windows.** Run the installer, or unpack the ZIP anywhere and run
-**Total Annihilation - Kingdoms**. The installer adds Start menu shortcuts.
+`takclient.exe`. The installer adds the Start menu shortcuts **Total
+Annihilation - Kingdoms** and **TAK Cartographer**. The installer and the
+programs are signed.
 
-**macOS.** Open the DMG and drag **Total Annihilation - Kingdoms** to
-Applications. The app and the DMG are signed and notarized by Apple, so the game
-opens on the first launch like any other app.
+**macOS.** Open the DMG and drag **Total Annihilation - Kingdoms** (and **TAK
+Cartographer**, if you want the map editor) to Applications. The apps and the
+DMG are signed and notarized by Apple, so the game opens on the first launch
+like any other app.
 
-**Linux.** Install the package with your package manager, for example
-`sudo apt install ./tak-engine-….deb` or `sudo dnf install ./tak-engine-….rpm`.
-The game appears in your application menu as **Total Annihilation: Kingdoms**.
+**Linux.** Install the package with your package manager:
+
+| Distribution | Command |
+| --- | --- |
+| Ubuntu, Debian | `sudo apt install ./tak-engine-….deb` |
+| Fedora | `sudo dnf install ./tak-engine-….rpm` |
+| openSUSE | `sudo zypper install ./tak-engine-….rpm` |
+| Arch Linux | `sudo pacman -U tak-engine-….pkg.tar.zst` |
+| Slackware | `upgradepkg --install-new tak-engine-….txz` (as root) |
+
+The game appears in your application menu as **Total Annihilation: Kingdoms**,
+and the map editor as **Cartographer**.
 
 Every package contains the game client, the Cartographer map editor and the
-dedicated server. Libraries the game needs are bundled; your system only has to
-provide graphics, sound and windowing.
+`takserver` dedicated server (with its `crusades_admin` tool); there is no menu
+shortcut for the server. Libraries the game needs are bundled; your system only
+has to provide graphics, sound and windowing.
+
+### Updating
+
+Install the new version over the old one, in the same way. Everything of yours
+carries over: your settings, your data folder choice, key bindings, the maps in
+your install's `Maps` folder (including saved generated maps), and your mod
+packs and their ticks.
+
+- **Multiplayer:** you can play only with the versions that share your network
+  protocol, and a server turns away any other. When a release changes the
+  protocol, the server and all of its players update together. See
+  [Versions](#versions).
+- **Replays** play only on a version with the protocol that recorded them. Keep
+  an old copy of the engine if you want to keep watching old replays.
+- **Anything you must do by hand** when updating is listed under *Upgrading* in
+  that release's [CHANGELOG](../CHANGELOG.md) entry. Older versions are not
+  offered for download; they can be built from source from their tags (see the
+  [development guide](development.md)).
 
 ---
 
@@ -186,6 +219,7 @@ archive supplies a given file.
 ## The main menu
 
 ![The title menu with its three doors and the version number](img/title.jpg)
+<!-- SHOT-0.9.0: title -- (must: version) title menu, three doors, VERSION 0.9.0 -->
 
 *The title menu. The doors open Single-Player, Multiplayer and Campaign; the version is shown at the bottom.*
 
@@ -252,6 +286,7 @@ In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
 6. Click **Start**.
 
 ![The game setup screen with the map list, a map preview with numbered start positions and the match options](img/lobby.jpg)
+<!-- SHOT-0.9.0: lobby -- single-player game setup screen: map list, preview with numbered starts and player count, match options -->
 
 *The game setup screen: pick a map, check its preview and player count, and set the match rules.*
 
@@ -274,20 +309,22 @@ change in the room, until the game starts.
 | --- | --- |
 | **Map** | A shipped, downloaded or generated map. |
 | **Crusades** | **Off** uses the standard unit balance. **On** uses the alternative *Crusades* balance from the final retail patch. Unit costs, stats and some build menus differ. |
-| **Double Sight/Radar** | Doubles every unit's sight and radar range. Weapon range is unchanged. |
+| **Double Sight/Radar** | Doubles every unit's sight and radar range in skirmish and multiplayer. Weapon range is unchanged, and campaign missions are never affected. |
 | **Monarch Expendable** | **Off** (the original rule): losing your Monarch loses the game. **On**: the Monarch is an ordinary unit and you lose only when everything is gone. |
-| **Fog of war** | **Not Explored**: the map starts hidden. **Explored**: the map starts revealed but enemies are hidden outside your sight. **Full Vision**: no fog. Terrain you have seen stays visible after your units leave. |
-| **Start locations** | **Fixed** gives the occupied slots the map's start positions in order, top slot first. Empty slots are skipped, as in the original game: a player in slot 1 and an AI in slot 8 start at positions 1 and 2. **Random** shuffles them. **By slot** always starts slot N at the map's position N, empty slots or not: slots 1 and 8 start at positions 1 and 8. It is not in the original game. In the room, a player picks a slot, and so a start, with **Move here** (0.8.7). A room normally opens one slot per position; a slot without a position of its own takes the lowest position that no occupied slot has by number, or a spot near the map centre, and the room shows which under the player's name. |
-| **Unit cap** | The most units each player may have alive: 250, 500, 1,000 or 2,000 (the default). Production pauses at the cap. |
+| **Fog of war** | **Not Explored**: the map starts hidden. **Explored**: the map starts revealed but enemies are hidden outside your sight. **Full Vision**: no fog. Terrain you have seen stays visible after your units leave; enemy units outside your current sight cannot be targeted. |
+| **Start locations** | **Fixed** gives the occupied slots the map's start positions in order, top slot first. Empty slots are skipped, as in the original game: a player in slot 1 and an AI in slot 8 start at positions 1 and 2. **Random** shuffles them. **By slot** always starts slot N at the map's position N, empty slots or not: slots 1 and 8 start at positions 1 and 8. It is not in the original game. In the room, a player picks a slot, and so a start, with **Move here**. A room normally opens one slot per position; a slot without a position of its own takes the lowest position that no occupied slot has by number, or a spot near the map centre, and the room shows which under the player's name. |
+| **Unit cap** | The most units each player may have alive: 250, 500, 1,000 or 2,000 (the default and the most the game allows). Production pauses at the cap. |
 | **Allow speed change** | Lets the host change game speed during the match, from −9 (0.1×) to +10 (2×). |
-| **Pathfinding** | **Retail** (the default) or **Legion**. See [Pathfinding](#pathfinding-retail-and-legion). |
+| **Pathfinding** | **Retail** (the default) or **Legion** (experimental). Campaigns and Crusades battles always use Retail. See [Pathfinding](#pathfinding-retail-and-legion). |
 | **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. The host can change it in the room by clicking it, until the game starts; then it is fixed. See [Spectating](#spectating). |
 | **Spectate (Watch AIs)** | Single-player only: fill every slot with AIs and watch. |
 | **Power codes** | **Off** (the default) or **On**. On lets every player in the game type the original game's cheat codes in the chat box, such as **+ATM** and **+NowISee**. See [Power codes](#power-codes). Always off in campaigns and Crusades battles. It cannot be changed in the room. |
 | **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered if your install has a game mod pack (one you could tick in the room, or an always-enabled one), in single player and multiplayer alike, with the warning *PACK NEEDED:* and the unit, in case a pack supplies it. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
 
-Your choices are remembered for next time, except passwords, Spectate and Map
-scenario.
+All of these except **Allow spectators** are set on the game setup screen
+only: the room shows them read-only. Your choices are remembered for next time
+(the map and its sorting, the game name and the random map settings too),
+except passwords, Spectate and Map scenario.
 
 ### AI difficulty
 
@@ -297,9 +334,9 @@ scenario.
 | **Easy** | Builds slowly. First attack after about four minutes, then small waves of at most eight units, at least two minutes apart. |
 | **Normal** | Sends small raiding parties to probe and scout while it builds up a main army sized to its income. |
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
-| **Absurd** | Plays like Hard, with **double mana income**. |
-| **Absurdly Defensive** | Plays like Defensive, with Absurd's **double mana income**. |
-| **Retail** | The Retail AI: the original 1999 game's own AI, driven by `ai/default.txt`, as it played in 1999. No difficulty setting and no income bonus. Weaker than Normal. A new AI seat starts on Normal. See [Retail AI](#retail-ai). |
+| **Absurd** | Plays like Hard, with **double mana income**, reclaim included. |
+| **Absurdly Defensive** | Plays like Defensive, with Absurd's **double mana income** ([details](ai-defensive-2026-10-17.md)). |
+| **Retail** | The Retail AI: the original 1999 game's own AI, driven by `ai/default.txt` (or the profile the map names; 30 campaign missions name their own), ported from the original program and checked against it. A game pack or a map archive that carries the profile file replaces the install's. No difficulty setting and no income bonus; it keeps the original's quirks and plays weaker than Normal. It always plays the campaign opponents. A new AI seat starts on Normal. See [Retail AI](#retail-ai). |
 
 At every difficulty except Retail, the AI's Monarch fights back when it is attacked, or when
 an armed enemy comes within its reach, instead of carrying on with a build.
@@ -346,11 +383,11 @@ The Retail AI is the original 1999 game's own computer player, driven by its
 the same thing as **Retail** pathfinding, which is chosen separately). Every decision it makes (what to build, where to put it, which units guard
 the base, when a wave leaves and what it marches on) follows the 1999 game's own AI, which was read from the original
 program and checked against it piece by piece
-([acceptance](classic-ai-acceptance.md)). So it plays the way the original did,
+([plan](classic-ai-plan.md), [acceptance](classic-ai-acceptance.md)). So it plays the way the original did,
 quirks included:
 
 - It builds from the map's **AI profile**, the file the map names
-  (`ai/default.txt` for every shipped skirmish map; many campaign missions name
+  (`ai/default.txt` for every shipped skirmish map; 30 campaign missions name
   their own, and a missing one falls back to `ai/default.txt`). The file is
   taken from a ticked game pack that carries its own `ai/default.txt` (or the
   file the map names), else from the map's own archive in `Maps/` (a `.kmp`; it
@@ -378,10 +415,18 @@ The Retail AI always plays the campaign's computer opponents: see
 
 - **Map type**: Mainland, Lakes or Islands, or a themed layout per world:
   Aramon Riverlands, Taros Maze, Veruna Ports, Zhon Clearings or Creon Highlands.
+  The themed layout is the fourth choice of **Layout**; changing the world while
+  a themed layout is chosen switches to that world's theme. Ports always has
+  connected deep-water harbour sites, and the land themes keep connected army
+  routes. Maze corridors open onto all four map edges, and Lakes can reach the
+  edge of the map.
 - **World**: the look of the map (Aramon, Taros, Veruna, Zhon or Creon terrain).
-- **Size** and **player count**. Larger player counts need bigger maps.
+- **Size** and **player count**, up to 64 × 64. The sizes on offer depend on the
+  layout and the player count: larger player counts need bigger maps, and themed
+  layouts start at 16 × 16 (24 × 24 for 5–8 players).
 - **Water**, **highland**, **forest** and **rock** amounts.
-- **Extra Mana Spots**: 0 to 6 extra spots per player, added fairly.
+- **Extra Mana Spots**: 0 to 6 extra spots per player, added fairly. Terrain can
+  limit how many fair rounds fit, so the preview shows the real total.
 - **Scattered Mana**: a second slider, separate from the per-player extra spots,
   with five notches: None, Minimum, Medium, High or Max. Neutral spots spread
   over open ground away from the bases. It is a density, so a bigger map gets
@@ -389,10 +434,16 @@ The Retail AI always plays the campaign's computer opponents: see
   halves it.
 - **Map seed**: the same seed and settings give the same map. **Re-roll seed**
   picks a new one.
-- **Map name**: optional; the generated map is saved under this name.
+- **Map name**: optional, up to 24 letters, digits, spaces, hyphens or
+  underscores. The generated map is saved under this name, which is also part of
+  its file name; a short recipe code beside it in the map list keeps maps with
+  the same name apart. Left blank, the map is named after its settings.
+
+The name and the generator settings, seed included, are remembered for next
+time.
 
 Every player gets a flat base area, clear routes for armies and three home mana
-spots. Scattered spots are always reachable from some start, never
+spots. Every mana spot the generator places has ruins around it. Scattered spots are always reachable from some start, never
 inside a base, and are spread evenly but not mirrored. Islands maps need ships
 or flyers to reach other players. The preview updates when you release a slider
 and counts the scattered spots in its MANA total, with a separate SCATTERED
@@ -401,12 +452,19 @@ Mana level beside the map seed. When the game starts, the map is saved on
 every player's computer and on the server, so it appears in the map list later.
 See [random map generation](random-map-generation.md) for the rules it follows.
 
+The generator is version 9. A recipe (seed and settings) from generator
+version 8 still makes exactly the same map; older recipes are not supported. A
+generated map you have saved as a `.kmp` always plays, whatever made it.
+Rebuilding a map from its recipe needs the same game data.
+
 ![The single-player screen with Generate Random Map open: Type Aramon, Layout Mainland, Size 12 × 12 and Players 4 on one row, then the Forests, Rock Clusters, Extra Mana Spots, Scattered Mana (at High), Water Amount and Authored Hills sliders and Re-roll Seed. The preview shows four numbered starts and reads MANA: 57 and SCATTERED: 33 NEUTRAL](img/guide/random-map-lobby.jpg)
+<!-- SHOT-0.9.0: guide-random-map-lobby -- Generate Random Map open in the single-player setup: Type/Layout/Size/Players row, the sliders with Scattered Mana at High, Re-roll Seed, preview with MANA and SCATTERED totals -->
 
 *The random map settings in the single-player lobby, with Scattered Mana at
 High. Size and Players share a row.*
 
 ![A wooded lake shore on a generated Aramon Riverlands map, with a lodestone among standing-stone ruins in a clearing](img/generated.jpg)
+<!-- SHOT-0.9.0: generated -- generated themed map with scattered mana: a lodestone on a neutral scattered spot -->
 
 *Part of a generated Aramon Riverlands map with Scattered Mana at Medium. The
 lodestone in the clearing stands on a neutral scattered spot that an AI has
@@ -417,6 +475,7 @@ claimed.*
 ## Playing
 
 ![The in-game screen with numbered markers on the minimap, stats panel, orders, weapons and stances, mana, build menu, information bar and the selected Monarch](img/guide/hud-annotated.jpg)
+<!-- SHOT-0.9.0: guide-hud-annotated -- in-game screen with numbered markers 1-8 (minimap, stats panel, orders, weapons and stances, mana, build menu, information bar, the selected Monarch) -->
 
 *The in-game screen with Aramon's Monarch, Elsin, selected.*
 
@@ -454,6 +513,7 @@ RULES: ENDLESS*, and the game ends when the players leave. Every seat the
 scenario gives units or rules to must be filled before the game can start.
 
 ![The single-player setup screen with King of the Hill selected and MAP SCENARIO: ON under the preview; the lines under it read UNITS PLACED FOR 1-4, NEEDS SEATS 1-4, BUILDS 6 UNIT TYPES and ENDS BY SCENARIO RULES, a gold S marks the scenario maps in the list, and Monarch Expendable and Start Locations are greyed](img/lobby-scenario.jpg)
+<!-- SHOT-0.9.0: guide-lobby-scenario -- single-player setup with King of the Hill and MAP SCENARIO: ON, the lines under it, gold S in the list, Monarch Expendable and Start Locations greyed -->
 
 *King of the Hill with **Map scenario** turned on.*
 
@@ -491,8 +551,10 @@ yield more.
 **Upgrading lodestones.** A builder that offers your side's divine lodestone can
 build it on top of one of your finished basic lodestones. The old one dissolves
 during the first half of construction and the new one forms during the second.
-The upgrade costs the full price of the divine lodestone, and the basic lodestone
-is not refunded if you cancel.
+Its larger footprint must fit. The upgrade costs the full price and build time
+of the divine lodestone and needs no extra unit-cap slot; it makes no mana until
+it is finished, and the basic lodestone is not given back if the upgrade is
+cancelled or destroyed.
 
 **Spending.** Everything you build draws mana while it is being built. If income
 cannot keep up, all construction slows down together. Storage lets you bank mana
@@ -512,9 +574,13 @@ A long menu that does not fit beside the command panel wraps into more rows,
 stacked upward in menu order and balanced (13 icons make rows of 7 and 6), so it
 never covers the panel or the mana orb; the hover tooltip and the **TRAINING**
 line stay clear of the panel too. The icons keep their size unless the Build Menu
-Scale is too big for the window, which is then lowered just enough to fit.
+Scale is too big for the window, which is then lowered just enough to fit. The
+**Build Menu** option ([Interface](#interface)) lines each row up left, centred
+or right. Over the menu the pointer stays the normal one, even with a map
+target underneath.
 
 ![A Zhon Beast Tamer's nine-icon conjure menu wrapped into two rows, five above four, left of the command panel in a 1024 by 768 window](img/guide/build-menu-wrap.jpg)
+<!-- SHOT-0.9.0: guide-build-menu-wrap -- a Beast Tamer menu wrapped into two balanced rows at Build Menu Scale 150% in a 1024x768 window -->
 
 *A Beast Tamer's menu at Build Menu Scale 150% in a 1024 × 768 window: two rows, clear of the command panel and the mana orb.*
 
@@ -536,6 +602,7 @@ Scale is too big for the window, which is then lowered just enough to fit.
   sit half on top of one already queued for that builder is left out.
 
   ![A Shift-drag wall line being laid: nine wall sites in a row, two cells apart, with the GAP 2 label by the pointer](img/guide/build-line.jpg)
+  <!-- SHOT-0.9.0: guide-build-line -- Shift-drag wall line being laid, sites two cells apart, GAP 2 label by the pointer -->
 
 - **Lodestone areas**: choose a lodestone, then **drag a box** (at least about
   32 pixels each way at 100% UI Scale, more at larger UI Scales; anything
@@ -543,8 +610,11 @@ Scale is too big for the window, which is then lowered just enough to fit.
   stays on the ground you pressed if the view scrolls or zooms while you drag. The
   builder visits every free mana spot in the box, closest first: after each spot
   it moves on to the nearest one left, scouting unexplored spots on the way and
-  preferring spots it can walk to. A Shift-queued area starts from where the
-  previous order ends. Builders given overlapping areas split the spots between
+  preferring spots it can walk to, and clearing trees and rocks from the spots
+  when it can. Spots that are taken or cannot be reached are skipped; a divine
+  lodestone area also upgrades your finished basic lodestones in it. A
+  Shift-queued area starts from where the previous order ends, and **Stop**
+  cancels the job. Builders given overlapping areas split the spots between
   them instead of heading for the same one.
 - **Assisting**: right-click an unfinished building with another builder to help
   build it.
@@ -579,7 +649,8 @@ order to set a **rally point** for new units; Shift adds more rally steps.
 **Mobile production.** Some builders conjure units in the field (Zhon's Beast
 Handler, for example). They place what they build like a structure. A mobile
 builder running infinite production treats **Move** and **Patrol** as rally
-orders for its output. **Stop** ends production.
+orders for its output; **Shift** adds rally steps and shows the route. **Stop**
+ends production and gives you the builder back.
 
 The build menu only appears when exactly one builder or production building is
 selected.
@@ -601,7 +672,10 @@ A builder that can reclaim turns trees, rocks and wrecks into mana.
 
 Press **H** (or use the heal button) and click a damaged friendly unit or
 building. Repair costs mana. Builders on **patrol** automatically repair damaged
-friendly units and buildings near their route, then carry on patrolling.
+friendly units and buildings near their route, at their ordinary repair rate and
+cost, then carry on with the same patrol. They do not follow a unit that leaves
+the area, and they leave unfinished buildings to an explicit build or help
+order.
 
 Damaged units and buildings also repair themselves slowly, for free, at the rate
 the original game's data sets: most mobile units are back to full health in
@@ -628,6 +702,7 @@ to aim, face their target first. A unit standing with no orders turns towards
 what it shoots. Units pick targets among the enemies their player can see.
 
 ![Aramon Archers and two Mage Builders walking east along a dotted move line, with Taros Zombies attacking the back of the column and hits flashing among them; Taros Skeleton Archers stand further off](img/guide/fire-on-the-move.jpg)
+<!-- SHOT-0.9.0: guide-fire-on-the-move -- archers on a move order (Shift held, dotted line) shooting enemies at the back of the column while walking -->
 
 *Archers and Mage Builders on a plain move order (Shift is held, so the dotted
 move line shows) keep walking while they shoot the Zombies that have caught the
@@ -698,6 +773,7 @@ units in the same group or formation:
   chance to drop all its orders and stop where it is.
 
 ![Side-by-side pictures of the same Zhon formation: in Retail the flyers are far ahead of the ground units, in Legion they fly over the leading ground units](img/guide/flyers-retail-legion.jpg)
+<!-- SHOT-0.9.0: guide-flyers-retail-legion -- side by side, same formation of ground units and flyers: Retail flyers far ahead, Legion flyers over the leading ground units -->
 
 *The same formation of ground units and flyers 22 seconds after one move order. Left, Retail: the flyers have gone ahead. Right, Legion: they ride over the leading ground units. (A development scene.)*
 
@@ -727,11 +803,23 @@ to one at a time.
 
 ### Scoring
 
-Destroying an enemy unit adds that unit's experience value to your score, as in
-the original game. Building units and gathering mana do not score. The **F4**
-panel shows each player's kills, losses and score.
+Destroying a finished unit of another player adds that unit's experience value
+to your score, as in the original game. Allies count too: as in the original, a
+kill of an allied player's unit scores. Destroying your own units or unfinished
+units and buildings scores nothing, and building units, gathering mana and
+losing units do not change your score. The values come from the balance in use,
+so Retail and Crusades can score the same unit differently: a Taros Zombie is
+worth 3 points in Retail and 5 in Crusades. Some campaign missions set the score
+from their own script instead. The
+[retail scoring evidence](campaign-presentation-2026-09-26.md#result-score) has
+the details.
+
+The **F4** panel shows each player's kills, losses and score. When any team has
+two or more players, it adds a team column and lists the players team by team.
+The results screen after a game shows the same scores.
 
 ![The F4 scorecard listing eight players with kills, losses and score over a battle](img/guide/scorecard.jpg)
+<!-- SHOT-0.9.0: guide-scorecard -- F4 scorecard over a battle: players with kills, losses and score -->
 
 *The F4 scorecard during an eight-player benchmark battle.*
 
@@ -761,6 +849,7 @@ walls and a gate.
 ### Aramon
 
 ![Aramon's Monarch Elsin selected beside an Aramon army, with her build menu along the bottom](img/guide/side-aramon.jpg)
+<!-- SHOT-0.9.0: guide-side-aramon -- Aramon Monarch selected beside an Aramon army, with the side's interface and build menu -->
 
 *Aramon: Elsin selected, with her build menu. The army is a test start, not a normal opening.*
 
@@ -781,6 +870,7 @@ cavalry and powerful siege weapons.
 ### Taros
 
 ![Taros's Monarch Lokken selected beside a Taros army, with the dark Taros interface](img/guide/side-taros.jpg)
+<!-- SHOT-0.9.0: guide-side-taros -- Taros Monarch selected beside a Taros army, with the side's interface and build menu -->
 
 *Taros: Lokken and the Taros interface.*
 
@@ -802,6 +892,7 @@ A kingdom of necromancy, fire and demons, led by the sorcerer Lokken.
 ### Veruna
 
 ![Veruna's Monarch Kirenna selected beside a Veruna army with Dirigibles](img/guide/side-veruna.jpg)
+<!-- SHOT-0.9.0: guide-side-veruna -- Veruna Monarch selected beside a Veruna army, with the side's interface and build menu -->
 
 *Veruna: Kirenna, with Dirigibles over the army.*
 
@@ -825,6 +916,7 @@ Kirenna.
 ### Zhon
 
 ![Zhon's Monarch Thirsha selected beside a Zhon army of beasts and flyers](img/guide/side-zhon.jpg)
+<!-- SHOT-0.9.0: guide-side-zhon -- Zhon Monarch selected beside a Zhon army, with the side's interface and build menu -->
 
 *Zhon: Thirsha. Her build menu holds conjurers and field structures, not production buildings.*
 
@@ -848,6 +940,7 @@ by mobile builders, so a Zhon base is wherever its conjurers stand.
 ### Creon
 
 ![Creon's Monarch the Sage selected beside a Creon army of machines](img/guide/side-creon.jpg)
+<!-- SHOT-0.9.0: guide-side-creon -- Creon Monarch selected beside a Creon army, with the side's interface and build menu -->
 
 *Creon: the Sage and the Creon interface.*
 
@@ -952,6 +1045,8 @@ walks into the open. Give it an attack order, or move it, and it fires again.
 
 ### Selection
 
+These select your own units and replace the current selection.
+
 | Key | Selects |
 | --- | --- |
 | **Ctrl+A** | All your units. |
@@ -968,7 +1063,7 @@ walks into the open. Give it an attack order, or move it, and it fires again.
 | **Ctrl+T** | Armed troops (not ships or Monarchs). |
 | **Ctrl+W** | All armed units except Monarchs. |
 | **Ctrl+Y** | Flyers. |
-| **N** | Next unit. |
+| **N** | Next unit. It needs a selection to start from. |
 
 With more than one unit selected, the information bar shows **N SELECTED** and a
 portrait for each unit type in the selection. The first selected unit's type comes
@@ -999,6 +1094,7 @@ top right). If they still do not fit, the last tile shows **+K**: K more types
 are selected but not shown.
 
 ![The information bar for 24 selected units of group 3: five full-size type portraits with counts 2, 3, 4, 6 and 9, the last one over the end-cap scroll, the label GROUP 3, partly filled health and mana bars, and 24 SELECTED centred to their right](img/guide/selection-strip.jpg)
+<!-- SHOT-0.9.0: guide-selection-strip -- information bar for a whole selected group: type portraits with counts, GROUP n label, health and mana bars, N SELECTED -->
 
 *Group 3 selected: nine Swordsmen in the usual portrait spot, then Archers,
 Mage Archers, Horsemen and Catapults to the left, most numerous first, all at
@@ -1040,11 +1136,11 @@ group automatically.
 | **Tab** | Full-screen map. Press again to return. |
 | **Shift+Z** | Return to the original game's 1:1 zoom. |
 | **F1** | Unit information for the selected unit. |
-| **F4** | Player names, kills, losses and score. |
+| **F4** | Player names, kills, losses and score; with teams of two or more, grouped by team (see [Scoring](#scoring)). |
 | **F9** | YouTube streaming setup. |
 | **Pause** | Pause or resume. This pauses the game for every player. |
-| **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×), 0.1× per level. A banner shows the new level, for example **GAME SPEED NORMAL** or **GAME SPEED +5**. Only the host can change it, and only if **Allow speed change** was on. In a campaign mission you can always change it. |
-| **Enter** | Open chat; **Enter** sends, **Esc** cancels. Also where you type [power codes](#power-codes). |
+| **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×): level *d* runs at (*d*+10)/10 of normal speed. **=** and the keypad **+**/**−** work too. In a replay they set the playback speed. A banner shows the new level, for example **GAME SPEED NORMAL** or **GAME SPEED +5**. Only the host can change it, and only if **Allow speed change** was on. In a campaign mission you can always change it. |
+| **Enter** | Open chat; **Enter** sends, **Esc** cancels. Also where you type [power codes](#power-codes). Chat works in live games, single player included, but not in replays. |
 | **Print Screen** | Make a poster: save a picture of the whole map. Only in a game with **Power codes** on. If your desktop takes the key for its own screenshots, or your keyboard has none (Mac), set another key for **MAKE POSTER** in **CONTROLS**. See [Power codes](#power-codes). |
 | **Space** (hold) | Push to talk, in multiplayer, when [voice chat](#voice-chat) is on with **Talk mode** Push to Talk. Never while you are typing in a text box. |
 | **Esc** | Close a dialog, cancel placement or an armed order, clear the selection, then open the game menu. |
@@ -1150,12 +1246,12 @@ repair, reclaim, area reclaim, load, unload and building.
 - **Stop** (**S**) clears the whole list.
 
 ![A dotted line with waypoint markers showing the Monarch's queued moves while Shift is held](img/guide/shift-queue.jpg)
+<!-- SHOT-0.9.0: guide-shift-queue -- Shift held: dotted line with waypoint markers through a unit's queued moves -->
 
 *Holding Shift shows the queued route: one move, then three Shift-queued moves.*
 
 **Patrols loop.** Patrol points keep cycling; other orders run once. Flyers
-loop the same way, armed flyers and flying builders included (before 0.8.12 an
-armed flyer told to move to A, then Shift-patrol B, flew to B and hovered there).
+loop the same way, armed flyers and flying builders included.
 
 | You issue | The unit does |
 | --- | --- |
@@ -1174,8 +1270,11 @@ just like its first move.
 ## Pathfinding: Retail and Legion
 
 The game creator chooses how units find their way, in **Pathfinding** on the
-game setup screen. Everyone in the match uses the same choice. Campaigns always
-use Retail.
+game setup screen (click it to switch between the two). Everyone in the match
+uses the same choice; the room shows it read-only, and the choice is remembered
+for your next game. Campaigns and Crusades battles always use Retail. A saved
+choice of Retail+, Flowfield or Cooperative (experimental modes that were
+removed before release) becomes Retail.
 
 ### Retail (the default)
 
@@ -1194,8 +1293,9 @@ instead of sprinting, and members far from the group walk back or wait.
 
 ### Legion
 
-Legion is a movement system written for TAK Engine. It is designed for big
-armies:
+Legion is an experimental movement system written for TAK Engine. It is
+designed for big armies ([design, limits and
+measurements](legion-pathfinding.md)):
 
 - **Groups plan together.** A group's order is planned once for the whole group,
   and the group heads for the destination as a body, not as a column of
@@ -1203,16 +1303,16 @@ armies:
 - **One order per click.** A right-click is one order however big the
   selection is: the whole army gets one destination area and one formation,
   and the order reaches every unit in the same game tick, even for 10,000
-  units (before 0.8.4 a big selection arrived in parts over several seconds).
+  units.
   A second order to the same spot, while the first army is still gathering
   there, joins its destination area.
 - **Groups share out narrow passages.** A narrow passage, such as a bridge or a
   door, keeps count of the units queueing for it. A group picks its way by
   travel time plus that queue, a big group can split to use two passages, and
   your own and allied units take turns through a narrow one, one direction at a
-  time. A long bridge counts as one passage, so two armies meeting at it no
-  longer both walk on and jam in the middle: one is let across while the other
-  waits at its end (0.8.6). Groups entering one room by different doors each
+  time. A long bridge counts as one passage, so two armies meeting at it do
+  not both walk on and jam in the middle: one is let across while the other
+  waits at its end. Groups entering one room by different doors each
   fill it from their own door.
 - **Arrivals settle.** Units take up places around the destination point, and
   once they are close they stop. Large groups do not keep shuffling forever:
@@ -1224,17 +1324,17 @@ armies:
   a wall, it swings round in several ranks instead of narrowing to single file.
   It drops to single file only when the gap really is too narrow. A single tree
   or rock (or a small clump) is not a wall end: the group walks past it. A wood
-  too dense to walk through still is. Since 0.8.7 units keep their places side by side
+  too dense to walk through still is. Units keep their places side by side
   through a turn instead of crossing over each other's lanes, and a crowd
   squeezing round a corner merges faster: units walking past one that has
   waited a while move over a lane to let it in, instead of filing past it.
 - **Groups take gaps several abreast.** A large group (16 or more) sent through
   a short gap in a wall or a doorway that is wide enough for two or three units
-  now splits across the gap and goes through two or three abreast, each unit
+  splits across the gap and goes through two or three abreast, each unit
   taking the place with the fewest friends queued before it, instead of
   queueing into one file. Through a short passage, each unit keeps its place
   from side to side until it is out the far end, so the group does not cross
-  over inside it; since 0.8.6 that also holds for a formation of about 100
+  over inside it; that also holds for a formation of about 100
   going through a wide gap (about 20 cells). A gap that fits only one unit is
   still taken in single file.
 - **Rooms fill from the back.** When the way into the destination narrows just
@@ -1244,18 +1344,17 @@ armies:
 - **Long routes.** A unit sent along a very long winding route walks it instead
   of standing still as if trapped.
 - **Columns meeting head on keep right.** Two large groups (16 or more) walking
-  towards each other along the same route now narrow a little before they meet
+  towards each other along the same route narrow a little before they meet
   and each passes on its own right, instead of ploughing into one another.
   Groups that are on a fight, attack, guard or patrol order do not do this. The
   narrowing is slight and only starts when the two groups are about to meet.
-  Since 0.8.6 it also works when the groups meet close to their destinations,
+  It also works when the groups meet close to their destinations,
   for example two squads sent to each other's places.
 - **Going round obstacles.** Groups route round parked crowds of units and round
   landed flyers instead of pushing into them. Your own and your allies' idle
   units step aside to let a group through, so a group can leave a place where
   another army has just arrived. Formation units flow round a rock, a wall end
-  or a block of idle units at their travel speed instead of creeping sideways
-  (0.8.6).
+  or a block of idle units at their travel speed instead of creeping sideways.
 - **Unreachable orders end where the unit stops.** Ordered to a place it cannot
   reach, a unit walks to the nearest spot it can reach, and its order ends there,
   so it is free for the next one at once. Units queued behind their own army end
@@ -1268,7 +1367,7 @@ armies:
   later one does not stand and wait for the other to pass: it plans round,
   behind the other stream's tail, even if that is a long way. Only when no way
   round exists at all does it go straight across, as before. Groups that meet
-  head on still keep to the right, and units stuck in a clot no longer block
+  head on still keep to the right, and units stuck in a clot do not block
   the routes of other groups planned past them.
 - **Attackers surround their target.** A group ordered to attack one unit or
   building spreads round it and fires from a ring of places at weapon reach,
@@ -1276,18 +1375,18 @@ armies:
   and the ones behind walk round it to the next free place. A group sent
   across the battlefield plans round a crowd that is standing and firing, and
   a crowd that parks across a group's way after it has planned (20 cells or
-  more of it) makes the group plan again once. Since 0.8.6 the ring fills all
+  more of it) makes the group plan again once. The ring fills all
   the way round instead of only the near side, a unit waiting just short of
   reach steps in until it can fire, a target in a walled-off place is still
   surrounded from outside its walls, and a group walking past another group's
   firing ring splits round both sides of it. Units chasing a moving target
-  follow it without planning again at every step. Since 0.8.7 units round a target that
-  is standing still no longer creep along the ring, and a target walled in on
-  every side is now fired on from the nearest spots against its walls. A ring
+  follow it without planning again at every step. Units round a target that
+  is standing still do not creep along the ring, and a target walled in on
+  every side is fired on from the nearest spots against its walls. A ring
   along a wall is deeper: units that find no place at the front wait just
   behind it instead of standing back, and step in when they can fire. Units
   on a fight or guard order also stop creeping round a target that stands
-  still, and walk round their friends at full speed. Since 0.8.8 units
+  still, and walk round their friends at full speed. Units
   waiting just outside reach of a ring along a wall step on into the ground
   behind it that the wall hides from the target, and stay there until they can
   fire; units on a fight-move that come upon a target standing still surround
@@ -1297,15 +1396,15 @@ armies:
   round a gatehouse, fill the corridor from its far end, as in Retail:
   the first units walk on past the first place they could fire from instead
   of stopping in the gate and shutting it, so at least as many units fire at once
-  as in Retail (before, under three quarters as many).
+  as in Retail.
 - **Narrow crossings take turns.** At a bridge or other narrow crossing, the
   time each group is let through grows with the length of the crossing, and a
   small group waits its turn instead of pushing in among a big one. Two armies
-  of about 100 meeting head on at a bridge no longer jam in tests (0.8.7).
+  of about 100 meeting head on at a bridge do not jam in tests.
 - **Dead-end corridors.** Groups sent into a corridor one unit wide are let in
-  one at a time and settle along it instead of jamming at its mouth (0.8.7).
+  one at a time and settle along it instead of jamming at its mouth.
 - **Buildings do not hold a formation.** A building or an unfinished unit in an
-  Alt+number formation no longer slows the formation to a standstill.
+  Alt+number formation does not slow the formation to a standstill.
 - **No spinning.** A unit that is truly trapped stops and waits, instead of
   circling on the spot. Units are not caught on jagged terrain unless they really
   are boxed in.
@@ -1326,7 +1425,7 @@ armies:
   go on to land at their destination instead of hovering for minutes.
 - **Flyers do not trap walkers.** A flyer that has lifted to let an army pass
   comes back down after at most a minute, and it fights while it is up. Ground
-  units no longer walk in under a flyer that is coming down to land.
+  units do not walk in under a flyer that is coming down to land.
 
 Legion handles ground units, ships and hovercraft for moves, fight-moves,
 patrols, attacks, guarding, building, repairing, reclaiming and transport
@@ -1346,7 +1445,7 @@ in a formation or Ctrl+number group with ground units keep station over them.
 - Legion units stand and wait in a crowd more than units in Retail do,
   although they usually arrive sooner. In a few test layouts a group still
   arrives a little later (under 5%) than in Retail.
-- Units attacking through a narrow gate or corridor now keep more of their
+- Units attacking through a narrow gate or corridor keep more of their
   number within reach than in Retail, so they deal more damage there: in the
   test layouts from about 1.2 to 2.2 times as much.
 - Two large groups meeting head-on at a narrow, tapering bridge can still jam
@@ -1391,10 +1490,9 @@ back to their defaults, undoing the one-time enlargement made by Ignore Windows
 Display Scaling or Native Retina Resolution, so raise them again on a scaled
 or Retina display.
 
-0.8.5 changed some defaults: Tactical Dots is now on at a zoom of 0%, Smooth GUI
-Art and Smooth Movies are on, Texture Filtering is Everything, and the new
-Screen Shake is off. A settings file you already have keeps the values saved in
-it; press **Defaults** to take the new ones.
+Every choice here is remembered. When a new version changes a default, a
+settings file you already have keeps the values saved in it; press **Defaults**
+to take the new ones.
 
 ### Player
 
@@ -1433,7 +1531,12 @@ is the one both use next time.
 | **Speaker** sliders | 100% | One per speaker channel on your device, for surround setups. |
 | **Voice chat** | Off | Opens the **Voice Chat** page; the row says whether voice chat is on (**ON - OPEN** or **OFF - OPEN**). Voice chat has its own devices, volumes and **Defaults**; see [Voice chat](#voice-chat). |
 
-World sounds are full volume on screen and fade with distance off screen.
+World sounds are full volume inside the view and fade with distance outside
+it, falling silent once a sound is as far beyond the nearest edge of the view as
+the view's shorter side is long. Moving or zooming the camera changes sounds
+that are already playing. Interface sounds, alerts for the whole game and the
+music are not affected. (The original game played every off-screen sound at one
+fixed volume.)
 
 A dying unit's cry is the one the game itself chose, as in the original, so every
 player, spectator and replay of a game hears the same cry for the same death. As
@@ -1452,6 +1555,7 @@ missed are silent while the game catches up.
 ### Display
 
 ![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, then Renderer set to Auto, Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Screen Shake off, Hardware Cursor and Smooth Motion on, and GPU Memory Limit set to 1.25 GB (default)](img/guide/options-graphics.jpg)
+<!-- SHOT-0.9.0: guide-options-graphics -- Options scrolled to Display and Graphics at the default settings (Max FPS greyed by VSync) -->
 
 *Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on. The picture was taken in a window, so Fullscreen shows Off.*
 
@@ -1469,7 +1573,7 @@ missed are silent while the game catches up.
 | **Ignore Windows Display Scaling** | On | Windows only. Stops Windows from enlarging the game window to match your display scaling (for example 150%), which made everything blurry. The game draws at the real screen resolution instead. Takes effect after a restart. The first time it runs, UI Scale and Cursor Size are raised to your Windows scale so the interface stays the same size, now sharp; adjust them afterwards if you like. |
 | **Native Retina Resolution** | On | macOS only; the same row as Ignore Windows Display Scaling. Draws at the full resolution of a Retina display (normally twice the window's size in points) instead of letting macOS double a half-size image, which made everything soft. Takes effect after a restart. The first time it runs on a Retina display, UI Scale and Cursor Size are doubled so the interface stays the same size, now sharp; adjust them afterwards if you like. The window can move between a Retina and an ordinary display: the picture and the pointer follow the display it is on, but UI Scale is not changed again, so the interface looks bigger on an ordinary display. |
 | **Texture Filtering** | Everything | How the game area is smoothed when you zoom in. **Off**: nothing is smoothed, as in the original. **Units**: the original game's Bilinear Filtering option; smooths unit textures and unit shadows only. **Everything**: Units, plus terrain, trees, rocks and other scenery, and effects, once you zoom in past 150%. Not in the original game. The interface, cursor and movies are never affected; see below. |
-| **Shadows** | On | Unit, scenery and projectile shadows. The biggest single graphics cost in a crowded battle. |
+| **Shadows** | On | Unit, scenery and projectile shadows, boats and every lodestone included. The biggest single graphics cost in a crowded battle. See below. |
 | **Smooth GUI Art** | On | Sharpens the low-resolution interface art, menus, fonts, cursors and build-menu portraits with an edge-aware upscale. Applies at once. No cost per frame; uses more video memory. |
 | **Smooth Movies** | On | Removes the blocky compression artefacts from the game's movies. |
 | **Trees Sway in Wind** | On | Animated trees and their shadows. |
@@ -1495,6 +1599,13 @@ levels costs any measurable speed or video memory. The interface, cursor and
 movies have their own settings (Smooth GUI Art, Smooth Movies). Saved settings
 from an older version keep their look: Bilinear Filtering off becomes Off, on
 becomes Units.
+
+**Shadows** follow each unit's animation, swaying trees included; the shading
+painted into the terrain art is there either way. Boats cast animated shadows
+and every basic and divine lodestone casts one from its visible pieces; the
+original game drew neither. Zoomed far out, small units standing still may be
+drawn from a cached picture of themselves to save time; moving, selected and
+special-effect units are always drawn in full.
 
 **GPU Memory Limit** is a safety net, not a quality setting. At the default 1.25
 GB a typical game uses 0.4–0.7 GB of it and even a huge map with a big battle
@@ -1539,6 +1650,7 @@ are much cheaper to draw than models, so a huge zoomed-out battle also runs
 faster.
 
 ![Two views of the same moment in a large battle, fully zoomed out. Left, labelled MODELS, the armies are tiny unit models that are hard to tell apart from the trees, with fire and spell flashes among them. Right, labelled TACTICAL DOTS, each army is a field of squares in its player's colour, blue, red and grey, with no effects drawn](img/guide/tactical-dots.jpg)
+<!-- SHOT-0.9.0: guide-tactical-dots -- same moment of a big zoomed-out battle, MODELS left and TACTICAL DOTS right -->
 
 *The same moment of an eight-AI Benchmark battle on Ulasem Arena, zoomed far out
 in a 1920 × 1080 window, at the default Tactical Dots Zoom of 0%. Left, Tactical
@@ -1571,6 +1683,7 @@ available on your system appear.
 ### Interface
 
 ![Options, Interface section: UI Font Modern, F4 Scorecard Scale and UI Scale 100%, Health Bars Damaged, Stats Panel on, Build Menu Center at 100%, Chat Position Centered and Chat Scale 100%](img/guide/options-interface.jpg)
+<!-- SHOT-0.9.0: guide-options-interface -- Options, Interface section at the defaults -->
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -1584,10 +1697,32 @@ available on your system appear.
 | **Chat Position** | Centered | Where the in-game chat box sits: left, or centred over the battlefield. |
 | **Chat Scale** | 100% | Size of the in-game chat box, on top of UI Scale (50–300%, in 10% steps). |
 
-The **stats panel** shows your units, kills and score, the clock, real time,
-game time, the speed the game is actually running at (as a game-speed level: NORMAL,
-+5, -3), client and server processor use and GPU use. It drops rows when there
-is not enough room.
+The **stats panel** shows, from the top:
+
+| Row | Shows |
+| --- | --- |
+| **FPS** | Frames drawn per second. |
+| **PING** | Multiplayer only: the round trip to the server. |
+| **SIM** | The speed the game is really running at, as a game-speed level (NORMAL, +5, -3). |
+| **UNITS** | Your living units (for a spectator, every living unit). |
+| **CLOCK** | Your computer's time of day (24-hour). |
+| **KILLS**, **SCORE** | Yours; not shown while you spectate. |
+| **REAL TIME**, **GAME TIME** | How long the game has run, in real time and in game time. |
+| **CLIENT CPU** | The game's share of the whole computer's processor capacity, 0–100%. |
+| **SERVER CPU** | Only when the game started its own local server (single player, campaigns): that server's share, 0–100%. |
+| **GPU** | How busy the whole graphics card is, 0–100%. |
+| **MEM**, **VID** | The game's memory, and the video memory its own textures use. |
+| **RENDERER** | The graphics backend in use. |
+
+It drops rows when there is not enough room. A value the system cannot give
+shows **N/A**. The GPU figure comes from the graphics driver: NVIDIA's NVML
+library on Windows and Linux; on Linux, amdgpu for AMD and i915 performance
+counters for Intel (which the kernel's permissions may block); IORegistry on
+macOS; and on Windows with AMD or Intel graphics, the Windows GPU Engine
+counters for all programs, reporting the busiest engine. Nothing extra is
+installed or started for this. Counters the system does not offer, such as
+Intel Xe on Linux, show N/A. With several graphics cards, NVIDIA reports its
+first one and the Windows counters the busiest one.
 
 The **chat box** shows multiplayer chat during a game, above the bottom of the
 screen's HUD (the information bar and any build row); in single player it shows what you type, such as [power codes](#power-codes).
@@ -1609,6 +1744,7 @@ until it fits, and a long line you are typing scrolls so its end stays in view. 
 saved as `chatScale` and `chatAlign` (0 left, 1 centred) in `settings.ini`.
 
 ![The in-game chat box centred on its dark panel just above a Barracks' build row and its TRAINING Horseman (10) line: four messages, each starting with the sender's name in their player colour, and a line being typed after SAY:](img/guide/chat-box.jpg)
+<!-- SHOT-0.9.0: guide-chat-box -- in-game chat box centred above a build row and TRAINING line: messages with coloured names and a line being typed after SAY: -->
 
 **UI Font** is saved as `uiFont = modern` or `uiFont = classic` in `settings.ini`; a
 file without it uses Modern. With Modern, names keep their own capitals (players, maps,
@@ -1634,19 +1770,50 @@ players do not need to open ports or set up their routers. The server runs the
 game alongside the players, hosts the computer opponents and checks that every
 player's game stays in step.
 
+### Playing with friends
+
+- **Single player** needs no server setup: the game starts a private server on
+  your own computer by itself.
+- **Online with friends:** everyone signs in to the same server and one of you
+  creates a game, with a password if you want to keep it private; the others
+  join it from the game browser. The list opens on the official public server
+  (marked **DEFAULT**); servers you have used before are listed under it.
+- **On your own server:** if you would rather host, run `takserver` on a machine
+  your friends can reach and give them its address to type under **CUSTOM...**.
+  Only that machine needs an open port; see [Running a server](#running-a-server)
+  and the [public server guide](public-server.md).
+
+Everyone must run a version with the same network protocol (see
+[Versions](#versions)) and have the same base game data. Missing maps and the
+host's game mods are sent automatically.
+
 ### Joining a game
 
-1. Click the **Multiplayer** door.
-2. Choose a server, or enter its address.
-3. Enter an **account name** and **password**. A name the server has not seen
-   before is registered the first time you sign in.
-4. In the game browser, **create** a game or **join** one. Password-protected
-   games ask for the password.
+![The Connect to Server panel: the server list with the default server marked, the account name and password fields, the note A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and the CONNECT and BACK buttons](img/mp-connect.jpg)
+<!-- SHOT-0.9.0: mp-connect -- NEW file docs/img/mp-connect.jpg: the Multiplayer door's CONNECT TO SERVER panel, server list with DEFAULT, account name typed, password as pips, CONNECT and BACK -->
+
+*Signing in to a server.*
+
+1. Click the **Multiplayer** door. The **CONNECT TO SERVER** panel opens.
+2. Click a server in the list, or **CUSTOM...** to type its address.
+3. Enter an **account name** and **password** and click **CONNECT**. A name the
+   server has not seen before is registered the first time you sign in; there
+   is no separate sign-up.
+4. In the game browser, click a game to join it, or click **CREATE** to make
+   one. A game marked **LOCK** needs its password: type it in **PASSWORD (FOR
+   LOCKED GAMES)** at the bottom before you click the game. A game marked
+   **LIVE** has started; **WATCH** spectates it (see [Spectating](#spectating)).
 5. In the room, choose your side, colour and team, then click **Ready**. The host
    starts the game when everyone is ready. To take a different seat, click
    **Move here** on any open slot (see [Start locations](#match-options)).
 
+![The online game browser: the GAMES list with name, map and player count columns, a LOCK marker on one game, a LIVE game with its WATCH button, REFRESH and CREATE at the top and the password field at the bottom](img/guide/game-browser.jpg)
+<!-- SHOT-0.9.0: guide-game-browser -- NEW file docs/img/guide/game-browser.jpg: the online game browser with several games, one LOCK, one LIVE with WATCH, REFRESH and CREATE, PASSWORD (FOR LOCKED GAMES) field -->
+
+*The game browser on a server.*
+
 ![A game room with player and AI slots, a MOVE HERE button on each open slot, the map with start markers 1 to 4 in the seated players' colours, mod pack choices and the read-only match rules](img/room.jpg)
+<!-- SHOT-0.9.0: room -- room with AI slots, MOVE HERE, start markers in the players' colours, mod lists with ALWAYS ON lines, read-only match rules -->
 
 *A game room, here for a single-player game: player and AI slots, **Move here** on the open slots, the map with each start marked in the colour of the player who starts there, mod packs and the read-only match rules.*
 
@@ -1691,10 +1858,16 @@ Press **D** for the **Diplomacy** screen:
 - **Volume**: how loud each other player's voice plays for you.
 
 ![The Diplomacy screen listing four players with Share Mana, Chat and Voice checkboxes, Volume sliders at 50% and 25% for the two other human players, and a Give Selected Units button](img/diplomacy.jpg)
+<!-- SHOT-0.9.0: diplomacy -- Diplomacy screen: players with Share Mana, Chat and Voice checkboxes, Volume sliders for other humans, Give Selected Units -->
 
 *The Diplomacy screen (**D**), from the engine's built-in input test, with voice chat on. The computer player (ENEMY) has no Volume slider.*
 
-See [unit gifting](unit-gifting.md) for which units can be given.
+The screen lists every player; the gift buttons and mana boxes appear only for
+allies, and chat starts on for everyone. A gift button is greyed while none of
+your selected units can be given. Giving units keeps the screen open: units that
+cannot be given stay yours, the recipient's unit cap is respected, and the given
+units leave your groups and take the recipient's colour. Campaigns have no
+gifting. See [unit gifting](unit-gifting.md) for which units can be given.
 
 ### Spectating
 
@@ -1744,6 +1917,7 @@ loading nobody's time is used, however long a slow computer takes; a player whos
 connection closes before the game starts is counted down from that moment.
 
 ![The game paused on Inner Circle with a dark banner near the top of the view reading WAITING FOR Brannoc 18 in gold letters, the minimap, mana bar and bottom bar in place around it](img/guide/disconnect-wait.jpg)
+<!-- SHOT-0.9.0: guide-disconnect-wait -- game paused with the WAITING FOR <name> <seconds> banner -->
 *Another player has stopped responding: the game waits for Brannoc, with 18 seconds of his time left.*
 
 - **Back in time:** if their game catches up again (a long freeze, a network
@@ -1764,14 +1938,27 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-**Everyone must use the same network protocol**, client and server alike.
-Version 0.8.14 uses network protocol **293**, the same as 0.8.13 and 0.8.12, so
-0.8.14, 0.8.13 and 0.8.12 play together: a server and its players may run any of
-them. (A room hosted by 0.8.12 or 0.8.13 may have game mods switched off; see
-[Mods](#mods).) It cannot play
-with 0.8.11 (protocol 290) or any earlier version: the server turns away a client
-whose protocol differs from its own, so when updating from 0.8.11 or earlier a
-server and all of its players must update together.
+<!-- VERSION-0.9.0: confirm protocol/replay format at cut (main: 293/14) -->
+TAK Engine 0.9.0 uses network protocol **293** and replay format **14**, the
+same as 0.8.12, 0.8.13 and 0.8.14. So:
+
+- **Multiplayer:** 0.9.0, 0.8.14, 0.8.13 and 0.8.12 play together: a server and
+  its players may run any of them. A server turns away a client whose protocol
+  differs from its own, so 0.9.0 does not play with 0.8.11 or any earlier
+  version. When a release changes the protocol, a server and all of its players
+  update together.
+- **Replays:** each of these versions plays the others' replays. A replay
+  recorded by 0.8.11 or earlier needs the version that recorded it; keep an old
+  copy of the engine if you want to keep watching old replays.
+- **Game mods with older hosts:** a room hosted by a 0.8.12 or 0.8.13 player may
+  still have its **Game mods** switch off; it then says **GAME MODS: OFF
+  (HOST)** and runs no game packs at all, your always-enabled ones included. A
+  0.8.12 or 0.8.13 player joining your room sees it as a room with game mods
+  on: **HOST:** names your packs, always-enabled ones included (or **NONE
+  SELECTED**), and their own game receives and verifies them as usual.
+
+Every release's protocol and replay format are listed in the
+[CHANGELOG](../CHANGELOG.md).
 
 If players' games ever fall out of step (a "desync"), the server detects it.
 This should not happen between matching versions with matching game data; if it
@@ -1779,11 +1966,30 @@ does, please report it with the replay.
 
 ### Network use
 
-The game sends orders, not unit positions, so it needs very little bandwidth:
-about 0.5 KB/s per player plus a few bytes per order. Low latency and low packet
-loss matter more than raw speed. Voice chat adds about 3 KB/s for each player
-talking, and always gives way to the game (see [What is sent](#what-is-sent)).
-The [README](../README.md#multiplayer-and-replays) has the details.
+The game sends orders, not unit positions: every computer runs the game itself
+from the same orders, and the computer players run on the server. So it needs
+very little bandwidth. Low latency and low packet loss matter more than raw
+speed.
+
+At normal speed, each human player and spectator receives:
+
+- about **0.5 KB/s** to keep the game in step;
+- **35 bytes for each ordinary order** given by anyone in the game, computer
+  players included (43 bytes for an area reclaim). For example, 100 orders a
+  second come to about **4 KB/s** (32 kbit/s), and one order to 2,000 units is a
+  burst of about **70 KB**.
+
+These are worked out from the protocol, not measured from typical games; the
+network's own overhead, acknowledgements, checksums, chat and resent data add
+to them. At 2× speed (the fastest) the same game sends about twice as much each
+second. The server sends a copy to every human player and spectator, so its
+upload grows with their number; computer players need no connection of their
+own. Downloading a missing map, and catching up when you start watching a game
+in progress or reconnect, are larger one-off transfers.
+
+Voice chat adds about 3 KB/s for each player talking, and always gives way to
+the game (see [What is sent](#what-is-sent)). YouTube streaming is not included
+in any of this: it uses the bitrate set in the streaming panel.
 
 ---
 
@@ -1814,6 +2020,7 @@ player with it off cannot talk and is sent no voice at all.
 While **Voice chat** is off, every other row is greyed out and ignores clicks.
 
 ![The Voice Chat page with voice chat on, Talk mode Push to Talk on Space, System Default microphone at volume 100 with an empty level meter, Activation level 15 greyed out, and output Same as Game Output at volume 100](img/guide/voice-chat.jpg)
+<!-- SHOT-0.9.0: guide-voice-chat -- Voice Chat page with voice chat on, Push to Talk on Space, microphone, level meter, Activation level greyed, output Same as Game Output -->
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -1958,6 +2165,7 @@ In the book:
 - Every chapter can be selected, including the *Iron Plague* alternate ending.
 
 ![The campaign book open at Book of Darien chapter 1, All Hell Broken Loose](img/campaign.jpg)
+<!-- SHOT-0.9.0: campaign -- Book of Darien picker -->
 
 *The campaign book, with tabs for both campaigns at the bottom.*
 
@@ -1967,6 +2175,7 @@ mission. The mouse wheel and **Up/Down** scroll long briefings. During play,
 **O** (with nothing selected) shows the objectives.
 
 ![The chapter 1 briefing, All Hell Broken Loose, over the darkened paused battlefield](img/guide/campaign-briefing.jpg)
+<!-- SHOT-0.9.0: guide-campaign-briefing -- Book of Darien chapter 1 briefing over the darkened paused battlefield -->
 
 *The briefing for *Book of Darien* chapter 1, over the paused battlefield.*
 
@@ -2009,8 +2218,10 @@ recording. During playback:
 - **Pause** pauses and resumes.
 - **+** / **−** change playback speed.
 - The time bar shows elapsed and total time.
+- Chat is not shown in replays.
 
 ![A replay of an Aramon army moving, with the replay time bar at nine of sixteen seconds](img/guide/replay.jpg)
+<!-- SHOT-0.9.0: guide-replay -- replay playback with the time bar showing elapsed and total time -->
 
 *Replay playback, with the time bar near the bottom.*
 
@@ -2018,9 +2229,7 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.14, 0.8.13 and 0.8.12 all play protocol-293 recordings only,
-  so each plays the others' replays, while replays recorded by 0.8.11, 0.8.10 or earlier
-  need the version that recorded them);
+  recorded it (see [Versions](#versions) for which versions share one);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -2072,9 +2281,9 @@ its folder out of `always_enabled/`.
   until you rename or move one of them. A saved tick of that name is kept and
   has no effect while the always-enabled pack is there.
 
-**Moving from 0.8.13 and earlier.** Since 0.8.14, a `.hpi` placed directly in
+**If you used 0.8.13 or earlier.** A `.hpi` placed directly in
 `mods/cosmetic/` (the old always-on archives, such as `mods/cosmetic/click.hpi`)
-is **no longer loaded**, and the game does not move it for you. For each one:
+is **not loaded**, and the game does not move it for you. For each one:
 
 1. Make a folder for it in `mods/cosmetic/always_enabled/`, named after the
    archive, for example `mods/cosmetic/always_enabled/click/`.
@@ -2086,6 +2295,13 @@ is **no longer loaded**, and the game does not move it for you. For each one:
 Anything placed loose in `mods/game/` was never loaded; put it in a pack folder.
 Your ticked packs carry over unchanged. The old **GAME MODS: ON/OFF** choice of
 the multiplayer setup screen is gone, and a saved choice is ignored.
+
+**If you used 0.8.7 or earlier.** The old `overrides/` folder is not read.
+Nothing in it is moved or changed; move your packs into `mods/cosmetic/` or `mods/game/` yourself, each
+in its own folder. A pack you used in **Cosmetic** mode goes in
+`mods/cosmetic/<pack>/`; a pack you used in **Full** mode, or any pack that
+changes units or rules, goes in `mods/game/<pack>/`. Your old pack choices are
+not carried over, so tick the packs again in the room.
 
 A cosmetic mod never stops a game. If an always-enabled or a ticked cosmetic
 pack cannot be loaded (more than 256 MB of mods, for example; a damaged archive
@@ -2099,6 +2315,7 @@ then ticked ones, each in alphabetical order of their folder names; later packs
 win when they change the same file. Game packs load first, then cosmetic packs.
 
 ![A single-player room with Power Codes: On among the match rules; below the map, the COSMETIC MODS list with ALWAYS ON: click under its heading and Classic Sounds ticked, and the GAME MODS list with ALWAYS ON: House Rules under its heading, Big Battles ticked and GAME MODS VERIFIED](img/guide/room-mods-power-codes.jpg)
+<!-- SHOT-0.9.0: guide-room-mods-power-codes -- single-player room with Power Codes: On in the rules, COSMETIC MODS with an ALWAYS ON line and a ticked pack, GAME MODS with an ALWAYS ON line, a ticked pack and GAME MODS VERIFIED -->
 
 - **Cosmetic packs** are each player's own choice, in single player and in
   multiplayer, host or not. They change only what that player sees and hears,
@@ -2110,12 +2327,9 @@ win when they change the same file. Game packs load first, then cosmetic packs.
   automatically, and everyone checks they have the same package before the game
   starts; the room shows the transfer's progress, then **GAME MODS VERIFIED**
   once the packs check out (nothing when the host has no game pack in play).
-  Transfers are limited to 256 MB. A room hosted by a 0.8.12 or 0.8.13 player
-  may still have its **Game mods** switch off; it then says **GAME MODS: OFF
-  (HOST)** and runs no game packs at all, your always-enabled ones included. A
-  0.8.12 or 0.8.13 player joining your room sees it as a room with game mods
-  on: **HOST:** names your packs, always-enabled ones included (or **NONE
-  SELECTED**), and their own game receives and verifies them as usual.
+  Transfers are limited to 256 MB, and downloaded packs are kept in a
+  `ModCache` folder, never over your installed files. Rooms hosted by older
+  versions: see [Versions](#versions).
 - **Campaigns** and **Crusades battles** use the original game data plus your
   always-enabled cosmetic packs only: no game packs (always-enabled ones
   included) and no ticked cosmetic packs.
@@ -2152,13 +2366,6 @@ per-level files (`ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt`,
 copies one of them into `ai/takengine.txt`. The Retail AI never reads `ai/takengine.txt`:
 it reads the map's own AI profile, else `ai/default.txt`, which a game pack or
 the map's archive can replace (see [Retail AI](#retail-ai)).
-
-The old `overrides/` folder is no longer read. Nothing in it is moved or
-changed; move your packs into `mods/cosmetic/` or `mods/game/` yourself, each
-in its own folder. A pack you used in **Cosmetic** mode goes in
-`mods/cosmetic/<pack>/`; a pack you used in **Full** mode, or any pack that
-changes units or rules, goes in `mods/game/<pack>/`. Your old pack choices are
-not carried over, so tick the packs again in the room.
 
 ### Making AI profiles
 
@@ -2200,6 +2407,7 @@ own profile.
 ## Map editor
 
 ![Cartographer unit browser, terrain canvas and minimap](img/cartographer.png)
+<!-- SHOT-0.9.0: cartographer-main -- (must: four-tool toolbar) editor on Ulasem Arena, five tools -->
 
 *Cartographer's Units browser, map canvas and minimap.*
 
@@ -2235,6 +2443,7 @@ either program changes it for both.
   selected piece again steps to its next variant.
 
   ![Cartographer's terrain browser showing the All sections group (555 pieces, 1261 sections) with cliff pieces named Cliff N, Cliff E, Cliff NE out and so on, each with a variant badge such as 1/3, beside the map canvas](img/guide/cartographer-terrain.jpg)
+  <!-- SHOT-0.9.0: guide-cartographer-terrain -- (must: 0.8.3 build) grouped terrain browser on Ulasem Arena with variant badges on the pieces -->
 
   *The grouped terrain browser on Ulasem Arena. The badge on each piece shows
   which of its variants is chosen and how many it has.*
@@ -2285,9 +2494,9 @@ directly with `--play-map` (see [Command line](#command-line)). See
 You only need your own server to host private online games; single-player starts
 one for you automatically.
 
-The Linux packages include the `takserver` dedicated server and a systemd
-service with automatic Let's Encrypt certificates. The
-[README's Linux server setup](../README.md#linux-server-setup) walks through
+Every package includes the `takserver` dedicated server. The Linux packages
+also include a systemd service with automatic Let's Encrypt certificates; the
+[Linux service setup](public-server.md#linux-service-setup) walks through
 installing it step by step. In short:
 
 - The server needs a copy of the **same retail game data** the players use.
@@ -2301,8 +2510,7 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together when the protocol changes.** A server
-only accepts clients of the same protocol version (0.8.14, 0.8.13 and 0.8.12 use protocol 293;
-0.8.11 uses 290, 0.8.10 289, 0.8.9 and 0.8.8 288).
+only accepts clients of the same protocol version; see [Versions](#versions).
 
 ---
 
@@ -2322,11 +2530,26 @@ Ulasem Arena for 60 seconds of game time. Choose an **intensity**:
 
 The results screen shows, every ten seconds, frame rate, simulation speed (as
 a game-speed level, like the stats panel), processor use, memory, GPU use and video memory, together with the display
-settings used. Unit limits still apply, so the highest intensities may not
-reach their requested unit counts. A slow machine can take longer than 60 real
-seconds.
+settings used. Client and server processor use are each a share of the whole
+computer's capacity, 0–100%, and GPU use is measured as in the
+[stats panel](#interface); a measurement the system cannot give shows **N/A**.
+Unit limits still apply, so the highest intensities may not reach their
+requested unit counts. A slow machine can take longer than 60 real seconds.
+
+The engine is tested with up to **16,000 units** in a game. That is a test
+target, not a promise of smooth play at that size: the map, the mix of units,
+their orders, your hardware and your graphics settings all matter. The
+measurements behind it: [large-map collision grid](large-map-collision-performance.md),
+[moving armies, shadows and simulation](performance-2026-09-28.md),
+[distant rendering](distant-rendering-performance.md),
+[geometry and shadow reuse](render-reuse-2026-09-26.md),
+[model reuse](render-reuse-2026-10-04.md),
+[rendering and animation](render-submission-2026-09-26.md),
+[engine profiling](performance-2026-09-26.md) and
+[earlier notes](performance-2026-09-20.md).
 
 ![A benchmark battle: several armies meet at the edge of a sandy clearing, with health bars over the damaged units and the BENCHMARKING countdown at the top](img/guide/benchmark.jpg)
+<!-- SHOT-0.9.0: guide-benchmark -- benchmark battle at Absurd intensity with the BENCHMARKING countdown at the top -->
 
 *A benchmark run at Absurd intensity, 55 seconds in. The badge at the top counts down the time remaining.*
 
@@ -2400,16 +2623,15 @@ the system's permission to use the microphone.
 
 ### I cannot join a multiplayer game
 
-- Check that you and the server run the **same version**.
+- Check that you and the server run versions with the **same protocol** (see
+  [Versions](#versions)).
 - Check that you have the same base game data as the server.
 - Map downloads are automatic; wait for the map to verify in the lobby.
 
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.14, 0.8.13 and 0.8.12 use protocol 293, 0.8.11 uses 290, 0.8.10 uses 289,
-0.8.9 and 0.8.8 use 288). See
-[Replays](#replays).
+one that recorded them. See [Versions](#versions) and [Replays](#replays).
 
 ### Where files are kept
 
@@ -2467,15 +2689,19 @@ differences:
 - **Patrolling builders repair** nearby friendly units.
 - **Area reclaim** with a right-drag box.
 - **Mana sharing and unit gifting** between allies through the Diplomacy screen.
-- **Sound fades with distance** from the camera instead of using one off-screen
-  volume.
-- **Boat shadows** and shadows on every lodestone.
+- **Sound fades with distance** from the view instead of using one off-screen
+  volume (see [Audio](#audio)).
+- **Boat shadows** and shadows on every lodestone (see [Graphics](#graphics)).
 - **A random map generator**, a modern map editor and **mod packs**.
 - **Emotes** (Disco and Headbang).
 - **Power codes** act for the player who types them, posters are PNG pictures of
   the whole map, and the game keeps running while one is made. See
   [Power codes](#power-codes).
 
-Everything else, such as unit statistics, weapons, the economy, the AI's
-choices and the campaign scripts, aims to behave as it did in 1999. If you find
+Everything else, such as unit statistics, weapons, the economy and the
+campaign scripts, aims to behave as it did in 1999. The computer players are
+the exception: the **Retail** level (and every campaign opponent) is the
+original 1999 AI, while the six other levels, Defensive to Absurdly Defensive,
+are TAK Engine's own AI and do not try to play as the original did (see
+[AI difficulty](#ai-difficulty)). If you find
 a difference that is not listed here, it is probably a bug. Please report it.
