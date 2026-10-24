@@ -4,7 +4,7 @@
 lets you make an **AI mod without a map**, and has our six AI levels read **one
 file, `ai/takengine.txt`**, instead of one file each. Each map now plays its own
 AI files, the lobby calls the original game's AI **RETAIL**, campaigns always
-allow game speed changes, and an armed flyer's Shift-queued patrol laps again.
+allow game speed changes, and an armed flyer's Shift-queued patrol now laps.
 
 **Compatibility first.** The network protocol moves to **293** (replays stay
 at format **14**): **0.8.12 does not play with 0.8.11 or any earlier version,
@@ -59,8 +59,8 @@ See [Making an AI mod without a map](cartographer-guide.md#making-an-ai-mod-with
 - **One file for our six levels.** Defensive, Easy, Normal, Hard, Absurd and
   Absurdly Defensive all read `ai/takengine.txt` from a ticked game mod (which
   wins) or the map's own archive, never from the install. Each level applies it
-  on top of its own built-in profile; with no such file the levels play exactly
-  as in 0.8.11.
+  on top of its own built-in profile; with no such file each level plays its
+  built-in profile.
 - **Honestly:** the six built-in unit tables hold the same values today, so
   `ai/takengine.txt` sets the same weights and limits for every level. The
   levels still differ in how they play and in how they treat a limit: Easy

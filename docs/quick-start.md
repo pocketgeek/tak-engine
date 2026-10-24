@@ -157,7 +157,7 @@ three wheel notches later, **GAP 3** (right).*
 | **F9** | YouTube streaming panel. |
 | **D** | Diplomacy: give units, share mana, chat and voice recipients. |
 | **Pause** | Pause / resume, for every player. |
-| **+** / **−** | Game speed. Host only, and only with *Allow Speed Change* on. |
+| **+** / **−** | Game speed. Host only, and only with *Allow Speed Change* on; always in a campaign mission. |
 | **Enter** | Chat: Enter sends, Esc cancels. With *Power Codes* on, also where you type a [power code](#power-codes). |
 | **Print Screen** | Save a picture of the whole map to the *screenshots* folder. Only with *Power Codes* on. |
 | **Space** (hold) | Push to talk, in a multiplayer game with voice chat on. |

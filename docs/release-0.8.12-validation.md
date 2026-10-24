@@ -59,9 +59,11 @@ The only hashed simulation change is `1e9d7df3` (queued flyer patrols; its own
 test failed 6 checks on the old code). Protocols 291 and 293 change map and
 game-mod packages, not the simulation; `c51dc03a` only sets a campaign
 mission room's speed-change option on the server. With no `ai/takengine.txt` in play our
-levels play their built-in tables, as in 0.8.11. `--mpai` Inner Circle seed 1
-is unchanged from 0.8.11 at 60 s and 300 s in both modes, and for a Retail AI
-seat at 60 s (see the local checks).
+levels play their built-in tables, as in 0.8.11. The commits themselves checked
+`--mpai` Inner Circle seed 1 at 60 s only (Retail, Legion and a Retail AI seat
+unchanged from 0.8.11).
+TODO-LEAD: confirm from the local checks that 60 s and 300 s in both modes and
+the Retail AI seat at 60 s are unchanged from 0.8.11.
 
 TODO-LEAD: `--mpai` on Windows and macOS (optimized Debug builds of the tag,
 oden-win and the arm64 MacBook): Retail 60 s `b353410003e98dd5` / 300 s
@@ -151,13 +153,21 @@ TODO-LEAD: Published with `gh release edit v0.8.12 --draft=false --latest` on
 
 ## Screenshots
 
-TODO-LEAD: what was retaken by the 0.8.12 build (at least `docs/img/title.jpg`
-for VERSION 0.8.12; the README title alt text and gallery footnote and
-`docs/img/README.md` follow), and what was checked and kept. The Cartographer
-AI window captures (`docs/img/cartographer/ai-profiles.jpg`,
-`ai-group-rules.jpg`, `ai-takengine.jpg`, `ai-mod.jpg`) were made by the
-`cartographer_aiprofile*_ui` tests' capture mode as the features landed (see
-`docs/cartographer-improvements-progress.md`).
+Only `docs/img/title.jpg` was retaken (branch `task-release-0812-shots`,
+`0b6f29ef`): an optimized Debug build with the version set to 0.8.12 locally,
+1920 × 1080 offscreen, cropped to 1440 × 1080, JPEG quality 90; it reads
+VERSION 0.8.12. The README title alt text, the gallery footnote ("0.7.25 to
+0.8.12 builds") and `docs/img/README.md` follow. Checked and kept: the lobby and
+room pictures (no AI seat at level 6, so neither DEFAULT nor RETAIL appears);
+`guide/campaign-briefing.jpg` and `campaign.jpg` (no order armed in a mission,
+no speed change shown); the Cartographer AI window captures
+(`docs/img/cartographer/ai-profiles.jpg`, `ai-group-rules.jpg`,
+`ai-takengine.jpg`, `ai-mod.jpg`), made by the `cartographer_aiprofile*_ui`
+tests' capture mode as the features landed (see
+`docs/cartographer-improvements-progress.md`) and matching the window text at
+`450a10b6` (one TAK ENGINE AI tab; the AI mod footer saying the install never
+supplies `ai/takengine.txt`). No picture shows the flyer patrol fix.
+TODO-LEAD: confirm the shots branch landed as described.
 
 ## Limits
 

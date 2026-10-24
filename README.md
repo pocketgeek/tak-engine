@@ -104,7 +104,7 @@ earlier version, and does not play their replays**. Update the server and every
 player together. The existing AI levels and the game itself play exactly as in
 0.8.10.
 
-- **DEFAULT AI: the original game's own computer player.** A new AI level,
+- **DEFAULT AI (shown as RETAIL since 0.8.12): the original game's own computer player.** A new AI level,
   **DEFAULT**, for skirmish and multiplayer AI seats: the 1999 game's own AI,
   driven by `ai/default.txt`, ported routine by routine (new AI seats still
   start on Normal). It builds from the map's AI profile (the original weights
@@ -1339,7 +1339,7 @@ builders, but units they produce inherit their squad.
 Live game speed works like the original: **+** / **−** step one level from −9 to +10, where level *d*
 runs at (*d*+10)/10 of normal speed (−9 = 0.1×, NORMAL = 1×, +10 = 2×). Only the host can change it, and the
 game creation screen’s **Allow speed change** option must be enabled (the lobby
-only displays it). Chat is available in live networked games (single-player also uses a local server), not replay playback.
+only displays it); in a campaign mission you can always change it. Chat is available in live networked games (single-player also uses a local server), not replay playback.
 
 ### Mouse and construction
 
