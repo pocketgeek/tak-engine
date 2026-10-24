@@ -911,7 +911,8 @@ table, instead of `ai/d.txt` ... `ai/ad.txt`. A map's package carries
 refused), so a 292 peer could compute a different digest for a map that carries
 them. 292 replays are refused.
 0.8.12 ships protocol 293; it plays with neither 0.8.11 nor any earlier version,
-nor their replays.
+nor their replays. So does 0.8.13 (client and Cartographer changes only; it plays
+with 0.8.12 and its replays).
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
@@ -1196,6 +1197,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.8.12 (peers and server) requires protocol 293; 0.8.11 required 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.8.13 (peers and server) requires protocol 293, as 0.8.12 does; 0.8.11 required 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

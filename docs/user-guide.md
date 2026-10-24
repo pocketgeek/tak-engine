@@ -2,8 +2,9 @@
 
 [Back to the README](../README.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.8.12** (network protocol **293**, replay format
-**14**; 0.8.12 does not play with 0.8.11 or earlier, nor their replays). It is
+This guide covers **TAK Engine 0.8.13** (network protocol **293**, replay format
+**14**, both the same as 0.8.12; 0.8.13 plays with 0.8.12 and its replays, but
+not with 0.8.11 or earlier, nor their replays). It is
 written for three kinds of reader:
 
 - people who have never played *Total Annihilation: Kingdoms* and want to learn
@@ -909,7 +910,9 @@ speed keys are fixed.
 ### Orders
 
 Orders that need a target are **armed** by their key or button, then issued with
-a left-click on the map or minimap. **Esc** disarms.
+a left-click on the map or minimap. **Esc** disarms. As in the original, an
+armed order shows only as its cursor (attack, move, patrol and so on) and its
+pressed button in the command panel; no text appears on screen.
 
 | Key | Order |
 | --- | --- |
@@ -1762,10 +1765,11 @@ others. In single-player there is nobody to wait for, so none of this applies.
 ### Versions
 
 **Everyone must use the same network protocol**, client and server alike.
-Version 0.8.12 uses network protocol **293**. It cannot play with 0.8.11
-(protocol 290) or any earlier version: the server turns away a client whose
-protocol differs from its own, so a server and all of its players must update to
-0.8.12 together.
+Version 0.8.13 uses network protocol **293**, the same as 0.8.12, so 0.8.13 and
+0.8.12 play together: a server and its players may run either. It cannot play
+with 0.8.11 (protocol 290) or any earlier version: the server turns away a client
+whose protocol differs from its own, so when updating from 0.8.11 or earlier a
+server and all of its players must update together.
 
 If players' games ever fall out of step (a "desync"), the server detects it.
 This should not happen between matching versions with matching game data; if it
@@ -2012,8 +2016,9 @@ A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
 
 - **a version of TAK Engine with the same network protocol** as the one that
-  recorded it (0.8.12 plays protocol-293 recordings only, so replays recorded by
-  0.8.11, 0.8.10 or earlier need the version that recorded them);
+  recorded it (0.8.13 and 0.8.12 both play protocol-293 recordings only, so each
+  plays the other's replays, while replays recorded by 0.8.11, 0.8.10 or earlier
+  need the version that recorded them);
 - the same game data and map.
 
 Older recordings need the engine version that made them. Keep an old copy of the
@@ -2256,8 +2261,8 @@ See [public server deployment](public-server.md) for manual certificates,
 resource limits, upgrades and troubleshooting.
 
 **Upgrade the server and players together when the protocol changes.** A server
-only accepts clients of the same protocol version (0.8.12 uses protocol 293; 0.8.11
-uses 290, 0.8.10 289, 0.8.9 and 0.8.8 288).
+only accepts clients of the same protocol version (0.8.13 and 0.8.12 use protocol 293;
+0.8.11 uses 290, 0.8.10 289, 0.8.9 and 0.8.8 288).
 
 ---
 
@@ -2362,7 +2367,7 @@ the system's permission to use the microphone.
 ### My old replays will not play
 
 Replays only play on an engine version with the same network protocol as the
-one that recorded them (0.8.12 uses protocol 293, 0.8.11 uses 290, 0.8.10 uses 289,
+one that recorded them (0.8.13 and 0.8.12 use protocol 293, 0.8.11 uses 290, 0.8.10 uses 289,
 0.8.9 and 0.8.8 use 288). See
 [Replays](#replays).
 

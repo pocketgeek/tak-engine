@@ -71,7 +71,8 @@ the orders for the selection on the right-hand panel.*
 
 An order key **arms** the order; then left-click a target on the map or the
 minimap. Hold **Shift** to queue it and keep it armed for more clicks; release
-Shift to disarm. **Esc** disarms. The command panel buttons do the same.
+Shift to disarm. **Esc** disarms. The command panel buttons do the same. An
+armed order shows as its cursor and its pressed button, with no text prompt.
 
 | Key | Order |
 | --- | --- |

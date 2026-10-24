@@ -11,7 +11,14 @@ with every TAK Engine package, next to the game.
 This guide is for players and mapmakers. It explains what you see on screen and
 what each control does, from a first map to sharing a finished one.
 
-> **Version note.** This guide describes TAK Engine 0.8.12. New in 0.8.12:
+> **Version note.** This guide describes TAK Engine 0.8.13. New in 0.8.13:
+>
+> - Cartographer starts on [an empty window](#the-first-screen) with no map;
+>   everything starts from the **File** menu (it used to open the New Map
+>   dialog over a blank, unsaved map). A map that fails to open at start, or
+>   cancelling New map or Open map, also ends there.
+>
+> New in 0.8.12:
 >
 > - the [AI Profiles window](#the-ai-profiles-window) (**Scenario → AI
 >   Profiles...**, **A**), which edits a map's AI profiles and saves them as a
@@ -123,8 +130,11 @@ or `zenity`.
 ### The first screen
 
 Started from its shortcut, Cartographer opens an empty window with no map: the
-middle reads **NO MAP OPEN**, and the toolbar, browser and minimap stay empty
-until a map is open. Start from the **File** menu:
+title bar reads just **Cartographer**, the status bar **NO MAP OPEN**, and the
+middle shows **NO MAP OPEN** with a short hint (*File > New map (Ctrl+N) or Open
+map (Ctrl+O). AI mods: File > New AI mod or Open AI mod.*). The toolbar, browser
+and minimap stay empty and do nothing until a map is open. Start from the
+**File** menu:
 
 - **File → New map** (**Ctrl+N** or **N**) opens the **New Map** dialog. Fill
   it in and click **CREATE** (or **RANDOM** for a generated map; see
@@ -138,7 +148,9 @@ until a map is open. Start from the **File** menu:
 Until then only these File commands, **Exit**, the UI size under **View**,
 **View → Preferences** and **Help** are available; everything else is greyed
 out. Cancelling either dialog returns to the empty window. There is nothing to
-save, so closing Cartographer straight away asks nothing. A map named when Cartographer
+save, so closing Cartographer straight away (**File → Exit**, the window's
+close button or **Esc**) asks nothing; holding **Esc** down after closing a
+dialog does not quit. A map named when Cartographer
 starts that cannot be opened shows **OPEN FAILED** and then the same empty
 window.
 

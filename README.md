@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.8.12-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
+[![version](https://img.shields.io/badge/version-0.8.13-c9a227?style=flat-square)](https://github.com/pocketgeek/tak-engine/releases)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -53,7 +53,32 @@ assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data. New players can start with the
 [quick-start controls reference](docs/quick-start.md).
 
-## New in 0.8.12
+## New in 0.8.13
+
+0.8.13 changes only the game's interface and the Cartographer: the protocol
+stays at **293** and replays at format **14**, so **0.8.13 plays with 0.8.12 and
+plays its replays, both ways**. A server and its players may run either version.
+Updating from 0.8.11 or earlier still means updating the server and every player
+together.
+
+- **No order text on screen.** Arming an order (Attack, Fight-move, Patrol,
+  Guard, Reclaim and so on) no longer shows a banner such as **ATTACK: CLICK
+  TARGET**. As in the original game, the order's cursor and its pressed button
+  in the command panel show what is armed.
+- **Cartographer starts with no map.** Started without a map, the editor opens
+  an empty window (**NO MAP OPEN**) instead of the New Map dialog over a blank,
+  unsaved map. Start from the **File** menu: **New map** (**Ctrl+N**), **Open
+  map** (**Ctrl+O**), **New AI mod** (**Ctrl+Shift+N**) or **Open AI mod**
+  (**Ctrl+Shift+O**). Cancelling, closing an AI mod or a map that fails to open
+  at start all return to it, and closing the empty window asks nothing. See
+  [The first screen](docs/cartographer-guide.md#the-first-screen).
+
+Saved `.kmp` maps, generated-map recipes, mods and settings carry over. No new
+runtime dependencies or retail assets are included. See the
+[release notes](docs/release-0.8.13-notes.md) and
+[validation report](docs/release-0.8.13-validation.md).
+
+### Previously in 0.8.12
 
 0.8.12 changes how our AI levels read their build profiles, how a map's AI
 files travel, and how Shift-queued flyer patrols fly, so the protocol moves to
@@ -1173,7 +1198,7 @@ underscores). It becomes the saved map's browser name and part of its filename;
 a short recipe hash also appears in the saved map list, so maps with the same
 title remain individually selectable. Blank names use the automatic description.
 The name and generator choices are remembered. Host, clients and server save
-the same named map when the game starts. Version 0.8.12 uses generator v9;
+the same named map when the game starts. Version 0.8.13 uses generator v9;
 v8 recipes still regenerate identically, older seed recipes are unsupported, and saved `.kmp` maps remain playable.
 Each biome also offers a themed layout: **Aramon Riverlands**, **Taros Maze**,
 **Veruna Ports**, **Zhon Clearings**, or **Creon Highlands**. Cycle Layout to the
@@ -1181,7 +1206,7 @@ fourth choice; changing Type while themed switches to that biome's layout.
 Ports guarantees connected deep-water harbor sites; the land themes retain
 connected army routes. Themed layouts start at 16×16 (24×24 for 5–8 players).
 New maze corridors open onto all four map edges instead of enclosing the map in walls.
-Version 0.8.12 uses protocol **293** and generator version 9; generated-map recipes from 0.8.0 on still work.
+Version 0.8.13 uses protocol **293** and generator version 9; generated-map recipes from 0.8.0 on still work.
 The preview reflects the selected seed and settings; see
 [random map generation](docs/random-map-generation.md) for the placement and
 connectivity rules.
@@ -1473,12 +1498,13 @@ modes prepared for the unpublished 0.7.24 were removed; a saved preference for
 one of them falls back to Retail.
 
 Use the **same network protocol and compatible game data** on every participant.
-Version **0.8.12 uses protocol 293**, including authoritative pathfinding
+Version **0.8.13 uses protocol 293**, the same as 0.8.12, including authoritative pathfinding
 selection, shared game-mod pack transfer, Darien Crusades campaign messages, the
 disconnect wait with its AI takeover, the Retail AI level and each map's own AI
-files. **0.8.12 does not play with 0.8.11 (protocol 290) or any earlier version,
-and does not play their replays**: a 0.8.12 client cannot join an older server,
-nor an older client a 0.8.12 server. Update the server
+files. 0.8.13 and 0.8.12 play together (a server and its players may mix the two) and play
+each other's replays. **Neither plays with 0.8.11 (protocol 290) or any earlier version,
+nor their replays**: a 0.8.13 or 0.8.12 client cannot join an older server,
+nor an older client a 0.8.13 or 0.8.12 server. Update from 0.8.11 or earlier with the server
 and all players together.
 Replay format is **14** (checkpoints also carry a position digest, and the header
 records the Map Scenario and Power Codes options), and
@@ -1723,7 +1749,7 @@ pack names win file conflicts; game packs load first, then the always-on
 archives, then ticked cosmetic packs. Pack choices are remembered. The old
 `overrides/` folder is no longer read and is left untouched. See
 [mod details](docs/user-guide.md#mods).
-Version 0.8.12 uses protocol **293**; servers and clients must all run 0.8.12 (0.8.11 uses 290, 0.8.10 289, 0.8.9 and 0.8.8 288).
+Version 0.8.13 uses protocol **293**, as 0.8.12 does; servers and clients must all run 0.8.13 or 0.8.12 (0.8.11 uses 290, 0.8.10 289, 0.8.9 and 0.8.8 288).
 
 
 ## License
