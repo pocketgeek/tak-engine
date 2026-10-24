@@ -233,7 +233,13 @@ jobs:
           ln -s /Applications dist-dmg/Applications
           hdiutil create -volname "Total Annihilation - Kingdoms" -srcfolder dist-dmg -ov -format UDZO \
             "tak-engine-$VERSION-macos-${{ matrix.arch }}.dmg"
-          hdiutil verify "tak-engine-$VERSION-macos-${{ matrix.arch }}.dmg"
+          # hdiutil can briefly report the new image busy ("Resource temporarily
+          # unavailable"); retry before calling it a bad image.
+          for attempt in 1 2 3 4 5; do
+            hdiutil verify "tak-engine-$VERSION-macos-${{ matrix.arch }}.dmg" && break
+            [ "$attempt" -lt 5 ] || exit 1
+            sleep 10
+          done
 
       # The zip carries the SAME .app (launch that from Finder -- no Terminal)
       # plus the bare binaries for people who want the CLI/server.
