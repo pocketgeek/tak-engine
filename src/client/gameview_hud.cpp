@@ -15,6 +15,7 @@
 #include "net/protocol.h"
 #include "sim/retailtransport.h"
 #include "sim/retailheight.h"
+#include "sim/footprint.h"
 #include "util/procmetrics.h"
 
 // Out-of-line GameView method definitions (hud concern), split from the
@@ -30,6 +31,20 @@ namespace {
                 return map.heights[size_t(cz)*size_t(map.width)+size_t(cx)];
             });
         return std::max(height,int(uint8_t(map.seaLevel)))*65536;
+    }
+
+    // An OPEN gate's doorway at world point (wx,wz): the cell is one of the gate's
+    // own 'c'/'C' yard cells (the cells retail's yard stamp 0x5062d0 flags 0x20) and
+    // the yard is open. Yardmaps are indexed unrotated, as the sim does
+    // (World::gatePassageAt): structures never turn their footprint.
+    bool openGateDoorwayAt(const UnitR& u,float wx,float wz) {
+        if (!u.yardOpen || !u.type || !u.type->gate || u.type->yardMap.empty()) return false;
+        const auto& type=*u.type;
+        const int dx=int(std::floor(wx/16))-tak::sim::footprintOrigin(u.x,type.footX);
+        const int dz=int(std::floor(wz/16))-tak::sim::footprintOrigin(u.z,type.footZ);
+        if (dx<0 || dz<0 || dx>=type.footX || dz>=type.footZ) return false;
+        const char yard=type.yardMap[size_t(dz)*type.footX+dx];
+        return yard=='c' || yard=='C';
     }
 }
 
@@ -2513,6 +2528,14 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         float hw = std::max(hb.w * zms * 0.5f, 9.0f);
         float hh = std::max(hb.h * zms * 0.5f, 9.0f);
         if (std::fabs(mx - cx) > hw || std::fabs(my - cy) > hh) return false;
+        // Retail 0x520530: past the quad test, the cursor's GROUND cell (0x50e660)
+        // in an open gate's doorway does not pick that gate, so hover, click and
+        // right-click all fall through to whatever stands in, or beyond, the opening.
+        if (u.yardOpen && u.type->gate) {
+            float wx, wz;
+            pickWorld(mx, my, wx, wz);
+            if (openGateDoorwayAt(u, wx, wz)) return false;
+        }
         if (d2) { float dx = cx - mx, dy = cy - my; *d2 = dx * dx + dy * dy; }
         return true;
     }

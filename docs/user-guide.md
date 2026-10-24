@@ -746,7 +746,9 @@ they rank up. Some units, such as Monarchs, never gain ranks.
 mana while active.
 
 **Gates.** Your gates open and close with **O**. Your own units can pass an open
-gate.
+gate. Clicking the doorway of an open gate is like clicking the ground, so a
+right-click there moves units through or into the opening; click a gate post or
+close the gate to select it.
 
 **Self-destruct.** **Ctrl+Shift+D** starts a five-second self-destruct on the
 selected units. Press it again to cancel.

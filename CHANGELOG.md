@@ -37,6 +37,12 @@ their validation reports; both live in [`docs/`](docs/).
   Rising sparkles on high ground or water also climb as far as they did in the
   original before they fade. The sparkles are display only, so this changes
   nothing about who can play together.
+- **Gate doorways:** clicking the doorway of an open gate now works like
+  clicking the ground, as in the original: it selects nothing, and a right-click
+  moves the selected units through or into the opening instead of guarding,
+  repairing or attacking the gate. A closed gate, the gate's posts and units
+  standing in the doorway are still selected as before. This is a mouse change
+  only, so it changes nothing about who can play together.
 - **Documentation:** the release history moved out of the README into this
   changelog; the README, quick start, user guide, map editor guide, server
   guide and streaming guide were rewritten and their pictures retaken.
