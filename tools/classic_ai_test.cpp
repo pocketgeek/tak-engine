@@ -156,10 +156,16 @@ static void profileRules() {
               p.limit[at(p,"aradrag")]==0 && p.limitLocked[at(p,"aradrag")] && p.pref[at(p,"aracastl")]==50 &&
               p.pref[at(p,"aralode")]==100 && p.limit[at(p,"aralode")]==-1,
               "case-insensitive commands and names, CRLF and tabs, // and # comments, extra tokens ignored, a missing value is 0");
-        check(p.pref[at(p,"arasiege")]==100 && p.limit[at(p,"arasiege")]==-1,
-              "a misspelt name (araseige) does nothing: the Rolling Tower stays 100 and unlimited");
+        check(p.pref[at(p,"arasiege")]==0 && p.prefLocked[at(p,"arasiege")] && p.limit[at(p,"arasiege")]==-1,
+              "the shipped misspelling araseige is read as the Rolling Tower (retail ignores it)");
         check(p.allows(at(p,"arabuild"),2) && !p.allows(at(p,"arabuild"),3) && !p.allows(at(p,"aradrag"),0) &&
               p.allows(at(p,"arasiege"),100000),"the limit check: -1 unlimited, else count < limit");
+    }
+    {
+        ai::ClassicProfile p(c.size());
+        p.execute("weight aracastle 0\nlimit arasiegee 3\n",c);
+        check(p.pref[at(p,"aracastl")]==100 && p.limit[at(p,"arasiege")]==-1,
+              "any other misspelt name does nothing: the type keeps 100 and unlimited");
     }
     check(ai::classicAtof("1.5x")==1.5f && ai::classicAtof("  -2")==-2.0f && ai::classicAtof("1e2")==100.0f &&
           ai::classicAtof("1d2")==100.0f && ai::classicAtof(".5")==0.5f && ai::classicAtof("abc")==0.0f &&
@@ -316,8 +322,8 @@ static void shippedData(const char* root) {
     ai::ClassicBrain brain(1,7,reg);brain.useProfile(script);
     const auto& c=brain.catalogue();const auto& p=brain.profile();
     auto idx=[&](const char* n){auto it=c.byName.find(n);return it==c.byName.end() ? size_t(0) : size_t(it->second);};
-    check(idx("arasiege") && p.pref[idx("arasiege")]==100 && p.limit[idx("arasiege")]==-1,
-          "shipped default.txt leaves arasiege (spelt araseige there) at 100, unlimited");
+    check(idx("arasiege") && p.pref[idx("arasiege")]==100 && p.limit[idx("arasiege")]==10,
+          "shipped default.txt's araseige lines give arasiege its limit of 10");
     check(idx("aratrans") && p.limit[idx("aratrans")]==-1 && idx("araking") && p.limit[idx("araking")]==-1,
           "unlisted types (the Ark, the Monarch) are unlimited");
     check(idx("aragod") && p.pref[idx("aragod")]==0 && p.limit[idx("aragod")]==0 &&

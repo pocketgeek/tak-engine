@@ -23,6 +23,11 @@ their validation reports; both live in [`docs/`](docs/).
 *Unreleased* <!-- VERSION-0.9.0: confirm date, protocol and replay format at cut (main: 293/14), and which versions it plays with -->
 
 <!-- WHATS-NEW-0.9.0: add the 0.9.0 gameplay and engine changes here before the cut. -->
+- **Retail AI:** the shipped AI profiles misspell the Aramon Rolling Tower
+  (`araseige`), which the original game ignores, so its AI built Rolling Towers
+  without limit. The Retail AI now reads the name as the Rolling Tower and keeps
+  to the profile's limit (10 in `ai/default.txt`). Only the server runs the AI,
+  so this changes nothing about who can play together.
 - **Documentation:** the release history moved out of the README into this
   changelog; the README, quick start, user guide, map editor guide, server
   guide and streaming guide were rewritten and their pictures retaken.

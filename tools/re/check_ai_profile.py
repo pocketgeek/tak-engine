@@ -143,7 +143,7 @@ def main():
             w32(manager + off, base)
             w32(manager + off + 4, base + n * size)
             w32(manager + off + 8, base + n * size)
-        typo = lambda: rng.choice(['araseige', 'aracastle', 'arach', 'foo', 'tarlod'])
+        typo = lambda: rng.choice(['arasiegee', 'aracastle', 'arach', 'foo', 'tarlod'])
         word = lambda: rng.choice([rng.choice(names)] * 6 + [rng.choice(CATEGORIES + ['all', 'ALL'])] * 2 + [typo()])
         value = lambda: rng.choice(VALUES) if rng.random() < 0.8 else f'{rng.uniform(-3, 300):.{rng.randrange(0, 5)}f}'
         rows, expected = [], []

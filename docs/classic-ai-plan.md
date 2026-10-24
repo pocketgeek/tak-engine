@@ -121,7 +121,7 @@ Where the area notes disagree, the plan settles it below and says how (see §1.1
 | Name -> types | 0x517240 | An exact unitname sets one bit and **locks** the type. Otherwise the word is a FBI `category=` word (or `ALL`): it ORs the category in and does NOT lock. An unknown word is a no-op. | S |
 | weight | 0x409760 -> 0x410c80 | For every player with a brain: `pref[t] = clamp(trunc(pref[t] * w), 0, 100)` for unlocked types. **pref starts at 100** (reset 0x410670). Explicit unit lines are first-writer-wins. Category lines compound. Every shipped weight is an integer, so **every non-zero weight gives 100: the file's weights are an on/off switch.** | E (config emulation; the live weight debug print agrees) |
 | limit | 0x4097f0 -> 0x410d50 | For kind-2 players: `limit[t] = N`, first-writer-wins. Default -1 = unlimited. | S, E |
-| Unlisted types | | They keep pref 100 and limit -1. So `araseige` (a typo) leaves **arasiege unlimited**, and `aratrans`, `vercen` and `npctemp` are also unlisted. | S, E |
+| Unlisted types | | They keep pref 100 and limit -1. So `araseige` (a typo) leaves **arasiege unlimited** in retail (since 0.9.0 the engine reads `araseige` as arasiege; see `kMisspelt` in `src/ai/classicprofile.cpp`), and `aratrans`, `vercen` and `npctemp` are also unlisted. | S, E |
 | FBI ai_weight/ai_limit | 0x410f20 / 0x410fe0 | Only for `downloadable=1` types. Retail bug: both passes execute ai_weight. No shipped FBI uses them, so it is dead on stock data. | E |
 | Limit check | 0x409890 -> 0x410de0 | Allowed if the player index >= 10, or `+0xe3 == 0`, or limit == -1, or count < limit (count includes unfinished units, from the cache). | S, repo-E |
 
@@ -647,7 +647,7 @@ builds a retail-like base, which is a usable checkpoint.
    `aiprofile`), one file for all AIs, and no faction filename exists. "10 profile slots" = one manager
    per player slot.
 3. "Unit at its limit EXCLUDED; unlisted?": unlisted or misspelled types are **built** (weight 100,
-   unlimited); `araseige` leaves arasiege unlimited.
+   unlimited); `araseige` leaves arasiege unlimited (in retail; the engine corrects it since 0.9.0).
 4. "rand(30)+15 per builder (0x40b320)": that is the **base squad** wake. Strike rand(60)+15, backup 150,
    VTOL rand(30)+15, homeless 1800, assignment rand(7)+3.
 5. "master econ scheduler 0x4ea6c0", "brain update 0x49e180", "army coordinator 0x4e91d0", "assign

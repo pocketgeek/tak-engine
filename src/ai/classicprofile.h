@@ -17,8 +17,9 @@
 //   * Unknown words do nothing, and so do commands other than weight/limit (retail
 //     runs the script with every console command enabled, but no shipped profile
 //     holds anything else, and `plan` is a no-op). A type the file never names
-//     keeps 100 / -1. That includes misspellings: the shipped IP default.txt says
-//     `araseige`, so the Rolling Tower stays unlimited -- kept, as retail does.
+//     keeps 100 / -1. That includes misspellings, with one exception that departs
+//     from retail: the shipped profiles' `araseige` is read as the Rolling Tower
+//     (arasiege), which retail leaves unlimited (unless a type is named araseige).
 //   * Lines split at '\n'; tokens at C isspace; '#' ends a line; a line whose
 //     first token starts with "//" is skipped; extra tokens are ignored.
 //

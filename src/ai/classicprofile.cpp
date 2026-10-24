@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <map>
+#include <utility>
 
 #include "hpi/hpi.h"
 #include "sim/sim.h"
@@ -41,6 +42,12 @@ std::vector<std::string_view> tokens(std::string_view line) {
     }
     return out;
 }
+
+// Misspelt unit names in the shipped profiles, read as the unit they mean. Retail
+// ignores them: IPData's default.txt and 11 other profiles say `araseige`, so
+// its AI builds the Rolling Tower without limit. Applied only when no type has the
+// misspelt name.
+constexpr std::pair<std::string_view, std::string_view> kMisspelt[] = {{"araseige", "arasiege"}};
 
 }  // namespace
 
@@ -152,7 +159,10 @@ void ClassicProfile::execute(std::string_view script, const ClassicCatalogue& ca
         const std::string word = t.size() > 1 ? lowered(t[1]) : std::string();
         const std::vector<uint16_t>* targets = nullptr;
         bool exact = false;
-        if (auto it = catalogue.byName.find(word); it != catalogue.byName.end() && it->second != 0) {
+        auto it = catalogue.byName.find(word);
+        for (const auto& [wrong, right] : kMisspelt)
+            if (it == catalogue.byName.end() && word == wrong) it = catalogue.byName.find(std::string(right));
+        if (it != catalogue.byName.end() && it->second != 0) {
             one[0] = it->second;
             targets = &one;
             exact = true;
