@@ -263,6 +263,10 @@ composed, so no browser cell or tree is a placeholder.
   `ai-profiles.jpg` was recaptured the same way later on 2026-10-23 and
   encoded at quality 98 (full chroma) instead of 86, because at 86 the tab
   label *DEFAULT AI* could read as *DEFAULT AT*; the scene is unchanged.
+  Both were recaptured again the same way when the levels' six tabs became one
+  TAK ENGINE AI tab (`ai/takengine.txt`), and `ai-takengine.jpg` was added from
+  the `aiprofile-merge` workflow (crop 802 × 534 at 60,78, quality 98, full
+  chroma).
 - **Toolbar.** Every whole-window picture except `blocked.jpg` predates the
   BLOCKED tool, so its toolbar shows four tool buttons where the editor now has
   five.
@@ -295,8 +299,9 @@ composed, so no browser cell or tree is a placeholder.
 | `test-map.jpg` | King of the Hill after F5: the TEST MAP message, with TEST RUNNING on the toolbar, whole window |
 | `test-lobby.jpg` | The game's private lobby for that King of the Hill snapshot (recaptured by the 0.8.9 client for the room's rules; before that by the 0.8.8 client for the UI font and the mods lists): seats 2 to 4 open, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, the map preview numbering the four starts, ALWAYS ON: click.hpi under the COSMETIC MODS heading with no packs in either the COSMETIC MODS or the GAME MODS list (so no GAME MODS VERIFIED line), START greyed, and MAP SCENARIO: ON (TEST MAP) as a rules line at the others' size with the scenario details under both columns; 1024 × 768 cropped to the lobby panel |
 | `menus.jpg` | Composite: the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each opened over Ulasem Arena or King of the Hill and cropped to the menu |
-| `ai-profiles.jpg` | *AiTest* (Ulasem Arena's terrain), Scenario → AI Profiles, DEFAULT AI tab: the map's own profile *aitest* started Empty, then NO FLYERS after its confirmation, so every flying unit reads BUILD OFF and LIMIT 0; Normal is tagged `map *` from an earlier edit. Crop of the window |
+| `ai-profiles.jpg` | *AiTest* (Ulasem Arena's terrain), Scenario → AI Profiles, DEFAULT AI tab: the map's own profile *aitest* started Empty, then NO FLYERS after its confirmation, so every flying unit reads BUILD OFF and LIMIT 0; TAK ENGINE AI (`ai/takengine.txt`) is tagged `map *` from an earlier edit, and PREVIEW LEVEL reads HARD. Crop of the window |
 | `ai-group-rules.jpg` | Ulasem Arena, AI Profiles, DEFAULT AI tab in the GROUP RULES view: own profile *ulasem arena*, one rule WEIGHT ARA 50 % covering 32 units, the Archer set individually (80 %) and shown as skipped. Crop of the window |
+| `ai-takengine.jpg` | *AiMerge* (Ulasem Arena's terrain) carrying the old level files `ai/e.txt`, `ai/n.txt` and `ai/h.txt`: AI Profiles, TAK ENGINE AI tab previewing NORMAL right after MERGE INTO TAK ENGINE took Normal's file; the old-file notice is still shown. From the `aiprofile-merge` workflow's `-merged.png`. Crop of the window |
 | `blocked.jpg` | Added with the BLOCKED tool, not by the capture driver: the editor's own `--shot` output (`cartographer "Ladron's Tarn" --shot … --shot-tool blocked`, SDL `offscreen`, fresh scratch profile), whole 921 × 691 window at 30%. The shipped map's blocked cells along its castle walls are tinted red and its road cells blue; the browser lists the five brush sizes |
 
 The native dialogs (the first-start folder picker, *Not a game folder*,

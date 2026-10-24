@@ -511,13 +511,15 @@ struct Editor : Session {
         bool built=false;std::string key,bytes;bool readOnly=false;
         AiDraft draft;std::vector<AiLine> lines;std::vector<AiIssue> issues;
         tak::ai::ClassicProfile classic;tak::ai::Profile level,builtin;
+        tak::ai::Difficulty preview=tak::ai::Difficulty::Normal;   // the level `level` and `builtin` are for
     };
     enum class AiView {Table,Text,Issues,Groups};   // Groups: the DEFAULT tab's group rules (Advanced)
     enum AiFocus {AI_NONE,AI_SEARCH,AI_NAME,AI_CELL,AI_TEXT,AI_PACK,AI_GROUP,AI_WORD};
     bool aiOpen=false,aiStartOpen=false,aiSetOnly=false,aiShowUnbuildable=false,aiTextFollow=true;
     std::string aiPendingName;                   // own profile chosen, waiting for Start from (one undo step with its file)
     std::map<std::string,std::pair<std::string,bool>> aiWrittenCache;   // key -> (bytes, opens as written)
-    int aiTab=0;                                 // 0 = DEFAULT AI, 1..6 = Defensive .. Absurdly Defensive
+    int aiTab=0;                                 // 0 = DEFAULT AI, 1 = TAK ENGINE AI (ai/takengine.txt, all six levels)
+    tak::ai::Difficulty aiPreviewLevel=tak::ai::Difficulty::Normal;   // the level whose built-in table and limits the TAK ENGINE tab shows
     AiView aiView=AiView::Table;
     AiFocus aiFocus=AI_NONE;
     int aiSide=0,aiGroup=0,aiScroll=0,aiTextScroll=0,aiIssueScroll=0,aiPack=0;
@@ -535,10 +537,11 @@ struct Editor : Session {
     struct AiCell {SDL_Rect rect;std::string key;int column;};   // column 0/1 = value/limit, 2 = BUILD
     std::vector<AiCell> aiCells;
     std::vector<std::pair<SDL_Rect,std::string>> aiRows;
-    SDL_Rect aiTabRects[7]{},aiPresetRects[3]{},aiSearchBox{},aiSideBox{},aiGroupBox{},aiSetOnlyBox{},aiUnbuildableBox{},
+    SDL_Rect aiTabRects[2]{},aiPreviewBox{},aiPresetRects[3]{},aiSearchBox{},aiSideBox{},aiGroupBox{},aiSetOnlyBox{},aiUnbuildableBox{},
              aiList{},aiStandardRadio{},aiOwnRadio{},aiNameBox{},aiStartButton{},aiViewButton{},aiCheckButton{},
              aiEditableButton{},aiInsertButton{},aiPackButton{},aiDoneButton{},aiTextBox{},aiStartStandard{},aiStartEmpty{},aiStartCancel{};
-    std::optional<tak::ai::Difficulty> aiTabLevel() const;
+    std::optional<tak::ai::Difficulty> aiTabLevel() const;   // the preview level on the TAK ENGINE tab
+    void aiStepPreview(int by);
     std::string aiKeyFor(int tab) const;
     std::string aiTabKey() const {return aiKeyFor(aiTab);}   // the file this tab edits ("" = DEFAULT on the standard profile, no map file)
     const AiTabView& aiTabView();
@@ -577,17 +580,18 @@ struct Editor : Session {
     void aiPickWord(const std::string& word);
     void aiCommitGroupCell();
     void aiGroupAction(int rule,int what);       // 0 keyword, 1 move up, 2 remove, 3 move down
-    // Copy to other levels (design 3.3, levels only): the shown level's unit settings
-    // written into each level the user ticks (none by default), after the dialog says
-    // what each file becomes. One undo step for all of them (a pack edit has none).
-    // The DEFAULT AI's file is never a target: it reads another grammar.
-    struct AiCopyRow {int tab=0;std::string key,bytes,status,error;bool tick=false,same=false;SDL_Rect box{};};
-    bool aiCopyOpen=false;
-    std::vector<AiCopyRow> aiCopyRows;
-    SDL_Rect aiCopyButton{},aiCopyGo{},aiCopyCancel{};
-    void aiOpenCopyLevels();
-    void aiCopyLevels();
-    void drawAiCopyLevels();
+    // The old per-level files (ai/d.txt .. ai/ad.txt, no longer read): kept byte for
+    // byte; MERGE INTO TAK ENGINE writes one of them into ai/takengine.txt after the
+    // dialog shows what it does (when they disagree the user picks which; Normal's is
+    // preselected). Optionally deletes them too. One undo step (a pack edit has none).
+    struct AiMergeRow {std::string key;size_t settings=0;int group=0;SDL_Rect box{};};   // group: rows with the same settings share it
+    bool aiMergeOpen=false,aiMergeDelete=false;
+    int aiMergePick=0;
+    std::vector<AiMergeRow> aiMergeRows;
+    SDL_Rect aiMergeButton{},aiMergeGo{},aiMergeCancel{},aiMergeDeleteBox{};
+    void aiOpenMerge();
+    void aiMerge();
+    void drawAiMerge();
     void drawAiGroups(int x0,int y0,int W,int listBottom);
     void drawAiWordPicker();
     // The unit roster of a game mod (design 7.2, phase 5): when a pack is edited or

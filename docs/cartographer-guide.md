@@ -17,7 +17,10 @@ what each control does, from a first map to sharing a finished one.
 > - the [AI Profiles window](#the-ai-profiles-window) (**Scenario → AI
 >   Profiles...**, **A**), which edits a map's AI profiles and saves them as a
 >   game mod;
-> - a map keeping its own `ai/` files through open, save, Test Map and recovery.
+> - a map keeping its own `ai/` files through open, save, Test Map and recovery;
+> - our six AI levels reading one file, `ai/takengine.txt`, instead of one file
+>   each (the window's TAK ENGINE AI tab, PREVIEW LEVEL and MERGE INTO TAK
+>   ENGINE).
 >
 > Apart from these, the guide matches 0.8.11.
 
@@ -1364,10 +1367,15 @@ The game has two kinds of computer player, and each reads its own file:
 | Computer player | File | What the file does |
 | --- | --- | --- |
 | **DEFAULT AI** (the 1999 game's own AI) | the map's **own profile**, `ai/<name>.txt`, named by the map | The whole profile: every unit the file does not name is built at full chance with no limit. |
-| **Defensive**, **Easy**, **Normal**, **Hard**, **Absurd**, **Absurdly Defensive** | `ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt`, `ai/ad.txt` | Changes only the units it names; every other unit keeps the level's built-in values. |
+| Our levels: **Defensive**, **Easy**, **Normal**, **Hard**, **Absurd**, **Absurdly Defensive** | one file for all six, `ai/takengine.txt` | Changes only the units it names, in every level; every other unit keeps each level's own built-in values, so the levels stay different. |
 
-See [AI difficulty](user-guide.md#ai-difficulty) in the game guide for how
-each level plays.
+The DEFAULT AI is the one the room calls **RETAIL**. See
+[AI difficulty](user-guide.md#ai-difficulty) in the game guide for how each
+level plays.
+
+Up to 0.8.11 each level read a file of its own
+(`ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt`, `ai/ad.txt`). The
+game no longer reads those; see [Old level files](#old-level-files).
 
 ### The AI Profiles window
 
@@ -1375,18 +1383,21 @@ each level plays.
 Properties** also shows the map's DEFAULT AI profile, with an **EDIT AI
 PROFILES...** button. While the window is open, the title bar shows `[AI]`.
 
-![The AI PROFILES window for map AiTest. Left: DEFAULT AI selected, with its file ai/aitest.txt and the tag map *, the six levels below it (Normal also tagged map *), the PRESETS buttons NO FLYERS, NO SHIPS and CLEAR ALL, PREVIEW WITH GAME MOD (PACK: NONE) and the GAME MOD buttons. Right: the rule line ORIGINAL-GAME RULES: THE FIRST LINE NAMING A UNIT WINS; GROUP RULES COMBINE, the choice between the standard profile and this map's own profile named aitest, the FIND, SIDE and GROUP filters, and a table of flying units, each with BUILD OFF, CHANCE 100 %, SET BY line 7 and so on, and LIMIT 0. Footer: Plays: DEFAULT AI on this map reads ai/aitest.txt from this map, and the buttons START FROM, TEXT VIEW, CHECK, GROUP RULES and DONE](img/cartographer/ai-profiles.jpg)
+![The AI PROFILES window for map AiTest. Left: DEFAULT AI selected, with its file ai/aitest.txt and the tag map *, then TAK ENGINE AI with ai/takengine.txt (also tagged map *), PREVIEW LEVEL (< HARD >), the PRESETS buttons NO FLYERS, NO SHIPS and CLEAR ALL, PREVIEW WITH GAME MOD (PACK: NONE) and the GAME MOD buttons. Right: the rule line ORIGINAL-GAME RULES: THE FIRST LINE NAMING A UNIT WINS; GROUP RULES COMBINE, the choice between the standard profile and this map's own profile named aitest, the FIND, SIDE and GROUP filters, and a table of flying units, each with BUILD OFF, CHANCE 100 %, SET BY line 7 and so on, and LIMIT 0. Footer: Plays: DEFAULT AI on this map reads ai/aitest.txt from this map, and the buttons START FROM, TEXT VIEW, CHECK, GROUP RULES and DONE](img/cartographer/ai-profiles.jpg)
 
 *The DEFAULT AI tab of a map with its own profile, after **No flyers**: every
 flying unit is switched off.*
 
-- **Left column**: **DEFAULT AI** and the six levels. A profile the map carries
-  is tagged `map`; `*` means it changed since the window opened, and
-  `as written` marks a file written by hand (see below). Under them are the
-  **presets**, **PREVIEW WITH GAME MOD** and the **GAME MOD** buttons.
+- **Left column**: the two tabs, **DEFAULT AI** and **TAK ENGINE AI**
+  (`ai/takengine.txt`, the one file all six of our levels read). A profile the
+  map carries is tagged `map`; `*` means it changed since the window opened,
+  and `as written` marks a file written by hand (see below). Under them are
+  **PREVIEW LEVEL**, the [old level files](#old-level-files) notice when the map
+  still has them, the **presets**, **PREVIEW WITH GAME MOD** and the **GAME
+  MOD** buttons.
 - **The rule line** at the top says how this kind of file works. DEFAULT AI:
-  *the first line naming a unit wins; group rules combine*. The levels: *whole
-  numbers; units by name only; later lines win*.
+  *the first line naming a unit wins; group rules combine*. TAK ENGINE AI:
+  *whole numbers; units by name only; later lines win*.
 - **The unit table** lists the units the computer players can build. Type in
   **FIND** to search by name or file name (for example *archer* or
   *araarch*), and pick a **SIDE** or **GROUP**. **SET ONLY** shows only the
@@ -1404,18 +1415,29 @@ flying unit is switched off.*
 Click a cell, type, and press **Enter** (**Esc** cancels the typing).
 **Right-click** a cell, or press **Delete**, to return it to *not set*.
 
-| Column | DEFAULT AI | Levels |
+| Column | DEFAULT AI | TAK ENGINE AI |
 | --- | --- | --- |
-| **BUILD** | Click to switch the unit **OFF** (never built) or back **ON**. | The same. |
-| **CHANCE** / **WEIGHT** | **CHANCE**, 0 to 100 %. 100 % is normal; a lower number makes the AI pick the unit less often against other units it wants just as much; 0 % never builds it. | **WEIGHT**, a whole number from 0 to 999. Higher means picked more often among what that builder can make; 0 never builds it. The grey **BUILT-IN** column shows the level's own value. |
+| **BUILD** | Click to switch the unit **OFF** (never built) or back **ON**. | The same (shown for the preview level). |
+| **CHANCE** / **WEIGHT** | **CHANCE**, 0 to 100 %. 100 % is normal; a lower number makes the AI pick the unit less often against other units it wants just as much; 0 % never builds it. | **WEIGHT**, a whole number from 0 to 999. Higher means picked more often among what that builder can make; 0 never builds it. The grey **BUILT-IN** column shows the preview level's own value. |
 | **LIMIT** | How many of the unit the AI may have: a number, or *no limit*. 0 means never built. | A number, or blank for the built-in limit. 0 means never built. |
 
-The levels change limits as they play: Easy halves them, Hard and Absurd
+#### One file, six levels: PREVIEW LEVEL
+
+`ai/takengine.txt` is read by all six of our levels. A value you set replaces
+that unit's value in **every** level; a unit you do not set keeps **each**
+level's own built-in value, so the levels stay as different as they are
+built. The table can show only one level at a time: **PREVIEW LEVEL** (click
+for the next level, right-click for the one before) picks whose built-in
+values fill the unset cells and the **BUILT-IN** column, and whose limits in
+play are shown. Your settings (marked `*`) are the same for every level.
+
+Each level also changes limits as it plays: Easy halves them, Hard and Absurd
 raise them by half (at least 1), and the Defensive levels ignore every limit
 except 0. The **LIMIT (IN PLAY)** column shows `> n` when the level changes your
 number, and `+` when Hard or Absurd may raise it further in a long game; the
 line under the table says it in words (*In play on Hard: 4 in play, more in
-long games*).
+long games*). Step **PREVIEW LEVEL** to see what another level makes of the
+same number.
 
 The real odds of a unit being built also depend on what the AI needs at that
 moment, so the window never shows a final percentage.
@@ -1427,21 +1449,32 @@ moment, so the window never shows a final percentage.
 says how many units it changes. Units you already set keep their settings,
 and Undo takes a preset back.
 
-#### Copy to other levels
+On the TAK ENGINE AI tab the presets write `ai/takengine.txt`, so they apply
+to all six levels.
 
-On a level's tab, **COPY TO OTHER LEVELS...** copies that level's unit
-settings to other levels. The dialog lists the five other levels, none ticked,
-and says what each file becomes: a *new file*, or that it *replaces* the
-level's own settings (or a file written by hand). Tick the levels you want and
-press **COPY** (or **Enter**); **CANCEL** or **Esc** closes it.
+#### Old level files
 
-- Each ticked level then sets exactly the units the copied level sets, with the
-  same weights and limits. Its other unit settings go.
-- The DEFAULT AI is never a target: its file works by different rules.
-- One **Undo** takes back the whole copy. In a game mod's pack there is no undo,
-  as for every pack edit.
-- Each extra level file is one more fixed name that a ticked game mod's file of
-  the same name replaces, so copy only to the levels you mean to change.
+A map or game mod made before the change may still carry the old per-level
+files `ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt` or
+`ai/ad.txt`. The game no longer reads them. Cartographer keeps them in the map
+(or pack) byte for byte, as ordinary unused files, and the left column shows a
+notice naming them, with **MERGE INTO TAK ENGINE...**:
+
+![The AI PROFILES window for map AiMerge on the TAK ENGINE AI tab, previewing NORMAL. Left: under PREVIEW LEVEL, the notice Old level files (e.txt, n.txt, h.txt) are no longer read by the game, and the button MERGE INTO TAK ENGINE.... Right: the unit table with WEIGHT, BUILT-IN and LIMIT (IN PLAY) columns, and the note Merged 2 unit settings from ai/n.txt into ai/takengine.txt; the old files stay (not read). Ctrl+Z takes it back](img/cartographer/ai-takengine.jpg)
+
+*After merging Normal's old file. The old files are still in the map, so the
+notice stays until you delete them.*
+
+- The dialog lists the old files in level order with how many units each
+  sets. Files that set exactly the same units merge as one. When they differ,
+  pick the file to use; **Normal**'s is preselected.
+- **MERGE** writes that file's unit settings into `ai/takengine.txt`: each unit
+  it names takes its weight and limit there; units `ai/takengine.txt` already
+  sets and the old file does not keep their values. Cartographer checks the
+  result with the game's own reader before it stores it.
+- The old files stay unless you tick **Also delete the old level files**.
+- One **Undo** takes back the whole merge (and the deletes). In a game mod's
+  pack there is no undo, as for every pack edit.
 
 #### The DEFAULT AI's own profile
 
@@ -1462,8 +1495,8 @@ FROM**:
 
 The profile is saved in the map as `ai/<name>.txt`, and the map's settings
 name it. You can rename it in the name field: the file moves with the name.
-A name cannot contain `.`, `/` or `\`, and cannot be `default` or a level's
-file name (`d`, `e`, `n`, `h`, `a`, `ad`). Choosing **the standard profile**
+A name cannot contain `.`, `/` or `\`, and cannot be `default`, `takengine`
+or an old level file name (`d`, `e`, `n`, `h`, `a`, `ad`). Choosing **the standard profile**
 again asks first, then removes the map's file. Cartographer never writes a new
 `ai/default.txt` into a map: that name is read by every map without a profile
 of its own. A map that already carries one keeps it, and choosing its own
@@ -1495,7 +1528,7 @@ own row, so the rule skips it.*
   last rule wins.
 - **TABLE** goes back to the unit table.
 
-The levels have no group rules: they read unit names only.
+TAK ENGINE AI has no group rules: our levels read unit names only.
 
 #### Text view and Check
 
@@ -1506,7 +1539,8 @@ selected unit's name. **TABLE VIEW** goes back.
 
 **CHECK** lists problems in all the map's AI files: misspelled unit names
 (with a suggestion), lines that do nothing, a decimal or a capital `Weight` in
-a level file, a side that could build nothing at all, and more. Click a
+`ai/takengine.txt`, a side that could build nothing at all (and on which
+levels), old level files the game no longer reads, and more. Click a
 problem to see its line. Check Map reports the warnings and errors too (see
 [What Check Map reports](#what-check-map-reports)). None of them stops you from
 saving.
@@ -1527,13 +1561,17 @@ example *DEFAULT AI on this map reads ai/islands.txt from this map. A ticked
 game mod's ai/islands.txt would replace it; a game mod's ai/default.txt would
 not.* The rules:
 
-- A ticked game mod's file replaces a map's file with the same name. For a
-  level it replaces the whole file, not line by line.
+- A ticked game mod's file replaces a map's file with the same name, the whole
+  file, not line by line: a game mod's `ai/takengine.txt` replaces the map's
+  for all six levels. For our levels the footer reads, for example, *All six
+  levels (Normal shown) read ai/takengine.txt from this map, each over its own
+  built-in table, unless a ticked game mod has ai/takengine.txt, which then
+  replaces it entirely.*
 - The DEFAULT AI first looks for the map's own profile name (game mod, then
   the map, then your install), and only then for `ai/default.txt` in the same
   order. So a game mod's `ai/default.txt` does not replace a map's own profile.
-- Your install never supplies level files. Cosmetic mods never supply AI
-  files.
+- Your install never supplies `ai/takengine.txt`. Cosmetic mods never supply
+  AI files. The old level files are never read, wherever they are.
 - Campaign missions always use the DEFAULT AI.
 
 **PREVIEW WITH GAME MOD** steps through your game mods (**PACK: NONE** means
@@ -1546,7 +1584,8 @@ pack is picked, the unit table also lists the units it adds, tagged `pack`.
 `mods/game/<pack>/ai/` in your game data folder. Type a new pack name, or step
 through the existing packs with `<` and `>`. The dialog shows the full folder,
 one row per file with what it will do (new, identical, replaces), and which
-files to write: the level files are ticked; the DEFAULT AI profile is not, and
+files to write: `ai/takengine.txt` is ticked; the old level files are not
+offered; the DEFAULT AI profile is not ticked, and
 can be written either as `ai/default.txt` (every map that uses the standard
 profile) or under the map's profile name (only maps whose profile has that
 name).
@@ -1583,8 +1622,9 @@ saved.
 #### Testing AI profiles
 
 **Test Map** (**F5**) takes the map's AI files into the test game. In the
-room, give each computer seat the level you are testing (DEFAULT for the map's
-own profile). To test a game mod's files, tick that pack in the room.
+room, give each computer seat the level you are testing (**RETAIL** for the
+map's DEFAULT AI profile; every other level reads `ai/takengine.txt`). To test
+a game mod's files, tick that pack in the room.
 
 ---
 
@@ -1755,7 +1795,7 @@ Afterwards the map has the new name and Ctrl+S saves there.
 folder instead of one `.kmp`: `<name>.tnt` (terrain), `.ota` (map settings and
 start positions), `.crt` (placed units, rules and regions), `.editor` (rule
 names), `.tdf` (the Use Only list) and `.txt` (the description). The map's AI
-profiles go in an `ai` folder in the save folder (`ai/n.txt`). Use it when
+profiles go in an `ai` folder in the save folder (`ai/takengine.txt`). Use it when
 you want the individual files, for example to look at them or to use them with
 other tools.
 
@@ -1824,14 +1864,14 @@ edit them in the [AI Profiles](#ai-profiles) window. When you open a `.kmp` file
 (**File → Open** with its full path or an installed map's name) or a loose
 `.tnt`, Cartographer keeps every file in its `ai` folder and saves each one again
 unchanged, byte for byte. Undo, recovery copies and **Test Map** keep them too.
-Each map keeps its own files: two installed maps that both carry `ai/n.txt` (or
+Each map keeps its own files: two installed maps that both carry `ai/takengine.txt` (or
 name the same profile) each open, play and travel with their own copy.
 
 Only some of these files go with the map to other players and into **Test
-Map**: `ai/default.txt`, the level files (`ai/d.txt`, `ai/e.txt`, `ai/n.txt`,
-`ai/h.txt`, `ai/a.txt`, `ai/ad.txt`) and the file the map's AI profile names
+Map**: `ai/default.txt`, `ai/takengine.txt` and the file the map's AI profile names
 (`aiprofile=islands` reads `ai/islands.txt`). Any other file, such as
-`ai/notes.txt`, stays in your `.kmp` but is not sent; Check Map says so.
+`ai/notes.txt` or an old level file like `ai/n.txt`, stays in your `.kmp` but is
+not sent; Check Map says so.
 
 ### Sharing your map
 

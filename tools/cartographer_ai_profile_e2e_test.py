@@ -2,20 +2,21 @@
 """A map's AI profiles, made into a .kmp by the Cartographer, play in a real game.
 
 Headless Cartographer --bundle writes two maps from Inner Circle's terrain, each with
-the DEFAULT AI profile named by its .ota (aiprofile=e2e, so ai/e2e.txt) and a Normal
-file ai/n.txt, both in the editor's canonical form and kept at the .kmp root. The
+the DEFAULT AI profile named by its .ota (aiprofile=e2e, so ai/e2e.txt) and the file
+all our levels read, ai/takengine.txt, both in the editor's canonical form and kept at
+the .kmp root. The
 profiles put a limit on every side's factories (category FACTORY): 0 in the first map,
 2 in the second. Both maps sit in one scratch Maps/ folder, so their ai/e2e.txt and
-ai/n.txt collide. Headless --mpai games (seed 1, the AI seat on DEFAULT, 60 s):
+ai/takengine.txt collide. Headless --mpai games (seed 1, the AI seat on DEFAULT, 60 s):
 
   stock    Inner Circle, with the two maps installed and an unticked game pack: the
            same state hash as in a plain install, and no factory limit in the AI's
            weight dump (TAK_CLASSIC_WEIGHTS)
-  alpha    the first map: the server log names ai/e2e.txt and ai/n.txt from the map
+  alpha    the first map: the server log names ai/e2e.txt and ai/takengine.txt from the map
            package, and the dump shows every factory at limit 0
   beta     the second map: its own files, not the first map's (limit 2)
   mod      the first map with a ticked game pack carrying ai/e2e.txt (limit 1) and
-           ai/n.txt: the log names both from the game mods, and the dump shows 1
+           ai/takengine.txt: the log names both from the game mods, and the dump shows 1
 """
 import argparse
 import os
@@ -90,7 +91,7 @@ def bundle(a, data, root, name, units, limit):
     (kit / 'kmap' / 'E2E Source.ota').write_bytes(ota.encode('latin-1'))
     (kit / 'kmap' / 'E2E Source.tnt').write_bytes(hpi_read(a.hpitool, data, 'maps/Inner Circle.tnt'))
     (kit / 'ai' / (PROFILE + '.txt')).write_bytes(profile('default', units, limit))
-    (kit / 'ai' / 'n.txt').write_bytes(profile('level', units, limit))
+    (kit / 'ai' / 'takengine.txt').write_bytes(profile('level', units, limit))
     subprocess.run([str(a.hpitool), 'pack', str(kit), str(author / 'Maps' / 'E2E Source.kmp')],
                    check=True, capture_output=True)
     home = root / ('home-' + name.replace(' ', '-'))
@@ -104,11 +105,11 @@ def bundle(a, data, root, name, units, limit):
     assert result.returncode == 0, result.stdout + result.stderr
     listing = subprocess.run([str(a.hpitool), 'list', str(out)], capture_output=True, text=True, check=True).stdout
     entries = {e.lower() for e in re.findall(r'^\s*\d+\s+(\S.*?)\s*$', listing, re.M)}
-    for want in ('ai/%s.txt' % PROFILE, 'ai/n.txt', 'kmap/%s/%s.tnt' % (name.lower(), name.lower()),
+    for want in ('ai/%s.txt' % PROFILE, 'ai/takengine.txt', 'kmap/%s/%s.tnt' % (name.lower(), name.lower()),
                  'kmap/%s/%s.ota' % (name.lower(), name.lower())):
         assert want in entries, '%s not in %s: %s' % (want, out, sorted(entries))
     assert not any(e.startswith('kmap/') and '/ai/' in e for e in entries), sorted(entries)
-    for path, want in (('ai/%s.txt' % PROFILE, profile('default', units, limit)), ('ai/n.txt', profile('level', units, limit))):
+    for path, want in (('ai/%s.txt' % PROFILE, profile('default', units, limit)), ('ai/takengine.txt', profile('level', units, limit))):
         got = subprocess.run([str(a.hpitool), 'cat', str(out), path], capture_output=True, check=True).stdout
         assert got == want, '%s in %s changed: %r' % (path, out, got)
     ota = subprocess.run([str(a.hpitool), 'cat', str(out), 'kmap/%s/%s.ota' % (name, name)],
@@ -179,30 +180,30 @@ def main():
         pack = data / 'mods' / 'game' / PACK / 'ai'
         pack.mkdir(parents=True)
         (pack / (PROFILE + '.txt')).write_bytes(profile('default', units, 1))
-        (pack / 'n.txt').write_bytes(profile('level', units, 1))
+        (pack / 'takengine.txt').write_bytes(profile('level', units, 1))
 
         stock_hash, limits, log = play(a, data, root / 'stock', 'Inner Circle')
         assert stock_hash == plain_hash, 'Inner Circle hash %s with the AI maps installed, %s without' % (
             stock_hash, plain_hash)
         assert re.search(r'DEFAULT AI profile ai/default\.txt from the base data', log, re.I), log
-        assert not re.search(r'AI level \d+ plays the built-in profile adjusted', log), log
+        assert not re.search(r'our AI levels play their built-in profiles adjusted', log), log
         assert all(limits.get(u) != {'0'} for u in units), 'stock map: a factory is limited to 0'
 
         for name, limit in (('E2E Alpha', 0), ('E2E Beta', 2)):
             _, limits, log = play(a, data, root / name.replace(' ', '-'), name)
             assert re.search(r'DEFAULT AI profile ai/%s\.txt from the map package' % PROFILE, log, re.I), log
-            assert re.search(r"AI level 2 plays the built-in profile adjusted by the map package's ai/n\.txt",
+            assert re.search(r"our AI levels play their built-in profiles adjusted by the map package's ai/takengine\.txt",
                              log, re.I), log
             expect_limits(limits, units, str(limit), name)
 
         _, limits, log = play(a, data, root / 'mod', 'E2E Alpha',
                               settings='mods.gamePack = ' + PACK.encode().hex() + '\n')
         assert re.search(r'DEFAULT AI profile ai/%s\.txt from the game mods' % PROFILE, log, re.I), log
-        assert re.search(r"AI level 2 plays the built-in profile adjusted by the game mods' ai/n\.txt",
+        assert re.search(r"our AI levels play their built-in profiles adjusted by the game mods' ai/takengine\.txt",
                          log, re.I), log
         expect_limits(limits, units, '1', 'E2E Alpha with the ticked pack')
 
-        print('PASS: Cartographer --bundle carries ai/%s.txt and ai/n.txt at the .kmp root; each of two '
+        print('PASS: Cartographer --bundle carries ai/%s.txt and ai/takengine.txt at the .kmp root; each of two '
               'colliding maps plays its own files (limit 0 / 2 on %d factories), a ticked game pack\'s files '
               'win (limit 1), and the stock map hash %s is unchanged' % (PROFILE, len(units), stock_hash))
 

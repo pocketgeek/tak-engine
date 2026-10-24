@@ -1,6 +1,6 @@
 // The AI Profiles window (SCENARIO > AI Profiles, A): the map's DEFAULT AI profile
-// (ai/<aiprofile>.txt) and our six levels' files (ai/d.txt .. ai/ad.txt), shown as
-// a unit table or as text. Built from the editor's own widgets (the Scripting-sized
+// (ai/<aiprofile>.txt) and the one file all six of our levels read (ai/takengine.txt,
+// previewed for one level at a time), shown as a unit table or as text. Built from the editor's own widgets (the Scripting-sized
 // panel, the Placed Units search list, the Use Only checklist). The model and
 // every rule about the two grammars live in aiprofiles.h; this file only draws,
 // routes input and writes the bytes back (one undo step per committed edit).
@@ -65,11 +65,16 @@ bool doesNothing(cart::AiLine::What what) {
 
 std::optional<tak::ai::Difficulty> cart::Editor::aiTabLevel() const {
     if(aiTab<=0)return std::nullopt;
-    return Difficulty(aiTab-1);
+    return aiPreviewLevel;
+}
+
+void cart::Editor::aiStepPreview(int by) {
+    aiPreviewLevel=Difficulty((int(aiPreviewLevel)+6+by)%6);   // Defensive .. Absurdly Defensive
+    if(aiTab!=1)aiSelectTab(1);
 }
 
 std::string cart::Editor::aiKeyFor(int tab) const {
-    if(tab>0)return tak::ai::levelProfileFile(Difficulty(tab-1));
+    if(tab>0)return tak::ai::kEngineProfileFile;
     if(aiMod)return aiMod->defaultKey;   // a pack's DEFAULT file: ai/default.txt or a profile name
     if(!cart::standardAiProfile(scenario.aiProfile))return cart::aiProfileFileKey(scenario.aiProfile);
     if(aiFiles.count("ai/default.txt"))return "ai/default.txt";   // kept from the map; never written new
@@ -83,8 +88,8 @@ const cart::Editor::AiTabView& cart::Editor::aiTabView() {
     else if(aiView==AiView::Text && aiTextKey==key)bytes=aiText;
     else if(const auto it=aiSet().find(key);it!=aiSet().end())bytes=bytesText(it->second);
     auto& v=aiViewCache;
-    if(v.key==key && v.bytes==bytes && v.readOnly==readOnly && v.draft.kind==kind && v.built)return v;
-    v=AiTabView{};v.built=true;v.key=key;v.bytes=std::move(bytes);v.readOnly=readOnly;
+    if(v.key==key && v.bytes==bytes && v.readOnly==readOnly && v.draft.kind==kind && v.built && (!aiTab || v.preview==aiPreviewLevel))return v;
+    v=AiTabView{};v.built=true;v.key=key;v.bytes=std::move(bytes);v.readOnly=readOnly;v.preview=aiPreviewLevel;
     const auto& catalogue=*aiCatalogue;
     v.draft=cart::parseAiDraft(v.bytes,kind,catalogue);
     v.lines=cart::attributeAiLines(v.bytes,kind,catalogue);   // views into v.bytes
@@ -121,7 +126,7 @@ bool cart::Editor::aiEdit(const std::function<bool(AiDraft&)>& change,const std:
 }
 
 std::string cart::Editor::aiHeaderFor(int tab) const {
-    return std::string(tab?cart::aiLevelName(Difficulty(tab-1)):"DEFAULT AI")+" profile for "+(aiMod?"game mod \""+aiMod->pack:"map \""+mapName)+
+    return std::string(tab?"TAK ENGINE AI (all six levels)":"DEFAULT AI")+" profile for "+(aiMod?"game mod \""+aiMod->pack:"map \""+mapName)+
         "\" ("+aiKeyFor(tab)+"). Edit in Cartographer: SCENARIO > AI Profiles.";
 }
 
@@ -189,7 +194,7 @@ void cart::Editor::openAiProfiles() {
     aiMod.reset();aiModSaveOpen=aiModOpenOpen=false;aiView=AiView::Table;
     aiUseRoster(aiPack?aiPacks[size_t(aiPack-1)]:"");
     commitHistory();aiUndoFloor=history.revision();aiRedoRevisions.clear();aiRedoAt=0;
-    aiOpened=aiFiles;aiOpen=true;aiStartOpen=aiCopyOpen=false;aiFocus=AI_NONE;aiWordPick=-2;aiGroupSelected=-1;aiGroupCell=-1;
+    aiOpened=aiFiles;aiOpen=true;aiStartOpen=aiMergeOpen=false;aiFocus=AI_NONE;aiWordPick=-2;aiGroupSelected=-1;aiGroupCell=-1;
     if(aiNote.find("Could not read the units")!=0)aiNote.clear();
     aiName=scenario.aiProfile;aiPendingName.clear();aiScroll=0;aiGroupScroll=aiGroupUnitScroll=0;aiIssues.clear();
     aiViewCache=AiTabView{};menuOpen=-1;
@@ -201,7 +206,7 @@ void cart::Editor::closeAiProfiles() {
     aiCommitText();
     if(aiModDirty()) {aiClosePack([this] {closeAiProfiles();});return;}   // asks first; closes after
     aiMod.reset();aiModSaveOpen=aiModOpenOpen=false;
-    aiOpen=aiStartOpen=aiCopyOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();aiWordPick=-2;aiGroupCell=-1;
+    aiOpen=aiStartOpen=aiMergeOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();aiWordPick=-2;aiGroupCell=-1;
     SDL_StopTextInput();
 }
 
@@ -214,7 +219,7 @@ void cart::Editor::aiCommitText() {
 void cart::Editor::aiSelectTab(int tab) {
     aiCommitText();
     if(aiFocus==AI_CELL || aiFocus==AI_TEXT)aiFocus=AI_NONE;
-    aiTab=std::clamp(tab,0,6);aiScroll=0;aiNote.clear();
+    aiTab=std::clamp(tab,0,1);aiScroll=0;aiNote.clear();
     if(aiTab && aiView==AiView::Groups)aiView=AiView::Table;   // group rules are the DEFAULT AI's only
     if(aiFocus==AI_GROUP)aiFocus=AI_NONE;
     if(aiView==AiView::Text) {
@@ -322,7 +327,7 @@ void cart::Editor::aiToggleBuild(const std::string& key) {
         }
         return true;
     });
-    if(stillOff)aiNote="This level still never builds it: type a weight above 0 (units the built-in table does not name need one).";
+    if(stillOff)aiNote=std::string(cart::aiLevelName(*aiTabLevel()))+" still never builds it: type a weight above 0 (units its built-in table does not name need one).";
 }
 
 void cart::Editor::aiPreset(int which) {
@@ -527,81 +532,83 @@ void cart::Editor::aiGroupAction(int rule,int what) {
     aiGroupSelected=what==1?rule-1:what==3?rule+1:what==2?std::min(rule,int(aiTabView().draft.groups.size())-1):rule;aiGroupUnitScroll=0;
 }
 
-// ---- copy to other levels (design 3.3) ------------------------------------------------------
-// Each ticked level's file becomes the shown level's unit rows under its own header
-// (its kept lines stay; a file written by hand is replaced whole), written and checked
-// by saveAiDraft in the levels grammar. The dialog is the asking: it lists what each
-// file becomes before COPY, and nothing is ticked until the user ticks it.
-void cart::Editor::aiOpenCopyLevels() {
-    aiCommitText();
-    if(!aiTab)return;   // never the DEFAULT AI: another grammar
-    const auto& view=aiTabView();
-    const std::string name=cart::aiLevelName(*aiTabLevel());
-    if(view.draft.asWritten) {aiNote="This file was written by hand. Press MAKE EDITABLE first, then copy its rows.";return;}
-    if(view.draft.units.empty()) {aiNote=name+" sets no units in this "+(aiMod?"pack":"map")+": nothing to copy.";return;}
-    const auto& catalogue=*aiCatalogue;
-    aiCopyRows.clear();
-    for(int t=1;t<7;++t) {
-        if(t==aiTab)continue;
-        AiCopyRow row;row.tab=t;row.key=aiKeyFor(t);
-        const auto it=aiSet().find(row.key);
-        const std::string before=it==aiSet().end()?std::string():bytesText(it->second);
-        AiDraft draft=cart::parseAiDraft(before,AiKind::Level,catalogue);
-        const bool byHand=draft.asWritten;
-        size_t had=0;for(const auto& [unit,rule]:draft.units)had+=!rule.empty();
-        if(byHand)draft=AiDraft{};
-        draft.kind=AiKind::Level;
-        if(draft.header.empty())draft.header=aiHeaderFor(t);
-        draft.units=view.draft.units;
-        if(!cart::saveAiDraft(draft,catalogue,row.bytes,row.error))row.status=row.error;
-        else if(row.bytes==before) {row.same=true;row.status="already the same";}
-        else if(before.empty())row.status="new file";
-        else if(byHand)row.status="replaces a file written by hand";
-        else row.status="replaces its settings for "+std::to_string(had)+" unit"+(had==1?"":"s");
-        aiCopyRows.push_back(std::move(row));
+// ---- the old per-level files: MERGE INTO TAK ENGINE -------------------------------------
+// The game no longer reads ai/d.txt .. ai/ad.txt; they stay byte for byte. The merge
+// writes one of them into ai/takengine.txt (aiMergeIntoEngine, checked by the engine's
+// own parser). Files that set the same units count as one; when they differ the user
+// picks which level's file (Normal's preselected). The dialog is the asking.
+void cart::Editor::aiOpenMerge() {
+    const auto& files=aiSet();
+    const auto old=cart::aiOldLevelFiles(files,aiMod?std::string():scenario.aiProfile);
+    if(old.empty())return;
+    aiMergeRows.clear();
+    std::vector<tak::ai::Profile> settings;
+    for(const auto& key:old) {
+        AiMergeRow row;row.key=key;
+        const auto profile=cart::aiLevelSettings(bytesText(files.at(key)));
+        row.settings=cart::aiLevelSettingCount(profile);
+        row.group=int(settings.size());
+        for(size_t i=0;i<settings.size();++i)
+            if(settings[i].weight==profile.weight && settings[i].limit==profile.limit) {row.group=aiMergeRows[i].group;break;}
+        settings.push_back(profile);
+        aiMergeRows.push_back(std::move(row));
     }
-    aiCopyOpen=true;if(aiFocus!=AI_NONE)aiFocus=AI_NONE;aiNote.clear();
+    aiMergePick=0;
+    for(size_t i=0;i<aiMergeRows.size();++i)if(cart::aiOldLevelOf(aiMergeRows[i].key)==Difficulty::Normal)aiMergePick=int(i);
+    aiMergeDelete=false;aiMergeOpen=true;if(aiFocus!=AI_NONE)aiFocus=AI_NONE;aiNote.clear();
 }
 
-void cart::Editor::aiCopyLevels() {
-    std::vector<std::string> names;
-    for(const auto& row:aiCopyRows)if(row.tick && row.error.empty() && !row.same)names.push_back(cart::aiLevelName(Difficulty(row.tab-1)));
-    if(names.empty()) {
-        bool any=false;for(const auto& row:aiCopyRows)any|=row.tick;
-        if(any) {aiCopyOpen=false;aiNote="The ticked levels already have these settings: nothing changed.";}
-        return;   // nothing ticked: the dialog stays open
+void cart::Editor::aiMerge() {
+    if(aiMergePick<0 || aiMergePick>=int(aiMergeRows.size())) {aiMergeOpen=false;return;}
+    const auto row=aiMergeRows[size_t(aiMergePick)];
+    const std::string engineKey=tak::ai::kEngineProfileFile;
+    const auto& files=aiSet();
+    const auto it=files.find(engineKey);
+    const std::string before=it==files.end()?std::string():bytesText(it->second);
+    std::string bytes,error;
+    if(!cart::aiMergeIntoEngine(before,bytesText(files.at(row.key)),aiHeaderFor(1),*aiCatalogue,bytes,error)) {
+        aiMergeOpen=false;aiNote=error;std::fprintf(stderr,"cartographer: %s\n",error.c_str());return;
     }
-    for(const auto& row:aiCopyRows)if(row.tick && row.error.empty() && !row.same)aiSetFile(row.key,row.bytes);   // one undo step: the same frame
-    aiCopyOpen=false;
-    std::string list;
-    for(size_t i=0;i<names.size();++i)list+=(i?i+1==names.size()?" and ":", ":"")+names[i];
-    aiNote="Copied "+std::string(cart::aiLevelName(*aiTabLevel()))+"'s unit settings to "+list+"."+(aiMod?" A pack edit has no undo: CLOSE PACK discards what is not saved.":" Ctrl+Z takes it back.");
+    aiSetFile(engineKey,bytes);   // one undo step with the deletes: the same frame
+    if(aiMergeDelete)for(const auto& r:aiMergeRows)aiSetFile(r.key,"");
+    aiMergeOpen=false;
+    if(aiView==AiView::Text) {aiTextKey.clear();aiSelectTab(1);}
+    else aiSelectTab(1);
+    aiNote="Merged "+std::to_string(row.settings)+" unit setting"+(row.settings==1?"":"s")+" from "+row.key+" into "+engineKey+
+        (aiMergeDelete?"; the old level files are deleted.":"; the old files stay (not read).")+
+        (aiMod?" A pack edit has no undo: CLOSE PACK discards what is not saved.":" Ctrl+Z takes it back.");
 }
 
-void cart::Editor::drawAiCopyLevels() {
-    if(!aiCopyOpen)return;
-    const auto pc=cart::drawPanel(ren,w,h,500,226,"COPY TO OTHER LEVELS");
-    const auto& view=aiTabView();
-    const std::string name=cart::aiLevelName(*aiTabLevel());
-    const size_t rows=view.draft.units.size();
-    cart::drawText(ren,"Copies "+name+"'s settings for "+std::to_string(rows)+" unit"+(rows==1?"":"s")+" ("+aiTabKey()+") to the levels you tick.",pc.x,pc.y,1,220,225,235);
-    cart::drawText(ren,"Each ticked level then sets exactly these units; its other unit settings go.",pc.x,pc.y+12,1,170,185,200);
-    int y=pc.y+32;
-    for(auto& row:aiCopyRows) {
-        row.box={pc.x,y,16,14};
-        SDL_SetRenderDrawColor(ren,96,98,112,255);SDL_RenderDrawRect(ren,&row.box);
-        if(row.tick)cart::drawText(ren,"x",pc.x+5,y+4,1,255,235,200);
-        cart::drawText(ren,std::string(cart::aiLevelName(Difficulty(row.tab-1)))+" -> "+row.key,pc.x+22,y+4,1,220,225,235);
-        const bool warn=!row.error.empty() || row.status.starts_with("replaces");
-        cart::drawText(ren,row.status,pc.x+232,y+4,1,warn?235:160,warn?200:200,warn?130:170);
+void cart::Editor::drawAiMerge() {
+    if(!aiMergeOpen)return;
+    std::set<int> groups;for(const auto& row:aiMergeRows)groups.insert(row.group);
+    const bool differ=groups.size()>1;
+    const auto pc=cart::drawPanel(ren,w,h,540,196+int(aiMergeRows.size())*18,"MERGE INTO TAK ENGINE");
+    const std::string engineKey=tak::ai::kEngineProfileFile;
+    int y=pc.y;
+    y+=12*drawWrapped(ren,"The game no longer reads the old level files. All six levels read "+engineKey+", each over its own built-in table.",pc.x,y,pc.w,2,220,225,235);
+    y+=12*drawWrapped(ren,differ?"These files set different units: pick the one to write into "+engineKey+" (Normal's is preselected).":
+        aiMergeRows.size()>1?"They all set the same units, so they merge as one.":"Its unit settings are written into "+engineKey+".",pc.x,y,pc.w,2,differ?235:170,differ?215:185,differ?150:200)+6;
+    for(size_t i=0;i<aiMergeRows.size();++i) {
+        auto& row=aiMergeRows[i];
+        row.box={pc.x,y,pc.w,16};
+        const bool picked=int(i)==aiMergePick || (!differ);
+        const auto level=cart::aiOldLevelOf(row.key);
+        cart::drawText(ren,std::string(picked?"(o) ":"( ) ")+row.key+" ("+(level?cart::aiLevelName(*level):"?")+")",pc.x,y+4,1,picked?255:205,picked?235:210,picked?200:220);
+        cart::drawText(ren,std::to_string(row.settings)+" unit setting"+(row.settings==1?"":"s"),pc.x+260,y+4,1,160,200,170);
         y+=18;
     }
     y+=4;
-    y+=12*drawWrapped(ren,"Each extra level file is one more fixed name: a game mod's file of the same name replaces it on every map.",pc.x,y,pc.w,2,150,160,175)+4;
-    drawWrapped(ren,aiMod?"A pack edit has no undo: CLOSE PACK discards what is not saved.":"One Ctrl+Z takes back the whole copy.",pc.x,y,pc.w,1,150,160,175);
-    bool any=false;for(const auto& row:aiCopyRows)any|=row.tick;
-    aiCopyGo=cart::drawButton(ren,pc.x+pc.w-150,pc.y+pc.h-20,70,18,"COPY",any);
-    aiCopyCancel=cart::drawButton(ren,pc.x+pc.w-74,pc.y+pc.h-20,70,18,"CANCEL",false);
+    const auto engine=aiSet().find(engineKey);
+    y+=12*drawWrapped(ren,engine==aiSet().end()?engineKey+" is new: it gets exactly these settings.":
+        "Units "+engineKey+" already sets and the old file does not keep their values; the old file's units take its values.",pc.x,y,pc.w,2,170,185,200)+4;
+    aiMergeDeleteBox={pc.x,y,pc.w,14};
+    SDL_Rect box{pc.x,y,16,14};SDL_SetRenderDrawColor(ren,96,98,112,255);SDL_RenderDrawRect(ren,&box);
+    if(aiMergeDelete)cart::drawText(ren,"x",pc.x+5,y+4,1,255,235,200);
+    cart::drawText(ren,"Also delete the old level files (otherwise they stay, unread)",pc.x+22,y+4,1,220,225,235);
+    drawWrapped(ren,aiMod?"A pack edit has no undo: CLOSE PACK discards what is not saved.":"One Ctrl+Z takes back the whole merge.",pc.x,pc.y+pc.h-34,pc.w,1,150,160,175);
+    aiMergeGo=cart::drawButton(ren,pc.x+pc.w-150,pc.y+pc.h-20,70,18,"MERGE",true);
+    aiMergeCancel=cart::drawButton(ren,pc.x+pc.w-74,pc.y+pc.h-20,70,18,"CANCEL",false);
 }
 
 std::string cart::Editor::aiRowExplanation(const AiRosterRow& row) {
@@ -646,6 +653,7 @@ std::string cart::Editor::aiRowExplanation(const AiRosterRow& row) {
         if(limit)out+="; limit "+std::to_string(limit->levelValue)+" (line "+std::to_string(limit->number)+").";
         else if(l!=view.level.limit.end())out+="; limit "+std::to_string(l->second)+" (built-in).";
         else out+="; no cap"+std::string(builtinWeight || weight?".":" ");
+        out+=" (Previewing "+std::string(cart::aiLevelName(*aiTabLevel()))+"'s built-in table.)";
         const auto effective=cart::aiEffectiveLimit(*aiTabLevel(),l==view.level.limit.end()?std::optional<int>():l->second,row.type,&aiRegistry());
         if(effective.changed || effective.mayRise)out+=" In play on "+std::string(cart::aiLevelName(*aiTabLevel()))+": "+effective.text+".";
     }
@@ -674,16 +682,17 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
         }
         return;
     }
-    if(aiCopyOpen) {   // copy to other levels: ticks, COPY (Enter), CANCEL (Esc)
+    if(aiMergeOpen) {   // merge the old level files: pick (when they differ), MERGE (Enter), CANCEL (Esc)
         if(e.type==SDL_KEYDOWN) {
             const auto key=e.key.keysym.sym;
-            if(key==SDLK_ESCAPE)aiCopyOpen=false;
-            else if(key==SDLK_RETURN || key==SDLK_KP_ENTER)aiCopyLevels();
+            if(key==SDLK_ESCAPE)aiMergeOpen=false;
+            else if(key==SDLK_RETURN || key==SDLK_KP_ENTER)aiMerge();
         } else if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
             const int mx=e.button.x,my=e.button.y;
-            if(cart::pointIn(mx,my,aiCopyGo))aiCopyLevels();
-            else if(cart::pointIn(mx,my,aiCopyCancel))aiCopyOpen=false;
-            else for(auto& row:aiCopyRows)if(cart::pointIn(mx,my,{row.box.x,row.box.y,224,row.box.h}) && row.error.empty())row.tick=!row.tick;
+            if(cart::pointIn(mx,my,aiMergeGo))aiMerge();
+            else if(cart::pointIn(mx,my,aiMergeCancel))aiMergeOpen=false;
+            else if(cart::pointIn(mx,my,aiMergeDeleteBox))aiMergeDelete=!aiMergeDelete;
+            else for(size_t i=0;i<aiMergeRows.size();++i)if(cart::pointIn(mx,my,aiMergeRows[i].box))aiMergePick=int(i);
         }
         return;
     }
@@ -736,7 +745,8 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
     }
     if(e.type!=SDL_MOUSEBUTTONDOWN)return;
     const int mx=e.button.x,my=e.button.y;
-    if(e.button.button==SDL_BUTTON_RIGHT) {   // a cell back to "not set"
+    if(e.button.button==SDL_BUTTON_RIGHT) {   // a cell back to "not set"; the preview level steps back
+        if(cart::pointIn(mx,my,aiPreviewBox)) {aiStepPreview(-1);return;}
         if(aiView==AiView::Table)for(const auto& cell:aiCells)if(cell.column<2 && cart::pointIn(mx,my,cell.rect)) {aiFocus=AI_NONE;aiClearCell(cell.key,cell.column);return;}
         return;
     }
@@ -746,7 +756,9 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
     if(aiFocus==AI_CELL)aiFocus=AI_NONE;
     if(aiFocus==AI_GROUP) {aiFocus=AI_NONE;aiGroupCell=-1;}
     if(aiFocus==AI_SEARCH && !cart::pointIn(mx,my,aiSearchBox))aiFocus=AI_NONE;
-    for(int t=0;t<7;++t)if(cart::pointIn(mx,my,aiTabRects[t])) {if(t!=aiTab)aiSelectTab(t);return;}
+    for(int t=0;t<2;++t)if(cart::pointIn(mx,my,aiTabRects[t])) {if(t!=aiTab)aiSelectTab(t);return;}
+    if(cart::pointIn(mx,my,aiPreviewBox)) {aiStepPreview(1);return;}
+    if(cart::pointIn(mx,my,aiMergeButton)) {aiCommitText();aiOpenMerge();return;}
     for(int p=0;p<3;++p)if(cart::pointIn(mx,my,aiPresetRects[p])) {aiPreset(p);return;}
     if(cart::pointIn(mx,my,aiDoneButton)) {closeAiProfiles();return;}
     if(cart::pointIn(mx,my,aiModSaveButton)) {aiCommitText();aiOpenModSave();return;}
@@ -781,7 +793,6 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
               if(aiGroupSelected<0 && !aiTabView().draft.groups.empty())aiGroupSelected=0;}
         return;
     }
-    if(aiTab && cart::pointIn(mx,my,aiCopyButton)) {aiOpenCopyLevels();return;}
     if(cart::pointIn(mx,my,aiEditableButton)) {aiCommitText();aiMakeEditable();return;}
     if(cart::pointIn(mx,my,aiStartButton)) {aiCommitText();if(!aiTab && (aiMod || !cart::standardAiProfile(scenario.aiProfile)))aiStartOpen=true;return;}
     if(cart::pointIn(mx,my,aiInsertButton)) {
@@ -833,9 +844,9 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
         for(const auto& [rect,index]:aiIssueRows)if(cart::pointIn(mx,my,rect) && index<aiIssues.size()) {
             const auto issue=aiIssues[index];
             int tab=-1;
-            if(const auto level=cart::aiLevelOf(issue.file))tab=int(*level)+1;
+            if(cart::aiEngineFile(issue.file))tab=1;
             else if(issue.file.empty() || issue.file==aiKeyFor(0))tab=0;
-            if(tab<0) {aiNote=issue.file+" is not one of the profiles shown here.";return;}
+            if(tab<0) {aiNote=issue.file+" is not one of the profiles shown here."+(cart::aiOldLevelOf(issue.file)?" MERGE INTO TAK ENGINE copies its unit settings.":"");return;}
             aiView=AiView::Text;aiTextKey.clear();aiSelectTab(tab);
             size_t at=0;for(int n=1;n<issue.line && at!=std::string::npos;++n) {at=aiText.find('\n',at);if(at!=std::string::npos)++at;}
             aiTextEdit.caret=aiTextEdit.anchor=at==std::string::npos?aiText.size():at;aiTextFollow=true;
@@ -876,10 +887,10 @@ void cart::Editor::drawAiProfiles() {
     const AiFiles& files=aiMod?aiMod->files:aiFiles;
     const AiFiles& openedFiles=aiMod?aiMod->opened:aiOpened;
 
-    // ---- left column: the profiles, presets, game-mod preview ----
-    for(int t=0;t<7;++t) {
+    // ---- left column: the profiles, the preview level, old files, presets, game-mod preview ----
+    for(int t=0;t<2;++t) {
         const auto key=aiKeyFor(t);
-        const SDL_Rect r=t==0?SDL_Rect{ct.x,ct.y,kLeftW,26}:SDL_Rect{ct.x,ct.y+28+(t-1)*16,kLeftW,16};
+        const SDL_Rect r{ct.x,ct.y+t*28,kLeftW,26};
         aiTabRects[t]=r;
         fillRect(ren,r.x,r.y,r.w,r.h,t==aiTab?58:30,t==aiTab?68:33,t==aiTab?95:42);
         const auto file=key.empty()?files.end():files.find(key);
@@ -892,13 +903,28 @@ void cart::Editor::drawAiProfiles() {
             if(cached.first!=bytes)cached={bytes,cart::parseAiDraft(bytes,t?AiKind::Level:AiKind::Default,catalogue).asWritten};
             written=cached.second;
         }
-        const std::string label=t?cart::aiLevelName(Difficulty(t-1)):"DEFAULT AI";
+        const std::string label=t?"TAK ENGINE AI":"DEFAULT AI";
         cart::drawText(ren,(t==aiTab?">":" ")+label,r.x+3,r.y+3,1,t==aiTab?255:215,t==aiTab?235:220,t==aiTab?200:230);
         const std::string tag=std::string(written?"as written ":"")+(inMap?aiMod?"pack":"map":"")+(edited?" *":"");
         cart::drawText(ren,tag,r.x+r.w-4-cart::textWidth(tag,1),r.y+3,1,written?235:160,written?190:200,written?120:170);
-        if(t==0)cart::drawText(ren,key.empty()?"   standard profile":"   "+key,r.x+3,r.y+15,1,150,165,185);
+        cart::drawText(ren,key.empty()?"   standard profile":"   "+key,r.x+3,r.y+15,1,150,165,185);
     }
-    int ly=ct.y+28+6*16+10;
+    int ly=ct.y+60;
+    cart::drawText(ren,"PREVIEW LEVEL",ct.x,ly,1,150,200,150);
+    aiPreviewBox=cart::drawButton(ren,ct.x,ly+12,kLeftW,18,std::string("< ")+upperText(cart::aiLevelName(aiPreviewLevel))+" >",aiTab==1);
+    ly+=36;
+    // The old per-level files: kept as they are, no longer read.
+    aiMergeButton={};
+    if(const auto old=cart::aiOldLevelFiles(files,aiMod?std::string():scenario.aiProfile);!old.empty()) {
+        std::string names;
+        for(size_t i=0;i<old.size();++i)names+=(i?", ":"")+old[i].substr(3);
+        const int lines=std::min(4,int(cart::TextEdit::lines("Old level files ("+names+") are no longer read by the game.",std::max(1,(kLeftW-6)/6)).size()));
+        fillRect(ren,ct.x,ly-2,kLeftW,lines*12+28,70,52,28);
+        drawWrapped(ren,"Old level files ("+names+") are no longer read by the game.",ct.x+3,ly,kLeftW-6,4,255,215,150);
+        aiMergeButton=cart::drawButton(ren,ct.x+3,ly+lines*12+4,kLeftW-6,18,"MERGE INTO TAK ENGINE...",true);
+        ly+=lines*12+32;
+    }
+    ly+=4;
     cart::drawText(ren,"PRESETS",ct.x,ly,1,150,200,150);
     for(int p=0;p<3;++p)aiPresetRects[p]=cart::drawButton(ren,ct.x,ly+12+p*22,kLeftW,18,kPresetNames[p],false);
     ly+=12+3*22+10;
@@ -924,7 +950,7 @@ void cart::Editor::drawAiProfiles() {
 
     // ---- right side ----
     const int x0=ct.x+kLeftW+10,W=ct.x+ct.w-x0,y0=ct.y;
-    cart::drawText(ren,aiTab?"OUR LEVEL RULES: WHOLE NUMBERS; UNITS BY NAME ONLY; LATER LINES WIN.":"ORIGINAL-GAME RULES: THE FIRST LINE NAMING A UNIT WINS; GROUP RULES COMBINE.",x0,y0,1,235,220,160);
+    cart::drawText(ren,aiTab?"TAK ENGINE RULES: WHOLE NUMBERS; UNITS BY NAME ONLY; LATER LINES WIN.":"ORIGINAL-GAME RULES: THE FIRST LINE NAMING A UNIT WINS; GROUP RULES COMBINE.",x0,y0,1,235,220,160);
     aiStandardRadio=aiOwnRadio=aiNameBox=aiModDefaultButton={};
     if(!aiTab && aiMod) {
         cart::drawText(ren,"This pack's DEFAULT AI file:",x0,y0+17,1,220,225,235);
@@ -942,8 +968,8 @@ void cart::Editor::drawAiProfiles() {
             cart::drawText(ren,"-> "+cart::aiProfileFileKey(scenario.aiProfile)+" in the map",x0+366,y0+31,1,160,175,195);
         } else cart::drawText(ren,"(proposed: "+cart::proposeAiProfileName(mapName)+")",x0+210,y0+31,1,140,150,165);
     } else {
-        cart::drawText(ren,"File: "+aiTabKey()+". Rows not set keep the BUILT-IN value (grey).",x0,y0+15,1,200,205,215);
-        cart::drawText(ren,"Units use their UnitType id; variants (such as tarnecr2) are DEFAULT AI only.",x0,y0+31,1,150,160,175);
+        cart::drawText(ren,"File: "+aiTabKey()+", read by all six levels over each one's own BUILT-IN table.",x0,y0+15,1,200,205,215);
+        cart::drawText(ren,"Showing "+upperText(cart::aiLevelName(aiPreviewLevel))+": rows not set keep its built-in value (grey). Unit ids only.",x0,y0+31,1,150,160,175);
     }
     const int listTop=y0+90,listBottom=ct.y+ct.h-112;
     aiCells.clear();aiRows.clear();aiIssueRows.clear();
@@ -1117,7 +1143,7 @@ void cart::Editor::drawAiProfiles() {
     if(help.empty() && aiView==AiView::Table) {
         if(!aiTab && view.key.empty())help="The standard profile is shown read-only: the installed ai/default.txt (or every unit at 100 % when there is none). Choose this map's own profile to edit.";
         else if(!aiTab && view.key=="ai/default.txt")help="This map carries ai/default.txt: every map without its own profile name also reads ai/default.txt, and an installed one may be used instead. Choose this map's own profile to move it.";
-        else help=aiTab?"WEIGHT: higher is picked more often among what this builder can make; 0 never builds it. LIMIT: blank keeps the built-in; 0 means never. Easy halves limits, Hard and Absurd raise them by half (minimum 1); Defensive levels ignore limits except 0.":
+        else help=aiTab?"One file for all six levels: a row replaces that unit's value in every level; blank keeps each level's built-in. WEIGHT: 0 never builds it. LIMIT: 0 means never. Easy halves limits, Hard and Absurd raise them by half (minimum 1); Defensive levels ignore limits except 0.":
             "CHANCE: 100 % is normal; lower numbers make the AI pick this unit less often against others it wants equally; 0 % never builds it. The real odds also depend on what the AI needs during play. LIMIT: a number, or no limit.";
     }
     drawWrapped(ren,help,x0,helpY,W,3,hr,hg,hb);
@@ -1131,7 +1157,8 @@ void cart::Editor::drawAiProfiles() {
     if(aiMod)plays+=" (on this map, with pack "+aiMod->pack+" ticked)";
     else if(aiPack)plays+=" (with pack "+aiPacks[size_t(aiPack-1)]+" ticked)";
     drawWrapped(ren,plays,ct.x,footY+2,ct.w,2,180,220,190);
-    cart::drawText(ren,"Test Map: pick the AI level you are testing in the room. Game-mod files are tested by ticking that pack.",ct.x,footY+28,1,150,160,175);
+    cart::drawText(ren,aiTab?"Test Map: every level you pick in the room reads ai/takengine.txt. Game-mod files are tested by ticking that pack.":
+        "Test Map: pick RETAIL for the DEFAULT AI in the room. Game-mod files are tested by ticking that pack.",ct.x,footY+28,1,150,160,175);
     const int by=ct.y+ct.h-18;
     aiStartButton=aiEditableButton=aiInsertButton={};
     int bx=ct.x;
@@ -1140,8 +1167,6 @@ void cart::Editor::drawAiProfiles() {
     aiCheckButton=cart::drawButton(ren,bx,by,64,16,aiView==AiView::Issues?"TABLE":"CHECK",aiView==AiView::Issues);bx+=70;
     aiGroupsButton={};
     if(!aiTab) {aiGroupsButton=cart::drawButton(ren,bx,by,96,16,aiView==AiView::Groups?"TABLE":"GROUP RULES",aiView==AiView::Groups);bx+=102;}
-    aiCopyButton={};
-    if(aiTab) {aiCopyButton=cart::drawButton(ren,bx,by,150,16,"COPY TO OTHER LEVELS...",false);bx+=156;}
     if(view.draft.asWritten && !view.key.empty()) {aiEditableButton=cart::drawButton(ren,bx,by,104,16,"MAKE EDITABLE",true);bx+=110;}
     if(aiView==AiView::Text && !aiTextKey.empty()) {aiInsertButton=cart::drawButton(ren,bx,by,96,16,"INSERT UNIT",false);bx+=102;}
     cart::drawText(ren,aiMod?"Pack files: no undo.":"Ctrl+Z undoes.",bx+6,by+5,1,140,150,165);
@@ -1160,9 +1185,9 @@ void cart::Editor::drawAiProfiles() {
         aiStartCancel=cart::drawButton(ren,pc.x+pc.w-74,pc.y+pc.h-20,70,18,"CANCEL",false);
     }
     drawAiWordPicker();
-    drawAiCopyLevels();
+    drawAiMerge();
     drawAiModDialogs();
-    if(!aiHint.empty() && !aiStartOpen && !aiCopyOpen && !aiModSaveOpen && !aiModOpenOpen && aiWordPick==-2 && modal==M_NONE)cart::drawTooltip(ren,w,h,pointerX,pointerY,aiHint);
+    if(!aiHint.empty() && !aiStartOpen && !aiMergeOpen && !aiModSaveOpen && !aiModOpenOpen && aiWordPick==-2 && modal==M_NONE)cart::drawTooltip(ren,w,h,pointerX,pointerY,aiHint);
 }
 
 // ---- game mods (design 3.5, 7.2) -------------------------------------------------
@@ -1171,7 +1196,11 @@ void cart::Editor::aiOpenModSave() {
     aiModRows.clear();aiModDeletes.clear();aiModDeleteTicked.clear();aiModNote.clear();aiModDeleteBoxes.clear();
     const auto& files=aiSet();
     auto has=[&](const std::string& key) {const auto it=files.find(key);return it!=files.end() && !it->second.empty();};
-    auto label=[](const std::string& key) {const auto level=cart::aiLevelOf(key);return std::string(level?cart::aiLevelName(*level):"DEFAULT AI");};
+    auto label=[](const std::string& key) {
+        if(cart::aiEngineFile(key))return std::string("TAK ENGINE AI");
+        if(const auto old=cart::aiOldLevelOf(key))return std::string("old ")+cart::aiLevelName(*old)+" file (not read)";
+        return std::string("DEFAULT AI");
+    };
     if(aiMod) {   // back to the pack it came from: what changed since it was opened
         aiModPack=aiMod->pack;
         for(const auto& [key,bytes]:files)if(!bytes.empty()) {
@@ -1184,14 +1213,12 @@ void cart::Editor::aiOpenModSave() {
         // DEFAULT unticked: a game mod's file applies on every map (design 3.5).
         const auto def=aiKeyFor(0);
         if(!def.empty() && has(def))aiModRows.push_back({"DEFAULT AI",def,def,false,true,{}});
-        for(int t=1;t<=6;++t) {
-            const auto key=aiKeyFor(t);
-            if(has(key))aiModRows.push_back({label(key),key,key,true,false,{}});
-            else if(aiOpened.count(key))aiModDeletes.push_back(key);   // emptied in this window
-        }
+        const auto key=aiKeyFor(1);   // ai/takengine.txt; the old level files are not read, so never offered
+        if(has(key))aiModRows.push_back({label(key),key,key,true,false,{}});
+        else if(aiOpened.count(key))aiModDeletes.push_back(key);   // emptied in this window
     }
     if(aiModRows.empty() && aiModDeletes.empty()) {
-        aiNote=aiMod?"This pack has no AI files to save.":"This map has no AI profiles to save yet: edit a level, or choose the DEFAULT AI's own profile first.";
+        aiNote=aiMod?"This pack has no AI files to save.":"This map has no AI profiles to save yet: edit TAK ENGINE AI, or choose the DEFAULT AI's own profile first.";
         return;
     }
     aiModSaveOpen=true;if(aiFocus!=AI_NONE)aiFocus=AI_NONE;
@@ -1272,7 +1299,7 @@ void cart::Editor::aiOpenPack(const std::string& pack) {
         // The DEFAULT tab shows ai/default.txt, or the pack's file for this map's profile name.
         if(!set.files.count("ai/default.txt")) {
             if(const auto own=cart::aiProfileFileKey(scenario.aiProfile);!cart::standardAiProfile(scenario.aiProfile) && set.files.count(own))set.defaultKey=own;
-            else for(const auto& [key,bytes]:set.files)if(!cart::aiLevelOf(key)) {set.defaultKey=key;break;}
+            else for(const auto& [key,bytes]:set.files)if(cart::aiKindOf(key)==AiKind::Default) {set.defaultKey=key;break;}
         }
         const auto count=set.files.size();
         aiMod=std::move(set);
@@ -1298,7 +1325,7 @@ void cart::Editor::aiStepModDefault() {
     if(!aiMod)return;
     std::vector<std::string> keys{"ai/default.txt"};
     if(!cart::standardAiProfile(scenario.aiProfile))keys.push_back(cart::aiProfileFileKey(scenario.aiProfile));
-    for(const auto& [key,bytes]:aiMod->files)if(!cart::aiLevelOf(key))keys.push_back(key);
+    for(const auto& [key,bytes]:aiMod->files)if(cart::aiKindOf(key)==AiKind::Default)keys.push_back(key);
     std::vector<std::string> unique;for(const auto& key:keys)if(std::find(unique.begin(),unique.end(),key)==unique.end())unique.push_back(key);
     const auto at=std::find(unique.begin(),unique.end(),aiMod->defaultKey);
     aiMod->defaultKey=at==unique.end() || at+1==unique.end()?unique.front():*(at+1);
@@ -1491,7 +1518,7 @@ void cart::Editor::drawAiModDialogs() {
         y+=18;
     }
     y+=6;
-    y+=12*drawWrapped(ren,"! A game mod's file replaces the same file on every map; for the levels the whole file, not line by line. "
+    y+=12*drawWrapped(ren,"! A game mod's file replaces the same file on every map, the whole file, not line by line: its ai/takengine.txt replaces the map's for all six levels. "
         "It applies only when the pack is ticked (multiplayer: the host turns Game mods On and ticks it). "
         "A game mod's default.txt does not replace a map's own profile.",pc.x,y,pc.w,4,255,205,140)+4;
     // The roster note: the units listed are this pack's when the window reads them (editing or previewing it).
@@ -1499,7 +1526,7 @@ void cart::Editor::drawAiModDialogs() {
     if(aiRosterLists(target))
         y+=12*drawWrapped(ren,"The units listed are this pack's, its "+std::to_string(aiPackRoster->added.size())+" additions included.",pc.x,y,pc.w,2,150,160,175)+4;
     else
-        y+=12*drawWrapped(ren,"Units this pack adds are not listed (PREVIEW WITH GAME MOD lists a pack's units). Levels never build a unit their file does not name; the DEFAULT AI builds them at full chance.",
+        y+=12*drawWrapped(ren,"Units this pack adds are not listed (PREVIEW WITH GAME MOD lists a pack's units). Our levels never build a unit that neither their built-in table nor ai/takengine.txt names; the DEFAULT AI builds them at full chance.",
             pc.x,y,pc.w,2,150,160,175)+4;
     if(!aiModPlanError.empty())drawWrapped(ren,aiModPlanError,pc.x,y,pc.w,3,255,150,135);
     else if(!aiModNote.empty())drawWrapped(ren,aiModNote,pc.x,y,pc.w,2,255,200,130);

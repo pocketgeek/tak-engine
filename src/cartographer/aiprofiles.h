@@ -7,8 +7,9 @@
 // editor parses them into drafts, and writes a draft back in one canonical form.
 // It never computes what a file does on its own: every effective value comes from
 // the engine's parsers -- ai::ClassicProfile::execute for the DEFAULT AI (retail's
-// ai/<aiprofile>.txt else ai/default.txt) and ai::applyProfileText for our levels'
-// ai/d.txt .. ai/ad.txt -- and every write is re-run through them (verifyAiDraft).
+// ai/<aiprofile>.txt else ai/default.txt) and ai::applyProfileText for the one file
+// all six of our levels read, ai/takengine.txt -- and every write is re-run through
+// them (verifyAiDraft).
 // What the model adds is line attribution: which line names a unit, which line a
 // group word, which lines are shadowed or do nothing. The test checks that
 // attribution against both parsers.
@@ -36,9 +37,15 @@ namespace cart {
 
 enum class AiKind { Default, Level };
 
-// Which level reads a map's ai/ file (ai/n.txt is Normal's, ai::levelProfileFile),
-// or none: every other ai/ file is in the DEFAULT grammar.
-std::optional<tak::ai::Difficulty> aiLevelOf(const std::string& key);
+// ai/takengine.txt (ai::kEngineProfileFile): the one file all six of our levels read,
+// each over its own built-in table.
+bool aiEngineFile(const std::string& key);
+// The level an old per-level file was for (ai/d.txt Defensive .. ai/ad.txt Absurdly
+// Defensive), or none. The game no longer reads these (since protocol 293); the
+// editor keeps them byte for byte and offers to merge them into ai/takengine.txt.
+std::optional<tak::ai::Difficulty> aiOldLevelOf(const std::string& key);
+// The levels grammar for ai/takengine.txt and the old level files; every other ai/
+// file is in the DEFAULT grammar.
 AiKind aiKindOf(const std::string& key);
 // "Defensive" .. "Absurdly Defensive"; "DEFAULT AI" for Classic.
 const char* aiLevelName(tak::ai::Difficulty);
@@ -158,7 +165,7 @@ std::set<std::string> aiReachableUnits(const tak::sim::TypeRegistry&);
 struct AiIssue {
     enum class Severity { Info, Warning, Error };
     Severity severity = Severity::Warning;
-    std::string file;      // "ai/n.txt"; "" for the map's aiprofile name
+    std::string file;      // "ai/takengine.txt"; "" for the map's aiprofile name
     int line = 0;          // 0 = the whole file
     std::string unit;
     std::string message;
@@ -178,11 +185,12 @@ bool standardAiProfile(const std::string& name);
 // The map name lowercased, keeping [a-z0-9 _-], at most 32 characters, never a
 // reserved name ("map" when nothing is left).
 std::string proposeAiProfileName(std::string_view mapName);
-// Why a newly typed name is refused ("" = accepted): '.', '/' or '\', d e n h a ad
-// default, over 32 characters, or not a valid file name. Existing names are kept.
+// Why a newly typed name is refused ("" = accepted): '.', '/' or '\', default,
+// takengine, the old level names d e n h a ad, over 32 characters, or not a valid
+// file name. Existing names are kept.
 std::string aiProfileNameError(const std::string& name);
 // The map's files that travel in its package (and reach Test Map): ai/default.txt,
-// the level files and ai/<aiprofile>.txt, when not empty.
+// ai/takengine.txt and ai/<aiprofile>.txt, when not empty (the old level files do not).
 bool aiFileTravels(const std::string& key, const std::string& aiProfile);
 AiFiles travellingAiFiles(const AiFiles&, const std::string& aiProfile);
 // Sets one file; empty bytes remove it.
@@ -193,7 +201,7 @@ bool renameAiProfile(AiFiles&, const std::string& oldName, const std::string& ne
 
 // The overwrite compare for one file (design 7.2, Save as game mod): the line
 // counts, the first changed line, and -- from the engine's own parsers -- how many
-// units play differently (levels measured over their built-in table).
+// units play differently (ai/takengine.txt measured over each level's built-in table).
 std::string compareAiFiles(const std::string& key, std::string_view before, std::string_view after,
                            const tak::ai::ClassicCatalogue&);
 
@@ -208,6 +216,23 @@ struct AiFileChoice {
 };
 AiFileChoice whichFile(tak::ai::Difficulty, const tak::hpi::Vfs& base, const AiFiles& mapFiles,
                        const std::string& aiProfile, const tak::hpi::Vfs::Files* gameModFiles = nullptr);
+
+// ---- the old per-level files (merge into ai/takengine.txt) ----------------------------
+// The old level files in `files` (not empty, not the map's own DEFAULT profile file),
+// in level order Defensive .. Absurdly Defensive.
+std::vector<std::string> aiOldLevelFiles(const AiFiles&, const std::string& aiProfile = {});
+// What a levels-grammar file sets, as the engine reads it (ai::applyProfileText over an
+// empty profile): the units and values its effective weight and limit lines give.
+tak::ai::Profile aiLevelSettings(std::string_view bytes);
+size_t aiLevelSettingCount(const tak::ai::Profile&);
+// ai/takengine.txt with `oldBytes`' settings written into it: each unit the old file
+// sets takes the old file's weight and limit (as ai::applyProfileText reads them);
+// everything else ai/takengine.txt has stays. `engineBytes` "" starts a new file with
+// `header`; a hand-written ai/takengine.txt is converted first (makeEditable) or the
+// merge is refused. Verified through the engine's parser: the result must read exactly
+// as `engineBytes` followed by `oldBytes`. False with `error` set otherwise.
+bool aiMergeIntoEngine(std::string_view engineBytes, std::string_view oldBytes, const std::string& header,
+                       const tak::ai::ClassicCatalogue&, std::string& out, std::string& error);
 
 // ---- DEFAULT group rules (design 4, the Advanced disclosure) --------------------------
 // The words a group rule may use: this catalogue's category words ("all" first, the

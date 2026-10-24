@@ -469,7 +469,7 @@ static void checks() {
     check(cart::checkAiFile("ai/islands.txt", std::string(cart::kAiFileMaxBytes + 1, '\n'), roster).at(0).severity == S::Error,
           "a file over 256 KiB is an error");
 
-    const auto lv = cart::checkAiFile("ai/n.txt",
+    const auto lv = cart::checkAiFile("ai/takengine.txt",
         "Weight araarch 5\nweight araarch 0.5\nweight arabuild #5\nweight aralode\nweight all 3\nweight araarch 4\n"
         "weight araarc 2\nplan attack 3\nweight ARA 1\nlimit tararch 2\n", roster);
     const auto l = dump(lv);
@@ -481,11 +481,19 @@ static void checks() {
     check(has(lv, 5, "levels read unit names only") && has(lv, 9, "levels read unit names only"), "category word or ALL\n" + l);
     check(has(lv, 7, "Did you mean 'araarch'?"), "unknown unit (level)\n" + l);
     check(has(lv, 8, "'plan' does nothing", S::Info), "other command (level)\n" + l);
-    check(has(lv, 0, "aramod (aramod) is never built by this level (not named)") && !has(lv, 0, "araarch (araarch) is never"),
-          "a unit outside the built-in table and the file is never built\n" + l);
-    check(!has(cart::checkAiFile("ai/n.txt", "weight aramod 3\n", roster), 0, "aramod (aramod) is never built"), "naming it fixes that");
-    check(has(cart::checkAiFile("ai/h.txt", "limit arabuild 0\n", roster), 0, "every builder is off", S::Error),
-          "the side checks read the level through applyProfileText on its built-in table");
+    check(has(lv, 0, "aramod (aramod) is never built by our levels (not named)") && !has(lv, 0, "araarch (araarch) is never"),
+          "a unit outside every built-in table and the file is never built\n" + l);
+    check(!has(cart::checkAiFile("ai/takengine.txt", "weight aramod 3\n", roster), 0, "aramod (aramod) is never built"), "naming it fixes that");
+    const auto off = cart::checkAiFile("ai/takengine.txt", "limit arabuild 0\n", roster);
+    check(has(off, 0, "every builder is off (every level)", S::Error) &&
+          std::count_if(off.begin(), off.end(), [](const cart::AiIssue& i) { return i.message.find("every builder") != std::string::npos; }) == 1,
+          "the side checks read each level through applyProfileText on its own built-in table, named once\n" + dump(off));
+    // The old level files are not read any more: one notice, no line checks.
+    for (const char* old : {"ai/n.txt", "AI/AD.TXT", "ai/d.txt"}) {
+        const auto notice = cart::checkAiFile(old, "Weight araarch 5\nlimit arabuild 0\n", roster);
+        check(notice.size() == 1 && notice[0].severity == S::Warning && notice[0].message.find("no longer reads it") != std::string::npos &&
+              notice[0].message.find("MERGE INTO TAK ENGINE") != std::string::npos, std::string("old level file notice for ") + old + "\n" + dump(notice));
+    }
 
     // Map-level rows.
     tak::hpi::Vfs base;
@@ -497,8 +505,15 @@ static void checks() {
     check(has(map, 0, "every map without its own profile name also reads ai/default.txt", S::Info), "a map's ai/default.txt\n" + m);
     files["ai/islands.txt"] = bytesOf("weight all 1\n");
     check(!has(cart::checkAiMap(files, "islands", base, roster), 0, "no ai/islands.txt"), "the map's own file is found");
-    check(has(cart::checkAiMap({}, "n", base, roster), 0, "makes the DEFAULT AI read the Normal level's file ai/n.txt", S::Error) &&
-          has(cart::checkAiMap({}, "AD.x", base, roster), 0, "Absurdly Defensive level's file", S::Error) &&
+    files["ai/n.txt"] = bytesOf("weight araarch 2\n");
+    const auto withOld = cart::checkAiMap(files, "islands", base, roster);
+    check(has(withOld, 0, "ai/n.txt was the Normal level's file; the game no longer reads it") &&
+              !has(withOld, 0, "ai/n.txt is kept in the .kmp but not sent"),
+          "an old level file gets one notice in the map checks\n" + dump(withOld));
+    files.erase("ai/n.txt");
+    check(has(cart::checkAiMap({}, "takengine", base, roster), 0, "makes the DEFAULT AI read ai/takengine.txt, the file our levels read", S::Error) &&
+          has(cart::checkAiMap({}, "n", base, roster), 0, "makes the DEFAULT AI read ai/n.txt, an old level file name", S::Error) &&
+          has(cart::checkAiMap({}, "AD.x", base, roster), 0, "ai/ad.txt, an old level file name", S::Error) &&
           has(cart::checkAiMap({}, "a/b", base, roster), 0, "names a file in another folder", S::Error),
           "aiprofile names that collide with level files or folders are errors");
     check(has(cart::checkAiMap({{"ai/my.txt", bytesOf("weight all 1\n")}}, "my.map", base, roster), 0, "the part after the last '.' is dropped") &&
@@ -519,10 +534,10 @@ static void names() {
           cart::proposeAiProfileName(std::string(40, 'x')) == std::string(32, 'x') &&
           cart::proposeAiProfileName("\xc3\x9c" "ber Land") == "ber land",
           "proposed name: lowercased [a-z0-9 _-], at most 32 characters, never reserved");
-    for (const char* bad : {"my.map", "a/b", "a\\b", "d", "E", "n", "h", "a", "ad", "default", "DEFAULT", "", "con",
+    for (const char* bad : {"my.map", "a/b", "a\\b", "d", "E", "n", "h", "a", "ad", "default", "DEFAULT", "takengine", "TakEngine", "", "con",
                             "thirty-three-characters-long-xxxx"})
         check(!cart::aiProfileNameError(bad).empty(), std::string("name accepted: ") + bad);
-    for (const char* good : {"islands", "mission 19", "Isle_of-Fire", "nn", "ade", "defaults"})
+    for (const char* good : {"islands", "mission 19", "Isle_of-Fire", "nn", "ade", "defaults", "takengine2"})
         check(cart::aiProfileNameError(good).empty(), std::string("name refused: ") + good + " " + cart::aiProfileNameError(good));
     // aiProfileFileKey follows the engine's own lookup.
     tak::hpi::Vfs none;
@@ -542,14 +557,21 @@ static void names() {
     cart::AiFiles files{{"ai/old.txt", bytesOf("weight all 1\n")}, {"ai/n.txt", bytesOf("weight x 1\n")}};
     check(cart::renameAiProfile(files, "old", "New") && files.count("ai/new.txt") && !files.count("ai/old.txt") &&
           files.at("ai/new.txt") == bytesOf("weight all 1\n"), "rename moves ai/<old>.txt to ai/<new>.txt");
-    check(!cart::renameAiProfile(files, "new", "n") && !cart::renameAiProfile(files, "new", "default") && files.count("ai/new.txt"),
-          "rename never moves onto a level file or ai/default.txt");
+    check(!cart::renameAiProfile(files, "new", "n") && !cart::renameAiProfile(files, "new", "default") &&
+          !cart::renameAiProfile(files, "new", "takengine") && files.count("ai/new.txt"),
+          "rename never moves onto ai/takengine.txt, an old level file or ai/default.txt");
     cart::setAiFile(files, "AI/N.txt", "");
     cart::setAiFile(files, "ai/e.txt", "weight y 2\n");
     check(!files.count("ai/n.txt") && files.at("ai/e.txt") == bytesOf("weight y 2\n"), "an empty draft deletes its file");
-    check(cart::aiLevelOf("AI/N.TXT") == Difficulty::Normal && cart::aiLevelOf("ai/ad.txt") == Difficulty::AbsurdlyDefensive &&
-          !cart::aiLevelOf("ai/default.txt") && cart::aiKindOf("ai/islands.txt") == AiKind::Default,
-          "level files from ai::levelProfileFile");
+    for (Difficulty d : {Difficulty::Passive, Difficulty::Easy, Difficulty::Normal, Difficulty::Hard, Difficulty::Absurd,
+                         Difficulty::AbsurdlyDefensive})
+        check(cart::aiEngineFile(tak::ai::levelProfileFile(d)), "every level's file is ai/takengine.txt (ai::levelProfileFile)");
+    check(cart::aiEngineFile("AI/TakEngine.TXT") && !cart::aiEngineFile("ai/n.txt") && !cart::aiEngineFile("ai/default.txt") &&
+          cart::aiKindOf("ai/takengine.txt") == AiKind::Level && cart::aiKindOf("ai/n.txt") == AiKind::Level &&
+          cart::aiOldLevelOf("AI/N.TXT") == Difficulty::Normal && cart::aiOldLevelOf("ai/ad.txt") == Difficulty::AbsurdlyDefensive &&
+          cart::aiOldLevelOf("ai/d.txt") == Difficulty::Passive && !cart::aiOldLevelOf("ai/takengine.txt") &&
+          !cart::aiOldLevelOf("ai/default.txt") && cart::aiKindOf("ai/islands.txt") == AiKind::Default,
+          "ai/takengine.txt and the old level names");
 }
 
 // What travels agrees with the game's own import (net::maps, Test Map's --play-map).
@@ -567,6 +589,7 @@ static void travel(const fs::path& root) {
     (*art)["terrain/00000001.jpg"] = {1};
     base.setModFiles(art);
     const cart::AiFiles files{{"ai/default.txt", bytesOf("a\n")}, {"ai/n.txt", bytesOf("b\n")}, {"ai/ad.txt", bytesOf("c\n")},
+                              {"ai/takengine.txt", bytesOf("weight araarch 2\n")},
                               {"ai/islands.txt", bytesOf("d\n")}, {"ai/my.txt", bytesOf("e\n")}, {"ai/notes.txt", bytesOf("f\n")},
                               {"ai/mission 19.txt", bytesOf("g\n")}, {"ai/x.txt", {}}};
     int n = 0;
@@ -596,19 +619,23 @@ static void whichFileMatrix(const fs::path& root) {
     using F = cart::AiFileChoice::From;
     writeFile(root / "base" / "ai" / "default.txt", "weight all 1\n");
     writeFile(root / "base" / "ai" / "installed.txt", "weight all 1\n");
-    writeFile(root / "base" / "ai" / "n.txt", "weight araarch 1\n");   // the install never supplies level files
+    writeFile(root / "base" / "ai" / "n.txt", "weight araarch 1\n");   // the install never supplies the levels' file
+    writeFile(root / "base" / "ai" / "takengine.txt", "weight araarch 1\n");
     writeFile(root / "mods" / "game" / "pack" / "ai" / "default.txt", "weight all 0.5\n");
-    writeFile(root / "mods" / "game" / "pack" / "ai" / "h.txt", "weight araarch 2\n");
+    writeFile(root / "mods" / "game" / "pack" / "ai" / "h.txt", "weight araarch 2\n");   // an old level file: not read
+    writeFile(root / "mods" / "game" / "pack3" / "ai" / "takengine.txt", "weight araarch 2\n");
     writeFile(root / "mods" / "game" / "pack2" / "ai" / "islands.txt", "weight all 0.25\n");
-    writeFile(root / "mods" / "game" / "pack2" / "ai" / "n.txt", "weight araarch 3\n");
+    writeFile(root / "mods" / "game" / "pack2" / "ai" / "takengine.txt", "weight araarch 3\n");
     tak::hpi::Vfs base;
     base.addLayer(tak::hpi::MountSet(root / "base"));
     tak::hpi::Vfs nothing;
     const auto pack = tak::hpi::modFiles(root, tak::hpi::ModKind::Game, {"pack"});
     const auto pack2 = tak::hpi::modFiles(root, tak::hpi::ModKind::Game, {"pack2"});
+    const auto pack3 = tak::hpi::modFiles(root, tak::hpi::ModKind::Game, {"pack3"});
     check(pack.count("ai/default.txt") && pack2.count("ai/islands.txt"), "game-mod fixtures mounted");
-    const cart::AiFiles map{{"ai/islands.txt", bytesOf("weight all 0.75\n")}, {"ai/n.txt", bytesOf("weight araarch 4\n")},
+    const cart::AiFiles map{{"ai/islands.txt", bytesOf("weight all 0.75\n")}, {"ai/takengine.txt", bytesOf("weight araarch 4\n")},
                             {"ai/notes.txt", bytesOf("plan\n")}};
+    const cart::AiFiles oldMap{{"ai/n.txt", bytesOf("weight araarch 4\n")}, {"ai/h.txt", bytesOf("weight araarch 5\n")}};
     auto is = [](const cart::AiFileChoice& c, F from, const std::string& path, const std::string& text) {
         check(c.from == from && c.path == path && c.message == text, "whichFile: got [" + c.path + "] " + c.message + "\nwant [" + path + "] " + text);
     };
@@ -636,14 +663,19 @@ static void whichFileMatrix(const fs::path& root) {
        "a game mod's ai/default.txt would not.");   // ... until the map names it
     is(cart::whichFile(Difficulty::Classic, nothing, {{"ai/islands.txt", {}}}, "islands"), F::None, "",
        "DEFAULT AI: no profile file, so every unit is built at full chance with no limit.");   // an empty file is dropped
-    is(cart::whichFile(Difficulty::Normal, base, map, "islands"), F::Map, "ai/n.txt",
-       "Normal reads ai/n.txt from this map unless a ticked game mod has ai/n.txt, which then replaces it entirely.");
-    is(cart::whichFile(Difficulty::Normal, base, map, "islands", &pack), F::Map, "ai/n.txt", "Normal reads ai/n.txt from this map.");
-    is(cart::whichFile(Difficulty::Normal, base, map, "islands", &pack2), F::GameMod, "ai/n.txt",
-       "Normal reads ai/n.txt from the game mod; it replaces this map's file entirely.");
-    is(cart::whichFile(Difficulty::Hard, base, map, "islands", &pack), F::GameMod, "ai/h.txt", "Hard reads ai/h.txt from the game mod.");
-    is(cart::whichFile(Difficulty::Easy, base, map, "islands", &pack), F::None, "", "Easy: built-in table (no file).");
-    is(cart::whichFile(Difficulty::Normal, base, {}, ""), F::None, "", "Normal: built-in table (no file).");   // never the install's
+    const std::string none = "Our six levels: built-in tables (no ai/takengine.txt).";
+    is(cart::whichFile(Difficulty::Normal, base, map, "islands"), F::Map, "ai/takengine.txt",
+       "All six levels (Normal shown) read ai/takengine.txt from this map, each over its own built-in table, unless a ticked "
+       "game mod has ai/takengine.txt, which then replaces it entirely.");
+    is(cart::whichFile(Difficulty::Hard, base, map, "islands", &pack), F::Map, "ai/takengine.txt",
+       "All six levels (Hard shown) read ai/takengine.txt from this map, each over its own built-in table.");   // pack's h.txt unread
+    is(cart::whichFile(Difficulty::Normal, base, map, "islands", &pack2), F::GameMod, "ai/takengine.txt",
+       "All six levels (Normal shown) read ai/takengine.txt from the game mod, each over its own built-in table; it replaces "
+       "this map's file entirely.");
+    is(cart::whichFile(Difficulty::Easy, base, {}, "islands", &pack3), F::GameMod, "ai/takengine.txt",
+       "All six levels (Easy shown) read ai/takengine.txt from the game mod, each over its own built-in table.");
+    is(cart::whichFile(Difficulty::Hard, base, oldMap, "islands", &pack), F::None, "", none);   // old files: never read
+    is(cart::whichFile(Difficulty::Normal, base, {}, ""), F::None, "", none);   // never the install's
 }
 
 // ---- the game-mod writer -------------------------------------------------------------
@@ -760,8 +792,10 @@ static void modWriter(const fs::path& root) {
     const auto text = cart::compareAiFiles("ai/x.txt", "weight araarch 1\nlimit aradrag 2\n", "weight araarch 0.505\nlimit aradrag 2\n", c);
     check(text.find("line 1 \"weight araarch 1\" becomes \"weight araarch 0.505\"") != std::string::npos &&
           text.find("1 unit plays differently (araarch)") != std::string::npos, "DEFAULT compare: " + text);
-    const auto level = cart::compareAiFiles("ai/n.txt", "weight araarch 5\n", "weight araarch 5\n// note\n", c);
+    const auto level = cart::compareAiFiles("ai/takengine.txt", "weight araarch 5\n", "weight araarch 5\n// note\n", c);
     check(level.find("Every unit plays the same") != std::string::npos, "level compare: " + level);
+    const auto levels = cart::compareAiFiles("ai/takengine.txt", "weight araarch 5\n", "weight araarch 6\nlimit tararch 0\n", c);
+    check(levels.find("2 units play differently (araarch, tararch)") != std::string::npos, "takengine compare: " + levels);
     std::cout << "mod writer: case-variant folders reused, identical skipped, backups outside the pack, symlinks and read-only refused\n";
 }
 
@@ -925,6 +959,54 @@ static void modDefaultHeader() {
     std::cout << "game mod default.txt: the header names ai/default.txt and the pack; nothing else changes\n";
 }
 
+// ---- the old per-level files: MERGE INTO TAK ENGINE ---------------------------------------
+
+static void mergeOld() {
+    const auto c = sample();
+    const cart::AiFiles files{{"ai/h.txt", bytesOf("weight araarch 3\n")}, {"ai/default.txt", bytesOf("weight all 1\n")},
+                              {"ai/n.txt", bytesOf("weight araarch 2\nlimit aradrag 0\n")}, {"ai/d.txt", {}},
+                              {"ai/ad.txt", bytesOf("// nothing\n")}, {"ai/takengine.txt", bytesOf("weight araarch 1\n")}};
+    check(cart::aiOldLevelFiles(files) == std::vector<std::string>{"ai/n.txt", "ai/h.txt", "ai/ad.txt"},
+          "old level files in level order, empty ones left out");
+    check(cart::aiOldLevelFiles(files, "n") == std::vector<std::string>{"ai/h.txt", "ai/ad.txt"},
+          "a map whose own DEFAULT profile is ai/n.txt keeps it as that");
+    const auto n = cart::aiLevelSettings("weight araarch 2\nWeight aradrag 4\nlimit aradrag 0\nweight araarch 7\n");
+    check(n.weight.size() == 1 && n.weight.at("araarch") == 7 && n.limit.at("aradrag") == 0 && cart::aiLevelSettingCount(n) == 2,
+          "settings as applyProfileText reads them (last line wins, lowercase keywords only)");
+
+    auto reads = [](std::string_view bytes) { return cart::aiLevelSettings(bytes); };
+    // Into a new file.
+    std::string out, error;
+    check(cart::aiMergeIntoEngine("", "weight araarch 2\nlimit aradrag 0\n// a note\n", "header", c, out, error), "merge into new: " + error);
+    check(out.starts_with(cart::kAiProfileMagic) && out.find("// header\n") != std::string::npos, "a new canonical file with the header");
+    auto want = reads("weight araarch 2\nlimit aradrag 0\n");
+    check(reads(out).weight == want.weight && reads(out).limit == want.limit, "the new file reads as the old file's settings");
+    // Into an existing canonical file: other units stay, the old file's units take its values.
+    cart::AiDraft draft;
+    draft.kind = AiKind::Level;
+    draft.header = "mine";
+    draft.units["araarch"].weight = 9;
+    draft.units["aradrag"].weight = 4;
+    draft.units["tararch"].limit = 3;
+    std::string engine;
+    check(cart::saveAiDraft(draft, c, engine, error), error);
+    check(cart::aiMergeIntoEngine(engine, "weight araarch 2\nlimit aradrag 0\n", "header", c, out, error), "merge into existing: " + error);
+    want = reads(engine);
+    tak::ai::applyProfileText("weight araarch 2\nlimit aradrag 0\n", want);
+    check(reads(out).weight == want.weight && reads(out).limit == want.limit && reads(out).weight.at("aradrag") == 4 &&
+              reads(out).limit.at("tararch") == 3 && out.find("// mine\n") != std::string::npos,
+          "the merged file reads as ai/takengine.txt followed by the old file, and keeps its header");
+    const auto parsed = cart::parseAiDraft(out, AiKind::Level, c);
+    check(!parsed.asWritten && parsed.units.size() == 3, "the merged file opens editable");
+    // Into a hand-written ai/takengine.txt: converted first, its effect kept.
+    const std::string hand = "weight araarch 9\nweight araarch 8\nlimit tararch 3\n";
+    check(cart::aiMergeIntoEngine(hand, "limit araarch 1\n", "header", c, out, error), "merge into a hand-written file: " + error);
+    want = reads(hand);
+    tak::ai::applyProfileText("limit araarch 1\n", want);
+    check(reads(out).weight == want.weight && reads(out).limit == want.limit && reads(out).weight.at("araarch") == 8, "hand-written merge");
+    std::cout << "merge: old level files listed, merged into ai/takengine.txt and verified by applyProfileText\n";
+}
+
 int main() try {
     const auto root = fs::temp_directory_path() /
                       ("tak-aiprofile-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -943,6 +1025,7 @@ int main() try {
     modWriter(root);
     groupRules();
     levelLimits();
+    mergeOld();
     std::cout << "cartographer_aiprofile: all passed\n";
     return 0;
 } catch (const std::exception& e) {

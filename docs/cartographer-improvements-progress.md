@@ -1783,6 +1783,96 @@ Validation:
 - The guide's Known limits no longer list "no copy to other levels" or "group rules
   only move up".
 
+## AI profile editor: one ai/takengine.txt for our levels (2026-10-23)
+
+User decision (2026-10-23): our six levels stop reading `ai/d.txt` .. `ai/ad.txt`
+and all read one file, `ai/takengine.txt`, each over its own built-in table (engine
+side: protocol 293, `ai::kEngineProfileFile`, `ai::levelProfileFrom`). The RETAIL
+(DEFAULT AI) tab is unchanged. The Cartographer follows:
+
+- **Model** (`aiprofiles.{h,cpp}`): `aiLevelOf` is gone. `aiEngineFile` names
+  `ai/takengine.txt`; `aiOldLevelOf` names the six old files (the levels grammar, so
+  `aiKindOf` is Level for both). `checkAiFile` checks `ai/takengine.txt` in each level
+  over its own table (a side finding names the levels it holds for once, or *every
+  level*; "never built by our levels" for a unit no built-in table and no line
+  names); an old level file gets one notice ("the game no longer reads it ... MERGE
+  INTO TAK ENGINE") and no line checks, and `checkAiMap` does not add the
+  "not sent" warning for it. `aiFileTravels`: `ai/default.txt`, `ai/takengine.txt`
+  and the own profile (as `maps::aiProfilePaths`). New profile names refuse
+  `takengine` and still the old names; `aiprofile=` naming either is a Check error.
+  `compareAiFiles` measures `ai/takengine.txt` over all six tables (a unit once).
+  `whichFile` for a level: *All six levels (Normal shown) read ai/takengine.txt from
+  this map, each over its own built-in table, unless a ticked game mod has ...*.
+  New: `aiOldLevelFiles` (level order, empty files and the map's own profile file
+  left out), `aiLevelSettings` (`applyProfileText` over an empty profile) and
+  `aiMergeIntoEngine` (the old file's weights and limits written into the
+  `ai/takengine.txt` draft, a hand-written one converted first by `makeEditable`;
+  saved by `saveAiDraft` and then required to read, through `applyProfileText`, as
+  the old `ai/takengine.txt` followed by the old file).
+- **Window** (`aiprofileswindow.cpp`, `editorstate.h`): two tabs, DEFAULT AI and TAK
+  ENGINE AI. **PREVIEW LEVEL** (click: next, right-click: previous; Normal at first)
+  picks the level whose built-in table, effective values (`builtinProfile` +
+  `applyProfileText`, cached per level) and limits in play (`aiEffectiveLimit`) the
+  table, the row explanation and the footer show. Presets, cells, BUILD, text view
+  and SAVE AS GAME MOD write `ai/takengine.txt`. "Copy to other levels..." and its
+  test are removed. A map or pack that still has old level files shows a notice in
+  the left column with **MERGE INTO TAK ENGINE...**: a dialog lists them in level
+  order with their unit counts, groups files with identical settings, preselects
+  Normal's, lets the user pick another, and has an unticked *Also delete the old
+  level files*. MERGE stores the result (and the deletes) in one frame: one undo
+  step; a pack edit has none. SAVE AS GAME MOD never offers an old file; OPEN FROM
+  GAME MOD keeps the pack's old files byte for byte (labelled *old Normal file (not
+  read)* if the pack set is saved back). Help, Test Map and the mod-save warning
+  texts name `ai/takengine.txt`; the Test Map hint says RETAIL for the DEFAULT AI.
+- `chrome.cpp` (Help) and `document.h` comments name the new file.
+
+Validation:
+
+- `cartographer_aiprofile`: the level names (every `ai::levelProfileFile` is
+  `ai/takengine.txt`; old names, case-insensitive), the checks above (side finding
+  once with *(every level)*, the old-file notice alone, the map check without the
+  "not sent" row), names (`takengine` refused, rename never onto it), travel
+  against `maps::importSnapshot` with `ai/takengine.txt` and old files in the map,
+  the whichFile matrix (map, game mod, map + unrelated pack whose old `h.txt` is not
+  read, old files only = built-in, install never), the takengine compare, and a new
+  `mergeOld`: listing order, the own-profile exception, settings as
+  `applyProfileText` reads them, merge into nothing / a canonical file (other units
+  and the header kept) / a hand-written file, each equal to the engine's reading of
+  the two files in turn.
+- `cartographer_aiprofile_ui`: a TAK ENGINE AI cell writes only
+  `ai/takengine.txt` (canonical, header *TAK ENGINE AI (all six levels) profile
+  for map ...*); PREVIEW LEVEL steps to Hard and the view equals
+  `ai::levelProfileFrom(Hard, file)` with Hard's built-in column; Save As carries
+  `ai/takengine.txt` at the `.kmp` root.
+- `cartographer_aiprofile_merge_ui` (replaces `_copy_ui`; `cartographer_ui_test
+  <data> aiprofile-merge`): a map with `ai/e.txt` = `ai/n.txt` and a hand-written
+  `ai/h.txt`. The notice is drawn; the dialog lists e, n, h with Normal
+  preselected and e/n grouped; clicks pick; MERGE writes a canonical
+  `ai/takengine.txt` that `applyProfileText` reads as Normal's file, old files
+  byte for byte, nothing else written; Ctrl+Z / Ctrl+Y; a second merge of Hard's
+  file with *also delete* reads as the first plus Hard's and removes the three,
+  the notice goes, and one Ctrl+Z restores all of it.
+  With MERGE not storing `ai/takengine.txt`, it fails at frame 7.
+- `cartographer_aiprofile_mod_ui`: the pack has `TakEngine.TXT` (replaced in its
+  own spelling, backed up) and an old `n.txt` that is never planned, never
+  touched and shown with the notice when the pack is opened; saving back now
+  replaces (compare asked) instead of creating; the emptied draft is deleted.
+- `cartographer_aiprofile_extras_ui`: the limit in play is checked on the TAK
+  ENGINE AI tab previewing Hard (*In play on Hard: 4 in play*).
+- `cartographer_aiprofile_packs_ui`: its 22 packs carry `ai/takengine.txt`.
+- `cartographer_ai_profile_e2e`: the maps and the pack carry `ai/takengine.txt`;
+  the server's one-line log (*our AI levels play their built-in profiles adjusted
+  by the map package's / game mods' ai/takengine.txt*) is matched.
+- Pictures: `ai-profiles.jpg` and `ai-group-rules.jpg` recaptured as before
+  (`aiprofile` / `aiprofile-extras`, SDL `offscreen` 921 x 691, crop 802 x 534 at
+  60,78, quality 98, full chroma); both showed the six level tabs. New
+  `ai-takengine.jpg` from the `aiprofile-merge` capture after the first merge (the
+  TAK ENGINE AI tab, PREVIEW LEVEL, the old-file notice). Inspected by eye.
+- Docs: `cartographer-guide.md` (the two-kinds table, the window, PREVIEW LEVEL,
+  Old level files, names, Check, Which file plays, Save as game mod, Testing, Files
+  in a map, Export loose files, the version note) and `user-guide.md` (Making AI
+  profiles; the game-mods paragraph points at MERGE INTO TAK ENGINE).
+
 ## Scope and remaining limitations
 
 The six core workflows are implemented: recoverable editing and saving; desktop

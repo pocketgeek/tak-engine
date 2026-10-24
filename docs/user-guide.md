@@ -2097,7 +2097,8 @@ alphabetically later pack wins, as for any file. In multiplayer it travels with
 the host's game packs. Cosmetic packs and the install itself cannot change these
 levels' profiles, even with an `ai/takengine.txt` of their own. The older
 per-level files (`ai/d.txt`, `ai/e.txt`, `ai/n.txt`, `ai/h.txt`, `ai/a.txt`,
-`ai/ad.txt`) are no longer read. The Retail AI never reads `ai/takengine.txt`:
+`ai/ad.txt`) are no longer read; the Cartographer's **MERGE INTO TAK ENGINE...**
+copies one of them into `ai/takengine.txt`. The Retail AI never reads `ai/takengine.txt`:
 it reads the map's own AI profile, else `ai/default.txt`, which a game pack or
 the map's archive can replace (see [Retail AI](#retail-ai)).
 
@@ -2111,15 +2112,19 @@ not carried over, so tick the packs again in the room.
 ### Making AI profiles
 
 The Cartographer makes these files for you: **Scenario → AI Profiles...**
-(**A**) opens a window with a **DEFAULT AI** tab (the Retail AI's profile) and one for each level, a
+(**A**) opens a window with a **DEFAULT AI** tab (the Retail AI's profile) and a
+**TAK ENGINE AI** tab (`ai/takengine.txt`, which all six of our levels read; a
+**PREVIEW LEVEL** choice shows the table as one level at a time sees it), a
 table of units in which you switch units off, change how often they are built
-and set limits, and presets such as **No flyers** and **No ships**. See
+and set limits, and presets such as **No flyers** and **No ships**. A map or
+pack that still has the old per-level files gets **MERGE INTO TAK ENGINE...**,
+which writes one of them into `ai/takengine.txt`. See
 [AI profiles](cartographer-guide.md#ai-profiles) in the Cartographer guide.
 
 - **For one map**: the files are saved inside the map's `.kmp` and travel with
   it. The Retail AI gets the map's own profile (`ai/<name>.txt`, which the map
-  names), usually started from the game's standard profile; each level you change gets
-  its file (`ai/n.txt` for Normal, and so on).
+  names), usually started from the game's standard profile; our levels get
+  `ai/takengine.txt`, one file for all six.
 - **For every map**: **SAVE AS GAME MOD...** writes the files into a game pack,
   `mods/game/<pack>/ai/`. They apply whenever that pack is ticked.
 

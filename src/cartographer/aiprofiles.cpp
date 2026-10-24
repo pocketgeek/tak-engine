@@ -131,13 +131,20 @@ std::string inQuotes(std::string_view s) { return "'" + std::string(s) + "'"; }
 
 // ---- kinds -------------------------------------------------------------------------
 
-std::optional<Difficulty> aiLevelOf(const std::string& key) {
+bool aiEngineFile(const std::string& key) {
+    return tak::hpi::MountSet::key(key) == tak::ai::kEngineProfileFile;
+}
+std::optional<Difficulty> aiOldLevelOf(const std::string& key) {
+    // The names the levels read up to protocol 292 (ai::levelProfileFile then).
+    static constexpr const char* kOld[] = {"ai/d.txt", "ai/e.txt", "ai/n.txt", "ai/h.txt", "ai/a.txt", "ai/ad.txt"};
     const auto k = tak::hpi::MountSet::key(key);
-    for (Difficulty d : kLevels)
-        if (k == tak::ai::levelProfileFile(d)) return d;
+    for (size_t i = 0; i < std::size(kOld); ++i)
+        if (k == kOld[i]) return kLevels[i];
     return std::nullopt;
 }
-AiKind aiKindOf(const std::string& key) { return aiLevelOf(key) ? AiKind::Level : AiKind::Default; }
+AiKind aiKindOf(const std::string& key) {
+    return aiEngineFile(key) || aiOldLevelOf(key) ? AiKind::Level : AiKind::Default;
+}
 const char* aiLevelName(Difficulty d) {
     switch (d) {
         case Difficulty::Passive: return "Defensive";
@@ -560,8 +567,13 @@ std::vector<AiIssue> checkAiFile(const std::string& key, std::string_view bytes,
     }
     static const ClassicCatalogue kNone;
     const ClassicCatalogue& catalogue = roster.catalogue ? *roster.catalogue : kNone;
-    const auto level = aiLevelOf(file);
-    const AiKind kind = level ? AiKind::Level : AiKind::Default;
+    if (const auto old = aiOldLevelOf(file)) {   // not read any more: no line checks
+        issue(S::Warning, 0, {}, file + " was the " + aiLevelName(*old) + " level's file; the game no longer reads it (all " +
+              "six levels read " + tak::ai::kEngineProfileFile + "). MERGE INTO TAK ENGINE copies its unit settings.");
+        return out;
+    }
+    const bool engine = aiEngineFile(file);
+    const AiKind kind = engine ? AiKind::Level : AiKind::Default;
     const auto lines = attributeAiLines(bytes, kind, catalogue);
     auto at = [&](const AiLine& l) { return "line " + std::to_string(l.number); };
     std::set<std::string> levelUnits;
@@ -657,10 +669,16 @@ std::vector<AiIssue> checkAiFile(const std::string& key, std::string_view bytes,
     }
     if (!roster.registry) return out;
 
-    // Sides: what this file switches off, by the engine's own reading.
-    std::optional<tak::ai::Profile> profile;
-    if (level) { profile = tak::ai::builtinProfile(*level); tak::ai::applyProfileText(bytes, *profile); }
-    auto off = [&](const tak::sim::UnitType& t) {
+    // Sides: what this file switches off, by the engine's own reading -- for
+    // ai/takengine.txt in each level (over its own table), the levels a finding holds
+    // for named once.
+    std::vector<std::pair<Difficulty, tak::ai::Profile>> profiles;
+    if (engine)
+        for (Difficulty d : kLevels) {
+            profiles.emplace_back(d, tak::ai::builtinProfile(d));
+            tak::ai::applyProfileText(bytes, profiles.back().second);
+        }
+    auto off = [&](const tak::sim::UnitType& t, const tak::ai::Profile* profile) {
         if (profile) {
             const auto w = profile->weight.find(t.id);
             const auto l = profile->limit.find(t.id);
@@ -672,22 +690,42 @@ std::vector<AiIssue> checkAiFile(const std::string& key, std::string_view bytes,
     };
     const auto sides = sideRosters(*roster.registry);
     std::set<const tak::sim::UnitType*> reachable;
-    for (const auto& side : sides) {
-        bool anything = false, anyBuilder = false, builderOn = false, anyLode = false, lodeOn = false;
-        for (const auto* t : side.units) {
-            reachable.insert(t);
-            if (t->commander) continue;
-            anything = anything || !off(*t);
-            if (t->isBuilder) { anyBuilder = true; builderOn = builderOn || !off(*t); }
-            if (t->onMana) { anyLode = true; lodeOn = lodeOn || !off(*t); }
+    for (const auto& side : sides)
+        for (const auto* t : side.units) reachable.insert(t);
+    std::vector<std::pair<std::string, std::vector<Difficulty>>> sideFindings;   // message, levels (in order)
+    const size_t passes = engine ? profiles.size() : 1;
+    for (size_t p = 0; p < passes; ++p) {
+        const tak::ai::Profile* profile = engine ? &profiles[p].second : nullptr;
+        for (const auto& side : sides) {
+            bool anything = false, anyBuilder = false, builderOn = false, anyLode = false, lodeOn = false;
+            for (const auto* t : side.units) {
+                if (t->commander) continue;
+                anything = anything || !off(*t, profile);
+                if (t->isBuilder) { anyBuilder = true; builderOn = builderOn || !off(*t, profile); }
+                if (t->onMana) { anyLode = true; lodeOn = lodeOn || !off(*t, profile); }
+            }
+            std::string sideName = side.side;
+            for (char& c : sideName) c = char(std::toupper(static_cast<unsigned char>(c)));
+            std::string message;
+            if (!anything && side.units.size() > 1) message = "this AI cannot build anything for " + sideName;
+            else if ((anyBuilder && !builderOn) || (anyLode && !lodeOn))
+                message = "this AI cannot grow its economy for " + sideName + ": every " +
+                          (anyBuilder && !builderOn ? "builder" : "lodestone") + " is off";
+            if (message.empty()) continue;
+            auto it = std::find_if(sideFindings.begin(), sideFindings.end(), [&](const auto& f) { return f.first == message; });
+            if (it == sideFindings.end()) { sideFindings.push_back({message, {}}); it = sideFindings.end() - 1; }
+            if (engine) it->second.push_back(profiles[p].first);
         }
-        std::string sideName = side.side;
-        for (char& c : sideName) c = char(std::toupper(static_cast<unsigned char>(c)));
-        if (!anything && side.units.size() > 1)
-            issue(S::Error, 0, {}, "this AI cannot build anything for " + sideName);
-        else if ((anyBuilder && !builderOn) || (anyLode && !lodeOn))
-            issue(S::Error, 0, {}, "this AI cannot grow its economy for " + sideName + ": every " +
-                  (anyBuilder && !builderOn ? "builder" : "lodestone") + " is off");
+    }
+    for (const auto& [message, levels] : sideFindings) {
+        std::string where;
+        if (engine && levels.size() == profiles.size()) where = " (every level)";
+        else if (engine) {
+            for (size_t i = 0; i < levels.size(); ++i)
+                where += std::string(i ? i + 1 == levels.size() ? " and " : ", " : " (") + aiLevelName(levels[i]);
+            where += ")";
+        }
+        issue(S::Error, 0, {}, message + where);
     }
     std::set<std::string> named, unreachable;
     for (const auto& l : lines) {
@@ -699,13 +737,16 @@ std::vector<AiIssue> checkAiFile(const std::string& key, std::string_view bytes,
         if (t && !t->commander && !reachable.count(t) && unreachable.insert(l.word).second)
             issue(S::Info, l.number, l.word, at(l) + ": no builder of its side can make " + unitLabel(*t));
     }
-    if (level) {
-        const auto& builtin = tak::ai::builtinProfile(*level);
+    if (engine) {   // a unit no level's built-in table names, and the file does not either
         std::set<std::string> reported;
+        auto anyBuiltin = [&](const std::string& id) {
+            return std::any_of(std::begin(kLevels), std::end(kLevels),
+                               [&](Difficulty d) { return tak::ai::builtinProfile(d).weight.count(id) > 0; });
+        };
         for (const auto& side : sides)
             for (const auto* t : side.units)
-                if (!t->commander && !builtin.weight.count(t->id) && !named.count(t->id) && reported.insert(t->id).second)
-                    issue(S::Warning, 0, t->id, unitLabel(*t) + " (" + t->id + ") is never built by this level (not named)");
+                if (!t->commander && !named.count(t->id) && !anyBuiltin(t->id) && reported.insert(t->id).second)
+                    issue(S::Warning, 0, t->id, unitLabel(*t) + " (" + t->id + ") is never built by our levels (not named)");
     }
     return out;
 }
@@ -718,9 +759,12 @@ std::vector<AiIssue> checkAiMap(const AiFiles& files, const std::string& aiProfi
     if (!aiProfile.empty() && !standardAiProfile(aiProfile)) {
         if (aiProfile.find_first_of("/\\") != std::string::npos)
             out.push_back({S::Error, {}, 0, {}, "aiprofile=" + aiProfile + " names a file in another folder"});
-        else if (const auto level = aiLevelOf(own))
-            out.push_back({S::Error, {}, 0, {}, "aiprofile=" + aiProfile + " makes the DEFAULT AI read the " +
-                           aiLevelName(*level) + " level's file " + own});
+        else if (aiEngineFile(own))
+            out.push_back({S::Error, {}, 0, {}, "aiprofile=" + aiProfile + " makes the DEFAULT AI read " + own +
+                           ", the file our levels read"});
+        else if (aiOldLevelOf(own))
+            out.push_back({S::Error, {}, 0, {}, "aiprofile=" + aiProfile + " makes the DEFAULT AI read " + own +
+                           ", an old level file name; rename the profile"});
         else {
             if (aiProfile.find('.') != std::string::npos)
                 out.push_back({S::Warning, {}, 0, {}, "aiprofile=" + aiProfile + " reads " + own +
@@ -732,8 +776,10 @@ std::vector<AiIssue> checkAiMap(const AiFiles& files, const std::string& aiProfi
         }
     }
     for (const auto& [key, bytes] : files) {
-        if (!aiFileTravels(key, aiProfile))
-            out.push_back({S::Warning, key, 0, {}, key + " is kept in the .kmp but not sent to other players or into Test Map"});
+        if (!aiFileTravels(key, aiProfile)) {
+            if (!aiOldLevelOf(key))   // an old level file: its own notice says it is not read
+                out.push_back({S::Warning, key, 0, {}, key + " is kept in the .kmp but not sent to other players or into Test Map"});
+        }
         else if (key == "ai/default.txt")
             out.push_back({S::Info, key, 0, {}, "every map without its own profile name also reads ai/default.txt, "
                            "and an installed ai/default.txt may be used instead"});
@@ -782,8 +828,9 @@ std::string aiProfileNameError(const std::string& name) {
     if (name.size() > 32) return "Profile names are at most 32 characters.";
     const auto key = aiProfileFileKey(name);
     if (key == "ai/default.txt") return "'default' is the standard profile; choose another name.";
-    if (const auto level = aiLevelOf(key))
-        return inQuotes(name) + " is the " + std::string(aiLevelName(*level)) + " level's file name; choose another name.";
+    if (aiEngineFile(key)) return inQuotes(name) + " is the file our AI levels read; choose another name.";
+    if (const auto level = aiOldLevelOf(key))
+        return inQuotes(name) + " was the " + std::string(aiLevelName(*level)) + " level's file name; choose another name.";
     if (!validDocumentName(name) || !aiFileKey(key) || name.front() == ' ')
         return "Choose a name without reserved file name characters.";
     return {};
@@ -791,7 +838,7 @@ std::string aiProfileNameError(const std::string& name) {
 
 bool aiFileTravels(const std::string& key, const std::string& aiProfile) {
     const auto k = tak::hpi::MountSet::key(key);
-    if (k == "ai/default.txt" || aiLevelOf(k)) return true;
+    if (k == "ai/default.txt" || aiEngineFile(k)) return true;
     // net::maps' whitelist takes ai/<aiprofile>.txt when it is a safe single name.
     const auto own = aiProfileFileKey(aiProfile);
     return !own.empty() && own == k && own.find('/', 3) == std::string::npos && own.find(':') == std::string::npos &&
@@ -812,7 +859,9 @@ void setAiFile(AiFiles& files, const std::string& key, std::string_view bytes) {
 
 bool renameAiProfile(AiFiles& files, const std::string& oldName, const std::string& newName) {
     const auto from = aiProfileFileKey(oldName), to = aiProfileFileKey(newName);
-    if (standardAiProfile(oldName) || standardAiProfile(newName) || aiLevelOf(from) || aiLevelOf(to)) return false;
+    if (standardAiProfile(oldName) || standardAiProfile(newName) || aiKindOf(from) == AiKind::Level ||
+        aiKindOf(to) == AiKind::Level)
+        return false;
     if (from == to) return true;
     const auto it = files.find(from);
     if (it == files.end()) return true;   // nothing to move
@@ -867,18 +916,74 @@ AiFileChoice whichFile(Difficulty d, const tak::hpi::Vfs& base, const AiFiles& m
     const std::string name = aiLevelName(d);
     out.path = source;
     if (source.empty()) {
-        out.message = name + ": built-in table (no file).";
+        out.message = "Our six levels: built-in tables (no " + std::string(tak::ai::kEngineProfileFile) + ").";
     } else if (fromMap) {
         out.from = AiFileChoice::From::Map;
-        out.message = name + " reads " + source + " from this map" +
+        out.message = "All six levels (" + name + " shown) read " + source + " from this map, each over its own built-in table" +
                       (gameModFiles ? std::string(".")
-                                    : " unless a ticked game mod has " + source + ", which then replaces it entirely.");
+                                    : ", unless a ticked game mod has " + source + ", which then replaces it entirely.");
     } else {
         out.from = AiFileChoice::From::GameMod;
-        out.message = name + " reads " + source + " from the game mod" +
+        out.message = "All six levels (" + name + " shown) read " + source + " from the game mod, each over its own built-in table" +
                       (travel.count(source) ? "; it replaces this map's file entirely." : ".");
     }
     return out;
+}
+
+// ---- the old per-level files -----------------------------------------------------------
+
+std::vector<std::string> aiOldLevelFiles(const AiFiles& files, const std::string& aiProfile) {
+    const auto own = aiProfileFileKey(aiProfile);
+    std::vector<std::pair<Difficulty, std::string>> found;
+    for (const auto& [key, bytes] : files)
+        if (const auto level = aiOldLevelOf(key); level && !bytes.empty() && key != own) found.push_back({*level, key});
+    std::sort(found.begin(), found.end());
+    std::vector<std::string> out;
+    for (auto& f : found) out.push_back(std::move(f.second));
+    return out;
+}
+
+tak::ai::Profile aiLevelSettings(std::string_view bytes) {
+    tak::ai::Profile out;
+    tak::ai::applyProfileText(bytes, out);
+    return out;
+}
+size_t aiLevelSettingCount(const tak::ai::Profile& p) {
+    std::set<std::string> units;
+    for (const auto* m : {&p.weight, &p.limit})
+        for (const auto& [unit, v] : *m) units.insert(unit);
+    return units.size();
+}
+
+bool aiMergeIntoEngine(std::string_view engineBytes, std::string_view oldBytes, const std::string& header,
+                       const ClassicCatalogue& catalogue, std::string& out, std::string& error) {
+    const std::string file = tak::ai::kEngineProfileFile;
+    AiDraft draft = parseAiDraft(engineBytes, AiKind::Level, catalogue);
+    if (draft.asWritten && !engineBytes.empty()) {
+        std::string why;
+        if (!makeEditable(draft, catalogue, &why)) {
+            error = file + " was written by hand and cannot be converted (" + why + "); merge by hand in the Text view.";
+            return false;
+        }
+    }
+    draft.asWritten = false;
+    draft.original.clear();
+    draft.kind = AiKind::Level;
+    if (draft.header.empty()) draft.header = header;
+    const auto old = aiLevelSettings(oldBytes);
+    for (const auto& [unit, v] : old.weight) draft.units[unit].weight = v;
+    for (const auto& [unit, v] : old.limit) draft.units[unit].limit = v;
+    if (!saveAiDraft(draft, catalogue, out, error)) return false;
+    // The engine's reading of the result must be the old ai/takengine.txt followed by
+    // the old level file, line for line.
+    auto want = aiLevelSettings(engineBytes);
+    tak::ai::applyProfileText(oldBytes, want);
+    const auto got = aiLevelSettings(out);
+    if (got.weight != want.weight || got.limit != want.limit) {
+        error = "AI profile could not be written exactly: the merged " + file + " does not read as its settings plus the old file's";
+        return false;
+    }
+    return true;
 }
 
 std::string compareAiFiles(const std::string& key, std::string_view before, std::string_view after,
@@ -906,16 +1011,19 @@ std::string compareAiFiles(const std::string& key, std::string_view before, std:
         break;
     }
     std::vector<std::string> changed;
-    if(const auto level=aiLevelOf(key)) {
-        auto x=tak::ai::builtinProfile(*level),y=x;
-        tak::ai::applyProfileText(before,x);tak::ai::applyProfileText(after,y);
-        std::set<std::string> units;
-        for(const auto* p:{&x,&y})for(const auto* m:{&p->weight,&p->limit})for(const auto& [unit,v]:*m)units.insert(unit);
+    if(aiKindOf(key)==AiKind::Level) {   // over each level's own table; a unit counts once
+        std::set<std::string> units,differ;
         auto get=[](const std::unordered_map<std::string,int>& m,const std::string& unit) {
             const auto it=m.find(unit);return it==m.end()?std::optional<int>():std::optional<int>(it->second);
         };
-        for(const auto& unit:units)
-            if(get(x.weight,unit)!=get(y.weight,unit) || get(x.limit,unit)!=get(y.limit,unit))changed.push_back(unit);
+        for(Difficulty d:kLevels) {
+            auto x=tak::ai::builtinProfile(d),y=x;
+            tak::ai::applyProfileText(before,x);tak::ai::applyProfileText(after,y);
+            for(const auto* p:{&x,&y})for(const auto* m:{&p->weight,&p->limit})for(const auto& [unit,v]:*m)units.insert(unit);
+            for(const auto& unit:units)
+                if(get(x.weight,unit)!=get(y.weight,unit) || get(x.limit,unit)!=get(y.limit,unit))differ.insert(unit);
+        }
+        changed.assign(differ.begin(),differ.end());
     } else {
         tak::ai::ClassicProfile x(catalogue.size()),y(catalogue.size());
         x.execute(before,catalogue);y.execute(after,catalogue);

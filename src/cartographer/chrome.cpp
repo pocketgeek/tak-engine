@@ -140,7 +140,7 @@ void cart::Editor::menuAction(int menu,int row) {
     } else if(menu==4)symmetryMenu(row);
     else openMessage(row?"ABOUT CARTOGRAPHER":"EDITOR CONTROLS",row?"TAK Engine map and scenario editor. Uses your original game assets.":
         "Choose terrain or objects in the left browser. Left-click uses the chosen Place, Select, Erase or Pan mode. Right-drag always pans. In Select mode, drag a box or move selected units or features. Ctrl+C/X/V copies/cuts/pastes, Ctrl+D duplicates, Delete removes, and Enter opens properties. Tab changes tools. Ctrl+Z undoes; Ctrl+Y redoes. Ctrl+S saves a playable KMP. File offers Open, Save As and loose export. Double-click a unit or rule to edit it. Unsaved maps get recovery copies every minute. "
-        "Scenario > AI Profiles (A) edits the map's DEFAULT AI profile and the AI level files it carries. "
+        "Scenario > AI Profiles (A) edits the map's DEFAULT AI profile and ai/takengine.txt, the one file all our AI levels read. "
         "Symmetry: M mirrors placements, moves and erasures live across the chosen axis; Shift+M (Symmetrize) copies one half or quadrant onto the rest, using mirror-twin terrain sections. "
         "Terrain tool + Select: drag a block rectangle, Ctrl+C copies it, Ctrl+V makes it a click-to-paste brush (Esc returns to sections). "
         "BLOCKED tool: Place paints impassable, unbuildable cells on empty ground only; Erase clears blocked cells; features and roads are never touched. "

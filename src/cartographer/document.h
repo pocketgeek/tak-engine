@@ -60,7 +60,7 @@ bool writeDocumentLoose(const std::filesystem::path& directory, const DocumentFi
 std::string modPackNameError(const std::string& name);
 struct ModProfileChange {
     enum class Action { Create, Same, Replace, Delete };
-    std::string key;                    // ai/n.txt
+    std::string key;                    // ai/takengine.txt
     Action action = Action::Create;
     std::filesystem::path path;         // the file on disk (an existing file's own spelling)
     std::vector<uint8_t> data;          // the new bytes (Create/Replace/Same)
