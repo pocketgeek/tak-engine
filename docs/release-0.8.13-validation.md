@@ -19,9 +19,13 @@ publication date/time.
 (`tools/cartographer_ui_test.cpp`, `tools/cartographer_placement_test.cpp`, two
 new `add_test` lines in `CMakeLists.txt`) and docs (`docs/cartographer-guide.md`,
 `docs/user-guide.md`).
-TODO-LEAD: list the preparation commits on top of `c579cab5` (docs, any shots,
-this report's fill) and confirm `git fetch` showed nothing else on
-`origin/main` before landing.
+After `c579cab5`, main gained `bb22812e` (CI only: the Linux packages
+workflow pins the Slackware mirror to mirrors.kernel.org; no source, test or
+doc change). The preparation commits sit on top of `bb22812e`, cherry-picked
+linearly: `18c53580` (screenshots), `c5b11728` (version 0.8.13, notes, this
+report's skeleton), `9feb6625` (doc completeness fixes) and the commit filling
+this report. `git fetch` just before landing showed `origin/main` at
+`bb22812e`, nothing else.
 
 The changes:
 
@@ -68,38 +72,55 @@ and source above.
 
 ## Local preparation checks
 
-Testing is reduced for this release, by the user's rule (minimal testing):
+Testing is reduced for this release, by the user's rule (minimal testing). The
+checks ran on Linux, cores 4-23, with an optimized Debug build (`build-o2`,
+`-O2 -g`, ccache + mold, `TAK_TEST_DATA` = the retail install), made fresh in a
+detached worktree at `c579cab5`, all targets; `--version` there reports `0.8.12
+(build v0.8.12-4-gc579cab5a86c)` (the CMake version was still 0.8.12 at that
+commit). No Release, `-O0` Debug, Clang or ASan suite was run, and no repeat
+runs.
 
-- **Full CTest, once, on optimized Debug (`-O2`) at `c579cab5`:**
-  TODO-LEAD (filled by the lander): passed/total, `-LE nightly -j16`, real
-  time, `rc`, defined vs excluded counts, timeouts/reruns, scratch HOME and
-  XDG_DATA_HOME. Name the new and changed tests inside the run:
-  `cartographer_blank_launch_ui`, `cartographer_failed_open_ui`,
-  `cartographer_aimod_ui`, `cartographer_starts_ui`,
-  `cartographer_place_blocked`. Log:
-  `~/tak-tmp/scratch/release-0813/ctest.out`.
-- No Release, `-O0` Debug, Clang or ASan suite was run, and no repeat runs.
-- **Detmath guard** (`tools/check-detmath.sh`): TODO-LEAD.
-- **Cross-compiler golden hash** (`tools/check-determinism.sh`): TODO-LEAD
-  (0.8.12 golden `dcef618cd2e4d558`).
+- **Full CTest, once, on optimized Debug (`-O2`) at `c579cab5`: 607/608
+  passed** (`-LE nightly -j16`, 677 s real, `rc=8`, scratch HOME and
+  XDG_DATA_HOME). 770 tests are defined; the 164 `nightly`-labelled ones were
+  excluded. The new and changed Cartographer tests passed inside this run:
+  `cartographer_blank_launch_ui` and `cartographer_failed_open_ui` (both new),
+  `cartographer_ui`, `cartographer_aimod_ui`, `cartographer_aiprofile_ui`,
+  `cartographer_recovery` and the `cartographer_place_*` set. The one failure
+  was **`ai_mod_profile`, which hit its 600 s timeout** and printed nothing; run
+  alone right afterwards, once, it **passed in 56 s**. In 0.8.12's full run
+  under the same load it passed in 59 s (0.8.11's final suite had the same
+  timeout and also passed alone in 56 s), so ten times longer looks like one of
+  its three games hanging intermittently rather than load. No code it covers
+  changed since `v0.8.12`; recorded as an intermittent hang, not investigated.
+  Logs: `~/tak-tmp/scratch/release-0813/ctest.out` and
+  `ctest-rerun-ai_mod_profile.out`.
+- **Detmath guard** (`tools/check-detmath.sh`): OK.
+- **Cross-compiler golden hash** (`tools/check-determinism.sh`): g++ and
+  clang++ at -O0/-O2/-O3 all give `dcef618cd2e4d558`, the 0.8.12 golden. The
+  aarch64 legs were skipped (no target libc locally); the macOS CI leg covers
+  ARM64. Log: `~/tak-tmp/scratch/release-0813/check-determinism.log`.
 - **`--mpai` golden hashes.** Inner Circle, `takserver --local --no-auth
   --seed 1`, a clean scratch profile per game, optimized Debug binaries at
   `c579cab5`, `TAK_LEGION=1` for Legion and `TAK_AI_LEVEL=6` for the Retail AI.
-  TODO-LEAD: confirm every game ended `err=none end=timelimit` with no desync
-  or referee-suspect line, and fill the units column.
+  All five games ended `err=none end=timelimit` with no desync or
+  referee-suspect line, and every hash equals 0.8.12's.
 
   | Mode | Length | Hash (units) | 0.8.12 |
   | --- | --- | --- | --- |
-  | Retail | 60 s | TODO-LEAD | `b353410003e98dd5` |
-  | Retail | 300 s | TODO-LEAD | `a3d953803a064191` |
-  | Legion | 60 s | TODO-LEAD | `0825aeb9e8139203` |
-  | Legion | 300 s | TODO-LEAD | `ce5c4ba7562e53b9` |
-  | Retail AI | 60 s | TODO-LEAD | `14849c00bc6e2a19` |
+  | Retail | 60 s | `b353410003e98dd5` (4) | `b353410003e98dd5` |
+  | Retail | 300 s | `a3d953803a064191` (13) | `a3d953803a064191` |
+  | Legion | 60 s | `0825aeb9e8139203` (4) | `0825aeb9e8139203` |
+  | Legion | 300 s | `ce5c4ba7562e53b9` (18) | `ce5c4ba7562e53b9` |
+  | Retail AI | 60 s | `14849c00bc6e2a19` (4) | `14849c00bc6e2a19` |
 
-  Logs: `~/tak-tmp/scratch/release-0813/mpai/`.
-- **Final source** (the preparation commits on `c579cab5`): TODO-LEAD (every
-  `build-o2` target rebuilt, `takclient --version` reports `0.8.13 (build
-  ...)`, any quick check run).
+  The Retail AI server again logged `DEFAULT AI profile ai/DEFAULT.txt` (log
+  wording only, as in 0.8.12). Logs: `~/tak-tmp/scratch/release-0813/mpai/`.
+- **Final source** (the preparation commits on `bb22812e`): every `build-o2`
+  target rebuilt at `9feb6625`, `takclient --version` reports `0.8.13 (build
+  v0.8.12-8-g9feb6625cb2f)`, and `ctest -L quick` passed 500/500 (139 s). This
+  report's fill commit changes only this file. Log:
+  `~/tak-tmp/scratch/release-0813/final-quick.out`.
 
 ## Remote multiplayer sweep
 
@@ -133,7 +154,7 @@ and time, asset count).
 
 ## Screenshots
 
-Retaken on branch `task-release-0813-shots` (`9e42f24c`):
+Retaken on branch `task-release-0813-shots` (`9e42f24c`, landed as `18c53580`):
 
 - `docs/img/title.jpg`: VERSION 0.8.13, from an `-O2` build with the version
   set to 0.8.13 locally (`~/tak-tmp/scratch/release-0813/shots/title.py`); a
@@ -156,7 +177,9 @@ checked), so none was retaken for it; every other picture is kept.
 
 ## Limits
 
-- TODO-LEAD: state whether a game mixing 0.8.13 with 0.8.12 was attempted.
+- No game mixing 0.8.13 with 0.8.12 was attempted before landing;
+  compatibility rests on the unchanged protocol, replay format and source
+  above (see TODO-LEAD under Scope).
 - All of 0.8.12's limits carry over: Legion units stand and wait more than
   Retail's; Legion attackers through a narrow gate deal more damage than
   Retail's; power codes are lockstep (retail applied them only on the typer's
