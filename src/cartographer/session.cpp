@@ -140,7 +140,7 @@ bool cart::Editor::openDocument(const std::string& request) {
         selectedUnits.indices.clear();selectedUnits.dragOrigins.clear();selectedFeatures.clear();
         regionDrag.cancel();regionSelected=-1;
         selected=sections.list().empty()?-1:0;selectedFeat=features.list().empty()?-1:0;paletteScroll=0;
-        edited=false;overlayInvalidated=true;historyPending=resetHistory=false;history.reset(historySnapshot(),true);dirty=false;
+        edited=false;overlayInvalidated=true;historyPending=resetHistory=false;history.reset(historySnapshot(),true);dirty=false;noDocument=false;
         editRule=nullptr;editUnit=draggingUnit=draggingStart=-1;scrGroup=-1;
         if(std::filesystem::is_regular_file(disk)) {outDir=pathText(std::filesystem::absolute(disk).parent_path());mapName=pathText(disk.stem());}
         preferences.remember(request);persistPreferences();
@@ -171,7 +171,7 @@ cart::DocumentFiles cart::Session::installedMapFiles(const std::string& path,con
 }
 
 void cart::Editor::testMap() {
-    if(aiModOnly)return;   // no map: an AI mod tests through TEST IN GAME
+    if(noMap())return;   // no map to test (an AI mod tests through TEST IN GAME)
     if(playtest.running()) {openMessage("TEST MAP", "A test is already running. Close its game window before starting another.");return;}
     try {
         const auto client=gameClient();

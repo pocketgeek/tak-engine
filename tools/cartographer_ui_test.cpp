@@ -668,14 +668,14 @@ static int recordTestClient(int argc,char** argv) {
     return ec?3:0;
 }
 // File > New AI mod / Open AI mod: an AI mod made and edited without a map, through real
-// input, against a SCRATCH data root. A bare launch's New Map is cancelled: its blank map
-// is no work to lose, but a start placed on it is, so Ctrl+Shift+N asks (Cancel keeps the
-// map; OK puts a blank placeholder in its place), then asks for the pack name (an existing
+// input, against a SCRATCH data root. A bare launch opens no document; File > New map makes
+// one: a new map is no work to lose, but a start placed on it is, so Ctrl+Shift+N asks (Cancel
+// keeps the map; OK leaves no document in its place), then asks for the pack name (an existing
 // pack's is refused). The window opens with the pack as the only document: the map is not
 // drawn and map menus are off.
 // One TAK ENGINE AI cell, the DEFAULT AI's ai/default.txt (Start from Empty, one chance)
 // and a named profile ai/islands.txt (NEW NAME...) are edited; SAVE TO PACK creates
-// mods/game/Harder AI/ai/ with exactly those three files. CLOSE returns to New Map;
+// mods/game/Harder AI/ai/ with exactly those three files. CLOSE returns to the empty editor;
 // Ctrl+Shift+O lists the packs and reopens it with the same values. TEST IN GAME on
 // Ulasem Arena starts the client (this executable, see recordTestClient) with
 // --play-map <test copy> --game-mod "Harder AI"; with an unsaved edit it asks, saves (the
@@ -734,8 +734,10 @@ static int aiModNoMapWorkflow(const char* data,const char* self) {
         auto find=[&](const std::string& what) {click(editor->aiSearchBox);key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);text(what);};
         using M=cart::Editor::Modal;
         switch(stage) {
-        case 0:check(editor->modal==M::M_NEW,"a bare launch did not open New Map");key(SDLK_ESCAPE);break;
-        case 1:check(editor->modal==M::M_NONE && !editor->mapHasUnsavedWork(),"the bare launch's blank map counts as work");
+        case 0:check(editor->modal==M::M_MESSAGE && editor->noDocument,"a bare launch did not open empty (with the first-run welcome)");key(SDLK_RETURN);break;
+        case 1:check(editor->modal==M::M_NONE && editor->noDocument,"the welcome did not close onto the empty editor");key(SDLK_n,KMOD_CTRL);stage=89;break;
+        case 90:check(editor->modal==M::M_NEW,"Ctrl+N did not open New Map");key(SDLK_RETURN);break;
+        case 91:check(editor->modal==M::M_NONE && !editor->noDocument && !editor->mapHasUnsavedWork(),"a new map nothing was done to counts as work");
             click({cart::Editor::kToolX+3*cart::Editor::kToolW,25,cart::Editor::kToolW-4,16});   // STARTS
             stage=99;break;
         // A map with unsaved work: the command asks before it is put away (Cancel keeps it).
@@ -744,7 +746,7 @@ static int aiModNoMapWorkflow(const char* data,const char* self) {
         case 102:check(editor->modal==M::M_CONFIRM && editor->mTitle=="NEW AI MOD","the map's unsaved work was not asked about");key(SDLK_ESCAPE);break;
         case 103:check(editor->modal==M::M_NONE && !editor->aiModOnly && editor->scenario.starts.size()==1,"Cancel did not keep the map");
             key(SDLK_n,KMOD_CTRL|KMOD_SHIFT);break;
-        case 104:check(editor->modal==M::M_CONFIRM,"no question the second time");key(SDLK_RETURN);stage=1;break;
+        case 104:check(editor->modal==M::M_CONFIRM,"no question the second time");key(SDLK_RETURN);stage=1;break;   // on to 2
         case 2:check(editor->modal==M::M_NEWAIMOD && editor->mf[0]=="my-ai","Ctrl+Shift+N did not ask for the pack name, or asked about the map");
             key(SDLK_a,KMOD_CTRL);key(SDLK_BACKSPACE);text("Other");key(SDLK_RETURN);break;
         case 3:check(editor->modal==M::M_NEWAIMOD && editor->modalError.find("already exists")!=std::string::npos,"an existing pack name was accepted for a new AI mod");
@@ -756,7 +758,7 @@ static int aiModNoMapWorkflow(const char* data,const char* self) {
             check(!editor->menuRowEnabled(3,0) && !editor->menuRowEnabled(0,2) && !editor->menuRowEnabled(0,5) && editor->menuRowEnabled(0,6) && editor->menuRowEnabled(0,8),
                   "map menus are not disabled (or the AI mod commands are)");
             check(!fs::exists(install/"mods"/"game"/"Harder AI"),"the pack was written before SAVE");
-            check(editor->scenario.starts.empty() && !editor->dirty && editor->aiModReturnNew,"the discarded map was kept, or the placeholder is unsaved");
+            check(editor->scenario.starts.empty() && !editor->dirty && editor->noDocument,"the discarded map was kept, or something is left to save");
             find("araarch");break;
         case 5:click(cell("araarch",0));break;
         case 6:text("0");key(SDLK_RETURN);break;
@@ -794,9 +796,10 @@ static int aiModNoMapWorkflow(const char* data,const char* self) {
             saved=packFile("ai/takengine.txt");
             key(SDLK_RETURN);break;
         case 20:click(editor->aiDoneButton);break;
-        case 21:check(!editor->aiModOnly && !editor->aiOpen && !editor->aiMod && editor->modal==M::M_NEW,"CLOSE did not end the AI mod (back to New Map)");
-            key(SDLK_ESCAPE);break;
-        case 22:key(SDLK_o,KMOD_CTRL|KMOD_SHIFT);break;
+        case 21:check(!editor->aiModOnly && !editor->aiOpen && !editor->aiMod && editor->modal==M::M_NONE && editor->noDocument && !editor->dirty && title=="Cartographer",
+                      "CLOSE did not end the AI mod (back to the empty editor)");
+            key(SDLK_o,KMOD_CTRL|KMOD_SHIFT);break;
+        case 22:break;
         case 23:{
             check(editor->aiModOpenOpen && editor->aiModPickWorkspace && editor->modal==M::M_NONE,"Ctrl+Shift+O did not list the packs");
             SDL_Rect row{};for(const auto& [r,name]:editor->aiModPackRows)if(name=="Harder AI")row=r;
@@ -2451,8 +2454,90 @@ static int dataFolderWorkflow(const char* data) {
     std::cout<<"PASS: preferences data folder (invalid kept, cancel, shared setting saved at once, RESTART NOW reopens the map, restarted editor mounts it, unsaved prompt CANCEL/DISCARD, --data greys it, SAVE reopens the saved file, a missing map opens anyway, a failed save cancels the restart)\n";return 0;
 }
 
+// A bare launch (no map named, no --new) opens an EMPTY editor through real input: the
+// first-run welcome over no document, no New Map dialog, nothing to save, and only File's
+// map-free commands enabled. Every map path is inert there -- canvas clicks and wheel,
+// the toolbar, browser and minimap, map shortcuts, the greyed menu rows. File > New map
+// (menu) and Ctrl+O open their dialogs without asking about unsaved changes; cancelling
+// either stays empty. No recovery copy is written, and quitting asks nothing.
+// TAK_EDITOR_TEST_CAPTURE=<prefix> also writes <prefix>-blank.png (the empty editor).
+static int blankLaunchWorkflow(const char* data) {
+    namespace fs=std::filesystem;
+    const auto root=fs::temp_directory_path()/("tak-editor-blank-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directory(root);isolateProfile(root.string().c_str());
+    std::vector<std::string> args={"cartographer","--data",data,"--out",root.string()};
+    std::vector<char*> raw;for(auto& arg:args)raw.push_back(arg.data());
+    cart::Editor* editor=nullptr;cart::EditorHooks hooks;hooks.attached=[&](cart::Editor& e){editor=&e;};
+    uint64_t now=0;hooks.recoveryClock=[&]{return now;};
+    std::string failure;int stage=0;cart::Editor::Tool toolBefore{};bool gridBefore=false;float zoomBefore=0;
+    auto check=[&](bool value,const std::string& message) {if(!value && failure.empty())failure="stage "+std::to_string(stage)+": "+message;};
+    const int result=cart::runEditor(int(raw.size()),raw.data(),[&](SDL_Window* window,SDL_Renderer* renderer,int frame) {
+        const std::string title=SDL_GetWindowTitle(window);
+        if(!failure.empty() || frame>60) {if(frame>60)failure+=" (did not finish)";std::cerr<<"FAIL: "<<failure<<'\n';std::_Exit(3);}
+        float sx=1,sy=1;SDL_RenderGetScale(renderer,&sx,&sy);
+        auto press=[&](Uint32 type,int x,int y,Uint8 button=SDL_BUTTON_LEFT) {
+            SDL_Event e{};e.type=type;e.button.button=button;e.button.clicks=1;e.button.x=int(x*sx);e.button.y=int(y*sy);SDL_PushEvent(&e);
+        };
+        auto click=[&](int x,int y) {press(SDL_MOUSEBUTTONDOWN,x,y);press(SDL_MOUSEBUTTONUP,x,y);};
+        auto menuRow=[&](int menu,int row) {click(96+menu*72+20,10);click(96+menu*72+20,22+row*20+10);};
+        auto empty=[&](const char* what) {
+            check(editor->modal==cart::Editor::M_NONE && editor->noDocument && editor->noMap() && !editor->dirty && !editor->history.canUndo() &&
+                  title=="Cartographer",std::string(what)+" (title \""+title+"\")");
+        };
+        using M=cart::Editor::Modal;
+        switch(stage) {
+        case 0:check(editor->modal==M::M_MESSAGE && editor->mTitle=="WELCOME TO CARTOGRAPHER","the first run's welcome is not up (or New Map is)");
+            key(SDLK_RETURN);break;
+        case 1:{
+            empty("the welcome did not close onto an empty, clean editor");
+            for(const auto [menu,row]:{std::pair{0,0},{0,1},{0,6},{0,7},{0,8},{2,12},{2,13},{2,18},{5,0},{5,1}})
+                check(editor->menuRowEnabled(menu,row),"a map-free command is disabled: menu "+std::to_string(menu)+" row "+std::to_string(row));
+            for(const auto [menu,row]:{std::pair{0,2},{0,3},{0,4},{0,5},{1,0},{1,1},{1,2},{2,0},{2,2},{2,7},{2,17},{3,0},{3,1},{3,3},{3,11},{4,0},{4,1}})
+                check(!editor->menuRowEnabled(menu,row),"a map command is enabled: menu "+std::to_string(menu)+" row "+std::to_string(row));
+            toolBefore=editor->tool;gridBefore=editor->showGrid;zoomBefore=editor->mapView.zoom();
+            // Everything that edits, views or tests a map: none of it may do anything.
+            const int cx=cart::Editor::kPaletteW+200,cy=cart::Editor::kMenuH+150;
+            click(cart::Editor::kToolX+3*cart::Editor::kToolW+30,32);   // STARTS tool
+            click(cart::Editor::kModeX+30,32);click(cart::Editor::kTestX+30,32);   // PLACE mode, TEST MAP
+            click(cx,cy);press(SDL_MOUSEBUTTONDOWN,cx,cy,SDL_BUTTON_RIGHT);press(SDL_MOUSEBUTTONUP,cx+40,cy+30,SDL_BUTTON_RIGHT);
+            click(40,200);click(editor->w-100,cart::Editor::kMenuH+40);   // the browser, the minimap
+            {SDL_Event wheel{};wheel.type=SDL_MOUSEWHEEL;wheel.wheel.y=1;SDL_PushEvent(&wheel);}
+            for(const SDL_Keycode k:{SDLK_TAB,SDLK_p,SDLK_r,SDLK_u,SDLK_c,SDLK_t,SDLK_a,SDLK_k,SDLK_g,SDLK_b,SDLK_m,SDLK_F5,SDLK_F6,SDLK_2,SDLK_LEFT,SDLK_DELETE})key(k);
+            for(const SDL_Keycode k:{SDLK_s,SDLK_b,SDLK_z,SDLK_y,SDLK_l,SDLK_v,SDLK_d})key(k,KMOD_CTRL);
+            key(SDLK_s,KMOD_CTRL|KMOD_SHIFT);key(SDLK_m,KMOD_SHIFT);
+            menuRow(0,2);menuRow(0,5);menuRow(3,0);menuRow(2,2);   // greyed rows: Save, Test Map, Properties, Grid
+            break;
+        }
+        case 2:
+            empty("a map input acted on the empty editor");
+            check(editor->tool==toolBefore && editor->showGrid==gridBefore && editor->mapView.zoom()==zoomBefore && !editor->clearArm && editor->scenario.starts.empty() &&
+                  !editor->playtest.running() && !editor->aiOpen && !editor->useOnlyOpen && !editor->scriptOpen && !editor->regionsOpen && editor->menuOpen<0,
+                  "a tool, view, dialog or test changed");
+            check(!fs::exists(root/"Untitled.kmp") && !fs::exists(root/"Untitled.tnt"),"something was saved");
+            if(const char* prefix=SDL_getenv("TAK_EDITOR_TEST_CAPTURE")) {
+                int pw=0,ph=0;SDL_GetRendererOutputSize(renderer,&pw,&ph);std::vector<uint8_t> rgba(size_t(pw)*ph*4);
+                if(SDL_RenderReadPixels(renderer,nullptr,SDL_PIXELFORMAT_RGBA32,rgba.data(),pw*4)==0)tak::png::write(std::string(prefix)+"-blank.png",pw,ph,rgba);
+            }
+            menuRow(0,0);break;   // File > New map
+        case 3:check(editor->modal==M::M_NEW,"File > New map did not open New Map (or asked about unsaved changes)");key(SDLK_ESCAPE);break;
+        case 4:empty("cancelling New Map left the empty editor");key(SDLK_o,KMOD_CTRL);break;
+        case 5:check(editor->modal==M::M_OPENPATH,"Ctrl+O did not open Open Map");key(SDLK_ESCAPE);break;
+        case 6:empty("cancelling Open Map left the empty editor");key(SDLK_n,KMOD_CTRL);break;
+        case 7:check(editor->modal==M::M_NEW,"Ctrl+N did not open New Map");key(SDLK_ESCAPE);now=10*60000;break;   // well past the recovery minute
+        case 8:empty("cancelling Ctrl+N's New Map left the empty editor");check(!editor->recoveryFilesPresent && !editor->recoveryJob.valid(),"a recovery copy was written for no document");
+            {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}break;
+        default:check(!editor->running,"quitting the empty editor asked something ("+std::to_string(int(editor->modal))+")");break;   // the quit's own frame
+        }
+        ++stage;
+    },hooks);
+    fs::remove_all(root);
+    if(result || !failure.empty() || stage!=10) {std::cerr<<"FAIL: "<<(failure.empty()?"the editor did not quit (stage "+std::to_string(stage)+")":failure)<<'\n';return 1;}
+    std::cout<<"PASS: bare launch opens empty (welcome, no New Map, clean, map commands off and inert), New/Open map cancel back to empty, no recovery, quit asks nothing\n";return 0;
+}
+
 int main(int argc,char** argv) {
     if(argc>1 && std::string(argv[1])=="--data")return recordTestClient(argc,argv);   // TEST IN GAME's client
+    if(argc==3 && std::string(argv[2])=="blank-launch")return blankLaunchWorkflow(argv[1]);
     if(argc==3 && std::string(argv[2])=="aimod-nomap")return aiModNoMapWorkflow(argv[1],argv[0]);
     if(argc==5 && std::string(argv[2])=="recovery")return recoveryWorkflow(argv[1],argv[3],argv[4]);
     if((argc==3 || argc==4) && std::string(argv[2])=="validation")return validationWorkflow(argv[1],argc==4?argv[3]:"Ulasem Arena");

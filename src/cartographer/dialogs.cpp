@@ -178,7 +178,7 @@ void cart::Editor::adoptFreshMap(FreshMap fm,const std::string& nm,const std::st
     paletteScroll = 0;
     edited = true;
     SDL_SetWindowTitle(win, ("Cartographer -- " + mapName).c_str());
-    dirty = true; historyPending=true;
+    dirty = true; historyPending=true;noDocument=false;
     modal = M_NONE; SDL_StopTextInput();
 }
 

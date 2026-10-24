@@ -207,7 +207,7 @@ void cart::Editor::closeAiProfiles() {
     if(!aiOpen)return;
     aiCommitText();
     if(aiModDirty()) {aiClosePack([this] {closeAiProfiles();});return;}   // asks first; closes after
-    if(aiModOnly) {finishAiModWorkspace(true);return;}   // closing the pack ends an AI mod without a map
+    if(aiModOnly) {finishAiModWorkspace();return;}   // closing the pack ends an AI mod without a map
     aiMod.reset();aiModSaveOpen=aiModOpenOpen=false;
     aiOpen=aiStartOpen=aiMergeOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();aiWordPick=-2;aiGroupCell=-1;
     SDL_StopTextInput();
@@ -1350,7 +1350,7 @@ void cart::Editor::aiOpenPack(const std::string& pack) {
 void cart::Editor::aiClosePack(std::function<void()> then) {
     if(!aiMod) {if(then)then();return;}
     auto close=[this,then] {
-        if(aiModOnly) {finishAiModWorkspace(true);if(then)then();return;}   // no map to return to inside the window
+        if(aiModOnly) {finishAiModWorkspace();if(then)then();return;}   // no map to return to inside the window
         aiMod.reset();aiModSaveOpen=false;aiViewCache=AiTabView{};aiIssues.clear();aiView=AiView::Table;aiFocus=AI_NONE;aiNote.clear();
         if(aiOpen)aiUseRoster(aiPack?aiPacks[size_t(aiPack-1)]:"");
         if(then)then();
@@ -1397,7 +1397,8 @@ void cart::Editor::aiCommitModName() {
 // The window opens with a game mod pack as the only document. The map is never shown: a
 // map without unsaved work is put aside as it is (and comes back when the mod closes);
 // one with unsaved work is discarded after the menu command asked, leaving a blank
-// placeholder; a new map nothing was done to counts as no work.
+// placeholder; a new map nothing was done to counts as no work. Either of those two
+// leaves no document behind (noDocument): closing the mod returns to the empty editor.
 bool cart::Editor::mapHasUnsavedWork() const {
     return dirty && (historyPending || history.canUndo() || history.canRedo() || !recoveredFrom.empty() || !mapPath.empty() ||
                      !scenario.generatorRecipe.empty());
@@ -1420,8 +1421,7 @@ void cart::Editor::requestAiMod(bool create) {
 
 void cart::Editor::startAiModWorkspace(const std::string& pack,bool fresh) {
     commitHistory();
-    aiModReturnNew=dirty;   // a placeholder (or a new map nothing was done to) is not returned to
-    if(dirty) {
+    if(dirty) {   // nothing to return to: closing the mod leaves no document open
         if(mapHasUnsavedWork()) {   // asked already (requestAiMod): a blank placeholder replaces it
             mapView.quiesce();
             try {
@@ -1431,7 +1431,7 @@ void cart::Editor::startAiModWorkspace(const std::string& pack,bool fresh) {
             } catch(const std::exception& error) {openMessage("AI MOD",error.what());return;}
             resetHistory=true;commitHistory();
         }
-        history.markSaved();dirty=historyPending=false;
+        history.markSaved();dirty=historyPending=false;noDocument=true;
     }
     aiPack=0;aiPackFiles.reset();
     openAiProfiles();
@@ -1441,24 +1441,22 @@ void cart::Editor::startAiModWorkspace(const std::string& pack,bool fresh) {
         aiNote="New AI mod "+pack+": edit TAK ENGINE AI (all six levels) and DEFAULT AI (RETAIL), then SAVE TO PACK makes mods/game/"+pack+"/ai/.";
     } else {
         aiOpenPack(pack);
-        if(!aiMod) {const auto why=aiNote;finishAiModWorkspace(true);openMessage("OPEN AI MOD FAILED",why);return;}
+        if(!aiMod) {const auto why=aiNote;finishAiModWorkspace();openMessage("OPEN AI MOD FAILED",why);return;}
     }
     std::fprintf(stderr,"cartographer: AI mod %s (%s), no map open\n",pack.c_str(),fresh?"new":"opened");
 }
 
-void cart::Editor::finishAiModWorkspace(bool toMapEditor) {
+void cart::Editor::finishAiModWorkspace() {
     aiMod.reset();aiModSaveOpen=aiModOpenOpen=aiModPickWorkspace=false;aiAfterSave=nullptr;
     aiOpen=aiStartOpen=aiMergeOpen=false;aiFocus=AI_NONE;aiView=AiView::Table;aiPendingName.clear();aiWordPick=-2;aiGroupCell=-1;
     aiViewCache=AiTabView{};aiIssues.clear();aiNote.clear();
-    aiModOnly=false;
+    aiModOnly=false;   // back to the map put aside, or to no document (noDocument)
     SDL_StopTextInput();
-    const bool placeholder=aiModReturnNew;aiModReturnNew=false;
-    if(toMapEditor && placeholder)openModal(M_NEW);   // as a bare launch: what shall we make?
 }
 
 void cart::Editor::leaveAiModThen(std::function<void()> then) {
     aiCommitText();
-    auto leave=[this,then] {finishAiModWorkspace(false);if(then)then();};
+    auto leave=[this,then] {finishAiModWorkspace();if(then)then();};
     if(aiModDirty())openConfirm("CLOSE AI MOD","Discard the unsaved changes to game mod "+aiMod->pack+"? They are not saved anywhere else.",leave);
     else leave();
 }

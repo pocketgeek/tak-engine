@@ -147,6 +147,10 @@ struct Session {
     std::string recoveryStatus;
 
     bool showWelcome=false;
+    // No map is open: a bare launch (File makes or opens one), or an AI mod discarded the
+    // map (or a new one nothing was done to). mapViewPtr then holds a hidden, clean
+    // placeholder that is never drawn or edited; File > New map / Open map replace it.
+    bool noDocument=false;
     std::string mapPath;
     tak::tnt::Scenario scenario;
     std::unique_ptr<MapView> mapViewPtr;
@@ -650,17 +654,19 @@ struct Editor : Session {
     void drawAiModDialogs();
     // ---- an AI mod without a map (File > New AI mod / Open AI mod) ----
     // The AI Profiles window with one game mod pack as the only document: the map is
-    // neither shown nor edited (it is put aside clean, or a blank placeholder when it had
-    // to be discarded), map menus are disabled, and closing the pack ends the mode.
+    // neither shown nor edited (it is put aside clean, or replaced by no document when it
+    // had to be discarded), map menus are disabled, and closing the pack ends the mode.
     bool aiModOnly=false;
-    bool aiModReturnNew=false;                   // leaving opens New Map (the map behind is a placeholder)
+    // No map to show or edit (an AI mod's workspace, or no document at all): only the
+    // File commands that need no map run, and the canvas, browser and minimap are inert.
+    bool noMap() const {return aiModOnly || noDocument;}
     bool aiModPickWorkspace=false;               // the pack list was opened by File > Open AI mod
     std::function<void()> aiAfterSave;           // TEST IN GAME: continues after SAVE TO PACK succeeded
     SDL_Rect aiTestButton{};
     bool mapHasUnsavedWork() const;
     void requestAiMod(bool create);              // the menu command: asks about the map, then names or lists packs
     void startAiModWorkspace(const std::string& pack,bool fresh);
-    void finishAiModWorkspace(bool toMapEditor);
+    void finishAiModWorkspace();
     void leaveAiModThen(std::function<void()> then);   // asks about unsaved pack edits first
     bool menuRowEnabled(int menu,int row) const;
     void aiTestInGame();

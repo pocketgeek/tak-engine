@@ -122,22 +122,29 @@ or `zenity`.
 
 ### The first screen
 
-![Cartographer just after starting: the NEW MAP dialog (map name Untitled, width 8, height 8, world aramon, with CREATE, RANDOM and CANCEL buttons) over a blank brown map](img/cartographer/new-map.jpg)
+Started from its shortcut, Cartographer opens an empty window with no map: the
+middle reads **NO MAP OPEN**, and the toolbar, browser and minimap stay empty
+until a map is open. Start from the **File** menu:
 
-*A plain start: the **New Map** dialog over a blank 8 × 8 Aramon map named Untitled.*
-
-Started from its shortcut, Cartographer opens on a blank map called
-**Untitled** with the **New Map** dialog already open:
-
-- To make a new map, fill in the dialog and click **CREATE** (or **RANDOM** for
-  a generated map; see [Generating a random map](#generating-a-random-map)).
-- To edit an existing map, click **CANCEL** and press **Ctrl+O**. See
+- **File → New map** (**Ctrl+N** or **N**) opens the **New Map** dialog. Fill
+  it in and click **CREATE** (or **RANDOM** for a generated map; see
+  [Generating a random map](#generating-a-random-map)).
+- **File → Open map** (**Ctrl+O**) edits an existing map. See
   [Opening a map](#opening-a-map).
+- **File → New AI mod...** (**Ctrl+Shift+N**) and **Open AI mod...**
+  (**Ctrl+Shift+O**) edit a game mod's AI files, which need no map. See
+  [Making an AI mod without a map](#making-an-ai-mod-without-a-map).
 
-The blank Untitled map already counts as unsaved, so closing Cartographer
-straight away asks whether to save it. Choose **DISCARD** if you do not want it.
+Until then only these File commands, **Exit**, the UI size under **View**,
+**View → Preferences** and **Help** are available; everything else is greyed
+out. Cancelling either dialog returns to the empty window. There is nothing to
+save, so closing Cartographer straight away asks nothing.
 
 ### The New Map dialog
+
+![The NEW MAP dialog: map name Untitled, width 8, height 8, world aramon, with CREATE, RANDOM and CANCEL buttons](img/cartographer/new-map.jpg)
+
+*The **New Map** dialog.*
 
 | Field | Choices |
 | --- | --- |
@@ -163,7 +170,7 @@ shortcut, without a map named) shows a **Recover map** message:
 | Button | Result |
 | --- | --- |
 | **Recover** | Opens the recovered map, still unsaved, with its name and save folder. |
-| **Discard recovery** | Deletes the recovery copy and continues to the New Map dialog. |
+| **Discard recovery** | Deletes the recovery copy and continues to the empty window. |
 | **Cancel** | Closes Cartographer and keeps the recovery copy for next time. |
 
 Saving the map, or closing Cartographer normally, removes the recovery copies.
@@ -179,7 +186,7 @@ options work in every build:
 | `<file.kmp>` or `<file.tnt>` | Open a map file on disk. |
 | `--data <folder>` | Use this game folder for this launch only. It overrides the saved setting without changing it, and Preferences then shows the folder as locked. |
 | `--out <folder>` | Save into this folder instead of the game's `Maps` folder. |
-| `--new WxH --world <world> [--random]` | Start on a new blank (or randomly generated) map of W × H units instead of showing the New Map dialog. |
+| `--new WxH --world <world> [--random]` | Start on a new blank (or randomly generated) map of W × H units instead of the empty window. |
 | `--save <file.tnt>` | Write the map (an installed map named on the same command line, or one made with `--new`) as loose files (see [Export loose files](#export-loose-files)) and exit without starting the editor. |
 | `--bundle <file.kmp>` | The same, but write a `.kmp`. |
 
@@ -190,9 +197,9 @@ options work in every build:
 This builds a small, fair two-player map from scratch and plays it. Each step
 links to the section that explains it in full.
 
-1. **Create the map.** Cartographer starts with the **New Map** dialog open. (If
-   you closed it, press **N** and click **OK** to discard the blank Untitled
-   map.) The name *Untitled* is already selected, so type over it, for example
+1. **Create the map.** Cartographer starts with no map open: choose
+   **File → New map** (or press **Ctrl+N**). The name *Untitled* is already
+   selected, so type over it, for example
    *Twin Rivers*. Set **WIDTH** and **HEIGHT** to 16 and **WORLD** to aramon.
    Click **CREATE**.
 2. **Turn on live symmetry.** Press **M**. A cyan line appears down the middle
@@ -1649,8 +1656,9 @@ built by any of our levels while the pack is ticked. Nothing is saved yet.*
   `mods/game/<pack>/ai/`.
 - **The open map.** If it has unsaved changes, the command asks first and the
   changes are lost. A map without unsaved changes is only put aside: it comes
-  back when the AI mod closes. A new, untouched map counts as nothing to lose;
-  closing the AI mod then shows **New Map**, as a fresh start does.
+  back when the AI mod closes. A new, untouched map counts as nothing to lose.
+  Where no map is put aside (a lost or untouched map, or none open), closing the
+  AI mod returns to the empty window, as a fresh start shows it.
 - **TAK ENGINE AI** edits the pack's `ai/takengine.txt`, read by all six of our
   levels over their own built-in tables, exactly as on a map's tab (PREVIEW
   LEVEL included).

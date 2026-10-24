@@ -193,7 +193,8 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     // Resolve the map name to its .tnt VFS path (Maps/<name>.tnt or a .kmp's
     // kmap/<name>.tnt), same resolution the game uses. An empty name (or --new
     // without --save) starts a fresh blank map instead -- mapPath stays empty so
-    // there are no sibling scenario files to load.
+    // there are no sibling scenario files to load. A bare interactive launch opens
+    // no document at all: the blank map is only a hidden placeholder (noDocument).
     showWelcome=interactive && mapName.empty() && pendingOpen.empty() && !newW && !preferences.guideSeen;
     mapPath=recoveredMapPath;
     if(recoveredMapPath.empty())documentRequest=mapName;   // an installed map reopens by name
@@ -236,12 +237,13 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
             throw Exit{1};
         }
         mapName = "Untitled";
+        noDocument=interactive && !newW && pendingOpen.empty();   // File > New map / Open map makes the first one
         scenario.kingdom = newWorld; scenario.sizeW = fw; scenario.sizeH = fh;
         scenario.missionName = mapName;
         scenario.generatorRecipe=fm.recipe;
         scenario.starts = std::move(fm.starts);
         mapViewPtr = std::make_unique<MapView>(ren, vfs, std::move(fm.map));
-        SDL_SetWindowTitle(win, "Cartographer -- Untitled");
+        SDL_SetWindowTitle(win, noDocument?"Cartographer":"Cartographer -- Untitled");
     }
     MapView& mapView = *mapViewPtr;
     mapView.setBilinear(true);
@@ -264,7 +266,7 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     std::string useOnlyTdf = mapPath.substr(0, mapPath.rfind('.')) + ".tdf";
     if (!scenario.useOnlyUnits.empty())
         for (auto& t : cart::loadUseOnly(vfs, useOnlyTdf)) useOnly.insert(t);
-    dirty = mapPath.empty() || !recoveredFrom.empty();
+    dirty = (mapPath.empty() && !noDocument) || !recoveredFrom.empty();   // no document: nothing to lose
     history.reset(historySnapshot(),!dirty);
 
     world = scenario.kingdom.empty() ? "aramon" : scenario.kingdom;
@@ -305,10 +307,9 @@ cart::Editor::Editor(int argc,char** argv,const FrameHook& frameHook,const Edito
     nextRecovery=recoveryClock()+60000;
     if(interactive)applyDisplayMode();   // a remembered borderless fullscreen (shots keep their window size)
     prepareShot();
-    // A bare launch (no map named, no --new size) opens on the blank map with
-    // the New Map dialog already up, so the first thing is "what shall we make?".
+    // A bare launch (no map named, no --new size) opens with no document: the File
+    // menu makes or opens a map, or an AI mod.
     if(!pendingOpen.empty()) openDocument(pendingOpen);   // a failure says why (OPEN FAILED) over the blank map
-    else if (mapPath.empty() && newW == 0 && shotPath.empty()) openModal(M_NEW);
 }
 
 int cart::Editor::run() {
@@ -368,13 +369,14 @@ int cart::Editor::run() {
             // the window has no dialog of its own up.
             const bool workspaceMenus=aiModOnly && aiOpen && !aiStartOpen && !aiMergeOpen && !aiModSaveOpen && !aiModOpenOpen && aiWordPick==-2;
             if(modal==M_NONE && !scriptOpen && (!aiOpen || workspaceMenus) && !useOnlyOpen && !regionsOpen && handleMenuInput(e))continue;
-            if(modal==M_NONE && !scriptOpen && !aiOpen && !useOnlyOpen && !regionsOpen && (handleMinimapInput(e) || handlePaletteScrollbar(e) || handlePaletteFocus(e)))continue;
+            if(modal==M_NONE && !scriptOpen && !aiOpen && !useOnlyOpen && !regionsOpen && !noMap() && (handleMinimapInput(e) || handlePaletteScrollbar(e) || handlePaletteFocus(e)))continue;
             if(regionsOpen && modal==M_NONE) {handleRegionsList(e);continue;}
             if (useOnlyOpen) {handleUseOnly(e);continue;}
             if (modal != M_NONE) {handleModal(e);continue;}
             if (scriptOpen) {handleScripting(e);continue;}
             if (aiOpen) {handleAiProfiles(e);continue;}
             if (aiModOpenOpen) {handleAiModDialogs(e);continue;}   // File > Open AI mod's pack list
+            if (noMap()) {handleShortcuts(e);continue;}            // no document: File's keys only, no canvas
             // Toolbar, canvas keys, global shortcuts, then palette and canvas
             // pointer input; the first handler that takes the event wins.
             if(handleToolbarModes(e) || handleCanvasKeys(e) || handleShortcuts(e) ||
@@ -391,22 +393,22 @@ int cart::Editor::run() {
         if(overlayInvalidated || historyPending || resetHistory) {overlayTexture.reset();overlayLegend.clear();overlayInvalidated=false;}
         if((historyPending || resetHistory) && !(SDL_GetMouseState(nullptr,nullptr)&(SDL_BUTTON_LMASK|SDL_BUTTON_RMASK)))
             commitHistory();
-        const std::string title=aiModOnly?"Cartographer -- AI mod "+(aiMod?aiMod->pack:std::string())+(aiModDirty()?" *":""):"Cartographer -- "+mapName+(modal==M_OBJECTS?" [Placed units]":modal==M_MODEL_LOADING?" [Loading model]":modal==M_MODEL?" [Unit model]":modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":modal==M_CHECKING?" [Checking map]":modal==M_ISSUES?" [Validation results]":modal==M_ANALYZING?" [Analyzing]":aiOpen?" [AI]":overlayTexture?" [Terrain overlay]":"")+(dirty?" *":"");
+        const std::string title=noDocument && !aiModOnly?std::string("Cartographer"):aiModOnly?"Cartographer -- AI mod "+(aiMod?aiMod->pack:std::string())+(aiModDirty()?" *":""):"Cartographer -- "+mapName+(modal==M_OBJECTS?" [Placed units]":modal==M_MODEL_LOADING?" [Loading model]":modal==M_MODEL?" [Unit model]":modal==M_GENERATING?" [Generating]":modal==M_GENERATED?" [Generated preview]":modal==M_CHECKING?" [Checking map]":modal==M_ISSUES?" [Validation results]":modal==M_ANALYZING?" [Analyzing]":aiOpen?" [AI]":overlayTexture?" [Terrain overlay]":"")+(dirty?" *":"");
         SDL_SetWindowTitle(win,title.c_str());
         autosaveRecovery();
         refreshMinimap();updateLiveMinimap();
-        if(!aiModOnly)mapView.ensureChunks(canvasW, canvasH);
+        if(!noMap())mapView.ensureChunks(canvasW, canvasH);
 
         SDL_SetRenderDrawColor(ren, 24, 26, 32, 255);
         SDL_RenderClear(ren);
 
-        if(!aiModOnly) {   // an AI mod without a map: a plain backdrop behind its window
+        if(!noMap()) {   // no map (none open, or an AI mod's): a plain backdrop
             drawCanvas();
             drawMinimap();
             drawPalette();
         }
         drawChrome();
-        if(!aiModOnly) {
+        if(!noMap()) {
             drawSectionMenu();
             drawClearArea();
             drawRegionsList();

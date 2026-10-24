@@ -2171,9 +2171,10 @@ either program changes it for both.
 
 ### Basics
 
-- A plain start opens the **New Map** dialog: choose a name, a size and a world
-  and click **Create**, or **Random** for a generated map. **Ctrl+O** opens an
-  existing map.
+- A plain start opens an empty editor with no map. **File → New map**
+  (**Ctrl+N**) asks for a name, a size and a world: click **Create**, or
+  **Random** for a generated map. **File → Open map** (**Ctrl+O**) opens an
+  existing map, and **File → New AI mod** / **Open AI mod** edit a game mod's AI.
 - **Ctrl+S** saves a playable `.kmp` map, by default in your install's `Maps`
   folder, where the game finds it the next time it starts; **Ctrl+Shift+S** is
   Save As. Saving keeps the previous version as a `.bak` file, and unsaved work

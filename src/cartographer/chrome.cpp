@@ -73,10 +73,10 @@ void cart::Editor::drawMinimap() {
     }
 }
 
-// While an AI mod is edited without a map, only the commands that need no map run:
-// File's New/Open map and New/Open AI mod, Exit, the UI scale, Preferences and Help.
+// With no map (none open, or an AI mod edited without one), only the commands that need
+// no map run: File's New/Open map and New/Open AI mod, Exit, the UI scale, Preferences and Help.
 bool cart::Editor::menuRowEnabled(int menu,int row) const {
-    if(!aiModOnly)return true;
+    if(!noMap())return true;
     if(menu==0)return row==0 || row==1 || row>=6;
     if(menu==2)return row==12 || row==13 || row==18;
     return menu==5;
@@ -168,7 +168,7 @@ bool cart::Editor::handleMenuInput(SDL_Event& e) {
     if(e.type==SDL_KEYDOWN && e.key.keysym.sym==SDLK_ESCAPE && menuOpen>=0) {menuOpen=-1;return true;}
     if(e.type==SDL_MOUSEBUTTONDOWN && e.button.button==SDL_BUTTON_LEFT) {
         const int mx=e.button.x,my=e.button.y;
-        if(!aiModOnly && my>=25 && my<41 && mx>=kTestX && mx<kTestX+kTestW) {testMap();return true;}
+        if(!noMap() && my>=25 && my<41 && mx>=kTestX && mx<kTestX+kTestW) {testMap();return true;}
         if(my<22 && mx>=96 && mx<96+int(menuNames.size())*72) {const int item=(mx-96)/72;menuOpen=menuOpen==item?-1:item;return true;}
         if(menuOpen>=0) {
             const int column=menuOpen;menuOpen=-1;
@@ -193,6 +193,17 @@ bool cart::Editor::handleToolbarModes(SDL_Event& e) {
 }
 
 bool cart::Editor::handleShortcuts(SDL_Event& e) {
+    if(noMap()) {   // no map: File's map-free commands through the menu's own checks, F11, Esc to leave
+        if(e.type!=SDL_KEYDOWN)return false;
+        const auto key=e.key.keysym.sym;const auto mod=e.key.keysym.mod;const bool ctrl=(mod&(KMOD_CTRL|KMOD_GUI))!=0;
+        if(ctrl && (mod&KMOD_SHIFT) && (key==SDLK_n || key==SDLK_o))menuAction(0,key==SDLK_n?6:7);
+        else if(ctrl && key==SDLK_o)menuAction(0,1);
+        else if(key==SDLK_n && !(mod&(KMOD_SHIFT|KMOD_ALT)))menuAction(0,0);
+        else if(key==SDLK_F11)toggleFullscreen();
+        else if(key==SDLK_ESCAPE) {SDL_Event quit{};quit.type=SDL_QUIT;SDL_PushEvent(&quit);}
+        else return false;
+        return true;
+    }
     if(e.type==SDL_KEYDOWN && (e.key.keysym.mod & (KMOD_CTRL|KMOD_GUI)) &&
        (e.key.keysym.sym==SDLK_z || e.key.keysym.sym==SDLK_y)) {
         commitHistory();
@@ -289,14 +300,14 @@ void cart::Editor::drawChrome() {
     // Chrome strips.
     fillRect(ren, 0, 0, w, kMenuH, 46, 48, 58);
     fillRect(ren, 0, kMenuH - 1, w, 1, 12, 12, 16);
-    if(!aiModOnly)fillRect(ren, kPaletteW - 1, kMenuH, 1, canvasH, 12, 12, 16);
+    if(!noMap())fillRect(ren, kPaletteW - 1, kMenuH, 1, canvasH, 12, 12, 16);
     fillRect(ren, 0, h - kStatusH, w, kStatusH, 38, 40, 50);
     fillRect(ren, 0, h - kStatusH, w, 1, 12, 12, 16);
 
     // Menu strip: title + tool buttons (active one highlighted).
     cart::drawText(ren, "CARTOGRAPHER", 6, 7, 1, 200, 200, 210);
     const auto* names = kToolNames;
-    for (int t = 0; t < kToolCount && !aiModOnly; ++t) {
+    for (int t = 0; t < kToolCount && !noMap(); ++t) {
         int bx = kToolX + t * kToolW;
         bool active = !regionCanvas && int(tool) == t;
         fillRect(ren, bx, 25, kToolW - 4, 16, active ? 90 : 60, active ? 80 : 62,
@@ -308,6 +319,9 @@ void cart::Editor::drawChrome() {
     static const char* modes[]={"PLACE","SELECT","ERASE","PAN"};
     if(aiModOnly) {   // no map: no tools, modes or Test Map
         cart::drawText(ren,"AI MOD (NO MAP OPEN): "+(aiMod?aiMod->pack:std::string()),kToolX,29,1,255,215,150);
+    } else if(noDocument) {   // nothing open: a short pointer to the File menu, centred on the backdrop
+        const std::string lines[]={"NO MAP OPEN","File > New map (Ctrl+N) or Open map (Ctrl+O).","AI mods: File > New AI mod or Open AI mod."};
+        for(int i=0;i<3;++i)cart::drawText(ren,lines[i],(w-cart::textWidth(lines[i],1))/2,kMenuH+canvasH/2-24+i*16,1,i?200:235,i?205:225,i?215:195);
     } else {
         for(int i=0;i<4;++i)cart::drawButton(ren,kModeX+i*kModeW,25,kModeW-4,16,modes[i],int(editMode)==i);
         cart::drawButton(ren,kRegionsX,25,kRegionsW,16,"REGIONS",regionCanvas);
@@ -321,6 +335,7 @@ void cart::Editor::drawChrome() {
     }
     if(!aiModOnly)drawMenuRows();   // an AI mod's window would cover them: drawn after it (main.cpp)
 
+    if(noDocument && !aiModOnly) {cart::drawText(ren,"NO MAP OPEN"+(recoveryStatus.empty()?std::string():"   "+recoveryStatus),6,h-kStatusH+7,1,200,205,215);return;}
     if(aiModOnly) {
         const std::string pack=aiMod?aiMod->pack:"";
         cart::drawText(ren,"AI MOD "+pack+": mods/game/"+pack+"/ai/ in the data folder"+(aiModDirty()?"   UNSAVED":"   SAVED")+
@@ -416,7 +431,7 @@ void cart::Editor::edgeScroll() {
     const float dt=edgeLast?std::min(.1f,float(now-edgeLast)/1000.f):0.f;edgeLast=now;
     int px,py;const Uint32 buttons=SDL_GetMouseState(&px,&py);const int x=int(px/kUIScale),y=int(py/kUIScale);
     int ww=0,wh=0;SDL_GetWindowSize(win,&ww,&wh);   // the pointer's own (window) coordinates
-    const bool idle=preferences.edgeScroll && SDL_GetMouseFocus()==win && (SDL_GetWindowFlags(win)&SDL_WINDOW_INPUT_FOCUS) && !buttons &&
+    const bool idle=preferences.edgeScroll && !noMap() && SDL_GetMouseFocus()==win && (SDL_GetWindowFlags(win)&SDL_WINDOW_INPUT_FOCUS) && !buttons &&
         modal==M_NONE && menuOpen<0 && !scriptOpen && !aiOpen && !useOnlyOpen && !regionsOpen && !sectionMenuOpen && !minimapDrag && !paletteThumbDrag && !cart::pointIn(x,y,miniRect);
     auto d=idle?cart::edgeScrollDirection(x,y,kPaletteW,kMenuH,canvasW,canvasH,cart::kEdgeScrollBand):cart::EdgeDirection{};
     if(const auto rim=idle?cart::windowRimDirection(px,py,ww,wh):cart::EdgeDirection{};rim.any()) {if(rim.x)d.x=rim.x;if(rim.z)d.z=rim.z;}
@@ -432,7 +447,7 @@ void cart::Editor::drawHints() {
     // Delayed hover help stays out of the way during gestures and dialogs.
     std::string hint;
     int hx,hy;const auto mouseButtons=SDL_GetMouseState(&hx,&hy);hx=int(hx/kUIScale);hy=int(hy/kUIScale);
-    if(modal==M_NONE && menuOpen<0 && !scriptOpen && !aiOpen && !regionsOpen && !useOnlyOpen && !mouseButtons) {
+    if(modal==M_NONE && menuOpen<0 && !scriptOpen && !aiOpen && !regionsOpen && !useOnlyOpen && !mouseButtons && !noMap()) {
         if(hy>=25 && hy<41) {
             if(hx>=kToolX && hx<kToolX+kToolCount*kToolW) {
                 const char* hints[]={

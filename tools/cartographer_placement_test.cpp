@@ -201,17 +201,22 @@ std::map<std::string,std::string> mapsByWorld(const std::string& data) {
 // ---- starts: the crash regression -------------------------------------------
 
 // Tool switches into STARTS and start edits while the STARTS browser is up,
-// on one document. `dialogWorld` first creates the map with the New dialog.
+// on one document. `dialogWorld` first creates the map with the New dialog (File >
+// New map, Ctrl+N, from the empty editor a bare launch opens).
 bool startsCase(const std::string& data,const std::string& label,std::vector<std::string> args,const std::string& dialogWorld) {
     const auto root=tempRoot("starts");isolateProfile(root);
     args.insert(args.begin(),"cartographer");args.insert(args.end(),{"--data",data,"--out",root});
     static constexpr Editor::Tool kWalk[]={Editor::FEATURES,Editor::TERRAIN,Editor::UNITS,Editor::TERRAIN,Editor::STARTS,
         Editor::FEATURES,Editor::STARTS,Editor::UNITS,Editor::STARTS};
-    int stage=dialogWorld.empty()?1:0;size_t before=0,walk=0;int placed=-1,cellX=0,cellZ=0;bool ok=true;
+    int stage=dialogWorld.empty()?1:-1;size_t before=0,walk=0;int placed=-1,cellX=0,cellZ=0;bool ok=true;
     auto expect=[&](bool value,const std::string& what){ok&=check(value,label+": "+what);};
     const bool ran=drive(args,[&](Editor& e,const Input& in) {
         auto& starts=e.scenario.starts;
         switch(stage++) {
+        case -1:   // the bare launch: no document (past the first-run welcome), then Ctrl+N
+            if(e.modal==Editor::M_MESSAGE) {in.key(SDLK_RETURN);--stage;return true;}
+            expect(e.modal==Editor::M_NONE && e.noDocument && !e.dirty,"a bare launch opens with no document");
+            in.key(SDLK_n,KMOD_CTRL);return true;
         case 0: {   // New Map dialog: WORLD is the fourth field, cycled with the arrow keys
             expect(e.modal==Editor::M_NEW,"New Map dialog opens");
             const auto& worlds=e.kWorldOpts;
@@ -1550,6 +1555,11 @@ int blockedWorkflow(const std::string& data) {
     };
     auto kmp=[&](const Editor& e) {return fs::path(root)/(e.mapName+".kmp");};
     const int brushes=int(cart::kBlockedBrushSizes.size());
+    s.then([&](Editor& e,const Input& in) {   // a bare launch: no document (past the first-run welcome); Ctrl+N
+        if(e.modal==Editor::M_MESSAGE) {in.key(SDLK_RETURN);return false;}
+        expect(e.modal==Editor::M_NONE && e.noDocument,"a bare launch opens with no document");
+        in.key(SDLK_n,KMOD_CTRL);return true;
+    });
     s.then([&](Editor& e,const Input& in) {   // New Map: CREATE a flat Aramon map
         if(!expect(e.modal==Editor::M_NEW,"New Map dialog opens"))return true;
         const auto& worlds=e.kWorldOpts;
