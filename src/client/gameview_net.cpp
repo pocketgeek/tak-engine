@@ -1267,7 +1267,7 @@ void GameView::autoplayStep() {
         }
         if (st == S::Lobby && (autoMode == 1 || autoMode == 4 || autoMode == 7 || autoMode == 8)) {
             tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
-            o.gameMods = mods_.game ? 1 : 0;   // room game mods = this host's --mods
+            o.gameMods = mods_.game ? 1 : 0;   // debug --mods override (the lobby always sends 1)
             // TAK_SPEED: set the game speed in tenths (10 = 1x) for headless timing
             // tests -- re-cadences the server without touching the (deterministic) sim.
             if (const char* sp = tak::devEnv("TAK_SPEED")) o.speed = uint8_t(std::clamp(std::atoi(sp), 1, tak::net::kMaxDevGameSpeed));
@@ -1341,7 +1341,7 @@ void GameView::autoplayStep() {
             if (!mp_->games().empty()) mp_->joinGame(mp_->games().front().id, "");
             else if (autoMode == 3 && mpListMs_ && SDL_GetTicks64() - mpFirstListMs_ > 800) {
                 tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
-            o.gameMods = mods_.game ? 1 : 0;   // room game mods = this host's --mods
+            o.gameMods = mods_.game ? 1 : 0;   // debug --mods override (the lobby always sends 1)
                 o.mapScenario = tak::devFlag("TAK_MAP_SCENARIO") ? 1 : 0;   // as for modes 1/4/7
                 o.powerCodes = tak::devFlag("TAK_POWER_CODES") ? 1 : 0;
                 mp_->createGame(mapId, "", mapId, o, mpCapacity(o.mapScenario != 0));

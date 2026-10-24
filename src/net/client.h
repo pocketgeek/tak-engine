@@ -50,11 +50,22 @@ public:
     // data doesn't match.
     void setDataHash(uint64_t h) { dataHash_ = h; }
 
-    void setMapRoot(const std::filesystem::path& root) { mapRoot_ = root; }
+    void setMapRoot(const std::filesystem::path& root) { mapRoot_ = root; rescanAlwaysGameMods(); }
     const std::shared_ptr<maps::Package>& mapPackage() const { return mapPackage_; }
-    // The host's selected mods/game packs (sent only when the room has game mods on).
+    // The host's ticked mods/game packs. A room this player hosts sends them, with
+    // the always-enabled ones (mods/game/always_enabled/), as one package to every
+    // player whenever the room has game mods on (every non-campaign room a current
+    // host creates; 0 only from a 0.8.12 or 0.8.13 host's GAME MODS: OFF or a debug --mods).
     void setGameModPacks(std::vector<std::string> names);
     const std::vector<std::string>& gameModPacks() const { return gameModPacks_; }
+    // False (debug --mods none|cosmetic) drops every game pack, always-enabled ones too.
+    void setGameModsAllowed(bool allowed) { gameModsAllowed_ = allowed; rescanAlwaysGameMods(); if (!allowed) setGameModPacks({}); }
+    // This install's always-enabled game packs (empty when game mods are not allowed):
+    // applied only in rooms this player hosts. A guest uses the host's package alone.
+    const std::vector<std::string>& alwaysGameModPacks() const { return alwaysGameModPacks_; }
+    // What this player's hosted room applies: always-enabled + ticked, sorted
+    // (disjoint: an always-enabled pack hides its ordinary namesake), at most 64.
+    std::vector<std::string> hostGameModPacks() const;
     const std::shared_ptr<mods::Package>& modPackage() const {return modPackage_;}
     const std::string& modStatus() const {return modStatus_;}
     // The game-mod status a room shows: a transfer in progress or an error always, but
@@ -70,8 +81,8 @@ public:
     bool modPending() const {return modPendingAt_!=0;}
     bool modBusy() const {return modSend_.package || modReceive_.size;}
     // The VFS a game in this room mounts: the room's verified game-mod package
-    // (when game mods are on), then the always-on mods/cosmetic/*.hpi archives
-    // (every room), then this player's own ticked cosmetic packs (every room but
+    // (when game mods are on), then the always-enabled cosmetic packs of
+    // mods/cosmetic/always_enabled/ (every room), then this player's own ticked cosmetic packs (every room but
     // a campaign mission or Crusades battle; packs no longer on disk are skipped).
     // `withCosmetic` false (debug --mods none|game) leaves every cosmetic layer out.
     // A cosmetic layer that cannot load or would change the gameplay hash is left
@@ -396,7 +407,9 @@ private:
     void acceptMods(std::shared_ptr<mods::Package> package,uint32_t room);
     void resetModTransfer();   // drop all mod package/transfer state
     void resetMapTransfer();        // ... and the map package/transfer state
-    std::vector<std::string> gameModPacks_;
+    std::vector<std::string> gameModPacks_, alwaysGameModPacks_;
+    bool gameModsAllowed_ = true;
+    void rescanAlwaysGameMods();
     std::shared_ptr<mods::Package> modPackage_;
     maps::Receiver modReceive_;
     maps::Sender modSend_;

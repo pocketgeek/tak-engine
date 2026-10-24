@@ -36,22 +36,30 @@ int main() {
         if(s.gameCreate.pathfindingMode!=PathMode::Retail)
             throw std::runtime_error("new create preferences must default to Retail");
         s.gameCreate.pathfindingMode=PathMode::Legion;
-        s.gameCreate.gameMods=true;
         s.uiScale=0.5f;s.scorecardScale=1.75f;
         if(!tak::saveSettings(s))throw std::runtime_error("save failed");
         const auto loaded=tak::loadSettings();
-        if(loaded.gameModPacks!=s.gameModPacks || loaded.cosmeticModPacks!=s.cosmeticModPacks || !loaded.gameCreate.gameMods)
-            throw std::runtime_error("mod selections or the GAME MODS toggle did not survive save/load");
+        if(loaded.gameModPacks!=s.gameModPacks || loaded.cosmeticModPacks!=s.cosmeticModPacks)
+            throw std::runtime_error("mod selections did not survive save/load");
         {   // Written under the new keys; the old override keys are neither written nor read.
             std::ifstream saved(path);std::string text((std::istreambuf_iterator<char>(saved)),{});
-            if(text.find("mods.gamePack = ")==text.npos || text.find("mods.cosmeticPack = ")==text.npos || text.find("gameCreate.gameMods = 1\n")==text.npos)
+            if(text.find("mods.gamePack = ")==text.npos || text.find("mods.cosmeticPack = ")==text.npos)
                 throw std::runtime_error("mod selections not written under the mods.* keys");
+            // 0.8.13's multiplayer GAME MODS toggle is gone: never written.
+            if(text.find("gameCreate.gameMods")!=text.npos)throw std::runtime_error("the removed GAME MODS key is still written");
             if(text.find("overrides")!=text.npos)throw std::runtime_error("an old overrides key is still written");
             std::ofstream(path)<<"overrides.hostPack = 4f6c64\noverrides.cosmeticPack = 4f6c64\ngameCreate.overrides = 2\n";
             const auto old=tak::loadSettings();
-            if(!old.gameModPacks.empty() || !old.cosmeticModPacks.empty() || old.gameCreate.gameMods)
+            if(!old.gameModPacks.empty() || !old.cosmeticModPacks.empty())
                 throw std::runtime_error("old overrides keys must be ignored (no migration)");
-            if(tak::Settings{}.gameCreate.gameMods)throw std::runtime_error("GAME MODS must default off");
+            // A 0.8.13 file's gameCreate.gameMods loads (skipped like any unknown key)
+            // and vanishes on the next save.
+            std::ofstream(path)<<"gameCreate.gameMods = 1\nmods.gamePack = 4b656570\n";
+            auto kept=tak::loadSettings();
+            if(kept.gameModPacks!=std::vector<std::string>{"Keep"})throw std::runtime_error("a file with the old GAME MODS key did not load");
+            if(!tak::saveSettings(kept))throw std::runtime_error("save failed");
+            std::ifstream again(path);std::string resaved((std::istreambuf_iterator<char>(again)),{});
+            if(resaved.find("gameCreate.gameMods")!=resaved.npos)throw std::runtime_error("the old GAME MODS key survived a save");
         }
         {   // takclient --game-mod (Cartographer's TEST IN GAME): a launch-only selection never
             // replaces the player's saved ticks, until the player changes the ticks themselves.

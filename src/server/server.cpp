@@ -1974,6 +1974,8 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             GameOptions o; get(r, o);
             if (!tak::sim::validPathfindingMode(uint8_t(o.pathfindingMode))) { sendReject(c,"invalid pathfinding mode"); return; }
             // Sanitise the raw options (get() checks only the pathfinder byte).
+            // A current host always asks for game mods; 0 comes from a 0.8.12 or 0.8.13 host's
+            // GAME MODS: OFF or a debug --mods launch, and is honoured as before.
             o.gameMods = o.gameMods ? 1 : 0;
             if(!mission.empty())o.gameMods=0;   // campaigns never run game mods
             if (o.speed < 1) o.speed = 10;
@@ -2422,7 +2424,8 @@ void Server::acceptMap(Room& room, std::shared_ptr<tak::net::maps::Package> pack
 }
 void Server::modMsg(Client& c,const Frame& f) {
     Room* room=roomOf(c);if(!room)return;
-    // Only the host of a skirmish room with GAME MODS on may upload game packs.
+    // Only the host of a skirmish room with game mods on (every room a current host
+    // creates; a 0.8.12 or 0.8.13 host may still turn them off) may upload game packs.
     // Anyone else (a guest, or any player of a campaign/Crusades room) is refused
     // outright, with an error rather than silence, so a modified client learns it.
     if(f.kind==Msg::ModOffer || f.kind==Msg::ModChunk) {

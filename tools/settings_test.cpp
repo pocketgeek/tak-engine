@@ -112,7 +112,6 @@ int main() {
     flips("gameCreate.generated", [](Settings& s) { s.gameCreate.generated = !s.gameCreate.generated; });
     flips("gameCreate.unitCap", [](Settings& s) { ++s.gameCreate.unitCap; });
     flips("gameCreate.fog", [](Settings& s) { ++s.gameCreate.fog; });
-    flips("gameCreate.gameMods", [](Settings& s) { s.gameCreate.gameMods = !s.gameCreate.gameMods; });
     flips("gameCreate.mapSort", [](Settings& s) { ++s.gameCreate.mapSort; });
     flips("gameCreate.mapSortDir", [](Settings& s) { ++s.gameCreate.mapSortDir; });
     flips("gameCreate.name", [](Settings& s) { s.gameCreate.name = "test"; });

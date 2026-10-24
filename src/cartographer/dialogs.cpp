@@ -103,7 +103,8 @@ void cart::Editor::openModal(Modal m, int unitIdx) {
         // A pack name the install does not have yet (Open AI mod edits an existing one).
         std::vector<std::string> packs;
         try {packs=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
-        auto taken=[&](const std::string& name) {return std::any_of(packs.begin(),packs.end(),[&](const std::string& p){return lowerText(p)==lowerText(name);});};
+        auto taken=[&](const std::string& name) {return std::any_of(packs.begin(),packs.end(),[&](const std::string& p){return lowerText(p)==lowerText(name);}) ||
+                                                        !cart::modPackReservedError(std::filesystem::u8path(dataRoot),name).empty();};
         std::string name="my-ai";
         for(int n=2;taken(name);++n)name="my-ai-"+std::to_string(n);
         mTitle="NEW AI MOD";mN=1;
@@ -280,6 +281,7 @@ void cart::Editor::applyModal() {
         while(!name.empty() && name.back()==' ')name.pop_back();
         while(!name.empty() && name.front()==' ')name.erase(name.begin());
         if(const auto why=cart::modPackNameError(name);!why.empty()) {modalError=why;return;}
+        if(const auto why=cart::modPackReservedError(std::filesystem::u8path(dataRoot),name);!why.empty()) {modalError=why;return;}
         std::vector<std::string> packs;
         try {packs=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
         for(const auto& pack:packs)if(lowerText(pack)==lowerText(name)) {

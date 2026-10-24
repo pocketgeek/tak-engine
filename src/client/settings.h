@@ -132,7 +132,6 @@ struct Settings {
         bool allowSpectators = true;   // multiplayer ALLOW SPECTATORS (on, as every room was before it)
         bool powerCodes = false;       // POWER CODES (net::GameOptions::powerCodes), off as in retail
         bool generated = false;
-        bool gameMods = false;         // multiplayer GAME MODS toggle (single player is always on)
         sim::PathfindingMode pathfindingMode = sim::PathfindingMode::Retail;
         int unitCap = 2000, fog = 1;
         // START LOCATIONS, net::GameOptions::randomStarts: 0 FIXED, 1 RANDOM, 2 BY SLOT.
@@ -143,9 +142,12 @@ struct Settings {
         std::string name = "game", generator;
         friend bool operator==(const GameCreate&, const GameCreate&) = default;
     } gameCreate;
-    // Ticked mod packs, by folder name: mods/game/<pack> (single player, and the
-    // multiplayer host with GAME MODS on) and mods/cosmetic/<pack> (always, every
-    // player, never sent anywhere). Saved as mods.gamePack / mods.cosmeticPack.
+    // Ticked mod packs, by folder name: mods/game/<pack> (applied in every non-campaign
+    // room this player hosts, sent to every player) and mods/cosmetic/<pack> (every
+    // player's own, never sent anywhere). Saved as mods.gamePack / mods.cosmeticPack.
+    // A name an always-enabled pack (mods/<kind>/always_enabled/) also uses is kept
+    // but has no effect while that pack is there. (The 0.8.13 gameCreate.gameMods
+    // key, its multiplayer GAME MODS toggle, is gone: skipped on load, never saved.)
     std::vector<std::string> gameModPacks, cosmeticModPacks;
     std::string lastMap;           // last map picked in the create/SP lobby (remembered)
     // Servers that connected successfully (most recent first, capped at 8). The

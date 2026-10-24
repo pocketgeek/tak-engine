@@ -1108,7 +1108,7 @@ void MpClient::createGame(const std::string& name, const std::string& password,
     if (mission.empty() && !mapgen::isGeneratedMapId(mapId)) {
         try {
             mapPackage_ = maps::build(hpi::mountRetailRoot(mapRoot_,
-                o.gameMods?gameModPacks_:std::vector<std::string>{}), mapId);
+                o.gameMods?hostGameModPacks():std::vector<std::string>{}), mapId);
         } catch (const std::exception& e) { err_ = mapStatus_ = e.what(); return; }
     }
     Writer w; w.str(name); w.str(password); w.str(mapId); w.str(mission);
@@ -1382,11 +1382,17 @@ void MpClient::setGameModPacks(std::vector<std::string> names) {
     // Only packs still on disk: a saved selection naming a pack folder since
     // removed or renamed must not stop every game from building its package
     // (the room lists only the packs that exist, so it could not be unticked).
+    // modPacks lists ordinary packs only, so a tick an always-enabled pack hides
+    // (same name) drops out too: that pack applies anyway.
+    const auto oldAlways=alwaysGameModPacks_;rescanAlwaysGameMods();
+    if(!gameModsAllowed_)names.clear();
     const auto have=hpi::modPacks(mapRoot_,hpi::ModKind::Game);
     std::erase_if(names,[&](const auto& n){return !std::binary_search(have.begin(),have.end(),n);});
     std::sort(names.begin(),names.end());names.erase(std::unique(names.begin(),names.end()),names.end());
-    if(names==gameModPacks_)return;
-    if(modBusy())return;
+    // One package carries at most 64 packs, the always-enabled ones first.
+    names.resize(std::min(names.size(),size_t(64)-alwaysGameModPacks_.size()));
+    if(names==gameModPacks_ && oldAlways==alwaysGameModPacks_)return;
+    if(modBusy()){alwaysGameModPacks_=oldAlways;return;}
     gameModPacks_=std::move(names);modOfferedRoom_=0;
     if(state_==State::InRoom && room_.hostId==myId_ && room_.opts.gameMods) {
         // Coalesce checkbox clicks into one transfer once selection settles.
@@ -1394,10 +1400,22 @@ void MpClient::setGameModPacks(std::vector<std::string> names) {
         room_.mapsReady=false;modStatus_="APPLYING PACK SELECTION";
     }
 }
+void MpClient::rescanAlwaysGameMods() {
+    alwaysGameModPacks_.clear();
+    if(!gameModsAllowed_ || mapRoot_.empty())return;
+    try {alwaysGameModPacks_=hpi::alwaysEnabledPacks(mapRoot_,hpi::ModKind::Game);}catch(const std::exception&){}
+    if(alwaysGameModPacks_.size()>64)alwaysGameModPacks_.resize(64);
+}
+std::vector<std::string> MpClient::hostGameModPacks() const {
+    if(!gameModsAllowed_)return {};
+    auto names=alwaysGameModPacks_;names.insert(names.end(),gameModPacks_.begin(),gameModPacks_.end());
+    std::sort(names.begin(),names.end());names.erase(std::unique(names.begin(),names.end()),names.end());
+    return names;
+}
 void MpClient::offerMods() {
     modPendingAt_=0;room_.mapsReady=false;
     modOfferedRoom_=room_.id;modReadyRoom_=0;mapPackage_.reset();mapOfferedRoom_=mapReadyRoom_=0;
-    try {modPackage_=mods::build(mapRoot_,gameModPacks_);
+    try {modPackage_=mods::build(mapRoot_,hostGameModPacks());
         send(Msg::ModOffer,maps::offer(room_.id,"mods",*modPackage_));modStatus_="VERIFYING GAME MODS";
     }catch(const std::exception& e){modPackage_.reset();modStatus_=std::string("GAME MODS: ")+e.what();}
 }
@@ -1405,8 +1423,9 @@ hpi::Vfs MpClient::modVfs(const std::vector<std::string>& cosmetic,bool withCosm
     hpi::Vfs::Files game;
     if(room_.opts.gameMods){if(!modPackage_)throw std::runtime_error("game mods not verified");game=*modPackage_->files;}
     // This player's own cosmetic mods on top (they cannot change the gameplay
-    // hash): the always-on archives in every room, the ticked pack folders in
-    // every room but a campaign one.
+    // hash): the always-enabled packs in every room, the ticked pack folders in
+    // every room but a campaign one. A guest's own always-enabled GAME packs
+    // never apply here: the host's package is the room's game data.
     const bool campaign=!room_.mission.empty() || campaignRoom();
     return hpi::mountPlayVfs(mapRoot_,std::move(game),campaign?std::vector<std::string>{}:cosmetic,withCosmetic,skipped);
 }
@@ -1415,7 +1434,7 @@ hpi::Vfs MpClient::roomDataVfs() const {
     // selection, or for a guest the host's verified game-mod package. A guest's
     // saved packs (from its own single-player games) never stand in for the host's.
     if(!room_.opts.gameMods)return hpi::mountRetailRoot(mapRoot_);
-    if(room_.hostId==myId_)return hpi::mountRetailRoot(mapRoot_,gameModPacks_);
+    if(room_.hostId==myId_)return hpi::mountRetailRoot(mapRoot_,hostGameModPacks());
     auto vfs=hpi::mountRetailRoot(mapRoot_);
     if(modPackage_)vfs.setModFiles(modPackage_->files);
     return vfs;

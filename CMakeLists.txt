@@ -1284,6 +1284,8 @@ target_link_libraries(mod_transfer_test PRIVATE tak-formats)
 add_executable(mod_packs_test tools/mod_packs_test.cpp)
 target_link_libraries(mod_packs_test PRIVATE tak-formats)
 add_test(NAME mod_packs COMMAND mod_packs_test)
+add_test(NAME no_game_mods_toggle COMMAND "${CMAKE_COMMAND}" -DLOBBY=${CMAKE_SOURCE_DIR}/src/client/gameview_lobby.cpp
+         -P "${CMAKE_SOURCE_DIR}/tools/no_game_mods_toggle.cmake")
 # The server-side AI (src/ai): every executable that runs a Controller links these.
 set(TAK_AI_SOURCES src/ai/ai.cpp src/ai/builtinprofile.cpp src/ai/classicbrain.cpp src/ai/classicprofile.cpp src/ai/classictypes.cpp)
 add_executable(room_worker_test tools/room_worker_test.cpp src/server/roomtick.cpp src/server/rosterdump.cpp ${TAK_AI_SOURCES})

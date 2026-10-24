@@ -197,9 +197,10 @@ private:
 // exposed under a virtual path prefix, resolved highest-precedence-first. This is
 // how a retail install directory is presented to the loaders as one namespace:
 //
-//   mods/cosmetic/<selected pack>/ (loose + archives, cosmetic files only)
-//   mods/cosmetic/*.hpi            (always on in a game, cosmetic files only)
-//   mods/game/<selected pack>/     (loose + archives, everything)
+//   mods/cosmetic/<selected pack>/        (loose + archives, cosmetic files only)
+//   mods/cosmetic/always_enabled/<pack>/  (every game, cosmetic files only)
+//   mods/game/<selected pack>/            (loose + archives, everything)
+//   mods/game/always_enabled/<pack>/      (every non-campaign game this player hosts)
 //   Maps/        (*.kmp single-map HPIs + loose)     -> kmap/<name>.*
 //   <root>/      (*.hpi only, no loose)              -> the base game + expansions
 //   Boneyards/Metagame/ (five allowlisted campaign presentation files only)
@@ -254,8 +255,11 @@ private:
 // mods/cosmetic/ and expose only files that cannot affect the deterministic sim
 // (textures/sprites/sound/music/fonts/gui), so every player may pick their own.
 // Game packs live in mods/game/ and expose everything, including gameplay data
-// (*.fbi, weapon/side/game *.tdf, canbuild, features, maps); in multiplayer only
-// the host picks them and they are transferred to everyone.
+// (*.fbi, weapon/side/game *.tdf, canbuild, features, maps); only the host picks
+// them and they are transferred to everyone. Each kind also has an
+// always_enabled/ subfolder whose packs (same format) are always applied: the
+// cosmetic ones in every game, the game ones in every non-campaign game this
+// player hosts. Loose files in mods/<kind>/ and in always_enabled/ never load.
 enum class ModKind { Cosmetic, Game };
 // Which kinds of mod pack a launch may use (the debug `--mods none|cosmetic|game|all`
 // switch; a release build always uses both). Which packs are ticked is a setting.
@@ -275,29 +279,38 @@ uint64_t gameplayHash(const Vfs& vfs);
 
 // Build the runtime VFS for a retail install root (see the layer diagram above).
 // Game packs are layered over the original data and cosmetic packs over those
-// (cosmetic wins), each kind alphabetical by pack name (later names win). The
-// always-on archives are NOT added here (this mount also feeds the handshake
-// hash and map packages); a game's VFS adds them through playModFiles().
+// (cosmetic wins), each kind alphabetical by pack name (later names win); names
+// resolve like modFiles. The always-enabled cosmetic packs are NOT added here
+// (this mount also feeds the handshake hash and map packages); a game's VFS
+// adds them through mountPlayVfs().
 // The old <install>/overrides/ folder is never read (nor touched).
 Vfs mountRetailRoot(const std::filesystem::path& root,
                     const std::vector<std::string>& gamePacks = {},
                     const std::vector<std::string>& cosmeticPacks = {});
-// Only immediate, real subdirectories of mods/cosmetic/ or mods/game/ are packs;
-// files directly in mods/ or mods/game/ are never mounted.
+// The folder (matched ignoring case) under mods/cosmetic/ and mods/game/ that
+// holds the always-enabled packs. It is never itself a pack.
+inline constexpr const char* kAlwaysEnabledDir = "always_enabled";
+// The ordinary packs a player may tick: immediate, real (non-symlink, non-hidden,
+// at most 128-byte) subdirectories of mods/cosmetic/ or mods/game/, sorted. Not
+// always_enabled/ (any case), and not a folder whose name equals an always-enabled
+// pack's ignoring case: that pack wins the name, so within one kind a name means
+// one pack in settings, packages and the room lists. Files directly in mods/,
+// mods/cosmetic/ or mods/game/ are never mounted.
 std::vector<std::string> modPacks(const std::filesystem::path& root, ModKind kind);
+// The always-enabled packs: real subdirectories of mods/<kind>/always_enabled/,
+// with the same filters as modPacks, sorted. Loose files there are ignored.
+std::vector<std::string> alwaysEnabledPacks(const std::filesystem::path& root, ModKind kind);
+// The merged files of the named packs. Each name is an always-enabled pack (if
+// alwaysEnabledPacks lists it) or else an ordinary one; any other name throws.
+// Always-enabled layers go first, then the ordinary ones, each alphabetical, so
+// a ticked pack beats an always-enabled one; all share one budget.
 Vfs::Files modFiles(const std::filesystem::path& root, ModKind kind,
                     const std::vector<std::string>& packs);
-// The always-on cosmetic archives: every real *.hpi file (any case; not .ufo,
-// .kmp, loose files or folders) directly in mods/cosmetic/. They are mounted in
-// every game of every kind (campaigns included), filtered like a cosmetic pack,
-// per player, never sent anywhere, and never listed for selection. Sorted
-// case-insensitively; that is also their layer order (later names win).
-std::vector<std::string> alwaysOnMods(const std::filesystem::path& root);
-Vfs::Files alwaysOnModFiles(const std::filesystem::path& root);
 // A game's VFS: the retail mount, `gameFiles` over it (the room's verified
-// game-mod package, or nothing), then -- with `withCosmetic` -- the always-on
-// archives and this player's ticked cosmetic packs (packs no longer on disk are
-// skipped silently). Each later layer wins. A cosmetic layer is its own choice
+// game-mod package, or nothing), then -- with `withCosmetic` -- the always-enabled
+// cosmetic packs (every game, campaigns included; per player, never sent) and
+// this player's ticked cosmetic packs (packs no longer on disk are skipped
+// silently). Each later layer wins. A cosmetic layer is its own choice
 // and must never stop a game, so one that cannot load (a damaged archive, past
 // the 256 MiB / 65536-file budget) or that would change gameplayHash (anims/
 // frame timing or availability the sim reads: storms, nimbus, feature burns) is

@@ -101,7 +101,8 @@ def main():
                 p.send('LeaveGame');p.send('Ping');p.receive('Pong')
                 create(p);rid=room(p)
                 offer=lambda c,size=1000:c.send('ModOffer',struct.pack('<I',rid)+auth.field('mods')+auth.field('1'*64)+struct.pack('<I',size))
-                # GAME MODS off (the default): even the host's game packs are refused.
+                # Game mods off (a 0.8.12 or 0.8.13 host's GAME MODS: OFF; current hosts always
+                # send on): even the host's game packs are refused.
                 offer(p);error=p.receive('ModError');assert error.num('<I')==rid;assert b'off' in error.field()
                 mods=bytearray(options());mods[2]=1
                 p.send('SetGameOptions',mods)

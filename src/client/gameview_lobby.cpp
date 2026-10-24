@@ -52,7 +52,7 @@ float createOptionPx(float maxW) {
         "MONARCH EXPENDABLE: SCENARIO", "MONARCH EXPENDABLE: ON", "MONARCH EXPENDABLE: OFF",
         "ALLOW SPEED CHANGE: ON", "ALLOW SPEED CHANGE: OFF", "POWER CODES: ON", "POWER CODES: OFF",
         "SPECTATE (WATCH AIS): ON", "SPECTATE (WATCH AIS): OFF",
-        "ALLOW SPECTATORS: ON", "ALLOW SPECTATORS: OFF", "GAME MODS: ON", "GAME MODS: OFF"};
+        "ALLOW SPECTATORS: ON", "ALLOW SPECTATORS: OFF"};
     float px = tak::uiTextFitPx(pathfindingLabel(tak::sim::PathfindingMode::Retail), 2.0f, maxW);
     px = tak::uiTextFitPx(pathfindingLabel(tak::sim::PathfindingMode::Legion), px, maxW);
     for (uint8_t mode = 0; mode < 3; ++mode) px = tak::uiTextFitPx(startLocationsLabel(mode), px, maxW);
@@ -474,7 +474,6 @@ float createOptionPx(float maxW) {
         pref.powerCodes = createPowerCodes_;
         pref.unitCap = createUnitCap_;
         pref.fog = createFog_;
-        if (!singlePlayer_) pref.gameMods = createGameMods_;   // SP is always on: keep the MP choice
         pref.name = createName_;
         pref.generated = tak::mapgen::isGeneratedMapId(mpMapId_);
         pref.generator = tak::mapgen::encodeMapId(genParams_);
@@ -500,7 +499,8 @@ float createOptionPx(float maxW) {
             const auto root=std::filesystem::u8path(installRoot_);
             availableGameMods_=mods_.game?tak::hpi::modPacks(root,tak::hpi::ModKind::Game):std::vector<std::string>{};
             availableCosmeticMods_=mods_.cosmetic?tak::hpi::modPacks(root,tak::hpi::ModKind::Cosmetic):std::vector<std::string>{};
-            alwaysOnMods_=mods_.cosmetic?tak::hpi::alwaysOnMods(root):std::vector<std::string>{};
+            alwaysCosmeticMods_=mods_.cosmetic?tak::hpi::alwaysEnabledPacks(root,tak::hpi::ModKind::Cosmetic):std::vector<std::string>{};
+            alwaysGameMods_=mods_.game?tak::hpi::alwaysEnabledPacks(root,tak::hpi::ModKind::Game):std::vector<std::string>{};
             modPacksScanned_=true;
         }
     }
@@ -508,7 +508,7 @@ float createOptionPx(float maxW) {
     bool GameView::createScenarioOn() const {
         if (createScenarioFor_ != mapPath_ || tak::mapgen::isGeneratedMapId(mpMapId_)) return false;
         // An offerable map plays its scenario when chosen; a Test Map copy always does.
-        return createScenario_.active(createMapScenario_ && scenarioOffered(createScenario_, createGameModsOn()));
+        return createScenario_.active(createMapScenario_ && scenarioOffered(createScenario_));
     }
 
     void GameView::drawCreate(int winW, int winH) {
@@ -526,7 +526,7 @@ float createOptionPx(float maxW) {
             spSpectate_ = false;  // Opt in for each skirmish; never restore from settings.
             createUnitCap_ = pref.unitCap == 250 || pref.unitCap == 500 || pref.unitCap == 1000 || pref.unitCap == 2000
                 ? uint16_t(pref.unitCap) : 2000;
-            createFog_ = uint8_t(pref.fog); createGameMods_ = pref.gameMods;
+            createFog_ = uint8_t(pref.fog);
             createName_ = pref.name;
             mapSort_ = pref.mapSort; mapSortDir_ = pref.mapSortDir;
             if (!mapList_.empty()) sortMapList();
@@ -611,21 +611,18 @@ float createOptionPx(float maxW) {
         // A MAP SCENARIO plays on fixed starts.
         option(startLocationsLabel(scenarioOn ? tak::net::kStartsFixed : createStartMode_), !scenarioOn,
                [this](int direction) { createStartMode_ = uint8_t((createStartMode_ + direction + 3) % 3); });
-        // GAME MODS (multiplayer only): lets the host tick mods/game packs in the room,
-        // which are then sent to every player. Single player always has them;
-        // cosmetic mods need no switch (every player picks their own in the room).
-        if (!singlePlayer_) {
-            option(createGameMods_ ? "GAME MODS: ON" : "GAME MODS: OFF", true,
-                   [this](int) { createGameMods_ = !createGameMods_; });
-        }
         // Footer buttons, symmetric: BACK at the bottom-left and CREATE at the
         // bottom-right, both inset by `x` from their side and at the same height.
         // BROWSER (MP only) sits just left of CREATE.
         const float by = kLobbyH - 40, bw = 120;
         lbBtn(kLobbyW - x - bw, by, bw, 30, "CREATE", !createName_.empty() && genPreviewError_.empty(), [this] {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0;
-            o.gameMods = createGameModsOn() ? 1 : 0;
-            if(settings_)mp_->setGameModPacks(mods_.game?settings_->gameModPacks:std::vector<std::string>{});
+            // Game mods are on in every room (multiplayer works like single player): the
+            // host ticks mods/game packs in the room, and they and the always-enabled
+            // ones are sent to every player. The server turns this off for campaigns.
+            o.gameMods = 1;
+            mp_->setGameModsAllowed(mods_.game);
+            mp_->setGameModPacks(settings_ ? settings_->gameModPacks : std::vector<std::string>{});
             o.doubleSight = createDoubleSight_ ? 1 : 0;
             o.pathfindingMode = createPathfindingMode_;
             o.speedUnlock = createSpeedUnlock_ ? 1 : 0;
@@ -637,7 +634,7 @@ float createOptionPx(float maxW) {
             // plays its scenario through its opt-in and sends 0 (the server checks the
             // verified package either way). Seats and rule regions follow fixed starts.
             o.mapScenario = !tak::mapgen::isGeneratedMapId(mpMapId_) && createScenarioFor_ == mapPath_ &&
-                scenarioOffered(createScenario_, createGameModsOn()) && createMapScenario_ ? 1 : 0;
+                scenarioOffered(createScenario_) && createMapScenario_ ? 1 : 0;
             o.randomStarts = createScenarioOn() ? tak::net::kStartsFixed : createStartMode_;
             // A private single-player room is never listed, so the rule means nothing
             // there; leave it at the default rather than a remembered MP choice.
@@ -757,7 +754,7 @@ float createOptionPx(float maxW) {
             blockText(info, infoX, row.y + (rowH - 11) / 2, 1.5f,
                       sel ? SDL_Color{170, 210, 170, 255} : SDL_Color{150, 160, 178, 255});
             // MAP SCENARIO: a gold S marks a map with a playable scenario (or a Test Map copy).
-            if (scenarioOffered(m.scenario, createGameModsOn()) || (m.scenario.marker && m.scenario.runnable()))
+            if (scenarioOffered(m.scenario) || (m.scenario.marker && m.scenario.runnable()))
                 blockText("S", infoX - 14, row.y + (rowH - 11) / 2, 1.5f, {230, 200, 120, 255});
             lobbyHots_.push_back({row, [this, nm, pth] {
                 mpMapId_ = nm; mapPath_ = pth;
@@ -913,7 +910,7 @@ float createOptionPx(float maxW) {
             // (hasscenario stays 0) plays no scenario, but its opt-in still applies the list.
             const bool testUseOnly = createScenario_.marker && !createScenario_.hasScenario &&
                                      createScenario_.useOnlyTypes >= 0;
-            const bool offered = scenarioOffered(createScenario_, createGameModsOn());
+            const bool offered = scenarioOffered(createScenario_);
             lbCycle(pvx, y0, pvW, 26, (createMapScenario_ && offered) || testCopy ? "MAP SCENARIO: ON" : "MAP SCENARIO: OFF",
                     offered, [this](int) { createMapScenario_ = !createMapScenario_; });
             std::vector<std::pair<std::string, SDL_Color>> lines;
@@ -975,22 +972,32 @@ float createOptionPx(float maxW) {
         const float kRoomMap = 140, mapDrop = roomMap ? kRoomMap + 5 : 0;
         float modBottom=112+mapDrop;
         {
-            // MODS, in the right column under the map. ALWAYS ON: the mods/cosmetic/*.hpi
-            // archives every game loads (campaigns included); named, never ticked.
+            // MODS, in the right column under the map. ALWAYS ON: the always-enabled
+            // packs (mods/<kind>/always_enabled/<pack>), named and locked, never ticked.
+            // The cosmetic ones load in every game (campaigns included).
             // COSMETIC: every player ticks their own mods/cosmetic packs (not in a
             // campaign room); they are never sent anywhere and cannot change the game.
-            // GAME: only the host of a skirmish room with GAME MODS on ticks mods/game
-            // packs, which are sent to every player; everyone else sees the host's choice.
+            // GAME: only the host of a skirmish room ticks mods/game packs; they and the
+            // host's always-enabled game packs are sent to every player, and everyone
+            // else sees the host's choice. A room is OFF only when a 0.8.12 or 0.8.13 host chose so.
             scanModPacks();
             const bool gameRoom=!campaign && room.mission.empty();
             const bool gameOn=gameRoom && room.opts.gameMods;
-            const size_t perPage=gameOn && host?3:5;
+            const auto& alwaysGame=mp_->alwaysGameModPacks();
+            const bool alwaysGameLine=gameOn && host && !alwaysGame.empty();
+            const size_t perPage=gameOn && host?(alwaysGameLine?2:3):5;
             float py=87+mapDrop;
             constexpr float kPackPx=1.3f;   // the column's list text (ALWAYS ON, HOST:)
+            // `always`: the kind's always-enabled packs. They are on the ALWAYS ON line, so a
+            // saved tick of the same name (ignoring case) is not listed again, and they
+            // count against the 64-pack limit.
             auto packList=[&](const std::vector<std::string>& available,const std::vector<std::string>& selected,
+                              const std::vector<std::string>& always,
                               size_t& page,bool busy,const char* empty,const char* pageLabel,
                               std::function<void(std::vector<std::string>)> apply) {
-                auto names=available;for(const auto& n:selected)if(std::find(names.begin(),names.end(),n)==names.end())names.push_back(n);
+                auto hidden=[&](const std::string& n){return std::any_of(always.begin(),always.end(),
+                    [&](const std::string& a){return tak::hpi::MountSet::key(a)==tak::hpi::MountSet::key(n);});};
+                auto names=available;for(const auto& n:selected)if(std::find(names.begin(),names.end(),n)==names.end() && !hidden(n))names.push_back(n);
                 std::sort(names.begin(),names.end());
                 const size_t pages=std::max<size_t>(1,(names.size()+perPage-1)/perPage);page=std::min(page,pages-1);
                 if(names.empty()){blockText(empty,winW-296.0f,py,1.3f,{150,155,165,255});py+=22;}
@@ -999,9 +1006,10 @@ float createOptionPx(float maxW) {
                     // A pack's name at the size of the column's other lines (ALWAYS ON, the
                     // joiner's HOST: list), centered clear of the checkbox.
                     const std::string label=tak::uiTextFit(name,kPackPx,220);
-                    lbBtn(winW-300.0f,py,280,20,label,!busy,[selected,name,enabled,apply]{
+                    const size_t locked=always.size();
+                    lbBtn(winW-300.0f,py,280,20,label,!busy,[selected,name,enabled,apply,locked]{
                         auto selection=selected;
-                        if(enabled)selection.erase(std::remove(selection.begin(),selection.end(),name),selection.end());else if(selection.size()<64)selection.push_back(name);
+                        if(enabled)selection.erase(std::remove(selection.begin(),selection.end(),name),selection.end());else if(selection.size()+locked<64)selection.push_back(name);
                         apply(std::move(selection));
                     },{60,66,86,255},kPackPx);
                     SDL_FRect checkBox{winW-291.0f,py+4.5f,11,11};
@@ -1012,33 +1020,40 @@ float createOptionPx(float maxW) {
                 }
                 if(pages>1){lbCycle(winW-300.0f,py,280,20,std::string(pageLabel)+" "+std::to_string(page+1)+" / "+std::to_string(pages),true,[&page,pages](int d){page=(page+pages+d)%pages;},kPackPx);py+=22;}
             };
-            // COSMETIC MODS heads the always-on archives and the ticked packs alike (a
-            // campaign room shows the heading only when it has always-on archives to list).
-            if(gameRoom || !alwaysOnMods_.empty()){blockText("COSMETIC MODS",winW-296.0f,py,1.6f,{205,210,225,255});py+=22;}
-            if(!alwaysOnMods_.empty()) {
-                // As many names as fit on one line (280 px), then "+N".
+            // ALWAYS ON: a, b +N -- as many always-enabled pack names as fit on one line
+            // (280 px), then "+N".
+            auto alwaysLine=[&](const std::vector<std::string>& always) {
+                if(always.empty())return;
                 constexpr float kLineW=280;
                 std::string line="ALWAYS ON: ";
-                const size_t n=alwaysOnMods_.size();size_t shown=0;
+                const size_t n=always.size();size_t shown=0;
                 for(;shown<n;++shown){
-                    const std::string next=(shown?", ":"")+alwaysOnMods_[shown];
+                    const std::string next=(shown?", ":"")+always[shown];
                     if(blockWidth(line+next+(shown+1<n?" +99":""),1.3f)>kLineW)break;
                     line+=next;
                 }
-                if(!shown){line=tak::uiTextFit(line+alwaysOnMods_[0],1.3f,kLineW-(n>1?blockWidth(" +99",1.3f):0));shown=1;}
+                if(!shown){line=tak::uiTextFit(line+always[0],1.3f,kLineW-(n>1?blockWidth(" +99",1.3f):0));shown=1;}
                 if(shown<n)line+=" +"+std::to_string(n-shown);
                 blockText(line,winW-296.0f,py,1.3f,{170,200,170,255});py+=20;
-            }
+            };
+            // COSMETIC MODS heads the always-enabled and the ticked packs alike (a campaign
+            // room shows the heading only when it has always-enabled packs to list).
+            if(gameRoom || !alwaysCosmeticMods_.empty()){blockText("COSMETIC MODS",winW-296.0f,py,1.6f,{205,210,225,255});py+=22;}
+            alwaysLine(alwaysCosmeticMods_);
             if(gameRoom) {
-                packList(availableCosmeticMods_,settings_?settings_->cosmeticModPacks:std::vector<std::string>{},cosmeticModPage_,false,
+                packList(availableCosmeticMods_,settings_?settings_->cosmeticModPacks:std::vector<std::string>{},alwaysCosmeticMods_,cosmeticModPage_,false,
                          "NO PACKS IN MODS/COSMETIC","COSMETIC PAGE",[this](std::vector<std::string> selection){
                     if(!settings_)return;
                     settings_->cosmeticModPacks=std::move(selection);saveSettings(*settings_);
                 });
                 py+=4;
-                blockText(gameOn?"GAME MODS":"GAME MODS: OFF",winW-296.0f,py,1.6f,{205,210,225,255});py+=22;
+                blockText(gameOn?"GAME MODS":"GAME MODS: OFF (HOST)",winW-296.0f,py,1.6f,{205,210,225,255});py+=22;
                 if(gameOn && host) {
-                    packList(availableGameMods_,mp_->gameModPacks(),gameModPage_,mp_->modBusy(),"NO PACKS IN MODS/GAME","GAME PAGE",
+                    // The host's own always-enabled game packs: locked on, and sent with
+                    // the ticked ones. A guest's never apply (it sees HOST: below).
+                    alwaysLine(alwaysGame);
+                    packList(availableGameMods_,mp_->gameModPacks(),alwaysGame,gameModPage_,mp_->modBusy(),
+                             "NO PACKS IN MODS/GAME","GAME PAGE",
                              [this](std::vector<std::string> selection){
                         mp_->setGameModPacks(selection);
                         if(settings_){settings_->gameModPacks=std::move(selection);saveSettings(*settings_);}

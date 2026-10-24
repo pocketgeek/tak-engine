@@ -2289,18 +2289,16 @@ private:
     tak::sim::ScenarioInfo createScenario_;   // the selected map's scenario facts (with registry check)
     void syncCreateScenario();
     bool createScenarioOn() const;            // the create choice plays the map's scenario
-    // Whether the create screen offers a map's scenario. With game mods on a placed
-    // or custom unit type this install lacks may come from a game mod pack the host
-    // selects in the room, so MissingType is offered there (with a warning) when
-    // this install has a pack to select; the server's START refuses it if no selected
-    // pack supplies the type. (A Use Only entry never needs a pack: a MAP SCENARIO game
-    // leaves out the names no unit answers to.) Call after scanModPacks().
-    bool scenarioOffered(const tak::sim::ScenarioInfo& s, bool gameModsOn) const {
-        return s.offerable() || (gameModsOn && !s.marker && s.status == tak::sim::ScenarioStatus::MissingType &&
-                                 s.seatOneArmy() && !availableGameMods_.empty());
+    // Whether the create screen offers a map's scenario. A placed or custom unit type
+    // this install lacks may come from a game mod pack (ticked by the host in the room,
+    // or always enabled), so MissingType is offered (with a warning) when this install
+    // has a game pack; the server's START refuses it if no applied pack supplies the
+    // type. (A Use Only entry never needs a pack: a MAP SCENARIO game leaves out the
+    // names no unit answers to.) Call after scanModPacks().
+    bool scenarioOffered(const tak::sim::ScenarioInfo& s) const {
+        return s.offerable() || (!s.marker && s.status == tak::sim::ScenarioStatus::MissingType &&
+                                 s.seatOneArmy() && (!availableGameMods_.empty() || !alwaysGameMods_.empty()));
     }
-    // The room being created runs game mods: always in single player, else the toggle.
-    bool createGameModsOn() const { return singlePlayer_ || createGameMods_; }
     // One selectable map plus the attributes the picker can sort by, read once from
     // the map's .ota GlobalHeader (a tiny text file -- no need to decompress the TNT).
     struct MapInfo {
@@ -2356,16 +2354,19 @@ private:
     float mapPreviewWorldW_ = 0, mapPreviewWorldH_ = 0;
     std::map<std::string, std::vector<uint8_t>> kingdomPals_;  // kingdom -> RGBA palette (256*4)
     std::vector<std::string> availableGameMods_, availableCosmeticMods_;   // mods/game, mods/cosmetic
-    std::vector<std::string> alwaysOnMods_;   // mods/cosmetic/*.hpi: loaded in every game, only named
-    std::vector<std::string> alwaysOnLoaded_;   // the always-on archives the current game mounted (remountMods)
+    // mods/cosmetic/always_enabled/<pack>: loaded in every game (campaigns too), only named.
+    std::vector<std::string> alwaysCosmeticMods_;
+    // mods/game/always_enabled/<pack>: applied in every non-campaign room this player
+    // hosts. Display copy; MpClient::alwaysGameModPacks() is the one a room sends.
+    std::vector<std::string> alwaysGameMods_;
+    std::vector<std::string> alwaysOnLoaded_;   // the always-enabled cosmetic packs the current game mounted (remountMods)
     bool modPacksScanned_=false;
     std::string alwaysOnNote() const {   // the campaign briefing's line naming them
         std::string note;for(const auto& name:alwaysOnLoaded_)note+=(note.empty()?"Always-on mods: ":", ")+name;
         return note;
     }
-    void scanModPacks();   // fills availableGameMods_ / availableCosmeticMods_ / alwaysOnMods_ once
+    void scanModPacks();   // fills availableGameMods_ / availableCosmeticMods_ / alwaysCosmeticMods_ / alwaysGameMods_ once
     size_t gameModPage_=0, cosmeticModPage_=0;
-    bool createGameMods_ = false;   // multiplayer create-dialog GAME MODS toggle (default off)
     std::string mpMapId_;   // set from the launched map basename
     std::string missionStem_;   // campaign mission to host (headless --mpmission)
     // Per-mission unit whitelist from missions/<stem>.tdf (lowercased ids). When set,

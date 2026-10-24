@@ -761,6 +761,25 @@ static void modWriter(const fs::path& root) {
     check(tak::hpi::modPacks(fresh, tak::hpi::ModKind::Game) == std::vector<std::string>{"new pack"}, "the new pack is listed by the game");
     check(tak::hpi::modFiles(fresh, tak::hpi::ModKind::Game, {"new pack"}).count("ai/n.txt"), "the game reads the new file");
 
+    // mods/game/always_enabled/ holds the packs the game always applies: it is not a
+    // pack, and Cartographer edits only ordinary packs (an always-enabled one hides
+    // a namesake folder, so a save there would never load).
+    fs::create_directories(fresh / "mods" / "game" / "always_enabled" / "House AI" / "ai");
+    std::ofstream(fresh / "mods" / "game" / "always_enabled" / "House AI" / "ai" / "takengine.txt") << "limit arabow 0\n";
+    check(!cart::planModProfiles(fresh, "always_enabled", {{"ai/n.txt", bytesOf("x\n")}}, {}, plan, error) &&
+          error.find("always_enabled") != std::string::npos, "a pack named always_enabled is refused: " + error);
+    check(!cart::planModProfiles(fresh, "ALWAYS_ENABLED", {{"ai/n.txt", bytesOf("x\n")}}, {}, plan, error), "always_enabled is refused in any case");
+    check(!cart::planModProfiles(fresh, "house ai", {{"ai/n.txt", bytesOf("x\n")}}, {}, plan, error) &&
+          error.find("always_enabled/House AI") != std::string::npos, "an always-enabled pack's name is refused (any case): " + error);
+    check(!cart::modPackReservedError(fresh, "House AI").empty() && cart::modPackReservedError(fresh, "new pack").empty(),
+          "only always-enabled names are reserved");
+    check(tak::hpi::modPacks(fresh, tak::hpi::ModKind::Game) == std::vector<std::string>{"new pack"}, "always_enabled and its packs are not listed for editing");
+    bool refused = false;
+    try { cart::readModProfiles(fresh, "House AI"); } catch (const std::exception&) { refused = true; }
+    check(refused, "Open from game mod refuses an always-enabled pack");
+    check(cart::alwaysEnabledGameNote(fresh).find("House AI") != std::string::npos && cart::alwaysEnabledGameNote(data).empty(),
+          "TEST IN GAME names the always-enabled game packs");
+
 #ifndef _WIN32
     // Symlinked components are refused: the game would never list the pack.
     const auto linked = root / "linkdata";

@@ -128,10 +128,12 @@ static void modLayers() {
     archive(root / "mods/game/rooted/root.hpi", {{"takengine.txt", "limit arabow 0\n"}});
     put(root / "mods/game/nested/sub/takengine.txt", "limit arabow 0\n");
     put(root / "mods/game/nested/sub/ai/takengine.txt", "limit arabow 0\n");
-    // Cosmetic packs and the always-on cosmetic archives can never supply one.
+    // Cosmetic packs, ticked or always-enabled, can never supply one.
     put(root / "mods/cosmetic/skin/ai/takengine.txt", "limit arabow 0\n");
     put(root / "mods/cosmetic/skin/sounds/x.wav", "x");
-    archive(root / "mods/cosmetic/always.hpi", {{"ai/takengine.txt", "limit arabow 0\n"}, {"sounds/y.wav", "y"}});
+    archive(root / "mods/cosmetic/always_enabled/always/always.hpi", {{"ai/takengine.txt", "limit araking 0\n"}, {"sounds/y.wav", "y"}});
+    // An always-enabled GAME pack can: it travels in the host's package like a ticked one.
+    put(root / "mods/game/always_enabled/house_ai/ai/takengine.txt", "limit arafly 0\n");
     // The base install's own ai/ folder (in a root archive) is not a game mod.
     archive(root / "data.hpi", {{"ai/takengine.txt", "limit arabow 0\n"}, {"gamedata/x.tdf", "x"}});
     const auto builtinAll = [](const hpi::Vfs::Files* files) {
@@ -169,9 +171,18 @@ static void modLayers() {
         check(builtinAll(&nested), "takengine.txt in another folder (sub/, sub/ai/) is not read");
 
         const auto cosmetic = hpi::modFiles(root, hpi::ModKind::Cosmetic, {"skin"});
-        const auto always = hpi::alwaysOnModFiles(root);
+        const auto always = hpi::modFiles(root, hpi::ModKind::Cosmetic, {"always"});
         check(cosmetic.count("sounds/x.wav") && !cosmetic.count("ai/takengine.txt") && always.count("sounds/y.wav") &&
-              !always.count("ai/takengine.txt"), "cosmetic packs and always-on archives cannot carry ai/takengine.txt");
+              !always.count("ai/takengine.txt"), "cosmetic packs, always-enabled ones too, cannot carry ai/takengine.txt");
+        {
+            const auto played = hpi::mountPlayVfs(root, {}, {});
+            const auto file = played.read("ai/takengine.txt");
+            check(played.has("sounds/y.wav") && std::string(file.begin(), file.end()) == "limit arabow 0\n",
+                  "an always-enabled cosmetic pack loads in play, its ai/ filtered out (the base install's file stays)");
+            const auto house = hpi::modFiles(root, hpi::ModKind::Game, {"house_ai"});
+            check(everyLevel([&](ai::Difficulty d) { return same(ai::levelProfile(d, &house), over(d, {{"arafly", -1, 0}})); }),
+                  "an always-enabled game pack's ai/takengine.txt adjusts every level");
+        }
 
         // The real transfer codec: the host's package, decoded as the server receives it.
         const auto package = net::mods::build(root, {"my_ai", "archived"});

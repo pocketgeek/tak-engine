@@ -53,6 +53,25 @@ assets are included. An installation of *Kingdoms + The Iron Plague*, such as
 the GOG edition, supplies the game data. New players can start with the
 [quick-start controls reference](docs/quick-start.md).
 
+## Since 0.8.13 (not yet released)
+
+These changes keep protocol **293** and replay format **14**: they play with
+0.8.13 and 0.8.12, both ways.
+
+- **Always-enabled mods, in folders.** Packs you always want go in
+  `mods/cosmetic/always_enabled/<pack>/` (loaded in every game, campaigns
+  included) and `mods/game/always_enabled/<pack>/` (applied in every game you
+  host, sent to every player like ticked game packs; never in campaigns or
+  Crusades battles, and a joining player's own are not used). They are
+  ordinary pack folders, shown locked on the room's **ALWAYS ON** lines.
+  **A `.hpi` placed directly in `mods/cosmetic/` is no longer loaded: move it
+  into its own folder, for example `mods/cosmetic/always_enabled/click/click.hpi`.**
+  The game does not move it for you. See [Mods](docs/user-guide.md#mods).
+- **No GAME MODS switch.** Multiplayer works like single player: the host of
+  any room except a campaign ticks game packs in the room. The setup screen's
+  **GAME MODS: ON/OFF** option is gone. A room hosted by 0.8.12 or 0.8.13 with
+  it off still plays without game packs.
+
 ## New in 0.8.13
 
 0.8.13 changes only the game's interface and the Cartographer: the protocol
@@ -1080,9 +1099,9 @@ takclient --data /path/to/tak_install
 
 Release builds otherwise use the menus; `--version` prints the installed
 version. Custom maps belong in the installation's `Maps/` folder, and custom
-content belongs in named pack subfolders of `mods/cosmetic/` or `mods/game/`
-(files directly in those folders are never loaded, except always-on `.hpi`
-archives directly in `mods/cosmetic/`). Unknown archives dropped into the installation
+content belongs in named pack subfolders of `mods/cosmetic/` or `mods/game/`, or
+of their `always_enabled/` folders for packs that always apply (files directly
+in any of those folders are never loaded). Unknown archives dropped into the installation
 root are not loaded. See the [game-data guide](docs/user-guide.md#game-data)
 for layout, archive precedence, and troubleshooting a rejected folder.
 
@@ -1610,7 +1629,7 @@ wreck. Buildings also use the authored palette shading and per-piece shadow
 flags observed in retail Glide.
 
 Game-create choices are remembered between sessions: balance, sight/radar, unit
-cap, pathfinding, monarch rule, speed changes, fog, start locations, game mods,
+cap, pathfinding, monarch rule, speed changes, fog, start locations,
 game name, map selection/sorting, and random-map settings (including the seed).
 Spectate starts off for each skirmish setup. Game passwords are not saved.
 
@@ -1727,13 +1746,12 @@ HPI/UFO/KMP archives:
 - `mods/cosmetic/<pack>/`: art and sound only (gameplay files are filtered
   out). Every player ticks their own in the skirmish or multiplayer room; they
   are never sent anywhere and never change the gameplay data hash.
-- `mods/cosmetic/*.hpi`: archives directly in `mods/cosmetic/` are **always on**
+- `mods/cosmetic/always_enabled/<pack>/`: cosmetic packs that are **always on**
   in every game, campaigns and replays included, with the same cosmetic filter.
-  They are not listed for ticking; the rooms and the campaign screen name them
-  on an ALWAYS ON line.
-- `mods/game/<pack>/`: everything, including units and rules. Single player
-  always offers them in the room. In multiplayer the host turns **GAME MODS**
-  on at the create screen, then only the host ticks packs; they transfer
+  They are not ticked; the rooms and the campaign screen name them on an
+  ALWAYS ON line.
+- `mods/game/<pack>/`: everything, including units and rules. Single player and
+  multiplayer alike, only the host ticks packs in the room; they transfer
   automatically to the server and all players, with checksum verification
   before start. Downloads stay in `ModCache/`; they do not replace installed
   files. A game pack can also adjust our six AI levels' built-in build
@@ -1742,11 +1760,19 @@ HPI/UFO/KMP archives:
   `ai/` folder (a `.kmp`, for example) (a game pack's file wins; the old
   per-level `ai/d.txt` ... `ai/ad.txt` are no longer read)
   ([AI profiles in game mods](docs/user-guide.md#ai-profiles-in-game-mods)).
+- `mods/game/always_enabled/<pack>/`: game packs applied in every game you
+  host (single player or multiplayer) along with your ticked ones, and sent
+  like ticked packs. A joining player's own always-enabled game packs are not
+  used, and none apply in campaigns or Crusades battles.
 
-Other files directly in `mods/`, `mods/cosmetic/` or `mods/game/` never load.
+Other files directly in `mods/`, `mods/cosmetic/`, `mods/game/` or an
+`always_enabled/` folder never load; a `.hpi` placed directly in
+`mods/cosmetic/` (always on up to 0.8.13) must move to
+`mods/cosmetic/always_enabled/<name>/`. An always-enabled pack hides an
+ordinary pack of the same kind and name (ignoring case).
 Campaigns and Crusades battles use neither game packs nor ticked cosmetic packs. Alphabetically later
-pack names win file conflicts; game packs load first, then the always-on
-archives, then ticked cosmetic packs. Pack choices are remembered. The old
+pack names win file conflicts; inside each kind always-enabled packs load
+first, then ticked ones; game packs load before cosmetic packs. Pack choices are remembered. The old
 `overrides/` folder is no longer read and is left untouched. See
 [mod details](docs/user-guide.md#mods).
 Version 0.8.13 uses protocol **293**, as 0.8.12 does; servers and clients must all run 0.8.13 or 0.8.12 (0.8.11 uses 290, 0.8.10 289, 0.8.9 and 0.8.8 288).

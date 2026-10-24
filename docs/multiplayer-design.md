@@ -176,15 +176,19 @@ agreed:
   (unit `.fbi`, weapon/side/game `.tdf`, build lists, features; **not** maps, which
   are per-game, and **not** cosmetics — art, models, animation, sound, music, GUI).
 - Each game carries a **game-mods flag** (`GameOptions.gameMods`, 0/1). When on,
-  the host's ticked `mods/game/<pack>` folders are packaged and transferred (see
+  the host's always-enabled `mods/game/always_enabled/<pack>` folders and its
+  ticked `mods/game/<pack>` folders are packaged and transferred (see
   [Per-room game mods](#per-room-game-mods)); every player mounts that verified
-  package at game start so its registry matches the referee's. A single-player
-  room always sends 1; a multiplayer room defaults to 0 (the create screen's GAME
-  MODS toggle); campaign missions and Crusades battles are forced to 0.
+  package at game start so its registry matches the referee's. After
+  0.8.13 (still protocol 293) every host sends 1, single player and
+  multiplayer alike: the create screen's GAME MODS toggle is gone. 0 comes only
+  from a 0.8.12/0.8.13 host that turned the toggle off, or a debug `--mods`
+  launch, and is honoured as before (no package, no game packs at all).
+  Campaign missions and Crusades battles are forced to 0.
 - **Cosmetic mods are per player and never travel.** Each client lays on top of
-  the room's package its own always-on `mods/cosmetic/*.hpi` archives (every
-  room) and its ticked `mods/cosmetic/<pack>` folders (every room but a campaign
-  one), through the cosmetic keep-filter (`!affectsGameplay`, no `features/`, no
+  the room's package its own always-enabled `mods/cosmetic/always_enabled/<pack>`
+  folders (every room; `mods/cosmetic/*.hpi` archives are no longer read) and its
+  ticked `mods/cosmetic/<pack>` folders (every room but a campaign one), through the cosmetic keep-filter (`!affectsGameplay`, no `features/`, no
   `ai/`). That filter strips everything `gameplayHash` reads, so the Loaded hash
   is unchanged by them. The handshake mount, the referee data and map packages
   (`maps::build`) never include any cosmetic layer, so a cosmetic `maps/*.tdf`
@@ -783,7 +787,14 @@ exception recovery. It runs without networking or retail assets.
 Protocol 213 added the pack transfer messages alongside map transfer; they are
 now ModOffer/ModRequest/ModChunk/ModReady/ModError (same ids, same order; the
 offer label is `"mods"`). The host selects named immediate subfolders of
-`mods/game/`; files directly in `mods/` or `mods/game/` are excluded. Selections
+`mods/game/`, and every immediate subfolder of `mods/game/always_enabled/` is
+added (`MpClient::hostGameModPacks`); files directly in `mods/`, `mods/game/` or
+`always_enabled/` are excluded, and `always_enabled` itself is never a pack. An
+always-enabled pack hides an ordinary pack whose name matches ignoring case
+(`hpi::modPacks`), so the names in the package are unique and plain; they pass
+0.8.12/0.8.13's `mods::decode` unchanged, so the wire and package format did not
+change. A guest never adds its own always-enabled game packs: it mounts the
+host's package alone. Selections
 are merged in alphabetical order into a bounded, SHA-256-addressed package (no
 cosmetic file ever goes in it). Server and peers verify it before room
 readiness. Each game-mods room owns its own VFS and registries, leaving other
@@ -1129,7 +1140,8 @@ game packs, the server refuses them from anyone else and forces the flag off in
 campaigns and Crusades battles, and the `Override*` messages are renamed `Mod*`
 with the same ids and the offer label `"mods"`. The replay header keeps the same
 byte as `gameMods` and the digest as `modDigest`. Cosmetic mods (selected pack
-folders and the always-on `mods/cosmetic/*.hpi` archives) stay local to each player
+folders and the always-on `mods/cosmetic/*.hpi` archives, since replaced by
+`mods/cosmetic/always_enabled/<pack>` folders) stay local to each player
 and are never sent. The simulation is 286's, but 286 recordings no longer play.
 Protocol 288 adds power codes. `GameOptions` gains a `powerCodes` byte after
 `mapScenario` (0 or 1, default 0, outside the Crusades rules digest): set when the

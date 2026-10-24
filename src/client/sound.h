@@ -117,7 +117,7 @@ public:
     // Live output-device switch from Options: re-open on the now-current device.
     void reopenDevice() { openOutput(); }
 
-    // (User sound mods -- e.g. the always-on mods/cosmetic/click.hpi replacing the
+    // (User sound mods -- e.g. the always-enabled mods/cosmetic/always_enabled/click/ replacing the
     // faction order tones -- arrive through the VFS's mod layer, which wins the
     // sounds/ namespace automatically, so no separate sound loader is needed.)
 

@@ -12,9 +12,10 @@ struct Settings;
 
 // Retail's BOD book, chapter illustration and previous/next/play controls.
 // Every installed chapter remains selectable; completion suggests a starting page.
-// Not retail: with <install> given, the left page names the always-on
-// mods/cosmetic/*.hpi archives the mission will load. Campaigns offer no mod
-// selection: game mods and cosmetic pack folders are never used there.
+// Not retail: with <install> given, the left page names the always-enabled
+// cosmetic packs (mods/cosmetic/always_enabled/) the mission will load. Campaigns
+// offer no mod selection: game mods (always-enabled ones too) and ticked cosmetic
+// packs are never used there.
 // Mission opponents always play the Classic AI (retail's own); there is no choice.
 class CampaignScreen {
 public:

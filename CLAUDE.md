@@ -60,7 +60,7 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
   — the engine reads a retail install directly (root `*.hpi` + `Maps/` + `Music/`
   + `mods/`); maps are referenced by NAME, resolved via the VFS. `--mods
   none|cosmetic|game|all` (default all) picks which kinds of ticked `mods/` packs a
-  debug launch may mount (`mods/cosmetic/*.hpi` are always on unless cosmetic is
+  debug launch may mount (`mods/cosmetic/always_enabled/<pack>/` packs are always on unless cosmetic is
   excluded). README lists all options.
   (A release `build/takclient --data <dir>` plays the same games through the menu.)
 - Headless determinism / smoke test — DEBUG binaries (the harness flags + `TAK_HEADLESS`

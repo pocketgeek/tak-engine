@@ -1039,14 +1039,34 @@ bool hasLegacyOverridesDir(const std::filesystem::path& root) {
     // Looks at the root's entries only: overrides/ itself is never opened.
     return !realSubdir(root,"overrides").empty();
 }
-std::vector<std::string> modPacks(const std::filesystem::path& root,ModKind kind) {
-    std::vector<std::string> result;auto dir=modDirectory(root,kind);if(dir.empty())return result;
+namespace {
+// mods/<kind>/always_enabled/ (any case), or empty.
+std::filesystem::path modAlwaysDirectory(const std::filesystem::path& root,ModKind kind) {
+    return realSubdir(modDirectory(root,kind),kAlwaysEnabledDir);
+}
+// The real (non-symlink, non-hidden) subdirectories of `dir`, sorted; files are ignored.
+std::vector<std::string> listPackDirs(const std::filesystem::path& dir) {
+    std::vector<std::string> result;if(dir.empty())return result;
     std::error_code ec;
     for(const auto& entry:std::filesystem::directory_iterator(dir,ec)) {
         const auto name=utf8(entry.path().filename());
         if(entry.is_directory(ec) && !entry.is_symlink(ec) && !name.empty() && name[0]!='.' && name.size()<=128)result.push_back(name);
     }
     std::sort(result.begin(),result.end());return result;
+}
+}
+std::vector<std::string> alwaysEnabledPacks(const std::filesystem::path& root,ModKind kind) {
+    return listPackDirs(modAlwaysDirectory(root,kind));
+}
+std::vector<std::string> modPacks(const std::filesystem::path& root,ModKind kind) {
+    auto result=listPackDirs(modDirectory(root,kind));if(result.empty())return result;
+    // always_enabled/ is not a pack, and an always-enabled pack hides an ordinary
+    // pack of the same name (ignoring case): its copy is the one that loads.
+    std::set<std::string> always;
+    for(const auto& name:alwaysEnabledPacks(root,kind))always.insert(MountSet::key(name));
+    std::erase_if(result,[&](const std::string& name){
+        const auto k=MountSet::key(name);return k==kAlwaysEnabledDir || always.count(k);});
+    return result;
 }
 namespace {
 // Feature definitions contain simulation keys; cosmetic files must never replace
@@ -1070,36 +1090,26 @@ void collect(const MountSet& mount,Vfs::Files& files,size_t& total) {
 Vfs::Files modFiles(const std::filesystem::path& root,ModKind kind,const std::vector<std::string>& selected) {
     Vfs::Files files;if(selected.empty())return files;
     if(selected.size()>64)throw std::runtime_error("too many mod packs");
-    const auto available=modPacks(root,kind);auto names=selected;std::sort(names.begin(),names.end());
+    auto names=selected;std::sort(names.begin(),names.end());
     if(std::adjacent_find(names.begin(),names.end())!=names.end())throw std::runtime_error("duplicate mod pack");
-    const auto dir=modDirectory(root,kind);size_t total=0;
+    // Each name is an always-enabled pack or an ordinary one (never both: an
+    // always-enabled pack hides its namesake). Always-enabled layers go first,
+    // then the ordinary ones, each alphabetical; later layers win.
+    const auto always=alwaysEnabledPacks(root,kind),available=modPacks(root,kind);
+    std::vector<std::filesystem::path> paths,later;
+    const auto alwaysDir=modAlwaysDirectory(root,kind),dir=modDirectory(root,kind);
     for(const auto& name:names) {
-        if(!std::binary_search(available.begin(),available.end(),name))throw std::runtime_error("mod pack not found: "+name);
+        if(std::binary_search(always.begin(),always.end(),name))paths.push_back(alwaysDir/std::filesystem::u8path(name));
+        else if(std::binary_search(available.begin(),available.end(),name))later.push_back(dir/std::filesystem::u8path(name));
+        else throw std::runtime_error("mod pack not found: "+name);
+    }
+    paths.insert(paths.end(),later.begin(),later.end());
+    size_t total=0;
+    for(const auto& path:paths) {
         MountConfig cfg{true,{".hpi",".ufo",".kmp"},{},{}};
         if(kind==ModKind::Cosmetic)cfg.keep=cosmeticKeep;
-        collect(MountSet(dir/std::filesystem::u8path(name),std::move(cfg)),files,total);
+        collect(MountSet(path,std::move(cfg)),files,total);
     }
-    return files;
-}
-std::vector<std::string> alwaysOnMods(const std::filesystem::path& root) {
-    std::vector<std::string> result;auto dir=modDirectory(root,ModKind::Cosmetic);if(dir.empty())return result;
-    std::error_code ec;std::set<std::string> seen;
-    for(const auto& entry:std::filesystem::directory_iterator(dir,ec)) {
-        const auto name=utf8(entry.path().filename());const auto k=MountSet::key(name);
-        // Real *.hpi files only (any case); a name that differs only in case from
-        // one already listed would mount the same archive twice, so it is skipped.
-        if(entry.is_regular_file(ec) && !entry.is_symlink(ec) && name[0]!='.' && name.size()<=128 &&
-           k.size()>4 && k.ends_with(".hpi") && seen.insert(k).second)result.push_back(name);
-    }
-    std::sort(result.begin(),result.end(),[](const auto& a,const auto& b){return MountSet::key(a)<MountSet::key(b);});
-    return result;
-}
-Vfs::Files alwaysOnModFiles(const std::filesystem::path& root) {
-    Vfs::Files files;const auto dir=modDirectory(root,ModKind::Cosmetic);size_t total=0;
-    // One MountSet per archive: inside one set a conflict goes to the newest entry
-    // date, but these layer alphabetically like the pack folders (later name wins).
-    for(const auto& name:alwaysOnMods(root))
-        collect(MountSet(dir,MountConfig{false,{".hpi"},cosmeticKeep,{MountSet::key(name)}}),files,total);
     return files;
 }
 Vfs mountPlayVfs(const std::filesystem::path& root,Vfs::Files gameFiles,std::vector<std::string> cosmeticPacks,
@@ -1117,13 +1127,13 @@ Vfs mountPlayVfs(const std::filesystem::path& root,Vfs::Files gameFiles,std::vec
             layers.push_back(std::move(layer));
         }catch(const std::exception& e){skip(name,e.what());}
     };
-    const auto dir=modDirectory(root,ModKind::Cosmetic);
-    // One MountSet per archive: inside one set a conflict goes to the newest entry
-    // date, but these layer alphabetically like the pack folders (later name wins).
-    for(const auto& name:alwaysOnMods(root))
-        add(name,[&]{Vfs::Files files;size_t total=0;
-            collect(MountSet(dir,MountConfig{false,{".hpi"},cosmeticKeep,{MountSet::key(name)}}),files,total);return files;});
-    // Remember unavailable selections, but a removed cosmetic pack must not stop a game.
+    // The always-enabled cosmetic packs first (every game, campaigns included),
+    // then the ticked ones; each alphabetical, later layers win.
+    auto always=alwaysEnabledPacks(root,ModKind::Cosmetic);
+    if(always.size()>64)always.resize(64);
+    for(const auto& name:always)add(name,[&]{return modFiles(root,ModKind::Cosmetic,{name});});
+    // Remember unavailable selections, but a removed cosmetic pack must not stop a
+    // game. A tick an always-enabled pack hides is not in modPacks either.
     const auto available=modPacks(root,ModKind::Cosmetic);
     std::sort(cosmeticPacks.begin(),cosmeticPacks.end());
     cosmeticPacks.erase(std::unique(cosmeticPacks.begin(),cosmeticPacks.end()),cosmeticPacks.end());

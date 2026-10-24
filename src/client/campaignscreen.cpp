@@ -31,14 +31,14 @@ struct CampaignScreen::Impl {
     bool picked=false;
     std::string stem,campaign;
     std::function<void(const std::string&)> playSound;
-    // Not retail: the always-on mods/cosmetic/*.hpi archives every game loads,
+    // Not retail: the always-enabled cosmetic packs (mods/cosmetic/always_enabled/) every game loads,
     // campaigns included, named on the left page (they cannot be switched off here).
     std::string alwaysOn;
 
     Impl(SDL_Renderer* r,const hpi::Vfs& vfs,const Settings& s,int initial,const std::filesystem::path& install)
         :ren(r),settings(s),camps(loadCampaigns(vfs)) {
         if(!install.empty())try {
-            for(const auto& name:hpi::alwaysOnMods(install))alwaysOn+=(alwaysOn.empty()?"":", ")+name;
+            for(const auto& name:hpi::alwaysEnabledPacks(install,hpi::ModKind::Cosmetic))alwaysOn+=(alwaysOn.empty()?"":", ")+name;
         }catch(...) {}
         try {ui=gui::parse(vfs.read("guis/bod.gui"),"guis/bod.gui");}catch(...) {}
         std::map<std::string,std::vector<gaf::Sequence>> banks;

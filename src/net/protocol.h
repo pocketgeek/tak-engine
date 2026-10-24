@@ -860,9 +860,12 @@ struct GameOptions {
     uint8_t forfeitSelfDestruct = 0;   // 0=units go inert on forfeit, 1=self-destruct
     // Game mods for this game: 0=off (no game packs), 1=on (the host's selected
     // mods/game packs are transferred to and mounted by every player). Cosmetic
-    // mods are each player's own choice and never travel. MP defaults to off; a
-    // single-player room always sends 1. (Was the 0/1/2 override tier before the
-    // mods rework: same byte, new meaning.)
+    // mods are each player's own choice and never travel. Every host after 0.8.13
+    // sends 1 (multiplayer works like single player; the host's always-enabled
+    // game packs travel in the same package); 0 comes only from a 0.8.12 or 0.8.13 host's
+    // GAME MODS: OFF or a debug --mods launch, and the server forces 0 for
+    // campaign and Crusades rooms. (Was the 0/1/2 override tier before the mods
+    // rework: same byte, new meaning.)
     uint8_t gameMods = 0;
     // Game speed in tenths (10 = 1.0x). Changes the server's tick CADENCE (and the
     // client's playout rate); the per-tick dt stays 1/kServerHz so the sim math is

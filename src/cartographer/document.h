@@ -58,6 +58,16 @@ bool writeDocumentLoose(const std::filesystem::path& directory, const DocumentFi
 // Why `name` cannot name a pack ("" = it can): 1-128 bytes, a valid file name, no
 // leading '.' (hpi::modPacks lists nothing else).
 std::string modPackNameError(const std::string& name);
+// Why `name` cannot be an editable game pack in `dataRoot` ("" = it can): it is
+// always_enabled (the folder of the packs the game always applies), or an
+// always-enabled pack (mods/game/always_enabled/<name>, any case) already uses it,
+// which would hide a mods/game/<name> folder. Cartographer edits ordinary packs
+// only; to edit an always-enabled one, move it out of always_enabled/ first.
+std::string modPackReservedError(const std::filesystem::path& dataRoot, const std::string& name);
+// TEST IN GAME's note when `dataRoot` has always-enabled game packs (they apply in
+// every room the player hosts, the test room too): " Always-enabled game packs
+// (mods/game/always_enabled/: A, B) also apply in the test game." or "".
+std::string alwaysEnabledGameNote(const std::filesystem::path& dataRoot);
 struct ModProfileChange {
     enum class Action { Create, Same, Replace, Delete };
     std::string key;                    // ai/takengine.txt
@@ -89,7 +99,8 @@ bool planModProfiles(const std::filesystem::path& dataRoot, const std::string& p
 bool writeModProfiles(const std::filesystem::path& dataRoot, const ModProfilePlan&, const std::filesystem::path& backupRoot,
                       std::string& error, std::filesystem::path* backupFolder = nullptr);
 // A pack's root ai/<x>.txt files as the game reads them (loose over its archives),
-// for Open from game mod. Throws when the pack is not listed by hpi::modPacks.
+// for Open from game mod. Throws when the pack is not listed by hpi::modPacks (an
+// always-enabled pack is not: hpi::modFiles alone would read it).
 AiFiles readModProfiles(const std::filesystem::path& dataRoot, const std::string& pack);
 
 // The data root's Maps folder (any case), or empty.

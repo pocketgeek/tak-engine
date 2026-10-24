@@ -153,7 +153,7 @@ takclient --data /path/to/your/kingdoms/install
 | `meta.hpi`, `boneyards.hpi`, `boneyards2.hpi`, `jersey.hpi`, `v2rocket.hpi`, `v3rocket.hpi` | Official patches and map/unit packs, if you have them. |
 | `Maps/` | Extra maps you downloaded (`.kmp` files). |
 | `Music/` | The soundtrack (`track*.wav`). |
-| `mods/` | Optional content packs, in `mods/cosmetic/` and `mods/game/`; see [Mods](#mods). |
+| `mods/` | Optional content packs, in `mods/cosmetic/` and `mods/game/` (and their `always_enabled/` subfolders); see [Mods](#mods). |
 
 The door videos on the main menu are read from the install's movie files. If
 they are missing, the menu shows still door art instead.
@@ -173,8 +173,9 @@ wins:
 
 - Inside one layer, loose files beat archive entries. Between archives, the
   entry with the newest stored date wins, as in the original game.
-- Ticked cosmetic packs beat the always-on cosmetic archives, which beat ticked
-  game packs. All of them beat installed maps, which beat the official archives.
+- Ticked cosmetic packs beat always-enabled cosmetic packs, which beat ticked
+  game packs, which beat always-enabled game packs. All of them beat installed
+  maps, which beat the official archives.
 - A map shared for the current match beats all of these for that match.
 
 The `hpitool where <install> <path>` command, built with the engine, shows which
@@ -280,11 +281,10 @@ change in the room, until the game starts.
 | **Unit cap** | The most units each player may have alive: 250, 500, 1,000 or 2,000 (the default). Production pauses at the cap. |
 | **Allow speed change** | Lets the host change game speed during the match, from −9 (0.1×) to +10 (2×). |
 | **Pathfinding** | **Retail** (the default) or **Legion**. See [Pathfinding](#pathfinding-retail-and-legion). |
-| **Game mods** | Multiplayer only, default **Off**. When on, the host ticks game mod packs in the room and they are sent to every player. Single player always has them. See [Mods](#mods). |
 | **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. The host can change it in the room by clicking it, until the game starts; then it is fixed. See [Spectating](#spectating). |
 | **Spectate (Watch AIs)** | Single-player only: fill every slot with AIs and watch. |
 | **Power codes** | **Off** (the default) or **On**. On lets every player in the game type the original game's cheat codes in the chat box, such as **+ATM** and **+NowISee**. See [Power codes](#power-codes). Always off in campaigns and Crusades battles. It cannot be changed in the room. |
-| **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered when game mods are available (always in single player, with **Game mods: On** in multiplayer), if you have a game mod pack, with the warning *PACK NEEDED:* and the unit, in case a selected pack supplies it. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
+| **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered if you have a game mod pack (ticked in the room or always enabled), in single player and multiplayer alike, with the warning *PACK NEEDED:* and the unit, in case a pack supplies it. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
 
 Your choices are remembered for next time, except passwords, Spectate and Map
 scenario.
@@ -2043,26 +2043,51 @@ Mods replace game files. There are two kinds, each in its own folder inside
 Put each pack in its own folder, for example
 `mods/cosmetic/New Sounds/sounds/click.wav` or `mods/game/Big Units/units/...`.
 A pack can hold loose files or `.hpi`, `.ufo` and `.kmp` archives. **Files
-placed directly in `mods/` or `mods/game/` are never loaded.**
+placed directly in `mods/`, `mods/cosmetic/` or `mods/game/` are never loaded.**
 
-**Always-on cosmetic mods.** A `.hpi` archive placed directly in
-`mods/cosmetic/`, for example `mods/cosmetic/click.hpi`, is always loaded, in
-every game: skirmish, multiplayer, campaigns, map scenarios and replays. It is
-filtered like any cosmetic mod, so it can only change what you see and hear. It
-is not listed for ticking; the game room, the campaign screen and the mission
-briefing name them instead (**ALWAYS ON**). To turn one off, move it out of the
-folder. Only `.hpi` files count: other files directly in `mods/cosmetic/` are
-ignored.
+**Always-enabled mods.** Each kind has an `always_enabled` folder for packs you
+always want: `mods/cosmetic/always_enabled/<pack>/` and
+`mods/game/always_enabled/<pack>/`, for example
+`mods/cosmetic/always_enabled/click/click.hpi`. A pack there is an ordinary
+pack folder, with the same rules as any other (loose files or archives, the
+same filters), but it is never ticked: it is always applied, and the game room
+lists it, locked, on an **ALWAYS ON** line under its kind's heading. Files
+placed directly in `always_enabled/` are never loaded. To turn a pack off, move
+its folder out of `always_enabled/`.
 
-A cosmetic mod never stops a game. If an always-on archive or a ticked cosmetic
-pack cannot be loaded (a damaged archive, or more than 256 MB of mods), or its
-animation art would change game timing (for example the frame timing of a
-storm effect), it is left out of that game and the game's chat says so.
+- **Always-enabled cosmetic packs** load in every game you play: skirmish,
+  multiplayer, campaigns, map scenarios and replays. They are your own, like
+  ticked cosmetic packs, and are never sent anywhere. The campaign screen and
+  the mission briefing name them too.
+- **Always-enabled game packs** apply in every game you **host**: single player
+  and the multiplayer rooms you create. They are sent to every player with your
+  ticked game packs, exactly like them. When you join someone else's room, the
+  host's packs are the game's packs and your own always-enabled game packs are
+  not used. They never apply in campaigns or Crusades battles.
+- **Names.** A pack in `always_enabled/` and an ordinary pack of the same kind
+  with the same name (ignoring upper and lower case) count as one pack: the
+  always-enabled one is used, and the ordinary folder is hidden from the room
+  until you rename or move one of them. A saved tick of that name is kept and
+  has no effect while the always-enabled pack is there.
 
-In the game room you tick the packs you want (up to 64 of each kind). Packs of
-one kind load in alphabetical order of their folder names; later names win when
-they change the same file. Game packs load first, then the always-on archives,
-then ticked cosmetic packs.
+**Moving from 0.8.13 and earlier.** A `.hpi` placed directly in
+`mods/cosmetic/` (the old always-on archives, such as `mods/cosmetic/click.hpi`)
+is **no longer loaded**. Move each one into its own folder in
+`mods/cosmetic/always_enabled/`, for example
+`mods/cosmetic/always_enabled/click/click.hpi`. The game does not move it for
+you. Likewise, anything placed loose in `mods/game/` was never loaded; put it in a
+pack folder.
+
+A cosmetic mod never stops a game. If an always-enabled or a ticked cosmetic
+pack cannot be loaded (more than 256 MB of mods, for example; a damaged archive
+inside a pack is skipped), or its animation art would change game timing (for
+example the frame timing of a storm effect), it is left out of that game and the
+game's chat says so.
+
+In the game room you tick the packs you want (up to 64 of each kind, counting
+the always-enabled ones). Inside each kind, always-enabled packs load first,
+then ticked ones, each in alphabetical order of their folder names; later packs
+win when they change the same file. Game packs load first, then cosmetic packs.
 
 ![A single-player room with Power Codes: On among the match rules; below the map, the COSMETIC MODS list with ALWAYS ON: click.hpi under its heading and Classic Sounds ticked and the GAME MODS list with Big Battles ticked](img/guide/room-mods-power-codes.jpg)
 
@@ -2070,15 +2095,18 @@ then ticked cosmetic packs.
   multiplayer, host or not. They change only what that player sees and hears,
   are never sent to the server or to other players, and players in one game may
   use different ones.
-- **Game packs** in single player are always available: tick them in the room.
-- **Game packs** in multiplayer need **Game mods: On** on the setup screen. Only
-  the host ticks them; they are sent to the server and to every player
+- **Game packs** work the same in single player and multiplayer: the host ticks
+  them in the room (there is no setup-screen switch for them). They and the
+  host's always-enabled game packs are sent to the server and to every player
   automatically, and everyone checks they have the same package before the game
   starts; the room shows the transfer's progress, then **GAME MODS VERIFIED**
-  once the ticked packs check out (nothing when no game pack is ticked).
-  Transfers are limited to 256 MB.
+  once the packs check out (nothing when the host has no game pack in play).
+  Transfers are limited to 256 MB. A room hosted by a 0.8.12 or 0.8.13 player
+  may still have its **Game mods** switch off; it then says **GAME MODS: OFF
+  (HOST)** and runs no game packs at all.
 - **Campaigns** and **Crusades battles** use the original game data plus your
-  always-on cosmetic archives only: no game packs and no ticked cosmetic packs.
+  always-enabled cosmetic packs only: no game packs (always-enabled ones
+  included) and no ticked cosmetic packs.
 
 ### AI profiles in game mods
 
@@ -2397,7 +2425,7 @@ Released builds keep the command line deliberately small:
 | --- | --- |
 | `--data <folder>` | Use this game-data folder. Optional: without it, the game uses the saved folder or asks. |
 | `--play-map <map.kmp>` | Open a Cartographer map snapshot in a private game lobby. |
-| `--game-mod <pack>` | With `--play-map` only: tick this one game pack (`mods/game/<pack>`) in that lobby, for this run. Your own ticks stay saved. Cartographer's **TEST IN GAME...** uses it. |
+| `--game-mod <pack>` | With `--play-map` only: tick this one game pack (`mods/game/<pack>`) in that lobby, for this run. Your own ticks stay saved. Your always-enabled game packs apply too, as in every room you host; naming one of them ticks nothing more. Cartographer's **TEST IN GAME...** uses it. |
 | `--version` | Print the version and exit. |
 
 Everything else is set in the menus. Developer builds have many more options;

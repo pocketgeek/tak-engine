@@ -180,7 +180,6 @@ Settings loadSettings() {
         else if (key == "gameCreate.generated") s.gameCreate.generated = asBool();
         else if (key == "gameCreate.unitCap") s.gameCreate.unitCap = asInt(250, 2000);
         else if (key == "gameCreate.fog") s.gameCreate.fog = asInt(0, 2);
-        else if (key == "gameCreate.gameMods") s.gameCreate.gameMods = asBool();
         else if (key == "gameCreate.mapSort") s.gameCreate.mapSort = asInt(0, 2);
         else if (key == "gameCreate.mapSortDir") s.gameCreate.mapSortDir = (asInt(-1, 1) < 0 ? -1 : 1);
         else if (key == "gameCreate.name") s.gameCreate.name = val;
@@ -280,7 +279,6 @@ std::string serializeSettings(const Settings& s) {
     o << "gameCreate.generated = " << s.gameCreate.generated << "\n";
     o << "gameCreate.unitCap = " << s.gameCreate.unitCap << "\n";
     o << "gameCreate.fog = " << s.gameCreate.fog << "\n";
-    o << "gameCreate.gameMods = " << s.gameCreate.gameMods << "\n";
     o << "gameCreate.mapSort = " << s.gameCreate.mapSort << "\n";
     o << "gameCreate.mapSortDir = " << s.gameCreate.mapSortDir << "\n";
     o << "gameCreate.name = " << s.gameCreate.name << "\n";

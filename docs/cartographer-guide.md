@@ -274,7 +274,9 @@ links to the section that explains it in full.
 4. **REGIONS**: switches to editing named trigger areas. See
    [Regions](#regions).
 5. **TEST MAP (F5)**: opens the current map in the game. While a test game is
-   open it reads **TEST RUNNING**.
+   open it reads **TEST RUNNING**. The test room is one you host, so your
+   always-enabled game packs (`mods/game/always_enabled/`) apply there; the
+   launch message names them.
 6. **Search box**: filters the browser below it. **Ctrl+F** jumps here; **Enter**
    or **Esc** returns to the map. The text stays when you change tools, so clear
    it if a browser looks empty.
@@ -1127,12 +1129,12 @@ such as "hold the hill for five minutes to win".
 >   fight, build or move (animals, villagers, monsters and unarmed buildings such
 >   as lodestones do not count) or a rule that creates units for it. Many
 >   downloaded maps used the scenario editor only to place scenery or wildlife,
->   and play as ordinary skirmish maps. When game mods are available (always in
->   single player, with **Game mods: On** in multiplayer), a map that needs
->   a unit type this install lacks is offered with the warning *PACK NEEDED:*
->   and the unit, when the install has a game mod pack the host could select in
->   the room; if no selected pack supplies the unit, the game refuses to start
->   and says which unit is missing. Maps with a playable scenario carry a gold
+>   and play as ordinary skirmish maps. A map that needs a unit type this
+>   install lacks is offered with the warning *PACK NEEDED:* and the unit, in
+>   single player and multiplayer alike, when the install has a game mod pack
+>   (one the host could tick in the room, or an always-enabled one); if no
+>   applied pack supplies the unit, the game refuses to start and says which
+>   unit is missing. Maps with a playable scenario carry a gold
 >   **S** in the map list.
 >
 > The test copy that each Test Map or `--play-map` run leaves in the game's
@@ -1600,7 +1602,12 @@ not.* The rules:
 - Campaign missions always use the DEFAULT AI.
 
 **PREVIEW WITH GAME MOD** steps through your game mods (**PACK: NONE** means
-none), so the footer can show what happens when one of them is ticked. While a
+none), so the footer can show what happens when one of them is ticked. The
+lists in this window (here, OPEN FROM GAME MOD and File → Open AI mod) show
+your ordinary packs in `mods/game/`, not the always-enabled packs in
+`mods/game/always_enabled/`, which Cartographer does not edit: to edit one,
+move its folder out of `always_enabled/` first. The preview and the checks see
+one pack over the install, without your always-enabled game packs. While a
 pack is picked, the unit table also lists the units it adds, tagged `pack`.
 
 #### Saving as a game mod
@@ -1625,9 +1632,13 @@ name).
   nothing else in it changes. A file written by hand is saved exactly as it is.
 - If the game data folder is read-only (for example a game installed under
   Program Files), **SAVE FAILED** says so.
-- A game mod applies only when it is ticked: in single player in the room, in
-  multiplayer when the host turns **Game mods: On** and ticks it. A game that is
-  already running shows a new pack the next time a room opens.
+- A game mod applies only when it is ticked: the host ticks it in the room, in
+  single player and multiplayer alike (or it is in the host's
+  `mods/game/always_enabled/`). A game that is already running shows a new pack
+  the next time a room opens.
+- A pack cannot be named `always_enabled` (that folder holds the packs the game
+  always applies), nor take the name of a pack in `mods/game/always_enabled/`
+  (ignoring case): the always-enabled copy would hide it.
 
 **OPEN FROM GAME MOD...** lists your game mods; with more than 14, scroll the
 list with the mouse wheel or its scrollbar, or use **Up**/**Down**,
@@ -1704,7 +1715,9 @@ built by any of our levels while the pack is ticked. Nothing is saved yet.*
   click or **Enter** to pick). The game opens its private test lobby on a test
   copy of that map, as **Test Map** does, with this pack ticked as the room's
   only game mod. This applies to that run only: your own ticks under the
-  room's mod list stay saved. Seat the computer players at the levels to test
+  room's mod list stay saved. Your always-enabled game packs
+  (`mods/game/always_enabled/`) apply too, as in every room you host, and the
+  launch message names them. Seat the computer players at the levels to test
   (**RETAIL** for the DEFAULT AI profile). The map's own AI files come along;
   where the pack has a file of the same name, the pack's is used.
 
@@ -2281,8 +2294,9 @@ Start Cartographer from its shortcut and choose **Recover**. See
 - **Re-saving downloaded maps.** If a downloaded map came with its own terrain
   images or feature files, re-saving it in Cartographer writes only the map's
   own files, not that extra art.
-- **Mods** (`mods/` packs, including the always-on `mods/cosmetic/*.hpi`
-  archives) are not loaded in the editor. The one exception is the AI Profiles
+- **Mods** (`mods/` packs, including the always-enabled packs in
+  `mods/cosmetic/always_enabled/` and `mods/game/always_enabled/`) are not
+  loaded in the editor. The one exception is the AI Profiles
   window, which lists a game mod's units while that pack is previewed or
   opened there.
 - **Display names** are cut to 31 bytes in the game.

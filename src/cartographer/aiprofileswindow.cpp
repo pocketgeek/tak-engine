@@ -1502,7 +1502,8 @@ void cart::Editor::aiLaunchTest(const std::string& mapPath) {
         if(!playtest.start(client,std::filesystem::u8path(dataRoot),files,error,aiMod->pack))throw std::runtime_error(error);
         playtestAiMod=true;
         openMessage("TEST IN GAME","Opened a private game lobby on a test copy of "+label+" with game mod "+aiMod->pack+
-            " ticked for that room only (your own ticks are kept). Seat AIs at the levels to test (RETAIL for the DEFAULT AI), then start. Close the game to return here.");
+            " ticked for that room only (your own ticks are kept). Seat AIs at the levels to test (RETAIL for the DEFAULT AI), then start. Close the game to return here."+
+            cart::alwaysEnabledGameNote(std::filesystem::u8path(dataRoot)));
     } catch(const std::exception& e) {openMessage("TEST IN GAME FAILED",e.what());}
 }
 
@@ -1689,7 +1690,7 @@ void cart::Editor::drawAiModDialogs() {
     }
     y+=6;
     y+=12*drawWrapped(ren,"! A game mod's file replaces the same file on every map, the whole file, not line by line: its ai/takengine.txt replaces the map's for all six levels. "
-        "It applies only when the pack is ticked (multiplayer: the host turns Game mods On and ticks it). "
+        "It applies only when the pack is ticked (multiplayer: the host ticks it in the room) or is in mods/game/always_enabled/ of the host's install. "
         "A game mod's default.txt does not replace a map's own profile.",pc.x,y,pc.w,4,255,205,140)+4;
     // The roster note: the units listed are this pack's when the window reads them (editing or previewing it).
     const std::string target=aiModPlan.pack.empty()?trimmed(aiModPack):aiModPlan.pack;

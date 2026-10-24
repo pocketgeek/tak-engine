@@ -320,8 +320,8 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     if (!loadReplayFile(path, rf))
         throw std::runtime_error(rf.error.empty() ? "cannot read that replay" : rf.error);
     // The replay's game mods come from the verified package it recorded (the
-    // digest); this viewer's own cosmetic mods go on top -- the always-on
-    // mods/cosmetic/*.hpi archives, plus the ticked packs unless it is a campaign
+    // digest); this viewer's own cosmetic mods go on top -- the always-enabled
+    // cosmetic packs, plus the ticked packs unless it is a campaign
     // replay (they never change the gameplay hash, so the data check below holds).
     tak::hpi::Vfs::Files game;
     if(!rf.modDigest.empty()) {
@@ -712,24 +712,33 @@ int main(int argc, char** argv) {
         }
     }
     if (!playGameMod.empty()) {
-        // --game-mod: the test room's game mods are exactly this pack, for this run only
-        // (tak::setLaunchGameModPacks keeps the player's saved ticks). Part of the
-        // --play-map handoff: Cartographer's TEST IN GAME for an AI mod.
+        // --game-mod: the test room's ticked game mods are exactly this pack, for this run
+        // only (tak::setLaunchGameModPacks keeps the player's saved ticks); the
+        // always-enabled game packs apply too, as in every room this player hosts. Part
+        // of the --play-map handoff: Cartographer's TEST IN GAME for an AI mod.
         std::string why;
+        bool alreadyAlways = false;
         if (playMap.empty()) why = "--game-mod is only used with --play-map";
         else if (!modUse.game) why = "--mods leaves game mods out of this launch";
         else {
-            const auto packs = tak::hpi::modPacks(std::filesystem::u8path(dataRoot), tak::hpi::ModKind::Game);
-            if (std::find(packs.begin(), packs.end(), playGameMod) == packs.end())
-                why = "There is no game mod \"" + playGameMod + "\" in " + dataRoot + "/mods/game";
+            const auto root = std::filesystem::u8path(dataRoot);
+            const auto packs = tak::hpi::modPacks(root, tak::hpi::ModKind::Game);
+            const auto always = tak::hpi::alwaysEnabledPacks(root, tak::hpi::ModKind::Game);
+            if (std::find(always.begin(), always.end(), playGameMod) != always.end()) alreadyAlways = true;
+            else if (std::find(packs.begin(), packs.end(), playGameMod) == packs.end())
+                why = "There is no game mod \"" + playGameMod + "\" in " + dataRoot + "/mods/game or " +
+                      dataRoot + "/mods/game/always_enabled";
         }
         if (!why.empty()) {
             tak::errorBox("Cannot test game mod", why);
             std::fprintf(stderr, "Test in game: %s\n", why.c_str()); SDL_Quit(); return 1;
         }
-        settings.gameModPacks = {playGameMod};
+        settings.gameModPacks = alreadyAlways ? std::vector<std::string>{} : std::vector<std::string>{playGameMod};
         tak::setLaunchGameModPacks(settings.gameModPacks);
-        std::fprintf(stderr, "Test in game: game mod %s ticked for this run\n", playGameMod.c_str());
+        if (alreadyAlways)
+            std::fprintf(stderr, "Test in game: game mod %s is already always enabled; no pack ticked for this run\n", playGameMod.c_str());
+        else
+            std::fprintf(stderr, "Test in game: game mod %s ticked for this run\n", playGameMod.c_str());
     }
     if (maxFps != 60) settings.maxFps = maxFps;          // --maxfps (if given) wins the file
     bool vsyncOn = settings.vsync && !noVsync;            // --novsync forces off
@@ -1118,7 +1127,8 @@ int main(int argc, char** argv) {
     if (!serverHost.empty()) {
         mp = std::make_unique<tak::net::MpClient>();
         mp->setMapRoot(std::filesystem::u8path(dataRoot));
-        mp->setGameModPacks(modUse.game ? settings.gameModPacks : std::vector<std::string>{});
+        mp->setGameModsAllowed(modUse.game);   // debug --mods none|cosmetic: no game packs at all
+        mp->setGameModPacks(settings.gameModPacks);
         if (playerName.empty()) playerName = settings.playerName;
         if (playerName.empty()) playerName = "player";
         // Hello carries the PURE-RETAIL gameplay fingerprint (no mods), so the

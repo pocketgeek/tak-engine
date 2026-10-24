@@ -126,6 +126,26 @@ std::string modPackNameError(const std::string& name) {
     return {};
 }
 
+std::string modPackReservedError(const fs::path& dataRoot, const std::string& name) {
+    using tak::hpi::MountSet;
+    if(MountSet::key(name)==tak::hpi::kAlwaysEnabledDir)
+        return "always_enabled holds the packs the game always applies; pick another name.";
+    std::vector<std::string> always;
+    try {always=tak::hpi::alwaysEnabledPacks(dataRoot,tak::hpi::ModKind::Game);} catch(const std::exception&) {}
+    for(const auto& pack:always)if(MountSet::key(pack)==MountSet::key(name))
+        return "mods/game/always_enabled/"+pack+" already uses that name, and its copy is the one the game loads. "
+               "Move it out of always_enabled to edit it here.";
+    return {};
+}
+
+std::string alwaysEnabledGameNote(const fs::path& dataRoot) {
+    std::vector<std::string> always;
+    try {always=tak::hpi::alwaysEnabledPacks(dataRoot,tak::hpi::ModKind::Game);} catch(const std::exception&) {}
+    if(always.empty())return {};
+    std::string names;for(const auto& pack:always)names+=(names.empty()?"":", ")+pack;
+    return " Always-enabled game packs (mods/game/always_enabled/: "+names+") also apply in the test game.";
+}
+
 bool ModProfilePlan::writes() const {
     return std::any_of(changes.begin(),changes.end(),[](const ModProfileChange& c){return c.action!=ModProfileChange::Action::Same;});
 }
@@ -136,6 +156,7 @@ bool planModProfiles(const fs::path& dataRoot, const std::string& packName, cons
     plan=ModProfilePlan{};error.clear();
     try {
         if(const auto why=modPackNameError(packName);!why.empty()) {error=why;return false;}
+        if(const auto why=modPackReservedError(dataRoot,packName);!why.empty()) {error=why;return false;}
         std::error_code ec;
         if(dataRoot.empty() || !fs::is_directory(dataRoot,ec)) {error="The data folder does not exist: "+fileText(dataRoot);return false;}
         // mods/, game/, <pack>/, ai/: an existing real folder of that name in any case
@@ -264,6 +285,8 @@ bool writeModProfiles(const fs::path& dataRoot, const ModProfilePlan& plan, cons
 }
 
 AiFiles readModProfiles(const fs::path& dataRoot, const std::string& pack) {
+    const auto packs=tak::hpi::modPacks(dataRoot,tak::hpi::ModKind::Game);
+    if(!std::binary_search(packs.begin(),packs.end(),pack))throw std::runtime_error("mod pack not found: "+pack);
     AiFiles result;
     for(auto& [path,data]:tak::hpi::modFiles(dataRoot,tak::hpi::ModKind::Game,{pack}))
         if(aiFileKey(path))result[tak::hpi::MountSet::key(path)]=std::move(data);

@@ -25,10 +25,17 @@ int main(int argc,char** argv){try{
  put(peerRoot,"mods/cosmetic/Local/units/araking.fbi",std::regex_replace(text,hp,"MaxDamage=99999"));
  put(peerRoot,"mods/cosmetic/Local/sounds/pack-test.wav","local");
  put(peerRoot,"mods/game/PeerGame/units/araking.fbi",std::regex_replace(text,hp,"MaxDamage=4242")); // a guest's game pack is never used
- // Always-on cosmetic archives (mods/cosmetic/*.hpi): each player's own, in every room,
- // never sent; a gameplay file inside one is filtered out like a cosmetic pack's.
- archive(hostRoot,"mods/cosmetic/host-always.hpi",{{"sounds/host-always.wav","h"}});
- archive(peerRoot,"mods/cosmetic/peer-always.hpi",{{"sounds/peer-always.wav","p"},{"sounds/pack-test.wav","always"},{"units/araking.fbi",std::regex_replace(text,hp,"MaxDamage=31337")}});
+ // Always-enabled cosmetic packs (mods/cosmetic/always_enabled/<pack>/): each player's
+ // own, in every room, never sent; a gameplay file inside one is filtered out like a
+ // cosmetic pack's. An archive directly in mods/cosmetic/ (0.8.13's always-on) never loads.
+ archive(hostRoot,"mods/cosmetic/always_enabled/HostAlways/host-always.hpi",{{"sounds/host-always.wav","h"}});
+ archive(peerRoot,"mods/cosmetic/always_enabled/PeerAlways/peer-always.hpi",{{"sounds/peer-always.wav","p"},{"sounds/pack-test.wav","always"},{"units/araking.fbi",std::regex_replace(text,hp,"MaxDamage=31337")}});
+ archive(peerRoot,"mods/cosmetic/root.hpi",{{"sounds/peer-root.wav","r"}});
+ // Always-enabled game packs (mods/game/always_enabled/<pack>/): applied in every
+ // non-campaign room the player HOSTS and sent like ticked packs. A guest's own never apply.
+ put(hostRoot,"mods/game/always_enabled/HostRules/sounds/host-rules.wav","rules");
+ put(peerRoot,"mods/game/always_enabled/PeerRules/units/araking.fbi",std::regex_replace(text,hp,"MaxDamage=5151"));
+ put(peerRoot,"mods/game/always_enabled/PeerRules/sounds/peer-rules.wav","peer rules");
  put(peerRoot,"ModCache","not a directory"); // the first peer cache save fails: the verified packs must still be accepted
  net::MpClient host,peer;host.setMapRoot(hostRoot);peer.setMapRoot(peerRoot);host.setGameModPacks({"Beta","Alpha"});peer.setGameModPacks({"PeerGame"});
  auto stockHash=hpi::gameplayHash(base);host.setDataHash(stockHash);peer.setDataHash(stockHash);
@@ -39,9 +46,14 @@ int main(int argc,char** argv){try{
   data=c.modVfs(&c==&host?std::vector<std::string>{"HostArt"}:std::vector<std::string>{"Local","Removed pack"});
   check(hpi::gameplayHash(data)!=stockHash,"game pack did not change gameplay");
   if(&c==&host) {sim::setupRegistry(registry,data,false);check(registry.find("araking")->maxHp==23456,"alphabetical pack precedence lost");check(data.has("sounds/host-art.wav"),"host cosmetic pack not loaded");
-   check(data.has("sounds/host-always.wav") && !data.has("sounds/peer-always.wav"),"host always-on archive not loaded (or a guest's was sent)");}
+   check(data.has("sounds/host-always.wav") && !data.has("sounds/peer-always.wav"),"host always-enabled cosmetic pack not loaded (or a guest's was sent)");
+   check(data.has("sounds/host-rules.wav") && !data.has("sounds/peer-rules.wav"),"host always-enabled game pack not applied (or a guest's was)");}
   else {check(hpi::gameplayHash(data)==hpi::gameplayHash(hostData),"peer cosmetics changed gameplay");check(data.read("sounds/pack-test.wav")==std::vector<uint8_t>({'l','o','c','a','l'}),"peer cosmetic pack not loaded over its always-on archive");check(!data.has("sounds/host-art.wav"),"host cosmetic pack was transferred");
-   check(data.has("sounds/peer-always.wav") && !data.has("sounds/host-always.wav"),"peer always-on archive not loaded (or the host's was sent)");
+   check(data.has("sounds/peer-always.wav") && !data.has("sounds/host-always.wav"),"peer always-enabled cosmetic pack not loaded (or the host's was sent)");
+   check(!data.has("sounds/peer-root.wav"),"an archive directly in mods/cosmetic/ was loaded");
+   check(data.has("sounds/host-rules.wav") && c.modPackage()->mapPath.find("HostRules")!=std::string::npos,"the host's always-enabled game pack was not sent");
+   check(!data.has("sounds/peer-rules.wav") && c.modPackage()->mapPath.find("PeerRules")==std::string::npos,"a guest's own always-enabled game pack applied in the host's room");
+   {sim::TypeRegistry mine;sim::setupRegistry(mine,data,false);check(mine.find("araking")->maxHp==23456,"the guest's always-enabled game pack changed the host's units");}
    check(!c.modPackage()->files->count("sounds/host-always.wav") && !c.modPackage()->files->count("sounds/host-art.wav"),"the game-mod package carried cosmetic files");}
   data.setMapFiles(c.mapPackage()->files);sim::MatchConfig cfg;cfg.vfs=&data;cfg.mapPath=c.mapPackage()->mapPath;cfg.startSeed=c.startSeed();cfg.slots={{true,0,0,1,false,false},{true,1,1,1,false,false}};cfg.unitCap=2000;
   world.setVisPlayer(-1);sim::setupMatch(world,registry,cfg);c.reportLoaded(hpi::gameplayHash(data) ^ (badLoaded && &c==&host ? 1 : 0));
@@ -63,6 +75,9 @@ int main(int argc,char** argv){try{
     initialDigest=host.modPackage()->digest;auto opts=host.room().opts;opts.gameMods=0;host.setGameOptions(opts);transition=1;
    } else if(transition==1 && host.room().opts.gameMods==0 && peer.room().opts.gameMods==0) {
     check(!host.modPackage()&&!peer.modPackage(),"GAME MODS off retained shared game mods");
+    // A room is off only when an older (0.8.12/0.8.13) host asks: then no game pack
+    // at all, the host's always-enabled ones included.
+    check(!host.modVfs({}).has("sounds/host-rules.wav"),"GAME MODS off still applied an always-enabled game pack");
     check(hpi::gameplayHash(peer.modVfs({"Local"}))==stockHash,"GAME MODS off loaded local gameplay");
     check(peer.modVfs({"Local"}).has("sounds/pack-test.wav"),"cosmetic packs must load with GAME MODS off");
     auto opts=host.room().opts;opts.gameMods=1;host.setGameOptions(opts);transition=2;
@@ -82,16 +97,26 @@ int main(int argc,char** argv){try{
    if(ht>=90 && pt>=90 && !campaign){check(!badLoaded,"incorrect loaded hash was admitted");host.leaveGame();peer.leaveGame();loaded=false;campaign=1;}
   }
   // A campaign mission room: GAME MODS is forced off (even when asked for), the
-  // ticked cosmetic pack folders stay out, and only the always-on archives load.
+  // ticked cosmetic pack folders and every game pack (always-enabled ones too) stay
+  // out, and only the always-enabled cosmetic packs load.
   if(campaign==1 && host.state()==net::MpClient::State::Lobby){net::GameOptions o;o.gameMods=1;host.createGame("campaign","","King of the Hill",o,8,false,true,"camp01");campaign=2;}
   if(campaign==2 && host.state()==net::MpClient::State::InRoom && !host.room().mission.empty()){
    check(host.room().opts.gameMods==0,"a campaign room adopted GAME MODS");
    const auto data=host.modVfs({"HostArt"});
-   check(data.has("sounds/host-always.wav"),"always-on archive not loaded in a campaign");
+   check(data.has("sounds/host-always.wav"),"always-enabled cosmetic pack not loaded in a campaign");
    check(!data.has("sounds/host-art.wav"),"a cosmetic pack folder loaded in a campaign");
+   check(!data.has("sounds/host-rules.wav"),"an always-enabled game pack loaded in a campaign");
    check(hpi::gameplayHash(data)==stockHash,"a campaign game loaded game mods");
+   host.leaveGame();campaign=3;
+  }
+  // A private (single-player) room: the host's always-enabled game pack applies there too.
+  if(campaign==3 && host.state()==net::MpClient::State::Lobby){net::GameOptions o;o.gameMods=1;host.setGameModPacks({});host.createGame("solo","","Ulasem Arena",o,2,false,true);campaign=4;}
+  if(campaign==4 && host.state()==net::MpClient::State::InRoom && host.room().mapsReady && host.modPackage() && !host.modPending()){
+   check(host.room().opts.gameMods==1,"a single-player room had game mods off");
+   check(host.modPackage()->mapPath=="HostRules" && host.modPackage()->files->count("sounds/host-rules.wav"),"the single-player room's package lacks the always-enabled game pack");
+   check(host.modVfs({}).has("sounds/host-rules.wav"),"the always-enabled game pack did not apply in single player");
    host.leaveGame();
-   std::cout<<"PASS: multi-pack upload, peer download, cosmetic isolation, always-on archives, gameplay loading, 90 lockstep ticks and a mod-free campaign room\n";return 0;
+   std::cout<<"PASS: multi-pack upload, peer download, cosmetic isolation, always-enabled cosmetic and game packs (host only, never a guest's, never in a campaign), gameplay loading, 90 lockstep ticks, a mod-free campaign room and a single-player room\n";return 0;
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(1));
  }

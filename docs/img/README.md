@@ -1,5 +1,20 @@
 # README and user-guide screenshots
 
+**Retake at the next release (always-enabled mod folders).** After 0.8.13 the
+always-on cosmetic mods moved from `.hpi` archives directly in `mods/cosmetic/`
+(no longer loaded) to pack folders in `mods/cosmetic/always_enabled/<pack>/`
+(and `mods/game/always_enabled/<pack>/` was added), and the multiplayer create
+screen lost its GAME MODS: ON/OFF option. No picture has been retaken for this
+yet. At the next release, rebuild the scratch install with the click archive at
+`mods/cosmetic/always_enabled/click/click.hpi` (the recipes below that place
+`mods/cosmetic/click.hpi` now load nothing; the repository file moved there too),
+so the rooms read **ALWAYS ON: click** instead of **ALWAYS ON: click.hpi**, and
+retake: `guide/room-mods-power-codes.jpg` (ALWAYS ON: click.hpi under COSMETIC
+MODS), `campaign.jpg` and `guide/campaign-briefing.jpg` (they name click.hpi as
+the always-on mod), `room.jpg` and `test-lobby.jpg` (the
+cosmetic ALWAYS ON layout; check `lobby-move-here.jpg` too). None of the shipped pictures shows the multiplayer
+create screen's GAME MODS option; any future one is taken without it.
+
 Refreshed on 2026-10-24 for **0.8.13**. The 0.8.13 build (version set to
 0.8.13 locally, ahead of the release commit; no capture patch was needed for the
 game) retook `title.jpg` (VERSION 0.8.13) the same way as for 0.8.12; only the

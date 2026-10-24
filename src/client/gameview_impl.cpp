@@ -2656,24 +2656,30 @@
         if (installRoot_.empty()) return;
         // Cosmetic mods are this player's own (never sent, never hashed); game mods
         // come from the room's verified package (multiplayer and single player alike).
-        // The always-on mods/cosmetic/*.hpi archives load in every game, campaigns
-        // included (--mods none|game leaves them out with the cosmetic packs).
+        // The always-enabled cosmetic packs (mods/cosmetic/always_enabled/) load in
+        // every game, campaigns included (--mods none|game leaves them out with the
+        // cosmetic packs).
         const auto cosmetic=mods_.cosmetic && settings_?settings_->cosmeticModPacks:std::vector<std::string>{};
         std::vector<std::string> skipped;
         if(mp_) vfs_=mp_->modVfs(cosmetic,mods_.cosmetic,&skipped);
         else {
-            // Debug local harnesses (no server): this launch's own ticked packs.
+            // Debug local harnesses (no server): this launch's own always-enabled and
+            // ticked game packs, as a room it hosted would apply; none in a mission.
             const auto root=std::filesystem::u8path(installRoot_);
-            auto game=mods_.game && settings_?settings_->gameModPacks:std::vector<std::string>{};
+            const bool gamePacks=mods_.game && missionStem_.empty();
+            auto game=gamePacks && settings_?settings_->gameModPacks:std::vector<std::string>{};
             const auto have=tak::hpi::modPacks(root,tak::hpi::ModKind::Game);
             std::erase_if(game,[&](const auto& n){return !std::binary_search(have.begin(),have.end(),n);});
+            if(gamePacks)for(const auto& name:tak::hpi::alwaysEnabledPacks(root,tak::hpi::ModKind::Game))game.push_back(name);
+            std::sort(game.begin(),game.end());game.erase(std::unique(game.begin(),game.end()),game.end());
+            if(game.size()>64)game.resize(64);
             vfs_=tak::hpi::mountPlayVfs(root,tak::hpi::modFiles(root,tak::hpi::ModKind::Game,game),
                 missionStem_.empty()?cosmetic:std::vector<std::string>{},mods_.cosmetic,&skipped);
         }
         // A cosmetic mod left out (it cannot load, or its anims/ art would change
         // gameplay timing) is named in the game's chat rather than stopping it.
         alwaysOnLoaded_.clear();
-        if(mods_.cosmetic)for(const auto& name:tak::hpi::alwaysOnMods(std::filesystem::u8path(installRoot_)))
+        if(mods_.cosmetic)for(const auto& name:tak::hpi::alwaysEnabledPacks(std::filesystem::u8path(installRoot_),tak::hpi::ModKind::Cosmetic))
             if(std::none_of(skipped.begin(),skipped.end(),[&](const std::string& why){return why.starts_with(name+" (");}))
                 alwaysOnLoaded_.push_back(name);
         for(const auto& why:skipped) {
