@@ -2101,6 +2101,17 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/gate-pick.png")
       set_tests_properties(gate_pick PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: every gate \\(4 types\\)")
+      # Clear orders fan out to every selected reclaimer (box, right-click, armed
+      # CLEAR; Shift per unit, a soldier untouched), and Inner Circle's one
+      # overlapped map feature (removed at load) is not drawn.
+      add_test(NAME reclaim_fanout COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_RECLAIM_FANOUT_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/reclaim-fanout-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/reclaim-fanout-profile
+          $<TARGET_FILE:takclient> game "Inner Circle" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/reclaim-fanout.png")
+      set_tests_properties(reclaim_fanout PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: reclaim fan-out to every selected reclaimer")
       add_test(NAME area_drag_input COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_AREA_DRAG_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/area-drag-profile

@@ -302,10 +302,12 @@ public:
 
     // A mobile, reclaim-capable builder of ours is selected (drives the right-drag).
     bool haveReclaimer();
-    int firstReclaimer();
-    // Right-drag "clear this area": order the builder to reclaim every reclaimable
-    // feature in the box, nearest-first (approximating retail's greedy re-scan).
+    std::vector<int> reclaimers();   // every selected one, in selection order
+    // Right-drag "clear this area": order EVERY selected reclaimer to clear the box
+    // (each its own ReclaimArea, retail 5214b0); non-reclaimers are left alone.
     void issueReclaimBox(float x0, float z0, float x1, float z1, bool queue);
+    // Single-feature reclaim (right-click / armed CLEAR): every reclaimer, same target.
+    void issueReclaimFeature(int targetId, bool queue);
 
     // Attach the multiplayer client. The game world is set up later, from the
     // server's GameStarting (startMpGame), not from the constructor.

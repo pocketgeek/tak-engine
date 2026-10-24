@@ -801,6 +801,153 @@
             std::fprintf(stderr,"PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column, volume sliders, eligibility, gift and selection cleanup\n");
             return;
         }
+        // Clear orders go to EVERY selected reclaimer (retail 5214b0 resolves each
+        // selected unit through 4de530): a right-drag box, a right-click on a feature
+        // and the armed CLEAR click each give the three builders one command apiece,
+        // the soldier none (its queue untouched). Also: a map feature the sim removed
+        // at load (an earlier overlapped one, 495360) is not drawn or pickable.
+        if (tak::devFlag("TAK_RECLAIM_FANOUT_TEST")) {
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("reclaim fan-out: "+what);
+                std::fprintf(stderr,"PASS: reclaim fan-out: %s\n",what.c_str());
+            };
+            constexpr int W=1000,H=700;
+            winW_=W;winH_=H;noFog_=true;edgeScrollOn_=false;uiScale_=1.0f;
+            writableWorld().setPlayerCount(2);
+            // Ghosts: every raw anchor the install dropped has no drawn instance.
+            {
+                const auto& map=mapView_.map();
+                const auto& installed=world_.installedMapFeatures();
+                check(installed.size()==map.features.size(),"the sim kept its installed feature plane");
+                size_t ghosts=0,drawn=0;
+                for (int cz=0;cz<map.height;++cz)
+                    for (int cx=0;cx<map.width;++cx) {
+                        const size_t i=size_t(cz)*map.width+cx;
+                        if (map.features[i]>=map.featureNames.size() || installed[i]==map.features[i]) continue;
+                        ++ghosts;
+                        for (const auto& f:features_)
+                            if (int(std::floor((f.x-float(f.fx*8))/16))==cx &&
+                                int(std::floor((f.z-float(f.fz*8))/16))==cz) ++drawn;
+                    }
+                std::fprintf(stderr,"reclaim fan-out: %zu removed map features, %zu drawn\n",ghosts,drawn);
+                check(drawn==0,"no feature removed at load is drawn ("+std::to_string(ghosts)+" removed)");
+            }
+            const tak::sim::UnitType* builderType=nullptr;
+            for (const char* id:{"aramage","araking"})
+                if (const auto* t=registry_.find(id); t && t->isBuilder && t->canMove && t->canReclaim) {builderType=t;break;}
+            check(builderType!=nullptr,"fixture has a mobile reclaimer type");
+            const float cx=float(mapView_.map().blocksX)*16.0f,cz=float(mapView_.map().blocksY)*16.0f;
+            std::vector<int> builders;
+            for (int i=0;i<3;++i) builders.push_back(spawn(builderType->id,cx+float(i)*48,cz,0,localPlayer_));
+            const int soldier=spawn("arasword",cx-150,cz-100,0,localPlayer_);
+            for (int id:builders) check(id>=0 && world_.unit(id),"builder spawned");
+            check(soldier>=0 && world_.unit(soldier) && !world_.unit(soldier)->type->canReclaim,"soldier spawned, not a reclaimer");
+            mapView_.setZoom(1);mapView_.setOffset(cx-400,cz-300);
+            const auto publish=[&] {captureFrame();beginFrame();cosmeticStep(0);};
+            const auto savedMod=SDL_GetModState();SDL_SetModState(KMOD_NONE);
+            const auto reset=[&] {
+                for (int id:builders) {writableWorld().stop(id);writableWorld().unit(id)->orders.clear();}
+                writableWorld().stop(soldier);
+                tak::net::Command m;m.kind=tak::net::Cmd::Move;m.unitId=soldier;m.player=uint8_t(localPlayer_);
+                m.x=cx-400;m.z=cz-300;apply(m);   // a queue the clear must not touch
+                selection_=builders;selection_.push_back(soldier);publish();
+            };
+            const auto soldierKept=[&] {
+                const auto& o=world_.unit(soldier)->orders;
+                return o.size()==1 && o.front().goal && !o.front().reclaimArea;
+            };
+            // Every builder got exactly one command of `kind`; the soldier got none.
+            const auto fanned=[&](const std::vector<tak::net::Command>& cmds,tak::net::Cmd kind) {
+                if (cmds.size()!=builders.size()) return false;
+                for (int id:builders) {
+                    int n=0;
+                    for (const auto& c:cmds) if (c.unitId==id && c.kind==kind) ++n;
+                    if (n!=1) return false;
+                }
+                for (const auto& c:cmds) if (c.unitId==soldier) return false;
+                return true;
+            };
+            const auto event=[&](uint32_t kind,uint8_t button,float x,float y) {
+                SDL_Event e{};e.type=kind;
+                if (kind==SDL_MOUSEMOTION) {e.motion.x=int(x);e.motion.y=int(y);}
+                else {e.button.button=button;e.button.x=int(x);e.button.y=int(y);}
+                input(e,W,H);
+            };
+            // Right-drag box through the real input().
+            reset();
+            std::vector<tak::net::Command> cmds;
+            {
+                ClickScope outer(*this);
+                event(SDL_MOUSEBUTTONDOWN,SDL_BUTTON_RIGHT,300,200);
+                event(SDL_MOUSEMOTION,0,500,380);
+                event(SDL_MOUSEBUTTONUP,SDL_BUTTON_RIGHT,500,380);
+                cmds=click_->cmds;
+            }
+            std::fprintf(stderr,"reclaim fan-out: box issued %zu commands\n",cmds.size());
+            check(fanned(cmds,tak::net::Cmd::ReclaimArea),"a box gives each of 3 reclaimers one ReclaimArea, the soldier none");
+            check(cmds[0].x==cmds[1].x && cmds[0].z2==cmds[2].z2 && !cmds[0].queue,"every builder clears the same box, unqueued");
+            for (int id:builders) {
+                const auto& o=world_.unit(id)->orders;
+                check(!o.empty() && o.front().reclaimArea,"builder "+std::to_string(id)+" holds the area order");
+            }
+            check(soldierKept(),"the soldier's own order is untouched");
+            // Shift queues per unit.
+            reset();
+            for (int id:builders) {
+                tak::net::Command m;m.kind=tak::net::Cmd::Move;m.unitId=id;m.player=uint8_t(localPlayer_);
+                m.x=cx;m.z=cz+200;apply(m);
+            }
+            publish();
+            SDL_SetModState(KMOD_LSHIFT);
+            {
+                ClickScope outer(*this);
+                event(SDL_MOUSEBUTTONDOWN,SDL_BUTTON_RIGHT,300,200);
+                event(SDL_MOUSEMOTION,0,500,380);
+                event(SDL_MOUSEBUTTONUP,SDL_BUTTON_RIGHT,500,380);
+                cmds=click_->cmds;
+            }
+            SDL_SetModState(KMOD_NONE);
+            check(fanned(cmds,tak::net::Cmd::ReclaimArea) && cmds[0].queue && cmds[2].queue,"Shift-box queues one ReclaimArea per builder");
+            for (int id:builders) {
+                const auto& o=world_.unit(id)->orders;
+                check(o.size()>=2 && !o.front().reclaimArea && o.back().reclaimArea,
+                      "builder "+std::to_string(id)+" keeps its move and queues the clear");
+            }
+            check(soldierKept(),"Shift-box leaves the soldier's order alone");
+            // Single feature: the nearest reclaimable, pickable map feature on the map.
+            const FeatureInst* target=nullptr;float best=1e30f;
+            for (const auto& f:features_) {
+                if (!f.hasSim || !f.aliveVis || !f.reclaimable) continue;
+                const float d=(f.x-cx)*(f.x-cx)+(f.z-cz)*(f.z-cz);
+                if (d<best) {best=d;target=&f;}
+            }
+            check(target!=nullptr,"the map has a reclaimable feature");
+            const float fx=target->x,fz=target->z;const int fid=target->simId;
+            check(reclaimTargetAt(fx,fz)==fid,"the feature picks under its own centre");
+            mapView_.setOffset(fx-400,fz-300);
+            reset();
+            mouseX_=-1000;mouseY_=-1000;   // no unit under the cursor: not an attack
+            {
+                ClickScope outer(*this);
+                rightClickOrder(fx,fz,false);
+                cmds=click_->cmds;
+            }
+            check(fanned(cmds,tak::net::Cmd::Reclaim) && cmds[0].targetId==fid && cmds[2].targetId==fid,
+                  "a right-click on a feature gives each reclaimer one Reclaim of it, the soldier none");
+            check(soldierKept(),"right-click reclaim leaves the soldier's order alone");
+            reset();
+            {
+                ClickScope outer(*this);
+                issueArmedOrder('c',fx,fz,false,false);
+                cmds=click_->cmds;
+            }
+            check(fanned(cmds,tak::net::Cmd::Reclaim) && cmds[1].targetId==fid,
+                  "an armed CLEAR click gives each reclaimer one Reclaim, the soldier none");
+            check(soldierKept(),"armed CLEAR leaves the soldier's order alone");
+            SDL_SetModState(savedMod);
+            std::fprintf(stderr,"PASS: reclaim fan-out to every selected reclaimer\n");
+            return;
+        }
         if (tak::devFlag("TAK_AREA_DRAG_TEST")) {
             // Map drags through the real input() and draw(): a small right-drag with a
             // reclaimer is the ordinary order, only a deliberate box clears an area,

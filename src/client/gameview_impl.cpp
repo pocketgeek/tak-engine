@@ -268,27 +268,50 @@
         return false;
     }
 
-    int GameView::firstReclaimer() {
+    // Every selected unit that can reclaim, in selection order. Retail's order code
+    // (5214b0) resolves each selected unit on its own through 4de530 (case 0xc): a
+    // type without the reclaim bit (+0x264 0x800) gets no mission and its queue is
+    // left alone, every reclaimer gets the same box or point (no claims, no split).
+    std::vector<int> GameView::reclaimers() {
+        std::vector<int> out;
         for (int id : selection_)
             if (const auto* u = frameUnitP(id))
                 if (u->alive() && u->type && u->type->isBuilder && u->type->canMove &&
                     u->type->canReclaim && u->player == localPlayer_)
-                    return id;
-        return 0;
+                    out.push_back(id);
+        return out;
     }
 
     void GameView::issueReclaimBox(float x0, float z0, float x1, float z1, bool queue) {
-        const int builderId = firstReclaimer();
-        if (!frameUnitP(builderId)) return;
-        tak::net::Command c;
-        c.kind = tak::net::Cmd::ReclaimArea;
-        c.unitId = builderId;
-        c.x = x0; c.z = z0; c.x2 = x1; c.z2 = z1;
-        c.queue = uint8_t(queue);
-        issue(c);
+        ClickScope click(*this);
+        const auto ids = reclaimers();
+        if (ids.empty()) return;
+        for (int id : ids) {   // each its own RECLAIMAREA (4d78a0), Shift queues per unit
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::ReclaimArea;
+            c.unitId = id;
+            c.x = x0; c.z = z0; c.x2 = x1; c.z2 = z1;
+            c.queue = uint8_t(queue);
+            issue(c);
+        }
         notice_ = "CLEAR AREA";
         noticeTimer_ = 2;
-        voice(builderId, "move");
+        voice(ids.front(), "move");
+    }
+
+    void GameView::issueReclaimFeature(int targetId, bool queue) {
+        ClickScope click(*this);   // one click, as the box (a no-op inside rightClickOrder's)
+        const auto ids = reclaimers();
+        if (ids.empty()) return;
+        for (int id : ids) {   // RECLAIM has no formation offset: all take the same feature
+            tak::net::Command c;
+            c.kind = tak::net::Cmd::Reclaim;
+            c.unitId = id;
+            c.targetId = targetId;
+            c.queue = uint8_t(queue);
+            issue(c);
+        }
+        voice(ids.front(), "move");
     }
 
     std::pair<int, size_t> GameView::keytestPickOwnUnit() const {

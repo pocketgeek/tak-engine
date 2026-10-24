@@ -216,14 +216,7 @@ namespace {
             // there) reclaims just that one -- retail's single Reclaim.
             if (enemy < 0 && haveReclaimer()) {
                 if (const auto fid = reclaimTargetAt(wx, wz)) {
-                    int builderId = firstReclaimer();
-                    tak::net::Command c;
-                    c.kind = tak::net::Cmd::Reclaim;
-                    c.unitId = builderId;
-                    c.targetId = *fid;
-                    c.queue = uint8_t(queue ? 1 : 0);
-                    issue(c);
-                    voice(builderId, "move");
+                    issueReclaimFeature(*fid, queue);   // every selected reclaimer
                     return;
                 }
             }
@@ -912,14 +905,7 @@ namespace {
             if (!haveReclaimer()) return;
             const auto fid = reclaimTargetAt(wx, wz);
             if (!fid) return;
-            int builderId = firstReclaimer();
-            tak::net::Command c;
-            c.kind = tak::net::Cmd::Reclaim;
-            c.unitId = builderId;
-            c.targetId = *fid;
-            c.queue = queue ? 1 : 0;
-            issue(c);
-            voice(builderId, "move");
+            issueReclaimFeature(*fid, queue);   // every selected reclaimer
             return;
         }
         if (cmd == 'r') { // repair or resume construction, using the cursor's eligibility

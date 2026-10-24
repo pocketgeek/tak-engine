@@ -6291,10 +6291,17 @@
         if (names.empty()) return;
         loadFeatureDefs();
         const auto& map = mapView_.map();
+        // Draw only what the sim installed: of two overlapping TNT features retail
+        // keeps the later one (495360/496380) and its draw scan (4fc8d9) sees only
+        // installed cells, so the earlier one is gone -- not drawn, picked, shown
+        // on the minimap or offered to the order trail. The raw plane is only the
+        // fallback for a world that never ran the install (no placement plane).
+        const auto& installed = world_.installedMapFeatures();
+        const auto& plane = installed.size() == map.features.size() ? installed : map.features;
         int placed = 0;
         for (int cz = 0; cz < map.height; ++cz)
             for (int cx = 0; cx < map.width; ++cx) {
-                uint16_t v = map.features[size_t(cz) * map.width + cx];
+                uint16_t v = plane[size_t(cz) * map.width + cx];
                 if (v >= names.size()) continue;
                 if (addFeature(names[v], cx, cz))
                     ++placed;
