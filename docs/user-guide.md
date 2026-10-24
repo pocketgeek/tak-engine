@@ -1776,8 +1776,9 @@ player's game stays in step.
   your own computer by itself.
 - **Online with friends:** everyone signs in to the same server and one of you
   creates a game, with a password if you want to keep it private; the others
-  join it from the game browser. The list opens on the default server (marked
-  **DEFAULT**); servers you have used before are listed under it.
+  join it from the game browser. The list opens on the official TAK Engine server,
+  `tak.pgnet.us` (marked **DEFAULT**); servers you have used before are listed
+  under it.
 - **On your own server:** if you would rather host, run `takserver` on a machine
   your friends can reach and give them its address to type under **CUSTOM...**.
   Only that machine needs an open port; see [Running a server](#running-a-server)

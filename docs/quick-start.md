@@ -65,7 +65,8 @@ further.
 <!-- SHOT-0.9.0: mp-connect -- NEW file docs/img/mp-connect.jpg: the Multiplayer door's CONNECT TO SERVER panel, server list with DEFAULT, account name typed, password as pips, CONNECT and BACK -->
 
 1. Click the **Multiplayer** door.
-2. Pick a server from the list, or **CUSTOM...** to type an address.
+2. Pick a server from the list (the official TAK Engine server, `tak.pgnet.us`,
+   is first, marked **DEFAULT**), or **CUSTOM...** to type an address.
 3. Type an account name and a password, then click **CONNECT**. A name the
    server has not seen before is registered as you sign in.
 4. In the game list, click a game to join it, or click **CREATE** to make one.

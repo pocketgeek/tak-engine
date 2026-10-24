@@ -109,16 +109,5 @@ Line numbers are the marker lines at the commit that added this file.
 | `guide-room-mods-power-codes` | `guide/room-mods-power-codes.jpg` | `docs/user-guide.md:2318` | single-player room with Power Codes: On in the rules, COSMETIC MODS with an ALWAYS ON line and a ticked pack, GAME MODS with an ALWAYS ON line, a ticked pack and GAME MODS VERIFIED |
 | `guide-benchmark` | `guide/benchmark.jpg` | `docs/user-guide.md:2552` | benchmark battle at Absurd intensity with the BENCHMARKING countdown at the top |
 
-## Pictures no longer used
-
-The rewritten README, quick start and guides no longer show these files. Nothing
-links to them outside `docs/img/README.md` and the frozen release validation
-reports, so they need no retake; delete them or put them back in a guide when the
-pictures land.
-
-- `cartographer-model.png`
-- `crusades.jpg`
-- `flyers.jpg`
-
 `lobby.jpg`, `streaming.jpg` and `diplomacy.jpg` left the README but are still
 used by the user guide and `docs/streaming.md`; they are listed above.
