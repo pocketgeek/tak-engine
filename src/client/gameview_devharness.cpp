@@ -19,6 +19,7 @@
 #include "client/runtimesettings.h"
 #include "client/buildline.h"
 #include "sim/retailmotion.h"
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 
@@ -1338,36 +1339,20 @@
         }
         // An open gate's doorway is not the gate (retail 0x520530): hover, click and
         // right-click fall through to the ground, or to a unit standing in it. Posts,
-        // and the whole closed gate, still pick it.
+        // and the whole closed gate, still pick it. Every gate=1 type in the data runs
+        // the same cases, each on its own patch of flat ground with its own soldier.
         if (tak::devFlag("TAK_GATE_PICK_TEST")) {
             noFog_=true;edgeScrollOn_=false;
-            const int gate=spawn("arangate",2000,2000,0,0);
-            const int soldier=spawn("arasword",1700,2300,0,0);
-            mapView_.setZoom(1);
-            mapView_.setOffset(1700,1750);
             winW_=1000;winH_=700;
+            const std::map<std::string,std::string> soldiers{
+                {"ara","arasword"},{"ver","versword"},{"tar","tartroop"},{"cre","creshoc"}};
+            std::vector<const tak::sim::UnitType*> gates;
+            for (const auto& [id,type]:registry_.types())
+                if (type.gate) gates.push_back(&type);
+            if (gates.size()<4) throw std::runtime_error("gate pick: expected the four shipped gates, found "+
+                                                         std::to_string(gates.size()));
             const auto publish=[&] {captureFrame();beginFrame();cosmeticStep(0);};
-            const auto fail=[](const std::string& m) {throw std::runtime_error("gate pick: "+m);};
-            const auto pass=[](const char* m) {std::fprintf(stderr,"PASS: %s\n",m);};
-            publish();
-            const auto* g=frameUnitP(gate);
-            if (!g || !g->type || !g->type->gate || g->yardOpen) fail("fixture needs a closed arangate");
-            const int ox=tak::sim::footprintOrigin(g->x,g->type->footX);
-            const int oz=tak::sim::footprintOrigin(g->z,g->type->footZ);
-            // Screen points inside the gate's pick box whose GROUND cell is a doorway
-            // ('c') or a post ('o') yard cell, found through pickWorld like the game.
-            float doorX=-1,doorY=-1,postX=-1,postY=-1;
-            for (int y=0;y<winH_-barH() && (doorX<0 || postX<0);y+=2)
-                for (int x=0;x<mapViewW(winW_);x+=2) {
-                    if (!unitUnderCursor(*g,float(x),float(y))) continue;
-                    float wx,wz;pickWorld(float(x),float(y),wx,wz);
-                    const int dx=int(std::floor(wx/16))-ox,dz=int(std::floor(wz/16))-oz;
-                    if (dx<0 || dz<0 || dx>=g->type->footX || dz>=g->type->footZ) continue;
-                    const char yard=g->type->yardMap[size_t(dz)*g->type->footX+dx];
-                    if (yard=='c' && doorX<0) {doorX=float(x);doorY=float(y);}
-                    if (yard=='o' && postX<0) {postX=float(x);postY=float(y);}
-                }
-            if (doorX<0 || postX<0) fail("no doorway/post point inside the gate's pick box");
+            const auto pass=[](const std::string& id,const char* m) {std::fprintf(stderr,"PASS: %s: %s\n",id.c_str(),m);};
             const auto click=[&](float x,float y) {
                 const auto savedMod=SDL_GetModState();SDL_SetModState(KMOD_NONE);
                 SDL_Event e{};e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;
@@ -1375,62 +1360,134 @@
                 e.type=SDL_MOUSEBUTTONUP;input(e,winW_,winH_);
                 SDL_SetModState(savedMod);
             };
-            // Right-click with the soldier selected: Guard (the gate) or a Move.
-            const auto rightClick=[&](float x,float y) {
-                selection_={soldier};writableWorld().stop(soldier);publish();
-                mouseX_=x;mouseY_=y;
-                float wx,wz;pickWorld(x,y,wx,wz);rightClickOrder(wx,wz,false);
-                const auto& orders=world_.unit(soldier)->orders;
-                return orders.empty() ? 0 : orders.back().guard ? 'g' : orders.back().goal ? 'm' : '?';
-            };
-            // Hover with the soldier selected: own unit = Select, empty ground = arrow.
-            const auto hover=[&](float x,float y) {
-                selection_={soldier};mouseX_=x;mouseY_=y;bool tint=false;return desiredCursor(tint);
-            };
-            if (!unitUnderCursor(*g,doorX,doorY)) fail("closed gate's doorway does not pick the gate");
-            if (hover(doorX,doorY)!=tak::CursorId::Select) fail("closed gate's doorway hover is not Select");
-            if (rightClick(doorX,doorY)!='g') fail("right-click on a closed gate does not guard it");
-            selection_.clear();click(doorX,doorY);
-            if (selection_!=std::vector<int>{gate}) fail("click on a closed gate does not select it");
-            pass("closed gate picks over its doorway");
-            // A spawned gate starts active without its script having seen Activate:
-            // toggle it so the script runs its open sequence.
-            writableWorld().setActive(gate,false);
-            for (int i=0;i<30;++i) writableWorld().tick(1.f/30);
-            writableWorld().setActive(gate,true);
-            for (int i=0;i<600 && !world_.scriptYardOpen(gate);++i) writableWorld().tick(1.f/30);
-            if (!world_.scriptYardOpen(gate)) fail("activated gate never opened its yard");
-            publish();g=frameUnitP(gate);
-            if (!g->yardOpen) fail("open yard missing from the render frame");
-            if (unitUnderCursor(*g,doorX,doorY)) fail("open gate's doorway still picks the gate");
-            if (!unitUnderCursor(*g,postX,postY)) fail("open gate's post no longer picks the gate");
-            if (hover(doorX,doorY)!=tak::CursorId::Normal) fail("open doorway hover is not the ground arrow");
-            if (hover(postX,postY)!=tak::CursorId::Select) fail("open gate's post hover lost the gate");
-            if (rightClick(doorX,doorY)!='m') fail("right-click into an open doorway is not a Move");
-            if (rightClick(postX,postY)!='g') fail("right-click on an open gate's post does not guard it");
-            selection_.clear();click(doorX,doorY);
-            if (!selection_.empty()) fail("click in an open doorway selected something");
-            click(postX,postY);
-            if (selection_!=std::vector<int>{gate}) fail("click on an open gate's post does not select it");
-            pass("open gate: doorway hover/click/right-click fall through to the ground, posts still pick the gate");
-            // A unit standing in the open doorway is picked, never the gate behind it.
-            float sx=-1,sy=-1;
-            for (int dz=0;dz<g->type->footZ && sx<0;++dz)
-                for (int dx=0;dx<g->type->footX;++dx)
-                    if (g->type->yardMap[size_t(dz)*g->type->footX+dx]=='c') {
-                        sx=float((ox+dx+3)*16+8);sy=float((oz+dz+1)*16+8);break;
+            // A flat, free gate site well inside the map and far (more than a screen)
+            // from every earlier scenario, so no fixture is on screen in another's test.
+            std::vector<std::pair<float,float>> used;
+            const auto& heights=world_.mapHeights();
+            const int mw=world_.mapW(),mh=world_.mapH();
+            const auto flat=[&](const tak::sim::UnitType* type,float x,float z) {
+                const int ox=tak::sim::footprintOrigin(tak::sim::Fixed::fromFloat(x),type->footX)-2;
+                const int oz=tak::sim::footprintOrigin(tak::sim::Fixed::fromFloat(z),type->footZ)-2;
+                if (ox<0 || oz<0 || ox+type->footX+4>mw || oz+type->footZ+4>mh) return false;
+                int lo=255,hi=0;
+                for (int cz=oz;cz<oz+type->footZ+4;++cz)
+                    for (int cx=ox;cx<ox+type->footX+4;++cx) {
+                        const size_t i=size_t(cz)*mw+cx;
+                        if (i>=heights.size()) return false;
+                        lo=std::min(lo,int(heights[i]));hi=std::max(hi,int(heights[i]));
                     }
-            const int walker=spawn("arasword",sx,sy,0,0);
-            publish();g=frameUnitP(gate);
-            const auto* w=frameUnitP(walker);
-            if (!w || !g->yardOpen) fail("walker fixture lost the open gate");
-            const auto p=unitScreen(*w);const auto& box=unitHitBox(w->type);const float zoom=mapView_.zoom();
-            const float wx=p.x+(box.x+box.w*.5f)*zoom,wy=p.y+(12+box.y+box.h*.5f)*zoom;
-            if (!unitUnderCursor(*w,wx,wy)) fail("walker is not under its own centre");
-            if (unitUnderCursor(*g,wx,wy)) fail("open gate still picks under the walker in its doorway");
-            selection_.clear();click(wx,wy);
-            if (selection_!=std::vector<int>{walker}) fail("click on a unit in the open doorway does not select it");
-            pass("unit standing in an open doorway is picked, not the gate");
+                return hi-lo<=2;
+            };
+            for (const auto* gateType:gates) {
+                const std::string& id=gateType->id;
+                const auto fail=[&](const std::string& m) {throw std::runtime_error("gate pick "+id+": "+m);};
+                std::string side=gateType->side;
+                for (auto& c:side) c=char(std::tolower(static_cast<unsigned char>(c)));
+                const auto soldierIt=soldiers.find(side);
+                if (soldierIt==soldiers.end()) fail("no soldier fixture for side '"+gateType->side+"'");
+                const auto* soldierType=registry_.find(soldierIt->second);
+                if (!soldierType || soldierType->isStructure()) fail("soldier "+soldierIt->second+" missing or immobile");
+                float gx=-1,gz=-1;
+                for (int z=1000;z<mh*16-1000 && gx<0;z+=96)
+                    for (int x=1000;x<mw*16-1000;x+=96) {
+                        bool far=true;
+                        for (const auto& [ux,uz]:used)
+                            if (std::abs(float(x)-ux)<1600 && std::abs(float(z)-uz)<1200) far=false;
+                        if (!far || !flat(gateType,float(x),float(z)) ||
+                            !world_.canPlace(gateType,float(x),float(z)) ||
+                            !world_.canPlace(soldierType,float(x-300),float(z+300))) continue;
+                        gx=float(x);gz=float(z);break;
+                    }
+                if (gx<0) fail("no flat free site for the gate");
+                used.push_back({gx,gz});
+                selection_.clear();pendingCmd_=0;placing_=nullptr;
+                const int gate=spawn(id,gx,gz,0,0);
+                const int soldier=spawn(soldierType->id,gx-300,gz+300,0,0);
+                if (gate<0 || soldier<0) fail("fixture spawn failed");
+                mapView_.setZoom(1);
+                mapView_.setOffset(gx-300,gz-250);
+                publish();
+                const auto* g=frameUnitP(gate);
+                if (!g || !g->type || !g->type->gate || g->yardOpen) fail("fixture needs a closed gate");
+                const int ox=tak::sim::footprintOrigin(g->x,g->type->footX);
+                const int oz=tak::sim::footprintOrigin(g->z,g->type->footZ);
+                // Screen points inside the gate's pick box whose GROUND cell is a doorway
+                // ('c') or a post ('o') yard cell, found through pickWorld like the game.
+                // A post can be a single corner cell (cregate), so a coarse miss retries
+                // every pixel before giving up.
+                float doorX=-1,doorY=-1,postX=-1,postY=-1;
+                int postDx=-1,postDz=-1;
+                for (int step=2;step>=1 && (doorX<0 || postX<0);--step)
+                    for (int y=0;y<winH_-barH() && (doorX<0 || postX<0);y+=step)
+                        for (int x=0;x<mapViewW(winW_);x+=step) {
+                            if (!unitUnderCursor(*g,float(x),float(y))) continue;
+                            float wx,wz;pickWorld(float(x),float(y),wx,wz);
+                            const int dx=int(std::floor(wx/16))-ox,dz=int(std::floor(wz/16))-oz;
+                            if (dx<0 || dz<0 || dx>=g->type->footX || dz>=g->type->footZ) continue;
+                            const char yard=g->type->yardMap[size_t(dz)*g->type->footX+dx];
+                            if ((yard=='c' || yard=='C') && doorX<0) {doorX=float(x);doorY=float(y);}
+                            if (yard=='o' && postX<0) {postX=float(x);postY=float(y);postDx=dx;postDz=dz;}
+                        }
+                if (doorX<0) fail("no doorway ('c') ground cell inside the gate's pick box");
+                if (postX<0) fail("no post ('o') ground cell inside the gate's pick box");
+                // Right-click with the soldier selected: Guard (the gate) or a Move.
+                const auto rightClick=[&](float x,float y) {
+                    selection_={soldier};writableWorld().stop(soldier);publish();
+                    mouseX_=x;mouseY_=y;
+                    float wx,wz;pickWorld(x,y,wx,wz);rightClickOrder(wx,wz,false);
+                    const auto& orders=world_.unit(soldier)->orders;
+                    return orders.empty() ? 0 : orders.back().guard ? 'g' : orders.back().goal ? 'm' : '?';
+                };
+                // Hover with the soldier selected: own unit = Select, empty ground = arrow.
+                const auto hover=[&](float x,float y) {
+                    selection_={soldier};mouseX_=x;mouseY_=y;bool tint=false;return desiredCursor(tint);
+                };
+                if (!unitUnderCursor(*g,doorX,doorY)) fail("closed gate's doorway does not pick the gate");
+                if (hover(doorX,doorY)!=tak::CursorId::Select) fail("closed gate's doorway hover is not Select");
+                if (rightClick(doorX,doorY)!='g') fail("right-click on a closed gate does not guard it");
+                selection_.clear();click(doorX,doorY);
+                if (selection_!=std::vector<int>{gate}) fail("click on a closed gate does not select it");
+                pass(id,"closed gate picks over its doorway");
+                // A spawned gate starts active without its script having seen Activate:
+                // toggle it so the script runs its open sequence.
+                writableWorld().setActive(gate,false);
+                for (int i=0;i<30;++i) writableWorld().tick(1.f/30);
+                writableWorld().setActive(gate,true);
+                for (int i=0;i<600 && !world_.scriptYardOpen(gate);++i) writableWorld().tick(1.f/30);
+                if (!world_.scriptYardOpen(gate)) fail("activated gate never opened its yard");
+                publish();g=frameUnitP(gate);
+                if (!g->yardOpen) fail("open yard missing from the render frame");
+                if (unitUnderCursor(*g,doorX,doorY)) fail("open gate's doorway still picks the gate");
+                if (!unitUnderCursor(*g,postX,postY)) fail("open gate's post no longer picks the gate");
+                if (hover(doorX,doorY)!=tak::CursorId::Normal) fail("open doorway hover is not the ground arrow");
+                if (hover(postX,postY)!=tak::CursorId::Select) fail("open gate's post hover lost the gate");
+                if (rightClick(doorX,doorY)!='m') fail("right-click into an open doorway is not a Move");
+                if (rightClick(postX,postY)!='g') fail("right-click on an open gate's post does not guard it");
+                selection_.clear();click(doorX,doorY);
+                if (!selection_.empty()) fail("click in an open doorway selected something");
+                click(postX,postY);
+                if (selection_!=std::vector<int>{gate}) fail("click on an open gate's post does not select it");
+                std::fprintf(stderr,"PASS: %s: open gate at %.0f,%.0f: doorway hover/click/right-click fall through to the ground, "
+                             "post cell %d,%d still picks the gate\n",id.c_str(),gx,gz,postDx,postDz);
+                // A unit standing in the open doorway (the gate's centre cell) is picked,
+                // never the gate behind it.
+                const int cdx=g->type->footX/2,cdz=g->type->footZ/2;
+                const char centre=g->type->yardMap[size_t(cdz)*g->type->footX+cdx];
+                if (centre!='c' && centre!='C') fail("gate's centre cell is not a doorway");
+                const int walker=spawn(soldierType->id,float((ox+cdx)*16+8),float((oz+cdz)*16+8),0,0);
+                publish();g=frameUnitP(gate);
+                const auto* w=frameUnitP(walker);
+                if (!w || !g->yardOpen) fail("walker fixture lost the open gate");
+                const auto p=unitScreen(*w);const auto& box=unitHitBox(w->type);const float zoom=mapView_.zoom();
+                const float wx=p.x+(box.x+box.w*.5f)*zoom,wy=p.y+(12+box.y+box.h*.5f)*zoom;
+                if (!unitUnderCursor(*w,wx,wy)) fail("walker is not under its own centre");
+                if (unitUnderCursor(*g,wx,wy)) fail("open gate still picks under the walker in its doorway");
+                selection_.clear();click(wx,wy);
+                if (selection_!=std::vector<int>{walker}) fail("click on a unit in the open doorway does not select it");
+                pass(id,"unit standing in an open doorway is picked, not the gate");
+                selection_.clear();
+            }
+            std::fprintf(stderr,"PASS: every gate (%zu types) picks through its open doorway\n",gates.size());
             return;
         }
         if (tak::devFlag("TAK_CURSOR_TEST")) {

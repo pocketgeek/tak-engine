@@ -2100,7 +2100,7 @@ if(TAK_BUILD_CLIENT)
           $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
           --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/gate-pick.png")
       set_tests_properties(gate_pick PROPERTIES TIMEOUT 90
-          PASS_REGULAR_EXPRESSION "PASS: unit standing in an open doorway")
+          PASS_REGULAR_EXPRESSION "PASS: every gate \\(4 types\\)")
       add_test(NAME area_drag_input COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_AREA_DRAG_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/area-drag-profile
