@@ -820,7 +820,7 @@ other map content keeps the view's map-over-mod layering.
 
 ### Match pathfinding selection
 
-The creation-time choice is `Retail` (the default) or experimental `Legion`.
+The creation-time choice is `Retail` (the default) or `Legion`.
 Protocol 220 introduced the selection (then Retail or Flowfield); protocols
 225-227 added Cooperative and Retail+, and 228 added Legion. Protocol 231
 removed Retail+, Flowfield and Cooperative (2026-10-06, by user decision; they

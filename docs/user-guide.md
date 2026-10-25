@@ -313,7 +313,7 @@ change in the room, until the game starts.
 | **Start locations** | **Fixed** gives the occupied slots the map's start positions in order, top slot first. Empty slots are skipped, as in the original game: a player in slot 1 and an AI in slot 8 start at positions 1 and 2. **Random** shuffles them. **By slot** always starts slot N at the map's position N, empty slots or not: slots 1 and 8 start at positions 1 and 8. It is not in the original game. In the room, a player picks a slot, and so a start, with **Move here**. A room normally opens one slot per position; a slot without a position of its own takes the lowest position that no occupied slot has by number, or a spot near the map centre, and the room shows which under the player's name. |
 | **Unit cap** | The most units each player may have alive: 250, 500, 1,000 or 2,000 (the default and the most the game allows). Production pauses at the cap. |
 | **Allow speed change** | Lets the host change game speed during the match, from −9 (0.1×) to +10 (2×). |
-| **Pathfinding** | **Retail** (the default) or **Legion** (experimental). Campaigns and Crusades battles always use Retail. See [Pathfinding](#pathfinding-retail-and-legion). |
+| **Pathfinding** | **Retail** (the default) or **Legion**. Campaigns and Crusades battles always use Retail. See [Pathfinding](#pathfinding-retail-and-legion). |
 | **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. The host can change it in the room by clicking it, until the game starts; then it is fixed. See [Spectating](#spectating). |
 | **Spectate (Watch AIs)** | Single-player only: fill every slot with AIs and watch. |
 | **Power codes** | **Off** (the default) or **On**. On lets every player in the game type the original game's cheat codes in the chat box, such as **+ATM** and **+NowISee**. See [Power codes](#power-codes). Always off in campaigns and Crusades battles. It cannot be changed in the room. |
@@ -1290,7 +1290,7 @@ instead of sprinting, and members far from the group walk back or wait.
 
 ### Legion
 
-Legion is an experimental movement system written for TAK Engine. It is
+Legion is a movement system written for TAK Engine. It is
 designed for big armies ([design, limits and
 measurements](legion-pathfinding.md)):
 

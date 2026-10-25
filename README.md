@@ -57,7 +57,7 @@ Full history: [CHANGELOG](CHANGELOG.md).
   original game's own AI ([AI difficulty](docs/user-guide.md#ai-difficulty)).
 - **Random maps** in five themed layouts and three classic ones, up to 64×64
   ([random maps](docs/user-guide.md#random-maps)).
-- **Two pathfinding modes:** Retail, as in 1999 (the default), and experimental
+- **Two pathfinding modes:** Retail, as in 1999 (the default), and
   Legion for large armies ([Legion](docs/user-guide.md#legion)).
 - **Power codes:** the original cheat codes, when a game allows them
   ([power codes](docs/user-guide.md#power-codes)).
