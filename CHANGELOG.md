@@ -19,8 +19,8 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
-## 0.9.1 -- Unreleased
-*protocol 295 · replay format 15 · does not play with 0.9.0 or earlier, nor their replays*
+## 0.9.1
+*2026-10-25 · protocol 295 · replay format 15 · does not play with 0.9.0 or earlier, nor their replays*
 
 - **Aiming at the body:** units now aim at the middle of the target's body, as
   in the original game. Before, most units aimed too low, some below the
@@ -31,10 +31,11 @@ their validation reports; both live in [`docs/`](docs/).
 - **Lightning at the Creon Submersible:** whether the Thirsha's lightning hits
   a parked Submersible now depends on which way the Submersible faces, as in
   the original, and it still misses often, as the original does: the
-  Submersible's aim point lies off its centre, outside the cells it stands on. In the reported game it missed 47 bolts out of 47; the
-  original hits 17 of those same shots, and we now aim the way it does.
-- **Ships leaving the yard:** a new unit with no rally point moves off the
-  building's pad to a spot a short way from the building and waits there, as in
+  Submersible's aim point lies off its centre, outside the cells it stands on.
+  In the reported game it missed 47 bolts out of 47; the original hits 17 of
+  those same shots, and we now aim the way it does.
+- **New units leaving their building:** a new unit with no rally point moves
+  off the building's pad to a spot a short way from the building and waits there, as in
   the original. A ship only picks a spot it can sail to, so ships no longer stay
   stuck on the pad of a yard by a small lake. The AI no longer builds a
   shipyard on a pond that does not reach the sea.
@@ -43,8 +44,12 @@ their validation reports; both live in [`docs/`](docs/).
   any side of it, as in the original, instead of stopping a short way in front
   of it. A flyer with a rally point flies straight to it, with no stop on the
   way.
-- **Faster aiming:** finding a target's aim point is about four times faster.
-  This changes nothing in the game.
+- **New units under Legion:** with Legion pathfinding, each new unit with no
+  rally point takes a free spot of its own around the building, nearest the
+  door first, on alternating sides and never in front of the door, so units
+  from a busy Barracks do not queue in a column for one spot and block its
+  door. When every spot is taken, they spread further out. Retail pathfinding
+  is unchanged.
 - **Game speed:** raising the speed to +10 now takes effect at once. A player
   or spectator whose game had paused for a moment (while it loaded, or after
   switching windows) could stay at about +4 for most of a minute.
@@ -68,11 +73,11 @@ their validation reports; both live in [`docs/`](docs/).
 - **Streaming from a large window:** a stream smaller than the game window now
   keeps up. Streaming a 7680x2160 window at MAX 3840 (3840x1080) and 60 FPS on
   Windows encoded only about 18 frames a second: the panel counted the rest as
-  DROPPED, and the bitrate stayed near a third of the setting. Under Direct3D,
-  what Windows used to pick by default, capturing the window also cut the game itself
-  from 240 FPS to about 30. The stream's resize now runs on several threads,
-  Direct3D shrinks the frame on the graphics card as OpenGL already did, and the
-  encoder no longer oversleeps on Windows. On the reporter's setup the stream
+  DROPPED, and the bitrate stayed near a third of the setting. Under Direct3D
+  9, what Windows used to pick by default, capturing the window also cut the
+  game itself from 240 FPS to about 30. The stream's resize now runs on several
+  threads, Direct3D 9 and 11 shrink the frame on the graphics card as OpenGL
+  already did, and the encoder no longer oversleeps on Windows. On the reporter's setup the stream
   now encodes all 60 frames a second at about 6,000 Kbps, and the game stays at
   240 FPS. This changes nothing about who can play together.
 - **Hardware cursor while streaming:** streaming no longer switches the cursor
@@ -91,13 +96,22 @@ their validation reports; both live in [`docs/`](docs/).
   report can now say which one ran.
 - **Windows draws with OpenGL by default:** with the Renderer option on Auto,
   Windows now uses OpenGL, where some of the game's drawing shortcuts work,
-  instead of Direct3D 9. Auto passes over Windows' software OpenGL (a machine with no
-  graphics driver) and Microsoft's OpenGL compatibility layer and uses
+  instead of Direct3D 9. Auto passes over Windows' software OpenGL (a machine
+  with no graphics driver) and Microsoft's OpenGL compatibility layer and uses
   Direct3D 11 instead, then Direct3D 9. The Renderer row shows the pick, such
   as **AUTO (OPENGL)**; choose **Direct3D 11** or **Direct3D 9** there if
-  OpenGL misbehaves. Linux and macOS are unchanged.
-- **Protocol 295:** the aiming and the new units' release change the game, so
-  0.9.1 does not play with 0.9.0, and 0.9.0 replays do not play in 0.9.1.
+  OpenGL misbehaves. OpenGL was faster on the test machine with 2,000 units on
+  screen; with 10,000, Direct3D 11 was about 10% faster. Linux and macOS are
+  unchanged.
+- **Not compatible with 0.9.0:** the aiming and the way new units leave their
+  building change the game itself, so 0.9.1 uses protocol 295 (replay format
+  15 is unchanged). It does not play with 0.9.0 or any earlier version, nor
+  their replays.
+- **Upgrading:** a server and all of its players update to 0.9.1 together;
+  public-server operators update `takserver` as well. Keep 0.9.0 (or build it
+  from its tag) to watch replays recorded before 0.9.1.
+
+[Release notes](docs/release-0.9.1-notes.md) · [Validation report](docs/release-0.9.1-validation.md) · [Source at v0.9.1](https://github.com/pocketgeek/tak-engine/tree/v0.9.1)
 
 ## 0.9.0
 *2026-10-24 · protocol 294 · replay format 15 · does not play with 0.8.14 or earlier, nor their replays*

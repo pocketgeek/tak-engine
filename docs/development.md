@@ -74,13 +74,13 @@ network changes so the client, server, and tools use the same code.
 
 Only the latest release is offered for download. To play an older version's
 replays, or with friends who have not updated, build that version from its git
-tag (every release has one, `v0.9.0`, `v0.8.14` and so on; the
+tag (every release has one, `v0.9.1`, `v0.9.0` and so on; the
 [CHANGELOG](../CHANGELOG.md) lists them):
 
 ```sh
 git clone https://github.com/pocketgeek/tak-engine.git
 cd tak-engine
-git checkout v0.8.14
+git checkout v0.9.0
 ```
 
 Then follow the build steps in that checkout's own `docs/development.md` (or

@@ -132,8 +132,15 @@ Two refinements make it self-tuning:
 - **Auto-sizing** (the default; `TAK_NET_DELAY` overrides — `0` disables the
   buffer, a positive integer pins a fixed depth): an active RTT probe (one
   ping/sec) plus a decaying-max of the measured bundle-arrival jitter size the
-  reserve each frame — `clamp(2 + max(kJit, kRtt), 2, 16)` bundles — so a clean
-  LAN sits at 2 and a jittery WAN grows the cushion only as needed.
+  reserve each frame — `clamp(2 + max(kJit, kRtt, kFrame), 2, cap)` ticks
+  (`tak::net::jitterTargetTicks`, `src/net/pacing.h`) — so a clean LAN sits at 2
+  and a jittery WAN grows the cushion only as needed. Since 0.9.1 the cap is
+  `min(max(16, 16·speed), flowBufferLimit)`: never more than server flow control
+  lets the client hold (`flowLeadTicks` less a Progress period, the round trip
+  and the sim inbox), which would pin the servo at its floor. A bundle's
+  lateness is measured against the *previous* poll and the jitter decays on
+  wall time, so a client's own stall (loading, alt-tab, a menu) is not counted
+  as network jitter (`ArrivalJitter`).
 - **Servo playout** holds the reserve *at* that target instead of drifting: the
   sim clock runs slightly fast when the buffer is deep (shed latency) and slightly
   slow when it is shallow (rebuild the reserve) — `rate = 30·clamp(1 + 0.06·(buffered
@@ -951,9 +958,18 @@ rally, else a PARK ring kept to the cells connected to its birth point, in place
 of the exit step. A structure's flyer output gets the rally alone, else retail
 PARK's flight branch: one flight move to a point on a circle of the factory's
 park radius plus (rand(6)+rand(3)+6)*16 at a rand(65536) angle, drawn from the
-game RNG when the move first runs. 294 replays are refused. The AI's pond-yard refusal is server
-side, and the client's pacing fix (a client stall is not network jitter; the
-buffer target stays under the flow-control limit) changes nothing on the wire.
+game RNG when the move first runs, and held as a PARK until the flight arrives.
+Under Legion a ground output's PARK claims a free spot of its own over the ring
+band (`World::legionParkSpot`: layers two footprints apart, nearest the door
+first on alternating sides, never in the door lane, reachable only, beyond the
+band once it is full) instead of the shared bearing's midpoint; Retail
+pathfinding keeps the plain PARK. 294 replays are refused. The AI's pond-yard
+refusal is server side, and the client's pacing fix (a client stall is not
+network jitter; the buffer target stays under the flow-control limit) changes
+nothing on the wire. The SweetSpot query's per-unit cache is bit-identical.
+0.9.1 ships protocol 295; it plays with neither 0.9.0 nor any earlier version,
+nor their replays. Its streaming, cursor and Windows renderer changes are
+client only and need no protocol change of their own.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte

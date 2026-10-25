@@ -132,15 +132,16 @@ your **Cursor Size**, and the hotspot on the pointer. It is drawn after the fram
 is resized to the stream size, so it keeps the share of the picture it has on
 screen, and inside a letterboxed picture it never spills into the black bars. It is
 clipped at the picture's edges, and it is left out while the pointer is outside the
-game window. This costs the game nothing per frame beyond handing the worker the
-cursor picture; the worker blends a few hundred pixels. While the setup panel is
-open, the stream shows the plain arrow the panel uses.
+game window. Where the picture is read back a frame or two late (OpenGL,
+Direct3D 11), each frame keeps the cursor it was captured with, so the pointer
+never runs ahead of the picture. This costs the game nothing per frame beyond
+handing the worker the cursor picture; the worker blends a few hundred pixels.
+While the setup panel is open, the stream shows the plain arrow the panel uses.
 
 With Hardware Cursor off, the game draws its cursor into the frame, so the stream
 captures it as part of the picture and nothing is added. In that mode the title
-screen's cursor is drawn after the capture and is not in the stream. Where the
-picture is read back a frame or two late (OpenGL, Direct3D 11), each frame keeps
-the cursor it was captured with, so the pointer never runs ahead of the picture.
+screen's cursor is drawn after the capture and is not in the stream.
+
 The setup panel, title-screen account and settings overlays, and the connection
 badges are drawn **after capture** and stay off the stream. During loading and
 modal screens the last captured frame stays on the stream.

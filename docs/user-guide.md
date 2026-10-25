@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.9.0**. Which versions it plays with, and whose
+This guide covers **TAK Engine 0.9.1**. Which versions it plays with, and whose
 replays it plays: see [Versions](#versions). What changed in each release: see
 the [CHANGELOG](../CHANGELOG.md). It is written for three kinds of reader:
 
@@ -644,7 +644,11 @@ Without a rally point, as in the original game, each new unit moves off the pad
 to a spot a short way from the building and waits there; a ship only picks a
 spot it can sail to. A new flyer with no rally point flies to a random spot on
 a circle a few hundred pixels around the building, on any side of it; with a
-rally point it flies straight to it.
+rally point it flies straight to it. Under [Legion](#legion) pathfinding each
+new unit with no rally point takes a free spot of its own around the
+building, nearest the door first and never in front of the door, and further
+out once the near spots are taken, so a busy building's output does not queue
+in a column and block the door.
 
 **Mobile production.** Some builders conjure units in the field (Zhon's Beast
 Handler, for example). They place what they build like a structure. A mobile
@@ -1967,16 +1971,16 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 0.9.0 uses network protocol **294** and replay format **15**. No
-earlier release uses protocol 294, so:
+TAK Engine 0.9.1 uses network protocol **295** and replay format **15**. No
+earlier release uses protocol 295, so:
 
-- **Multiplayer:** 0.9.0 plays only with 0.9.0. A server turns away a client
-  whose protocol differs from its own, so a 0.8.14 or older player cannot join a
-  0.9.0 server, nor a 0.9.0 player an older one; the connection fails with a
+- **Multiplayer:** 0.9.1 plays only with 0.9.1. A server turns away a client
+  whose protocol differs from its own, so a 0.9.0 or older player cannot join a
+  0.9.1 server, nor a 0.9.1 player an older one; the connection fails with a
   *protocol version mismatch* message. When a release changes the protocol, a
   server and all of its players update together.
-- **Replays:** 0.9.0 plays only replays recorded by 0.9.0. A replay recorded by
-  0.8.14 or earlier needs a version with that replay's protocol; keep an old
+- **Replays:** 0.9.1 plays only replays recorded by 0.9.1. A replay recorded by
+  0.9.0 or earlier needs a version with that replay's protocol; keep an old
   copy of the engine (built from its tag, see the
   [development guide](development.md)) if you want to keep watching old
   replays.

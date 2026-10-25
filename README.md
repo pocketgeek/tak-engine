@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.0-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.1-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,30 +26,42 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.0
+## What's new in 0.9.1
 
-- **A cleaner set of guides.** The release history now lives in the
-  [CHANGELOG](CHANGELOG.md), and this page, the [quick start](docs/quick-start.md),
-  the [user guide](docs/user-guide.md) and the
-  [map editor guide](docs/cartographer-guide.md) were rewritten with new
-  pictures.
-- **Area clear works more like the original.** Every selected builder takes a
-  clear order, trees on explored ground are cleared under the fog, builders
-  give up on what they cannot reach, and overlapping map objects the original
-  removes at load are gone ([Reclaiming](docs/user-guide.md#reclaiming)).
-- **Reclaiming as in the original.** Builders work standing next to a tree,
-  rock or wreck, take the original's time for it (about 9 seconds for a big
-  tree), and gain no mana from it.
-- **Gate doorways.** Clicking an open gate's doorway picks the ground, so
-  units can be ordered through it.
-- **The Rolling Tower.** The Retail AI and our AI levels now build the Aramon
-  Rolling Tower, which the shipped AI profiles misspell.
-- **Build sparkles** sit on the building's footprint, as in the original.
+- **Shots hit the body.** Units aim at the middle of the target's body, as in
+  the original, so spears and other curving shots no longer fall short: Zhon
+  Hunters now hit each other.
+- **New units leave their building as in the original.** Without a rally point
+  a new unit waits a short way from the building, a ship only where it can
+  sail, and a flyer flies out to a random spot around it. Ships no longer get
+  stuck in a yard on a small lake, and the AI no longer builds yards on ponds.
+  Under Legion, new units spread over spots of their own instead of queueing
+  for one ([Building](docs/user-guide.md#building)).
+- **Game speed +10 takes effect at once**, even after a pause or switching
+  windows.
+- **Streaming fixes on every system:** hardware encoding on Intel and AMD under
+  Linux uses the system's VA-API, streams from a Mac reach YouTube, and
+  streaming from a large window on Windows keeps up at 60 FPS. The hardware
+  cursor stays on while you stream and is drawn into the video
+  ([streaming](docs/streaming.md)).
+- **Windows draws with OpenGL by default**, with Direct3D 11 and Direct3D 9 as
+  fallbacks and as choices in Options ([Renderer](docs/user-guide.md#renderer)).
 
-**0.9.0 does not play with 0.8.x, nor play its replays** (protocol 294, replay
+**0.9.1 does not play with 0.9.0, nor play its replays** (protocol 295, replay
 format 15): a server and all of its players update together. See
 [Versions](docs/user-guide.md#versions) and the
-[0.9.0 entry in the CHANGELOG](CHANGELOG.md#090).
+[0.9.1 entry in the CHANGELOG](CHANGELOG.md#091).
+
+### Previously in 0.9.0
+
+- **A cleaner set of guides**, with the release history in the
+  [CHANGELOG](CHANGELOG.md).
+- **Area clear and reclaiming work more like the original**: every selected
+  builder takes a clear order, trees on explored ground are cleared under the
+  fog, and builders work next to the object for the original's time and gain
+  no mana from it ([Reclaiming](docs/user-guide.md#reclaiming)).
+- **Gate doorways**, **the Rolling Tower** in the AI, and **build sparkles** on
+  the building's footprint, as in the original.
 
 Full history: [CHANGELOG](CHANGELOG.md).
 

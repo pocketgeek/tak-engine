@@ -12,10 +12,12 @@ independent security audit or protection against a volumetric DDoS.
 ## Versions
 
 Server and clients must speak the same gameplay protocol; update the server and
-every client together when it changes. **0.9.0 changes it (protocol 294):** a
-0.9.0 `takserver` accepts only 0.9.0 players and turns away 0.8.x clients with a
-*protocol version mismatch* message, and a 0.8.x server turns away 0.9.0
-players, so update `takserver` when you announce 0.9.0 to your players. Which versions play together is listed in
+every client together when it changes. **0.9.1 changes it (protocol 295):** a
+0.9.1 `takserver` accepts only 0.9.1 players and turns away 0.9.0 and older
+clients with a *protocol version mismatch* message, and a 0.9.0 or older server
+turns away 0.9.1 players, so update `takserver` when you announce 0.9.1 to your
+players. Crusades battle replays recorded by an older server can no longer be
+watched after the update. Which versions play together is listed in
 the [user guide](user-guide.md#versions) and in the [CHANGELOG](../CHANGELOG.md).
 
 ## Quick setup: Linux package
