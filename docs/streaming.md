@@ -75,6 +75,38 @@ Hardware encoding needs a working GPU driver that supports the chosen codec and
 resolution. If the hardware fails during encoding, the stream restarts on the CPU,
 up to 4096 pixels per axis; larger sizes report an error.
 
+### Intel and AMD hardware encoding on Linux
+
+On Linux, Intel and AMD encoding goes through the VA-API library installed on your
+system (`libva.so.2` and `libva-drm.so.2`) and its driver; the game does not carry a
+copy of libva. Without libva, Automatic uses NVENC or the CPU, as on a computer
+without VA-API hardware. libva is not a package dependency, but most desktops already
+have it.
+
+If the status line shows **LIVE - CPU FALLBACK** on an Intel or AMD computer, check
+VA-API outside the game with `vainfo` (Fedora: package `libva-utils`; Debian and
+Ubuntu: `vainfo`). It must list `VAEntrypointEncSlice` or `VAEntrypointEncSliceLP`
+for an H.264 profile such as `VAProfileH264Main` or `VAProfileH264High`. Entries with
+only `VAEntrypointVLD` are decoding, and the game cannot encode with them.
+
+| Hardware | Driver package |
+| --- | --- |
+| Intel Broadwell and newer | Fedora: `intel-media-driver` from RPM Fusion nonfree (it installs into `/usr/lib64/dri-nonfree`, where the system libva looks); Debian and Ubuntu: `intel-media-va-driver-non-free` |
+| AMD | Fedora: `mesa-va-drivers-freeworld` from RPM Fusion free (Fedora's own `mesa-va-drivers` does not encode H.264 or HEVC); Debian and Ubuntu: `mesa-va-drivers` |
+
+To see what libva does when the game opens the encoder, start the game from a
+terminal with libva's own messages switched on:
+
+```sh
+LIBVA_MESSAGING_LEVEL=2 takclient
+```
+
+When you press Start Streaming the terminal shows a `TAK VA-API: using system
+/usr/lib64/libva.so.2 ...` line (or why libva could not be loaded), then libva's
+`libva info:` lines: its VA-API version, each driver file it tries, and whether that
+driver started. `LIBVA_DRIVER_NAME` (for example `iHD`) and `LIBVA_DRIVERS_PATH`
+work as they do for `vainfo`.
+
 ### The status lines
 
 The panel shows the encoder actually opened, the connection state, encoded frames,
@@ -205,10 +237,10 @@ rate; that readback can add render-thread cost. Lower the resolution/frame rate
 or choose hardware encoding if streaming reduces game performance.
 
 No FFmpeg executable or additional DLL/shared-library bundle is required by
-players. FFmpeg, x264, OpenSSL, the Linux VA-API/DRM loaders and the Windows oneVPL
-dispatcher are built as static archives. NVIDIA and AMD SDK headers add no runtime
-library bundle. Installed GPU drivers and native OS frameworks remain external,
-just as SDL's display/audio drivers do.
+players. FFmpeg, x264, OpenSSL and the Windows oneVPL dispatcher are built as static
+archives. NVIDIA and AMD SDK headers add no runtime library bundle. On Linux, VA-API
+uses the system libva, loaded when a stream starts. Installed GPU drivers and native
+OS frameworks remain external, just as SDL's display/audio drivers do.
 
 ## Development checks
 
@@ -221,7 +253,18 @@ uses SecureTransport. Multiplayer TLS uses static OpenSSL on all platforms. FFmp
 is patched explicitly for the pinned FFmpeg 7.1 source.
 
 CMake requires the media/codec/TLS/loader archives by full path; CI additionally
-checks executable imports. `stream_test` tests H.264/AAC output, timestamps,
+checks executable imports. On Linux the FFmpeg build compiles against pinned libva
+headers, and the prefix's `libva.a` is `tools/vashim.c`: each libva function FFmpeg
+calls forwards to the system `libva.so.2`/`libva-drm.so.2`, opened with `dlopen` on
+first use. When they cannot be loaded every call fails with a VA error and
+`vaGetDisplayDRM` returns no display, so FFmpeg moves on to the next encoder. Functions
+newer than libva 2.0 are optional (`vaSyncBuffer` reports unimplemented, `vaMapBuffer2`
+falls back to `vaMapBuffer`). `vashim_test` checks this: `vashim_unavailable` runs
+against a fake `libva.so.2` and `libva-drm.so.2` with no functions and expects a clean failure and a CPU
+recording; `vashim_system` and `vashim_system_loader` (skipped without libva or a DRM
+render node) open the system libva, and the latter gives it a fake driver that exports
+only `__vaDriverInit_1_23`, which only a libva 2.23 or newer loader finds. Linux CI also
+fails if `takclient` contains a libva driver loader. `stream_test` tests H.264/AAC output, timestamps,
 configuration validation, stopping, failure and restart without any network. It also
 records with a local copy and reads the MP4 back box by box (the shipped FFmpeg has no
 MP4 reader): fragmented, an H.264/HEVC video track and an AAC track, the expected

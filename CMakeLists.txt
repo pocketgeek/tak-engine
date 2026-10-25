@@ -1945,6 +1945,34 @@ add_test(NAME streaming_native COMMAND stream_test libx264 native)
 # 77: this FFmpeg build predates the local copy's MP4 muxer (rerun build-ffmpeg-bink.sh).
 set_tests_properties(streaming PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
 
+# Linux VA-API goes through tools/vashim.c (the prefix's libva.a), which forwards to the
+# system libva.so.2. vashim_test checks the unavailable path against a fake libva.so.2
+# and libva-drm.so.2 that have no functions, and that the system loader (not a bundled one) finds a driver
+# exporting only __vaDriverInit_1_23. The latter two skip without libva or a render node.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_library(vashim_fake_va SHARED tools/vashim_fake.cpp)
+  target_compile_definitions(vashim_fake_va PRIVATE TAK_FAKE_LIBVA)
+  set_target_properties(vashim_fake_va PROPERTIES OUTPUT_NAME va SOVERSION 2
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/vashim-fake-libva")
+  add_library(vashim_fake_va_drm SHARED tools/vashim_fake.cpp)
+  target_compile_definitions(vashim_fake_va_drm PRIVATE TAK_FAKE_LIBVA)
+  set_target_properties(vashim_fake_va_drm PROPERTIES OUTPUT_NAME va-drm SOVERSION 2
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/vashim-fake-libva")
+  add_library(vashim_fake_driver MODULE tools/vashim_fake.cpp)
+  target_compile_definitions(vashim_fake_driver PRIVATE TAK_FAKE_DRIVER)
+  set_target_properties(vashim_fake_driver PROPERTIES PREFIX "" OUTPUT_NAME takfake_drv_video
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/vashim-fake-driver")
+  add_executable(vashim_test tools/vashim_test.cpp src/video/stream.cpp)
+  target_link_libraries(vashim_test PRIVATE tak-formats tak_ffmpeg)
+  add_dependencies(vashim_test vashim_fake_va vashim_fake_va_drm vashim_fake_driver)
+  add_test(NAME vashim_unavailable COMMAND vashim_test unavailable)
+  set_tests_properties(vashim_unavailable PROPERTIES TIMEOUT 60
+    ENVIRONMENT "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/vashim-fake-libva")
+  add_test(NAME vashim_system COMMAND vashim_test system)
+  add_test(NAME vashim_system_loader COMMAND vashim_test driver "${CMAKE_BINARY_DIR}/vashim-fake-driver")
+  set_tests_properties(vashim_system vashim_system_loader PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+endif()
+
 # Streaming REMEMBER KEY: the stream key in the OS credential store (src/client/credstore.h),
 # one platform file each. Linux dlopens libsecret at run time, so static release builds gain
 # no runtime dependency; without it (or without a Secret Service) the option is greyed out.

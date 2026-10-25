@@ -87,29 +87,59 @@ case "$platform" in
     cmake --install "$root/vpl/build"
     ;;
   *)
-    # Meson is run from pinned source; no pip install or system Meson needed.
-    fetch meson https://github.com/mesonbuild/meson.git 1.7.0
-    fetch drm https://gitlab.freedesktop.org/mesa/drm.git libdrm-2.4.124
-    if [ ! -f "$PREFIX/lib/libdrm.a" ]; then
-      python3 "$root/meson/meson.py" setup "$root/drm/build" "$root/drm" \
-        --prefix="$PREFIX" --libdir=lib --default-library=static --buildtype=release \
-        -Dintel=disabled -Dradeon=disabled -Damdgpu=disabled -Dnouveau=disabled \
-        -Dvmwgfx=disabled -Domap=disabled -Dfreedreno=disabled -Dtegra=disabled \
-        -Dvc4=disabled -Detnaviv=disabled -Dcairo-tests=disabled -Dman-pages=disabled \
-        -Dtests=false
-      ninja -C "$root/drm/build" install
-    fi
-    fetch va https://github.com/intel/libva.git 2.22.0
-    # Upstream libva hardcodes shared_library(), ignoring default-library.
-    # Make its loader honor the static build requested here.
-    sed -i.bak 's/shared_library(/library(/g' "$root/va/va/meson.build"
-    export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
-    if [ ! -f "$PREFIX/lib/libva.a" ]; then
-      python3 "$root/meson/meson.py" setup "$root/va/build" "$root/va" \
-        --prefix="$PREFIX" --libdir=lib --default-library=static --buildtype=release \
-        -Ddriverdir=/usr/lib/x86_64-linux-gnu/dri:/usr/lib/aarch64-linux-gnu/dri:/usr/lib64/dri:/usr/lib/dri \
-        -Dwith_x11=no -Dwith_wayland=no -Dwith_glx=no -Ddisable_drm=false -Denable_docs=false
-      ninja -C "$root/va/build" install
+    # VA-API: FFmpeg compiles against pinned libva HEADERS, and the prefix's libva.a
+    # is tools/vashim.c, which forwards to the SYSTEM libva.so.2 at run time. A
+    # bundled libva loader could not initialise drivers built for a newer libva and
+    # knew only fixed driver folders. No libva/libdrm code is linked into the game.
+    va_version=2.22.0
+    fetch "va-$va_version" https://github.com/intel/libva.git "$va_version"
+    shim_stamp="$va_version-$(cksum < "$here/tools/vashim.c")"
+    if [ "$(cat "$PREFIX/vashim-version" 2>/dev/null || true)" != "$shim_stamp" ]; then
+      # Drop the real libva/libdrm a cached prefix from an older recipe still holds.
+      rm -rf "$PREFIX/include/va" "$PREFIX/include/libdrm" "$PREFIX/include/xf86drm.h" \
+        "$PREFIX/include/xf86drmMode.h" "$PREFIX/include/libsync.h" "$PREFIX/lib/dri"
+      rm -f "$PREFIX"/lib/libva*.so* "$PREFIX"/lib/libva*.a "$PREFIX"/lib/libdrm*.so* "$PREFIX"/lib/libdrm*.a \
+        "$PREFIX"/lib/pkgconfig/libva*.pc "$PREFIX"/lib/pkgconfig/libdrm*.pc
+      mkdir -p "$PREFIX/include/va" "$PREFIX/lib/pkgconfig"
+      vasrc="$root/va-$va_version"
+      for h in va.h va_backend.h va_backend_prot.h va_backend_vpp.h va_compat.h \
+               va_dec_hevc.h va_dec_jpeg.h va_dec_vp8.h va_dec_vp9.h va_dec_av1.h va_dec_vvc.h \
+               va_drmcommon.h va_egl.h va_enc_hevc.h va_enc_h264.h va_enc_jpeg.h va_enc_vp8.h \
+               va_fei.h va_fei_h264.h va_fei_hevc.h va_enc_mpeg2.h va_enc_vp9.h va_enc_av1.h \
+               va_str.h va_tpi.h va_prot.h va_vpp.h drm/va_drm.h; do
+        cp "$vasrc/va/$h" "$PREFIX/include/va/"
+      done
+      api() { sed -n "s/^va_api_$1_version = \([0-9]*\)$/\1/p" "$vasrc/meson.build"; }
+      api_version="$(api major).$(api minor).$(api micro)"
+      sed -e "s/@VA_API_MAJOR_VERSION@/$(api major)/" -e "s/@VA_API_MINOR_VERSION@/$(api minor)/" \
+          -e "s/@VA_API_MICRO_VERSION@/$(api micro)/" -e "s/@VA_API_VERSION@/$api_version/g" \
+          "$vasrc/va/va_version.h.in" > "$PREFIX/include/va/va_version.h"
+      "${CC:-cc}" -std=gnu11 -O2 -fPIC -fvisibility=hidden -Wall -I"$PREFIX/include" \
+        -c "$here/tools/vashim.c" -o "$root/vashim.o"
+      "${AR:-ar}" rcs "$PREFIX/lib/libva.a" "$root/vashim.o"
+      # libva-drm's one function lives in the same archive.
+      cat > "$PREFIX/lib/pkgconfig/libva.pc" <<VAPC
+prefix=$PREFIX
+includedir=\${prefix}/include
+libdir=\${prefix}/lib
+
+Name: va
+Description: VA-API headers with a forwarder to the system libva.so.2 (tools/vashim.c)
+Version: $api_version
+Libs: -L\${libdir} -lva -ldl -pthread
+Cflags: -I\${includedir}
+VAPC
+      cat > "$PREFIX/lib/pkgconfig/libva-drm.pc" <<VAPC
+prefix=$PREFIX
+includedir=\${prefix}/include
+
+Name: va-drm
+Description: VA-API DRM header; vaGetDisplayDRM forwards to the system libva-drm.so.2
+Version: $api_version
+Requires: libva
+Cflags: -I\${includedir}
+VAPC
+      printf '%s\n' "$shim_stamp" > "$PREFIX/vashim-version"
     fi
     ;;
 esac

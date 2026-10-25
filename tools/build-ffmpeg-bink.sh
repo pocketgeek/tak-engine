@@ -11,7 +11,7 @@ PREFIX="${PREFIX:-$here/third_party/ffmpeg-bink}"
 SRC="${SRC:-$PREFIX/src}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
-recipe=$(cat "$here/tools/build-ffmpeg-bink.sh" "$here/tools/build-stream-deps.sh" "$here/tools/ffmpeg-tls-hostname.patch" | cksum)
+recipe=$(cat "$here/tools/build-ffmpeg-bink.sh" "$here/tools/build-stream-deps.sh" "$here/tools/ffmpeg-tls-hostname.patch" "$here/tools/vashim.c" | cksum)
 stamp="stream-v2-$FFMPEG_VERSION-${TARGET_OS:-$(uname -s)}-${TARGET_ARCH:-native}-$recipe"
 if [ -f "$PREFIX/stream-build-version" ] && [ "$(cat "$PREFIX/stream-build-version")" = "$stamp" ]; then
   echo "static FFmpeg with streaming: already built"; exit 0

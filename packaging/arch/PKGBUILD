@@ -17,7 +17,8 @@ optdepends=('libx11: X11 video backend'
             'wayland: Wayland video backend'
             'pipewire: audio'
             'libpulse: PulseAudio audio'
-            'alsa-lib: ALSA audio')
+            'alsa-lib: ALSA audio'
+            'libva: Intel/AMD hardware encoding for streaming')
 options=('!debug')
 
 package() {

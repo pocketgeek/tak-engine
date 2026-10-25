@@ -48,6 +48,14 @@ their validation reports; both live in [`docs/`](docs/).
 - **Game speed:** raising the speed to +10 now takes effect at once. A player
   or spectator whose game had paused for a moment (while it loaded, or after
   switching windows) could stay at about +4 for most of a minute.
+- **Streaming on Intel and AMD (Linux):** YouTube streaming now uses the
+  computer's own VA-API library (`libva`) and graphics driver for hardware
+  encoding. The game used to carry an older copy of libva that could not start
+  current drivers, such as Intel's on Fedora 44, and did not look in Fedora's
+  RPM Fusion driver folders, so streams fell back to the CPU (**LIVE - CPU
+  FALLBACK**) even where `vainfo` worked. Without libva the game still streams
+  on the CPU as before; libva is not a package dependency. This changes nothing
+  about who can play together.
 - **Protocol 295:** the aiming and the new units' release change the game, so
   0.9.1 does not play with 0.9.0, and 0.9.0 replays do not play in 0.9.1.
 
