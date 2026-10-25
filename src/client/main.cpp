@@ -208,7 +208,11 @@ constexpr int kWinW = 1920, kWinH = 1080;
 
 void screenshot(SDL_Renderer* ren, int w, int h, const std::string& path) {
     std::vector<uint8_t> px(size_t(w) * h * 4);
-    if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_RGBA32, px.data(), w * 4) == 0) {
+    // An explicit w x h rect: with nullptr SDL reads the CURRENT viewport, which a
+    // fullscreen switch or resize earlier in the frame has already grown past the
+    // buffer (it overran the heap in a Windows fullscreen-toggle capture).
+    const SDL_Rect area{0, 0, w, h};
+    if (SDL_RenderReadPixels(ren, &area, SDL_PIXELFORMAT_RGBA32, px.data(), w * 4) == 0) {
         tak::png::write(path, w, h, px);
         std::printf("screenshot: %s\n", path.c_str());
     }
