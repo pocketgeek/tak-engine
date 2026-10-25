@@ -459,6 +459,16 @@
         }
         // Regression probe: an eliminated, non-acking client must not stall survivors.
         if (outcome_ < 0 && tak::devFlag("TAK_DEFEAT_STALL")) return true;
+        // TAK_STALL_AT=<tick>:<ms>: freeze this client's main thread once for <ms> when the played
+        // tick reaches <tick> -- an alt-tab, a menu or a hitch -- so a harness can check that the
+        // client's own stall is not read back as network jitter (tools/speed_stall_check.sh).
+        if (const char* e = tak::devEnv("TAK_STALL_AT"); e && !stallDone_ && netTick_ >= uint32_t(std::atoi(e))) {
+            stallDone_ = true;
+            const char* c = std::strchr(e, ':');
+            const int ms = c ? std::max(0, std::atoi(c + 1)) : 0;
+            std::fprintf(stderr, "SPEEDLOG stall %llu tick %u ms %d\n", (unsigned long long)SDL_GetTicks64(), netTick_, ms);
+            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        }
         speedProbe();
 #endif
         // Send at the rate the server DRAINS (kCmdCapPerTick per sim tick), metered
@@ -653,26 +663,6 @@
             if (!e || std::string(e) == "auto") { netAuto_ = true; netDelay_ = 3; mp_->enableRttProbe(); }
             else netDelay_ = std::max(0, std::atoi(e));
         }
-        if (netAuto_) {
-            // Size the buffer to cover the measured bundle-arrival jitter, with an
-            // RTT-scaled floor, clamped. Recomputed each frame so it tracks the link.
-            // Everything is in ticks at the CURRENT game speed (tickMs = 1000/(30*speed)): a
-            // reserve sized in 1x ticks is a handful of ms at 8x, shorter than one display frame.
-            // The frame term keeps at least one frame's worth of arrivals in hand, since a frame
-            // consumes up to frameMs/tickMs ticks at once.
-            const float sp = std::max(1, int(mp_->gameSpeed())) / 10.0f;
-            const float tickMs = 1000.0f / (30.0f * sp);
-            const uint64_t nowF = SDL_GetTicks64();
-            if (netFrameAt_) {
-                const float f = std::min(250.0f, float(nowF - netFrameAt_));
-                netFrameMs_ += 0.1f * (f - netFrameMs_);
-            }
-            netFrameAt_ = nowF;
-            int kJit = int(std::ceil(mp_->arrivalJitterMs() / tickMs));
-            int kRtt = int(std::ceil(mp_->rttMs() / 60.0f));   // gentle RTT floor (1x ticks, as before)
-            int kFrame = netFrameMs_ > tickMs ? int(std::ceil(netFrameMs_ / tickMs)) : 0;   // sub-tick frames: 1x unchanged
-            netDelay_ = std::clamp(2 + std::max({kJit, kRtt, kFrame}), 2, std::max(16, int(16.0f * sp)));
-        }
         // WE S3: a seated player's sim worker is fed only while its inbox holds kSimInboxCap ticks
         // or fewer at the start of the frame. The rest wait in mp_, where the jitter servo, the
         // 900-tick guard and the server's flow control (Msg::Progress below) all see them, so a
@@ -680,6 +670,21 @@
         // queueing 120-150 ticks of command latency in the inbox. Rejoin catch-up and spectators
         // keep the 512-tick fast-forward: they replay history the server is not waiting on.
         constexpr size_t kSimInboxCap = 2;
+        if (netAuto_) {
+            // Size the buffer to cover the measured bundle-arrival jitter, with an RTT-scaled
+            // floor and a frame term, never past what the server's flow control lets the buffer
+            // reach (tak::net::jitterTargetTicks, net/pacing.h). Recomputed each frame so it
+            // tracks the link and the game speed.
+            const uint64_t nowF = SDL_GetTicks64();
+            if (netFrameAt_) {
+                const float f = std::min(250.0f, float(nowF - netFrameAt_));
+                netFrameMs_ += 0.1f * (f - netFrameMs_);
+            }
+            netFrameAt_ = nowF;
+            netDelay_ = tak::net::jitterTargetTicks(mp_->arrivalJitterMs(), mp_->rttMs(), netFrameMs_,
+                                                    std::max(1, int(mp_->gameSpeed())),
+                                                    useSimThread_ ? int(kSimInboxCap) : 0);
+        }
         const bool capInbox = useSimThread_ && !cmdCatchUp_ && !mp_->isSpectator();
         bool inboxFull = false;
         if (capInbox) {

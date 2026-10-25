@@ -23,6 +23,7 @@
 #include "net/crypto.h"
 #include "net/mappackage.h"
 #include "net/modpackage.h"
+#include "net/pacing.h"
 #include "net/conn.h"
 #include "net/protocol.h"
 #include "net/replayhdr.h"
@@ -551,24 +552,13 @@ private:
     // (the adaptive jitter buffer). Off by default -> no extra traffic.
     bool measureRtt_ = false;
     float rttMs_ = 0;                   // smoothed round-trip time
-    // Bundle-arrival jitter: how much later than the 30 Hz schedule bundles land,
-    // as a slowly-decaying recent max. This is what the jitter buffer must cover.
-    uint64_t lastBundleMs_ = 0;
-    float arrivalJitterMs_ = 0;
-    void noteBundleArrival(uint64_t now) {
-        if (lastBundleMs_) {
-            // Lateness against the schedule at the CURRENT game speed: at 8x bundles are due every
-            // 4.2 ms, so measuring against the 1x 33 ms interval read every gap as early (jitter 0).
-            // The decay is 0.4 ms per 1x-tick of wall time, so it is per bundle / speed.
-            const float sp = float(std::max<int>(1, gameSpeed_)) / 10.0f;
-            float late = float(now - lastBundleMs_) - 1000.0f / (30.0f * sp);
-            arrivalJitterMs_ = std::max(std::max(0.0f, late), arrivalJitterMs_ - 0.4f / sp);
-        }
-        lastBundleMs_ = now;
-    }
+    // Bundle-arrival jitter (net/pacing.h): stamped per poll, so the client's own stalls are
+    // not read as network jitter. This is what the jitter buffer must cover.
+    ArrivalJitter jitter_;
+    void noteBundleArrival(uint64_t now) { jitter_.noteBundle(now, gameSpeed_); }
 public:
     float rttMs() const { return rttMs_; }
-    float arrivalJitterMs() const { return arrivalJitterMs_; }
+    float arrivalJitterMs() const { return jitter_.jitterMs; }
     void enableRttProbe() { measureRtt_ = true; }
 private:
 };

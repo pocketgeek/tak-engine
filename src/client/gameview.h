@@ -2189,6 +2189,7 @@ public:
     std::vector<std::pair<uint32_t, int>> speedAt_;
     size_t speedAtNext_ = 0;
     bool speedAtParsed_ = false;
+    bool stallDone_ = false;                      // TAK_STALL_AT fired (gameview_net.cpp)
     uint64_t speedLogMs_ = 0;
     tak::PaceLog pace_;                           // TAK_PACELOG: per-frame ticks/backlog record (src/client/pacelog.h)
     bool paceInit_ = false;

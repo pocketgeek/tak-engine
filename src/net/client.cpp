@@ -140,6 +140,7 @@ bool MpClient::poll() {
     // buffered and then thrown away, leaving only a bare "peer closed" to explain a
     // rejection the server had actually spelled out.
     const uint64_t readAt = nowMs();
+    jitter_.beginPoll(readAt);   // a bundle read now came after the previous poll (see ArrivalJitter)
     // A seated player whose link goes now may reconnect (canReconnect) -- unless the
     // server itself ended it (Reject, Bye), which the handlers below record.
     const bool inGame = state_ == State::InGame && !spectator_;
@@ -1299,7 +1300,7 @@ void MpClient::sendHash(uint32_t tick, uint64_t hash, uint64_t posDigest) {
 
 void MpClient::sendProgress(uint32_t tick) {
     Writer w; w.u32(tick);
-    w.u32(uint32_t(std::min(rttMs_ > 0 ? rttMs_ + 0.5f : 0.0f, 60000.0f)));
+    w.u32(progressRttMs(rttMs_));   // flowBufferLimit sizes the jitter target from the same value
     w.u32(bundles_.empty() ? tick : std::max(tick, bundles_.rbegin()->first));   // arrived, not yet run
     send(Msg::Progress, w);
 }
