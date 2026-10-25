@@ -127,7 +127,7 @@ The Retail AI places yards as the original did.
   `tickCombat` and `findTarget`. New checks in `naval_combat_test` and
   `blocked_shot_test`; `tools/re/check_ballistic_inrange.py` matches 6,000
   emulated `52bc60` answers. Evidence in [retail-engine.md](retail-engine.md).
-- AI (`1a2f1333`, `064cb448`, `src/ai/ai.cpp`, our levels only; the Retail
+- AI (`1a2f1333`, `064cb448`, `src/ai/ai.cpp` and `ai.h`, our levels only; the Retail
   AI's ClassicBrain is untouched): factory door strips (yardmap edges with open
   `c`/`C` cells; span plus 16 px each side, 80-112 px deep, capped at retail's
   7-cell street; none for producers whose outputs all fly) checked by

@@ -982,6 +982,8 @@ loaded, aimed weapon whose muzzle solve has no arc spends its reload as a
 blocked shot (`World::noteNoArc`) instead of lobbing flat. 295 replays are
 refused. The AI's factory-door strips and Navy Yard door-clearance siting are
 server side and change nothing on the wire.
+0.9.2 ships protocol 296; it plays with neither 0.9.1 nor any earlier version,
+nor their replays.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte

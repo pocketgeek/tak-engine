@@ -88,7 +88,7 @@ Debug builds (`build-o2`, `-O2 -g`, ccache + mold).
 - **Change tests.** The fix branches checked that their new checks fail without
   the fix (for example, the new `naval_combat` case fails on `6697b952`) and
   ran `ctest -L quick`.
-- **Full suite.** `ctest -LE nightly` passed **436/437** (1 skipped, 1 failed,
+- **Full suite.** `ctest -LE nightly`: **435/437** passed (1 skipped, 1 failed,
   345 s real). The failure, `vashim_unavailable`, also fails on `87a04421` on
   this host: the local `third_party/ffmpeg-bink` predates the libva shim, which
   CI builds (as in 0.9.1); `vashim_system_loader` is the skipped test, same
@@ -159,6 +159,10 @@ version line and docs; no code differs from the integrated code above):
     off a target after three no-arc reloads) change how this game plays out.
     The test is labelled `quick` but needs the install, so the branches' and
     the integration's data-less `ctest` runs did not include it.
+    The other two pairings still pass, but one moved a long way: Aramon
+    against Veruna went from an Aramon win after 60.8 game-minutes on
+    `87a04421` to a Veruna win after 86.4, close to the cap (Taros against Zhon:
+    Zhon after 27.4, now 28.6).
     TODO-LEAD: ruling (accept as a balance shift and adjust the test's cap or
     pairing, or change the code). Logs:
     `~/tak-tmp/scratch/release-092/ctest-full.out`, `duels-*.out`.
