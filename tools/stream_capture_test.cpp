@@ -36,7 +36,9 @@ int main(int argc,char** argv) {
     }
     SDL_RendererInfo info{};SDL_GetRendererInfo(ren,&info);
     const bool tempFile=argc<3||!*argv[2]; // "": a temporary file, removed afterwards
-    std::string path=!tempFile?argv[2]:(std::filesystem::temp_directory_path()/"tak-stream-capture.flv").string();
+    // Unique: CTest runs streaming_capture and streaming_capture_cursor side by side.
+    std::string path=!tempFile?argv[2]:(std::filesystem::temp_directory_path()/
+        ("tak-stream-capture-"+std::to_string(SDL_GetPerformanceCounter())+".flv")).string();
     {
         tak::Streaming streaming(ren);
         tak::video::StreamConfig c;c.encoder=argc>6?argv[6]:"libx264";
@@ -100,5 +102,5 @@ int main(int argc,char** argv) {
     if(checkVsync && SDL_GL_GetSwapInterval()!=swapBefore)return 6;
     if(checkVsync)std::printf("swap interval unchanged: %d\n",swapBefore);
     SDL_DestroyRenderer(ren);SDL_DestroyWindow(win);SDL_Quit();
-    if(tempFile)std::filesystem::remove(path);
+    if(tempFile){std::error_code ec;std::filesystem::remove(path,ec);}
 }
