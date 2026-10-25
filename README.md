@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.1-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.2-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,7 +26,23 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.1
+## What's new in 0.9.2
+
+- **Flames and scenery.** Flames that stop on a rock or standing stone count as
+  blocked shots, so a Fire Wagon walks to a clear shot or moves on instead of
+  burning the same stone again and again ([Blocked shots](docs/user-guide.md#blocked-shots)).
+- **Lobbing weapons stay within their arc**, as in the original: a Creon
+  Submersible or catapult closes in until its shot can reach, instead of
+  lobbing shells into the water at its own bow.
+- **The computer players keep factory doors clear** and build Navy Yards that
+  open onto open water, so new units and ships are no longer trapped.
+
+**0.9.2 does not play with 0.9.1, nor play its replays** (protocol 296, replay
+format 15): a server and all of its players update together. See
+[Versions](docs/user-guide.md#versions) and the
+[0.9.2 entry in the CHANGELOG](CHANGELOG.md#092).
+
+### Previously in 0.9.1
 
 - **Shots hit the body.** Units aim at the middle of the target's body, as in
   the original, so spears and other curving shots no longer fall short: Zhon
@@ -46,22 +62,6 @@ interface art and sound straight from its installation folder.
   ([streaming](docs/streaming.md)).
 - **Windows draws with OpenGL by default**, with Direct3D 11 and Direct3D 9 as
   fallbacks and as choices in Options ([Renderer](docs/user-guide.md#renderer)).
-
-**0.9.1 does not play with 0.9.0, nor play its replays** (protocol 295, replay
-format 15): a server and all of its players update together. See
-[Versions](docs/user-guide.md#versions) and the
-[0.9.1 entry in the CHANGELOG](CHANGELOG.md#091).
-
-### Previously in 0.9.0
-
-- **A cleaner set of guides**, with the release history in the
-  [CHANGELOG](CHANGELOG.md).
-- **Area clear and reclaiming work more like the original**: every selected
-  builder takes a clear order, trees on explored ground are cleared under the
-  fog, and builders work next to the object for the original's time and gain
-  no mana from it ([Reclaiming](docs/user-guide.md#reclaiming)).
-- **Gate doorways**, **the Rolling Tower** in the AI, and **build sparkles** on
-  the building's footprint, as in the original.
 
 Full history: [CHANGELOG](CHANGELOG.md).
 

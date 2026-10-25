@@ -19,10 +19,10 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
-## 0.9.2 -- Unreleased
-*protocol 296 · replay format 15 · does not play with 0.9.1 or earlier, nor their replays*
+## 0.9.2
+*2026-10-25 · protocol 296 · replay format 15 · does not play with 0.9.1 or earlier, nor their replays*
 
-- **Flame units get round scenery:** flames that stop on a rock, a standing
+- **Flames blocked by scenery:** flames that stop on a rock, a standing
   stone or other indestructible scenery now count as blocked shots, like
   arrows and spears. A Fire Wagon or other flame unit that picked its target
   while on the move (an attack-move, a patrol or a queued move) walks to a
@@ -41,6 +41,15 @@ their validation reports; both live in [`docs/`](docs/).
 - **AI Navy Yards:** the computer players build Navy Yards where ships can sail
   straight out to open water, not at the head of a narrow inlet where new ships
   stayed stuck.
+- **Not compatible with 0.9.1:** the flame and lobbing changes change the game
+  itself, so 0.9.2 uses protocol 296 (replay format 15 is unchanged). It does
+  not play with 0.9.1 or any earlier version, nor their replays.
+- **Upgrading:** a server and all of its players update to 0.9.2 together;
+  public-server operators update `takserver` as well. Keep 0.9.1 (it stays on
+  the releases page, or build it from its tag) to watch replays recorded
+  before 0.9.2.
+
+[Release notes](docs/release-0.9.2-notes.md) · [Validation report](docs/release-0.9.2-validation.md) · [Source at v0.9.2](https://github.com/pocketgeek/tak-engine/tree/v0.9.2)
 
 ## 0.9.1
 *2026-10-25 · protocol 295 · replay format 15 · does not play with 0.9.0 or earlier, nor their replays*
