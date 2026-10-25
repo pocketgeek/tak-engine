@@ -2418,7 +2418,6 @@ own profile.
 ## Map editor
 
 ![Cartographer unit browser, terrain canvas and minimap](img/cartographer.png)
-<!-- SHOT-0.9.0: cartographer-main -- (must: current picture shows the old four-tool toolbar) editor on Ulasem Arena, five tools -->
 
 *Cartographer's Units browser, map canvas and minimap.*
 
@@ -2454,7 +2453,6 @@ either program changes it for both.
   selected piece again steps to its next variant.
 
   ![Cartographer's terrain browser showing the All sections group (555 pieces, 1261 sections) with cliff pieces named Cliff N, Cliff E, Cliff NE out and so on, each with a variant badge such as 1/3, beside the map canvas](img/guide/cartographer-terrain.jpg)
-  <!-- SHOT-0.9.0: guide-cartographer-terrain -- (must: current picture is from the 0.8.3 build) grouped terrain browser on Ulasem Arena with variant badges on the pieces -->
 
   *The grouped terrain browser on Ulasem Arena. The badge on each piece shows
   which of its variants is chosen and how many it has.*

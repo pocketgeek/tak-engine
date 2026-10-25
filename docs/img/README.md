@@ -211,7 +211,7 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 | `streaming.jpg` | Streaming setup with no key or broadcast, showing the **Remember Key** row (off; the Secret Service is available) and the **Save a Local Copy** row (off, the default; MP4 IN THE VIDEOS FOLDER), new in 0.8.10. Rendered by the 0.8.10 build at 1600 × 1000, with the debug `TAK_CREDSTORE=test` store so no real key could appear |
 | `diplomacy.jpg` | Built-in input-test fixture (the debug `TAK_DIPLOMACY_TEST` harness, `--testbuild`) after gifting, 1600 × 1000, in a profile with voice chat on. The VOICE column ticks every other player (your own box is shown, greyed); VOLUME has sliders for the two other humans, left by the fixture at 50% (ALLY) and 25% (DEFEATED), and none for the computer player (ENEMY). Elsin stays selected, so the bar shows her portrait, name and health and mana only. Rendered by the 0.8.8 build |
 | `results.jpg` | Built-in five-player **sample statistics** (`TAK_SHOT_RESULT`), not a finished match. Rendered by the 0.8.8 build |
-| `cartographer.png` | Cartographer Units tab on Ulasem Arena, from the 0.8.3 build: the toolbar has five tools (BLOCKED is new) and the browser a scrollbar. A fresh editor profile, `--shot --shot-tool units`, 30% zoom |
+| `cartographer.png` | Cartographer Units tab on Ulasem Arena: the five-tool toolbar (TERRAIN, FEATURES, UNITS, STARTS, BLOCKED), the browser with its scrollbar, and the minimap. A fresh editor profile, `--shot --shot-tool units`, 30% zoom. Retaken by the 0.9.0 build; the output is byte-identical to the 0.8.3 picture, which already had the five tools |
 
 The 0.7.25 `army.jpg` (an Aramon army standing still, with no combat) and
 `gameplay.jpg` (a single barracks) were removed. `battle.jpg` and `hud.jpg`
@@ -228,7 +228,7 @@ replace them. The unchanged views contain no version text.
 | `flyers-retail-legion.jpg` | **Development scene, spawned.** From the 0.8.8 build (both halves, protocol 288). The `flyers.jpg` formation and order, 22 s in, run once in Retail (flyers far ahead) and once in Legion (flyers over the leading ground units). The same 1.05× camera is used for both, and the two captures are placed side by side with labels |
 | `options-graphics.jpg` | 0.8.8. Options screen in a 1600 × 1100 window, scrolled so that Display and the whole Graphics section show (the last Audio rows above, the Interface heading and UI FONT below), cropped to the panel: Fullscreen (OFF), VSync (ON), Max FPS (60, greyed out because VSync is on), Renderer (AUTO), Texture Filtering at EVERYTHING, Shadows, Smooth GUI Art, Smooth Movies, Trees Sway in Wind and Tactical Dots (ON), Tactical Dots Zoom (0%), Screen Shake (OFF), Hardware Cursor and Smooth Motion (ON) and GPU Memory Limit at 1.25 GB (default). A fresh profile whose only setting is `fullscreen = 0`. Linux build, so the Windows-only Ignore Windows Display Scaling row is absent |
 | `fire-on-the-move.jpg` | **From the 0.8.8 build. Development scene, two-player spawned.** Ulasem Arena, Retail pathfinding, 14 s after one plain move order east (**scripted orders**). 14 Aramon Archers and 2 Mage Builders were spawned in a 4-wide grid; 6 Taros Zombies and 6 Skeleton Archers (enemy, no AI) stand south of their path. Shift is held, so the move line shows. Zombies have reached the back of the column, which keeps walking and shooting; the flashes are hits, and three of the sixteen have fallen, so the information bar shows two portraits (2 Mage Builders, 11 Archers) and 13 SELECTED. 1.4× zoom, fog off |
-| `cartographer-terrain.jpg` | Cartographer Terrain tab on Ulasem Arena (`--shot --shot-tool terrain`, fresh editor profile, 921 × 691), from the 0.8.3 build: the grouped section browser, All sections (555 pieces, 1261 sections), with readable piece names, variant badges and the scrollbar, and five tools on the toolbar |
+| `cartographer-terrain.jpg` | Cartographer Terrain tab on Ulasem Arena (`--shot --shot-tool terrain`, fresh editor profile, 921 × 691), retaken by the 0.9.0 build (byte-identical to the 0.8.3 picture): the grouped section browser, All sections (555 pieces, 1261 sections), with readable piece names, variant badges and the scrollbar, and five tools on the toolbar |
 | `tactical-dots.jpg` | From the 0.8.5 build. **Benchmark** run (Absurd) on Ulasem Arena, 50 game seconds in, spectator view fully zoomed out (zoom 0.1875, the floor for this map in a 1920 × 1080 window), where the 0.8.5 default Tactical Dots Zoom of 0% shows dots. The deterministic run was rendered twice at the same tick and camera, with Tactical Dots off and on in otherwise identical profiles. The same 800 × 900 region (the east of the map: the blue and red armies) is cropped from each at 1:1 and placed side by side under labels. With models, fire and spell effects show among the armies; with dots none are drawn (new in 0.8.5) |
 | `campaign-briefing.jpg` | *Book of Darien* chapter 1 briefing over the paused battlefield, from a direct mission launch (`TAK_SHOT_BRIEFING`, 1600 × 900, scaled), by the 0.8.14 build: the PAUSED heading is retail art, the chapter, title and objectives are in the UI font, and the last line names the always-enabled cosmetic pack (Always-on mods: click). Nothing is selected, so the information bar is empty |
 | `replay.jpg` | Replay playback of a recorded local-server game, 9 s of 16 s, with the time bar. **Stress-test start**: an Aramon army given one Legion move order (**scripted orders**). Recorded and played back by the 0.8.8 build |
@@ -256,6 +256,24 @@ The first-launch folder picker is the operating system's own dialog
 Added on 2026-10-14 for the [Cartographer user guide](../cartographer-guide.md),
 from a build of `main` after 0.8.2 (Debug with `-O2`). Every picture is real
 editor output, inspected by eye; the Test Map lobby is the game's.
+
+**Retaken for 0.9.0** (2026-10-24): all 32 pictures, `cartographer.png` and
+`guide/cartographer-terrain.jpg`, by the 0.9.0 build (Debug with `-O2`), the same
+ways as described below: a new scratch capture driver (outside Git, linked
+against the 0.9.0 editor objects like `cartographer_ui_test`) for the
+driver-made pictures, the editor's own `--shot` for `blocked.jpg`, the
+`cartographer_ui_test` workflows' capture mode for the AI Profiles pictures and
+(with the same capture-only patch as for 0.8.13, not committed) for
+`empty-window.jpg` and `new-map.jpg`, and the debug game client for
+`test-lobby.jpg`. Every whole-window picture now shows the five-tool toolbar.
+`window-annotated.jpg` has its markers redrawn for the five tools, and
+`menus.jpg` shows the current menus, including File → New AI mod and Open AI
+mod and Scenario → AI Profiles. Where the scene had not changed, the output came
+out byte-identical to the earlier file (`empty-window.jpg`, `new-map.jpg`,
+`terrain-variant.jpg`, `preferences.jpg`, `ai-mod.jpg`, `ai-group-rules.jpg`,
+`ai-takengine.jpg`, `cartographer.png` and `guide/cartographer-terrain.jpg`).
+Eight of Player 1's units are box-selected in `units.jpg` (seven before), and
+the guide's caption says so.
 
 **How they were captured.** A scratch capture driver, kept outside Git, links the
 editor objects that the `cartographer_ui_test` target builds (the release editor
@@ -301,14 +319,17 @@ composed, so no browser cell or tree is a placeholder.
   line, GAME MODS VERIFIED only with game packs in play). On 2026-10-24 it was
   recaptured by the 0.8.14 client the same way, with the click archive at
   `mods/cosmetic/always_enabled/click/click.hpi` in the scratch install, so the
-  room reads ALWAYS ON: click.
+  room reads ALWAYS ON: click. On 2026-10-24 it was recaptured by the 0.9.0
+  client the same way (protocol 294), from the snapshot that F5 on King of the
+  Hill wrote for the stand-in client (*Cartographer Test*), with only the
+  click pack in the scratch install.
 - **Markers and composites.** `window-annotated.jpg` has numbered markers drawn
   on a copy of the capture with Pillow. `random-generator.jpg`,
   `symmetry-stamp.jpg`, `terrain-clipboard.jpg` and `features-select.jpg` put two
   crops side by side under text labels, and `menus.jpg` puts six crops of the
   opened menus together (each with only its own menu title).
 - **Encoding.** JPEG, full chroma resolution, quality 86, not scaled (some AI
-  Profiles pictures at 98, below). The 32 files total about 3.8 MB.
+  Profiles pictures at 98, below). The 32 files total about 3.7 MB (0.9.0).
 - **AI Profiles.** `ai-profiles.jpg` and `ai-group-rules.jpg` were added on
   2026-10-23 with the AI Profiles window (branch `task-carto-ai`, after
   0.8.11), not by the capture driver: they are the window captures that the
@@ -339,13 +360,13 @@ composed, so no browser cell or tree is a placeholder.
   welcome is closed (before the workflow's inert clicks and keys) and
   `<prefix>-newmap.png` when File → New map has opened the dialog. Whole window,
   quality 86, full chroma; nothing was edited or saved.
-- **Toolbar.** Every whole-window picture except `blocked.jpg` predates the
-  BLOCKED tool, so its toolbar shows four tool buttons where the editor now has
-  five.
+- **Toolbar.** From 0.9.0 every whole-window picture shows the five tool
+  buttons (TERRAIN, FEATURES, UNITS, STARTS, BLOCKED). Before that, every one
+  except `blocked.jpg` predated the BLOCKED tool and showed four.
 
 | Image | Scene |
 | --- | --- |
-| `window-annotated.jpg` | Ulasem Arena, Terrain tool, view centred on the arena at 35%, whole window. Markers 1–13: menu bar, tools, modes, REGIONS, TEST MAP, search, group button, counter line, variant badge, scrollbar, canvas, minimap, status bar |
+| `window-annotated.jpg` | Ulasem Arena, Terrain tool, view centred on the arena at 35%, whole window, by the 0.9.0 build with the five-tool toolbar. Markers 1–13 (redrawn for 0.9.0): menu bar, tools, modes, REGIONS, TEST MAP, search, group button, counter line, variant badge, scrollbar, canvas, minimap, status bar |
 | `empty-window.jpg` | New in 0.8.13. Bare launch with a fresh profile, the first run's welcome closed: the empty window, title *Cartographer*, menu bar only, an empty toolbar, the centred NO MAP OPEN hint naming File → New map (Ctrl+N), Open map (Ctrl+O) and the AI mod commands, and NO MAP OPEN in the status bar. Whole window |
 | `new-map.jpg` | Retaken for 0.8.13. The same bare launch after File → New map: the New Map dialog (Untitled, 8 × 8, aramon) over the dimmed empty window, with NO MAP OPEN in the status bar. Whole window. Before 0.8.13 a bare launch opened this dialog by itself over an Untitled placeholder map |
 | `random-generator.jpg` | Recaptured for 0.8.5 by the same driver, linked against the 0.8.5 editor. Composite. Left: Random Map Settings (seed 2026, 4 players, Aramon Riverlands, 16 × 16, SCATTERED MANA (BY MAP AREA) set to Medium, other fields default). Right: the Generated Map Preview it produced. Dialog crops; the settings dialog is taller than before (twelve fields) |
@@ -356,7 +377,7 @@ composed, so no browser cell or tree is a placeholder.
 | `symmetrize.jpg` | Ulasem Arena, Shift+M, the Symmetrize dialog. Dialog crop |
 | `features.jpg` | Ulasem Arena, Features tool, category *trees*: five palm trees placed by clicking, the preview of a sixth under the pointer, whole window |
 | `features-select.jpg` | Composite of two crops of the same trees: the selection box being dragged in Select mode, then the selected anchor cells |
-| `units.jpg` | King of the Hill, Units tool filtered to GROUND and ARAMON; Player 1's units box-selected in Select mode at 75%, whole window |
+| `units.jpg` | King of the Hill, Units tool filtered to GROUND and ARAMON; eight of Player 1's units box-selected in Select mode at 75%, whole window |
 | `unit-properties.jpg` | King of the Hill, Unit Properties of one of Player 1's Archers (opened with Shift+Enter in Placed units) with *Captain Aldric* typed as the display name, not applied. Dialog crop |
 | `unit-model.jpg` | Ulasem Arena, Units browser searched for *knight*, F6 on the Aramon Knight. Crop of the browser and the model window |
 | `starts.jpg` | Ulasem Arena, Starts tool, View → Fit map (7%), whole window |
@@ -367,11 +388,11 @@ composed, so no browser cell or tree is a placeholder.
 | `check-map.jpg` | *Practice*: a new 8 × 8 Aramon map with one start, a Horseman, and a War Galley placed on dry land; then Check Map. Dialog crop |
 | `overlay-movement.jpg` | Ulasem Arena at 40%, Horseman chosen in the Units browser, View → Overlay: movement, whole window |
 | `preferences.jpg` | View → Preferences with default settings. Dialog crop |
-| `open-map.jpg` | Open Map after opening King of the Hill and saving *Twin Rivers*, so two Recent rows lead the list. Dialog crop |
+| `open-map.jpg` | Open Map after opening King of the Hill and saving *Twin Rivers*, so two Recent rows lead the list (Twin Rivers first, the latest). Dialog crop |
 | `save-as.jpg` | Save As for the new map *Twin Rivers*. Dialog crop |
 | `test-map.jpg` | King of the Hill after F5: the TEST MAP message, with TEST RUNNING on the toolbar, whole window |
 | `test-lobby.jpg` | The game's private lobby for that King of the Hill snapshot (recaptured by the 0.8.14 client for the always-enabled pack folders; before that by the 0.8.9 client for the room's rules and the 0.8.8 client for the UI font and the mods lists): seats 2 to 4 open, tagged NEEDED BY SCENARIO and each with a MOVE HERE button, the map preview numbering the four starts, ALWAYS ON: click under the COSMETIC MODS heading with no packs in either the COSMETIC MODS or the GAME MODS list (so no GAME MODS VERIFIED line), START greyed, and MAP SCENARIO: ON (TEST MAP) as a rules line at the others' size with the scenario details under both columns; 1024 × 768 cropped to the lobby panel |
-| `menus.jpg` | Composite: the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each opened over Ulasem Arena or King of the Hill and cropped to the menu |
+| `menus.jpg` | Composite: the FILE, EDIT, VIEW, SCENARIO, SYMMETRY and HELP menus, each opened over Ulasem Arena and cropped to the menu (with only its own title). From 0.9.0 FILE has New AI mod... and Open AI mod..., VIEW ends with Show blocked cells (B) and SCENARIO with AI Profiles... (A) |
 | `ai-profiles.jpg` | *AiTest* (Ulasem Arena's terrain), Scenario → AI Profiles, DEFAULT AI tab: the map's own profile *aitest* started Empty, then NO FLYERS after its confirmation, so every flying unit reads BUILD OFF and LIMIT 0; TAK ENGINE AI (`ai/takengine.txt`) is tagged `map *` from an earlier edit, and PREVIEW LEVEL reads HARD. Crop of the window |
 | `ai-group-rules.jpg` | Ulasem Arena, AI Profiles, DEFAULT AI tab in the GROUP RULES view: own profile *ulasem arena*, one rule WEIGHT ARA 50 % covering 32 units, the Archer set individually (80 %) and shown as skipped. Crop of the window |
 | `ai-takengine.jpg` | *AiMerge* (Ulasem Arena's terrain) carrying the old level files `ai/e.txt`, `ai/n.txt` and `ai/h.txt`: AI Profiles, TAK ENGINE AI tab previewing NORMAL right after MERGE INTO TAK ENGINE took Normal's file; the old-file notice is still shown. From the `aiprofile-merge` workflow's `-merged.png`. Crop of the window |

@@ -101,8 +101,7 @@ Full history: [CHANGELOG](CHANGELOG.md).
     <!-- SHOT-0.9.0: campaign -- Book of Darien campaign picker --></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/img/cartographer.png"><img src="docs/img/cartographer.png" alt="Cartographer editing a map, with its toolbar, terrain canvas, browser and minimap"></a><br><sub>Cartographer, the map editor</sub>
-    <!-- SHOT-0.9.0: cartographer-main -- (must: current picture shows the old four-tool toolbar) Cartographer on Ulasem Arena with the five-tool toolbar, browser and minimap --></td>
+    <td width="50%"><a href="docs/img/cartographer.png"><img src="docs/img/cartographer.png" alt="Cartographer editing a map, with its toolbar, terrain canvas, browser and minimap"></a><br><sub>Cartographer, the map editor</sub></td>
     <td width="50%"><a href="docs/img/results.jpg"><img src="docs/img/results.jpg" alt="Post-game statistics with faction emblems and player colours"></a><br><sub>Post-game statistics</sub>
     <!-- SHOT-0.9.0: readme-results -- post-game statistics screen with faction emblems and player colours --></td>
   </tr>
