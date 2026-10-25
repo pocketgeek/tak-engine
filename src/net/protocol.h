@@ -29,7 +29,11 @@ constexpr uint32_t kNetVersion = 295;      // 295: SweetSpot is retail's drawn p
                                            //      the rally alone (no exit hop before it), else PARK's flight branch
                                            //      (407ca0), one flight to a random point on footX*16+padding(base 6)
                                            //      +half the factory diagonal round the factory, held as a PARK until
-                                           //      it arrives. Hashed sim change; 294 replays refused.
+                                           //      it arrives. Under Legion a ground output's PARK claims a free spot
+                                           //      of its own over the ring band (World::legionParkSpot: layers, never
+                                           //      in the door lane, reachable only, beyond the band once it is full)
+                                           //      instead of the shared bearing that queued a column out of the door.
+                                           //      Hashed sim change; 294 replays refused.
                                            // 294: area clear as retail: overlapped TNT features removed at load are gone
                                            //      everywhere (World::installedMapFeatures: no art, blocker, sacred site,
                                            //      deposit or target); fogged-but-explored world features stay clearable

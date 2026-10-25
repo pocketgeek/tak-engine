@@ -2022,6 +2022,14 @@ bool World::groundMissionAccepts(const Unit& u,const Order& goal) {
     const int radius=std::bit_cast<int32_t>(goal.missionRadius+4u);
     const RetailCircleGoal circle{footprintOrigin(goal.missionTarget ? goal.missionTarget->first : goal.x,u.type->footX),
         footprintOrigin(goal.missionTarget ? goal.missionTarget->second : goal.z,u.type->footZ),radius,retailCircleRadiusSquared(radius)};
+    // A Legion spread PARK (legionParkSpot) arrives at its own spot only, in
+    // the band or beyond it: arriving anywhere in the band would stop a body
+    // in the door lane or on a spot another output has claimed.
+    if (goal.park && goal.park->spot) {
+        const int dx=footprintOrigin(u.x,u.type->footX)-goal.park->spot->first;
+        const int dz=footprintOrigin(u.z,u.type->footZ)-goal.park->spot->second;
+        return std::abs(dx)<=1 && std::abs(dz)<=1;
+    }
     return goal.park && goal.park->ring
         ? goal.park->ring->accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ))
         : circle.accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
@@ -3231,8 +3239,21 @@ void World::tickGroundMission(Unit& u) {
                         const Unit& center=useTarget ? *target : u;
                         park.ring=RetailRingGoal{footprintOrigin(center.x,u.type->footX),
                             footprintOrigin(center.z,u.type->footZ),inner,outer,retailCircleRadiusSquared(outer)};
-                        const auto point=park.ring->navigationPoint(u.x,u.z,u.type->footX,u.type->footZ);
-                        goal.x=point.x;goal.z=point.z;
+                        // Legion: a free spot of the band (or beyond it) instead
+                        // of the bearing's midpoint, which every output of one
+                        // door shares (legionParkSpot). Re-chosen on each
+                        // failure, so a blocked spot hands over to the next.
+                        park.spot.reset();
+                        if (park.spread && useTarget && w.legion_ && isLegionPathfinding(w.pathfindingMode_) &&
+                            w.legion_->supports(u))
+                            park.spot=w.legionParkSpot(u,park,*target);
+                        if (park.spot) {
+                            goal.x=Fixed::fromInt(park.spot->first*16+u.type->footX*8);
+                            goal.z=Fixed::fromInt(park.spot->second*16+u.type->footZ*8);
+                        } else {
+                            const auto point=park.ring->navigationPoint(u.x,u.z,u.type->footX,u.type->footZ);
+                            goal.x=point.x;goal.z=point.z;
+                        }
                         goal.segmentX=Fixed::fromInt(u.x.floorInt());goal.segmentZ=Fixed::fromInt(u.z.floorInt());
                         goal.hasSegment=true;goal.navigationExhausted=false;goal.navigationConsumed=false;goal.controller=++w.nextMovementController_;
                         m.pending&=~0x3700u;w.cancelPath(u);
@@ -11327,6 +11348,14 @@ void World::parkProductionOutput(int id,int factoryId) {
         order.park->target=factoryId;
         order.mission.flags=0x200u; // PARK definition retains its live target.
         order.park->padding=padding;
+        // Legion spreads its outputs over the band (legionParkSpot); the door
+        // bearing is the birth point's, seen from the factory's centre (not
+        // the ring's, snapped to this footprint's cells: a Navy Yard's pad is
+        // only 25 px out).
+        if (isLegionPathfinding(pathfindingMode_) && legion_) {
+            order.park->spread=true;
+            order.park->door=uint16_t(retailDirection(u->x-f->x,u->z-f->z).v);
+        }
         u->orders.push_back(order);
         return;
     }
@@ -11349,6 +11378,112 @@ void World::parkProductionOutput(int id,int factoryId) {
         }
     if (best) order(id,footprintWaypoint(best->first+t->footX/2,t->footX).toFloat(),
                     footprintWaypoint(best->second+t->footZ/2,t->footZ).toFloat(),false);
+}
+
+// The door lane of a spread PARK: a corridor about a door wide (half width
+// legionParkLaneHalf) straight out of the factory along `door`, from the
+// ring's centre out without end. A body of footprint fx x fz centred at
+// (x,z) (Q16 px) is in it when its centre lies ahead of the ring's centre
+// and within the half width + its reach (8*max(fx,fz)) + `margin` px of the
+// axis.
+bool World::legionParkInLane(const RetailParkState& park,const UnitType& factory,
+                             int64_t x,int64_t z,int fx,int fz,int margin) {
+    if (!park.ring || !park.spread) return false;
+    const int64_t vx=x-(int64_t(park.ring->x)*16+fx*8)*65536,vz=z-(int64_t(park.ring->z)*16+fz*8)*65536;
+    const int64_t dx=retailScaledSine(park.door,65536),dz=retailScaledCosine(park.door,65536);
+    const int64_t along=(vx*dx+vz*dz)>>16,cross=(vx*dz-vz*dx)>>16;
+    return along>0 && std::abs(cross)<(int64_t(legionParkLaneHalf(factory))+8*std::max(fx,fz)+margin)*65536;
+}
+
+// Legion's spread PARK (ours, not retail). Retail steers a ground PARK to the
+// ring's mid-radius along the unit's bearing from the factory (4e33b0) and
+// accepts arrival anywhere in the band; every output of one door shares that
+// bearing, and Legion's exact solo goal queued them into a column out of the
+// door. Here each output claims a spot of its own:
+//  * candidates in layers over the band (inner layer first), centres spaced
+//    two footprints apart (a footprint's gap, so a later body passes between
+//    parked ones), nearest the door bearing first, then alternating sides;
+//  * never in the door lane: a corridor straight out of the exit, about a
+//    door wide, from the factory out without end, so a new output always has
+//    a free way out;
+//  * a spot is taken while another unit on its PARK leg has claimed one that
+//    comes within a footprint of it, or while any body stands within a
+//    footprint of it (bodies, not claims, hold finished outputs' spots);
+//  * only cells connected to the unit (component roots, as the reachability
+//    test in parkProductionOutput), legal for its footprint;
+//  * a full band grows outward with more layers past the outer radius; a
+//    spot there completes the PARK on arrival (groundMissionAccepts), which
+//    retail's ring would not.
+// Integer and retail sine-table math; claims are a set test over all units,
+// so their order does not matter. None found: the caller keeps 4e33b0's point.
+std::optional<std::pair<int,int>> World::legionParkSpot(const Unit& u,const RetailParkState& park,
+                                                       const Unit& factory) const {
+    if (!park.ring || !u.type || !factory.type) return std::nullopt;
+    const RetailRingGoal& ring=*park.ring;
+    const UnitType& t=*u.type;
+    const int fx=t.footX,fz=t.footZ,foot=std::max(1,std::max(fx,fz)),cells=footCells(&t);
+    const int64_t cx=(int64_t(ring.x)*16+fx*8)*65536,cz=(int64_t(ring.z)*16+fz*8)*65536;
+    // The unit's component, searched around it as for the birth point.
+    const NavGrid& g=navFor(&t);
+    const CompGrid* cg=g.empty() ? nullptr : components(g,cells);
+    int32_t home=-1;
+    if (cg && !cg->empty()) {
+        const int bx=footprintCell(u.x,cells),bz=footprintCell(u.z,cells);
+        for (int r=0;r<=2 && home<0;++r)
+            for (int j=-r;j<=r && home<0;++j) for (int i=-r;i<=r && home<0;++i)
+                if (std::max(std::abs(i),std::abs(j))==r) home=cg->componentAt(bx+i,bz+j);
+    }
+    // Spots other PARK legs hold, around enough to matter.
+    struct Box {int x,z,w,h;};
+    std::vector<Box> claims;
+    const int64_t reachCells=int64_t(ring.outerTolerance)/16+kLegionParkLayers*2*foot+4*foot+16;
+    for (const Unit& v:units_) {
+        if (v.id==u.id || !v.alive() || !v.type || v.orders.empty()) continue;
+        const Order& o=v.orders[currentLeg(v.orders)];
+        if (!o.park || !o.park->spot) continue;
+        const auto [sx,sz]=*o.park->spot;
+        if (std::abs(int64_t(sx)-ring.x)>reachCells || std::abs(int64_t(sz)-ring.z)>reachCells) continue;
+        claims.push_back({sx,sz,v.type->footX,v.type->footZ});
+    }
+    // At each angle off the door, the side the body is on first: two outputs
+    // leaving the lane for opposite sides never cross.
+    const bool side=[&] {
+        const int64_t vx=int64_t(u.x.v)-cx,vz=int64_t(u.z.v)-cz;
+        const int64_t dx=retailScaledSine(park.door,65536),dz=retailScaledCosine(park.door,65536);
+        // A positive angle step off the door is a positive cross product.
+        return ((vx*dz-vz*dx)>>16)>=0;
+    }();
+    const int spacing=32*foot;
+    const int bandEnd=ring.outerTolerance-8*foot-16;
+    int radius=ring.innerRadius+8*foot+16;
+    for (int layer=0;layer<kLegionParkLayers;++layer,radius+=spacing) {
+        const bool inBand=radius<=bandEnd;
+        const int count=int(std::clamp<int64_t>(int64_t(radius)*6283/(1000*int64_t(spacing)),6,64));
+        const int step=65536/count;
+        for (int j=0;j<count;++j) {
+            const int k=(j+1)/2;
+            const uint16_t h=uint16_t(int(park.door)+(((j%2)!=0)==side ? k*step : -k*step));
+            const int64_t px=cx+retailScaledSine(h,int32_t(radius)*65536);
+            const int64_t pz=cz+retailScaledCosine(h,int32_t(radius)*65536);
+            // Out of the door lane by a body's reach more than a parked body
+            // must keep, and the cell its arrival may stop short.
+            if (legionParkInLane(park,*factory.type,px,pz,fx,fz,8*foot+16)) continue;
+            const Fixed spotX=Fixed::raw(int32_t(px)),spotZ=Fixed::raw(int32_t(pz));
+            const int ox=footprintOrigin(spotX,fx),oz=footprintOrigin(spotZ,fz);
+            if (ox<0 || oz<0 || ox+fx>terW_ || oz+fz>terH_) continue;
+            if (inBand && !ring.accepts(ox,oz)) continue;
+            if (cg && home>=0 && cg->componentAt(footprintCell(spotX,cells),footprintCell(spotZ,cells))!=home) continue;
+            const Box around{ox-foot,oz-foot,fx+2*foot,fz+2*foot};
+            if (std::any_of(claims.begin(),claims.end(),[&](const Box& b){
+                    return around.x<b.x+b.w && b.x<around.x+around.w && around.z<b.z+b.h && b.z<around.z+around.h;}))
+                continue;
+            const auto bodies=searchBodyRect(around.x,around.z,around.w,around.h,u.id);
+            if (std::any_of(bodies.cells.begin(),bodies.cells.end(),[](const Unit* b){return b!=nullptr;})) continue;
+            if (!mapPlacementCells_.empty() && !mobilePlacement(t,uint16_t(u.id),ox,oz,true)) continue;
+            return std::pair{ox,oz};
+        }
+    }
+    return std::nullopt;
 }
 
 // PARK for a flyer (407ca0's flight branch, see retailFlightParkOffset). It is
@@ -15139,6 +15274,10 @@ uint64_t World::stateHash() const {
                 mix(p.target);mix(p.padding);mix(p.attempts);mix(uint32_t(p.permanent));mix(p.ring.has_value());
                 if (p.ring) {mix(p.ring->x);mix(p.ring->z);mix(p.ring->innerRadius);
                     mix(p.ring->outerTolerance);mix(p.ring->outerSquared);}
+                if (p.spread) {
+                    mix(0x5350524541444eull);mix(uint32_t(p.door));mix(p.spot.has_value());
+                    if (p.spot) {mix(uint32_t(p.spot->first));mix(uint32_t(p.spot->second));}
+                }
             }
             mix(order.transportUnloadApproach);
             if(order.load || order.unload || order.transportUnloadApproach) {

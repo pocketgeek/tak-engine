@@ -313,6 +313,12 @@ constexpr size_t kLateRingMembers=8;
 // A production exit without headway for this many crowd windows, its
 // birthplace clear, is done (twice as many hand it over to a rally).
 constexpr uint8_t kExitWindows=1;
+// A spread factory PARK (World::legionParkSpot) has a free spot of its own:
+// the held release below waits this many windows for it (a body walking
+// round its factory gains little on the spot, and one window cut such walks
+// short beside the door), and twice as many before it releases one in the
+// door lane.
+constexpr uint8_t kParkSpotWindows=4;
 // Static bodies (see scanStill): a ground body that has not moved over
 // kStillScans consecutive scans kStillScan ticks apart, and is not a Legion
 // member on its way, is a soft obstacle. A field charges kSoftFactor times
@@ -11273,15 +11279,20 @@ struct LegionNavigator::Impl {
         // its ring is done once clear of the factory: as for the exit step,
         // its spot was generated and pressing on holds the lane behind it.
         // Retail's navigator re-rolls a refused ring cell; Legion's exact ring
-        // goal does not, and 2 of 24 Barracks outputs held outside it.
-        if(rule.exitClear&&leg.park&&leg.park->target&&
-           std::max(stillTicks,m.state==Holding?heldFor(m):0u)>=kExitWindows*kCrowdWindow) {
-            const Unit* f=w.unit(leg.park->target);
+        // goal does not, and 2 of 24 Barracks outputs held outside it. A
+        // spread PARK (its own spot) waits longer, and longer again in the
+        // door lane, where a parked body would hold every later output.
+        if(rule.exitClear&&leg.park&&leg.park->target) {
+            const uint32_t held=std::max(stillTicks,m.state==Holding?heldFor(m):0u);
+            const uint32_t need=(leg.park->spread?kParkSpotWindows:kExitWindows)*kCrowdWindow;
+            const Unit* f=held>=need?w.unit(leg.park->target):nullptr;
             if(!f || !f->alive() || !f->type || !f->type->isStructure()) {}
             else {
                 const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
                 const int fx=footprintOrigin(f->x,f->type->footX),fz=footprintOrigin(f->z,f->type->footZ);
-                if(ux>=fx+f->type->footX||ux+u.type->footX<=fx||uz>=fz+f->type->footZ||uz+u.type->footZ<=fz)
+                const bool lane=held<2*need&&World::legionParkInLane(*leg.park,*f->type,
+                    int64_t(u.x.v),int64_t(u.z.v),u.type->footX,u.type->footZ,0);
+                if(!lane&&(ux>=fx+f->type->footX||ux+u.type->footX<=fx||uz>=fz+f->type->footZ||uz+u.type->footZ<=fz))
                     {complete(u,m,true,true);return;}
             }
         }

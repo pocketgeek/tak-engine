@@ -86,7 +86,9 @@ where it sat on the pad and held the yard for 3m46s. Factories now release with
 GetBuilt's rally-else-PARK, kept to cells the output can reach (see
 `retail-engine.md`, "A factory's output: rally, else PARK"). The siting
 conflict above did not recur: `naval_ai`, `production_exit` and the quick suite
-pass with it.
+pass with it. Under Legion each ground output then claims a spot of its own
+over PARK's band, out of the door lane (`retail-engine.md`, "Legion: a spot of
+its own"), instead of queueing behind the first along their shared bearing.
 
 ## Every shipped ground factory
 

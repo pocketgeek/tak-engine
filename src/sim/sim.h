@@ -2646,6 +2646,16 @@ private:
     bool exitSpot(const UnitType* t, float fx, float fz, float& outX, float& outZ, int departingId = 0) const;
     // GetBuilt's PARK release of a factory's finished output. See the definition.
     void parkProductionOutput(int id,int factoryId);
+    // Legion's spread PARK: a free spot for a factory output (see sim.cpp).
+    static constexpr int kLegionParkLayers=16;
+    // Half the width of a factory's door lane, px: about its narrow side.
+    static int legionParkLaneHalf(const UnitType& factory) {
+        return std::max(48,8*std::min(factory.footX,factory.footZ));
+    }
+    static bool legionParkInLane(const RetailParkState& park,const UnitType& factory,
+                                 int64_t x,int64_t z,int fx,int fz,int margin);
+    std::optional<std::pair<int,int>> legionParkSpot(const Unit& u,const RetailParkState& park,
+                                                     const Unit& factory) const;
     // A flyer's PARK, and its point once its move first runs. See the definitions.
     void queueFlyerPark(int id,int factoryId,uint32_t padding);
     void resolveFlyerPark(Unit& u,Order& leg);

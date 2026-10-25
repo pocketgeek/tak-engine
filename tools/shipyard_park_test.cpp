@@ -13,6 +13,10 @@
 //
 // Flyers take the same release: the factory's rally alone, else PARK's flight
 // branch, a single flight to a random point on a circle round the factory.
+//
+// Under Legion a run of ground outputs spreads over PARK's band (each claims
+// a spot of its own, World::legionParkSpot) instead of queueing in a column
+// out of the door; tools/legion_park_test.cpp covers it in depth.
 #include "ai/ai.h"
 #include "ai/builtinprofile.h"
 #include "hpi/hpi.h"
@@ -120,7 +124,7 @@ void pondSiting(const sim::TypeRegistry& registry,hpi::Vfs& vfs) {
 
 // A land factory parks its output in front of it, inside PARK's ring; a rally
 // point still wins over PARK.
-void landFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,bool rally) {
+void landFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,bool rally,int count=4) {
     sim::World w;w.setSerialThreads(true);w.setVisPlayer(-1);w.setPathfindingMode(mode);
     w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
     w.setMapPlacementFeatures(std::vector<uint16_t>(256*256,0xffff),{});
@@ -129,7 +133,7 @@ void landFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,boo
     const auto* sword=registry.find("arasword");
     const int id=w.spawn(&barracks,1800,1800,0,0);
     if(rally)w.order(id,2600,1000,false);
-    w.player(0).mana=1000000;w.train(id,sword,4);
+    w.player(0).mana=1000000;w.train(id,sword,count);
     const Rect yard=footprint(*w.unit(id));
     std::vector<int> out;bool parked=true,rallied=true;
     for(int tick=0;tick<6000;++tick) {
@@ -142,9 +146,10 @@ void landFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,boo
                 parked=parked && park;
                 rallied=rallied && !park && !u.orders.empty();
             }
-        if(out.size()==4 && std::all_of(out.begin(),out.end(),[&](int u){return w.unit(u)->orders.empty();}))break;
+        if(int(out.size())==count && std::all_of(out.begin(),out.end(),[&](int u){return w.unit(u)->orders.empty();}))break;
     }
-    int front=0,inRing=0,arrived=0,inYard=0;
+    int front=0,inRing=0,beyond=0,inside=0,arrived=0,inYard=0,left=0,right=0;
+    float minAngle=10,maxAngle=-10;
     const auto* f=w.unit(id);
     const int fx=sim::footprintOrigin(f->x,sword->footX),fz=sim::footprintOrigin(f->z,sword->footZ);
     for(int u:out) {
@@ -158,23 +163,35 @@ void landFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,boo
         const int half=int(std::sqrt(double(barracks.footX*barracks.footX+barracks.footZ*barracks.footZ))*8);
         const int inner=sword->footX*16+48+half,outer=3*(sword->footX*16+160+half);
         inRing+=cells2*256>=inner*inner && cells2*256<=outer*outer;
+        beyond+=cells2*256>outer*outer;inside+=cells2*256<inner*inner;
+        // Bearing off the door (south), and its side.
+        const float angle=std::atan2(dx,dz);
+        minAngle=std::min(minAngle,angle);maxAngle=std::max(maxAngle,angle);
+        (dx<0?left:right)++;
         const float rx=s->x.toFloat()-2600,rz=s->z.toFloat()-1000;
         arrived+=rx*rx+rz*rz<160*160;
     }
     const std::string label=std::string(mode==sim::PathfindingMode::Legion?"Legion: ":"Retail: ");
-    std::printf("land mode=%s rally=%d outputs=%zu parked=%d rallied=%d front=%d inRing=%d arrived=%d inYard=%d hash=%016llx\n",
-        mode==sim::PathfindingMode::Legion?"Legion":"Retail",rally,out.size(),parked,rallied,front,inRing,arrived,inYard,
-        (unsigned long long)w.stateHash());
+    std::printf("land mode=%s rally=%d outputs=%zu parked=%d rallied=%d front=%d inRing=%d beyond=%d inside=%d "
+                "left=%d right=%d spread=%.2f arrived=%d inYard=%d hash=%016llx\n",
+        mode==sim::PathfindingMode::Legion?"Legion":"Retail",rally,out.size(),parked,rallied,front,inRing,beyond,inside,
+        left,right,out.empty()?0.f:maxAngle-minAngle,arrived,inYard,(unsigned long long)w.stateHash());
     if(rally) {
         check(out.size()==4 && rallied && arrived==4 && inYard==0,label+"a Barracks with a rally point sends its output there, not to PARK");
-    } else {
+    } else if(count==4) {
         check(out.size()==4 && parked,label+"a Barracks without a rally point releases its output with PARK");
-        // Legion's exact ring goal queues a column behind the first output and
-        // releases each once clear of the factory (LegionNavigator), so only
-        // the Retail navigator is held to the ring itself.
+        // Legion spreads the outputs round the door (some beside the
+        // factory), so only the Retail navigator is held to its front.
         if(mode==sim::PathfindingMode::Legion)
-            check(front==4 && inYard==0,label+"the parked output stands in front of the Barracks, clear of it");
+            check(inRing==4 && inYard==0,label+"the parked output stands in PARK's ring, clear of the Barracks");
         else check(front==4 && inRing==4 && inYard==0,label+"the parked output stands in front of the Barracks, in PARK's ring");
+    } else {
+        // Legion spreads a run of outputs over the band, or beyond it once
+        // the band is full (World::legionParkSpot); they used to queue in a
+        // column out of the door, three of eight short of the inner radius.
+        check(int(out.size())==count && parked && inYard==0,label+"eight parked outputs leave the Barracks");
+        check(inRing+beyond==count && inside==0,label+"all eight stand in PARK's band or beyond it, none short of its inner radius");
+        check(left>0 && right>0 && maxAngle-minAngle>=1.0f,label+"the eight spread round the door, not in a column");
     }
 }
 
@@ -368,6 +385,7 @@ int main(int argc,char** argv) {
         for(auto mode:{sim::PathfindingMode::Retail,sim::PathfindingMode::Legion}) {
             pondYard(registry,vfs,mode,crusades);
             if(crusades)for(bool rally:{false,true})landFactory(registry,mode,rally);
+            if(crusades && mode==sim::PathfindingMode::Legion)landFactory(registry,mode,false,8);
             if(crusades)deadRally(registry,mode);
             {
                 for(bool rally:{false,true}) {

@@ -840,13 +840,80 @@ connected to the birth point (component roots for the unit's movement class);
 otherwise the output moves to the farthest free connected cell clear of the
 factory within the ring's outer radius. Our rally also carries attack and
 fight-move orders; when every entry drops (its attack targets are dead), the
-output parks, as retail's does when nothing was copied. Legion's exact ring goal queues a
-column behind the first output, so a held Legion PARK is completed once clear
-of the factory, as its exit step was. Our AI counts a unit holding only PARK as
+output parks, as retail's does when nothing was copied. Under Legion a ground
+output's PARK is spread over the band instead (see "Legion: a spot of its own"
+below); a Legion PARK still held after that is completed once clear of the
+factory, as its exit step was. Our AI counts a unit holding only PARK as
 idle (retail's AI takes it through `0x50b4f0`). Tests:
 `tools/shipyard_park_test.cpp` (the reported pond, a Barracks, a rally point,
 a rally of only a dead target),
 and an emulation probe of `0x402220` kept outside the repo (`~/tak-tmp/scratch/fix-091/shipyard-fix/probe_getbuilt_release.py`).
+
+### Legion: a spot of its own (ours, not retail, protocol 295)
+
+Retail's ground PARK steers to the ring's mid-radius along the unit's own
+bearing from the factory (`4e33b0`, `RetailRingGoal::navigationPoint`) and
+accepts arrival anywhere in the band. Every output of one door shares that
+bearing, and Legion serves PARK as an exact solo goal, so the outputs queued
+behind each other: a column 130-240 px out of the door, 3 of 8 Swordsmen
+inside the inner radius (191 px) once the held release completed them, and
+with fast production (twenty times the worker time) the Barracks jammed for
+good after 21 of 40. Retail mode keeps retail's point, bit for bit.
+
+Under Legion, `World::parkProductionOutput` marks a factory's ground PARK
+`spread` and records the door bearing (birth point seen from the factory's
+centre), and each time PARK's stage sets its goal `World::legionParkSpot`
+picks a spot instead of the bearing's midpoint:
+
+* Candidates in layers from the inner radius + a footprint outward, centres
+  two footprints apart along and across the layers (a footprint's gap, so a
+  later output passes between parked ones); in each layer nearest the door
+  bearing first, alternating sides (the body's own side first), inner layer
+  before outer. At a Barracks the first layer holds 22-34 spots for a 2x2
+  (the padding draw sets its radius), 13-19 for a 4x4.
+* Never in the door lane: a corridor straight out of the exit, half width
+  `legionParkLaneHalf` (8 px times the factory's narrow side, at least 48; the
+  Barracks door is its full 7 cells) plus the body's reach and a cell, from the
+  factory out without end. A new output always has a free way out.
+* A spot is taken while another unit's current PARK leg has claimed one
+  within a footprint of it (any factory), or while any body stands within a
+  footprint of it. Claims end with the leg; a parked output holds its spot by
+  its body, so moving it away frees the spot.
+* Reachable only: the spot's cell must share the unit's component root (the
+  test `parkProductionOutput` uses), pass `mobilePlacement` on a loaded map,
+  and lie on the map.
+* A full band grows outward: up to 16 layers in all, past the outer radius.
+  **Deliberate difference:** a spread PARK arrives only at its own spot (its
+  footprint origin within a cell, `groundMissionAccepts`), in the band or
+  beyond it, so arriving beyond the band completes it, which retail's ring
+  never would; arriving elsewhere in the band does not (it would stop a body
+  in the lane or on another's spot).
+* A refused approach (the spot found blocked, the crowd settled outside it)
+  raises 0x200 as before, PARK's stage re-runs and picks the next free spot.
+  None free at all: retail's point, as in Retail mode.
+* The held release stays as the last resort, so nothing can jam: a spread
+  PARK held 4 crowd windows (6 s) and clear of the factory is completed, but
+  only outside the door lane until it has been held 8.
+
+Deterministic: integer and retail sine-table math, the claims are a set test
+over all units (order does not matter), and the new state (`spread`, `door`,
+`spot`) is hashed when set. Tests: `tools/legion_park_test.cpp` (40 Swordsmen
+in both balances, a cliff with an unreachable plateau beside the factory, a
+map corner, 8 Catapults, 8 Submersibles at a Navy Yard; checked every tick
+that no parked output stands in the door lane, and production against a
+rally run that takes every output away), and `shipyard_park_test`'s Legion
+Barracks cases (4 of 4 in the band; 8 all in the band or beyond, none inside
+the inner radius, spread round the door). On 4c22fbe3 the 40-Swordsman run
+jams after 21 (2,125 refused sites, 12 inside the inner radius, a parked body
+in the lane on 29,804 of 30,000 ticks); now all 40 park, none in the lane.
+Time from completion to the end of the PARK (four times the worker time,
+Barracks, 40 Swordsmen): Legion mean 286 / max 628 ticks, Retail mode 286 /
+538; 8 Catapults 415 / 583 against Retail 371 / 621. Turning off towards a
+spot frees the pad later than walking straight out (30 ticks against a
+rally's 21 for a Swordsman, 101 against 69 for a Catapult), so production
+runs behind a rally that sends every output straight away: 6% for the
+Swordsmen, 12% for the Catapults, 5% for the Submersibles (Retail mode's PARK:
+1% and 7%); by the cliff and in the corner it keeps up.
 
 ### A factory's flyer: PARK's flight branch (icd `0x407ca0`, emulated 2026-10-25)
 
@@ -889,8 +956,8 @@ Mobile producers are deliberately unchanged: retail's GetBuilt releases only a
 structure builder's output (bit 0x2000000) and gives a mobile producer's output
 nothing, so it would stand where it was made. Ours keeps the exit step there,
 because a mobile producer (a Zhon builder, Ctrl+click repeat production)
-builds its next unit on the same spot. The Legion column a Legion PARK forms
-behind the first ground output remains a known gap.
+builds its next unit on the same spot. (The Legion column behind the first
+ground output is gone: see "Legion: a spot of its own" above.)
 
 Placement: retail's structure placement (`507400`) tests the ground word,
 which holds a mobile body only while landed (`5066f0`). Ours matches:

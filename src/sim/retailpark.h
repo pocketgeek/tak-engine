@@ -13,6 +13,14 @@ struct RetailParkState {
     uint32_t padding=0,attempts=0;
     int32_t permanent=1;
     std::optional<RetailRingGoal> ring;
+    // Ours, Legion only (World::legionParkSpot): a factory output's PARK
+    // spreads over the ring band instead of steering along its bearing.
+    // `door` is the factory's exit bearing (centre to pad, retail BAM), and
+    // `spot` the footprint origin this unit has claimed while it is on the
+    // leg. Hashed when `spread` is set; Retail never sets it.
+    bool spread=false;
+    uint16_t door=0;
+    std::optional<std::pair<int,int>> spot;
 };
 
 // PARK's radius, both branches of 407ca0: footX*16 + padding, plus half the
