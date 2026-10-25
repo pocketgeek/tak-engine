@@ -438,9 +438,11 @@ void OptionsScreen::build(int channels) {
 
     // GRAPHICS. TEXTURE FILTERING's UNITS level is retail's video option (BiLinearFilter).
     section("GRAPHICS");
-    // RENDERER: AUTO (SDL's own pick) or any driver this SDL build reports. Applied at
-    // startup only, so the row says RESTART REQUIRED when the pick differs from what is
-    // running (or UNAVAILABLE when startup already had to fall back from it).
+    // RENDERER: AUTO (Windows: OpenGL, else Direct3D 11, else Direct3D 9; elsewhere SDL's
+    // own pick; shown as "AUTO (OPENGL)" etc. while it is running) or any driver this
+    // SDL build reports. Applied at startup only, so the row says RESTART REQUIRED when
+    // the pick differs from what is running (or UNAVAILABLE when startup already had to
+    // fall back from it).
     {
         auto values = std::make_shared<std::vector<std::string>>(1, std::string());
         for (auto& id : renderdriver::available()) values->push_back(id);
@@ -449,7 +451,10 @@ void OptionsScreen::build(int channels) {
         dropdown("RENDERER",
             [values] {
                 std::vector<std::string> labels;
-                for (auto& v : *values) labels.push_back(renderdriver::label(v));
+                const auto& a = renderdriver::active();
+                for (auto& v : *values)
+                    labels.push_back(v.empty() ? renderdriver::autoLabel(a.inEffect.empty(), a.created)
+                                               : renderdriver::label(v));
                 return labels;
             },
             [this, values] {

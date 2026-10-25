@@ -773,45 +773,131 @@ int main(int argc, char** argv) {
     if(testbuild && tak::devFlag("TAK_RENDER_STUDY") && SDL_GetCurrentVideoDriver() &&
        std::strcmp(SDL_GetCurrentVideoDriver(),"dummy")==0)renFlags=SDL_RENDERER_SOFTWARE;
 #endif
-    // Options -> RENDERER. AUTO (the default, "") leaves SDL_HINT_RENDER_DRIVER alone,
-    // so it is exactly the pre-option path. A chosen driver is applied only to a real
-    // window launch: the screenshot/test and dummy-driver paths above keep their own
-    // flags untouched. If the choice is missing from this SDL build or fails to create,
-    // this launch falls back to AUTO, logs it, and the menu shows a one-time notice.
-    // The saved choice is kept (no implicit write): it is re-checked every launch, and a
-    // transient failure does not silently lose it. See docs/user-guide.md.
+    // Options -> RENDERER. A chosen driver, or AUTO's ordered try on Windows, is applied
+    // only to a real window launch: the screenshot/test and dummy-driver paths above keep
+    // their own flags untouched. If the choice is missing from this SDL build or fails to
+    // create, this launch falls back to AUTO, logs it, and the menu shows a one-time
+    // notice. The saved choice is kept (no implicit write): it is re-checked every launch,
+    // and a transient failure does not silently lose it. See docs/user-guide.md.
     const char* vidDrv = SDL_GetCurrentVideoDriver();
     const bool applyRenderer = shot.empty() && !(vidDrv && std::strcmp(vidDrv, "dummy") == 0);
     auto& renState = tak::renderdriver::active();
     SDL_Renderer* ren = nullptr;
+    // One named attempt. SDL turns command batching OFF for a renderer picked by name (it
+    // assumes the app will mix in its own API calls). Auto keeps it on, and so must a
+    // chosen driver: without it OpenGL measured ~20% slower per frame here.
+    const auto createNamed = [&](const std::string& id, Uint32 flags) -> SDL_Renderer* {
+#ifndef NDEBUG
+        // TAK_RENDER_FAIL=<id>[,<id>...]: that driver "fails to create" (fallback tests).
+        if (const char* f = tak::devEnv("TAK_RENDER_FAIL"); f && tak::renderdriver::containsNoCase(f, id)) {
+            SDL_SetError("TAK_RENDER_FAIL");
+            return nullptr;
+        }
+#endif
+        SDL_SetHintWithPriority(SDL_HINT_RENDER_DRIVER, id.c_str(), SDL_HINT_OVERRIDE);
+        SDL_SetHint(SDL_HINT_RENDER_BATCHING, "1");
+        SDL_Renderer* r = SDL_CreateRenderer(win, -1, flags);
+        SDL_ResetHint(SDL_HINT_RENDER_BATCHING);
+        SDL_ResetHint(SDL_HINT_RENDER_DRIVER);   // back to SDL's own (env) value
+        return r;
+    };
+    const auto createdName = [](SDL_Renderer* r) -> std::string {
+        SDL_RendererInfo ri{};
+        return r && SDL_GetRendererInfo(r, &ri) == 0 && ri.name ? std::string(ri.name) : std::string();
+    };
+    const auto dropRenderer = [&](SDL_Renderer*& r) {
+        if (!r) return;
+        tak::releaseUiTextGlyphs();
+        SDL_DestroyRenderer(r);
+        r = nullptr;
+    };
     if (applyRenderer && !settings.renderer.empty()) {
         tak::renderdriver::Plan rp =
             tak::renderdriver::plan(settings.renderer, tak::renderdriver::available(), renFlags);
         if (!rp.fallback) {
-            SDL_SetHintWithPriority(SDL_HINT_RENDER_DRIVER, rp.hint.c_str(), SDL_HINT_OVERRIDE);
-            // SDL turns command batching OFF for a renderer picked by name (it assumes
-            // the app will mix in its own API calls). Auto keeps it on, and so must a
-            // chosen driver: without it OpenGL measured ~20% slower per frame here.
-            SDL_SetHint(SDL_HINT_RENDER_BATCHING, "1");
-            ren = SDL_CreateRenderer(win, -1, rp.flags);
-            SDL_ResetHint(SDL_HINT_RENDER_BATCHING);
-            SDL_RendererInfo ri{};
-            const char* got = (ren && SDL_GetRendererInfo(ren, &ri) == 0) ? ri.name : nullptr;
-            if (!tak::renderdriver::honoured(rp.hint, got)) {
+            ren = createNamed(rp.hint, rp.flags);
+            const std::string got = createdName(ren);
+            if (!tak::renderdriver::honoured(rp.hint, ren ? got.c_str() : nullptr)) {
                 rp.fallback = true;
-                rp.reason = ren ? std::string("SDL created '") + (got ? got : "?") + "' instead"
+                rp.reason = ren ? "SDL created '" + got + "' instead"
                                 : std::string("creation failed: ") + SDL_GetError();
-                if (ren) { tak::releaseUiTextGlyphs(); SDL_DestroyRenderer(ren); ren = nullptr; }
+                dropRenderer(ren);
             } else {
                 renState.inEffect = rp.hint;
             }
-            SDL_ResetHint(SDL_HINT_RENDER_DRIVER);   // back to SDL's own (env) value
         }
         if (rp.fallback) {
             std::fprintf(stderr, "renderer: %s unavailable (%s) -- using Auto\n",
                          tak::renderdriver::label(settings.renderer).c_str(), rp.reason.c_str());
             renState.failed = settings.renderer;
         }
+    }
+    // AUTO's ordered try (Windows; empty elsewhere). An SDL_RENDER_DRIVER set in the
+    // environment is SDL's own override and wins, as it always has.
+    const char* envDriver = SDL_GetHint(SDL_HINT_RENDER_DRIVER);
+    if (applyRenderer && !ren && !(envDriver && *envDriver)) {
+#ifdef _WIN32
+        constexpr bool kWindowsAuto = true;
+#else
+        constexpr bool kWindowsAuto = false;
+#endif
+        const Uint32 autoFlags = renFlags & ~Uint32(SDL_RENDERER_SOFTWARE);
+        for (const std::string& id :
+             tak::renderdriver::autoOrder(kWindowsAuto, tak::renderdriver::available(), renState.failed)) {
+            ren = createNamed(id, autoFlags);
+            std::string why;
+            if (!ren) {
+                why = std::string("creation failed: ") + SDL_GetError();
+            } else {
+                SDL_RendererInfo ri{};
+                SDL_GetRendererInfo(ren, &ri);
+                const std::string got = ri.name ? ri.name : "";
+                std::string vendor, glRen;
+                if (got.compare(0, 6, "opengl") == 0) {
+                    // The renderer's context is current right after creation.
+                    using GetString = const GLubyte*(APIENTRY*)(GLenum);
+                    if (auto get = reinterpret_cast<GetString>(SDL_GL_GetProcAddress("glGetString"))) {
+                        const auto str = [&](GLenum e) {
+                            const auto* v = reinterpret_cast<const char*>(get(e));
+                            return std::string(v ? v : "");
+                        };
+                        vendor = str(GL_VENDOR);
+                        glRen = str(GL_RENDERER);
+                    }
+#ifndef NDEBUG
+                    // TAK_RENDER_FAKE_GL=<GL_RENDERER>[|<GL_VENDOR>]: pretend to be that GL.
+                    if (const char* fake = tak::devEnv("TAK_RENDER_FAKE_GL"); fake && *fake) {
+                        const std::string f = fake;
+                        const size_t bar = f.find('|');
+                        glRen = f.substr(0, bar);
+                        vendor = bar == std::string::npos ? std::string("Microsoft Corporation") : f.substr(bar + 1);
+                    }
+#endif
+                    std::fprintf(stderr, "renderer: auto: OpenGL is \"%s\" from \"%s\"\n",
+                                 glRen.c_str(), vendor.c_str());
+                }
+                const auto verdict = tak::renderdriver::judge(
+                    got, (ri.flags & SDL_RENDERER_ACCELERATED) != 0, vendor, glRen);
+                if (!tak::renderdriver::honoured(id, got.c_str()))
+                    why = "SDL created '" + got + "' instead";
+                else if (!verdict.keep)
+                    why = verdict.reason;
+                if (!why.empty()) dropRenderer(ren);
+            }
+            if (ren) {
+                std::fprintf(stderr, "renderer: auto chose %s%s\n",
+                             tak::renderdriver::label(id).c_str(),
+                             renState.autoNote.empty() ? " (first in the Windows order)"
+                                                       : (" after skipping " + renState.autoNote).c_str());
+                break;
+            }
+            std::fprintf(stderr, "renderer: auto: skipping %s: %s\n",
+                         tak::renderdriver::label(id).c_str(), why.c_str());
+            if (!renState.autoNote.empty()) renState.autoNote += "; ";
+            renState.autoNote += tak::renderdriver::label(id) + " (" + why + ")";
+        }
+        if (!ren && !renState.autoNote.empty())
+            std::fprintf(stderr, "renderer: auto: no candidate kept -- SDL's own pick\n");
     }
     if (!ren) ren = SDL_CreateRenderer(win, -1, renFlags);
     if (!ren) {

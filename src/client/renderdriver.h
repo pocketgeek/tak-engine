@@ -3,12 +3,13 @@
 // The RENDERER option: which SDL render driver the client asks for at startup.
 //
 // Settings::renderer stores SDL's own driver id ("opengl", "direct3d11", "metal",
-// "software", ...). "" means AUTO -- no render-driver hint, SDL's own choice, which is
-// exactly what every build did before this option existed. The choice is applied ONCE,
-// where main() creates the renderer; changing it takes effect after a restart.
+// "software", ...). "" means AUTO: SDL's own choice on Linux and macOS, as every build
+// made it before this option existed; on Windows an ordered try, OpenGL first (see
+// autoOrder below). The choice is applied ONCE, where main() creates the renderer;
+// changing it takes effect after a restart.
 //
-// The planning half (normalise / label / plan / verify) is plain logic over strings so
-// renderdriver_test can cover it without a GPU. The runtime half (which drivers this
+// The planning half (normalise / label / plan / verify, AUTO's order and judge) is
+// plain logic over strings so renderdriver_test can cover it without a GPU. The runtime half (which drivers this
 // SDL build has, and what actually got created) is a few SDL queries and one
 // process-wide record that the Options screen, the stats panel and the benchmark read.
 
@@ -91,7 +92,7 @@ inline Plan plan(const std::string& saved, const std::vector<std::string>& avail
                  Uint32 autoFlags) {
     Plan p;
     p.flags = autoFlags;
-    if (saved.empty()) return p;   // AUTO: exactly the pre-option behaviour
+    if (saved.empty()) return p;   // AUTO: main() runs autoOrder(), then SDL's own pick
     bool have = std::any_of(available.begin(), available.end(),
                             [&](const std::string& d) { return sameId(d, saved); });
     if (!have) {
@@ -117,6 +118,80 @@ inline bool honoured(const std::string& hint, const char* createdName) {
     return createdName && sameId(hint, createdName);
 }
 
+// ---- AUTO ------------------------------------------------------------------------
+//
+// On Windows AUTO tries, in order, OpenGL, Direct3D 11 and Direct3D 9, keeping the
+// first one that creates and is a real hardware driver; if none does, SDL's own pick.
+// OpenGL comes first because every native fast path (client/nativepass.h,
+// geometrysubmit.h, paletteindexed.h) is OpenGL-only; SDL's own Windows order starts
+// at Direct3D 9, which is what AUTO ran before 0.9.1. Windows ships a software OpenGL
+// ("GDI Generic", vendor Microsoft) for a machine with no GPU driver, and Microsoft's
+// OpenGL compatibility pack layers OpenGL over Direct3D 12 (also vendor Microsoft);
+// either is slower than Direct3D 11 on the same machine, so AUTO moves on.
+// Elsewhere AUTO is unchanged: no hint, SDL's own pick (OpenGL on Linux, Metal on
+// macOS), and an empty order here.
+
+// AUTO's candidates, in the order startup tries them, from those this build has;
+// `skip` (a saved choice that already failed this launch) is left out. Empty = just
+// SDL's own pick. SDL's own pick always follows the list as the last resort.
+inline std::vector<std::string> autoOrder(bool windows, const std::vector<std::string>& available,
+                                          std::string_view skip = {}) {
+    std::vector<std::string> out;
+    if (!windows) return out;
+    for (std::string_view id : {"opengl", "direct3d11", "direct3d"}) {
+        if (!skip.empty() && sameId(id, skip)) continue;
+        if (std::any_of(available.begin(), available.end(),
+                        [&](const std::string& d) { return sameId(d, id); }))
+            out.emplace_back(id);
+    }
+    return out;
+}
+
+inline bool containsNoCase(std::string_view hay, std::string_view needle) {
+    if (needle.empty() || needle.size() > hay.size()) return needle.empty();
+    for (size_t i = 0; i + needle.size() <= hay.size(); ++i)
+        if (sameId(hay.substr(i, needle.size()), needle)) return true;
+    return false;
+}
+
+// Whether AUTO keeps a renderer it created. created: SDL's driver name; accelerated:
+// SDL_RENDERER_ACCELERATED; glVendor/glRenderer: GL_VENDOR/GL_RENDERER for an OpenGL
+// renderer ("" for others, or when unreadable). A chosen (non-AUTO) driver is never
+// judged: the player asked for it.
+struct Verdict {
+    bool keep = true;
+    std::string reason;   // why not, for the log
+};
+inline Verdict judge(std::string_view created, bool accelerated, std::string_view glVendor,
+                     std::string_view glRenderer) {
+    Verdict v;
+    if (!accelerated) {
+        v.keep = false;
+        v.reason = "SDL reports it is not hardware accelerated";
+        return v;
+    }
+    if (!sameId(created.substr(0, 6), "opengl")) return v;
+    for (std::string_view soft : {"gdi generic", "llvmpipe", "softpipe", "swiftshader",
+                                  "software rasterizer"})
+        if (containsNoCase(glRenderer, soft)) {
+            v.keep = false;
+            v.reason = "software OpenGL (" + std::string(glRenderer) + ")";
+            return v;
+        }
+    if (containsNoCase(glVendor, "microsoft")) {
+        v.keep = false;
+        v.reason = "Microsoft's OpenGL (" + std::string(glVendor) + ", " + std::string(glRenderer) + ")";
+    }
+    return v;
+}
+
+// The RENDERER list's AUTO entry: "Auto (OpenGL)" when this launch runs AUTO and so
+// knows what it picked, plain "Auto" otherwise.
+inline std::string autoLabel(bool runningAuto, std::string_view created) {
+    if (!runningAuto || created.empty()) return "Auto";
+    return "Auto (" + label(created) + ")";
+}
+
 // ---- runtime record --------------------------------------------------------------
 
 // This SDL build's render drivers, in SDL's own order.
@@ -140,6 +215,7 @@ struct Active {
     std::string created;    // the driver actually created (SDL_GetRendererInfo name)
     bool accelerated = false;
     std::string failed;     // the saved choice that could not be used ("" = none)
+    std::string autoNote;   // AUTO only: what it passed over and why ("" = took the first)
     bool noticeShown = false;   // the one-time "unavailable, using Auto" notice was shown
 };
 inline Active& active() { static Active a; return a; }

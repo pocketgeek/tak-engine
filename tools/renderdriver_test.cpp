@@ -87,6 +87,65 @@ int main() {
     check(!rd::honoured("opengles2", "opengl"), "SDL fell through to another driver -> fallback");
     check(!rd::honoured("software", nullptr), "creation failed -> fallback");
 
+    // ---- AUTO: the Windows order and what it keeps (pure; the same on every platform) ----
+    {
+        const std::vector<std::string> win{"direct3d", "direct3d11", "direct3d12", "opengl",
+                                           "opengles2", "software"};
+        auto o = rd::autoOrder(true, win);
+        check(o == std::vector<std::string>({"opengl", "direct3d11", "direct3d"}),
+              "windows auto: OpenGL, Direct3D 11, Direct3D 9");
+        check(rd::autoOrder(false, win).empty() && rd::autoOrder(false, linuxDrivers).empty(),
+              "linux/macOS auto: no order, SDL's own pick");
+        check(rd::autoOrder(true, {"direct3d", "direct3d11", "software"}) ==
+                  std::vector<std::string>({"direct3d11", "direct3d"}),
+              "windows auto: a build without OpenGL starts at Direct3D 11");
+        check(rd::autoOrder(true, {"software"}).empty(), "windows auto: none of the three -> SDL");
+        check(rd::autoOrder(true, win, "opengl") ==
+                  std::vector<std::string>({"direct3d11", "direct3d"}),
+              "a chosen driver that failed is not retried");
+        check(rd::autoOrder(true, win, "DIRECT3D11") ==
+                  std::vector<std::string>({"opengl", "direct3d"}),
+              "skip is case-insensitive");
+        check(rd::autoOrder(true, {"OpenGL", "Direct3D11"}) ==
+                  std::vector<std::string>({"opengl", "direct3d11"}),
+              "availability is case-insensitive");
+
+        check(rd::judge("opengl", true, "NVIDIA Corporation", "NVIDIA GeForce RTX 5070/PCIe/SSE2").keep,
+              "judge: NVIDIA OpenGL kept");
+        check(rd::judge("opengl", true, "ATI Technologies Inc.", "AMD Radeon RX 7800 XT").keep,
+              "judge: AMD OpenGL kept");
+        check(rd::judge("opengl", true, "Intel", "Intel(R) Arc(TM) Graphics").keep,
+              "judge: Intel OpenGL kept");
+        auto v = rd::judge("opengl", true, "Microsoft Corporation", "GDI Generic");
+        check(!v.keep && v.reason.find("GDI Generic") != std::string::npos,
+              "judge: GDI Generic rejected, named in the reason");
+        check(!rd::judge("opengl", true, "", "GDI Generic").keep, "judge: GDI Generic without vendor");
+        check(!rd::judge("opengl", true, "Mesa", "llvmpipe (LLVM 19.1.0, 256 bits)").keep,
+              "judge: llvmpipe rejected");
+        check(!rd::judge("opengl", true, "Mesa", "softpipe").keep, "judge: softpipe rejected");
+        check(!rd::judge("opengl", true, "Google Inc.", "Google SwiftShader").keep,
+              "judge: SwiftShader rejected");
+        check(!rd::judge("opengl", true, "Microsoft Corporation",
+                         "D3D12 (Qualcomm(R) Adreno(TM) X1-85 GPU)").keep,
+              "judge: Microsoft's OpenGL-over-D3D12 rejected");
+        check(!rd::judge("opengl", true, "microsoft corporation", "x").keep,
+              "judge: vendor match is case-insensitive");
+        check(!rd::judge("opengl", false, "NVIDIA Corporation", "NVIDIA GeForce").keep,
+              "judge: not accelerated rejected");
+        check(!rd::judge("direct3d11", false, "", "").keep, "judge: unaccelerated Direct3D rejected");
+        check(rd::judge("direct3d11", true, "", "").keep && rd::judge("direct3d", true, "", "").keep,
+              "judge: accelerated Direct3D kept (no GL strings)");
+        check(rd::judge("opengl", true, "", "").keep,
+              "judge: unreadable GL strings are not proof of software");
+        check(rd::judge("direct3d11", true, "Microsoft Corporation", "GDI Generic").keep,
+              "judge: GL strings only matter for an OpenGL renderer");
+
+        check(rd::autoLabel(true, "opengl") == "Auto (OpenGL)", "auto label names the pick");
+        check(rd::autoLabel(true, "direct3d11") == "Auto (Direct3D 11)", "auto label: Direct3D 11");
+        check(rd::autoLabel(false, "opengl") == "Auto", "auto label plain when a choice runs");
+        check(rd::autoLabel(true, "") == "Auto", "auto label plain before a renderer exists");
+    }
+
     // ---- one-time notice ----
     {
         auto& a = rd::active();
