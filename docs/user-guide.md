@@ -1671,15 +1671,36 @@ effects only without dots.*
 
 #### Renderer
 
-**Auto** lets the game pick the graphics backend, as every earlier version did:
-OpenGL on Linux, Direct3D on Windows and Metal on macOS. The list also shows
-every other backend your copy of the game can use, such as **OpenGL ES 2**,
-**OpenGL ES**, **Direct3D 11**, **Direct3D 12** or **Software**; only the ones
-available on your system appear.
+**Auto** lets the game pick the graphics backend:
+
+- **Windows:** OpenGL, if your graphics driver provides a real one; otherwise
+  Direct3D 11, then Direct3D 9. Auto passes over Windows' own software OpenGL
+  ("GDI Generic", what Windows offers when no graphics driver is installed),
+  and Microsoft's OpenGL compatibility layer, because Direct3D 11 is faster
+  than either. OpenGL comes first because some of the game's drawing
+  shortcuts work only with it. Versions before 0.9.1 used Direct3D 9 here.
+- **Linux:** OpenGL. **macOS:** Metal.
+
+While Auto is in use the row names what it picked, for example
+**AUTO (OPENGL)**. The list also shows every other backend your copy of the
+game can use, such as **OpenGL**, **Direct3D 11**, **Direct3D 9**,
+**Direct3D 12**, **OpenGL ES 2** or **Software**; only the ones available on
+your system appear.
 
 - Leave it on **Auto** unless something is wrong. Try another backend if the
   game draws incorrectly, crashes in the graphics driver, or runs badly on your
-  graphics card; on Windows, Direct3D 11 or OpenGL are the usual alternatives.
+  graphics card.
+- **Very large battles on Windows** can run faster with **Direct3D 11**: on an
+  RTX 5070 at 7680 × 2160, OpenGL drew a 2,000-unit view about 11% faster
+  than Direct3D 11 and 17% faster than Direct3D 9, but a 10,000-unit view
+  about 10% slower than Direct3D 11 (and as fast as Direct3D 9).
+- **If OpenGL misbehaves on Windows** (wrong colours, flicker, a crash, a black
+  window, or worse speed than before 0.9.1), choose **Direct3D 11**, or
+  **Direct3D 9** for exactly what earlier versions used, then restart the game.
+  If the game does not get as far as the menu, see
+  [The game will not start, or shows a black screen](#the-game-will-not-start-or-shows-a-black-screen).
+- A backend you choose yourself is used as it is, even a slow one: Auto's
+  checks apply only to Auto.
 - **Software** draws everything on the processor without the graphics card. It
   is a last resort for a machine with no working graphics driver: it is very
   slow at high resolutions (a few frames per second at 1920x1080 in a big
@@ -1690,7 +1711,9 @@ available on your system appear.
   that session and says so at the top of the main menu (and the row says
   **UNAVAILABLE**). Your choice stays saved, so it is tried again next time;
   pick **Auto** to stop the message.
-- The Benchmark results and the Stats panel show the backend in use.
+- The Benchmark results and the Stats panel show the backend in use. The game's
+  log (its console output) has a `renderer:` line for each backend Auto tried
+  and why it kept or passed over it.
 
 ### Interface
 
@@ -2602,6 +2625,15 @@ renderer = auto
 (deleting the line works too). The game also falls back to Auto by itself when a
 backend cannot start at all; editing the file is only needed when the backend
 starts but then misbehaves.
+
+On Windows, if it started with 0.9.1 and you never changed the Renderer, Auto's
+OpenGL is the likely cause: set the same line to
+
+```
+renderer = direct3d11
+```
+
+or `renderer = direct3d` for Direct3D 9, what earlier versions used.
 
 ### There is no sound, or sound comes from the wrong device
 

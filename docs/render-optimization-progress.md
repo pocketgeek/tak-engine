@@ -732,6 +732,12 @@ The ones a reader of this report most needs:
   paths run: the assembled body, the baked palette pages, per-command
   submission. Only NVIDIA GL on Linux was timed. Direct3D, Metal, GLES2,
   Mesa, Windows and macOS were not run (see the status table).
+  (0.9.1, task-091-wingl: Windows Auto now picks OpenGL first. On oden-win,
+  RTX 5070, 7680×2160, pipelined, the native paths ran (arena draws, native
+  passes) and captures matched Linux GL pixel for pixel at 1280×960;
+  stationary-mixed 2000 was 11% faster than Direct3D 11 and 17% faster than
+  Direct3D 9, but total10k-visible was ~10% slower than Direct3D 11:
+  `t_body_submit` 27.8 ms on GL against 10.4 ms for SDL's Direct3D 11 batch.)
 - **The densest view is GPU-bound.** total10k-visible at 7680×2160 gains
   only 4.4% (forced) / 15% (pipelined, against the stalling baseline). Its
   shadows exceed the four-page atlas, so the whole-frame direct path runs in

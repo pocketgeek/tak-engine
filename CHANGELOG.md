@@ -69,7 +69,7 @@ their validation reports; both live in [`docs/`](docs/).
   keeps up. Streaming a 7680x2160 window at MAX 3840 (3840x1080) and 60 FPS on
   Windows encoded only about 18 frames a second: the panel counted the rest as
   DROPPED, and the bitrate stayed near a third of the setting. Under Direct3D,
-  what Windows picks by default, capturing the window also cut the game itself
+  what Windows used to pick by default, capturing the window also cut the game itself
   from 240 FPS to about 30. The stream's resize now runs on several threads,
   Direct3D shrinks the frame on the graphics card as OpenGL already did, and the
   encoder no longer oversleeps on Windows. On the reporter's setup the stream
@@ -89,6 +89,13 @@ their validation reports; both live in [`docs/`](docs/).
   machines where the cursor was reported to feel like a software cursor, the
   hardware cursor was in use throughout, with nothing drawn by the game, so a
   report can now say which one ran.
+- **Windows draws with OpenGL by default:** with the Renderer option on Auto,
+  Windows now uses OpenGL, where some of the game's drawing shortcuts work,
+  instead of Direct3D 9. Auto passes over Windows' software OpenGL (a machine with no
+  graphics driver) and Microsoft's OpenGL compatibility layer and uses
+  Direct3D 11 instead, then Direct3D 9. The Renderer row shows the pick, such
+  as **AUTO (OPENGL)**; choose **Direct3D 11** or **Direct3D 9** there if
+  OpenGL misbehaves. Linux and macOS are unchanged.
 - **Protocol 295:** the aiming and the new units' release change the game, so
   0.9.1 does not play with 0.9.0, and 0.9.0 replays do not play in 0.9.1.
 
