@@ -56,6 +56,7 @@ int main(int argc,char** argv){try{
    {sim::TypeRegistry mine;sim::setupRegistry(mine,data,false);check(mine.find("araking")->maxHp==23456,"the guest's always-enabled game pack changed the host's units");}
    check(!c.modPackage()->files->count("sounds/host-always.wav") && !c.modPackage()->files->count("sounds/host-art.wav"),"the game-mod package carried cosmetic files");}
   data.setMapFiles(c.mapPackage()->files);sim::MatchConfig cfg;cfg.vfs=&data;cfg.mapPath=c.mapPackage()->mapPath;cfg.startSeed=c.startSeed();cfg.slots={{true,0,0,1,false,false},{true,1,1,1,false,false}};cfg.unitCap=2000;
+  cfg.roomMapRevealed=c.room().opts.fogExplored>=1;cfg.roomLosOff=c.room().opts.fogExplored==2;   // hashed room vision, as net::matchConfigFor sets it
   world.setVisPlayer(-1);sim::setupMatch(world,registry,cfg);c.reportLoaded(hpi::gameplayHash(data) ^ (badLoaded && &c==&host ? 1 : 0));
  };
  const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(90);
