@@ -689,6 +689,31 @@ Checked: `sweetspot_test` (both balances) asserts the four captured Hunter
 offsets to 0.03 px and that a Hunter hits a standing Hunter in the 0.9.0
 geometry (dx -272, dz +192): 0 of 16 impacts before, 17 of 17 after.
 
+**Lightning at the Creon Submersible.** In a 0.9.0 game a Thirsha's lightning
+hit two parked subs 0 times in 47 bolts. The sub's SweetSpot (its `body` piece)
+lies about 20.3 px from its centre, past its 2x2 footprint cells, and
+`52a4d0` only tests the quad of the unit that owns the bolt's cell (the port's
+collision matched retail on all 594 sub-steps of those bolts). With the drawn
+bounds the offset turns with the heading (at heading 4616 it is (-10.16, 9.87,
+19.61), at 14493 (-20.50, 9.87, 3.50)), so the result depends on where the
+bow points:
+- `52a4d0` emulated on the game's own 47 bolts (same muzzles, drawn aim point
+  per recorded heading): sub 106 (heading 4616) 0 of 20, sub 328 17 of 27
+  (headings 14493 7/7, 12198 1/1, 49448 9/18, 56994 0/1); with the old local
+  aim, 0 of 47.
+- Native sweep over 16 headings x 16 approach directions at the Thirsha's
+  150/150 hover (156 px out, muzzle 203): 31% hits with the local aim point,
+  28% with the drawn one on a cell-aligned sub; 300 px out it rises from 34%
+  to 62%.
+- The simulation scene (Thirsha attacks a parked sub, 16 headings x 8
+  approaches): 32% -> 28% cell-aligned. In the replay setups it hits sub 328
+  at headings 14493, 12198 and 49448 (12/14, 12/14, 10/16) and misses sub 106
+  and heading 56994, as retail does.
+
+So a hovering Thirsha often misses a parked Submersible in retail too; this is
+retail behaviour, kept. `sweetspot_test` asserts both replay setups (sub 328
+hit, sub 106 missed); the 328 case fails on the local aim point.
+
 ## Map feature install and area clear (icd, 2026-10-24, protocol 294)
 
 **Overlapping TNT features.** The loader (`0x50f6c0..0x50f948`) initialises

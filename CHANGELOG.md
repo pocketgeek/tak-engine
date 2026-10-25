@@ -19,6 +19,31 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.1 -- Unreleased
+*protocol 295 · replay format 15 · does not play with 0.9.0 or earlier, nor their replays*
+
+- **Aiming at the body:** units now aim at the middle of the target's body, as
+  in the original game. Before, most units aimed too low, some below the
+  target's feet, so spears and other shots that fly in a curve hit the ground in
+  front of it: Zhon Hunters almost never hit each other (4% of shots in a
+  reported game, 89% now). The aim point also turns with the target, as in the
+  original.
+- **Lightning at the Creon Submersible:** whether the Thirsha's lightning hits
+  a parked Submersible now depends on which way the Submersible faces, as in
+  the original, and it still misses often, as the original does: the
+  Submersible's aim point lies off its centre, outside the cells it stands on. In the reported game it missed 47 bolts out of 47; the
+  original hits 17 of those same shots, and we now aim the way it does.
+- **Ships leaving the yard:** a new unit with no rally point moves off the
+  building's pad to a spot a short way from the building and waits there, as in
+  the original. A ship only picks a spot it can sail to, so ships no longer stay
+  stuck on the pad of a yard by a small lake. The AI no longer builds a
+  shipyard on a pond that does not reach the sea.
+- **Game speed:** raising the speed to +10 now takes effect at once. A player
+  or spectator whose game had paused for a moment (while it loaded, or after
+  switching windows) could stay at about +4 for most of a minute.
+- **Protocol 295:** the aiming and the new units' release change the game, so
+  0.9.1 does not play with 0.9.0, and 0.9.0 replays do not play in 0.9.1.
+
 ## 0.9.0
 *2026-10-24 · protocol 294 · replay format 15 · does not play with 0.8.14 or earlier, nor their replays*
 

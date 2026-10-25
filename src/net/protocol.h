@@ -22,7 +22,10 @@ namespace tak::net {
 constexpr uint32_t kNetVersion = 295;      // 295: SweetSpot is retail's drawn piece bounds (4dd2a0 over the buffer the draw
                                            //      path poses in place): the piece chain plus body attitude, not the
                                            //      authored local vertices, so aimed shots hit chest-high instead of the
-                                           //      feet (Hunters missed each other). Hashed sim change; 294 replays refused.
+                                           //      feet (Hunters missed each other). Also a structure's ground/water
+                                           //      output gets retail GetBuilt's rally-else-PARK (kept to the birth
+                                           //      point's component) instead of the exit step, and the AI refuses
+                                           //      landlocked pond yards. Hashed sim change; 294 replays refused.
                                            // 294: area clear as retail: overlapped TNT features removed at load are gone
                                            //      everywhere (World::installedMapFeatures: no art, blocker, sacred site,
                                            //      deposit or target); fogged-but-explored world features stay clearable

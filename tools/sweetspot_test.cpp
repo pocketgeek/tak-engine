@@ -15,6 +15,9 @@
 //   live retail capture (4dd4f0 on next-device-state-01, tick 11134);
 // - two Hunters on flat ground in that game's geometry (dx -272, dz +192,
 //   333 px): the shooter's spears hit its standing target.
+// - a Thirsha's lightning at a parked Creon Submersible in two setups of a
+//   0.9.0 game: it hits where retail's collision does with the drawn aim
+//   point (sub 328) and misses where retail misses (sub 106).
 //
 // A dev harness; not shipped in a game.
 
@@ -108,6 +111,54 @@ int main(int argc, char** argv) {
             std::snprintf(buf, sizeof buf, "impacts=%d hits=%d damage=%.0f shooter moved %.0f px", shots, hits,
                           t ? 30000.f - t->hp.toFloat() : -1.f, moved);
             check(shots >= 8 && hits * 10 >= shots * 8, "a Hunter's spears hit a standing Hunter at 333 px", buf);
+        }
+
+        // A Thirsha's lightning at a parked Creon Submersible, in two setups from
+        // a 0.9.0 game (47 bolts, 0 hits). The sub's SweetSpot sits 20.3 px out
+        // from its centre, past its 2x2 cells, and the drawn offset turns with
+        // its heading. Retail's 52a4d0 run on the game's own 47 bolts with the
+        // drawn aim point hits sub 328 (heading 14493: 7 of 7) and still misses
+        // sub 106 (heading 4616: 0 of 20); the simulation must do the same.
+        {
+            const sim::UnitType* thirsha = reg.find("zonhunt");
+            const sim::UnitType* subType = reg.find("cresubm");
+            if (!thirsha || !subType) { check(false, "shipped zonhunt and cresubm load"); continue; }
+            auto sub = *subType;
+            sub.maxHp = 10000000;
+            sub.healTime = 0;
+            sub.weapons.clear();
+            sub.weapon.damage = 0;
+            struct Setup { const char* what; float sx, sz; uint16_t heading; float mx, mz; bool hits; };
+            const Setup setups[] = {
+                {"lightning hits sub 328 at heading 14493, as retail", 80, 2192, 14493, 197.10f, 2156.04f, true},
+                {"lightning misses sub 106 at heading 4616, as retail", 400.1f, 2032.28f, 4616, 516.42f, 2063.27f, false}};
+            for (const auto& s : setups) {
+                sim::World w;
+                w.setVisPlayer(-1);
+                w.setTerrain(std::vector<uint8_t>(64 * 192, 0), 64, 192, 58);
+                w.buildNavClasses(reg);
+                const int target = w.spawn(&sub, s.sx, s.sz, 0, 1);
+                w.tick(1.f / 30);
+                w.unit(target)->heading = sim::Bam(s.heading);
+                const float dx = s.mx - s.sx, dz = s.mz - s.sz, len = std::hypot(dx, dz);
+                const int shooter = w.spawn(thirsha, s.sx + 300 * dx / len, s.sz + 300 * dz / len, 0, 0);
+                w.attack(shooter, target, false);
+                int bolts = 0, hits = 0;
+                size_t live = 0;
+                sim::Fixed hp = w.unit(target)->hp;
+                for (int i = 0; i < 40 * 30; ++i) {
+                    w.tick(1.f / 30);
+                    size_t n = 0;
+                    for (const auto& shot : w.projectiles()) n += shot.fromId == shooter;
+                    if (n > live) bolts += int(n - live);
+                    live = n;
+                    if (w.unit(target)->hp < hp) { ++hits; hp = w.unit(target)->hp; }
+                    w.unit(target)->heading = sim::Bam(s.heading);   // parked: hold the recorded heading
+                }
+                char buf[96];
+                std::snprintf(buf, sizeof buf, "hits %d of %d bolts", hits, bolts);
+                check(bolts >= 8 && (s.hits ? hits * 2 >= bolts : hits == 0), s.what, buf);
+            }
         }
     }
     std::printf(failures ? "FAIL: %d checks\n" : "PASS: drawn SweetSpot aim\n", failures);

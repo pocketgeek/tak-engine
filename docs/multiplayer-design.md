@@ -944,6 +944,14 @@ nor their replays. Its other changes (the Rolling Tower spelling in the AI,
 server side; build sparkles; gate doorway picking and the reclaim fan-out,
 client side) need no protocol change of their own.
 
+Protocol 295 changes the simulation: SweetSpot is retail's drawn piece bounds
+(the piece chain plus the body's pitch, heading and roll, not the authored local
+vertices), and a structure's ground or water output gets retail GetBuilt's
+rally, else a PARK ring kept to the cells connected to its birth point, in place
+of the exit step. 294 replays are refused. The AI's pond-yard refusal is server
+side, and the client's pacing fix (a client stall is not network jitter; the
+buffer target stays under the flow-control limit) changes nothing on the wire.
+
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
 in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each
@@ -1233,6 +1241,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.9.0 (peers and server) requires protocol 294; 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.9.1 (peers and server) requires protocol 295; 0.9.0 required 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

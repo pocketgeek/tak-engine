@@ -640,6 +640,9 @@ only when there is room for its whole body there; if the last unit has not
 cleared the pad yet, the building waits a moment and tries again, as in the
 original game. Give the building a **move** or **patrol**
 order to set a **rally point** for new units; Shift adds more rally steps.
+Without a rally point, as in the original game, each new unit moves off the pad
+to a spot a short way from the building and waits there; a ship only picks a
+spot it can sail to.
 
 **Mobile production.** Some builders conjure units in the field (Zhon's Beast
 Handler, for example). They place what they build like a structure. A mobile
@@ -714,6 +717,9 @@ while they carry out a move or a patrol, without stopping or turning to aim:
 only hovering attack flyers, and the few ground units that must turn in place
 to aim, face their target first. A unit standing with no orders turns towards
 what it shoots. Units pick targets among the enemies their player can see.
+As in the original game, units aim at the middle of the target's body as it
+stands at that moment, so spears and arrows strike chest-high rather than at
+the feet.
 
 ![Aramon Archers and two Mage Builders walking east along a dotted move line, with Taros Zombies attacking the back of the column and hits flashing among them; Taros Skeleton Archers stand further off](img/guide/fire-on-the-move.jpg)
 
@@ -1146,7 +1152,7 @@ group automatically.
 | **F4** | Player names, kills, losses and score; with teams of two or more, grouped by team (see [Scoring](#scoring)). |
 | **F9** | YouTube streaming setup. |
 | **Pause** | Pause or resume. This pauses the game for every player. |
-| **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×): level *d* runs at (*d*+10)/10 of normal speed. **=** and the keypad **+**/**−** work too. In a replay they set the playback speed. A banner shows the new level, for example **GAME SPEED NORMAL** or **GAME SPEED +5**. Only the host can change it, and only if **Allow speed change** was on. In a campaign mission you can always change it. |
+| **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×): level *d* runs at (*d*+10)/10 of normal speed. **=** and the keypad **+**/**−** work too. In a replay they set the playback speed. A banner shows the new level, for example **GAME SPEED NORMAL** or **GAME SPEED +5**. The new speed takes effect at once, for spectators too. Only the host can change it, and only if **Allow speed change** was on. In a campaign mission you can always change it. |
 | **Enter** | Open chat; **Enter** sends, **Esc** cancels. Also where you type [power codes](#power-codes). Chat works in live games, single player included, but not in replays. |
 | **Print Screen** | Make a poster: save a picture of the whole map. Only in a game with **Power codes** on. If your desktop takes the key for its own screenshots, or your keyboard has none (Mac), set another key for **MAKE POSTER** in **CONTROLS**. See [Power codes](#power-codes). |
 | **Space** (hold) | Push to talk, in multiplayer, when [voice chat](#voice-chat) is on with **Talk mode** Push to Talk. Never while you are typing in a text box. |
