@@ -1,4 +1,6 @@
 #include "client/streaming.h"
+#include "client/cursorpath.h"
+#include "client/hidpi.h"
 #include "client/uitext.h"
 #include "client/gpuvram.h"
 #include "client/settings.h"
@@ -23,7 +25,10 @@ class Capture {
 public:
     ~Capture() { clear(); }
     void reset() { clear(); d3d_.reset(); w_=h_=0; checked_=available_=false; context_=nullptr; std::vector<uint8_t>().swap(pixels_); }
-    bool get(SDL_Renderer* ren, int w, int h, video::Stream& stream) {
+    // `cursor`: the hardware cursor beside this capture (a default one: none). The
+    // OpenGL readback delivers a frame or two later, so each pixel buffer keeps the
+    // cursor it was captured with; the other paths deliver the frame they capture.
+    bool get(SDL_Renderer* ren, int w, int h, video::Stream& stream, const video::StreamCursor& cursor) {
         if (w<=0 || h<=0 || w>8192 || h>8192) return false;
         SDL_RendererInfo info{}; SDL_GetRendererInfo(ren,&info);
         bool gl = info.name && !std::strcmp(info.name,"opengl");
@@ -55,6 +60,7 @@ public:
                         pixels_.resize(size_t(w)*h*4);
                         for(int y=0;y<h;++y) std::memcpy(pixels_.data()+size_t(y)*w*4,ptr+size_t(h-1-y)*w*4,size_t(w)*4);
                         unmap_(GL_PIXEL_PACK_BUFFER);
+                        stream.cursor(cursors_[i]);
                         delivered=stream.video(pixels_,w,h);
                     }
                     deleteSync_(fences_[i]);fences_[i]=nullptr;
@@ -95,12 +101,13 @@ public:
                     bindFbo_(GL_READ_FRAMEBUFFER,oldRead);bindFbo_(GL_DRAW_FRAMEBUFFER,oldDraw);
                     bindRb_(GL_RENDERBUFFER,oldRenderbuffer);
                 }
-                fences_[i]=fence_(GL_SYNC_GPU_COMMANDS_COMPLETE,0);serial_[i]=++nextSerial_;break;
+                fences_[i]=fence_(GL_SYNC_GPU_COMMANDS_COMPLETE,0);serial_[i]=++nextSerial_;cursors_[i]=cursor;break;
             }
             bind_(GL_PIXEL_PACK_BUFFER,GLuint(old));store_(GL_PACK_ALIGNMENT,align);
             store_(GL_PACK_ROW_LENGTH,rowLength); store_(GL_PACK_SKIP_ROWS,skipRows); store_(GL_PACK_SKIP_PIXELS,skipPixels);
             return delivered;
         }
+        stream.cursor(cursor);
         if(!gl) {
             const auto output=stream.status();
             const int d3d=d3d_.get(ren,w,h,output.width,output.height,stream);
@@ -135,7 +142,7 @@ private:
             if(fbo_)delFbo_(1,&fbo_);
             if(rb_)delRb_(1,&rb_);
         }
-        buffers_={};fences_={};allocated_={};fbo_=rb_=0;
+        buffers_={};fences_={};allocated_={};cursors_={};fbo_=rb_=0;
         gpuvram::removeBuffer(counted_);counted_=0;   // gone with the context otherwise
     }
     void count(size_t b) {gpuvram::addBuffer(b);counted_+=b;}
@@ -146,6 +153,7 @@ private:
     int w_=0,h_=0;SDL_GLContext context_=nullptr;
     std::array<uint64_t,2> serial_{};uint64_t nextSerial_=0;
     std::array<bool,2> allocated_{};
+    std::array<video::StreamCursor,2> cursors_{};
     std::array<GLuint,2> buffers_{};std::array<GLsync,2> fences_{};
     std::vector<uint8_t> pixels_;
     GLboolean (APIENTRY *isEnabled_)(GLenum)=nullptr;
@@ -174,6 +182,19 @@ private:
     void (APIENTRY *get_)(GLenum,GLint*)=nullptr;
     void (APIENTRY *store_)(GLenum,GLint)=nullptr;
 };
+// The OS cursor as the broadcast should show it, or none (client/cursorpath.h): the
+// hotspot at the pointer in renderer-output pixels, the w x h space being captured.
+video::StreamCursor hardwareCursor(SDL_Renderer* ren,int w,int h) {
+    const auto& shown=shownHardwareCursor();
+    SDL_Window* window=SDL_RenderGetWindow(ren);
+    if(!stampHardwareCursor(shown.image!=nullptr,SDL_ShowCursor(SDL_QUERY)==SDL_ENABLE,
+                            shown.cursor && SDL_GetCursor()==shown.cursor,
+                            window && SDL_GetMouseFocus()==window))return {};
+    int mx=0,my=0;hidpi::mousePixels(ren,mx,my);
+    video::StreamCursor c;
+    c.image=shown.image;c.x=float(mx);c.y=float(my);c.scale=shown.pixelScale;c.refW=w;c.refH=h;
+    return c;
+}
 }
 struct Streaming::Impl {
     SDL_Renderer* ren;
@@ -186,6 +207,9 @@ struct Streaming::Impl {
     int resolution=5; // 720p, 1080p, 1440p, 4K, full window, max width 3840
     bool visible=false,editing=false,wasActive=false,wasTextInput=false;
     bool localCopy=false; // SAVE A LOCAL COPY: settings->streamLocalCopy when there are settings
+#ifdef TAK_STREAM_TESTING
+    bool testCursorSet=false;video::StreamCursor testCursor;
+#endif
     std::string error;
     uint64_t nextCapture=0, rateTime=0, rateBytes=0;
     uint64_t rateKbps=0;
@@ -344,6 +368,9 @@ SDL_FRect Streaming::rememberRect(int w,int h){p_->layout(w,h);return p_->rememb
 SDL_FRect Streaming::localCopyRect(int w,int h){p_->layout(w,h);return p_->localCopyRect();}
 bool Streaming::waitKeyStore(int ms){const bool idle=p_->keys->waitIdle(ms);p_->pollKeys();return idle;}
 video::Stream& Streaming::stream(){return p_->stream;}
+#ifdef TAK_STREAM_TESTING
+void Streaming::testCursor(const video::StreamCursor* c){p_->testCursorSet=c!=nullptr;p_->testCursor=c?*c:video::StreamCursor{};}
+#endif
 bool Streaming::shown() const{return p_->visible;}
 bool Streaming::input(const SDL_Event& e,int w,int h) {
     if((e.type==SDL_KEYDOWN && !e.key.repeat && e.key.keysym.sym==SDLK_F9) ||
@@ -435,7 +462,11 @@ void Streaming::frame(int w,int h,bool drawPanel) {
     if(!active && p_->wasActive)p_->capture.reset();
     p_->wasActive=active;
     if(active&&now>=p_->nextCapture&&w>0&&h>0){
-        p_->capture.get(p_->ren,w,h,p_->stream);
+        video::StreamCursor cursor=hardwareCursor(p_->ren,w,h);
+#ifdef TAK_STREAM_TESTING
+        if(p_->testCursorSet)cursor=p_->testCursor;
+#endif
+        p_->capture.get(p_->ren,w,h,p_->stream,cursor);
         const uint64_t interval=1000000/p_->stream.status().fps;
         // Keep a stable cadence across uneven render frames; now + interval
         // loses a whole render frame whenever the deadline is slightly late.

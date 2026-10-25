@@ -11,6 +11,7 @@ extern "C" {
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -255,7 +256,60 @@ static int pacing(const std::string& encoder,int sw,int sh,int ow,int oh,int fps
     require(frames3*10>=uint64_t(fps)*3*8,"at least 80% of the frame slots encoded");
     return 0;
 }
+// The hardware cursor end to end through the worker (video/streamcursor.h): a 400x300
+// capture into a 320x180 stream letterboxes to a 240x180 picture, so a cursor at the
+// window's centre must land at the picture's centre at 0.6x, and only while one is set.
+// A cursor set AFTER a submission belongs to the next one: frames carry their own.
+static int cursorStamp(const std::string& encoder) {
+    tak::video::StreamConfig config;
+    config.encoder=encoder;config.width=320;config.height=180;config.fps=30;config.bitrateKbps=1000;
+    auto path=std::filesystem::temp_directory_path()/("tak-stream-cursor-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".flv");
+    const int sw=400,sh=300;
+    std::vector<uint8_t> frame(size_t(sw)*sh*4,60);
+    for(size_t i=3;i<frame.size();i+=4)frame[i]=255;
+    auto image=std::make_shared<tak::video::CursorImage>();
+    image->w=20;image->h=20;image->hotX=0;image->hotY=0;image->rgba.assign(20*20*4,255);
+    tak::video::StreamCursor cursor;
+    cursor.image=image;cursor.x=200;cursor.y=150;cursor.scale=1;cursor.refW=sw;cursor.refH=sh;
+    int ok=0;
+    {
+        tak::video::Stream stream;
+        require(stream.startRecording(config,path.string()),"start cursor recording");
+        // Wait for a picture showing `want` (true: the cursor), feeding frames meanwhile.
+        auto await=[&](bool want,const char* what) {
+            const auto begin=std::chrono::steady_clock::now();
+            while(std::chrono::steady_clock::now()-begin<5s) {
+                require(stream.active(),stream.status().state.c_str());
+                std::vector<uint8_t> buffer(frame);
+                stream.cursor(want?cursor:tak::video::StreamCursor{});
+                stream.video(buffer,sw,sh);
+                if(!want)stream.cursor(cursor); // set after the submission: not this frame's
+                std::this_thread::sleep_for(40ms);
+                int w=0,h=0;const auto pic=stream.testLastPicture(w,h);
+                if(w!=240||h!=180||pic.empty())continue;
+                auto px=[&](int x,int y){return pic[(size_t(y)*w+x)*4];};
+                // Centre 120,90; the 20px sprite becomes 12px: 120..131 x 90..101.
+                const bool white=px(125,95)==255 && px(120,90)==255 && px(131,101)==255;
+                const bool clean=px(119,90)==60 && px(132,95)==60 && px(125,102)==60 && px(125,89)==60;
+                if(want && white && clean) return true;
+                if(!want && px(125,95)==60 && px(120,90)==60) return true;
+            }
+            std::fprintf(stderr,"FAIL: %s\n",what);return false;
+        };
+        ok+=await(true,"cursor stamped at the picture's centre, scaled 0.6x, nothing around it");
+        ok+=await(false,"no cursor -> no stamp (a later cursor does not leak into an earlier frame)");
+        ok+=await(true,"cursor back");
+        stream.stop();
+        const auto deadline=std::chrono::steady_clock::now()+5s;
+        while(stream.active()&&std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(1ms);
+    }
+    std::filesystem::remove(path);
+    if(ok!=3)return 1;
+    std::printf("cursor stamp: placed, scaled and removed through the %s worker\n",encoder.c_str());
+    return 0;
+}
 int main(int argc,char** argv) {
+    if(argc>2 && std::string(argv[2])=="cursor")return cursorStamp(argv[1]);
     if(argc>2 && std::string(argv[2])=="pacing")
         return pacing(argv[1],argc>3?std::atoi(argv[3]):7680,argc>4?std::atoi(argv[4]):2160,
                       argc>5?std::atoi(argv[5]):1280,argc>6?std::atoi(argv[6]):360,argc>7?std::atoi(argv[7]):60);

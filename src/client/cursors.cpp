@@ -1,6 +1,7 @@
 #include "client/cursors.h"
 
 #include "client/artscale.h"
+#include "client/cursorpath.h"
 #include "client/cursortiming.h"
 #include "client/hidpi.h"
 #include "client/settings.h"
@@ -10,6 +11,8 @@
 #include "hpi/hpi.h"
 
 #include <cctype>
+#include <cstdio>
+#include <cstring>
 #include <string>
 #include <unordered_map>
 
@@ -153,7 +156,8 @@ void CursorSet::draw(SDL_Renderer* ren, CursorId c, int mouseX, int mouseY, int 
 namespace {
 
 // Bake one frame's RGBA into a scaled, tinted SDL_Cursor. Hotspot is scaled to match.
-// Returns nullptr on failure.
+// Returns nullptr on failure. `image` receives the same pixels, which the stream worker
+// stamps into the broadcast (the OS cursor is never in a captured frame).
 //
 // This is the HARDWARE cursor path (SDL_CreateColorCursor), and it does not go anywhere
 // near the textures the smooth-art option upscales -- it builds an OS cursor straight
@@ -165,7 +169,8 @@ namespace {
 // downsample is what antialiases. Smoothing off keeps the old nearest replication,
 // which is the crisp retail pixel cursor.
 SDL_Cursor* bakeCursor(const std::vector<uint8_t>& rgba, const std::vector<uint8_t>* smoothed,
-                       int w, int h, int hx, int hy, int scale, SDL_Color tint) {
+                       int w, int h, int hx, int hy, int scale, SDL_Color tint,
+                       std::shared_ptr<const video::CursorImage>& image) {
     if (rgba.size() < size_t(w) * size_t(h) * 4 || w <= 0 || h <= 0) return nullptr;
     SDL_Surface* s = SDL_CreateRGBSurfaceWithFormat(0, w * scale, h * scale, 32,
                                                     SDL_PIXELFORMAT_RGBA32);
@@ -192,6 +197,15 @@ SDL_Cursor* bakeCursor(const std::vector<uint8_t>& rgba, const std::vector<uint8
         }
     }
     SDL_Cursor* cur = SDL_CreateColorCursor(s, hx * scale, hy * scale);
+    if (cur) {
+        auto im = std::make_shared<video::CursorImage>();
+        im->w = w * scale; im->h = h * scale; im->hotX = hx * scale; im->hotY = hy * scale;
+        im->rgba.resize(size_t(im->w) * size_t(im->h) * 4);
+        for (int y = 0; y < im->h; ++y)
+            std::memcpy(im->rgba.data() + size_t(y) * size_t(im->w) * 4,
+                        static_cast<const uint8_t*>(s->pixels) + size_t(y) * s->pitch, size_t(im->w) * 4);
+        image = std::move(im);
+    }
     SDL_FreeSurface(s);
     return cur;
 }
@@ -232,12 +246,27 @@ void CursorSet::precompute(int scale) {
         }
 }
 
+// One line per new hardware-cursor size, and the Options row's status: a report can
+// then say which path ran ("feels like a software cursor" had nothing to go on).
+void CursorSet::noteBake(int w, int h, int scale, bool ok) {
+    auto& st = hardwareCursorStatus();
+    static int loggedScale = 0;
+    const bool changed = !st.tried || st.failed != !ok || loggedScale != scale;
+    st.tried = true; st.failed = !ok; st.w = w; st.h = h;
+    if (!changed) return;
+    loggedScale = scale;
+    if (ok) std::fprintf(stderr, "cursor: hardware cursor %dx%d ok (%s)\n", w, h, SDL_GetCurrentVideoDriver());
+    else std::fprintf(stderr, "cursor: hardware cursor %dx%d FAILED (%s: %s) -- using software\n",
+                      w, h, SDL_GetCurrentVideoDriver(), SDL_GetError());
+}
+
 bool CursorSet::applyHardware(CursorId c, int scale, SDL_Color tint) {
     if (!ok_) return false;
     if (size_t(c) >= anims_.size() || anims_[size_t(c)].empty()) c = CursorId::Normal;
     const auto& frames = anims_[size_t(c)];
     if (frames.empty()) return false;
     if (scale < 1) scale = 1;
+    float pixelScale = 1;   // renderer-output pixels per cursor-image pixel
 #ifdef __APPLE__
     // SDL2's Cocoa cursor is sized in points, so on a Retina window it already shows
     // backing-scale times bigger than the pixel-drawn software cursor (client/hidpi.h).
@@ -246,6 +275,7 @@ bool CursorSet::applyHardware(CursorId c, int scale, SDL_Color tint) {
     static float backing = 1.0f;
     if (SDL_Window* w = SDL_GetMouseFocus()) backing = hidpi::scale(w);
     scale = hardwareCursorScale(scale, backing);
+    pixelScale = backing;
 #endif
 
     if (scale != hwScale_) {                    // rebuild on scale change
@@ -261,17 +291,19 @@ bool CursorSet::applyHardware(CursorId c, int scale, SDL_Color tint) {
                                               // rebuild it every frame to fail again
     auto it = hw_.find(key);
     if (it == hw_.end()) {                       // lazily bake this (cursor,tint) set
-        std::vector<SDL_Cursor*> built;
+        std::vector<HwFrame> built;
         built.reserve(frames.size());
         for (const auto& f : frames) {
-            SDL_Cursor* cur = bakeCursor(f.rgba, f.smoothScale == scale ? &f.smooth : nullptr,
-                                         f.w, f.h, f.hx, f.hy, scale, tint);
-            if (!cur) {                          // platform rejected it -> unwind, fall back
-                for (SDL_Cursor* b : built) SDL_FreeCursor(b);
+            HwFrame b;
+            b.cursor = bakeCursor(f.rgba, f.smoothScale == scale ? &f.smooth : nullptr,
+                                  f.w, f.h, f.hx, f.hy, scale, tint, b.image);
+            noteBake(f.w * scale, f.h * scale, scale, b.cursor != nullptr);
+            if (!b.cursor) {                     // platform rejected it -> unwind, fall back
+                for (HwFrame& d : built) SDL_FreeCursor(d.cursor);
                 hwFailed_.insert(key);           // and remember, so this is not retried
                 return false;
             }
-            built.push_back(cur);
+            built.push_back(std::move(b));
         }
         it = hw_.emplace(key, std::move(built)).first;
     }
@@ -281,14 +313,23 @@ bool CursorSet::applyHardware(CursorId c, int scale, SDL_Color tint) {
     const uint64_t now = SDL_GetTicks64();
     const size_t idx = animClock_.frameAt(size_t(c), now, anims_);
 
-    if (curs[idx] != hwSet_) { hwSet_ = curs[idx]; SDL_SetCursor(hwSet_); }
+    if (curs[idx].cursor != hwSet_) { hwSet_ = curs[idx].cursor; SDL_SetCursor(hwSet_); }
+    // Mirror what the OS now shows, for the broadcast (client/cursorpath.h).
+    auto& shown = shownHardwareCursor();
+    if (shown.cursor != hwSet_ || shown.pixelScale != pixelScale) {
+        shown.cursor = hwSet_; shown.image = curs[idx].image; shown.pixelScale = pixelScale;
+        auto& st = hardwareCursorStatus();
+        if (shown.image) { st.failed = false; st.w = shown.image->w; st.h = shown.image->h; }
+    }
     return true;
 }
 
 void CursorSet::releaseHardware() {
+    auto& shown = shownHardwareCursor();
+    if (hwSet_ && shown.cursor == hwSet_) shown = {};   // ours is about to be freed
     for (auto& kv : hw_)
-        for (SDL_Cursor* c : kv.second)
-            if (c) SDL_FreeCursor(c);
+        for (HwFrame& f : kv.second)
+            if (f.cursor) SDL_FreeCursor(f.cursor);
     hw_.clear();
     hwFailed_.clear();   // a different scale may be accepted where this one was not
     hwScale_ = 0;

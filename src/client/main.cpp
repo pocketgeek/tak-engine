@@ -2012,10 +2012,22 @@ int main(int argc, char** argv) {
         double t4 = prof ? pnow() : 0;
         // Custom animated mouse cursor, drawn last so it sits above the HUD (and above
         // the AA-resolved scene) at native resolution. Only in-game; the asset viewers
-        // keep the OS arrow.
-        if (gameView) gameView->drawCursorOverlay(streaming.stream().active() || streaming.shown());
-        if (gameView) streaming.frame(w,h);
-        if (gameView && streaming.shown()) gameView->drawCursorOverlay(true,true);
+        // keep the OS arrow. A stream keeps the HARDWARE cursor: it is not in the
+        // captured frame, so the stream worker stamps it in (docs/streaming.md). With
+        // the setup panel open it is the plain arrow, for clicking the panel. A
+        // SOFTWARE cursor is drawn before the capture, so the broadcast has it already,
+        // then drawn again over the private panel, which is drawn after the capture.
+        if (gameView) {
+            const bool panel = streaming.shown();
+            if (gameView->hardwareCursorInUse()) {
+                gameView->drawCursorOverlay(panel);
+                streaming.frame(w,h);
+            } else {
+                gameView->drawCursorOverlay();
+                streaming.frame(w,h);
+                if (panel) gameView->drawCursorOverlay(true);
+            }
+        }
         // Read both metrics from the pinned snapshot before releasing it.
         const uint32_t profTick = prof && gameView ? gameView->framedTick() : 0;
         const size_t profLive = prof && gameView ? gameView->framedAliveUnits() : 0;

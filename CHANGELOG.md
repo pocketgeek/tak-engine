@@ -75,6 +75,20 @@ their validation reports; both live in [`docs/`](docs/).
   encoder no longer oversleeps on Windows. On the reporter's setup the stream
   now encodes all 60 frames a second at about 6,000 Kbps, and the game stays at
   240 FPS. This changes nothing about who can play together.
+- **Hardware cursor while streaming:** streaming no longer switches the cursor
+  to the one the game draws itself. The pointer stays the system's hardware
+  cursor on your screen, and the stream draws the same cursor into the video:
+  the same art, animation frame and size, at the pointer, scaled to the stream,
+  clipped at the picture's edges and left out while the pointer is outside the
+  window. With Hardware Cursor off nothing changes: the game draws the cursor and
+  the stream captures it. This changes nothing about who can play together.
+- **Which cursor is in use:** the Options screen now shows beside Hardware Cursor
+  what the game gave the system, such as `OS CURSOR 64X100`, or
+  `UNAVAILABLE - SOFTWARE` when the system refused that size and the game is
+  drawing the cursor itself; the log says the same. On the Windows and macOS
+  machines where the cursor was reported to feel like a software cursor, the
+  hardware cursor was in use throughout, with nothing drawn by the game, so a
+  report can now say which one ran.
 - **Protocol 295:** the aiming and the new units' release change the game, so
   0.9.1 does not play with 0.9.0, and 0.9.0 replays do not play in 0.9.1.
 

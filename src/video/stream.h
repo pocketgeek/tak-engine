@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "video/streamcursor.h"
 
 namespace tak::video {
 struct StreamConfig {
@@ -38,6 +39,9 @@ public:
     void testDelayOnce(int milliseconds);
     bool testDelayInProgress() const;
     size_t testRetainedVideoBytes() const;
+    // The newest encoded picture as RGBA, after scaling and cursor stamping (the
+    // letterboxed inner picture, before colour conversion). Empty before the first.
+    std::vector<uint8_t> testLastPicture(int& w, int& h) const;
     bool startTestEndpoint(const StreamConfig&, const std::string& url, const std::string& caFile);
     // The local copy's next write after `packets` more fails, as a full disk would.
     void testFailLocalAfter(int packets);
@@ -49,6 +53,10 @@ public:
     // Transfer packed RGBA ownership, returning a reusable buffer to the producer.
     bool video(std::vector<uint8_t>& rgba, int width, int height);
     void audio(const int16_t* samples, int frames, int channels); // 11025 Hz
+    // The hardware cursor for the NEXT video() submission (video/streamcursor.h); it
+    // stays set until replaced, and a default StreamCursor shows none. The worker
+    // stamps it in after scaling, so it costs the caller a copy of a shared_ptr.
+    void cursor(const StreamCursor&);
 private:
     struct Impl;
     std::unique_ptr<Impl> p_;

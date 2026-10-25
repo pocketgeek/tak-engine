@@ -10,8 +10,11 @@
 
 #include <SDL.h>
 
+#include "video/streamcursor.h"
+
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -147,6 +150,7 @@ private:
     // mid-session -- that one DOES run inside a frame: a one-off stall when the slider
     // moves, against re-reconstructing on every hover for the rest of the session.
     void precompute(int scale);
+    static void noteBake(int w, int h, int scale, bool ok);
 
     struct Frame {
         SDL_Texture* tex = nullptr;
@@ -168,7 +172,9 @@ private:
     // Hardware-cursor cache: (CursorId << 32 | packed-RGBA-tint) -> one SDL_Cursor per
     // frame, built for hwScale_. hwSet_ is the currently-applied cursor (skip redundant
     // SDL_SetCursor); hwCur_/hwStartMs_ drive the animation clock in hardware mode.
-    std::unordered_map<uint64_t, std::vector<SDL_Cursor*>> hw_;
+    // Each frame keeps the baked pixels too: the stream stamps them into the broadcast.
+    struct HwFrame { SDL_Cursor* cursor = nullptr; std::shared_ptr<const video::CursorImage> image; };
+    std::unordered_map<uint64_t, std::vector<HwFrame>> hw_;
     // Keys whose bake the platform REFUSED. Without this a rejected cursor is retried
     // every frame -- allocating a surface, tinting it and calling SDL_CreateColorCursor
     // for each frame of the animation, all to fail again. GameView latched that itself

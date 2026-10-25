@@ -4,6 +4,7 @@
 #include "client/gameview.h"
 #include "client/gamespeed.h"
 #include "client/artscale.h"
+#include "client/cursorpath.h"
 #include "client/cursorrange.h"
 #include "client/reclaimpick.h"
 #include "client/gpuvram.h"
@@ -274,7 +275,11 @@ namespace {
             }
         }
 
-    void GameView::drawCursorOverlay(bool forceSoftware, bool uiOverlay) {
+    bool GameView::hardwareCursorInUse() const {
+        return settings_ && tak::useHardwareCursor(settings_->hardwareCursor, hwCursorFailed_);
+    }
+
+    void GameView::drawCursorOverlay(bool uiOverlay) {
         if (!cursorsInit_) { cursorsInit_ = true; cursors_.load(ren_, vfs_, settings_); }
         // A benchmark RUN is hands-off: hide the cursor entirely (OS + software). It
         // returns for the stats screen (benchStatsShown_) so DONE is clickable.
@@ -293,11 +298,13 @@ namespace {
 
         // HARDWARE cursor: hand the sprite to the OS, which tracks the pointer position
         // itself -- so it stays smooth even when a heavy frame stalls our render loop.
-        if (settings_ && settings_->hardwareCursor && !forceSoftware && !hwCursorFailed_) {
+        // Streaming no longer forces the software path: the stream worker stamps this
+        // cursor into the broadcast (client/cursorpath.h, video/streamcursor.h).
+        if (hardwareCursorInUse()) {
             if (cursorMode_ != 1) { SDL_ShowCursor(SDL_ENABLE); cursorMode_ = 1; }
             if (cursors_.applyHardware(c, sc, tint)) return;
             hwCursorFailed_ = true;   // platform rejected it (size cap?) -> software from here on
-            std::fprintf(stderr, "cursor: hardware cursor unavailable -- using software\n");
+                                      // (CursorSet logged the size and SDL's reason)
         }
 
         // SOFTWARE cursor: hide the OS arrow and draw our own into the frame.

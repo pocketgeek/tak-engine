@@ -1,5 +1,6 @@
 #include "video/stream.h"
 #include "video/rgbascale.h"
+#include "video/streamcursor.h"
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -162,6 +163,16 @@ struct Stream::Impl {
     std::vector<uint8_t> pixels;
     int sourceW = 0, sourceH = 0;
     bool fresh = false;
+    // The hardware cursor (video/streamcursor.h): `nextCursor` is the latest one the
+    // client set; each submitted frame takes a copy (`pixelsCursor`, under inputMutex),
+    // so the cursor always travels with the picture it was captured beside.
+    std::mutex cursorMutex;
+    StreamCursor nextCursor, pixelsCursor;
+#ifdef TAK_STREAM_TESTING
+    mutable std::mutex testPictureMutex;
+    std::vector<uint8_t> testPicture;
+    int testPictureW = 0, testPictureH = 0;
+#endif
     // Fixed two-second ring, stereo S16 at the game's native 11025 Hz.
     std::mutex audioMutex;
     std::array<int16_t, 22050 * 2> pcm{};
@@ -169,6 +180,14 @@ struct Stream::Impl {
     // How far the worker's current attempt got, for the failure reason. Worker only.
     enum class Stage { Setup, Connect, Live } stage = Stage::Setup;
 
+#ifdef TAK_STREAM_TESTING
+    void testKeep(const uint8_t* picture, ptrdiff_t pitch, int w, int h) {
+        std::lock_guard lock(testPictureMutex);
+        testPicture.resize(size_t(w)*h*4);
+        for (int y=0;y<h;++y) std::memcpy(testPicture.data()+size_t(y)*w*4, picture+ptrdiff_t(y)*pitch, size_t(w)*4);
+        testPictureW = w; testPictureH = h;
+    }
+#endif
     void report(const std::string& s, const std::string& encoder = {}) {
         std::lock_guard lock(stateMutex); state.state = s;
         if (!encoder.empty()) state.encoder = encoder;
@@ -457,6 +476,8 @@ struct Stream::Impl {
                 bool haveVideo = false;
                 std::vector<uint8_t> frame;
                 int width = 0, height = 0;
+                StreamCursor frameCursor;
+                CursorStamper stamper;
                 while (!cancel) {
 #ifdef TAK_STREAM_TESTING
                     if (int delay = testDelay.exchange(0)) {
@@ -490,7 +511,8 @@ struct Stream::Impl {
                     if (vpts * 1000000 / c.fps <= elapsed) {
                         check(av_frame_make_writable(e.vf));
                         { std::lock_guard lock(inputMutex);
-                          if (fresh) { frame.swap(pixels); width = sourceW; height = sourceH; fresh = false; }
+                          if (fresh) { frame.swap(pixels); width = sourceW; height = sourceH; fresh = false;
+                                      frameCursor = std::move(pixelsCursor); pixelsCursor = {}; }
                         }
                         if (!frame.empty()) {
                             check(av_frame_make_writable(e.vf));
@@ -508,14 +530,25 @@ struct Stream::Impl {
                                 e.vf->data[2] ? e.vf->data[2]+y/2*e.vf->linesize[2]+x/2 : nullptr, nullptr};
                             // Resize with the threaded scaler (straight into the frame for
                             // NVENC's RGBA); swscale then only converts colour, at output size.
-                            if (packed) resize.scale(frame.data(), width, height, width*4, out[0], dw, dh, e.vf->linesize[0]);
-                            else {
-                                const uint8_t* source = frame.data();
+                            // The hardware cursor goes in after the resize, at output
+                            // resolution, into the picture (never the letterbox bars).
+                            if (packed) {
+                                resize.scale(frame.data(), width, height, width*4, out[0], dw, dh, e.vf->linesize[0]);
+                                stamper.stamp(out[0], e.vf->linesize[0], dw, dh, frameCursor);
+#ifdef TAK_STREAM_TESTING
+                                testKeep(out[0], e.vf->linesize[0], dw, dh);
+#endif
+                            } else {
+                                uint8_t* source = frame.data();
                                 if (dw != width || dh != height) {
                                     resized.resize(size_t(dw)*dh*4);
                                     resize.scale(frame.data(), width, height, width*4, resized.data(), dw, dh, dw*4);
                                     source = resized.data();
                                 }
+                                stamper.stamp(source, ptrdiff_t(dw)*4, dw, dh, frameCursor);
+#ifdef TAK_STREAM_TESTING
+                                testKeep(source, ptrdiff_t(dw)*4, dw, dh);
+#endif
                                 e.scale = sws_getCachedContext(e.scale, dw, dh, AV_PIX_FMT_RGBA,
                                     dw, dh, static_cast<AVPixelFormat>(e.vf->format), SWS_BILINEAR, nullptr, nullptr, nullptr);
                                 if (!e.scale) throw AVERROR(ENOMEM);
@@ -627,6 +660,9 @@ bool Stream::startRecording(const StreamConfig& c, const std::string& path) {
 void Stream::testDelayOnce(int milliseconds) { p_->testDelay = milliseconds; }
 void Stream::testFailLocalAfter(int packets) { p_->testCopyFail = packets; }
 bool Stream::testDelayInProgress() const { return p_->testDelaying; }
+std::vector<uint8_t> Stream::testLastPicture(int& w, int& h) const {
+    std::lock_guard lock(p_->testPictureMutex); w = p_->testPictureW; h = p_->testPictureH; return p_->testPicture;
+}
 size_t Stream::testRetainedVideoBytes() const {
     std::lock_guard lock(p_->inputMutex); return p_->pixels.capacity();
 }
@@ -650,7 +686,9 @@ bool Stream::video(const uint8_t* rgba, int w, int h, int pitch) {
     if (p_->fresh) ++p_->replaced;
     p_->pixels.resize(size_t(w)*h*4);
     for (int y=0;y<h;++y) std::memcpy(p_->pixels.data()+size_t(y)*w*4, rgba+size_t(y)*pitch, size_t(w)*4);
-    p_->sourceW=w; p_->sourceH=h; p_->fresh=true; return true;
+    p_->sourceW=w; p_->sourceH=h; p_->fresh=true;
+    { std::lock_guard cursorLock(p_->cursorMutex); p_->pixelsCursor = p_->nextCursor; }
+    return true;
 }
 bool Stream::video(std::vector<uint8_t>& rgba, int w, int h) {
     if (!active() || w <= 0 || h <= 0 || w > 8192 || h > 8192 || rgba.size() != size_t(w)*h*4) return false;
@@ -659,7 +697,12 @@ bool Stream::video(std::vector<uint8_t>& rgba, int w, int h) {
     if (!p_->running || p_->cancel) return false;
     if (p_->fresh) ++p_->replaced;
     p_->pixels.swap(rgba);
-    p_->sourceW=w; p_->sourceH=h; p_->fresh=true; return true;
+    p_->sourceW=w; p_->sourceH=h; p_->fresh=true;
+    { std::lock_guard cursorLock(p_->cursorMutex); p_->pixelsCursor = p_->nextCursor; }
+    return true;
+}
+void Stream::cursor(const StreamCursor& c) {
+    std::lock_guard lock(p_->cursorMutex); p_->nextCursor = c;
 }
 void Stream::audio(const int16_t* samples, int frames, int channels) {
     if (!active() || !samples || channels < 1 || channels > 8) return;

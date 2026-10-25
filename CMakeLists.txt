@@ -1932,7 +1932,7 @@ if(FFMPEG_FOUND)
   message(STATUS "FFmpeg: STATIC Bink and streaming build from ${TAK_FFMPEG_PREFIX}")
 endif()
 
-add_executable(stream_network_test tools/stream_network_test.cpp src/video/stream.cpp src/video/rgbascale.cpp)
+add_executable(stream_network_test tools/stream_network_test.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp)
 target_compile_definitions(stream_network_test PRIVATE TAK_STREAM_TESTING)
 target_link_libraries(stream_network_test PRIVATE tak-formats tak_ffmpeg)
 # A real RTMPS upload to a local TLS proxy + RTMP sink (no ffmpeg program needed): it
@@ -1945,7 +1945,7 @@ if(Python3_Interpreter_FOUND AND NOT WIN32)
   set_tests_properties(streaming_rtmps PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
 endif()
 
-add_executable(stream_test tools/stream_test.cpp src/video/stream.cpp src/video/rgbascale.cpp)
+add_executable(stream_test tools/stream_test.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp)
 target_compile_definitions(stream_test PRIVATE TAK_STREAM_TESTING=1)
 target_link_libraries(stream_test PRIVATE tak-formats tak_ffmpeg)
 add_test(NAME streaming COMMAND stream_test)
@@ -1958,6 +1958,14 @@ add_executable(rgbascale_test tools/rgbascale_test.cpp src/video/rgbascale.cpp)
 target_include_directories(rgbascale_test PRIVATE src)
 target_link_libraries(rgbascale_test PRIVATE Threads::Threads)
 add_test(NAME rgbascale COMMAND rgbascale_test)
+# Hardware-cursor stamping into stream frames (no GPU, no FFmpeg): position, scale,
+# letterbox mapping, edge clipping and alpha.
+add_executable(streamcursor_test tools/streamcursor_test.cpp src/video/streamcursor.cpp)
+target_include_directories(streamcursor_test PRIVATE src)
+add_test(NAME streamcursor COMMAND streamcursor_test)
+# The stream worker end to end: a captured frame plus a cursor -> the stamped picture.
+add_test(NAME streaming_cursor COMMAND stream_test libx264 cursor)
+set_tests_properties(streaming_cursor PROPERTIES TIMEOUT 60)
 # 77: this FFmpeg build predates the local copy's MP4 muxer (rerun build-ffmpeg-bink.sh).
 set_tests_properties(streaming PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
 
@@ -2021,7 +2029,7 @@ set_tests_properties(credstore PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/video/rgbascale.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp)
+    add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp)
     # Local dev/test harness (standalone scenario/demo/FFA setup, --testbuild/--firetest...):
     # debug builds only. The file is also wrapped in #ifndef NDEBUG, as are its callers, so
     # this just skips an empty TU when the config's flags define NDEBUG.
@@ -2127,14 +2135,17 @@ if(TAK_BUILD_CLIENT)
     add_executable(crusades_effective_audit tools/crusades_effective_audit.cpp)
     target_compile_definitions(crusades_effective_audit PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(crusades_effective_audit PRIVATE tak-formats ${_tak_sdl2})
-    add_executable(stream_capture_test tools/stream_capture_test.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp src/video/stream.cpp src/video/rgbascale.cpp
+    add_executable(stream_capture_test tools/stream_capture_test.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp
                    src/client/settings.cpp)
     target_link_libraries(stream_capture_test PRIVATE tak-uifont tak-formats tak-credstore tak_ffmpeg ${_tak_sdl2})
-    target_compile_definitions(stream_capture_test PRIVATE SDL_MAIN_HANDLED)
+    target_compile_definitions(stream_capture_test PRIVATE SDL_MAIN_HANDLED TAK_STREAM_TESTING=1)
     add_test(NAME streaming_capture COMMAND stream_capture_test)
+    # The hardware cursor stamped through the portable capture path (software renderer).
+    add_test(NAME streaming_capture_cursor COMMAND stream_capture_test "" "" 640 480 cursor)
+    set_tests_properties(streaming_capture_cursor PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 15)
     set_tests_properties(streaming_capture PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 15)
     # Remember Key logic and panel against a fake credential store (never the real one).
-    add_executable(stream_key_test tools/stream_key_test.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp src/video/stream.cpp src/video/rgbascale.cpp
+    add_executable(stream_key_test tools/stream_key_test.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp
                    src/client/settings.cpp)
     target_link_libraries(stream_key_test PRIVATE tak-uifont tak-formats tak-credstore tak_ffmpeg ${_tak_sdl2})
     target_compile_definitions(stream_key_test PRIVATE SDL_MAIN_HANDLED)

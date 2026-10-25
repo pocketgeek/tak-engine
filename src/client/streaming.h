@@ -27,6 +27,11 @@ public:
     SDL_FRect rememberRect(int w, int h);
     SDL_FRect localCopyRect(int w, int h); // the SAVE A LOCAL COPY row
     bool waitKeyStore(int ms);
+#ifdef TAK_STREAM_TESTING
+    // Use this cursor for every capture instead of the OS pointer's (null: back to the
+    // OS pointer), so a hidden test window can check stamping through each backend.
+    void testCursor(const video::StreamCursor*);
+#endif
 private:
     struct Impl;
     std::unique_ptr<Impl> p_;

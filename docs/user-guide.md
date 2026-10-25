@@ -1593,7 +1593,7 @@ missed are silent while the game catches up.
 | **Tactical Dots** | On | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. |
 | **Tactical Dots Zoom** | 0% | How far out you must zoom before dots replace models. Greyed out while Tactical Dots is off. See below. |
 | **Screen Shake** | Off | Shakes the camera on heavy impacts (weapons that shake the screen in the original game) and on mission earthquakes. Applies at once. |
-| **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. |
+| **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. It stays on while you stream; the stream draws the same cursor into the video. Beside the switch the game shows what it gave the system, for example `OS CURSOR 64X100`, or `UNAVAILABLE - SOFTWARE` if the system refused a cursor that size and the game is drawing it itself. |
 | **Smooth Motion** | On | Units glide between the game's 30 updates per second instead of stepping. Adds about 33 ms of visual delay. |
 | **GPU Memory Limit** | 1.25 GB | The most video memory the game's own textures may use: 512 MB, 768 MB, 1 GB, 1.25 GB (the default), 1.5 GB, 2 GB, 3 GB, 4 GB or Unlimited. Applies at once. See below. |
 

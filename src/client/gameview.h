@@ -851,7 +851,11 @@ public:
     // We never restore the OS arrow on teardown: the menu and the game both hide it and
     // draw their own, so restoring it only makes the arrow flash during the next screen's
     // (slow) load; the desktop cursor returns on its own when the window is destroyed.
-    void drawCursorOverlay(bool forceSoftware = false, bool uiOverlay = false);
+    // `uiOverlay`: a plain arrow for a panel drawn over the game (the streaming setup).
+    void drawCursorOverlay(bool uiOverlay = false);
+    // HARDWARE CURSOR is on and the platform took our cursor: the OS draws the pointer
+    // (and a stream gets it stamped in by its worker), so nothing is drawn into frames.
+    bool hardwareCursorInUse() const;
     void setAudioTap(void* context, void (*tap)(void*, const int16_t*, int, int)) {
         sounds_.setAudioTap(context, tap);
     }

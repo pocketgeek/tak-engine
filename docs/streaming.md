@@ -120,8 +120,27 @@ keeps streaming from uncapping presentation.
 ## What the stream contains
 
 The stream carries the game view, HUD, cursor and mixed game audio, including the
-title and lobby music. Hardware cursors temporarily use the software drawing path
-so they appear in the stream. A differently shaped game window is letterboxed.
+title and lobby music. A differently shaped game window is letterboxed.
+
+### The cursor
+
+With **Hardware Cursor** on (the default), the pointer stays a hardware cursor on
+your screen while you stream. The operating system draws that cursor, so it is not
+in the captured picture; the stream's encoding worker draws the same cursor back
+into each frame instead: the same art and animation frame, the fight-move tint,
+your **Cursor Size**, and the hotspot on the pointer. It is drawn after the frame
+is resized to the stream size, so it keeps the share of the picture it has on
+screen, and inside a letterboxed picture it never spills into the black bars. It is
+clipped at the picture's edges, and it is left out while the pointer is outside the
+game window. This costs the game nothing per frame beyond handing the worker the
+cursor picture; the worker blends a few hundred pixels. While the setup panel is
+open, the stream shows the plain arrow the panel uses.
+
+With Hardware Cursor off, the game draws its cursor into the frame, so the stream
+captures it as part of the picture and nothing is added. In that mode the title
+screen's cursor is drawn after the capture and is not in the stream. Under
+Direct3D 11 the captured picture can be a frame or two older than the cursor
+position stamped on it; at the game's frame rate that is a few milliseconds.
 The setup panel, title-screen account and settings overlays, and the connection
 badges are drawn **after capture** and stay off the stream. During loading and
 modal screens the last captured frame stays on the stream.
@@ -308,7 +327,12 @@ full disk must stop only the copy, leaving the frames already fragmented readabl
 and an unwritable folder must fail only the copy. Built against an FFmpeg from before
 the local copy (no MP4 muxer), that part reports itself and CTest shows the test as
 skipped; CI does not allow the skip. Rerun `tools/build-ffmpeg-bink.sh` to update.
-`stream_capture_test` exercises capture with an open private setup panel.
+`stream_capture_test` exercises capture with an open private setup panel; with
+`cursor` as its fifth argument (`stream_capture_test gl "" 640 480 cursor`) it
+checks that a cursor reaches the encoded picture at the right place and size through
+that renderer's capture path, and is gone once cleared. `streamcursor_test` checks the
+cursor stamping itself (position, size, letterbox, clipping and alpha) without a GPU,
+and `stream_test libx264 cursor` checks it through the encoding worker.
 `stream_key_test` drives Remember Key through the panel against a fake store, and
 checks that the saved settings never contain the key. `credstore_test` makes a round
 trip through the real password store under a test-only name (service

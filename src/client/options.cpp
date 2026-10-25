@@ -2,6 +2,7 @@
 
 #include "client/uitext.h"
 #include "client/chatbox.h"   // wrap
+#include "client/cursorpath.h"
 #include "client/hidpi.h"
 #include "client/datafolder.h"
 #include "client/gpuvram.h"
@@ -522,6 +523,8 @@ void OptionsScreen::build(int channels) {
     // stalls the render loop (the retail Direct3D "hardware cursor" option).
     toggle("HARDWARE CURSOR", [&] { return s_.hardwareCursor ? 1.0f : 0.0f; },
            [&](float v) { s_.hardwareCursor = v > 0.5f; });
+    // Which path actually runs: the OS cursor and its size, or the platform's refusal.
+    ctls_.back().note = [this] { return hardwareCursorNote(s_.hardwareCursor, hardwareCursorStatus()); };
     // Glide units between the 30Hz sim ticks instead of stepping them -- smooth motion
     // above 30fps, at the cost of ~one tick (33ms) of visual latency.
     toggle("SMOOTH MOTION", [&] { return s_.smoothMotion ? 1.0f : 0.0f; },
@@ -927,6 +930,14 @@ void OptionsScreen::render(int winW, int winH) {
             if (live) SDL_SetRenderDrawColor(ren_, 130, 140, 170, 255);
             else SDL_SetRenderDrawColor(ren_, 70, 76, 92, 255);
             SDL_RenderDrawRectF(ren_, &pill);
+            if (c.note && live) {   // e.g. HARDWARE CURSOR's "OS CURSOR 64X100": left of the pill
+                const std::string n = c.note();
+                const float npx = 1.3f * u_, nx = pill.x - 10 * u_ - uiTextWidth(n, npx);
+                if (!n.empty() && nx > c.row.x + uiTextWidth(c.label, fpx) + 8 * u_)
+                    uiText(ren_, n, nx, pill.y + (pill.h - 7 * npx) / 2, npx,
+                           n.starts_with("UNAVAILABLE") ? SDL_Color{240, 190, 90, 255}
+                                                        : SDL_Color{150, 160, 175, 255});
+            }
             const char* t = on ? "ON" : "OFF";
             uiText(ren_, t, pill.x + (pill.w - uiTextWidth(t, 2.0f * u_)) / 2,
                           pill.y + (pill.h - 7 * 2.0f * u_) / 2, 2.0f * u_,
