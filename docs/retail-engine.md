@@ -110,7 +110,36 @@ MeleeWeapon vtable `0x5f3af8`, base WeaponType `0x5f3710`):
   no weapon-piece origin.
 - **BallisticWeapon @0x52bc60**: solves the launch arc first (helper `0x52bd10`,
   the only user of dy; `0x8000` = no solution → out of range), then falls
-  through to the base centre test.
+  through to the base centre test. The arc runs origin to origin (target minus
+  shooter `+0x68/+0x6c/+0x70`, so a submerged or flying body's own y), each
+  delta and the speed `+0xd0 * +0xcc` (per-substep velocity times substeps,
+  our `retailAimSpeed`) scaled to float by `1/65536`, under the map's gravity
+  (`game+0x19ecc`). The base test it falls into is `530580`: weapon flags
+  `+0xc8` bits `0x4000`/`0x8000` against the target's air state, `range==0`
+  in range, else the per-axis high dwords of `dx²` and `dz²` summed against
+  `range²`. Ported 2026-10-25 (0.9.2) as `tak::retailBallisticInRange` /
+  `World::ballisticInRange`; `tools/re/check_ballistic_inrange.py` emulates
+  `52bc60` on 6000 cases (half of them the Marine Mortar around 750/800 px)
+  and matches every answer.
+
+**Engine use (0.9.2).** For a Ballistic weapon (not Dropped, flame or beam:
+`Weapon::ballisticClass`) the sweep and auto slots (`slotInRange`), the attack
+order's fire gate and its approach all use that predicate, with no footprint
+pad. Every other ranged weapon keeps our structure pad (`8*max(foot)+24` px,
+so short-range attackers do not grind a building's edge). Before, the pad let
+a Creon Submersible 822-848 px from an 800-range Divine Lodestone count as in
+range; the arc had no solution, `queryWeaponAim` turned `0x8000` into pitch 0
+(what `52bdf0` stores) and the sub lobbed every shell flat into the water at
+its bow (44% of all sub shots in the user's 0.9.1 game). Now an ordered
+attacker closes in until the arc reaches; a boat that cannot get nearer (a
+land target past the shore) holds without firing, as retail. The aim still
+reports pitch 0 for no arc, but a slot whose muzzle-to-SweetSpot solve has
+no arc (possible just inside the origin solve's reach) does not start
+FireWeapon (`tickScriptWeapon`) and a scriptless shot is not launched
+(`fire`); a unit free to move keeps closing there. The reposition search
+(`repositionForShot`) keeps only spots the arc reaches. `naval_combat_test`
+covers 740/785/795 px (hits), 830-848 px in open water (closes in, hits, no
+splash within 300 px of the sub) and behind a shore (no shot, no churn).
 - **MeleeWeapon @0x52b980** (point @0x52b8a0): **never reads `range`**. Each
   unit's footprint box is position ∓ `foot<<19` (∓ 8px·footCells, cell-snapped);
   in range iff on BOTH axes `|centreΔ| − halfA − halfB < 0x80000` (= 8 px) —
@@ -182,7 +211,11 @@ ranged, non-lobbing ground weapons (`slotClearShot`, `tickCombat`'s `los`).
 That test cannot see a passable crest a low arc clips, water, a tall feature
 that does not block movement, or the corner cells its Bresenham walk skips,
 so since this change the sim also watches where shots land
-(`World::noteShotImpact`, every ballistic, straight and guided shot):
+(`World::noteShotImpact`, every ballistic, straight and guided shot, and
+since 0.9.2 every flame: `tickFlames` reports a flame's first impact with the
+unit it was fired at, `FlameShot::targetId`, hashed). Melee, beam and other
+instant hits land on the target itself, and Remote Effect spells and
+wandering storms are not aimed shots, so none of them can stop on scenery:
 
 - An impact on terrain, water or scenery the weapon cannot destroy
   (`indestructible`, no `damage`, `unitsonly`; a fire starter still counts a
@@ -193,8 +226,12 @@ so since this change the sim also watches where shots land
   included: an arc that clears never counts.
 - After three in a row (`shotBlockedHere`), an auto weapon slot treats the
   target as having no clear shot from here (the sweep drops it and picks
-  another). An attacking ground mover that is allowed to leave its post
-  (not Hold Position) searches the cells within 12 of it for the nearest spot
+  another), and auto-acquisition (`findTarget`) does not pick it again from
+  this spot. An attacking ground mover that is allowed to leave its post
+  (not Hold Position), or a Hold Position unit whose auto target interrupted
+  a movement order (an attack-move, a patrol or a move queued behind it: the
+  Creon Fire Wagon ships Hold Position, `standingunitorder=1`, and the AI
+  attack-moves it), searches the cells within 12 of it for the nearest spot
   in the weapon's range band of the target that it fits on, can reach, is away
   from the blocked spot, passes the 2D test, and has a clear straight chord
   from its muzzle height to the target's SweetSpot through `52a4d0`'s map
@@ -202,13 +239,16 @@ so since this change the sim also watches where shots land
   to that spot in front of the attack, so Retail and Legion each walk it their
   own way, and the attack resumes on arrival (`repositionForShot`).
 - Three walks per target between hits on it (a hit renews them); when none
-  is left the unit fires on as retail does. A search that finds no spot
+  is left the unit fires on as retail does, unless its target is an auto
+  target with a movement order behind it: that unit drops the target and
+  goes on with the movement (also when a search finds no spot). A search that finds no spot
   writes off the moment, not the target: the unit fires on (still counted
   blocked, so the sweep prefers another target) and searches again after
   three more blocked shots (`Unit::searchFailed`), so a target that moves
   behind a different obstacle, or a long-lived one attacked later from a new
-  approach, is searched again. Buildings, flyers, melee and Hold Position never
-  move. The state (`Unit::blockedTarget` and its counters) is hashed, with a
+  approach, is searched again. Buildings, flyers and melee never move, and
+  neither does Hold Position with nothing queued behind its attack (it fires
+  on, as retail). The state (`Unit::blockedTarget` and its counters) is hashed, with a
   tag, only once a blocked impact has been seen.
 
 `blocked_shot_test` (Retail and `--legion`) uses the shipped Aramon Archer and
@@ -218,6 +258,14 @@ damage (retail); on Maneuver it lands 3 short, walks 49-88 px and kills the
 target with 5 hits. Its sticky case: an archer whose first search fails (a
 full-height campfire wall out of reach) walks once and lands 16 hits after the
 target moves behind the short row; before the fix it never walked again.
+Since 0.9.2 it also replays the user's Fire Wagon: a shipped `crefire`
+344 px from an `aralode` with a shipped `ZonHenge04` (1x2, indestructible,
+height 60) on the line of fire that the Bresenham walk passes beside. Idle on
+Hold Position it burns the stone 10 times for no damage with the count at 10
+(before: count 0); with the AI's attack-move queued behind the auto attack,
+Hold Position or Maneuver, it lands 3 flames on the stone, moves about 38 px
+and destroys the lodestone (before: 20 flames on the stone, no damage, no
+move).
 
 ## After an unload the carrier stands by and lands (icd, 2026-10-12, protocol 256)
 

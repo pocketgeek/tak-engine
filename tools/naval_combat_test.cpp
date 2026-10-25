@@ -6,6 +6,7 @@
 #include "sim/legion.h"
 #include "sim/matchsetup.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string_view>
 
@@ -130,6 +131,89 @@ int main(int argc,char**argv) {
                 w.blockCells(53,0,6,128,false);
                 for (int tick=0;tick<600 && !fired;++tick) { w.tick(1.f/30.f);fired=w.unit(a)->justFired; }
                 check(fired,"removing a shared obstacle immediately opens naval sight");
+            }
+        }
+    }
+    // A Creon Submersible's Marine Mortar (Ballistic, lobpreferred,
+    // gravityadjustment 2.8) against an Aramon Divine Lodestone (3x3) on an
+    // island, as in the user's 0.9.1 game. 52bc60 rules a target out of range
+    // when the shell's arc cannot reach it and tests the centre distance with
+    // no footprint pad; our footprint pad let subs 822-848 px off lob shells
+    // flat into the water at their own bow. Never in Legion: no movement here
+    // that Legion routes differently matters to what is checked.
+    if (!legion) {
+        tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,true);   // range 800, as in the game
+        const auto* sub=registry.find("cresubm");
+        const auto* mana=registry.find("aramana");
+        check(sub && mana && sub->weapon.ballistic,"shipped cresubm (ballistic) and aramana load");
+        if (sub && mana) {
+            const float range=float(sub->weapon.range);
+            // island: cells [isl0,isl1) square, land 66 over sea level 64.
+            struct Shot { int fired=0,hits=0,bowSplashes=0; float closest=1e9f,moved=0,lastMoves=0; };
+            auto run=[&](float distance,int moveState,int islandHalf,int ticks) {
+                tak::sim::World w;w.setVisPlayer(-1);
+                const int size=256;
+                std::vector<uint8_t> heights(size_t(size)*size,10);
+                const int c=size/2;
+                for (int z=c-islandHalf;z<c+islandHalf;++z) for (int x=c-islandHalf;x<c+islandHalf;++x)
+                    heights[size_t(z)*size+x]=66;
+                w.setTerrain(heights,size,size,64);w.buildNavClasses(registry);
+                auto victim=*mana;victim.maxHp=60000;victim.healTime=0;
+                const float tx=float(c*16),tz=float(c*16);
+                const int b=w.spawn(&victim,tx,tz,0,1);
+                const int a=w.spawn(sub,tx-distance,tz,1.570796327f,0);
+                w.unit(a)->moveState=moveState;
+                w.player(0).mana=30000;
+                Shot out;
+                std::vector<std::pair<float,float>> trail;
+                for (int tick=0;tick<ticks;++tick) {
+                    w.tick(1.f/30.f);
+                    const auto* u=w.unit(a);
+                    if (!u || !w.unit(b)) break;
+                    out.fired+=u->justFired;
+                    trail.push_back({u->x.toFloat(),u->z.toFloat()});
+                    out.closest=std::min(out.closest,tak::sim::fxLen(u->x-w.unit(b)->x,u->z-w.unit(b)->z).toFloat());
+                    for (const auto& h:w.hits()) {
+                        if (h.fromPlayer!=0) continue;
+                        if (h.victimId==b) { ++out.hits;continue; }
+                        const float dx=h.x-u->x.toFloat(),dz=h.z-u->z.toFloat();
+                        if (dx*dx+dz*dz<300.f*300.f) ++out.bowSplashes;
+                    }
+                }
+                for (size_t i=1;i<trail.size();++i) {
+                    const float step=std::hypot(trail[i].first-trail[i-1].first,trail[i].second-trail[i-1].second);
+                    out.moved+=step;
+                    if (i+600>=trail.size()) out.lastMoves+=step;
+                }
+                return out;
+            };
+            auto show=[&](const char* what,float d,const Shot& s) {
+                std::printf("cresubm %-26s from %.0f px (range %.0f): fired=%d hits=%d bow-splashes=%d closest=%.0f moved=%.0f last20s=%.0f\n",
+                    what,d,range,s.fired,s.hits,s.bowSplashes,s.closest,s.moved,s.lastMoves);
+            };
+            // In arc and in range: it hits from where it lies.
+            const Shot near=run(range-60,0,8,900);show("hold, near",range-60,near);
+            check(near.hits>0 && near.bowSplashes==0,"a sub well inside its range lobs onto the lodestone");
+            // Past the range: a sub that may move closes in and hits; it never
+            // lobs a shell flat into the water at its bow.
+            for (float d:{range+30,range+40,range+48}) {
+                const Shot open=run(d,2,8,1800);show("roam, open water",d,open);
+                check(open.bowSplashes==0,"no flat shell into the water from beyond the arc's reach");
+                check(open.hits>0 && open.closest<=range,"the sub closes to its range and hits");
+            }
+            // The band where the origin arc reaches but the muzzle-to-SweetSpot
+            // solve may not: a shell is lobbed onto the target or not at all.
+            for (float d:{range-15,range-5}) {
+                const Shot band=run(d,0,8,900);show("hold, edge of range",d,band);
+                check(band.bowSplashes==0 && (band.fired==0 || band.hits>0),
+                      "at the edge of its range a sub hits the lodestone or holds its fire");
+            }
+            // Past the range with the shore in the way: it cannot close, so it
+            // holds: no shell, and no churning at the shoreline.
+            for (float d:{range+30,range+48}) {
+                const Shot shore=run(d,2,int(range+8)/16,1800);show("roam, shore-bound",d,shore);
+                check(shore.fired==0 && shore.bowSplashes==0,"a sub kept past its range by the shore does not fire");
+                check(shore.lastMoves<64,"a shore-bound sub holds instead of churning");
             }
         }
     }

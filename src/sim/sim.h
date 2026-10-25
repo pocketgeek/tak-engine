@@ -126,6 +126,11 @@ struct Weapon {
     //   Freeze        the whole spell ABORTS if its caster dies mid-channel.
     enum class RemoteKind { Plain, Earthquake, Hailstorm, MindCtl, Freeze };
     RemoteKind remote = RemoteKind::Plain;
+    // Retail's BallisticWeapon class: a plain Ballistic shell (not Dropped, a
+    // flame or a beam). Its inRange (52bc60) solves the launch arc first.
+    bool ballisticClass() const {
+        return ballistic && kind == Kind::Normal && !melee && !beam && flameKind < 0;
+    }
     int32_t particlesPerSec = 0; // particlespersecond (readInt): hailstorm pulse rate
     float turnRate = 0;      // guided: steering rate, radians/sec (FBI deg/s)
     // Retail splits a projectile's per-tick travel into sub-steps so no sub-step is
@@ -1448,6 +1453,7 @@ struct Projectile {
 struct FlameShot {
     const Weapon* weapon=nullptr;
     int owner=0,fromId=0,slot=0;
+    int targetId=0;        // the unit it was fired at, for the blocked-shot count
     std::array<int32_t,3> position{},velocity{},endpoint{};
     std::array<int32_t,3> muzzle{},aimPoint{}; // display-only native admission endpoints
     uint32_t start=0,end=0,lifetime=1,speed=0,substeps=1;
@@ -2314,6 +2320,9 @@ public:
         std::array<int32_t,3> target{}, source{};
         // 52fe30's facing request, a native heading (retailSlotFacing).
         uint16_t facing=0;
+        // A ballistic slot whose arc (52bd10) cannot reach the aim point: the
+        // aim keeps native pitch 0 (52bdf0), but no shell is launched.
+        bool unreachable=false;
     };
     std::optional<WeaponAimSolution> queryWeaponAim(int unitId,int targetId,int slot);
     // 51aa50 for a unit target: its SweetSpot plus the weapon's lead.
@@ -3036,6 +3045,9 @@ private:
     void setSlotTarget(Unit& u,int slot,int id);   // 51a700
     void syncSlotMode(Unit& u);
     bool slotInRange(const Unit& u,const Unit& t,int slot) const;
+    // 52bc60 (BallisticWeapon::inRange) for a shooter standing at (x,y,z).
+    bool ballisticInRange(Fixed x,Fixed y,Fixed z,const Unit& t,const Weapon& w) const;
+    bool ballisticInRange(const Unit& u,const Unit& t,const Weapon& w) const;
     bool slotInsideMinRange(const Unit& u,const Unit& t,int slot) const;
     bool slotBadTarget(const Unit& u,int slot,const Unit& t) const;
     bool slotClearShot(const Unit& u,const Unit& t,int slot) const;

@@ -53,6 +53,20 @@ inline uint16_t retailBallisticPitch(float dx,float dy,float dz,float speed,
     if(!std::isfinite(angle))return 0;
     return uint16_t(int32_t(angle));
 }
+
+// 52bc60, BallisticWeapon::inRange: the deltas are target minus shooter
+// ORIGIN (+0x68/+0x6c/+0x70, 16.16), the speed the weapon's per-substep
+// velocity times its substep count (retailAimSpeed). No arc (52bd10 returns
+// 0x8000) is out of range; otherwise the base test 530580 decides: range 0
+// is always in range, else the per-axis high dwords of the squared deltas,
+// summed, against range squared (inclusive). No footprint enters it.
+inline bool retailBallisticInRange(int32_t dx,int32_t dy,int32_t dz,int32_t speed,
+                                   float gravityScale,bool highArc,int32_t gravity,int32_t range) {
+    if(retailBallisticPitch(float(dx)/65536.f,float(dy)/65536.f,float(dz)/65536.f,
+                            float(speed)/65536.f,gravityScale,highArc,gravity)==0x8000)return false;
+    if(!range)return true;
+    return ((int64_t(dx)*dx)>>32)+((int64_t(dz)*dz)>>32)<=int64_t(int32_t(uint32_t(range)*uint32_t(range)));
+}
 }
 
 namespace tak::sim {

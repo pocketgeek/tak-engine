@@ -5228,6 +5228,7 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         const int32_t raw=int32_t(double(w.projVel)*2184.5333333333333);
         if(raw<=0)return;
         FlameShot flame;flame.weapon=&w;flame.owner=u.player;flame.fromId=u.id;flame.slot=slot;
+        flame.targetId=target.id;
         flame.position=queryUnitScriptPoint(u.id,false,slot);
         flame.muzzle=flame.position;
         flame.aimPoint=scriptTriggered ? u.weaponAimPoints[size_t(slot)] :
@@ -5380,6 +5381,7 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
             const uint32_t steps = std::max(1u, (uint32_t(raw) + 0xfffffu) >> 20);
             const auto aim = scriptTriggered ? std::optional<WeaponAimSolution>{} :
                                                queryWeaponAim(u.id, target.id, slot);
+            if (aim && aim->unreachable) return;   // no arc: no flat shell (queryWeaponAim)
             const uint16_t heading = scriptTriggered ? u.weaponAim[size_t(slot)].heading :
                 aim ? aim->heading : u.weaponAim[size_t(slot)].heading;
             const uint16_t pitch = scriptTriggered ? u.weaponAim[size_t(slot)].pitch :
@@ -5585,6 +5587,7 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
             // Range rejects most candidates. Damage/category lookup is pure,
             // so defer it until these cheap geometric checks have passed.
             if (!canTarget(e)) return;
+            if (shotBlockedHere(u,e)) return;   // written off from this spot (noteShotImpact)
             if (ranged && !e.type->canFly && !lobber &&
                 !combatLineOfSight(u,e))
                 return;                         // no clear shot: don't acquire it
@@ -5714,11 +5717,29 @@ bool World::slotInsideMinRange(const Unit& u,const Unit& t,int slot) const {
     return m>0 && retailCentreDist2(u,t)<m*m;
 }
 
+// 52bc60 (BallisticWeapon::inRange): the launch arc from the shooter's
+// origin to the target's (flight y for a flyer, a submerged body's own y),
+// at the weapon's aim speed under the map's gravity; then the strict centre
+// test, with no footprint pad. A shell that cannot reach is never in range,
+// so the weapon is not aimed or fired and an ordered attacker closes in.
+bool World::ballisticInRange(Fixed x,Fixed y,Fixed z,const Unit& t,const Weapon& w) const {
+    const Fixed ty=t.type->canFly ? t.flightY : t.groundY;
+    auto delta=[](Fixed to,Fixed from) { return std::bit_cast<int32_t>(uint32_t(to.v)-uint32_t(from.v)); };
+    return tak::retailBallisticInRange(delta(t.x,x),delta(ty,y),delta(t.z,z),tak::retailAimSpeed(w.projVel),
+        w.gravityAdj,w.lobPreferred,ballisticGravityRaw_,w.range);
+}
+
+bool World::ballisticInRange(const Unit& u,const Unit& t,const Weapon& w) const {
+    return ballisticInRange(u.x,u.type->canFly ? u.flightY : u.groundY,u.z,t,w);
+}
+
 bool World::slotInRange(const Unit& u,const Unit& t,int slot) const {
     const Weapon& w=u.type->weapons[size_t(slot)];
     if (w.melee) return meleeInRange(u.type,t.type,(t.x-u.x).toFloat(),(t.z-u.z).toFloat());
+    if (w.ballisticClass()) return ballisticInRange(u,t,w);
     // The base test (530580) is centre to centre, inclusive. A structure is
-    // padded by its footprint like the order-driven fire test (tryFire).
+    // padded by its footprint like the order-driven fire test (tryFire); a
+    // ballistic shell is not (above), since its arc must actually reach.
     const int64_t pad=t.type->isStructure() ? 8*std::max(t.type->footX,t.type->footZ)+24 : 0;
     const int64_t r=int64_t(w.range)+pad;
     return retailCentreDist2(u,t)<=r*r;
@@ -5868,18 +5889,42 @@ static constexpr uint8_t kMaxRepositions=3;
 static constexpr int kRepositionReach=12;    // cells from the unit searched for a spot
 static constexpr int kRepositionChords=256;  // chord tests per search, nearest spots first
 
+// The order behind the front one is a movement leg: a move, an attack-move
+// or a patrol, with no target or job of its own.
+static bool movementQueued(const Unit& u) {
+    if (u.orders.size()<2) return false;
+    const Order& o=u.orders[1];
+    return !o.targetId && !o.guard && !o.load && !o.unload && !o.buildType && !o.reclaimFeat &&
+        !o.reclaimArea && !o.manaBuildArea && !o.repairTarget && !o.wait && !o.waitAttack;
+}
+
 bool World::repositionForShot(Unit& u,const Unit& t,int slot) {
     if (u.repositions>=kMaxRepositions) return false;
     if (u.searchFailed && u.blockedShots<2*kBlockedShots) return false;
     const Weapon& w=u.type->weapons[size_t(slot)];
     const int foot=footCells(u.type);
     const NavGrid& grid=navFor(u.type);
-    const int64_t pad=t.type->isStructure() ? 8*std::max(t.type->footX,t.type->footZ)+24 : 0;
+    // A ballistic shell is held to its arc and the strict centre test (each
+    // spot is solved below), so its band has no footprint pad.
+    const bool arc=w.ballisticClass();
+    const int64_t pad=t.type->isStructure() && !arc ? 8*std::max(t.type->footX,t.type->footZ)+24 : 0;
     const int64_t hi=int64_t(w.range)+pad-16,lo=std::max<int64_t>(int64_t(w.minRange)+16,
         8*(std::max(t.type->footX,t.type->footZ)+foot)+8);
     const int64_t ux=u.x.floorInt(),uz=u.z.floorInt(),tx=t.x.floorInt(),tz=t.z.floorInt();
     const int ucx=footprintCell(u.x,foot),ucz=footprintCell(u.z,foot);
     const bool needLoS=w.range>64 && !t.type->canFly && !u.type->lobs();
+    // The origin height the unit would stand at on a spot: a boat keeps its
+    // own (sea level or its dive depth); a ground body follows the terrain
+    // with its present clearance over it.
+    auto terrainY=[&](Fixed x,Fixed z) {
+        return heights_.empty() ? Fixed() : Fixed::fromInt(retailTerrainHeight(x.v,z.v,terW_,terH_,
+            [&](int hx,int hz) { return heights_[size_t(hz)*size_t(terW_)+size_t(hx)]; }));
+    };
+    const Fixed clearance=u.type->domain==UnitType::Domain::Water ? Fixed() : u.groundY-terrainY(u.x,u.z);
+    auto spotY=[&](int cx,int cz) {
+        return u.type->domain==UnitType::Domain::Water ? u.groundY :
+            terrainY(footprintWaypoint(cx,foot),footprintWaypoint(cz,foot))+clearance;
+    };
     std::vector<std::pair<int64_t,int>> spots;
     if (hi>lo) for (int cz=ucz-kRepositionReach;cz<=ucz+kRepositionReach;++cz)
         for (int cx=ucx-kRepositionReach;cx<=ucx+kRepositionReach;++cx) {
@@ -5889,6 +5934,8 @@ bool World::repositionForShot(Unit& u,const Unit& t,int slot) {
             if (r2>hi*hi || r2<lo*lo) continue;
             if (std::abs(px-u.blockedX)<=2*kBlockedSpot && std::abs(pz-u.blockedZ)<=2*kBlockedSpot) continue;
             if (!grid.fits(cx,cz,foot) || !passable(u.type,cx,cz)) continue;
+            if (arc && !ballisticInRange(footprintWaypoint(cx,foot),spotY(cx,cz),footprintWaypoint(cz,foot),t,w))
+                continue;
             spots.push_back({(px-ux)*(px-ux)+(pz-uz)*(pz-uz),cz*terW_+cx});
         }
     std::sort(spots.begin(),spots.end());
@@ -6428,6 +6475,30 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
                     ? 8.0f * float(std::max(target->type->footX, target->type->footZ)) + 24.0f
                     : 0.0f;
     float reach = best + pad;
+    // A ballistic weapon reaches only where its arc does (52bc60, see
+    // ballisticInRange): no pad, and a target its shell cannot reach is out
+    // of reach however near it stands. The weapon the unit approaches on
+    // decides: the selected one, or the longest when they all fire.
+    int approachSlot = sel ? slot : -1;
+    if (allWeapons)
+        for (int sl = 0; sl < int(u.type->weapons.size()); ++sl)
+            if (approachSlot < 0 || u.type->weapons[size_t(sl)].range > u.type->weapons[size_t(approachSlot)].range)
+                approachSlot = sl;
+    const Weapon* approach = approachSlot >= 0 ? &u.type->weapons[size_t(approachSlot)] : nullptr;
+    const bool arcApproach = approach && approach->ballisticClass();
+    const bool inReach = arcApproach ? ballisticInRange(u,*target,*approach) : dist <= reach;
+    // Just inside the origin arc's reach the muzzle-to-SweetSpot solve can
+    // still fail (queryWeaponAim launches nothing then): a unit free to move
+    // keeps closing there rather than stand without a shot.
+    // Only a marginal arc is asked: one that would fail with the target
+    // 128 px higher (more than a muzzle and a SweetSpot sit off the origins).
+    const auto arcShort = [&] {
+        if (!arcApproach || !inReach) return false;
+        if (ballisticInRange(u.x,(u.type->canFly ? u.flightY : u.groundY)-Fixed::fromInt(128),u.z,*target,*approach))
+            return false;
+        const auto aim = queryWeaponAim(u.id,target->id,approachSlot);
+        return aim && aim->unreachable;
+    };
     // Melee: retail closes to footprint adjacency (see meleeInRange above);
     // `range` and LoS play no part.
     bool adj = sel && sel->melee && target->type &&
@@ -6446,7 +6517,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // matter -- identical result, but a marching army (the bulk of a big battle, all
     // out of range) stops paying for a per-tick line-of-sight cast it never uses.
     bool los = true;
-    if (needLoS && dist <= reach)
+    if (needLoS && inReach)
         los = combatLineOfSight(u,*target);
     // A static unit cannot chase -- and neither may one whose move standing order
     // says hold position. Both drop an AUTO-acquired target that walks out of
@@ -6454,7 +6525,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // kill something is exactly the case the standing order does not govern.
     const bool mayChase = u.type->canMove &&
                           (u.moveState != 0 || !u.orders.front().autoTarget || u.orders.front().chaseLeashed);
-    if (!mayChase && dist > reach) {
+    if (!mayChase && !inReach) {
         dropLeg(u);
         cancelPath(u);
         u.routeStamp = -1;
@@ -6462,11 +6533,24 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     }
     // Shots from here keep stopping short of the target on something they
     // cannot destroy (noteShotImpact): a ground mover free to leave its post
-    // walks to a spot with a clear shot. Hold Position stays and fires on.
-    if (!airRun && !hovering && sel && !sel->melee && dist <= reach && mayChase && u.moveState != 0 &&
-        !u.type->canFly && !u.type->isStructure() && shotBlockedHere(u,*target) &&
-        repositionForShot(u,*target,slot))
-        return;
+    // walks to a spot with a clear shot. So does a Hold Position unit whose
+    // auto target interrupted a movement order (an attack-move, a patrol, a
+    // move queued behind it): it is on its way anyway. If no spot is left in
+    // reach it drops the target and goes on with that movement (findTarget
+    // will not pick the target again from this spot). Hold Position with
+    // nothing to go on with stays and fires on, as retail.
+    if (!airRun && !hovering && sel && !sel->melee && inReach && u.type->canMove &&
+        !u.type->canFly && !u.type->isStructure() && shotBlockedHere(u,*target)) {
+        const bool onTheWay = u.orders.front().autoTarget && movementQueued(u);
+        if ((u.moveState != 0 || onTheWay) && repositionForShot(u,*target,slot)) return;
+        if (onTheWay && (u.searchFailed || u.repositions >= kMaxRepositions)) {
+            if(u.scriptAimTarget)clearScriptWeaponTarget(u);
+            dropLeg(u);
+            cancelPath(u);
+            u.routeStamp = -1;
+            return;
+        }
+    }
     if (hovering) {
         tickHoverAttack(u,*target,sel);
         groundMovementHandled=true; // the flight controller already committed movement
@@ -6476,7 +6560,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // An attack run flies in and out of range: its weapons fire (below) when
     // a slot has the target in range, and the mission flies on regardless.
     if (!airRun && ((sel && sel->melee) ? !adj
-                            : (dist > reach || (!los && mayChase)))) {
+                            : (!inReach || (!los && mayChase) || (mayChase && arcShort())))) {
         if (hovering) return;
         // Advance toward the target, steering around impassable terrain.
         if (u.repathLeft > 0) --u.repathLeft;
@@ -6496,7 +6580,8 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         if ((sw.mindControl || u.type->canCapture) && !canCaptureTarget(u.player,*target)) return false;
         if (sw.noAir && target->type && target->type->canFly) return false;
         if (!(sw.melee || los)) return false;
-        if (sw.melee ? !adj : dist > sw.range + pad) return false;
+        if (sw.melee ? !adj : sw.ballisticClass() ? !ballisticInRange(u,*target,sw) : dist > sw.range + pad)
+            return false;
         return dist >= sw.minRange;
     };
     auto forEachSlot = [&](auto&& f) {
@@ -6565,7 +6650,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     forEachSlot(tryFire);
     // cancapture: a charmer converts the target after sustained contact (~3s) or
     // once it is worn down, rather than killing it.
-    if (u.type->canCapture && canCaptureTarget(u.player,*target) && (!airRun || dist <= reach)) {
+    if (u.type->canCapture && canCaptureTarget(u.player,*target) && (!airRun || inReach)) {
         ++u.captureProg;
         if (u.captureProg > 3 * int32_t(kTick) ||
             target->hp < Fixed::fromFloat(target->type->maxHp * 0.25f)) {
@@ -11749,6 +11834,7 @@ void World::tickFlames(std::span<const int> airGrid) {
                 uint32_t(flame.position[axis])+uint32_t(flame.velocity[axis]));
             const auto hit=collision(flame.position);
             if(hit.code==2) {
+                noteShotImpact(flame.fromId,flame.targetId,w,flame.position,hit.unitId);
                 applyHit(w,Fixed::raw(flame.position[0]).toFloat(),Fixed::raw(flame.position[2]).toFloat(),
                     flame.owner,flame.fromId,unit(hit.unitId),flame.position);
                 flame.impacted=true;break;
@@ -11960,8 +12046,16 @@ std::optional<World::WeaponAimSolution> World::queryWeaponAim(int unitId,int tar
         result.heading=angles[0];result.pitch=angles[1];
         if(weapon.ballistic) {
             result.pitch=tak::retailBallisticPitch(float(delta[0])/65536.f,float(delta[1])/65536.f,
-                float(delta[2])/65536.f,float(speed)/65536.f,weapon.gravityAdj,weapon.lobPreferred);
-            if(result.pitch==0x8000)result.pitch=0;
+                float(delta[2])/65536.f,float(speed)/65536.f,weapon.gravityAdj,weapon.lobPreferred,
+                ballisticGravityRaw_);
+            // 52bdf0 aims at pitch 0 when the arc cannot reach. Retail never
+            // fires then (52bc60 already ruled the target out of range); the
+            // muzzle-to-SweetSpot solve can still fail where the origin solve
+            // passed, so no shell is launched on it (tickScriptWeapon, fire).
+            if(result.pitch==0x8000) {
+                result.pitch=0;
+                result.unreachable=weapon.ballisticClass();
+            }
         }
     }
     return result;
@@ -12024,7 +12118,11 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept,const Weap
     // pivot and a structure fire on COB readiness alone.
     const bool aligned=!slotNeedsFacing(*u.type) ||
         retailFacingAligned(portHeadingToRetail(u.heading),solution->facing,uint16_t(weapon.aimTol));
-    if(dropped ? available : aim.ready(solution->heading,solution->pitch,uint16_t(weapon.aimTol),available,aligned)) {
+    // No arc to the aim point: hold the FireWeapon start until there is one.
+    // The release (SET 23) launches on the angles accepted here (fire), so a
+    // shell never leaves on the flat pitch an unreachable solve aims at.
+    if(!solution->unreachable &&
+       (dropped ? available : aim.ready(solution->heading,solution->pitch,uint16_t(weapon.aimTol),available,aligned))) {
         const uint16_t nominal=uint16_t(int32_t(weapon.reload*kTick+0.5f));
         u.reloads[slot]=retailWeaponReload(nominal,uint16_t(crtRand(0x530167)));
         const bool all=!u.type->weaponSwitching && u.type->weapons.size()>1;
@@ -15522,7 +15620,7 @@ uint64_t World::stateHash() const {
     if(!flames_.empty()) {
         mix(0x464c414du);mix(flames_.size());
         for(const auto& flame:flames_) {
-            mix(flame.owner);mix(flame.fromId);mix(flame.slot);mix(flame.start);mix(flame.end);
+            mix(flame.owner);mix(flame.fromId);mix(flame.targetId);mix(flame.slot);mix(flame.start);mix(flame.end);
             mix(flame.lifetime);mix(flame.speed);mix(flame.substeps);mix(flame.impacted);
             for(const auto* values:{&flame.position,&flame.velocity,&flame.endpoint})
                 for(int32_t value:*values)mix(uint32_t(value));

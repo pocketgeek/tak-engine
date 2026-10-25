@@ -1078,6 +1078,12 @@ int main(int argc,char** argv) {
             std::printf("%u\n",unsigned(tak::retailBallisticPitch(x,y,z,speed,scale,high!=0,gravity)));
         return 0;
     }
+    if(argc==2 && std::strcmp(argv[1],"--ballistic-inrange")==0) {
+        int32_t dx,dy,dz,speed,range,gravity;float scale;int high;
+        while(std::scanf("%d %d %d %d %f %d %d %d",&dx,&dy,&dz,&speed,&scale,&high,&gravity,&range)==8)
+            std::printf("%d\n",int(tak::retailBallisticInRange(dx,dy,dz,speed,scale,high!=0,gravity,range)));
+        return 0;
+    }
     if(argc==2 && std::strcmp(argv[1],"--ballistic-projectile")==0) {
         char operation;
         while(std::scanf(" %c",&operation)==1) {

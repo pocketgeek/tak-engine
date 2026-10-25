@@ -175,6 +175,91 @@ std::pair<int, int> runSticky(const hpi::Vfs& vfs, const sim::TypeRegistry& reg)
     return {firstWalks == 0 ? walks : -1, hits};
 }
 
+// The user's 0.9.1 game: a Creon Fire Wagon (crefire, a flame weapon; the
+// FBI's standingunitorder=1 makes it Hold Position) on an attack-move
+// auto-acquires an Aramon Lodestone 344 px off, with a Zhon standing stone
+// (ZonHenge04: 1x2, indestructible, height 60) on the line of fire. The 2D
+// sight walk passes beside the one-cell stone, so only the flames' impacts
+// can show the shot is blocked. The geometry is the game's, moved by whole
+// cells (224,480).
+enum class Wagon { AttackMoveHold, AttackMoveManeuver, Hold };
+
+struct WagonOutcome {
+    int stoneFlames = 0;     // flame impacts that are not on the lodestone
+    int lodestoneHits = 0;
+    float damage = 0;
+    int blockedShots = 0;    // most counted against the lodestone at once
+    float moved = 0;
+    bool attackMoveLeft = false;
+};
+
+WagonOutcome runWagon(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, Wagon variant, int ticks) {
+    tnt::Map map;
+    map.width = map.height = 64;
+    map.seaLevel = 0;
+    map.heights.assign(64 * 64, 62);
+    map.features.assign(64 * 64, 0xffff);
+    map.featureNames = {"ZonHenge04"};
+    map.features[size_t(23) * 64 + 20] = 0;
+    sim::World w;
+    w.setVisPlayer(-1);
+    w.setPathfindingMode(mode);
+    w.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
+    sim::registerMapFeatures(w, map, vfs, &reg);
+    w.setPathService(true);
+    const sim::UnitType* wagon = reg.find("crefire");
+    const sim::UnitType* lode = reg.find("aralode");
+    if (!wagon || !lode) { check(false, "shipped crefire and aralode load"); return {}; }
+    const float sx = 591.3f, sz = 456.0f;
+    const int lodestone = w.spawn(lode, 256, 384, 0, 1);
+    for (int i = 0; i < 30; ++i) w.tick(1.f / 30);
+    const int shooter = w.spawn(wagon, sx, sz, {}, 0);
+    w.player(0).mana = 30000;
+    sim::Unit* u = w.unit(shooter);
+    if (variant == Wagon::AttackMoveManeuver) u->moveState = 1;
+    WagonOutcome out;
+    if (u->moveState != (variant == Wagon::AttackMoveManeuver ? 1 : 0))
+        check(false, "crefire ships Hold Position (standingunitorder=1)");
+    // It acquires the lodestone on its own (fire at will); the attack-move
+    // the AI gave it is then behind the auto attack, as in the game.
+    for (int i = 0; i < 90 && (u->orders.empty() || u->orders.front().targetId != lodestone); ++i) {
+        w.tick(1.f / 30);
+        u = w.unit(shooter);
+    }
+    if (u->orders.empty() || !u->orders.front().autoTarget) check(false, "the wagon auto-acquires the lodestone");
+    if (variant != Wagon::Hold) w.attackMove(shooter, sx - 500, sz + 480, true);
+    const float hp0 = w.unit(lodestone)->hp.toFloat();
+    for (int i = 0; i < ticks; ++i) {
+        w.tick(1.f / 30);
+        const sim::Unit* a = w.unit(shooter);
+        const sim::Unit* t = w.unit(lodestone);
+        if (!a || !a->alive()) break;
+        if (a->blockedTarget == lodestone) out.blockedShots = std::max(out.blockedShots, int(a->blockedShots));
+        for (const auto& h : w.hits()) {
+            if (h.fromPlayer != 0) continue;
+            if (h.victimId == lodestone) ++out.lodestoneHits;
+            else ++out.stoneFlames;
+        }
+        if (!t || !t->alive()) break;
+    }
+    const sim::Unit* a = w.unit(shooter);
+    const sim::Unit* t = w.unit(lodestone);
+    out.damage = hp0 - (t && t->alive() ? t->hp.toFloat() : 0.f);
+    if (a) {
+        const float dx = a->x.toFloat() - sx, dz = a->z.toFloat() - sz;
+        out.moved = std::sqrt(dx * dx + dz * dz);
+        out.attackMoveLeft = !a->orders.empty() && a->orders.back().attackMove;
+    }
+    return out;
+}
+
+std::string describe(const WagonOutcome& o) {
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "flames off target=%d hits=%d damage=%.0f blocked=%d moved=%.0fpx",
+                  o.stoneFlames, o.lodestoneHits, o.damage, o.blockedShots, o.moved);
+    return buf;
+}
+
 std::string describe(const Outcome& o) {
     char buf[160];
     std::snprintf(buf, sizeof buf, "short=%d hits=%d damage=%.0f moved=%.0fpx repositions=%d",
@@ -214,6 +299,20 @@ int main(int argc, char** argv) {
         if (mode == sim::PathfindingMode::Legion)
             check(free.legionMoves > held.legionMoves, "the walk is Legion's", std::to_string(free.legionMoves));
     }
+    // Fire Wagon flames against a lodestone behind a standing stone.
+    const WagonOutcome hold = runWagon(vfs, reg, Wagon::Hold, kTicks);
+    const WagonOutcome onMove = runWagon(vfs, reg, Wagon::AttackMoveHold, 1800);
+    const WagonOutcome maneuver = runWagon(vfs, reg, Wagon::AttackMoveManeuver, 1800);
+    std::printf("  fire wagon hold, idle:        %s\n", describe(hold).c_str());
+    std::printf("  fire wagon hold, attack-move: %s\n", describe(onMove).c_str());
+    std::printf("  fire wagon maneuver, a-move:  %s\n", describe(maneuver).c_str());
+    check(hold.stoneFlames >= 3 && hold.blockedShots >= 3,
+          "flame impacts on the stone count as blocked shots against the lodestone");
+    check(hold.damage == 0 && hold.moved < 8, "Hold Position with nothing queued stays and fires on");
+    check(onMove.damage > 0 && onMove.stoneFlames <= 6,
+          "Hold Position on an attack-move leaves the blocked spot and burns the lodestone");
+    check(maneuver.damage > 0 && maneuver.stoneFlames <= 6,
+          "Maneuver on an attack-move walks to a clear shot and burns the lodestone");
     const auto [walks, hits] = runSticky(vfs, reg);
     check(walks >= 1 && hits > 0, "a failed search does not give up on the target once a clear spot is in reach",
           "walks=" + std::to_string(walks) + " hits=" + std::to_string(hits));
