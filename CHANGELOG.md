@@ -20,7 +20,7 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
 ## 0.9.0
-*TODO-LEAD (release date) · protocol 294 · replay format 15 · does not play with 0.8.14 or earlier, nor their replays*
+*2026-10-24 · protocol 294 · replay format 15 · does not play with 0.8.14 or earlier, nor their replays*
 
 - **AI and the Rolling Tower:** the shipped AI profiles misspell the Aramon
   Rolling Tower (`araseige`). The original game ignores the name, so the Retail
