@@ -110,7 +110,7 @@ public:
         stream.cursor(cursor);
         if(!gl) {
             const auto output=stream.status();
-            const int d3d=d3d_.get(ren,w,h,output.width,output.height,stream);
+            const int d3d=d3d_.get(ren,w,h,output.width,output.height,stream,cursor);
             if(d3d>=0)return d3d>0;
         }
         pixels_.resize(size_t(w)*h*4);

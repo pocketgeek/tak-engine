@@ -17,8 +17,11 @@ public:
     D3DCapture(const D3DCapture&) = delete;
     D3DCapture& operator=(const D3DCapture&) = delete;
     // -1: not handled here; 0: nothing delivered this time; 1: a frame went to `stream`.
-    // outW/outH: the stream's size (0 = keep the window size).
-    int get(SDL_Renderer* ren, int w, int h, int outW, int outH, video::Stream& stream);
+    // outW/outH: the stream's size (0 = keep the window size). `cursor`: the hardware
+    // cursor beside this capture (video/streamcursor.h); a frame delivered later (the
+    // Direct3D 11 readback ring) carries the cursor it was captured with.
+    int get(SDL_Renderer* ren, int w, int h, int outW, int outH, video::Stream& stream,
+            const video::StreamCursor& cursor);
     void reset();
 private:
     struct Impl;

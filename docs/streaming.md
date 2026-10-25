@@ -138,9 +138,9 @@ open, the stream shows the plain arrow the panel uses.
 
 With Hardware Cursor off, the game draws its cursor into the frame, so the stream
 captures it as part of the picture and nothing is added. In that mode the title
-screen's cursor is drawn after the capture and is not in the stream. Under
-Direct3D 11 the captured picture can be a frame or two older than the cursor
-position stamped on it; at the game's frame rate that is a few milliseconds.
+screen's cursor is drawn after the capture and is not in the stream. Where the
+picture is read back a frame or two late (OpenGL, Direct3D 11), each frame keeps
+the cursor it was captured with, so the pointer never runs ahead of the picture.
 The setup panel, title-screen account and settings overlays, and the connection
 badges are drawn **after capture** and stay off the stream. During loading and
 modal screens the last captured frame stays on the stream.

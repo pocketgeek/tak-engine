@@ -21,7 +21,7 @@ namespace tak {
 struct D3DCapture::Impl {};
 D3DCapture::D3DCapture() = default;
 D3DCapture::~D3DCapture() = default;
-int D3DCapture::get(SDL_Renderer*, int, int, int, int, video::Stream&) { return -1; }
+int D3DCapture::get(SDL_Renderer*, int, int, int, int, video::Stream&, const video::StreamCursor&) { return -1; }
 void D3DCapture::reset() {}
 #else
 namespace {
@@ -73,7 +73,7 @@ struct D3DCapture::Impl {
     ID3D11Texture2D* mip = nullptr; ID3D11ShaderResourceView* mipView = nullptr;
     D3D11_TEXTURE2D_DESC mipDesc{};
     size_t counted = 0; // the mip chain, in gpuvram's total while it exists
-    struct Slot { ID3D11Texture2D* texture = nullptr; bool pending = false; uint64_t serial = 0; };
+    struct Slot { ID3D11Texture2D* texture = nullptr; bool pending = false; uint64_t serial = 0; video::StreamCursor cursor; };
     std::array<Slot, 3> slots{};
     int slotW = 0, slotH = 0; DXGI_FORMAT slotFormat = DXGI_FORMAT_UNKNOWN;
     uint64_t serial = 0;
@@ -93,7 +93,7 @@ struct D3DCapture::Impl {
         release(system); systemDesc = {}; device9 = nullptr;
     }
 
-    int d3d11(SDL_Renderer* ren, int outW, int outH, video::Stream& stream) {
+    int d3d11(SDL_Renderer* ren, int outW, int outH, video::Stream& stream, const video::StreamCursor& cursor) {
         ID3D11Device* dev = SDL_RenderGetD3D11Device(ren);
         if (!dev) return -1;
         if (dev != device) { clear(); device = dev; }
@@ -109,13 +109,14 @@ struct D3DCapture::Impl {
             D3D11_TEXTURE2D_DESC desc{}; back->GetDesc(&desc);
             const bool bgra = desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM || desc.Format == DXGI_FORMAT_B8G8R8X8_UNORM;
             if ((bgra || desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM) && desc.SampleDesc.Count == 1 && desc.ArraySize == 1)
-                result = submit11(dev, ctx, back, desc, outW, outH, stream);
+                result = submit11(dev, ctx, back, desc, outW, outH, stream, cursor);
         }
         release(resource); release(view); release(ctx); dev->Release();
         return result;
     }
     int submit11(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11Texture2D* back,
-                 const D3D11_TEXTURE2D_DESC& desc, int outW, int outH, video::Stream& stream) {
+                 const D3D11_TEXTURE2D_DESC& desc, int outW, int outH, video::Stream& stream,
+                 const video::StreamCursor& cursor) {
         const int bw = int(desc.Width), bh = int(desc.Height);
         int tw, th; fit(bw, bh, outW, outH, tw, th);
         // Half size or less: let the GPU average 2x2 blocks (mip level 1); the
@@ -157,6 +158,7 @@ struct D3DCapture::Impl {
             if (SUCCEEDED(hr)) {
                 copyRows(pixels, static_cast<const uint8_t*>(map.pData), map.RowPitch, slotW, slotH, slotFormat != DXGI_FORMAT_R8G8B8A8_UNORM);
                 ctx->Unmap(s.texture, 0);
+                stream.cursor(s.cursor);   // the pointer as it was when this was copied
                 delivered = stream.video(pixels, slotW, slotH);
             }
             for (auto& older : slots) if (older.pending && older.serial <= s.serial) older.pending = false;
@@ -170,13 +172,13 @@ struct D3DCapture::Impl {
                 if (FAILED(dev->CreateTexture2D(&t, nullptr, &s.texture))) { s.texture = nullptr; return -1; }
             }
             ctx->CopySubresourceRegion(s.texture, 0, 0, 0, 0, source, level, nullptr);
-            s.pending = true; s.serial = ++serial;
+            s.pending = true; s.serial = ++serial; s.cursor = cursor;
             break;
         }
         return delivered ? 1 : 0;
     }
 
-    int d3d9(SDL_Renderer* ren, int outW, int outH, video::Stream& stream) {
+    int d3d9(SDL_Renderer* ren, int outW, int outH, video::Stream& stream, const video::StreamCursor& cursor) {
         IDirect3DDevice9* dev = SDL_RenderGetD3D9Device(ren);
         if (!dev) return -1;
         if (dev != device9) { release(system); systemDesc = {}; device9 = dev; }
@@ -206,6 +208,7 @@ struct D3DCapture::Impl {
             if (FAILED(dev->GetRenderTargetData(source, system)) || FAILED(system->LockRect(&lock, nullptr, D3DLOCK_READONLY))) goto done;
             copyRows(pixels, static_cast<const uint8_t*>(lock.pBits), size_t(lock.Pitch), tw, th, true);
             system->UnlockRect();
+            stream.cursor(cursor);
             result = stream.video(pixels, tw, th) ? 1 : 0;
         }
     done:
@@ -216,11 +219,12 @@ struct D3DCapture::Impl {
 D3DCapture::D3DCapture(): p_(std::make_unique<Impl>()) {}
 D3DCapture::~D3DCapture() { p_->clear(); }
 void D3DCapture::reset() { p_->clear(); std::vector<uint8_t>().swap(p_->pixels); }
-int D3DCapture::get(SDL_Renderer* ren, int, int, int outW, int outH, video::Stream& stream) {
+int D3DCapture::get(SDL_Renderer* ren, int, int, int outW, int outH, video::Stream& stream,
+                    const video::StreamCursor& cursor) {
     SDL_RendererInfo info{};
     if (SDL_GetRendererInfo(ren, &info) != 0 || !info.name) return -1;
-    if (!std::strcmp(info.name, "direct3d11")) return p_->d3d11(ren, outW, outH, stream);
-    if (!std::strcmp(info.name, "direct3d")) return p_->d3d9(ren, outW, outH, stream);
+    if (!std::strcmp(info.name, "direct3d11")) return p_->d3d11(ren, outW, outH, stream, cursor);
+    if (!std::strcmp(info.name, "direct3d")) return p_->d3d9(ren, outW, outH, stream, cursor);
     return -1;
 }
 #endif
