@@ -272,9 +272,9 @@ before reading it back, so a 7680×2160 window streamed at MAX 3840 copies a
 
 | Renderer | Capture |
 | --- | --- |
-| OpenGL | GPU scaling, two pixel buffers and nonblocking fence checks |
+| OpenGL (what **Auto** picks on Linux and Windows) | GPU scaling, two pixel buffers and nonblocking fence checks |
 | Direct3D 11 (Windows) | GPU half-size reduction when the stream is half the window or smaller, then a ring of staging textures read only once the GPU has finished |
-| Direct3D 9 (Windows; what **Auto** picks there) | GPU scaling to the stream size, then a small readback that waits for the GPU |
+| Direct3D 9 (Windows) | GPU scaling to the stream size, then a small readback that waits for the GPU |
 | Metal, software | SDL's portable full-size readback, which waits for the GPU on the render thread |
 
 The worker finishes any remaining resize with its own multithreaded scaler (an
