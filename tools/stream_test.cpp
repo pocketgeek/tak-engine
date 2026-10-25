@@ -210,6 +210,9 @@ static bool localCopy(tak::video::StreamConfig config) {
 // (x264 on machines without a GPU) is not what is measured. Steady state only: the
 // first half second (encoder start-up) is not counted.
 static int pacing(const std::string& encoder,int sw,int sh,int ow,int oh,int fps) {
+    // Measured: a 3-core machine sits near the 10% limit and 2 cores fail it (the
+    // encoder, the scaler and this feeder share them). Not a verdict on the scaler.
+    if(std::thread::hardware_concurrency()<4){std::printf("SKIP pacing: fewer than 4 hardware threads\n");return 77;}
     tak::video::StreamConfig config;
     config.encoder=encoder;config.width=ow;config.height=oh;config.fps=fps;config.bitrateKbps=3000;
     auto path=std::filesystem::temp_directory_path()/("tak-stream-pacing-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".flv");

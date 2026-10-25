@@ -1,7 +1,9 @@
 #include "client/streamcapture_d3d.h"
 #ifdef _WIN32
 #include "client/gpuvram.h"
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <d3d9.h>
@@ -107,13 +109,13 @@ struct D3DCapture::Impl {
             D3D11_TEXTURE2D_DESC desc{}; back->GetDesc(&desc);
             const bool bgra = desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM || desc.Format == DXGI_FORMAT_B8G8R8X8_UNORM;
             if ((bgra || desc.Format == DXGI_FORMAT_R8G8B8A8_UNORM) && desc.SampleDesc.Count == 1 && desc.ArraySize == 1)
-                result = submit11(dev, ctx, back, desc, bgra, outW, outH, stream);
+                result = submit11(dev, ctx, back, desc, outW, outH, stream);
         }
         release(resource); release(view); release(ctx); dev->Release();
         return result;
     }
     int submit11(ID3D11Device* dev, ID3D11DeviceContext* ctx, ID3D11Texture2D* back,
-                 const D3D11_TEXTURE2D_DESC& desc, bool bgra, int outW, int outH, video::Stream& stream) {
+                 const D3D11_TEXTURE2D_DESC& desc, int outW, int outH, video::Stream& stream) {
         const int bw = int(desc.Width), bh = int(desc.Height);
         int tw, th; fit(bw, bh, outW, outH, tw, th);
         // Half size or less: let the GPU average 2x2 blocks (mip level 1); the

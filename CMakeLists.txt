@@ -1953,7 +1953,7 @@ add_test(NAME streaming_overload COMMAND stream_test libx264 overload)
 add_test(NAME streaming_native COMMAND stream_test libx264 native)
 # A 7680x2160 capture into a small 60 FPS stream: the worker's resize keeps pace.
 add_test(NAME streaming_pacing COMMAND stream_test libx264 pacing)
-set_tests_properties(streaming_pacing PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+set_tests_properties(streaming_pacing PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE SKIP_RETURN_CODE 77)
 add_executable(rgbascale_test tools/rgbascale_test.cpp src/video/rgbascale.cpp)
 target_include_directories(rgbascale_test PRIVATE src)
 target_link_libraries(rgbascale_test PRIVATE Threads::Threads)

@@ -354,7 +354,9 @@ test tools, not engine runtime dependencies.
 7680×2160 frames at 60 FPS into a small 60 FPS stream and fails if more than 10%
 of the frame slots are dropped once the encoder has started: the worker's resize
 must keep pace (swscale's single-threaded bilinear needed about 50 ms per such
-frame). `rgbascale_test` checks the scaler against a floating-point reference.
+frame). It skips on machines with fewer than 4 hardware threads, where the
+encoder, the scaler and the test's own feeder crowd each other. `rgbascale_test`
+checks the scaler against a floating-point reference.
 
 Encoder slowdowns skip late video frames without reconnecting. Audio catches up
 independently; reconnects are reserved for connection/write failures. Title-screen
