@@ -11721,8 +11721,11 @@ std::array<int32_t,3> World::queryUnitScriptPoint(int unitId,bool sweetSpot,int 
         // 4dd2a0 over the drawn vertex buffer: the piece's posed bounds centre
         // (retailPieceDrawnCenter), always from the current simulation pose.
         if(size_t(piece)>=u->type->scriptPieceVertices.size())return point;
-        offset=retailPieceDrawnCenter(u->type->productionModel,it->peek().pieces,piece,
-            u->type->scriptPieceVertices[size_t(piece)],portHeadingToRetail(u->heading),u->groundPitch,u->groundRoll);
+        // The unit's cache answers while the posed chain is unchanged.
+        thread_local RetailDrawnChain chain;
+        retailPieceDrawnChain(chain,u->type->productionModel,it->peek().pieces,piece,
+            portHeadingToRetail(u->heading),u->groundPitch,u->groundRoll);
+        offset=it->sweetSpotCache.get(chain,u->type->scriptPieceVertices[size_t(piece)]);
     } else offset=retailPieceOrigin(u->type->productionModel,it->peek().pieces,piece,
         portHeadingToRetail(u->heading),u->groundPitch,u->groundRoll);
     for(size_t axis=0;axis<3;++axis)

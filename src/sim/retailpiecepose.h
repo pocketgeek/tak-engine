@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -42,15 +43,15 @@ inline void retailRotatePair(int32_t& a,int32_t& b,uint16_t angle) {
     using Wide=__int128_t;
     const auto& coefficients=retailRotationCoefficients(angle);
     const int64_t sine=coefficients[0],cosine=coefficients[1];
+    // Round to nearest/even at 2^60. Nearest/even is symmetric under negation,
+    // so rounding the signed value from its floor equals 536143's rounding of
+    // the magnitude with the sign put back; no data-dependent branches.
     auto rounded=[](Wide value) {
-        constexpr Wide scale=Wide(1)<<60;
-        const bool negative=value<0;
-        if (negative) value=-value;
-        Wide whole=value/scale,rest=value%scale;
-        if (rest>scale/2 || (rest==scale/2 && (whole&1))) ++whole;
-        if (negative) whole=-whole;
-        if (whole<INT32_MIN || whole>INT32_MAX) return int32_t(INT32_MIN);
-        return int32_t(whole);
+        constexpr uint64_t half=uint64_t(1)<<59,mask=(uint64_t(1)<<60)-1;
+        int64_t whole=int64_t(value>>60);
+        const uint64_t rest=uint64_t(value)&mask;
+        whole+=int64_t((rest>half) | ((rest==half) & uint64_t(whole&1)));
+        return whole<INT32_MIN || whole>INT32_MAX ? int32_t(INT32_MIN) : int32_t(whole);
     };
     const int32_t nextA=rounded(Wide(a)*cosine-Wide(b)*sine);
     b=rounded(Wide(a)*sine+Wide(b)*cosine); a=nextA;
@@ -150,20 +151,31 @@ struct RetailPieceBounds {
 // `vertices` are the piece's authored vertices with X/Z mirrored as the model
 // loader installs them. Each vertex takes the piece's own turn (plus the body
 // attitude on the root), then its translated offset, then every parent's.
-inline std::array<int32_t,3> retailPieceDrawnCenter(std::span<const RetailModelPiece> model,
+// The posed chain of one script piece's model object, nearest first: each
+// step's turn (plus the body attitude on the root) and translated offset.
+struct RetailDrawnChain {
+    struct Step {
+        std::array<uint16_t,3> angles{}; std::array<int32_t,3> offset{};
+        bool operator==(const Step&) const=default;
+    };
+    std::array<Step,64> steps;
+    size_t depth=0;
+    bool found=false;
+};
+
+inline void retailPieceDrawnChain(RetailDrawnChain& chain,std::span<const RetailModelPiece> model,
         std::span<const cob::RetailPiece> poses,int scriptPiece,
-        std::span<const std::array<int32_t,3>> vertices,
         uint16_t heading,uint16_t pitch=0,uint16_t roll=0) {
+    chain.depth=0; chain.found=false;
     int index=-1;
     for (size_t i=0;i<model.size();++i)
         if (model[i].scriptPiece==scriptPiece) { index=int(i); break; }
-    if (index<0) return {};
-    struct Step { std::array<uint16_t,3> angles{}; std::array<int32_t,3> offset{}; };
-    std::array<Step,64> chain{};
-    size_t depth=0;
-    for (int at=index;at>=0 && depth<chain.size();at=model[size_t(at)].parent) {
+    if (index<0) return;
+    chain.found=true;
+    for (int at=index;at>=0 && chain.depth<chain.steps.size();at=model[size_t(at)].parent) {
         const auto& piece=model[size_t(at)];
-        auto& step=chain[depth++];
+        auto& step=chain.steps[chain.depth++];
+        step.angles={};
         step.offset=piece.offset;
         step.offset[0]=std::bit_cast<int32_t>(0u-uint32_t(step.offset[0]));
         step.offset[2]=std::bit_cast<int32_t>(0u-uint32_t(step.offset[2]));
@@ -179,16 +191,54 @@ inline std::array<int32_t,3> retailPieceDrawnCenter(std::span<const RetailModelP
             step.angles[2]=uint16_t(step.angles[2]+roll);
         }
     }
+}
+
+inline std::array<int32_t,3> retailDrawnChainCenter(const RetailDrawnChain& chain,
+        std::span<const std::array<int32_t,3>> vertices) {
+    if (!chain.found) return {};
     RetailPieceBounds bounds;
     for (auto vertex:vertices) {
-        for (size_t s=0;s<depth;++s) {
-            retailRotatePiece(vertex,chain[s].angles);
+        for (size_t s=0;s<chain.depth;++s) {
+            retailRotatePiece(vertex,chain.steps[s].angles);
             for (size_t i=0;i<3;++i)
-                vertex[i]=std::bit_cast<int32_t>(uint32_t(vertex[i])+uint32_t(chain[s].offset[i]));
+                vertex[i]=std::bit_cast<int32_t>(uint32_t(vertex[i])+uint32_t(chain.steps[s].offset[i]));
         }
         bounds.add(vertex);
     }
     return bounds.center();
 }
+
+inline std::array<int32_t,3> retailPieceDrawnCenter(std::span<const RetailModelPiece> model,
+        std::span<const cob::RetailPiece> poses,int scriptPiece,
+        std::span<const std::array<int32_t,3>> vertices,
+        uint16_t heading,uint16_t pitch=0,uint16_t roll=0) {
+    RetailDrawnChain chain;
+    retailPieceDrawnChain(chain,model,poses,scriptPiece,heading,pitch,roll);
+    return retailDrawnChainCenter(chain,vertices);
+}
+
+// The drawn centre is a pure function of the piece's vertices (fixed per type
+// and script piece) and its posed chain, so a unit keeps the last answer and
+// reuses it while the chain is unchanged: bit-identical by construction.
+struct RetailDrawnCenterCache {
+    static constexpr size_t kDepth=8;   // deeper chains are not cached
+    const void* vertices=nullptr;       // the type's vertex list for the piece
+    size_t depth=0;
+    std::array<RetailDrawnChain::Step,kDepth> steps{};
+    std::array<int32_t,3> center{};
+
+    std::array<int32_t,3> get(const RetailDrawnChain& chain,std::span<const std::array<int32_t,3>> list) {
+        if (!chain.found) return {};
+        if (vertices==list.data() && depth==chain.depth && depth<=kDepth &&
+            std::equal(steps.begin(),steps.begin()+std::ptrdiff_t(depth),chain.steps.begin()))
+            return center;
+        center=retailDrawnChainCenter(chain,list);
+        if (chain.depth<=kDepth) {
+            vertices=list.data(); depth=chain.depth;
+            std::copy(chain.steps.begin(),chain.steps.begin()+std::ptrdiff_t(depth),steps.begin());
+        } else vertices=nullptr;
+        return center;
+    }
+};
 
 } // namespace tak::sim

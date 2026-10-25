@@ -3476,6 +3476,8 @@ private:
         uint32_t movementRate=0;
         bool dying=false;
         int deathStopValue=0;
+        // Last SweetSpot drawn centre (queryUnitScriptPoint): derived, not hashed.
+        RetailDrawnCenterCache sweetSpotCache;
         explicit UnitScript(const cob::File& file):state_(file) {
 #ifndef NDEBUG
             file_=&file;
