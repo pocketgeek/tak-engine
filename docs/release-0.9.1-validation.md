@@ -3,7 +3,7 @@
 Protocol **295** (was 294 in 0.9.0), replay format **15** (unchanged),
 generator version **9**, campaign payload **4**, database schema **9**.
 
-TODO-LEAD: Tagged `v0.9.1` at `<sha>` (full `<full sha>`, annotated tag object `<obj>`, "TAK Engine 0.9.1") and published on 2026-10-<dd> <hh:mm:ss> UTC.
+Tagged `v0.9.1` at `41b2b81f` (full `41b2b81fee07a96d1609e3a52810de853f034aca`, annotated tag object `a8f15c7b`, "TAK Engine 0.9.1") and published on 2026-10-25 21:33:11 UTC.
 
 ## Scope and compatibility
 
@@ -76,7 +76,8 @@ under `docs/` and the three images.
 `src/net/replayhdr.h`, `src/net/crusades.h` or `src/client/settings.*`
 changed. The same stat over the prepared tree (`v0.9.0..` the report commit)
 is unchanged: 32 files, the preparation commits touch nothing under `src/`.
-TODO-LEAD: re-run this stat on the final tag.
+On the final tag, `git diff --stat v0.9.0 v0.9.1 -- src` gives the same 32
+files (1,998 insertions, 171 deletions).
 
 **Compatibility.** `kNetVersion` is **295** in `src/net/protocol.h` (294 at
 `v0.9.0`). `kReplayFormat` is **15** in `src/net/replayhdr.h`, unchanged. The
@@ -282,27 +283,68 @@ There is no desync anywhere: every seat agreed with the referee at every checkpo
 
 ## CI and packages
 
-TODO-LEAD: main CI on the final sha (checked once), tag CI runs (Determinism
-dispatched on the tag, Linux, Windows, macOS with Sign + notarize), reruns and
-flakes, the 29 assets (digests, sizes, build ids `v0.9.1`), dependencies
-(Debian/Ubuntu `libc6` only; no libva, libdrm, libsecret or GLib `NEEDED`; Arch
-`optdepend` libva), Authenticode on oden-win, notarization on the MacBook,
-packaged server running the Retail AI, packaged `--help`, mods folder, streaming
-muxer, Opus static, licences, microphone and Retina plist keys.
+Main CI ran once on the integrated code (`b1d133a3`): Determinism, Windows
+and macOS passed; Linux packages passed 15 of 16 jobs, and Debian 12 arm64 failed
+before building anything (an SSL connect error downloading the Opus source from
+downloads.xiph.org) and passed on a rerun of that job. The runs on the prep
+commit `41b2b81f` (docs, images and the version only) were cancelled, because
+the tag builds the same commit.
+
+On the tag, all four workflows passed on the first attempt, with no reruns:
+[Determinism](https://github.com/pocketgeek/tak-engine/actions/runs/40229540844)
+(dispatched on the tag; every GCC and Clang x86-64 build agrees on golden
+`dcef618cd2e4d558`, unchanged from 0.9.0),
+[Linux packages](https://github.com/pocketgeek/tak-engine/actions/runs/40229541104)
+(16 distro jobs),
+[Windows](https://github.com/pocketgeek/tak-engine/actions/runs/40229541114)
+(build, sign and publish) and
+[macOS](https://github.com/pocketgeek/tak-engine/actions/runs/40229541127)
+(build, sign and notarize).
+
+All 29 assets were downloaded and match GitHub's SHA-256 digests. Every binary
+that can run here reports `0.9.1 (build v0.9.1)`; the Arch client needs Arch's
+newer glibc (`GLIBC_2.44`) and does not start on this Fedora machine, as with
+0.9.0, while its server reports the same version. The Linux binaries link only
+libc and libm (plus libdl/libpthread on one older target); none has a libva,
+libdrm, libsecret or GLib `NEEDED`. The licence files, including
+`STREAMING-LICENSES.txt` with the VA-API headers-only wording, are in every
+package. No `mods/`, `overrides/` or `click.hpi` is shipped. The packaged
+Linux `takclient --help` lists only `--data`, `--play-map`, `--game-mod` and
+`--version`, and the packaged `takserver` runs the Retail AI game to
+`c5846d769e0a7d93`, the same as the local table.
+
+Windows: on oden-win, `Get-AuthenticodeSignature` reports **Valid**
+(timestamped, "Curtis Edge") for all 9 signed files: the x64 installer and
+`takclient`, `takserver`, `cartographer` and `crusades_admin` in both the x64
+and arm64 zips. Both report `0.9.1 (build v0.9.1)`.
+
+macOS: on the MacBook, both DMGs and all four apps (from the DMGs and the zips)
+pass `stapler validate`, and `spctl` accepts them as "Notarized Developer ID".
 
 New checks for 0.9.1:
 
-- TODO-LEAD: no shipped Linux `takclient` contains a libva driver loader
-  (`__vaDriverInit_`); CI's "no bundled libva loader" step result.
-- TODO-LEAD: macOS `streaming_rtmps` and `stream_network_test` in tag CI.
-- TODO-LEAD: `renderdriver` ran in the Linux, macOS and Windows CI builds.
+- No shipped Linux `takclient` contains a libva driver loader: none of the 18
+  Linux clients holds the `__vaDriverInit_` string (0.9.0's did). CI's
+  "no bundled libva loader" check passed in all 16 Linux jobs, and
+  `vashim_test unavailable` passed in each of them.
+- macOS tag CI ran the RTMPS upload test: "PASS: RTMPS upload stayed live;
+  wrong certificate refused with its reason".
+- `renderdriver` passed in every Linux, Windows and macOS CI job (20 jobs).
 
-`--mpai` on Windows and macOS: TODO-LEAD (oden-win MSYS2 MINGW64 GCC and the
-arm64 MacBook, optimized Debug builds of the tag; the five games above, each
-matching the Linux table).
+`--mpai` on Windows: on oden-win (MSYS2 MINGW64 GCC, optimized Debug build of
+the tag, run at 8× with `TAK_SPEED=80`, which gives the same hashes as 1×), all
+five games match the Linux table: Retail 60 s `d375d03a6c472773`, Retail 300 s
+`a470242be92a0e14`, Legion 60 s `426ab0842b709c28`, Legion 300 s
+`a65a48d7a63825ae`, Retail AI 60 s `c5846d769e0a7d93`. The SSH connection to
+oden-win dropped twice during the runs; the games it cut off were rerun and
+matched. `--mpai` on macOS was not completed: on the MacBook the test server
+exited before the games started (tick 0, "peer closed"), a harness problem on
+that machine. macOS CI on Apple Silicon ran the determinism checks for this tag
+(detmath golden, `fp_contract`, `navigation_determinism`, `sim_driver_equiv`)
+and they passed.
 
-TODO-LEAD: publication line (`gh release edit v0.9.1 --draft=false --latest`,
-time, asset count). 0.9.0 and later releases are kept.
+Published with `gh release edit v0.9.1 --draft=false --latest` at
+2026-10-25 21:33:11 UTC, with 29 assets. 0.9.0 and later releases are kept.
 
 ## Limits
 
@@ -326,4 +368,5 @@ time, asset count). 0.9.0 and later releases are kept.
 - The local checks and the remote sweep ran at `b1d133a3`, before the CMake
   version bump, so those binaries and the sweep's replay headers report engine
   `0.9.0`; the preparation commits change no code.
-- Tag CI: TODO-LEAD.
+- Tag CI: all four workflows passed on the first attempt. `--mpai` on macOS
+  was not completed (see CI and packages).
