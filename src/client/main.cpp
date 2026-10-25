@@ -1803,6 +1803,11 @@ int main(int argc, char** argv) {
     const unsigned studyJump=studyPeriod("TAK_RENDER_JUMP");
     const unsigned studyReset=studyPeriod("TAK_RENDER_RESET");
     const unsigned studyChurn=studyPeriod("TAK_RENDER_CHURN");
+    // TAK_RENDER_FULLSCREEN=<period>: toggle desktop fullscreen every <period> frames, the
+    // way Options does (renderer window-event checks). TAK_RENDER_CAPTURE_EVERY=<period>:
+    // with TAK_RENDER_CAPTURE_DIR, also capture every <period> frames.
+    const unsigned studyFullscreen=studyPeriod("TAK_RENDER_FULLSCREEN");
+    const unsigned studyCaptureEvery=studyPeriod("TAK_RENDER_CAPTURE_EVERY");
     const unsigned studyEpoch=studyPeriod("TAK_RENDER_EPOCH");   // world-epoch bump (rejoin id reuse)
     const unsigned studyShake=studyPeriod("TAK_RENDER_SHAKE");   // camera shake every N frames (workstream L)
     const unsigned studyVeteran=studyPeriod("TAK_RENDER_VETERAN");   // veterancy cycle (material-only)
@@ -2088,6 +2093,11 @@ int main(int argc, char** argv) {
                     gameView->renderStudyOffset(studySparseX,studySparseZ);
                 if(renderStudy && studyFilter && studyFrame && studyFrame%studyFilter==0)
                     gameView->renderStudyToggleFilter();
+                if(renderStudy && studyFullscreen && studyFrame && studyFrame%studyFullscreen==0) {
+                    const bool fs=(SDL_GetWindowFlags(win)&SDL_WINDOW_FULLSCREEN_DESKTOP)==SDL_WINDOW_FULLSCREEN_DESKTOP;
+                    std::printf("RENDER_FULLSCREEN frame=%u -> %s rc=%d\n",studyFrame,fs?"windowed":"fullscreen",
+                                SDL_SetWindowFullscreen(win,fs?0:SDL_WINDOW_FULLSCREEN_DESKTOP));
+                }
                 if(renderStudy && studyReset && studyFrame && studyFrame%studyReset==0) {
                     // The SDL_RENDER_TARGETS_RESET path, on a fixed schedule.
                     windowTarget();
@@ -2123,7 +2133,8 @@ int main(int argc, char** argv) {
 #endif
             t3 = prof ? pnow() : 0;
 #ifndef NDEBUG
-            if(renderStudy && (studyFrame==360 || (studyFrame>=480 && studyFrame<490) || studyFrame==720))
+            if(renderStudy && (studyFrame==360 || (studyFrame>=480 && studyFrame<490) || studyFrame==720 ||
+                               (studyCaptureEvery && studyFrame%studyCaptureEvery==0)))
                 if(const char* directory=tak::devEnv("TAK_RENDER_CAPTURE_DIR")) {
                     const auto path=std::filesystem::u8path(directory)/("frame-"+std::to_string(studyFrame)+".png");
                     const auto utf8=path.u8string();
