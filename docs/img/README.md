@@ -1,7 +1,7 @@
 # README and user-guide screenshots
 
-**Retaken for 0.9.0** (2026-10-24): all 81 pictures in
-[SHOTLIST-0.9.0.md](SHOTLIST-0.9.0.md) were retaken by the 0.9.0 build (Debug
+**Retaken for 0.9.0** (2026-10-24): all 81 pictures on the 0.9.0 shot list
+(`SHOTLIST-0.9.0.md`, deleted once they landed) were retaken by the 0.9.0 build (Debug
 with `-O2`, CMake `VERSION 0.9.0`), on three branches: the Cartographer
 pictures, the front-end and multiplayer pictures, and the in-game pictures.
 `title.jpg` reads VERSION 0.9.0, and three pictures are new: `mp-connect.jpg`,
