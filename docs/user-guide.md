@@ -332,7 +332,7 @@ except passwords, Spectate and Map scenario.
 | **Easy** | Builds slowly. First attack after about four minutes, then small waves of at most eight units, at least two minutes apart. |
 | **Normal** | Sends small raiding parties to probe and scout while it builds up a main army sized to its income. |
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
-| **Absurd** | Plays like Hard, with **double mana income**, reclaim included. |
+| **Absurd** | Plays like Hard, with **double mana income**. |
 | **Absurdly Defensive** | Plays like Defensive, with Absurd's **double mana income** ([details](ai-defensive-2026-10-17.md)). |
 | **Retail** | The Retail AI: the original 1999 game's own AI, driven by `ai/default.txt` (or the profile the map names; 30 campaign missions name their own), ported from the original program and checked against it. A game pack or a map archive that carries the profile file replaces the install's. No difficulty setting and no income bonus; it keeps the original's quirks and plays weaker than Normal. It always plays the campaign opponents. A new AI seat starts on Normal. See [Retail AI](#retail-ai). |
 
@@ -541,7 +541,6 @@ Mana comes from:
 | **Lodestones** (Creon: Mana Refinery) built on mana spots | 10 mana per second each, plus storage. |
 | **Divine lodestones** (Creon: Mana Amplifier) | 20 mana per second each, plus more storage. |
 | **Builders and some priests** | A small trickle each. |
-| **Reclaiming** trees, rocks and wrecks | A lump of mana per object. |
 
 Mana spots are marked on the map. A lodestone must be built on one. Better spots
 yield more.
@@ -653,7 +652,17 @@ selected.
 
 ### Reclaiming
 
-A builder that can reclaim turns trees, rocks and wrecks into mana.
+A builder that can reclaim clears away trees, rocks and wrecks. As in the
+original game it gains no mana for them: reclaiming makes room to build and
+move, and removes wrecks before a priest can raise them.
+
+- The builder walks right up to the object and works standing next to it,
+  whatever its build distance. Once it has started, being pushed away does not
+  stop it.
+- How long it takes depends only on the object: about half a second for a rock
+  or a wreck, about 9 seconds for a big tree, longer for crops and wells. A
+  faster builder is no quicker, and several builders on one object do not
+  share the work: the first to finish removes it.
 
 - Right-click a single object to reclaim it. Every selected builder that can
   reclaim goes for it; other selected units keep their orders.

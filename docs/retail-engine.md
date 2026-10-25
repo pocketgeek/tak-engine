@@ -669,11 +669,68 @@ area approach is a radius-4 circle (`0x4d4da0`) waited on mask 0x700, so
 arrival (0x500) and failure (0x200) both lead to the next pick. 0x200 is raised
 only at `0x4e4ec4`: a zero-point route delivery whose controller rejects the
 unit. A pick in the same `0x50e660` cell as the last target retires the order
-(8); RECLAIM returns 8 on 0x200 in stage 1. Retail's reclaim approach is a
-footprint-adjacency rectangle (`0x4d4e80`/`0x4e3590`, no builddistance) and its
-work countdown is `ftol(energy + 15.0)` ticks; ours still uses a reach radius
-and 120 work/s, not yet changed. Details:
-[guessed-area-clear-2026-09-26.md](guessed-area-clear-2026-09-26.md).
+(8); RECLAIM returns 8 on 0x200 in stage 1. The reclaim child itself is
+below. Details: [guessed-area-clear-2026-09-26.md](guessed-area-clear-2026-09-26.md).
+
+## Reclaim (icd `0x406250`, emulated 2026-10-24)
+
+RECLAIM is one mission for every reclaim in the sim: a click on a feature or a
+corpse, an area-clear child, and the clearing reclaims a build queues ahead of
+itself. Retail has no unit reclaim (the mission table beside the Reclaim and
+ReclaimArea handlers, `0x5eba01`/`0x5eba1a`, has none), and the AI issues none.
+VTOL_RECLAIM (`0x420xxx`) is not ported; flying reclaimers keep our old
+centre-distance reach.
+
+**Reach.** Stage 0 resolves the mission point's cell (`0x4930d0`, tails walked
+back through +0xb/+0xa to the anchor) and the footprint from the feature def
+(+0xb0). `0x4d4e80` then installs a `0x4e3590` rectangle controller with
+minX = ax − bw, maxX = ax + fw, minZ = az − bh, maxZ = az + fh, for builder
+footprint (bw, bh) at unit+0x78/+0x7a; wait mask 0x700. Its acceptance
+(`0x4e24a0` -> `0x4e39e0`) takes only footprint-origin cells on that
+perimeter: the builder's footprint touches the target at an edge or a corner,
+with no gap and no overlap (a builder standing on a non-blocking feature is
+steered out). Builddistance (type+0x230), Y and height are never read. The
+steering cell is `0x4e38e0`, our `RetailRectGoal::navigationCell`, the
+controller MobileBuild already used. Stage 1 starts work on 0x100/0x400 and
+ends silently on 0x200, with no builddistance fallback. After that no distance
+is ever tested: a builder pushed 40 cells away kept working. A corpse is a
+feature, reached through its installed corpse footprint. Emulated: 19,044
+origin cells over all 144 combinations of 1..4 x 1..4 builders and 1..3 x 1..3
+features, random clicked cell and builddistance 0..500, all on the perimeter
+rule; `tools/re/check_reclaim_reach.py` re-checks a sample against the port.
+
+**Time and payment.** On arrival the countdown at mission+0x4e is
+`ftol(type+0x128 + 15.0f)` (energy as a float). Stage 2 waits for COB
+INBUILDSTANCE (after a FacingNoFormation turn child unless turninplacerate is
+0). The work stages 3 and 4 (`0x406529`) wake every 2 ticks (mask 2|1) and
+subtract 2; a worker particle while more than 15 remain; at <= 0 stage 4 runs
+once more and stage 5 removes the target. So the order ends
+2·ceil(C/2) + 2 ticks after arrival: 18 for energy 0 (rocks, every shipped
+corpse), 92 for 75, 268 for a 250-energy tree, 542 for 525. Workertime,
+builddistance, metal and damage play no part, and every builder keeps its own
+count: the first to finish removes the feature, the rest quit on their next
+wake. Each wake re-checks the target (`0x496ea0`: reclaimable flag and the
+object's +0x5d bit 0x10, cleared by a fade or a fire), and holds a corpse's
+decay (object+0x3c = decomposetime·30). `0x494fd0` starts a fade (`0x494ce0`,
+alpha 1.0 less 0.03 a tick: 34 ticks) and removes the feature with no
+featuredead replacement; it stays in the plane, blocking but no longer a
+target, until the fade ends. **Reclaim pays no mana**: a write watch on the
+player and its economy saw nothing, the only other reader of type+0x128 is the
+VTOL countdown, and the economy loop has no reclaim term. Event 0x2 is the
+cancel (the order destructor), not a speed-up.
+
+Port: `sim/retailreclaim.h` (rectangle, countdown, work wake) driven by
+`World::prepareReclaimApproach` (stage 0, on the leg's `buildRectangle`) and
+`World::tickReclaim`; `Feature::fadeLeft` / `Unit::corpseFading` hold the fade.
+Ours, not retail: a MobileBuild retry treats a fading feature on its site like
+a mobile unit (the engine's own placement-clearing queues reclaims ahead of a
+build); a fading feature or corpse takes no weapon damage and cannot catch
+fire (otherwise a hit could swap it into a stage that outlives the fade);
+the idle-reclaimer corpse clear in `tickAbilities` is unverified; the
+fade is not drawn (the feature simply goes at its end). Not emulated: the turn
+child and the COB time to INBUILDSTANCE (both add to the table above), what
+else raises 0x400, and retail's per-wake lookup by cell (a new feature on the
+same cell would be carried on with; ours follows the feature id).
 
 ## Benchmark switches and RNG seeding (icd, 2026-10-22)
 

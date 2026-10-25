@@ -37,6 +37,9 @@ interface art and sound straight from its installation folder.
   clear order, trees on explored ground are cleared under the fog, builders
   give up on what they cannot reach, and overlapping map objects the original
   removes at load are gone ([Reclaiming](docs/user-guide.md#reclaiming)).
+- **Reclaiming as in the original.** Builders work standing next to a tree,
+  rock or wreck, take the original's time for it (about 9 seconds for a big
+  tree), and gain no mana from it.
 - **Gate doorways.** Clicking an open gate's doorway picks the ground, so
   units can be ordered through it.
 - **The Rolling Tower.** The Retail AI and our AI levels now build the Aramon

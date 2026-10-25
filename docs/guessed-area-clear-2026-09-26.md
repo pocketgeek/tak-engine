@@ -108,8 +108,39 @@ retail (static reading of `KINGDOMS.icd`; the fog rule also emulated):
   retail. Not ported: an armed CLEAR left-drag as an area clear, and the Shift
   toggle that removes an already queued click (`0x4d7a30`).
 
-Still ours, not retail: reclaim starts within `24 + 8*foot + builddistance` of
-the target, where retail's child approach is `0x4d4e80`'s footprint-adjacency
-rectangle with no builddistance; and work runs at 120/s against max(energy, 60),
-where retail's countdown is about energy + 15 ticks (about 4x slower for a
-250-energy tree). Neither is emulated yet; both would change every reclaim.
+The reclaim child's reach and speed, ours until then (start within
+`24 + 8*foot + builddistance`, 120 work/s against max(energy, 60), mana paid
+as it went), are now retail's, both emulated: see the next section.
+
+## 2026-10-24 (later): the reclaim child is retail RECLAIM
+
+`0x406250` was emulated stage by stage (scratch probes, not in the repo;
+`tools/re/check_reclaim_reach.py` keeps a check against the port). Every
+reclaim the sim runs is this mission: a click, an area-clear child, a build's
+own clearing reclaims, and corpses. What changed, with the full detail in
+[retail-engine.md](retail-engine.md#reclaim-icd-0x406250-emulated-2026-10-24):
+
+- **Reach** is `0x4d4e80`'s rectangle: the builder's footprint touching the
+  target's, edge or corner, no overlap, no builddistance. The child walks to
+  the nearest perimeter cell (the MobileBuild controller) and, once working,
+  never checks distance again. A corpse is reached through its corpse feature.
+- **Time** is `trunc(energy + 15)` ticks counted down two at a time: 268 ticks
+  from arrival for a 250-energy tree (about 9 s; ours took 63), 18 for a rock
+  or a corpse. Workertime does not matter and builders do not share work.
+- **No mana.** Retail RECLAIM pays nothing; we paid the feature's energy.
+- The feature fades for 34 ticks after the order ends, still blocking, and
+  leaves no rubble.
+
+Measured with the scratch area-clear probe (araking, every feature in the
+box cleared both times; seconds until the builders are idle):
+
+| Box | Builders | Before | After |
+|---|---|---|---|
+| Lake Ferrix_JM 5440,832-6080,1472 (73) | 1 | 184.6 | 755.8 |
+| Lake Ferrix_JM | 3 | 65.9 | 344.6 |
+| whisper hills pass 3008,1728-3648,2368 (45) | 1 | 106.5 | 451.7 |
+| whisper hills pass | 3 | 43.3 | 204.8 |
+
+The single builder spends about 9 s working each 250-energy tree (669 s of
+756 on Lake Ferrix_JM); the rest is walking up to each one. Three builders
+now often converge on one tree and only the first one's work counts.

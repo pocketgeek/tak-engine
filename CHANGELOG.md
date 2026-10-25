@@ -59,6 +59,15 @@ their validation reports; both live in [`docs/`](docs/).
 - **Unreachable objects:** a builder now gives up on a tree or rock it cannot
   reach, and an area clear ends when the nearest object left is one it could
   not reach, as in the original. Before, the builder could keep trying forever.
+- **Reclaim works as in the original:** a builder now walks right up to a tree,
+  rock or wreck and works standing next to it; before, it started from as far
+  away as its build distance. Each object takes as long as the original game
+  gives it, whatever the builder: about 9 seconds for a big tree (it was about
+  2), half a second for a rock or wreck, and builders on the same object no
+  longer share the work. Reclaiming gives **no mana**, as in the original; it
+  gave the object's value before. The object fades for about a second before
+  it is gone and leaves no rubble. Area clears and the clearing a builder does
+  before building take longer as a result.
 - **Not compatible with 0.8.x:** these changes alter the game itself, so 0.9.0
   uses protocol 294 and replay format 15. It does not play with 0.8.14 or any
   earlier version, nor their replays.

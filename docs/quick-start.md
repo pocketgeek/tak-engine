@@ -153,7 +153,7 @@ the orders for the selection on the right-hand panel.*
 | An unfinished building | a builder that can build it | Help build it. |
 | Your transport | units it can carry | Board it. |
 | Any point | a transport carrying units | Go there and unload. |
-| A tree, rock or wreck | a reclaiming builder | Reclaim it for mana. |
+| A tree, rock or wreck | a reclaiming builder | Reclaim (clear) it. It gives no mana. |
 
 ![The attack cursor, crossed swords, over an enemy Skeleton Archer with the Aramon army selected](img/quick/attack-cursor.jpg)
 

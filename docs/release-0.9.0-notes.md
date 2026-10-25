@@ -2,10 +2,11 @@
 
 0.9.0 follows 0.8.14. It brings a new set of guides, with the release history
 moved into one [CHANGELOG](../CHANGELOG.md), and a handful of game changes that
-bring area clearing, gate doorways, the computer players and build sparkles
-closer to the original game.
+bring area clearing, reclaiming, gate doorways, the computer players and build
+sparkles closer to the original game.
 
-**Compatibility first.** The area-clear changes alter the game simulation, so
+**Compatibility first.** The area-clear and reclaim changes alter the game
+simulation, so
 0.9.0 uses network protocol **294** and replay format **15**. **0.9.0 does not
 play with 0.8.14 or any earlier version, and does not play their replays.**
 
@@ -69,6 +70,24 @@ play with 0.8.14 or any earlier version, and does not play their replays.**
   failed to reach, as in the original. Before, a builder could keep trying
   forever.
 
+## Reclaiming as in the original
+
+- **Next to the object.** A builder now walks right up to a tree, rock or wreck
+  and works standing beside it, as in the original. Before, it started from as
+  far away as its build distance. Once it has started, being pushed away does
+  not stop it.
+- **The original's time.** Each object takes as long as the original gives
+  it, whatever the builder: about 9 seconds for a big tree (it was about 2),
+  half a second for a rock or wreck, longer for crops and wells. A faster
+  builder is no quicker, and several builders on one object no longer share
+  the work: the first to finish removes it. The object then fades for about a
+  second, still in the way, and leaves no rubble.
+- **No mana.** Reclaiming gives no mana, as in the original; it gave the
+  object's value before. It clears room to build and move and removes wrecks
+  before a priest can raise them.
+- **Area clears take longer** as a result, about four times as long for a box
+  of big trees, and so does the clearing a builder does before it builds.
+
 See [Reclaiming](user-guide.md#reclaiming) in the user guide.
 
 ## Gates
@@ -110,6 +129,9 @@ This is display only.
   original (it read as 1 before). Every shipped mobile builder has a `bmcode`
   line, so this changes only buildings' construction sparkles in the shipped
   data; a modded mobile builder without one should say `bmcode=1`.
+- A feature's `energy` now sets only how long it takes to reclaim (`energy +
+  15` ticks, at 30 ticks a second), as in the original; reclaiming pays no
+  mana. A unit's `workertime` and `builddistance` play no part in reclaiming.
 
 ## For contributors
 
@@ -137,23 +159,33 @@ This is display only.
 - Build sparkles (`00494013`): `buildMovementCode` defaults to 0, and the
   cosmetic emitter's ceiling comes from the owner's world Y. The hashed restore
   path keeps the corner height, so no hashed state changes there.
+- Reclaim (`7c0325b6`, protocol 294): every reclaim the sim runs (a click,
+  area-clear children, a build's own clearing reclaims, corpses) follows retail
+  RECLAIM `0x406250`, emulated: reach is `0x4d4e80`'s footprint-adjacency
+  rectangle (`Order::buildRectangle`, the MobileBuild approach), the countdown
+  is `trunc(energy + 15)` (`src/sim/retailreclaim.h`), no mana is paid, and the
+  target fades 34 ticks with no rubble. `Feature::manaYield/work/workFull`,
+  `Unit::corpseWork` and `addFeature`'s `work` argument are gone. New ctest
+  `reclaim`; `tools/re/check_reclaim_reach.py` checks the port against the
+  emulated routine. Details in
+  [retail-engine.md](retail-engine.md#reclaim-icd-0x406250-emulated-2026-10-24).
 - `--mpai` Inner Circle seed 1 hashes are new with protocol 294: at 60 s Retail
-  `89c5eadaa7290dbb`, Legion `b1a0afcc56c14990`, a Retail AI seat
-  (`TAK_AI_LEVEL=6`) `68f228cec489010b`; at 300 s Retail `9b58b36177e3a767`,
-  Legion `1ddb894f6d73dee5`. The cross-compiler golden (`check-determinism`)
+  `d375d03a6c472773`, Legion `426ab0842b709c28`, a Retail AI seat
+  (`TAK_AI_LEVEL=6`) `c5846d769e0a7d93`; at 300 s Retail `b69b4e0842ba4eef`,
+  Legion `0da23f54df7a1b9d`. The AI never reclaims; these moved from the area-clear
+  baselines only because the state hash folds the new reclaim fields. The cross-compiler golden (`check-determinism`)
   stays `dcef618cd2e4d558`.
 
 ## Known limits
 
 New with 0.9.0:
 
-- **Reclaiming is still ours in reach and speed.** How close a builder must
-  stand and how long a tree or rock takes are this engine's, not the
-  original's: the original works about four times slower and reclaims from
-  next to the object's footprint.
 - **The Shift order-trail preview** of a queued area clear uses what your side
   sees now, not the explored ground the order will use.
-- **Flying reclaimers** reach their targets with a plain move.
+- **Flying reclaimers** reach their targets with a plain move and still
+  start from their old distance; they work for the original's time.
+- **The fade** of a reclaimed object is not drawn: it stays as it was for
+  about a second, then disappears.
 
 All of 0.8.14's known limits carry over:
 

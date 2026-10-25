@@ -621,7 +621,7 @@ by hand.
 
 Features are the objects that sit on the ground: trees, bushes, rocks, mana
 deposits, ruins, walls, buildings and so on. The game decides what each one
-does (whether it blocks units, can be reclaimed for mana and so on) from its own
+does (whether it blocks units, can be reclaimed and so on) from its own
 definitions; Cartographer only places them.
 
 ![The Features tool on Ulasem Arena: the browser shows the trees category with palm and jungle trees, five palm trees stand on the sand, and a see-through palm tree with a yellow outline previews the next placement](img/cartographer/features.jpg)

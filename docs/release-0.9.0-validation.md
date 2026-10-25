@@ -33,6 +33,17 @@ and merged as `56e86ce4`, `04f77b36`, `e53b4e82`; then `30007217`, `563a3a40`,
 - `b8762727`: clear orders to every selected reclaimer; removed features not
   drawn. Client only.
 - `de4a383e` (docs) and `aedb827c` (CMake `VERSION 0.9.0`).
+- `7c0325b6`, after the preparation commits below: reclaim as retail RECLAIM
+  (`0x406250`, emulated): footprint-adjacent reach (`0x4d4e80`'s rectangle,
+  no builddistance), `trunc(energy + 15)` ticks whatever the builder, no mana,
+  a 34-tick fade with no rubble. Every reclaim path (clicks, area-clear
+  children, a build's own clearing reclaims, corpses). **Hashed simulation
+  change under the same protocol 294** (0.9.0 is still an unpublished draft;
+  whether to bump to 295 is the lead's call);
+  `src/sim/` (`legion.cpp`, `matchsetup.cpp`, `retailreclaim.h` new,
+  `sim.cpp`, `sim.h`) and `src/client/` (`gameview_devharness.cpp`,
+  `gameview_impl.cpp`). New ctest `reclaim`; `tools/navigation_checkpoints.json`
+  retaken.
 
 The preparation commits on top of `aedb827c`, all linear (no merges):
 `55e3016d` (release notes, this report's skeleton, protocol 294 in every
@@ -82,39 +93,31 @@ No mixed-version check was run (see *Local preparation checks*).
 
 ## Local preparation checks
 
-These ran on Linux, cores 4-23, with an optimized Debug build (`build-o2`, `-O2 -g`, ccache + mold, `TAK_TEST_DATA` = the retail install). The build was made fresh in a detached worktree at `aedb827c`, all targets; `takclient --version` and `takserver --version` report `0.9.0 (build v0.8.14-19-gaedb827c5c41)`. A Release build with the vendored static libraries was also configured fresh from the same worktree (`~/tak-tmp/scratch/release-090/build-rel`, all targets): its `takclient --version` and `takserver --version` read `0.9.0 (build v0.8.14-19-gaedb827c5c41)`, `ldd takclient` lists only libc, libm and the loader, and `--help` lists only `--data`, `--play-map`, `--game-mod` and `--version`. By the user's rule (minimal testing), no Release, `-O0` Debug, Clang or ASan suite was run, and no repeat runs beyond the one rerun below.
+These ran on Linux, cores 4-23, with an optimized Debug build (`build-o2`, `-O2 -g`, ccache + mold, `TAK_TEST_DATA` = the retail install), all targets, on the tree committed as `7c0325b6` (on top of `ef1b2b15`; `takclient --version` read `0.9.0 (build v0.9.0-1-gef1b2b15630b-dirty)` before the commit). The earlier checks at `aedb827c` (full suite 610/611 with the `mod_transfer` harness gap, fixed in the test before landing; Release build with vendored static libraries, `ldd` libc/libm/loader only, `--help` listing only `--data`, `--play-map`, `--game-mod` and `--version`) are superseded by the results below; logs in `~/tak-tmp/scratch/release-090/`. By the user's rule (minimal testing), no Release, `-O0` Debug, Clang or ASan suite was run, and no repeat runs.
 
-- **Full suite.** The one full `ctest` run on `-O2` at `aedb827c` (`-LE nightly -j16`, scratch HOME/XDG_DATA_HOME) passed **610/611** (`rc=8`, 389 s real). 773 tests are defined, the 164 `nightly`-labelled ones excluded. The one failure is **`mod_transfer`** (15.7 s, not a timeout): the referee logged `game 1: REFEREE SUSPECT at tick 0 -- all 2 clients agree with each other but disagree with the server sim`. Run again alone it failed the same way (12.8 s), so it is not load. Cause (source reading; fixed in the test before landing, see *Failures*): 737653ed added `MatchConfig::roomMapRevealed/roomLosOff`, which `World::stateHash()` folds in when set (`sim.cpp`, `mix(0x524f4f4d564953)`). The server and the real client build their config with `net::matchConfigFor()`, where the default room FOG OF WAR (`fogExplored = 1`, EXPLORED) gives `roomMapRevealed = true`. The test's own C++ peers (`tools/mod_transfer_test.cpp` line 58) build a `sim::MatchConfig` by hand and leave it `false`, so their tick-0 hash differs from the referee's. Real games are not affected: every shipped path (`gameview_net.cpp`, `server.cpp`, `replayfile.cpp`) goes through `matchConfigFor()`, and the `--mpai` games below ran with no referee-suspect line. The fix belongs in the test (set `cfg.roomMapRevealed = true`, or build the config with `matchConfigFor()`). The tests for this release's changes passed inside the run: `reclaimarea`, `navblock`, `gate_pick`, `reclaim_fanout`, `replay`, `replay_file`, `replay_writer`, `replay_always`, `classic_ai*`, `ai_profile`, `ai_profile_data`, `ai_mod_profile` (63 s) and `classic_ai_map_profile`. Logs: `~/tak-tmp/scratch/release-090/ctest.out`, `~/tak-tmp/scratch/release-090/ctest-mod_transfer-rerun.out`.
+- **Full suite.** One full `ctest` run (`-LE nightly -j16`, scratch HOME/XDG_DATA_HOME) passed **612/612** (357 s real), including the new `reclaim` test and `reclaimarea`, `clear_build`, `navblock`, `retail_script`, `ai_behavior`, `retailgap`, `reclaim_fanout`, `gate_pick`, `mod_transfer` and the `replay*` tests. Log: `~/tak-tmp/scratch/reclaim-fix/ctest.out`.
 - **Detmath guard** (`tools/check-detmath.sh`): OK. The sim path has no direct libm transcendentals and no `std::atomic_ref`.
-- **Cross-compiler golden hash** (`tools/check-determinism.sh`): g++ and clang++ at -O0/-O2/-O3 all give `dcef618cd2e4d558`, the same golden as 0.8.14. The aarch64 legs were SKIPPED because there is no target libc or headers locally; the macOS CI leg covers ARM64. Log: `~/tak-tmp/scratch/release-090/check-determinism.log`.
-- **`--mpai` Inner Circle, seed 1** (`takserver --local --no-auth --seed 1`, a clean scratch HOME/XDG_DATA_HOME per game, `TAK_LEGION=1` for Legion, `TAK_AI_LEVEL=6` for the Retail AI). All five games ended `err=none end=timelimit`, and no log has a desync or referee-suspect line.
+- **Cross-compiler golden hash** (`tools/check-determinism.sh`): g++ and clang++ at -O0/-O2/-O3 all give `dcef618cd2e4d558`, the same golden as 0.8.14 (unchanged; reclaim adds no detmath). The aarch64 legs were SKIPPED because there is no target libc or headers locally; the macOS CI leg covers ARM64.
+- **`--mpai` Inner Circle, seed 1** (`takserver --local --no-auth --seed 1`, a clean scratch HOME/XDG_DATA_HOME per game, `TAK_LEGION=1` for Legion, `TAK_AI_LEVEL=6` for the Retail AI), each game run **twice with identical hashes**. All ten games ended `err=none end=timelimit`, and no log has a desync or referee-suspect line.
 
 | Mode | 60 s | 300 s |
 |---|---|---|
-| Retail pathfinding (Normal AI) | `89c5eadaa7290dbb` (4 units) | `9b58b36177e3a767` (13 units) |
-| Legion | `b1a0afcc56c14990` (4 units) | `1ddb894f6d73dee5` (18 units) |
-| Retail AI (`TAK_AI_LEVEL=6`) | `68f228cec489010b` (4 units) | not run |
+| Retail pathfinding (Normal AI) | `d375d03a6c472773` (4 units) | `b69b4e0842ba4eef` (13 units) |
+| Legion | `426ab0842b709c28` (4 units) | `0da23f54df7a1b9d` (18 units) |
+| Retail AI (`TAK_AI_LEVEL=6`) | `c5846d769e0a7d93` (4 units) | not run |
 
-Every hash matches the baselines taken at `de4a383e`, as expected: `git diff --stat de4a383e aedb827c` is the one-line `CMakeLists.txt` version change. They differ from 0.8.14's, as they should: the sim changed under protocol 294 (Rolling Tower in the AI tables, area clear and installed map features, the hashed room vision). The Retail AI server again logged `game 1: DEFAULT AI profile ai/DEFAULT.txt from the base data`; this is log wording only, as before. Logs: `~/tak-tmp/scratch/release-090/mpai/`.
+They replace the area-clear baselines (`89c5eadaa7290dbb`, `9b58b36177e3a767`, `b1a0afcc56c14990`, `1ddb894f6d73dee5`, `68f228cec489010b`) only because `World::stateHash()` folds different reclaim fields: the AI never reclaims, and with a temporary patch that hashed the old fields all five old baselines and both navigation goldens came back exactly. The Retail AI server again logged `game 1: DEFAULT AI profile ai/DEFAULT.txt from the base data`; this is log wording only, as before. Logs: `~/tak-tmp/scratch/reclaim-fix/land-mpai/`.
 
-- **Compatibility constants** (checked at `aedb827c`): `kNetVersion` **294** (`src/net/protocol.h`, was 293 in `v0.8.14`) and `kReplayFormat` **15** (`src/net/replayhdr.h`, was 14; the header gains the room's FOG OF WAR byte). `tools/replay_test.cpp` pins `kNetVersion == 294` and `kReplayFormat == 15`, and checks that format 14 under protocol 293 is refused. Unchanged since `v0.8.14`: map generator `formatVer` 9 (`src/tnt/mapgen.h`), campaign `kVersion` 4 (`src/net/crusades.h`), `kSchemaVersion` 9 (`src/server/crusades/store.cpp`).
+- **Compatibility constants** (unchanged by `7c0325b6`): `kNetVersion` **294** (`src/net/protocol.h`, was 293 in `v0.8.14`) and `kReplayFormat` **15** (`src/net/replayhdr.h`, was 14; the header gains the room's FOG OF WAR byte). `tools/replay_test.cpp` pins `kNetVersion == 294` and `kReplayFormat == 15`, and checks that format 14 under protocol 293 is refused. Unchanged since `v0.8.14`: map generator `formatVer` 9 (`src/tnt/mapgen.h`), campaign `kVersion` 4 (`src/net/crusades.h`), `kSchemaVersion` 9 (`src/server/crusades/store.cpp`). The reclaim change alters hashed state without a protocol bump: a build from before `7c0325b6` that also says 294 would desync against 0.9.0, which is harmless only if no 294 build was handed out (the 0.9.0 release is still an unpublished draft). TODO-LEAD: keep 294 or bump to 295.
 - **How versions are compared** (source check for the notes):
   - *Joining a server.* `Server::handshake` (`src/server/server.cpp`) rejects a Hello when `ver != kNetVersion` ("protocol version mismatch"), or when the client's pure-retail gameplay-data hash differs from the referee's. The client sends an empty build id ("version-gated only"); `tak::kVersion` is never compared. So **0.9.0 does not play with any 0.8.x client or server**: a 0.8.12-0.8.14 (protocol 293) client is refused by a 0.9.0 server and a 0.9.0 client by a 0.8.x server. Public-server operators must update `takserver` with their players.
   - *Replays.* A replay loads only when `supportedReplayProtocol(format, protocol)` holds (`1 <= format <= 15` and `protocol == kNetVersion`). 0.8.12-0.8.14 replays carry protocol 293, so **0.9.0 cannot play 0.8.x replays**, and 0.8.x cannot play 0.9.0's (format 15, protocol 294).
 
 **No mixed-version check was run.** No 0.8.14 client joined a 0.9.0 server (or the reverse), and no 0.8.14 replay was opened on 0.9.0; the points above rest on the source and `replay_test`.
 
-Failures: one, `mod_transfer` (reproducible; a test-harness config gap after
-`737653ed`, not a product desync; see the full-suite item). Fixed in the test
-before landing: its peers now set `roomMapRevealed`/`roomLosOff` from the
-room's FOG OF WAR option exactly as `net::matchConfigFor` does. No product code
-changed.
+**Not checked by hand:** that retail pays no mana for a reclaim rests on the emulation of `0x406250` (a write watch on the player and its economy), not on a game of the real retail program under Proton.
 
-- **Final source** (the landed tree): all targets rebuilt from it on `-O2`
-  (`build-o2`, cores 4-23), `takclient --version` and `takserver --version`
-  read `0.9.0`, `ctest -L quick` passed 503/503 (173 s), and `mod_transfer`
-  alone passed (12.9 s). Logs: `~/tak-tmp/scratch/release-090/land-quick.out`,
-  `~/tak-tmp/scratch/release-090/land-mod_transfer.out`.
+Failures: none in the run above. (The earlier `mod_transfer` failure at `aedb827c` was a test-harness config gap after `737653ed`, fixed in the test: its peers set `roomMapRevealed`/`roomLosOff` from the room's FOG OF WAR option exactly as `net::matchConfigFor` does.)
 
 ## Remote multiplayer sweep
 
@@ -124,8 +127,8 @@ gave for skipping the sweep (no `src/sim/` change, `--mpai` identical) does not
 hold. State the plan here: either run the 37-scenario sweep per pathfinding
 mode (`tools/desync-hunt-remote.sh`, isolated binaries and ports, never the
 public takserver) and record the new table, or record why it was skipped (for
-example: the change is confined to area clear and map-feature install, covered
-by `reclaimarea_test`, `navblock_test`, `reclaim_fanout` and five
+example: the change is confined to area clear, reclaim and map-feature install, covered
+by `reclaim_test`, `reclaimarea_test`, `navblock_test`, `reclaim_fanout` and five
 run-twice-identical `--mpai` games plus Windows and macOS `--mpai`).
 
 ## CI and packages
@@ -136,7 +139,7 @@ Windows, macOS with signing), attempts, reruns and force-cancels.
 TODO-LEAD: assets (count, SHA-256 and sizes against GitHub's digests, size
 change against 0.8.14, dependencies, file lists), build ids, Windows
 signatures, macOS notarization, packaged server running the Retail AI (expect
-`hash=68f228cec489010b` at 60 s, protocol v294), packaged client and editor
+`hash=c5846d769e0a7d93` at 60 s, protocol v294), packaged client and editor
 command lines, mods folder, streaming local copy, Opus static, font licences,
 macOS microphone and Retina, and that every `blob/v0.9.0/docs/...` link in the
 release body resolves at the tag.
@@ -193,10 +196,11 @@ mouse pointer in the top-left corner.
 
 - No game mixing 0.9.0 with 0.8.x is possible: protocol 294 is refused by
   every older server and client. No mixed-version check was run.
-- New: reclaim reach and work time are still this engine's (retail works about
-  four times slower and reclaims from footprint adjacency); the Shift
-  order-trail preview of a queued area clear uses current sight only; flying
-  reclaimers use a plain move.
+- New: the Shift order-trail preview of a queued area clear uses current
+  sight only; flying reclaimers use a plain move and keep the old reach; a
+  reclaimed object's 34-tick fade is not drawn; the turn and COB build-stance
+  time before reclaim work starts were not emulated; a reclaimer follows its
+  target by feature id where retail looks it up by cell each wake.
 - All of 0.8.14's limits carry over (see
   [release-0.8.14-validation.md](release-0.8.14-validation.md#limits)), except
   the mixed-version notes, which no longer apply.
