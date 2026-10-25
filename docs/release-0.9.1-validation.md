@@ -133,11 +133,19 @@ Failures: TODO-LEAD.
 
 ## Screenshots
 
-TODO-LEAD: which pictures were retaken for 0.9.1 (at least `title.jpg`, which
-reads VERSION 0.9.0, and the Options pictures if the Renderer or Hardware
-Cursor rows changed: `options-graphics.jpg` shows RENDERER AUTO), by which
-build, and the `docs/img/README.md` rows updated; or that none were and why.
-No image was edited by the docs branch.
+Three pictures were retaken on branch `task-091-shots` (`a4d43808`, on
+`b1d133a3`) by the 0.9.1 build (Debug `-O2`, CMake `VERSION 0.9.1` set locally),
+with scratch profiles and the offscreen driver: `title.jpg` (VERSION 0.9.1),
+`guide/options-graphics.jpg` (RENDERER **Auto (OpenGL)**, HARDWARE CURSOR note
+**OS CURSOR 16X25**; user-guide alt text and caption updated) and
+`streaming.jpg` (idle panel, unchanged apart from the version line behind it).
+`docs/img/README.md` has a "Retaken for 0.9.1" note and the three rows. The new
+stream failure and reconnect reasons appear only after a real start against
+YouTube, so no picture shows them. No other picture's scene or caption depends
+on a 0.9.1 change. No image was edited by the docs branch.
+
+TODO-LEAD: confirm the screenshot commit landed with the release (its sha on
+main).
 
 ## Remote multiplayer sweep
 

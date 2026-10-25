@@ -4,9 +4,9 @@ Every published TAK Engine release, newest first.
 
 The current version is always at
 [the latest release](https://github.com/pocketgeek/tak-engine/releases/latest).
-Older versions are kept as git tags (each entry links its source); to run one,
-build it from source with the [development guide](docs/development.md) of that
-tag. No release includes retail game assets: every version needs your own
+Releases from 0.9.0 on stay on the GitHub releases page; versions before 0.9.0
+are kept only as git tags (each entry links its source): to run one, build it
+from source with the [development guide](docs/development.md) of that tag. No release includes retail game assets: every version needs your own
 *Total Annihilation: Kingdoms* installation.
 
 **Protocol** decides who can play together. A server and all of its players
@@ -99,17 +99,18 @@ their validation reports; both live in [`docs/`](docs/).
   instead of Direct3D 9. Auto passes over Windows' software OpenGL (a machine
   with no graphics driver) and Microsoft's OpenGL compatibility layer and uses
   Direct3D 11 instead, then Direct3D 9. The Renderer row shows the pick, such
-  as **AUTO (OPENGL)**; choose **Direct3D 11** or **Direct3D 9** there if
+  as **Auto (OpenGL)**; choose **Direct3D 11** or **Direct3D 9** there if
   OpenGL misbehaves. OpenGL was faster on the test machine with 2,000 units on
-  screen; with 10,000, Direct3D 11 was about 10% faster. Linux and macOS are
-  unchanged.
+  screen; with 10,000, Direct3D 11 was about 10% faster. Linux and macOS pick
+  as before; their Auto row now names the pick too, such as **Auto (Metal)**.
 - **Not compatible with 0.9.0:** the aiming and the way new units leave their
   building change the game itself, so 0.9.1 uses protocol 295 (replay format
   15 is unchanged). It does not play with 0.9.0 or any earlier version, nor
   their replays.
 - **Upgrading:** a server and all of its players update to 0.9.1 together;
-  public-server operators update `takserver` as well. Keep 0.9.0 (or build it
-  from its tag) to watch replays recorded before 0.9.1.
+  public-server operators update `takserver` as well. Keep 0.9.0 (it stays on
+  the releases page, or build it from its tag) to watch replays recorded
+  before 0.9.1.
 
 [Release notes](docs/release-0.9.1-notes.md) · [Validation report](docs/release-0.9.1-validation.md) · [Source at v0.9.1](https://github.com/pocketgeek/tak-engine/tree/v0.9.1)
 

@@ -72,8 +72,9 @@ network changes so the client, server, and tools use the same code.
 
 ### Building an older version
 
-Only the latest release is offered for download. To play an older version's
-replays, or with friends who have not updated, build that version from its git
+Releases from 0.9.0 on stay on the GitHub releases page; versions before 0.9.0
+are no longer offered for download. To play such a version's replays, or with
+friends who have not updated, build that version from its git
 tag (every release has one, `v0.9.1`, `v0.9.0` and so on; the
 [CHANGELOG](../CHANGELOG.md) lists them):
 

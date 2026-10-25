@@ -142,8 +142,9 @@ packs and their ticks.
 - **Replays** play only on a version with the protocol that recorded them. Keep
   an old copy of the engine if you want to keep watching old replays.
 - **Anything you must do by hand** when updating is listed under *Upgrading* in
-  that release's [CHANGELOG](../CHANGELOG.md) entry. Older versions are not
-  offered for download; they can be built from source from their tags (see the
+  that release's [CHANGELOG](../CHANGELOG.md) entry. Releases from 0.9.0 on
+  stay on the GitHub releases page; older versions are not offered for
+  download, but can be built from source from their tags (see the
   [development guide](development.md)).
 
 ---
@@ -1686,7 +1687,7 @@ effects only without dots.*
 - **Linux:** OpenGL. **macOS:** Metal.
 
 While Auto is in use the row names what it picked, for example
-**AUTO (OPENGL)**. The list also shows every other backend your copy of the
+**Auto (OpenGL)**. The list also shows every other backend your copy of the
 game can use, such as **OpenGL**, **Direct3D 11**, **Direct3D 9**,
 **Direct3D 12**, **OpenGL ES 2** or **Software**; only the ones available on
 your system appear.

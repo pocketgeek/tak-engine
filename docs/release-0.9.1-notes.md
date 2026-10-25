@@ -22,9 +22,10 @@ version, and does not play their replays.**
   as *Recorded replay version unsupported* and can no longer be watched in
   0.9.1.
 - **Old replays:** a replay recorded by 0.9.0 or earlier needs a version with
-  that replay's protocol. Older versions are no longer offered for download;
-  to keep watching old replays, keep your current install, or build the
-  version from its git tag (see the [development guide](development.md)).
+  that replay's protocol. To keep watching 0.9.0 replays, keep your 0.9.0
+  install (0.9.0 stays on the GitHub releases page); versions before 0.9.0 are
+  no longer offered for download and can be built from their git tags (see the
+  [development guide](development.md)).
 - **Everything else carries over:** settings, your data folder choice, key
   bindings, saved `.kmp` maps, generated-map recipes, mod packs and their
   ticks, and `ModCache/` downloads. A Renderer you chose yourself in Options
@@ -145,8 +146,9 @@ OpenGL instead of Direct3D 9, because some of the game's drawing shortcuts work
 only with OpenGL. Auto passes over Windows' software OpenGL ("GDI Generic", on a
 machine with no graphics driver) and Microsoft's OpenGL compatibility layer,
 and then tries Direct3D 11, then Direct3D 9. The Renderer row shows the pick,
-for example **AUTO (OPENGL)**, and the log has a `renderer:` line for each
-backend Auto tried. Linux (OpenGL) and macOS (Metal) are unchanged.
+for example **Auto (OpenGL)**, and the log has a `renderer:` line for each
+backend Auto tried. Linux (OpenGL) and macOS (Metal) pick as before; their Auto
+row names the pick too.
 
 - **Which is faster.** On the test machine (RTX 5070, 7680 × 2160), OpenGL drew
   a 2,000-unit view about 11% faster than Direct3D 11 and 17% faster than
