@@ -782,7 +782,11 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                         emissionModel.emissionVertexCount=uint8_t(std::min(size_t(2),object.verticesRaw.size()));
                         for(size_t i=0;i<emissionModel.emissionVertexCount;++i)
                             emissionModel.emissionVertices[i]=object.verticesRaw[i];
-                        if(piece>=0) {
+                        // A script piece names its first model object, whose
+                        // chain retailPieceDrawnCenter poses (as retailPieceOrigin).
+                        bool first=true;
+                        for(int i=0;i<index;++i)first=first && productionModel[size_t(i)].scriptPiece!=piece;
+                        if(piece>=0 && first) {
                             // Duplicates cannot move a bound, so keep each vertex once.
                             auto& vertices=currentType.scriptPieceVertices[size_t(piece)];
                             for(auto vertex:object.verticesRaw) {

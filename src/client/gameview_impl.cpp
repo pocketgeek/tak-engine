@@ -2238,8 +2238,12 @@
                     auto found=std::find(cc.pieceNames.begin(),cc.pieceNames.end(),name);
                     const int piece=found==cc.pieceNames.end() ? -1 : int(found-cc.pieceNames.begin());
                     const int index=int(cc.modelPieces.size());
+                    const bool first=piece<0 || std::none_of(cc.modelPieces.begin(),cc.modelPieces.end(),
+                        [&](const auto& model) {return model.scriptPiece==piece;});
                     cc.modelPieces.push_back({object.offsetRaw,parent,piece});
-                    if(piece>=0) {
+                    // The first object named by the piece, as the sim (and the
+                    // posed chain retailPieceDrawnCenter walks) uses it.
+                    if(piece>=0 && first) {
                         auto& vertices=cc.pieceVertices[size_t(piece)];
                         vertices=object.verticesRaw;
                         // Mirrored authored vertices, as the model loader installs
