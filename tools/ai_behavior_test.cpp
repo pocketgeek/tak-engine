@@ -979,6 +979,19 @@ int main(int argc,char** argv) {
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{3000,800}});
         check(attacks(think(controller,w))==0,"naval coastal projection rejects a disconnected body of water");
     }
+    {
+        // The ship's lake lies within 1536 px of the enemy start, but a separate
+        // lake is the enemy's nearest coast (0.9.0: a Navy Yard in a landlocked
+        // pond). Only the nearest wet ring, or the one after it, may count.
+        sim::World w;std::vector<uint8_t> heights(256*256,100);
+        for(int z=0;z<256;++z)for(int x=0;x<256;++x)
+            if((x>=48 && x<80) || (x>=112 && x<128))heights[z*256+x]=0;
+        w.setTerrain(std::move(heights),256,256,20);w.setVisPlayer(-1);
+        auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;
+        w.spawn(&boat,1000,800,0,0);
+        ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{2700,800}});
+        check(attacks(think(controller,w))==0,"naval coastal projection takes the enemy's nearest coast, not a farther lake");
+    }
     for (auto difficulty:{ai::Difficulty::Passive,ai::Difficulty::Easy,ai::Difficulty::Normal}) {
         sim::World w;terrain(w,true);w.player(0).income=200;
         auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;

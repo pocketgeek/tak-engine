@@ -80,6 +80,14 @@ unwound by itself there.
   ignores mobile units (405824). Legion's PARK routing also left 3 of 24 crowded
   units pressing outside their ring without re-rolling it.
 
+**Update, protocol 295 (0.9.1):** the exit step is gone for structures. A Creon
+Navy Yard on a pond sent its Submersible 316 px into another body of water,
+where it sat on the pad and held the yard for 3m46s. Factories now release with
+GetBuilt's rally-else-PARK, kept to cells the output can reach (see
+`retail-engine.md`, "A factory's output: rally, else PARK"). The siting
+conflict above did not recur: `naval_ai`, `production_exit` and the quick suite
+pass with it.
+
 ## Every shipped ground factory
 
 Largest ground output, then three of the smallest (and the reverse order), at both

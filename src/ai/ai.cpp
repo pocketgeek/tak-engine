@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <set>
 #include <unordered_map>
 #include <vector>
 
@@ -206,6 +207,25 @@ const std::vector<std::pair<float,float>>& Controller::navalLaunchOffsets(const 
     std::sort(it->second.begin(),it->second.end());
     it->second.erase(std::unique(it->second.begin(),it->second.end()),it->second.end());
     return it->second;
+}
+
+// Whether the water a ship launched at (x,z) can move in holds at least
+// `cells` positions it fits in (a bounded 4-neighbour flood of its nav grid).
+// A yard needs a sea to send its fleet into, not a pond.
+bool Controller::navalBodyAtLeast(const tak::sim::World& world,const tak::sim::UnitType* ship,
+                                  float x,float z,int cells) const {
+    const auto& grid=world.navFor(ship);
+    const int foot=std::clamp(std::max(ship->footX,ship->footZ),1,15);
+    const int sx=tak::sim::footprintCell(x,foot),sz=tak::sim::footprintCell(z,foot);
+    if (grid.empty() || !grid.fits(sx,sz,foot)) return false;
+    std::vector<std::pair<int,int>> queue{{sx,sz}};
+    std::set<std::pair<int,int>> seen{{sx,sz}};
+    for (size_t head=0;head<queue.size() && int(queue.size())<cells;++head) {
+        const auto [cx,cz]=queue[head];
+        for (const auto [nx,nz]:{std::pair{cx-1,cz},std::pair{cx+1,cz},std::pair{cx,cz-1},std::pair{cx,cz+1}})
+            if (grid.fits(nx,nz,foot) && seen.insert({nx,nz}).second) queue.emplace_back(nx,nz);
+    }
+    return int(queue.size())>=cells;
 }
 
 bool Controller::navalLaunchClear(const tak::sim::World& world,const tak::sim::UnitType* factory,
@@ -648,14 +668,25 @@ bool Controller::reachablePoint(const tak::sim::World& world, const tak::sim::Un
         }
     if (type->domain == tak::sim::UnitType::Domain::Water) {
         // An inland starting position is a strategic destination, not a firing
-        // target. Project it onto a nearby connected coast so ships can contest
-        // the sea even when they cannot bombard the Monarch from there.
-        for (float r = 256; r <= 1536; r += 256)
+        // target. Project it onto the enemy's NEAREST coast so ships can contest
+        // the sea even when they cannot bombard the Monarch from there: the first
+        // ring holding water this ship fits in, or the ring after it, must be
+        // connected to the ship. Accepting any connected point out to 1536 px let
+        // a landlocked pond 1536 px from an enemy pass as "reaches the enemy", and
+        // a Navy Yard went into it (0.9.0 report; generated map, Creon yard at
+        // (1800,5272)). This is our levels' rule only: retail's AI site search
+        // (classicplacement.h, 0x412f80/0x411200) tests no reachability at all.
+        int firstWet = 0;
+        for (int ring = 1; ring <= 6 && (!firstWet || ring <= firstWet + 1); ++ring) {
+            const float r = 256.0f * float(ring);
             for (int i = 0; i < 16; ++i) {
                 const float a = float(i) * 0.392699082f;
                 const float px = tx + detmath::cos(a) * r, pz = tz + detmath::sin(a) * r;
-                if (reachable(px,pz)) { x=px;z=pz;return true; }
+                if (!nav.fits(tak::sim::footprintCell(px,foot),tak::sim::footprintCell(pz,foot),foot)) continue;
+                if (!firstWet) firstWet = ring;
+                if (world.pathExists(type,px,pz,fx,fz)) { x=px;z=pz;return true; }
             }
+        }
     }
     return false;
 }
@@ -886,9 +917,10 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
                 })) {
                     float tx,tz;
                     const auto& offset=launches->front();
-                    output=enemyStarts_.empty() || std::any_of(enemyStarts_.begin(),enemyStarts_.end(),[&](const auto& enemy) {
+                    output=navalBodyAtLeast(world,ship,x+offset.first,z+offset.second,kMinNavalBodyCells) &&
+                        (enemyStarts_.empty() || std::any_of(enemyStarts_.begin(),enemyStarts_.end(),[&](const auto& enemy) {
                         return reachablePoint(world,ship,x+offset.first,z+offset.second,enemy.first,enemy.second,tx,tz);
-                    });
+                    }));
                     if (output) break;
                 }
             }
@@ -1624,7 +1656,7 @@ void Controller::stationArmy(const tak::sim::World& world, std::vector<int>& ass
         if (issued == kMaxCommands) break;
         if (!u.alive() || u.player != player_ || !u.type || u.type->isStructure() || u.type->isBuilder ||
             u.type->commander || u.underConstruction || u.embarked() || u.incapacitated() ||
-            !u.orders.empty() || u.buildSiteId || defenders_.count(u.id) ||
+            !idle(u) || u.buildSiteId || defenders_.count(u.id) ||
             (!u.type->canFly && u.type->domain == tak::sim::UnitType::Domain::Water) ||
             std::find(assigned.begin(), assigned.end(), u.id) != assigned.end()) continue;
         const float ux = u.x.toFloat(), uz = u.z.toFloat();
@@ -1789,7 +1821,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         // building is mistaken for a mobile builder and issued Build orders it can't
         // honour. And never drive a producer that is itself still under construction.
         if (!u.type->isStructure() && u.type->isBuilder && !u.underConstruction &&
-            u.orders.empty() && u.buildSiteId == 0)
+            idle(u) && u.buildSiteId == 0)
             producers.push_back(u.id);                        // idle mobile builder
         else if (u.type->isStructure() && !u.underConstruction && u.buildQueue.empty() &&
                  !registry_.buildable(u.type->id).empty())
@@ -1925,7 +1957,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     for (const auto& u : world.units()) {
         if (cleared >= std::min(dp_.producersPerThink * 2, 64)) break;
         if (!u.alive() || u.player!=player_ || !u.type || u.type->isStructure() ||
-            u.underConstruction || u.embarked() || !u.orders.empty() || u.buildSiteId ||
+            u.underConstruction || u.embarked() || !idle(u) || u.buildSiteId ||
             std::find(assigned.begin(),assigned.end(),u.id)!=assigned.end()) continue;
         for (int factoryId:exitFactories) {
             const auto* found=world.unit(factoryId);

@@ -7,6 +7,7 @@
 #include "net/lockstep.h"
 #include "net/protocol.h"
 #include <algorithm>
+#include <set>
 #include <cstdio>
 #include <stdexcept>
 using namespace tak::sim;
@@ -85,18 +86,32 @@ uint64_t production(bool mobile,bool rally,bool serial) {
     const int id=w.spawn(&producer,600,600,0,0);w.player(0).mana=1e9;
     w.setRepeat(id,&type);if(rally)w.order(id,1600,640,false);
     bool stopped=false,controllerSeen=false;
-    std::map<int,std::pair<Fixed,Fixed>> births;
+    std::map<int,std::pair<Fixed,Fixed>> births;std::set<int> parked;
     bool birthplaceClear=true;
     for(int n=0;n<18000;++n) {
         w.tick(1.f/30);
         for(const auto& u:w.units())if(u.id!=id&&!u.underConstruction) {
-            if(!births.contains(u.id))for(const auto& order:u.orders)
-                if(order.productionExit){births.emplace(u.id,*order.productionExit);break;}
+            // The exit step records where the output was finished. A factory
+            // releases it with GetBuilt's PARK instead, whose ring lies clear
+            // of the factory: an output born outside it (this unscripted
+            // producer's) may park beside its own birthplace.
+            // A rally-only release (a factory's output) is first seen where born.
+            if(!births.contains(u.id)) {
+                for(const auto& order:u.orders) {
+                    if(order.productionExit){births.emplace(u.id,*order.productionExit);break;}
+                    if(order.park){births.emplace(u.id,std::pair{u.x,u.z});parked.insert(u.id);break;}
+                }
+                if(!births.contains(u.id) && rally && !mobile)births.emplace(u.id,std::pair{u.x,u.z});
+            }
             if(u.orders.empty()) {
                 const auto origin=births.find(u.id);
-                birthplaceClear&=origin!=births.end()&&
-                    (std::abs(footprintOrigin(u.x,type.footX)-footprintOrigin(origin->second.first,type.footX))>=type.footX||
-                     std::abs(footprintOrigin(u.z,type.footZ)-footprintOrigin(origin->second.second,type.footZ))>=type.footZ);
+                const auto& f=*w.unit(id);
+                const int ux=footprintOrigin(u.x,type.footX),uz=footprintOrigin(u.z,type.footZ);
+                const int fx=footprintOrigin(f.x,producer.footX),fz=footprintOrigin(f.z,producer.footZ);
+                birthplaceClear&=origin!=births.end()&&(parked.contains(u.id)
+                    ? ux>=fx+producer.footX||ux+type.footX<=fx||uz>=fz+producer.footZ||uz+type.footZ<=fz
+                    : std::abs(ux-footprintOrigin(origin->second.first,type.footX))>=type.footX||
+                      std::abs(uz-footprintOrigin(origin->second.second,type.footZ))>=type.footZ);
             }
         }
         for(const auto& u:w.units())if(u.id!=id&&!u.underConstruction&&!u.orders.empty()) {
@@ -113,7 +128,7 @@ uint64_t production(bool mobile,bool rally,bool serial) {
     check(!rally||controllerSeen,"produced rally points receive a ground controller");
     check(idle==built,"all completed outputs stop after their exit/rally move");
     if(selectedMode==PathfindingMode::Legion)
-        check(birthplaceClear&&births.size()==size_t(built),"every produced output clears its full birthplace before stopping");
+        check(birthplaceClear&&births.size()==size_t(built),"every produced output clears its full birthplace (a parked one, its factory) before stopping");
     return w.stateHash();
 }
 void mobileFightRally() {

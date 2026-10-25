@@ -785,6 +785,40 @@ child and the COB time to INBUILDSTANCE (both add to the table above), what
 else raises 0x400, and retail's per-wake lookup by cell (a new feature on the
 same cell would be carried on with; ours follows the feature id).
 
+## A factory's output: rally, else PARK (icd `0x402220`, emulated 2026-10-25)
+
+GetBuilt's completion branch (`0x402243..0x4023ef`) releases a finished unit
+when the unit and its builder both carry `+0x130` bit 0x1000000 without 0x1000,
+the unit has a mover (+8) and the builder is a structure builder (bit
+0x2000000). It walks the factory's mission list (+0x60) and copies every
+`QMove` and `QPatrol` entry onto the new unit (`0x4de530`, then `0x4d78a0`);
+nothing else is copied. An AI owner (`[+0xb8]` set, +0xea 1) then gets
+`0x50b4f0`, the AI unit assignment. Only when nothing was copied does it add
+`PARK` (`0x604ae8`, definition 13: handler `0x407ca0`, class 14) with the
+factory as target, permanent 1 and padding `(rand(6)+rand(3)+3)*16`, the 3
+being 6 for a type with flag 0x800 at +0x260 (canfly). Emulated with the
+callees hooked: rally kinds copy and suppress PARK, other kinds do not, the AI
+call happens either way, and all 36 padding draws match. PARK's ring (already
+ported in `retailpark.h`, 8,192 cases in `check_ground_park.py`, re-run against
+this change) is footX*16 + padding + half the factory's footprint diagonal,
+out to three times that, around the factory; it ends on arrival (0x100) or
+when a next order is ready, and re-rolls on failure without limit. A mobile
+builder's output gets nothing.
+
+Port (protocol 295): `World::parkProductionOutput` for a structure's ground
+and water outputs; flying outputs and mobile producers keep the exit step.
+Ours, not retail: retail tests no reachability, so a Navy Yard on a pond could
+park its ship in the next body of water, and a permanent PARK that cannot be
+reached never ends, holding the pad. The ring is kept when any cell of it is
+connected to the birth point (component roots for the unit's movement class);
+otherwise the output moves to the farthest free connected cell clear of the
+factory within the ring's outer radius. Legion's exact ring goal queues a
+column behind the first output, so a held Legion PARK is completed once clear
+of the factory, as its exit step was. Our AI counts a unit holding only PARK as
+idle (retail's AI takes it through `0x50b4f0`). Tests:
+`tools/shipyard_park_test.cpp` (the reported pond, a Barracks, a rally point),
+and an emulation probe of `0x402220` kept outside the repo (`~/tak-tmp/scratch/fix-091/shipyard-fix/probe_getbuilt_release.py`).
+
 ## Benchmark switches and RNG seeding (icd, 2026-10-22)
 
 Found while building the retail AI comparison harness (`tools/re/README-retail-ai.md`).

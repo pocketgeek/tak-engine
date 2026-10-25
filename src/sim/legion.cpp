@@ -927,7 +927,7 @@ struct LegionNavigator::Impl {
         case Kind::Build:case Kind::Reclaim:p.nativeAccept=true;p.exact=true;p.area=false;p.solo=true;break;
         case Kind::Repair:p.completes=false;p.keyed=true;p.area=false;p.solo=true;break;
         case Kind::Load:case Kind::Unload:p.nativeAccept=true;p.exact=true;p.transport=true;p.area=false;p.solo=true;break;
-        case Kind::Park:p.nativeAccept=true;p.exact=true;p.area=false;p.solo=true;break;
+        case Kind::Park:p.nativeAccept=true;p.exact=true;p.area=false;p.solo=true;p.exitClear=true;break;
         case Kind::Exit:p.area=false;p.solo=true;p.exitClear=true;break;
         default:break;
         }
@@ -9147,7 +9147,7 @@ struct LegionNavigator::Impl {
         const uint32_t age=w.tickCounter_-peer.headTick;
         return peer.movedTick==w.tickCounter_||age==0?age:age-1;
     }
-    void complete(Unit& u,Member& m,bool contact) {
+    void complete(Unit& u,Member& m,bool contact,bool released=false) {
         // The nearest reachable point to an unreachable goal is not a
         // completion: the body stops there and its order is retired after
         // kApproachRetire (see trapped), as Retail drops an unreachable goal.
@@ -9160,7 +9160,8 @@ struct LegionNavigator::Impl {
         u.speed=Fixed();u.turnReqBam=0;
         // An exact goal is reached only on its own geometry; anywhere else
         // the approach failed and the mission handler decides (0x200).
-        const uint32_t event=rule.exact&&!accepts(u,leg,m.kind)?0x200u:0x500u;
+        // A released factory PARK (below) arrives where it stands.
+        const uint32_t event=rule.exact&&!released&&!accepts(u,leg,m.kind)?0x200u:0x500u;
         (rule.transport?leg.transportMission:leg.mission).pending|=event;
         ++(event==0x500u?stats.missionArrivals:stats.missionFailures)[size_t(m.kind)];
         leg.controller=0;leg.navigationExhausted=true;
@@ -11267,6 +11268,22 @@ struct LegionNavigator::Impl {
             const bool clear=std::abs(dx)>=u.type->footX*16||std::abs(dz)>=u.type->footZ*16;
             const bool rally=World::currentLeg(u.orders)+1<u.orders.size();
             if(clear||(rally&&stillTicks>=2*kExitWindows*kCrowdWindow)) {complete(u,m,true);return;}
+        }
+        // A factory's PARK release (GetBuilt) held up by the crowd already in
+        // its ring is done once clear of the factory: as for the exit step,
+        // its spot was generated and pressing on holds the lane behind it.
+        // Retail's navigator re-rolls a refused ring cell; Legion's exact ring
+        // goal does not, and 2 of 24 Barracks outputs held outside it.
+        if(rule.exitClear&&leg.park&&leg.park->target&&
+           std::max(stillTicks,m.state==Holding?heldFor(m):0u)>=kExitWindows*kCrowdWindow) {
+            const Unit* f=w.unit(leg.park->target);
+            if(!f || !f->alive() || !f->type || !f->type->isStructure()) {}
+            else {
+                const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
+                const int fx=footprintOrigin(f->x,f->type->footX),fz=footprintOrigin(f->z,f->type->footZ);
+                if(ux>=fx+f->type->footX||ux+u.type->footX<=fx||uz>=fz+f->type->footZ||uz+u.type->footZ<=fz)
+                    {complete(u,m,true,true);return;}
+            }
         }
         if(m.goal<0) {trapped(u,m);return;}
         // Stopped at its approach point (retired by trapped), or still

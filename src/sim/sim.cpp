@@ -11282,6 +11282,71 @@ bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& 
     return false;
 }
 
+// GetBuilt's release (0x402220, emulated): a structure's finished output with no
+// queued QMove/QPatrol order gets PARK around the factory, padding
+// (rand(6)+rand(3)+3)*16 (flyers +6, which never come here). PARK's ring
+// (407ca0, retailGroundPark) is footX*16+padding+half the factory's diagonal
+// out to three times that. Retail tests no reachability: a yard on a small pond
+// could park its ship in the next body of water and leave it on the pad, holding
+// the yard. So the ring is kept only when one of its cells is connected to the
+// birth point for this unit's movement class (component roots, never raw ids);
+// otherwise the output moves to the farthest free connected cell clear of the
+// factory within that ring's reach, and stays only if there is none.
+void World::parkProductionOutput(int id,int factoryId) {
+    const uint32_t first=gameRand(6),second=gameRand(3);
+    Unit* u=unit(id);const Unit* f=unit(factoryId);
+    if (!u || !f || !u->type || !f->type) return;
+    const UnitType* t=u->type;
+    const uint32_t padding=(first+second+3)*16;
+    const uint64_t diagonal=uint64_t(int64_t(f->type->footX)*f->type->footX+int64_t(f->type->footZ)*f->type->footZ);
+    const int radius=int(uint32_t(t->footX*16)+padding+uint32_t(isqrt64(diagonal*256)/2));
+    const RetailRingGoal ring{footprintOrigin(f->x,t->footX),footprintOrigin(f->z,t->footZ),
+                              radius,radius*3,retailCircleRadiusSquared(radius*3)};
+    const NavGrid& g=navFor(t);
+    const int foot=footCells(t);
+    const CompGrid* cg=g.empty() ? nullptr : components(g,foot);
+    int32_t birth=-1;
+    if (cg && !cg->empty()) {
+        const int bx=footprintCell(u->x,foot),bz=footprintCell(u->z,foot);
+        for (int r=0;r<=2 && birth<0;++r)
+            for (int j=-r;j<=r && birth<0;++j) for (int i=-r;i<=r && birth<0;++i)
+                if (std::max(std::abs(i),std::abs(j))==r) birth=cg->componentAt(bx+i,bz+j);
+    }
+    const int reach=(radius*3)/16+2;
+    bool ringReachable=birth<0;   // no labelling to test against: keep retail's ring
+    for (int dz=-reach;dz<=reach && !ringReachable;++dz)
+        for (int dx=-reach;dx<=reach && !ringReachable;++dx)
+            ringReachable=ring.accepts(ring.x+dx,ring.z+dz) &&
+                cg->componentAt(ring.x+dx+t->footX/2,ring.z+dz+t->footZ/2)==birth;
+    if (ringReachable) {
+        Order order;order.goal=order.groundMission=true;order.park.emplace();
+        order.park->target=factoryId;
+        order.mission.flags=0x200u; // PARK definition retains its live target.
+        order.park->padding=padding;
+        u->orders.push_back(order);
+        return;
+    }
+    // Clear of the factory's rectangle by this unit's footprint, free of bodies.
+    const int fx0=footprintOrigin(f->x,f->type->footX)-t->footX,fz0=footprintOrigin(f->z,f->type->footZ)-t->footZ;
+    const int fx1=fx0+f->type->footX+t->footX,fz1=fz0+f->type->footZ+t->footZ;
+    const int ux=footprintOrigin(u->x,t->footX),uz=footprintOrigin(u->z,t->footZ);
+    std::optional<std::pair<int,int>> best;int64_t bestDistance=-1;
+    for (int dz=-reach;dz<=reach;++dz)
+        for (int dx=-reach;dx<=reach;++dx) {
+            const int ox=ring.x+dx,oz=ring.z+dz;
+            if (ox>fx0 && ox<fx1 && oz>fz0 && oz<fz1) continue;
+            if (int64_t(ring.squared(ox,oz))>ring.outerSquared) continue;
+            if (cg->componentAt(ox+t->footX/2,oz+t->footZ/2)!=birth) continue;
+            const int64_t distance=int64_t(ox-ux)*(ox-ux)+int64_t(oz-uz)*(oz-uz);
+            if (distance<=bestDistance) continue;
+            const auto bodies=searchBodyRect(ox,oz,t->footX,t->footZ,id);
+            if (std::any_of(bodies.cells.begin(),bodies.cells.end(),[](const Unit* b){return b!=nullptr;})) continue;
+            best=std::pair{ox,oz};bestDistance=distance;
+        }
+    if (best) order(id,footprintWaypoint(best->first+t->footX/2,t->footX).toFloat(),
+                    footprintWaypoint(best->second+t->footZ/2,t->footZ).toFloat(),false);
+}
+
 struct World::ScriptHost {
     World& world; Unit& unit; UnitScript& factory;
     uint32_t random(int32_t bound) { return world.gameRand(bound); }
@@ -12305,16 +12370,24 @@ void World::tickProduction(Unit& u, float dt) {
     //
     // Deterministic: a fixed outward ring scan over the nav grid and the unit grid,
     // both of which every peer builds identically.
-    float gx = sx, gz = sz + float(productionExitDistance(t));
+    //
+    // A structure's ground or water output is released as retail's GetBuilt does
+    // instead (0x402220, emulated): the factory's queued QMove/QPatrol orders, else
+    // PARK around the factory (parkProductionOutput). The step stays for flying
+    // outputs and for mobile producers' outputs, which retail gives nothing.
+    const Unit* factory=unit(producerId);
+    const bool getBuilt=factory && factory->type->isStructure() && !t->canFly;
     bool hasExitStep=false;
-    if (exitSpot(t, gx, gz, gx, gz,id)) {
+    if (getBuilt) {
+        if (factory->rally.empty()) parkProductionOutput(id,producerId);
+    } else if (float gx = sx, gz = sz + float(productionExitDistance(t)); exitSpot(t, gx, gz, gx, gz,id)) {
         order(id, gx, gz, false);
         hasExitStep=!unit(id)->orders.empty();
     }
-    // ...then hand it the factory's RALLY plan, queued behind that step. A production
-    // building accepts move / fight-move / patrol / attack orders (and queues them) --
-    // it cannot act on them itself, so they describe what its OUTPUT should do. The
-    // step above still runs first so the unit clears the doorway before setting off.
+    // ...then hand it the factory's RALLY plan. A production building accepts move /
+    // fight-move / patrol / attack orders (and queues them) -- it cannot act on them
+    // itself, so they describe what its OUTPUT should do. Behind the exit step where
+    // there is one; a factory's output takes the rally alone, as GetBuilt copies it.
     if (const Unit* pb = unit(producerId))
         for (const Order& ro : pb->rally) {
             Unit* nu = unit(id);

@@ -11,6 +11,7 @@
 // every peer -- so lockstep never depends on the AI being reproducible. We still
 // keep it RNG-driven so a --mpai run is repeatable for testing.
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -215,6 +216,9 @@ private:
     bool navalFactory(const tak::sim::UnitType*) const;
     bool navalProducer(const tak::sim::UnitType*) const;
     const std::vector<std::pair<float,float>>& navalLaunchOffsets(const tak::sim::UnitType*) const;
+    // A ship's water body at (x,z) holds at least `cells` positions it fits in.
+    static constexpr int kMinNavalBodyCells = 256;
+    bool navalBodyAtLeast(const tak::sim::World&, const tak::sim::UnitType* ship, float x, float z, int cells) const;
     bool navalLaunchClear(const tak::sim::World&,const tak::sim::UnitType* factory,
                           const tak::sim::UnitType* ship,float x,float z,float dx,float dz) const;
     int   desire(BuildCat, const Needs&) const;
@@ -259,6 +263,17 @@ private:
     // The Monarch and defensive AI use it to remain near home.
     std::pair<float, float> homeOf(const tak::sim::World&) const;
 
+    // Idle, or only holding a factory's PARK release: retail parks every factory
+    // output with no rally (GetBuilt 0x402220) and that PARK lasts until the next
+    // order, so a parked newborn is as free to command as one with no orders.
+    static bool idle(const tak::sim::Unit& u) {
+        return std::all_of(u.orders.begin(),u.orders.end(),[](const tak::sim::Order& o) {
+            return o.park || (!o.goal && !o.groundMission && !o.buildType && !o.targetId && !o.reclaimFeat &&
+                !bool(o.reclaimArea) && !o.repairTarget && !o.load && !o.unload && !o.patrol &&
+                !o.attackMove && !o.guard);
+        }) && (u.orders.empty() || std::any_of(u.orders.begin(),u.orders.end(),
+            [](const tak::sim::Order& o){return bool(o.park);}));
+    }
     // A fighter is free to be committed to a wave when it's idle or only doing a plain
     // move -- NOT while it's already fight-moving or attacking (so re-commanding it each
     // think doesn't reset its march and thrash it in place).

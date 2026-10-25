@@ -716,7 +716,8 @@ int main(int argc,char** argv) {
         std::printf("Legion routed:");
         for (size_t k = 0; k < 16; ++k) if (g_legionSaw[k]) std::printf(" %zu", k);
         std::printf("\n");
-        check(g_legionSaw[size_t(LegionMission::Exit)], "Legion routes production exits");
+        // A factory releases its output with GetBuilt's PARK, not the exit step.
+        check(g_legionSaw[size_t(LegionMission::Park)], "Legion routes a factory output's PARK release");
         check(g_legionSaw[size_t(LegionMission::Move)], "Legion routes the produced units' rally moves");
     }
     std::printf(g_fail ? "production_test: %d FAILURE(S)\n" : "production_test: all passed\n",

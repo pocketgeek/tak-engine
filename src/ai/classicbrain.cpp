@@ -80,6 +80,8 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     else if (o.guard) { m.cls = 5; m.flags = 0x3000200; m.target = o.targetId; }
     else if (o.targetId) { m.cls = 1; m.flags = 0x1000280; m.target = o.targetId; }
     else if (o.patrol) { m.cls = 7; m.flags = 0x3000410; }
+    // A factory output's GetBuilt PARK: definition class 14, flags 0x200.
+    else if (o.park) { m.cls = 14; m.flags = o.mission.flags; }
     else { m.cls = 14; m.flags = 0x3000400; }   // a move
     m.kind = m.cls == 14 ? moveKind(u.type->canFly) : m.cls == 7 ? kKindPatrol : otherKind(m.cls);
     // Only the World's auto-attacks (and the return move behind a leashed one):
