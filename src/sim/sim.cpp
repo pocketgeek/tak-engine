@@ -1752,6 +1752,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
             // Otherwise the new final waypoint becomes an ordinary move and
             // reclaim completion can consume the next queued obstacle instead.
             o.reclaimFeat = tmpl.reclaimFeat;
+            o.reclaimCountdown = tmpl.reclaimCountdown; o.reclaimHeading = tmpl.reclaimHeading;
             o.repairTarget = tmpl.repairTarget;
             o.patrolRepair = tmpl.patrolRepair;
             o.patrolOpen = tmpl.patrolOpen;
@@ -4922,7 +4923,10 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         const float r = std::max(w.aoe * 0.5f, 8.0f);
         const int icx = int(hx) / 16, icz = int(hz) / 16;
         auto damageFeature = [&](Feature& f) {
-            if (!f.alive || f.type < 0) return;
+            // A reclaimed feature fading out (494fd0) is already removed with
+            // no featuredead; ours keeps it inert rather than let a hit or a
+            // fire swap it into a stage that would outlive the fade.
+            if (!f.alive || f.type < 0 || f.fadeLeft) return;
             const FeatType& ft = featTypes_[size_t(f.type)];
             if (ft.indestructible) return;
             if (w.fireStarter && ft.flamable && !f.burn && ft.hasBurnAnim) {
@@ -4940,6 +4944,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             const auto owner=corpseAnchors_.find(anchor);
             if (owner==corpseAnchors_.end()) return false;
             auto& footprint=corpseFootprints_.at(owner->second);
+            if (const Unit* fading=unit(owner->second);fading && fading->corpseFading) return true;
             const auto& ft=featTypes_[size_t(footprint.type)];
             const float x=float(footprint.x*16+ft.fx*8),z=float(footprint.z*16+ft.fz*8);
             if (!direct && (x-hx)*(x-hx)+(z-hz)*(z-hz)>r*r) return true;
@@ -4952,7 +4957,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             if (next>=0) {
                 const auto& rubble=featTypes_[size_t(next)];
                 addFeature(anchor,float(cx*16+rubble.fx*8),float(cz*16+rubble.fz*8),
-                    rubble.energy,std::max(rubble.energy,60.f),rubble.fx,rubble.fz,
+                    rubble.energy,rubble.fx,rubble.fz,
                     rubble.blocking,next);
             }
             return true; // never damage the newly installed rubble with this hit
@@ -8111,13 +8116,19 @@ bool World::placementCheck(const UnitType* type, float x, float z, int player,
     // Check the domain-appropriate grid so water units (Kraken) require water
     // and land units require land, rather than always testing the ground grid.
     const NavGrid& grid = navFor(type);
+    // MobileBuild's retry query (ignoreMobile, from startBuild) also passes a
+    // feature that a reclaim has already finished and that is only fading out
+    // (494ce0, 34 ticks): ours, so a build queued behind its own clearing
+    // reclaims (queueBuild) waits out the fade instead of being dropped.
+    const bool passFading=ignoreMobile && !clearFeatures && fadingFeatures_;
     const auto clearObstacle=[&](int gx,int gz) {
-        if (!clearFeatures) return false;
+        if (!clearFeatures && !passFading) return false;
         bool found=false;
         for (const auto& f:features_) {
             if (!f.alive || !f.blocks) continue;
             const int ox=footprintOrigin(f.x,f.fx),oz=footprintOrigin(f.z,f.fz);
             if (gx<ox || gz<oz || gx>=ox+f.fx || gz>=oz+f.fz) continue;
+            if (passFading) { if (!f.fadeLeft) return false; found=true; continue; }
             if (!featureReclaimable(f)) return false;
             found=true;
             if (std::find(clearFeatures->begin(),clearFeatures->end(),f.id)==clearFeatures->end())
@@ -8527,6 +8538,8 @@ Order World::makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fix
 bool World::prepareBuildApproach(Unit& u) {
     if (u.orders.empty()) return false;
     auto& goal=u.orders[currentLeg(u.orders)];
+    // A reclaim leg's rectangle belongs to tickReclaim.
+    if (!goal.buildType) return false;
     if (goal.buildRectangle && goal.mission.stage==0) {
         // A queued build computes its approach when it becomes active,
         // after earlier movement/build orders have changed our position.
@@ -8601,7 +8614,6 @@ void World::cancelBuilds(int builderId) {
                                               o.repairTarget != 0;
                                    }),
                     b->orders.end());
-    b->reclaimEffectDelay = 0;
     b->reclaimId = 0;            // a fresh move/attack/stop drops any reclaim job
     b->repairId = 0;             // ...and any repair job
     if (b->buildSiteId) {
@@ -8779,11 +8791,11 @@ bool World::placeMapFeature(const Feature& f,uint8_t owner) {
     return placed;
 }
 
-void World::addFeature(int id, float x, float z, float manaYield, float work,
+void World::addFeature(int id, float x, float z, float energy,
                        int fx, int fz, bool blocks, int type, bool placeOnMap) {
-    Feature f{id, Fixed::fromFloat(x), Fixed::fromFloat(z), fx, fz, manaYield,
-              Fixed::fromFloat(std::max(work, 1.0f)),
-              Fixed::fromFloat(std::max(work, 1.0f)), blocks, true};
+    Feature f;
+    f.id = id; f.x = Fixed::fromFloat(x); f.z = Fixed::fromFloat(z);
+    f.fx = fx; f.fz = fz; f.energy = energy; f.blocks = blocks;
     f.type = type;
     if (placeOnMap && !placeMapFeature(f)) return;
     featureIdx_[id] = features_.size();
@@ -8822,6 +8834,7 @@ bool World::featureAliveAt(float x, float z) const {
 // -- our features carry no owner). newType < 0 = the feature is simply gone.
 void World::swapFeature(Feature& f, int newType) {
     bumpFeatGen();   // burnt-stage swap (or removal): art changes
+    if (f.fadeLeft) { f.fadeLeft = 0; --fadingFeatures_; }
     f.burn = 0;
     f.burnSequence = 0;
     f.dmg = 0;
@@ -8842,12 +8855,11 @@ void World::swapFeature(Feature& f, int newType) {
     if (f.blocks)
         blockCells(f.x.floorInt() / 16 - f.fx / 2, f.z.floorInt() / 16 - f.fz / 2,
                    f.fx, f.fz, true);
-    f.manaYield = nt.energy;
-    f.work = f.workFull = Fixed::fromFloat(std::max(nt.energy, 60.0f));
+    f.energy = nt.energy;
 }
 
 void World::igniteFeature(Feature& f) {
-    if (f.burn || !f.alive || f.type < 0) return;
+    if (f.burn || !f.alive || f.type < 0 || f.fadeLeft) return;   // fading: see damageFeature
     const FeatType& ft = featTypes_[size_t(f.type)];
     if (!ft.flamable || !ft.hasBurnAnim) return;
     static const bool kBurnLog = std::getenv("TAK_BURNLOG") != nullptr;
@@ -8899,10 +8911,6 @@ void World::tickBurning() {
         }
     }
 }
-
-// Reclaim rate: work is consumed at a flat rate (retail ties reclaim duration to
-// the feature's `energy`, not the builder's worktime). ~2s for a 250-value tree.
-static constexpr float kReclaimRate = 120.0f;   // work units per second
 
 void World::reclaimArea(int builderId,float x0,float z0,float x1,float z1,bool queue) {
     OrdersNote note{*this,builderId};
@@ -9003,14 +9011,14 @@ void World::tickReclaimArea(Unit& b) {
     // misses multi-cell trees and rubble intersecting the selection rectangle.
     std::unordered_map<int,int> targets;
     for (const auto& f:features_) {
-        if (!f.alive || !f.id || f.work<=Fixed()) continue;
+        if (!f.alive || !f.id || f.fadeLeft) continue;
         if (f.type>=0 && (size_t(f.type)>=featTypes_.size() || !featTypes_[size_t(f.type)].reclaimable)) continue;
         const int x=footprintOrigin(f.x,f.fx),z=footprintOrigin(f.z,f.fz);
         targets.emplace(z*hW_+x,f.id);
     }
     for (const auto& [id,p]:corpseFootprints_) {
         const Unit* corpse=unit(id);
-        if (!corpse || corpse->alive() || corpse->deadFor>=corpse->corpseUntil ||
+        if (!corpse || corpse->alive() || corpse->deadFor>=corpse->corpseUntil || corpse->corpseFading ||
             p.type<0 || size_t(p.type)>=featTypes_.size() || !featTypes_[size_t(p.type)].reclaimable) continue;
         targets.emplace(p.z*hW_+p.x,-id);
     }
@@ -9055,7 +9063,7 @@ void World::reclaim(int builderId, int featureId, bool queue) {
         const Unit* c = unit(-featureId);
         // Accept anything dead or dying this tick whose def can be reclaimed
         // (the walk takes longer than the death anim anyway).
-        if (!c || c->id == builderId || !c->type || (c->alive() && c->hp > Fixed()))
+        if (!c || c->id == builderId || !c->type || (c->alive() && c->hp > Fixed()) || c->corpseFading)
             return;
         int ct = c->corpseStatue >= 0 ? c->corpseStatue : corpseTypeOf(c->type);
         if (ct < 0 || !featTypes_[size_t(ct)].reclaimable) return;
@@ -9086,138 +9094,215 @@ void World::reclaim(int builderId, int featureId, bool queue) {
     b->orders.push_back(o);
 }
 
-// Our reclaim acceptance: the builder within reach of the target (24 px plus
-// half its footprint plus builddistance). Not retail's, which is 4d4e80's
-// footprint-adjacency rectangle; see docs/guessed-area-clear-2026-09-26.md.
-bool World::reclaimInReach(const Unit& b,int target) const {
-    Fixed x,z;int foot=0;
-    if (target<0) {
-        const Unit* c=unit(-target);
-        if (!c || !c->type) return false;
-        x=c->x;z=c->z;foot=std::max(c->type->footX,c->type->footZ);
-    } else {
-        const Feature* f=feature(target);
-        if (!f) return false;
-        x=f->x;z=f->z;foot=std::max(f->fx,f->fz);
-    }
-    const float dx=(x-b.x).toFloat(),dz=(z-b.z).toFloat();
-    const float reach=24.0f+8.0f*float(foot)+(b.type->buildDist>0 ? b.type->buildDist : 0.0f);
+// VTOL_RECLAIM (420xxx) is not ported, so a flying reclaimer keeps our old
+// acceptance: within 24 px plus half the target plus builddistance of its
+// centre. Ground reclaimers use retail's rectangle (prepareReclaimApproach).
+bool World::flyerReclaimInReach(const Unit& b,int target) const {
+    int ax=0,az=0,fw=1,fh=1;float energy=0;
+    if (!reclaimTargetFootprint(target,ax,az,fw,fh,energy)) return false;
+    const float dx=float(ax*16+fw*8)-b.x.toFloat(),dz=float(az*16+fh*8)-b.z.toFloat();
+    const float reach=24.0f+8.0f*float(std::max(fw,fh))+(b.type->buildDist>0 ? b.type->buildDist : 0.0f);
     return dx*dx+dz*dz<=reach*reach;
 }
 
-void World::tickReclaim(Unit& b, float dt) {
-    // 40638e: a failed approach (0x200, a zero-point route delivery while out
-    // of reach) ends the child with no chatter (4062a5 returns 8).
-    if (!b.orders.empty()) {
-        const auto& leg=b.orders[currentLeg(b.orders)];
-        if (leg.reclaimFeat==b.reclaimId && (leg.mission.pending&0x200)) {
-            stopWorkAnimation(b);
-            dropLeg(b);
-            b.reclaimId=0;b.reclaimEffectDelay=0;
-            return;
-        }
+// 4930d0 resolves the mission cell to its feature's anchor and reads the
+// footprint from the feature definition. A corpse is a feature too: its
+// installed corpse footprint, never the dead unit's own.
+bool World::reclaimTargetFootprint(int target,int& x,int& z,int& fx,int& fz,float& energy) const {
+    if (target<0) {
+        const auto found=corpseFootprints_.find(-target);
+        if (found==corpseFootprints_.end() || found->second.type<0 ||
+            size_t(found->second.type)>=featTypes_.size()) return false;
+        const FeatType& type=featTypes_[size_t(found->second.type)];
+        x=found->second.x;z=found->second.z;fx=type.fx;fz=type.fz;energy=type.energy;
+        return true;
     }
-    auto advance = [&] {
-        // The job is over. Retire its order; the next one (which may be another
-        // reclaim) simply becomes current.
-        stopWorkAnimation(b);
-        if (!b.orders.empty() && b.orders[currentLeg(b.orders)].reclaimFeat == b.reclaimId)
-            dropLeg(b);
-        b.reclaimId = 0;
-        b.reclaimEffectDelay = 0;
-    };
-    if (b.reclaimId < 0) {
-        // Ordered corpse reclaim: walk to the body/wreck and consume it. Yields
-        // the corpse def's energy (0 for everything shipped) -- this is about
-        // clearing rubble and denying resurrection, not income.
-        Unit* c = unit(-b.reclaimId);
-        if (!c || !c->type || c->deadFor >= c->corpseUntil) { advance(); return; }
-        if (c->alive()) {
-            // hp<=0 = dying THIS tick (the death edge may run after us): hold
-            // the job. A genuinely healthy target is an invalid order: drop it.
-            if (c->hp > Fixed()) advance();
-            return;
+    const Feature* f=feature(target);
+    if (!f || !f->alive) return false;
+    x=footprintOrigin(f->x,f->fx);z=footprintOrigin(f->z,f->fz);fx=f->fx;fz=f->fz;energy=f->energy;
+    return true;
+}
+
+// Each work wake looks the target up again (4930d0 -> 496ea0: the type's
+// reclaimable flag and the object's +0x5d bit 0x10). The bit is gone once
+// another builder's reclaim has started its fade, and while the feature burns
+// (4949c0 clears it).
+bool World::reclaimTargetValid(int target) const {
+    if (target<0) {
+        const Unit* c=unit(-target);
+        if (!c || !c->type || c->alive() || c->corpseFading || c->deadFor>=c->corpseUntil ||
+            !corpseFootprints_.contains(c->id)) return false;
+        const int ct=corpseFootprints_.at(c->id).type;
+        return ct>=0 && size_t(ct)<featTypes_.size() && featTypes_[size_t(ct)].reclaimable;
+    }
+    const Feature* f=feature(target);
+    return f && featureReclaimable(*f) && !f->burn;
+}
+
+// 406250 stage 0, when the RECLAIM leg first becomes current: resolve the
+// target (4930d0), then 4d4e80 installs the rectangle controller around its
+// footprint (no builddistance anywhere) with wait mask 0x700. The approach
+// is the one MobileBuild uses (prepareBuildApproach), the same controller.
+void World::prepareReclaimApproach(Unit& u) {
+    if (u.orders.empty()) return;
+    auto& goal=u.orders[currentLeg(u.orders)];
+    if (!goal.reclaimFeat || goal.mission.stage!=0) return;
+    int ax=0,az=0,fw=1,fh=1;float energy=0;
+    if (!reclaimTargetFootprint(goal.reclaimFeat,ax,az,fw,fh,energy) || !reclaimTargetValid(goal.reclaimFeat)) {
+        // A body still dying has no corpse feature yet (ours accepts the
+        // order early); wait for it to settle. Anything else is gone.
+        if (goal.reclaimFeat<0) {
+            const Unit* c=unit(-goal.reclaimFeat);
+            if (c && c->type && !c->corpseFading &&
+                ((c->alive() && c->hp<=Fixed()) ||
+                 (!c->alive() && c->deadFor<c->corpseAnimationTicks() && c->deadFor<c->corpseUntil))) return;
         }
-        // Body still mid-death-anim: stand by until it settles (statues settle
-        // instantly).
-        if (c->deadFor < (c->corpseAnimationTicks())) return;
-        if (!reclaimInReach(b, b.reclaimId)) return;   // still walking there
-        // Retail corpses/statues occupy the ordinary feature table, so their
-        // reclaim mission requests the same work stance as a tree or rock.
-        startWorkAnimation(b,c->x,c->z);
-        b.speed = Fixed();
-        int ct = c->corpseStatue >= 0 ? c->corpseStatue : corpseTypeOf(c->type);
-        const FeatType* cd = ct >= 0 ? &featTypes_[size_t(ct)] : nullptr;
-        // Per TICK. kReclaimRate is work/second and the sim steps at kTick, so this
-        // is an exact constant rather than a dt multiply.
-        const Fixed step = Fixed::fromFloat(kReclaimRate / kTick);
-        // Proportional drip against the INITIAL work (= max(energy,60), set at
-        // death). Shipped corpse defs all have energy 0, so this grants nothing.
-        if (cd && cd->energy > 0 && c->corpseWork > Fixed())
-            players_[size_t(b.player)].creditMana(
-                double(cd->energy) * double(fxMin(step, c->corpseWork).toFloat()) /
-                double(std::max(cd->energy, 60.0f)) * double(players_[size_t(b.player)].manaMult));
-        c->corpseWork -= step;
-        if (c->corpseWork <= Fixed()) {
-            retireCorpse(*c);
-            static const bool kRecLog = std::getenv("TAK_BURNLOG") != nullptr;
-            if (kRecLog)
-                std::fprintf(stderr, "corpse reclaimed: %s at %.0f,%.0f\n",
-                             c->type->id.c_str(), c->x.toFloat(), c->z.toFloat());
-            advance();
-        }
+        stopWorkAnimation(u);
+        u.reclaimId=0;
+        dropLeg(u);
         return;
     }
-    auto it = featureIdx_.find(b.reclaimId);
-    if (it == featureIdx_.end()) { advance(); return; }
-    Feature& f = features_[it->second];
-    if (!f.alive) { advance(); return; }   // someone else got it (RECLAIMFAILED)
-    float dx = (f.x - b.x).toFloat(), dz = (f.z - b.z).toFloat();
-    if (!reclaimInReach(b, b.reclaimId)) return;   // still walking there
-    // Native Reclaim calls the same stance producer as RepairUnit (406411).
-    startWorkAnimation(b,f.x,f.z);
-    // Never the RECLAIM order itself -- that entry IS the job, and it is what
-    // holds the queue back until the feature is gone (advance() retires it).
-    cancelPath(b);
-    if (!b.orders.empty()) {
-        const size_t end = currentLeg(b.orders);
-        if (b.orders[end].reclaimFeat == b.reclaimId)
-            b.orders.erase(b.orders.begin(), b.orders.begin() + long(end));
+    goal.mission.stage=1;
+    goal.reclaimCountdown=0;
+    if (u.type->canFly) { goal.mission.waitMask=0; return; }   // flyerReclaimInReach
+    goal.buildRectangle=retailReclaimRectangle(ax,az,fw,fh,u.type->footX,u.type->footZ);
+    const auto [x,z]=goal.buildRectangle->navigationCell(
+        footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
+    goal.x=Fixed::fromInt(x*16+u.type->footX*8);
+    goal.z=Fixed::fromInt(z*16+u.type->footZ*8);
+    goal.segmentX=Fixed::fromInt(u.x.floorInt());
+    goal.segmentZ=Fixed::fromInt(u.z.floorInt());
+    goal.hasSegment=true;
+    goal.mission.waitMask=0x700;
+    goal.controller=++nextMovementController_;
+    goal.navigationExhausted=goal.navigationConsumed=false;
+    goal.mission.pending&=~0x3700u;
+    if (u.routeStamp<0 || uint32_t(u.routeStamp)<=tickCounter_-6u) u.routeStamp=0;
+    cancelPath(u);
+    requestPath(u,goal.x.toFloat(),goal.z.toFloat());
+}
+
+// 494fd0 at stage 5: the feature fades out (494ce0) and leaves the plane with
+// no featuredead replacement, so a reclaimed corpse leaves no rubble. While
+// it fades it still blocks but is no longer a target. No mana.
+void World::finishReclaim(Unit&,int target) {
+    if (target<0) {
+        Unit* c=unit(-target);
+        if (!c) return;
+        c->corpseFading=true;
+        // deadFor advances later this tick: the body retires kReclaimFadeTicks on.
+        c->corpseUntil=c->deadFor+int32_t(kReclaimFadeTicks)+1;
+        return;
     }
-    b.speed = Fixed();
-    const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));   // face the feature
-    // Stopped (b.speed was zeroed just above), so this is a pivot: turninplacerate.
-    const int32_t bTurnMax = b.type->turnInPlaceRate;
-    const int32_t diff = bamDiff(want, b.heading);
-    const int32_t turn = std::clamp(diff, -bTurnMax, bTurnMax);
-    b.heading = b.heading + Bam(turn);
-    b.turnReqBam = diff;   // builder pivot request -> TurnDirection anim (icd 0x4d9593)
-    // Per TICK, like the corpse drain: kReclaimRate is work/second.
-    const Fixed d = fxMin(f.work, Fixed::fromFloat(kReclaimRate / kTick));
-    f.work -= d;
-    // Retail Reclaim (406529..40658e) requests one falling worker particle
-    // every two work ticks, and none during its final completion delay.
-    // Keep emission tied to our active work; reclaim economics are unchanged.
-    if (f.work > Fixed() && f.manaYield > 0) {
-        if (b.reclaimEffectDelay == 0) {
-            emitConstruction(b, false);
-            b.reclaimEffectDelay = 1;
-        } else --b.reclaimEffectDelay;
-    }
-    players_[size_t(b.player)].creditMana(
-        // DIVIDE IN DOUBLE. `(d / f.workFull)` in fixed point truncates the
-        // proportion every tick, and the remainder is never paid: a shipped
-        // 525-energy feature returned about 524.66 over a full reclaim.
-        double(f.manaYield) * (double(d.toFloat()) / double(f.workFull.toFloat()))
-        * double(players_[size_t(b.player)].manaMult));   // drip (income-cheat scaled)
-    if (f.work <= Fixed()) {
-        f.alive = false;
+    auto it=featureIdx_.find(target);
+    if (it==featureIdx_.end()) return;
+    Feature& f=features_[it->second];
+    if (!f.fadeLeft) ++fadingFeatures_;
+    f.fadeLeft=kReclaimFadeTicks;
+    bumpFeatGen();   // no longer a reclaim target: the viewer's cursor follows
+}
+
+void World::tickFeatureFades() {
+    if (!fadingFeatures_) return;
+    for (auto& f:features_) {
+        if (!f.fadeLeft || --f.fadeLeft) continue;
+        --fadingFeatures_;
+        if (!f.alive) continue;
+        f.alive=false;
         removeMapFeature(footprintOrigin(f.x,f.fx),footprintOrigin(f.z,f.fz));
         bumpFeatGen();   // reclaimed away: stop drawing it
-        if (f.blocks) {   // free the ground cells it occupied (setupMatch blocked nav_)
-            blockCells(f.x.floorInt() / 16 - f.fx / 2, f.z.floorInt() / 16 - f.fz / 2, f.fx, f.fz, false);
+        if (f.blocks)   // free the ground cells it occupied (setupMatch blocked nav_)
+            blockCells(footprintOrigin(f.x,f.fx),footprintOrigin(f.z,f.fz),f.fx,f.fz,false);
+    }
+}
+
+// Retail RECLAIM (406250) on the current leg. Stage 1 waits for the approach
+// (0x100/0x400 arrival, 0x200 failure); stage 2 is the turn child and the
+// INBUILDSTANCE wait; stages 3 and 4 are the two-tick work wakes (406529);
+// stage 5 removes the target. Once work has started nothing checks distance
+// again: a builder pushed away keeps working, as in retail.
+void World::tickReclaim(Unit& b) {
+    if (b.orders.empty() || b.orders[currentLeg(b.orders)].reclaimFeat!=b.reclaimId) {
+        // Another order is current (a fresh one, or one pushed ahead): the
+        // job resumes when its leg is current again.
+        stopWorkAnimation(b);
+        b.reclaimId=0;
+        return;
+    }
+    const int target=b.reclaimId;
+    const auto quit=[&] {
+        // 4062a5: the order ends silently (StopBuilding), the next one runs.
+        stopWorkAnimation(b);
+        dropLeg(b);
+        b.reclaimId=0;
+    };
+    size_t leg=currentLeg(b.orders);
+    if (b.orders[leg].mission.stage==0) return;   // prepareReclaimApproach
+    int ax=0,az=0,fw=1,fh=1;float energy=0;
+    if (b.orders[leg].mission.stage==1) {
+        auto& goal=b.orders[leg];
+        if (b.type->canFly) {
+            if (!reclaimTargetValid(target)) { quit(); return; }
+            if (!flyerReclaimInReach(b,target)) return;
+        } else {
+            const uint32_t events=(b.missionEvents | goal.mission.pending) & goal.mission.waitMask;
+            if (!events) return;
+            b.missionEvents&=~events;goal.mission.pending&=~events;goal.mission.waitMask=0;
+            // 40638e: a failed approach ends the child, with no builddistance
+            // fallback (MobileBuild has one; RECLAIM does not).
+            if (events&0x200) { quit(); return; }
         }
-        advance();
+        if (!reclaimTargetValid(target) || !reclaimTargetFootprint(target,ax,az,fw,fh,energy)) { quit(); return; }
+        // Work starts: the approach's waypoints go, the leg is the order.
+        cancelPath(b);
+        if (leg) { b.orders.erase(b.orders.begin(),b.orders.begin()+long(leg));leg=0; }
+        auto& work=b.orders.front();
+        work.reclaimCountdown=retailReclaimCountdown(energy);
+        const Fixed tx=Fixed::fromInt(ax*16+fw*8),tz=Fixed::fromInt(az*16+fh*8);
+        work.reclaimHeading=uint16_t(retailDirection(b.x-tx,b.z-tz).v);
+        work.mission.stage=2;
+        b.speed=Fixed();
+        // The stance producer RepairUnit also calls (406411): StartBuilding.
+        startWorkAnimation(b,tx,tz);
+    } else if (!reclaimTargetFootprint(target,ax,az,fw,fh,energy)) { quit(); return; }
+    auto& work=b.orders[leg];
+    const Fixed tx=Fixed::fromInt(ax*16+fw*8),tz=Fixed::fromInt(az*16+fh*8);
+    if (work.mission.stage==2) {
+        // The FacingNoFormation child (skipped when turninplacerate is 0),
+        // then 4d4b90: wait for COB INBUILDSTANCE (SET 5, our `ready`).
+        if (!b.type->canFly && b.type->turnInPlaceRate>0 &&
+            portHeadingToRetail(b.heading)!=work.reclaimHeading) {
+            const int32_t diff=bamDiff(retailHeadingToPort(work.reclaimHeading),b.heading);
+            b.heading=b.heading+Bam(std::clamp(diff,-b.type->turnInPlaceRate,b.type->turnInPlaceRate));
+            b.turnReqBam=diff;b.speed=Fixed();
+            return;
+        }
+        if (const auto script=unitScripts_.find(b.id);script!=unitScripts_.end() && !script->second.ready) return;
+        work.mission.stage=3;
+        work.mission.waitMask=0;
+        work.mission.deadline=tickCounter_;
+    }
+    if (tickCounter_<work.mission.deadline) return;
+    if (!reclaimTargetValid(target)) { quit(); return; }
+    startWorkAnimation(b,tx,tz);
+    if (retailReclaimRemoval(work.mission)) {
+        finishReclaim(b,target);
+        static const bool kRecLog = std::getenv("TAK_BURNLOG") != nullptr;
+        if (kRecLog)
+            std::fprintf(stderr, "reclaimed %d at %d,%d (tick %u)\n", target, ax, az, tickCounter_);
+        quit();
+        return;
+    }
+    if (retailReclaimWork(work.mission,work.reclaimCountdown,tickCounter_).particle)
+        emitConstruction(b,false);
+    if (target<0) {
+        // 4065xx: a corpse being reclaimed does not decay (object+0x3c reset
+        // to decomposetime*30 on every wake).
+        Unit* c=unit(-target);
+        const int ct=corpseFootprints_.at(c->id).type;
+        const int decompose=featTypes_[size_t(ct)].decomposeTicks;
+        if (decompose>0 && c->corpseUntil!=INT32_MAX)
+            c->corpseUntil=int32_t(std::min(int64_t(INT32_MAX),int64_t(c->deadFor)+decompose));
     }
 }
 
@@ -10370,7 +10455,7 @@ void World::tickAbilities(float dt) {
         // Statues stand from the instant of death (retail: severity 0, no Dying
         // anim); ordinary bodies appear after the 4s death animation.
         const int from = c.corpseAnimationTicks();
-        return c.type && !c.alive() && c.deadFor >= from && c.deadFor < c.corpseUntil;
+        return c.type && !c.alive() && !c.corpseFading && c.deadFor >= from && c.deadFor < c.corpseUntil;
     };
     auto corpseDef = [&](const Unit& c) -> const FeatType* {
         int ct = c.corpseStatue >= 0 ? c.corpseStatue : corpseTypeOf(c.type);
@@ -10519,9 +10604,9 @@ void World::tickAbilities(float dt) {
                              0.5f) * kTick + 0.5f);
                 break;
             } else if (u.type->canReclaim && cd->reclaimable) {
-                // Retail yield = the corpse def's energy -- 0 for every shipped
-                // corpse. You reclaim bodies to DENY resurrection, not for mana.
-                players_[size_t(u.player)].creditMana(double(cd->energy)*players_[size_t(u.player)].manaMult);
+                // Ours, not retail RECLAIM (406250, which pays nothing either):
+                // an idle reclaimer clears a nearby body to deny resurrection.
+                // Whether retail does this at all is unverified.
                 retire(c);
             }
         }
@@ -12293,12 +12378,6 @@ void World::deliverSearchRoute(int unitId,const std::vector<PathCell>& route,Fix
                     : groundMissionAccepts(*u,*goal);
                 if (!satisfied) (goal->load || goal->transportUnloadApproach
                     ? goal->transportMission : goal->mission).pending|=0x200;
-            } else if (!u->type->canFly && !u->orders.empty()) {
-                // RECLAIM's approach (406250 stage 0, 4d4e80) gets the same
-                // zero-point failure when it is still out of reach; stage 1
-                // then ends the child (40638e -> 4062a5).
-                auto& leg=u->orders[currentLeg(u->orders)];
-                if (leg.reclaimFeat && !reclaimInReach(*u,leg.reclaimFeat)) leg.mission.pending|=0x200;
             }
         }
         return;
@@ -12505,7 +12584,9 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
             return;
         }
         Order* completed = nullptr;
-        if (rectangleReached && !(leg.mission.pending & 0x100))
+        // A reclaim leg keeps its rectangle while it works, its controller
+        // already detached: no second arrival.
+        if (rectangleReached && !(leg.mission.pending & 0x100) && (leg.controller || !leg.reclaimFeat))
             completed = &u.orders[currentLeg(u.orders)];
         else if (auto* goal = navigationMissionOrder(u);goal && !goal->buildRectangle) {
             if (goal->controller && groundMissionAccepts(u,*goal)) completed = goal;
@@ -12777,6 +12858,7 @@ void World::tick(float dt) {
         std::optional<PhaseSpan> _burn;
         if (g_phase) _burn.emplace(g_burnMs, probe::kBurn);
         tickBurning();   // feature fire: spread + burn-out (deterministic, hashed)
+        tickFeatureFades();   // reclaimed features leave the plane (494ce0)
     }
     // Benchmark: fire the staged spawn plan at its scheduled ticks. Deterministic -- both
     // the client sim and the referee run the identical plan (built in setupMatch), so
@@ -13109,7 +13191,7 @@ void World::tick(float dt) {
             u.constructionHolding=!u.retailBuild->flying;
             if (auto* site=unit(u.retailBuild->target);site) site->beingBuilt=true;
         } else if (u.alive() && u.type && u.buildSiteId) tickConstruction(u, dt);
-        else if (u.alive() && u.type && u.reclaimId) tickReclaim(u, dt);
+        else if (u.alive() && u.type && u.reclaimId) tickReclaim(u);
         else if (u.alive() && u.type && u.repairId) tickRepair(u, dt);
     }
     // Decay walks the sites listed by the economy walk, then every unit spawned
@@ -13699,11 +13781,7 @@ void World::tick(float dt) {
                 if (kStatLog2 && (u.stonedFor > 0 || u.frozenFor > 0))
                     std::fprintf(stderr, "statue edge: %s statue=%d stoned=%d\n",
                                  u.type->id.c_str(), u.corpseStatue, u.stonedFor);
-                int ct = u.corpseStatue >= 0 ? u.corpseStatue : corpseTypeOf(u.type);
                 beginUnitDeath(u);
-                u.corpseWork = Fixed::fromFloat(
-                    std::max(ct >= 0 ? featTypes_[size_t(ct)].energy : 0.0f,
-                             60.0f));   // ~0.5s minimum consume time
                 if (u.type->isStructure())
                     blockFoot(*u.type,u.x.toFloat(),u.z.toFloat(),false);
             }
@@ -13977,10 +14055,14 @@ void World::tick(float dt) {
             buildDue_.push_back(u.id);
         tickReclaimArea(u);
         // Reclaim needs no deferral: consuming a feature spawns nothing, so
-        // nothing can reallocate units_ underneath us.
-        if (!u.orders.empty() && u.orders.front().reclaimFeat && u.reclaimId == 0) {
-            u.reclaimId = u.orders.front().reclaimFeat;
-            u.reclaimEffectDelay = 0;
+        // nothing can reallocate units_ underneath us. Its stage 0 runs as
+        // soon as the leg is current, before the mover (406250, 4d4e80).
+        if (!u.orders.empty()) {
+            const auto& leg=u.orders[currentLeg(u.orders)];
+            if (leg.reclaimFeat && u.reclaimId == 0) u.reclaimId = leg.reclaimFeat;
+            // (A body still dying waits here until its corpse feature exists.)
+            if (leg.reclaimFeat && leg.reclaimFeat == u.reclaimId && leg.mission.stage == 0)
+                prepareReclaimApproach(u);
         }
         if (!u.orders.empty() && u.repairId == 0) {
             const auto& leg=u.orders[currentLeg(u.orders)];
@@ -14674,7 +14756,7 @@ void World::hashTrace() const {
         hPlayers = fnv(fnv(hPlayers, bits64(t.mana)), uint32_t(t.team));
     uint64_t fAlive = 0, fWork = 0;
     for (const auto& f : features_)
-        if (f.alive) { ++fAlive; fWork ^= (uint64_t(uint32_t(f.work.v)) << 1) ^ uint64_t(uint32_t(f.id)); }
+        if (f.alive) { ++fAlive; fWork ^= (uint64_t(f.fadeLeft) << 1) ^ uint64_t(uint32_t(f.id)); }
     uint64_t hFeat = fnv(fnv(seed, fAlive), fWork);
     // The nav overlay + grid cells drive losBetween, which gates target acquisition --
     // but NEITHER is folded into stateHash, so a divergence here is invisible to the
@@ -14900,7 +14982,11 @@ uint64_t World::stateHash() const {
                 mix(a.stage);mix(uint32_t(a.lastX));mix(uint32_t(a.lastZ));
             }
             if (order.reclaimAreaApproach) mix(0x52434c4d41505052ull);
-            if (order.reclaimFeat && order.mission.pending) {mix(0x52434c4d50454e44ull);mix(order.mission.pending);}
+            if (order.reclaimFeat && (order.mission.stage || order.mission.pending)) {
+                mix(0x52434c4d50454e44ull);mix(order.mission.pending);
+                mix(order.mission.stage);mix(order.mission.waitMask);mix(order.mission.deadline);
+                mix(uint32_t(order.reclaimCountdown));mix(order.reclaimHeading);mix(order.controller);
+            }
             if (order.patrolOpen) mix(0x5041544f50454eull);
             if (order.patrolRepair) {
                 mix(0x5054524c52455052ull);
@@ -15114,7 +15200,6 @@ uint64_t World::stateHash() const {
             mix(queued->id.size());
             for (unsigned char c : queued->id) mix(c);
         }
-        mix(u.reclaimEffectDelay);
         mix(uint64_t(uint32_t(u.repairId)));   // build-power target -> HP/mana divergence
         mix(u.workScriptWorking);
         mix(uint64_t(uint32_t(int32_t(u.squad))));   // control squad: formation<0 drives movement
@@ -15269,9 +15354,9 @@ uint64_t World::stateHash() const {
     for (const auto& f : features_)
         if (f.alive) {
             ++fAlive;
-            // Raw fixed-point / raw int -- not a float of either. work was a float
-            // whose BITS were folded; it is 16.16 now and dmg is an integer.
-            const uint32_t w = uint32_t(f.work.v);
+            // Raw ints. The reclaim state is the fade countdown (the work is
+            // on the reclaiming builder's order).
+            const uint32_t w = f.fadeLeft;
             const uint32_t dm = uint32_t(f.dmg);
             fWork ^= (uint64_t(w) << 1) ^ uint64_t(uint32_t(f.id)) ^
                      // burning/damage state: type swaps and timers are sim state
@@ -15289,7 +15374,7 @@ uint64_t World::stateHash() const {
     for (const auto& corpse:units_) if (!corpse.alive() &&
         (corpse.deadFor<kRetiredTicks || corpseFootprints_.contains(corpse.id))) {
         mix(uint32_t(corpse.id));mix(uint32_t(corpse.deadFor));mix(uint32_t(corpse.corpseUntil));
-        mix(uint32_t(corpse.corpseStatue));mix(uint32_t(corpse.corpseWork.v));mix(corpse.corpseBlocks);
+        mix(uint32_t(corpse.corpseStatue));mix(corpse.corpseFading);mix(corpse.corpseBlocks);
         mix(uint32_t(corpse.deathAnimationTicks));mix(corpse.deathHasCorpse);
     }
     // Features are 16-bit values serialized as eight bytes by mix(). On large

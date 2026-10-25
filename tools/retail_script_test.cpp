@@ -35,7 +35,8 @@ struct RetailReplayProbe {
     static uint32_t scriptDebt(const World& world,int id) {return world.unitScripts_.at(id).debt();}
     static const tak::cob::RetailVm& paidVm(World& world,int id) {return world.unitScripts_.at(id).state().vm;}
     static void repairTick(World& world,int id) {world.tickRepair(*world.unit(id),1.f/30);}
-    static void reclaimTick(World& world,int id) {world.tickReclaim(*world.unit(id),1.f/30);}
+    // COB INBUILDSTANCE (SET 5), which the reclaim and build stance waits poll.
+    static void setStance(World& world,int id,bool ready) {world.unitScripts_.at(id).ready=ready;}
     static void scriptTick(World& world,int id) {world.tickUnitScript(*world.unit(id));}
     static void clearScriptEvents(World& world) {world.scriptEmissions_.clear();}
 
@@ -855,7 +856,7 @@ int main(int argc,char** argv) {
             FeatType stump;stump.name="smudge";stump.indestructible=true;
             trees.setFeatureTypes({tree,stump});
             const int id=20*64+20;
-            trees.addFeature(id,320+size*8,320+size*8,0,1,size,size,true,0);
+            trees.addFeature(id,320+size*8,320+size*8,0,size,size,true,0);
             const float hit=320+(size-1)*16+8;
             Weapon shot;shot.damage=400;shot.aoe=aoe;
             shot.unitsOnly=true;RetailReplayProbe::hit(trees,shot,hit,hit,0,0);
@@ -889,7 +890,7 @@ int main(int argc,char** argv) {
             std::vector<uint16_t> raw(64*64,0xffff);const int treeId=25*64+28;
             raw[size_t(treeId)]=0;world.setMapPlacementFeatures(raw,{mapTree});
             FeatType tree;tree.name="tree";tree.hp=10000;tree.projectileHeight=255;
-            world.setFeatureTypes({tree});world.addFeature(treeId,448,400,0,1,1,1,false,0,false);
+            world.setFeatureTypes({tree});world.addFeature(treeId,448,400,0,1,1,false,0,false);
             const int from=world.spawn(&shooter,400,400,0,0);
             const int target=world.spawn(&targetType,520,400,0,1);
             world.unit(from)->groundY=world.unit(target)->groundY=Fixed::fromInt(20);
@@ -923,7 +924,7 @@ int main(int argc,char** argv) {
             FeatType tree;tree.name="tartree09";tree.fx=tree.fz=5;
             tree.hp=1000;tree.projectileHeight=140;tree.blocking=true;
             world.setFeatureTypes({tree});const int treeId=21*64+28;
-            world.addFeature(treeId,488,376,0,1,5,5,true,0);
+            world.addFeature(treeId,488,376,0,5,5,true,0);
             const int from=world.spawn(&shooter,400,400,0,0);
             const int target=world.spawn(&targetType,600,400,0,1);
             world.unit(from)->groundY=Fixed::fromInt(30);world.unit(target)->groundY=Fixed::fromInt(10);
@@ -954,7 +955,7 @@ int main(int argc,char** argv) {
             std::vector<uint16_t> raw(64*64,0xffff);const int treeId=25*64+28;
             raw[size_t(treeId)]=0;world.setMapPlacementFeatures(raw,{mapTree});
             FeatType tree;tree.name="tree";tree.hp=10000;tree.projectileHeight=255;
-            world.setFeatureTypes({tree});world.addFeature(treeId,448,400,0,1,1,1,false,0,false);
+            world.setFeatureTypes({tree});world.addFeature(treeId,448,400,0,1,1,false,0,false);
             const int from=world.spawn(&shooter,400,400,0,0);
             const int target=world.spawn(&targetType,520,400,0,1);
             world.unit(from)->groundY=world.unit(target)->groundY=Fixed::fromInt(20);
@@ -992,7 +993,7 @@ int main(int argc,char** argv) {
             std::vector<uint16_t> raw(64*64,0xffff);const int treeId=25*64+28;
             raw[size_t(treeId)]=0;world.setMapPlacementFeatures(raw,{mapTree});
             FeatType tree;tree.name="tree";tree.hp=10000;tree.projectileHeight=255;
-            world.setFeatureTypes({tree});world.addFeature(treeId,448,400,0,1,1,1,false,0,false);
+            world.setFeatureTypes({tree});world.addFeature(treeId,448,400,0,1,1,false,0,false);
             const int from=world.spawn(&shooter,225,400,0,0);
             const int target=world.spawn(&targetType,520,400,0,1);
             world.unit(from)->groundY=world.unit(target)->groundY=Fixed::fromInt(20);
@@ -1430,25 +1431,31 @@ int main(int argc,char** argv) {
             RetailReplayProbe::scriptStatics(repairWorld,worker)[3]==2,
             "repair cancellation stops its controller exactly once");
 
-        repairWorld.addFeature(99,220,200,0,12,1,1,false,-1,false);
-        repairWorld.unit(worker)->reclaimId=99;
-        RetailReplayProbe::reclaimTick(repairWorld,worker);
-        RetailReplayProbe::scriptTick(repairWorld,worker);
+        // The worker already touches the feature: RECLAIM's arrival is
+        // immediate, and it then waits for INBUILDSTANCE (406250 stage 2),
+        // which this counting script never sets on its own.
+        repairer.canReclaim=true;
+        repairWorld.addFeature(99,220,200,0,1,1,false,-1,false);
+        repairWorld.reclaim(worker,99,false);
+        for(int tick=0;tick<3;++tick)repairWorld.tick(1.f/30);
         require(repairWorld.unit(worker)->workScriptWorking &&
             RetailReplayProbe::scriptStatics(repairWorld,worker)[2]==3,
             "feature reclaim starts its authored controller even with no mana yield");
-        RetailReplayProbe::reclaimTick(repairWorld,worker);
-        RetailReplayProbe::scriptTick(repairWorld,worker);
-        require(RetailReplayProbe::scriptStatics(repairWorld,worker)[2]==3,
-            "ongoing reclaim does not restart its pose each update");
-        RetailReplayProbe::reclaimTick(repairWorld,worker);
+        for(int tick=0;tick<3;++tick)repairWorld.tick(1.f/30);
+        require(RetailReplayProbe::scriptStatics(repairWorld,worker)[2]==3 &&
+            repairWorld.unit(worker)->orders.size()==1 &&
+            repairWorld.unit(worker)->orders.front().mission.stage==2,
+            "ongoing reclaim does not restart its pose and waits for its stance");
+        RetailReplayProbe::setStance(repairWorld,worker,true);
+        for(int tick=0;tick<20;++tick)repairWorld.tick(1.f/30);
         require(!repairWorld.unit(worker)->workScriptWorking &&
-            RetailReplayProbe::scriptStatics(repairWorld,worker)[3]==3,
+            RetailReplayProbe::scriptStatics(repairWorld,worker)[3]==3 &&
+            repairWorld.feature(99)->fadeLeft>0,
             "completed reclaim stops its controller");
-        repairWorld.addFeature(100,220,200,0,12,1,1,false,-1,false);
-        repairWorld.unit(worker)->reclaimId=100;
-        RetailReplayProbe::reclaimTick(repairWorld,worker);
-        RetailReplayProbe::scriptTick(repairWorld,worker);
+        repairWorld.addFeature(100,220,200,0,1,1,false,-1,false);
+        repairWorld.reclaim(worker,100,false);
+        for(int tick=0;tick<4;++tick)repairWorld.tick(1.f/30);
+        require(repairWorld.unit(worker)->workScriptWorking,"the next reclaim is working");
         repairWorld.cancelBuilds(worker);repairWorld.cancelBuilds(worker);
         require(!repairWorld.unit(worker)->workScriptWorking &&
             RetailReplayProbe::scriptStatics(repairWorld,worker)[3]==4,
@@ -1480,8 +1487,7 @@ int main(int argc,char** argv) {
         repairWorld.unit(replacement)->x=Fixed::fromInt(220);
         RetailReplayProbe::repairTick(repairWorld,worker);
         RetailReplayProbe::scriptTick(repairWorld,worker);
-        repairer.canReclaim=true;
-        repairWorld.addFeature(101,220,200,0,100,1,1,false,-1,false);
+        repairWorld.addFeature(101,220,200,0,1,1,false,-1,false);
         workCommand.kind=tak::net::Cmd::Reclaim;workCommand.targetId=101;
         applyCommand(repairWorld,workRegistry,workCommand);
         require(!repairWorld.unit(worker)->workScriptWorking,
@@ -1506,9 +1512,9 @@ int main(int argc,char** argv) {
         for(int mode=0;mode<3;++mode) {
             const auto beforeCorpse=RetailReplayProbe::scriptStatics(repairWorld,worker);
             const int corpse=repairWorld.spawn(&damaged,220,200,0);
-            auto& dead=*repairWorld.unit(corpse);
-            dead.hp=Fixed();dead.deadFor=120;dead.corpseUntil=1000;
-            dead.corpseWork=Fixed::fromInt(20);dead.corpseStatue=mode ? mode : -1;
+            // Reclaim works on the installed corpse feature.
+            require(RetailReplayProbe::corpse(repairWorld,corpse,mode),"the body installs its corpse feature");
+            repairWorld.unit(corpse)->corpseStatue=mode ? mode : -1;
             workCommand.kind=tak::net::Cmd::Reclaim;workCommand.targetId=-corpse;
             applyCommand(repairWorld,workRegistry,workCommand);
             for(int tick=0;tick<2;++tick)repairWorld.tick(1.f/30);
@@ -1521,7 +1527,7 @@ int main(int argc,char** argv) {
                 require(repairWorld.unit(corpse)->corpseUntil!=0,
                     "stopping corpse reclaim preserves its unfinished target");
             } else {
-                for(int tick=0;tick<8;++tick)repairWorld.tick(1.f/30);
+                for(int tick=0;tick<60;++tick)repairWorld.tick(1.f/30);
                 require(!repairWorld.unit(corpse) || repairWorld.unit(corpse)->corpseUntil==0,
                     "completed corpse reclaim retires its target");
             }

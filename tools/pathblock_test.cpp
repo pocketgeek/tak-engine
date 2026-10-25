@@ -168,7 +168,7 @@ static PlacementRun runSitePlacement(bool legion,int what,bool fly=false) {
     w.queueBuild(bid,&site,512,512,false);
     w.order(bid,160,800,true);
     int kid=0;
-    if (what==2) w.addFeature(4242,512,512,0,10,1,1,true,0);
+    if (what==2) w.addFeature(4242,512,512,0,1,1,true,0);
     else kid=w.spawn(&blocker,528,512,0,1);
     Fixed sx,sz;
     for (int t=0;t<1200;++t) {
@@ -293,7 +293,7 @@ int main() {
         int feature=1;
         for (auto [x,z,size,blocks] : {std::tuple{100,100,1,true},{300,120,2,true},{500,80,1,false},
                                        {8,8,1,true},{1000,1000,3,true},{200,700,2,false}})
-            w.addFeature(feature++,float(x),float(z),0,1,size,size,blocks);
+            w.addFeature(feature++,float(x),float(z),0,size,size,blocks);
         w.blockCells(30,10,2,12,true);
         UnitType body=soldier(),big=soldier(),house=soldier(),gate=soldier(),mover=soldier();
         body.footX=body.footZ=1;big.footX=3;big.footZ=2;

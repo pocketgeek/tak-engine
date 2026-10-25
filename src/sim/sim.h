@@ -1,5 +1,6 @@
 #pragma once
 #include "sim/retailreclaimarea.h"
+#include "sim/retailreclaim.h"
 #include "sim/heapoptional.h"
 
 #include "sim/fixed.h"
@@ -705,6 +706,9 @@ struct alignas(64) Order {
     HeapOptional<RetailParkState> park;
     // Restored MobileBuild approach; production after arrival still uses the
     // World's construction host. Bounds use retail footprint-origin cells.
+    // A RECLAIM leg (reclaimFeat) carries the same controller: 406250 stage 0
+    // installs it through the same 4d4e80 (prepareReclaimApproach), around the
+    // target feature's footprint instead of the site's.
     HeapOptional<RetailRectGoal> buildRectangle;
     HeapOptional<RetailFlightGoal> flightGoal;
     // Mission destination can change while the navigator retains its old route.
@@ -788,6 +792,14 @@ struct alignas(64) Order {
     bool chaseLeashed = false;
     uint16_t chaseLeash = 0;
     RetailGroundPoint chaseOrigin{};
+    // RECLAIM's work countdown (406250 mission +0x4e): trunc(energy + 15) at
+    // arrival, less 2 every two-tick wake (retailReclaimWork). Its stages run
+    // on `mission`. Hashed on reclaim legs.
+    int32_t reclaimCountdown = 0;
+    // The facing the stage-1 turn child (FacingNoFormation) turns the builder
+    // to before the stance wait: retail heading from the target to the builder,
+    // as MobileBuild's turn. Hashed on reclaim legs.
+    uint16_t reclaimHeading = 0;
 };
 // Which line each field sits on (WE D2). Moving a field across a line, or
 // growing line 0/1 past 64 bytes, is a compile error here. (offsetof on a type
@@ -1080,7 +1092,6 @@ struct alignas(64) Unit {
     uint8_t repositions = 0;
     uint8_t searchFailed = 0;
     int16_t blockedX = 0, blockedZ = 0;
-    uint8_t reclaimEffectDelay = 0;    // worker particle cadence while actively reclaiming
     bool workScriptWorking = false; // repair/reclaim requested StartBuilding
     bool buildBegun = false;   // construction site: true once the builder arrived
     Fixed conjureRate = Fixed();  // site: hp/TICK the last builder added; drives decay
@@ -1111,9 +1122,9 @@ struct alignas(64) Unit {
     uint8_t hpPct1s = 100;   // HP% sampled every 30 ticks (previous sample -- the
     uint8_t hpPctCur = 100;  //  retail unit+0x111/+0x110 pair severity reads)
     int corpseStatue = -1;   // FeatType override chosen at death (stone/frozen), -1 = corpse=
-    // Fixed work units. Bounded by the corpse def's `energy` (shipped: small), so
-    // nowhere near 16.16's ceiling.
-    Fixed corpseWork = Fixed::fromInt(60);   // ordered-reclaim work left in the body
+    // A reclaim finished this body: it fades out (corpseUntil is the end of the
+    // fade) and can no longer be reclaimed or raised. Hashed.
+    bool corpseFading = false;
     int reviveTarget = 0;    // priest: dead unit id being channelled back (0 = none)
     int8_t reviveMode = 0;   // 1 = resurrect (own corpse), 2 = animate (raise ghoul)
     int32_t reviveLeft = 0;  // ticks of channel remaining
@@ -1289,7 +1300,7 @@ inline constexpr size_t kUnitPrefetchHot=9*64;
                   "Unit::" #field " must sit on cache lines " #first "-" #last)
 TAK_UNIT_LINE(standbyState, 8); TAK_UNIT_LINE(guardNoMoveState, 8); TAK_UNIT_LINE(standbyAllowed, 8);
 TAK_UNIT_LINES(deathAnimationTicks, 8, 11); TAK_UNIT_LINES(corpseUntil, 8, 11); TAK_UNIT_LINES(corpseStatue, 8, 11);
-TAK_UNIT_LINES(corpseWork, 8, 11); TAK_UNIT_LINES(airOccupant, 9, 11); TAK_UNIT_LINES(flightVelocity, 9, 11);
+TAK_UNIT_LINES(corpseFading, 8, 11); TAK_UNIT_LINES(airOccupant, 9, 11); TAK_UNIT_LINES(flightVelocity, 9, 11);
 TAK_UNIT_LINES(flightAcceleration, 9, 11); TAK_UNIT_LINES(flightNavigation, 9, 11);
 TAK_UNIT_LINES(retainedFlightGoal, 9, 11); TAK_UNIT_LINES(flightSectorZ, 9, 11);
 TAK_UNIT_LINES(legionLiftUntil, 9, 11); TAK_UNIT_LINES(legionLiftEnded, 9, 11);
@@ -1333,8 +1344,9 @@ struct UnitClassLists {
 
 // A reclaimable map feature (tree, rock, house, wreckage, …). Positions and stats
 // are derived deterministically in setupMatch -- the same row-major walk runs on
-// every peer -- so reclaim stays in lockstep. Not a Unit: no orders or combat,
-// just reclaim "work" a builder chips away for mana. A `blocks` feature also
+// every peer -- so reclaim stays in lockstep. Not a Unit: no orders or combat.
+// A builder reclaims it in a fixed time set by its `energy` (Reclaim 406250,
+// see sim/retailreclaim.h) and gains no mana for it. A `blocks` feature also
 // occupies the nav grid, freed when it is reclaimed.
 // Per-feature-type burn/footprint data the sim needs (built by setupMatch from
 // the feature TDFs, identical on every peer -- indices are shared lockstep state).
@@ -1346,7 +1358,7 @@ struct FeatType {
     int  spreadChance = 0;   // TDF spreadchance (percent)
     int  sparkTicks = 0;     // TDF sparktime * 30 (retail stores seconds*30)
     int  burntType = -1;     // TDF featureburnt -> index into the same table
-    float energy = 0;        // reclaim yield (TDF energy -- readFloat in retail too)
+    float energy = 0;        // TDF energy: the reclaim countdown (readFloat in retail too)
     int  fx = 1, fz = 1;
     bool blocking = false;
     // Corpse defs (features/corpses/*_dead.tdf): how long the body lies there
@@ -1373,12 +1385,14 @@ struct Feature {
     int   id = 0;          // cz*terrainWidth + cx: position-derived, peer-identical
     Fixed x = Fixed(), z = Fixed();   // 16.16, the same world units as everything else
     int   fx = 1, fz = 1;  // footprint cells (for the nav unblock on removal)
-    float manaYield = 0;   // total mana granted over a full reclaim (FBI `energy`)
-    // Fixed: reclaim drains fractionally per tick, exactly as corpseWork does.
-    Fixed work = Fixed();      // remaining reclaim work; consumed to 0
-    Fixed workFull = Fixed::fromInt(1);   // initial work (for the proportional mana drip)
+    // TDF energy (type+0x128), which alone sets how long a reclaim takes
+    // (retailReclaimCountdown). Retail pays no mana for it.
+    float energy = 0;
     bool  blocks = false;  // occupied the nav grid
     bool  alive = true;    // false once fully reclaimed (decal disappears)
+    // Reclaimed, fading out (494ce0's object: 34 ticks). It stays installed and
+    // blocking until this reaches 0, but can no longer be reclaimed. Hashed.
+    uint8_t fadeLeft = 0;
     // Burning (retail mechanic, icd 0x494b40/0x495110/0x495300 -- ours runs
     // fully deterministic in the lockstep sim instead of retail's host-authority
     // event scheme). Active/timer state is hashed; display timestamp/order is not.
@@ -1909,7 +1923,7 @@ public:
     float sacredIncomeMultiplier(int x,int z,int fx,int fz) const;
     // Reclaimable features (trees/rocks/houses). Populated only by setupMatch (the
     // one deterministic per-peer walk); never from the viewer. See struct Feature.
-    void addFeature(int id, float x, float z, float manaYield, float work,
+    void addFeature(int id, float x, float z, float energy,
                     int fx, int fz, bool blocks, int type = -1, bool placeOnMap = true);
     const std::vector<Feature>& features() const { return features_; }
     void setMapPlacementFeatures(const std::vector<uint16_t>& raw,
@@ -1955,7 +1969,7 @@ public:
     SinCos steerGround(Unit& subject,RetailSteeringPoint start,RetailSteeringPoint end,
                        RetailSteeringPoint next,Fixed maximum);
     bool featureReclaimable(const Feature& f) const {
-        return f.alive && f.work>Fixed() && (f.type<0 ||
+        return f.alive && !f.fadeLeft && (f.type<0 ||
             (size_t(f.type)<featTypes_.size() && featTypes_[size_t(f.type)].reclaimable));
     }
     const Feature* feature(int id) const;                 // by id, nullptr if none
@@ -1985,12 +1999,12 @@ public:
     // Drop all registered features (setupMatch rebuilds authoritatively -- the
     // client ctor may have pre-registered the launch map's via registerMapFeatures).
     void clearFeatures() {
-        features_.clear(); featureIdx_.clear(); clearFeatureTypes(); burnSequence_=0;
+        features_.clear(); featureIdx_.clear(); clearFeatureTypes(); burnSequence_=0; fadingFeatures_=0;
     }
     const std::vector<FeatType>& featureTypes() const { return featTypes_; }
     bool featureAliveAt(float x, float z) const;          // viewer decal sync
-    // Order a mobile builder to reclaim feature `featureId` (queue = append to its
-    // reclaim queue, for an area drag). Grants the feature's mana as it consumes it.
+    // Order a mobile builder to reclaim feature `featureId` (negative = a corpse;
+    // queue = append to its orders, for an area drag). Retail Reclaim (406250).
     void reclaim(int builderId, int featureId, bool queue);
     void reclaimArea(int builderId, float x0, float z0, float x1, float z1, bool queue);
     // Order a mobile builder to repair damaged friendly `targetId` (restores HP at
@@ -2094,7 +2108,7 @@ public:
         scriptEmissions_.clear();
         scriptSounds_.clear();
         features_.clear();
-        burnSequence_ = 0;
+        burnSequence_ = 0; fadingFeatures_ = 0;
         mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
         installedMapFeatures_.clear();
         explorationHeights_.clear();navigationExplored_.clear();viewCounts_.clear();deathSights_.clear();
@@ -2659,9 +2673,13 @@ private:
     // Orphaned conjure (no builder worked it this tick): bleed HP at its build
     // rate, then vanish with no corpse.
     void decayConstruction(Unit& u, float dt);
-    // A builder chips reclaim work off its target feature, drips mana, then removes
-    // the feature and advances its reclaim queue.
-    void tickReclaim(Unit& b, float dt);
+    // Retail Reclaim (406250) once its leg is current: the approach events,
+    // the stance wait and the two-tick work countdown, then the removal.
+    void tickReclaim(Unit& b);
+    // 406250 stage 0: install the reclaim leg's rectangle controller.
+    void prepareReclaimApproach(Unit& u);
+    void finishReclaim(Unit& b,int target);
+    void tickFeatureFades();
     void tickReclaimArea(Unit& b);
     void tickManaBuildArea(Unit& b);
     void tickAbilities(float dt);   // reclaim / resurrect on nearby corpses
@@ -3256,7 +3274,14 @@ private:
     void removeScenarioUnits(int player);
     void removeMapFeature(int cx,int cz);
     bool placeMapFeature(const Feature& f,uint8_t owner=kRetailWorldFeatureOwner);
-    bool reclaimInReach(const Unit& b,int target) const;
+    // A FLYING reclaimer's acceptance (VTOL_RECLAIM 420xxx is not ported):
+    // within 24 px plus half the target plus builddistance of its centre.
+    bool flyerReclaimInReach(const Unit& b,int target) const;
+    // Resolve a reclaim target to its installed plane anchor and footprint
+    // (a corpse: its corpse feature). False when it is gone.
+    bool reclaimTargetFootprint(int target,int& x,int& z,int& fx,int& fz,float& energy) const;
+    // Retail's per-wake re-lookup (4930d0 -> 496ea0): still reclaimable.
+    bool reclaimTargetValid(int target) const;
     void swapFeature(Feature& f, int newType);   // chain stage swap (burnt/dead)
     void tickBurning();
     std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_
@@ -3330,6 +3355,7 @@ private:
     void startEmote(int player, int unitId, bool disco, bool append);
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition
     uint64_t burnSequence_ = 0;  // display order for active feature burns; not lockstep state
+    uint32_t fadingFeatures_ = 0; // features with fadeLeft > 0 (tickFeatureFades walks only then)
     std::vector<BenchStage> benchPlan_;   // benchmark staged spawns (executed in tick)
     size_t benchCursor_ = 0;              // next unexecuted stage
     uint32_t benchEndTick_ = 0;           // 0 = not a benchmark run

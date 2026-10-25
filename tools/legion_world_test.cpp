@@ -344,7 +344,7 @@ void trapped() {
         int clearedAt=-1;
         for(int t=0;t<9300&&clearedAt<0;++t) {
             if(t>=20&&t<60&&t%10==0)   // a blocking feature placed and lifted on the far island (churn ... toggle)
-                f.world.addFeature(30*256+200,200*16+16.f,30*16+16.f,0,1,2,2,(t/10)%2==0,-1,true);
+                f.world.addFeature(30*256+200,200*16+16.f,30*16+16.f,0,2,2,(t/10)%2==0,-1,true);
             f.world.tick(1.f/30);
             if(f.world.unit(inside)->orders.empty())clearedAt=t;
         }
@@ -369,7 +369,7 @@ void trapped() {
         f.world.order(inside,100*16,32*16,false);
         int clearedAt=-1;
         for(int t=0;t<9400&&clearedAt<0;++t) {
-            if(t>=20&&t%10==0)f.world.addFeature(30*256+200,200*16+16.f,30*16+16.f,0,1,2,2,(t/10)%2==0,-1,true);
+            if(t>=20&&t%10==0)f.world.addFeature(30*256+200,200*16+16.f,30*16+16.f,0,2,2,(t/10)%2==0,-1,true);
             if(opens&&t==300) {f.open(28,22,2,4);f.publish();}
             f.world.tick(1.f/30);
             if(f.world.unit(inside)->orders.empty())clearedAt=t;
@@ -400,7 +400,7 @@ void improvedefer() {
     std::vector<int> ids;
     for(int i=0;i<4;++i)ids.push_back(f.spawn(type,6+(i%2)*3,30+(i/2)*3));
     f.start();
-    f.world.addFeature(10*160+80,80*16+16.f,10*16+16.f,0,1,2,2,true,-1,true);   // a rock off the way
+    f.world.addFeature(10*160+80,80*16+16.f,10*16+16.f,0,2,2,true,-1,true);   // a rock off the way
     for(const int id:ids)f.world.order(id,150*16,32*16,false);
     const auto* nav=f.world.legionNavigator();
     auto acct=[&] {return nav->accounting();};
@@ -408,7 +408,7 @@ void improvedefer() {
     int done=-1;
     for(int t=0;t<4000&&done<0;++t) {
         if(t==60) {
-            f.world.addFeature(10*160+80,80*16+16.f,10*16+16.f,0,1,2,2,false,-1,true);   // lifted: an improvement
+            f.world.addFeature(10*160+80,80*16+16.f,10*16+16.f,0,2,2,false,-1,true);   // lifted: an improvement
             opened=acct().routesOpened;closed=acct().routesClosed;promoted=acct().improveRefreshes;
         }
         if(t==62) {
@@ -419,7 +419,7 @@ void improvedefer() {
         if(t==60+160)check(acct().improveRefreshes==promoted+1,"improvedefer: the deferred improvement refresh never came");
         if(t==400) {
             closed=acct().routesClosed;
-            f.world.addFeature(54*160+100,100*16+16.f,54*16+16.f,0,1,2,2,true,-1,true);   // placed off the way: a closure
+            f.world.addFeature(54*160+100,100*16+16.f,54*16+16.f,0,2,2,true,-1,true);   // placed off the way: a closure
         }
         if(t==402)check(acct().routesClosed>closed,"improvedefer: the placed rock did not reach the route as a closure");
         f.world.tick(1.f/30);
@@ -454,7 +454,7 @@ void chainresolve() {
     int t=0,done=0;
     for(;t<9000&&done<int(ids.size());++t) {
         if(t>=2&&t<300)for(const auto& r:rocks)
-            f.world.addFeature(r[1]*512+r[0],float(r[0]*16+16),float(r[1]*16+16),0,1,2,2,t%2==0,-1,true);
+            f.world.addFeature(r[1]*512+r[0],float(r[0]*16+16),float(r[1]*16+16),0,2,2,t%2==0,-1,true);
         f.world.tick(1.f/30);
         done=0;for(const int id:ids)done+=f.world.unit(id)->orders.empty();
     }
@@ -716,7 +716,7 @@ void staticidle() {
         std::vector<int> ids;
         for(int i=0;i<2;++i)ids.push_back(f.spawn(type,80,46+i*4));
         f.start();
-        auto gate=[&](bool closed) {f.world.addFeature(52*200+100,101*16.f,53*16.f,0,1,2,2,closed,-1,true);};
+        auto gate=[&](bool closed) {f.world.addFeature(52*200+100,101*16.f,53*16.f,0,2,2,closed,-1,true);};
         gate(true);
         for(int t=0;t<90;++t)f.world.tick(1.f/30);   // the plug has stood still a while
         for(int id:ids)f.world.order(id,150*16,50*16,false);
@@ -764,7 +764,7 @@ void staticidle() {
     check(held>=6,"staticidle: the guards are not holding with their orders");
     const auto base=f.world.legionStats();
     for(int t=0;t<600;++t) {
-        if(t%10==0)f.world.addFeature(50*200+60,60*16+8.f,50*16+8.f,0,1,1,1,t%20==0,-1,true);
+        if(t%10==0)f.world.addFeature(50*200+60,60*16+8.f,50*16+8.f,0,1,1,t%20==0,-1,true);
         f.world.tick(1.f/30);
     }
     if(std::getenv("STATIC_VERBOSE"))for(int id:ids)std::printf("  guard %d state %d at %.1f,%.1f\n",id,f.world.legionNavigator()->unitState(id),f.world.unit(id)->x.toFloat()/16,f.world.unit(id)->z.toFloat()/16);
@@ -1410,7 +1410,7 @@ void churn() {
     for(int t=0;t<6000;++t) {
         // A blocking feature placed and lifted again (blockCells alone never
         // reaches Legion's placement plane, so it churned nothing).
-        if(t%5==0)f.world.addFeature(40*160+150,150*16+8.f,40*16+8.f,0,1,1,1,(t/5)%2==0,-1,true);
+        if(t%5==0)f.world.addFeature(40*160+150,150*16+8.f,40*16+8.f,0,1,1,(t/5)%2==0,-1,true);
         f.world.tick(1.f/30);
         if(!ready&&f.world.legionStats().fieldsBuilt>0)ready=true;
         else if(ready)for(int id:ids)waits+=legion->unitState(id)==3;
@@ -1442,7 +1442,7 @@ void churnfield() {
     const int32_t x0=f.world.unit(late)->x.v,z0=f.world.unit(late)->z.v;
     int fieldAt=-1;
     for(int t=0;t<330;++t) {
-        f.world.addFeature(1010*1024+1010,1010*16+8.f,1010*16+8.f,0,1,1,1,t%2==0,-1,true);
+        f.world.addFeature(1010*1024+1010,1010*16+8.f,1010*16+8.f,0,1,1,t%2==0,-1,true);
         if(t==30)f.world.order(late,50*16,700*16,false);
         f.world.tick(1.f/30);
         if(t>30&&fieldAt<0&&legion->fieldPotential(late,footprintOrigin(f.world.unit(late)->x,2),
@@ -1610,7 +1610,7 @@ std::array<uint64_t,4> chainsRun(bool serial,bool churn=false) {
         // chains are touched, keep steering and refresh; TAK_LEGION_VERIFY must not take their older tiles for
         // the current geometry).
         if(churn&&(t==5||t==400))for(int z=100;z<220;++z)
-            f.world.addFeature(z*512+380,float(380*16+8),float(z*16+8),0,1,1,1,t==5,-1,true);
+            f.world.addFeature(z*512+380,float(380*16+8),float(z*16+8),0,1,1,t==5,-1,true);
         f.world.tick(1.f/30);
         done=0;for(const auto& q:squads)for(const int id:q)done+=f.world.unit(id)->orders.empty();
     }
@@ -2174,13 +2174,13 @@ std::array<uint64_t,3> planeincrementalSeed(uint32_t seed,bool serial) {
         const int kind=rnd(10);
         if(kind<5) {
             const int fx=1+rnd(3),fz=1+rnd(3),x=4+rnd(W-10),z=4+rnd(H-10);
-            f.world.addFeature(z*W+x,float(x*16+fx*8),float(z*16+fz*8),0,1,fx,fz,rnd(3)!=0,-1,true);
+            f.world.addFeature(z*W+x,float(x*16+fx*8),float(z*16+fz*8),0,fx,fz,rnd(3)!=0,-1,true);
         } else if(kind<7) {
             // A wall line across the map (splits), later overwritten open.
             const bool across=rnd(2),blocks=rnd(3)!=0;const int at=6+rnd(across?H-12:W-12);
             for(int i=0;i<(across?W:H)-4;++i) {
                 const int x=across?2+i:at,z=across?at:2+i;
-                f.world.addFeature(z*W+x,float(x*16+8),float(z*16+8),0,1,1,1,blocks,-1,true);
+                f.world.addFeature(z*W+x,float(x*16+8),float(z*16+8),0,1,1,blocks,-1,true);
             }
         } else if(kind<8) {
             const int x=6+rnd(W-14),z=6+rnd(H-14);
@@ -2232,11 +2232,11 @@ void planeprebuild() {
     for(int step=0;step<400;++step) {
         if(step%2==0) {
             const int fx=1+rnd(3),fz=1+rnd(3),x=4+rnd(W-10),z=4+rnd(H-10);
-            f.world.addFeature(z*W+x,float(x*16+fx*8),float(z*16+fz*8),0,1,fx,fz,rnd(3)!=0,-1,true);
+            f.world.addFeature(z*W+x,float(x*16+fx*8),float(z*16+fz*8),0,fx,fz,rnd(3)!=0,-1,true);
         }
         if(step%37==0) {
             const int at=6+rnd(H-12),blocks=rnd(2);
-            for(int x=2;x<W-2;++x)f.world.addFeature(at*W+x,float(x*16+8),float(at*16+8),0,1,1,1,blocks,-1,true);
+            for(int x=2;x<W-2;++x)f.world.addFeature(at*W+x,float(x*16+8),float(at*16+8),0,1,1,blocks,-1,true);
         }
         f.world.tick(1.f/30);
     }
@@ -2267,14 +2267,14 @@ void penstale() {
     check(before.fieldsBuilt>=1,"no field for the penned order");
     for(int t=0;t<40;++t) {
         const int x=P+4+10+t%8,z=10;
-        f.world.addFeature(z*f.width+x,float(x*16+8),float(z*16+8),0,1,1,1,t%2==0,-1,true);
+        f.world.addFeature(z*f.width+x,float(x*16+8),float(z*16+8),0,1,1,t%2==0,-1,true);
         f.world.tick(1.f/30);
     }
     const auto other=f.world.legionStats();
     check(other.planeRefreshes>before.planeRefreshes,"the other region's changes never reached the plane");
     check(other.fieldsBuilt==before.fieldsBuilt,"a change in another region rebuilt the field");
     check(!f.world.unit(id)->orders.empty(),"arrived before the in-region change");
-    f.world.addFeature(30*f.width+20,float(20*16+8),float(30*16+8),0,1,1,1,true,-1,true);
+    f.world.addFeature(30*f.width+20,float(20*16+8),float(30*16+8),0,1,1,true,-1,true);
     for(int t=0;t<10;++t)f.world.tick(1.f/30);
     const auto inside=f.world.legionStats();
     check(inside.fieldsBuilt>other.fieldsBuilt,"a change inside the region did not refresh its field");
@@ -2394,7 +2394,7 @@ void navalclearance() {
         const int kind=rnd(10);
         if(kind<6) {
             const int fx=1+rnd(3),fz=1+rnd(3),x=4+rnd(kSeaW-10),z=4+rnd(kSeaH-10);
-            f.world.addFeature(z*kSeaW+x,float(x*16+fx*8),float(z*16+fz*8),0,1,fx,fz,rnd(3)!=0,-1,true);
+            f.world.addFeature(z*kSeaW+x,float(x*16+fx*8),float(z*16+fz*8),0,fx,fz,rnd(3)!=0,-1,true);
         } else if(kind<7) {
             const int x=6+rnd(kSeaW-14),z=6+rnd(kSeaH-14);
             structures.push_back(f.world.spawn(&yard,float(x*16+32),float(z*16+24),std::nullopt,1));

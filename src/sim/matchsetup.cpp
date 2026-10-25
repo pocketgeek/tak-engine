@@ -505,8 +505,7 @@ static void scanFeaturePlane(World& world, const tak::tnt::Map& map,
             // Their damage state still belongs in every peer's simulation.
             const bool destructible = di->second.hp > 0 && !di->second.indestructible;
             if ((di->second.reclaimable || di->second.flamable || destructible) && !di->second.mana) {
-                float work = std::max(di->second.energy, 60.0f);   // rocks (energy 0) still take a beat
-                world.addFeature(cz * map.width + cx, x, z, di->second.energy, work,
+                world.addFeature(cz * map.width + cx, x, z, di->second.energy,
                                  di->second.fx, di->second.fz, di->second.blocking != 0,
                                  types.intern(key),false);
             }

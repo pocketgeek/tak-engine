@@ -18,6 +18,11 @@ struct PlacementProbe {
     }
 };
 }
+namespace tak::sim {
+struct RetailReplayProbe {
+    static bool corpse(World& w,Unit& u,int type) {return w.placeCorpse(u,type);}
+};
+}
 using namespace tak;
 static int fails=0;
 static void check(bool ok,const char* label) {
@@ -1008,8 +1013,11 @@ int main(int argc,char** argv) {
                   "completed factory production and placed conjuring retain type standing orders");
         }
     }
+    // Absurd doubles recurring income. Reclaim (features, ordered and
+    // automatic corpses) pays nothing at all in retail (406250, 494fd0), so
+    // there is nothing for it to double; the targets still go.
     for (int source=0;source<4;++source) {
-        double earned[2]{};
+        double earned[2]{};bool cleared[2]{};
         for (int bonus=0;bonus<2;++bonus) {
             sim::World w;terrain(w);auto builder=soldier;
             builder.isBuilder=true;builder.canReclaim=true;builder.storage=10000;
@@ -1018,22 +1026,28 @@ int main(int argc,char** argv) {
             int id=w.spawn(&builder,800,800,0,0);
             w.player(0).mana=0;w.player(0).manaMult=bonus ? 2 : 1;
             if (source==1) {
-                w.addFeature(101,840,800,60,60,1,1,false);
+                w.addFeature(101,840,800,60,1,1,false);
                 w.reclaim(id,101,false);
             }
+            int dead=0;
             if (source>=2) {
                 sim::FeatType corpse;corpse.energy=60;corpse.reclaimable=true;
                 w.setFeatureTypes({corpse});w.mapCorpse(&soldier,0);
-                int dead=w.spawn(&soldier,840,800,0,1);
+                dead=w.spawn(&soldier,840,800,0,1);
                 auto* u=w.unit(dead);u->hp={};u->deadFor=120;u->corpseUntil=2000;
-                u->corpseWork=sim::Fixed::fromInt(60);
+                if (!sim::RetailReplayProbe::corpse(w,*u,0)) check(false,"test corpse installs");
                 if (source==2) w.reclaim(id,-dead,false);
             }
             for (int tick=0;tick<240;++tick) w.tick(1.f/30.f);
             earned[bonus]=w.player(0).mana;
+            cleared[bonus]=source==1 ? !w.feature(101)->alive :
+                source>=2 ? w.unit(dead)==nullptr || w.unit(dead)->corpseUntil==0 : true;
         }
-        check(earned[0]>0 && std::abs(earned[1]-earned[0]*2)<0.001,
-              "Absurd doubles recurring, feature, ordered-corpse and automatic-corpse income");
+        if (source==0)
+            check(earned[0]>0 && std::abs(earned[1]-earned[0]*2)<0.001,"Absurd doubles recurring income");
+        else
+            check(earned[0]==0 && earned[1]==0 && cleared[0] && cleared[1],
+                  "feature, ordered-corpse and automatic-corpse reclaims clear their target for no mana");
     }
     levelWiring();
     classicLevel();

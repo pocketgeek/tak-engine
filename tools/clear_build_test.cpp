@@ -32,9 +32,9 @@ int main(int argc,char** argv) {
             w.setFeatureTypes({tree,decor});
             // A real-length reclaim overlaps asynchronous route delivery. The
             // old 20-work fixtures completed before the approach could replan.
-            w.addFeature(101,504,504,50,600,1,1,true,0);
-            w.addFeature(102,520,520,50,600,1,1,true,0);
-            w.addFeature(103,584,504,50,20,1,1,true,0);
+            w.addFeature(101,504,504,50,1,1,true,0);
+            w.addFeature(102,520,520,50,1,1,true,0);
+            w.addFeature(103,584,504,50,1,1,true,0);
             std::vector<int> clearing;
             check(!w.canPlace(&site,512,512,0),"uncleared site is blocked");
             check(w.clearableForPlacement(&site,512,512,clearing,0) && clearing.size()==2,
@@ -73,7 +73,7 @@ int main(int argc,char** argv) {
             if (pathMode==3)
                 check((legionBuild && legionReclaim)!=builder->canFly,"Legion routes the ground reclaim and build approaches");
             check(w.feature(103)->alive,"nearby tree outside footprint survives");
-            w.addFeature(104,760,760,50,20,1,1,true,1);
+            w.addFeature(104,760,760,50,1,1,true,1);
             check(!w.clearableForPlacement(&site,768,768,clearing,0),"nonreclaimable feature refuses");
             w.queueBuild(bid,&site,768,768,false);
             check(w.unit(bid)->orders.empty(),"invalid site adds no reclaim orders");

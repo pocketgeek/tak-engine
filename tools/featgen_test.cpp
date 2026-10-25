@@ -94,7 +94,7 @@ int main() {
         World fire;fire.setVisPlayer(-1);
         FeatType tree;tree.name="tree";tree.flamable=true;tree.hasBurnAnim=true;tree.burnTicks=30;
         fire.setFeatureTypes({tree});
-        fire.addFeature(77,100,100,10,5,1,1,false,0);
+        fire.addFeature(77,100,100,10,1,1,false,0);
         for(int i=0;i<17;++i)fire.tick(1.0f/30);
         const auto generation=fire.featGeneration();
         RetailReplayProbe::ignite(fire,77);
@@ -124,8 +124,8 @@ int main() {
         FeatType tree;tree.name="spark-tree";tree.flamable=true;tree.hasBurnAnim=true;
         tree.burnTicks=lifetime;tree.spreadChance=100;tree.sparkTicks=0;
         fire.setFeatureTypes({tree});
-        fire.addFeature(85,88,88,10,5,1,1,false,0);
-        fire.addFeature(86,104,88,10,5,1,1,false,0);
+        fire.addFeature(85,88,88,10,1,1,false,0);
+        fire.addFeature(86,104,88,10,1,1,false,0);
         RetailReplayProbe::ignite(fire,85);
         const auto firstOrder=fire.feature(85)->burnSequence;
         fire.tick(1.0f/30);
@@ -152,13 +152,13 @@ int main() {
 
     // Adding a feature must move it: the renderer has to notice a new feature to give
     // it a visual instance at all.
-    w.addFeature(1, 100.0f, 100.0f, 10.0f, 5.0f, 1, 1, false, -1);
+    w.addFeature(1, 100.0f, 100.0f, 10.0f, 1, 1, false, -1);
     const uint32_t afterOne = w.featGeneration();
     check(afterOne != atStart, "adding a feature bumps the generation");
     check(w.features().size() == 1, "and the feature is actually there");
 
     // Distinct adds must be distinguishable, not collapsed into one edge.
-    w.addFeature(2, 200.0f, 200.0f, 10.0f, 5.0f, 1, 1, false, -1);
+    w.addFeature(2, 200.0f, 200.0f, 10.0f, 1, 1, false, -1);
     check(w.featGeneration() != afterOne, "a second add bumps it again");
 
     // ...and ticking after the adds must go quiet again, so the sync settles back to
@@ -187,7 +187,7 @@ int main() {
         RetailReplayProbe::cache(map,unit);
         const int emptyGrade=RetailReplayProbe::cached(map,9,10);
         const int id=8*32+8;
-        map.addFeature(id,8*16+16,8*16+24,0,60,2,3,true,0);
+        map.addFeature(id,8*16+16,8*16+24,0,2,3,true,0);
         check(RetailReplayProbe::grade(map,9,10)==1,
               "a newly created statue blocks its entire rectangular footprint");
         check(RetailReplayProbe::grade(map,10,10)==7,
@@ -209,14 +209,14 @@ int main() {
               "removal refreshes the active search cache");
         check(RetailReplayProbe::grade(map,8,8)==7 && RetailReplayProbe::grade(map,9,10)==7,
               "removal clears the expanded footprint");
-        map.addFeature(id,8*16+8,8*16+8,0,60,1,1,true,2);
+        map.addFeature(id,8*16+8,8*16+8,0,1,1,true,2);
         const auto count=map.features().size();
-        map.addFeature(id,8*16+16,8*16+24,0,60,2,3,true,0);
+        map.addFeature(id,8*16+16,8*16+24,0,2,3,true,0);
         check(map.features().size()==count && RetailReplayProbe::grade(map,8,8)==0,
               "placement cannot overwrite an indestructible feature");
         const int removable=8*32+7;
-        map.addFeature(removable,7*16+8,8*16+8,0,60,1,1,true,1);
-        map.addFeature(removable,7*16+16,8*16+24,0,60,2,3,true,0);
+        map.addFeature(removable,7*16+8,8*16+8,0,1,1,true,1);
+        map.addFeature(removable,7*16+16,8*16+24,0,2,3,true,0);
         check(!map.feature(removable)->alive && RetailReplayProbe::grade(map,7,8)==7 &&
               RetailReplayProbe::grade(map,8,8)==0,
               "a refused placement retains earlier removals in scan order");
@@ -263,7 +263,7 @@ int main() {
         map.unit(id)->frozenFor=100;map.unit(id)->hp=Fixed();map.tick(1.0f/30);
         check(map.unit(id)->corpseBlocks && RetailReplayProbe::grade(map,11,12)==1,
               "a frozen mobile unit immediately places the statue's full footprint");
-        map.addFeature(10*32+10,168,168,0,60,1,1,true,1);
+        map.addFeature(10*32+10,168,168,0,1,1,true,1);
         check(!map.unit(id)->corpseBlocks && RetailReplayProbe::grade(map,11,12)==7,
               "overwriting a statue retires its owner and frees the old footprint");
         RetailReplayProbe::retire(map,id);

@@ -1279,7 +1279,7 @@ public:
             const int cx = ch.x + ch.dx * int(cell % row);
             const int cz = ch.z + ch.dz * int(cell / row);
             if (cx < 0 || cz < 0 || cx + ch.w > b_.width || cz + ch.h > b_.height) continue;
-            b_.world->addFeature(cz * b_.width + cx, float(cx * 16 + ch.w * 8), float(cz * 16 + ch.h * 8), 0.f, 1.f,
+            b_.world->addFeature(cz * b_.width + cx, float(cx * 16 + ch.w * 8), float(cz * 16 + ch.h * 8), 0.f,
                                  ch.w, ch.h, !ch.toggle || k % 2 == 0, -1, true);
         }
     }

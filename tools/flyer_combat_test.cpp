@@ -489,7 +489,7 @@ int main(int argc,char** argv) {
                 w.unit(id)->hp=tak::sim::Fixed::fromInt(patient.maxHp/2);
                 w.repair(flyer,id,false);
             }
-            if (hold==1) { w.addFeature(4242,1400,1000,50,400,1,1,true,0);w.reclaim(flyer,4242,false); }
+            if (hold==1) { w.addFeature(4242,1400,1000,50,1,1,true,0);w.reclaim(flyer,4242,false); }
             if (hold==2) {
                 w.queueBuild(flyer,registry.find("arawall"),1400,1000,false);
                 w.spawn(&blocker,1400,1000,0,1);   // another player's unit on the site
@@ -559,7 +559,7 @@ int main(int argc,char** argv) {
                 const float base=shell->damageVs(&dummy);
                 // Fire Swirl strikes the centre dummy with another standing in its radius.
                 const int close=w.spawn(&dummy,1503,1500,0,1),edgeUnit=w.spawn(&dummy,1620+8*dummy.footX,1500,0,1);
-                w.addFeature(93*256+93,1500,1500,0,1,1,1,false,0);
+                w.addFeature(93*256+93,1500,1500,0,1,1,false,0);
                 w.tick(1.f/30.f);
                 Fixed centreHp=w.unit(centre)->hp;
                 tak::sim::RetailReplayProbe::blast(w,*swirl,{1500*65536,ground,1500*65536},0,centre);

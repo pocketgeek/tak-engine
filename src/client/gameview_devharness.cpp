@@ -2118,7 +2118,7 @@
             const auto* type=registry_.find(name);
             if (!type || !type->canReclaim) return;
             for (const auto& feature:world_.features()) {
-                if (!feature.alive || feature.manaYield<250 || feature.work.toFloat()<250) continue;
+                if (!feature.alive || feature.energy<250) continue;
                 const float x=feature.x.toFloat(),z=feature.z.toFloat();
                 for (const auto& [dx,dz]:std::array<std::pair<float,float>,4>{
                          {{-96,0},{96,0},{0,-96},{0,96}}}) {

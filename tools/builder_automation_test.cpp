@@ -126,7 +126,7 @@ uint64_t areaBuild(sim::PathfindingMode mode,bool air,bool serial=true) {
     sim::World w;setup(w,mode,serial);auto builder=worker(air);builder.sight=100;auto lode=lodestone();
     w.setManaSpots({{512,256},{896,256},{1280,640}});
     const int id=w.spawn(&builder,256,400,0,0);
-    w.addFeature(7,896,256,1,1,1,1,true);
+    w.addFeature(7,896,256,1,1,1,true);
     w.queueManaBuildArea(id,&lode,1050,400,400,128,false);
     check(w.unit(id)->orders.size()==1 && w.unit(id)->orders.front().manaBuildArea,
           "reversed box remains one bounded area order");

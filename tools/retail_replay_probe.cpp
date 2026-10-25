@@ -340,7 +340,7 @@ struct RetailReplayProbe {
         for (auto& feature:world.features_) {
             const auto found=present.find(feature.id);
             if (found!=present.end()) continue;
-            feature.alive=false;feature.work=Fixed();++removed;
+            feature.alive=false;++removed;
             if (feature.blocks) world.blockCells(feature.id%world.terW_,
                 feature.id/world.terW_,feature.fx,feature.fz,false);
         }
@@ -358,8 +358,7 @@ struct RetailReplayProbe {
                 world.swapFeature(world.features_[tracked->second],ti);++changed;
             } else {
                 world.addFeature(id,float(id%world.terW_*16+type->fx*8),
-                    float(id/world.terW_*16+type->fz*8),type->energy,
-                    std::max(type->energy,60.0f),type->fx,type->fz,type->blocking,ti);++added;
+                    float(id/world.terW_*16+type->fz*8),type->energy,type->fx,type->fz,type->blocking,ti);++added;
             }
             const auto restored=world.mapPlacementCells_.at(size_t(id)).feature;
             if (restored>=world.mapPlacementTypes_.size() || world.mapPlacementTypes_[restored].name!=name)

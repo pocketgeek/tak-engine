@@ -387,7 +387,7 @@ void queuedMoves(PathfindingMode mode) {
     {   // Move, Shift-reclaim, Shift-move: the feature goes only after the first move.
         World w;setup(w,mode);auto worker=soldier();
         worker.isBuilder=worker.canReclaim=true;worker.workerTime=1000;worker.buildDist=48;
-        const int id=w.spawn(&worker,320,320,0,0);w.addFeature(31,1200,700,1,4,1,1,false);
+        const int id=w.spawn(&worker,320,320,0,0);w.addFeature(31,1200,700,1,1,1,false);
         send(w,Cmd::Move,id,1200,320,false);send(w,Cmd::Reclaim,id,0,0,true,31);send(w,Cmd::Move,id,320,1200,true);
         int out=-1,gone=-1,back=-1;
         for(int n=0;n<9000&&back<0;++n) {

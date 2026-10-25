@@ -824,7 +824,7 @@
         s.corpseReclaimable=false;
         if (!u.alive() && s.corpseFeat>=0 && size_t(s.corpseFeat)<world_.featureTypes().size()) {
             const auto& corpse=world_.featureTypes()[size_t(s.corpseFeat)];
-            s.corpseReclaimable=corpse.reclaimable;
+            s.corpseReclaimable=corpse.reclaimable && !u.corpseFading;
             s.corpseCellX=tak::sim::footprintOrigin(u.x,u.type->footX)+u.type->corpseAdjX;
             s.corpseCellZ=tak::sim::footprintOrigin(u.z,u.type->footZ)+u.type->corpseAdjZ;
             s.corpseFootX=corpse.fx;s.corpseFootZ=corpse.fz;

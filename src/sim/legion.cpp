@@ -905,8 +905,8 @@ struct LegionNavigator::Impl {
         // The arrival event belongs to the leg's transport mission (boarding
         // and surface-unload approaches), as in the native mover.
         bool transport=false;
-        // The leg has no movement controller (repair, reclaim: the work
-        // handler polls reach itself); the member key is the leg's target.
+        // The leg has no movement controller (repair: the work handler
+        // polls reach itself); the member key is the leg's target.
         bool keyed=false;
         // Never shares a group/field: each body's goal is its own (a teammate's
         // seed is not on this body's rectangle or within its reach).
@@ -922,8 +922,10 @@ struct LegionNavigator::Impl {
         case Kind::Fight:p.nativeAccept=true;break;
         case Kind::Patrol:p.nativeAccept=true;p.perController=true;p.passThrough=true;break;
         case Kind::Attack:case Kind::Guard:p.completes=false;p.moving=true;p.area=false;break;
-        case Kind::Build:p.nativeAccept=true;p.exact=true;p.area=false;p.solo=true;break;
-        case Kind::Repair:case Kind::Reclaim:p.completes=false;p.keyed=true;p.area=false;p.solo=true;break;
+        // RECLAIM approaches on the same rectangle controller as MobileBuild
+        // (406250 stage 0 -> 4d4e80).
+        case Kind::Build:case Kind::Reclaim:p.nativeAccept=true;p.exact=true;p.area=false;p.solo=true;break;
+        case Kind::Repair:p.completes=false;p.keyed=true;p.area=false;p.solo=true;break;
         case Kind::Load:case Kind::Unload:p.nativeAccept=true;p.exact=true;p.transport=true;p.area=false;p.solo=true;break;
         case Kind::Park:p.nativeAccept=true;p.exact=true;p.area=false;p.solo=true;break;
         case Kind::Exit:p.area=false;p.solo=true;p.exitClear=true;break;
@@ -3205,7 +3207,7 @@ struct LegionNavigator::Impl {
     // A work/logistics leg: no flags but the ones its kind owns.
     enum Work : uint32_t {WBuild=1,WRepair=2,WReclaim=4,WLoad=8,WPickup=16,WUnloadApproach=32,WPark=64,WExit=128};
     static bool workLeg(const Order& o,uint32_t own) {
-        if(bool(o.buildType)!=bool(own&WBuild)||bool(o.buildRectangle)!=bool(own&WBuild))return false;
+        if(bool(o.buildType)!=bool(own&WBuild)||bool(o.buildRectangle)!=bool(own&(WBuild|WReclaim)))return false;
         if(bool(o.repairTarget)!=bool(own&WRepair)||bool(o.reclaimFeat)!=bool(own&WReclaim))return false;
         if(o.load!=bool(own&(WLoad|WPickup))||o.transportPickup!=bool(own&WPickup))return false;
         if(o.transportUnloadApproach!=bool(own&WUnloadApproach)||bool(o.park)!=bool(own&WPark))return false;
@@ -3231,7 +3233,7 @@ struct LegionNavigator::Impl {
     }
     // The mission's own arrival geometry for an exact kind.
     static bool accepts(const Unit& u,const Order& leg,Kind kind) {
-        if(kind==Kind::Build)
+        if(kind==Kind::Build||kind==Kind::Reclaim)
             return leg.buildRectangle->accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
         return World::groundMissionAccepts(u,leg);
     }
@@ -3289,9 +3291,9 @@ struct LegionNavigator::Impl {
     // (no controller) the chased unit.
     static uint64_t legKey(const Order& leg,Kind kind) {
         if(policy(kind).moving)return 0xC000000000000000ull|uint64_t(uint8_t(kind))<<48|uint32_t(leg.targetId);
-        // A repair or reclaim leg: its target and order (no controller).
+        // A repair leg: its target and order (no controller).
         if(policy(kind).keyed)return 0xA000000000000000ull|uint64_t(uint8_t(kind))<<48|
-            uint64_t(uint16_t(leg.issuedTick))<<32|uint32_t(kind==Kind::Repair?leg.repairTarget:leg.reclaimFeat);
+            uint64_t(uint16_t(leg.issuedTick))<<32|uint32_t(leg.repairTarget);
         return leg.controller;
     }
     // Nearest statically legal origin to a requested one. Past the near
@@ -3501,8 +3503,8 @@ struct LegionNavigator::Impl {
         int gx=footprintOrigin(tx,u.type->footX),gz=footprintOrigin(tz,u.type->footZ);
         const int sx=footprintOrigin(u.x,u.type->footX),sz=footprintOrigin(u.z,u.type->footZ);
         const int reach=legal(p,sx,sz)?compAt(p,sz*width()+sx):-1;
-        if(kind==Kind::Build) {
-            // The build rectangle's own approach cell (as requestPath asks
+        if(kind==Kind::Build||kind==Kind::Reclaim) {
+            // The build (or reclaim) rectangle's own approach cell (as requestPath asks
             // the controller); if the static plane rejects it, the nearest
             // perimeter origin this body can stand on and reach. Arrival is
             // the rectangle itself (accepts), never a point beside it.
