@@ -2127,7 +2127,7 @@ void World::tickFlightPatrol(Unit& u) {
             if (u.orders.front().flightMoveMission) {
                 auto& order=u.orders.front();
                 if (m.stage==0) {
-                    if (order.park) w.resolveFlyerPark(u,order);
+                    if (order.park && !order.park->attempts) w.resolveFlyerPark(u,order);
                     if (auto script=w.unitScripts_.find(u.id);script!=w.unitScripts_.end() && !script->second.activated) {
                         script->second.activated=true;w.notifyUnitScript(u,"Activate");
                     }
@@ -11369,13 +11369,15 @@ void World::queueFlyerPark(int id,int factoryId,uint32_t padding) {
 
 // The park's point, resolved by VTOL_Move's stage 0. Around the target while
 // it is live; around the flyer itself, without the diagonal, once it is not
-// (0x407f0a). Keeping the point on the map is ours: retail lets a park ring
+// (0x407f0a). The leg keeps its park (attempts 1: the point is fixed) until it
+// retires on arrival, as retail's PARK lasts until its flight's arrival: so the
+// AI still sees a parked newborn (AI::idle), free to command, while it flies. Keeping the point on the map is ours: retail lets a park ring
 // overhang the edge. An axis that would leave the map is mirrored through the
 // centre first, so the flyer still ends a full radius from its factory instead
 // of being clamped back towards the pad; the clamp is the last resort.
 void World::resolveFlyerPark(Unit& u,Order& leg) {
     const RetailParkState park=*leg.park;
-    leg.park.reset();
+    leg.park->attempts=1;
     const Unit* target=park.target ? unit(park.target) : nullptr;
     const bool live=target && target->alive() && target->type;
     const uint16_t angle=uint16_t(gameRand(65536));

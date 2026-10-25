@@ -872,7 +872,11 @@ is straight north (-z), 16384 west (-x).
 Port (protocol 295): `World::queueFlyerPark` queues the plain VTOL_Move
 carrying the park; `World::resolveFlyerPark` fixes its point when that move's
 stage 0 first runs (radius and offset in `retailpark.h`:
-`retailParkRadius`, `retailFlightParkOffset`). The game RNG supplies the
+`retailParkRadius`, `retailFlightParkOffset`; the radius matches the
+emulation for every factory footprint 1..24 x 1..24). The leg keeps its park
+(attempts 1: the point is fixed) until it retires on arrival, as retail's PARK
+lasts until its flight arrives, so the AI (`AI::idle`) still sees a parked
+newborn, free to command, while it flies. The game RNG supplies the
 draws; their order against other draws is not claimed to be retail's. Ours,
 not retail: the point is kept on the map (an axis that would leave it is
 mirrored through the centre, then clamped), and the retail-resources
@@ -897,7 +901,8 @@ search; a landed one does, as in retail. Tests: `tools/shipyard_park_test.cpp`
 (four factory/flyer pairs: radius within the formula's range, all four
 quadrants including behind the factory, none left on the pad; a rally flyer
 flies straight to the rally; the self-centred circle once the factory is gone;
-airborne vs landed flyer over a site), both pathfinding modes.
+airborne vs landed flyer over a site; the park held until arrival), both
+pathfinding modes and both balances.
 
 ## Benchmark switches and RNG seeding (icd, 2026-10-22)
 

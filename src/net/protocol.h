@@ -28,8 +28,8 @@ constexpr uint32_t kNetVersion = 295;      // 295: SweetSpot is retail's drawn p
                                            //      landlocked pond yards. A factory's FLYER takes the same release:
                                            //      the rally alone (no exit hop before it), else PARK's flight branch
                                            //      (407ca0), one flight to a random point on footX*16+padding(base 6)
-                                           //      +half the factory diagonal round the factory. Hashed sim change;
-                                           //      294 replays refused.
+                                           //      +half the factory diagonal round the factory, held as a PARK until
+                                           //      it arrives. Hashed sim change; 294 replays refused.
                                            // 294: area clear as retail: overlapped TNT features removed at load are gone
                                            //      everywhere (World::installedMapFeatures: no art, blocker, sacred site,
                                            //      deposit or target); fogged-but-explored world features stay clearable

@@ -241,6 +241,10 @@ void flyerFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,co
     const int count=rally?3:12;
     w.player(0).mana=1000000;w.train(id,flyer,count);
     struct Out {int id;bool seen=false,resolved=false;size_t legs=0;float x=0,z=0;};
+    // Retail's PARK lasts until its flight arrives: the leg keeps its park on
+    // the way, so the AI still sees a parked newborn it is free to command
+    // (the landing that follows arrival is not the park's).
+    int unparkedFlight=0;
     std::vector<Out> out;
     int tick=0;
     for(;tick<20000;++tick) {
@@ -250,10 +254,12 @@ void flyerFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,co
             auto it=std::find_if(out.begin(),out.end(),[&](const Out& o){return o.id==u.id;});
             if(it==out.end()) {out.push_back({u.id});it=out.end()-1;}
             // The order it was released with, once its park (if any) has its point.
-            if(!it->resolved && !u.orders.empty() && !u.orders.front().park) {
+            if(!it->resolved && !u.orders.empty() && (!u.orders.front().park || u.orders.front().park->attempts)) {
                 it->resolved=true;it->legs=u.orders.size();
                 it->x=u.orders.front().x.toFloat();it->z=u.orders.front().z.toFloat();
             }
+            else if(it->resolved && !rally && !u.orders.empty() && u.orders.front().flightMoveMission &&
+                    !u.orders.front().park)++unparkedFlight;   // still flying to the point, not landing there
             it->seen=true;
         }
         if(int(out.size())==count && w.unit(id)->buildQueue.empty())break;
@@ -284,6 +290,7 @@ void flyerFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,co
     } else {
         check(resolved==count && inRadius==count,label+"a parked flyer's point lies within PARK's flight radius");
         check(quadrants==0xfu && behind,label+"parked flyers spread round the factory, behind it too");
+        check(unparkedFlight==0,label+"a parked flyer's leg stays a PARK until it arrives");
     }
 }
 
@@ -309,7 +316,7 @@ void flyerParkFallback(const sim::TypeRegistry& registry,sim::PathfindingMode mo
         p=w.unit(u);p->orders.back().park.emplace();p->orders.back().park->target=f;p->orders.back().park->padding=96;
         w.tick(1.f/30);
         p=w.unit(u);
-        const bool resolved=!p->orders.empty() && !p->orders.front().park;
+        const bool resolved=!p->orders.empty() && p->orders.front().park && p->orders.front().park->attempts;
         const float cx=dead?ux:fx,cz=dead?uz:fz;
         const float dx=p->orders.empty()?0:p->orders.front().x.toFloat()-cx,dz=p->orders.empty()?0:p->orders.front().z.toFloat()-cz;
         const int want=flyer->footX*16+96+(dead?0:halfDiagonal(*factory));
@@ -362,7 +369,7 @@ int main(int argc,char** argv) {
             pondYard(registry,vfs,mode,crusades);
             if(crusades)for(bool rally:{false,true})landFactory(registry,mode,rally);
             if(crusades)deadRally(registry,mode);
-            if(!crusades) {
+            {
                 for(bool rally:{false,true}) {
                     flyerFactory(registry,mode,"arakeep","arafast",rally);
                     if(!rally)flyerFactory(registry,mode,"creacad","credrag",rally);
