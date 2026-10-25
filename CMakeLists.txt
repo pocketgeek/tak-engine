@@ -1986,7 +1986,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_compile_definitions(vashim_fake_driver PRIVATE TAK_FAKE_DRIVER)
   set_target_properties(vashim_fake_driver PROPERTIES PREFIX "" OUTPUT_NAME takfake_drv_video
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/vashim-fake-driver")
-  add_executable(vashim_test tools/vashim_test.cpp src/video/stream.cpp)
+  add_executable(vashim_test tools/vashim_test.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp)
   target_link_libraries(vashim_test PRIVATE tak-formats tak_ffmpeg)
   add_dependencies(vashim_test vashim_fake_va vashim_fake_va_drm vashim_fake_driver)
   add_test(NAME vashim_unavailable COMMAND vashim_test unavailable)
