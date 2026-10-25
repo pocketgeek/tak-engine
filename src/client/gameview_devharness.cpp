@@ -1537,10 +1537,10 @@
                 float gx=-1,gz=-1;
                 for (int z=1000;z<mh*16-1000 && gx<0;z+=96)
                     for (int x=1000;x<mw*16-1000;x+=96) {
-                        bool far=true;
+                        bool apart=true;
                         for (const auto& [ux,uz]:used)
-                            if (std::abs(float(x)-ux)<1600 && std::abs(float(z)-uz)<1200) far=false;
-                        if (!far || !flat(gateType,float(x),float(z)) ||
+                            if (std::abs(float(x)-ux)<1600 && std::abs(float(z)-uz)<1200) apart=false;
+                        if (!apart || !flat(gateType,float(x),float(z)) ||
                             !world_.canPlace(gateType,float(x),float(z)) ||
                             !world_.canPlace(soldierType,float(x-300),float(z+300))) continue;
                         gx=float(x);gz=float(z);break;
