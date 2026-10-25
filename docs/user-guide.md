@@ -1568,9 +1568,9 @@ missed are silent while the game catches up.
 
 ### Display
 
-![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, then Renderer set to Auto, Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Screen Shake off, Hardware Cursor and Smooth Motion on, and GPU Memory Limit set to 1.25 GB (default)](img/guide/options-graphics.jpg)
+![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, then Renderer set to Auto (OpenGL), Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Screen Shake off, Hardware Cursor on with the note OS CURSOR 16X25 beside it, Smooth Motion on, and GPU Memory Limit set to 1.25 GB (default)](img/guide/options-graphics.jpg)
 
-*Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on. The picture was taken in a window, so Fullscreen shows Off.*
+*Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on. Renderer reads Auto (OpenGL): Auto, and the backend it started with. The picture was taken in a window, so Fullscreen shows Off.*
 
 | Option | Default | What it does |
 | --- | --- | --- |
