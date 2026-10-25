@@ -122,7 +122,7 @@ inline std::array<int32_t,3> retailScriptEffectPosition(
     return result;
 }
 
-// 4dd2a0: SweetSpot uses mirrored model-space vertex bounds, including zero.
+// 4dd2a0 (SweetSpot): the bounds of one piece's vertex buffer, including zero.
 // The native extrema start at zero, and signed center division truncates to zero.
 struct RetailPieceBounds {
     std::array<int32_t,3> minimum{},maximum{};
@@ -139,5 +139,56 @@ struct RetailPieceBounds {
         return result;
     }
 };
+
+// 4dd2a0 reads the per-unit vertex buffer (model+0x1cc+piece*0x38+0x24) that
+// the draw path rewrites in place: 4ee620 -> 4ee920 copies the definition's
+// vertices back in and 4eea20 transforms them by the piece chain plus the body
+// pitch/heading/roll, unit-relative (position zero, no final Z flip). A drawn
+// retail unit's SweetSpot is therefore the centre of its drawn piece bounds.
+// Lockstep cannot depend on drawing, so the simulation always uses the drawn
+// geometry from its own pose (docs/retail-engine.md, "SweetSpot").
+// `vertices` are the piece's authored vertices with X/Z mirrored as the model
+// loader installs them. Each vertex takes the piece's own turn (plus the body
+// attitude on the root), then its translated offset, then every parent's.
+inline std::array<int32_t,3> retailPieceDrawnCenter(std::span<const RetailModelPiece> model,
+        std::span<const cob::RetailPiece> poses,int scriptPiece,
+        std::span<const std::array<int32_t,3>> vertices,
+        uint16_t heading,uint16_t pitch=0,uint16_t roll=0) {
+    int index=-1;
+    for (size_t i=0;i<model.size();++i)
+        if (model[i].scriptPiece==scriptPiece) { index=int(i); break; }
+    if (index<0) return {};
+    struct Step { std::array<uint16_t,3> angles{}; std::array<int32_t,3> offset{}; };
+    std::array<Step,64> chain{};
+    size_t depth=0;
+    for (int at=index;at>=0 && depth<chain.size();at=model[size_t(at)].parent) {
+        const auto& piece=model[size_t(at)];
+        auto& step=chain[depth++];
+        step.offset=piece.offset;
+        step.offset[0]=std::bit_cast<int32_t>(0u-uint32_t(step.offset[0]));
+        step.offset[2]=std::bit_cast<int32_t>(0u-uint32_t(step.offset[2]));
+        if (piece.scriptPiece>=0 && size_t(piece.scriptPiece)<poses.size())
+            for (size_t i=0;i<3;++i) {
+                step.angles[i]=uint16_t(poses[size_t(piece.scriptPiece)].turn[i]);
+                step.offset[i]=std::bit_cast<int32_t>(uint32_t(step.offset[i])+
+                    uint32_t(poses[size_t(piece.scriptPiece)].move[i]));
+            }
+        if (piece.parent<0) {
+            step.angles[0]=uint16_t(step.angles[0]+pitch);
+            step.angles[1]=uint16_t(step.angles[1]+heading);
+            step.angles[2]=uint16_t(step.angles[2]+roll);
+        }
+    }
+    RetailPieceBounds bounds;
+    for (auto vertex:vertices) {
+        for (size_t s=0;s<depth;++s) {
+            retailRotatePiece(vertex,chain[s].angles);
+            for (size_t i=0;i<3;++i)
+                vertex[i]=std::bit_cast<int32_t>(uint32_t(vertex[i])+uint32_t(chain[s].offset[i]));
+        }
+        bounds.add(vertex);
+    }
+    return bounds.center();
+}
 
 } // namespace tak::sim

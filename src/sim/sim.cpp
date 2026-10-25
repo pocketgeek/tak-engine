@@ -770,7 +770,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 if(vfs.has(modelPath)) {
                     auto model=tdo::load(vfs.read(modelPath));
                     auto& currentType=t;
-                    t.scriptPieceCenters.resize(script->pieces.size());
+                    t.scriptPieceVertices.resize(script->pieces.size());
                     auto& productionModel=t.productionModel;
                     auto append=[&](auto&& self,const tdo::Object& object,int parent)->void {
                         int piece=-1;
@@ -783,12 +783,14 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                         for(size_t i=0;i<emissionModel.emissionVertexCount;++i)
                             emissionModel.emissionVertices[i]=object.verticesRaw[i];
                         if(piece>=0) {
-                            RetailPieceBounds bounds;
+                            // Duplicates cannot move a bound, so keep each vertex once.
+                            auto& vertices=currentType.scriptPieceVertices[size_t(piece)];
                             for(auto vertex:object.verticesRaw) {
                                 for(int axis:{0,2})vertex[size_t(axis)]=std::bit_cast<int32_t>(0u-uint32_t(vertex[size_t(axis)]));
-                                bounds.add(vertex);
+                                vertices.push_back(vertex);
                             }
-                            currentType.scriptPieceCenters[size_t(piece)]=bounds.center();
+                            std::sort(vertices.begin(),vertices.end());
+                            vertices.erase(std::unique(vertices.begin(),vertices.end()),vertices.end());
                         }
                         for (const auto& child:object.children) self(self,child,index);
                     };
@@ -11647,8 +11649,11 @@ std::array<int32_t,3> World::queryUnitScriptPoint(int unitId,bool sweetSpot,int 
     if(piece<0 || size_t(piece)>=it->peek().pieces.size())return point;
     std::array<int32_t,3> offset{};
     if(sweetSpot) {
-        if(size_t(piece)>=u->type->scriptPieceCenters.size())return point;
-        offset=u->type->scriptPieceCenters[size_t(piece)];
+        // 4dd2a0 over the drawn vertex buffer: the piece's posed bounds centre
+        // (retailPieceDrawnCenter), always from the current simulation pose.
+        if(size_t(piece)>=u->type->scriptPieceVertices.size())return point;
+        offset=retailPieceDrawnCenter(u->type->productionModel,it->peek().pieces,piece,
+            u->type->scriptPieceVertices[size_t(piece)],portHeadingToRetail(u->heading),u->groundPitch,u->groundRoll);
     } else offset=retailPieceOrigin(u->type->productionModel,it->peek().pieces,piece,
         portHeadingToRetail(u->heading),u->groundPitch,u->groundRoll);
     for(size_t axis=0;axis<3;++axis)

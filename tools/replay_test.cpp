@@ -190,10 +190,12 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 294, "replay format 11 is kept under protocol 294");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 294");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 294");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 295, "replay format 11 is kept under protocol 295");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 295");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 295");
     check(!supportedReplayProtocol(16, kNetVersion), "a newer replay format is refused");
+    // 295 aims at the drawn SweetSpot (posed piece bounds; hashed state).
+    check(!supportedReplayProtocol(15, 294), "previous protocol with local-vertex SweetSpots is refused");
     // 294 clears areas as retail (overlapped map features removed at load, explored world features clearable
     // under fog, the area's approach and child exits; hashed state) and records the room's fog (format 15).
     check(!supportedReplayProtocol(14, 293), "previous protocol with ghost features and stalled area clears is refused");

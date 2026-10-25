@@ -348,7 +348,12 @@ int main(int argc,char** argv) {
         std::cout<<"PASS: "<<count<<(allUnits ? " unit" : " factory")<<" scripts, 10000 updates each across build lifecycle callbacks\n";
         return count ? 0 : 1;
     }
-    if ((argc==7 || argc==9) && (std::string(argv[1])=="--origin" || std::string(argv[1])=="--bounds")) {
+    // --origin: 4dd0f0's piece origin. --bounds: 4dd2a0's SweetSpot bounds over
+    // the drawn (posed) vertex buffer, as the simulation uses. --local-bounds:
+    // 4dd2a0 on a unit never drawn since load, whose buffer holds the authored
+    // vertices. Outputs are unit-relative raw fixed point.
+    if ((argc==7 || argc==9) && (std::string(argv[1])=="--origin" || std::string(argv[1])=="--bounds" ||
+                                 std::string(argv[1])=="--local-bounds")) {
         auto file=tak::cob::load(std::filesystem::path(argv[2]));
         auto model=tak::tdo::load(std::filesystem::path(argv[3]));
         std::ifstream input(argv[4],std::ios::binary);
@@ -367,14 +372,16 @@ int main(int argc,char** argv) {
             for (const auto& child:object.children) self(self,child,index);
         };
         append(append,model.root,-1);
-        auto point=tak::sim::retailPieceOrigin(pieces,state.pieces,std::stoi(argv[6]),uint16_t(std::stoi(argv[5])),
-            argc==9 ? uint16_t(std::stoi(argv[7])) : 0,argc==9 ? uint16_t(std::stoi(argv[8])) : 0);
-        if(std::string(argv[1])=="--bounds") {
+        const uint16_t heading=uint16_t(std::stoi(argv[5]));
+        const uint16_t pitch=argc==9 ? uint16_t(std::stoi(argv[7])) : 0,roll=argc==9 ? uint16_t(std::stoi(argv[8])) : 0;
+        auto point=tak::sim::retailPieceOrigin(pieces,state.pieces,std::stoi(argv[6]),heading,pitch,roll);
+        for(auto& vertex:vertices)
+            for(int axis:{0,2})vertex[size_t(axis)]=std::bit_cast<int32_t>(0u-uint32_t(vertex[size_t(axis)]));
+        if(std::string(argv[1])=="--bounds")
+            point=tak::sim::retailPieceDrawnCenter(pieces,state.pieces,std::stoi(argv[6]),vertices,heading,pitch,roll);
+        if(std::string(argv[1])=="--local-bounds") {
             tak::sim::RetailPieceBounds bounds;
-            for(auto vertex:vertices) {
-                for(int axis:{0,2})vertex[size_t(axis)]=std::bit_cast<int32_t>(0u-uint32_t(vertex[size_t(axis)]));
-                bounds.add(vertex);
-            }
+            for(const auto& vertex:vertices)bounds.add(vertex);
             point=bounds.center();
         }
         for (auto v:point) std::cout<<v<<' ';
@@ -1977,17 +1984,28 @@ int main(int argc,char** argv) {
         file->code={0x10021002,1,0x10023002,0,0x10065000};
         UnitType type;type.simulationScript=file;type.maxHp=100;
         type.productionModel={{{0,0,0},-1,0},{{32*65536,6*65536,12*65536},0,1}};
-        type.scriptPieceCenters={{{5*65536,6*65536,7*65536}},{{0,0,0}}};
+        type.scriptPieceVertices={{{10*65536,12*65536,14*65536}},{}};
         World world;world.setVisPlayer(-1);
         const int id=world.spawn(&type,200,200);auto* unit=world.unit(id);
         unit->groundY=Fixed::fromInt(50);unit->heading=Bam(32768);
         require(world.queryUnitScriptPoint(id,false,1)==std::array<int32_t,3>{168*65536,56*65536,212*65536},
             "simulation QueryWeapon returns selected piece in world coordinates");
-        unit->groundPitch=1234;unit->groundRoll=5678;unit->heading=Bam(12345);
+        // 4dd2a0 bounds the drawn buffer, so the body's attitude turns the
+        // root piece's vertex: retail heading 0 leaves (10,12,14), and a quarter
+        // turn moves it to (-14,12,10). Bounds include zero, so halve each.
         require(world.queryUnitScriptPoint(id,true)==std::array<int32_t,3>{205*65536,56*65536,207*65536},
-            "simulation SweetSpot uses authored bounds independent of body attitude");
+            "simulation SweetSpot centres the drawn piece bounds at rest");
+        unit->heading=Bam(49152);
+        require(world.queryUnitScriptPoint(id,true)==std::array<int32_t,3>{193*65536,56*65536,205*65536},
+            "simulation SweetSpot follows the body heading of the drawn piece");
+        unit->groundPitch=1234;unit->groundRoll=5678;unit->heading=Bam(12345);
+        const auto attitude=world.queryUnitScriptPoint(id,true);
+        require(attitude!=std::array<int32_t,3>{205*65536,56*65536,207*65536} &&
+                attitude!=std::array<int32_t,3>{193*65536,56*65536,205*65536},
+            "simulation SweetSpot follows the body pitch and roll of the drawn piece");
         type.canFly=true;unit->flightY=Fixed::fromInt(80);
-        require(world.queryUnitScriptPoint(id,true)==std::array<int32_t,3>{205*65536,86*65536,207*65536},
+        const auto flying=world.queryUnitScriptPoint(id,true);
+        require(flying==std::array<int32_t,3>{attitude[0],attitude[1]+30*65536,attitude[2]},
             "flying script query uses authoritative flight altitude");
         require(world.queryUnitScriptPoint(id,false,2)==std::array<int32_t,3>{200*65536,80*65536,200*65536},
             "invalid script piece falls back to unit position");

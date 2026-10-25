@@ -1256,7 +1256,8 @@
             if (h.target && h.target->bodyType == "flesh") {
                 // Spray blood from the victim's SweetSpot (its body centre) rather
                 // than the ground hit point -- retail asks the COB for that piece
-                // (SweetSpot -> out-param local 0) and homes hit effects to it.
+                // (SweetSpot -> out-param local 0) and homes hit effects to it:
+                // 4dd2a0's centre of the piece's drawn bounds, as the sim aims.
                 float bx = h.x, bz = h.z;
                 float ba = h.position ? float((*h.position)[1] >> 16) * 0.5f -
                     float(heightRef_) * 0.5f - terrainLift(bx,bz) : 0.f;
@@ -1267,12 +1268,17 @@
                             vi->second.vm->call("SweetSpot", {0});
                             const auto& ll = vi->second.vm->lastLocals();
                             int pc = ll.empty() ? -1 : ll[0];
-                            if (pc >= 0 && pc < int(vi->second.pieceNames->size())) {
-                                float sx, sz, sa;
-                                if (pieceWorldFx(*v, vi->second,
-                                                 (*vi->second.pieceNames)[size_t(pc)], sx, sz, sa)) {
-                                    bx = sx; bz = sz; ba = sa;
-                                }
+                            const auto cache = cobCache_.find(v->type->id);
+                            if (pc >= 0 && cache != cobCache_.end() &&
+                                size_t(pc) < cache->second.pieceVertices.size()) {
+                                const auto offset = tak::sim::retailPieceDrawnCenter(
+                                    cache->second.modelPieces, vi->second.vm->retailPieces(), pc,
+                                    cache->second.pieceVertices[size_t(pc)],
+                                    uint16_t(v->headingWord + 32768), v->bodyPitch, v->bodyRoll);
+                                // A world offset: X/Z on the ground, Y as scriptEffectOrigin lifts it.
+                                bx = v->x + float(offset[0]) / 65536.f;
+                                bz = v->z + float(offset[2]) / 65536.f;
+                                ba = (float(offset[1]) / 65536.f + unitAltById(v->id)) * kProjY;
                             }
                         }
                 spawnBurst(bx, bz, 5, h.target->blood[0], h.target->blood[1],
@@ -2236,8 +2242,9 @@
                     if(piece>=0) {
                         auto& vertices=cc.pieceVertices[size_t(piece)];
                         vertices=object.verticesRaw;
-                        // 4dd2a0 uses these mirrored authored vertices directly:
-                        // SweetSpot ignores piece offsets, animation and heading.
+                        // Mirrored authored vertices, as the model loader installs
+                        // them: emissions read the first two, and SweetSpot (4dd2a0)
+                        // bounds them once posed (retailPieceDrawnCenter).
                         for(auto& vertex:vertices) for(int axis:{0,2})
                             vertex[size_t(axis)]=std::bit_cast<int32_t>(0u-uint32_t(vertex[size_t(axis)]));
                     }

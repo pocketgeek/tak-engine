@@ -272,9 +272,11 @@ velocity and the speed (speed is |velocity| in `tickFlightBody`), as a retail
 mover with no velocity is still. `flyer_combat_test` covers the five flyers that
 hold (zongryp, tarang, zongod, verball, creaeri) in both balances.
 
-Side effect, retail arithmetic: the Gryphon's and the Dirigible's SweetSpots sit
-0.05 and 0.08 px above the bottom of their hit bands, so an unled straight shot
-at a still one arrives about 2 px low and passes underneath. Mage Archers, Mage
+Side effect, retail arithmetic: the Gryphon's SweetSpot sits 0.05 px above the
+bottom of its hit band, so an unled straight shot at a still one arrives about
+2 px low and passes underneath. (The Dirigible's did too, 0.08 px, until
+protocol 295 made SweetSpot the drawn piece bounds: it is 37 px up now, see
+"SweetSpot is the drawn piece bounds".) Mage Archers, Mage
 Towers, Strongholds, Gatling Crossbows, Beast Riders, Heket and the Beast Lord
 stopped hitting a held Gryphon (they hit before only because the stale climb
 velocity raised their aim). The low Crusades Wisp is missed the same way.
@@ -635,6 +637,57 @@ Still deviating:
 - Off the map, World flies at the clamped sector's cruise height (retail: the
   off-map cell's height 0 plus cruisealt), and its velocity kernel keeps the
   vertical control that `4dab71` skips for an off-map unit.
+
+## SweetSpot is the drawn piece bounds (icd + live capture, 2026-10-24, protocol 295)
+
+`SweetSpot` (`4dd4f0` -> `4dd2a0`) names a piece through the COB and returns
+the centre of that piece's vertex bounds, the extrema starting at zero, plus
+the unit's position (+0x68/+0x6c/+0x70). The vertices are not the model's: they
+are the unit's own buffer at `[unit+0xc0]+0x1cc+piece*0x38+0x24`, set up at
+creation as a copy of the definition (`4ee7a0`). The draw path rewrites that
+buffer in place: "draw unit" `4ee700` -> `4ee620`, which copies the definition
+back in (`4ee920`) and transforms it (`4eea20`) by the piece chain plus the
+body's pitch, heading and roll, unit-relative (position zero, no final Z flip).
+`QueryBlood` (`4dd590` -> `4ee620`) refreshes it too, and the draw counter at
+node +0x28 counts passes. So a unit that has been drawn aims at the centre of
+its drawn piece; one never drawn since it was created or loaded aims at the
+authored (local) bounds.
+
+Evidence from the live capture `0d8e.../next-device-state-01.json` (tick
+11134), with `4dd4f0` emulated on the captured memory:
+- 26 drawn Hunters (counter above zero, buffer unlike the definition) have a
+  SweetSpot 18.99 px up, e.g. (1.54, 18.99, -1.55) at retail heading 8192 and
+  (-1.51, 18.99, 1.56) at 42005. The undrawn Hunters 49 and 70 give
+  (-0.03, -1.24, 1.24): the local torso bounds, below the feet.
+- `tools/re/check_captured_aim.py` now tells the two apart. Drawn Hunters 17,
+  44, 53 and 117 match `retailPieceDrawnCenter` on all 31 pieces to at most
+  357 raw units (0.005 px; retail transforms in x87 floats, the port in
+  integers), most to 1 raw unit. The undrawn Thirsha 308 (the old PASS, all
+  47 pieces) and Hunter 49 still match the local bounds exactly. The reload
+  captures have every model dirty and unposed, so the earlier check (local
+  vertices) only ever covered undrawn units.
+
+A lockstep simulation cannot depend on what one machine drew, so World always
+uses the drawn geometry from its own current pose (`retailPieceDrawnCenter`,
+`queryUnitScriptPoint`): retail for any unit that has been on screen. Every
+SweetSpot caller follows: the lead point (`retailLeadPoint`), the ballistic
+pitch, the facing request, the hover ring, the clear-shot chord and guided
+homing. The client's blood spray homes to the same point. By inference, two
+retail Hunters that were never drawn would miss each other the way World's did.
+
+Before protocol 295 World used the local bounds for every unit. A Hunter's aim
+point sat 1.24 px under its feet, so spears fell short into the ground: in a
+0.9.0 all-Hunter game 727 Hunter-on-Hunter shots hit 0 times (4.2% over all
+1175). With the drawn bounds the same replay hits 89%. Of 202 unit types, 136
+have a different SweetSpot height at rest and 115 sit more than 10 px higher
+(both balances), e.g. zonter -1.24 -> 18.99, zonhunt 6.13 -> 25.94, verball
+0.08 -> 37.00. The Gryphon's (a root piece whose bounds already span zero)
+keeps its height. Pieces now turn with the body, so an off-centre SweetSpot
+such as the Creon Submersible's 20.3 px rotates with its heading.
+
+Checked: `sweetspot_test` (both balances) asserts the four captured Hunter
+offsets to 0.03 px and that a Hunter hits a standing Hunter in the 0.9.0
+geometry (dx -272, dz +192): 0 of 16 impacts before, 17 of 17 after.
 
 ## Map feature install and area clear (icd, 2026-10-24, protocol 294)
 

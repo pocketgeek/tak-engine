@@ -13,7 +13,7 @@
 //
 // Shipped Aramon Archers (arabow, a ballistic Standard Arrow) against a
 // Swordsman standing behind a passable ridge, and behind a row of shipped
-// Zhon campfire art (ZonFireD01: indestructible, nonblocking, 'height'
+// Zhon campfire art (ZonFireD02: indestructible, nonblocking, 'height'
 // set), in Retail and Legion pathfinding. Measured: shots landing short,
 // damage to the target, and where the archer ends up; plus the limits
 // (Hold Position stays; an open field is untouched).
@@ -57,7 +57,9 @@ struct Outcome {
 
 // A 64x64 map at height 30. Ridge: columns 17..23 climb 12 per cell to a
 // 90-high crest and fall again (a 3x3 spread of 24: passable, and clear on
-// the nav grid). Campfires: column 19, rows 26..38, ZonFireD01.
+// the nav grid). Campfires: column 19, rows 26..38, ZonFireD02 (height 50;
+// an arrow aimed at a Swordsman's drawn SweetSpot clears the 25-high
+// ZonFireD01 since protocol 295).
 Outcome run(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, Obstacle obstacle,
             int moveState, int ticks) {
     tnt::Map map;
@@ -70,7 +72,7 @@ Outcome run(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, Obstacle obstacle
         for (int z = 0; z < 64; ++z)
             for (int i = 0; i < 9; ++i) map.heights[size_t(z) * 64 + size_t(16 + i)] = uint8_t(profile[i]);
     } else if (obstacle == Obstacle::Campfires) {
-        map.featureNames = {"ZonFireD01"};
+        map.featureNames = {"ZonFireD02"};
         for (int z = 20; z <= 44; ++z) map.features[size_t(z) * 64 + 19] = 0;
     }
     sim::World w;
@@ -130,7 +132,7 @@ std::pair<int, int> runSticky(const hpi::Vfs& vfs, const sim::TypeRegistry& reg)
     map.seaLevel = 0;
     map.heights.assign(64 * 64, 30);
     map.features.assign(64 * 64, 0xffff);
-    map.featureNames = {"ZonFireD01"};
+    map.featureNames = {"ZonFireD02"};
     for (int z = 0; z < 64; ++z) map.features[size_t(z) * 64 + 34] = 0;
     for (int z = 20; z <= 44; ++z) map.features[size_t(z) * 64 + 19] = 0;
     sim::World w;

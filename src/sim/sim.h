@@ -295,7 +295,9 @@ struct UnitType {
     std::shared_ptr<const cob::File> simulationScript;
     const cob::File* script() const { return simulationScript ? simulationScript.get() : productionScript.get(); }
     std::vector<RetailModelPiece> productionModel; // shared script-piece hierarchy, also used for combat queries
-    std::vector<std::array<int32_t,3>> scriptPieceCenters; // native mirrored SweetSpot bounds centers
+    // Each script piece's authored vertices, X/Z mirrored and deduplicated: the
+    // geometry 4dd2a0 bounds for SweetSpot once the draw path has posed it.
+    std::vector<std::vector<std::array<int32_t,3>>> scriptPieceVertices;
     bool commander = false;   // FBI commander=1: the faction's Monarch (loss condition)
     // Buildings vs mobile units: the reliable test is maxVel. The FBI `canmove`
     // flag is set on some buildings too (e.g. the Keep, or the Taros Hell), so a

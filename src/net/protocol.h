@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 294;      // 294: area clear as retail: overlapped TNT features removed at load are gone
+constexpr uint32_t kNetVersion = 295;      // 295: SweetSpot is retail's drawn piece bounds (4dd2a0 over the buffer the draw
+                                           //      path poses in place): the piece chain plus body attitude, not the
+                                           //      authored local vertices, so aimed shots hit chest-high instead of the
+                                           //      feet (Hunters missed each other). Hashed sim change; 294 replays refused.
+                                           // 294: area clear as retail: overlapped TNT features removed at load are gone
                                            //      everywhere (World::installedMapFeatures: no art, blocker, sacred site,
                                            //      deposit or target); fogged-but-explored world features stay clearable
                                            //      (cell owner byte, room FOG OF WAR in the sim, replay format 15); the
