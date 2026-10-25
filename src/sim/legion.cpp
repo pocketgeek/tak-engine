@@ -316,8 +316,8 @@ constexpr uint8_t kExitWindows=1;
 // A spread factory PARK (World::legionParkSpot) has a free spot of its own:
 // the held release below waits this many windows for it (a body walking
 // round its factory gains little on the spot, and one window cut such walks
-// short beside the door), and twice as many before it releases one in the
-// door lane.
+// short beside the door), twice as many before it releases one in the door
+// lane, and four times as many while it still walks.
 constexpr uint8_t kParkSpotWindows=4;
 // Static bodies (see scanStill): a ground body that has not moved over
 // kStillScans consecutive scans kStillScan ticks apart, and is not a Legion
@@ -11285,7 +11285,15 @@ struct LegionNavigator::Impl {
         if(rule.exitClear&&leg.park&&leg.park->target) {
             const uint32_t held=std::max(stillTicks,m.state==Holding?heldFor(m):0u);
             const uint32_t need=(leg.park->spread?kParkSpotWindows:kExitWindows)*kCrowdWindow;
-            const Unit* f=held>=need?w.unit(leg.park->target):nullptr;
+            // A spread PARK still walking (Moving, above a quarter of its top
+            // speed) is on its way round the factory, not held: a slow, big
+            // body on that detour gains under half a body a window, and 100
+            // Catapults from a Keep were released beside it at 4 windows,
+            // walled the door and jammed it after 24. Walking, it is released
+            // only after four times as long.
+            const bool walking=leg.park->spread&&m.state==Moving&&
+                int64_t(u.speed.v)*4>int64_t(u.type->maxVel.v);
+            const Unit* f=held>=(walking?4*need:need)?w.unit(leg.park->target):nullptr;
             if(!f || !f->alive() || !f->type || !f->type->isStructure()) {}
             else {
                 const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);

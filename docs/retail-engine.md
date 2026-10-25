@@ -893,13 +893,20 @@ picks a spot instead of the bearing's midpoint:
   None free at all: retail's point, as in Retail mode.
 * The held release stays as the last resort, so nothing can jam: a spread
   PARK held 4 crowd windows (6 s) and clear of the factory is completed, but
-  only outside the door lane until it has been held 8.
+  only outside the door lane until it has been held 8. "Held" is under half a
+  body gained on the spot per window, which a slow, big body walking round
+  its factory also is: one still walking (Moving, above a quarter of its top
+  speed) waits 16 windows. Without that, 100 Catapults from a Keep (four times
+  the worker time) were completed beside the Keep on their way to spots
+  behind it, walled the door and jammed it after 24 (Retail mode's PARK jams
+  after 52; 4c22fbe3's Legion after 9); now all 100 park, 13% behind a rally.
 
 Deterministic: integer and retail sine-table math, the claims are a set test
 over all units (order does not matter), and the new state (`spread`, `door`,
 `spot`) is hashed when set. Tests: `tools/legion_park_test.cpp` (40 Swordsmen
 in both balances, a cliff with an unreachable plateau beside the factory, a
-map corner, 8 Catapults, 8 Submersibles at a Navy Yard; checked every tick
+map corner, 8 Catapults, a queue of 100 Catapults, 8 Submersibles at a Navy
+Yard; checked every tick
 that no parked output stands in the door lane, and production against a
 rally run that takes every output away), and `shipyard_park_test`'s Legion
 Barracks cases (4 of 4 in the band; 8 all in the band or beyond, none inside

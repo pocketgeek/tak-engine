@@ -12,8 +12,8 @@
 // none overlaps another, and the factory produced about as fast as with a
 // rally that sends every output far away (the unobstructed rate). Layouts: open
 // ground, a cliff beside the factory (an unreachable plateau), a map corner;
-// outputs: Swordsmen (both balances), Catapults (4x4), Submersibles at a Navy
-// Yard. It prints each output's time from completion to the end of its PARK
+// outputs: Swordsmen (both balances), Catapults (4x4, also a queue of 100),
+// Submersibles at a Navy Yard. It prints each output's time from completion to the end of its PARK
 // (park mean/max) and to clearing its birth footprint (clear).
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
@@ -168,6 +168,21 @@ void parkCase(const sim::TypeRegistry& registry,const std::string& balance,Layou
     if(layout==Layout::Open)run(registry,sim::PathfindingMode::Retail,layout,factory,output,count,false,4);
     if(layout==Layout::Cliff)check(p.onPlateau==0,label+"no output is sent onto the unreachable plateau");
 }
+
+// A long queue of big, slow outputs: 100 Catapults from a Keep. Walking round
+// the Keep to a spot behind it a Catapult gains under half a body a crowd
+// window, and the held-PARK release took that for a body held up: it parked
+// them beside the Keep, they walled the door, and the factory jammed after 24.
+void queueCase(const sim::TypeRegistry& registry) {
+    const std::string label="Legion standard open arakeep x100 arapult (queue): ";
+    if(!only.empty() && label.find(only)==std::string::npos)return;
+    const Result q=run(registry,sim::PathfindingMode::Legion,Layout::Open,"arakeep","arapult",100,false,4);
+    const Result ref=run(registry,sim::PathfindingMode::Legion,Layout::Open,"arakeep","arapult",100,true,4);
+    check(q.produced==100 && q.parked==100 && q.laneTicks==0 && q.inYard==0 && q.overlaps==0,
+          label+"every output is built and parks, none in the door lane");
+    check(q.produced==100 && q.lastDone<=ref.lastDone+ref.lastDone*15/100,
+          label+"production runs near the unobstructed rate ("+std::to_string(q.lastDone)+" vs "+std::to_string(ref.lastDone)+" ticks)");
+}
 }
 
 int main(int argc,char** argv) {
@@ -183,6 +198,7 @@ int main(int argc,char** argv) {
         parkCase(registry,balance,Layout::Corner,"arakeep","arasword",24);
         parkCase(registry,balance,Layout::Open,"arakeep","arapult",8);
         parkCase(registry,balance,Layout::Water,"crenavy","cresubm",8);
+        queueCase(registry);
     }
     std::printf("legion park: %d cases, %d failures\n",cases,failures);
     return failures?1:0;
