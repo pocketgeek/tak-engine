@@ -13,7 +13,6 @@ A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 [Download](https://github.com/pocketgeek/tak-engine/releases/latest) · [Getting started](#getting-started) · [Quick start](docs/quick-start.md) · [User guide](docs/user-guide.md) · [Map editor guide](docs/cartographer-guide.md) · [Changelog](CHANGELOG.md) · [Build from source](docs/development.md)
 
 <a href="docs/img/title.jpg"><img src="docs/img/title.jpg" width="72%" alt="TAK Engine title screen with its three doors"></a>
-<!-- SHOT-0.9.0: title -- (must: current picture shows an older VERSION) title menu, three doors, VERSION 0.9.0 -->
 
 </div>
 
@@ -92,18 +91,18 @@ Full history: [CHANGELOG](CHANGELOG.md).
     <td width="50%"><a href="docs/img/dragons.jpg"><img src="docs/img/dragons.jpg" alt="Creon Neo Dragons breathe blue fire on an Aramon siege column"></a><br><sub>Creon Neo Dragons strike an Aramon siege column</sub>
     <!-- SHOT-0.9.0: readme-dragons -- Creon Neo Dragons breathing fire on an Aramon siege column --></td>
     <td width="50%"><a href="docs/img/generated.jpg"><img src="docs/img/generated.jpg" alt="A wooded lake shore on a generated themed map, with a lodestone on a scattered neutral mana spot"></a><br><sub>A generated map with Scattered Mana</sub>
-    <!-- SHOT-0.9.0: generated -- generated themed map (e.g. Aramon Riverlands) with a lodestone on a scattered mana spot --></td>
+    </td>
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/room.jpg"><img src="docs/img/room.jpg" alt="Game room with AI slots, MOVE HERE buttons on the open slots, start markers in the players' colours and the mod lists"></a><br><sub>A game room: seats, start positions and mods</sub>
-    <!-- SHOT-0.9.0: room -- room with AI slots, MOVE HERE, coloured start markers, mod lists with ALWAYS ON lines, read-only match rules --></td>
+    </td>
     <td width="50%"><a href="docs/img/campaign.jpg"><img src="docs/img/campaign.jpg" alt="The Book of Darien campaign book"></a><br><sub>The campaign book</sub>
-    <!-- SHOT-0.9.0: campaign -- Book of Darien campaign picker --></td>
+    </td>
   </tr>
   <tr>
     <td width="50%"><a href="docs/img/cartographer.png"><img src="docs/img/cartographer.png" alt="Cartographer editing a map, with its toolbar, terrain canvas, browser and minimap"></a><br><sub>Cartographer, the map editor</sub></td>
     <td width="50%"><a href="docs/img/results.jpg"><img src="docs/img/results.jpg" alt="Post-game statistics with faction emblems and player colours"></a><br><sub>Post-game statistics</sub>
-    <!-- SHOT-0.9.0: readme-results -- post-game statistics screen with faction emblems and player colours --></td>
+    </td>
   </tr>
 </table>
 

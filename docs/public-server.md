@@ -90,7 +90,6 @@ You do **not** need to download or copy a service unit from the source repositor
    Press Ctrl+C to leave the log viewer; this does not stop the server.
 
    ![The Connect to Server panel with CUSTOM... selected and a server hostname typed in the address box](img/mp-connect-custom.jpg)
-   <!-- SHOT-0.9.0: mp-connect-custom -- NEW file docs/img/mp-connect-custom.jpg: the Multiplayer door's CONNECT TO SERVER panel with CUSTOM... selected and a hostname such as tak.example.org typed in the address box -->
 
 **Optional: change server defaults.** Copy and edit the settings template:
 

@@ -3,7 +3,6 @@
 TAK Engine can broadcast the game straight to YouTube, with no extra software.
 
 ![The YouTube Streaming panel: stream key, Remember Key, resolution, frame rate, bitrate, encoder, Save a Local Copy and Start Streaming](img/streaming.jpg)
-<!-- SHOT-0.9.0: streaming -- panel with Remember Key and Save a Local Copy rows, no key -->
 
 ## Quick start
 

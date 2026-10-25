@@ -37,7 +37,6 @@ expansion adds the Creon side and its campaign.
 ## Your first skirmish
 
 ![The title menu with its three doors: Single-Player, Multiplayer and Campaign](img/title.jpg)
-<!-- SHOT-0.9.0: title -- (must: current picture shows an older VERSION) title menu, three doors, VERSION 0.9.0 -->
 
 *The main menu. The doors open Single-Player, Multiplayer and Campaign.*
 
@@ -62,7 +61,6 @@ further.
 ## Play online
 
 ![The Connect to Server panel: the server list with the default server marked, the account name and password fields, the note A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and the CONNECT and BACK buttons](img/mp-connect.jpg)
-<!-- SHOT-0.9.0: mp-connect -- NEW file docs/img/mp-connect.jpg: the Multiplayer door's CONNECT TO SERVER panel, server list with DEFAULT, account name typed, password as pips, CONNECT and BACK -->
 
 1. Click the **Multiplayer** door.
 2. Pick a server from the list (the official TAK Engine server, `tak.pgnet.us`,
@@ -81,7 +79,6 @@ ports; only the server does. More in [Multiplayer](user-guide.md#multiplayer).
 ## Play a campaign
 
 ![The campaign book open at Book of Darien chapter 1, with the campaign tabs at the bottom](img/campaign.jpg)
-<!-- SHOT-0.9.0: campaign -- Book of Darien picker -->
 
 1. Click the **Campaign** door.
 2. Pick the *Book of Darien* or *Iron Plague* tab, then a chapter (the page
@@ -311,7 +308,6 @@ More in the user guide's [Power codes](user-guide.md#power-codes).
 | **READY** (multiplayer) | Mark yourself ready; the host can START when everyone is. |
 
 ![A single-player room: you in slot 1, a Normal AI in slot 2, MOVE HERE buttons on open slots 3 to 5, and the map with numbered starts](img/quick/lobby-move-here.jpg)
-<!-- SHOT-0.9.0: quick-lobby-move-here -- single-player room: you in slot 1, a Normal AI in slot 2, MOVE HERE on open slots, map with numbered starts -->
 
 *A single-player room: **MOVE HERE** on each open slot.*
 

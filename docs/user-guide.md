@@ -219,7 +219,6 @@ archive supplies a given file.
 ## The main menu
 
 ![The title menu with its three doors and the version number](img/title.jpg)
-<!-- SHOT-0.9.0: title -- (must: current picture shows an older VERSION) title menu, three doors, VERSION 0.9.0 -->
 
 *The title menu. The doors open Single-Player, Multiplayer and Campaign; the version is shown at the bottom.*
 
@@ -286,7 +285,6 @@ In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
 6. Click **Start**.
 
 ![The game setup screen with the map list, a map preview with numbered start positions and the match options](img/lobby.jpg)
-<!-- SHOT-0.9.0: lobby -- single-player game setup screen: map list, preview with numbered starts and player count, match options -->
 
 *The game setup screen: pick a map, check its preview and player count, and set the match rules.*
 
@@ -462,13 +460,11 @@ generated map you have saved as a `.kmp` always plays, whatever made it.
 Rebuilding a map from its recipe needs the same game data.
 
 ![The single-player screen with Generate Random Map open: Type Aramon, Layout Mainland, Size 12 × 12 and Players 4 on one row, then the Forests, Rock Clusters, Extra Mana Spots, Scattered Mana (at High), Water Amount and Authored Hills sliders and Re-roll Seed. The preview shows four numbered starts and reads MANA: 57 and SCATTERED: 33 NEUTRAL](img/guide/random-map-lobby.jpg)
-<!-- SHOT-0.9.0: guide-random-map-lobby -- Generate Random Map open in the single-player setup: Type/Layout/Size/Players row, the sliders with Scattered Mana at High, Re-roll Seed, preview with MANA and SCATTERED totals -->
 
 *The random map settings in the single-player lobby, with Scattered Mana at
 High. Size and Players share a row.*
 
 ![A wooded lake shore on a generated Aramon Riverlands map, with a lodestone among standing-stone ruins in a clearing](img/generated.jpg)
-<!-- SHOT-0.9.0: generated -- generated themed map with scattered mana: a lodestone on a neutral scattered spot -->
 
 *Part of a generated Aramon Riverlands map with Scattered Mana at Medium. The
 lodestone in the clearing stands on a neutral scattered spot that an AI has
@@ -517,7 +513,6 @@ RULES: ENDLESS*, and the game ends when the players leave. Every seat the
 scenario gives units or rules to must be filled before the game can start.
 
 ![The single-player setup screen with King of the Hill selected and MAP SCENARIO: ON under the preview; the lines under it read UNITS PLACED FOR 1-4, NEEDS SEATS 1-4, BUILDS 6 UNIT TYPES and ENDS BY SCENARIO RULES, a gold S marks the scenario maps in the list, and Monarch Expendable and Start Locations are greyed](img/lobby-scenario.jpg)
-<!-- SHOT-0.9.0: guide-lobby-scenario -- single-player setup with King of the Hill and MAP SCENARIO: ON, the lines under it, gold S in the list, Monarch Expendable and Start Locations greyed -->
 
 *King of the Hill with **Map scenario** turned on.*
 
@@ -834,7 +829,6 @@ two or more players, it adds a team column and lists the players team by team.
 The results screen after a game shows the same scores.
 
 ![The F4 scorecard listing eight players with kills, losses and score over a battle](img/guide/scorecard.jpg)
-<!-- SHOT-0.9.0: guide-scorecard -- F4 scorecard over a battle: players with kills, losses and score -->
 
 *The F4 scorecard during an eight-player benchmark battle.*
 
@@ -1570,7 +1564,6 @@ missed are silent while the game catches up.
 ### Display
 
 ![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, then Renderer set to Auto, Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Screen Shake off, Hardware Cursor and Smooth Motion on, and GPU Memory Limit set to 1.25 GB (default)](img/guide/options-graphics.jpg)
-<!-- SHOT-0.9.0: guide-options-graphics -- Options scrolled to Display and Graphics at the default settings (Max FPS greyed by VSync) -->
 
 *Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on. The picture was taken in a window, so Fullscreen shows Off.*
 
@@ -1698,7 +1691,6 @@ available on your system appear.
 ### Interface
 
 ![Options, Interface section: UI Font Modern, F4 Scorecard Scale and UI Scale 100%, Health Bars Damaged, Stats Panel on, Build Menu Center at 100%, Chat Position Centered and Chat Scale 100%](img/guide/options-interface.jpg)
-<!-- SHOT-0.9.0: guide-options-interface -- Options, Interface section at the defaults -->
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -1759,7 +1751,6 @@ until it fits, and a long line you are typing scrolls so its end stays in view. 
 saved as `chatScale` and `chatAlign` (0 left, 1 centred) in `settings.ini`.
 
 ![The in-game chat box centred on its dark panel just above a Barracks' build row and its TRAINING Horseman (10) line: four messages, each starting with the sender's name in their player colour, and a line being typed after SAY:](img/guide/chat-box.jpg)
-<!-- SHOT-0.9.0: guide-chat-box -- in-game chat box centred above a build row and TRAINING line: messages with coloured names and a line being typed after SAY: -->
 
 **UI Font** is saved as `uiFont = modern` or `uiFont = classic` in `settings.ini`; a
 file without it uses Modern. With Modern, names keep their own capitals (players, maps,
@@ -1806,7 +1797,6 @@ host's game mods are sent automatically.
 ### Joining a game
 
 ![The Connect to Server panel: the server list with the default server marked, the account name and password fields, the note A NEW NAME IS REGISTERED WHEN YOU SIGN IN, and the CONNECT and BACK buttons](img/mp-connect.jpg)
-<!-- SHOT-0.9.0: mp-connect -- NEW file docs/img/mp-connect.jpg: the Multiplayer door's CONNECT TO SERVER panel, server list with DEFAULT, account name typed, password as pips, CONNECT and BACK -->
 
 *Signing in to a server.*
 
@@ -1824,12 +1814,10 @@ host's game mods are sent automatically.
    **Move here** on any open slot (see [Start locations](#match-options)).
 
 ![The online game browser: the GAMES list with name, map and player count columns, a LOCK marker on one game, a LIVE game with its WATCH button, REFRESH and CREATE at the top and the password field at the bottom](img/guide/game-browser.jpg)
-<!-- SHOT-0.9.0: guide-game-browser -- NEW file docs/img/guide/game-browser.jpg: the online game browser with several games, one LOCK, one LIVE with WATCH, REFRESH and CREATE, PASSWORD (FOR LOCKED GAMES) field -->
 
 *The game browser on a server.*
 
 ![A game room with player and AI slots, a MOVE HERE button on each open slot, the map with start markers 1 to 4 in the seated players' colours, mod pack choices and the read-only match rules](img/room.jpg)
-<!-- SHOT-0.9.0: room -- room with AI slots, MOVE HERE, start markers in the players' colours, mod lists with ALWAYS ON lines, read-only match rules -->
 
 *A game room, here for a single-player game: player and AI slots, **Move here** on the open slots, the map with each start marked in the colour of the player who starts there, mod packs and the read-only match rules.*
 
@@ -1874,7 +1862,6 @@ Press **D** for the **Diplomacy** screen:
 - **Volume**: how loud each other player's voice plays for you.
 
 ![The Diplomacy screen listing four players with Share Mana, Chat and Voice checkboxes, Volume sliders at 50% and 25% for the two other human players, and a Give Selected Units button](img/diplomacy.jpg)
-<!-- SHOT-0.9.0: diplomacy -- Diplomacy screen: players with Share Mana, Chat and Voice checkboxes, Volume sliders for other humans, Give Selected Units -->
 
 *The Diplomacy screen (**D**), from the engine's built-in input test, with voice chat on. The computer player (ENEMY) has no Volume slider.*
 
@@ -1933,7 +1920,6 @@ loading nobody's time is used, however long a slow computer takes; a player whos
 connection closes before the game starts is counted down from that moment.
 
 ![The game paused on Inner Circle with a dark banner near the top of the view reading WAITING FOR Brannoc 18 in gold letters, the minimap, mana bar and bottom bar in place around it](img/guide/disconnect-wait.jpg)
-<!-- SHOT-0.9.0: guide-disconnect-wait -- game paused with the WAITING FOR <name> <seconds> banner -->
 *Another player has stopped responding: the game waits for Brannoc, with 18 seconds of his time left.*
 
 - **Back in time:** if their game catches up again (a long freeze, a network
@@ -2031,7 +2017,6 @@ player with it off cannot talk and is sent no voice at all.
 While **Voice chat** is off, every other row is greyed out and ignores clicks.
 
 ![The Voice Chat page with voice chat on, Talk mode Push to Talk on Space, System Default microphone at volume 100 with an empty level meter, Activation level 15 greyed out, and output Same as Game Output at volume 100](img/guide/voice-chat.jpg)
-<!-- SHOT-0.9.0: guide-voice-chat -- Voice Chat page with voice chat on, Push to Talk on Space, microphone, level meter, Activation level greyed, output Same as Game Output -->
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -2176,7 +2161,6 @@ In the book:
 - Every chapter can be selected, including the *Iron Plague* alternate ending.
 
 ![The campaign book open at Book of Darien chapter 1, All Hell Broken Loose](img/campaign.jpg)
-<!-- SHOT-0.9.0: campaign -- Book of Darien picker -->
 
 *The campaign book, with tabs for both campaigns at the bottom.*
 
@@ -2186,7 +2170,6 @@ mission. The mouse wheel and **Up/Down** scroll long briefings. During play,
 **O** (with nothing selected) shows the objectives.
 
 ![The chapter 1 briefing, All Hell Broken Loose, over the darkened paused battlefield](img/guide/campaign-briefing.jpg)
-<!-- SHOT-0.9.0: guide-campaign-briefing -- Book of Darien chapter 1 briefing over the darkened paused battlefield -->
 
 *The briefing for *Book of Darien* chapter 1, over the paused battlefield.*
 
@@ -2232,7 +2215,6 @@ recording. During playback:
 - Chat is not shown in replays.
 
 ![A replay of an Aramon army moving, with the replay time bar at nine of sixteen seconds](img/guide/replay.jpg)
-<!-- SHOT-0.9.0: guide-replay -- replay playback with the time bar showing elapsed and total time -->
 
 *Replay playback, with the time bar near the bottom.*
 
@@ -2326,7 +2308,6 @@ then ticked ones, each in alphabetical order of their folder names; later packs
 win when they change the same file. Game packs load first, then cosmetic packs.
 
 ![A single-player room with Power Codes: On among the match rules; below the map, the COSMETIC MODS list with ALWAYS ON: click under its heading and Classic Sounds ticked, and the GAME MODS list with ALWAYS ON: House Rules under its heading, Big Battles ticked and GAME MODS VERIFIED](img/guide/room-mods-power-codes.jpg)
-<!-- SHOT-0.9.0: guide-room-mods-power-codes -- single-player room with Power Codes: On in the rules, COSMETIC MODS with an ALWAYS ON line and a ticked pack, GAME MODS with an ALWAYS ON line, a ticked pack and GAME MODS VERIFIED -->
 
 - **Cosmetic packs** are each player's own choice, in single player and in
   multiplayer, host or not. They change only what that player sees and hears,
@@ -2558,7 +2539,6 @@ measurements behind it: [large-map collision grid](large-map-collision-performan
 [earlier notes](performance-2026-09-20.md).
 
 ![A benchmark battle: several armies meet at the edge of a sandy clearing, with health bars over the damaged units and the BENCHMARKING countdown at the top](img/guide/benchmark.jpg)
-<!-- SHOT-0.9.0: guide-benchmark -- benchmark battle at Absurd intensity with the BENCHMARKING countdown at the top -->
 
 *A benchmark run at Absurd intensity, 55 seconds in. The badge at the top counts down the time remaining.*
 
