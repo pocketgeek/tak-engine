@@ -12410,6 +12410,11 @@ void World::tickProduction(Unit& u, float dt) {
                 nu->orders.back().issuedTick = tickCounter_;
             }
         }
+    // A rally whose every entry was dropped (its attack targets are dead) hands
+    // over nothing: park instead, as GetBuilt does when there is nothing to copy,
+    // rather than leave the output standing on the pad.
+    if (const Unit* pb=unit(producerId),*nu=unit(id); getBuilt && pb && !pb->rally.empty() && nu && nu->orders.empty())
+        parkProductionOutput(id,producerId);
     // Legion routes the automatic exit as its own mission (LegionMission::
     // Exit): the birthplace lets a held-up exit finish once clear of it.
     if(hasExitStep && isLegionPathfinding(pathfindingMode_) && !t->canFly) {

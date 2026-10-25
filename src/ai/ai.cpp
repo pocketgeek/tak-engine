@@ -1632,7 +1632,8 @@ void Controller::stationArmy(const tak::sim::World& world, std::vector<int>& ass
             if (u.embarked() || u.underConstruction) continue;
             // A move's route may queue waypoints ahead of its goal: the spot is the last.
             const auto* goal = u.orders.empty() ? nullptr : &u.orders.back();
-            if (!goal) take(u.x.toFloat(), u.z.toFloat());
+            // A factory PARK has no point until its handler first runs: its spot is the unit's.
+            if (!goal || goal->park) take(u.x.toFloat(), u.z.toFloat());
             else if (!goal->targetId && !goal->buildType && !goal->reclaimFeat && !goal->repairTarget)
                 take(goal->x.toFloat(), goal->z.toFloat());
             continue;

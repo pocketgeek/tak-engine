@@ -174,6 +174,35 @@ void landFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,boo
         else check(front==4 && inRing==4 && inYard==0,label+"the parked output stands in front of the Barracks, in PARK's ring");
     }
 }
+
+// A rally whose only entry is an attack on a unit that has since died hands the
+// output nothing; it must still park rather than stand on the pad.
+void deadRally(const sim::TypeRegistry& registry,sim::PathfindingMode mode) {
+    sim::World w;w.setSerialThreads(true);w.setVisPlayer(-1);w.setPathfindingMode(mode);
+    w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+    w.setMapPlacementFeatures(std::vector<uint16_t>(256*256,0xffff),{});
+    w.buildNavClasses(registry);w.setPathService(true);
+    auto barracks=*registry.find("arakeep");barracks.workerTime*=20;barracks.storage=1000000;
+    const auto* sword=registry.find("arasword");
+    const int id=w.spawn(&barracks,1800,1800,0,0);
+    const int victim=w.spawn(sword,2600,1000,1,0);
+    w.attack(id,victim,false);
+    const bool hasRally=!w.unit(id)->rally.empty();
+    w.destroy(victim);   // self-destruct: two seconds, then gone
+    for(int tick=0;tick<300 && w.unit(victim) && w.unit(victim)->alive();++tick)w.tick(1.f/30);
+    const bool gone=!w.unit(victim) || !w.unit(victim)->alive();
+    w.player(0).mana=1000000;w.train(id,sword,1);
+    int out=0;bool parked=false;
+    for(int tick=0;tick<3000 && !out;++tick) {
+        w.player(0).mana=1000000;w.tick(1.f/30);
+        for(const auto& u:w.units())
+            if(u.alive() && u.type==sword && u.player==0 && !u.underConstruction) {
+                out=u.id;parked=std::any_of(u.orders.begin(),u.orders.end(),[](const auto& o){return bool(o.park);});
+            }
+    }
+    check(hasRally && gone && out && parked,std::string(mode==sim::PathfindingMode::Legion?"Legion: ":"Retail: ")+
+          "a rally of only a dead attack target still parks the output");
+}
 }
 
 int main(int argc,char** argv) {
@@ -187,6 +216,7 @@ int main(int argc,char** argv) {
         for(auto mode:{sim::PathfindingMode::Retail,sim::PathfindingMode::Legion}) {
             pondYard(registry,vfs,mode,crusades);
             if(crusades)for(bool rally:{false,true})landFactory(registry,mode,rally);
+            if(crusades)deadRally(registry,mode);
         }
     }
     std::printf("shipyard park: %d cases, %d failures\n",cases,failures);

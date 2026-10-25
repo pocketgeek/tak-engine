@@ -812,11 +812,14 @@ park its ship in the next body of water, and a permanent PARK that cannot be
 reached never ends, holding the pad. The ring is kept when any cell of it is
 connected to the birth point (component roots for the unit's movement class);
 otherwise the output moves to the farthest free connected cell clear of the
-factory within the ring's outer radius. Legion's exact ring goal queues a
+factory within the ring's outer radius. Our rally also carries attack and
+fight-move orders; when every entry drops (its attack targets are dead), the
+output parks, as retail's does when nothing was copied. Legion's exact ring goal queues a
 column behind the first output, so a held Legion PARK is completed once clear
 of the factory, as its exit step was. Our AI counts a unit holding only PARK as
 idle (retail's AI takes it through `0x50b4f0`). Tests:
-`tools/shipyard_park_test.cpp` (the reported pond, a Barracks, a rally point),
+`tools/shipyard_park_test.cpp` (the reported pond, a Barracks, a rally point,
+a rally of only a dead target),
 and an emulation probe of `0x402220` kept outside the repo (`~/tak-tmp/scratch/fix-091/shipyard-fix/probe_getbuilt_release.py`).
 
 ## Benchmark switches and RNG seeding (icd, 2026-10-22)
