@@ -5588,6 +5588,14 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
             // so defer it until these cheap geometric checks have passed.
             if (!canTarget(e)) return;
             if (shotBlockedHere(u,e)) return;   // written off from this spot (noteShotImpact)
+            // A unit that may not leave its post (tickCombat's !mayChase) drops
+            // an auto target its arc cannot reach; never pick one up, or it
+            // is acquired and dropped again on every acquisition turn.
+            if (!(u.type->canMove && u.moveState != 0)) {
+                const int as=approachSlot(u);
+                if (as>=0 && u.type->weapons[size_t(as)].ballisticClass() &&
+                    !ballisticInRange(u,e,u.type->weapons[size_t(as)])) return;
+            }
             if (ranged && !e.type->canFly && !lobber &&
                 !combatLineOfSight(u,e))
                 return;                         // no clear shot: don't acquire it
@@ -5733,6 +5741,17 @@ bool World::ballisticInRange(const Unit& u,const Unit& t,const Weapon& w) const 
     return ballisticInRange(u.x,u.type->canFly ? u.flightY : u.groundY,u.z,t,w);
 }
 
+// The weapon an attack order approaches on: the selected one for a switcher,
+// the longest when they all fire (tickCombat's reach). -1: none.
+int World::approachSlot(const Unit& u) const {
+    if (u.type->weapons.empty()) return -1;
+    int s=std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1);
+    if (!u.type->weaponSwitching && u.type->weapons.size()>1)
+        for (int sl=0;sl<int(u.type->weapons.size());++sl)
+            if (u.type->weapons[size_t(sl)].range>u.type->weapons[size_t(s)].range) s=sl;
+    return s;
+}
+
 bool World::slotInRange(const Unit& u,const Unit& t,int slot) const {
     const Weapon& w=u.type->weapons[size_t(slot)];
     if (w.melee) return meleeInRange(u.type,t.type,(t.x-u.x).toFloat(),(t.z-u.z).toFloat());
@@ -5830,6 +5849,22 @@ void World::noteShotImpact(int fromId,int targetId,const Weapon& w,const std::ar
     }
     if (u->blockedShots<255) ++u->blockedShots;
     u->blockedX=int16_t(sx);u->blockedZ=int16_t(sz);
+}
+
+// A ballistic slot aimed and ready whose muzzle-to-SweetSpot solve has no
+// arc (queryWeaponAim's `unreachable`; the origin solve, 52bc60, passed)
+// launches nothing (tickScriptWeapon). Retail lobs it flat; we count it as a
+// shot that stops short, once per reload, so a unit that cannot close in
+// writes the target off from this spot like a blocked one instead of holding
+// it for ever without a shot.
+void World::noteNoArc(Unit& u,const Unit& t) {
+    const int64_t sx=u.x.floorInt(),sz=u.z.floorInt();
+    if (u.blockedTarget!=t.id) { u.blockedTarget=t.id;u.blockedShots=0;u.repositions=0;u.searchFailed=0; }
+    if (u.blockedShots && (std::abs(sx-u.blockedX)>kBlockedSpot || std::abs(sz-u.blockedZ)>kBlockedSpot)) {
+        u.blockedShots=0;u.searchFailed=0;
+    }
+    if (u.blockedShots<255) ++u.blockedShots;
+    u.blockedX=int16_t(sx);u.blockedZ=int16_t(sz);
 }
 
 bool World::shotBlockedHere(const Unit& u,const Unit& t) const {
@@ -6479,24 +6514,23 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // ballisticInRange): no pad, and a target its shell cannot reach is out
     // of reach however near it stands. The weapon the unit approaches on
     // decides: the selected one, or the longest when they all fire.
-    int approachSlot = sel ? slot : -1;
-    if (allWeapons)
-        for (int sl = 0; sl < int(u.type->weapons.size()); ++sl)
-            if (approachSlot < 0 || u.type->weapons[size_t(sl)].range > u.type->weapons[size_t(approachSlot)].range)
-                approachSlot = sl;
-    const Weapon* approach = approachSlot >= 0 ? &u.type->weapons[size_t(approachSlot)] : nullptr;
+    const int arcSlot = approachSlot(u);
+    const Weapon* approach = arcSlot >= 0 ? &u.type->weapons[size_t(arcSlot)] : nullptr;
     const bool arcApproach = approach && approach->ballisticClass();
     const bool inReach = arcApproach ? ballisticInRange(u,*target,*approach) : dist <= reach;
     // Just inside the origin arc's reach the muzzle-to-SweetSpot solve can
     // still fail (queryWeaponAim launches nothing then): a unit free to move
-    // keeps closing there rather than stand without a shot.
-    // Only a marginal arc is asked: one that would fail with the target
-    // 128 px higher (more than a muzzle and a SweetSpot sit off the origins).
+    // keeps closing there rather than stand without a shot. That solve
+    // turns with the aiming pose, so a unit that may not move keeps the
+    // target until its aimed weapon has had no arc for kBlockedShots
+    // reloads (noteNoArc), and drops it then (below).
     const auto arcShort = [&] {
         if (!arcApproach || !inReach) return false;
+        // Only a marginal arc is asked: one that would fail with the target
+        // 128 px higher (more than a muzzle and a SweetSpot sit off the origins).
         if (ballisticInRange(u.x,(u.type->canFly ? u.flightY : u.groundY)-Fixed::fromInt(128),u.z,*target,*approach))
             return false;
-        const auto aim = queryWeaponAim(u.id,target->id,approachSlot);
+        const auto aim = queryWeaponAim(u.id,target->id,arcSlot);
         return aim && aim->unreachable;
     };
     // Melee: retail closes to footprint adjacency (see meleeInRange above);
@@ -6550,6 +6584,17 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
             u.routeStamp = -1;
             return;
         }
+    }
+    // A unit that may not move (a building, Hold Position on an auto target)
+    // whose aimed shell has no arc from here (noteNoArc wrote the target
+    // off) drops it; findTarget and the sweep do not pick it up again from
+    // this spot.
+    if (!mayChase && shotBlockedHere(u,*target) && arcShort()) {
+        if(u.scriptAimTarget)clearScriptWeaponTarget(u);
+        dropLeg(u);
+        cancelPath(u);
+        u.routeStamp = -1;
+        return;
     }
     if (hovering) {
         tickHoverAttack(u,*target,sel);
@@ -12121,8 +12166,14 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept,const Weap
     // No arc to the aim point: hold the FireWeapon start until there is one.
     // The release (SET 23) launches on the angles accepted here (fire), so a
     // shell never leaves on the flat pitch an unreachable solve aims at.
-    if(!solution->unreachable &&
-       (dropped ? available : aim.ready(solution->heading,solution->pitch,uint16_t(weapon.aimTol),available,aligned))) {
+    const bool ready=dropped ? available :
+        aim.ready(solution->heading,solution->pitch,uint16_t(weapon.aimTol),available,aligned);
+    if(ready && solution->unreachable) {
+        // Aimed, loaded, and still no arc: a dud for the blocked-shot count
+        // (noteNoArc), one per nominal reload.
+        u.reloads[slot]=uint16_t(int32_t(weapon.reload*kTick+0.5f));
+        noteNoArc(u,target);
+    }else if(ready) {
         const uint16_t nominal=uint16_t(int32_t(weapon.reload*kTick+0.5f));
         u.reloads[slot]=retailWeaponReload(nominal,uint16_t(crtRand(0x530167)));
         const bool all=!u.type->weaponSwitching && u.type->weapons.size()>1;

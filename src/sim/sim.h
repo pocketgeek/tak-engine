@@ -3048,11 +3048,13 @@ private:
     // 52bc60 (BallisticWeapon::inRange) for a shooter standing at (x,y,z).
     bool ballisticInRange(Fixed x,Fixed y,Fixed z,const Unit& t,const Weapon& w) const;
     bool ballisticInRange(const Unit& u,const Unit& t,const Weapon& w) const;
+    int approachSlot(const Unit& u) const;
     bool slotInsideMinRange(const Unit& u,const Unit& t,int slot) const;
     bool slotBadTarget(const Unit& u,int slot,const Unit& t) const;
     bool slotClearShot(const Unit& u,const Unit& t,int slot) const;
     // Blocked shots (engine deviation, see noteShotImpact in sim.cpp).
     void noteShotImpact(int fromId,int targetId,const Weapon& w,const std::array<int32_t,3>& impact,int hitUnit);
+    void noteNoArc(Unit& u,const Unit& t);
     bool impactIndestructible(const Weapon& w,int cx,int cz) const;
     bool shotBlockedHere(const Unit& u,const Unit& t) const;
     bool shotChordClear(const Unit& u,Fixed fromX,Fixed fromZ,const Unit& t,int slot);

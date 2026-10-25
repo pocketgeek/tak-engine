@@ -149,14 +149,14 @@ int main(int argc,char**argv) {
         if (sub && mana) {
             const float range=float(sub->weapon.range);
             // island: cells [isl0,isl1) square, land 66 over sea level 64.
-            struct Shot { int fired=0,hits=0,bowSplashes=0; float closest=1e9f,moved=0,lastMoves=0; };
-            auto run=[&](float distance,int moveState,int islandHalf,int ticks) {
+            struct Shot { int fired=0,hits=0,bowSplashes=0,acquired=0; bool holding=false; float closest=1e9f,moved=0,lastMoves=0; };
+            auto run=[&](float distance,int moveState,int islandHalf,int ticks,uint8_t land=66) {
                 tak::sim::World w;w.setVisPlayer(-1);
                 const int size=256;
                 std::vector<uint8_t> heights(size_t(size)*size,10);
                 const int c=size/2;
                 for (int z=c-islandHalf;z<c+islandHalf;++z) for (int x=c-islandHalf;x<c+islandHalf;++x)
-                    heights[size_t(z)*size+x]=66;
+                    heights[size_t(z)*size+x]=land;
                 w.setTerrain(heights,size,size,64);w.buildNavClasses(registry);
                 auto victim=*mana;victim.maxHp=60000;victim.healTime=0;
                 const float tx=float(c*16),tz=float(c*16);
@@ -166,11 +166,15 @@ int main(int argc,char**argv) {
                 w.player(0).mana=30000;
                 Shot out;
                 std::vector<std::pair<float,float>> trail;
+                bool attacking=false;
                 for (int tick=0;tick<ticks;++tick) {
                     w.tick(1.f/30.f);
                     const auto* u=w.unit(a);
                     if (!u || !w.unit(b)) break;
                     out.fired+=u->justFired;
+                    const bool now=!u->orders.empty() && u->orders.front().targetId==b;
+                    out.acquired+=now && !attacking;
+                    attacking=out.holding=now;
                     trail.push_back({u->x.toFloat(),u->z.toFloat()});
                     out.closest=std::min(out.closest,tak::sim::fxLen(u->x-w.unit(b)->x,u->z-w.unit(b)->z).toFloat());
                     for (const auto& h:w.hits()) {
@@ -188,8 +192,8 @@ int main(int argc,char**argv) {
                 return out;
             };
             auto show=[&](const char* what,float d,const Shot& s) {
-                std::printf("cresubm %-26s from %.0f px (range %.0f): fired=%d hits=%d bow-splashes=%d closest=%.0f moved=%.0f last20s=%.0f\n",
-                    what,d,range,s.fired,s.hits,s.bowSplashes,s.closest,s.moved,s.lastMoves);
+                std::printf("cresubm %-26s from %.0f px (range %.0f): fired=%d hits=%d bow-splashes=%d acquired=%d holding=%d closest=%.0f moved=%.0f last20s=%.0f\n",
+                    what,d,range,s.fired,s.hits,s.bowSplashes,s.acquired,int(s.holding),s.closest,s.moved,s.lastMoves);
             };
             // In arc and in range: it hits from where it lies.
             const Shot near=run(range-60,0,8,900);show("hold, near",range-60,near);
@@ -203,10 +207,22 @@ int main(int argc,char**argv) {
             }
             // The band where the origin arc reaches but the muzzle-to-SweetSpot
             // solve may not: a shell is lobbed onto the target or not at all.
-            for (float d:{range-15,range-5}) {
+            for (float d:{range-15,range-5,range-1}) {
                 const Shot band=run(d,0,8,900);show("hold, edge of range",d,band);
                 check(band.bowSplashes==0 && (band.fired==0 || band.hits>0),
                       "at the edge of its range a sub hits the lodestone or holds its fire");
+            }
+            // A lodestone on a raised island, in the sub's 2D range: the
+            // origin arc (52bc60) may reach while the muzzle-to-SweetSpot
+            // solve does not, so the aimed sub has no shot. A Hold sub cannot
+            // close in: after kBlockedShots reloads without an arc it writes
+            // the target off and drops it (before: it held it for ever with
+            // its slots off auto), and it is not acquired again from there.
+            for (uint8_t land:{uint8_t(70),uint8_t(80),uint8_t(100),uint8_t(120)}) {
+                const Shot high=run(range-5,0,8,900,land);
+                std::printf("  (island height %d)\n",int(land));show("hold, raised island",range-5,high);
+                check(high.bowSplashes==0 && high.acquired<=1 && (high.hits>0 || !high.holding),
+                      "a Hold sub with no arc drops the target and does not take it up again");
             }
             // Past the range with the shore in the way: it cannot close, so it
             // holds: no shell, and no churning at the shoreline.

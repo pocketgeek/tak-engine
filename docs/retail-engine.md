@@ -136,7 +136,17 @@ land target past the shore) holds without firing, as retail. The aim still
 reports pitch 0 for no arc, but a slot whose muzzle-to-SweetSpot solve has
 no arc (possible just inside the origin solve's reach) does not start
 FireWeapon (`tickScriptWeapon`) and a scriptless shot is not launched
-(`fire`); a unit free to move keeps closing there. The reposition search
+(`fire`); a unit free to move keeps closing there. A unit that may not leave
+its post (a building, or Hold Position on an auto target) drops a target past
+its origin arc, so `findTarget` does not acquire one for it (it would be
+acquired and dropped on every acquisition turn, and each acquisition cancels
+the unit's path and takes its slots off auto). The muzzle solve turns with the
+aiming pose, so it is judged only once the weapon is aimed and loaded: each
+reload spent that way counts as a blocked shot (`World::noteNoArc`, see
+"Blocked shots"), so after three the target is written off from that spot;
+the sweep then picks another, and a unit that may not move drops it (before:
+it held it for ever without a shot). Retail lobs that shell flat instead. The
+reposition search
 (`repositionForShot`) keeps only spots the arc reaches. `naval_combat_test`
 covers 740/785/795 px (hits), 830-848 px in open water (closes in, hits, no
 splash within 300 px of the sub) and behind a shore (no shot, no churn).
