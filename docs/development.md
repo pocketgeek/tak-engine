@@ -70,6 +70,25 @@ suite. Some animation checks also require extracted scripts under
 `assets/extracted/all/scripts`. Rebuild **all targets** after simulation, AI, or
 network changes so the client, server, and tools use the same code.
 
+### Building an older version
+
+Only the latest release is offered for download. To play an older version's
+replays, or with friends who have not updated, build that version from its git
+tag (every release has one, `v0.9.0`, `v0.8.14` and so on; the
+[CHANGELOG](../CHANGELOG.md) lists them):
+
+```sh
+git clone https://github.com/pocketgeek/tak-engine.git
+cd tak-engine
+git checkout v0.8.14
+```
+
+Then follow the build steps in that checkout's own `docs/development.md` (or
+its README for versions before that guide existed), since the dependencies and
+steps have changed over time. Each version's client plays only with servers and
+replays of its own protocol, so a client built from an older tag needs a server
+of that version too.
+
 ### Static dependencies and menu videos
 
 Menu door clips use Bink video decoded by the bundled, minimal FFmpeg build.

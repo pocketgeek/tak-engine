@@ -139,10 +139,31 @@ deleted with their tags kept; record the tag count before and after
 
 ## Screenshots
 
-TODO-LEAD: the shot branches, the build they were taken from, which of the 81
-pictures in [`docs/img/SHOTLIST-0.9.0.md`](img/SHOTLIST-0.9.0.md) were retaken,
-kept or added (the three new ones: `mp-connect`, `mp-connect-custom`,
-`guide/game-browser`), and the commits they landed as.
+All 81 pictures in [`docs/img/SHOTLIST-0.9.0.md`](img/SHOTLIST-0.9.0.md) were
+retaken by the 0.9.0 build (Debug `-O2`, from `aedb827c`, CMake `VERSION
+0.9.0`), each shot by exactly one branch, and every `SHOT-0.9.0` marker was
+removed:
+
+- `task-090-shots-carto` (`28d7a187`): 34 Cartographer pictures, nine of them
+  byte-identical to the old files (`cartographer.png`,
+  `guide/cartographer-terrain.jpg`, `empty-window`, `new-map`,
+  `terrain-variant`, `preferences`, `ai-mod`, `ai-group-rules`,
+  `ai-takengine`). The old `cartographer.png` already had the five-tool
+  toolbar; every whole-window picture shows the five tools.
+- `task-090-shots-front` (`6a3515ac`): 24 front-end and multiplayer pictures,
+  including the three new ones (`mp-connect`, `mp-connect-custom`,
+  `guide/game-browser`); five byte-identical (`lobby`, `lobby-scenario`,
+  `guide/random-map-lobby`, `campaign`, `guide/campaign-briefing`).
+  `title.jpg` reads VERSION 0.9.0. The connect panels come from the menu's
+  debug capture (no server contacted); the game browser used a private
+  loopback `takserver`.
+- `task-090-shots-game` (`153bb70b`): 23 in-game shots (24 captures;
+  `quick/build-line.jpg` is a two-capture composite).
+
+Capture-only patches were applied while building and reverted before each
+commit. `docs/img/README.md` conflicts between the front and game branches
+(rows in the same tables); each row keeps the version of the branch that owns
+that picture. TODO-LEAD: the commits they landed as.
 
 ## Limits
 

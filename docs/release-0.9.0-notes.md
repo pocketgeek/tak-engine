@@ -154,9 +154,6 @@ New with 0.9.0:
 - **The Shift order-trail preview** of a queued area clear uses what your side
   sees now, not the explored ground the order will use.
 - **Flying reclaimers** reach their targets with a plain move.
-- The Retail AI's server log still says `DEFAULT AI profile ai/DEFAULT.txt`, and
-  the Cartographer's tab still reads **DEFAULT AI** (log and label wording
-  only).
 
 All of 0.8.14's known limits carry over:
 
@@ -195,6 +192,9 @@ All of 0.8.14's known limits carry over:
   sets the same unit weights and limits for all of them (they still differ in
   behaviour and limit scaling).
 - **TEST IN GAME has not yet been tried by hand on Windows or macOS.**
+- The Retail AI's server log still says `DEFAULT AI profile ai/DEFAULT.txt`, and
+  the Cartographer's tab still reads **DEFAULT AI** (log and label wording
+  only).
 - **Old always-on archives are not moved for you**, and the game does not warn
   about a `.hpi` left directly in `mods/cosmetic/` (see 0.8.14's
   [notes](release-0.8.14-notes.md#moving-your-always-on-archives)).

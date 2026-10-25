@@ -657,6 +657,13 @@ without asking. A cell holding one of the invisible road or blocker markers
 that terrain sections bring (see [What a stamp replaces](#what-a-stamp-replaces))
 or that you painted (see [Blocked cells](#blocked-cells)) loses the marker too.
 
+A large feature's footprint covers several cells, so two features can overlap
+even though each stands in a cell of its own. When the game loads the map it
+sets features down row by row from the top, left to right, and one whose
+footprint overlaps a feature set down before it removes that earlier one, as
+in the original game (since 0.9.0). Cartographer still draws both, so leave
+room between large features you want to keep.
+
 ### Selecting and moving features
 
 ![Two views of the same palm trees: left, a yellow selection box being dragged around them in Select mode; right, after release, each tree has a small gold square at the base of its trunk](img/cartographer/features-select.jpg)

@@ -1,5 +1,17 @@
 # README and user-guide screenshots
 
+**Retaken for 0.9.0** (2026-10-24): all 81 pictures in
+[SHOTLIST-0.9.0.md](SHOTLIST-0.9.0.md) were retaken by the 0.9.0 build (Debug
+with `-O2`, CMake `VERSION 0.9.0`), on three branches: the Cartographer
+pictures, the front-end and multiplayer pictures, and the in-game pictures.
+`title.jpg` reads VERSION 0.9.0, and three pictures are new: `mp-connect.jpg`,
+`mp-connect-custom.jpg` (both from the menu's debug server-panel capture; no
+server was contacted) and `guide/game-browser.jpg` (a private loopback
+`takserver`, never the public one). Fourteen retakes came out byte-identical to
+the files they replace, because nothing in those scenes changed. Each picture's
+row below says how it was made; the sections that follow still describe the
+earlier rounds.
+
 Refreshed on 2026-10-24 for **0.8.14**. The always-on cosmetic mods moved
 from `.hpi` archives directly in `mods/cosmetic/` (no longer loaded) to pack
 folders in `mods/cosmetic/always_enabled/<pack>/`, `mods/game/always_enabled/<pack>/`
@@ -426,7 +438,7 @@ Capture scripts, job lists and the encoder are in the release-preparation
 scratch directories, `$SCR/shared/release-0.7.26/shots`,
 `$SCR/shared/release-0.7.27/shots`, `$SCR/shared/release-0.7.28/shots`,
 `$SCR/shared/release-0.8.0/shots`, `$SCR/shared/release-0.8.1/shots`,
-`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots`, `~/tak-tmp/scratch/release-086/shots`, `~/tak-tmp/scratch/release-087/shots`, `~/tak-tmp/scratch/release-088/shots`, `~/tak-tmp/scratch/release-089/shots`, `~/tak-tmp/scratch/release-0810/shots`, `~/tak-tmp/scratch/release-0811/shots`, `~/tak-tmp/scratch/release-0812/shots`, `~/tak-tmp/scratch/release-0813/shots` and `~/tak-tmp/scratch/release-0814/shots`. Raw PNGs, logs, profiles
+`$SCR/shared/release-0.8.2/shots`, `$SCR/shared/release-0.8.3/shots`, `$SCR/shared/release-0.8.4/shots`, `~/tak-tmp/scratch/release-085/shots`, `~/tak-tmp/scratch/release-086/shots`, `~/tak-tmp/scratch/release-087/shots`, `~/tak-tmp/scratch/release-088/shots`, `~/tak-tmp/scratch/release-089/shots`, `~/tak-tmp/scratch/release-0810/shots`, `~/tak-tmp/scratch/release-0811/shots`, `~/tak-tmp/scratch/release-0812/shots`, `~/tak-tmp/scratch/release-0813/shots`, `~/tak-tmp/scratch/release-0814/shots`, and for 0.9.0 `~/tak-tmp/scratch/release-090/carto`, `~/tak-tmp/scratch/release-090/front/shots` and `~/tak-tmp/scratch/release-090/game`. Raw PNGs, logs, profiles
 and the SHA-256 manifest are kept locally in the worktree's ignored
 `build-o2/capture` folder. Keep retail archives, extracted assets and temporary
 capture files out of Git. When refreshing, rerender and inspect every view, then

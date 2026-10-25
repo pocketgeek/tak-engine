@@ -34,7 +34,7 @@ interface art and sound straight from its installation folder.
   the [user guide](docs/user-guide.md) and the
   [map editor guide](docs/cartographer-guide.md) were rewritten with new
   pictures.
-- **Area clear works as in the original.** Every selected builder takes a
+- **Area clear works more like the original.** Every selected builder takes a
   clear order, trees on explored ground are cleared under the fog, builders
   give up on what they cannot reach, and overlapping map objects the original
   removes at load are gone ([Reclaiming](docs/user-guide.md#reclaiming)).

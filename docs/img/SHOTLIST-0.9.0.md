@@ -1,5 +1,11 @@
 # Screenshot list for 0.9.0
 
+**Status (2026-10-24): done.** All 81 shots were taken from the 0.9.0 build and
+every marker was removed (branches `task-090-shots-carto`,
+`task-090-shots-front` and `task-090-shots-game`). The `cartographer-main`
+reason below was wrong: the old `cartographer.png` already had the five tools,
+and its retake is byte-identical. The line numbers are from commit `30007217`.
+
 Compiled from every `<!-- SHOT-0.9.0: <id> -- <what it must show> -->` marker in the
 docs. Take every shot from the final 0.9.0 build, then remove the markers (or this
 file) when the pictures land. Capture notes and sizes for the existing pictures are
