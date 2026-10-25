@@ -65,6 +65,16 @@ their validation reports; both live in [`docs/`](docs/).
   made, or it kept dropping. A stream that stayed up for a minute gets three
   fresh retries when the connection drops, instead of sharing three retries
   across the whole stream.
+- **Streaming from a large window:** a stream smaller than the game window now
+  keeps up. Streaming a 7680x2160 window at MAX 3840 (3840x1080) and 60 FPS on
+  Windows encoded only about 18 frames a second: the panel counted the rest as
+  DROPPED, and the bitrate stayed near a third of the setting. Under Direct3D,
+  what Windows picks by default, capturing the window also cut the game itself
+  from 240 FPS to about 30. The stream's resize now runs on several threads,
+  Direct3D shrinks the frame on the graphics card as OpenGL already did, and the
+  encoder no longer oversleeps on Windows. On the reporter's setup the stream
+  now encodes all 60 frames a second at about 6,000 Kbps, and the game stays at
+  240 FPS. This changes nothing about who can play together.
 - **Protocol 295:** the aiming and the new units' release change the game, so
   0.9.1 does not play with 0.9.0, and 0.9.0 replays do not play in 0.9.1.
 

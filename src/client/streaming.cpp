@@ -3,6 +3,7 @@
 #include "client/gpuvram.h"
 #include "client/settings.h"
 #include "client/streamkey.h"
+#include "client/streamcapture_d3d.h"
 #include <SDL_opengl.h>
 #include <algorithm>
 #include <array>
@@ -12,15 +13,16 @@
 
 namespace tak {
 namespace {
-// Double-buffered OpenGL readback: only map after the fence signals. SDL's
-// Metal/D3D/software backends use a throttled portable readback fallback.
+// Double-buffered OpenGL readback: only map after the fence signals. Direct3D
+// shrinks on the GPU (streamcapture_d3d.h). SDL's Metal/software backends use a
+// throttled portable readback fallback.
 // The two PBOs and the scaling renderbuffer are counted in gpuvram's total (only
 // while a stream runs: 2 x w*h*4, plus w*h*4 when scaled) but never refused by its
 // cap -- the player asked to stream, and the capture cannot work without them.
 class Capture {
 public:
     ~Capture() { clear(); }
-    void reset() { clear(); w_=h_=0; checked_=available_=false; context_=nullptr; std::vector<uint8_t>().swap(pixels_); }
+    void reset() { clear(); d3d_.reset(); w_=h_=0; checked_=available_=false; context_=nullptr; std::vector<uint8_t>().swap(pixels_); }
     bool get(SDL_Renderer* ren, int w, int h, video::Stream& stream) {
         if (w<=0 || h<=0 || w>8192 || h>8192) return false;
         SDL_RendererInfo info{}; SDL_GetRendererInfo(ren,&info);
@@ -99,6 +101,11 @@ public:
             store_(GL_PACK_ROW_LENGTH,rowLength); store_(GL_PACK_SKIP_ROWS,skipRows); store_(GL_PACK_SKIP_PIXELS,skipPixels);
             return delivered;
         }
+        if(!gl) {
+            const auto output=stream.status();
+            const int d3d=d3d_.get(ren,w,h,output.width,output.height,stream);
+            if(d3d>=0)return d3d>0;
+        }
         pixels_.resize(size_t(w)*h*4);
         if(SDL_RenderReadPixels(ren,nullptr,SDL_PIXELFORMAT_RGBA32,pixels_.data(),w*4)!=0)return false;
         return stream.video(pixels_,w,h);
@@ -133,6 +140,7 @@ private:
     }
     void count(size_t b) {gpuvram::addBuffer(b);counted_+=b;}
     size_t counted_=0;
+    D3DCapture d3d_;
     bool checked_=false,available_=false,scalable_=false;
     GLuint fbo_=0,rb_=0;
     int w_=0,h_=0;SDL_GLContext context_=nullptr;

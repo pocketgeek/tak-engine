@@ -203,7 +203,59 @@ static bool localCopy(tak::video::StreamConfig config) {
     fs::remove_all(root);
     return true;
 }
+// A capture much larger than the stream, as MAX 3840 sends a 7680x2160 window at
+// 3840x1080: the worker must resize every frame within its frame slot. Before the
+// threaded scaler, swscale's bilinear took ~50 ms per 7680x2160 frame and a 60 FPS
+// stream encoded ~18 FPS, the rest DROPPED. The output is kept small so the encoder
+// (x264 on machines without a GPU) is not what is measured. Steady state only: the
+// first half second (encoder start-up) is not counted.
+static int pacing(const std::string& encoder,int sw,int sh,int ow,int oh,int fps) {
+    tak::video::StreamConfig config;
+    config.encoder=encoder;config.width=ow;config.height=oh;config.fps=fps;config.bitrateKbps=3000;
+    auto path=std::filesystem::temp_directory_path()/("tak-stream-pacing-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count())+".flv");
+    std::array<std::vector<uint8_t>,2> frames;
+    for(int f=0;f<2;++f) {
+        frames[f].resize(size_t(sw)*sh*4);
+        for(int y=0;y<sh;++y)for(int x=0;x<sw;++x){uint8_t* p=&frames[f][(size_t(y)*sw+x)*4];p[0]=uint8_t(x/7+f*40);p[1]=uint8_t(y/5);p[2]=uint8_t((x^y)>>3);p[3]=255;}
+    }
+    tak::video::StreamStatus warm{},end{};
+    {
+        tak::video::Stream stream;
+        require(stream.startRecording(config,path.string()),"start pacing recording");
+        std::array<int16_t,184*2> audio{};
+        const auto begin=std::chrono::steady_clock::now();
+        bool warmed=false;
+        std::vector<uint8_t> buffer;
+        for(int n=0;;++n) {
+            const auto now=std::chrono::steady_clock::now();
+            if(now-begin>=3500ms)break;
+            require(stream.active(),stream.status().state.c_str());
+            if(!warmed && now-begin>=500ms){warm=stream.status();warmed=true;}
+            // As the capture does: fill a buffer, then hand it over (the copy
+            // happens outside the stream's lock; a buffer comes back to reuse).
+            buffer.assign(frames[n&1].begin(),frames[n&1].end());
+            stream.video(buffer,sw,sh);
+            stream.audio(audio.data(),184,2);
+            std::this_thread::sleep_until(begin+std::chrono::microseconds(int64_t(n+1)*1000000/60));
+        }
+        end=stream.status();
+        stream.stop();
+        const auto deadline=std::chrono::steady_clock::now()+5s;
+        while(stream.active()&&std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(1ms);
+    }
+    std::filesystem::remove(path);
+    const uint64_t frames3=end.frames-warm.frames, dropped=end.dropped-warm.dropped;
+    std::printf("pacing %s %dx%d -> %dx%d@%d: %llu frames, %llu dropped in 3 s of steady state\n",end.encoder.c_str(),sw,sh,ow,oh,fps,
+                (unsigned long long)frames3,(unsigned long long)dropped);
+    // 3 s at fps: allow for a loaded test machine, not for a scaler that misses most slots.
+    require(dropped*10<=uint64_t(fps)*3,"no more than 10% of the frame slots dropped");
+    require(frames3*10>=uint64_t(fps)*3*8,"at least 80% of the frame slots encoded");
+    return 0;
+}
 int main(int argc,char** argv) {
+    if(argc>2 && std::string(argv[2])=="pacing")
+        return pacing(argv[1],argc>3?std::atoi(argv[3]):7680,argc>4?std::atoi(argv[4]):2160,
+                      argc>5?std::atoi(argv[5]):1280,argc>6?std::atoi(argv[6]):360,argc>7?std::atoi(argv[7]):60);
     tak::video::StreamConfig config;
     config.encoder=argc>1?argv[1]:"libx264";
     if(config.encoder=="auto")config.encoder.clear();

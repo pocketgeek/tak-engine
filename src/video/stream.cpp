@@ -1,4 +1,5 @@
 #include "video/stream.h"
+#include "video/rgbascale.h"
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -22,6 +23,11 @@ extern "C" {
 #include <mutex>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 
 namespace tak::video {
 namespace {
@@ -59,6 +65,26 @@ void logCallback(void* obj, int level, const char* fmt, va_list args) {
     std::fill(std::begin(text), std::end(text), '\0');
 }
 void check(int result) { if (result < 0) throw result; }
+#ifdef _WIN32
+// A condition-variable timeout here sleeps whole 15.6 ms scheduler quanta, even
+// under timeBeginPeriod(1): 1 ms takes ~15 ms and 16 ms ~31 ms, the length of
+// two 60 FPS frame slots. A high-resolution waitable timer (Windows 10 1803+)
+// wakes within ~0.5 ms. Without one, pacing falls back to the condition variable.
+class PaceTimer {
+public:
+    PaceTimer(): timer_(CreateWaitableTimerExW(nullptr, nullptr, 0x2 /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION */, TIMER_ALL_ACCESS)) {}
+    ~PaceTimer() { if (timer_) CloseHandle(timer_); }
+    PaceTimer(const PaceTimer&) = delete;
+    PaceTimer& operator=(const PaceTimer&) = delete;
+    bool wait(int64_t us) {
+        LARGE_INTEGER due; due.QuadPart = -us * 10; // relative, 100 ns units
+        return timer_ && SetWaitableTimer(timer_, &due, 0, nullptr, nullptr, FALSE) &&
+            WaitForSingleObject(timer_, 1000) == WAIT_OBJECT_0;
+    }
+private:
+    HANDLE timer_;
+};
+#endif
 struct HardwareUnavailable {};
 struct EncodeFailure {};
 // The optional local copy: a second muxer fed references to the encoder's own packets
@@ -410,6 +436,11 @@ struct Stream::Impl {
         privateStreamLog = true;
         int attempts = 0;
         int64_t start = 0;
+        RgbaScaler resize; // outlives reconnects: its helper threads start once
+        std::vector<uint8_t> resized;
+#ifdef _WIN32
+        PaceTimer pace;
+#endif
         while (!cancel) {
             try {
                 Encoder e;
@@ -465,11 +496,6 @@ struct Stream::Impl {
                             int dw = c.width, dh = int(int64_t(height) * dw / width) & ~1;
                             if (dh > c.height) { dh = c.height; dw = int(int64_t(width) * dh / height) & ~1; }
                             dw = std::max(dw, 2); dh = std::max(dh, 2);
-                            e.scale = sws_getCachedContext(e.scale, width, height, AV_PIX_FMT_RGBA,
-                                dw, dh, static_cast<AVPixelFormat>(e.vf->format), SWS_BILINEAR, nullptr, nullptr, nullptr);
-                            if (!e.scale) throw AVERROR(ENOMEM);
-                            const int* coeff = sws_getCoefficients(SWS_CS_ITU709);
-                            check(sws_setColorspaceDetails(e.scale, coeff, 1, coeff, 0, 0, 1<<16, 1<<16));
                             ptrdiff_t strides[4] = {e.vf->linesize[0], e.vf->linesize[1], e.vf->linesize[2], e.vf->linesize[3]};
                             if (dw != c.width || dh != c.height)
                                 check(av_image_fill_black(e.vf->data, strides, static_cast<AVPixelFormat>(e.vf->format), AVCOL_RANGE_MPEG, c.width, c.height));
@@ -478,11 +504,24 @@ struct Stream::Impl {
                             uint8_t* out[4] = {e.vf->data[0] + y*e.vf->linesize[0]+x*(packed?4:1),
                                 e.vf->data[1] ? e.vf->data[1]+y/2*e.vf->linesize[1]+(e.vf->format==AV_PIX_FMT_NV12 ? x : x/2) : nullptr,
                                 e.vf->data[2] ? e.vf->data[2]+y/2*e.vf->linesize[2]+x/2 : nullptr, nullptr};
-                            const uint8_t* in[] = {frame.data(), nullptr, nullptr, nullptr}; int pitch[] = {width*4,0,0,0};
-                            if (packed && dw == width && dh == height) {
-                                for (int row=0; row<height; ++row)
-                                    std::memcpy(out[0]+size_t(row)*e.vf->linesize[0],frame.data()+size_t(row)*width*4,size_t(width)*4);
-                            } else check(sws_scale(e.scale, in, pitch, 0, height, out, e.vf->linesize));
+                            // Resize with the threaded scaler (straight into the frame for
+                            // NVENC's RGBA); swscale then only converts colour, at output size.
+                            if (packed) resize.scale(frame.data(), width, height, width*4, out[0], dw, dh, e.vf->linesize[0]);
+                            else {
+                                const uint8_t* source = frame.data();
+                                if (dw != width || dh != height) {
+                                    resized.resize(size_t(dw)*dh*4);
+                                    resize.scale(frame.data(), width, height, width*4, resized.data(), dw, dh, dw*4);
+                                    source = resized.data();
+                                }
+                                e.scale = sws_getCachedContext(e.scale, dw, dh, AV_PIX_FMT_RGBA,
+                                    dw, dh, static_cast<AVPixelFormat>(e.vf->format), SWS_BILINEAR, nullptr, nullptr, nullptr);
+                                if (!e.scale) throw AVERROR(ENOMEM);
+                                const int* coeff = sws_getCoefficients(SWS_CS_ITU709);
+                                check(sws_setColorspaceDetails(e.scale, coeff, 1, coeff, 0, 0, 1<<16, 1<<16));
+                                const uint8_t* in[] = {source, nullptr, nullptr, nullptr}; int pitch[] = {dw*4,0,0,0};
+                                check(sws_scale(e.scale, in, pitch, 0, dh, out, e.vf->linesize));
+                            }
                             haveVideo = true;
                             frame.clear();
                         }
@@ -502,8 +541,16 @@ struct Stream::Impl {
                         { std::lock_guard lock(stateMutex); ++state.frames; }
                     }
                     const int64_t next = std::min(vpts*1000000/c.fps, apts*1000000/44100);
+                    const int64_t wait = std::max<int64_t>(0, start+next-micros());
+                    // Behind: go straight on. Even a zero condition-variable timeout
+                    // sleeps a 15.6 ms quantum on Windows, a whole frame slot lost.
+                    if (wait == 0) continue;
+#ifdef _WIN32
+                    // At most one frame slot, so stop still lands within ~33 ms.
+                    if (pace.wait(wait)) continue;
+#endif
                     std::unique_lock lock(inputMutex);
-                    wake.wait_for(lock, std::chrono::microseconds(std::max<int64_t>(0, start+next-micros())), [&]{return cancel.load();});
+                    wake.wait_for(lock, std::chrono::microseconds(wait), [&]{return cancel.load();});
                 }
                 if (local) { // files can be finalized even after stop interrupts network
                     deadline = 0; e.mux->interrupt_callback = {nullptr,nullptr};

@@ -246,10 +246,26 @@ The reason never includes the key, and FFmpeg's own messages are not shown.
 Encoding, scaling, audio resampling and networking run on a separate worker.
 The video queue holds only the latest frame; the audio ring has a fixed size.
 Slow uploads cannot grow an unlimited queue or block the mixer/simulation.
-The OpenGL renderer uses two pixel buffers and nonblocking fence checks for
-readback. SDL's other renderers use its portable readback at the selected capture
-rate; that readback can add render-thread cost. Lower the resolution/frame rate
-or choose hardware encoding if streaming reduces game performance.
+
+The renderer shrinks each captured frame toward the stream size on the GPU
+before reading it back, so a 7680×2160 window streamed at MAX 3840 copies a
+3840×1080 image, not the whole window:
+
+| Renderer | Capture |
+| --- | --- |
+| OpenGL | GPU scaling, two pixel buffers and nonblocking fence checks |
+| Direct3D 11 (Windows) | GPU half-size reduction when the stream is half the window or smaller, then a ring of staging textures read only once the GPU has finished |
+| Direct3D 9 (Windows; what **Auto** picks there) | GPU scaling to the stream size, then a small readback that waits for the GPU |
+| Metal, software | SDL's portable full-size readback, which waits for the GPU on the render thread |
+
+The worker finishes any remaining resize with its own multithreaded scaler (an
+area average when shrinking, bilinear when enlarging); colour conversion for
+encoders other than NVENC runs after the resize, at the stream size. On the
+7680×2160, RTX 5070 Windows test machine, a MAX 3840 / 60 FPS / 6,000 Kbps NVENC
+stream encodes all 60 frames a second at about the set bitrate with the game
+still at 240 FPS, under Direct3D 9, Direct3D 11 and OpenGL alike. If streaming
+still reduces game performance, lower the resolution or frame rate, or choose
+hardware encoding.
 
 No FFmpeg executable or additional DLL/shared-library bundle is required by
 players. FFmpeg, x264, OpenSSL and the Windows oneVPL dispatcher are built as static
@@ -333,6 +349,12 @@ python3 tools/check-stream-network.py build-o2/stream_network_test
 
 The external `ffmpeg`, `ffprobe` and `openssl` commands used by this check are development
 test tools, not engine runtime dependencies.
+
+`streaming_pacing` (`stream_test libx264 pacing [srcW srcH outW outH fps]`) feeds
+7680×2160 frames at 60 FPS into a small 60 FPS stream and fails if more than 10%
+of the frame slots are dropped once the encoder has started: the worker's resize
+must keep pace (swscale's single-threaded bilinear needed about 50 ms per such
+frame). `rgbascale_test` checks the scaler against a floating-point reference.
 
 Encoder slowdowns skip late video frames without reconnecting. Audio catches up
 independently; reconnects are reserved for connection/write failures. Title-screen
