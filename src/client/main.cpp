@@ -842,47 +842,82 @@ int main(int argc, char** argv) {
         constexpr bool kWindowsAuto = false;
 #endif
         const Uint32 autoFlags = renFlags & ~Uint32(SDL_RENDERER_SOFTWARE);
+        // GL_VENDOR / GL_RENDERER of the current context.
+        const auto glStrings = [](std::string& vendor, std::string& glRen) {
+            using GetString = const GLubyte*(APIENTRY*)(GLenum);
+            if (auto get = reinterpret_cast<GetString>(SDL_GL_GetProcAddress("glGetString"))) {
+                const auto str = [&](GLenum e) {
+                    const auto* v = reinterpret_cast<const char*>(get(e));
+                    return std::string(v ? v : "");
+                };
+                vendor = str(GL_VENDOR);
+                glRen = str(GL_RENDERER);
+            }
+#ifndef NDEBUG
+            // TAK_RENDER_FAKE_GL=<GL_RENDERER>[|<GL_VENDOR>]: pretend to be that GL.
+            if (const char* fake = tak::devEnv("TAK_RENDER_FAKE_GL"); fake && *fake) {
+                const std::string f = fake;
+                const size_t bar = f.find('|');
+                glRen = f.substr(0, bar);
+                vendor = bar == std::string::npos ? std::string("Microsoft Corporation") : f.substr(bar + 1);
+            }
+#endif
+        };
+        // OpenGL is judged on a hidden 1x1 window BEFORE it touches the game's window: a
+        // GL renderer made and destroyed on the window can leave it unusable for Direct3D
+        // 11 (seen with Mesa's OpenGL-over-Direct3D 12, which keeps a swap chain on it).
+        const auto probeGl = [&](std::string& vendor, std::string& glRen) -> std::string {
+            SDL_Window* pw = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 1, 1,
+                                              SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+            if (!pw) return std::string("creation failed: ") + SDL_GetError();
+            SDL_GLContext ctx = SDL_GL_CreateContext(pw);
+            std::string err;
+            if (!ctx) err = std::string("creation failed: ") + SDL_GetError();
+            else {
+                glStrings(vendor, glRen);
+                SDL_GL_MakeCurrent(pw, nullptr);
+                SDL_GL_DeleteContext(ctx);
+            }
+            SDL_DestroyWindow(pw);
+            return err;
+        };
         for (const std::string& id :
              tak::renderdriver::autoOrder(kWindowsAuto, tak::renderdriver::available(), renState.failed)) {
-            ren = createNamed(id, autoFlags);
             std::string why;
-            if (!ren) {
-                why = std::string("creation failed: ") + SDL_GetError();
-            } else {
-                SDL_RendererInfo ri{};
-                SDL_GetRendererInfo(ren, &ri);
-                const std::string got = ri.name ? ri.name : "";
-                std::string vendor, glRen;
-                if (got.compare(0, 6, "opengl") == 0) {
-                    // The renderer's context is current right after creation.
-                    using GetString = const GLubyte*(APIENTRY*)(GLenum);
-                    if (auto get = reinterpret_cast<GetString>(SDL_GL_GetProcAddress("glGetString"))) {
-                        const auto str = [&](GLenum e) {
-                            const auto* v = reinterpret_cast<const char*>(get(e));
-                            return std::string(v ? v : "");
-                        };
-                        vendor = str(GL_VENDOR);
-                        glRen = str(GL_RENDERER);
-                    }
+            const bool gl = id.compare(0, 6, "opengl") == 0;
+            if (gl) {
 #ifndef NDEBUG
-                    // TAK_RENDER_FAKE_GL=<GL_RENDERER>[|<GL_VENDOR>]: pretend to be that GL.
-                    if (const char* fake = tak::devEnv("TAK_RENDER_FAKE_GL"); fake && *fake) {
-                        const std::string f = fake;
-                        const size_t bar = f.find('|');
-                        glRen = f.substr(0, bar);
-                        vendor = bar == std::string::npos ? std::string("Microsoft Corporation") : f.substr(bar + 1);
-                    }
+                if (const char* f = tak::devEnv("TAK_RENDER_FAIL"); f && tak::renderdriver::containsNoCase(f, id))
+                    why = "creation failed: TAK_RENDER_FAIL";
 #endif
+                std::string vendor, glRen;
+                if (why.empty()) why = probeGl(vendor, glRen);
+                if (why.empty()) {
                     std::fprintf(stderr, "renderer: auto: OpenGL is \"%s\" from \"%s\"\n",
                                  glRen.c_str(), vendor.c_str());
+                    if (const auto v = tak::renderdriver::judge(id, true, vendor, glRen); !v.keep) why = v.reason;
                 }
-                const auto verdict = tak::renderdriver::judge(
-                    got, (ri.flags & SDL_RENDERER_ACCELERATED) != 0, vendor, glRen);
-                if (!tak::renderdriver::honoured(id, got.c_str()))
-                    why = "SDL created '" + got + "' instead";
-                else if (!verdict.keep)
-                    why = verdict.reason;
-                if (!why.empty()) dropRenderer(ren);
+            }
+            if (why.empty()) {
+                ren = createNamed(id, autoFlags);
+                if (!ren) {
+                    why = std::string("creation failed: ") + SDL_GetError();
+                } else {
+                    SDL_RendererInfo ri{};
+                    SDL_GetRendererInfo(ren, &ri);
+                    const std::string got = ri.name ? ri.name : "";
+                    // The renderer's own context (current right after creation) is judged
+                    // again, with SDL's accelerated flag.
+                    std::string vendor, glRen;
+                    if (got.compare(0, 6, "opengl") == 0) glStrings(vendor, glRen);
+                    const auto verdict = tak::renderdriver::judge(
+                        got, (ri.flags & SDL_RENDERER_ACCELERATED) != 0, vendor, glRen);
+                    if (!tak::renderdriver::honoured(id, got.c_str()))
+                        why = "SDL created '" + got + "' instead";
+                    else if (!verdict.keep)
+                        why = verdict.reason;
+                    if (!why.empty()) dropRenderer(ren);
+                }
             }
             if (ren) {
                 std::fprintf(stderr, "renderer: auto chose %s%s\n",
