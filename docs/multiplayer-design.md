@@ -948,7 +948,10 @@ Protocol 295 changes the simulation: SweetSpot is retail's drawn piece bounds
 (the piece chain plus the body's pitch, heading and roll, not the authored local
 vertices), and a structure's ground or water output gets retail GetBuilt's
 rally, else a PARK ring kept to the cells connected to its birth point, in place
-of the exit step. 294 replays are refused. The AI's pond-yard refusal is server
+of the exit step. A structure's flyer output gets the rally alone, else retail
+PARK's flight branch: one flight move to a point on a circle of the factory's
+park radius plus (rand(6)+rand(3)+6)*16 at a rand(65536) angle, drawn from the
+game RNG when the move first runs. 294 replays are refused. The AI's pond-yard refusal is server
 side, and the client's pacing fix (a client stall is not network jitter; the
 buffer target stays under the flow-control limit) changes nothing on the wire.
 

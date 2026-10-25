@@ -38,6 +38,13 @@ their validation reports; both live in [`docs/`](docs/).
   the original. A ship only picks a spot it can sail to, so ships no longer stay
   stuck on the pad of a yard by a small lake. The AI no longer builds a
   shipyard on a pond that does not reach the sea.
+- **Flyers leaving the factory:** a new flyer with no rally point flies to a
+  random spot on a circle around the factory, a few hundred pixels out and on
+  any side of it, as in the original, instead of stopping a short way in front
+  of it. A flyer with a rally point flies straight to it, with no stop on the
+  way.
+- **Faster aiming:** finding a target's aim point is about four times faster.
+  This changes nothing in the game.
 - **Game speed:** raising the speed to +10 now takes effect at once. A player
   or spectator whose game had paused for a moment (while it loaded, or after
   switching windows) could stay at about +4 for most of a minute.

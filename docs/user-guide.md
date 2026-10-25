@@ -642,7 +642,9 @@ original game. Give the building a **move** or **patrol**
 order to set a **rally point** for new units; Shift adds more rally steps.
 Without a rally point, as in the original game, each new unit moves off the pad
 to a spot a short way from the building and waits there; a ship only picks a
-spot it can sail to.
+spot it can sail to. A new flyer with no rally point flies to a random spot on
+a circle a few hundred pixels around the building, on any side of it; with a
+rally point it flies straight to it.
 
 **Mobile production.** Some builders conjure units in the field (Zhon's Beast
 Handler, for example). They place what they build like a structure. A mobile
