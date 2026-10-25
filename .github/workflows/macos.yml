@@ -67,7 +67,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: third_party/ffmpeg-bink
-          key: ffmpeg-bink-macos-${{ matrix.arch }}-min14-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch', 'tools/vashim.c') }}
+          key: ffmpeg-bink-macos-${{ matrix.arch }}-min14-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch', 'tools/ffmpeg-securetransport-nonblock.patch', 'tools/vashim.c') }}
           restore-keys: ffmpeg-bink-macos-${{ matrix.arch }}-min14-n7.1.1-stream-v2-
       - name: Build static FFmpeg (Bink)
         run: |
@@ -112,7 +112,7 @@ jobs:
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_FIND_FRAMEWORK=LAST
-          cmake --build build --target acme_test server_address_test server_commands_test room_worker_test mod_packs_test tls_test crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_matchmaking_test crusades_result_test crusades_history_test crusades_replay_files_test replay_file_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test spectator_client_test crusades_presentation_test crusades_ui_test crusades_import crusades_admin crusades_admin_test crusades_servicelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test cartographer_placement_test datafolder_test detmath_test sim_driver_equiv_test stream_test menu_music_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
+          cmake --build build --target acme_test server_address_test server_commands_test room_worker_test mod_packs_test tls_test crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_matchmaking_test crusades_result_test crusades_history_test crusades_replay_files_test replay_file_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test spectator_client_test crusades_presentation_test crusades_ui_test crusades_import crusades_admin crusades_admin_test crusades_servicelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test cartographer_placement_test datafolder_test detmath_test sim_driver_equiv_test stream_test stream_network_test menu_music_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
 
       - name: Crusades model and durable store
         run: |
@@ -191,6 +191,7 @@ jobs:
           ./build/stream_test
           ./build/stream_test libx264 overload
           ./build/stream_test libx264 native
+          python3 tools/check-stream-rtmps.py build/stream_network_test
           ./build/menu_music_test
           ./build/nvml_test
           ./build/windowsgpu_test

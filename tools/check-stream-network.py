@@ -26,7 +26,9 @@ def certificate(root, name):
     cert, key = root / (name + '.crt'), root / (name + '.key')
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
                     '-keyout', str(key), '-out', str(cert), '-days', '1',
-                    '-subj', '/CN=' + name, '-addext', 'subjectAltName=DNS:' + name],
+                    '-subj', '/CN=' + name, '-addext', 'subjectAltName=DNS:' + name,
+                    # macOS rejects a TLS server certificate without serverAuth (-9807).
+                    '-addext', 'extendedKeyUsage=serverAuth'],
                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return cert, key
 
@@ -178,6 +180,8 @@ def main():
             output, errors = p.communicate(timeout=8)
             assert 'LIVE' not in output, 'hostname mismatch accepted'
             assert 'RECONNECTING' in output, output
+            # The panel names the reason (Schannel's wording is not inspected).
+            assert sys.platform == 'win32' or 'TLS CERTIFICATE' in output, output
             assert proxy.accepted == 0, 'TLS handshake accepted a mismatched hostname'
             assert 'test-key' not in output + errors, 'stream key leaked into logs'
             print('PASS: encrypted upload, reconnect, local copies, hostname rejection, key redaction')

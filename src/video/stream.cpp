@@ -11,8 +11,10 @@ extern "C" {
 }
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -28,8 +30,33 @@ int64_t micros() { return std::chrono::duration_cast<std::chrono::microseconds>(
 // FFmpeg's protocol errors may contain the URL (including the key). Suppress
 // logging only on the streaming worker; Bink diagnostics remain available.
 thread_local bool privateStreamLog = false;
+// Set when the TLS layer rejected the server's certificate during this attempt, so
+// the panel can say so. Only the "tls" protocol's own error text is inspected (it
+// never holds the URL), in a stack buffer that is wiped and never stored.
+thread_local bool tlsCertificateRejected = false;
+bool certificateError(const char* text) {
+    std::string lower(text);
+    for (char& ch : lower) ch = char(std::tolower(static_cast<unsigned char>(ch)));
+    bool found = lower.find("certificate") != std::string::npos;
+    // SecureTransport's "Unable to negotiate TLS/SSL session: <OSStatus>": the chain,
+    // root, expiry and host-name trust failures (Security/SecureTransport.h).
+    for (const char* code : {"-9807", "-9808", "-9812", "-9813", "-9814", "-9815", "-9843"})
+        found = found || lower.find(code) != std::string::npos;
+    std::fill(lower.begin(), lower.end(), '\0');
+    return found;
+}
 void logCallback(void* obj, int level, const char* fmt, va_list args) {
-    if (!privateStreamLog) av_log_default_callback(obj, level, fmt, args);
+    if (!privateStreamLog) { av_log_default_callback(obj, level, fmt, args); return; }
+    if (level > AV_LOG_ERROR || !obj) return;
+    const AVClass* cls = *static_cast<AVClass**>(obj);
+    if (!cls || !cls->item_name || std::strcmp(cls->item_name(obj), "tls") != 0) return;
+    char text[256];
+    va_list copy;
+    va_copy(copy, args);
+    std::vsnprintf(text, sizeof text, fmt, copy);
+    va_end(copy);
+    if (certificateError(text)) tlsCertificateRejected = true;
+    std::fill(std::begin(text), std::end(text), '\0');
 }
 void check(int result) { if (result < 0) throw result; }
 struct HardwareUnavailable {};
@@ -111,6 +138,8 @@ struct Stream::Impl {
     std::mutex audioMutex;
     std::array<int16_t, 22050 * 2> pcm{};
     size_t read = 0, count = 0;
+    // How far the worker's current attempt got, for the failure reason. Worker only.
+    enum class Stage { Setup, Connect, Live } stage = Stage::Setup;
 
     void report(const std::string& s, const std::string& encoder = {}) {
         std::lock_guard lock(stateMutex); state.state = s;
@@ -328,6 +357,7 @@ struct Stream::Impl {
 #ifdef TAK_STREAM_TESTING
         if (!testCaFile.empty()) av_dict_set(&opts, "ca_file", testCaFile.c_str(), 0);
 #endif
+        stage = Stage::Connect;
         timeout();
         int result = avio_open2(&e.mux->pb, dest.c_str(), AVIO_FLAG_WRITE, &e.mux->interrupt_callback, &opts);
         av_dict_free(&opts); check(result);
@@ -379,14 +409,18 @@ struct Stream::Impl {
     void run(StreamConfig c, std::string dest, bool local) {
         privateStreamLog = true;
         int attempts = 0;
+        int64_t start = 0;
         while (!cancel) {
             try {
                 Encoder e;
+                stage = Stage::Setup; tlsCertificateRejected = false;
                 open(e, c, dest, local);
                 { std::lock_guard lock(audioMutex); count = read = 0; }
                 report(local ? "RECORDING" : c.encoder.empty() && e.v->codec_id == AV_CODEC_ID_H264 &&
                     std::string(e.v->codec->name) == "libx264" ? "LIVE - CPU FALLBACK" : "LIVE");
-                int64_t start = micros(), vpts = 0, apts = 0, nextKey = 0;
+                stage = Stage::Live;
+                start = micros();
+                int64_t vpts = 0, apts = 0, nextKey = 0;
                 bool haveVideo = false;
                 std::vector<uint8_t> frame;
                 int width = 0, height = 0;
@@ -488,8 +522,20 @@ struct Stream::Impl {
                 report("RESTARTING WITH CPU ENCODER");
             } catch (int) {
                 if (cancel) break;
-                if (local || ++attempts > 3) { report("FAILED - CHECK KEY, CONNECTION OR ENCODER"); break; }
-                report("RECONNECTING " + std::to_string(attempts) + "/3");
+                // Three retries per outage: a connection that stayed up a minute
+                // earned a fresh set, so drops hours apart never end the stream.
+                if (stage == Stage::Live && micros() - start > 60000000) attempts = 0;
+                const bool certificate = tlsCertificateRejected;
+                if (local || ++attempts > 3) {
+                    report(local || stage == Stage::Setup ? "FAILED - CHECK KEY, CONNECTION OR ENCODER" :
+                           certificate ? "FAILED - TLS CERTIFICATE NOT TRUSTED" :
+                           stage == Stage::Connect ? "FAILED - CANNOT CONNECT - CHECK KEY, NETWORK" :
+                                                     "FAILED - CONNECTION DROPPED - CHECK NETWORK");
+                    break;
+                }
+                report("RECONNECTING " + std::to_string(attempts) + "/3" +
+                       (stage == Stage::Setup ? "" : certificate ? " - TLS CERTIFICATE" :
+                        stage == Stage::Connect ? " - CANNOT CONNECT" : " - CONNECTION DROPPED"));
                 std::unique_lock lock(inputMutex);
                 wake.wait_for(lock, std::chrono::seconds(1 << attempts), [&]{return cancel.load();});
             } catch (...) { report("FAILED - STREAMING RESOURCE ERROR"); break; }

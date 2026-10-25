@@ -1935,6 +1935,15 @@ endif()
 add_executable(stream_network_test tools/stream_network_test.cpp src/video/stream.cpp)
 target_compile_definitions(stream_network_test PRIVATE TAK_STREAM_TESTING)
 target_link_libraries(stream_network_test PRIVATE tak-formats tak_ffmpeg)
+# A real RTMPS upload to a local TLS proxy + RTMP sink (no ffmpeg program needed): it
+# must stay LIVE. Caught macOS SecureTransport stalling every upload after a few frames.
+# Not on Windows: Schannel ignores the test's ca_file.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND AND NOT WIN32)
+  add_test(NAME streaming_rtmps
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/check-stream-rtmps.py $<TARGET_FILE:stream_network_test>)
+  set_tests_properties(streaming_rtmps PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+endif()
 
 add_executable(stream_test tools/stream_test.cpp src/video/stream.cpp)
 target_compile_definitions(stream_test PRIVATE TAK_STREAM_TESTING=1)

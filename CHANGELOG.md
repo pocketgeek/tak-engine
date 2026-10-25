@@ -56,6 +56,15 @@ their validation reports; both live in [`docs/`](docs/).
   FALLBACK**) even where `vainfo` worked. Without libva the game still streams
   on the CPU as before; libva is not a package dependency. This changes nothing
   about who can play together.
+- **YouTube streaming on macOS:** streams from a Mac now reach YouTube. Before,
+  every upload stopped after a few frames: the panel went RECONNECTING and then
+  FAILED, and only the local copy was saved. A bug in FFmpeg's macOS TLS code
+  froze the upload for 5 seconds the first time it checked for a reply from
+  YouTube; the built-in FFmpeg is now patched. When streaming fails, the panel
+  now says why: the certificate was not trusted, the connection could not be
+  made, or it kept dropping. A stream that stayed up for a minute gets three
+  fresh retries when the connection drops, instead of sharing three retries
+  across the whole stream.
 - **Protocol 295:** the aiming and the new units' release change the game, so
   0.9.1 does not play with 0.9.0, and 0.9.0 replays do not play in 0.9.1.
 

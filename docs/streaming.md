@@ -224,8 +224,22 @@ On Linux, prefer the native build if you want to remember the key.
 Uploads use RTMPS with certificate and hostname verification, H.264 or HEVC video, AAC
 stereo audio at 44.1 kHz / 128 Kbps, and two-second video keyframes. After a
 connection failure, the worker retries three times, waiting 2, 4 and 8 seconds.
-Stop interrupts network I/O; an unsuccessful stream reports failure in the game.
-The primary YouTube ingest endpoint is currently fixed in the client.
+A connection that stayed live for a minute starts a fresh set of three retries
+when it drops, so drops far apart never end the stream. Stop interrupts network
+I/O; an unsuccessful stream reports failure in the game. The primary YouTube
+ingest endpoint is currently fixed in the client.
+
+While retrying, the status line names the reason (for example
+**RECONNECTING 1/3 - CONNECTION DROPPED**). After the last retry it shows one of:
+
+| Status | Meaning |
+|---|---|
+| **FAILED - TLS CERTIFICATE NOT TRUSTED** | The secure connection was refused because the server's certificate did not verify (a network that intercepts HTTPS, or a wrong system clock). |
+| **FAILED - CANNOT CONNECT - CHECK KEY, NETWORK** | The connection to YouTube could not be opened or set up for the stream. Check the key and the network. |
+| **FAILED - CONNECTION DROPPED - CHECK NETWORK** | The stream went live, but the upload kept stalling or being closed. |
+| **FAILED - CHECK KEY, CONNECTION OR ENCODER** | The encoder or the stream could not be set up. |
+
+The reason never includes the key, and FFmpeg's own messages are not shown.
 
 ## Performance and dependencies
 
@@ -251,7 +265,11 @@ Python 3, Ninja, Perl's standard modules (Fedora: `perl-core`), and patch in
 addition to the regular build tools. Perl configures OpenSSL during the build;
 it is not a game dependency. Windows streaming uses Schannel and macOS streaming
 uses SecureTransport. Multiplayer TLS uses static OpenSSL on all platforms. FFmpeg's OpenSSL hostname checking
-is patched explicitly for the pinned FFmpeg 7.1 source.
+is patched explicitly for the pinned FFmpeg 7.1 source. On macOS the build also applies
+`tools/ffmpeg-securetransport-nonblock.patch`: FFmpeg 7.1's SecureTransport code does not
+pass non-blocking reads down to the socket, so RTMP's periodic check for server messages
+blocked until the 5-second timeout and every RTMPS upload dropped after a few frames
+(0.9.0 and earlier). Both patches are part of the FFmpeg cache keys in CI.
 
 CMake requires the media/codec/TLS/loader archives by full path; CI additionally
 checks executable imports. On Linux the FFmpeg build compiles against pinned libva
@@ -289,11 +307,24 @@ SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=opengl \
 ./build-o2/stream_test h264_nvenc
 ```
 
+`streaming_rtmps` (CTest, not on Windows; also run by macOS CI) uploads over RTMPS for
+10 seconds to a local Python TLS proxy in front of `stream_network_test --sink`, a plain
+RTMP receiver built from the same static FFmpeg. It needs only `python3` and `openssl`
+(it is skipped without `openssl`), and fails unless the stream stays LIVE without a
+reconnect and the receiver gets nearly all of it (megabytes of FLV with libx264). It caught the macOS stall above. It
+then offers a trusted certificate for another host name, which must be refused with the
+TLS CERTIFICATE reason. It never contacts YouTube:
+
+```sh
+cmake --build build-o2 --target stream_network_test
+python3 tools/check-stream-rtmps.py build-o2/stream_network_test
+```
+
 The optional local network check uses a test-only build of the backend, a local
 TLS proxy, and a local FFmpeg receiver. It verifies reconnect, saves a local copy
 of each connection and checks with `ffprobe` that both files open with H.264 video,
 AAC audio and a plausible duration, and rejects a trusted certificate for the wrong
-hostname. It never contacts YouTube:
+hostname with the TLS CERTIFICATE reason. It never contacts YouTube:
 
 ```sh
 cmake --build build-o2 --target stream_network_test
