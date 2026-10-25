@@ -46,8 +46,9 @@ spending follows its income instead.
   is not one), the side its output leaves by. In front of the door is a strip:
   the door's span widened 16 px each side, 80-112 px deep (the largest ground
   output plus a builder, 3x3 plus 2x2 at the least, retail's 7-cell street at
-  the most). No building goes in a strip, a new factory's own strip must be
-  clear of buildings and of sites still to be built, and a builder never works
+  the most); a building whose outputs all fly has none. No building goes in a
+  strip, a new factory's own strip must be clear of buildings and of sites
+  still to be built, and a builder never works
   from a strip or from a building's open yard. A conjurer standing in a
   factory's open yard does not conjure until door clearing has walked it out
   (an Aramon Priest conjured a Dragon from its Castle's yard), and nothing it

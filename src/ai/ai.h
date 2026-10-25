@@ -259,7 +259,7 @@ private:
     };
     BaseLayout baseLayout(const tak::sim::World&) const;
     mutable std::map<std::tuple<const tak::sim::UnitType*,const tak::sim::UnitType*,int,int,int,int>,int>
-        navalDoorSteps_;   // per yard type, ship and site
+        navalDoorSteps_;   // per yard type, ship and site, for one think
     int   desire(BuildCat, const Needs&) const;
     // Retail's lodestone trigger: short of mana, with no lodestone under way.
     bool  manaShort(const tak::sim::World&, const Needs&) const;

@@ -281,7 +281,6 @@ int Controller::navalDoorSteps(const tak::sim::World& world,const tak::sim::Unit
     const int sx=tak::sim::footprintOrigin(x+dx,ship->footX),sz=tak::sim::footprintOrigin(z+dz,ship->footZ);
     const auto key=std::tuple{factory,ship,ox,oz,sx,sz};
     if (const auto it=navalDoorSteps_.find(key); it!=navalDoorSteps_.end()) return it->second;
-    if (navalDoorSteps_.size()>65536) navalDoorSteps_.clear();
     const auto& grid=world.navFor(ship);
     const int reach=navalDoorReach(factory,ship);
     // Moves from the pad to the yard's edge, by the shortest side; the budget
@@ -347,6 +346,8 @@ const std::vector<Controller::Rect>& Controller::doorStrips(const tak::sim::Unit
         output=std::max({output,int(child->footX),int(child->footZ)});
         if (child->isBuilder) builder=std::max({builder,int(child->footX),int(child->footZ)});
     }
+    // Outputs that all fly (or none at all) leave no ground traffic at a door.
+    if (output==0) return it->second;
     const float depth=float(std::clamp((output+builder)*16,80,112));
     auto open=[&](int i,int j){const char c=type->yardMap[size_t(j)*fx+i];return c=='c' || c=='C';};
     // One edge: `n` cells along it, at(k) whether cell k is open, strip(a,b) the
@@ -2019,6 +2020,9 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     if (world.player(player_).defeated) return;
 
     now_ = simTick;
+    // Door clearance reads the live obstacle overlay, which new buildings change:
+    // keep it for one think only.
+    navalDoorSteps_.clear();
     if (!home_) home_=homeOf(world);
     if (!allyHomesKnown_) {
         allyHomesKnown_=true;
