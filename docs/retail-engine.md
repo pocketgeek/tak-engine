@@ -830,8 +830,9 @@ out to three times that, around the factory; it ends on arrival (0x100) or
 when a next order is ready, and re-rolls on failure without limit. A mobile
 builder's output gets nothing.
 
-Port (protocol 295): `World::parkProductionOutput` for a structure's ground
-and water outputs; flying outputs and mobile producers keep the exit step.
+Port (protocol 295): `World::parkProductionOutput` for every output of a
+structure, flyers included (flight branch below); mobile producers keep the
+exit step.
 Ours, not retail: retail tests no reachability, so a Navy Yard on a pond could
 park its ship in the next body of water, and a permanent PARK that cannot be
 reached never ends, holding the pad. The ring is kept when any cell of it is
@@ -846,6 +847,57 @@ idle (retail's AI takes it through `0x50b4f0`). Tests:
 `tools/shipyard_park_test.cpp` (the reported pond, a Barracks, a rally point,
 a rally of only a dead target),
 and an emulation probe of `0x402220` kept outside the repo (`~/tak-tmp/scratch/fix-091/shipyard-fix/probe_getbuilt_release.py`).
+
+### A factory's flyer: PARK's flight branch (icd `0x407ca0`, emulated 2026-10-25)
+
+GetBuilt treats a flyer like any output: the factory's `QMove`/`QPatrol`
+entries are copied with nothing inserted before them, and only when none was
+copied does it add PARK, padding `(rand(6)+rand(3)+6)*16`
+(`0x4023b5..0x4023d3`: the base is 6 for canfly, 3 otherwise). PARK's stage 0
+splits on canfly (`test ch,8` on type `+0x260` at `0x407e51`). The flight
+branch (`0x407e5a..0x407f62`) takes no ring: radius r = footX*16 + padding +
+trunc(sqrt(fx^2+fz^2)*16)/2 for the factory's footprint fx,fz (the constant at
+`0x5ebaa8` is -16.0, subtracted), angle a = rand(65536) drawn by the stage
+itself when the mission runs, and the target is the factory position minus
+(r sin a, r cos a) through `0x5360bf`/`0x5360f3`, the factory's y kept. It is
+pushed as ONE `VTOL_MOVE` child (`0x4d4ef0`); stage 1 ends on arrival
+(0x100), and a failed approach (0x200) re-rolls through `0x4d4e10`. When the
+factory is gone or lacks `+0x130` bit 0x1000000 (`0x407f0a`) the circle is
+centred on the unit itself with no diagonal term. Emulated with the callees
+hooked (probe outside the repo,
+`~/tak-tmp/scratch/fix-091/exit-research/probe_park_flyer.py`): Spyhawk
+(2x2) at a Barracks (7x12), padding 96, gives r = 239 at every angle; angle 0
+is straight north (-z), 16384 west (-x).
+
+Port (protocol 295): `World::queueFlyerPark` queues the plain VTOL_Move
+carrying the park; `World::resolveFlyerPark` fixes its point when that move's
+stage 0 first runs (radius and offset in `retailpark.h`:
+`retailParkRadius`, `retailFlightParkOffset`). The game RNG supplies the
+draws; their order against other draws is not claimed to be retail's. Ours,
+not retail: the point is kept on the map (an axis that would leave it is
+mirrored through the centre, then clamped), and the retail-resources
+GetBuilt host now releases flyers the same way. No reachability test is
+needed: an airborne flyer holds no ground, so it can neither be left on the
+pad nor block the factory's next output. Flyers are not Legion-routed, so
+both pathfinding modes release them identically.
+
+Mobile producers are deliberately unchanged: retail's GetBuilt releases only a
+structure builder's output (bit 0x2000000) and gives a mobile producer's output
+nothing, so it would stand where it was made. Ours keeps the exit step there,
+because a mobile producer (a Zhon builder, Ctrl+click repeat production)
+builds its next unit on the same spot. The Legion column a Legion PARK forms
+behind the first ground output remains a known gap.
+
+Placement: retail's structure placement (`507400`) tests the ground word,
+which holds a mobile body only while landed (`5066f0`). Ours matches:
+`searchBodyRect` skips a flyer whose `flightGroundMode` is not 1, and
+MobileBuild's retry test ignores mobile units, so an airborne flyer parked
+over a base never refuses a building site in `canPlace` or the AI's site
+search; a landed one does, as in retail. Tests: `tools/shipyard_park_test.cpp`
+(four factory/flyer pairs: radius within the formula's range, all four
+quadrants including behind the factory, none left on the pad; a rally flyer
+flies straight to the rally; the self-centred circle once the factory is gone;
+airborne vs landed flyer over a site), both pathfinding modes.
 
 ## Benchmark switches and RNG seeding (icd, 2026-10-22)
 

@@ -2127,6 +2127,7 @@ void World::tickFlightPatrol(Unit& u) {
             if (u.orders.front().flightMoveMission) {
                 auto& order=u.orders.front();
                 if (m.stage==0) {
+                    if (order.park) w.resolveFlyerPark(u,order);
                     if (auto script=w.unitScripts_.find(u.id);script!=w.unitScripts_.end() && !script->second.activated) {
                         script->second.activated=true;w.notifyUnitScript(u,"Activate");
                     }
@@ -9593,12 +9594,13 @@ void World::tickRetailGetBuilt(Unit& site) {
             if (state.progress.remaining==0) {
                 auto* builder=w.unit(state.builder);
                 if (!u.type->isStructure() && builder && builder->alive() && builder->type->isStructure()) {
-                    if (u.type->canFly || !builder->rally.empty())
-                        throw std::runtime_error("factory flight/rally completion host is not ported");
+                    if (!builder->rally.empty())
+                        throw std::runtime_error("factory rally completion host is not ported");
+                    const uint32_t first=random(6),second=random(3);
+                    if (u.type->canFly) { w.queueFlyerPark(u.id,builder->id,(first+second+6)*16); return 5; }
                     Order order;order.goal=order.groundMission=true;order.park.emplace();
                     order.park->target=builder->id;
                     order.mission.flags=0x200u; // PARK definition retains its live target.
-                    const uint32_t first=random(6),second=random(3);
                     order.park->padding=(first+second+3)*16;
                     u.orders.push_back(order);
                 }
@@ -11284,7 +11286,8 @@ bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& 
 
 // GetBuilt's release (0x402220, emulated): a structure's finished output with no
 // queued QMove/QPatrol order gets PARK around the factory, padding
-// (rand(6)+rand(3)+3)*16 (flyers +6, which never come here). PARK's ring
+// (rand(6)+rand(3)+3)*16, or +6 for a flyer (0x4023b5..0x4023d3), whose PARK
+// is the flight branch (queueFlyerPark). The ground PARK's ring
 // (407ca0, retailGroundPark) is footX*16+padding+half the factory's diagonal
 // out to three times that. Retail tests no reachability: a yard on a small pond
 // could park its ship in the next body of water and leave it on the pad, holding
@@ -11297,6 +11300,7 @@ void World::parkProductionOutput(int id,int factoryId) {
     Unit* u=unit(id);const Unit* f=unit(factoryId);
     if (!u || !f || !u->type || !f->type) return;
     const UnitType* t=u->type;
+    if (t->canFly) { queueFlyerPark(id,factoryId,(first+second+6)*16); return; }
     const uint32_t padding=(first+second+3)*16;
     const uint64_t diagonal=uint64_t(int64_t(f->type->footX)*f->type->footX+int64_t(f->type->footZ)*f->type->footZ);
     const int radius=int(uint32_t(t->footX*16)+padding+uint32_t(isqrt64(diagonal*256)/2));
@@ -11345,6 +11349,49 @@ void World::parkProductionOutput(int id,int factoryId) {
         }
     if (best) order(id,footprintWaypoint(best->first+t->footX/2,t->footX).toFloat(),
                     footprintWaypoint(best->second+t->footZ/2,t->footZ).toFloat(),false);
+}
+
+// PARK for a flyer (407ca0's flight branch, see retailFlightParkOffset). It is
+// queued as the plain VTOL_Move it pushes, carrying the park until that move
+// first runs: resolveFlyerPark then draws the angle and fixes the point, as the
+// PARK stage does when its mission runs rather than at the release. Retail
+// does not test reachability here and needs none: flyers do not hold ground
+// while airborne, so no position can leave one on its factory's pad.
+void World::queueFlyerPark(int id,int factoryId,uint32_t padding) {
+    const Unit* u=unit(id);
+    if (!u || !u->type || !u->type->canFly) return;
+    order(id,u->x.toFloat(),u->z.toFloat(),false);
+    Unit* p=unit(id);
+    if (!p || p->orders.empty()) return;
+    auto& leg=p->orders.back();
+    leg.park.emplace();leg.park->target=factoryId;leg.park->padding=padding;
+}
+
+// The park's point, resolved by VTOL_Move's stage 0. Around the target while
+// it is live; around the flyer itself, without the diagonal, once it is not
+// (0x407f0a). Keeping the point on the map is ours: retail lets a park ring
+// overhang the edge. An axis that would leave the map is mirrored through the
+// centre first, so the flyer still ends a full radius from its factory instead
+// of being clamped back towards the pad; the clamp is the last resort.
+void World::resolveFlyerPark(Unit& u,Order& leg) {
+    const RetailParkState park=*leg.park;
+    leg.park.reset();
+    const Unit* target=park.target ? unit(park.target) : nullptr;
+    const bool live=target && target->alive() && target->type;
+    const uint16_t angle=uint16_t(gameRand(65536));
+    const uint32_t radius=retailParkRadius(int16_t(u.type->footX),park.padding,live,
+        int16_t(live ? target->type->footX : 0),int16_t(live ? target->type->footZ : 0));
+    const auto [dx,dz]=retailFlightParkOffset(angle,radius);
+    const auto place=[](Fixed centre,int32_t offset,int cells,int foot) {
+        int64_t at=int64_t(centre.v)+offset;
+        if (cells<=0) return Fixed::raw(int32_t(at));
+        const int64_t low=int64_t(foot)*8*65536,high=std::max(low,int64_t(cells)*16*65536-low);
+        if (at<low || at>high) at=int64_t(centre.v)-offset;
+        return Fixed::raw(int32_t(std::clamp(at,low,high)));
+    };
+    leg.x=place(live ? target->x : u.x,dx,terW_,u.type->footX);
+    leg.z=place(live ? target->z : u.z,dz,terH_,u.type->footZ);
+    leg.flightGoal.reset();
 }
 
 struct World::ScriptHost {
@@ -12374,12 +12421,14 @@ void World::tickProduction(Unit& u, float dt) {
     // Deterministic: a fixed outward ring scan over the nav grid and the unit grid,
     // both of which every peer builds identically.
     //
-    // A structure's ground or water output is released as retail's GetBuilt does
-    // instead (0x402220, emulated): the factory's queued QMove/QPatrol orders, else
-    // PARK around the factory (parkProductionOutput). The step stays for flying
-    // outputs and for mobile producers' outputs, which retail gives nothing.
+    // A structure's output -- ground, water or flying -- is released as retail's
+    // GetBuilt does instead (0x402220, emulated): the factory's queued QMove/QPatrol
+    // orders, else PARK around the factory (parkProductionOutput; a flyer's PARK
+    // flies to one point on its circle). The step stays for mobile producers'
+    // outputs, which retail gives nothing: without it a mobile producer's next
+    // output would be built on top of the last.
     const Unit* factory=unit(producerId);
-    const bool getBuilt=factory && factory->type->isStructure() && !t->canFly;
+    const bool getBuilt=factory && factory->type->isStructure();
     bool hasExitStep=false;
     if (getBuilt) {
         if (factory->rally.empty()) parkProductionOutput(id,producerId);
@@ -12390,7 +12439,8 @@ void World::tickProduction(Unit& u, float dt) {
     // ...then hand it the factory's RALLY plan. A production building accepts move /
     // fight-move / patrol / attack orders (and queues them) -- it cannot act on them
     // itself, so they describe what its OUTPUT should do. Behind the exit step where
-    // there is one; a factory's output takes the rally alone, as GetBuilt copies it.
+    // there is one; a factory's output, flyers included, takes the rally alone, as
+    // GetBuilt copies it with nothing before it.
     if (const Unit* pb = unit(producerId))
         for (const Order& ro : pb->rally) {
             Unit* nu = unit(id);
