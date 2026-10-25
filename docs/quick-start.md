@@ -134,12 +134,10 @@ There is no double-click select; use **Ctrl+Z** (same type) or **Ctrl+X** (same
 type on screen).
 
 ![Left-dragging a green box around seventeen Aramon units](img/quick/box-select.jpg)
-<!-- SHOT-0.9.0: quick-box-select -- left-drag selection box around about seventeen Aramon units -->
 
 *Left-drag draws the selection box.*
 
 ![The same army selected: green rings, four type portraits with counts, 17 SELECTED, and the command panel](img/quick/selected.jpg)
-<!-- SHOT-0.9.0: quick-selected -- the same army selected: rings, type portraits with counts, N SELECTED, command panel -->
 
 *After the drag: one portrait per unit type with its count, **17 SELECTED**, and
 the orders for the selection on the right-hand panel.*
@@ -158,7 +156,6 @@ the orders for the selection on the right-hand panel.*
 | A tree, rock or wreck | a reclaiming builder | Reclaim it for mana. |
 
 ![The attack cursor, crossed swords, over an enemy Skeleton Archer with the Aramon army selected](img/quick/attack-cursor.jpg)
-<!-- SHOT-0.9.0: quick-attack-cursor -- attack cursor (crossed swords) over an enemy with an army selected, Cursor Size 2x -->
 
 *Over an enemy the pointer becomes the attack cursor (shown here at Cursor Size
 2×).*
@@ -189,7 +186,6 @@ Patrols queued with Shift loop back to where the patrol started.
 | **Ctrl+Shift+D** | Self-destruct in 5 seconds (press again to cancel). |
 
 ![The command panel with labels: MOVE, PATROL, ATTACK, GUARD, HEAL, CLEAR and STOP](img/quick/command-panel.jpg)
-<!-- SHOT-0.9.0: quick-command-panel -- a builder's command panel: MOVE, PATROL, ATTACK, GUARD, HEAL, CLEAR, STOP -->
 
 *The command panel of a builder. **CLEAR** arms reclaim: click a tree, rock or
 wreck. Armed units can also have stance buttons (Offensive, Defensive, Passive),
@@ -210,13 +206,11 @@ and cloakers a cloak button; units with several weapons get weapon buttons.*
 | Rally point | With the building selected, right-click the ground or press **M** / **P** and click. Shift adds rally steps. A mobile builder in endless production takes **Move** and **Patrol** as rally orders too; **Stop** ends its production. |
 
 ![A Mage Builder selected, the Barracks icon chosen from the build menu, and the Barracks ghost under the pointer](img/quick/build-placement.jpg)
-<!-- SHOT-0.9.0: quick-build-placement -- Mage Builder selected, Barracks icon chosen, Barracks ghost under the pointer -->
 
 *A builder's build menu along the bottom, and the Barracks ghost under the
 pointer.*
 
 ![Two Shift-drag wall lines by a Monarch: a tight diagonal of ten walls corner to corner, and a straight line of five walls with the GAP 3 label at its end](img/quick/build-line.jpg)
-<!-- SHOT-0.9.0: quick-build-line -- two Shift-drag wall lines: a tight diagonal and a straight line with the GAP 3 label -->
 
 *Shift-drag lines: tight by default (left, a diagonal packs corner to corner);
 three wheel notches later, **GAP 3** (right).*

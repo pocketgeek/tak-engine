@@ -78,18 +78,14 @@ Full history: [CHANGELOG](CHANGELOG.md).
 
 <table>
   <tr>
-    <td colspan="2"><a href="docs/img/battle.jpg"><img src="docs/img/battle.jpg" alt="Aramon and Taros armies clash across a sandy arena with fire, magic and dragons"></a><br><sub>An eight-AI Benchmark battle on Ulasem Arena</sub>
-    <!-- SHOT-0.9.0: readme-battle -- Benchmark battle on Ulasem Arena, Aramon and Taros armies clashing with fire and dragons --></td>
+    <td colspan="2"><a href="docs/img/battle.jpg"><img src="docs/img/battle.jpg" alt="Aramon and Taros armies clash across a sandy arena with fire, magic and dragons"></a><br><sub>An eight-AI Benchmark battle on Ulasem Arena</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/img/hud.jpg"><img src="docs/img/hud.jpg" alt="An army of eight unit types selected as one formation: the information bar shows one portrait per type with its count, FORMATION and N SELECTED"></a><br><sub>A mixed selection: one portrait per unit type</sub>
-    <!-- SHOT-0.9.0: readme-hud -- mixed selection: portrait strip with counts, FORMATION n and N SELECTED in the information bar, stats panel visible --></td>
-    <td width="50%"><a href="docs/img/naval.jpg"><img src="docs/img/naval.jpg" alt="Veruna sailing ships trade fire with Creon ships on open water"></a><br><sub>Veruna's fleet against Creon ships</sub>
-    <!-- SHOT-0.9.0: readme-naval -- Veruna fleet trading fire with Creon ships on open water --></td>
+    <td width="50%"><a href="docs/img/hud.jpg"><img src="docs/img/hud.jpg" alt="An army of eight unit types selected as one formation: the information bar shows one portrait per type with its count, FORMATION and N SELECTED"></a><br><sub>A mixed selection: one portrait per unit type</sub></td>
+    <td width="50%"><a href="docs/img/naval.jpg"><img src="docs/img/naval.jpg" alt="Veruna sailing ships trade fire with Creon ships on open water"></a><br><sub>Veruna's fleet against Creon ships</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/img/dragons.jpg"><img src="docs/img/dragons.jpg" alt="Creon Neo Dragons breathe blue fire on an Aramon siege column"></a><br><sub>Creon Neo Dragons strike an Aramon siege column</sub>
-    <!-- SHOT-0.9.0: readme-dragons -- Creon Neo Dragons breathing fire on an Aramon siege column --></td>
+    <td width="50%"><a href="docs/img/dragons.jpg"><img src="docs/img/dragons.jpg" alt="Creon Neo Dragons breathe blue fire on an Aramon siege column"></a><br><sub>Creon Neo Dragons strike an Aramon siege column</sub></td>
     <td width="50%"><a href="docs/img/generated.jpg"><img src="docs/img/generated.jpg" alt="A wooded lake shore on a generated themed map, with a lodestone on a scattered neutral mana spot"></a><br><sub>A generated map with Scattered Mana</sub>
     </td>
   </tr>

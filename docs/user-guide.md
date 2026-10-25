@@ -475,7 +475,6 @@ claimed.*
 ## Playing
 
 ![The in-game screen with numbered markers on the minimap, stats panel, orders, weapons and stances, mana, build menu, information bar and the selected Monarch](img/guide/hud-annotated.jpg)
-<!-- SHOT-0.9.0: guide-hud-annotated -- in-game screen with numbered markers 1-8 (minimap, stats panel, orders, weapons and stances, mana, build menu, information bar, the selected Monarch) -->
 
 *The in-game screen with Aramon's Monarch, Elsin, selected.*
 
@@ -579,7 +578,6 @@ or right. Over the menu the pointer stays the normal one, even with a map
 target underneath.
 
 ![A Zhon Beast Tamer's nine-icon conjure menu wrapped into two rows, five above four, left of the command panel in a 1024 by 768 window](img/guide/build-menu-wrap.jpg)
-<!-- SHOT-0.9.0: guide-build-menu-wrap -- a Beast Tamer menu wrapped into two balanced rows at Build Menu Scale 150% in a 1024x768 window -->
 
 *A Beast Tamer's menu at Build Menu Scale 150% in a 1024 × 768 window: two rows, clear of the command panel and the mana orb.*
 
@@ -601,7 +599,6 @@ target underneath.
   sit half on top of one already queued for that builder is left out.
 
   ![A Shift-drag wall line being laid: nine wall sites in a row, two cells apart, with the GAP 2 label by the pointer](img/guide/build-line.jpg)
-  <!-- SHOT-0.9.0: guide-build-line -- Shift-drag wall line being laid, sites two cells apart, GAP 2 label by the pointer -->
 
 - **Lodestone areas**: choose a lodestone, then **drag a box** (at least about
   32 pixels each way at 100% UI Scale, more at larger UI Scales; anything
@@ -710,7 +707,6 @@ to aim, face their target first. A unit standing with no orders turns towards
 what it shoots. Units pick targets among the enemies their player can see.
 
 ![Aramon Archers and two Mage Builders walking east along a dotted move line, with Taros Zombies attacking the back of the column and hits flashing among them; Taros Skeleton Archers stand further off](img/guide/fire-on-the-move.jpg)
-<!-- SHOT-0.9.0: guide-fire-on-the-move -- archers on a move order (Shift held, dotted line) shooting enemies at the back of the column while walking -->
 
 *Archers and Mage Builders on a plain move order (Shift is held, so the dotted
 move line shows) keep walking while they shoot the Zombies that have caught the
@@ -783,7 +779,6 @@ units in the same group or formation:
   chance to drop all its orders and stop where it is.
 
 ![Side-by-side pictures of the same Zhon formation: in Retail the flyers are far ahead of the ground units, in Legion they fly over the leading ground units](img/guide/flyers-retail-legion.jpg)
-<!-- SHOT-0.9.0: guide-flyers-retail-legion -- side by side, same formation of ground units and flyers: Retail flyers far ahead, Legion flyers over the leading ground units -->
 
 *The same formation of ground units and flyers 22 seconds after one move order. Left, Retail: the flyers have gone ahead. Right, Legion: they ride over the leading ground units. (A development scene.)*
 
@@ -858,7 +853,6 @@ walls and a gate.
 ### Aramon
 
 ![Aramon's Monarch Elsin selected beside an Aramon army, with her build menu along the bottom](img/guide/side-aramon.jpg)
-<!-- SHOT-0.9.0: guide-side-aramon -- Aramon Monarch selected beside an Aramon army, with the side's interface and build menu -->
 
 *Aramon: Elsin selected, with her build menu. The army is a test start, not a normal opening.*
 
@@ -879,7 +873,6 @@ cavalry and powerful siege weapons.
 ### Taros
 
 ![Taros's Monarch Lokken selected beside a Taros army, with the dark Taros interface](img/guide/side-taros.jpg)
-<!-- SHOT-0.9.0: guide-side-taros -- Taros Monarch selected beside a Taros army, with the side's interface and build menu -->
 
 *Taros: Lokken and the Taros interface.*
 
@@ -901,7 +894,6 @@ A kingdom of necromancy, fire and demons, led by the sorcerer Lokken.
 ### Veruna
 
 ![Veruna's Monarch Kirenna selected beside a Veruna army with Dirigibles](img/guide/side-veruna.jpg)
-<!-- SHOT-0.9.0: guide-side-veruna -- Veruna Monarch selected beside a Veruna army, with the side's interface and build menu -->
 
 *Veruna: Kirenna, with Dirigibles over the army.*
 
@@ -925,7 +917,6 @@ Kirenna.
 ### Zhon
 
 ![Zhon's Monarch Thirsha selected beside a Zhon army of beasts and flyers](img/guide/side-zhon.jpg)
-<!-- SHOT-0.9.0: guide-side-zhon -- Zhon Monarch selected beside a Zhon army, with the side's interface and build menu -->
 
 *Zhon: Thirsha. Her build menu holds conjurers and field structures, not production buildings.*
 
@@ -949,7 +940,6 @@ by mobile builders, so a Zhon base is wherever its conjurers stand.
 ### Creon
 
 ![Creon's Monarch the Sage selected beside a Creon army of machines](img/guide/side-creon.jpg)
-<!-- SHOT-0.9.0: guide-side-creon -- Creon Monarch selected beside a Creon army, with the side's interface and build menu -->
 
 *Creon: the Sage and the Creon interface.*
 
@@ -1103,7 +1093,6 @@ top right). If they still do not fit, the last tile shows **+K**: K more types
 are selected but not shown.
 
 ![The information bar for 24 selected units of group 3: five full-size type portraits with counts 2, 3, 4, 6 and 9, the last one over the end-cap scroll, the label GROUP 3, partly filled health and mana bars, and 24 SELECTED centred to their right](img/guide/selection-strip.jpg)
-<!-- SHOT-0.9.0: guide-selection-strip -- information bar for a whole selected group: type portraits with counts, GROUP n label, health and mana bars, N SELECTED -->
 
 *Group 3 selected: nine Swordsmen in the usual portrait spot, then Archers,
 Mage Archers, Horsemen and Catapults to the left, most numerous first, all at
@@ -1255,7 +1244,6 @@ repair, reclaim, area reclaim, load, unload and building.
 - **Stop** (**S**) clears the whole list.
 
 ![A dotted line with waypoint markers showing the Monarch's queued moves while Shift is held](img/guide/shift-queue.jpg)
-<!-- SHOT-0.9.0: guide-shift-queue -- Shift held: dotted line with waypoint markers through a unit's queued moves -->
 
 *Holding Shift shows the queued route: one move, then three Shift-queued moves.*
 
@@ -1658,7 +1646,6 @@ are much cheaper to draw than models, so a huge zoomed-out battle also runs
 faster.
 
 ![Two views of the same moment in a large battle, fully zoomed out. Left, labelled MODELS, the armies are tiny unit models that are hard to tell apart from the trees, with fire and spell flashes among them. Right, labelled TACTICAL DOTS, each army is a field of squares in its player's colour, blue, red and grey, with no effects drawn](img/guide/tactical-dots.jpg)
-<!-- SHOT-0.9.0: guide-tactical-dots -- same moment of a big zoomed-out battle, MODELS left and TACTICAL DOTS right -->
 
 *The same moment of an eight-AI Benchmark battle on Ulasem Arena, zoomed far out
 in a 1920 × 1080 window, at the default Tactical Dots Zoom of 0%. Left, Tactical
