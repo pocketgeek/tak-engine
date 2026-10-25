@@ -2626,8 +2626,8 @@ renderer = auto
 backend cannot start at all; editing the file is only needed when the backend
 starts but then misbehaves.
 
-On Windows, if it started with 0.9.1 and you never changed the Renderer, Auto's
-OpenGL is the likely cause: set the same line to
+On Windows, if the problem began with 0.9.1 and you never changed the
+Renderer, Auto's OpenGL is the likely cause: set the same line to
 
 ```
 renderer = direct3d11

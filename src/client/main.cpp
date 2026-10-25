@@ -790,10 +790,22 @@ int main(int argc, char** argv) {
     // One named attempt. SDL turns command batching OFF for a renderer picked by name (it
     // assumes the app will mix in its own API calls). Auto keeps it on, and so must a
     // chosen driver: without it OpenGL measured ~20% slower per frame here.
+#ifndef NDEBUG
+    // TAK_RENDER_FAIL=<id>[,<id>...]: those drivers "fail to create" (fallback tests).
+    // Whole ids: "direct3d11" must not also fail "direct3d".
+    const auto renderFailHook = [](std::string_view id) {
+        const char* f = tak::devEnv("TAK_RENDER_FAIL");
+        for (std::string_view rest = f ? f : ""; !rest.empty();) {
+            const size_t comma = rest.find(',');
+            if (tak::renderdriver::sameId(rest.substr(0, comma), id)) return true;
+            rest = comma == std::string_view::npos ? std::string_view() : rest.substr(comma + 1);
+        }
+        return false;
+    };
+#endif
     const auto createNamed = [&](const std::string& id, Uint32 flags) -> SDL_Renderer* {
 #ifndef NDEBUG
-        // TAK_RENDER_FAIL=<id>[,<id>...]: that driver "fails to create" (fallback tests).
-        if (const char* f = tak::devEnv("TAK_RENDER_FAIL"); f && tak::renderdriver::containsNoCase(f, id)) {
+        if (renderFailHook(id)) {
             SDL_SetError("TAK_RENDER_FAIL");
             return nullptr;
         }
@@ -895,8 +907,7 @@ int main(int argc, char** argv) {
             const bool gl = id.compare(0, 6, "opengl") == 0;
             if (gl) {
 #ifndef NDEBUG
-                if (const char* f = tak::devEnv("TAK_RENDER_FAIL"); f && tak::renderdriver::containsNoCase(f, id))
-                    why = "creation failed: TAK_RENDER_FAIL";
+                if (renderFailHook(id)) why = "creation failed: TAK_RENDER_FAIL";
 #endif
                 std::string vendor, glRen;
                 if (why.empty()) why = probeGl(vendor, glRen);
@@ -930,8 +941,9 @@ int main(int argc, char** argv) {
             if (ren) {
                 std::fprintf(stderr, "renderer: auto chose %s%s\n",
                              tak::renderdriver::label(id).c_str(),
-                             renState.autoNote.empty() ? " (first in the Windows order)"
-                                                       : (" after skipping " + renState.autoNote).c_str());
+                             !renState.autoNote.empty() ? (" after skipping " + renState.autoNote).c_str()
+                             : renState.failed.empty()  ? " (first in the Windows order)"
+                                                        : " (first in the Windows order after the saved choice)");
                 break;
             }
             std::fprintf(stderr, "renderer: auto: skipping %s: %s\n",
