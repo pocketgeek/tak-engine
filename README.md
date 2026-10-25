@@ -28,42 +28,12 @@ interface art and sound straight from its installation folder.
 
 ## What's new in 0.9.2
 
-- **Flames and scenery.** Flames that stop on a rock or standing stone count as
-  blocked shots, so a Fire Wagon walks to a clear shot or moves on instead of
-  burning the same stone again and again ([Blocked shots](docs/user-guide.md#blocked-shots)).
-- **Lobbing weapons stay within their arc**, as in the original: a Creon
-  Submersible or catapult closes in until its shot can reach, instead of
-  lobbing shells into the water at its own bow.
-- **The computer players keep factory doors clear** and build Navy Yards that
-  open onto open water, so new units and ships are no longer trapped.
+- Flame units walk to a clear shot when scenery blocks their flames.
+- Lobbing units (Submersibles, catapults) only fire when their shot can reach.
+- The AI keeps factory doors clear and builds Navy Yards facing open water.
 
-**0.9.2 does not play with 0.9.1, nor play its replays** (protocol 296, replay
-format 15): a server and all of its players update together. See
-[Versions](docs/user-guide.md#versions) and the
-[0.9.2 entry in the CHANGELOG](CHANGELOG.md#092).
-
-### Previously in 0.9.1
-
-- **Shots hit the body.** Units aim at the middle of the target's body, as in
-  the original, so spears and other curving shots no longer fall short: Zhon
-  Hunters now hit each other.
-- **New units leave their building as in the original.** Without a rally point
-  a new unit waits a short way from the building, a ship only where it can
-  sail, and a flyer flies out to a random spot around it. Ships no longer get
-  stuck in a yard on a small lake, and the AI no longer builds yards on ponds.
-  Under Legion, new units spread over spots of their own instead of queueing
-  for one ([Building](docs/user-guide.md#building)).
-- **Game speed +10 takes effect at once**, even after a pause or switching
-  windows.
-- **Streaming fixes on every system:** hardware encoding on Intel and AMD under
-  Linux uses the system's VA-API, streams from a Mac reach YouTube, and
-  streaming from a large window on Windows keeps up at 60 FPS. The hardware
-  cursor stays on while you stream and is drawn into the video
-  ([streaming](docs/streaming.md)).
-- **Windows draws with OpenGL by default**, with Direct3D 11 and Direct3D 9 as
-  fallbacks and as choices in Options ([Renderer](docs/user-guide.md#renderer)).
-
-Full history: [CHANGELOG](CHANGELOG.md).
+Does not play with 0.9.1 or its replays (protocol 296). Details in the
+[CHANGELOG](CHANGELOG.md#092).
 
 ## Features
 
