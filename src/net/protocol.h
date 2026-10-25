@@ -19,7 +19,14 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 295;      // 295: SweetSpot is retail's drawn piece bounds (4dd2a0 over the buffer the draw
+constexpr uint32_t kNetVersion = 296;      // 296: a flame feeds the blocked-shot count (FlameShot::targetId, hashed),
+                                           //      so a flame unit stopped by scenery on a movement order walks to
+                                           //      a clear shot (Hold too, while a move is queued behind the auto
+                                           //      target); a ballistic weapon is in range only where retail's arc
+                                           //      solve (52bc60) reaches the target centre, so lobbers close in or
+                                           //      hold instead of firing flat. The AI keeps factory doors clear and
+                                           //      prefers Navy Yard sites opening onto water.
+                                           // 295: SweetSpot is retail's drawn piece bounds (4dd2a0 over the buffer the draw
                                            //      path poses in place): the piece chain plus body attitude, not the
                                            //      authored local vertices, so aimed shots hit chest-high instead of the
                                            //      feet (Hunters missed each other). Also a structure's ground/water

@@ -971,6 +971,18 @@ nothing on the wire. The SweetSpot query's per-unit cache is bit-identical.
 nor their replays. Its streaming, cursor and Windows renderer changes are
 client only and need no protocol change of their own.
 
+Protocol 296 changes the simulation: a flame reports its first impact with the
+unit it was fired at (`FlameShot::targetId`, hashed), so flames feed the
+blocked-shot count; a Hold Position unit whose auto target interrupted a
+movement order repositions for a clear shot, and an auto target with a movement
+order behind it is dropped when no spot is found or the three walks are spent.
+A Ballistic weapon is in range only where retail's arc solve (`52bc60`, origin
+to origin under the map's gravity, no footprint pad) reaches the target; a
+loaded, aimed weapon whose muzzle solve has no arc spends its reload as a
+blocked shot (`World::noteNoArc`) instead of lobbing flat. 295 replays are
+refused. The AI's factory-door strips and Navy Yard door-clearance siting are
+server side and change nothing on the wire.
+
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
 in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each
@@ -1260,6 +1272,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.9.1 (peers and server) requires protocol 295; 0.9.0 required 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.9.2 (peers and server) requires protocol 296; 0.9.1 required 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

@@ -19,6 +19,29 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.2 -- Unreleased
+*protocol 296 · replay format 15 · does not play with 0.9.1 or earlier, nor their replays*
+
+- **Flame units get round scenery:** flames that stop on a rock, a standing
+  stone or other indestructible scenery now count as blocked shots, like
+  arrows and spears. A Fire Wagon or other flame unit that picked its target
+  while on the move (an attack-move, a patrol or a queued move) walks to a
+  clear shot, even on Hold Position, or drops the target and carries on. In a
+  reported game a Fire Wagon burned a standing stone 101 times in a row
+  without ever reaching the lodestone behind it.
+- **Lobbing weapons stay within their arc:** units that lob their shots (the
+  Creon Submersible, catapults and the like) no longer fire at targets their
+  arc cannot reach, as in the original game. They close in until they can hit,
+  or hold their fire when they cannot get nearer. Before, such a unit lobbed
+  the shell flat into the ground or water in front of it: in a reported game
+  44% of all Submersible shells landed beside the Submersible itself.
+- **AI factory doors:** the computer players (every level except Retail) keep
+  the ground in front of their factory doors clear and no longer park units in
+  another factory's doorway, so new units are not trapped inside.
+- **AI Navy Yards:** the computer players build Navy Yards where ships can sail
+  straight out to open water, not at the head of a narrow inlet where new ships
+  stayed stuck.
+
 ## 0.9.1
 *2026-10-25 · protocol 295 · replay format 15 · does not play with 0.9.0 or earlier, nor their replays*
 

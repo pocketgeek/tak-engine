@@ -190,10 +190,12 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 295, "replay format 11 is kept under protocol 295");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 295");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 295");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 296, "replay format 11 is kept under protocol 296");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 296");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 296");
     check(!supportedReplayProtocol(16, kNetVersion), "a newer replay format is refused");
+    // 296 counts blocked flames and judges ballistic range by retail's arc solve (hashed state).
+    check(!supportedReplayProtocol(15, 295), "previous protocol with flat out-of-arc lobs is refused");
     // 295 aims at the drawn SweetSpot (posed piece bounds; hashed state).
     check(!supportedReplayProtocol(15, 294), "previous protocol with local-vertex SweetSpots is refused");
     // 294 clears areas as retail (overlapped map features removed at load, explored world features clearable

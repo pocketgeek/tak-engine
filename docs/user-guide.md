@@ -361,6 +361,12 @@ buildings, so its AI counts its Beast Handlers, Tamers, Lords and Shamans as
 both producers and builders. An AI whose mana store is nearly full keeps its
 builders building income rather than leaving them idle.
 
+Every level except Retail keeps the ground in front of its factory doors clear:
+it does not build in front of a door, does not put a new factory where its door
+would face a building, and does not send units to wait in another factory's
+doorway, so new units can always walk out. It sites a Navy Yard where ships
+leaving its door reach open water, rather than at the head of a narrow inlet.
+
 The AI runs on the game server, never in your client. In single-player, the game
 starts a private server on your own computer for you.
 
@@ -734,6 +740,14 @@ the feet.
 move line shows) keep walking while they shoot the Zombies that have caught the
 back of the column. (A development scene.)*
 
+**Lobbing weapons.** A weapon that lobs its shot in an arc (the Creon
+Submersible, catapults, mortars and the like) is in range only where its arc
+can reach the target, as in the original game. A unit ordered to attack
+something just past that reach closes in until it can hit; one that cannot get
+nearer (a boat whose target stands inland past the shore) holds without firing.
+Before 0.9.2 such units fired at targets out of reach of their arc, and the shot
+landed just in front of them.
+
 **Builders defend themselves.** An armed builder fires at enemies it passes on
 the way to a building site. While it is placing, building, repairing,
 reclaiming or resurrecting, its weapons stay quiet, as in the original; they
@@ -1047,7 +1061,7 @@ pressed button in the command panel; no text appears on screen.
 
 #### Blocked shots
 
-If a unit's shots keep hitting something it cannot destroy
+If a unit's shots (flames included) keep hitting something it cannot destroy
 before they reach its target (a hill, water, a rock or other indestructible
 scenery), it walks a short way to a spot with a clear shot and then attacks
 again. This happens after three blocked shots in a row. Shots that hit a tree or
@@ -1055,7 +1069,14 @@ anything else that can be destroyed do not count, because they wear it down. A
 unit tries at most three new spots before it lands a hit on that target (each
 hit gives it three more). If it finds no spot within about twelve cells, it
 stays where it is and keeps firing, as in the original game, and looks again
-after three more blocked shots, in case the target has moved. Units on **Hold Position**, buildings, flyers and melee units never move
+after three more blocked shots, in case the target has moved. A unit that
+picked the target on its own while on the move (an attack-move, a patrol or a
+queued move) does not stand and fire on: when it finds no spot, or has used up
+its three, it drops the target and carries on with its orders. Units on
+**Hold Position** move for this only while such a movement order waits behind
+the target (the Creon Fire Wagon starts on Hold Position, so this is what lets
+a Fire Wagon on an attack-move get round a standing stone); with nothing queued
+they fire on from where they stand. Buildings, flyers and melee units never move
 for this. A unit that is not under an attack order stops firing at that target
 and picks another one. This is new behaviour; the original game had no such
 check, and its units fire into the hill or rock until their orders change.
