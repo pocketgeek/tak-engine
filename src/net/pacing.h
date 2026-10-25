@@ -58,11 +58,16 @@ struct ArrivalJitter {
 
 // The deepest buffer the client can actually hold: the server runs flowLeadTicks() past the
 // processed tick we last reported, which trails the played tick by up to kProgressPeriod and by
-// what sits in the sim worker's inbox; one more tick of margin for the report in flight. A
-// target past this can never be reached, and the servo would pin the playout at its floor.
+// what sits in the sim worker's inbox, and by the round trip: the report takes half of it to
+// reach the server and the bundles it releases the other half to come back, while the client
+// keeps playing. One more tick of margin. A target past this can never be reached, and the
+// servo would pin the playout at its floor (6% per missing tick, 0.7 at 5 short).
 inline int flowBufferLimit(int speedTenths, float rttMs, int inboxCap) {
-    const int lead = int(flowLeadTicks(speedTenths, progressRttMs(rttMs)));
-    return std::max(2, lead - kProgressPeriod - inboxCap - 1);
+    const uint32_t rtt = progressRttMs(rttMs);
+    const int lead = int(flowLeadTicks(speedTenths, rtt));
+    const int sp = speedTenths > 0 ? speedTenths : 10;
+    const int rttTicks = int((uint64_t(rtt) * 3 * uint64_t(sp) + 999) / 1000);   // as flowLeadTicks rounds it
+    return std::max(2, lead - kProgressPeriod - rttTicks - inboxCap - 1);
 }
 
 // The jitter-buffer target in ticks at the current game speed (tickMs = 1000/(30*speed)): enough to
