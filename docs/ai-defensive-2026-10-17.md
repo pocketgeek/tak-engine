@@ -41,6 +41,29 @@ spending follows its income instead.
 - Buildings keep a 48 px lane between them (lodestones excepted: a deposit is
   where it is). Packed buildings walled two Ulasem Arena builders into pockets
   by 46 minutes, every site unreachable, the store full.
+- (0.9.2, every one of our levels) A production building's door stays clear.
+  Its door is each yardmap edge holding open `c`/`C` cells (a corner cell alone
+  is not one), the side its output leaves by. In front of the door is a strip:
+  the door's span widened 16 px each side, 80-112 px deep (the largest ground
+  output plus a builder, 3x3 plus 2x2 at the least, retail's 7-cell street at
+  the most). No building goes in a strip, a new factory's own strip must be
+  clear of buildings and of sites still to be built, and a builder never works
+  from a strip or from a building's open yard. A conjurer standing in a
+  factory's open yard does not conjure until door clearing has walked it out
+  (an Aramon Priest conjured a Dragon from its Castle's yard), and nothing it
+  conjures goes in a yard or a strip unless it flies. Door clearing and
+  `stationArmy` send no unit into a building's footprint or a strip. Before
+  this, an Academy went up 48 px in front of a Smithy's door, built from that
+  door by the Smithy's newborn Mechanic, and a Fire Wagon stood behind it for
+  2.5 minutes. Separately, a door-clearing ring point fell in a neighbouring
+  Smithy's open yard, and the units sent there jammed it for minutes. Measured
+  over three 15-minute Creon vs Aramon Absurd games, no door had a gap under
+  80 px (before: as little as 48 px, at up to 16 doors) and no factory output
+  stayed in its factory past 300 ticks (before: up to two a game). None of
+  this is retail: its block grid leaves 7-cell streets with no notion of
+  doors, and the Retail AI level is unchanged. Tests: `ai_behavior` (the
+  Smithy/Academy door, the newborn builder, the door-clearing ring point, the
+  conjurer in a Castle's yard).
 - Sites already spoken for are not given out again: a site ordered this think,
   one an own builder is walking to, and, for a minute, one whose order came to
   nothing (the builder idle again with nothing started there). On Frey River

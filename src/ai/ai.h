@@ -14,9 +14,11 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -221,6 +223,43 @@ private:
     bool navalBodyAtLeast(const tak::sim::World&, const tak::sim::UnitType* ship, float x, float z, int cells) const;
     bool navalLaunchClear(const tak::sim::World&,const tak::sim::UnitType* factory,
                           const tak::sim::UnitType* ship,float x,float z,float dx,float dz) const;
+    // Open water out of a yard's door (placeSite prefers it; never a veto): the
+    // moves a ship launched at (x+dx,z+dz) needs, beyond a straight run out of the
+    // door, to get navalDoorReach cells clear of the yard's rectangle by
+    // navalLaunchClear's cell rules -- 0 for open water straight out -- or -1 when
+    // it cannot within a short budget: the door opens onto a shore pocket and the
+    // way out runs round the yard.
+    int navalDoorSteps(const tak::sim::World&,const tak::sim::UnitType* factory,
+                       const tak::sim::UnitType* ship,float x,float z,float dx,float dz) const;
+    // The clear depth in cells: the PARK ring's inner radius for that ship (its
+    // smallest padding), less the yard's half-depth and the ship's half-width.
+    static int navalDoorReach(const tak::sim::UnitType* factory,const tak::sim::UnitType* ship);
+    // Our levels' base layout -- not retail, whose block-grid streets know no
+    // doors. A production building's door is each yardmap edge holding 'c'/'C'
+    // cells, the side its output leaves by. In front of it lies a strip -- the
+    // door's span widened a cell each side, doorDepth deep -- kept clear of new
+    // buildings, of their builders' approach and of parked units. Rects are world
+    // px, half-open; a type's strips are offsets from its footprint origin.
+    struct Rect {
+        float x0, z0, x1, z1;
+        bool overlaps(const Rect& o) const { return x0<o.x1 && o.x0<x1 && z0<o.z1 && o.z0<z1; }
+    };
+    const std::vector<Rect>& doorStrips(const tak::sim::UnitType*) const;
+    mutable std::unordered_map<const tak::sim::UnitType*,std::vector<Rect>> doorStrips_;
+    static Rect footprintRect(const tak::sim::UnitType*, float x, float z);
+    void addDoorStrips(const tak::sim::UnitType*, float x, float z, std::vector<Rect>& out) const;
+    // Every own structure's footprint (yard cells included) and every own
+    // production building's door strip, gathered once per use.
+    struct BaseLayout {
+        std::vector<Rect> rects, doors;
+        bool blocks(const Rect& r) const {
+            const auto hit=[&](const Rect& o){return o.overlaps(r);};
+            return std::any_of(rects.begin(),rects.end(),hit) || std::any_of(doors.begin(),doors.end(),hit);
+        }
+    };
+    BaseLayout baseLayout(const tak::sim::World&) const;
+    mutable std::map<std::tuple<const tak::sim::UnitType*,const tak::sim::UnitType*,int,int,int,int>,int>
+        navalDoorSteps_;   // per yard type, ship and site
     int   desire(BuildCat, const Needs&) const;
     // Retail's lodestone trigger: short of mana, with no lodestone under way.
     bool  manaShort(const tak::sim::World&, const Needs&) const;

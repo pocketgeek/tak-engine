@@ -13,7 +13,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <set>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -263,6 +265,121 @@ bool Controller::navalLaunchClear(const tak::sim::World& world,const tak::sim::U
         }
     }
     return false;
+}
+
+int Controller::navalDoorReach(const tak::sim::UnitType* factory,const tak::sim::UnitType* ship) {
+    // PARK's inner radius (retailParkRadius) at its least padding, (0+0+3)*16.
+    const uint64_t diagonal=uint64_t(factory->footX*factory->footX+factory->footZ*factory->footZ);
+    const int inner=ship->footX*16+48+int(tak::sim::isqrt64(diagonal*256)/2);
+    const int beyond=inner-std::min(factory->footX,factory->footZ)*8-std::max(ship->footX,ship->footZ)*8;
+    return std::max(2,(beyond+15)/16);
+}
+
+int Controller::navalDoorSteps(const tak::sim::World& world,const tak::sim::UnitType* factory,
+                               const tak::sim::UnitType* ship,float x,float z,float dx,float dz) const {
+    const int ox=tak::sim::footprintOrigin(x,factory->footX),oz=tak::sim::footprintOrigin(z,factory->footZ);
+    const int sx=tak::sim::footprintOrigin(x+dx,ship->footX),sz=tak::sim::footprintOrigin(z+dz,ship->footZ);
+    const auto key=std::tuple{factory,ship,ox,oz,sx,sz};
+    if (const auto it=navalDoorSteps_.find(key); it!=navalDoorSteps_.end()) return it->second;
+    if (navalDoorSteps_.size()>65536) navalDoorSteps_.clear();
+    const auto& grid=world.navFor(ship);
+    const int reach=navalDoorReach(factory,ship);
+    // Moves from the pad to the yard's edge, by the shortest side; the budget
+    // allows a few more than the straight run out.
+    const int door=std::max(0,std::min({oz+factory->footZ-sz,sz+ship->footZ-oz,
+                                        ox+factory->footX-sx,sx+ship->footX-ox}));
+    const int budget=reach+door+4;
+    const int margin=reach+std::max(ship->footX,ship->footZ)+2;
+    const int x0=std::min(ox-margin,sx),z0=std::min(oz-margin,sz);
+    const int x1=std::max(ox+factory->footX+margin,sx+1),z1=std::max(oz+factory->footZ+margin,sz+1);
+    const int width=x1-x0,height=z1-z0;
+    std::vector<int16_t> depth(size_t(width)*height,-1);
+    std::vector<std::pair<int,int>> queue{{sx,sz}};
+    depth[size_t(sz-z0)*width+sx-x0]=0;
+    int found=-1;
+    for (size_t head=0;head<queue.size() && found<0;++head) {
+        const auto [cx,cz]=queue[head];
+        const int steps=depth[size_t(cz-z0)*width+cx-x0];
+        bool fits=true;
+        for (int j=0;j<ship->footZ && fits;++j) for (int i=0;i<ship->footX && fits;++i) {
+            const int gx=cx+i,gz=cz+j;
+            fits=grid.walkable(gx,gz);
+            if (gx>=ox && gz>=oz && gx<ox+factory->footX && gz<oz+factory->footZ && !factory->yardMap.empty()) {
+                const char cell=factory->yardMap[size_t(gz-oz)*factory->footX+gx-ox];
+                fits=fits && (cell=='.' || cell==' ' || cell=='c' || cell=='C' || cell=='y' || cell=='Y');
+            }
+        }
+        if (!fits) continue;
+        const int clear=std::max({ox-(cx+ship->footX),cx-(ox+factory->footX),
+                                  oz-(cz+ship->footZ),cz-(oz+factory->footZ)});
+        if (clear>=reach) {found=std::max(0,steps-door-reach);break;}
+        if (steps>=budget) continue;
+        for (const auto [nx,nz]:{std::pair{cx-1,cz},std::pair{cx+1,cz},std::pair{cx,cz-1},std::pair{cx,cz+1}}) {
+            if (nx<x0 || nz<z0 || nx>=x1 || nz>=z1) continue;
+            auto& seen=depth[size_t(nz-z0)*width+nx-x0];
+            if (seen<0) {seen=int16_t(steps+1);queue.emplace_back(nx,nz);}
+        }
+    }
+    navalDoorSteps_.emplace(key,found);
+    return found;
+}
+
+Controller::Rect Controller::footprintRect(const tak::sim::UnitType* type,float x,float z) {
+    const float x0=float(tak::sim::footprintOrigin(x,type->footX)*16);
+    const float z0=float(tak::sim::footprintOrigin(z,type->footZ)*16);
+    return {x0,z0,x0+float(type->footX*16),z0+float(type->footZ*16)};
+}
+
+const std::vector<Controller::Rect>& Controller::doorStrips(const tak::sim::UnitType* type) const {
+    auto [it,inserted]=doorStrips_.try_emplace(type);
+    const int fx=type->footX,fz=type->footZ;
+    // Naval yards open onto water (placeSite ranks their doors); Zhon's mobile
+    // producers have none. A yardmap without a door edge has no strip.
+    if (!inserted || !type->isStructure() || registry_.buildable(type->id).empty() || navalFactory(type) ||
+        fx<1 || fz<1 || type->yardMap.size()!=size_t(fx)*fz) return it->second;
+    // Deep enough for the largest ground output beside one builder, 3x3 plus 2x2
+    // at the least (80 px: a fire wagon passes a mechanic at work) and retail's
+    // block-grid street (7 cells, 112 px) at the most.
+    int output=0,builder=2;
+    for (const auto& id:registry_.buildable(type->id)) {
+        const auto* child=registry_.find(id);
+        if (!child || child->isStructure() || child->canFly) continue;
+        output=std::max({output,int(child->footX),int(child->footZ)});
+        if (child->isBuilder) builder=std::max({builder,int(child->footX),int(child->footZ)});
+    }
+    const float depth=float(std::clamp((output+builder)*16,80,112));
+    auto open=[&](int i,int j){const char c=type->yardMap[size_t(j)*fx+i];return c=='c' || c=='C';};
+    // One edge: `n` cells along it, at(k) whether cell k is open, strip(a,b) the
+    // strip for the span a..b along it. A corner cell alone opens no door (a yard
+    // whose bottom row is open reaches both side columns there); the span runs
+    // over every open cell of a door edge.
+    auto edge=[&](int n,auto&& at,auto&& strip) {
+        int lo=n,hi=-1;bool inner=false;
+        for (int k=0;k<n;++k) if (at(k)) {lo=std::min(lo,k);hi=k;inner=inner || (k>0 && k<n-1) || n<3;}
+        if (inner) it->second.push_back(strip(float((lo-1)*16),float((hi+2)*16)));
+    };
+    edge(fx,[&](int k){return open(k,0);},[&](float a,float b){return Rect{a,-depth,b,0};});
+    edge(fx,[&](int k){return open(k,fz-1);},[&](float a,float b){return Rect{a,float(fz*16),b,float(fz*16)+depth};});
+    edge(fz,[&](int k){return open(0,k);},[&](float a,float b){return Rect{-depth,a,0,b};});
+    edge(fz,[&](int k){return open(fx-1,k);},[&](float a,float b){return Rect{float(fx*16),a,float(fx*16)+depth,b};});
+    return it->second;
+}
+
+void Controller::addDoorStrips(const tak::sim::UnitType* type,float x,float z,std::vector<Rect>& out) const {
+    const auto origin=footprintRect(type,x,z);
+    for (const auto& s:doorStrips(type))
+        out.push_back({origin.x0+s.x0,origin.z0+s.z0,origin.x0+s.x1,origin.z0+s.z1});
+}
+
+Controller::BaseLayout Controller::baseLayout(const tak::sim::World& world) const {
+    BaseLayout layout;
+    for (const auto& u:world.units()) {
+        if (!u.alive() || u.player!=player_ || !u.type || !u.type->isStructure()) continue;
+        const float x=u.x.toFloat(),z=u.z.toFloat();
+        layout.rects.push_back(footprintRect(u.type,x,z));
+        addDoorStrips(u.type,x,z,layout.doors);
+    }
+    return layout;
 }
 
 // Count the empire by category and set the targets the planner steers toward.
@@ -787,10 +904,20 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
             emit(sink,tak::net::Cmd::Build,p.id,pick->id,x,z);
             return true;
         }
+        // A conjurer works where it stands: not in a factory's open yard, where it
+        // holds the outputs in (a newborn Aramon Priest conjured a Dragon from its
+        // Castle's yard); door clearing walks it out first. Nor does the conjured
+        // unit go in a building's yard or a factory door, unless it flies.
+        const BaseLayout layout = baseLayout(world);
+        const Rect body = footprintRect(p.type, p.x.toFloat(), p.z.toFloat());
+        for (const auto& u : world.units())
+            if (u.alive() && u.player == player_ && u.type && u.type->isStructure() &&
+                !registry_.buildable(u.type->id).empty() &&
+                footprintRect(u.type, u.x.toFloat(), u.z.toFloat()).overlaps(body)) return false;
         for (float r = 40; r < 170; r += 20)
             for (float a = 0; a < 6.28f; a += 0.6f) {
                 float x = p.x.toFloat() + detmath::cos(a) * r, z = p.z.toFloat() + detmath::sin(a) * r;
-                if (world.canPlace(pick, x, z)) {
+                if (world.canPlace(pick, x, z) && (pick->canFly || !layout.blocks(footprintRect(pick, x, z)))) {
                     emit(sink, tak::net::Cmd::Build, p.id, pick->id, x, z);
                     return true;
                 }
@@ -886,6 +1013,26 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
                     pendingSites.push_back({order.buildType,order.buildX.toFloat(),order.buildZ.toFloat()});
         }
     }
+    // Keep production doors clear (doorStrips): no building in front of one, no
+    // factory whose own door faces a building, no builder working from a door.
+    // Sites still to be built count, at every level. A deposit is where it is.
+    const bool doors=t->isStructure() && !t->onMana;
+    BaseLayout layout;
+    std::vector<Rect> siteDoors;
+    if (doors) {
+        layout=baseLayout(world);
+        auto pending=[&](const tak::sim::UnitType* type,float px,float pz) {
+            layout.rects.push_back(footprintRect(type,px,pz));
+            addDoorStrips(type,px,pz,layout.doors);
+        };
+        for (const auto& site:plannedSites_) pending(site.type,site.x,site.z);
+        for (const auto& u:world.units()) {
+            if (!u.alive() || u.player!=player_ || u.id==builder.id || !u.type || !u.type->isBuilder) continue;
+            for (const auto& order:u.orders)
+                if (order.buildType && order.buildType->isStructure() && (order.buildX.v || order.buildZ.v))
+                    pending(order.buildType,order.buildX.toFloat(),order.buildZ.toFloat());
+        }
+    }
     // Past the old fixed radii the unbounded levels' grown base stays on its own side
     // of the map -- nearer home than any enemy start -- so a defensive AI does not
     // build its way into an enemy's base (Frey River Plain, Absurdly Defensive: its
@@ -903,6 +1050,15 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
         if (std::any_of(fights.begin(),fights.end(),[&](const auto& f) {
             const float fx=f.first-x,fz=f.second-z;return fx*fx+fz*fz<kFightRadius*kFightRadius;
         })) return false;
+        if (doors) {
+            const Rect site=footprintRect(t,x,z);
+            if (std::any_of(layout.doors.begin(),layout.doors.end(),[&](const Rect& d){return d.overlaps(site);}))
+                return false;
+            siteDoors.clear();addDoorStrips(t,x,z,siteDoors);
+            for (const auto& door:siteDoors)
+                if (std::any_of(layout.rects.begin(),layout.rects.end(),[&](const Rect& r){return r.overlaps(door);}))
+                    return false;
+        }
         float approachX=x,approachZ=z;
         if (launches && !launches->empty()) {
             bool output=false;
@@ -951,6 +1107,12 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             const auto [cx,cz]=rectangle.navigationCell(
                 tak::sim::footprintOrigin(builder.x,builder.type->footX),
                 tak::sim::footprintOrigin(builder.z,builder.type->footZ));
+            // Nor from a door strip or a building's open yard, where it holds the
+            // next output in (a Mechanic building an Academy from a Smithy's door
+            // kept a fire wagon in for 2.5 minutes). A newborn builder stands in
+            // its factory's door, so its nearest sites used to be just these.
+            if (doors && layout.blocks({float(cx*16),float(cz*16),float((cx+builder.type->footX)*16),
+                                        float((cz+builder.type->footZ)*16)})) return false;
             if (waterUnit || world.lodestoneUpgradeSource(t,x,z,player_)) {
                 approachX=float(cx*16+builder.type->footX*8);
                 approachZ=float(cz*16+builder.type->footZ*8);
@@ -1052,6 +1214,63 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
         return found;
     }
     const float searchRadius = naval ? std::min(radius,2400.0f) : t->minWaterDepth>0 ? std::min(radius,1600.0f) : 340.0f;
+    // A yard's door never turns (buildings do not rotate), so a yard on the
+    // nearest coast can open onto a shore pocket, its ships circling it to get
+    // out. Prefer open water out of the door (navalDoorSteps) for the largest
+    // ship it may build, looking at most kDoorSearch past the first ring with a
+    // usable site: the first ring holding a site with water straight out of the
+    // door (a detour of at most kStraight moves), its straightest; else the first
+    // ring holding any door-clear site, its straightest; else the first usable
+    // site, as before -- a preference, never a veto, so a navy still gets built.
+    const tak::sim::UnitType* largestShip=nullptr;
+    if (launches && !launches->empty())
+        for (const auto& id:registry_.buildable(t->id)) {
+            const auto* ship=registry_.find(id);
+            const auto wi=profile_.weight.find(id),li=profile_.limit.find(id);
+            if (!ship || ship->isBuilder || !world.buildAllowed(ship) ||
+                wi==profile_.weight.end() || wi->second<=0 || (li!=profile_.limit.end() && li->second==0)) continue;
+            if (!largestShip || std::max(ship->footX,ship->footZ)>std::max(largestShip->footX,largestShip->footZ))
+                largestShip=ship;
+        }
+    if (largestShip) {
+        constexpr float kDoorSearch=720;
+        constexpr int kStraight=1;
+        auto detour=[&](float x,float z) {
+            int worst=0;
+            for (const auto& offset:*launches) {
+                const int steps=navalDoorSteps(world,t,largestShip,x,z,offset.first,offset.second);
+                if (steps<0) return -1;
+                worst=std::max(worst,steps);
+            }
+            return worst;
+        };
+        struct Pick { float x=0,z=0; int detour=INT_MAX; };
+        std::optional<Pick> first,clear;
+        float firstR=0;
+        for (float r = 70; r < searchRadius && (!first || r<=firstR+kDoorSearch); r += 30) {
+            Pick ring;
+            for (float a = 0; a < 6.28f; a += std::min(0.5f,48.0f/r)) {
+                const float x = tak::sim::footprintWaypoint(tak::sim::footprintCell(nx + detmath::cos(a) * r,t->footX),t->footX).toFloat();
+                const float z = tak::sim::footprintWaypoint(tak::sim::footprintCell(nz + detmath::sin(a) * r,t->footZ),t->footZ).toFloat();
+                // Past the first usable site only a better door can win: test the
+                // door first, far cheaper than usable() (and cached).
+                if (first) {
+                    if (!world.canPlace(t,x,z,player_)) continue;
+                    const int d=detour(x,z);
+                    if (d<0 || (clear && d>kStraight)) continue;
+                }
+                if (!usable(x,z)) continue;
+                if (!first) {first=Pick{x,z};firstR=r;}
+                const int d=detour(x,z);
+                if (d>=0 && d<ring.detour) ring=Pick{x,z,d};
+            }
+            if (ring.detour<=kStraight) {outX=ring.x;outZ=ring.z;return true;}
+            if (!clear && ring.detour!=INT_MAX) clear=ring;
+        }
+        if (!first) return false;
+        const Pick& pick=clear ? *clear : *first;
+        outX=pick.x;outZ=pick.z;return true;
+    }
     for (float r = 70; r < searchRadius; r += 30)
         for (float a = 0; a < 6.28f; a += (naval || waterUnit) ? std::min(0.5f,48.0f/r) : 0.5f) {
             float x = tak::sim::footprintWaypoint(tak::sim::footprintCell(nx + detmath::cos(a) * r,t->footX),t->footX).toFloat();
@@ -1654,6 +1873,9 @@ void Controller::stationArmy(const tak::sim::World& world, std::vector<int>& ass
         if (d <= nearHome)
             base = std::max(base, d + float(std::max(u.type->footX, u.type->footZ)) * 8 + 96);
     }
+    // Nor in a building's open yard or in front of a factory door (doorStrips):
+    // canPlace lets a unit stand on a yard's open cells.
+    const BaseLayout layout = baseLayout(world);
     int issued = 0;
     for (const auto& u : world.units()) {
         if (issued == kMaxCommands) break;
@@ -1673,6 +1895,7 @@ void Controller::stationArmy(const tak::sim::World& world, std::vector<int>& ass
                 const float a = bearing + float((i + 1) / 2) * (i % 2 ? 0.523598776f : -0.523598776f);
                 const float x = hx + detmath::cos(a) * r, z = hz + detmath::sin(a) * r;
                 if (isTaken(x, z) || enemySide(x, z, hx, hz) || !world.canPlace(u.type, x, z) ||
+                    (!u.type->canFly && layout.blocks(footprintRect(u.type, x, z))) ||
                     (!u.type->canFly && !world.pathExists(u.type, x, z, ux, uz))) continue;
                 emit(sink, tak::net::Cmd::Move, u.id, "", x, z);
                 take(x, z);
@@ -1956,6 +2179,11 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     // Idle newborns and constructors must clear factory doors even when this AI
     // never attacks. Issue ordinary local moves; do not relax body occupancy or
     // change the movement controller to make production succeed.
+    // A ring point can fall in a neighbour's open yard or door (canPlace allows
+    // its open cells): Smithy 12's first ring point lay in Smithy 27's door, and
+    // the units sent there jammed it for minutes. Skip any own building's
+    // footprint and every door strip (doorStrips).
+    const BaseLayout layout = exitFactories.empty() ? BaseLayout{} : baseLayout(world);
     int cleared = 0;
     for (const auto& u : world.units()) {
         if (cleared >= std::min(dp_.producersPerThink * 2, 64)) break;
@@ -1981,7 +2209,8 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                         std::pair{factory.x.toFloat(),factory.z.toFloat()} : homeOf(world);
                     if (!dp_.attack && (x-home.first)*(x-home.first)+(z-home.second)*(z-home.second)>600*600) continue;
                     if (!world.canPlace(u.type,x,z) || (!u.type->canFly &&
-                        !world.pathExists(u.type,x,z,u.x.toFloat(),u.z.toFloat()))) continue;
+                        (layout.blocks(footprintRect(u.type,x,z)) ||
+                         !world.pathExists(u.type,x,z,u.x.toFloat(),u.z.toFloat())))) continue;
                     emit(sink,tak::net::Cmd::Move,u.id,"",x,z);
                     assigned.push_back(u.id);++cleared;moved=true;break;
                 }

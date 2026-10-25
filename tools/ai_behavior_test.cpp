@@ -16,6 +16,32 @@ struct PlacementProbe {
                       const sim::Unit& builder,float& x,float& z) {
         return c.placeSite(w,t,builder,800,800,x,z);
     }
+    // placeSite's first probe is ring 70 at angle 0: (nx+70,nz) snapped to cells,
+    // so this asks whether (x,z) itself is usable -- it comes back unchanged.
+    static bool usable(const Controller& c,const sim::World& w,const sim::UnitType* t,
+                       const sim::Unit& builder,float x,float z) {
+        float ox=0,oz=0;
+        return c.placeSite(w,t,builder,x-70,z,ox,oz) && ox==x && oz==z;
+    }
+    static bool placeFrom(const Controller& c,const sim::World& w,const sim::UnitType* t,
+                          const sim::Unit& builder,float nx,float nz,float& x,float& z) {
+        return c.placeSite(w,t,builder,nx,nz,x,z);
+    }
+    static int doorSteps(const Controller& c,const sim::World& w,const sim::UnitType* yard,
+                         const sim::UnitType* ship,float x,float z) {
+        const auto& launches=c.navalLaunchOffsets(yard);
+        if (launches.empty()) return -2;
+        int worst=0;
+        for (const auto& [dx,dz]:launches) {
+            const int steps=c.navalDoorSteps(w,yard,ship,x,z,dx,dz);
+            if (steps<0) return -1;
+            worst=std::max(worst,steps);
+        }
+        return worst;
+    }
+    static std::vector<Controller::Rect> doors(const Controller& c,const sim::UnitType* t,float x,float z) {
+        std::vector<Controller::Rect> out;c.addDoorStrips(t,x,z,out);return out;
+    }
 };
 }
 namespace tak::sim {
@@ -1694,6 +1720,149 @@ int main(int argc,char** argv) {
                     for (const auto& u:w.units()) if (u.type==outputType) produced=true;
                     std::printf("  factory %s: ",fixture[1]);
                     check(produced,"new construction produces through its script-oriented yard");
+                }
+            }
+            {
+                // Production doors (2026-10-25, a Creon Absurd base on a generated
+                // map): Academy 17 went up 48 px in front of Smithy 5's south door,
+                // full width, from that door, by the Smithy's newborn Mechanic, and
+                // a Fire Wagon stood behind the working Mechanic for 2.5 minutes.
+                const auto* smithy=reg.find("cresmit");
+                const auto* academy=reg.find("creacad");
+                const auto* mechanic=reg.find("cremech");
+                if (!smithy || !academy || !mechanic) check(false,"door fixture types exist");
+                else {
+                    const auto strips=ai::PlacementProbe::doors(
+                        ai::Controller(0,reg,profile,1,ai::Difficulty::Absurd),smithy,1032,1328);
+                    std::printf("  cresmit doors:");
+                    for (const auto& d:strips) std::printf(" (%.0f,%.0f)-(%.0f,%.0f)",d.x0,d.z0,d.x1,d.z1);
+                    std::printf("\n");
+                    check(strips.size()==1 && strips[0].z0==1392 && strips[0].z1-strips[0].z0>=80 &&
+                          strips[0].x0<=1032-40 && strips[0].x1>=1032+40,
+                          "the Smithy's door is its south yard edge, a strip at least 80 px deep");
+                    for (bool front:{true,false}) {
+                        sim::World w;terrain(w);w.buildNavClasses(reg);
+                        w.spawn(smithy,1032,1328,0,0);
+                        // The replay's 48 px gap, in front of the door or beside the
+                        // Smithy's closed east wall (with the Academy's own door free;
+                        // its odd footprint centres on a cell, z 1336 for 1264..1408).
+                        const float ax=front ? 1032 : 1032+(7+9)*8+48,az=front ? 1328+(8+9)*8+48 : 1336;
+                        const int builder=w.spawn(mechanic,ax+250,az,0,0);
+                        for (auto level:{ai::Difficulty::Normal,ai::Difficulty::Absurd}) {
+                            ai::Controller controller(0,reg,profile,1,level,{{3400,3400}});
+                            const bool ok=ai::PlacementProbe::usable(controller,w,academy,*w.unit(builder),ax,az);
+                            check(ok!=front,front ? "a site 48 px in front of a factory door is refused"
+                                                  : "the same gap beside the factory's closed wall is still used");
+                        }
+                    }
+                    // The newborn Mechanic at the Smithy's door: its site and its
+                    // working position stay out of that door.
+                    {
+                        sim::World w;terrain(w);w.buildNavClasses(reg);
+                        w.spawn(smithy,1032,1328,0,0);
+                        const int builder=w.spawn(mechanic,1036,1416,0,0);
+                        ai::Controller controller(0,reg,profile,1,ai::Difficulty::Absurd,{{3400,3400}});
+                        float x=0,z=0;
+                        const bool found=ai::PlacementProbe::placeFrom(controller,w,academy,*w.unit(builder),1036,1416,x,z);
+                        const sim::Fixed fx=sim::Fixed::fromFloat(x),fz=sim::Fixed::fromFloat(z);
+                        const int ox=sim::footprintOrigin(fx,academy->footX),oz=sim::footprintOrigin(fz,academy->footZ);
+                        const bool inDoor=found && float(ox*16)<strips[0].x1 && float((ox+academy->footX)*16)>strips[0].x0 &&
+                                          float(oz*16)<strips[0].z1 && float((oz+academy->footZ)*16)>strips[0].z0;
+                        std::printf("  academy from the door -> (%.0f,%.0f)\n",x,z);
+                        check(found && !inDoor,"a newborn builder does not build in its own factory's door");
+                    }
+                    // The door-clearing ring: Smithy 12's first ring point (r 176,
+                    // 292.5 degrees) lay in Smithy 27's open yard, and eight units
+                    // sent there over the game jammed 27's door.
+                    {
+                        sim::World w;terrain(w);w.buildNavClasses(reg);
+                        const float s12x=1048,s12z=1344;   // the replay's (8856,3344), shifted
+                        const float s27x=s12x+64,s27z=s12z-208;
+                        w.spawn(smithy,s12x,s12z,0,0);
+                        w.spawn(smithy,s27x,s27z,0,0);
+                        // Door clearing starts each unit's ring probe at angle id%16;
+                        // the replay's units started at 13 (292.5 degrees).
+                        int filler=0;
+                        do filler=w.spawn(mechanic,3600,600+float(filler%64)*40,std::nullopt,1);
+                        while (filler%16!=12);
+                        const int unit=w.spawn(reg.find("creauto"),s12x+90,s12z+20,0,0);
+                        check(unit%16==13,"door-clearing fixture probes the replay's ring point first");
+                        ai::Profile none;
+                        ai::Controller controller(0,reg,none,1,ai::Difficulty::Normal,{{3400,3400}});
+                        const auto cs=think(controller,w);
+                        std::vector<decltype(strips)::value_type> blocked;
+                        for (const auto& [sx,sz]:{std::pair{s12x,s12z},std::pair{s27x,s27z}}) {
+                            blocked.push_back({sx-56,sz-64,sx+56,sz+64});
+                            for (const auto& d:ai::PlacementProbe::doors(controller,smithy,sx,sz)) blocked.push_back(d);
+                        }
+                        bool moved=false,intoYard=false;
+                        for (const auto& c:cs) if (c.kind==net::Cmd::Move && c.unitId==unit) {
+                            moved=true;
+                            const auto* type=w.unit(unit)->type;
+                            const float hx=float(type->footX*8),hz=float(type->footZ*8);
+                            for (const auto& r:blocked)
+                                intoYard=intoYard || (c.x-hx<r.x1 && c.x+hx>r.x0 && c.z-hz<r.z1 && c.z+hz>r.z0);
+                            std::printf("  door clearing -> (%.1f,%.1f)\n",c.x,c.z);
+                        }
+                        check(moved && !intoYard,"door clearing sends no unit into a building's open yard or a factory door");
+                    }
+                }
+            }
+            {
+                // The same check, an Aramon Priest conjuring a Dragon from inside its
+                // Castle's open yard, where it stood for the whole conjure.
+                const auto* castle=reg.find("aracastl");
+                const auto* priest=reg.find("arapries");
+                if (!castle || !priest) check(false,"conjurer fixture types exist");
+                else for (bool inYard:{true,false}) {
+                    sim::World w;terrain(w);w.buildNavClasses(reg);
+                    w.player(0).mana=100000;w.player(0).income=1000;
+                    w.spawn(castle,1000,1000,0,0);
+                    // The Castle's open rows are its bottom four (z 1048..1112).
+                    const int id=w.spawn(priest,1000,inYard ? 1080 : 1400,0,0);
+                    ai::Profile p;p.weight["aradrag"]=100;
+                    ai::Controller controller(0,reg,p,1,ai::Difficulty::Normal,{{3400,3400}});
+                    const auto cs=think(controller,w);
+                    const bool conjured=std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
+                        return c.unitId==id && c.kind==net::Cmd::Build;
+                    });
+                    check(conjured!=inYard,inYard ? "a conjurer in a factory's open yard does not conjure there"
+                                                  : "the same conjurer clear of the factory conjures");
+                }
+            }
+            if (crusades) {
+                // Navy Yard doors (2026-10-25, the same game, crusades balance):
+                // Creon's yard 33 at (9016,2392) opens onto a 3-4 row shore pocket at
+                // the head of an inlet, its ships circling the yard to get out;
+                // yards 35 (9080,4424) and 476 (7880,5816) open onto the sea.
+                sim::World w;w.setVisPlayer(-1);
+                sim::MatchConfig config;config.vfs=&vfs;
+                config.mapPath="~gen1~090001000000000000000300030003020000ffff000104496e74656c20393331302044656c6c";
+                config.slots={{true,4,0,2.0f},{true,0,1,2.0f}};
+                config.startMode=sim::StartMode::BySlot;config.startSeed=1853210448u;
+                const auto starts=sim::setupMatch(w,reg,config);
+                const auto* yard=reg.find("crenavy");
+                const auto* iron=reg.find("creiron");
+                const auto* mechanic=reg.find("cremech");
+                check(starts.size()==2 && yard && iron && mechanic,"generated coast fixture loads");
+                if (starts.size()==2 && yard && iron && mechanic) {
+                    const auto& absurd=ai::builtinProfile(ai::Difficulty::Absurd);
+                    ai::Controller controller(0,reg,absurd,1,ai::Difficulty::Absurd,{starts[1]});
+                    const int pocket=ai::PlacementProbe::doorSteps(controller,w,yard,iron,9016,2392);
+                    const int open35=ai::PlacementProbe::doorSteps(controller,w,yard,iron,9080,4424);
+                    const int open476=ai::PlacementProbe::doorSteps(controller,w,yard,iron,7880,5816);
+                    std::printf("  navy yard door steps: (9016,2392)=%d (9080,4424)=%d (7880,5816)=%d\n",
+                                pocket,open35,open476);
+                    check(pocket==-1 && open35>=0 && open476>=0,
+                          "a yard door onto a shore pocket is not clear; doors onto the sea are");
+                    // Mechanic 11 ordered yard 33 from here at tick 5780.
+                    const int builder=w.spawn(mechanic,9327,3017,0,0);
+                    float x=0,z=0;
+                    const bool found=ai::PlacementProbe::placeFrom(controller,w,yard,*w.unit(builder),9327,3017,x,z);
+                    const int chosen=found ? ai::PlacementProbe::doorSteps(controller,w,yard,iron,x,z) : -3;
+                    std::printf("  navy yard from (9327,3017) -> (%.0f,%.0f) door steps %d\n",x,z,chosen);
+                    check(found && !(x==9016 && z==2392) && chosen>=0,
+                          "the AI sites its Navy Yard with open water out of the door");
                 }
             }
             {
