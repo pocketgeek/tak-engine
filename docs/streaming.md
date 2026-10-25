@@ -102,7 +102,8 @@ LIBVA_MESSAGING_LEVEL=2 takclient
 ```
 
 When you press Start Streaming the terminal shows a `TAK VA-API: using system
-/usr/lib64/libva.so.2 ...` line (or why libva could not be loaded), then libva's
+.../libva.so.2 and .../libva-drm.so.2` line naming the files it loaded (or a `TAK
+VA-API: system libva unavailable: ...` line saying why not), then libva's
 `libva info:` lines: its VA-API version, each driver file it tries, and whether that
 driver started. `LIBVA_DRIVER_NAME` (for example `iHD`) and `LIBVA_DRIVERS_PATH`
 work as they do for `vainfo`.
