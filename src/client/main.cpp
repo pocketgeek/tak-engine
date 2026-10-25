@@ -866,7 +866,11 @@ int main(int argc, char** argv) {
         // OpenGL is judged on a hidden 1x1 window BEFORE it touches the game's window: a
         // GL renderer made and destroyed on the window can leave it unusable for Direct3D
         // 11 (seen with Mesa's OpenGL-over-Direct3D 12, which keeps a swap chain on it).
+        // The probe first takes its own hold on the OpenGL library and never lets go:
+        // destroying the probe window would otherwise unload it, and unloading Mesa's
+        // opengl32.dll mid-run hung in FreeLibrary on the test machine.
         const auto probeGl = [&](std::string& vendor, std::string& glRen) -> std::string {
+            if (SDL_GL_LoadLibrary(nullptr) != 0) return std::string("creation failed: ") + SDL_GetError();
             SDL_Window* pw = SDL_CreateWindow("", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 1, 1,
                                               SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
             if (!pw) return std::string("creation failed: ") + SDL_GetError();
