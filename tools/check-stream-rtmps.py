@@ -31,6 +31,21 @@ def free_port():
         return s.getsockname()[1]
 
 
+# Every extension comes from this file, never from the openssl CLI's own openssl.cnf:
+# OpenSSL 1.1.1 (the macOS runners' `openssl`) appends -addext extensions to its config's
+# v3_ca ones, and the duplicate basicConstraints made OpenSSL 3 refuse the root as an
+# invalid certificate ("unable to get local issuer certificate"). The same certificates
+# come out of OpenSSL 1.1.1, OpenSSL 3 and LibreSSL.
+CONFIG = '''[req]
+distinguished_name = subject
+[subject]
+[root]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+'''
+
+
 def run_openssl(*args):
     subprocess.run(['openssl', *map(str, args)], check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -38,21 +53,22 @@ def run_openssl(*args):
 
 def authority(root):
     """A throwaway root CA: the client trusts it as its ca_file, like a public root."""
-    cert, key = root / 'ca.crt', root / 'ca.key'
-    run_openssl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert,
-                '-days', '1', '-subj', '/CN=TAK test root', '-addext', 'basicConstraints=critical,CA:TRUE',
-                '-addext', 'keyUsage=critical,keyCertSign,cRLSign')
+    cert, key, config = root / 'ca.crt', root / 'ca.key', root / 'openssl.cnf'
+    config.write_text(CONFIG)
+    run_openssl('req', '-x509', '-config', config, '-extensions', 'root', '-newkey', 'rsa:2048',
+                '-nodes', '-sha256', '-keyout', key, '-out', cert, '-days', '1', '-subj', '/CN=TAK test root')
     return cert, key
 
 
 def certificate(root, ca, name='localhost'):
     """A server certificate for `name` issued by `ca` (a proper chain, not self-signed)."""
     cert, key, request, ext = (root / (name + suffix) for suffix in ('.crt', '.key', '.csr', '.ext'))
-    run_openssl('req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', request,
-                '-subj', '/CN=' + name)
+    run_openssl('req', '-new', '-config', root / 'openssl.cnf', '-newkey', 'rsa:2048', '-nodes',
+                '-keyout', key, '-out', request, '-subj', '/CN=' + name)
     # serverAuth: macOS rejected a TLS server certificate without it (-9807).
     ext.write_text(f'subjectAltName=DNS:{name}\nextendedKeyUsage=serverAuth\n'
-                   'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\n')
+                   'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\n'
+                   'subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid:always\n')
     run_openssl('x509', '-req', '-in', request, '-CA', ca[0], '-CAkey', ca[1], '-set_serial',
                 str(2 + sum(map(ord, name))), '-days', '1', '-sha256', '-extfile', ext, '-out', cert)
     return cert, key
@@ -64,10 +80,31 @@ def refused(exe, cert, key, ca_file, encoder, why):
     try:
         client = subprocess.run([exe, f'rtmps://localhost:{proxy.port}/live/test-key', str(ca_file),
                                  '3', encoder], capture_output=True, text=True, timeout=30)
-        print(client.stdout, end='')
+        print(client.stdout + tls_errors(client), end='')
         assert 'LIVE' not in client.stdout and proxy.accepted == 0, why + ' accepted'
         assert 'RECONNECTING 1/3 - TLS CERTIFICATE' in client.stdout, 'no certificate reason: ' + why
         assert 'test-key' not in client.stdout + client.stderr, 'stream key leaked into logs'
+    finally:
+        proxy.close()
+
+
+def tls_errors(client):
+    """The client's TLS error lines (stream_network_test prints them to stderr)."""
+    return ''.join(l + '\n' for l in client.stderr.splitlines() if l.startswith('TLS ERROR'))
+
+
+def check_chain(cert, key, ca_file):
+    """Python's own TLS must accept the test chain, so a refusal names its verify error
+    and test certificates the client rightly rejects are not mistaken for an engine bug."""
+    proxy = Proxy(cert, key, free_port())  # nothing listens behind it
+    try:
+        context = ssl.create_default_context(cafile=str(ca_file))
+        with socket.create_connection(('127.0.0.1', proxy.port), timeout=5) as raw:
+            with context.wrap_socket(raw, server_hostname='localhost'):
+                pass
+    except ssl.SSLCertVerificationError as error:
+        raise AssertionError(f'{ssl.OPENSSL_VERSION} refuses the test certificates: '
+                             f'{error.verify_message}') from error
     finally:
         proxy.close()
 
@@ -132,6 +169,7 @@ def main():
         root = pathlib.Path(directory)
         ca = authority(root)
         cert, key = certificate(root, ca)
+        check_chain(cert, key, ca[0])
         backend = free_port()
         sink = subprocess.Popen([exe, '--sink', str(backend), str(SECONDS + 10)],
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
@@ -144,7 +182,7 @@ def main():
                                      str(SECONDS), encoder], capture_output=True, text=True,
                                     timeout=SECONDS + 30)
             wall = time.monotonic() - started
-            print(client.stdout, end='', flush=True)
+            print(client.stdout + tls_errors(client), end='', flush=True)
             lines = client.stdout.splitlines()
             done = [l for l in lines if l.startswith('DONE ')]
             assert client.returncode == 0 and done, f'client exit {client.returncode}'

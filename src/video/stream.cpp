@@ -66,6 +66,9 @@ void logCallback(void* obj, int level, const char* fmt, va_list args) {
     std::vsnprintf(text, sizeof text, fmt, copy);
     va_end(copy);
     if (certificateError(text)) tlsCertificateRejected = true;
+#ifdef TAK_STREAM_TESTING
+    std::fprintf(stderr, "TLS ERROR %s", text); // the test prints why a handshake failed
+#endif
     std::fill(std::begin(text), std::end(text), '\0');
 }
 void check(int result) { if (result < 0) throw result; }
