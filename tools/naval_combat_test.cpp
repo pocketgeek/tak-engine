@@ -118,8 +118,12 @@ int main(int argc,char**argv) {
                 if (cliff) heights[size_t(z)*128+x]=220;
                 else features[size_t(z)*128+x]=0xFFFC;
             w.setTerrain(heights,128,128,64,&features);w.buildNavClasses(registry);
+            // The flagship's Bow and Arrows are Ballistic, which takes no 2D
+            // line test since 0.9.3 (its arc decides): make them a line-of-sight
+            // shot, the kind the test still applies to.
             auto type=*registry.find("verflag");type.weapon.lobPreferred=false;
-            for (auto& wp:type.weapons) wp.lobPreferred=false;
+            for (auto& wp:type.weapons) { wp.lobPreferred=false;wp.ballistic=false;wp.beam=wp.straight=true; }
+            type.weapon=type.weapons.front();
             auto victim=*registry.find("aratrans");victim.maxHp=30000;
             victim.weapon.damage=0;victim.weapons.clear();victim.maxVel={};
             const int a=w.spawn(&type,800,800,1.570796327f,0),b=w.spawn(&victim,1000,800,0,1);

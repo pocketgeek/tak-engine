@@ -131,6 +131,15 @@ struct Weapon {
     bool ballisticClass() const {
         return ballistic && kind == Kind::Normal && !melee && !beam && flameKind < 0;
     }
+    // Does a shot from this weapon need the engine's 2D clear-line test? That
+    // test is a deviation (retail has none: its weapon update admits a shot on
+    // range alone, World::slotClearShot), kept for a ranged weapon whose shot
+    // flies the line. A plain Ballistic shell is exempt whatever its root: its
+    // 3D arc and the projectile's own collision (52a4d0) decide what it clears,
+    // as in retail, and World::noteShotImpact catches a shell that keeps
+    // landing short. Decided per weapon -- the firing slot's, or the approach
+    // slot's for the unit as a whole -- never by "any weapon of the unit".
+    bool needsClearLine() const { return !melee && range > 64 && !ballisticClass(); }
     int32_t particlesPerSec = 0; // particlespersecond (readInt): hailstorm pulse rate
     float turnRate = 0;      // guided: steering rate, radians/sec (FBI deg/s)
     // Retail splits a projectile's per-tick travel into sub-steps so no sub-step is
@@ -526,16 +535,6 @@ struct UnitType {
         float r = 0;
         for (const auto& w : weapons) r = std::max(r, float(w.range));
         return r;
-    }
-    // Does this unit lob? A lobbing weapon takes the high ballistic arc, which is
-    // precisely how a mortar or catapult puts its shell behind a wall -- so a
-    // lobber is exempt from the line-of-sight gate that makes other ranged units
-    // refuse to fire through an obstacle. Seven units carry one: the Aramon
-    // Grenadier and Catapult, the Creon Bomb Sprinkler, Sage and Submersible, and
-    // the Veruna Mortar and Catapult.
-    bool lobs() const {
-        for (const auto& w : weapons) if (w.lobPreferred) return true;
-        return false;
     }
 };
 
@@ -3056,6 +3055,11 @@ private:
     // `pad` is the structure footprint pad the non-ballistic reach adds.
     struct CombatReach { int slot; const Weapon* weapon; bool arc; float best; float pad; bool in; };
     CombatReach combatReach(const Unit& u,const Unit& t,float dist) const;
+    // Does `u` fighting `t` as a whole (approach, acquisition, the drop of a
+    // target it may not chase) need the 2D clear-line test? Its approach
+    // slot's weapon decides (Weapon::needsClearLine); a flyer on either side
+    // never does.
+    bool approachNeedsClearLine(const Unit& u,const Unit& t) const;
     bool slotInsideMinRange(const Unit& u,const Unit& t,int slot) const;
     bool slotBadTarget(const Unit& u,int slot,const Unit& t) const;
     bool slotClearShot(const Unit& u,const Unit& t,int slot) const;

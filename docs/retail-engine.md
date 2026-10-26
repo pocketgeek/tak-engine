@@ -192,8 +192,9 @@ weapon slots is **auto** or **manual**:
   can reach it unless the current target is still good. AI owners also switch
   weapons (`51a8b0`) and sweep `commandfire` weapons; human owners do not.
 
-Deviations: auto slots of ranged, non-lobbing ground weapons keep our 2D
-clear-shot test (retail has none); parts of the stone/freeze/paralyze
+Deviations: auto slots of ranged ground weapons whose shot flies the line
+(not a plain Ballistic shell, `Weapon::needsClearLine`) keep our 2D clear-shot
+test (retail has none); parts of the stone/freeze/paralyze
 immunity checks are not modelled. `shootme` is: a human-owned shooter never
 auto-picks a type without it (protocol 253).
 
@@ -223,7 +224,8 @@ so a retail archer behind a hill crest or a rock fires into it until the order
 changes. A destructible feature wears down and then lets the shots through.
 
 The engine already deviates with a 2D clear-shot test on the nav grid for
-ranged, non-lobbing ground weapons (`slotClearShot`, `tickCombat`'s `los`).
+ranged ground weapons whose shot flies the line (`slotClearShot`,
+`tickCombat`'s `los`; since 0.9.3 not a plain Ballistic shell, see below).
 That test cannot see a passable crest a low arc clips, water, a tall feature
 that does not block movement, or the corner cells its Bresenham walk skips,
 so since this change the sim also watches where shots land
@@ -282,6 +284,48 @@ Hold Position it burns the stone 10 times for no damage with the count at 10
 Hold Position or Maneuver, it lands 3 flames on the stone, moves about 38 px
 and destroys the lodestone (before: 20 flames on the stone, no damage, no
 move).
+
+### The 2D line test is decided per weapon; Ballistic shells are exempt (0.9.3)
+
+Until 0.9.3 the 2D test exempted a unit only if one of its weapons was
+`lobpreferred` (`UnitType::lobs`). That held every plain Ballistic shell to
+it: 42 shipped unit types in `units/` (the same set in Crusades' `unitscb/`)
+carry a Ballistic weapon that is not lobpreferred -- every bow, arrow tower,
+cannon, ballista, spear and musket, both trebuchets; 38 of them ground units,
+7 of those structures (`araat`, `aratre`, `cregatl`, `tarcage`, `verat`,
+`verfltwr`, `verlight`) -- while the Creon Sage's line-of-sight Blue Flame was
+exempted by its lobbing Mortar slot. Nothing in retail tests a line: the weapon update
+admits on range (`probe_weapon_gate_loss.py`: with an all-hidden visibility
+grid `52ae90` still reaches AimWeapon/FireWeapon), `BallisticWeapon::inRange`
+(`52bc60`) solves only the arc, and the shell's 3D flight meets whatever it
+meets (`52a4d0`). A shipped Aramon Trebuchet (`aratre`: Ballistic, range 2700,
+minrange 500, not lobpreferred) whose line crossed its own buildings held an
+auto target for 36 game-minutes without a shot in the `classic_ai_duels` seed
+0x4444 game.
+
+Now the test is a property of the weapon (`Weapon::needsClearLine`: ranged,
+not melee, not `ballisticClass`), decided where the shot is decided: each slot
+on its own in the sweep, the hit response and the weapon update
+(`slotClearShot`, `tickCombat`'s `slotAims`), the reposition search on the
+slot it repositions for, and the approach slot (`approachSlot`: the selected
+weapon, or the longest when all fire) for the unit as a whole -- closing in,
+`findTarget`'s acquisition, the flyer/structure hold and Legion's reach ring
+(`World::approachNeedsClearLine`). A Ballistic shell is fired on range and the
+blocked-shot count above catches one that keeps landing short.
+
+A unit that may not leave its post (a building, Hold Position on an auto
+target) and whose approach weapon needs the line drops an AUTO target it has
+no line to (before: it held it for ever without a shot, and nothing else got
+shot at); `findTarget` applies the same test from the same spot, so it is not
+picked up again until the line clears (an explicitly ordered target is
+kept). `ballistic_line_test` (Retail and
+`--legion`): a Trebuchet 1200 px from a target behind a wall of shipped
+`ZonHenge04` stones (height 60) and an `araat` arrow tower 350 px from one
+fire (before: neither acquired); a Veruna tower (`vertower`, line of sight)
+with one enemy behind the stones and one in the open shoots only the open
+one, and one whose target a row of its owner's walls comes to hide drops it
+once and shoots an enemy in the open (before: held it blind for the rest of
+the run, 60 s).
 
 ## After an unload the carrier stands by and lands (icd, 2026-10-12, protocol 256)
 

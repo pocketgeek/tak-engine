@@ -1058,10 +1058,18 @@ int main(int argc, char** argv) {
         }
         if (const sim::Weapon* w = wpn("arabow", 0))
             check(!w->lobPreferred, "an archer does not lob");
-        if (const sim::UnitType* t = reg.find("vermort"))
-            check(t->lobs(), "the Veruna mortar lobs (exempt from the LoS gate)");
-        if (const sim::UnitType* t = reg.find("arabow"))
-            check(!t->lobs(), "an archer is not");
+        // The 2D clear-line gate is decided per weapon: every plain Ballistic
+        // shell is exempt (its 3D arc decides, as in retail), lobbed or not;
+        // a shot that flies the line is not.
+        if (const sim::Weapon* w = wpn("vermort", 0))
+            check(!w->needsClearLine(), "the Veruna mortar's shell needs no 2D line");
+        if (const sim::Weapon* w = wpn("aratre", 0))
+            check(w->ballisticClass() && !w->lobPreferred && !w->needsClearLine(),
+                  "nor does the Trebuchet's (Ballistic, not lobpreferred)");
+        if (const sim::Weapon* w = wpn("arabow", 0))
+            check(!w->needsClearLine(), "nor an archer's arrow (Ballistic)");
+        if (const sim::Weapon* w = wpn("arasiege", 1))
+            check(w->straight && w->needsClearLine(), "a line-of-sight shot does");
         // dontleadtargets ships only on Dropped bombs, whose weaponvelocity is a
         // fall parameter -- leading on it would throw the aim point off the map.
         int noLead = 0;

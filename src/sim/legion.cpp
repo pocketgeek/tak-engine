@@ -10106,7 +10106,7 @@ struct LegionNavigator::Impl {
         if(sel.melee)return {8*(std::max(u.type->footX,u.type->footZ)+std::max(t->type->footX,t->type->footZ))+8,false};
         const float best=all?u.type->maxRange():sel.range;
         const float pad=t->type->maxVel<=Fixed()?8.0f*float(std::max(t->type->footX,t->type->footZ))+24.0f:0.0f;
-        const bool los=best>64.0f&&!t->type->canFly&&!u.type->lobs();
+        const bool los=w.approachNeedsClearLine(u,*t);   // tickCombat's own test
         return {int(best+pad),los};
     }
     // tickCombat's own radial reach (float), as reachPx before its floor;

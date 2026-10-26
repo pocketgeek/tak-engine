@@ -5565,8 +5565,9 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
         // A ranged unit only auto-acquires enemies it can actually see, so it
         // doesn't charge a target hidden behind a wall (which caused pile-ups at
         // corners). Melee/flyers acquire regardless.
-        bool ranged = u.type->maxRange() > 64.0f && !u.type->canFly;
-        const bool lobber = u.type->lobs();   // shoots OVER obstacles: skip the LoS gate
+        // Whether that needs the 2D line is decided by the weapon the unit
+        // fights with (approachNeedsClearLine), as tickCombat decides it: a
+        // Ballistic shell flies its arc over the wall, as in retail.
         uint64_t enemies=~uint64_t(0);
         for (int player=0;player<numPlayers() && player<64;++player)
             if (allied(player,u.player)) enemies&=~(uint64_t(1)<<player);
@@ -5601,8 +5602,7 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
                 const CombatReach cr=combatReach(u,e,std::sqrt(d));
                 if (cr.weapon && !cr.weapon->melee && !cr.in) return;
             }
-            if (ranged && !e.type->canFly && !lobber &&
-                !combatLineOfSight(u,e))
+            if (approachNeedsClearLine(u,e) && !combatLineOfSight(u,e))
                 return;                         // no clear shot: don't acquire it
             if (scatter) {
                 // Retail's scorer, with the flag's substitution in place: n is
@@ -5783,6 +5783,12 @@ World::CombatReach World::combatReach(const Unit& u,const Unit& t,float dist) co
     return r;
 }
 
+bool World::approachNeedsClearLine(const Unit& u,const Unit& t) const {
+    if (u.type->canFly || !t.type || t.type->canFly) return false;
+    const int slot=approachSlot(u);
+    return slot>=0 && u.type->weapons[size_t(slot)].needsClearLine();
+}
+
 bool World::slotInRange(const Unit& u,const Unit& t,int slot) const {
     const Weapon& w=u.type->weapons[size_t(slot)];
     if (w.melee) return meleeInRange(u.type,t.type,(t.x-u.x).toFloat(),(t.z-u.z).toFloat());
@@ -5796,14 +5802,17 @@ bool World::slotInRange(const Unit& u,const Unit& t,int slot) const {
 }
 
 // Engine deviation shared with findTarget and the order-driven fire test: a
-// ranged ground weapon that does not lob needs a clear 2D line to its target
-// (retail has no such test; without it a unit would empty its auto slots into
-// a wall). Part of "in range" for the sweep, the weapon update and the hit
-// response alike, so a blocked target is never selected and then held.
+// ranged ground weapon whose shot flies the line (Weapon::needsClearLine: not
+// a plain Ballistic shell) needs a clear 2D line to its target (retail has no
+// such test; without it a unit would empty its auto slots into a wall). Part
+// of "in range" for the sweep, the weapon update and the hit response alike,
+// so a blocked target is never selected and then held. Decided by THIS slot's
+// weapon: a Ballistic slot of a unit whose other slot needs the line is free
+// of it, and the reverse.
 bool World::slotClearShot(const Unit& u,const Unit& t,int slot) const {
     const Weapon& w=u.type->weapons[size_t(slot)];
     if (shotBlockedHere(u,t)) return false;   // its shots from here stop short (noteShotImpact)
-    if (w.melee || w.range<=64 || u.type->canFly || t.type->canFly || u.type->lobs()) return true;
+    if (!w.needsClearLine() || u.type->canFly || t.type->canFly) return true;
     return combatLineOfSight(u,t);
 }
 
@@ -5978,7 +5987,7 @@ bool World::repositionForShot(Unit& u,const Unit& t,int slot) {
         8*(std::max(t.type->footX,t.type->footZ)+foot)+8);
     const int64_t ux=u.x.floorInt(),uz=u.z.floorInt(),tx=t.x.floorInt(),tz=t.z.floorInt();
     const int ucx=footprintCell(u.x,foot),ucz=footprintCell(u.z,foot);
-    const bool needLoS=w.range>64 && !t.type->canFly && !u.type->lobs();
+    const bool needLoS=w.needsClearLine() && !t.type->canFly;
     // The origin height the unit would stand at on a spot: a boat keeps its
     // own (sea level or its dive depth); a ground body follows the terrain
     // with its present clearance over it.
@@ -6532,7 +6541,6 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // a structure target; the arc for a ballistic weapon.
     const bool allWeapons = !u.type->weaponSwitching && u.type->weapons.size() > 1;
     const CombatReach cr = combatReach(u,*target,dist);
-    const float best = cr.best;
     const float pad = cr.pad;
     const int arcSlot = cr.slot;
     const Weapon* approach = cr.weapon;
@@ -6557,13 +6565,25 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // `range` and LoS play no part.
     bool adj = sel && sel->melee && target->type &&
                meleeInRange(u.type, target->type, dx, dz);
-    // Ranged units need a clear line to shoot; a wall between them means close
-    // in / reposition rather than firing through it (melee & flyers are exempt).
-    // Ballistic shots use retail's pitched 3D arc and terrain collision, so a
-    // lobber does not need this separate 2D line test: the trajectory itself
-    // determines whether it clears the obstruction.
-    bool needLoS = best > 64.0f && !u.type->canFly &&
-                   target->type && !target->type->canFly && !u.type->lobs();
+    // Ranged units whose shot flies the line need a clear line to shoot; a
+    // wall between them means close in / reposition rather than firing through
+    // it (melee & flyers are exempt). Ballistic shots use retail's pitched 3D
+    // arc and terrain collision, so a Ballistic weapon -- lobpreferred or not:
+    // an archer's arrow, a Trebuchet's stone -- does not need this separate 2D
+    // line test: the trajectory itself determines whether it clears the
+    // obstruction (and noteShotImpact counts it when it does not). Decided by
+    // the weapon: the approach slot's for closing in and for the drop below,
+    // each firing slot's own for its shot (slotAims).
+    const bool groundPair = !u.type->canFly && target->type && !target->type->canFly;
+    const bool approachNeedsLine = approachNeedsClearLine(u,*target);
+    bool needLoS = approachNeedsLine;
+    if (groundPair && !needLoS) {
+        if (allWeapons) {
+            for (const Weapon& sw : u.type->weapons) needLoS = needLoS || sw.needsClearLine();
+        } else if (sel) {
+            needLoS = sel->needsClearLine();
+        }
+    }
     // LoS gates ONLY in-range firing and in-range repositioning; an out-of-range
     // chaser advances regardless (the `dist > best` move test below
     // short-circuits before `los` is read, and the fire gate is never reached out of
@@ -6580,6 +6600,19 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     const bool mayChase = u.type->canMove &&
                           (u.moveState != 0 || !u.orders.front().autoTarget || u.orders.front().chaseLeashed);
     if (!mayChase && !inReach) {
+        dropLeg(u);
+        cancelPath(u);
+        u.routeStamp = -1;
+        return;
+    }
+    // One that may not chase and has no clear line from here for the weapon
+    // it fights with would hold an AUTO target for ever without a shot (a
+    // tower behind a wall that went up; Hold Position behind a building), and
+    // nothing else would get shot at: it drops it, and findTarget, which
+    // applies the same test from the same spot, does not pick it again. An
+    // explicitly ordered attack is kept: the order says which target.
+    if (!mayChase && inReach && approachNeedsLine && !los && u.orders.front().autoTarget) {
+        if(u.scriptAimTarget)clearScriptWeaponTarget(u);
         dropLeg(u);
         cancelPath(u);
         u.routeStamp = -1;
@@ -6625,7 +6658,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // An attack run flies in and out of range: its weapons fire (below) when
     // a slot has the target in range, and the mission flies on regardless.
     if (!airRun && ((sel && sel->melee) ? !adj
-                            : (!inReach || (!los && mayChase) || (mayChase && arcShort())))) {
+                            : (!inReach || (approachNeedsLine && !los && mayChase) || (mayChase && arcShort())))) {
         if (hovering) return;
         // Advance toward the target, steering around impassable terrain.
         if (u.repathLeft > 0) --u.repathLeft;
@@ -6644,7 +6677,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         const Weapon& sw = u.type->weapons[size_t(sl)];
         if ((sw.mindControl || u.type->canCapture) && !canCaptureTarget(u.player,*target)) return false;
         if (sw.noAir && target->type && target->type->canFly) return false;
-        if (!(sw.melee || los)) return false;
+        if (groundPair && sw.needsClearLine() && !los) return false;
         if (sw.melee ? !adj : sw.ballisticClass() ? !ballisticInRange(u,*target,sw) : dist > sw.range + pad)
             return false;
         return dist >= sw.minRange;
@@ -14564,9 +14597,7 @@ void World::tick(float dt) {
                 if (std::sqrt(dx * dx + dz * dz) > (range + pad) * 0.95f) return false;
                 // Don't sit still with no shot: a ranged unit whose line to the
                 // target is blocked keeps moving to get around the wall.
-                bool needLoS = range > 64.0f && !u.type->canFly &&
-                               t->type && !t->type->canFly && u.type->canMove &&
-                               !u.type->lobs();
+                bool needLoS = u.type->canMove && approachNeedsClearLine(u,*t);
                 return !needLoS ||
                        combatLineOfSight(u,*t);
             }();
