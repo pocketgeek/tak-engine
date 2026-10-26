@@ -71,6 +71,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 
 using namespace tak;
@@ -864,17 +865,23 @@ static void classicExpansion(const char* root) {
         std::vector<Snapshot> snaps;
         std::set<int> sitesUsed;bool sharedSite=false;
         for (uint32_t tick=0;tick<minutes*1800u;++tick) {
+            // A Build is judged against its builder's base once the think is
+            // over: an expansion moves its founder into the new base in the
+            // same think that orders the first lodestone there, and squadOf
+            // only reports the move after it.
+            std::vector<std::tuple<int,float,float>> thinkBuilds;
             controller.tick(w,tick,[&](const net::Command& c) {
-                if (c.kind==net::Cmd::Build) {
-                    ++builds;
-                    const int slot=brain.squadOf(c.unitId);
-                    if (const auto centre=anchorCentre(slot)) {
-                        const float d=std::hypot(c.x-centre->first,c.z-centre->second);
-                        if (d>float(sim::retailAiBaseRadius(baseFootprint(slot),1))+40*16) ++outside;
-                    }
-                }
+                if (c.kind==net::Cmd::Build) thinkBuilds.emplace_back(c.unitId,c.x,c.z);
                 sim::applyCommand(w,reg,c);
             });
+            for (const auto& [unitId,x,z]:thinkBuilds) {
+                ++builds;
+                const int slot=brain.squadOf(unitId);
+                if (const auto centre=anchorCentre(slot)) {
+                    const float d=std::hypot(x-centre->first,z-centre->second);
+                    if (d>float(sim::retailAiBaseRadius(baseFootprint(slot),1))+40*16) ++outside;
+                }
+            }
             w.tick(1.f/30.f);
             const uint32_t now=tick+1;
             if (now==5u*1800u || now==10u*1800u || now==minutes*1800u) {

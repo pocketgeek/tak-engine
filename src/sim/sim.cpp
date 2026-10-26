@@ -5589,12 +5589,15 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
             if (!canTarget(e)) return;
             if (shotBlockedHere(u,e)) return;   // written off from this spot (noteShotImpact)
             // A unit that may not leave its post (tickCombat's !mayChase) drops
-            // an auto target its arc cannot reach; never pick one up, or it
-            // is acquired and dropped again on every acquisition turn.
+            // an auto target out of its reach at once; never pick one up, or it
+            // is acquired and dropped again on every acquisition turn, and each
+            // acquisition (setSlotsManual) wipes the fire-at-will sweep's slot
+            // targets. The reach is tickCombat's own (combatReach): the arc for
+            // a ballistic weapon, else the selected weapon's range (the longest
+            // when all fire) padded for a structure. Melee keeps the old reach.
             if (!(u.type->canMove && u.moveState != 0)) {
-                const int as=approachSlot(u);
-                if (as>=0 && u.type->weapons[size_t(as)].ballisticClass() &&
-                    !ballisticInRange(u,e,u.type->weapons[size_t(as)])) return;
+                const CombatReach cr=combatReach(u,e,std::sqrt(d));
+                if (cr.weapon && !cr.weapon->melee && !cr.in) return;
             }
             if (ranged && !e.type->canFly && !lobber &&
                 !combatLineOfSight(u,e))
@@ -5750,6 +5753,32 @@ int World::approachSlot(const Unit& u) const {
         for (int sl=0;sl<int(u.type->weapons.size());++sl)
             if (u.type->weapons[size_t(sl)].range>u.type->weapons[size_t(s)].range) s=sl;
     return s;
+}
+
+World::CombatReach World::combatReach(const Unit& u,const Unit& t,float dist) const {
+    CombatReach r{};
+    r.slot=approachSlot(u);
+    r.weapon=r.slot>=0 ? &u.type->weapons[size_t(r.slot)] : nullptr;
+    // Approach on the reach this unit actually fights at: the selected weapon for a
+    // switcher, the longest of them when they all fire.
+    const bool allWeapons=!u.type->weaponSwitching && u.type->weapons.size()>1;
+    r.best=allWeapons ? u.type->maxRange() : (r.weapon ? float(r.weapon->range) : u.type->maxRange());
+    // Range is to the target's footprint EDGE, not its centre. A building's centre is
+    // deep inside a blocked footprint, so a centre-distance check leaves a short-range
+    // attacker grinding the edge (never "in range") or a flyer buried inside it. For a
+    // STRUCTURE target, pad the effective range by its footprint half-extent plus a
+    // small margin for where nav actually halts at the edge (mirrors the builder reach
+    // in tickConstruction). Mobile targets keep centre-distance, so unit-vs-unit combat
+    // is unchanged.
+    r.pad=t.type->maxVel <= Fixed()
+              ? 8.0f*float(std::max(t.type->footX,t.type->footZ))+24.0f
+              : 0.0f;
+    // A ballistic weapon reaches only where its arc does (52bc60, see
+    // ballisticInRange): no pad, and a target its shell cannot reach is out
+    // of reach however near it stands.
+    r.arc=r.weapon && r.weapon->ballisticClass();
+    r.in=r.arc ? ballisticInRange(u,t,*r.weapon) : dist <= r.best+r.pad;
+    return r;
 }
 
 bool World::slotInRange(const Unit& u,const Unit& t,int slot) const {
@@ -6495,29 +6524,18 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     //     AA/ground turret really does work both barrels at once.
     // (`fireatwillrandom` is unrelated to this -- it scatters auto-acquired TARGET
     // choice; see UnitType::fireAtWillRandom.)
-    bool allWeapons = !u.type->weaponSwitching && u.type->weapons.size() > 1;
-    // Approach on the reach this unit actually fights at: the selected weapon for a
-    // switcher, the longest of them when they all fire.
-    float best = allWeapons ? u.type->maxRange() : (sel ? sel->range : u.type->maxRange());
-    // Range is to the target's footprint EDGE, not its centre. A building's centre is
-    // deep inside a blocked footprint, so a centre-distance check leaves a short-range
-    // attacker grinding the edge (never "in range") or a flyer buried inside it. For a
-    // STRUCTURE target, pad the effective range by its footprint half-extent plus a
-    // small margin for where nav actually halts at the edge (mirrors the builder reach
-    // in tickConstruction). Mobile targets keep centre-distance, so unit-vs-unit combat
-    // is unchanged.
-    float pad = target->type->maxVel <= Fixed()
-                    ? 8.0f * float(std::max(target->type->footX, target->type->footZ)) + 24.0f
-                    : 0.0f;
-    float reach = best + pad;
-    // A ballistic weapon reaches only where its arc does (52bc60, see
-    // ballisticInRange): no pad, and a target its shell cannot reach is out
-    // of reach however near it stands. The weapon the unit approaches on
-    // decides: the selected one, or the longest when they all fire.
-    const int arcSlot = approachSlot(u);
-    const Weapon* approach = arcSlot >= 0 ? &u.type->weapons[size_t(arcSlot)] : nullptr;
-    const bool arcApproach = approach && approach->ballisticClass();
-    const bool inReach = arcApproach ? ballisticInRange(u,*target,*approach) : dist <= reach;
+    // The reach it fights at (combatReach, which findTarget shares so a unit
+    // that may not chase never acquires what is dropped below): the selected
+    // weapon's range for a switcher, the longest when they all fire, padded for
+    // a structure target; the arc for a ballistic weapon.
+    const bool allWeapons = !u.type->weaponSwitching && u.type->weapons.size() > 1;
+    const CombatReach cr = combatReach(u,*target,dist);
+    const float best = cr.best;
+    const float pad = cr.pad;
+    const int arcSlot = cr.slot;
+    const Weapon* approach = cr.weapon;
+    const bool arcApproach = cr.arc;
+    const bool inReach = cr.in;
     // Just inside the origin arc's reach the muzzle-to-SweetSpot solve can
     // still fail (queryWeaponAim launches nothing then): a unit free to move
     // keeps closing there rather than stand without a shot. That solve

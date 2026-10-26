@@ -1,9 +1,100 @@
 // Buildings retain their placement heading while their weapon scripts aim.
+//   structure_combat_test <data>         heading cases
+//   structure_combat_test <data> reach   a unit that may not leave its post
+//     (a non-ballistic tower, a Hold Position Monarch on its selected weapon)
+//     never auto-acquires an enemy outside tickCombat's reach: it would drop
+//     it at once, and every acquisition wipes the fire-at-will sweep.
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include <cstdio>
+#include <cstring>
 #include <algorithm>
+namespace {
+// One unit `id` at the centre of a flat field and an enemy structure just
+// past its weapon range, in reach only by tickCombat's footprint pad. With
+// `decoy`, a mobile enemy also stands nearer, but past the reach: before the
+// fix, findTarget took the nearer decoy on every acquisition turn,
+// tickCombat dropped it at once, and each acquisition wiped the sweep's slot
+// targets, so the structure in reach was barely shot. Returns the damage the
+// structure takes.
+long reachCase(const tak::sim::TypeRegistry& registry,const char* id,bool hold,int slot,
+               float reach,bool decoy,int ticks) {
+    const auto& type=*registry.find(id);
+    tak::sim::World w;w.setVisPlayer(-1);
+    w.setTerrain(std::vector<uint8_t>(512*512,70),512,512,64);
+    w.buildNavClasses(registry);
+    auto mobile=*registry.find("araarch");
+    mobile.maxHp=30000;mobile.healTime=0;mobile.weapons.clear();mobile.weapon.damage=0;
+    auto building=*registry.find("aralode");
+    building.maxHp=30000;building.healTime=0;building.weapons.clear();building.weapon.damage=0;
+    const float pad=8.0f*float(std::max(building.footX,building.footZ))+24.0f;
+    const int a=w.spawn(&type,4096,4096,0,0);
+    // Past the range, inside range+pad: a centre distance of reach+pad/2.
+    const int inner=w.spawn(&building,4096,4096-(reach+pad*0.5f),0,1);
+    const int outer=decoy ? w.spawn(&mobile,4096+reach+pad*0.25f,4096,0,1) : 0;
+    w.player(0).mana=100000;
+    if(hold)w.unit(a)->moveState=0;
+    if(slot>=0)w.setWeapon(a,slot);
+    long damage=0;
+    for(int tick=0;tick<ticks;++tick) {
+        if(outer)w.unit(outer)->hp=tak::sim::Fixed::fromInt(30000);
+        w.unit(inner)->hp=tak::sim::Fixed::fromInt(30000);
+        w.unit(a)->hp=tak::sim::Fixed::fromInt(type.maxHp);
+        w.tick(1.f/30.f);
+        damage+=30000-w.unit(inner)->hp.floorInt();
+    }
+    return damage;
+}
+// Compares the structure's damage with and without the decoy.
+int reachPair(const tak::sim::TypeRegistry& registry,const char* id,bool hold,int slot,float reach) {
+    const long alone=reachCase(registry,id,hold,slot,reach,false,1800);
+    const long decoyed=reachCase(registry,id,hold,slot,reach,true,1800);
+    // Shots are few (a Stronghold reloads in 4 s) and splash varies, so
+    // half is the bar; the churn left it at nothing.
+    const bool ok=alone>0 && decoyed*2>=alone;
+    std::printf("%s %s%s slot=%d reach=%.0f: structure in reach takes %ld alone, %ld beside an out-of-reach decoy\n",
+                ok?"PASS":"FAIL",id,hold?" (hold)":"",slot,reach,alone,decoyed);
+    return ok?0:1;
+}
+// tickCombat's reach without a structure pad: the selected weapon's range,
+// the longest when every weapon fires.
+float reachOf(const tak::sim::UnitType& t,int slot) {
+    if(!t.weaponSwitching && t.weapons.size()>1)return t.maxRange();
+    return float(t.weapons[size_t(std::max(slot,0))].range);
+}
+int reachCases(const char* data) {
+    auto vfs=tak::hpi::mountRetailRoot(data);
+    tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,false);
+    int failures=0;
+    for(const char* id:{"crepris","arassh","cresage","araarch","aralode"})
+        if(!registry.find(id)){std::printf("FAIL missing type %s\n",id);return 1;}
+    // The duel's churning towers: Prismatic Mirror and Stronghold.
+    for(const char* id:{"crepris","arassh"}) {
+        const auto& t=*registry.find(id);
+        if(t.weapons.empty() || t.weapons[0].ballisticClass() || t.weapons[0].melee) {
+            std::printf("FAIL %s: expected a non-ballistic ranged weapon\n",id);++failures;continue;
+        }
+        failures+=reachPair(registry,id,false,-1,reachOf(t,-1));
+    }
+    // The Creon Monarch on Hold Position with its shortest weapon selected:
+    // the reach is that weapon's, not the longest one's.
+    const auto& t=*registry.find("cresage");
+    int shortest=0;
+    for(int s=0;s<int(t.weapons.size());++s)
+        if(t.weapons[size_t(s)].damage>0 && !t.weapons[size_t(s)].melee &&
+           !t.weapons[size_t(s)].ballisticClass() && t.weapons[size_t(s)].range<t.weapons[size_t(shortest)].range)
+            shortest=s;
+    if(!t.weaponSwitching || reachOf(t,shortest)>=t.maxRange()) {
+        std::printf("FAIL cresage: expected a weapon switcher with a short weapon\n");++failures;
+    } else {
+        failures+=reachPair(registry,"cresage",true,shortest,reachOf(t,shortest));
+    }
+    std::printf("structure_combat reach: %d failures\n",failures);
+    return failures?1:0;
+}
+} // namespace
 int main(int argc,char** argv) {
+    if(argc==3 && std::strcmp(argv[2],"reach")==0)return reachCases(argv[1]);
     if(argc!=2)return 2;
     auto vfs=tak::hpi::mountRetailRoot(argv[1]);
     int failures=0,cases=0;

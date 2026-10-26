@@ -3049,6 +3049,11 @@ private:
     bool ballisticInRange(Fixed x,Fixed y,Fixed z,const Unit& t,const Weapon& w) const;
     bool ballisticInRange(const Unit& u,const Unit& t,const Weapon& w) const;
     int approachSlot(const Unit& u) const;
+    // tickCombat's reach to a target at centre distance `dist`: the weapon it
+    // approaches on (approachSlot), and whether the target is within it.
+    // `pad` is the structure footprint pad the non-ballistic reach adds.
+    struct CombatReach { int slot; const Weapon* weapon; bool arc; float best; float pad; bool in; };
+    CombatReach combatReach(const Unit& u,const Unit& t,float dist) const;
     bool slotInsideMinRange(const Unit& u,const Unit& t,int slot) const;
     bool slotBadTarget(const Unit& u,int slot,const Unit& t) const;
     bool slotClearShot(const Unit& u,const Unit& t,int slot) const;
