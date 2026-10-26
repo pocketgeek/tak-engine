@@ -20,7 +20,7 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
 ## 0.9.5
-*Unreleased · protocol 299 · replay format 15 · does not play with 0.9.4 or earlier, nor their replays*
+*2026-10-26 · protocol 299 · replay format 15 · does not play with 0.9.4 or earlier, nor their replays*
 
 - **Dead units stay dead.** A unit that was killed could take more hits in the
   same instant, for example from the rest of a big splash or a volley landing
@@ -84,7 +84,7 @@ players. A server started with `--map-cache-dir` behaves as before; one started
 without it now caches maps in its per-user folder (above), and its data folder's
 old `MapCache/` is no longer read.
 
-[Source at v0.9.5](https://github.com/pocketgeek/tak-engine/tree/v0.9.5)
+[Release notes](docs/release-0.9.5-notes.md) · [Validation report](docs/release-0.9.5-validation.md) · [Source at v0.9.5](https://github.com/pocketgeek/tak-engine/tree/v0.9.5)
 
 ## 0.9.4
 *2026-10-26 · protocol 298 · replay format 15 · does not play with 0.9.3 or earlier, nor their replays*

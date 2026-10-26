@@ -12,10 +12,10 @@ independent security audit or protection against a volumetric DDoS.
 ## Versions
 
 Server and clients must speak the same gameplay protocol; update the server and
-every client together when it changes. **0.9.4 changes it (protocol 298):** a
-0.9.4 `takserver` accepts only 0.9.4 players and turns away 0.9.3 and older
-clients with a *protocol version mismatch* message, and a 0.9.3 or older server
-turns away 0.9.4 players, so update `takserver` when you announce 0.9.4 to your
+every client together when it changes. **0.9.5 changes it (protocol 299):** a
+0.9.5 `takserver` accepts only 0.9.5 players and turns away 0.9.4 and older
+clients with a *protocol version mismatch* message, and a 0.9.4 or older server
+turns away 0.9.5 players, so update `takserver` when you announce 0.9.5 to your
 players. Which versions play together is listed in
 the [user guide](user-guide.md#versions) and in the [CHANGELOG](../CHANGELOG.md).
 
