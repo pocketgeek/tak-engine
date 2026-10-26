@@ -985,6 +985,15 @@ server side and change nothing on the wire.
 0.9.2 ships protocol 296; it plays with neither 0.9.1 nor any earlier version,
 nor their replays.
 
+Protocol 297 (0.9.3) changes hashed firing decisions only: the 2D line-of-sight
+test applies per weapon (`Weapon::needsClearLine`), and a plain Ballistic shell
+(arrows, spears, cannon balls, Trebuchet shells) is exempt because it flies its
+arc, as in retail, which tests no line before firing. A building or Hold unit
+drops an auto target it has no line to. Nothing on the wire changes; 296
+replays are refused. The macOS FFmpeg TLS switch to OpenSSL is client side.
+0.9.3 ships protocol 297; it plays with neither 0.9.2 nor any earlier version,
+nor their replays.
+
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
 in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each
@@ -1274,6 +1283,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.9.2 (peers and server) requires protocol 296; 0.9.1 required 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.9.3 (peers and server) requires protocol 297; 0.9.2 required 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions and Crusades battle rooms remain fixed to Retail.

@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 296;      // 296: a flame feeds the blocked-shot count (FlameShot::targetId, hashed),
+constexpr uint32_t kNetVersion = 297;      // 297: only a plain Ballistic shell (arrows, spears, cannon balls) skips the 2D line
+                                           //      test (retail never tests a line; its shells fly their arc), so
+                                           //      archers, arrow towers and the Trebuchet fire over obstacles; a
+                                           //      building or Hold unit drops an auto target it has no line to.
+                                           // 296: a flame feeds the blocked-shot count (FlameShot::targetId, hashed),
                                            //      so a flame unit stopped by scenery on a movement order walks to
                                            //      a clear shot (Hold too, while a move is queued behind the auto
                                            //      target); a ballistic weapon is in range only where retail's arc

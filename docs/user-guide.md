@@ -1061,6 +1061,13 @@ pressed button in the command panel; no text appears on screen.
 
 #### Blocked shots
 
+Weapons that lob a plain arcing shell (arrows, spears, cannon balls and
+Trebuchet stones) need no clear line to their target: they fire over a wall
+or a hill, as in the original game, and a Trebuchet or Archer Tower shoots at
+anything in range. Direct-fire weapons (flames, bolts, beams) still need a
+clear line, and a building or a unit on Hold Position drops a target it has
+no line to and picks another.
+
 If a unit's shots (flames included) keep hitting something it cannot destroy
 before they reach its target (a hill, water, a rock or other indestructible
 scenery), it walks a short way to a spot with a clear shot and then attacks
@@ -1993,16 +2000,16 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 0.9.2 uses network protocol **296** and replay format **15**. No
-earlier release uses protocol 296, so:
+TAK Engine 0.9.3 uses network protocol **297** and replay format **15**. No
+earlier release uses protocol 297, so:
 
-- **Multiplayer:** 0.9.2 plays only with 0.9.2. A server turns away a client
-  whose protocol differs from its own, so a 0.9.1 or older player cannot join a
-  0.9.2 server, nor a 0.9.2 player an older one; the connection fails with a
+- **Multiplayer:** 0.9.3 plays only with 0.9.3. A server turns away a client
+  whose protocol differs from its own, so a 0.9.2 or older player cannot join a
+  0.9.3 server, nor a 0.9.3 player an older one; the connection fails with a
   *protocol version mismatch* message. When a release changes the protocol, a
   server and all of its players update together.
-- **Replays:** 0.9.2 plays only replays recorded by 0.9.2. A replay recorded by
-  0.9.1 or earlier needs a version with that replay's protocol; keep an old
+- **Replays:** 0.9.3 plays only replays recorded by 0.9.3. A replay recorded by
+  0.9.2 or earlier needs a version with that replay's protocol; keep an old
   copy of the engine (built from its tag, see the
   [development guide](development.md)) if you want to keep watching old
   replays.

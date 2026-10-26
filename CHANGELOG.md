@@ -19,6 +19,48 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.3
+*Unreleased · protocol 297 · replay format 15 · does not play with 0.9.2 or earlier, nor their replays*
+
+- **Trebuchets fire again:** a Trebuchet no longer sits idle because a wall,
+  hill, tree line or other scenery lies between it and its target. Its
+  shell flies in an arc, so it fires, as in the original game, which never
+  checks for a clear line before firing a lobbed shell. In a reported game a
+  Trebuchet held a target for 47 minutes without a single shot. Test games
+  that used to stall for over an hour with Trebuchets holding fire now finish.
+- **Every arrow, spear and cannon ball does the same:** the same fix applies
+  to 42 unit types that shoot a plain arcing shell: the archers, bowmen,
+  cannons, ballistas, spear throwers and musketeers of the races, and the
+  Arrow Tower and other towers with arrow weapons. They now fire at targets behind scenery instead of waiting
+  for a clear line, and a unit whose shots keep landing short walks to a clear
+  spot as described under Blocked shots in the user guide. Units with
+  direct-fire weapons (flames, magic bolts, beams) still need a clear line,
+  and a unit that mixes both kinds (the Cre'on Sage) now tests each weapon on its own.
+- **Towers stop holding targets they cannot hit:** a tower or other building,
+  or a unit on Hold Position, that has picked a target it has no clear line to
+  now drops it and looks for another, instead of holding it without firing
+  while an enemy in the open shoots it. In a test game a tower whose own new
+  walls blocked its target ignored an enemy in the open for a whole minute.
+  Orders you give directly are unchanged.
+- **Shorter, more decisive games:** in a set of 16 computer-player duels the
+  units that stood holding a target for over a minute without firing fell
+  from 80 to 4, and a game that previously never ended now finishes.
+- **macOS streaming uses OpenSSL:** streaming to RTMPS services (YouTube,
+  Twitch and the like) from a Mac now uses the same OpenSSL as multiplayer,
+  instead of Apple's deprecated SecureTransport, which could stall on slow
+  connections. Certificates are still checked against the macOS system root
+  certificates, and a certificate for the wrong host or from an unknown
+  authority is still refused with the TLS CERTIFICATE reason. Windows and
+  Linux are unchanged. Certificates you added to the Mac keychain yourself
+  (for example a company proxy) are not used.
+- **Not compatible with 0.9.2:** the firing changes change the game itself,
+  so 0.9.3 uses protocol 297 (replay format 15 is unchanged). It does not play
+  with 0.9.2 or any earlier version, nor their replays.
+- **Upgrading:** a server and all of its players update to 0.9.3 together;
+  public-server operators update `takserver` as well. Keep 0.9.2 (it stays on
+  the releases page, or build it from its tag) to watch replays recorded
+  before 0.9.3.
+
 ## 0.9.2
 *2026-10-25 · protocol 296 · replay format 15 · does not play with 0.9.1 or earlier, nor their replays*
 
