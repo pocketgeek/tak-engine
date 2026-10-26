@@ -169,36 +169,19 @@ jobs:
         # + the WIN32 -static flag) so the .exe is fully self-contained -- no bundled DLLs.
         run: |
           cmake -B build -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target acme_test server_address_test server_commands_test room_worker_test mod_packs_test tls_test crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_matchmaking_test crusades_result_test crusades_history_test crusades_replay_files_test replay_file_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test spectator_client_test crusades_presentation_test crusades_ui_test crusades_import crusades_admin crusades_admin_test filelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test cartographer_placement_test datafolder_test detmath_test sim_driver_equiv_test stream_test menu_music_test vfs_names_test audio_device_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
+          cmake --build build --target acme_test server_address_test server_commands_test room_worker_test mod_packs_test tls_test replay_file_test spectator_client_test filelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test cartographer_placement_test datafolder_test detmath_test sim_driver_equiv_test stream_test menu_music_test vfs_names_test audio_device_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
 
-      - name: Crusades model and durable store
+      - name: Server, network and replay checks
         run: |
-          ./build/crusades_admin_test.exe
           ./build/filelease_test.exe
-          python3 tools/crusades_admin_cli_test.py build/crusades_admin.exe
           ./build/tls_test.exe
           ./build/acme_test.exe
           ./build/server_address_test.exe
           ./build/server_commands_test.exe
           ./build/room_worker_test.exe
           ./build/mod_packs_test.exe
-          ./build/crusades_campaign_test.exe
-          ./build/crusades_store_test.exe
-          ./build/crusades_allegiance_test.exe
-          ./build/crusades_battle_test.exe
-          ./build/crusades_matchmaking_test.exe
-          ./build/crusades_result_test.exe
-          ./build/crusades_history_test.exe
-          ./build/crusades_replay_files_test.exe
           ./build/replay_file_test.exe
-          ./build/crusades_rules_test.exe
-          ./build/crusades_rules_store_test.exe
-          ./build/crusades_protocol_test.exe
-          ./build/crusades_network_service_test.exe
-          ./build/crusades_client_network_test.exe
           ./build/spectator_client_test.exe
-          ./build/crusades_presentation_test.exe
-          SDL_VIDEODRIVER=dummy ./build/crusades_ui_test.exe
 
       - name: Retail scripts, paths, rendering and map generation
         run: |
@@ -230,7 +213,7 @@ jobs:
 
       - name: Verify fully static (only system DLL imports)
         run: |
-          for binary in takclient takserver cartographer crusades_admin; do
+          for binary in takclient takserver cartographer; do
             imports=$("$OBJDUMP" -p "build/$binary.exe" | awk '/DLL Name:/{print tolower($3)}')
             echo "$binary DLL imports: $imports"
             if echo "$imports" | grep -qE 'sdl2|opus|jpeg|zlib|libz|libpng|avcodec|avformat|swscale|swresample|avutil|x264|libssl|libcrypto|libvpl|nvml|sqlite|libstdc|libgcc|winpthread|libc\+\+|libunwind|msys-|cygwin'; then
@@ -240,7 +223,7 @@ jobs:
 
       - name: Verify executable architecture
         run: |
-          for binary in takclient takserver cartographer crusades_admin; do
+          for binary in takclient takserver cartographer; do
             header=$("$OBJDUMP" -f "build/$binary.exe")
             echo "$header"
             [[ "$header" == *"architecture: ${{ matrix.machine }}"* ]]
@@ -271,7 +254,7 @@ jobs:
       - name: Stage static executables
         run: |
           mkdir -p dist-win
-          cp build/takclient.exe build/takserver.exe build/cartographer.exe build/crusades_admin.exe dist-win/
+          cp build/takclient.exe build/takserver.exe build/cartographer.exe dist-win/
           cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-win/
 
       - name: ZIP unsigned CI build
@@ -308,7 +291,7 @@ jobs:
       - name: Configure + build (debug)
         run: |
           cmake -B build-debug -G Ninja -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Debug
-          cmake --build build-debug --target takclient takserver cartographer crusades_admin
+          cmake --build build-debug --target takclient takserver cartographer
           ccache --show-stats
 
       # Saved even when a test step failed, so the next push still starts warm.
@@ -321,7 +304,7 @@ jobs:
 
       - name: Verify Debug architecture and static dependencies
         run: |
-          for binary in takclient takserver cartographer crusades_admin; do
+          for binary in takclient takserver cartographer; do
             header=$("$OBJDUMP" -f "build-debug/$binary.exe")
             [[ "$header" == *"architecture: ${{ matrix.machine }}"* ]]
             imports=$("$OBJDUMP" -p "build-debug/$binary.exe" | awk '/DLL Name:/{print tolower($3)}')
@@ -333,7 +316,7 @@ jobs:
       - name: Stage static executables (debug)
         run: |
           mkdir -p dist-win-debug
-          cp build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe build-debug/crusades_admin.exe dist-win-debug/
+          cp build-debug/takclient.exe build-debug/takserver.exe build-debug/cartographer.exe dist-win-debug/
           cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-win-debug/
 
       - name: ZIP unsigned CI build (debug)

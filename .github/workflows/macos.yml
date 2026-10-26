@@ -112,36 +112,19 @@ jobs:
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_FIND_FRAMEWORK=LAST
-          cmake --build build --target acme_test server_address_test server_commands_test room_worker_test mod_packs_test tls_test crusades_campaign_test crusades_store_test crusades_allegiance_test crusades_battle_test crusades_matchmaking_test crusades_result_test crusades_history_test crusades_replay_files_test replay_file_test crusades_rules_test crusades_rules_store_test crusades_protocol_test crusades_network_service_test crusades_client_network_test spectator_client_test crusades_presentation_test crusades_ui_test crusades_import crusades_admin crusades_admin_test filelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test cartographer_placement_test datafolder_test detmath_test sim_driver_equiv_test stream_test stream_network_test menu_music_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
+          cmake --build build --target acme_test server_address_test server_commands_test room_worker_test mod_packs_test tls_test replay_file_test spectator_client_test filelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test cartographer_placement_test datafolder_test detmath_test sim_driver_equiv_test stream_test stream_network_test menu_music_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
 
-      - name: Crusades model and durable store
+      - name: Server, network and replay checks
         run: |
-          ./build/crusades_admin_test
           ./build/filelease_test
-          python3 tools/crusades_admin_cli_test.py build/crusades_admin
           ./build/tls_test
           ./build/acme_test
           ./build/server_address_test
           ./build/server_commands_test
           ./build/room_worker_test
           ./build/mod_packs_test
-          ./build/crusades_campaign_test
-          ./build/crusades_store_test
-          ./build/crusades_allegiance_test
-          ./build/crusades_battle_test
-          ./build/crusades_matchmaking_test
-          ./build/crusades_result_test
-          ./build/crusades_history_test
-          ./build/crusades_replay_files_test
           ./build/replay_file_test
-          ./build/crusades_rules_test
-          ./build/crusades_rules_store_test
-          ./build/crusades_protocol_test
-          ./build/crusades_network_service_test
-          ./build/crusades_client_network_test
           ./build/spectator_client_test
-          ./build/crusades_presentation_test
-          SDL_VIDEODRIVER=dummy ./build/crusades_ui_test
 
       - name: Retail scripts, paths, rendering and map generation
         run: |
@@ -157,7 +140,7 @@ jobs:
 
       - name: Verify Release architecture and static dependencies
         run: |
-          for binary in takclient takserver cartographer crusades_admin; do
+          for binary in takclient takserver cartographer; do
             [[ "$(lipo -archs "build/$binary")" == "${{ matrix.machine }}" ]]
             otool -L "build/$binary"
             imports=$(otool -L "build/$binary" | tail -n +2 | awk '{print $1}')
@@ -213,7 +196,7 @@ jobs:
           cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt "$APPDIR/Contents/Resources/"
           cp res/icons/takclient.icns "$APPDIR/Contents/Resources/"
           iconutil -c iconset "$APPDIR/Contents/Resources/takclient.icns" -o /tmp/takclient.iconset
-          cp build/takclient build/takserver build/crusades_admin "$APPDIR/Contents/MacOS/"
+          cp build/takclient build/takserver "$APPDIR/Contents/MacOS/"
           sed "s/@VERSION@/$VERSION/g" packaging/macos/Info.plist > "$APPDIR/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MACOSX_DEPLOYMENT_TARGET" "$APPDIR/Contents/Info.plist"
           plutil -lint "$APPDIR/Contents/Info.plist"
@@ -250,7 +233,7 @@ jobs:
           ditto --rsrc --extattr "dist-dmg/Total Annihilation - Kingdoms.app" \
             "dist-macos/Total Annihilation - Kingdoms.app"
           ditto --rsrc --extattr "dist-dmg/TAK Cartographer.app" "dist-macos/TAK Cartographer.app"
-          cp build/takclient build/takserver build/cartographer build/crusades_admin dist-macos/
+          cp build/takclient build/takserver build/cartographer dist-macos/
           # Preserve the signed bundle intact in the zip.
           ditto -c -k --sequesterRsrc dist-macos "takclient-$VERSION-macos-${{ matrix.arch }}.zip"
 
@@ -273,7 +256,7 @@ jobs:
         run: |
           cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_FIND_FRAMEWORK=LAST
-          cmake --build build-debug --target takclient takserver cartographer crusades_admin
+          cmake --build build-debug --target takclient takserver cartographer
           ccache --show-stats
 
       # Saved even when a test step failed, so the next push still starts warm.
@@ -296,7 +279,7 @@ jobs:
 
       - name: Verify Debug architecture and static dependencies
         run: |
-          for binary in takclient takserver cartographer crusades_admin; do
+          for binary in takclient takserver cartographer; do
             [[ "$(lipo -archs "build-debug/$binary")" == "${{ matrix.machine }}" ]]
             imports=$(otool -L "build-debug/$binary" | tail -n +2 | awk '{print $1}')
             if echo "$imports" | grep -qvE '^(/usr/lib/|/System/Library/)'; then
@@ -308,7 +291,7 @@ jobs:
         run: |
           mkdir -p dist-macos-debug
           cp STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt dist-macos-debug/
-          cp build-debug/takclient build-debug/takserver build-debug/cartographer build-debug/crusades_admin dist-macos-debug/
+          cp build-debug/takclient build-debug/takserver build-debug/cartographer dist-macos-debug/
           (cd dist-macos-debug && zip -r ../takclient-macos-${{ matrix.arch }}-debug.zip .)
 
       - name: Upload CI artifact (debug)
@@ -506,7 +489,7 @@ jobs:
           done
           codesign -d --entitlements - "$GAME" 2>/dev/null | grep -q com.apple.security.device.audio-input \
             || { echo "::error::the game bundle lost its microphone entitlement"; exit 1; }
-          for bin in takclient takserver cartographer crusades_admin; do
+          for bin in takclient takserver cartographer; do
             signbin "work/release/$bin"
           done
 
@@ -514,8 +497,8 @@ jobs:
           mkdir -p work/debug
           ditto unsigned/takclient-macos-"$ARCH"-debug work/debug
           # upload-artifact drops Unix modes on a loose directory; restore the execute bit.
-          chmod 755 work/debug/takclient work/debug/takserver work/debug/cartographer work/debug/crusades_admin
-          for bin in takclient takserver cartographer crusades_admin; do
+          chmod 755 work/debug/takclient work/debug/takserver work/debug/cartographer
+          for bin in takclient takserver cartographer; do
             signbin "work/debug/$bin"
           done
           (cd work/debug && zip -qr "$GITHUB_WORKSPACE/signed/takclient-macos-$ARCH-debug.zip" .)

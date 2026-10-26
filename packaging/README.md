@@ -75,7 +75,7 @@ signing profile/account. Only the release signing job receives `id-token: write`
 The environment's tag restriction is required because an environment-based OIDC
 subject identifies the environment, not a specific branch or tag.
 
-All four executables (`takclient`, `takserver`, `cartographer`, `crusades_admin`)
+All three executables (`takclient`, `takserver`, `cartographer`)
 in both Release and Debug, for x64 and ARM64, are signed with SHA-256 and an
 RFC 3161 SHA-256 timestamp. Authenticode and Windows SDK SignTool verify signatures,
 certificate chains and timestamps before ZIP/NSIS packaging. Packaging checks

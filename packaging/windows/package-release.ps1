@@ -9,7 +9,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $root = (Resolve-Path "$PSScriptRoot/../..").Path
 $payload = (Resolve-Path $PayloadRoot).Path
-$executables = @('takclient.exe', 'takserver.exe', 'cartographer.exe', 'crusades_admin.exe')
+$executables = @('takclient.exe', 'takserver.exe', 'cartographer.exe')
 $expected = @($executables) + @('STREAMING-LICENSES.txt', 'EDITOR-FONT-LICENSE.txt', 'CHAT-FONT-LICENSE.txt', 'ACME-LICENSES.txt', 'OPUS-LICENSE.txt')
 $versionMatch = [regex]::Match((Get-Content "$root/CMakeLists.txt" -Raw), 'project\(tak-engine VERSION ([0-9]+\.[0-9]+\.[0-9]+)')
 if (!$versionMatch.Success) { throw 'Cannot read project version' }
@@ -40,7 +40,7 @@ foreach ($group in $groups) {
     }
 }
 if ($ValidateOnly) { return }
-& "$PSScriptRoot/verify-signatures.ps1" -Path $payload -ExpectedCount 16
+& "$PSScriptRoot/verify-signatures.ps1" -Path $payload -ExpectedCount 12
 $output = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath)
 if (Test-Path $output) { throw "Output folder already exists: $output" }
 New-Item -ItemType Directory $output | Out-Null
