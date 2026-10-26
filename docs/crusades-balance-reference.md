@@ -1,10 +1,45 @@
 # Crusades Balance reference
 
-This records the original standard-versus-Crusades data changes required by
-Milestone 1 section 1.6 of the [Darien Crusades plan](darien-crusades-plan.md).
-Source reports, effective loaded-value reports, fingerprints and regression
-coverage are linked below. Counts distinguish authored fields from effective
+This records the original standard-versus-Crusades data changes behind the
+lobby's **Crusades** balance option. Source reports, effective loaded-value
+reports, fingerprints and regression coverage are linked below. Counts distinguish authored fields from effective
 fields; neither is a count of independent balance-design decisions.
+
+## How retail selects the Crusades balance (corrected in 0.9.4)
+
+Retail changes exactly one thing when the Crusades balance is on: the unit
+roster. Static analysis of `KINGDOMS.icd` (sha256 `1144a394...`):
+
+- The flag is byte `0x641144` (set by `0x5174c0`, read by `0x5174e0`). The FBI
+  prescan `0x517510` fills two dictionaries, `Units\*.fbi` and `UnitsCB\*.fbi`.
+  The lookup `0x518080` searches **only** the dictionary the flag selects and
+  returns 0 on a miss; it never falls back. The roster builder `0x4bf3b0` leaves
+  a missed name without its "present" bit, and `0x4c1a8e..0x4c1b08` compacts it
+  away. So a unit with a `units/` FBI but no `unitscb/` FBI does not exist in a
+  Crusades game: in the shipped Iron Plague-era data that is `monelem`,
+  `monmum`, `tarcship`, `tarhel`, `tarnecr2` and `zonspide` (the plain 3.0
+  data has none of these units in either mode).
+- Build menus come from `0x4c1950` in both modes: for every roster type with
+  the builder flag it lists `CanBuild\<builder>\*.tdf`, keeps each entry that
+  names a roster type (`0x515ac0`), reads `[Menu] Priority` (default
+  9999999999 when absent) and bubble-sorts ascending with a strict `>` swap,
+  so ties keep enumeration order.
+- There is no `CanBuildCB` string in this executable, in the 2005
+  `ironplague.icd`, or in the Iron Plague CD `Kingdoms.icd`. The shipped
+  `canbuildcb/` tree is data the game never reads.
+
+In retail Crusades games the tech tree is therefore the standard one: the gods
+stay on the monarchs, the Shaman builds the Giant Orm and Giant Barracuda, the
+Beast Handler builds the Swamp Beast, the Beast Tamer has the same nine entries
+as in the standard game, and the Ark has no build menu. Until 0.9.4 the engine
+loaded `canbuildcb/` menus and fell back to `units/` for units with no
+`unitscb/` FBI; that let a Crusades Beast Tamer build the Trapdoor Spider
+(`zonspide`), which retail never offers. `setupRegistry` now loads the roster
+from `unitscb/` alone and the menus from `canbuild/` alone, filtered by the
+roster, and `balance_roster_test` checks this against the shipped data. On the
+shipped data no menu has a priority tie or a missing priority, so the stable
+priority sort gives the same order as the earlier (priority, name) sort, and
+every Crusades menu equals its standard menu.
 
 ## Reproduce the source comparison
 
@@ -22,11 +57,11 @@ backslashes, tabs and newlines within values are escaped. Descriptive name,
 description and designation values are omitted.
 
 For each winning unitscb definition it compares the corresponding units file,
-including nested weapon/damage sections. A missing CB unit does not remove the
-base unit. For build menus, however, a builder present in canbuildcb replaces
-its entire canbuild menu: omitted entries are removals. Definition existence
-rows retain additions/removals even if the menu file contains no explicit keys.
-Repeated TDF sections have separate occurrence indices.
+including nested weapon/damage sections. A units file with no unitscb
+counterpart is reported as a `removed-definition` row, because that unit does
+not exist in a Crusades game. Build menus are not compared: both modes use the
+standard canbuild tree (see above), so `canbuildcb/` is ignored. Repeated TDF
+sections have separate occurrence indices.
 
 This command produces a **file/field diff**. The companion effective audit
 below resolves canonical definitions, inherited movement, defaults, conversions
@@ -35,7 +70,10 @@ a text difference need not change effective gameplay.
 
 ## First local survey
 
-On 2026-09-30, the current `/home/pocket_geek/tak_data` installation yielded:
+On 2026-09-30, the current `/home/pocket_geek/tak_data` installation yielded
+the figures below. They predate the 0.9.4 correction and still count the
+`canbuildcb/` menu comparison; the current reports are in the tables further
+down.
 
 - 377 compared files, including base menu entries suppressed by CB replacement;
 - 193 changed files, 15 CB-only files (all build-menu entries);
@@ -53,7 +91,7 @@ field review rather than silently repairing the original data.
 
 ## Verification boundary
 
-All **177 distinct changed source-field paths** across the three scopes have
+All **176 distinct changed source-field paths** across the three scopes have
 an explicit classification and check/reference in the
 [coverage table](research/darien-crusades/balance/field-coverage.tsv) and its
 [explanation](research/darien-crusades/balance/field-coverage.md). Gameplay
@@ -78,9 +116,14 @@ origin archive. The tool checks those source bytes against the actual audit VFS.
 
 | Scope | Field report | Manifest | Compared files | Changed fields |
 |---|---|---|---:|---:|
-| GOG 2.0.0.22 packaged Iron Plague-era installation | [gog.tsv](research/darien-crusades/balance/gog.tsv) | [gog-manifest.tsv](research/darien-crusades/balance/gog-manifest.tsv) | 377 | 1,269 |
-| Original Iron Plague CD composed data view | [iron-plague-cd.tsv](research/darien-crusades/balance/iron-plague-cd.tsv) | [iron-plague-cd-manifest.tsv](research/darien-crusades/balance/iron-plague-cd-manifest.tsv) | 377 | 1,269 |
-| Base data/English archives plus official ordinary 3.0 patch archives | [official30.tsv](research/darien-crusades/balance/official30.tsv) | [official30-manifest.tsv](research/darien-crusades/balance/official30-manifest.tsv) | 352 | 1,053 |
+| GOG 2.0.0.22 packaged Iron Plague-era installation | [gog.tsv](research/darien-crusades/balance/gog.tsv) | [gog-manifest.tsv](research/darien-crusades/balance/gog-manifest.tsv) | 197 (+6 removed) | 1,244 |
+| Original Iron Plague CD composed data view | [iron-plague-cd.tsv](research/darien-crusades/balance/iron-plague-cd.tsv) | [iron-plague-cd-manifest.tsv](research/darien-crusades/balance/iron-plague-cd-manifest.tsv) | 197 (+6 removed) | 1,244 |
+| Base data/English archives plus official ordinary 3.0 patch archives | [official30.tsv](research/darien-crusades/balance/official30.tsv) | [official30-manifest.tsv](research/darien-crusades/balance/official30-manifest.tsv) | 172 | 1,028 |
+
+The reports were regenerated for 0.9.4 from the same three roots; the
+manifests reproduced byte for byte, and every unit field row is unchanged. The
+difference from the earlier figures is the dropped `canbuildcb/` menu rows
+(25 priority rows in each scope) and the six new `removed-definition` rows.
 
 The CD and official-patch scopes are explicitly assembled data views, not executed installers.
 The CD view combines the disc's base/Data archives with the Required_Install_Files
@@ -103,14 +146,17 @@ build/crusades_balance_audit /path/to/data --manifest > /tmp/balance-manifest.ts
 `crusades_effective_audit` loads both modes and compares the fields affected by
 the original source deltas, including derived movement limits/timing, aura
 parameters, native weapon-slot state, precomputed integer damage and ordered
-menus. It also retains selected presentation references used downstream. It
+menus. A unit absent from one mode's roster reports only its `unit/present`
+row. Since 0.9.4 no ordered menu differs: Crusades menus are the standard
+canbuild menus filtered by the roster, and none of the removed units is on a
+standard menu. It also retains selected presentation references used downstream. It
 does not claim to serialize every field or every rule of the engine.
 
 | Scope | Effective report | Changed effective fields |
 |---|---|---:|
-| Original Iron Plague CD | [iron-plague-cd-effective.tsv](research/darien-crusades/balance/iron-plague-cd-effective.tsv) | 1,405 |
-| GOG 2.0.0.22 | [gog-effective.tsv](research/darien-crusades/balance/gog-effective.tsv) | 1,405 |
-| Base plus official 3.0 patch | [official30-effective.tsv](research/darien-crusades/balance/official30-effective.tsv) | 1,171 |
+| Original Iron Plague CD | [iron-plague-cd-effective.tsv](research/darien-crusades/balance/iron-plague-cd-effective.tsv) | 1,395 |
+| GOG 2.0.0.22 | [gog-effective.tsv](research/darien-crusades/balance/gog-effective.tsv) | 1,395 |
+| Base plus official 3.0 patch | [official30-effective.tsv](research/darien-crusades/balance/official30-effective.tsv) | 1,156 |
 
 The original-CD and GOG effective reports are byte-identical. `fixed16` values
 are the raw signed 16.16 storage (divide by 65,536); floating values use enough
@@ -134,8 +180,12 @@ build/crusades_effective_audit /path/to/data > /tmp/effective-balance.tsv
 ## Loaded registry checks
 
 `crusades_registry_test` loads both modes through `setupRegistry`, excluding
-loose overrides and downloaded-map resources. It checks canonical definitions,
-complete ordered menus and active native-to-local weapon slot mappings.
+loose overrides and downloaded-map resources. It checks the canonical roster of
+each mode (`units/` or `unitscb/`, no fallback), complete ordered menus (the
+standard canbuild tree filtered by that roster) and active native-to-local
+weapon slot mappings. `balance_roster_test` pins the retail facts directly: the
+six absent units, the nine-entry Beast Tamer, the Shaman's Orm and Barracuda,
+the monarch gods and the Ark's empty menu.
 A review caught that the initial weapon check searched the wrong TDF level and
 therefore checked no weapons. This is corrected: weapon, explosion and category
 counts are explicit, and a zero-coverage corpus fails.
@@ -154,18 +204,18 @@ Current coverage includes:
 - complete category-damage tables, effective multiplier damage, interned versus
   string-lookup parity, and unmatched-category fallback;
 - projectile model/art, explosion art, light size and impact sound;
-- whole ordered menu replacement, priorities and alphabetical tie breaks.
+- roster filtering of the standard menus, priorities and stable tie order.
 
-The GOG scope exercises 404 unit/mode cases, 66 complete builder/mode menus,
-397 weapons, 12 death explosions and 426 category overrides. The official 3.0
-scope exercises 344 unit/mode cases, 54 menus, 323 weapons, seven death
-explosions and 348 category overrides. Final registry runs pass 126,413 checks for each IP-era scope and 93,337 for the
-official 3.0 scope. Native investigation resolved the suspect keys and damage
+The GOG scope exercises 399 unit/mode cases, 64 complete builder/mode menus,
+390 weapons, 12 death explosions and 415 category overrides. The official 3.0
+scope exercises 344 unit/mode cases, 52 menus, 323 weapons, seven death
+explosions and 348 category overrides. Registry runs (0.9.4) pass 123,362 checks
+for each IP-era scope and 93,334 for the official 3.0 scope. Native investigation resolved the suspect keys and damage
 semantics; no changed gameplay field is left unclassified.
 
 ```sh
-cmake --build build --target crusades_registry_test
-ctest --test-dir build -R '^crusades_registry$' --output-on-failure
+cmake --build build --target crusades_registry_test balance_roster_test
+ctest --test-dir build -R '^(crusades_registry|balance_roster)$' --output-on-failure
 ```
 
 ## Corrected wind callback gate

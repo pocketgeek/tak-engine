@@ -1086,6 +1086,20 @@ flies straight to the rally; the self-centred circle once the factory is gone;
 airborne vs landed flyer over a site; the park held until arrival), both
 pathfinding modes and both balances.
 
+## The Crusades balance swaps only the unit roster (icd, 2026-10-26)
+
+With the Crusades balance on, the unit lookup `0x518080` searches only the
+`UnitsCB\*.fbi` dictionary (flag byte `0x641144`) and never falls back to
+`Units\`, so a unit with no `unitscb/` FBI does not exist (Iron Plague data:
+`monelem`, `monmum`, `tarcship`, `tarhel`, `tarnecr2`, `zonspide`). Build menus
+always come from `CanBuild\<builder>\*.tdf` (`0x4c1950`), entries filtered by
+the roster (`0x515ac0`) and bubble-sorted by ascending `[Menu] Priority`
+(default 9999999999, ties in enumeration order). The executable has no
+`CanBuildCB` path: the shipped `canbuildcb/` tree is never read. The engine
+loaded `canbuildcb/` with a `units/` fallback until 0.9.4, which, among other
+things, offered the Trapdoor Spider from the Crusades Beast Tamer. Details in
+[the balance reference](crusades-balance-reference.md).
+
 ## Benchmark switches and RNG seeding (icd, 2026-10-22)
 
 Found while building the retail AI comparison harness (`tools/re/README-retail-ai.md`).

@@ -19,21 +19,6 @@ explodeAs/projVel	zonamoe	0	1000
 explodeAs/subSteps	zonamoe	1	3
 explodeAs/switchReloadTicks	zonamoe	30	0
 explodeAs/waterExplosionClass	zonamoe	<empty>	large water explosion
-menu/ordered	aracastl	arabroad,arabow,arapal,arasmith,aracan,araspy,arasiege,arabuild,arapries	arabroad,arabow,arapal,arasmith,aracan,araspy,aragren,arasiege,arabuild,arapries
-menu/ordered	arafly	arawall,aratre,aralode,araat,arawar,arassh,arakeep,aracastl	arawall,aratre,aralode,araat,arawar,arassh,arakeep,aracastl,arasiege
-menu/ordered	araking	arawall,arangate,aralode,araat,aratrans,arakeep,aragod	arawall,arangate,aralode,araat,aratrans,arakeep
-menu/ordered	arapries	aragren,aramana,aradrag,arafly	aramana,aradrag,arafly,aragod
-menu/ordered	aratrans	<empty>	arafast,arasword,araarch
-menu/ordered	tarnecro	tarwall,tarlode,tarngate,tarcage,tarcastl,tardung,tarhell,targod	tarwall,tarlode,tarngate,tarcage,tarcastl,tardung,tarhell
-menu/ordered	tarpries	tarmana,tarang,tardrag	tarmana,tarang,tardrag,targod
-menu/ordered	vercastl	verbers,vercen,vermusk,vercrus,verknigh,verball,verliege,verlihr	verbers,vermusk,vercrus,verknigh,verball,verliege,vercen,verbal,verlihr
-menu/ordered	verflag	verlode,verfltwr,verkeep,verasy	verlode,verfltwr,verkeep,verasy,verlight
-menu/ordered	verlihr	verbal,verpill,vermana,verdrag	verpill,vermana,verdrag,vergod
-menu/ordered	vermage	verwall,verlode,verngate,verat,verkeep,verasy,vergod	verwall,verlode,verngate,verat,verkeep,verasy
-menu/ordered	zonhand	zongob,zonfire,zonbat,zonter,zontroll,zonlode,zonswamp,zontrain	zongob,zonfire,zonbat,zonter,zontroll,zonlode,zontrain
-menu/ordered	zonhunt	zonfire,zonlode,zonglyph,zonhand,zongod	zonfire,zonlode,zonglyph,zonhand
-menu/ordered	zonsham	zonamoe,zonbar,zonmana,zondrag	zonmana,zondrag,zongod
-menu/ordered	zontrain	zonlode,zonkrak,zongryp,zonwolf,zonbasil,zonharp,zonglyph,zonhand,zonlord	zonlode,zonkrak,zonbar,zongryp,zonwolf,zonbasil,zonamoe,zonswamp,zonharp,zonglyph,zonspide,zonhand,zonlord
 unit/accel.fixed16	aragod	32768	655360
 unit/accel.fixed16	targod	32768	655360
 unit/accel.fixed16	verbal	23592	26214

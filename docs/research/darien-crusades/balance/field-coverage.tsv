@@ -1,5 +1,5 @@
 field	classification	gog_rows	official30_rows	iron_plague_cd_rows	coverage	evidence
-<definition>	gameplay-checked	24	24	24	complete ordered build menu and canonical roster; base fallback and whole-menu replacement	tools/crusades_registry_test.cpp
+<definition>	gameplay-checked	6	0	6	unit roster: a units/ FBI with no unitscb FBI is absent in Crusades (no fallback); menus are canbuild/ filtered by the roster	tools/crusades_registry_test.cpp
 explodeas#1/areaofeffect	gameplay-checked	3	2	3	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
 explodeas#1/damage#1/airship	gameplay-checked	1	1	1	binary64 default*multiplier then truncate to integer; complete category map and actual target lookup	tools/crusades_registry_test.cpp
 explodeas#1/damage#1/default	gameplay-checked	4	2	4	default uint16 damage	tools/crusades_registry_test.cpp
@@ -11,7 +11,6 @@ explodeas#1/name	presentation-consumer-checked	4	2	4	name load and downstream st
 explodeas#1/type	gameplay-checked	2	1	2	family enum and melee/ballistic/beam dispatch	tools/crusades_registry_test.cpp
 explodeas#1/waterexplosionclass	presentation-checked	1	1	1	source presentation field compared with registry value; not pixel/audio-output validation	tools/crusades_registry_test.cpp
 explodeas#1/weaponvelocity	gameplay-checked	2	1	2	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
-menu#1/priority	gameplay-checked	25	25	25	complete ordered menus sorted by source priority then unit ID	tools/crusades_registry_test.cpp
 unitinfo#1/acceleration	gameplay-checked	4	4	4	source value/default compared with loaded field in both balance modes	tools/crusades_registry_test.cpp
 unitinfo#1/adjustjoy#1/adjustment	gameplay-checked	1	1	1	joy aura presence and source amount/radius/enemy/edge contract	tools/crusades_registry_test.cpp
 unitinfo#1/adjustjoy#1/affectsenemy	gameplay-checked	1	1	1	joy aura presence and source amount/radius/enemy/edge contract	tools/crusades_registry_test.cpp

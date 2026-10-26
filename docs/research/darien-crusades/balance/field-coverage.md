@@ -1,8 +1,8 @@
 # Exhaustive changed-field coverage
 
 `field-coverage.tsv` contains one row for every distinct field path appearing in
-`gog.tsv`, `official30.tsv`, or `iron-plague-cd.tsv`: **177 paths**. Its three
-count columns count report rows, including added/removed menu definitions;
+`gog.tsv`, `official30.tsv`, or `iron-plague-cd.tsv`: **176 paths**. Its three
+count columns count report rows, including removed unit definitions;
 they are not counts of independently loaded unit types. The union and per-scope
 counts were mechanically recomputed from the TSVs. The classifications were
 then reviewed against `tools/crusades_registry_test.cpp`, production readers,
@@ -12,7 +12,8 @@ The table deliberately distinguishes:
 
 - `gameplay-checked`: a source-to-registry contract exists in the retail-backed
   test for the loaded value/default or effective derived result. This includes
-  roster fallback, complete menu ordering, inherited movement properties,
+  the roster (no fallback to `units/`), complete menu ordering (the standard
+  `canbuild/` tree filtered by that roster), inherited movement properties,
   weapon dispatch and category damage against actual target types.
 - `presentation-checked`: the registry test checks the source reference/value,
   but does not establish pixel-perfect rendering, sound output, or asset identity.
