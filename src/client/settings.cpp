@@ -155,6 +155,22 @@ Settings loadSettings() {
         else if (key == "accountName")     s.accountName = val;
         else if (key == "streamRememberKey") s.streamRememberKey = asBool();
         else if (key == "streamLocalCopy") s.streamLocalCopy = asBool();
+        else if (key == "streamBitrate") {
+            const int v = asInt(0, 1000000);
+            s.streamBitrate = Settings::kStreamBitrateDefault;
+            for (int r : Settings::kStreamBitrates) if (r == v) s.streamBitrate = v;
+        }
+        else if (key == "streamResolution") {
+            char* end = nullptr;
+            const long v = std::strtol(val.c_str(), &end, 10);
+            s.streamResolution = (end != val.c_str() && *end == 0 && v >= 0 && v <= 5)
+                                     ? int(v) : Settings::kStreamResolutionDefault;
+        }
+        else if (key == "streamFps") {
+            const int v = std::atoi(val.c_str());
+            s.streamFps = (v == 30) ? 30 : 60;
+        }
+        else if (key == "streamCpuEncoder") s.streamCpuEncoder = asBool();
         else if (key == "audioDevice")     s.audioDevice = val;
         else if (key == "voiceEnabled")    s.voiceEnabled = asBool();
         else if (key == "voiceActivation") s.voiceActivation = asBool();
@@ -259,6 +275,10 @@ std::string serializeSettings(const Settings& s) {
     o << "accountName = " << s.accountName << "\n";
     o << "streamRememberKey = " << (s.streamRememberKey ? 1 : 0) << "\n";
     o << "streamLocalCopy = " << (s.streamLocalCopy ? 1 : 0) << "\n";
+    o << "streamBitrate = " << s.streamBitrate << "\n";
+    o << "streamResolution = " << s.streamResolution << "\n";
+    o << "streamFps = " << s.streamFps << "\n";
+    o << "streamCpuEncoder = " << (s.streamCpuEncoder ? 1 : 0) << "\n";
     o << "audioDevice = " << s.audioDevice << "\n";
     o << "voiceEnabled = " << (s.voiceEnabled ? 1 : 0) << "\n";
     o << "voiceActivation = " << (s.voiceActivation ? 1 : 0) << "\n";

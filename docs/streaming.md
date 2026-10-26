@@ -51,6 +51,13 @@ be changed while a stream runs.
   for 1440p or 30,000 Kbps for 4K; you can still change it afterwards. Raise the
   bitrate for higher-resolution video as far as your upload allows. The highest
   value is not a YouTube recommendation.
+- The game remembers the panel's **resolution, frame rate, bitrate and encoder**
+  (the `streamResolution`, `streamFps`, `streamBitrate` and `streamCpuEncoder` lines
+  in the settings file) and saves them whenever you change one, so the panel opens
+  with them next time. The bitrate saved is the one on screen, including a value
+  that choosing a resolution raised. A value that is not one of the panel's choices
+  falls back to the default (MAX 3840, 60, 6,000 Kbps, AUTOMATIC). **Defaults** in
+  Options leaves all four alone, like Save a Local Copy.
 
 ### Encoders
 

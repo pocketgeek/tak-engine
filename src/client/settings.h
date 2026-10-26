@@ -127,6 +127,19 @@ struct Settings {
     bool streamRememberKey = false;
     // The streaming panel's SAVE A LOCAL COPY: also write the stream to videoDir().
     bool streamLocalCopy = false;
+    // The streaming panel's BITRATE (Kbps). Always one of kStreamBitrates; anything else
+    // read from the file snaps to the default.
+    static constexpr int kStreamBitrates[] = {3000, 6000, 9000, 12000, 20000, 30000, 45000, 60000, 80000};
+    static constexpr int kStreamBitrateDefault = 6000;
+    int streamBitrate = kStreamBitrateDefault;
+    // The panel's RESOLUTION choice, as its index: 0-3 = 720p/1080p/1440p/4K, 4 = FULL window,
+    // 5 = MAX 3840 (the default); anything else read from the file snaps to the default.
+    static constexpr int kStreamResolutionDefault = 5;
+    int streamResolution = kStreamResolutionDefault;
+    // FRAME RATE: 30 or 60 (default 60).
+    int streamFps = 60;
+    // ENCODER: false = AUTOMATIC (default), true = CPU (libx264).
+    bool streamCpuEncoder = false;
     struct GameCreate {
         bool crusades = false, doubleSight = false, speedUnlock = false;
         bool monarchExpendable = false;
@@ -207,6 +220,9 @@ struct Settings {
             && a.hardwareCursor == b.hardwareCursor && a.smoothMotion == b.smoothMotion
             && a.playerName == b.playerName && a.accountName == b.accountName
             && a.streamRememberKey == b.streamRememberKey && a.streamLocalCopy == b.streamLocalCopy
+            && a.streamBitrate == b.streamBitrate
+            && a.streamResolution == b.streamResolution && a.streamFps == b.streamFps
+            && a.streamCpuEncoder == b.streamCpuEncoder
             && a.gameModPacks == b.gameModPacks && a.cosmeticModPacks == b.cosmeticModPacks
             && a.lastMap == b.lastMap && a.gameCreate == b.gameCreate
             && a.dataDir == b.dataDir && a.dataManifest == b.dataManifest
@@ -274,7 +290,8 @@ std::string serializeSettings(const Settings&);
 //   * Identity and things with their own reset UI -- name, account, last map, hotkeys,
 //     and the streaming panel's Remember Key (a stored key sits behind that flag; only
 //     unticking it there deletes the key, so DEFAULTS must not orphan it) and its Save
-//     A Local Copy, which also lives only on that panel.
+//     A Local Copy, Resolution, Frame Rate, Bitrate and Encoder, which also live only on
+//     that panel.
 //
 // This used to be two separate lists: one inline in the DEFAULTS click handler, one in
 // Options::atDefaults(). They have to agree, and three times they did not -- dataDir was
@@ -286,6 +303,10 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.accountName = cur.accountName;
     d.streamRememberKey = cur.streamRememberKey;
     d.streamLocalCopy = cur.streamLocalCopy;
+    d.streamBitrate = cur.streamBitrate;
+    d.streamResolution = cur.streamResolution;
+    d.streamFps = cur.streamFps;
+    d.streamCpuEncoder = cur.streamCpuEncoder;
     d.lastMap = cur.lastMap;
     d.gameCreate = cur.gameCreate;
     d.gameModPacks=cur.gameModPacks;d.cosmeticModPacks=cur.cosmeticModPacks;

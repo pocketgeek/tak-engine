@@ -241,6 +241,17 @@ struct Streaming::Impl {
         if(!keys->setRemember(!keys->remember(),config.key)) {keys->check();return;} // greyed out: look again
         if(settings) {settings->streamRememberKey=keys->remember();if(save)save();}
     }
+    // Remember the panel's current resolution, frame rate, bitrate (including one a
+    // resolution change raised) and encoder; saves only when one of them changed.
+    void saveChoices() {
+        if(!settings)return;
+        const bool cpu=!config.encoder.empty();
+        if(settings->streamBitrate==config.bitrateKbps && settings->streamResolution==resolution &&
+           settings->streamFps==config.fps && settings->streamCpuEncoder==cpu)return;
+        settings->streamBitrate=config.bitrateKbps;settings->streamResolution=resolution;
+        settings->streamFps=config.fps;settings->streamCpuEncoder=cpu;
+        if(save)save();
+    }
     void toggleLocalCopy() {
         if(stream.active())return; // greyed out: the choice applies at Start Streaming
         localCopy=!localCopy;
@@ -369,6 +380,16 @@ Streaming::Streaming(SDL_Renderer* ren,Settings* settings,std::function<void()> 
                      std::shared_ptr<credstore::Store> store):p_(std::make_unique<Impl>()) {
     p_->ren=ren;p_->config.fps=60;p_->settings=settings;p_->save=std::move(save);
     p_->localCopy=settings && settings->streamLocalCopy;
+    if(settings) { // every value was snapped to its allowed list when the settings loaded
+        p_->config.bitrateKbps=settings->streamBitrate;
+        p_->config.fps=settings->streamFps;
+        p_->config.encoder=settings->streamCpuEncoder?"libx264":"";
+        p_->resolution=settings->streamResolution;
+        if(p_->resolution<4) { // fixed sizes; FULL / MAX are taken from the window at Start
+            constexpr int widths[]={1280,1920,2560,3840},heights[]={720,1080,1440,2160};
+            p_->config.width=widths[p_->resolution];p_->config.height=heights[p_->resolution];
+        }
+    }
     p_->config.key.reserve(320); // room for 255 bytes + one text event: typing never reallocates (unwiped copies)
     const bool remember=settings && settings->streamRememberKey;
     p_->keys=std::make_unique<StreamKeyMemory>(store?std::move(store):streamKeyStore(),remember);
@@ -450,10 +471,11 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
                     }
                     const int64_t pixels=int64_t(p_->config.width)*p_->config.height;
                     p_->config.bitrateKbps=std::max(p_->config.bitrateKbps,pixels>2560*1440?30000:pixels>1920*1080?12000:6000);
+                    p_->saveChoices();
                 }
-                if(i==2)p_->config.fps=p_->config.fps==30?60:30;
+                if(i==2){p_->config.fps=p_->config.fps==30?60:30;p_->saveChoices();}
                 if(i==3){
-                    constexpr int rates[]={3000,6000,9000,12000,20000,30000,45000,60000,80000};
+                    const auto& rates=Settings::kStreamBitrates;
                     if(direction>0) {
                         const auto next=std::upper_bound(std::begin(rates),std::end(rates),p_->config.bitrateKbps);
                         p_->config.bitrateKbps=next==std::end(rates)?rates[0]:*next;
@@ -462,8 +484,9 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
                         if(prev==std::begin(rates))prev=std::end(rates);
                         p_->config.bitrateKbps=*--prev;
                     }
+                    p_->saveChoices();
                 }
-                if(i==4)p_->config.encoder=p_->config.encoder.empty()?"libx264":"";
+                if(i==4){p_->config.encoder=p_->config.encoder.empty()?"libx264":"";p_->saveChoices();}
             }
         }
     }

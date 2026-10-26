@@ -100,6 +100,10 @@ int main() {
     flips("playerName",      [](Settings& s) { s.playerName = "someone"; });
     flips("accountName",     [](Settings& s) { s.accountName = "someone"; });
     flips("streamRememberKey", [](Settings& s) { s.streamRememberKey = !s.streamRememberKey; });
+    flips("streamBitrate", [](Settings& s) { s.streamBitrate = 20000; });
+    flips("streamResolution", [](Settings& s) { s.streamResolution = 1; });
+    flips("streamFps", [](Settings& s) { s.streamFps = 30; });
+    flips("streamCpuEncoder", [](Settings& s) { s.streamCpuEncoder = true; });
     flips("streamLocalCopy", [](Settings& s) { s.streamLocalCopy = !s.streamLocalCopy; });
     flips("gameCreate.crusades", [](Settings& s) { s.gameCreate.crusades = !s.gameCreate.crusades; });
     flips("gameCreate.doubleSight", [](Settings& s) { s.gameCreate.doubleSight = !s.gameCreate.doubleSight; });
@@ -169,6 +173,10 @@ int main() {
         cur.accountName = "curtis";
         cur.streamRememberKey = true;
         cur.streamLocalCopy = true;
+        cur.streamBitrate = 45000;
+        cur.streamResolution = 2;
+        cur.streamFps = 30;
+        cur.streamCpuEncoder = true;
         cur.lastMap = "Inner Circle";
         cur.gameCreate.crusades = true;
         cur.gameCreate.generator = "saved recipe";
@@ -212,6 +220,10 @@ int main() {
         keep("accountName",       d.accountName == cur.accountName);
         keep("streamRememberKey", d.streamRememberKey);
         keep("streamLocalCopy",   d.streamLocalCopy);
+        keep("streamBitrate",     d.streamBitrate == 45000);
+        keep("streamResolution",  d.streamResolution == 2);
+        keep("streamFps",         d.streamFps == 30);
+        keep("streamCpuEncoder",  d.streamCpuEncoder);
         keep("lastMap",           d.lastMap == cur.lastMap);
         keep("hotkeys",           d.hotkeys == cur.hotkeys);
         keep("voice chat",        d.voiceEnabled && d.voiceMicDevice == "a-mic" && !d.voiceOutputSameAsGame &&
@@ -366,6 +378,48 @@ int main() {
         check("campaignAi: dropped", tak::serializeSettings(s).find("campaignAi") == std::string::npos);
         std::error_code ec;
         std::filesystem::remove(path, ec);
+    }
+    // The streaming panel's BITRATE: saved, reloaded, and invalid values snap to 6000.
+    {
+        auto loadFrom = [&](const std::string& body) {
+            const auto path = std::filesystem::temp_directory_path() /
+                              ("settings_test_br_" + std::to_string(std::random_device{}()) + ".ini");
+            { std::ofstream(path) << body; }
+            tak::setSettingsPath(path.string());
+            const Settings v = tak::loadSettings();
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+            return v;
+        };
+        auto bitrateFrom = [&](const std::string& b) { return loadFrom(b).streamBitrate; };
+        auto check = [&](const char* what, bool ok) {
+            std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++g_fail;
+        };
+        Settings w{};
+        w.streamBitrate = 45000;
+        check("bitrate: round trip", bitrateFrom(tak::serializeSettings(w)) == 45000);
+        check("bitrate: absent=6000", bitrateFrom("masterVol = 7\n") == 6000);
+        check("bitrate: 7777 snaps", bitrateFrom("streamBitrate = 7777\n") == 6000);
+        check("bitrate: 0 snaps", bitrateFrom("streamBitrate = 0\n") == 6000);
+        check("bitrate: junk snaps", bitrateFrom("streamBitrate = fast\n") == 6000);
+        check("bitrate: 80000 ok", bitrateFrom("streamBitrate = 80000\n") == 80000);
+        // Resolution, frame rate and encoder: round trip, then invalid values snap to default.
+        Settings w2{};
+        w2.streamResolution = 1; w2.streamFps = 30; w2.streamCpuEncoder = true;
+        const Settings r2 = loadFrom(tak::serializeSettings(w2));
+        check("panel: res round trip", r2.streamResolution == 1);
+        check("panel: fps round trip", r2.streamFps == 30);
+        check("panel: enc round trip", r2.streamCpuEncoder);
+        const Settings d0 = loadFrom("masterVol = 7\n");
+        check("panel: absent=defaults", d0.streamResolution == 5 && d0.streamFps == 60 && !d0.streamCpuEncoder);
+        check("res: 4 ok", loadFrom("streamResolution = 4\n").streamResolution == 4);
+        check("res: 6 snaps", loadFrom("streamResolution = 6\n").streamResolution == 5);
+        check("res: -1 snaps", loadFrom("streamResolution = -1\n").streamResolution == 5);
+        check("res: junk snaps", loadFrom("streamResolution = big\n").streamResolution == 5);
+        check("fps: 30 ok", loadFrom("streamFps = 30\n").streamFps == 30);
+        check("fps: 45 snaps", loadFrom("streamFps = 45\n").streamFps == 60);
+        check("fps: junk snaps", loadFrom("streamFps = x\n").streamFps == 60);
     }
 #endif
 
