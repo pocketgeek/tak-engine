@@ -169,7 +169,6 @@ Published with `gh release edit v0.9.5 --draft=false --latest` on 2026-10-26 19:
   above).
 - The scenario gate had not run for seven releases (0.8.11 to 0.9.4); its
   baseline is now current, but nothing else in that span was re-checked by it.
-- Screenshots and Cartographer saves still write into the data folder.
 - A `takserver` started by hand without `XDG_DATA_HOME` or `--map-cache-dir`
   writes its cache to the real per-user folder. The `--mpai` command in
   `CLAUDE.md` (`35ee5c27`) and `tools/desync-hunt.sh` (after the tag) now give
