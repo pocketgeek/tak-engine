@@ -362,8 +362,9 @@ proxy's certificate is issued by a throwaway root CA that the client is given as
 file. The check then offers a certificate from that root for another host name, and the
 right host name with no test CA (the client keeps its real trust store, which does not
 hold the throwaway root); both must be refused with the TLS CERTIFICATE reason. On macOS
-`stream_network_test --system-roots` must also read every system trust anchor, including
-GTS Root R1 and GlobalSign Root CA, which YouTube's ingest certificates chain to. It never
+`stream_network_test --system-roots` must also export the system trust anchors as a bundle
+that parses back cleanly (anchors OpenSSL cannot decode are left out, as multiplayer TLS
+skips them) and includes GTS Root R1 and GlobalSign Root CA, which YouTube's ingest certificates chain to. It never
 contacts YouTube:
 
 ```sh

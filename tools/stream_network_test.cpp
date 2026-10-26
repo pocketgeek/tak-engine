@@ -43,7 +43,8 @@ int sink(int port,int seconds){
 }
 #ifdef __APPLE__
 // --system-roots [FILE]: the trust anchors macOS streaming hands FFmpeg's OpenSSL TLS as its CA
-// file (video/stream.cpp). OpenSSL must read every one, and they must include the roots
+// file (video/stream.cpp). Every certificate in that bundle must parse back (an anchor
+// OpenSSL cannot decode is left out of it, as multiplayer TLS skips it), and they must include the roots
 // YouTube's ingest certificates chain to (Google Trust Services, cross-signed by
 // GlobalSign), or every real RTMPS stream fails as TLS CERTIFICATE NOT TRUSTED.
 // With a FILE argument the bundle is also written there, for a manual check.
