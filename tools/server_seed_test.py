@@ -11,7 +11,7 @@ import contextlib
 from pathlib import Path
 import struct
 import tempfile
-import crusades_auth_network_test as auth
+import server_net as auth
 from server_public_test import server,login,options
 
 

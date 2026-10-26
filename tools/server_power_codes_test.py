@@ -12,8 +12,8 @@ import argparse
 from pathlib import Path
 import struct
 import tempfile
-import crusades_auth_network_test as auth
-from crusades_battle_network_test import OPTIONS_BYTES, lobby
+import server_net as auth
+from server_net import OPTIONS_BYTES, lobby
 from server_public_test import server, login, options
 
 POWER = OPTIONS_BYTES - 1       # powerCodes, the last GameOptions byte

@@ -1,6 +1,6 @@
 #include "net/replaywriter.h"
 
-#include "net/crusades.h"   // kMaxReplayBytes: the loader's size cap
+#include "net/replayhdr.h"  // kMaxReplayBytes: the loader's size cap
 
 #include <algorithm>
 #include <cstdio>
@@ -268,7 +268,7 @@ void recoverOne(const std::string& part, std::vector<RecoveredReplay>& out) {
     if (openLocked(part, f) != Opened::Ok) return;   // live (Busy), finished meanwhile, or unreadable
     std::vector<uint8_t> d;
     // A .part over the size cap can never be loaded; leave it rather than spend the memory.
-    if (!readAll(f, d, crusades::kMaxReplayBytes + (1u << 20))) { closeFile(f); return; }
+    if (!readAll(f, d, kMaxReplayBytes + (1u << 20))) { closeFile(f); return; }
     auto discard = [&](const char* why) {
         closeFile(f);
         removeFile(part);

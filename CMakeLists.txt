@@ -3050,19 +3050,10 @@ target_link_libraries(crusades_rules_test PRIVATE tak-crusades)
 add_test(NAME crusades_rules COMMAND crusades_rules_test)
 
 include(cmake/SQLite.cmake)
-add_library(tak-crusades-servicelease STATIC src/server/crusades/servicelease.cpp)
-target_include_directories(tak-crusades-servicelease PUBLIC src)
-add_executable(crusades_servicelease_test tools/crusades_servicelease_test.cpp)
-target_link_libraries(crusades_servicelease_test PRIVATE tak-crusades-servicelease)
-if(WIN32)
-  target_link_libraries(crusades_servicelease_test PRIVATE shell32)
-endif()
-add_test(NAME crusades_servicelease COMMAND crusades_servicelease_test)
-set_tests_properties(crusades_servicelease PROPERTIES TIMEOUT 30)
 add_library(tak-crusades-store STATIC src/server/crusades/store.cpp src/server/crusades/matchmaking.cpp)
 target_link_libraries(tak-crusades-store PUBLIC tak-crusades PRIVATE tak-sqlite tak-crypto)
 add_executable(crusades_admin tools/crusades_admin.cpp)
-target_link_libraries(crusades_admin PRIVATE tak-crusades-store tak-crusades-servicelease)
+target_link_libraries(crusades_admin PRIVATE tak-crusades-store tak-filelease)
 if(WIN32)
   target_link_libraries(crusades_admin PRIVATE shell32)
 endif()
@@ -3167,9 +3158,20 @@ add_test(NAME match_codec COMMAND match_codec_test)
 
 # The skirmish AI (src/ai) is SERVER-ONLY -- it never links into takclient, so the
 # client cannot run AI locally. AIs run only on the server.
+# Exclusive process lease on a path: the ACME state directory's lock, so two
+# servers never share one certificate store.
+add_library(tak-filelease STATIC src/server/filelease.cpp)
+target_include_directories(tak-filelease PUBLIC src)
+add_executable(filelease_test tools/filelease_test.cpp)
+target_link_libraries(filelease_test PRIVATE tak-filelease)
+if(WIN32)
+  target_link_libraries(filelease_test PRIVATE shell32)
+endif()
+add_test(NAME filelease COMMAND filelease_test)
+set_tests_properties(filelease PROPERTIES TIMEOUT 30)
 add_library(tak-acme STATIC src/server/acme.cpp)
 target_include_directories(tak-acme PRIVATE "${TAK_FFMPEG_PREFIX}/include")
-target_link_libraries(tak-acme PUBLIC tak-formats tak-crusades-servicelease)
+target_link_libraries(tak-acme PUBLIC tak-formats tak-filelease)
 add_executable(acme_test tools/acme_test.cpp)
 target_link_libraries(acme_test PRIVATE tak-acme)
 target_include_directories(acme_test PRIVATE "${TAK_FFMPEG_PREFIX}/include")
@@ -3178,7 +3180,7 @@ set_tests_properties(acme PROPERTIES TIMEOUT 30)
 add_executable(acme_test_driver tools/acme_test_driver.cpp)
 target_link_libraries(acme_test_driver PRIVATE tak-acme)
 add_executable(takserver src/server/server.cpp src/server/status.cpp src/server/accounts.cpp src/server/roomtick.cpp src/server/rosterdump.cpp ${TAK_AI_SOURCES})
-target_link_libraries(takserver PRIVATE tak-acme tak-formats tak-crusades-allegiance tak-crusades-network tak-crusades-servicelease)
+target_link_libraries(takserver PRIVATE tak-acme tak-formats tak-crusades-allegiance tak-crusades-network)
 if(APPLE)
   target_link_libraries(takserver PRIVATE "-framework CoreFoundation")
 endif()
@@ -3287,6 +3289,11 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_status_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>")
     set_tests_properties(server_status PROPERTIES TIMEOUT 120)
+    # Account login (SCRAM): register, log in, a wrong proof, a pending registration.
+    add_test(NAME account_auth_network COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/account_auth_network_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(account_auth_network PROPERTIES TIMEOUT 120)
     add_test(NAME crusades_auth_network COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/crusades_auth_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")

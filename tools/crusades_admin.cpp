@@ -1,6 +1,6 @@
 // Offline, trusted administration. Mutation authorization comes from local OS
 // access; actor IDs are audit attribution, never account authentication.
-#include "server/crusades/servicelease.h"
+#include "server/filelease.h"
 #include "server/crusades/store.h"
 #include "server/crusades/network.h"
 #include "util/winargv.h"
@@ -260,11 +260,11 @@ int run(int argc, char** argv) {
         }
         if (command.name != "start" && !fs::is_regular_file(path))
             throw std::runtime_error("database does not exist or is not a regular file; only start creates a database");
-        c::CampaignServiceLease lease(path);
-        if (command.name != "start" && !fs::is_regular_file(lease.databasePath()))
+        tak::srv::FileLease lease(path);
+        if (command.name != "start" && !fs::is_regular_file(lease.path()))
             throw std::runtime_error("database disappeared before acquisition of its service lock");
-        if (command.name == "backup") backupDestination(lease.databasePath(),fs::u8path(command.argument));
-        c::CampaignStore store(lease.databasePath());
+        if (command.name == "backup") backupDestination(lease.path(),fs::u8path(command.argument));
+        c::CampaignStore store(lease.path());
         if (command.name == "status" || command.name == "health") {
             const auto report = store.health(command.limit(4096,100000));
             std::cout << "{\"kind\":\"health\",\"healthy\":" << (report.healthy ? "true" : "false")

@@ -12,8 +12,8 @@ import tempfile
 import threading
 import time
 
-import crusades_auth_network_test as auth
-from crusades_battle_network_test import Peer, lobby
+import server_net as auth
+from server_net import BufferedPeer as Peer, lobby
 from server_public_test import login, options, server
 
 

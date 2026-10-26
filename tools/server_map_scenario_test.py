@@ -31,8 +31,8 @@ import tempfile
 import time
 import traceback
 
-import crusades_auth_network_test as auth
-from crusades_battle_network_test import OPTIONS_BYTES, Peer, lobby
+import server_net as auth
+from server_net import OPTIONS_BYTES, BufferedPeer as Peer, lobby
 from server_public_test import login, options, server
 
 SCENARIO = OPTIONS_BYTES - 2   # mapScenario (protocol 259), before powerCodes

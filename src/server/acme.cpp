@@ -8,7 +8,7 @@
 #include "server/acme_internal.h"
 #include "net/conn.h"
 #include "net/revocation.h"
-#include "server/crusades/servicelease.h"
+#include "server/filelease.h"
 #include "vendor/nlohmann/json.hpp"
 #include <openssl/ssl.h>
 #include <openssl/pem.h>
@@ -499,7 +499,7 @@ std::optional<std::time_t> acme_detail::parseRfc3339(const std::string& text) {r
 std::optional<std::time_t> acme_detail::ariRenewalTime(const std::string& body,const std::string& id,std::time_t notAfter,std::time_t now) {return ariTime(body,id,notAfter,now);}
 struct AcmeCertificates::Impl {
     AcmeOptions options;
-    std::unique_ptr<crusades::CampaignServiceLease> lease;
+    std::unique_ptr<FileLease> lease;
     std::shared_ptr<tak::net::TlsContext> current;
     std::time_t renewAt=0,nextAttempt=0;
     unsigned failures=0;
@@ -533,7 +533,7 @@ struct AcmeCertificates::Impl {
 #else
         require(::chmod(options.state.c_str(),0700)==0,"cannot protect state directory");
 #endif
-        lease=std::make_unique<crusades::CampaignServiceLease>(options.state/"acme");
+        lease=std::make_unique<FileLease>(options.state/"acme");
         const auto identity=Json{{"directory",options.directory},{"domain",options.domain}}.dump();
         auto saved=readFile(options.state/"identity.json");
         require(saved.empty() || saved==identity,"state directory belongs to another hostname or CA");

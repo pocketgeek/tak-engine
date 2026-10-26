@@ -75,7 +75,7 @@
 #include "server/crusades/network.h"
 #include "server/crusades/replayfiles.h"
 #include "server/crusades/matchmaking.h"
-#include "server/crusades/servicelease.h"
+#include "server/filelease.h"
 #include "tdf/tdf.h"
 #include "net/conn.h"
 #include "net/protocol.h"
@@ -478,8 +478,8 @@ public:
             bootstrap=tak::srv::crusades::loadDefinition(definition);
             tak::srv::crusades::validateCampaignNetworkState(*bootstrap,tak::srv::crusades::makeInitialState(*bootstrap));
         }
-        campaignLease_ = std::make_unique<tak::srv::crusades::CampaignServiceLease>(database);
-        crusades_ = std::make_unique<tak::srv::crusades::CampaignStore>(campaignLease_->databasePath());
+        campaignLease_ = std::make_unique<tak::srv::FileLease>(database);
+        crusades_ = std::make_unique<tak::srv::crusades::CampaignStore>(campaignLease_->path());
         // Validate every page, including campaigns other than the configured
         // bootstrap, before admitting clients or auditing startup mutations.
         std::string after;
@@ -554,7 +554,7 @@ private:
     std::shared_ptr<tak::srv::AcmeCertificates> acme_;
     bool loopbackOnly_ = false;
     tak::srv::AccountStore accounts_;
-    std::unique_ptr<tak::srv::crusades::CampaignServiceLease> campaignLease_;
+    std::unique_ptr<tak::srv::FileLease> campaignLease_;
     std::unique_ptr<tak::srv::crusades::CampaignStore> crusades_;
     SharedWorkBudget acceptKeys_,lobbyWorkKeys_;
     WorkBudget acceptWork_,commandBytes_,commandCount_,commandLogs_;

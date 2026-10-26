@@ -35,6 +35,9 @@ namespace tak::net {
 // Bump when the layout changes, and handle the older values in readReplayHeader.
 inline constexpr uint32_t kReplayFormat = 15;   // 15: records the room's FOG OF WAR option (area clear reads it); 14: records the room's POWER CODES option; 13: records the room's MAP SCENARIO option; 12: checkpoints carry posDigest; 11: independent pathfinding mode
 
+// The largest .takrep the loaders accept (the client picker and the writer's re-read).
+inline constexpr uint64_t kMaxReplayBytes = 512ull * 1024 * 1024;
+
 // Simulation changes require the matching engine; do not emulate older rules.
 inline bool supportedReplayProtocol(uint32_t format, uint32_t protocol) {
     if (format < 1 || format > kReplayFormat) return false;

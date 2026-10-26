@@ -6,8 +6,8 @@ from pathlib import Path
 import struct
 import tempfile
 import time
-import crusades_auth_network_test as auth
-from crusades_battle_network_test import lobby
+import server_net as auth
+from server_net import lobby
 from server_public_test import server,login,options
 
 

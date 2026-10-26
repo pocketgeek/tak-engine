@@ -42,8 +42,8 @@ import tempfile
 import time
 import traceback
 
-import crusades_auth_network_test as auth
-from crusades_battle_network_test import lobby
+import server_net as auth
+from server_net import lobby
 from server_public_test import login, options, server
 
 STALL_MS, WAIT_MS = 3000, 8000

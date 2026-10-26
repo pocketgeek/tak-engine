@@ -24,8 +24,8 @@ import struct
 import tempfile
 import traceback
 
-import crusades_auth_network_test as auth
-from crusades_battle_network_test import OPTIONS_BYTES, lobby
+import server_net as auth
+from server_net import OPTIONS_BYTES, lobby
 from server_public_test import login, options, server
 
 REASON = b'spectators are not allowed in this game'

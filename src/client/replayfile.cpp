@@ -2,6 +2,7 @@
 
 #include "net/matchconfig.h"   // matchConfigFor / replayHeaderFor
 #include "net/protocol.h"      // tak::net::Reader / getBundle
+#include "net/replayhdr.h"     // kMaxReplayBytes
 
 #include <cstdio>
 #include <filesystem>
@@ -17,7 +18,7 @@ bool loadReplayFile(const std::string& path, ReplayFile& out) {
     std::fseek(f, 0, SEEK_END);
     long n = std::ftell(f);
     std::fseek(f, 0, SEEK_SET);
-    if (n < 0 || uint64_t(n) > tak::net::crusades::kMaxReplayBytes) {
+    if (n < 0 || uint64_t(n) > tak::net::kMaxReplayBytes) {
         std::fclose(f); out.error = "replay file exceeds supported size"; return false;
     }
     std::vector<uint8_t> d(size_t(n < 0 ? 0 : n));
