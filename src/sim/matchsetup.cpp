@@ -237,10 +237,8 @@ void applyEvent(World& world, const tak::net::Event& e) {
     // AI seat is from the start (MatchSlot::automaticGates: gates open themselves, no
     // human death sights).
     if (e.kind == tak::net::Event::Kind::AiTakeover) { world.player(p).automaticGates = true; return; }
-    if (e.kind == tak::net::Event::Kind::CampaignForfeit ||
-        (world.hasScenarioOutcomes() && (e.kind == tak::net::Event::Kind::Forfeit ||
-                                       e.kind == tak::net::Event::Kind::Leave)))
-        world.forceDefeat(p);
+    if (e.kind != tak::net::Event::Kind::Forfeit && e.kind != tak::net::Event::Kind::Leave) return;
+    if (world.hasScenarioOutcomes()) world.forceDefeat(p);
     for (auto& u : world.units())
         if (u.alive() && u.player == p) world.stop(u.id);
 }

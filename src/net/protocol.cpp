@@ -137,21 +137,16 @@ bool validOrder(const SelectionOrder& o) {
     return orderRecordBytes(o) <= kOrderMaxBytes;
 }
 
-// The options as 257 wrote them -- frozen, because the Crusades rules digest hashes
-// exactly these bytes (match_codec_test pins it) and an issued battle's stored digest
-// must still match after an upgrade. Append new fields in put(), not here.
-static void putRules(Writer& w, const GameOptions& o) {
+// The byte order is the wire format and the replay header's (match_codec_test pins
+// it): append new fields at the end, matching get().
+void put(Writer& w, const GameOptions& o) {
     w.u8(o.crusades); w.u8(o.forfeitSelfDestruct); w.u8(o.gameMods);
     w.u8(o.speed); w.u8(o.speedUnlock); w.u32(o.unitCap); w.u8(o.monarchExpendable);
     w.u8(o.stressTest); w.u8(o.fogExplored); w.u8(o.benchmark); w.u8(o.randomStarts);
     w.u8(o.doubleSight); w.u8(uint8_t(o.pathfindingMode));
-}
-
-void put(Writer& w, const GameOptions& o) {
-    putRules(w, o);
-    w.u8(o.allowSpectators);   // 258: room admission, outside the rules digest
-    w.u8(o.mapScenario);       // 259: map scenario, outside the rules digest
-    w.u8(o.powerCodes);        // 288: power codes, outside the rules digest
+    w.u8(o.allowSpectators);   // 258: room admission
+    w.u8(o.mapScenario);       // 259: map scenario
+    w.u8(o.powerCodes);        // 288: power codes
 }
 
 void get(Reader& r, GameOptions& o) {
@@ -175,17 +170,6 @@ void put(Writer& w, const SlotInfo& s) {
 void get(Reader& r, SlotInfo& s) {
     s.type = r.u8(); s.faction = r.u8(); s.color = r.u8(); s.team = r.u8();
     s.ready = r.u8(); s.aiLevel = r.u8(); s.name = r.str();
-}
-
-Writer crusadesRulesPreimage(uint32_t seed, const GameOptions& o, const SlotInfo* slots) {
-    Writer w;
-    w.str("modern-crusades-duel-v1"); w.u32(seed);
-    putRules(w, o);
-    for (int i = 0; i < kMaxSlots; ++i) {
-        const SlotInfo& s = slots[i];
-        w.u8(s.type); w.u8(s.faction); w.u8(s.color); w.u8(s.team); w.u8(s.aiLevel);
-    }
-    return w;
 }
 
 void putBundle(Writer& w, uint32_t tick, const std::vector<Command>& cmds, const std::vector<Event>& events) {
@@ -214,10 +198,15 @@ bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict, uint32_t pro
     }
     const uint32_t ne = r.u32();
     if (!r.ok || uint64_t(ne) * 2 > uint64_t(r.end - r.p)) return false;
-    const auto maxEvent = proto >= kAiTakeoverProtocol ? Event::Kind::AiTakeover : Event::Kind::CampaignForfeit;
+    // Kinds 1 (Forfeit) and 2 (Leave), and 4 (AiTakeover) from protocol 289. Kind 3,
+    // the removed Darien Crusades CampaignForfeit, is refused.
+    const auto validEvent = [proto](uint8_t kind) {
+        return kind == uint8_t(Event::Kind::Forfeit) || kind == uint8_t(Event::Kind::Leave) ||
+               (kind == uint8_t(Event::Kind::AiTakeover) && proto >= kAiTakeoverProtocol);
+    };
     for (uint32_t i = 0; i < ne && r.ok; ++i) {
         Event e; e.kind = Event::Kind(r.u8()); e.player = r.u8();
-        if (strict && (e.player >= kMaxSlots || uint8_t(e.kind) < 1 || uint8_t(e.kind) > uint8_t(maxEvent))) return false;
+        if (strict && (e.player >= kMaxSlots || !validEvent(uint8_t(e.kind)))) return false;
         out.events.push_back(e);
     }
     return r.ok && (!strict || r.p == r.end);   // truncated or trailing inner data

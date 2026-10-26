@@ -68,7 +68,9 @@ void run(){
  bad=Command{};bad.x=std::numeric_limits<float>::quiet_NaN();check(!load(recording(kNetVersion,bad)),"nonfinite command accepted");
  bad=Command{};bad.player=kMaxSlots;check(!load(recording(kNetVersion,bad)),"invalid command player accepted");
  check(!load(recording(kNetVersion,Command{},255)),"unknown event accepted");
- check(load(recording(kNetVersion,Command{},uint8_t(Event::Kind::CampaignForfeit))),"real campaign forfeit event refused");
+ // Kind 3 was the Darien Crusades CampaignForfeit, removed in 0.9.4: refused like any unknown kind.
+ check(!load(recording(kNetVersion,Command{},3)),"removed campaign forfeit event accepted");
+ check(load(recording(kNetVersion,Command{},uint8_t(Event::Kind::AiTakeover))),"AI takeover event refused");
  // Format 12: the checkpoint carries posDigest. A format-11 file (12-byte records) still loads, digest absent.
  // Format 13 adds the room's MAP SCENARIO byte; a format-12 file reads it as off. Format 14
  // adds POWER CODES; a format-13 file reads it as off. Format 15 adds the room's FOG OF WAR.

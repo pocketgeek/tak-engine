@@ -738,45 +738,6 @@ enum class Msg : uint8_t {
     MapChunk,          // both: room, offset, <=64 KiB raw bytes
     MapReady,          // C->S: room, verified SHA-256
     MapError,          // both: room, explanation
-    // Opt-in persistent Crusades service. Requests have NO account/player ID;
-    // server binds them to its authenticated connection, never a display name.
-    CrusadesGetAllegiance, // C->S: str campaign (1..128 bytes)
-    CrusadesSetAllegiance, // C->S: str campaign, u64 expected allegiance revision
-                          // (UINT64_MAX = not yet joined), u8 alliance (1 Honor, 2 Terror)
-    CrusadesAllegianceResult, // S->C: u8 operation (0 get,1 set), u8 status
-                          // (0 OK,1 malformed,2 unauthenticated,3 disabled,4 rejected),
-                          // str campaign, u8 alliance (0 absent), u64 revision
-                          // (UINT64_MAX absent), u64 joinedUnix, u64 changedUnix,
-                          // str explanation. Absent timestamps=0. Exact payloads;
-                          // no trailing extensions or client-supplied identity.
-    CrusadesIssueBattle, // C->S: str campaign(1..128),u32 territory,str opponent(3..20).
-                        // Account caller, map, rules, and launch token are NEVER client supplied.
-    CrusadesBattleResult, // S->C (issuer response/opponent invitation): u8 status
-                        // (0 OK,1 malformed,2 unauthenticated,3 disabled,4 rejected),
-                        // str campaign,str battle ID,u32 room,str map,u64 expiresUnix,str reason.
-                        // Designated opponent accepts via ordinary JoinGame; exact payloads.
-
-    // Independent strategic messages, never commands or replay tick bundles.
-    // All payloads start with u16 campaign protocol version, u32 request ID.
-    // See net/crusades.h for bounded, exact versioned structures. ID zero is
-    // reserved for unsolicited server lifecycle/snapshot notifications.
-    CrusadesListCampaigns,    // C->S: paginated catalog request
-    CrusadesGetSnapshot,      // C->S: campaign + last known revision
-    CrusadesCampaignList,     // S->C: authoritative catalog page
-    CrusadesCampaignSnapshot, // S->C: complete definition + state + revision
-    CrusadesGetPlayerStatus,  // C->S: own authenticated campaign participation
-    CrusadesPlayerStatus,     // S->C: own allegiance + recent battle references
-    CrusadesGetBattleStatus,  // C->S: battle ID (participants only)
-    CrusadesBattleStatus,     // S->C: issued/started/terminal + verified result
-    CrusadesError,            // S->C: typed sanitized campaign error
-    CrusadesGetMatchmaking,   // C->S: current campaign aggregate rendezvous board
-    CrusadesSearchBattle,     // C->S: own authenticated territory search
-    CrusadesCancelSearch,     // C->S: cancel own search, never another account
-    CrusadesMatchmakingStatus,// S->C: versioned modern queue aggregate + own search
-    CrusadesGetTerritoryHistory, // C->S: bounded terminal archive page
-    CrusadesTerritoryHistory,    // S->C: verified metadata, opaque replay availability
-    CrusadesGetReplayChunk,      // C->S: battle ID + bounded offset/limit
-    CrusadesReplayChunk,         // S->C: request-bound immutable replay bytes
     ModOffer, ModRequest, ModChunk, ModReady, ModError,
     Progress,           // C->S: u32 tick (last tick PROCESSED), u32 rttMs (the client's smoothed ping)
                         // [, u32 received: the newest tick whose bundle has ARRIVED, >= tick;
@@ -813,7 +774,7 @@ enum class Msg : uint8_t {
                         // u8 flags | u16 len | len bytes | str name (only with kVoiceHasName).
     MoveSeat,           // C->S: u8 slot. A seated player (the host too) takes that OPEN seat
                         // (type 0, inside the map capacity), in the lobby only and never in a
-                        // Crusades battle or campaign mission room; anything else is ignored.
+                        // campaign mission room; anything else is ignored.
                         // Side, colour, team and READY move with the player; the old seat
                         // opens with the target's colour and team. The server answers the
                         // mover with JoinResult (ok, new slot) and then broadcasts LobbyState.
@@ -897,7 +858,7 @@ struct GameOptions {
     // sends 1 (multiplayer works like single player; the host's always-enabled
     // game packs travel in the same package); 0 comes only from a 0.8.12 or 0.8.13 host's
     // GAME MODS: OFF or a debug --mods launch, and the server forces 0 for
-    // campaign and Crusades rooms. (Was the 0/1/2 override tier before the mods
+    // campaign mission rooms. (Was the 0/1/2 override tier before the mods
     // rework: same byte, new meaning.)
     uint8_t gameMods = 0;
     // Game speed in tenths (10 = 1.0x). Changes the server's tick CADENCE (and the
@@ -944,7 +905,7 @@ struct GameOptions {
     // host's own create-as-spectator seat is the host's choice and is exempt; seated
     // players' Rejoin is untouched. Changeable in the lobby, fixed once the game starts
     // (in-game SetGameOptions changes only speed). An admission rule, never part of the
-    // sim or the Crusades rules digest; campaign battle rooms are always 0.
+    // sim.
     uint8_t allowSpectators = 1;
     // MAP SCENARIO (259): 1 = play the map's own scenario (.crt placements and rules, the
     // Use Only .tdf) instead of a skirmish. Chosen when the room is created and never
@@ -952,29 +913,28 @@ struct GameOptions {
     // for it). The server clears it for missions, generated maps, stress and benchmark
     // rooms, forces randomStarts off with it, and refuses START when the verified map
     // has no scenario content or a seat the scenario needs is empty. Sim-affecting
-    // (MatchConfig::mapScenario, replay format 13); outside the Crusades rules digest;
-    // campaign battle rooms are always 0. A Test Map copy's [TAKPlaytest] opt-in plays
+    // (MatchConfig::mapScenario, replay format 13). A Test Map copy's [TAKPlaytest] opt-in plays
     // its scenario even with this 0.
     uint8_t mapScenario = 0;
     // POWER CODES (retail's "Power Codes" battle-room box, GameOptions+0x18): 1 lets
     // every player type the nine +codes (sim/powercodes.h) in the chat box. Host-set
     // when the room is created, fixed after (SetGameOptions keeps it). The server
-    // clears it for campaign missions and Crusades battles -- retail's gate 0x499610
-    // refuses codes in a campaign -- and drops every Cmd::PowerCode while it is 0.
-    // Sim-affecting (MatchConfig::powerCodes, replay format 14); outside the Crusades
-    // rules digest.
+    // clears it for campaign missions -- retail's gate 0x499610 refuses codes in a
+    // campaign -- and drops every Cmd::PowerCode while it is 0.
+    // Sim-affecting (MatchConfig::powerCodes, replay format 14).
     uint8_t powerCodes = 0;
 };
 
 // A sim-affecting server decision, sequenced inside a TickBundle so every peer
 // (and the referee) applies it on the same tick and the log replays identically.
 struct Event {
-    // CampaignForfeit is emitted only by an issued campaign room. Ordinary
-    // skirmish Leave/Forfeit keep their existing inert-army behavior.
+    // Leave/Forfeit leave the player's army inert. Kind 3 was CampaignForfeit, emitted
+    // only by the Darien Crusades battle rooms removed in 0.9.4; it is reserved and
+    // refused on the wire (getBundle) so AiTakeover keeps its value.
     // AiTakeover (protocol 289): the player stopped communicating and the disconnect
     // wait ran out, so a server-run Normal AI plays the seat from this tick. The units
     // keep their orders; the sim only marks the player computer-owned (automaticGates).
-    enum class Kind : uint8_t { Forfeit = 1, Leave = 2, CampaignForfeit = 3, AiTakeover = 4 };
+    enum class Kind : uint8_t { Forfeit = 1, Leave = 2, /* 3 reserved */ AiTakeover = 4 };
     Kind kind = Kind::Forfeit;
     uint8_t player = 0;
 };
@@ -1075,8 +1035,8 @@ struct Reader {
 
 // ------- shared codecs -------------------------------------------------------
 //
-// GameOptions and SlotInfo have ONE byte layout, used by CreateGame, SetGameOptions,
-// LobbyState/GameStarting and the Crusades rules digest. Each used to be written out
+// GameOptions and SlotInfo have ONE byte layout, used by CreateGame, SetGameOptions
+// and LobbyState/GameStarting. Each used to be written out
 // field by field at every site, and fixes landed in some copies only. get() is RAW:
 // it checks nothing but the pathfinder byte (an unknown mode clears r.ok; the byte is
 // still stored so the server can reject with a reason). The server's clamps and
@@ -1085,12 +1045,6 @@ void put(Writer& w, const GameOptions& o);
 void get(Reader& r, GameOptions& o);
 void put(Writer& w, const SlotInfo& s);   // type faction color team ready aiLevel, name
 void get(Reader& r, SlotInfo& s);
-
-// The preimage of a Crusades duel's rulesDigest: a tag, the seed, the options in
-// put() order, then each slot's type/faction/color/team/aiLevel. Its SHA-256 is
-// stored with every issued battle and checked again when the result is reported,
-// so this byte order is frozen (match_codec_test pins it).
-Writer crusadesRulesPreimage(uint32_t seed, const GameOptions& o, const SlotInfo* slots);
 
 // ------- selection orders (protocol 267) -------------------------------------
 //

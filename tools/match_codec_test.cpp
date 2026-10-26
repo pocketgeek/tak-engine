@@ -135,16 +135,6 @@ static void slotCodec() {
     }
 }
 
-static void crusadesDigest() {
-    SlotInfo slots[kMaxSlots]; fxSlots(slots, false);
-    const Writer rules = crusadesRulesPreimage(0xC0FFEE11, fxOpts(7), slots);
-    // Frozen at 257's options layout: allowSpectators (an admission rule, 258) is not
-    // in the preimage, so a battle issued before the upgrade still verifies after it.
-    golden(rules.b, "17006d6f6465726e2d63727573616465732d6475656c2d763111eeffc00304021105efbe00000607080b090a0401070301090204090004000205060002030102000301080503020107030100090204020300000702", "Crusades rules preimage bytes");
-    const std::string digest = tak::crypto::toHex(tak::crypto::sha256(rules.b.data(), rules.b.size()));
-    check(digest == "73e3f3410da7565bd0101cbdc680617f9ea5fc0da4b5f910f5621fea9ad1d807", "Crusades rulesDigest changed", digest);
-}
-
 static ReplayHeader header(const GameOptions& o, const SlotInfo* slots, const std::string& mission) {
     ReplayHeader h = replayHeaderFor(o, "Inner Circle", mission, slots, 0x5EED1234);
     h.modDigest = std::string(64, 'o');
@@ -223,9 +213,9 @@ static void bundles() {
     cmds[0].kind = Cmd::Move; cmds[0].player = 1; cmds[0].unitId = 77; cmds[0].targetId = -1; cmds[0].x = 1.5f; cmds[0].z = -2.25f; cmds[0].queue = 1;
     cmds[1].kind = Cmd::ReclaimArea; cmds[1].player = 3; cmds[1].unitId = 5; cmds[1].x = 10; cmds[1].z = 20; cmds[1].x2 = 30; cmds[1].z2 = 40;
     cmds[2].kind = Cmd::BuildManaArea; cmds[2].player = 7; std::strcpy(cmds[2].type, "TARLODE"); cmds[2].x = 3; cmds[2].z = 4; cmds[2].x2 = 5; cmds[2].z2 = 6;
-    events[0].kind = Event::Kind::Leave; events[0].player = 2; events[1].kind = Event::Kind::CampaignForfeit; events[1].player = 6;
+    events[0].kind = Event::Kind::Leave; events[0].player = 2; events[1].kind = Event::Kind::Forfeit; events[1].player = 6;
     Writer w; putBundle(w, 1234, cmds, events);
-    golden(w.b, "d20400000300000000014d000000ffffffff0000c03f000010c0010000000000000000000000000000000017030500000000000000000020410000a04100000000000000000000000000000000000000f041000020421a0700000000000000000000404000008040005441524c4f44450000000000000000000000a0400000c0400200000002020306", "TickBundle bytes");
+    golden(w.b, "d20400000300000000014d000000ffffffff0000c03f000010c0010000000000000000000000000000000017030500000000000000000020410000a04100000000000000000000000000000000000000f041000020421a0700000000000000000000404000008040005441524c4f44450000000000000000000000a0400000c0400200000002020106", "TickBundle bytes");
     auto decode = [](const std::vector<uint8_t>& b, Bundle& out, uint32_t proto = kNetVersion) {
         uint32_t tick = 0; Reader r(b.data(), b.size());
         return getBundle(r, tick, out, /*strict=*/true, proto) && tick == 1234;
@@ -248,6 +238,10 @@ static void bundles() {
     check(!decode(mutated([](auto& c, auto&) { c[0].player = kMaxSlots; }), x = {}), "command player out of range accepted");
     check(!decode(mutated([](auto& c, auto&) { c[1].x2 = std::numeric_limits<float>::quiet_NaN(); }), x = {}), "non-finite coordinate accepted");
     check(!decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind(0); }), x = {}), "event kind 0 accepted");
+    // Kind 3 was the Darien Crusades CampaignForfeit (removed in 0.9.4): reserved, refused.
+    check(!decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind(3); }), x = {}), "removed event kind 3 accepted");
+    check(!decode(mutated([](auto&, auto& e) { e[0].kind = Event::Kind(3); }), x = {}, kAiTakeoverProtocol - 1),
+          "removed event kind 3 accepted under an older protocol");
     check(!decode(mutated([](auto&, auto& e) { e[1].player = kMaxSlots; }), x = {}), "event player out of range accepted");
     check(!decode(w.b, x = {}, 220), "area command accepted under a protocol before 221");
     // Event::Kind::AiTakeover (protocol 289): read from 289 on, refused in an older replay,
@@ -280,7 +274,6 @@ static void bundles() {
 int main() {
     optionsCodec();
     slotCodec();
-    crusadesDigest();
     replayHeaders();
     matchConfigs();
     replayLoader();

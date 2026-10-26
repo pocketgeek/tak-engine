@@ -1,9 +1,11 @@
 # Pinned Opus release (BSD-3-Clause; OPUS-LICENSE.txt ships beside the binaries), the
-# voice chat codec. Built from source on every platform like SQLite (cmake/SQLite.cmake):
-# a static archive compiled by our own toolchain, so no system libopus and no extra DLL
+# voice chat codec. Built from source on every platform: a static archive compiled by our own toolchain, so no system libopus and no extra DLL
 # or dylib. Only the client links it (tak-voice); takserver relays voice as opaque bytes.
 enable_language(C)
-# See cmake/SQLite.cmake: C's implicit gcc_s must not override the Linux -static-libgcc.
+# CMake appends C's implicit libraries when this archive joins a C++ link. Fedora
+# names its shared unwinder gcc_s_asneeded, unlike C++'s gcc_s, so the extra -l can
+# override the Linux -static-libgcc policy. Leave the driver to select that runtime
+# and retain all other implicit C libraries.
 if(UNIX AND NOT APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   list(FILTER CMAKE_C_IMPLICIT_LINK_LIBRARIES EXCLUDE REGEX "^gcc_s(_asneeded)?$")
 endif()

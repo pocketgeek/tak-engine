@@ -156,7 +156,6 @@ add_library(tak-formats
   src/gui/gui.cpp
   src/net/protocol.cpp
   src/net/matchconfig.cpp
-  src/net/crusades.cpp
   src/net/conn.cpp
   src/net/client.cpp
   src/net/replaywriter.cpp
@@ -3022,29 +3021,6 @@ endif()
 
 # --- Multiplayer server (headless; no SDL) ------------------------------------
 
-# Strategic campaign definitions, state and territory rules deliberately have
-# no tactical simulation dependency. Persistence has a separate library.
-add_library(tak-crusades STATIC src/server/crusades/campaign.cpp src/server/crusades/rules.cpp)
-target_include_directories(tak-crusades PUBLIC src)
-add_executable(crusades_campaign_test tools/crusades_campaign_test.cpp)
-target_link_libraries(crusades_campaign_test PRIVATE tak-crusades)
-add_test(NAME crusades_campaign COMMAND crusades_campaign_test)
-add_executable(crusades_rules_test tools/crusades_rules_test.cpp)
-target_link_libraries(crusades_rules_test PRIVATE tak-crusades)
-add_test(NAME crusades_rules COMMAND crusades_rules_test)
-
-include(cmake/SQLite.cmake)
-add_library(tak-crusades-store STATIC src/server/crusades/store.cpp src/server/crusades/matchmaking.cpp)
-target_link_libraries(tak-crusades-store PUBLIC tak-crusades PRIVATE tak-sqlite tak-crypto)
-add_executable(crusades_admin tools/crusades_admin.cpp)
-target_link_libraries(crusades_admin PRIVATE tak-crusades-store tak-filelease)
-if(WIN32)
-  target_link_libraries(crusades_admin PRIVATE shell32)
-endif()
-add_executable(crusades_admin_test tools/crusades_admin_test.cpp)
-target_link_libraries(crusades_admin_test PRIVATE tak-crusades-store tak-sqlite)
-add_test(NAME crusades_admin COMMAND crusades_admin_test)
-set_tests_properties(crusades_admin PROPERTIES TIMEOUT 90)
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
   add_test(NAME crowdbench_matrix COMMAND "${Python3_EXECUTABLE}"
@@ -3069,46 +3045,7 @@ if(Python3_Interpreter_FOUND)
     "$<TARGET_FILE:navigation_checkpoint_test>"
     "${CMAKE_SOURCE_DIR}/tools/navigation_checkpoints.json")
   set_tests_properties(navigation_determinism PROPERTIES TIMEOUT 1200)
-  add_test(NAME crusades_admin_cli COMMAND "${Python3_EXECUTABLE}"
-    "${CMAKE_SOURCE_DIR}/tools/crusades_admin_cli_test.py" "$<TARGET_FILE:crusades_admin>")
-  set_tests_properties(crusades_admin_cli PROPERTIES TIMEOUT 90)
 endif()
-add_executable(crusades_store_test tools/crusades_store_test.cpp)
-target_link_libraries(crusades_store_test PRIVATE tak-crusades-store tak-sqlite)
-add_test(NAME crusades_store COMMAND crusades_store_test)
-set_tests_properties(crusades_store PROPERTIES TIMEOUT 90)
-add_executable(crusades_allegiance_test tools/crusades_allegiance_test.cpp)
-target_link_libraries(crusades_allegiance_test PRIVATE tak-crusades-store tak-sqlite)
-add_test(NAME crusades_allegiance COMMAND crusades_allegiance_test)
-add_executable(crusades_battle_test tools/crusades_battle_test.cpp)
-target_link_libraries(crusades_battle_test PRIVATE tak-crusades-store tak-sqlite)
-add_test(NAME crusades_battle COMMAND crusades_battle_test)
-add_executable(crusades_matchmaking_test tools/crusades_matchmaking_test.cpp)
-target_link_libraries(crusades_matchmaking_test PRIVATE tak-crusades-store)
-add_test(NAME crusades_matchmaking COMMAND crusades_matchmaking_test)
-add_executable(crusades_result_test tools/crusades_result_test.cpp)
-target_link_libraries(crusades_result_test PRIVATE tak-crusades-store tak-sqlite)
-add_test(NAME crusades_result COMMAND crusades_result_test)
-add_executable(crusades_history_test tools/crusades_history_test.cpp)
-target_link_libraries(crusades_history_test PRIVATE tak-crusades-store tak-sqlite)
-add_test(NAME crusades_history COMMAND crusades_history_test)
-add_executable(crusades_rules_store_test tools/crusades_rules_store_test.cpp)
-target_link_libraries(crusades_rules_store_test PRIVATE tak-crusades-store tak-sqlite)
-add_test(NAME crusades_rules_store COMMAND crusades_rules_store_test)
-add_library(tak-crusades-allegiance STATIC src/server/crusades/allegiance.cpp)
-target_link_libraries(tak-crusades-allegiance PUBLIC tak-crusades-store PRIVATE tak-formats)
-add_library(tak-crusades-network STATIC src/server/crusades/network.cpp src/server/crusades/replayfiles.cpp)
-target_link_libraries(tak-crusades-network PUBLIC tak-crusades-store PRIVATE tak-formats)
-target_link_libraries(crusades_admin PRIVATE tak-crusades-network)
-add_executable(crusades_protocol_test tools/crusades_protocol_test.cpp)
-target_link_libraries(crusades_protocol_test PRIVATE tak-formats)
-add_test(NAME crusades_protocol COMMAND crusades_protocol_test)
-add_executable(crusades_network_service_test tools/crusades_network_service_test.cpp)
-target_link_libraries(crusades_network_service_test PRIVATE tak-crusades-network tak-formats tak-sqlite)
-add_test(NAME crusades_network_service COMMAND crusades_network_service_test)
-add_executable(crusades_replay_files_test tools/crusades_replay_files_test.cpp)
-target_link_libraries(crusades_replay_files_test PRIVATE tak-crusades-network tak-formats)
-add_test(NAME crusades_replay_files COMMAND crusades_replay_files_test)
 # ALLOW SPECTATORS as a real MpClient sees it (scripted loopback server, no data).
 add_executable(spectator_client_test tools/spectator_client_test.cpp)
 target_link_libraries(spectator_client_test PRIVATE tak-formats)
@@ -3310,7 +3247,7 @@ if(UNIX AND NOT APPLE)
                 packaging/systemd/README.md
           DESTINATION share/doc/tak-engine/systemd)
   install(FILES STREAMING-LICENSES.txt EDITOR-FONT-LICENSE.txt CHAT-FONT-LICENSE.txt ACME-LICENSES.txt OPUS-LICENSE.txt DESTINATION share/licenses/tak-engine)
-  install(TARGETS takserver crusades_admin RUNTIME DESTINATION bin)
+  install(TARGETS takserver RUNTIME DESTINATION bin)
   if(TARGET takclient)
     install(TARGETS takclient RUNTIME DESTINATION bin)
   endif()
@@ -3367,7 +3304,7 @@ elseif(WIN32)
   # Windows installer (NSIS via CPack; the CI's MSYS2 job runs `cpack -G NSIS`).
   # Binaries install into the chosen folder root (no bin/), with Start-menu
   # shortcuts and an uninstaller. The static build has no DLLs to carry.
-  install(TARGETS takserver crusades_admin RUNTIME DESTINATION .)
+  install(TARGETS takserver RUNTIME DESTINATION .)
   if(TARGET takclient)
     install(TARGETS takclient RUNTIME DESTINATION .)
   endif()
@@ -3381,7 +3318,7 @@ elseif(WIN32)
 
   include(CPack)
 elseif(APPLE)
-  install(TARGETS takserver crusades_admin RUNTIME DESTINATION bin)
+  install(TARGETS takserver RUNTIME DESTINATION bin)
 endif()
 
 # Per-user files. Every test gets its own XDG_DATA_HOME, XDG_CONFIG_HOME and (Linux)
