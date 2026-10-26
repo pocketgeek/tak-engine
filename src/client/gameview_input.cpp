@@ -1,3 +1,4 @@
+#include "client/doubleclick.h"
 #include "client/gameview.h"
 #include "client/buildline.h"
 
@@ -418,6 +419,7 @@
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    !spectating_) {   // a spectator watches only -- no unit selection
             dragging_ = true;
+            dragClicks_ = e.button.clicks;
             dragAnchor_ = dragAnchorAt(float(e.button.x), float(e.button.y));
             dragX1_ = float(e.button.x);
             dragY1_ = float(e.button.y);
@@ -464,7 +466,25 @@
                     if (unitUnderCursor(u, ccx, ccy, &d) && d < best) { best = d; hit = u.id; }
                 }
                 if (hit >= 0) matched.push_back(hit);
+                // Double-click on the same unit: every unit of its type drawn in the map
+                // view (Shift adds them to the selection, Ctrl removes them).
+                const bool dbl = tak::client::doubleclick::isDouble(dragClicks_, hit, lastClickHit_);
+                lastClickHit_ = dbl ? -1 : hit;
+                if (dbl) {
+                    std::vector<tak::client::doubleclick::Candidate> cands;
+                    for (const UnitR* _up : front().live) {
+                        const UnitR& u = *_up;
+                        if (!u.alive() || !u.type) continue;
+                        const UnitR& fu = frameUnit(u.id);
+                        SDL_FPoint p = dotsFrame_ ? dotCentre(fu) : unitScreen(fu);
+                        cands.push_back({u.id, u.type, u.player == localPlayer_,
+                                         !u.underConstruction, p.x, p.y});
+                    }
+                    matched = tak::client::doubleclick::expand(
+                        hit, cands, {float(mapViewW(winW_)), float(winH_ - barH())});
+                }
             } else {
+                lastClickHit_ = -1;
                 for (const UnitR* _up : front().live) {
                     const UnitR& u = *_up;
                     if (u.alive() && u.player == localPlayer_ && !u.underConstruction) {

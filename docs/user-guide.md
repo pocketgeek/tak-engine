@@ -1021,6 +1021,8 @@ speed keys are fixed.
 | --- | --- |
 | **Left-click** | Select a unit. |
 | **Left-drag** | Box-select your own units. If the box catches any armed mobile units, the builders and buildings in it are left out. |
+| **Double-click** a unit of yours | Select every unit of that type drawn on the screen (not under the panels). Enemy and allied units select just the one. |
+| **Shift** + double-click | Add all of that type on the screen to the selection. |
 | **Shift** + select | Add to the selection. |
 | **Ctrl** + select | Remove from the selection. |
 | **Right-click** | The natural order for what is under the cursor: move, attack, guard, repair, load, reclaim and so on. |

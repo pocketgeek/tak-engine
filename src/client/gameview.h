@@ -2025,6 +2025,8 @@ private:
     std::vector<int> selection_;
     std::unordered_set<int> selSet_;   // rebuilt each draw for O(1) membership
     bool dragging_ = false;
+    int dragClicks_ = 0;        // SDL click count of the press that began the drag
+    int lastClickHit_ = -1;     // unit the previous plain click selected (double-click needs the same)
     bool buildDrag_ = false;          // shift-drag placing a line of buildings
     bool manaBuildDrag_ = false;      // plain left-drag places lodestones in a box
     float bdX0_ = 0, bdZ0_ = 0;       // build-drag start (world)

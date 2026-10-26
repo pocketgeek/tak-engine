@@ -130,8 +130,9 @@ sans-serif, as in these pictures) or *Classic* (the engine's old lettering).
 | Portrait in the info bar (several types selected) | Left-click: keep only that type. Shift + left-click: drop that type. |
 | Right-click a setting in a menu | Previous choice (left-click is the next). |
 
-There is no double-click select; use **Ctrl+Z** (same type) or **Ctrl+X** (same
-type on screen).
+**Double-click** one of your units to select every unit of that type on the screen
+(**Shift** + double-click adds them to the selection). **Ctrl+Z** selects the same
+type everywhere; **Ctrl+X** the same type on screen.
 
 ![Left-dragging a green box around seventeen Aramon units](img/quick/box-select.jpg)
 
