@@ -75,6 +75,21 @@ builds (arm64 and x64, minimum macOS 14), like Linux. The patch is gone.
   proxy's) is not honoured for streaming, because OpenSSL gets only Apple's
   built-in roots.
 
+## Streaming panel and HUD
+
+- **The streaming panel remembers its settings.** Resolution, frame rate,
+  bitrate and encoder are saved in `settings.ini` when you change them and come
+  back next session. Values that are not one of the panel's choices fall back
+  to the defaults (MAX 3840, 60 FPS, 6,000 Kbps, Automatic); a saved bitrate
+  below the saved resolution's minimum is raised to it. Options' reset to
+  defaults leaves them alone, like Remember Key and Save a Local Copy.
+- **The STREAM LIVE banner no longer covers the F4 scorecard.** The banner,
+  game clock, scorecard, objectives and voice-chat speaker list share the
+  top-left corner and stack instead of overlapping; at large scorecard scales
+  the scorecard also stays clear of the minimap. The banner is not in the
+  streamed video, but the overlays below it move down by its height there too,
+  so viewers see a small empty band at the top while you stream.
+
 ## For modders and mapmakers
 
 - A Ballistic weapon no longer needs a clear 2D line to its target in any unit.

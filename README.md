@@ -31,6 +31,7 @@ interface art and sound straight from its installation folder.
 - Trebuchets, archers and other arc-shooters fire over scenery, as in the original.
 - Towers drop targets they cannot hit instead of holding them.
 - macOS streaming uses OpenSSL, like Linux.
+- The streaming panel remembers its settings, and its banner no longer covers the scorecard.
 
 Does not play with 0.9.2 or its replays (protocol 297). Details in the
 [CHANGELOG](CHANGELOG.md#093).

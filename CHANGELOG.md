@@ -53,6 +53,18 @@ their validation reports; both live in [`docs/`](docs/).
   authority is still refused with the TLS CERTIFICATE reason. Windows and
   Linux are unchanged. Certificates you added to the Mac keychain yourself
   (for example a company proxy) are not used.
+- **Streaming panel remembers its settings:** the YouTube streaming panel
+  now keeps its resolution, frame rate, bitrate and encoder between sessions
+  in `settings.ini`. A value that is not one of the panel's choices falls back
+  to the default (MAX 3840, 60 FPS, 6,000 Kbps, Automatic), a saved bitrate
+  below the saved resolution's minimum is raised to it, and Options' reset to
+  defaults leaves them alone, like Remember Key and Save a Local Copy.
+- **Stream banner no longer covers the scorecard:** the STREAM LIVE banner in
+  the top-left corner hid the F4 scorecard's header. The banner, game clock,
+  scorecard, objectives and voice-chat speaker list now stack in that corner
+  instead of overlapping, and at large scorecard scales the scorecard stays
+  clear of the minimap. The banner is not part of the streamed video, but the
+  overlays below it move down by its height there too.
 - **Not compatible with 0.9.2:** the firing changes change the game itself,
   so 0.9.3 uses protocol 297 (replay format 15 is unchanged). It does not play
   with 0.9.2 or any earlier version, nor their replays.

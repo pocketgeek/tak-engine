@@ -29,6 +29,19 @@ commit `43d22d18`). Every code change landed on main linearly after `43d22d18`
 - `4e766af8`: `kNetVersion` 296 -> 297, `tools/replay_test.cpp` pins 297 and
   refuses 296, CHANGELOG, `docs/multiplayer-design.md`, `docs/user-guide.md`.
 
+- `87907355`: HUD top-left column (`src/client/hudcorner.h`): the stream
+  banner, clock, scorecard, objectives and voice speakers stack;
+  `hudcorner_test` checks 5,760 layouts (the old placement fails 5,744).
+  Client only.
+- `37bfd340`, `6e34fd16`: the streaming panel saves resolution, frame rate,
+  bitrate and encoder (`settings_test` round trip, invalid values, defaults
+  reset; bitrate floor on load). Client only.
+- After these two client branches were added on top of the prep commit, the
+  `build-o2` tree was rebuilt and `ctest -L quick` plus `hudcorner` and the
+  settings tests were run once: `ctest -L quick` 519 of 521 passed (the known
+  host-only `vashim_unavailable` failed, `vashim_system_loader` skipped);
+  `settings`, `mod_settings` and `hudcorner` passed.
+
 <!-- TODO-LEAD: diff stat: `git diff --stat v0.9.2 v0.9.3 -- src` (files, insertions, deletions) and the list of files outside src. At 4e766af8, `git diff --stat v0.9.2 4e766af8` touches 28 files (702 insertions, 170 deletions), 4 of them in .github/workflows. -->
 
 The preparation commit on top of `4e766af8` changes no code: `CMakeLists.txt`
