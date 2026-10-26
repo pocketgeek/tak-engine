@@ -154,8 +154,6 @@ class MountSet {
 public:
     explicit MountSet(const std::filesystem::path& dir, MountConfig cfg = {});
 
-    // Explicit cosmetic file aliases, without exposing neighboring loose files.
-    void addLooseFile(const std::string& path, const std::filesystem::path& file);
     // Is `path` resolvable (loose file or in some archive)?
     bool has(const std::string& path) const;
     // Read a file by internal path (case-insensitive, '/' or '\\'). Throws if
@@ -187,7 +185,6 @@ private:
 
     std::filesystem::path dir_;
     MountConfig cfg_;
-    std::map<std::string, std::filesystem::path> looseFiles_;
     std::vector<Archive> archives_;
     std::vector<std::filesystem::path> archiveFiles_;
     std::unordered_map<std::string, Win> map_;   // winning archive entry per path
@@ -203,7 +200,6 @@ private:
 //   mods/game/always_enabled/<pack>/      (every non-campaign game this player hosts)
 //   Maps/        (*.kmp single-map HPIs + loose)     -> kmap/<name>.*
 //   <root>/      (*.hpi only, no loose)              -> the base game + expansions
-//   Boneyards/Metagame/ (five allowlisted campaign presentation files only)
 //   Music/       (loose *.wav)                       -> music/<file>
 //
 // Build one with mountRetailRoot(). Every asset read in the engine goes through
