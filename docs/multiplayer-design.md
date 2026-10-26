@@ -1011,6 +1011,18 @@ games are bit-identical to 297. 297 replays are refused.
 0.9.4 ships protocol 298; it plays with neither 0.9.3 nor any earlier version,
 nor their replays.
 
+Protocol 299 (0.9.5) changes only hashed sim state: a unit already at 0 HP or
+below takes no further hits in the tick it dies (retail `51a140`: the hit's CRT
+draw is still spent, but its HP, kill credit, death type, overkill, hit
+response and status effects come from the fatal hit only), and the HP
+subtraction of a hit, of construction decay and of deadly water saturates
+instead of wrapping, with `maxdamage` loaded capped at 32767 (the retail 16-bit
+HP word). Nothing on the wire changes, and replay format 15 is kept; 298
+replays are refused. Map and mod caches move from the data folder to the
+per-user folder (see [map-transfer.md](map-transfer.md)), which the wire does
+not see. 0.9.5 ships protocol 299; it plays with neither 0.9.4 nor any earlier
+version, nor their replays.
+
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
 in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each
@@ -1300,6 +1312,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.9.4 (peers and server) requires protocol 298; 0.9.3 required 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.9.5 (peers and server) requires protocol 299; 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions remain fixed to Retail.

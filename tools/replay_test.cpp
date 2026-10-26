@@ -190,9 +190,11 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 298, "replay format 11 is kept under protocol 298");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 298");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 298");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 299, "replay format 11 is kept under protocol 299");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 299");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 299");
+    // 299 stops hits on a unit already at 0 HP in the tick it dies and saturates HP damage (hashed state).
+    check(!supportedReplayProtocol(15, 298), "previous protocol where a dying unit kept taking hits is refused");
     check(!supportedReplayProtocol(16, kNetVersion), "a newer replay format is refused");
     // 298 removes the Crusades meta-game messages and loads the retail Crusades roster and menus (hashed state).
     check(!supportedReplayProtocol(15, 297), "previous protocol with the Crusades meta game and canbuildcb menus is refused");

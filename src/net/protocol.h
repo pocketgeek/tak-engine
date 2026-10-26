@@ -19,7 +19,12 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 298;      // 298: the Darien Crusades meta game is gone: its 22 Crusades* messages are deleted
+constexpr uint32_t kNetVersion = 299;      // 299: a unit at 0 HP or below takes no more hits in the tick it dies (retail
+                                           //      51a140: the CRT draw is still spent, but HP, kill credit, death type,
+                                           //      overkill, hit response and status come from the fatal hit only); HP
+                                           //      damage, construction decay and deadly-water subtractions saturate and
+                                           //      maxdamage loads capped at 32767 (hashed state).
+                                           // 298: the Darien Crusades meta game is gone: its 22 Crusades* messages are deleted
                                            //      (every later message id moves down) and event kind 3 (CampaignForfeit)
                                            //      stays reserved and refused. The Crusades balance follows retail: the
                                            //      roster comes only from unitscb/ (no units/ fallback, so monelem, monmum,

@@ -19,6 +19,73 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.5
+*Unreleased · protocol 299 · replay format 15 · does not play with 0.9.4 or earlier, nor their replays*
+
+- **Dead units stay dead.** A unit that was killed could take more hits in the
+  same instant, for example from the rest of a big splash or a volley landing
+  together. Each extra hit was still subtracted from its health, and with
+  enough of them the health counter ran past its lowest value and wrapped round
+  to nearly full: the "dead" unit stood back up with around 30,000 hit points.
+  As in the original game, a unit that has just been killed now ignores every
+  further hit: the player whose hit killed it keeps the kill, and the way it
+  dies, its overkill and its last reaction come from that killing blow alone.
+  A single hit stronger than any unit's health (over 32,767 damage, possible
+  with armour and veteran bonuses) also no longer wraps round. Health is capped
+  at 32,767, the most the original game can hold; no shipped unit has more
+  than 29,999. Unfinished buildings under heavy fire, and units standing in
+  deadly water, are protected the same way.
+- **The game no longer writes into your game data folder.** Until now, every
+  map a game room accepted, every map downloaded from another player, every
+  downloaded game mod, every random map you played and every Cartographer Test
+  Map copy was saved inside the folder holding your *Total Annihilation:
+  Kingdoms* install (in its `MapCache`, `ModCache` and `Maps` folders). They now
+  go in your own per-user folder, beside `settings.ini`:
+  `%APPDATA%\TAKengine\TAKingdoms\` on Windows,
+  `~/Library/Application Support/TAKengine/TAKingdoms/` on macOS and
+  `~/.local/share/TAKengine/TAKingdoms/` on Linux. The game folder can now be
+  read-only, for example a shared or system-wide install. A `MapCache` or
+  `ModCache` folder an earlier version left in the game folder is ignored and
+  left alone (you can delete it); a map you had downloaded is downloaded again
+  the first time a room uses it. Random maps an earlier version saved in the
+  game folder's `Maps` still show up as ordinary maps, and Cartographer still
+  lists your downloaded maps and Test Map copies. Screenshots and the maps and
+  mods you save from Cartographer still go where they did.
+- **A game whose map cannot be built says so:** creating a game room on a map
+  that cannot be built (for example one whose terrain art is missing) now stays
+  on the setup screen and shows *CANNOT CREATE* with the reason, instead of
+  silently doing nothing.
+- **Windows test fixes and test tooling:** eight of the developer tests that
+  failed on Windows pass again (they needed symbolic links, which the Windows
+  build cannot make, and `hpitool cat` wrote its output in text mode, which
+  corrupted extracted maps). `hpitool cat` now writes exact bytes on Windows.
+  The developer test harness stops at once with an error when its map cannot
+  be built, instead of waiting for its time limit; the desync-hunt script no
+  longer mistakes its own folder name for a desync and can use any build
+  folder; and an out-of-bounds read in a Cartographer test is fixed.
+- **The Legion scenario gate is re-baselined.** The developer gate that replays
+  145 Legion pathfinding scenarios and compares them against a stored baseline
+  had been left out of release checks since 0.8.11, and its stored game-state
+  checksums had gone stale in 0.9.0, when reclaiming changed what the checksum
+  covers. Only those checksums are retaken; every movement and timing limit is
+  unchanged, and the gate passes again.
+- **Server operators:** without `--map-cache-dir`, `takserver` now keeps
+  uploaded and random maps in `TAKengine/takserver` in the per-user data folder
+  (`$XDG_DATA_HOME` or `~/.local/share` on Linux, `%APPDATA%` on Windows,
+  `~/Library/Application Support` on macOS) instead of its data folder, and it
+  refuses to start if it has neither a home folder nor `--map-cache-dir`.
+- **Protocol 299:** the dead-unit fix changes how fights play out, so 0.9.5
+  plays only with 0.9.5 and plays only replays recorded by 0.9.5. A 0.9.4
+  client or server is turned away with a *protocol version mismatch* message,
+  and a 0.9.4 replay is refused with the version message.
+
+**Upgrading (server operators):** update `takserver` together with your
+players. A server started with `--map-cache-dir` behaves as before; one started
+without it now caches maps in its per-user folder (above), and its data folder's
+old `MapCache/` is no longer read.
+
+[Source at v0.9.5](https://github.com/pocketgeek/tak-engine/tree/v0.9.5)
+
 ## 0.9.4
 *2026-10-26 · protocol 298 · replay format 15 · does not play with 0.9.3 or earlier, nor their replays*
 
