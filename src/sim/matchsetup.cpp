@@ -255,7 +255,11 @@ void setupRegistry(TypeRegistry& reg, const hpi::Vfs& input, bool crusades) {
     // (monelem, monmum, tarcship, tarhel, tarnecr2, zonspide) does not exist in a
     // Crusades game. The VFS already merges base + Iron Plague + community units
     // into one namespace, resolved by retail newest-date precedence.
-    reg.loadDir(vfs, crusades ? "unitscb" : "units");
+    // An install with no unitscb/ at all has no Crusades balance to select: the
+    // referee then plays the standard registry (Server::buildDataSet haveCb), so
+    // every peer must do the same rather than load an empty roster.
+    const bool cb = crusades && !vfs.list("unitscb").empty();
+    reg.loadDir(vfs, cb ? "unitscb" : "units");
     // Build menus always come from the standard canbuild/ tree, filtered by that
     // roster (retail 0x4c1950). Retail has no canbuildcb path: that shipped tree
     // is data the game never reads.

@@ -8,7 +8,9 @@
 #include <SDL.h>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <string>
@@ -94,6 +96,34 @@ int main(int argc,char** argv) {
             for(const auto& id:former)if(crusades.find(id))filtered.push_back(id);
             if(crusades.find(builder))
                 check(crusades.buildable(builder)==filtered,"Crusades "+builder+" = canbuild filtered by roster");
+        }
+        // Synthetic data for the cases the shipped tree never exercises: a missing
+        // priority sorts last, ties keep listing order, an entry naming no unit and a
+        // builder without builder=1 give nothing; and an install with no unitscb/
+        // plays Crusades on the standard roster, as the referee does (haveCb).
+        {
+            const auto root=std::filesystem::temp_directory_path()/("tak-balance-roster-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+            struct Cleanup {std::filesystem::path path;~Cleanup(){std::error_code e;std::filesystem::remove_all(path,e);}} cleanup{root};
+            auto put=[&](const std::string& path,const std::string& text) {
+                std::filesystem::create_directories((root/path).parent_path());
+                std::ofstream(root/path)<<text;
+            };
+            put("units/bld.fbi","[UNITINFO]\n{\nobjectname=BLD;\nbuilder=1;\n}\n");
+            put("units/nob.fbi","[UNITINFO]\n{\nobjectname=NOB;\n}\n");
+            for(const char* id:{"a","b","c"})put(std::string("units/")+id+".fbi",std::string("[UNITINFO]\n{\nobjectname=")+id+";\n}\n");
+            put("canbuild/bld/a.tdf","[Other]\n{\nx=1;\n}\n");
+            put("canbuild/bld/b.tdf","[Menu]\n{\nPriority=5;\n}\n");
+            put("canbuild/bld/c.tdf","[Menu]\n{\nPriority=5;\n}\n");
+            put("canbuild/bld/ghost.tdf","[Menu]\n{\nPriority=1;\n}\n");
+            put("canbuild/nob/a.tdf","[Menu]\n{\nPriority=1;\n}\n");
+            tak::hpi::Vfs tiny;tiny.addLayer(tak::hpi::MountSet(root));
+            for(bool cb:{false,true}) {
+                tak::sim::TypeRegistry r;tak::sim::setupRegistry(r,tiny,cb);
+                const std::string mode=cb?"no-unitscb Crusades: ":"synthetic: ";
+                check(r.find("bld") && r.find("a"),mode+"standard roster loaded");
+                check(r.buildable("bld")==std::vector<std::string>{"b","c","a"},mode+"ties stable, missing priority last, ghost dropped");
+                check(r.buildable("nob").empty(),mode+"non-builder has no menu");
+            }
         }
         std::cout<<checks<<" checks, "<<failures<<" failures\n";
         return failures?1:0;
