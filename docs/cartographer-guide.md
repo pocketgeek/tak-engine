@@ -194,6 +194,8 @@ options work in every build:
 | `--new WxH --world <world> [--random]` | Start on a new blank (or randomly generated) map of W × H units instead of the empty window. |
 | `--save <file.tnt>` | Write the map (an installed map named on the same command line, or one made with `--new`) as loose files (see [Export loose files](#export-loose-files)) and exit without starting the editor. |
 | `--bundle <file.kmp>` | The same, but write a `.kmp`. |
+| `--version`, `-v` | Print the version and build and exit, without starting the editor. |
+| `--help`, `-h` | Print the command-line options and exit, without starting the editor. |
 
 ---
 
