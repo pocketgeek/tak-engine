@@ -388,6 +388,9 @@ Streaming::Streaming(SDL_Renderer* ren,Settings* settings,std::function<void()> 
         if(p_->resolution<4) { // fixed sizes; FULL / MAX are taken from the window at Start
             constexpr int widths[]={1280,1920,2560,3840},heights[]={720,1080,1440,2160};
             p_->config.width=widths[p_->resolution];p_->config.height=heights[p_->resolution];
+            // a hand-edited file may pair a big size with a low bitrate: same floor as choosing it
+            const int64_t pixels=int64_t(p_->config.width)*p_->config.height;
+            p_->config.bitrateKbps=std::max(p_->config.bitrateKbps,pixels>2560*1440?30000:pixels>1920*1080?12000:6000);
         }
     }
     p_->config.key.reserve(320); // room for 255 bytes + one text event: typing never reallocates (unwiped copies)
