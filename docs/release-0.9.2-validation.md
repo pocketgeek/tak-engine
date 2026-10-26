@@ -3,7 +3,7 @@
 Protocol **296** (was 295 in 0.9.1), replay format **15** (unchanged),
 generator version **9**, campaign payload **4**, database schema **9**.
 
-TODO-LEAD: Tagged `v0.9.2` at `<sha>` (full `<full sha>`, annotated tag object `<obj>`, "TAK Engine 0.9.2") and published on 2026-10-<dd> <hh:mm:ss> UTC.
+Tagged `v0.9.2` at `2c48b983` (full `2c48b9833480cc24bc239a7abd5a85dd8f69bc4d`, annotated tag object `9cd7694a`, "TAK Engine 0.9.2") and published on 2026-10-26 01:53:43 UTC.
 
 ## Scope and compatibility
 
@@ -64,8 +64,7 @@ The preparation commits on top of `db237626` change no code: `CMakeLists.txt`
 `docs/img/README.md` and `docs/img/title.jpg`. The static-reach commits
 followed them; the docs commit after those changes no code.
 
-TODO-LEAD: `git diff --stat v0.9.1 v0.9.2 -- src` on the final tag (expected:
-the same 6 files, 519 insertions, 36 deletions).
+`git diff --stat v0.9.1 v0.9.2 -- src` on the final tag touches the same 6 files (522 insertions, 36 deletions): `src/ai/ai.cpp` (240 lines changed), `src/ai/ai.h` (39), `src/net/protocol.h` (9), `src/sim/retailaim.h` (14), `src/sim/sim.cpp` (233) and `src/sim/sim.h` (23). The three lines beyond `24fb36be` are `2c48b983`, which changed one line in `src/ai/ai.cpp` (a lambda capture of a structured binding).
 
 **Compatibility.** `kNetVersion` is **296** in `src/net/protocol.h` (295 at
 `v0.9.1`). `kReplayFormat` is **15** in `src/net/replayhdr.h`, unchanged. The
@@ -273,18 +272,53 @@ So there are no 0.9.2 reference ticks and hashes for the sweep's cases; the
 
 ## CI and packages
 
-TODO-LEAD: tag CI runs (Determinism dispatched on the tag, Linux packages,
-Windows, macOS), reruns if any, and the asset check (count, SHA-256 digests,
-`--version` of every runnable binary, Linux `NEEDED`, licence files, no
-`mods/`/`overrides/`/`click.hpi`, packaged `--help`).
+On the tag, all four workflows passed on the first attempt, with no reruns:
+[Determinism](https://github.com/pocketgeek/tak-engine/actions/runs/40253337061)
+(dispatched on the tag; the GCC -O0/-O2/-O3 and Clang -O0/-O2/-O3 x86-64 builds all agree on golden
+`dcef618cd2e4d558`, unchanged from 0.9.1; the aarch64 cross-build is skipped there as before),
+[Linux packages](https://github.com/pocketgeek/tak-engine/actions/runs/40253332597)
+(18 jobs, all success),
+[Windows](https://github.com/pocketgeek/tak-engine/actions/runs/40253332585)
+(build, sign and publish) and
+[macOS](https://github.com/pocketgeek/tak-engine/actions/runs/40253332621)
+(build, sign and notarize). All four ran on `2c48b983`.
 
-TODO-LEAD: Windows Authenticode (oden-win) and macOS notarisation (MacBook)
-checks. `--mpai` on Windows and macOS only if the lead runs them (by the
-0.9.0 rule they are skipped unless build flags, compilers or CI determinism
-coverage changed; none did).
+All 29 assets were downloaded and match GitHub's SHA-256 digests. The file set is
+the same as 0.9.1's: every package, zip, installer and DMG lists exactly the same
+files, and sizes differ by +0.04% to +0.16%. Every takclient and takserver (62 binaries) carries the
+`v0.9.2` build string and none carries a 0.9.0 or 0.9.1 one. Every one that can run here reports
+`0.9.2 (build v0.9.2)`; the Arch client needs Arch's newer glibc (`GLIBC_2.44`) and does not start on this
+Fedora machine, as with 0.9.1, while its server reports the same version. None of the 72 Linux ELF
+binaries (takclient, takserver, cartographer, crusades_admin) has a libva, libdrm, libsecret or GLib
+`NEEDED` entry, and none contains `__vaDriverInit_`. The licence files (`OPUS-LICENSE.txt`,
+`CHAT-FONT-LICENSE.txt`, `EDITOR-FONT-LICENSE.txt`, `STREAMING-LICENSES.txt`, `ACME-LICENSES.txt`)
+are in every package, zip, installer, DMG and app. No `mods/`, `overrides/` or `click.hpi` is shipped.
+The packaged Linux `takclient --help` lists only `--data`, `--play-map`, `--game-mod` and `--version`.
+The Fedora 44 x86-64 RPM's `takserver` (`0.9.2 (build v0.9.2)`, protocol v296) ran the Retail AI game
+on Inner Circle with `--local --no-auth --seed 1` and a scratch HOME. The client was the `-O2`-class
+Debug build at `62c60753`, with `TAK_AI_LEVEL=6 TAK_SPEED=80 --mpai --time 60`, and the game ended
+`hash=c5846d769e0a7d93 units=4 err=none end=timelimit`. No desync or referee-suspect line appeared. The same
+RPM's `cartographer "Inner Circle" --bundle` loaded the map (96 x 96 blocks, 4 start positions, 215
+features, 1261 sections), wrote a 379,088-byte `.kmp` and exited 0, as in 0.9.1.
 
-TODO-LEAD: publication line (`gh release edit v0.9.2 --draft=false --latest`,
-time, asset count). 0.9.0 and later releases are kept.
+Windows: on oden-win, `Get-AuthenticodeSignature` reports **Valid** (timestamped, "Curtis Edge") for all 9
+signed files: the x64 installer and `takclient`, `takserver`, `cartographer` and `crusades_admin` in both
+the x64 and arm64 zips, the same 9 as 0.9.1. The x64 `takclient.exe` and `takserver.exe` report
+`0.9.2 (build v0.9.2)`, and the arm64 ones carry the `v0.9.2` build string. `--mpai` was not run on
+Windows or macOS, per the release rule (no build flags, compilers or CI determinism coverage changed). The
+Windows and macOS tag CI determinism tests (detmath golden, `sim_driver_equiv`, `navigation_determinism`,
+plus `fp_contract` on macOS) cover them.
+
+macOS: on the MacBook (no builds), both DMGs and all four apps (the game and TAK Cartographer, from the DMGs
+and from the zips) pass `stapler validate`, and `spctl -a -vv` accepts them as "Notarized Developer ID"
+(Curtis Edge, L479Y59RN8). Each passes `codesign --verify --strict`, has `NSHighResolutionCapable` true and
+`NSMicrophoneUsageDescription`, and the takclient has the `audio-input` entitlement (the other binaries do
+not). The bare zip programs pass `codesign --strict`; `spctl` calls them "not an app", as expected. The macOS
+`takclient` and `takserver` report `0.9.2 (build v0.9.2)` (arm64 and x64, apps, bare programs and debug zips)
+and contain the MP4 muxer strings. No licence file is missing. No `mods/`, `overrides/` or `click.hpi` is
+present.
+
+Published with `gh release edit v0.9.2 --draft=false --latest` on 2026-10-26 01:53:43 UTC with 29 assets; it is the Latest release. 0.9.0 and 0.9.1 stay on the releases page (0.9.0 and later releases are kept).
 
 ## Limits
 
@@ -313,4 +347,4 @@ time, asset count). 0.9.0 and later releases are kept.
 - All of 0.9.1's limits carry over (see
   [release-0.9.1-validation.md](release-0.9.1-validation.md#limits)), except
   the mixed-version notes, which now concern 0.9.1.
-- TODO-LEAD: tag CI outcome.
+- Tag CI: none of the four workflows needed a rerun; every tag run passed on attempt 1. `--mpai` on Windows and macOS was not run (the user's rule); tag CI determinism covers them.
