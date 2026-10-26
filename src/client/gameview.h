@@ -3409,10 +3409,9 @@ private:
 
     SDL_Texture* iconFor(const std::string& typeId);
 
-    // Fallback build icon: render the unit's 3D model into a small cached texture,
-    // for buildables that ship no anims/buildpic. Retail never drew a build pic for
-    // the Zhon trapdoor spider (zonspide) -- a base-game creature the Crusades
-    // balance made buildable -- so without this its slot would be an empty box.
+    // Fallback unit icon: render the unit's 3D model into a small cached texture,
+    // for types that ship no anims/buildpic -- the wildlife, monsters and campaign
+    // NPCs a player can select (lifdeer, monmum, npcpeas, ...), and community units.
     SDL_Texture* modelIconTex(const std::string& id, int slot, bool canMove);
 
     // Build controls belong to exactly one selected builder.

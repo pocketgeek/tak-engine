@@ -53,28 +53,30 @@ int main(int argc,char** argv) {
             {"turnrate",&tak::sim::UnitType::turnRate,500},
             {"waterline",&tak::sim::UnitType::waterline,0}
         };
-        std::set<std::string> ids,builders;
-        std::map<std::string,std::string> aliases;
-        check(!vfs.list("unitscb").empty(),"Crusades unit overlay is present");
-        check(!vfs.list("canbuildcb").empty(),"Crusades menu overlay is present");
-        for(const auto* prefix:{"units","unitscb"})for(const auto& path:vfs.list(prefix)) {
+        // Retail: the roster is ONE directory (units, or unitscb for Crusades, no
+        // fallback); menus are always canbuild/ filtered by the roster.
+        std::map<bool,std::set<std::string>> idsFor;std::set<std::string> builders;
+        std::map<bool,std::map<std::string,std::string>> aliasesFor;
+        check(!vfs.list("unitscb").empty(),"Crusades unit roster is present");
+        for(bool cb:{false,true})for(const auto& path:vfs.list(cb?"unitscb":"units")) {
             if(!lower(path).ends_with(".fbi"))continue;
             auto doc=read(vfs,path);auto info=doc.child("unitinfo");
             if(!info)continue;
             auto stem=lower(std::filesystem::path(path).stem().string());
-            if(lower(info->valueOr("objectname",stem))==stem)ids.insert(stem);
-            else aliases[stem]=lower(info->valueOr("objectname",stem));
+            if(lower(info->valueOr("objectname",stem))==stem)idsFor[cb].insert(stem);
+            else aliasesFor[cb][stem]=lower(info->valueOr("objectname",stem));
         }
-        using Menu=std::map<std::pair<double,std::string>,std::string>;
-        std::map<std::string,std::map<std::string,Menu>> sourceMenus;
-        for(const std::string prefix:{"canbuild","canbuildcb"})for(const auto& path:vfs.list(prefix)) {
+        std::map<std::string,std::vector<std::pair<double,std::string>>> sourceMenus;
+        const std::string prefix="canbuild";
+        for(const auto& path:vfs.list(prefix)) {
             auto key=lower(path);if(!key.ends_with(".tdf"))continue;
             auto slash=key.find('/',prefix.size()+1);
             if(slash==std::string::npos || key.find('/',slash+1)!=std::string::npos)continue;
             auto builder=key.substr(prefix.size()+1,slash-prefix.size()-1);
             auto id=std::filesystem::path(key).stem().string();
             auto doc=read(vfs,path);auto menu=doc.child("menu");
-            sourceMenus[prefix][builder][{menu?menu->numberOr("priority",99):99,id}]=id;
+            const double none=9999999999.0;
+            sourceMenus[builder].push_back({menu?menu->numberOr("priority",none):none,id});
             builders.insert(builder);
         }
         auto moveInfo=read(vfs,"gamedata/moveinfo.tdf");
@@ -84,14 +86,14 @@ int main(int argc,char** argv) {
         for(bool cb:{false,true}) {
             tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,cb);
             std::string mode=cb?"Crusades ":"standard ";
+            const auto& ids=idsFor[cb];const auto& aliases=aliasesFor[cb];
             check(registry.types().size()==ids.size(),mode+" complete canonical roster");
             for(const auto& [alias,id]:aliases) {
                 check(ids.count(id)!=0,mode+alias+" canonical source exists");
                 if(!ids.count(alias))check(registry.find(alias)==nullptr,mode+alias+" does not create an extra unit type");
             }
             for(const auto& id:ids) {
-                std::string path="units/"+id+".fbi";
-                if(cb && vfs.has("unitscb/"+id+".fbi"))path="unitscb/"+id+".fbi";
+                std::string path=(cb?"unitscb/":"units/")+id+".fbi";
                 if(!vfs.has(path))continue;
                 auto doc=read(vfs,path);auto info=doc.child("unitinfo");
                 if(!info || lower(info->valueOr("objectname",id))!=id)continue;
@@ -304,9 +306,13 @@ int main(int argc,char** argv) {
 
             }
             for(const auto& builder:builders) {
-                const auto prefix=cb && sourceMenus["canbuildcb"].count(builder)?"canbuildcb":"canbuild";
                 std::vector<std::string> expected;
-                for(const auto& [priority,id]:sourceMenus[prefix][builder])expected.push_back(id);
+                const auto* owner=registry.find(builder);
+                if(owner && owner->isBuilder) {
+                    auto entries=sourceMenus[builder];
+                    std::stable_sort(entries.begin(),entries.end(),[](const auto& a,const auto& b){return a.first<b.first;});
+                    for(const auto& [priority,id]:entries)if(registry.find(id))expected.push_back(id);
+                }
                 check(registry.buildable(builder)==expected,mode+builder+" complete ordered menu");++menus;
             }
         }

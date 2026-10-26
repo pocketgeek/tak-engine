@@ -41,9 +41,13 @@ class BalanceAuditTests(unittest.TestCase):
         self.assertEqual(rows['weapon1#1/damage#1/default']['standard'], '5')
         self.assertNotIn('unitinfo#1/objectname', rows)
 
-    def test_menu_replacement_and_unit_fallback(self):
+    def test_roster_removal_and_menus_ignored(self):
+        # Retail never reads canbuildcb/, and a unit without a unitscb FBI does not
+        # exist in Crusades: the audit reports the removal and no menu rows.
         result = self.run_audit({
             'units/baseonly.fbi': '[UNITINFO]{ObjectName=baseonly;MaxDamage=10;}',
+            'units/kept.fbi': '[UNITINFO]{ObjectName=kept;MaxDamage=10;}',
+            'unitscb/kept.fbi': '[UNITINFO]{ObjectName=kept;MaxDamage=10;}',
             'canbuild/builder/old.tdf': '',
             'canbuildcb/builder/new.tdf': '',
             'canbuild/other/retained.tdf': '[MENU]{Priority=1;}',
@@ -51,8 +55,7 @@ class BalanceAuditTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         rows = list(csv.DictReader(io.StringIO(result.stdout), delimiter='\t'))
         self.assertEqual({(r['path'],r['kind']) for r in rows}, {
-            ('canbuild/builder/old.tdf','removed-menu-entry'),
-            ('canbuild/builder/new.tdf','added-definition')})
+            ('units/baseonly.fbi','removed-definition')})
 
     def test_repeated_sections_remain_distinct(self):
         result = self.run_audit({

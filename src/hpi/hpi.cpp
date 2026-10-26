@@ -805,9 +805,11 @@ bool affectsGameplay(const std::string& path) {
     // Files our deterministic sim consumes: unit stats, weapon/side/game data,
     // build lists, map geometry + scenario data, scripts and model origins.
     // Factory scripts and their animated build points affect production.
-    // Build-tree markers (canbuild/canbuildcb/<builder>/<buildable>.tdf) define who
-    // builds what -- gameplay, and .tdf, so check them BEFORE the .tdf rule below.
-    if (k.find("canbuild") != std::string::npos) return true;
+    // Build-tree markers (canbuild/<builder>/<buildable>.tdf) define who builds
+    // what -- gameplay, and .tdf, so check them BEFORE the .tdf rule below. The
+    // shipped canbuildcb/ tree is not: retail never reads it, nor does the sim.
+    if (k.find("canbuild") != std::string::npos && k.find("canbuildcb") == std::string::npos)
+        return true;
     if (ext(".fbi") || ext(".tnt") || ext(".ota") || ext(".crt")) return true;
     // Factory scripts and model build-piece transforms now drive production.
     if (ext(".cob") || ext(".3do")) return true;
@@ -843,7 +845,7 @@ uint64_t gameplayHash(const Vfs& input) {
     // those are per-game, checked separately. Two installs with identical retail
     // gameplay files hash the same; a modified/overridden gameplay file changes it.
     std::unordered_map<std::string, std::string> byKey;   // key -> winning path (deduped)
-    for (const char* pre : {"units", "unitscb", "canbuild", "canbuildcb", "features",
+    for (const char* pre : {"units", "unitscb", "canbuild", "features",
                             "gamedata", "weapons"})
         for (const std::string& p : vfs.list(pre)) {
             if (!affectsGameplay(p)) continue;

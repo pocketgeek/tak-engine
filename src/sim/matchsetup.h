@@ -118,9 +118,10 @@ inline const char* benchmarkLevelInterval(int level) {
 // The starting Monarch of each faction (index = faction id).
 extern const char* const kMonarchs[5];
 
-// Load the unit registry from the VFS: MOVEINFO, units, canbuild -- with the
-// Crusades overlay loaded first (it wins). Iron Plague and community units are
-// already merged into the "units"/"canbuild" namespaces by the VFS. Deterministic.
+// Load the unit registry from the VFS: MOVEINFO, the roster (units, or unitscb
+// alone for the Crusades balance -- no fallback, as retail), then canbuild menus
+// filtered by that roster. Iron Plague and community units are already merged
+// into these namespaces by the VFS. Deterministic.
 void setupRegistry(TypeRegistry& reg, const hpi::Vfs& vfs, bool crusades);
 
 // Start positions from the map's .ota (world pixels), ordered by StartPos index.

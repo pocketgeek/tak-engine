@@ -39,12 +39,12 @@
                 debrisNoSeaTrigger_=header->numberOr("nosealeveltrigger",0)!=0;
             }
         }
-        // Unit registry: MOVEINFO + units + canbuild (+ Crusades overlay first).
+        // Unit registry: MOVEINFO + units (unitscb for Crusades) + canbuild.
         // The VFS merges base + Iron Plague + community data into one namespace,
         // precedence resolved by the retail newest-date rule.
         tak::sim::setupRegistry(registry_, vfs_, crusades_);
         if (crusades_)
-            std::fprintf(stderr, "balance: Crusades (unitscb/canbuildcb)%s\n",
+            std::fprintf(stderr, "balance: Crusades (unitscb roster, standard canbuild)%s\n",
                          vfs_.list("unitscb").empty() ? " -- NOT FOUND" : "");
         // DEV PATH ONLY -- this is the standalone viewer, which does not call
         // setupMatch and so never runs retail's god roll (the 10% GameChance and the

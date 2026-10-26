@@ -51,7 +51,8 @@ int main(int argc,char** argv) {
             }
             if(!balance)std::printf("EXPLOSION_CORPSE %s\n",name.c_str());
         }
-        check(restored==29,"all 29 omitted corpse types restored");
+        // The Crusades roster has no Cult of Lokken Ship (tarcship has no unitscb FBI).
+        check(restored==(balance?28:29),"all 29 (Crusades 28) omitted corpse types restored");
         check(!registry.find("arasword")->explosionCorpse,"ordinary soldier explosion still gibs");
         check(!registry.find("arafly")->explosionCorpse,"handler that refuses a corpse stays excluded");
         for(bool unfinished:{false,true}) {

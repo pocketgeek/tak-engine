@@ -567,7 +567,9 @@ public:
     // Parse every .fbi under `prefix` in the VFS (e.g. "units"). All source
     // archives' units merge into one namespace, precedence already resolved.
     void loadDir(const hpi::Vfs& vfs, const std::string& prefix);
-    // Parse <prefix>/<builder>/<buildable>.tdf into the build tree.
+    // Parse <prefix>/<builder>/<buildable>.tdf into the build tree, as retail
+    // 0x4c1950 does: only for loaded builder types, only entries naming a loaded
+    // type, ascending [Menu] Priority with stable ties. Call AFTER loadDir.
     void loadBuildTree(const hpi::Vfs& vfs, const std::string& prefix);
     const UnitType* find(const std::string& id) const;
     // Full type table in deterministic (name-sorted) order -- corpse interning
@@ -593,7 +595,7 @@ public:
     // Called once after loading; idempotent.
     void internCategories();
     // Largest build menu of any builder (drives the minimum window width so the
-    // whole icon row always fits at full size -- some Crusades menus reach 13).
+    // whole icon row always fits at full size -- some menus exceed 10).
     std::size_t maxBuildMenu() const {
         std::size_t m = 0;
         for (const auto& [id, list] : buildTree_) m = std::max(m, list.size());

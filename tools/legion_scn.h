@@ -144,7 +144,7 @@ struct Scenario {
     std::vector<std::pair<int, int>> teams;
     bool weapons = false, explored = true;
     std::vector<std::pair<uint32_t, uint16_t>> exploredRle;   // `explored rle N:HEX ...`: the recording's per-cell owner masks
-    bool crusades = false;            // `crusades on`: the Crusades balance overlay (unitscb/canbuildcb)
+    bool crusades = false;            // `crusades on`: the Crusades balance (unitscb roster, standard canbuild)
     bool wanderers = true;            // `wanderers off`: fbi types lose Standby_wander (their home-pull)
     int roundTrip = -1;               // `uplink R`: the 512-command window
     uint64_t navBytes = 0;            // `navbytes N`: the Legion field byte allowance (0: the game's)

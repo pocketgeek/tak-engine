@@ -82,66 +82,53 @@ int main(int argc,char**argv) {
             return 0;
         }
         std::cout<<"kind\tpath\tfield\tstandard\tcrusades\n";
-        size_t compared=0,changedFiles=0,changedFields=0,addedFiles=0;
-        for(const auto& prefix:{std::string("units"),std::string("canbuild")}) {
-            const auto cb=prefix+"cb";
-            const auto extension=prefix=="units"?".fbi":".tdf";
-            std::map<std::string,std::string> paths;
-            std::set<std::string> builders;
-            for(const auto& path:vfs.list(cb)) {
-                const auto key=lower(path);
-                if(key.starts_with(cb+"/") && key.ends_with(extension)) {
-                    paths.emplace(key,path);
-                    if(prefix=="canbuild") {
-                        const auto slash=key.find('/',cb.size()+1);
-                        if(slash!=std::string::npos && key.find('/',slash+1)==std::string::npos)
-                            builders.insert(key.substr(cb.size()+1,slash-cb.size()-1));
-                    }
-                }
+        size_t compared=0,changedFiles=0,changedFields=0,addedFiles=0,removedFiles=0;
+        // Only the unit roster differs between the balances. Retail never reads the
+        // shipped canbuildcb/ tree: both modes build menus from canbuild/, filtered
+        // by the roster. A unit with no unitscb FBI does not exist in Crusades (no
+        // fallback to units/), so it is reported as a removed definition.
+        const std::string prefix="units",cb="unitscb",extension=".fbi";
+        std::map<std::string,std::string> paths;
+        for(const auto& path:vfs.list(cb)) {
+            const auto key=lower(path);
+            if(key.starts_with(cb+"/") && key.ends_with(extension))paths.emplace(key,path);
+        }
+        for(const auto& path:vfs.list(prefix)) {
+            const auto key=lower(path);
+            if(!key.starts_with(prefix+"/") || !key.ends_with(extension))continue;
+            if(paths.count(cb+key.substr(prefix.size())))continue;
+            ++removedFiles;++changedFiles;
+            std::cout<<"removed-definition\t"<<escaped(key)<<"\t<definition>\tpresent\t<absent>\n";
+        }
+        for(const auto& [key,path]:paths) {
+            const auto base=prefix+key.substr(cb.size());
+            const bool exists=vfs.has(base);
+            const auto a=exists?fields(vfs,base):Fields{};
+            const auto b=fields(vfs,path);
+            ++compared;
+            if(!exists)++addedFiles;
+            std::set<std::string> keys;
+            for(const auto& [k,v]:a)keys.insert(k);
+            for(const auto& [k,v]:b)keys.insert(k);
+            bool changed=!exists;
+            if(changed)std::cout<<"added-definition\t"<<escaped(base)<<"\t<definition>\t<absent>\tpresent\n";
+            for(const auto& k:keys) {
+                const auto left=a.find(k),right=b.find(k);
+                if(left!=a.end() && right!=b.end() && left->second==right->second)continue;
+                changed=true;++changedFields;
+                const auto value=[&](const auto& it,const auto& end) {
+                    if(it==end)return std::string("<absent>");
+                    return prose(k)?std::string("<presentation text omitted>"):escaped(it->second);
+                };
+                std::cout<<(prose(k)?"presentation":(!exists?"added-definition":"changed"))
+                    <<'\t'<<escaped(base)<<'\t'<<escaped(k)<<'\t'
+                    <<value(left,a.end())<<'\t'<<value(right,b.end())<<'\n';
             }
-            // A CB menu replaces the builder's entire base menu. Missing entries
-            // are removals, unlike units, whose absent CB definitions fall back.
-            if(prefix=="canbuild")for(const auto& path:vfs.list(prefix)) {
-                const auto key=lower(path);
-                const auto slash=key.find('/',prefix.size()+1);
-                if(!key.starts_with(prefix+"/") || !key.ends_with(extension) ||
-                   slash==std::string::npos || key.find('/',slash+1)!=std::string::npos)continue;
-                const auto builder=key.substr(prefix.size()+1,slash-prefix.size()-1);
-                if(builders.count(builder))paths.try_emplace(cb+key.substr(prefix.size()),"");
-            }
-            for(const auto& [key,path]:paths) {
-                const auto base=prefix+key.substr(cb.size());
-                const bool exists=vfs.has(base);
-                const auto a=exists?fields(vfs,base):Fields{};
-                const auto b=path.empty()?Fields{}:fields(vfs,path);
-                ++compared;
-                if(!exists)++addedFiles;
-                std::set<std::string> keys;
-                for(const auto& [k,v]:a)keys.insert(k);
-                for(const auto& [k,v]:b)keys.insert(k);
-                bool changed=!exists || path.empty();
-                if(changed)std::cout<<(path.empty()?"removed-menu-entry":"added-definition")
-                    <<'\t'<<escaped(base)<<"\t<definition>\t"
-                    <<(exists?"present":"<absent>")<<'\t'
-                    <<(path.empty()?"<absent>":"present")<<'\n';
-                for(const auto& k:keys) {
-                    const auto left=a.find(k),right=b.find(k);
-                    if(left!=a.end() && right!=b.end() && left->second==right->second)continue;
-                    changed=true;++changedFields;
-                    const auto value=[&](const auto& it,const auto& end) {
-                        if(it==end)return std::string("<absent>");
-                        return prose(k)?std::string("<presentation text omitted>"):escaped(it->second);
-                    };
-                    std::cout<<(prose(k)?"presentation":(path.empty()?"removed-menu-entry":
-                        (!exists?"added-definition":"changed")))
-                        <<'\t'<<escaped(base)<<'\t'<<escaped(k)<<'\t'
-                        <<value(left,a.end())<<'\t'<<value(right,b.end())<<'\n';
-                }
-                if(changed)++changedFiles;
-            }
+            if(changed)++changedFiles;
         }
         if(compared==0)throw std::runtime_error("No Crusades definitions found");
-        std::cerr<<compared<<" overlay files compared; "<<changedFiles<<" changed; "
-                 <<addedFiles<<" without base; "<<changedFields<<" field differences\n";
+        std::cerr<<compared<<" unitscb files compared; "<<changedFiles<<" changed; "
+                 <<addedFiles<<" without base; "<<removedFiles<<" without unitscb; "
+                 <<changedFields<<" field differences\n";
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

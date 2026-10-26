@@ -249,14 +249,16 @@ void setupRegistry(TypeRegistry& reg, const hpi::Vfs& input, bool crusades) {
     // Map sprite banks must not change unit weapon/nimbus timing in one room.
     hpi::Vfs vfs(&input, true);
     reg.loadMoveInfo(vfs, "gamedata/moveinfo.tdf");
-    // Crusades overlay first (first-definition-wins), then the base roster. The
-    // VFS already merges base + Iron Plague + community units into one namespace,
-    // resolved by retail newest-date precedence, so one loadDir("units") suffices.
-    if (crusades) {
-        reg.loadDir(vfs, "unitscb");
-        reg.loadBuildTree(vfs, "canbuildcb");
-    }
-    reg.loadDir(vfs, "units");
+    // The roster is ONE unit directory: units/ for the standard balance, unitscb/
+    // for Crusades. Retail 0x518080 looks a name up only in the dictionary the
+    // Crusades flag selects and never falls back, so a unit with no unitscb FBI
+    // (monelem, monmum, tarcship, tarhel, tarnecr2, zonspide) does not exist in a
+    // Crusades game. The VFS already merges base + Iron Plague + community units
+    // into one namespace, resolved by retail newest-date precedence.
+    reg.loadDir(vfs, crusades ? "unitscb" : "units");
+    // Build menus always come from the standard canbuild/ tree, filtered by that
+    // roster (retail 0x4c1950). Retail has no canbuildcb path: that shipped tree
+    // is data the game never reads.
     reg.loadBuildTree(vfs, "canbuild");
 }
 

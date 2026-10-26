@@ -100,9 +100,11 @@ int main(int argc,char** argv) {
     try {
         auto mounts=tak::hpi::mountRetailRoot(argv[1]);
         tak::hpi::Vfs vfs(&mounts,true);std::set<std::string> builders;
-        if(vfs.list("unitscb").empty())throw std::runtime_error("no Crusades unit overlay");
-        if(vfs.list("canbuildcb").empty())throw std::runtime_error("no Crusades menu overlay");
-        for(const std::string prefix:{"canbuild","canbuildcb"})for(const auto& path:vfs.list(prefix)) {
+        if(vfs.list("unitscb").empty())throw std::runtime_error("no Crusades unit roster");
+        // Retail builds every menu from canbuild/ in both modes (it never reads
+        // canbuildcb/); Crusades changes the roster those menus are filtered by.
+        const std::string prefix="canbuild";
+        for(const auto& path:vfs.list(prefix)) {
             auto lower=[](std::string s) {
                 std::transform(s.begin(),s.end(),s.begin(),[](unsigned char c){return char(std::tolower(c));});
                 return s;
@@ -121,8 +123,13 @@ int main(int argc,char** argv) {
         std::set<std::pair<std::string,std::string>> keys;
         for(const auto& [key,v]:standard)keys.insert(key);
         for(const auto& [key,v]:crusades)keys.insert(key);
+        // A unit absent from one roster (no unitscb FBI: retail has no fallback)
+        // reports just its unit/present row, not every field as <absent>.
+        auto present=[](const Fields& f,const std::string& id){return f.count({"unit/present",id})!=0;};
         size_t changed=0;std::cout<<"field\tid\tstandard\tcrusades\n";
         for(const auto& key:keys) {
+            if(key.first!="unit/present" && !key.first.starts_with("menu/") &&
+               present(standard,key.second)!=present(crusades,key.second))continue;
             auto a=standard.find(key),b=crusades.find(key);
             const std::string av=a==standard.end()?"<absent>":a->second;
             const std::string bv=b==crusades.end()?"<absent>":b->second;

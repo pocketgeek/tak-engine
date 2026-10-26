@@ -805,9 +805,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             }
         }
     }
-    // Intern here rather than asking callers to remember: loadDir is called once per
-    // archive (unitscb then units) and this rebuilds from scratch each time, so it is
-    // idempotent and cannot be left stale by a second load.
+    // Intern here rather than asking callers to remember: this rebuilds from scratch
+    // on every loadDir call, so it is idempotent and cannot be left stale by a
+    // second load.
     internCategories();
     // Fix up cross-type references now that every unit is in the table
     // (animatetype=MONGHOUL names another unit the animator raises).
@@ -819,8 +819,13 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
 
 void TypeRegistry::loadBuildTree(const hpi::Vfs& vfs, const std::string& prefix) {
     namespace fs = std::filesystem;
-    // The VFS enumerates <prefix>/<builder>/<buildable>.tdf recursively; group by
-    // the builder subdirectory (the path segment right after `prefix`).
+    // Retail 0x4c1950: for every roster type with the builder flag, list
+    // CanBuild\<builder>\*.tdf, keep each entry that names a roster type (0x515ac0
+    // returns 0 for anything else and the entry is skipped), read [Menu] Priority
+    // (default 9999999999 when absent) and sort ascending. The roster must
+    // therefore be loaded (loadDir) before this. The VFS enumerates
+    // <prefix>/<builder>/<buildable>.tdf recursively; group by the builder
+    // subdirectory (the path segment right after `prefix`).
     std::string pre = lower(prefix);
     while (!pre.empty() && (pre.back() == '/' || pre.back() == '\\')) pre.pop_back();
     std::map<std::string, std::vector<std::pair<double, std::string>>> byBuilder;
@@ -837,23 +842,26 @@ void TypeRegistry::loadBuildTree(const hpi::Vfs& vfs, const std::string& prefix)
         while (i < segs.size() && lower(segs[i]) != pre) ++i;
         if (i + 3 != segs.size()) continue;   // require exactly <prefix>/<builder>/<file>
         std::string builder = lower(segs[i + 1]);
-        double prio = 99;
+        const auto bt = types_.find(builder);
+        if (bt == types_.end() || !bt->second.isBuilder) continue;
+        std::string id = lower(fs::path(path).stem().string());
+        if (!types_.count(id)) continue;
+        double prio = 9999999999.0;
         try {
             auto bytes = vfs.read(path);
             auto root = tdf::parseText(std::string(bytes.begin(), bytes.end()), path);
-            if (const auto* m = root.child("Menu")) prio = m->numberOr("priority", 99);
+            if (const auto* m = root.child("Menu")) prio = m->numberOr("priority", prio);
         } catch (const std::exception&) {}
         if (!byBuilder.count(builder)) order.push_back(builder);
-        byBuilder[builder].push_back({prio, lower(fs::path(path).stem().string())});
+        byBuilder[builder].push_back({prio, std::move(id)});
     }
     for (const std::string& builder : order) {
         auto entries = byBuilder[builder];
-        std::sort(entries.begin(), entries.end());
+        // Retail bubble-sorts with a strict > swap: ascending priority, ties kept in
+        // enumeration order (here the VFS's sorted listing).
+        std::stable_sort(entries.begin(), entries.end(),
+                         [](const auto& a, const auto& b) { return a.first < b.first; });
         auto& list = buildTree_[builder];
-        // First source to define a builder wins it whole -- so a Crusades-balance
-        // canbuildcb loaded before canbuild replaces that builder's menu rather
-        // than merging with it. (No effect on the usual single load.)
-        if (!list.empty()) continue;
         for (auto& [p, id] : entries)
             if (std::find(list.begin(), list.end(), id) == list.end())
                 list.push_back(id);
