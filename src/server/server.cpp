@@ -3217,11 +3217,13 @@ static int serverMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--accounts") && i + 1 < argc) accountsPath = argv[++i];
         else if (!std::strcmp(argv[i], "--crusades-db") || !std::strcmp(argv[i], "--crusades-definition")) {
             // The Darien Crusades service (persistent campaigns, allegiance, issued battles)
-            // was removed in 0.9.4. Refuse rather than start a server that silently lacks
-            // what its operator asked for; its database and replays are simply not read.
-            std::fprintf(stderr, "takserver: %s was removed in 0.9.4 (the Darien Crusades campaign service "
-                                 "no longer exists); remove the option. The Crusades balance is a room option.\n", argv[i]);
-            return 1;
+            // was removed in 0.9.4. A service drop-in written for 0.9.3 may still pass these:
+            // warn and ignore them (and their value) so the updated server still starts; its
+            // database and replays are never read.
+            std::fprintf(stderr, "takserver: warning: %s was removed in 0.9.4 (the Darien Crusades campaign "
+                                 "service no longer exists) and is ignored; remove the option. The Crusades "
+                                 "balance is a room option.\n", argv[i]);
+            if (i + 1 < argc && std::strncmp(argv[i + 1], "--", 2) != 0) ++i;
         }
         else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc)
             { fixedSeed = uint32_t(std::strtoul(argv[++i], nullptr, 0)); fixedSeedGiven = true; }

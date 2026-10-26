@@ -190,10 +190,12 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 297, "replay format 11 is kept under protocol 297");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 297");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 297");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 298, "replay format 11 is kept under protocol 298");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 298");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 298");
     check(!supportedReplayProtocol(16, kNetVersion), "a newer replay format is refused");
+    // 298 removes the Crusades meta-game messages and loads the retail Crusades roster and menus (hashed state).
+    check(!supportedReplayProtocol(15, 297), "previous protocol with the Crusades meta game and canbuildcb menus is refused");
     // 297 fires plain Ballistic shells without the 2D line test (hashed state).
     check(!supportedReplayProtocol(15, 296), "previous protocol with line-tested arrows and trebuchets is refused");
     // 296 counts blocked flames and judges ballistic range by retail's arc solve (hashed state).

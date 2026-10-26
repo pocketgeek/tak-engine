@@ -306,7 +306,7 @@ change in the room, until the game starts.
 | Option | What it does |
 | --- | --- |
 | **Map** | A shipped, downloaded or generated map. |
-| **Crusades** | **Off** uses the standard unit balance. **On** uses the alternative *Crusades* balance from the final retail patch. Unit costs and stats differ, and a few Iron Plague units (the Trapdoor Spider, Heligrin, Lokken, Cult of Lokken Ship, Sea Serpent and Mummy) do not exist; build menus are the standard ones. |
+| **Crusades** | **Off** uses the standard unit balance. **On** uses the alternative *Crusades* balance from the final retail patch. Unit costs and stats differ, and a few Iron Plague units (the Trapdoor Spider, Heligrin, Cult of Lokken Ship, Sea Serpent, Mummy and the second Lokken unit; the Taros monarch is unaffected) do not exist, as in the original game. Build menus are the standard ones, without those units. |
 | **Double Sight/Radar** | Doubles every unit's sight and radar range in skirmish and multiplayer. Weapon range is unchanged, and campaign missions are never affected. |
 | **Monarch Expendable** | **Off** (the original rule): losing your Monarch loses the game. **On**: the Monarch is an ordinary unit and you lose only when everything is gone. |
 | **Fog of war** | **Not Explored**: the map starts hidden. **Explored**: the map starts revealed but enemies are hidden outside your sight. **Full Vision**: no fog. Terrain you have seen stays visible after your units leave; enemy units outside your current sight cannot be targeted. |

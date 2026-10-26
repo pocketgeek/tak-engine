@@ -40,18 +40,25 @@ def run(binary, data):
         stored = (root / 'accounts.conf').read_bytes()
         password = secrets[0]
         assert password not in stored, 'the password reached the accounts file'
-        # The Darien Crusades service was removed in 0.9.4: its options are refused,
-        # not silently ignored, and nothing is created.
+        # The Darien Crusades service was removed in 0.9.4: a 0.9.3 service line that still
+        # passes its options starts anyway (warned, ignored, the old database left alone)
+        # and the accounts still log in.
+        (root / 'campaign.sqlite').write_bytes(b'SQLite format 3\x00old 0.9.3 store')
+        (root / 'crusades-replays').mkdir()
+        extra = ('--crusades-db', str(root / 'campaign.sqlite'),
+                 '--crusades-definition', str(root / 'darien.campaign'))
+        with net.server(binary, data, root, extra) as (port, fingerprint):
+            with contextlib.closing(net.Peer(port)) as alice:
+                alice.hello(fingerprint)
+                alice.login('Alice', secrets)
+        log = (root / 'server.log').read_text(errors='replace')
         for flag in ('--crusades-db', '--crusades-definition'):
-            result = subprocess.run([str(binary), '--data', str(data), '--local', '--port', '1',
-                                     '--accounts', str(root / 'accounts.conf'), flag, str(root / 'campaign.sqlite')],
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30)
-            assert result.returncode != 0, flag + ' was accepted'
-            assert b'removed' in result.stderr, result.stderr
-        assert not (root / 'campaign.sqlite').exists()
+            assert flag + ' was removed in 0.9.4' in log and 'is ignored' in log, log
+        assert (root / 'campaign.sqlite').read_bytes() == b'SQLite format 3\x00old 0.9.3 store'
+        assert not (root / 'darien.campaign').exists()
         usage = subprocess.run([str(binary), '--help'], capture_output=True, timeout=30)
         assert usage.returncode == 0 and b'crusades' not in usage.stdout.lower(), 'takserver --help lists Crusades options'
-    print('PASS: live SCRAM register, login, wrong proof, pending registration and restart; Crusades options refused')
+    print('PASS: live SCRAM register, login, wrong proof, pending registration and restart; Crusades options warned and ignored')
 
 
 def main():

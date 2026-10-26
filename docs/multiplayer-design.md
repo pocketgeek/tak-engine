@@ -992,6 +992,24 @@ replays are refused. The macOS FFmpeg TLS switch to OpenSSL is client side.
 0.9.3 ships protocol 297; it plays with neither 0.9.2 nor any earlier version,
 nor their replays.
 
+Protocol 298 (0.9.4) removes the Darien Crusades meta game from the wire. Its
+22 `Crusades*` messages are deleted, so every message id from `ModOffer` on
+moves down; a 297 peer would misread them, which is why the handshake's version
+check turns it away. Bundle event kind 3 (`CampaignForfeit`) is deleted but the
+number stays reserved: `getBundle` refuses it and the sim ignores it, so
+`AiTakeover` keeps kind 4. The `GameOptions` byte layout is unchanged (the
+257-byte rules encoding is folded back into `put`), and so is replay format 15.
+The same protocol also changes hashed state in Crusades-balance games: the roster
+comes only from `unitscb/` with no `units/` fallback (so `monelem`, `monmum`,
+`tarcship`, `tarhel`, `tarnecr2` and `zonspide` do not exist), and build menus
+always come from the standard `canbuild/` tree, kept to roster types and sorted
+by ascending `[Menu] Priority` (stable; a missing priority is 9999999999), as
+retail does (`0x518080`, `0x4c1950`, `0x515ac0`). `canbuildcb/` is no longer
+gameplay data, so the gameplay-data hash changes for every install. Standard
+games are bit-identical to 297. 297 replays are refused.
+0.9.4 ships protocol 298; it plays with neither 0.9.3 nor any earlier version,
+nor their replays.
+
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
 in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each
@@ -1281,6 +1299,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.9.3 (peers and server) requires protocol 297; 0.9.2 required 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.9.4 (peers and server) requires protocol 298; 0.9.3 required 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions remain fixed to Retail.

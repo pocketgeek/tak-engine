@@ -19,7 +19,15 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 297;      // 297: only a plain Ballistic shell (arrows, spears, cannon balls) skips the 2D line
+constexpr uint32_t kNetVersion = 298;      // 298: the Darien Crusades meta game is gone: its 22 Crusades* messages are deleted
+                                           //      (every later message id moves down) and event kind 3 (CampaignForfeit)
+                                           //      stays reserved and refused. The Crusades balance follows retail: the
+                                           //      roster comes only from unitscb/ (no units/ fallback, so monelem, monmum,
+                                           //      tarcship, tarhel, tarnecr2 and zonspide do not exist), build menus come
+                                           //      from the standard canbuild/ tree filtered by that roster and sorted by
+                                           //      ascending Priority (stable; missing = 9999999999), and canbuildcb/ is
+                                           //      no longer gameplay data (the game-data hash changes for every install).
+                                           // 297: only a plain Ballistic shell (arrows, spears, cannon balls) skips the 2D line
                                            //      test (retail never tests a line; its shells fly their arc), so
                                            //      archers, arrow towers and the Trebuchet fire over obstacles; a
                                            //      building or Hold unit drops an auto target it has no line to.

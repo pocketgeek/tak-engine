@@ -22,23 +22,85 @@ their validation reports; both live in [`docs/`](docs/).
 ## 0.9.4
 *unreleased · protocol 298 · replay format 15 · does not play with 0.9.3 or earlier, nor their replays*
 
-- **The Darien Crusades meta game is removed:** the strategic map, the online
-  campaigns, allegiance, territory matchmaking, issued Crusades battles and their
-  replay archive are gone from the client and the server. It was never offered
-  in the game browser. The **Crusades balance** stays: it is still the CRUSADES
-  option of a room (and `--crusades` in debug launches).
-- **Crusades balance as in the original game:** with CRUSADES on, the units are
-  only those of the Crusades unit set, and every build menu is the standard one,
-  limited to those units.
-- **Accounts and sign-in are unchanged.**
+- **The Darien Crusades meta game is removed.** Everything built for the online
+  campaign is gone from the client and the server: the strategic map of Darien
+  and its campaign screens, the online campaigns themselves, allegiance to a
+  side, territory matchmaking (searching for and issuing a battle over a
+  territory), the issued Crusades battles with their forfeit-on-disconnect rule,
+  the server's campaign database and its archive of battle replays, and the
+  `crusades_admin` tool that managed it. The meta game was never offered in the
+  game browser, so ordinary skirmish, multiplayer and campaign play is
+  unchanged: rooms, accounts, spectating, reconnecting, replays, voice chat and
+  game mods work as before. The client no longer asks a server for Crusades
+  campaigns after signing in, and the lobby, the in-game menu and replay
+  playback lose their Crusades-battle labels and rules (no more "ESC: RETURN TO
+  CAMPAIGN").
+- **What stays: the Crusades balance and accounts.** The **Crusades** option of
+  a game room (the alternative unit balance from the final retail patch, and
+  `--crusades` in debug launches) is kept, and so are server accounts and
+  sign-in, which never depended on the meta game.
+- **Smaller downloads and fewer moving parts:** `crusades_admin` is no longer in
+  any package, `takserver` no longer links SQLite (the static SQLite build is
+  gone from the source tree), and the client no longer mounts the Boneyards
+  campaign art it used only for the strategic map. With issued battles gone,
+  the server's rules have no exceptions left: every room writes its replay to
+  the replay directory (when one is set) and allows spectators by its ALLOW
+  SPECTATORS option, and a player whose connection runs out of time is always
+  replaced by a server AI.
+- **Crusades balance as in the original game.** The original game never reads
+  the `canbuildcb/` build menus shipped with the final patch, and it does not
+  fall back to the standard unit files for a unit the Crusades set lacks. With
+  Crusades on, the units are now only those of the Crusades unit set
+  (`unitscb/`), and every build menu is the standard one, limited to those units
+  and in the same order. In practice:
+  - **Six Iron Plague units do not exist in a Crusades game:** the Trapdoor
+    Spider, the Heligrin, the Cult of Lokken Ship, the Sea Serpent, the Mummy
+    and the Iron Plague's second Lokken unit (`tarnecr2`; the Taros monarch
+    Lokken is unaffected). Until now a Crusades Beast Tamer could train the
+    Trapdoor Spider, which the original game never offers.
+  - **Gods are built by the monarchs again:** Elsin, Kirenna, Lokken and Thirsha
+    build their side's god, as in the standard game, instead of the Acolyte,
+    the Priest of Lihr, the Dark Priest and the Shaman.
+  - **The Zhon Shaman builds the Giant Orm and the Giant Barracuda**, and the
+    **Beast Handler builds the Swamp Beast**, as in the standard game.
+  - **The Beast Tamer has its nine standard entries** (Lodestone, Kraken,
+    Gryphon, Spirit Wolf, Basilisk, Harpy, Death Totem, Beast Handler, Beast
+    Lord) instead of thirteen.
+  - **The Ark has no build menu** (it built the Spyhawk, Swordsman and Archer
+    in Crusades games).
+  - The other menus that had moved are standard again: the Grenadier comes
+    from the Acolyte, not the Keep; the Flying Builder no longer builds the
+    Rolling Tower; the Flagship no longer builds the Lighthouse; and the
+    Ballista comes from the Priest of Lihr, not the Citadel, whose menu is back
+    in its standard order.
 
-**Upgrading (server operators):** `takserver` no longer accepts
-`--crusades-db` or `--crusades-definition`; a server started with either stops
-with a message saying so, so remove them from your service drop-in or script. A
-leftover campaign database and `crusades-replays/` folder are not read and can
-be deleted. `crusades_admin` is no longer shipped. A client's old
-`ReplayCache/` folder beside `settings.ini` is no longer used and can be deleted.
-See [public-server.md](docs/public-server.md#versions).
+  Unit costs and statistics, which is what the Crusades balance is really
+  about, are unchanged. Standard games are bit-identical to 0.9.3. A menu entry
+  without a `[Menu] Priority` now sorts last, as in the original game, and a
+  unit without `builder=1` gets no build menu; this matters only for mods,
+  since the shipped data has neither. Because `canbuildcb/` is no longer game
+  data, the game-data check value every player and server compare changes for
+  every install; this only matters together with the protocol change below.
+- **Protocol 298:** removing the Crusades messages renumbers the network
+  messages after them, and the balance fix changes Crusades games, so 0.9.4
+  plays only with 0.9.4 and plays only replays recorded by 0.9.4. A 0.9.3
+  client or server is turned away with a *protocol version mismatch* message,
+  and a 0.9.3 replay is refused with the version message. A Crusades-balance
+  replay containing one of the six removed units could not be played anyway.
+
+**Upgrading (server operators):** update `takserver` together with your
+players. `takserver` no longer has `--crusades-db` or `--crusades-definition`;
+a server still started with either (and its value) prints a warning that the
+option was removed and is ignored, then starts as usual, so remove them from
+your service drop-in or script at your convenience. The campaign database (`campaign.sqlite` and its `-journal`, `-wal`,
+`-shm` and `.service-lock` files) and the `crusades-replays/` folder are never
+read and can be deleted. Accounts, the account file and the replay directory
+are untouched. See [public-server.md](docs/public-server.md#versions).
+
+**Upgrading (players):** nothing to do. A client's old `ReplayCache/` folder
+beside `settings.ini` (downloaded Crusades battle replays) is no longer used and
+can be deleted; your settings, including the remembered Crusades choice of the
+game setup screen, are kept.
 
 ## 0.9.3
 *2026-10-26 · protocol 297 · replay format 15 · does not play with 0.9.2 or earlier, nor their replays*
