@@ -224,7 +224,10 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.turnRate = int32_t(tr);   // bam/tick, exactly as the FBI holds it
             // Native +0x190 is an unsigned word, with zero for an omitted key.
             t.turnInPlaceRate = uint16_t(int32_t(info->numberOr("turninplacerate", 0)));
-            t.maxHp = float(info->numberOr("maxdamage", 100));
+            // Native HP is a signed 16-bit word (shipped data tops out at 29999);
+            // cap a modded maxdamage there so every Fixed::fromInt(maxHp) on the
+            // HP, heal and repair paths stays inside 16.16's whole-number range.
+            t.maxHp = int32_t(float(std::min(info->numberOr("maxdamage", 100), 32767.0)));
             t.experiencePoints = int32_t(info->numberOr("experiencepoints", 666));
             t.isBuilder = info->numberOr("builder", 0) != 0;
             t.commander = info->numberOr("commander", 0) != 0;   // the Monarch
@@ -4876,7 +4879,20 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         float scaledDamage = w.damageVs(e.type) * atkMul / armour * scale;
         damageCrtUsed_ = true;
         const int dealt = retailDamageWithSpread(scaledDamage, crtRand(0x52a3ba), uint8_t(damageMode_));
-        e.hp -= Fixed::fromInt(dealt);
+        // Retail 51a140/51a240: a unit whose HP has reached zero is flagged
+        // dying (+0x130 |= 0x1000, 51a639) on the spot, and every later hit
+        // that tick returns before touching it -- no HP, no kill credit, no
+        // death type, no HitByWeapon, no status. The CRT draw above (52a3ba)
+        // is still consumed. Our hp<=0 sweep runs later in the tick, so the
+        // dying test is the sweep's own. A retail construction site at zero
+        // is not dying and keeps taking damage.
+        if (e.hp <= Fixed() && !(e.retailSite && e.underConstruction)) return;
+        // Native HP is a 16-bit word that wraps; ours is 16.16 and saturates,
+        // and `dealt` may exceed the whole-number range of fromInt (armour
+        // and veterancy reach 33619). Subtract in 64 bits, clamped so that
+        // -hp (the overkill below) is representable too.
+        e.hp = Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(e.hp.v) - int64_t(dealt) * Fixed::kOne,
+                                                      -int64_t(INT32_MAX), INT32_MAX)));
         // Retail 409f7a..409fb2 routes the local monarch's hit to AlarmMon.
         // Keep ownership at impact, including splash and fatal hits; no visibility
         // gate and no simulation/RNG changes for this presentation event.

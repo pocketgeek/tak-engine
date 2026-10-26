@@ -519,6 +519,29 @@ Still deviating:
   Remote Effect lands on its target's position at fire time; retail uses the
   slot's aim point (+8), lead included.
 
+### A dying unit takes no more hits
+
+`52a330` draws its CRT spread and hands the integer damage to `51a140`, which
+returns at once unless the victim is alive (+0x130 & 0x1000000) and not
+already dying (+0x130 & 0x1000). `51a240` subtracts the damage from the
+16-bit HP word (+0x10c, a wrapping `sub word`). When HP reaches zero or less
+on a unit its own machine runs (player record +0xea 1 or 2), `51a639` sets
+the dying bit then and there; a remote player's unit is clamped to 0 and
+the owner decides. Every later hit in the same frame is dropped before the
+HP update: no damage, no kill credit (+0xf8), no death type (+0x10f), no
+hit response (`409a50`), no HitByWeapon. The CRT draw has already been made.
+
+World's hp<=0 sweep runs later in the tick, so `hurt` used to keep
+subtracting. Two units killing the same target in one tick gave the kill to
+the second, and a big enough second hit took HP past -32768: the 16.16
+subtraction overflowed (undefined behaviour) and wrapped to about +30000,
+so the death sweep let the unit live. `hurt` now returns after the CRT draw
+for a unit at hp <= 0 (a retail construction site excepted, as in the
+sweep), and subtracts in 64 bits clamped to the Fixed range, since one hit
+can exceed 32767 (armour and veterancy gave 33619). `maxdamage` is capped
+at 32767 when a type loads, the native word's limit; shipped data peaks at
+29999. `hp_overflow_test` covers it.
+
 ### The facing request: the led SweetSpot (protocol 263)
 
 Aim start `52fe30` (called for every slot by the weapon update `52ae90`, which
