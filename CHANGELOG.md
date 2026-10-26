@@ -55,8 +55,8 @@ their validation reports; both live in [`docs/`](docs/).
   that cannot be built (for example one whose terrain art is missing) now stays
   on the setup screen and shows *CANNOT CREATE* with the reason, instead of
   silently doing nothing.
-- **Windows test fixes and test tooling:** eight of the developer tests that
-  failed on Windows pass again (they needed symbolic links, which the Windows
+- **Windows test fixes and test tooling:** eight developer tests that
+  failed on Windows are fixed (they needed symbolic links, which the Windows
   build cannot make, and `hpitool cat` wrote its output in text mode, which
   corrupted extracted maps). `hpitool cat` now writes exact bytes on Windows.
   The developer test harness stops at once with an error when its map cannot
