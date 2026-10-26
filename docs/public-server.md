@@ -12,13 +12,21 @@ independent security audit or protection against a volumetric DDoS.
 ## Versions
 
 Server and clients must speak the same gameplay protocol; update the server and
-every client together when it changes. **0.9.3 changes it (protocol 297):** a
-0.9.3 `takserver` accepts only 0.9.3 players and turns away 0.9.2 and older
-clients with a *protocol version mismatch* message, and a 0.9.2 or older server
-turns away 0.9.3 players, so update `takserver` when you announce 0.9.3 to your
-players. Crusades battle replays recorded by an older server can no longer be
-watched after the update. Which versions play together is listed in
+every client together when it changes. **0.9.4 changes it (protocol 298):** a
+0.9.4 `takserver` accepts only 0.9.4 players and turns away 0.9.3 and older
+clients with a *protocol version mismatch* message, and a 0.9.3 or older server
+turns away 0.9.4 players, so update `takserver` when you announce 0.9.4 to your
+players. Which versions play together is listed in
 the [user guide](user-guide.md#versions) and in the [CHANGELOG](../CHANGELOG.md).
+
+**0.9.4 removes the Darien Crusades campaign service.** `--crusades-db` and
+`--crusades-definition` no longer exist: a server started with either stops at
+once with a message saying so, so take them out of your service drop-in or
+script. A leftover campaign database (`campaign.sqlite` and its `-journal`,
+`-wal`, `-shm` and `.service-lock` companions) and `crusades-replays/` folder are
+never read; delete them when you no longer want them. `crusades_admin` is no
+longer shipped. The Crusades *balance* is unaffected: it is still the room's
+CRUSADES option.
 
 ## Quick setup: Linux package
 
@@ -303,7 +311,7 @@ Ordinary lobby/chat/setting requests have per-connection, account, IP and global
 work budgets. Expensive creation/start/map-offer requests cost more than small
 queries; map chunks have separate byte budgets. Keepalive has a connection
 budget so one abusive connection cannot disconnect its healthy NAT neighbours.
-Authentication and Crusades queries retain their own throttles. Account-file
+Authentication retains its own throttles. Account-file
 rewrites are also limited globally. New connections are limited before TLS
 allocation (32 per IP and 128 globally per second). Upload reads apply
 backpressure at 4 MiB/s per connection and 16 MiB/s globally; fast legitimate
@@ -356,7 +364,7 @@ player's reconnect (`Rejoin` with its resume token) is unaffected. Only the host
 the rule, in the lobby; if the host leaves the lobby, the player who inherits the
 room inherits the rule too. Once the game starts, it is fixed: an in-game
 `SetGameOptions` changes only speed. A host who created the room to watch it
-keeps that seat. Crusades battle rooms never allow spectators.
+keeps that seat.
 `server_spectators_test.py` checks each of these against a real server.
 
 A seated player the server stops hearing from (nothing for 8 seconds, or a
@@ -372,8 +380,7 @@ closes that connection and its own AI, at Normal, plays the seat for the rest of
 game (`Event::AiTakeover`, recorded in the replay). The accounting is wall-clock time
 on the server, so a server whose own upload stalls for more than a second charges
 every seat it holds up. A player who quits the game
-deliberately leaves at once, without a wait. In an issued Crusades battle the
-absent participant forfeits instead. The two times can be shortened for tests
+deliberately leaves at once, without a wait. The two times can be shortened for tests
 with `TAK_STALL_MS` and `TAK_DROP_WAIT_MS` (milliseconds) in the server's
 environment; `server_disconnect_test.py` checks the wait, the takeover, a
 resume and a reconnect against a real server.
@@ -394,8 +401,7 @@ a real server. See [voice chat](multiplayer-design.md#voice-chat-protocol-276).
 Public games cannot enable benchmark/stress workloads or launch local campaign
 missions. Private `--local --no-auth` games retain those features. Debug builds
 have an explicit `--allow-benchmarks` override for isolated performance harnesses;
-Release builds do not accept it. This does not disable authenticated Darien
-Crusades battles or map scenarios (rooms created with MAP SCENARIO on, and Test
+Release builds do not accept it. This does not disable map scenarios (rooms created with MAP SCENARIO on, and Test
 Map copies), which the server checks against the verified map package at START
 (`server_map_scenario_test.py`).
 
@@ -412,8 +418,7 @@ truncated `.takrep`.
 
 `--closed-registration` allows existing accounts to log in while refusing new
 ones. It can be enabled after inviting the initial community. Keep the account
-file private and back it up together with any Crusades database and replay
-archive. Do not use game-account passwords on unrelated services.
+file private and back it up together with the replay directory, if you keep one. Do not use game-account passwords on unrelated services.
 
 ## Linux service setup
 
@@ -574,7 +579,7 @@ query writes only JSON to standard output and exits with status 0:
 }
 ```
 
-Counts include private games and enabled Crusades games. `running_games`
+Counts include private games. `running_games`
 includes started games that are loading or paused; `lobby_games` counts rooms
 that have not started. `connected_clients` counts established player, spectator,
 and game-browser sessions. It excludes unfinished handshakes/logins, disconnected
@@ -697,7 +702,7 @@ Do not run takserver as root to make certificate issuance work.
 
 Keep SSH/admin access separately restricted. Back up private state and monitor
 certificate and quota errors. Use filesystem quotas if needed; application
-limits do not cap the Crusades database or the system journal's total size.
+limits do not cap the system journal's total size.
 Package updates replace the vendor unit and template, not your edited drop-in.
 
 ## Remaining risks

@@ -131,9 +131,8 @@ provides only graphics, sound and windowing.
   or `upgradepkg --install-new ./tak-engine-….txz`. The application menu then
   shows **Total Annihilation: Kingdoms** and **Cartographer**.
 
-Every package holds the game, the Cartographer map editor, the dedicated server
-`takserver` and the offline `crusades_admin` tool. No server shortcut is added
-and no server starts by itself. Updating? Install the new version over the old
+Every package holds the game, the Cartographer map editor and the dedicated
+server `takserver`. No server shortcut is added and no server starts by itself. Updating? Install the new version over the old
 one; [Updating](docs/user-guide.md#updating) says what carries over.
 
 ## Getting started
@@ -179,7 +178,7 @@ files or `.hpi`, `.ufo` and `.kmp` archives:
 | `mods/cosmetic/<pack>/` | Art and sound only. Each player ticks their own in the room; never sent to anyone. |
 | `mods/cosmetic/always_enabled/<pack>/` | Cosmetic packs that are always on, in every game, campaigns and replays included. |
 | `mods/game/<pack>/` | Units, rules, anything. The host ticks them in the room and they are sent to every player. |
-| `mods/game/always_enabled/<pack>/` | Game packs applied in every game you host. Never in campaigns or Crusades battles. |
+| `mods/game/always_enabled/<pack>/` | Game packs applied in every game you host. Never in campaigns. |
 
 Files placed directly in `mods/`, `mods/cosmetic/`, `mods/game/` or an
 `always_enabled/` folder are never loaded. **Coming from 0.8.13 or earlier?**
@@ -209,9 +208,6 @@ interaction is identical or fully verified.
 - The **RETAIL** AI level is the original game's own AI, ported routine by
   routine and checked by emulation. The six other levels (Defensive to Absurdly
   Defensive) are TAK Engine's own.
-- **Darien Crusades**, the strategic online campaign, is implemented but hidden
-  from the game browser for now; see its
-  [interface and setup notes](docs/research/darien-crusades/campaign-ui.md).
 
 The evidence and the remaining gaps: [retail engine notes](docs/retail-engine.md),
 [Retail pathfinding port](docs/pathfinding-port.md),

@@ -276,7 +276,7 @@ another key for *MAKE POSTER* in *Controls*.
 #### Power codes
 
 Only in a game created with **Power Codes** on (single player or multiplayer;
-never in campaigns or Crusades). Press **Enter**, type the code, press
+never in campaigns). Press **Enter**, type the code, press
 **Enter**; capitals do not matter. Every player sees the code typed.
 
 | Code | Does |

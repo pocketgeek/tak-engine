@@ -19,6 +19,27 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.4
+*unreleased · protocol 298 · replay format 15 · does not play with 0.9.3 or earlier, nor their replays*
+
+- **The Darien Crusades meta game is removed:** the strategic map, the online
+  campaigns, allegiance, territory matchmaking, issued Crusades battles and their
+  replay archive are gone from the client and the server. It was never offered
+  in the game browser. The **Crusades balance** stays: it is still the CRUSADES
+  option of a room (and `--crusades` in debug launches).
+- **Crusades balance as in the original game:** with CRUSADES on, the units are
+  only those of the Crusades unit set, and every build menu is the standard one,
+  limited to those units.
+- **Accounts and sign-in are unchanged.**
+
+**Upgrading (server operators):** `takserver` no longer accepts
+`--crusades-db` or `--crusades-definition`; a server started with either stops
+with a message saying so, so remove them from your service drop-in or script. A
+leftover campaign database and `crusades-replays/` folder are not read and can
+be deleted. `crusades_admin` is no longer shipped. A client's old
+`ReplayCache/` folder beside `settings.ini` is no longer used and can be deleted.
+See [public-server.md](docs/public-server.md#versions).
+
 ## 0.9.3
 *2026-10-26 · protocol 297 · replay format 15 · does not play with 0.9.2 or earlier, nor their replays*
 

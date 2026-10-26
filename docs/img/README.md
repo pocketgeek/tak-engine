@@ -155,7 +155,7 @@ Every image below is actual engine output from a release-preparation build
 interface text was re-rendered by the 0.8.8 build, with the default UI Font:
 
 - menus and rooms: `title.jpg` (VERSION 0.8.8), `lobby.jpg`,
-  `lobby-scenario.jpg`, `room.jpg`, `campaign.jpg`, `crusades.jpg`, `streaming.jpg`,
+  `lobby-scenario.jpg`, `room.jpg`, `campaign.jpg`, `streaming.jpg`,
   `results.jpg`, `cartographer/test-lobby.jpg`, `guide/random-map-lobby.jpg`,
   `guide/options-graphics.jpg` and `guide/voice-chat.jpg`;
 - the game pictures: `battle.jpg`, `dragons.jpg`, `flyers.jpg`, `hud.jpg`,

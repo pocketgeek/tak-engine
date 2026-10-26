@@ -192,7 +192,7 @@ agreed:
   0.8.12/0.8.13 host that turned the toggle off (from 0.9.0, protocol 294, such
   a host can no longer connect) and still comes from a debug `--mods` launch; it
   is honoured as before (no package, no game packs at all).
-  Campaign missions and Crusades battles are forced to 0.
+  Campaign missions are forced to 0.
 - **Cosmetic mods are per player and never travel.** Each client lays on top of
   the room's package its own always-enabled `mods/cosmetic/always_enabled/<pack>`
   folders (every room; `mods/cosmetic/*.hpi` archives are no longer read) and its
@@ -375,9 +375,6 @@ link `sim`, `tdf`, `net`, and the new `ai` module only.
     mid-game needs nothing from the opening. Its commands enter the bundles
     like any AI seat's, so peers and replays simply apply them. A reconnect
     after that is refused: "the wait ran out: an AI took over your seat".
-    Issued Crusades battles are the exception: a duel between two accounts does
-    not go on with a stand-in, so the absent participant forfeits
-    (`CampaignForfeit`) when the wait runs out, as before.
   - *Leaving on purpose* is unchanged: `LeaveGame` (the game client sends it
     when the player quits a running game from the menu) is a `Leave` event at
     once -- the units go inert, no wait. A defeated player's departure never
@@ -423,7 +420,7 @@ silently skipped.)
 | `SetGameOptions` | full `GameOptions` | host only; in the lobby the server adopts them and rebroadcasts `LobbyState`; in-game only `speed` takes effect (if `speedUnlock`), pushed via `SpeedUpdate` |
 | `Chat` | text | lobby and in-game |
 | `Kick` | slot # | host only |
-| `MoveSeat` | slot # | a seated player (the host too) takes an OPEN seat inside the map capacity, lobby only; not in a Crusades battle or campaign mission room; side, colour, team and ready move with the player, the old seat opens with the target's colour and team; the server answers the mover with `JoinResult` (its new slot), then broadcasts `LobbyState`; anything else is ignored (protocol 284) |
+| `MoveSeat` | slot # | a seated player (the host too) takes an OPEN seat inside the map capacity, lobby only; not in a campaign mission room; side, colour, team and ready move with the player, the old seat opens with the target's colour and team; the server answers the mover with `JoinResult` (its new slot), then broadcasts `LobbyState`; anything else is ignored (protocol 284) |
 | `StartGame` | — | host only; server validates: every human ready, colors unique, players ≤ map start positions |
 | `GameStarting` | final slot table, map id, options, per-AI RNG seeds, resume token | clients load and report `Loaded`; server starts when all humans are loaded; a `Loaded` timeout kicks that player back to the lobby and re-opens the slot (host decides: re-fill or start without) |
 
@@ -541,9 +538,10 @@ page, the per-player mix), `diplomacy_ui` (the VOLUME sliders), `voice_client_te
 
 Bundle **Event** records (u8 kind + payload): `Forfeit{player}` (explicit
 surrender), `Leave{player}` (voluntary, units per forfeit rule),
-`CampaignForfeit{player}` (an issued Crusades battle), `AiTakeover{player}`
+`AiTakeover{player}`
 (protocol 289: the disconnect wait ran out; a server Normal AI plays the seat
-from this tick, the player becomes computer-owned),
+from this tick, the player becomes computer-owned; kind 3, the Darien Crusades
+`CampaignForfeit` removed in 0.9.4, is reserved and refused),
 reserved: `AllianceChange` (v2 diplomacy). Defeat itself is *not* an event —
 it's derived deterministically inside the sim from unit state, so every sim
 concludes it independently on the same tick.
@@ -808,8 +806,8 @@ alphabetical order (later layers win), into a bounded, SHA-256-addressed package
 cosmetic file ever goes in it). Server and peers verify it before room
 readiness. Each game-mods room owns its own VFS and registries, leaving other
 rooms unchanged. The server takes a package only from the host of a skirmish
-room with game mods on: an offer or chunk from a guest or in a campaign or
-Crusades room, and an offer while game mods are off, are answered with ModError. Replay
+room with game mods on: an offer or chunk from a guest or in a campaign
+room, and an offer while game mods are off, are answered with ModError. Replay
 format 10 records the shared package digest (`ReplayHeader::modDigest`, with the
 `gameMods` byte where `overridePolicy` was) and loads it from `ModCache/`.
 The package also carries a pack's `ai/takengine.txt` (loose in the pack's `ai/`
@@ -908,7 +906,7 @@ Game options
 and every lobby/start/spectate snapshot carry the choice. The server validates the
 value, includes it in the authoritative rules digest, and retains it when a
 host sends later option updates. Both clients and the referee apply that choice
-through shared match setup. Campaign missions and Crusades battle rooms remain
+through shared match setup. Campaign missions remain
 Retail. The lobby reports the selected mode without changing it.
 Protocol 291 changes which AI files a map package carries, not the messages: a
 map's `ai/<aiprofile>.txt`, `ai/default.txt` and level files now come from the
@@ -1285,4 +1283,4 @@ values, command layout, or replay format 11. Retail and Flowfield remain separat
 choices with their existing behavior. This was superseded by protocols 226 and
 227. Version 0.9.3 (peers and server) requires protocol 297; 0.9.2 required 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
-Campaign missions and Crusades battle rooms remain fixed to Retail.
+Campaign missions remain fixed to Retail.

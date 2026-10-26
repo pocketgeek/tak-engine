@@ -2316,8 +2316,8 @@ Start Cartographer from its shortcut and choose **Recover**. See
   seat 1, and players who join take the lowest open seat. In the lobby of an
   ordinary game, any seated player (the host too) can press **MOVE HERE** on an
   open seat to take it; the seat moves with the player's side, colour, team and
-  ready state. Moving is refused once the game is running, in Crusades battles
-  and in campaign missions. Close the seats your scenario does not need before
+  ready state. Moving is refused once the game is running and in campaign
+  missions. Close the seats your scenario does not need before
   others join, so that they land in seats that have units.
 - **No height brush.** Heights come with terrain sections; there is no tool for
   raising or lowering ground directly.

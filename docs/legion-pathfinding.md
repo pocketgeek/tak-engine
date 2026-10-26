@@ -5155,7 +5155,7 @@ Rules that came out of using them:
   does not know it is rejected by the version check. Since protocol 231 the
   bytes 1-3 (the removed modes) are invalid.
 * Lobby: the pathfinding button switches between Retail and Legion. Campaign
-  missions and Crusades always run Retail movement, whatever the lobby says.
+  missions always run Retail movement, whatever the lobby says.
 * Retail hashes and goldens are unchanged by Legion (as were those of the
   since-removed modes). Legion state enters `World::stateHash` only in mode 4.
 * Headless runs: the DEBUG client flag `TAK_LEGION=1` selects Legion for the

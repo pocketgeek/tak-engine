@@ -124,7 +124,7 @@ The game appears in your application menu as **Total Annihilation: Kingdoms**,
 and the map editor as **Cartographer**.
 
 Every package contains the game client, the Cartographer map editor and the
-`takserver` dedicated server (with its `crusades_admin` tool); there is no menu
+`takserver` dedicated server; there is no menu
 shortcut for the server. Libraries the game needs are bundled; your system only
 has to provide graphics, sound and windowing.
 
@@ -314,10 +314,10 @@ change in the room, until the game starts.
 | **Start locations** | **Fixed** gives the occupied slots the map's start positions in order, top slot first. Empty slots are skipped, as in the original game: a player in slot 1 and an AI in slot 8 start at positions 1 and 2. **Random** shuffles them. **By slot** always starts slot N at the map's position N, empty slots or not: slots 1 and 8 start at positions 1 and 8. It is not in the original game. In the room, a player picks a slot, and so a start, with **Move here**. A room normally opens one slot per position; a slot without a position of its own takes the lowest position that no occupied slot has by number, or a spot near the map centre, and the room shows which under the player's name. |
 | **Unit cap** | The most units each player may have alive: 250, 500, 1,000 or 2,000 (the default and the most the game allows). Production pauses at the cap. |
 | **Allow speed change** | Lets the host change game speed during the match, from −9 (0.1×) to +10 (2×). |
-| **Pathfinding** | **Retail** (the default) or **Legion**. Campaigns and Crusades battles always use Retail. See [Pathfinding](#pathfinding-retail-and-legion). |
+| **Pathfinding** | **Retail** (the default) or **Legion**. Campaigns always use Retail. See [Pathfinding](#pathfinding-retail-and-legion). |
 | **Allow spectators** | Multiplayer only. **On** (the default): anyone in the browser can **Watch** the game once it starts. **Off**: the server turns every watcher away. Players, AIs and reconnecting players are not affected. The host can change it in the room by clicking it, until the game starts; then it is fixed. See [Spectating](#spectating). |
 | **Spectate (Watch AIs)** | Single-player only: fill every slot with AIs and watch. |
-| **Power codes** | **Off** (the default) or **On**. On lets every player in the game type the original game's cheat codes in the chat box, such as **+ATM** and **+NowISee**. See [Power codes](#power-codes). Always off in campaigns and Crusades battles. It cannot be changed in the room. |
+| **Power codes** | **Off** (the default) or **On**. On lets every player in the game type the original game's cheat codes in the chat box, such as **+ATM** and **+NowISee**. See [Power codes](#power-codes). Always off in campaigns. It cannot be changed in the room. |
 | **Map scenario** | Play the map's own scenario (its placed armies, trigger rules and Use Only unit list) instead of a skirmish. The button is under the map preview; maps marked with a gold **S** in the list have a scenario. It is greyed, with the reason, for maps without a playable one, including maps whose scenario gives you, player 1, nothing to command (*PLAYER 1 GETS NO ARMY*: many downloaded maps place only scenery or wildlife). A map that needs a unit type your install lacks is offered if your install has a game mod pack (one you could tick in the room, or an always-enabled one), in single player and multiplayer alike, with the warning *PACK NEEDED:* and the unit, in case a pack supplies it. It starts **Off** and turns off again when you pick another map, and the lines under it say what turning it on changes. While it is on, **Start locations** are fixed and **Monarch expendable** does not apply. It cannot be changed in the room. In the original game's multiplayer room the same option, **Use map script**, was ticked automatically for scenario maps; here it starts off, and single player can use it too. See [Scenario games](#scenario-games). |
 
 All of these except **Allow spectators** are set on the game setup screen
@@ -1206,8 +1206,7 @@ Everyone in the game sees and hears emotes.
 
 Power codes are the original game's cheat codes. They work only in a game
 created with **Power codes: On** (see [Match options](#match-options)), in
-single player or multiplayer. They never work in a campaign or a Crusades
-battle, and not while you watch a game or a replay.
+single player or multiplayer. They never work in a campaign, and not while you watch a game or a replay.
 
 To use one, press **Enter**, type the code and press **Enter**. Capital letters
 do not matter (**+atm**, **+ATM** and **+Atm** are the same), and spaces around
@@ -1319,7 +1318,7 @@ just like its first move.
 The game creator chooses how units find their way, in **Pathfinding** on the
 game setup screen (click it to switch between the two). Everyone in the match
 uses the same choice; the room shows it read-only, and the choice is remembered
-for your next game. Campaigns and Crusades battles always use Retail. A saved
+for your next game. Campaigns always use Retail. A saved
 choice of Retail+, Flowfield or Cooperative (experimental modes that were
 removed before release) becomes Retail.
 
@@ -1881,7 +1880,7 @@ host's game mods are sent automatically.
 
 *A game room, here for a single-player game: player and AI slots, **Move here** on the open slots, the map with each start marked in the colour of the player who starts there, mod packs and the read-only match rules.*
 
-The host can open and close empty slots, add AIs and kick players (a slot with a player in it cannot be turned into an AI or closed; kick the player first). Any seated player, the host included, can move to an open slot with **Move here** until the game starts; closed, AI and taken slots cannot be moved to, and campaign missions and Crusades battles keep their seats. Match options are
+The host can open and close empty slots, add AIs and kick players (a slot with a player in it cannot be turned into an AI or closed; kick the player first). Any seated player, the host included, can move to an open slot with **Move here** until the game starts; closed, AI and taken slots cannot be moved to, and campaign missions keep their seats. Match options are
 set when the game is created, except **Allow spectators**, which the host can
 click in the room's rules to turn on or off until the game starts. It lights up
 under the host's pointer; for everyone else it is read-only. See
@@ -2327,7 +2326,7 @@ its folder out of `always_enabled/`.
   and the multiplayer rooms you create. They are sent to every player with your
   ticked game packs, exactly like them. When you join someone else's room, the
   host's packs are the game's packs and your own always-enabled game packs are
-  not used. They never apply in campaigns or Crusades battles.
+  not used. They never apply in campaigns.
 - **Names.** A pack in `always_enabled/` and an ordinary pack of the same kind
   with the same name (ignoring upper and lower case) count as one pack: the
   always-enabled one is used, and the ordinary folder is hidden from the room
@@ -2382,7 +2381,7 @@ win when they change the same file. Game packs load first, then cosmetic packs.
   Transfers are limited to 256 MB, and downloaded packs are kept in a
   `ModCache` folder, never over your installed files. Rooms hosted by older
   versions: see [Versions](#versions).
-- **Campaigns** and **Crusades battles** use the original game data plus your
+- **Campaigns** use the original game data plus your
   always-enabled cosmetic packs only: no game packs (always-enabled ones
   included) and no ticked cosmetic packs.
 

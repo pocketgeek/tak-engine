@@ -1,8 +1,9 @@
 # Crusades Balance reference
 
 This records the original standard-versus-Crusades data changes behind the
-lobby's **Crusades** balance option. Source reports, effective loaded-value
-reports, fingerprints and regression coverage are linked below. Counts distinguish authored fields from effective
+lobby's CRUSADES option (the Crusades balance).
+Source reports, effective loaded-value reports, fingerprints and regression
+coverage are linked below. Counts distinguish authored fields from effective
 fields; neither is a count of independent balance-design decisions.
 
 ## How retail selects the Crusades balance (corrected in 0.9.4)

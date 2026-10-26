@@ -34,25 +34,17 @@ pass matching `-DTAK_FFMPEG_PREFIX=...` and `-DTAK_STATIC_DEPS_PREFIX=...`
 CMake options when using custom locations. Missing required libraries fail
 configuration rather than silently switching to shared libraries.
 
-The Crusades persistence library builds SQLite 3.53.4 statically from its
-[official amalgamation](https://www.sqlite.org/download.html). CMake downloads
-the pinned, SHA-256-verified archive on first configure; subsequent builds reuse
-the extracted source under the build directory. For offline configuration,
-set `-DFETCHCONTENT_SOURCE_DIR_TAK_SQLITE=/path/to/sqlite-amalgamation-3530400`
-to an extracted copy containing `sqlite3.c` and `sqlite3.h`. It adds no runtime
-SQLite DLL/shared-library dependency. Voice chat's codec, Opus 1.5.2, is built
-the same way (`cmake/Opus.cmake`, client only, BSD licence in `OPUS-LICENSE.txt`);
-offline, set `-DFETCHCONTENT_SOURCE_DIR_TAK_OPUS=/path/to/opus-1.5.2`. The interface font (the chat box, and all plain UI text under UI FONT = MODERN; `src/client/uifont.h`, `src/client/uitext.h`), Noto Sans Bold subset to Latin-1
+Voice chat's codec, Opus 1.5.2, is built statically from its pinned,
+SHA-256-verified source release (`cmake/Opus.cmake`, client only, BSD licence in
+`OPUS-LICENSE.txt`). CMake downloads it on first configure; offline, set
+`-DFETCHCONTENT_SOURCE_DIR_TAK_OPUS=/path/to/opus-1.5.2`. It adds no runtime
+Opus DLL/shared-library dependency. The interface font (the chat box, and all plain UI text under UI FONT = MODERN; `src/client/uifont.h`, `src/client/uitext.h`), Noto Sans Bold subset to Latin-1
 (`res/chat-font`, SIL OFL 1.1), is embedded into takclient by `cmake/EmbedFiles.cmake` and
 drawn with the vendored stb_truetype (`src/vendor/stb`, public domain / MIT); both notices
-are in `CHAT-FONT-LICENSE.txt`, which ships beside the binaries. The opt-in authenticated Crusades service
-supports tactical battles, territory browsing, matchmaking, results and retained
-replays. Operators supply campaign definitions and battle-map assignments.
-Historical territory-capture and campaign-victory rules remain incomplete; see
-the [operations guide](research/darien-crusades/campaign-operations.md).
+are in `CHAT-FONT-LICENSE.txt`, which ships beside the binaries.
 
 For Clang AddressSanitizer builds, select both `CMAKE_C_COMPILER=clang` and
-`CMAKE_CXX_COMPILER=clang++`: SQLite is compiled as C, so mixing GCC C with
+`CMAKE_CXX_COMPILER=clang++`: Opus is compiled as C, so mixing GCC C with
 Clang C++ can introduce incompatible sanitizer runtimes.
 
 For developer launch modes, diagnostics, and headless harnesses, use a Debug

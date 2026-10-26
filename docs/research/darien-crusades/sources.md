@@ -76,8 +76,7 @@ examined in this pass supplied campaign server sources, adjacency edges, live
 initial/reset owners, fatigue/support/toughness formulas or war objectives.
 Three delta patches and eighteen original-TA archive containers were not fully
 decoded; this is a scoped negative result, not proof those materials never
-existed. See [extraction limits](installer-inventory.md) and the
-[updater delivery leads](updater-manifest.md).
+existed. See [extraction limits](installer-inventory.md).
 
 Raw downloads and extracted payloads are retained locally under the ignored
 `assets/research/darien-crusades/` directory, in `downloads/`, `standard/`, and
@@ -151,7 +150,7 @@ HELP-144 is an overview explicitly framed as the 1999-12-08 open beta.
 HELP-146 is the quickstart. HELP-147 is a numbered FAQ, useful for stable
 section references even when HTML line endings differ. They contain promises
 of future features and are not evidence that every described rule was running
-unchanged on the final service. See the [rules analysis](campaign-rules-evidence.md).
+unchanged on the final service.
 An internet search for the momentum/orphan-battle text found no useful
 independent corroboration; unrelated search results were not used as evidence.
 
@@ -193,9 +192,7 @@ retrieved bytes rather than an authenticated original publisher file.
 bytes; SHA-256 `c89738d776303f29ef40965a5d3feee168806891ca7344dc421a9bccc336b948`.
 **RECON-0** — sibling `Tak_rec0.htm`, 6906 bytes; SHA-256
 `4b9b49e05c3f5d109a71f94c71cd84363a3303b9d6a31e351b07f02e23ca4314`.
-Both are byte-identical between PATCH-STANDARD and PATCH-CRUSADES. Active
-native template references and their limits are described in
-[territory-parameters.md](territory-parameters.md).
+Both are byte-identical between PATCH-STANDARD and PATCH-CRUSADES.
 
 ## Manual, contemporary press and public-source search coverage
 
