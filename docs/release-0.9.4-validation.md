@@ -4,8 +4,7 @@ Protocol **298** (was 297 in 0.9.3), replay format **15** (unchanged),
 generator version **9**. The Crusades campaign payload and database schema of
 0.9.3 (4 and 9) no longer exist.
 
-TODO-LEAD: tag line (tag `v0.9.4` -> short and full commit sha, annotated tag
-object, "TAK Engine 0.9.4", publication time in UTC, as in the 0.9.3 report).
+Tagged `v0.9.4` at `9f6978c8` (full `9f6978c861752db98693ae3b1844a8dedd160edb`, annotated tag object `9e314d2c`, "TAK Engine 0.9.4") and published on 2026-10-26 08:46:51 UTC.
 
 ## Scope and compatibility
 
@@ -37,12 +36,7 @@ integrated at `2651b032`:
   starts; `account_auth_network` checks that; CHANGELOG, `multiplayer-design.md`,
   `public-server.md`, `user-guide.md`.
 
-TODO-LEAD: diff stat `git diff --stat v0.9.3 v0.9.4 -- src` and over the whole
-tree, the commit count between the tags, and the list of files outside `src`
-(taken at the tag). Measured at `2651b032` for reference: whole tree 171 files
-changed, 1,233 insertions(+), 20,764 deletions(-); `src` 44 files changed, 272
-insertions(+), 6,098 deletions(-) (`src/client` 10 files, `src/hpi` 2, `src/net`
-8, `src/server` 20, `src/sim` 4).
+`git diff --stat v0.9.3 v0.9.4 -- src`: 44 files changed, 272 insertions(+), 6,098 deletions(-) (`src/client` 10 files, `src/hpi` 2, `src/net` 8, `src/server` 20, `src/sim` 4; nothing in `src/ai`). Over the whole tree: 174 files changed, 1,784 insertions(+), 20,784 deletions(-), in 16 commits between the tags (no merges). The `src` numbers equal those measured at the integration commit `2651b032`, so the prep and validation commits touch nothing in `src`. The 130 files outside `src` (1,512 insertions, 14,686 deletions) are: `docs/research/darien-crusades/` (25 deleted, 3 more deleted under `inventories/`, 12 edited), 10 edited and 4 deleted/added files in `docs/` plus 2 images, 56 files under `tools/` (28 deleted, 25 modified, 3 added, 3 under `tools/re/` deleted), 3 workflow files in `.github/workflows/`, `packaging/` (windows 2, slackware, arch, plus one more), `cmake/`, `CMakeLists.txt`, `CHANGELOG.md` and `README.md`.
 
 The preparation commit on top changes no code: `CMakeLists.txt` (the version
 line), `CHANGELOG.md` (dated, links), `README.md`, the version lines in `docs/`,
@@ -310,19 +304,15 @@ checkpoint in every case, in both modes and in the repeats.
 
 ## CI and packages
 
-TODO-LEAD: tag CI runs (Determinism, Linux, Windows, macOS) with links and
-outcomes; the asset list, digests and file sets compared with 0.9.3 (the
-Linux, Windows and macOS packages should list `crusades_admin` nowhere); build
-strings `v0.9.4`; no libsecret/glib `NEEDED`; licence files; the packaged
-`takserver --help` without Crusades options; a packaged `takserver` Retail AI
-`--mpai` run.
+All four tag workflows ran on `9f6978c8` and passed. The Linux packages run needed one rerun: [Linux packages 40284021695](https://github.com/pocketgeek/tak-engine/actions/runs/40284021695) failed its first attempt only on Ubuntu 24.04 arm64, in 45 s, when the Opus source download from downloads.xiph.org gave an SSL connect error. That is infrastructure, not code. The failed job was rerun, attempt 2 passed (the other 17 jobs and Attach to release passed), and the rerun finished at 08:20 UTC. The other three passed on the first attempt: [Windows 40284021707](https://github.com/pocketgeek/tak-engine/actions/runs/40284021707) (x64, arm64, sign and publish), [macOS 40284021694](https://github.com/pocketgeek/tak-engine/actions/runs/40284021694) (arm64 and x64 build, then sign and notarize for each) and [Determinism 40284029990](https://github.com/pocketgeek/tak-engine/actions/runs/40284029990) (dispatched on the tag; detmath, unit-tests 8/8 and sim-equiv all success; GCC and Clang x86-64 at -O0/-O2/-O3 all agree on golden `dcef618cd2e4d558`, "DETERMINISM OK", unchanged from 0.9.3). The Determinism sim-equiv job took 58 minutes because the runner's `apt` download in "Install build deps" stalled for about 50 minutes (the 71 MB gcc-riscv64 package); it finished by itself and the driver-equivalence test printed OK. The earlier push runs on `main` for the tagged commit were cancelled as superseded by the tag runs.
 
-Windows: TODO-LEAD Authenticode results (0.9.3 had 9 signed files: the x64 installer plus `takclient`, `takserver`, `cartographer` and `crusades_admin` in the x64 and arm64 zips; with `crusades_admin` gone the expected set is 7).
+All 29 assets were downloaded and match GitHub's SHA-256 digests. The file set is the same as 0.9.3's with exactly one difference: `crusades_admin` is gone from every package, zip, installer and debug archive (Linux packages and tarballs, Windows installer and zips, macOS zips and DMG apps); no `crusades_admin` exists anywhere. The macOS DMGs hold the same two apps and the `Applications` link. Sizes shrank (no `crusades_admin`, no SQLite): -9.3% to -16.5% for the packages, installer, zips and DMGs, and -7.5% to -9.2% for the debug archives. Every takclient and takserver (62 binaries) carries the `v0.9.4` build string and none carries an older one. Every one that can run here reports `0.9.4 (build v0.9.4)` (Slackware, Debian, Ubuntu, Fedora, openSUSE x86-64 and the debug tarball); the Arch client needs Arch's newer glibc (`GLIBC_2.44`) and does not start on this Fedora machine, as with 0.9.0 to 0.9.3, while its server reports the same version. None of the 54 Linux ELF binaries (takclient, takserver, cartographer) has a libva, libdrm, libsecret, GLib or libsqlite `NEEDED` entry, and none contains `__vaDriverInit_`, `SQLite format` or `sqlite3_`. The same string check on the Windows and macOS binaries finds no SQLite either, and no macOS binary links a `libsqlite` dylib. The cartographer binaries carry no version string, as in 0.9.3. The licence files (`OPUS-LICENSE.txt`, `CHAT-FONT-LICENSE.txt`, `EDITOR-FONT-LICENSE.txt`, `STREAMING-LICENSES.txt`, `ACME-LICENSES.txt`) are in every package, zip, installer, DMG and app. All 27 `STREAMING-LICENSES.txt` copies are byte-identical to 0.9.3's (45,912 bytes, 46,828 on Windows), still carry the OpenSSL notice (including both macOS apps) and contain no SQLite text. No `mods/`, `overrides/` or `click.hpi` is shipped. The packaged Linux `takclient --help` lists only `--data`, `--play-map`, `--game-mod` and `--version`. The Fedora 44 x86-64 RPM's `takserver` (`0.9.4 (build v0.9.4)`, "listening ... (protocol v298)", retail gameplay hash `d6000f4fa9095a51`) has no Crusades option in its `--help`. It ran the Retail AI game on Inner Circle with `--local --no-auth --seed 1` and a scratch HOME. The client was the Debug build at `9f6978c8` (`build-dbg`), with `TAK_AI_LEVEL=6 TAK_SPEED=80 --mpai --time 60`, and the game ended `hash=c5846d769e0a7d93 units=4 err=none end=timelimit` (tick 1800), the same as 0.9.3. A second 60 s game on the same server with the client's `--crusades` option was accepted ("balance: Crusades (unitscb roster, standard canbuild)") and ended `hash=3f40434b00d84b7d units=4 err=none end=timelimit`. That game has no 0.9.3 reference, since the Crusades roster changed on purpose. No desync or referee-suspect line appeared in either game. The same RPM's `takserver --crusades-db x --crusades-definition y` printed one "was removed in 0.9.4 ... and is ignored" warning for each option and started normally. The same RPM's `cartographer "Inner Circle" --bundle` loaded the map (96 x 96 blocks, 4 start positions, 215 features, 1261 sections), wrote a 379,088-byte `.kmp` and exited 0, as in 0.9.3. Every `blob`/`tree` `v0.9.4` link in the release notes (6 links, 2 with anchors: `public-server.md#versions` and `release-0.9.3-notes.md#known-limits`) resolves to a file and heading present at the tag.
 
-macOS: TODO-LEAD notarisation and stapling results.
+Windows: on oden-win, `Get-AuthenticodeSignature` reports **Valid** (timestamped, "Curtis Edge") for all 7 signed files: the x64 installer and `takclient`, `takserver` and `cartographer` in both the x64 and arm64 zips. That is the expected 7, which is 0.9.3's 9 minus the two `crusades_admin.exe`. The x64 `takclient.exe` and `takserver.exe` report `0.9.4 (build v0.9.4)`, and the arm64 ones carry the `v0.9.4` build string. `--mpai` was not run on Windows or macOS, per the release rule (no build flags, compilers or CI determinism coverage changed); the Windows and macOS tag CI determinism tests cover them.
 
-Publication: TODO-LEAD `gh release edit v0.9.4 --draft=false --latest` time and
-asset count; 0.9.0 to 0.9.3 stay on the releases page.
+macOS: on the MacBook (no builds), both DMGs and all four apps (the game and TAK Cartographer, from the DMGs and from the zips) pass `stapler validate`, and `spctl -a -vv` accepts them as "Notarized Developer ID" (Curtis Edge, L479Y59RN8). Both DMGs themselves are also stapled and accepted as Notarized Developer ID. Each app passes `codesign --verify --strict --deep` and has `NSHighResolutionCapable` true; the game apps have `NSMicrophoneUsageDescription`, and the takclient has the `audio-input` entitlement (the other binaries do not). The bare zip programs (takclient, takserver, cartographer) pass `codesign --strict` with the same team id; `spctl` calls them "not an app", as expected. The macOS `takclient` and `takserver` report `0.9.4 (build v0.9.4)` (arm64 and x64, apps, bare programs and debug zips) and contain the MP4 muxer strings. No licence file is missing, and no `mods/`, `overrides/` or `click.hpi` is present. `otool -L` of the shipped arm64 and x64 `takclient`, `takserver` and `cartographer` shows no `libssl`, `libcrypto`, `libsqlite` or libopus dylib. Both takclients contain `OpenSSL 3.5.8 25 Aug 2026` and no SecureTransport TLS symbols, and Security.framework is still linked for the system root anchors.
+
+Published with `gh release edit v0.9.4 --draft=false --latest` on 2026-10-26 08:46:51 UTC with 29 assets; it is the Latest release. 0.9.0 to 0.9.3 stay on the releases page.
 
 ## Limits
 
@@ -332,7 +322,9 @@ asset count; 0.9.0 to 0.9.3 stay on the releases page.
 - A Crusades-balance replay that contains one of the six removed units could
   not be played in 0.9.4; every 0.9.3 replay is refused anyway.
 - The macOS and Windows builds of the removal and CPack DEB/RPM were not run
-  locally; TODO-LEAD tag CI result.
+  locally; tag CI built and packaged all of them (Windows x64 and arm64,
+  macOS arm64 and x64 with notarisation, 16 Linux package jobs) and passed
+  (see above).
 - The remote multiplayer sweep ran against `2651b032` (engine string `0.9.3`, see above); the release-prep commits do not touch simulation, network or server code.
 - Local only: `vashim_unavailable` fails against a `third_party/ffmpeg-bink`
   built before the shim; CI builds FFmpeg with it. `voice` can fail on timing
@@ -341,4 +333,8 @@ asset count; 0.9.0 to 0.9.3 stay on the releases page.
   `--crusades-definition`; they are harmless (a warning at start) until removed.
 - All of 0.9.3's limits carry over (see
   [release-0.9.3-validation.md](release-0.9.3-validation.md#limits)).
-- Tag CI: TODO-LEAD.
+- Tag CI: one infrastructure flake. The Ubuntu 24.04 arm64 package job failed
+  on its first attempt (Opus download from downloads.xiph.org, SSL connect
+  error) and passed on rerun; every other tag job passed on attempt 1. The
+  Determinism run's sim-equiv job was slow (a stalled runner `apt` download of
+  about 50 minutes) but passed without intervention.
