@@ -124,8 +124,7 @@ The game appears in your application menu as **Total Annihilation: Kingdoms**,
 and the map editor as **Cartographer**.
 
 Every package contains the game client, the Cartographer map editor and the
-`takserver` dedicated server; there is no menu
-shortcut for the server. Libraries the game needs are bundled; your system only
+`takserver` dedicated server; there is no menu shortcut for the server. Libraries the game needs are bundled; your system only
 has to provide graphics, sound and windowing.
 
 ### Updating
@@ -1206,7 +1205,8 @@ Everyone in the game sees and hears emotes.
 
 Power codes are the original game's cheat codes. They work only in a game
 created with **Power codes: On** (see [Match options](#match-options)), in
-single player or multiplayer. They never work in a campaign, and not while you watch a game or a replay.
+single player or multiplayer. They never work in a campaign, and not while you
+watch a game or a replay.
 
 To use one, press **Enter**, type the code and press **Enter**. Capital letters
 do not matter (**+atm**, **+ATM** and **+Atm** are the same), and spaces around

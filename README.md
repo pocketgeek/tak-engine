@@ -132,8 +132,9 @@ provides only graphics, sound and windowing.
   shows **Total Annihilation: Kingdoms** and **Cartographer**.
 
 Every package holds the game, the Cartographer map editor and the dedicated
-server `takserver`. No server shortcut is added and no server starts by itself. Updating? Install the new version over the old
-one; [Updating](docs/user-guide.md#updating) says what carries over.
+server `takserver`. No server shortcut is added and no server starts by itself.
+Updating? Install the new version over the old one;
+[Updating](docs/user-guide.md#updating) says what carries over.
 
 ## Getting started
 
