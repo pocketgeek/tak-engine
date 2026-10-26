@@ -77,9 +77,10 @@ int main(int argc,char** argv) try {
         vfs=hpi::mountRetailRoot(data);
         sim::setupRegistry(registry,vfs,crusades);
         mapgen::Params map;
-        map.formatVer=2; // Keep the established performance fixture comparable.
+        // Current recipe (Params default formatVer): the retired v2 recipe is rejected by mapgen::generate.
+        // Flat and empty as before: no water, trees, rocks, relief or neutral mana.
         map.widthCells=map.heightCells=768;map.players=8;
-        map.waterDensity=map.treeDensity=map.rockDensity=map.reliefDensity=0;
+        map.waterDensity=map.treeDensity=map.rockDensity=map.reliefDensity=map.manaDensity=0;
         sim::MatchConfig config;
         config.vfs=&vfs;
         config.mapPath=mapName.empty() ? mapgen::encodeMapId(map) : hpi::findMap(vfs,mapName);

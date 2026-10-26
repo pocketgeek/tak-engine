@@ -7,12 +7,16 @@
 
 #include <iostream>
 
+static int usage() {
+    std::cerr << "usage: cobtool info <file.cob>\n"
+                 "       cobtool disasm <file.cob> <script>\n";
+    return 2;
+}
+
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::cerr << "usage: cobtool info|disasm <file.cob> [script]\n";
-        return 2;
-    }
+    if (argc < 3) return usage();
     std::string cmd = argv[1];
+    if (!(cmd == "info" || (cmd == "disasm" && argc >= 4))) return usage();
     try {
         auto f = tak::cob::load(argv[2]);
         if (cmd == "info") {
@@ -33,8 +37,6 @@ int main(int argc, char** argv) {
             int idx = f.scriptIndex(argv[3]);
             if (idx < 0) { std::cerr << "no script " << argv[3] << "\n"; return 1; }
             std::cout << tak::cob::disassemble(f, idx);
-        } else {
-            return 2;
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

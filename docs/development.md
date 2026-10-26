@@ -356,5 +356,5 @@ attacks.
 | `src/gui/` | retail `.gui` HUD/gadget layout parsing |
 | `src/client/` | the SDL2 app (`takclient`: asset viewer + game) |
 | `src/cartographer/` | `cartographer`, a clean-room port of the retail map editor (in progress) |
-| `tools/` | CLI dev tools (`hpitool`, `gaftool`, `tnttool`, `modeltool`, `cobtool`, `tdftool`, `missiontool`, `biktool`, `aitool`) |
+| `tools/` | CLI dev tools (`hpitool`, `gaftool`, `tnttool`, `modeltool`, `cobtool`, `tdftool`, `missiontool`, `biktool`, `aitool`); a tool given too few arguments prints its usage on stderr and exits 2, `cartographer --version` / `--help` answer without opening the editor, and `simperf` (a benchmark, not a ctest target) generates its default map with the current random-map recipe; `tools/cli_tools_test.py` is the `cli_tools` test |
 | `docs/` | format notes + reverse-engineering findings (`retail-engine.md` = the `KINGDOMS.icd` disassembly) |

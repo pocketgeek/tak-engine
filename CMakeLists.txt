@@ -3268,6 +3268,18 @@ target_link_libraries(tdftool PRIVATE tak-formats)
 add_executable(cobtool tools/cobtool.cpp)
 target_link_libraries(cobtool PRIVATE tak-formats)
 
+# Dev-tool command lines: usage on bad arguments, Cartographer --version/--help, simperf's default map.
+if(Python3_Interpreter_FOUND)
+  set(CLI_TOOLS_ARGS --cobtool "$<TARGET_FILE:cobtool>" --modeltool "$<TARGET_FILE:modeltool>"
+    --gaftool "$<TARGET_FILE:gaftool>" --tnttool "$<TARGET_FILE:tnttool>" --tdftool "$<TARGET_FILE:tdftool>"
+    --hpitool "$<TARGET_FILE:hpitool>" --simperf "$<TARGET_FILE:simperf>" --data "${TAK_TEST_DATA}")
+  if(TARGET cartographer)
+    list(APPEND CLI_TOOLS_ARGS --cartographer "$<TARGET_FILE:cartographer>")
+  endif()
+  add_test(NAME cli_tools COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/cli_tools_test.py" ${CLI_TOOLS_ARGS})
+  set_tests_properties(cli_tools PROPERTIES TIMEOUT 180)
+endif()
+
 # --- Packaging: native .deb + .rpm via CPack (Linux) --------------------------
 # One source of truth for both package families. Build, then from the build dir:
 #   cpack -G DEB   -> tak-engine-<version>-{amd64,arm64}.deb

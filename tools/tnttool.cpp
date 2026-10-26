@@ -18,16 +18,22 @@
 #include <set>
 #include <vector>
 
+static int usage() {
+    std::cerr << "usage: tnttool info <map.tnt>\n"
+                 "       tnttool heightmap|minimap <map.tnt> <out.png>\n"
+                 "       tnttool render <map.tnt> <retail-install-dir> <out.png>\n"
+                 "       tnttool roundtrip <map.tnt>\n"
+                 "       tnttool ota <map.ota>\n"
+                 "       tnttool crt <map.crt>\n";
+    return 2;
+}
+
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::cerr << "usage: tnttool info|heightmap|minimap <map.tnt> [out.png]\n"
-                     "       tnttool render <map.tnt> <terrain-dir> <out.png>\n"
-                     "       tnttool roundtrip <map.tnt>\n"
-                     "       tnttool ota <map.ota>\n"
-                     "       tnttool crt <map.crt>\n";
-        return 2;
-    }
+    if (argc < 3) return usage();
     std::string cmd = argv[1];
+    const bool needsOut = cmd == "heightmap" || cmd == "minimap";
+    if (!(cmd == "info" || cmd == "roundtrip" || cmd == "ota" || cmd == "crt" ||
+          (needsOut && argc >= 4) || (cmd == "render" && argc >= 5))) return usage();
     try {
         if (cmd == "crt") {
             // tnttool crt <file.crt> -- parse + re-serialize. Verifies the
@@ -141,9 +147,6 @@ int main(int argc, char** argv) {
             }
             tak::png::write(argv[3], w, h, rgba);
             std::cout << "wrote " << argv[3] << " (" << w << "x" << h << ")\n";
-        } else {
-            std::cerr << "unknown command\n";
-            return 2;
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

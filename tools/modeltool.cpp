@@ -72,12 +72,17 @@ static void drawLine(std::vector<uint8_t>& img, int W, int H, int x0, int y0, in
     }
 }
 
+static int usage() {
+    std::cerr << "usage: modeltool info <model.3do>\n"
+                 "       modeltool obj <model.3do> <out.obj>\n"
+                 "       modeltool wire <model.3do> <out.png>\n";
+    return 2;
+}
+
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::cerr << "usage: modeltool info|obj|wire <model.3do> [out]\n";
-        return 2;
-    }
+    if (argc < 3) return usage();
     std::string cmd = argv[1];
+    if (!(cmd == "info" || ((cmd == "obj" || cmd == "wire") && argc >= 4))) return usage();
     try {
         auto m = tak::tdo::load(argv[2]);
 
@@ -130,9 +135,6 @@ int main(int argc, char** argv) {
                 }
             tak::png::write(argv[3], W, H, img);
             std::cout << "wrote " << argv[3] << " (" << polys.size() << " polys)\n";
-        } else {
-            std::cerr << "unknown command\n";
-            return 2;
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

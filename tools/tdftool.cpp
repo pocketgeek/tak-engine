@@ -19,14 +19,17 @@ static void dump(const Node& n, int depth) {
     }
 }
 
+static int usage() {
+    std::cerr << "usage: tdftool dump <file>\n"
+                 "       tdftool get <file> <section> <key>\n"
+                 "       tdftool check <file>...\n";
+    return 2;
+}
+
 int main(int argc, char** argv) {
-    if (argc < 3) {
-        std::cerr << "usage: tdftool dump <file>\n"
-                     "       tdftool get <file> <section> <key>\n"
-                     "       tdftool check <file>...\n";
-        return 2;
-    }
+    if (argc < 3) return usage();
     std::string cmd = argv[1];
+    if (!(cmd == "dump" || cmd == "check" || (cmd == "get" && argc >= 5))) return usage();
 
     if (cmd == "check") {
         int failures = 0;
@@ -52,9 +55,6 @@ int main(int argc, char** argv) {
             const auto* v = sec->value(argv[4]);
             if (!v) { std::cerr << "no key " << argv[4] << "\n"; return 1; }
             std::cout << *v << "\n";
-        } else {
-            std::cerr << "unknown command\n";
-            return 2;
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

@@ -10,13 +10,16 @@
 
 namespace fs = std::filesystem;
 
+static int usage() {
+    std::cerr << "usage: gaftool list <file.gaf> <palette.pal>\n"
+                 "       gaftool export <file.gaf> <palette.pal> <outdir> [entry]\n";
+    return 2;
+}
+
 int main(int argc, char** argv) {
-    if (argc < 4) {
-        std::cerr << "usage: gaftool list <file.gaf> <palette.pal>\n"
-                     "       gaftool export <file.gaf> <palette.pal> <outdir> [entry]\n";
-        return 2;
-    }
+    if (argc < 4) return usage();
     std::string cmd = argv[1];
+    if (!(cmd == "list" || (cmd == "export" && argc >= 5))) return usage();
     try {
         auto pal = tak::gaf::Palette::load(argv[3]);
         auto seqs = tak::gaf::load(argv[2], pal);
@@ -45,9 +48,6 @@ int main(int argc, char** argv) {
                 }
             }
             std::cout << "wrote " << count << " PNGs to " << outDir.string() << "\n";
-        } else {
-            std::cerr << "unknown command\n";
-            return 2;
         }
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

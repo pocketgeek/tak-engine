@@ -18,6 +18,7 @@
 #include "cartographer/dialog.h"
 #include "cartographer/document.h"
 #include "cartographer/generator.h"
+#include "version.h"
 #include "client/settings.h"
 #include "client/datafolder.h"
 #include "client/dirpicker.h"
@@ -65,6 +66,22 @@ static std::filesystem::path profileFolder() {
     return path.empty()?std::filesystem::path():std::filesystem::u8path(path);
 }
 
+namespace {
+const char* const kUsage =
+            "Cartographer -- TA:Kingdoms map editor\n"
+            "usage: cartographer \"<map name>\" [--data <retail-install-dir>]\n"
+            "         (--data is optional when run from inside a game folder)\n"
+            "         [--out <dir>]        Ctrl+S / Ctrl+B save destination (default .)\n"
+            "         [--new WxH --world <w> [--random]]  start a blank/random map\n"
+            "                                 (or press N in-editor)\n"
+            "         [--save <file.tnt>]  headless: save loose .tnt/.ota/.crt and exit\n"
+            "         [--bundle <file.kmp>] headless: save a packed .kmp map and exit\n"
+            "         --version, -v        print version and exit\n"
+            "         --help, -h           print this help and exit\n"
+            "in-editor: Tab tools, 1-5 zoom, G grid, N new, P/R/U/C/T/K scenario menu,\n"
+            "           Ctrl+S save .kmp, Ctrl+Shift+S export loose files\n";
+}
+
 cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const EditorHooks& hooks)
     : frameHook(frameHook), hooks(hooks) {
     parseArguments(argc,argv);
@@ -95,17 +112,7 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
             }
     }
     if (dataRoot.empty()) {
-        std::fprintf(stderr,
-            "Cartographer -- TA:Kingdoms map editor\n"
-            "usage: cartographer \"<map name>\" [--data <retail-install-dir>]\n"
-            "         (--data is optional when run from inside a game folder)\n"
-            "         [--out <dir>]        Ctrl+S / Ctrl+B save destination (default .)\n"
-            "         [--new WxH --world <w> [--random]]  start a blank/random map\n"
-            "                                 (or press N in-editor)\n"
-            "         [--save <file.tnt>]  headless: save loose .tnt/.ota/.crt and exit\n"
-            "         [--bundle <file.kmp>] headless: save a packed .kmp map and exit\n"
-            "in-editor: Tab tools, 1-5 zoom, G grid, N new, P/R/U/C/T/K scenario menu,\n"
-            "           Ctrl+S save .kmp, Ctrl+Shift+S export loose files\n");
+        std::fprintf(stderr,"%s",kUsage);
         throw Exit{2};
     }
 
@@ -464,7 +471,15 @@ int cart::runEditor(int argc, char** argv, const std::function<void(SDL_Window*,
 }
 
 #ifndef TAK_CARTOGRAPHER_TEST
-int main(int argc,char** argv) {return cart::runEditor(argc,argv);}
+int main(int argc,char** argv) {
+    // Informational flags answer before any editor, window or data-folder prompt exists.
+    for(int i=1;i<argc;++i) {
+        const std::string a=argv[i];
+        if(a=="--version"||a=="-v") {std::printf("cartographer (TAK engine) %s (build %s)\n",tak::kVersion,tak::kBuildId);return 0;}
+        if(a=="--help"||a=="-h") {std::fputs(kUsage,stdout);return 0;}
+    }
+    return cart::runEditor(argc,argv);
+}
 #ifdef _WIN32
 int WINAPI WinMain(HINSTANCE,HINSTANCE,LPSTR,int) {return tak::utf8Main(main);}
 #endif
