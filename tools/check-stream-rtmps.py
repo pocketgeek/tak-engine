@@ -4,10 +4,11 @@
 The receiver is stream_network_test's own --sink (the same static FFmpeg as the game),
 behind a Python TLS proxy with a throwaway localhost certificate, so this needs only
 python3 and openssl -- no ffmpeg program -- and runs on macOS CI. Like YouTube, the sink
-sends nothing while the first megabytes arrive. That caught the macOS SecureTransport
-bug (tools/ffmpeg-securetransport-nonblock.patch): RTMP's non-blocking check for
-server messages blocked, every upload stalled out the 5 s timeout after a few frames and
-went RECONNECTING. Usage: python3 tools/check-stream-rtmps.py build/stream_network_test [encoder]
+sends nothing while the first megabytes arrive. That caught 0.9.0's macOS SecureTransport
+bug: RTMP's non-blocking check for server messages blocked, every upload stalled out the
+5 s timeout after a few frames and went RECONNECTING. The server certificate is issued by
+a throwaway root CA the client is given; a certificate for another host name and one from
+a root outside the system trust store must both be refused. Usage: python3 tools/check-stream-rtmps.py build/stream_network_test [encoder]
 Exits 77 (skipped) without openssl. Never contacts a real service.
 """
 import pathlib
@@ -30,14 +31,45 @@ def free_port():
         return s.getsockname()[1]
 
 
-def certificate(root, name='localhost'):
-    cert, key = root / (name + '.crt'), root / (name + '.key')
-    # serverAuth: macOS rejects a TLS server certificate without it (-9807).
-    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
-                    '-keyout', str(key), '-out', str(cert), '-days', '1', '-subj', '/CN=' + name,
-                    '-addext', 'subjectAltName=DNS:' + name, '-addext', 'extendedKeyUsage=serverAuth'],
-                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def run_openssl(*args):
+    subprocess.run(['openssl', *map(str, args)], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def authority(root):
+    """A throwaway root CA: the client trusts it as its ca_file, like a public root."""
+    cert, key = root / 'ca.crt', root / 'ca.key'
+    run_openssl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', cert,
+                '-days', '1', '-subj', '/CN=TAK test root', '-addext', 'basicConstraints=critical,CA:TRUE',
+                '-addext', 'keyUsage=critical,keyCertSign,cRLSign')
     return cert, key
+
+
+def certificate(root, ca, name='localhost'):
+    """A server certificate for `name` issued by `ca` (a proper chain, not self-signed)."""
+    cert, key, request, ext = (root / (name + suffix) for suffix in ('.crt', '.key', '.csr', '.ext'))
+    run_openssl('req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', request,
+                '-subj', '/CN=' + name)
+    # serverAuth: macOS rejected a TLS server certificate without it (-9807).
+    ext.write_text(f'subjectAltName=DNS:{name}\nextendedKeyUsage=serverAuth\n'
+                   'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\n')
+    run_openssl('x509', '-req', '-in', request, '-CA', ca[0], '-CAkey', ca[1], '-set_serial',
+                str(2 + sum(map(ord, name))), '-days', '1', '-sha256', '-extfile', ext, '-out', cert)
+    return cert, key
+
+
+def refused(exe, cert, key, ca_file, encoder, why):
+    """The client must refuse this server's certificate, with the TLS CERTIFICATE reason."""
+    proxy = Proxy(cert, key, free_port())
+    try:
+        client = subprocess.run([exe, f'rtmps://localhost:{proxy.port}/live/test-key', str(ca_file),
+                                 '3', encoder], capture_output=True, text=True, timeout=30)
+        print(client.stdout, end='')
+        assert 'LIVE' not in client.stdout and proxy.accepted == 0, why + ' accepted'
+        assert 'RECONNECTING 1/3 - TLS CERTIFICATE' in client.stdout, 'no certificate reason: ' + why
+        assert 'test-key' not in client.stdout + client.stderr, 'stream key leaked into logs'
+    finally:
+        proxy.close()
 
 
 class Proxy:
@@ -98,7 +130,8 @@ def main():
         return 77
     with tempfile.TemporaryDirectory(prefix='tak-rtmps-') as directory:
         root = pathlib.Path(directory)
-        cert, key = certificate(root)
+        ca = authority(root)
+        cert, key = certificate(root, ca)
         backend = free_port()
         sink = subprocess.Popen([exe, '--sink', str(backend), str(SECONDS + 10)],
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
@@ -107,7 +140,7 @@ def main():
             assert sink.stdout.readline().strip() == 'SINK LISTENING'
             time.sleep(1)  # the sink's listen() follows that line
             started = time.monotonic()
-            client = subprocess.run([exe, f'rtmps://localhost:{proxy.port}/live/test-key', str(cert),
+            client = subprocess.run([exe, f'rtmps://localhost:{proxy.port}/live/test-key', str(ca[0]),
                                      str(SECONDS), encoder], capture_output=True, text=True,
                                     timeout=SECONDS + 30)
             wall = time.monotonic() - started
@@ -139,19 +172,20 @@ def main():
                 sink.kill()
                 sink.wait()
             proxy.close()
-        # A trusted certificate for another host name: refused, and the status says why.
-        wrong_cert, wrong_key = certificate(root, 'wrong.invalid')
-        proxy = Proxy(wrong_cert, wrong_key, free_port())
-        try:
-            client = subprocess.run([exe, f'rtmps://localhost:{proxy.port}/live/test-key', str(wrong_cert),
-                                     '3', encoder], capture_output=True, text=True, timeout=30)
-            print(client.stdout, end='')
-            assert 'LIVE' not in client.stdout and proxy.accepted == 0, 'host name mismatch accepted'
-            assert 'RECONNECTING 1/3 - TLS CERTIFICATE' in client.stdout, 'no certificate reason'
-            assert 'test-key' not in client.stdout + client.stderr, 'stream key leaked into logs'
-        finally:
-            proxy.close()
-        print('PASS: RTMPS upload stayed live; wrong certificate refused with its reason')
+        # A certificate from the trusted root, but for another host name.
+        wrong_cert, wrong_key = certificate(root, ca, 'wrong.invalid')
+        refused(exe, wrong_cert, wrong_key, ca[0], encoder, 'host name mismatch')
+        # The right host name from a root the system does not trust: '-' leaves the
+        # client on its production trust store (the macOS system anchors, or the
+        # distribution's CA bundle on Linux), exactly as a real stream uses it.
+        refused(exe, cert, key, '-', encoder, 'untrusted root')
+        if sys.platform == 'darwin':
+            # Streaming's OpenSSL never reads the keychain: it must be handed every system
+            # anchor, including the roots YouTube's ingest chains to.
+            roots = subprocess.run([exe, '--system-roots'], capture_output=True, text=True, timeout=30)
+            print(roots.stdout, end='')
+            assert roots.returncode == 0, 'system trust anchors missing'
+        print('PASS: RTMPS upload stayed live through a CA-issued chain; wrong host and untrusted root refused with their reason')
         return 0
 
 

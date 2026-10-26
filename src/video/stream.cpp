@@ -24,6 +24,10 @@ extern "C" {
 #include <mutex>
 #include <thread>
 #include <vector>
+#ifdef __APPLE__
+#include "net/tls.h"
+#include <unistd.h>
+#endif
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -46,11 +50,8 @@ thread_local bool tlsCertificateRejected = false;
 bool certificateError(const char* text) {
     std::string lower(text);
     for (char& ch : lower) ch = char(std::tolower(static_cast<unsigned char>(ch)));
-    bool found = lower.find("certificate") != std::string::npos;
-    // SecureTransport's "Unable to negotiate TLS/SSL session: <OSStatus>": the chain,
-    // root, expiry and host-name trust failures (Security/SecureTransport.h).
-    for (const char* code : {"-9807", "-9808", "-9812", "-9813", "-9814", "-9815", "-9843"})
-        found = found || lower.find(code) != std::string::npos;
+    // OpenSSL: "...:certificate verify failed"; Schannel names the certificate too.
+    const bool found = lower.find("certificate") != std::string::npos;
     std::fill(lower.begin(), lower.end(), '\0');
     return found;
 }
@@ -68,6 +69,38 @@ void logCallback(void* obj, int level, const char* fmt, va_list args) {
     std::fill(std::begin(text), std::end(text), '\0');
 }
 void check(int result) { if (result < 0) throw result; }
+#ifdef __APPLE__
+// FFmpeg's OpenSSL TLS takes trust anchors only from a file, and OpenSSL never reads
+// the keychain: each connection attempt writes the current system anchors to a
+// private (0600) temporary file, deleted once the attempt has connected or failed.
+// Public certificates only; nothing about the stream goes in it.
+class SystemRootsFile {
+public:
+    SystemRootsFile() {
+        const std::string pem = tak::net::systemRootsPem();
+        if (pem.empty()) return;
+        std::error_code error;
+        std::string name = (std::filesystem::temp_directory_path(error) / "tak-roots-XXXXXX").string();
+        if (error) return;
+        const int fd = mkstemp(name.data());
+        if (fd < 0) return;
+        size_t done = 0;
+        while (done < pem.size()) {
+            const ssize_t n = ::write(fd, pem.data() + done, pem.size() - done);
+            if (n <= 0) break;
+            done += size_t(n);
+        }
+        ::close(fd);
+        if (done == pem.size()) path_ = name; else ::unlink(name.c_str());
+    }
+    ~SystemRootsFile() { if (!path_.empty()) ::unlink(path_.c_str()); }
+    SystemRootsFile(const SystemRootsFile&) = delete;
+    SystemRootsFile& operator=(const SystemRootsFile&) = delete;
+    const std::string& path() const { return path_; }
+private:
+    std::string path_;
+};
+#endif
 #ifdef _WIN32
 // A condition-variable timeout here sleeps whole 15.6 ms scheduler quanta, even
 // under timeBeginPeriod(1): 1 ms takes ~15 ms and 16 ms ~31 ms, the length of
@@ -400,6 +433,12 @@ struct Stream::Impl {
         for (const char* path : {"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/cert.pem"}) {
             if (std::filesystem::exists(path)) { av_dict_set(&opts, "ca_file", path, 0); break; }
         }
+#endif
+#ifdef __APPLE__
+        // Without it OpenSSL trusts nothing, and every RTMPS connection fails as
+        // TLS CERTIFICATE NOT TRUSTED.
+        const SystemRootsFile roots;
+        if (!roots.path().empty()) av_dict_set(&opts, "ca_file", roots.path().c_str(), 0);
 #endif
 #ifdef TAK_STREAM_TESTING
         if (!testCaFile.empty()) av_dict_set(&opts, "ca_file", testCaFile.c_str(), 0);

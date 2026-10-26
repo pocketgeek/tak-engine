@@ -30,8 +30,8 @@ if [ ! -f "$PREFIX/lib/libx264.a" ]; then
    make install-lib-static)
 fi
 platform="${TARGET_OS:-$(uname -s)}"
-# Multiplayer TLS needs static OpenSSL on every platform, including those
-# whose FFmpeg uses the native OS TLS backend.
+# Static OpenSSL on every platform: multiplayer TLS everywhere, and FFmpeg's
+# RTMPS on Linux and macOS (Windows FFmpeg uses Schannel).
 openssl_version=3.5.8
 if [ ! -f "$PREFIX/lib/libssl.a" ] || [ "$(cat "$PREFIX/openssl-version" 2>/dev/null || true)" != "$openssl_version" ]; then
   fetch "openssl-$openssl_version" https://github.com/openssl/openssl.git "openssl-$openssl_version"

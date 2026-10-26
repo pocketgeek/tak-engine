@@ -3,6 +3,9 @@ Streaming dependencies
 
 Pinned source URLs and build recipes: tools/build-stream-deps.sh and tools/build-ffmpeg-bink.sh.
 FFmpeg is built under GPLv3-or-later; the engine GPLv3 license is in LICENSE.
+OpenSSL (Apache License 2.0, below) is linked statically on every platform: it is
+FFmpeg's TLS for RTMPS on Linux and macOS (Windows uses the system's Schannel) and the
+multiplayer TLS everywhere.
 
 
 x264

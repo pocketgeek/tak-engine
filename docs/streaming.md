@@ -299,13 +299,18 @@ OS frameworks remain external, just as SDL's display/audio drivers do.
 Its pinned dependencies are built by `tools/build-stream-deps.sh`. Linux needs
 Python 3, Ninja, Perl's standard modules (Fedora: `perl-core`), and patch in
 addition to the regular build tools. Perl configures OpenSSL during the build;
-it is not a game dependency. Windows streaming uses Schannel and macOS streaming
-uses SecureTransport. Multiplayer TLS uses static OpenSSL on all platforms. FFmpeg's OpenSSL hostname checking
-is patched explicitly for the pinned FFmpeg 7.1 source. On macOS the build also applies
-`tools/ffmpeg-securetransport-nonblock.patch`: FFmpeg 7.1's SecureTransport code does not
-pass non-blocking reads down to the socket, so RTMP's periodic check for server messages
-blocked until the 5-second timeout and every RTMPS upload dropped after a few frames
-(0.9.0 and earlier). Both patches are part of the FFmpeg cache keys in CI.
+it is not a game dependency. Windows streaming uses Schannel; Linux and macOS
+streaming use the same static OpenSSL as multiplayer TLS. FFmpeg's OpenSSL hostname
+checking is patched explicitly for the pinned FFmpeg 7.1 source
+(`tools/ffmpeg-tls-hostname.patch`, part of the FFmpeg cache keys in CI). OpenSSL does
+not read the macOS keychain, so on macOS each connection attempt writes the system trust
+anchors (the ones multiplayer TLS also imports) to a private temporary file, passes it to
+FFmpeg as its CA file and deletes it once the attempt has connected or failed. On Linux
+the first distribution CA bundle found is used. Certificate verification is never turned
+off. Until 0.9.2 macOS streaming used Apple's deprecated SecureTransport, whose FFmpeg 7.1
+code did not pass non-blocking reads down to the socket: RTMP's periodic check for server
+messages blocked until the 5-second timeout and every RTMPS upload dropped after a few
+frames (0.9.0 and earlier; 0.9.1 and 0.9.2 patched it).
 
 CMake requires the media/codec/TLS/loader archives by full path; CI additionally
 checks executable imports. On Linux the FFmpeg build compiles against pinned libva
@@ -352,9 +357,14 @@ SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=opengl \
 10 seconds to a local Python TLS proxy in front of `stream_network_test --sink`, a plain
 RTMP receiver built from the same static FFmpeg. It needs only `python3` and `openssl`
 (it is skipped without `openssl`), and fails unless the stream stays LIVE without a
-reconnect and the receiver gets nearly all of it (megabytes of FLV with libx264). It caught the macOS stall above. It
-then offers a trusted certificate for another host name, which must be refused with the
-TLS CERTIFICATE reason. It never contacts YouTube:
+reconnect and the receiver gets nearly all of it (megabytes of FLV with libx264). It caught the macOS stall above. The
+proxy's certificate is issued by a throwaway root CA that the client is given as its CA
+file. The check then offers a certificate from that root for another host name, and the
+right host name with no test CA (the client keeps its real trust store, which does not
+hold the throwaway root); both must be refused with the TLS CERTIFICATE reason. On macOS
+`stream_network_test --system-roots` must also read every system trust anchor, including
+GTS Root R1 and GlobalSign Root CA, which YouTube's ingest certificates chain to. It never
+contacts YouTube:
 
 ```sh
 cmake --build build-o2 --target stream_network_test

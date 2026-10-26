@@ -1854,8 +1854,8 @@ else()
   message(FATAL_ERROR "pkg-config is required to locate the static Bink and streaming FFmpeg")
 endif()
 
-# Multiplayer TLS shares the pinned, static OpenSSL distribution used by media
-# on Linux. Other platforms build the same archives; no SSL DLLs are shipped.
+# Multiplayer TLS shares the pinned, static OpenSSL distribution FFmpeg's RTMPS
+# uses on Linux and macOS. Windows builds the same archives; no SSL DLLs are shipped.
 foreach(_tls_lib ssl crypto)
   if(NOT EXISTS "${TAK_FFMPEG_PREFIX}/lib/lib${_tls_lib}.a")
     message(FATAL_ERROR "Missing static TLS archive; run tools/build-ffmpeg-bink.sh")
@@ -1942,7 +1942,8 @@ add_executable(stream_network_test tools/stream_network_test.cpp src/video/strea
 target_compile_definitions(stream_network_test PRIVATE TAK_STREAM_TESTING)
 target_link_libraries(stream_network_test PRIVATE tak-formats tak_ffmpeg)
 # A real RTMPS upload to a local TLS proxy + RTMP sink (no ffmpeg program needed): it
-# must stay LIVE. Caught macOS SecureTransport stalling every upload after a few frames.
+# must stay LIVE. Caught macOS SecureTransport stalling every upload after a few frames;
+# also checks certificate refusal and, on macOS, the system trust anchors OpenSSL is given.
 # Not on Windows: Schannel ignores the test's ca_file.
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND AND NOT WIN32)

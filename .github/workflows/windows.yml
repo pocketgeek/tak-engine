@@ -129,7 +129,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: third_party/ffmpeg-bink
-          key: ffmpeg-bink-windows-${{ matrix.arch }}-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch', 'tools/ffmpeg-securetransport-nonblock.patch', 'tools/vashim.c') }}
+          key: ffmpeg-bink-windows-${{ matrix.arch }}-n7.1.1-stream-v2-${{ hashFiles('tools/build-ffmpeg-bink.sh', 'tools/build-stream-deps.sh', 'tools/ffmpeg-tls-hostname.patch', 'tools/vashim.c') }}
           restore-keys: ffmpeg-bink-windows-${{ matrix.arch }}-n7.1.1-stream-v2-
       - name: Build static FFmpeg (Bink)
         run: |

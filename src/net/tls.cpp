@@ -65,7 +65,33 @@ void addRoot(SSL_CTX* ctx,const unsigned char* bytes,long length) {
     ERR_clear_error(); // duplicate anchors are harmless
 }
 #endif
+#ifdef __APPLE__
+// Each system trust anchor's DER bytes.
+template<class F> void forEachSystemRoot(F&& visit) {
+    CFArrayRef roots=nullptr;
+    if(SecTrustCopyAnchorCertificates(&roots)!=errSecSuccess || !roots)return;
+    for(CFIndex i=0;i<CFArrayGetCount(roots);++i) {
+        auto cert=static_cast<SecCertificateRef>(const_cast<void*>(CFArrayGetValueAtIndex(roots,i)));
+        CFDataRef bytes=SecCertificateCopyData(cert);
+        if(bytes) {visit(CFDataGetBytePtr(bytes),long(CFDataGetLength(bytes)));CFRelease(bytes);}
+    }
+    CFRelease(roots);
 }
+#endif
+}
+#ifdef __APPLE__
+std::string systemRootsPem() {
+    std::unique_ptr<BIO,decltype(&BIO_free)> out(BIO_new(BIO_s_mem()),BIO_free);
+    if(!out)return {};
+    forEachSystemRoot([&](const unsigned char* bytes,long length) {
+        if(auto* cert=d2i_X509(nullptr,&bytes,length)) {PEM_write_bio_X509(out.get(),cert);X509_free(cert);}
+    });
+    ERR_clear_error();
+    char* data=nullptr;
+    const long size=BIO_get_mem_data(out.get(),&data);
+    return size>0?std::string(data,size_t(size)):std::string();
+}
+#endif
 std::shared_ptr<TlsContext> TlsContext::server(const std::string& certificate,const std::string& key) {
     auto c=context(true);
     if(SSL_CTX_use_certificate_chain_file(c->handle,certificate.c_str())!=1 ||
@@ -104,15 +130,7 @@ std::shared_ptr<TlsContext> TlsContext::client() {
         CertCloseStore(roots,0);
     }
 #elif defined(__APPLE__)
-    CFArrayRef roots=nullptr;
-    if(SecTrustCopyAnchorCertificates(&roots)==errSecSuccess && roots) {
-        for(CFIndex i=0;i<CFArrayGetCount(roots);++i) {
-            auto cert=static_cast<SecCertificateRef>(const_cast<void*>(CFArrayGetValueAtIndex(roots,i)));
-            CFDataRef bytes=SecCertificateCopyData(cert);
-            if(bytes) {addRoot(c->handle,CFDataGetBytePtr(bytes),long(CFDataGetLength(bytes)));CFRelease(bytes);}
-        }
-        CFRelease(roots);
-    }
+    forEachSystemRoot([&](const unsigned char* bytes,long length){addRoot(c->handle,bytes,length);});
 #else
     // Our static OpenSSL prefix is not the operating system's trust-store path.
     for(const char* path:{"/etc/ssl/certs/ca-certificates.crt","/etc/pki/tls/certs/ca-bundle.crt","/etc/ssl/cert.pem"})

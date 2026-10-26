@@ -12,7 +12,7 @@ SRC="${SRC:-$PREFIX/src}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
 recipe=$(cat "$here/tools/build-ffmpeg-bink.sh" "$here/tools/build-stream-deps.sh" "$here/tools/ffmpeg-tls-hostname.patch" \
-  "$here/tools/ffmpeg-securetransport-nonblock.patch" "$here/tools/vashim.c" | cksum)
+  "$here/tools/vashim.c" | cksum)
 stamp="stream-v2-$FFMPEG_VERSION-${TARGET_OS:-$(uname -s)}-${TARGET_ARCH:-native}-$recipe"
 if [ -f "$PREFIX/stream-build-version" ] && [ "$(cat "$PREFIX/stream-build-version")" = "$stamp" ]; then
   echo "static FFmpeg with streaming: already built"; exit 0
@@ -36,7 +36,10 @@ cross_args=()
 platform="${TARGET_OS:-$(uname -s)}"
 stream_args=()
 case "$platform" in
-  Darwin|darwin) stream_args+=(--enable-securetransport --enable-videotoolbox --enable-encoder=h264_videotoolbox,hevc_videotoolbox) ;;
+  # macOS TLS is the static OpenSSL (Apple deprecated SecureTransport, whose FFmpeg 7.1
+  # backend also blocked RTMP's non-blocking reads). OpenSSL never reads the keychain:
+  # src/video/stream.cpp hands it the system trust anchors as its ca_file.
+  Darwin|darwin) stream_args+=(--enable-openssl --enable-videotoolbox --enable-encoder=h264_videotoolbox,hevc_videotoolbox) ;;
   MINGW*|MSYS*|mingw32)
     stream_args+=(--enable-schannel --enable-d3d11va --enable-dxva2 --enable-amf --enable-libvpl --enable-encoder=h264_amf,h264_qsv,hevc_amf,hevc_qsv)
     # FFmpeg 7.1 supports Windows NVENC only on x86; its configure script
@@ -53,17 +56,6 @@ cd "$SRC"
 if ! grep -q 'SSL_set1_host' libavformat/tls_openssl.c; then
   patch -p1 < "$here/tools/ffmpeg-tls-hostname.patch"
 fi
-# FFmpeg 7.1's SecureTransport (macOS) never passes AVIO_FLAG_NONBLOCK down to the
-# TCP socket, so RTMP's every-10-packets non-blocking poll for server messages
-# blocks until the server speaks, which a publish target never does mid-stream:
-# each RTMPS upload stalled out the 5 s rw_timeout after a few frames. The other
-# TLS backends already forward the flag.
-case "$platform" in
-  Darwin|darwin)
-    if ! grep -q 'AVIO_FLAG_NONBLOCK' libavformat/tls_securetransport.c; then
-      patch -p1 < "$here/tools/ffmpeg-securetransport-nonblock.patch"
-    fi ;;
-esac
 ./configure \
   --prefix="$PREFIX" \
   --disable-shared --enable-static --enable-pic --enable-small \
