@@ -166,7 +166,7 @@ float createOptionPx(float maxW) {
     void GameView::buildMapList(tak::LoadScreen* progress) {
         if (progress) progress->step("Finding maps",70);
         resetMinimap(); mapView_.quiesce();
-        vfs_.refreshMapCache(installRoot_);
+        vfs_.refreshMapCache(tak::hpi::userMapRoot());
         mapList_.clear();
         mapTitlesLoaded_ = false;   // the install may have changed: read the tables again
         const auto maps=tak::hpi::listMaps(vfs_);

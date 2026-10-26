@@ -154,6 +154,9 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
 
     editorFont.emplace(ren);
 
+    // The game's downloaded maps and Test Map copies (MapCache/) and saved generated
+    // maps live in the game's per-user folder, beside its settings.ini; list them too.
+    tak::hpi::setUserMapRoot(std::filesystem::u8path(tak::replayDir()));
     try {
         vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot));
     } catch (const std::exception& e) {

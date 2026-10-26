@@ -29,13 +29,20 @@ resource paths/types, geometry dimensions, and dependencies before accepting it.
 Partial transfers are not installed. Leaving/reconnecting restarts an incomplete
 transfer; completed copies are reused. No received path is extracted onto disk.
 
-Verified copies are saved under `<data root>/MapCache/`: `.takmap` is the checked wire
+Verified copies are saved under `MapCache/` in the per-user folder, never in the game data
+folder: `.takmap` is the checked wire
 package and `.kmp` is its archive for the map catalog. Map-picker entries have the
 original map name plus a fingerprint, so different versions remain separate and no
 installed map is overwritten. They are selectable in later games, including when that
 machine becomes the host. Replays record the package digest, so they
 use the exact cached copy even if a different map with the same name is installed.
-Map caches are local to each client's/server's configured data root.
+Map caches are local to each machine: a client keeps them in its per-user folder (beside
+`settings.ini`, which its private single-player server shares through `--map-cache-dir`),
+and takserver in `--map-cache-dir`, by default `TAKengine/takserver` in the per-user data
+folder (`$XDG_DATA_HOME` or `~/.local/share` on Linux, `%APPDATA%` on Windows,
+`~/Library/Application Support` on macOS). Downloaded game mods go in `ModCache/` beside it.
+The data folder is only read; a `MapCache/` that a version before 0.9.5 left in it is
+ignored and left as it is.
 
 Generated recipes still need no terrain download. At match start each participant
 saves a reusable `.kmp` under `Maps/`; see [random map generation](random-map-generation.md).

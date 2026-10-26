@@ -69,6 +69,7 @@ legion_gen1_route_45941_om1 21
 legion_scenario_wall-4x50 21
 legion_situation_r9-65850_legion 21
 replay_always 26
+map_cache_readonly 20
 legion_gen1_route_54772_om1 20
 cartographer_place_features 20
 legion_scenario_strait-2x150 19

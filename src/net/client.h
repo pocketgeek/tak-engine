@@ -50,7 +50,12 @@ public:
     // data doesn't match.
     void setDataHash(uint64_t h) { dataHash_ = h; }
 
+    // The game data folder: read only, never written.
     void setMapRoot(const std::filesystem::path& root) { mapRoot_ = root; rescanAlwaysGameMods(); }
+    // Where verified map and game-mod downloads (MapCache/, ModCache/) and saved
+    // generated maps (Maps/) go. Default: hpi::userMapRoot(); none when both are empty.
+    void setCacheRoot(const std::filesystem::path& root) { cacheRoot_ = root; }
+    std::filesystem::path cacheRoot() const { return cacheRoot_.empty() ? hpi::userMapRoot() : cacheRoot_; }
     const std::shared_ptr<maps::Package>& mapPackage() const { return mapPackage_; }
     // The host's ticked mods/game packs. A room this player hosts sends them, with
     // the always-enabled ones (mods/game/always_enabled/), as one package to every
@@ -354,7 +359,7 @@ private:
     std::string modStatus_;
     void mapFrame(const Frame& f);
     void acceptMap(std::shared_ptr<maps::Package> package, uint32_t room);
-    std::filesystem::path mapRoot_;
+    std::filesystem::path mapRoot_,cacheRoot_;
     std::shared_ptr<maps::Package> mapPackage_;
     maps::Receiver mapReceive_;
     maps::Sender mapSend_;

@@ -188,7 +188,9 @@ filtering, edits, and renderer reset.
 
 The lobby distributes generated-map recipes, not independently chosen random seeds.
 Once the match starts, the host, every client (including spectators), and the server
-save a reusable `Maps/Generated-<recipe SHA-256>.kmp` under their data root. The archive
+save a reusable `Maps/Generated-<recipe SHA-256>.kmp` in their per-user folder (the
+client's beside `settings.ini`, the server's `--map-cache-dir`), never in the game data
+folder; maps saved in a data folder's `Maps/` by versions before 0.9.5 stay listed there. The archive
 contains the terrain, starting positions, original recipe, and retail tile artwork.
 Repeated starts of the same recipe reuse that file. Previewing/canceling does not save
 it. Saved maps appear in the map picker in subsequent games.

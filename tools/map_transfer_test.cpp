@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <thread>
 
 using namespace tak;
@@ -22,6 +23,20 @@ template<class F> static void rejects(F f, const char* why) {
 static void write(const std::filesystem::path& path, const std::vector<uint8_t>& bytes) {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary); out.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+}
+// Every entry under `root` (symlinks not followed) with its size and write time:
+// equal before and after a run proves nothing in that data folder was written.
+static std::map<std::string,std::pair<uintmax_t,std::filesystem::file_time_type>> tree(const std::filesystem::path& root) {
+    std::map<std::string,std::pair<uintmax_t,std::filesystem::file_time_type>> out;
+    for(const auto& e:std::filesystem::recursive_directory_iterator(root)) {
+        std::error_code ec;const bool file=e.is_regular_file(ec) && !e.is_symlink(ec);
+        out[e.path().string()]={file?e.file_size(ec):0,std::filesystem::symlink_status(e.path()).type()==std::filesystem::file_type::symlink?std::filesystem::file_time_type{}:e.last_write_time(ec)};
+    }
+    return out;
+}
+static void readOnly(const std::filesystem::path& dir) {
+    using std::filesystem::perms;
+    std::filesystem::permissions(dir,perms::owner_write|perms::group_write|perms::others_write,std::filesystem::perm_options::remove);
 }
 static int soloNetwork(uint16_t port,const char* hostRoot,const char* peerRoot) {
     auto original=hpi::mountRetailRoot(hostRoot);
@@ -174,6 +189,13 @@ int main(int argc, char** argv) try {
         }
         write(argv[3],package->bytes);return 0;
     }
+    if(argc==5 && std::string(argv[1])=="--export-kmp") {
+        // A Cartographer-style one-map snapshot of an installed map, for --play-map.
+        const auto package=net::maps::build(hpi::mountRetailRoot(argv[2]),argv[4]);
+        std::vector<hpi::PackFile> files;
+        for(const auto& [path,bytes]:*package->files)files.push_back({path,bytes});
+        write(argv[3],hpi::pack(files));return 0;
+    }
     if(argc==5 && std::string(argv[1])=="--solo-network")return soloNetwork(uint16_t(std::stoi(argv[2])),argv[3],argv[4]);
     if (argc >= 5 && std::string(argv[1]) == "--network") {
         const auto port = uint16_t(std::stoi(argv[2]));
@@ -230,8 +252,24 @@ int main(int argc, char** argv) try {
         }
         hpi::Vfs hostData = hpi::mountRetailRoot(argv[3]);
         hpi::Vfs peerData = hpi::mountRetailRoot(argv[4]);
+        // Each player's downloads and saved generated maps go to its own per-user
+        // folder; the data folders are only read. TAK_MAP_TEST_READONLY takes write
+        // permission off them (and their Maps/) and checks nothing in them changed.
+        const auto cacheBase = std::filesystem::temp_directory_path() / ("tak-map-net-" + crypto::toHex(crypto::randomVec(8)));
+        struct CleanCache { std::filesystem::path p; ~CleanCache() { std::error_code ec; std::filesystem::remove_all(p,ec); } } cleanCache{cacheBase};
+        const char* spectatorRoot = std::getenv("TAK_MAP_TEST_SPECTATOR_ROOT");
+        const bool readOnlyData = std::getenv("TAK_MAP_TEST_READONLY") != nullptr;
+        std::vector<std::filesystem::path> dataRoots{argv[3], argv[4]};
+        if (spectatorRoot) dataRoots.push_back(spectatorRoot);
+        std::vector<decltype(tree({}))> before;
+        if (readOnlyData) for (const auto& data : dataRoots) {
+            readOnly(data);
+            if (std::error_code ec; std::filesystem::is_directory(data/"Maps",ec)) readOnly(data/"Maps");
+            before.push_back(tree(data));
+        }
         net::MpClient host, peer, spectator;
-        host.setMapRoot(argv[3]); peer.setMapRoot(argv[4]); spectator.setMapRoot(std::getenv("TAK_MAP_TEST_SPECTATOR_ROOT") ? std::getenv("TAK_MAP_TEST_SPECTATOR_ROOT") : argv[4]);
+        host.setMapRoot(argv[3]); peer.setMapRoot(argv[4]); spectator.setMapRoot(spectatorRoot ? spectatorRoot : argv[4]);
+        host.setCacheRoot(cacheBase/"host"); peer.setCacheRoot(cacheBase/"peer"); spectator.setCacheRoot(cacheBase/(spectatorRoot ? "spectator" : "peer"));
         host.setDataHash(hpi::gameplayHash(hostData));
         peer.setDataHash(hpi::gameplayHash(peerData)); spectator.setDataHash(peer.dataHash());
         check(host.connect("127.0.0.1", port, "maphost"), "host connection");
@@ -358,9 +396,14 @@ int main(int argc, char** argv) try {
                 std::cout << "directed chat: recipients, exclusion, empty mask, broadcast and spectator privacy passed\n";
                 if (mapgen::isGeneratedMapId(mapId)) {
                     const auto file="Generated-"+crypto::toHex(crypto::sha256(mapId))+".kmp";
-                    check(std::filesystem::exists(std::filesystem::path(argv[3])/"Maps"/file),"host did not save generated map");
-                    check(std::filesystem::exists(std::filesystem::path(argv[4])/"Maps"/file),"peer did not save generated map");
+                    check(std::filesystem::exists(cacheBase/"host"/"Maps"/file),"host did not save generated map");
+                    check(std::filesystem::exists(cacheBase/"peer"/"Maps"/file),"peer did not save generated map");
+                } else {
+                    check(std::filesystem::exists(cacheBase/"peer"/"MapCache"/(peer.mapPackage()->digest+".takmap")),"peer did not cache the downloaded map");
                 }
+                for (size_t i = 0; i < before.size(); ++i)
+                    check(tree(dataRoots[i]) == before[i], "a data folder was written");
+                if (readOnlyData) std::cout << "read-only data folders: unchanged; downloads in the per-user cache\n";
                 std::cout << "network map transfer: host, peer, late spectator, 300 matching ticks, hash " << std::hex << wh.stateHash() << '\n';
                 return 0;
             }

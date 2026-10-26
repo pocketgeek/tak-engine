@@ -144,8 +144,15 @@ int pickFreePort() {
 // an unauthenticated server must not be reachable from the network.
 bool spawnLocalServer(tak::LocalServer& server, const std::string& serverBin,
                       const std::string& dataRoot, int port) {
-    return server.start(serverBin, {"--port", std::to_string(port), "--data", dataRoot,
-                                    "--no-auth", "--local"});
+    // It shares this player's per-user map folder (hpi::userMapRoot): a map the client
+    // verified (a download, a --play-map copy) is there for the referee too, and
+    // nothing is written into the game data folder.
+    std::vector<std::string> args{"--port", std::to_string(port), "--data", dataRoot, "--no-auth", "--local"};
+    if (const auto cache = tak::hpi::userMapRoot(); !cache.empty()) {
+        const auto text = cache.u8string();
+        args.insert(args.end(), {"--map-cache-dir", std::string(text.begin(), text.end())});
+    }
+    return server.start(serverBin, args);
 }
 
 // Path to the takserver binary that sits beside this client. argv[0] is unreliable:
@@ -328,7 +335,8 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     // replay (they never change the gameplay hash, so the data check below holds).
     tak::hpi::Vfs::Files game;
     if(!rf.modDigest.empty()) {
-        auto pack=tak::net::mods::loadCache(dataRoot,rf.modDigest);
+        const auto cache=tak::hpi::userMapRoot();
+        auto pack=cache.empty()?nullptr:tak::net::mods::loadCache(cache,rf.modDigest);
         // A single-player room always verifies a game-mod package, an empty one
         // when no game pack was ticked; that one any install can rebuild.
         if(!pack) try {
@@ -346,13 +354,14 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     for(const auto& why:skippedMods)std::fprintf(stderr,"replay: cosmetic mod left out: %s\n",why.c_str());
     std::string mapPath;
     if (!rf.mapDigest.empty()) {
-        auto package = tak::net::maps::loadCache(dataRoot, rf.mapDigest);
+        const auto cache = tak::hpi::userMapRoot();   // never the data folder
+        auto package = cache.empty() ? nullptr : tak::net::maps::loadCache(cache, rf.mapDigest);
         if (!package) try {
             auto local = tak::net::maps::build(rvfs, rf.mapId);
             if (local->digest == rf.mapDigest) package = std::move(local);
         } catch (const std::exception&) {}
         if (!package) throw std::runtime_error("the verified map copy for this replay is missing");
-        try { tak::net::maps::saveCache(std::filesystem::u8path(dataRoot), *package); }
+        try { if (!cache.empty()) tak::net::maps::saveCache(cache, *package); }
         catch (const std::exception& e) { std::fprintf(stderr,"replay: verified map cache unavailable: %s\n",e.what()); }
         mapPath = package->mapPath; rvfs.setMapFiles(package->files);
     } else if (!rf.mission.empty()) {
@@ -651,6 +660,9 @@ int main(int argc, char** argv) {
     // listed and playable like any other (net/replaywriter.h). Recordings still
     // live in another running client are locked and skipped.
     tak::net::recoverReplayParts(tak::replayDir());
+    // Map and game-mod downloads, Test Map copies and saved generated maps live
+    // beside settings.ini, never in the game data folder (hpi::setUserMapRoot).
+    tak::hpi::setUserMapRoot(std::filesystem::u8path(tak::replayDir()));
 #ifdef _WIN32
     if (tak::dpiIgnoredAtStartup()) {
         // First run (or first run since this option arrived): the old stretched window made
@@ -702,8 +714,13 @@ int main(int argc, char** argv) {
                 playtestTrace=std::make_shared<tak::ScenarioTraceLog>(tak::scenarioTracePath(
                     std::filesystem::u8path(folder),std::filesystem::u8path(playMap)));
             }
-            tak::net::maps::saveCache(std::filesystem::u8path(dataRoot), *snapshot);
-            vfs.refreshMapCache(std::filesystem::u8path(dataRoot));
+            // The verified copy goes in the per-user MapCache, where this client's
+            // private server (--map-cache-dir) finds it too; the data folder stays
+            // untouched.
+            const auto cache=tak::hpi::userMapRoot();
+            if(cache.empty())throw std::runtime_error("Cannot locate the per-user map folder");
+            tak::net::maps::saveCache(cache, *snapshot);
+            vfs.refreshMapCache(cache);
             // MapCache exposes a digest-qualified picker name, not the source
             // archive's internal path. Select that exact revision.
             args = {tak::vpath::stem(snapshot->mapPath) + " [" + snapshot->digest.substr(0,16) + "]"};

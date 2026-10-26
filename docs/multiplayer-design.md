@@ -809,7 +809,8 @@ rooms unchanged. The server takes a package only from the host of a skirmish
 room with game mods on: an offer or chunk from a guest or in a campaign
 room, and an offer while game mods are off, are answered with ModError. Replay
 format 10 records the shared package digest (`ReplayHeader::modDigest`, with the
-`gameMods` byte where `overridePolicy` was) and loads it from `ModCache/`.
+`gameMods` byte where `overridePolicy` was) and loads it from `ModCache/` (in the per-user
+folder, `hpi::userMapRoot`; never the game data folder).
 The package also carries a pack's `ai/takengine.txt` (loose in the pack's `ai/`
 folder or under `ai/` in an archive in it), and a map package carries it when
 the map's own archive (its `.kmp`) has it (`maps::build`, checked on decode). The

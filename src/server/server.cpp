@@ -436,7 +436,7 @@ public:
         return accounts_.load(path, &err);
     }
     // `dataRoot` is never empty -- main() refuses to start without --data.
-    Server(uint16_t port, const std::string& dataRoot,const std::string& mapRoot) : port_(port), dataRoot_(dataRoot),mapRoot_(mapRoot.empty()?dataRoot:mapRoot) {
+    Server(uint16_t port, const std::string& dataRoot,const std::string& mapRoot) : port_(port), dataRoot_(dataRoot),mapRoot_(mapRoot) {
         // The referee reads the retail install directly, plus the ROOM's game
         // mods. Build the pure-retail set eagerly (the connection-level Hello
         // check + every game without game mods); a game-mod set is built lazily
@@ -534,7 +534,6 @@ private:
     }
     void buildDataSet(DataSet& ds) {
         ds.vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot_));
-        if(mapRoot_!=dataRoot_)ds.vfs.refreshMapCache(std::filesystem::u8path(mapRoot_));
         tak::sim::setupRegistry(ds.reg, ds.vfs, false);
         if (!ds.vfs.list("unitscb").empty()) {
             tak::sim::setupRegistry(ds.regCb, ds.vfs, true);
@@ -3176,6 +3175,25 @@ int Server::run() {
     return 0;
 }
 
+// Where map and game-mod uploads (MapCache/, ModCache/) and saved generated maps
+// (Maps/) go without --map-cache-dir: a per-user folder, never the game data folder
+// (--data is only read). XDG_DATA_HOME wins on every platform, as for the game.
+std::string defaultMapCacheDir() {
+    namespace fs = std::filesystem;
+    fs::path base;
+    if (const char* x = std::getenv("XDG_DATA_HOME"); x && *x) base = fs::u8path(x);
+#ifdef _WIN32
+    else if (const wchar_t* a = _wgetenv(L"APPDATA"); a && *a) base = fs::path(a);
+#elif defined(__APPLE__)
+    else if (const char* h = std::getenv("HOME"); h && *h) base = fs::u8path(h) / "Library" / "Application Support";
+#else
+    else if (const char* h = std::getenv("HOME"); h && *h) base = fs::u8path(h) / ".local" / "share";
+#endif
+    if (base.empty()) return {};
+    const auto text = (base / "TAKengine" / "takserver").u8string();
+    return {text.begin(), text.end()};
+}
+
 }  // namespace
 
 static int serverMain(int argc, char** argv) {
@@ -3261,6 +3279,9 @@ static int serverMain(int argc, char** argv) {
                         "  --data is REQUIRED when hosting: it is what the referee sim and the\n"
                         "  server-hosted AI players read. There is no relay-only mode.\n"
                         "  --replaydir writes a .takrep replay file per finished game.\n"
+                        "  --map-cache-dir holds uploaded maps and game mods and saved generated\n"
+                        "  maps (default: TAKengine/takserver in the per-user data folder, e.g.\n"
+                        "  ~/.local/share). The --data folder is never written.\n"
                         "  --seed N (0 included) pins every game's RNG seed, so a headless run is\n"
                         "  repeatable. Games are otherwise seeded randomly (which is what\n"
                         "  makes Random Start Locations differ game to game).\n"
@@ -3309,6 +3330,14 @@ static int serverMain(int argc, char** argv) {
             "  Run with --help for the full usage.\n");
         return 1;
     }
+    if (mapRoot.empty()) mapRoot = defaultMapCacheDir();
+    if (mapRoot.empty()) {
+        std::fprintf(stderr, "takserver: no per-user folder for map downloads; pass --map-cache-dir <dir>.\n");
+        return 1;
+    }
+    // --data is only read: uploads and saved generated maps go here, and every
+    // mount lists them (hpi::userMapRoot).
+    tak::hpi::setUserMapRoot(std::filesystem::u8path(mapRoot));
     Server s(port, dataRoot,mapRoot);
 #ifndef NDEBUG
     if(allowTestWork)s.allowBenchmarks();

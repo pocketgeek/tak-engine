@@ -1187,7 +1187,7 @@ such as "hold the hill for five minutes to win".
 >   **S** in the map list.
 >
 > The test copy that each Test Map or `--play-map` run leaves in the game's
-> `MapCache` folder appears in the map list with a fingerprint in brackets after
+> `MapCache` folder (in the game's per-user folder, beside its `settings.ini`) appears in the map list with a fingerprint in brackets after
 > its name (see [Testing a map in the game](#testing-a-map-in-the-game)).
 > Choosing the test copy of a map with a scenario always plays that scenario,
 > just as the test did: its MAP SCENARIO button reads ON and cannot be changed.
@@ -1879,7 +1879,10 @@ Notes:
   not have, are reported when you start the game from the lobby, in red under
   the buttons (*CANNOT START: ...*). If the game stops with an error,
   Cartographer shows **TEST MAP ENDED** with the error code.
-- Each test leaves a verified copy of the map in the game's `MapCache` folder.
+- Each test leaves a verified copy of the map in the game's `MapCache` folder, in
+  the game's per-user folder beside its `settings.ini` (see the
+  [game user guide](user-guide.md#where-files-are-kept)); the game data folder is
+  never written.
   These copies appear in the game's and Cartographer's map lists as
   *Test* followed by a number and a fingerprint, for example
   `Test 1792011008282376239 [bc9730de769612c0]`, and they keep their scenario
@@ -2077,8 +2080,10 @@ deleted in a pack (one folder per pack and save). The game data folder is
 stored in the game's own `settings.ini` (see the
 [game user guide](user-guide.md#where-files-are-kept)).
 
-Your maps are in the game data folder: `Maps` for the maps you save, and
-`MapCache` for downloaded maps and Test Map copies.
+The maps you save are in the game data folder's `Maps`. Downloaded maps and Test
+Map copies are in `MapCache`, and saved random maps in `Maps`, in the game's
+per-user folder (beside its `settings.ini`); the game itself never writes into the
+data folder.
 
 ---
 

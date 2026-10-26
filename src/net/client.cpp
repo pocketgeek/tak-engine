@@ -571,7 +571,7 @@ void MpClient::onFrame(const Frame& f) {
             if (room_.mission.empty() && mapgen::isGeneratedMapId(room_.mapId)) {
                 try {
                     const auto data = roomDataVfs();
-                    maps::saveGenerated(mapRoot_, data, room_.mapId);
+                    if (const auto cache = cacheRoot(); !cache.empty()) maps::saveGenerated(cache, data, room_.mapId);
                 } catch (const std::exception& e) {
                     mapStatus_ = std::string("MAP SAVE FAILED: ") + e.what();
                     chat_.push_back({"SYSTEM", mapStatus_});
@@ -906,7 +906,7 @@ namespace tak::net {
 void MpClient::acceptMap(std::shared_ptr<maps::Package> package, uint32_t room) {
     mapPackage_ = std::move(package); mapReadyRoom_ = room; mapReceive_ = {};
     mapStatus_ = "MAP VERIFIED";
-    try { maps::saveCache(mapRoot_, *mapPackage_); }
+    try { if (const auto cache = cacheRoot(); !cache.empty()) maps::saveCache(cache, *mapPackage_); }
     catch (const std::exception& e) {
         mapStatus_ = std::string("MAP VERIFIED; SAVE FAILED: ") + e.what();
         chat_.push_back({"SYSTEM", mapStatus_}); std::fprintf(stderr, "%s\n", mapStatus_.c_str());
@@ -926,7 +926,7 @@ void MpClient::mapFrame(const Frame& f) {
             if (mapReceive_.room == id && mapReceive_.digest == digest) return;
             if (mapPackage_ && mapPackage_->digest == digest) { acceptMap(mapPackage_, id); return; }
             mapReadyRoom_ = 0; mapReceive_.begin(id, size, digest);
-            if (auto cached = maps::loadCache(mapRoot_, digest)) { acceptMap(std::move(cached), id); return; }
+            if (auto cached = cacheRoot().empty() ? nullptr : maps::loadCache(cacheRoot(), digest)) { acceptMap(std::move(cached), id); return; }
             try {
                 auto local = maps::build(roomDataVfs(), mapId);
                 if (local->digest == digest) { acceptMap(std::move(local), id); return; }
@@ -1040,7 +1040,7 @@ void MpClient::acceptMods(std::shared_ptr<mods::Package> package,uint32_t room) 
     modStatus_="GAME MODS VERIFIED";
     // Like acceptMap: the package is verified, so a cache failure (full disk)
     // is reported but must not reject it.
-    try {mods::saveCache(mapRoot_,*modPackage_);}
+    try {if(const auto cache=cacheRoot();!cache.empty())mods::saveCache(cache,*modPackage_);}
     catch(const std::exception& e){modStatus_=std::string("GAME MODS VERIFIED; SAVE FAILED: ")+e.what();chat_.push_back({"SYSTEM",modStatus_});std::fprintf(stderr,"%s\n",modStatus_.c_str());}
     Writer w;w.u32(room);w.str(modPackage_->digest);send(Msg::ModReady,w);
     if(pendingMapStart_){auto start=std::move(*pendingMapStart_);pendingMapStart_.reset();onFrame(start);}
@@ -1053,7 +1053,7 @@ void MpClient::modFrame(const Frame& f) {
             if(!r.ok || r.p!=r.end || !id || label!="mods" || (room_.id && id!=room_.id))throw std::runtime_error("invalid game mod offer");
             modReceive_.begin(id,size,digest);modReadyRoom_=0;
             if(modPackage_ && modPackage_->digest==digest && modPackage_->bytes.size()==size){acceptMods(modPackage_,id);return;}
-            if(auto cached=mods::loadCache(mapRoot_,digest)){if(cached->bytes.size()!=size)throw std::runtime_error("game mod size mismatch");acceptMods(std::move(cached),id);return;}
+            if(auto cached=cacheRoot().empty()?nullptr:mods::loadCache(cacheRoot(),digest)){if(cached->bytes.size()!=size)throw std::runtime_error("game mod size mismatch");acceptMods(std::move(cached),id);return;}
             Writer w;w.u32(id);w.str(digest);send(Msg::ModRequest,w);modStatus_="DOWNLOADING GAME MODS";
         }else if(f.kind==Msg::ModRequest){
             auto id=r.u32();if(!r.ok || r.p!=r.end || id!=room_.id || room_.hostId!=myId_ || !modPackage_ || modSend_.package)throw std::runtime_error("invalid game mod upload request");

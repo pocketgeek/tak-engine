@@ -25,6 +25,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -589,8 +590,22 @@ std::vector<std::string> MountSet::archivePaths(int archive) const {
 
 // ---- Vfs: layered runtime read-path over a retail install root -------------
 
+namespace {
+std::mutex userMapRootMutex;
+std::filesystem::path userMapRootPath;
+}
+void setUserMapRoot(const std::filesystem::path& root) {
+    std::lock_guard lock(userMapRootMutex);
+    userMapRootPath = root;
+}
+std::filesystem::path userMapRoot() {
+    std::lock_guard lock(userMapRootMutex);
+    return userMapRootPath;
+}
+
 void Vfs::refreshMapCache(const std::filesystem::path& root) {
     cachedMaps_.clear();
+    if (root.empty()) return;
     std::error_code ec;
     const auto folder = root / "MapCache";
     if (!std::filesystem::is_directory(folder, ec)) return;
@@ -1190,19 +1205,23 @@ Vfs mountRetailRoot(const std::filesystem::path& root, const std::vector<std::st
     // units/gamedata); retail reads a .kmp only for its map, so we expose just the
     // map (kmap/... and cosmetic tiles the map ships) and drop any bundled gameplay
     // data -- otherwise one modded map would rewrite every game's unit roster.
-    if (fs::path maps = findSub("Maps"); !maps.empty()) {
+    auto addMaps = [&](const fs::path& maps) {
         MountConfig cfg{true, {".kmp", ".hpi", ".ufo"}, {}, {}};
         cfg.keep = [](const std::string& p) {
             return MountSet::key(p).rfind("kmap/", 0) == 0 || !affectsGameplay(p);
         };
         vfs.addLayer(MountSet(maps, std::move(cfg)), "", true);
-    }
+    };
+    // Saved generated maps in the per-user folder, under the install's own maps.
+    const fs::path user = userMapRoot();
+    if (std::error_code ec; !user.empty() && fs::is_directory(user / "Maps", ec)) addMaps(user / "Maps");
+    if (fs::path maps = findSub("Maps"); !maps.empty()) addMaps(maps);
     if (!gamePacks.empty() || !cosmeticPacks.empty()) {
         auto files = modFiles(root, ModKind::Game, gamePacks);
         for (auto& [path, bytes] : modFiles(root, ModKind::Cosmetic, cosmeticPacks)) files[path] = std::move(bytes);
         vfs.setModFiles(std::make_shared<const Vfs::Files>(std::move(files)));
     }
-    vfs.refreshMapCache(root);
+    vfs.refreshMapCache(user);
     return vfs;
 }
 

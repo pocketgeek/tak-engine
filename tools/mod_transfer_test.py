@@ -25,6 +25,11 @@ def main():
             log=(root/'log').read_text()
             assert 'DESYNCED' not in log and 'REFEREE SUSPECT' not in log,log
             assert list((root/'server-cache'/'ModCache').glob('*.takmods'))
+            assert list((root/'peer-cache'/'ModCache').glob('*.takmods'))
+            # Downloads go to the per-user folders: no data folder gains a cache.
+            for data in (host,peer,referee):
+                for name in ('ModCache','MapCache'):
+                    assert not (data/name).exists(),data/name
             assert not (referee/'mods').exists() and not (referee/'overrides').exists()
             # The host's legacy overrides/ pack is still there, untouched.
             assert (host/'overrides'/'Gamma'/'units'/'araking.fbi').is_file()

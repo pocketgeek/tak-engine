@@ -283,6 +283,15 @@ uint64_t gameplayHash(const Vfs& vfs);
 Vfs mountRetailRoot(const std::filesystem::path& root,
                     const std::vector<std::string>& gamePacks = {},
                     const std::vector<std::string>& cosmeticPacks = {});
+// The per-user folder for downloaded and test maps (MapCache/), game-mod downloads
+// (ModCache/) and saved generated maps (Maps/Generated-*.kmp): the game's profile
+// folder, or takserver's --map-cache-dir. Nothing is ever written to the game data
+// folder, and a MapCache/ left in one by an older version is not read. Set once at
+// startup, before any mount; empty (the default, and every test that does not set
+// it) means none. mountRetailRoot adds its Maps/ below the install's own Maps/ and
+// lists its MapCache/.
+void setUserMapRoot(const std::filesystem::path& root);
+std::filesystem::path userMapRoot();
 // The folder (matched ignoring case) under mods/cosmetic/ and mods/game/ that
 // holds the always-enabled packs. It is never itself a pack.
 inline constexpr const char* kAlwaysEnabledDir = "always_enabled";

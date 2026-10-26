@@ -3112,6 +3112,14 @@ if(TAK_TEST_DATA)
     add_test(NAME mod_transfer COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/mod_transfer_test.py"
       --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:mod_transfer_test>" --data "${TAK_TEST_DATA}")
     set_tests_properties(mod_transfer PROPERTIES TIMEOUT 150)
+    # The game data folder is only read: a host-only map through a read-only server
+    # (default per-user cache) and --play-map on a read-only install (hpi::userMapRoot).
+    if(TARGET takclient)
+      add_test(NAME map_cache_readonly COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/map_cache_readonly_test.py"
+        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>"
+        --map-tool "$<TARGET_FILE:map_transfer_test>" --data "${TAK_TEST_DATA}")
+      set_tests_properties(map_cache_readonly PROPERTIES TIMEOUT 300)
+    endif()
     # A game mod's ai/n.txt (the real mod transfer) or the map's (its .kmp, the map
     # package) reaches the server's Normal AI only, the game mod's winning; misplaced
     # n.txt files (pack root, cosmetic, base) are not read

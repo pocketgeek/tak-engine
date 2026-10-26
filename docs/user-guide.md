@@ -2703,7 +2703,11 @@ Settings, saved replays and downloaded content live in a per-user folder:
 The settings file is `settings.ini`. Replays (`.takrep` files) are saved beside
 it; a game still being recorded is a `.takrep.part` file, with a small
 `.takrep.part.chk` beside it, until it ends. Local copies of YouTube streams go in its
-`videos` folder. Cartographer keeps its preferences in a sibling `Cartographer` folder.
+`videos` folder. Maps downloaded in multiplayer and Cartographer's Test Map copies go in
+its `MapCache` folder, downloaded game mods in `ModCache`, and random maps you have
+played in `Maps`. The game never writes into your game data folder, which may be
+read-only; a `MapCache` an older version left there is ignored.
+Cartographer keeps its preferences in a sibling `Cartographer` folder.
 
 The game prints diagnostic messages to the terminal it was started from. On
 Linux and macOS, start it from a terminal if you need them for a bug report.

@@ -304,8 +304,11 @@ transient decoding/serialization, TLS and allocator overhead also use memory.
 Map uploads reserve their advertised size before receiving data and expire
 after 30 seconds without progress or five minutes total. Each package remains
 limited to 256 MiB. New disk writes are rejected at quota; old maps/replays are
-not silently deleted. Existing downloaded maps remain selectable. Use
-`--map-cache-dir` to keep writable map state outside the retail install.
+not silently deleted. Existing downloaded maps remain selectable. Uploaded maps and
+game mods and saved generated maps go in `--map-cache-dir`; without it, in
+`TAKengine/takserver` in the service account's per-user data folder (`$XDG_DATA_HOME`
+or `~/.local/share` on Linux, `%APPDATA%` on Windows). The `--data` folder is only
+read, so it can be read-only to the service account.
 
 Ordinary lobby/chat/setting requests have per-connection, account, IP and global
 work budgets. Expensive creation/start/map-offer requests cost more than small

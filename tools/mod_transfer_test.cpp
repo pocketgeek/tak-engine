@@ -36,8 +36,10 @@ int main(int argc,char** argv){try{
  put(hostRoot,"mods/game/always_enabled/HostRules/sounds/host-rules.wav","rules");
  put(peerRoot,"mods/game/always_enabled/PeerRules/units/araking.fbi",std::regex_replace(text,hp,"MaxDamage=5151"));
  put(peerRoot,"mods/game/always_enabled/PeerRules/sounds/peer-rules.wav","peer rules");
- put(peerRoot,"ModCache","not a directory"); // the first peer cache save fails: the verified packs must still be accepted
- net::MpClient host,peer;host.setMapRoot(hostRoot);peer.setMapRoot(peerRoot);host.setGameModPacks({"Beta","Alpha"});peer.setGameModPacks({"PeerGame"});
+ // Downloads go to each player's own folder, never the data folder (hpi::userMapRoot).
+ const auto hostCache=hostRoot.parent_path()/(hostRoot.filename().string()+"-cache"),peerCache=peerRoot.parent_path()/(peerRoot.filename().string()+"-cache");
+ put(peerCache,"ModCache","not a directory"); // the first peer cache save fails: the verified packs must still be accepted
+ net::MpClient host,peer;host.setMapRoot(hostRoot);peer.setMapRoot(peerRoot);host.setCacheRoot(hostCache);peer.setCacheRoot(peerCache);host.setGameModPacks({"Beta","Alpha"});peer.setGameModPacks({"PeerGame"});
  auto stockHash=hpi::gameplayHash(base);host.setDataHash(stockHash);peer.setDataHash(stockHash);
  check(host.connect(serverHost,uint16_t(std::stoi(argv[1])),"pack-host"),"host connect");check(peer.connect(serverHost,uint16_t(std::stoi(argv[1])),"pack-peer"),"peer connect");
  sim::TypeRegistry registry;hpi::Vfs hostData,peerData;sim::World wh,wp;
@@ -72,7 +74,7 @@ int main(int argc,char** argv){try{
   if(!ready && peer.room().id && peer.room().mySlot>=0){host.setSlot(0,1,0,0,0,1);peer.setSlot(1,1,1,1,1,1);ready=true;}
   if(ready && !started) {
    if(transition==0 && host.room().mapsReady && peer.modPackage()) {
-    check(saveFailed,"peer cache failure not reported");std::filesystem::remove(peerRoot/"ModCache"); // later transitions save, then reuse, the cache
+    check(saveFailed,"peer cache failure not reported");std::filesystem::remove(peerCache/"ModCache"); // later transitions save, then reuse, the cache
     initialDigest=host.modPackage()->digest;auto opts=host.room().opts;opts.gameMods=0;host.setGameOptions(opts);transition=1;
    } else if(transition==1 && host.room().opts.gameMods==0 && peer.room().opts.gameMods==0) {
     check(!host.modPackage()&&!peer.modPackage(),"GAME MODS off retained shared game mods");
@@ -87,7 +89,7 @@ int main(int argc,char** argv){try{
     host.setGameModPacks({"Alpha"});transition=3;
    } else if(transition==3 && !host.modPending() && host.room().mapsReady && peer.modPackage() && host.modPackage()->digest!=initialDigest && peer.modPackage()->digest==host.modPackage()->digest) {
     alphaDigest=host.modPackage()->digest;check(alphaDigest!=initialDigest,"selection did not replace pack");host.setGameModPacks({"Beta","Alpha"});peer.setGameModPacks({"PeerGame"});transition=4;
-   } else if(transition==4 && !host.modPending() && host.room().mapsReady && peer.modPackage() && peer.modPackage()->digest==initialDigest){check(std::filesystem::exists(peerRoot/"ModCache"/(initialDigest+".takmods")),"peer cache not saved after recovery");transition=5;}
+   } else if(transition==4 && !host.modPending() && host.room().mapsReady && peer.modPackage() && peer.modPackage()->digest==initialDigest){check(std::filesystem::exists(peerCache/"ModCache"/(initialDigest+".takmods")),"peer cache not saved after recovery");transition=5;}
   }
   if(!started && transition==5 && ready && host.room().mapsReady && host.room().slots[1].ready){check(host.modPackage()&&peer.modPackage(),"start allowed before packs received");check(host.modPackage()->digest==peer.modPackage()->digest,"pack digest mismatch");host.startGame();started=true;}
   if(!loaded && !campaign && host.starting() && peer.starting()){setup(host,hostData,wh);setup(peer,peerData,wp);loaded=true;}
