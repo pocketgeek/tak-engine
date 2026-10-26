@@ -1270,6 +1270,13 @@ void GameView::autoplayStep() {
         if (st == S::InRoom && mpStarted_ && !mp_->startError().empty()) {
             netError_ = "start refused: " + mp_->startError(); return false;
         }
+        // A createGame whose map cannot build sends nothing, so the lobby never advances: end a
+        // harness run on it (and never retry -- each try rebuilds the map). Interactive auto
+        // modes (menu Benchmark, CLI single-player) ignore the result and keep the banner.
+        if (autoMode && st == S::Lobby && !mp_->createError().empty()) {
+            if (netError_.empty()) netError_ = "create game failed: " + mp_->createError();
+            return false;
+        }
         if (st == S::Lobby && (autoMode == 1 || autoMode == 4 || autoMode == 7 || autoMode == 8)) {
             tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
             o.gameMods = mods_.game ? 1 : 0;   // debug --mods override (the lobby always sends 1)
@@ -1332,9 +1339,6 @@ void GameView::autoplayStep() {
             std::string createMap = benchmarkMode_ ? std::string("Ulasem Arena") : mapId;
             mp_->createGame(benchmarkMode_ ? "Benchmark" : (priv ? "Single Player" : "headless"),
                             "", createMap, o, cap, watch, priv, mission);
-            // A map that cannot build never reaches the server and the lobby never advances, so
-            // without this the run would retry every frame until its outer timeout.
-            if (!mp_->createError().empty()) { netError_ = "create game failed: " + mp_->createError(); return false; }
         } else if (st == S::Lobby && autoMode == 6) {
             // Spectate: poll the list and watch the first running game. Ask once
             // per refusal, not every frame: a room with ALLOW SPECTATORS off says no,
@@ -1353,7 +1357,6 @@ void GameView::autoplayStep() {
                 o.mapScenario = tak::devFlag("TAK_MAP_SCENARIO") ? 1 : 0;   // as for modes 1/4/7
                 o.powerCodes = tak::devFlag("TAK_POWER_CODES") ? 1 : 0;
                 mp_->createGame(mapId, "", mapId, o, mpCapacity(o.mapScenario != 0));
-                if (!mp_->createError().empty()) { netError_ = "create game failed: " + mp_->createError(); return false; }
             }
             if (!mpFirstListMs_) mpFirstListMs_ = SDL_GetTicks64();
         } else if (st == S::InRoom && autoMode && !mpReadied_) {

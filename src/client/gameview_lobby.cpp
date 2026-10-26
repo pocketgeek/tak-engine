@@ -623,7 +623,7 @@ float createOptionPx(float maxW) {
         });
         if (!mp_->createError().empty()) {
             const std::string why = "CANNOT CREATE: " + mp_->createError();
-            blockText(tak::uiTextFit(why, 1.3f, kLobbyW - 2 * x - 2 * bw - 140.0f), x + bw + 20, by + 9, 1.3f, {255, 130, 110, 255});
+            blockText(tak::uiTextFit(why, 1.3f, kLobbyW - 2 * x - 2 * bw - 152.0f), x + bw + 20, by + 9, 1.3f, {255, 130, 110, 255});
         }
         if (!singlePlayer_)   // a private single-player game has no browser to go back to
             lbBtn(kLobbyW - x - bw - 122, by, 110, 30, "BROWSER", true,
