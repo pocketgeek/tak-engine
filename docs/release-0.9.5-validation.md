@@ -3,7 +3,7 @@
 Protocol **299** (was 298 in 0.9.4), replay format **15** (unchanged),
 generator version **9** (unchanged).
 
-Tagged `v0.9.5` at TODO-LEAD (tag line: short and full sha, annotated tag object, publication time).
+Tagged `v0.9.5` at `35ee5c27` (full `35ee5c27b03fd84fdb00ed4f0d9e0bb55b27db26`, annotated tag object `ec29d3c2`) and published on 2026-10-26 19:23:25 UTC.
 
 ## Scope and compatibility
 
@@ -47,9 +47,7 @@ this order, and were integrated at `085d4c45`:
 `src/cartographer` 1, `src/server` 1, `src/sim` 1; nothing in `src/ai`). Over the
 whole tree at the integration commit: 37 files changed, 2,978 insertions(+),
 2,275 deletions(-), of which `tools/scenarios/baseline.json` is 2,193 lines
-each way. TODO-LEAD: the diff stat `v0.9.4..v0.9.5` once the tag exists (the
-preparation commit adds only version lines, documentation and `title.jpg`, so
-`src` should be unchanged).
+each way. `git diff --stat v0.9.4 v0.9.5 -- src` is the same, so the preparation commits changed no `src` file. Over the whole tree, `v0.9.4..v0.9.5` is 11 commits and 43 files changed, 3,371 insertions(+), 2,302 deletions(-), of which `tools/scenarios/baseline.json` is 2,193 lines each way. Outside `src` the follow-up commits touch only CHANGELOG, README, `CLAUDE.md`, the notes, this report, `docs/img/` and the version line in `CMakeLists.txt`.
 
 The preparation commit on top changes no code: `CMakeLists.txt` (the version
 line), `CHANGELOG.md` (dated, links), `README.md`, the version lines in
@@ -120,14 +118,7 @@ each change's own proving tests, then one full suite at integration.
 | Crusades, Retail pathfinding | not run | `3a380ae964f75b5a` |
 | Crusades, Legion | not run | `772874591d07dbdf` |
 
-- **Windows test fixes.** TODO-LEAD: the integration report does not say that the
-  eight Windows test fixes were re-run on oden-win, and it notes that the
-  Windows tests were not re-run after the tools review fix. State the result
-  here if they were (the eight tests are `ai_profile_data`,
-  `cartographer_aiprofile_mod_ui`, `cartographer_aiprofile_extras_ui`,
-  `cartographer_aiprofile_packs_ui`, `cartographer_aimod_ui`,
-  `cartographer_ai_profile_e2e`, `classic_ai_map_profile` and `ai_mod_profile`);
-  otherwise leave them to tag CI and say so.
+- **Windows test fixes.** The 0.9.5 Windows test fixes were verified on oden-win (Windows 11, MinGW GCC 16.2, GNU ld) at tag v0.9.5 (35ee5c27), built as Release and as Debug -O2 against the retail test data, with each test run individually through the updated `runctest.py` (which normalises CRLF). Passing in both builds: ai_profile_data, cartographer_aiprofile_mod_ui, cartographer_aiprofile_extras_ui, cartographer_aiprofile_packs_ui, cartographer_aimod_ui and hp_overflow, each in 1 to 4 s. Passing in the Debug -O2 build, where they are registered: cartographer_ai_profile_e2e (77 s), classic_ai_map_profile (95 s), ai_mod_profile (66 s) and render_shadow_cache (32 s). The three profile tests that timed out or failed in the 0.9.4 pass now pass in 66 to 95 s. No `--mpai` games were run on Windows for this check.
 
 Not run locally: the lobby *CANNOT CREATE* message and the Benchmark and
 single-player paths when a map fails to build (compiled, and covered by
@@ -159,15 +150,15 @@ release.
 
 ## CI and packages
 
-TODO-LEAD: tag CI results for `v0.9.5` (Linux packages, Windows, macOS,
-Determinism: run ids, attempts, reruns), the package set and sizes against
-0.9.4's 29 assets, SHA-256 checks, the `--version` of each runnable binary.
+All four tag workflows ran on `35ee5c27` and passed on the first attempt, with no reruns: [Linux packages 40376004449](https://github.com/pocketgeek/tak-engine/actions/runs/40376004449) (18 jobs, all success, finished 18:46 UTC), [Windows 40376004367](https://github.com/pocketgeek/tak-engine/actions/runs/40376004367) (x64, arm64, sign and publish, cache prune), [macOS 40376004589](https://github.com/pocketgeek/tak-engine/actions/runs/40376004589) (arm64 and x64 build, then sign and notarize for each) and [Determinism 40376004317](https://github.com/pocketgeek/tak-engine/actions/runs/40376004317) (dispatched on the tag; detmath, unit-tests 8/8 and sim-equiv all success; GCC and Clang x86-64 at -O0/-O2/-O3 all agree on golden `dcef618cd2e4d558`, "DETERMINISM OK", unchanged from 0.9.4). The Determinism sim-equiv job took 61 minutes because "Install build deps" stalled for 59 minutes (18:15:55 to 19:14:42 UTC); it finished by itself and the driver-equivalence test printed OK, the same runner stall as in 0.9.4.
 
-Signing: TODO-LEAD: Authenticode results on oden-win (expected 7 signed files,
-as 0.9.4) and macOS notarisation and `stapler`/`spctl` results on the MacBook.
+All 29 assets were downloaded and match GitHub's SHA-256 digests and sizes. The file set is identical to 0.9.4's: all 29 per-asset file lists (packages, installer, zips, DMGs, debug archives) match, apart from the download path printed in the installer's listing. Sizes grew slightly, from +0.01% (Linux x64 debug tarball) to +0.10% (Arch package); the largest absolute growth is the Windows x64 debug zip at +20 KB. Every takclient and takserver (36 Linux, 22 Windows and macOS) carries the `v0.9.5` build string and none carries an older `v0.9.x` string; the 18 cartographer binaries carry no version string, as in 0.9.4. Every one that can run here reports `0.9.5 (build v0.9.5)` (Slackware, Debian, Ubuntu, Fedora, openSUSE x86-64 and the debug tarball); the Arch client needs Arch's newer glibc (`GLIBC_2.44`) and does not start on this Fedora machine, as with 0.9.0 to 0.9.4, while its server reports the same version. None of the 54 Linux ELF binaries has a libva, libdrm, libsecret, GLib or libsqlite `NEEDED` entry, and none contains `__vaDriverInit_`, `SQLite format` or `sqlite3_`; the Windows and macOS binaries contain no SQLite strings either. The licence files (`OPUS-LICENSE.txt`, `CHAT-FONT-LICENSE.txt`, `EDITOR-FONT-LICENSE.txt`, `STREAMING-LICENSES.txt`, `ACME-LICENSES.txt`) are in every package, zip, installer, DMG and app. All 27 `STREAMING-LICENSES.txt` copies are byte-identical to 0.9.4's (the same two checksums, 22 and 5 copies), all 27 carry the OpenSSL notice, and none contains SQLite text. No `mods/`, `overrides/` or `click.hpi` is shipped. The packaged Linux `takclient --help` lists only `--data`, `--play-map`, `--game-mod` and `--version`. The Fedora 44 x86-64 RPM's `takserver` (`0.9.5 (build v0.9.5)`, "listening ... (protocol v299)", retail gameplay hash `d6000f4fa9095a51`) documents `--map-cache-dir` in its `--help`. It ran the Retail AI game on Inner Circle with `--local --no-auth --seed 1` and a scratch HOME and `XDG_DATA_HOME`; the client was the Debug build at `35ee5c27` (`build-dbg`) with `TAK_AI_LEVEL=6 TAK_SPEED=80 --mpai --time 60`, and the game ended `hash=c5846d769e0a7d93 units=4 err=none end=timelimit` (tick 1800), the same as 0.9.4 and as the local gate. No desync or referee-suspect line appeared. The server's map and mod caches landed under the scratch `XDG_DATA_HOME/TAKengine/takserver`, the client's under `TAKengine/TAKingdoms`. The same RPM's `cartographer "Inner Circle" --bundle` loaded the map (96 x 96 blocks, 4 start positions, 215 features, 1261 sections), wrote a 379,088-byte `.kmp` and exited 0, as in 0.9.4. The packaged release `takclient --data <read-only copy> --play-map <that .kmp>` reached the single-player lobby (local server on a private port, protocol v299, game created, map verified, features loaded) with the retail data folder as a `chmod a-w` copy that symlinks every file. Nothing was created or modified in that copy or in the real `assets/game`, and the map cache (`.kmp` and `.takmap`) and mod cache landed under the scratch `XDG_DATA_HOME/TAKengine/TAKingdoms`. Every `blob` `v0.9.5` link in the release notes (6 links, 2 with anchors: `public-server.md#versions` and `release-0.9.4-notes.md#known-limits`) resolves to a file and heading present at the tag.
 
-Publication: TODO-LEAD: the `gh release edit` time, asset count and that it is
-the Latest release; 0.9.0 to 0.9.4 stay on the releases page.
+Signing. Windows: on oden-win, `Get-AuthenticodeSignature` reports **Valid** (timestamped, "Curtis Edge") for all 7 signed files: the x64 installer and `takclient`, `takserver` and `cartographer` in both the x64 and arm64 zips, the same 7 as 0.9.4. The x64 `takclient.exe` and `takserver.exe` report `0.9.5 (build v0.9.5)`, and the arm64 ones carry the `v0.9.5` build string. `--mpai` was not run on Windows or macOS, per the release rule (no build flags, compilers or CI determinism coverage changed); the Windows and macOS tag CI determinism tests cover them.
+
+macOS: on the MacBook (no builds, macOS 26.6.2), both DMGs and all four apps (the game and TAK Cartographer, from the DMGs and from the zips) pass `stapler validate`, and `spctl -a -vv` accepts them as "Notarized Developer ID" (Curtis Edge, L479Y59RN8). Both DMGs themselves are also stapled and accepted as Notarized Developer ID. Each app passes `codesign --verify --strict --deep` and has `NSHighResolutionCapable` true; the game apps have `NSMicrophoneUsageDescription`, and the takclient has the `audio-input` entitlement (the other binaries do not). The bare zip programs (takclient, takserver, cartographer) pass `codesign --strict` with the same team id; `spctl` calls them "not an app", as expected. The macOS `takclient` and `takserver` report `0.9.5 (build v0.9.5)` (arm64 and x64, apps, bare programs and debug zips) and contain the MP4 muxer strings. No licence file is missing, and no `mods/`, `overrides/` or `click.hpi` is present. `otool -L` of the shipped arm64 and x64 `takclient`, `takserver` and `cartographer` shows no `libssl`, `libcrypto`, `libsqlite` or libopus dylib. Both takclients contain `OpenSSL 3.5.8 25 Aug 2026` and no SecureTransport TLS symbols, and Security.framework is still linked for the system root anchors.
+
+Published with `gh release edit v0.9.5 --draft=false --latest` on 2026-10-26 19:23:25 UTC with 29 assets; it is the Latest release. 0.9.0 to 0.9.4 stay on the releases page.
 
 ## Limits
 
@@ -179,10 +170,11 @@ the Latest release; 0.9.0 to 0.9.4 stay on the releases page.
 - The scenario gate had not run for seven releases (0.8.11 to 0.9.4); its
   baseline is now current, but nothing else in that span was re-checked by it.
 - Screenshots and Cartographer saves still write into the data folder.
-- A `takserver` started by hand without `XDG_DATA_HOME` or `--map-cache-dir` now
-  writes its cache to the real per-user folder; this includes the `--mpai`
-  command in `CLAUDE.md` and `desync-hunt.sh`, so test runs set a scratch
-  `XDG_DATA_HOME` for the server too.
+- A `takserver` started by hand without `XDG_DATA_HOME` or `--map-cache-dir`
+  writes its cache to the real per-user folder. The `--mpai` command in
+  `CLAUDE.md` (`35ee5c27`) and `tools/desync-hunt.sh` (after the tag) now give
+  the server a scratch `XDG_DATA_HOME`; `desync-hunt-remote.sh` already passes
+  `--map-cache-dir`. Any other hand-started test server still needs one.
 - `tickConstruction` adds to health without an upper limit, so a mod with an
   absurdly short build time could overflow it; a retail construction site's
   progress health is not updated when it is hit. Both predate 0.9.5.
@@ -191,6 +183,6 @@ the Latest release; 0.9.0 to 0.9.4 stay on the releases page.
   ModCache") was not investigated.
 - Local only: `vashim_unavailable` fails against a `third_party/ffmpeg-bink`
   built before the shim; CI builds FFmpeg with it.
-- Tag CI: TODO-LEAD.
+- Tag CI: no failures and no reruns; all four tag workflows passed on attempt 1. The Determinism run's sim-equiv job was slow (the runner's "Install build deps" step stalled for 59 minutes) but passed without intervention, as in 0.9.4.
 - All of 0.9.4's limits carry over (see
   [release-0.9.4-validation.md](release-0.9.4-validation.md#limits)).

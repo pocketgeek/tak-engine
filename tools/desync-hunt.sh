@@ -151,6 +151,8 @@ run_one() {
   # guaranteed desync manufactured by the harness, which would then be reported as a
   # finding. Every other option here still travels as a room setting; this is the one
   # that does not, so it is forwarded explicitly.
+  # The server keeps its map cache under XDG_DATA_HOME (0.9.5), so it gets a per-run
+  # folder too, never the real per-user one.
   local srv_env=""
   case "$envs" in *TAK_GODS=1*) srv_env="TAK_GODS=1";; esac
   # RETRY THE BIND. A port left in TIME_WAIT by an earlier sweep, or any unrelated
@@ -160,7 +162,8 @@ run_one() {
   local spid="" tries=0
   while [ $tries -lt 5 ]; do
     # shellcheck disable=SC2086
-    env $srv_env $SERVER --port "$port" --data "$DATA" --no-auth --local --seed "$seed" >"$slog" 2>&1 &
+    env $srv_env XDG_DATA_HOME="$OUT/server/$name" \
+        $SERVER --port "$port" --data "$DATA" --no-auth --local --seed "$seed" >"$slog" 2>&1 &
     spid=$!
     for _ in $(seq 120); do
       grep -q listening "$slog" 2>/dev/null && break
