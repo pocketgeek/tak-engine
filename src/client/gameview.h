@@ -145,6 +145,7 @@
 #include "client/fogupload.h"
 #include "client/shadowmask.h"
 #include "client/appglobals.h"   // kProjY/kProjZ, kSortZ/kSortY
+#include "client/hudcorner.h"    // the top-left overlays' shared column
 
 namespace tak { class CrusadesScreen; }
 
@@ -724,6 +725,9 @@ public:
     }
 
     void draw(int winW, int winH);
+    // The stream status banner's bottom edge (Streaming::bannerBottom; 0 with none), set
+    // before each draw(): the top-left overlays start below it.
+    void setStreamBannerBottom(float y) { streamBannerBottom_ = y; }
 #ifndef NDEBUG
     uint64_t geometryChecks() const { return geometryChecks_.load(); }
     uint64_t animatedTextureChecks() const { return animatedTextureChecks_.load(); }
@@ -2133,6 +2137,8 @@ private:
     void drawGiveUnitsMenu(int winW, int winH);
     void giveSelectedUnits(int recipient);
     bool showCounts_ = false;   // F4: player names, kills, losses, and score
+    float streamBannerBottom_ = 0;        // setStreamBannerBottom
+    tak::hudcorner::Column topLeft_;      // this frame's top-left overlays, in draw order
     bool spectating_ = false;   // watching a live net game (no control, no fog)
     std::string playerName_[8];   // net games: display name per player (from lobby)
     std::optional<uint8_t> resultParticipants_; // frozen starting roster; keep defeated/disconnected players

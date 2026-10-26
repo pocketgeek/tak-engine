@@ -29,6 +29,7 @@
         // values via input(), so this is a no-op there.
         winW_ = winW;
         winH_ = winH;
+        topLeft_ = tak::hudcorner::Column(streamBannerBottom_ > 0 ? streamBannerBottom_ + tak::hudcorner::kGap : 0);
         // Render telemetry: reset every frame; recording only for debug harnesses.
         // The render study records by default; TAK_RENDER_STATS=0 switches it off
         // there, so the telemetry's own cost can be measured with one binary.
@@ -3080,23 +3081,29 @@
         if (!panelTex_ && !spectating_ && !posterFrame_) {
             const PlayerR& tm = framePlayer(localPlayer_);
             float cap = std::max(tm.storage, 1.0f);
-            SDL_FRect bg{10, 10, 180, 12};
+            // Its lines reach y = 90 with a builder selected (MANA, the unit, its menu,
+            // TRAINING); the block moves down as one under the stream banner.
+            const auto* sel = selection_.empty() ? nullptr : frameUnitP(selection_.front());
+            const float legacyH = !hudFont_.ok() ? 12.0f : !sel || !sel->alive() || !sel->type ? 28.0f
+                                  : sel->type->isBuilder ? 82.0f : 46.0f;
+            const float dy = topLeft_.place(10, legacyH) - 10;
+            SDL_FRect bg{10, 10 + dy, 180, 12};
             SDL_SetRenderDrawColor(ren_, 20, 20, 30, 230);
             SDL_RenderFillRectF(ren_, &bg);
-            SDL_FRect fg{12, 12, 176 * std::clamp(tm.mana / cap, 0.0f, 1.0f), 8};
+            SDL_FRect fg{12, 12 + dy, 176 * std::clamp(tm.mana / cap, 0.0f, 1.0f), 8};
             SDL_SetRenderDrawColor(ren_, 80, 200, 255, 255);
             SDL_RenderFillRectF(ren_, &fg);
             if (hudFont_.ok() && !panelTex_) {
                 char buf[96];
                 std::snprintf(buf, sizeof buf, "MANA %d/%d  +%d", int(tm.mana), int(cap),
                               int(tm.income));
-                hudFont_.draw(ren_, buf, 198, 21, 1.5f, {170, 225, 255, 255});
+                hudFont_.draw(ren_, buf, 198, 21 + dy, 1.5f, {170, 225, 255, 255});
                 if (!selection_.empty()) {
                     const auto* u = frameUnitP(selection_.front());
                     if (u && u->alive() && u->type) {
                         std::snprintf(buf, sizeof buf, "%s  %d/%d", u->displayName().c_str(),
                                       int(u->hp), int(u->type->maxHp));
-                        hudFont_.draw(ren_, buf, 12, 40, 1.5f, {220, 220, 190, 255});
+                        hudFont_.draw(ren_, buf, 12, 40 + dy, 1.5f, {220, 220, 190, 255});
                         if (u->type->isBuilder) {
                             const auto menu = conjureMenu(u->type->id);   // mission-filtered
                             std::string m;
@@ -3106,12 +3113,12 @@
                                      (bt ? bt->name : menu[i]) + "  ";
                             }
                             if (!m.empty())
-                                hudFont_.draw(ren_, m, 12, 58, 1.5f, {180, 200, 170, 255});
+                                hudFont_.draw(ren_, m, 12, 58 + dy, 1.5f, {180, 200, 170, 255});
                             if (!u->buildQueue.empty()) {
                                 std::snprintf(buf, sizeof buf, "TRAINING %s (%zu queued)",
                                               u->buildQueue.front()->name.c_str(),
                                               u->buildQueue.size());
-                                hudFont_.draw(ren_, buf, 12, 76, 1.5f, {150, 200, 255, 255});
+                                hudFont_.draw(ren_, buf, 12, 76 + dy, 1.5f, {150, 200, 255, 255});
                             }
                         }
                     }
@@ -3147,22 +3154,25 @@
         if (!spectating_) {
             renderGui(winW, winH);
             drawPanel(winW, winH);
-            drawObjectivesPanel(winW, winH);
         }
         // After the command panel: the readout fills the strip BETWEEN the two, and it
         // measures the panel's drawn position to find its own bottom edge.
         drawStatsPanel(winW, winH);
+        // The top-left column (client/hudcorner.h), top down: the GAME TIME clock, the F4
+        // scoreboard, the mission objectives, then (later) the voice speakers.
         if (front().scenarioClock) {
             const unsigned seconds=front().gameTick/30;
             char clock[64];
             std::snprintf(clock,sizeof clock,"GAME TIME %u:%02u:%02u",seconds/3600,(seconds/60)%60,seconds%60);
-            const SDL_FRect background{8,32,blockWidth(clock,2.f)+12,28};
+            const float y=topLeft_.place(32,28);
+            const SDL_FRect background{8,y,blockWidth(clock,2.f)+12,28};
             SDL_SetRenderDrawBlendMode(ren_,SDL_BLENDMODE_BLEND);
             SDL_SetRenderDrawColor(ren_,14,13,18,235);
             SDL_RenderFillRectF(ren_,&background);
-            blockText(clock,14,38,2.f,{240,242,248,255});
+            blockText(clock,14,y+6,2.f,{240,242,248,255});
         }
         if (showCounts_) drawUnitCounts(winW);
+        if (!spectating_) drawObjectivesPanel(winW, winH);
         if (showHDebug_) drawHDebug();
 
         if (mp_ && hudFont_.ok()) {

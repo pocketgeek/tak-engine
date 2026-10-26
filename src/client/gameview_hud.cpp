@@ -2046,11 +2046,15 @@ namespace {
         });
         // Retail's compact F4 table: white serif text, faction/colour emblems,
         // translucent player rows, and Name / Kills / Losses / Score columns.
-        // Independent saved scale; shrink only when the complete table cannot fit.
+        // Independent saved scale; shrink only when the complete table cannot fit in the
+        // map view (never under the minimap strip). It sits in the top-left column, under
+        // the stream banner and the GAME TIME clock.
         const float requestedScale = (settings_ ? settings_->scorecardScale : 1.0f) * kHudBase;
-        const float scale = std::max(0.1f, std::min({requestedScale, float(winW) / (484.0f + (showTeams ? 64.0f : 0.0f)),
-            float(std::max(1, winH_ - barH())) / (24.0f + 32.0f * (np + 1))}));
-        const float x = 12 * scale, top = 12 * scale, rowH = 32 * scale;
+        const auto board = tak::hudcorner::scoreboard(requestedScale, showTeams, np, float(mapViewW(winW)),
+                                                      float(winH_ - barH()), topLeft_.next());
+        const float scale = board.scale, top = board.top;
+        topLeft_.place(top, 32 * scale * float(rows.size() + 1));
+        const float x = 12 * scale, rowH = 32 * scale;
         const float nameW = 190 * scale, numberW = 90 * scale;
         const float teamW = showTeams ? 64 * scale : 0;
         const float numbersX = x + nameW + teamW;
@@ -2122,7 +2126,7 @@ namespace {
 
     void GameView::drawObjectivesPanel(int winW, int /*winH*/) {
         if (missionObjectives_.empty()) return;
-        const float x0 = 12, top = 92;
+        const float x0 = 12;
         // Integer-sized glyphs have predictable bounds: the decorative book font
         // uses baseline offsets that made the old 21px rows overlap each other.
         const float s = 2.0f, lh = 22.0f;
@@ -2158,6 +2162,7 @@ namespace {
         }
         const float panelW = showObjectives_ ? maxW + 34 : blockWidth("[O] OBJECTIVES", s) + 20;
         const float panelH = showObjectives_ ? 52 + float(lines.size()) * lh : 30;
+        const float top = topLeft_.place(86, panelH) + 6;   // the box starts 6 above the text
         SDL_FRect bg{x0 - 6, top - 6, panelW, panelH};
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren_, 14, 13, 18, 235);

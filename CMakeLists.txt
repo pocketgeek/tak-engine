@@ -2134,6 +2134,11 @@ if(TAK_BUILD_CLIENT)
     add_executable(buildrow_test tools/buildrow_test.cpp)
     target_include_directories(buildrow_test PRIVATE src)
     add_test(NAME buildrow COMMAND buildrow_test)
+    # The map view's top-left overlays (client/hudcorner.h): the stream banner, GAME TIME
+    # clock and F4 scoreboard stack instead of overlapping, at every size and scale.
+    add_executable(hudcorner_test tools/hudcorner_test.cpp)
+    target_include_directories(hudcorner_test PRIVATE src)
+    add_test(NAME hudcorner COMMAND hudcorner_test)
     add_executable(crusades_ui_test tools/crusades_ui_test.cpp src/client/crusadesscreen.cpp)
     target_compile_definitions(crusades_ui_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(crusades_ui_test PRIVATE tak-crusades-map tak-uifont ${_tak_sdl2})

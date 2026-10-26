@@ -2140,6 +2140,9 @@ int main(int argc, char** argv) {
 #endif
             gameView->pumpVoice();   // voice chat: frames in and out, push-to-talk upkeep
             gameView->posterStep(w, h);   // a MakePoster tile, drawn and read back before the frame
+            // The stream banner is drawn after the capture (Streaming::frame); the HUD's
+            // top-left overlays still start below it, on screen and in the broadcast alike.
+            gameView->setStreamBannerBottom(streaming.bannerBottom(w));
             gameView->draw(w, h);
 #ifndef NDEBUG
             if(studyQuery) {

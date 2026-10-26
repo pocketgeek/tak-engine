@@ -1,5 +1,7 @@
 #include "client/streaming.h"
 #include "client/cursorpath.h"
+#include "client/dev.h"
+#include "client/hudcorner.h"
 #include "client/hidpi.h"
 #include "client/uitext.h"
 #include "client/gpuvram.h"
@@ -262,6 +264,21 @@ struct Streaming::Impl {
             settings->streamRememberKey=keys->remember();if(save)save();
         }
     }
+    // The status banner shown while the panel is closed: "" when there is none.
+    static std::string bannerText(const video::StreamStatus& s) {
+        if(!s.active && !s.state.starts_with("FAILED"))return {};
+        std::string text="STREAM " + s.state;
+        if(s.active && !s.local.empty() && s.local!="LOCAL COPY SAVED")text+=" - "+s.local;
+        return text+" - F9";
+    }
+    video::StreamStatus bannerStatus(video::StreamStatus s) const {
+#ifndef NDEBUG
+        // TAK_SHOT_STREAM_BANNER=1: show the banner of a live stream saving a local copy,
+        // with no stream at all, so a screenshot can check what it shares the corner with.
+        if(!s.active && tak::devFlag("TAK_SHOT_STREAM_BANNER")) {s.active=true;s.state="LIVE";s.local="SAVING LOCAL COPY";}
+#endif
+        return s;
+    }
     void layout(int w,int h) {u=std::max(.4f,std::min({float(w)/680,float(h)/620,1.5f}));x=(w-640*u)/2;y=(h-580*u)/2;}
     void show(bool on) {
         if(on&&!visible)wasTextInput=SDL_IsTextInputActive();
@@ -275,11 +292,9 @@ struct Streaming::Impl {
         if(!s.active || s.bytes<rateBytes) {rateTime=now;rateBytes=s.bytes;rateKbps=0;}
         else if(now-rateTime>=1000) {rateKbps=(s.bytes-rateBytes)*8/(now-rateTime);rateTime=now;rateBytes=s.bytes;}
         if(!visible) {
-            if(s.active || s.state.starts_with("FAILED")) {
-                std::string text="STREAM " + s.state;
-                if(s.active && !s.local.empty() && s.local!="LOCAL COPY SAVED")text+=" - "+s.local;
-                text+=" - F9";
-                SDL_SetRenderDrawColor(ren,10,12,18,230);SDL_FRect r{10,10,std::min(float(w-20),uiTextWidth(text,1.5f)+20),30};SDL_RenderFillRectF(ren,&r);
+            if(const std::string text=bannerText(bannerStatus(s));!text.empty()) {
+                const auto box=hudcorner::streamBanner(uiTextWidth(text,1.5f),w); // GameView keeps its overlays below it
+                SDL_SetRenderDrawColor(ren,10,12,18,230);SDL_FRect r{box.x,box.y,box.w,box.h};SDL_RenderFillRectF(ren,&r);
                 uiText(ren,text,20,20,1.5f,{255,210,100,255});
             }
             return;
@@ -456,6 +471,13 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
     return e.type==SDL_KEYDOWN||e.type==SDL_KEYUP||e.type==SDL_TEXTINPUT||e.type==SDL_MOUSEBUTTONDOWN||e.type==SDL_MOUSEBUTTONUP||e.type==SDL_MOUSEMOTION||e.type==SDL_MOUSEWHEEL;
 }
 void Streaming::draw(int w,int h) { p_->draw(w,h); }
+float Streaming::bannerBottom(int w) const {
+    if(p_->visible)return 0;
+    const std::string text=Impl::bannerText(p_->bannerStatus(p_->stream.status()));
+    if(text.empty())return 0;
+    const auto box=hudcorner::streamBanner(uiTextWidth(text,1.5f),w);
+    return box.y+box.h;
+}
 void Streaming::frame(int w,int h,bool drawPanel) {
     uint64_t now=SDL_GetTicks64()*1000;
     bool active=p_->stream.active();
