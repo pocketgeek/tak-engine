@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.9.2**. Which versions it plays with, and whose
+This guide covers **TAK Engine 0.9.3**. Which versions it plays with, and whose
 replays it plays: see [Versions](#versions). What changed in each release: see
 the [CHANGELOG](../CHANGELOG.md). It is written for three kinds of reader:
 

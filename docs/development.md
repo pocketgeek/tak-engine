@@ -75,7 +75,7 @@ network changes so the client, server, and tools use the same code.
 Releases from 0.9.0 on stay on the GitHub releases page; versions before 0.9.0
 are no longer offered for download. To play such a version's replays, or with
 friends who have not updated, build that version from its git
-tag (every release has one, `v0.9.2`, `v0.9.1` and so on; the
+tag (every release has one, `v0.9.3`, `v0.9.2` and so on; the
 [CHANGELOG](../CHANGELOG.md) lists them):
 
 ```sh

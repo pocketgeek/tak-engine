@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.2-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.3-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,14 +26,14 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.2
+## What's new in 0.9.3
 
-- Flame units walk to a clear shot when scenery blocks their flames.
-- Lobbing units (Submersibles, catapults) only fire when their shot can reach.
-- The AI keeps factory doors clear and builds Navy Yards facing open water.
+- Trebuchets, archers and other arc-shooters fire over scenery, as in the original.
+- Towers drop targets they cannot hit instead of holding them.
+- macOS streaming uses OpenSSL, like Linux.
 
-Does not play with 0.9.1 or its replays (protocol 296). Details in the
-[CHANGELOG](CHANGELOG.md#092).
+Does not play with 0.9.2 or its replays (protocol 297). Details in the
+[CHANGELOG](CHANGELOG.md#093).
 
 ## Features
 

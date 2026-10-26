@@ -307,7 +307,7 @@ not read the macOS keychain, so on macOS each connection attempt writes the syst
 anchors (the ones multiplayer TLS also imports) to a private temporary file, passes it to
 FFmpeg as its CA file and deletes it once the attempt has connected or failed. On Linux
 the first distribution CA bundle found is used. Certificate verification is never turned
-off. Until 0.9.2 macOS streaming used Apple's deprecated SecureTransport, whose FFmpeg 7.1
+off. Until 0.9.3 macOS streaming used Apple's deprecated SecureTransport, whose FFmpeg 7.1
 code did not pass non-blocking reads down to the socket: RTMP's periodic check for server
 messages blocked until the 5-second timeout and every RTMPS upload dropped after a few
 frames (0.9.0 and earlier; 0.9.1 and 0.9.2 patched it).

@@ -20,18 +20,17 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
 ## 0.9.3
-*Unreleased · protocol 297 · replay format 15 · does not play with 0.9.2 or earlier, nor their replays*
+*2026-10-26 · protocol 297 · replay format 15 · does not play with 0.9.2 or earlier, nor their replays*
 
 - **Trebuchets fire again:** a Trebuchet no longer sits idle because a wall,
   hill, tree line or other scenery lies between it and its target. Its
   shell flies in an arc, so it fires, as in the original game, which never
-  checks for a clear line before firing a lobbed shell. In a reported game a
-  Trebuchet held a target for 47 minutes without a single shot. Test games
-  that used to stall for over an hour with Trebuchets holding fire now finish.
+  checks for a clear line before firing a lobbed shell. In a test game
+  between two computer players an Aramon Trebuchet held a target for 47
+  minutes without a single shot.
 - **Every arrow, spear and cannon ball does the same:** the same fix applies
-  to 42 unit types that shoot a plain arcing shell: the archers, bowmen,
-  cannons, ballistas, spear throwers and musketeers of the races, and the
-  Arrow Tower and other towers with arrow weapons. They now fire at targets behind scenery instead of waiting
+  to 42 unit types that shoot a plain arcing shell: the bows, cannons and
+  both Trebuchets, the Arrow Tower and other towers with arrow weapons. They now fire at targets behind scenery instead of waiting
   for a clear line, and a unit whose shots keep landing short walks to a clear
   spot as described under Blocked shots in the user guide. Units with
   direct-fire weapons (flames, magic bolts, beams) still need a clear line,
@@ -42,13 +41,14 @@ their validation reports; both live in [`docs/`](docs/).
   while an enemy in the open shoots it. In a test game a tower whose own new
   walls blocked its target ignored an enemy in the open for a whole minute.
   Orders you give directly are unchanged.
-- **Shorter, more decisive games:** in a set of 16 computer-player duels the
-  units that stood holding a target for over a minute without firing fell
-  from 80 to 4, and a game that previously never ended now finishes.
+- **Fewer idle standoffs:** in 16 test duels between two computer players
+  (Creon against Aramon on Edmont's Field), the times a unit stood holding a
+  target for over a minute without firing fell from 80 to 4, and the one duel
+  that ended with no winner within 90 minutes now has one.
 - **macOS streaming uses OpenSSL:** streaming to RTMPS services (YouTube,
   Twitch and the like) from a Mac now uses the same OpenSSL as multiplayer,
-  instead of Apple's deprecated SecureTransport, which could stall on slow
-  connections. Certificates are still checked against the macOS system root
+  instead of Apple's deprecated SecureTransport, which needed a patch in 0.9.1
+  to keep uploads alive. Certificates are still checked against the macOS system root
   certificates, and a certificate for the wrong host or from an unknown
   authority is still refused with the TLS CERTIFICATE reason. Windows and
   Linux are unchanged. Certificates you added to the Mac keychain yourself
@@ -60,6 +60,8 @@ their validation reports; both live in [`docs/`](docs/).
   public-server operators update `takserver` as well. Keep 0.9.2 (it stays on
   the releases page, or build it from its tag) to watch replays recorded
   before 0.9.3.
+
+[Release notes](docs/release-0.9.3-notes.md) · [Validation report](docs/release-0.9.3-validation.md) · [Source at v0.9.3](https://github.com/pocketgeek/tak-engine/tree/v0.9.3)
 
 ## 0.9.2
 *2026-10-25 · protocol 296 · replay format 15 · does not play with 0.9.1 or earlier, nor their replays*
