@@ -320,9 +320,9 @@ shot at); `findTarget` applies the same test from the same spot, so it is not
 picked up again until the line clears (an explicitly ordered target is
 kept). `ballistic_line_test` (Retail and
 `--legion`): a Trebuchet 1200 px from a target behind a wall of shipped
-`ZonHenge04` stones (height 60) and an `araat` arrow tower 350 px from one
+`CAVStalag01` stalagmites (blocking, indestructible, height 60) and an `araat` arrow tower 350 px from one
 fire (before: neither acquired); a Veruna tower (`vertower`, line of sight)
-with one enemy behind the stones and one in the open shoots only the open
+with one enemy behind the stalagmites and one in the open shoots only the open
 one, and one whose target a row of its owner's walls comes to hide drops it
 once and shoots an enemy in the open (before: held it blind for the rest of
 the run, 60 s).
