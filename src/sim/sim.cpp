@@ -4903,6 +4903,15 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         // -hp (the overkill below) is representable too.
         e.hp = Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(e.hp.v) - int64_t(dealt) * Fixed::kOne,
                                                       -int64_t(INT32_MAX), INT32_MAX)));
+        // Retail 51a3c2..51a408: every non-heal hit on an unfinished site (progress
+        // remaining at +0x108 nonzero) rewrites remaining = 1 - hp/maxdamage from
+        // the new signed hp word, whatever the damage source. Without it the next
+        // work tick restored hp from the stale progress and erased the damage.
+        if (e.retailSite && e.underConstruction && e.retailSite->progress.remaining!=0) {
+            auto& progress=e.retailSite->progress;
+            progress.hp=uint16_t(e.hp.floorInt());
+            progress.remaining=float(1.0-double(progress.hp)/std::max(1,e.maximumHp()));
+        }
         // Retail 409f7a..409fb2 routes the local monarch's hit to AlarmMon.
         // Keep ownership at impact, including splash and fatal hits; no visibility
         // gate and no simulation/RNG changes for this presentation event.
@@ -10093,6 +10102,16 @@ void World::tickConjureHover(Unit& b, const Unit& site) {
     notifyFlightOccupancy(b);
 }
 
+// Construction growth never takes a site past its maximum health, and the sum is
+// done in 64 bits: a mod's very short build time (or a large maxdamage) makes one
+// tick's growth as large as the whole bar, and hp + growth wrapped the 16.16 word.
+// (Retail derives a site's hp from its progress fraction, 429af0, so it is
+// bounded by maxdamage by construction.)
+static Fixed addCapped(Fixed hp,Fixed grow,int maxHp) {
+    const int64_t cap=int64_t(std::clamp(maxHp,0,32767))*Fixed::kOne;
+    return Fixed::raw(int32_t(std::min<int64_t>(cap,int64_t(hp.v)+grow.v)));
+}
+
 void World::tickConstruction(Unit& b, float dt) {
     Unit* site = unit(b.buildSiteId);
     if (!site || !site->alive() || !site->underConstruction) {
@@ -10187,8 +10206,7 @@ void World::tickConstruction(Unit& b, float dt) {
             tm.payMana(std::min(tm.mana,cost*share));
             progress=std::min(1.0,progress+work);
         }
-        site->hp=fxMin(Fixed::fromInt(site->type->maxHp),site->hp+
-            Fixed::fromFloat(float(site->type->maxHp*0.95*work)));
+        site->hp=addCapped(site->hp,Fixed::fromFloat(float(site->type->maxHp*0.95*work)),site->type->maxHp);
     } else {
         float cost = site->type->buildCost * dt / std::max(total, 0.01f);
         const double share = tm.constructionShare(cost);
@@ -10196,7 +10214,7 @@ void World::tickConstruction(Unit& b, float dt) {
         tm.payMana(std::min(tm.mana, double(cost) * share));
         float grow = site->type->maxHp * 0.95f * dt / std::max(total, 0.01f);
         if (share < 1) grow = float(double(grow) * share);
-        site->hp += Fixed::fromFloat(grow);
+        site->hp=addCapped(site->hp,Fixed::fromFloat(grow),site->type->maxHp);
     }
     emitConstruction(b,false);
     emitConstruction(*site,true);

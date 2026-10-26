@@ -519,6 +519,17 @@ Still deviating:
   Remote Effect lands on its target's position at fire time; retail uses the
   slot's aim point (+8), lead included.
 
+### A hit on an unfinished site rewrites its progress
+
+In the same routine (`51a3c2..51a408`), after the 16-bit HP subtraction, a
+unit whose construction remaining (+0x108, a float) is nonzero gets
+`remaining = 1 - hp / maxdamage` from the new signed HP word, whatever the
+damage source (weapon, fire, script). The work routine `429af0` derives a
+site's HP from that fraction, so retail construction HP is bounded by
+maxdamage by construction. We mirror this in `applyHit` for retail sites, and
+cap the legacy `tickConstruction` growth at maxdamage in 64 bits (a very short
+buildtime or a tall type used to wrap the 16.16 word).
+
 ### A dying unit takes no more hits
 
 `52a330` draws its CRT spread and hands the integer damage to `51a140`, which

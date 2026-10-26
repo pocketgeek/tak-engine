@@ -76,5 +76,47 @@ int main() {
         w.tick(1.f/30);
         check(!w.unit(s)->alive() || w.unit(s)->hp<=Fixed(),"its decay does not wrap the hp back to positive");
     }
+    {
+        // Construction growth. A mod with a tiny buildtime on a tall type makes one
+        // tick's growth as large as the whole bar; the site's hp (already above
+        // zero from the first tick) plus that growth wrapped the 16.16 word, leaving
+        // a negative hp, or UB under UBSan. Retail bounds a site's hp by maxdamage.
+        sim::World w;setup(w);
+        sim::UnitType site=body("tower",32767);site.maxVel=Fixed();site.canMove=false;
+        site.buildTime=0.001f;site.buildCost=0;
+        sim::UnitType worker=body("worker",100);worker.isBuilder=true;worker.workerTime=1;worker.buildDist=64;
+        const int b=w.spawn(&worker,200,200,0,0);
+        const int s=w.startBuild(b,&site,200,240,sim::World::Approach::None);
+        check(s!=0,"a short build of a 32767-hp type is placed");
+        if(s) {
+            w.unit(s)->hp=Fixed::fromInt(30000);   // growth below adds ~32767 more
+            bool over=false,neg=false;
+            for(int i=0;i<30 && w.unit(s)->underConstruction;++i) {
+                w.tick(1.f/30);
+                const Fixed hp=w.unit(s)->hp;
+                over|=hp>Fixed::fromInt(32767);neg|=hp<Fixed();
+            }
+            check(!neg,"a one-tick build never wraps the site's hp negative");
+            check(!over,"construction never raises hp above maxdamage");
+            check(!w.unit(s)->underConstruction && w.unit(s)->hp==Fixed::fromInt(32767),
+                  "the short build completes at exactly maxdamage");
+        }
+    }
+    {
+        // Retail 51a140 (51a3c2..51a408): a hit on an unfinished site rewrites its
+        // progress (hp word and remaining = 1 - hp/maxdamage); the next work tick
+        // otherwise restored the stale hp and erased the damage.
+        sim::World w;setup(w);
+        const int a=w.spawn(&attacker,200,200,0,0),s=w.spawn(&victim,230,260,0,1);
+        auto* site=w.unit(s);site->underConstruction=true;site->retailSite.emplace();
+        site->retailSite->progress.remaining=0.4f;site->retailSite->progress.hp=300;
+        site->retailSite->type.maxHp=500;
+        site->hp=Fixed::fromInt(300);
+        sim::RetailReplayProbe::hit(w,blow(100),a,s);
+        const auto& pr=w.unit(s)->retailSite->progress;
+        check(pr.hp==uint16_t(w.unit(s)->hp.floorInt()),"a hit on a retail site updates its progress hp");
+        check(std::fabs(pr.remaining-float(1.0-double(w.unit(s)->hp.floorInt())/500))<1e-6f,
+              "...and its remaining work (1 - hp/maxdamage)");
+    }
     return failures?1:0;
 }
