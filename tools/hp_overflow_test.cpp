@@ -64,5 +64,17 @@ int main() {
               "a hit above 32767 subtracts its whole value");
         check(w.unit(v)->overkill==-hp,"overkill matches the saturated hp");
     }
+    {
+        // A retail construction site is not dying at zero hp, so a big hit
+        // saturates it at -INT32_MAX; the unattended site's decay that tick
+        // must not wrap that back to positive and leave the site standing.
+        sim::World w;setup(w);
+        const int a=w.spawn(&attacker,200,200,0,0),s=w.spawn(&victim,230,260,0,1);
+        auto* site=w.unit(s);site->underConstruction=true;site->retailSite.emplace();site->hp=Fixed();
+        sim::RetailReplayProbe::hit(w,blow(40000),a,s);
+        check(w.unit(s)->hp==Fixed::raw(-INT32_MAX),"a retail site at zero saturates under a huge hit");
+        w.tick(1.f/30);
+        check(!w.unit(s)->alive() || w.unit(s)->hp<=Fixed(),"its decay does not wrap the hp back to positive");
+    }
     return failures?1:0;
 }

@@ -227,7 +227,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             // Native HP is a signed 16-bit word (shipped data tops out at 29999);
             // cap a modded maxdamage there so every Fixed::fromInt(maxHp) on the
             // HP, heal and repair paths stays inside 16.16's whole-number range.
-            t.maxHp = int32_t(float(std::min(info->numberOr("maxdamage", 100), 32767.0)));
+            t.maxHp = truncSat32(double(float(std::min(info->numberOr("maxdamage", 100), 32767.0))));
             t.experiencePoints = int32_t(info->numberOr("experiencepoints", 666));
             t.isBuilder = info->numberOr("builder", 0) != 0;
             t.commander = info->numberOr("commander", 0) != 0;   // the Monarch
@@ -10207,7 +10207,9 @@ void World::decayConstruction(Unit& u, float dt) {
                      ? u.conjureRate
                      : Fixed::fromFloat(u.type->maxHp * 0.95f
                                         / (std::max(u.type->buildTime, 0.01f) * kTick));
-    u.hp -= rate;
+    // A retail site keeps taking hits at or below zero, so applyHit may have
+    // saturated its hp at -INT32_MAX; subtract in 64 bits so this cannot wrap.
+    u.hp = Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(u.hp.v) - rate.v, -int64_t(INT32_MAX), INT32_MAX)));
     if (u.hp > Fixed()) return;
     if (u.type->isStructure()) {
         blockFoot(*u.type, u.x.toFloat(), u.z.toFloat(), false);
@@ -14342,7 +14344,9 @@ void World::tick(float dt) {
         // there, so anything that can cross water is exempt.
         if (waterDamage_ > 0 && !u.type->canFly && u.type->maxWaterDepth <= 0 &&
             isWater(u.x.toFloat(), u.z.toFloat())) {
-            u.hp -= Fixed::fromFloat(waterDamage_ * dt);
+            // Saturating: a retail site stays alive at or below zero hp.
+            u.hp = Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(u.hp.v) - Fixed::fromFloat(waterDamage_ * dt).v,
+                                                          -int64_t(INT32_MAX), INT32_MAX)));
             if (u.hp <= Fixed()) { u.overkill = fxMax(u.overkill, -u.hp); u.deathType = 1; }
         }
         // Self-repair (KINGDOMS.icd 0x51e152..0x51e1bc). healtime is the unit's own
