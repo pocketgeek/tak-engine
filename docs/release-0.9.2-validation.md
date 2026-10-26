@@ -10,8 +10,9 @@ TODO-LEAD: Tagged `v0.9.2` at `<sha>` (full `<full sha>`, annotated tag object `
 0.9.2 follows 0.9.1 (protocol 295; tag `v0.9.1` -> `41b2b81f`, validation
 commit `87a04421`). It is a bug-fix release for four problems the user saw
 watching an all-AI game (Creon against Aramon, both Absurd, Legion, Crusades
-balance, a generated map). Every code change landed on main linearly after
-`87a04421`, from two fix branches cherry-picked onto main (no merges):
+balance, a generated map), plus a targeting fix that `classic_ai_duels` led
+to. Every code change landed on main linearly after `87a04421`, from fix
+branches cherry-picked or fast-forwarded onto main (no merges):
 
 - `6697b952`: Ballistic weapons use retail's BallisticWeapon inRange
   (`0x52bc60`, origin to origin under the map's gravity, no footprint pad) in
@@ -37,20 +38,34 @@ balance, a generated map). Every code change landed on main linearly after
 - `db237626`: integration: `kNetVersion` 295 -> 296, `tools/replay_test.cpp`
   pins 296 and refuses 295; CHANGELOG, `docs/multiplayer-design.md`,
   `docs/user-guide.md`.
+- `6c3e8359`: static reach, landed after the preparation commits:
+  `World::combatReach` is the one reach test (selected slot via
+  `approachSlot`, the longest when all fire; structure footprint pad, or the
+  arc for a Ballistic weapon). `tickCombat`'s keep test and `findTarget`'s
+  filter for units that may not leave their post both use it, for every
+  ranged weapon (melee exempt), so towers and switching Monarchs on Hold no
+  longer acquire and drop out-of-reach targets. New test
+  `structure_combat_reach`; `classic_ai_expansion` judges each Build after the
+  think. **Hashed: folded into protocol 296** (unreleased, no bump).
+- `24fb36be`: review: `findTarget(..., chases)` keeps the AI squad attack
+  missions (`response.mode<0`, which `mayChase` lets chase even on Hold) out
+  of that filter.
 
-`git diff --stat v0.9.1 db237626 -- src` touches 6 files (474 insertions, 18
+`git diff --stat v0.9.1 24fb36be -- src` touches 6 files (519 insertions, 36
 deletions): `src/ai/ai.cpp`, `src/ai/ai.h`, `src/net/protocol.h`,
-`src/sim/retailaim.h`, `src/sim/sim.cpp` and `src/sim/sim.h`. Nothing under
-`src/server/`, `src/client/`, `src/tnt/`, `src/campaign/`,
-`src/net/replayhdr.h` or `src/net/crusades.h` changed.
+`src/sim/retailaim.h`, `src/sim/sim.cpp` and `src/sim/sim.h` (at `db237626`:
+the same 6 files, 474 insertions, 18 deletions). Nothing under `src/server/`,
+`src/client/`, `src/tnt/`, `src/campaign/`, `src/net/replayhdr.h` or
+`src/net/crusades.h` changed.
 
-The preparation commit on top of `db237626` changes no code: `CMakeLists.txt`
+The preparation commits on top of `db237626` change no code: `CMakeLists.txt`
 (the version line), `CHANGELOG.md` (dated, compatibility and links),
 `README.md`, the version lines in `docs/`, these notes, this report,
-`docs/img/README.md` and `docs/img/title.jpg`.
+`docs/img/README.md` and `docs/img/title.jpg`. The static-reach commits
+followed them; the docs commit after those changes no code.
 
 TODO-LEAD: `git diff --stat v0.9.1 v0.9.2 -- src` on the final tag (expected:
-the same 6 files).
+the same 6 files, 519 insertions, 36 deletions).
 
 **Compatibility.** `kNetVersion` is **296** in `src/net/protocol.h` (295 at
 `v0.9.1`). `kReplayFormat` is **15** in `src/net/replayhdr.h`, unchanged. The
@@ -111,7 +126,8 @@ Debug builds (`build-o2`, `-O2 -g`, ccache + mold).
 | Retail AI (`TAK_AI_LEVEL=6`) | `c5846d769e0a7d93` (4 units, same as 0.9.1) | not run |
 
 Only the AI change moves the two 300 s gates; the sim branch on its own left
-all five at their 0.9.1 values. Logs: `~/tak-tmp/fix092-int/` (`ctest.log`,
+all five at their 0.9.1 values. The static-reach fix moved both 300 s gates
+again; the final values are under "On the static-reach fix" below. Logs: `~/tak-tmp/fix092-int/` (`ctest.log`,
 `gates.out`, `gate-*.log`).
 
 - **The reported problems, re-measured** on the integrated build. A recorded
@@ -148,7 +164,7 @@ version line and docs; no code differs from the integrated code above):
   - `mod_settings` ("settings not isolated"): the harness, not the code. The
     run also set `TAK_SETTINGS_FILE`, which overrides the path this test
     checks; run again without it, it passes.
-  - **`classic_ai_duels`: a real change in behaviour, not yet ruled on.** The
+  - **`classic_ai_duels`: a real change in behaviour, since fixed (below).** The
     Classic (Retail AI) duel Creon against Aramon on Edmont's Field ends with
     no winner within the 90-minute cap (peak units 52 / 99). It is
     deterministic (the same numbers on a second run) and bisects to
@@ -163,10 +179,70 @@ version line and docs; no code differs from the integrated code above):
     against Veruna went from an Aramon win after 60.8 game-minutes on
     `87a04421` to a Veruna win after 86.4, close to the cap (Taros against Zhon:
     Zhon after 27.4, now 28.6).
-    TODO-LEAD: ruling (accept as a balance shift and adjust the test's cap or
-    pairing, or change the code). Logs:
-    `~/tak-tmp/scratch/release-092/ctest-full.out`, `duels-*.out`.
+    Ruling: change the code, for every static unit (the user's decision).
+    Logs: `~/tak-tmp/scratch/release-092/ctest-full.out`, `duels-*.out`.
 - `takclient menu` renders VERSION 0.9.2 (the title screenshot).
+
+**The `classic_ai_duels` diagnosis.** Instrumented duels (out-of-tree probes,
+16 seeds per build; outputs in `~/tak-tmp/wt/sweep/`) found no arc-path stall:
+0.9.2's no-arc paths (`noteNoArc`, its write-off, the arc drops and the
+`fire` no-arc return) never ran in these duels. The outcome shift came from
+`cc5e966e`'s `findTarget` filter alone. A unit that may not leave its post
+acquired within `maxRange+90` with no reach test, `tickCombat` dropped the
+target at once (`!mayChase && !inReach`), and every acquisition ran
+`setSlotsManual`, which clears the fire-at-will sweep's slot targets: such a
+unit spent its time acquiring and dropping instead of shooting what was in
+range. `cc5e966e` stopped that for Ballistic weapons only, which strengthened
+the Creon and Aramon ballistic towers and changed the matchup; the Prismatic
+Mirror, the Stronghold and the weapon-switching Creon Monarch on Hold
+(searching `maxRange` 1200 with Blue Flame selected) still churned (counts
+below). Stalls
+were not new: over 16 seeds, `87a04421` had 1 duel with no winner (8 Creon /
+7 Aramon), `664ea36c` 2 (6 / 8); the default seed landed on one.
+
+**On the static-reach fix** (`24fb36be`, worktree `build-o2` with
+`TAK_TEST_DATA` set, scratch HOME/XDG_DATA_HOME, all targets):
+
+- **Change test.** `structure_combat_reach`: a shooter with an enemy
+  structure in reach only through the footprint pad and a nearer mobile decoy
+  just past its reach. Damage dealt to the structure with the decoy present,
+  before (`c1c46a79`) and after the fix, against the no-decoy run:
+
+| Shooter | Before | After | No decoy |
+|---|---|---|---|
+| Prismatic Mirror `crepris` (range 1478) | 0 | 11373 | 11373 |
+| Stronghold `arassh` (range 600) | 0 | 14146 | 14728 |
+| Creon Monarch `cresage`, Hold, slot 2 (range 120) | 0 | 10382 | 9151 |
+
+- **Affected tests**, all 19 passed: `classic_ai_duels`, every `classic_ai*`
+  (with `classic_ai_expansion` and `classic_ai_map_profile`),
+  `structure_combat`, `structure_combat_reach`, `blocked_shot`,
+  `legion_blocked_shot`, `naval_combat`, `legion_naval_combat`, `ai_behavior`
+  and `ai_behavior_data`. `ctest -L quick` with data (on `6c3e8359`):
+  517/518, the one failure `vashim_unavailable` as above.
+- **`classic_ai_duels`** (default seeds), all three won within the cap:
+  Creon beats Aramon after 54.2 game-minutes (no winner in 90 on
+  `664ea36c`; 48.7 on `87a04421`), Aramon beats Veruna after 39.6 (Veruna
+  after 86.4 on `664ea36c`; Aramon after 60.8 on `87a04421`), Zhon beats Taros
+  after 26.3 (28.6; 27.4). Over the same 16 seeds the prototype of this fix
+  had 1 duel with no winner (6 Creon / 9 Aramon), as many as 0.9.1.
+- **Churn** on the default Creon/Aramon seed, drops of an out-of-reach
+  target, `664ea36c` -> fix: `cresage` 2628 -> 1, `crepris` 907 -> 47,
+  `arassh` 1149 -> 13, `crebomb` 44 -> 24, `araat` 7 -> 5. What remains is a
+  target that moves out of reach between acquisition and the next combat tick.
+- **Detmath guard** OK; **cross-compiler golden** (`check-determinism`) OK,
+  `dcef618cd2e4d558`, unchanged.
+- **`--mpai` gates** as above, both 300 s gates run twice with the same hash
+  (on `6c3e8359`) and once more on `24fb36be`; these are the 0.9.2 values:
+
+| Mode | 60 s | 300 s |
+|---|---|---|
+| Retail pathfinding (Normal AI) | `d375d03a6c472773` (unchanged) | `387df8b0916a182e` (was `00499a875aa5f0db` at `db237626`) |
+| Legion | `426ab0842b709c28` (unchanged) | `2d09d13d3ef0d324` (was `15097d3fe06e195b` at `db237626`) |
+| Retail AI (`TAK_AI_LEVEL=6`) | `c5846d769e0a7d93` (unchanged) | not run |
+
+  Logs: `~/tak-tmp/rev092/` (`r60.log`, `r300.log`, `l60.log`, `l300.log`,
+  `ai60.log`, `ctest.txt`).
 
 ## Screenshots
 
@@ -221,10 +297,17 @@ time, asset count). 0.9.0 and later releases are kept.
   where retail lobs a flat shell; ships leave the main Navy Yard of the test
   map slowly and a crowd of Iron Clads can still block a yard door; Aramon
   Keep and Castle get door strips on three sides; a conjurer in a factory yard
-  could wait for ever with no free clearing spot within 600 px (not seen). No
-  test fails with only the extra `findTarget` check removed.
-- `classic_ai_duels` fails from `cc5e966e` on (Creon against Aramon, Classic
-  AI, no winner in 90 minutes); see Local preparation checks.
+  could wait for ever with no free clearing spot within 600 px (not seen);
+  melee buildings and melee units on Hold can still acquire and drop an
+  out-of-reach target. `structure_combat_reach` fails without the static
+  `findTarget` reach filter.
+- `classic_ai_duels` passes again; a Classic duel with no winner within 90
+  minutes still happens on about 1 seed in 16, as it did in 0.9.1.
+- Static `findTarget` limits that predate this release: the search radius is
+  `maxRange+90` (`+0` on Hold), so a footprint pad above 90 px does not extend
+  acquisition; a tower whose longest weapon is Ballistic acquires only inside
+  that arc and leaves targets only a shorter direct weapon reaches to the
+  sweep. The AI squad-mission exemption (`24fb36be`) has no test of its own.
 - Local only: `vashim_unavailable` fails against a `third_party/ffmpeg-bink`
   built before the shim; CI builds FFmpeg with it.
 - All of 0.9.1's limits carry over (see

@@ -35,15 +35,22 @@ their validation reports; both live in [`docs/`](docs/).
   or hold their fire when they cannot get nearer. Before, such a unit lobbed
   the shell flat into the ground or water in front of it: in a reported game
   44% of all Submersible shells landed beside the Submersible itself.
+- **Towers no longer flicker between targets:** towers, other buildings and
+  Monarchs holding position no longer pick a target they cannot hit, only to
+  drop it again a moment later, over and over. They keep firing at what is in
+  range. In a test game between two Retail AI players, the Creon Monarch,
+  Prismatic Mirrors and Aramon Strongholds spent their time switching
+  targets instead of shooting, and the game never ended.
 - **AI factory doors:** the computer players (every level except Retail) keep
   the ground in front of their factory doors clear and no longer park units in
   another factory's doorway, so new units are not trapped inside.
 - **AI Navy Yards:** the computer players build Navy Yards where ships can sail
   straight out to open water, not at the head of a narrow inlet where new ships
   stayed stuck.
-- **Not compatible with 0.9.1:** the flame and lobbing changes change the game
-  itself, so 0.9.2 uses protocol 296 (replay format 15 is unchanged). It does
-  not play with 0.9.1 or any earlier version, nor their replays.
+- **Not compatible with 0.9.1:** the flame, lobbing and targeting changes
+  change the game itself, so 0.9.2 uses protocol 296 (replay format 15 is
+  unchanged). It does not play with 0.9.1 or any earlier version, nor their
+  replays.
 - **Upgrading:** a server and all of its players update to 0.9.2 together;
   public-server operators update `takserver` as well. Keep 0.9.1 (it stays on
   the releases page, or build it from its tag) to watch replays recorded

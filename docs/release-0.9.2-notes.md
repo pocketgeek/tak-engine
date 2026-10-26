@@ -4,10 +4,12 @@
 that burned the same standing stone for minutes, Creon Submersibles that lobbed
 their shells into the water at their own bow, computer players that trapped new
 units behind their own buildings, and Navy Yards built where ships could not get
-out.
+out. It also stops towers and Monarchs on Hold Position from switching targets
+instead of shooting, which left a test game between two Retail AI players
+without a winner.
 
-**Compatibility first.** The flame and lobbing fixes change the game
-simulation, so 0.9.2 uses network protocol **296** (replay format **15**,
+**Compatibility first.** The flame, lobbing and targeting fixes change the
+game simulation, so 0.9.2 uses network protocol **296** (replay format **15**,
 unchanged). **0.9.2 does not play with 0.9.1 or any earlier version, and does
 not play their replays.**
 
@@ -76,6 +78,29 @@ In the 20-minute test game, 1 of 197 Submersible shells landed within 300
 pixels of the Submersible (290 pixels out, on high ground), against 44% in the
 reported game.
 
+## Towers and targets
+
+A building, or a unit on Hold Position, picks its own targets but may not walk
+towards them. Until now it could pick an enemy just out of its reach, drop it
+at once because it could not hit it, and pick it again a moment later, over and
+over. Each time it picked one, it also stopped shooting at the enemies that
+were in reach. 0.9.2 already stopped this for lobbing weapons; now it is
+stopped for every building and every unit holding its position:
+
+- **Towers** (the Prismatic Mirror, the Stronghold and the rest) pick only
+  targets they can hit from where they stand, and keep firing at what is in
+  range.
+- **Monarchs on Hold Position** that switch weapons (the Creon Monarch) judge
+  the reach by the weapon they have selected, not by their longest one.
+- **Units sent on an attack by the computer players** still go after targets
+  out of reach, even on Hold Position, as before.
+- Close-combat buildings and units are unchanged.
+
+In a test game between two Retail AI players (Creon against Aramon on Edmont's
+Field) the Creon Monarch dropped a target 2,628 times and Aramon's Strongholds
+1,149 times; the game had no winner after 90 minutes. Now the Monarch drops 1
+and the Strongholds 13, and Creon wins after 54 minutes.
+
 ## Computer players: factory doors
 
 Every level except Retail now keeps the ground in front of its factory doors
@@ -114,6 +139,10 @@ The Retail AI places yards as the original did.
   targets inland.
 - A flame weapon (one that fires a flame stream) now counts its blocked shots
   like any other weapon.
+- A building, or a unit on Hold Position, picks a target only within the reach
+  it fires at: its selected weapon's range (its longest weapon's, if it fires
+  them all), plus a target building's footprint, or the arc for a lobbing
+  weapon. Melee weapons are unchanged.
 
 ## For contributors
 
@@ -127,6 +156,15 @@ The Retail AI places yards as the original did.
   `tickCombat` and `findTarget`. New checks in `naval_combat_test` and
   `blocked_shot_test`; `tools/re/check_ballistic_inrange.py` matches 6,000
   emulated `52bc60` answers. Evidence in [retail-engine.md](retail-engine.md).
+- Sim (`6c3e8359`, `24fb36be`, protocol 296): `World::combatReach` is the one
+  reach test (selected slot via `approachSlot`, the longest when all fire;
+  structure footprint pad, or the arc for a Ballistic weapon). `tickCombat`'s
+  keep test and `findTarget`'s filter for units that may not leave their post
+  both use it, for every ranged weapon (melee exempt); switchers on Hold use
+  the clamped `weaponSlot`. `findTarget(..., chases)` exempts the AI squad
+  attack missions, which `mayChase` lets chase. New test
+  `structure_combat_reach`; `classic_ai_expansion` now judges a Build after the
+  think (an expansion moves its founder in the same think).
 - AI (`1a2f1333`, `064cb448`, `src/ai/ai.cpp` and `ai.h`, our levels only; the Retail
   AI's ClassicBrain is untouched): factory door strips (yardmap edges with open
   `c`/`C` cells; span plus 16 px each side, 80-112 px deep, capped at retail's
@@ -138,9 +176,9 @@ The Retail AI places yards as the original did.
   [naval-ai-2026-10-01.md](naval-ai-2026-10-01.md).
 - `--mpai` Inner Circle seed 1: at 60 s unchanged from 0.9.1 (Retail
   `d375d03a6c472773`, Legion `426ab0842b709c28`, Retail AI
-  `c5846d769e0a7d93`); at 300 s Retail `00499a875aa5f0db` (was
-  `a470242be92a0e14`), Legion `15097d3fe06e195b` (was `a65a48d7a63825ae`),
-  moved by the AI change only. The cross-compiler golden
+  `c5846d769e0a7d93`); at 300 s Retail `387df8b0916a182e` (0.9.1
+  `a470242be92a0e14`), Legion `2d09d13d3ef0d324` (0.9.1 `a65a48d7a63825ae`),
+  moved by the AI change and the static-reach fix. The cross-compiler golden
   (`check-determinism`) stays `dcef618cd2e4d558`.
 
 ## Known limits
@@ -161,6 +199,8 @@ New with 0.9.2:
   cells on their west and east edges as well as the south, so the computer
   players keep all three sides clear. Whether that is too cautious is a
   judgement call; it was left as it is.
+- **Close combat.** A close-combat building, or a close-combat unit on Hold
+  Position, can still pick a target out of its reach and drop it again.
 - **A conjurer in a factory yard** waits for the yard to be cleared; if no spot
   to clear it to is free within 600 pixels it could wait for ever. This was not
   seen in testing.

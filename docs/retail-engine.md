@@ -137,10 +137,16 @@ reports pitch 0 for no arc, but a slot whose muzzle-to-SweetSpot solve has
 no arc (possible just inside the origin solve's reach) does not start
 FireWeapon (`tickScriptWeapon`) and a scriptless shot is not launched
 (`fire`); a unit free to move keeps closing there. A unit that may not leave
-its post (a building, or Hold Position on an auto target) drops a target past
-its origin arc, so `findTarget` does not acquire one for it (it would be
-acquired and dropped on every acquisition turn, and each acquisition cancels
-the unit's path and takes its slots off auto). The muzzle solve turns with the
+its post (a building, or Hold Position on an auto target; an AI squad attack
+mission, which may chase, is exempt) drops a target out of its reach, so
+`findTarget` does not acquire one for it (it would be acquired and dropped on
+every acquisition turn, and each acquisition cancels the unit's path and takes
+its slots off auto, clearing the fire-at-will sweep's targets). Both sides use
+one test, `World::combatReach`: the selected slot (`approachSlot`; the longest
+weapon when all fire), its range plus the structure pad, or the origin arc for
+a Ballistic weapon. This holds for every ranged weapon since `6c3e8359` (only
+Ballistic ones before; non-ballistic towers and switching Monarchs on Hold
+churned thousands of times a game); melee keeps the old acquisition reach. The muzzle solve turns with the
 aiming pose, so it is judged only once the weapon is aimed and loaded: each
 reload spent that way counts as a blocked shot (`World::noteNoArc`, see
 "Blocked shots"), so after three the target is written off from that spot;
