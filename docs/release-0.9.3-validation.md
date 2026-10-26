@@ -42,6 +42,18 @@ commit `43d22d18`). Every code change landed on main linearly after `43d22d18`
   host-only `vashim_unavailable` failed, `vashim_system_loader` skipped);
   `settings`, `mod_settings` and `hudcorner` passed.
 
+- `a916402d`: test-only fix found by the first tag CI run. macOS
+  `streaming_rtmps` failed on both runners: their `openssl` command-line tool
+  is OpenSSL 1.1.1w, whose `req -x509 -addext` kept its own config's
+  extensions and gave the test's throwaway root CA two Basic Constraints;
+  OpenSSL 3.5.8 (the new macOS FFmpeg TLS) rejects such a certificate ("unable
+  to get local issuer certificate"). `tools/check-stream-rtmps.py` now writes
+  its own `openssl.cnf`, so every openssl/LibreSSL flavour makes the same
+  certificates, and a Python pre-check reports the verify error. The engine is
+  unchanged; the wrong-host and untrusted-root cases are still refused.
+  Reproduced and passed with OpenSSL 1.1.1w, LibreSSL 3.3.6 and OpenSSL 3.5.x
+  on the MacBook and Linux. The v0.9.3 tag was moved to it before publication.
+
 <!-- TODO-LEAD: diff stat: `git diff --stat v0.9.2 v0.9.3 -- src` (files, insertions, deletions) and the list of files outside src. At 4e766af8, `git diff --stat v0.9.2 4e766af8` touches 28 files (702 insertions, 170 deletions), 4 of them in .github/workflows. -->
 
 The preparation commit on top of `4e766af8` changes no code: `CMakeLists.txt`
