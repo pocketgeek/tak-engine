@@ -468,8 +468,10 @@
                 if (hit >= 0) matched.push_back(hit);
                 // Double-click on the same unit: every unit of its type drawn in the map
                 // view (Shift adds them to the selection, Ctrl removes them).
-                const bool dbl = tak::client::doubleclick::isDouble(dragClicks_, hit, lastClickHit_);
-                lastClickHit_ = dbl ? -1 : hit;
+                const bool dbl = tak::client::doubleclick::isDouble(dragClicks_, hit, lastClickHit_,
+                                                                    lastClickCount_);
+                lastClickHit_ = hit;
+                lastClickCount_ = dragClicks_;
                 if (dbl) {
                     std::vector<tak::client::doubleclick::Candidate> cands;
                     for (const UnitR* _up : front().live) {

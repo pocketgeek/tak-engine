@@ -32,9 +32,13 @@ inline bool inView(const Candidate& c, const View& v) {
     return c.sx >= 0 && c.sy >= 0 && c.sx <= v.w && c.sy <= v.h;
 }
 
-// A double-click is a second press, on the same unit, that SDL counts as >= 2.
-inline bool isDouble(int sdlClicks, int hitId, int lastHitId) {
-    return sdlClicks >= 2 && hitId >= 0 && hitId == lastHitId;
+// A double-click is a press SDL counts as >= 2 whose previous press in SDL's chain
+// was the plain select-click on the SAME unit (lastClicks == sdlClicks - 1). A triple
+// click therefore expands again rather than collapsing to the one unit, and a press
+// in between that something else consumed (an order click, a HUD button) breaks the
+// chain instead of pairing with an older select-click.
+inline bool isDouble(int sdlClicks, int hitId, int lastHitId, int lastClicks) {
+    return sdlClicks >= 2 && lastClicks == sdlClicks - 1 && hitId >= 0 && hitId == lastHitId;
 }
 
 // Ids to select for a double-click on `hitId`. Only the player's own units expand; an

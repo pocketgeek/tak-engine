@@ -52,11 +52,14 @@ int main() {
     for (int id : r) if (!has(sel, id)) sel.push_back(id);
     check(has(sel, 6) && has(sel, 1) && has(sel, 2) && has(sel, 9) && sel.size() == 4, "shift adds to selection");
 
-    // Click detection: needs SDL clicks >= 2 AND the same unit as the previous click.
-    check(dc::isDouble(2, 5, 5), "two clicks same unit");
-    check(!dc::isDouble(1, 5, 5), "single click");
-    check(!dc::isDouble(2, 5, 6), "second click on a neighbour");
-    check(!dc::isDouble(2, -1, -1), "empty ground");
+    // Click detection: needs SDL clicks >= 2, the same unit as the previous select-click,
+    // and that click being the previous press in SDL's chain.
+    check(dc::isDouble(2, 5, 5, 1), "two clicks same unit");
+    check(!dc::isDouble(1, 5, 5, 1), "single click");
+    check(!dc::isDouble(2, 5, 6, 1), "second click on a neighbour");
+    check(!dc::isDouble(2, -1, -1, 1), "empty ground");
+    check(dc::isDouble(3, 5, 5, 2), "triple click expands again, not back to one unit");
+    check(!dc::isDouble(3, 5, 5, 1), "a press consumed elsewhere breaks the chain");
 
     std::printf(g_fail ? "FAILED\n" : "ok\n");
     return g_fail ? 1 : 0;
