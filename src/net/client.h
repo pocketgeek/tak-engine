@@ -170,6 +170,9 @@ public:
     // "spectators are not allowed in this game", ...); empty once a later request is
     // sent or one succeeds. The connection stays in the lobby, so the browser shows it.
     const std::string& joinError() const { return joinError_; }
+    // Why the last createGame() could not even be requested (the map failed to build locally);
+    // cleared by the next createGame(). The connection stays up in the lobby.
+    const std::string& createError() const { return createError_; }
     // Why the server refused this client's last START (MAP SCENARIO's missing seat, a map
     // without a scenario, setupMatch's refusal, maps not verified). Cleared by startGame().
     const std::string& startError() const { return startError_; }
@@ -367,6 +370,7 @@ private:
 
     std::vector<GameInfo> games_;
     RoomView room_;
+    std::string createError_;   // see createError()
     std::string joinError_;   // the last JoinResult refusal (see joinError())
     std::string startError_;  // the last START refusal (see startError())
     bool startSent_ = false;  // a StartGame went out and its answer is still to come

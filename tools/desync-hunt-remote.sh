@@ -157,7 +157,8 @@ if [ -n "${TAK_WALL_TIMEOUT:-}" ]; then
   fi
 fi
 
-CLIENT="${TAK_CLIENT:-./build-dbg/takclient}"
+BUILD="${BUILD:-build-dbg}"   # the local build dir
+CLIENT="${TAK_CLIENT:-./$BUILD/takclient}"
 [ -x "$CLIENT" ] || { echo "$CLIENT missing" >&2; exit 2; }
 
 

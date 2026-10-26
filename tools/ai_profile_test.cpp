@@ -214,6 +214,14 @@ static void modLayers() {
     fs::remove_all(root, ec);
 }
 
+// MinGW's create_symlink always fails with ENOSYS: fall back to a hard link, then a copy.
+static void linkOrCopy(const std::filesystem::path& target, const std::filesystem::path& link) {
+    std::error_code ec;
+    std::filesystem::create_symlink(target, link, ec);
+    if (ec) std::filesystem::create_hard_link(target, link, ec);
+    if (ec) std::filesystem::copy_file(target, link, std::filesystem::copy_options::overwrite_existing, ec);
+}
+
 static bool isHpi(const std::filesystem::path& p) { return hpi::MountSet::key(p.extension().string()) == ".hpi"; }
 
 static void retailDefault(const char* data) {
@@ -235,7 +243,7 @@ static void mapPackages(const char* data) {
     try {
         fs::create_directories(root);
         for (const auto& e : fs::directory_iterator(data))
-            if (e.is_regular_file() && isHpi(e.path())) fs::create_symlink(fs::absolute(e.path()), root / e.path().filename());
+            if (e.is_regular_file() && isHpi(e.path())) linkOrCopy(fs::absolute(e.path()), root / e.path().filename());
         const auto base = hpi::mountRetailRoot(data);
         const std::string own = "// the map's own profile\nlimit tarcage 0\n";
         // The map archive also carries ai/takengine.txt, and the old per-level files.
@@ -328,7 +336,7 @@ static void mapClash(const char* data) {
     try {
         fs::create_directories(root);
         for (const auto& e : fs::directory_iterator(data))
-            if (e.is_regular_file() && isHpi(e.path())) fs::create_symlink(fs::absolute(e.path()), root / e.path().filename());
+            if (e.is_regular_file() && isHpi(e.path())) linkOrCopy(fs::absolute(e.path()), root / e.path().filename());
         const auto base = hpi::mountRetailRoot(data);
         const auto ota = base.read("maps/Inner Circle.ota");
         auto scenario = tnt::Scenario::parse(std::string(ota.begin(), ota.end()));

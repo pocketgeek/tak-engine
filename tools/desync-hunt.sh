@@ -24,6 +24,7 @@
 # are independent and can be read after the fact.
 #
 # usage: tools/desync-hunt.sh [--minutes N] [--jobs N] [--data DIR] [--quick]
+#        (BUILD=<dir> picks the build dir, default build-dbg)
 set -u
 
 DATA="assets/game"
@@ -40,9 +41,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-CLIENT=./build-dbg/takclient
-SERVER=./build-dbg/takserver
-[ -x "$CLIENT" ] && [ -x "$SERVER" ] || { echo "build-dbg binaries missing -- cmake --build build-dbg" >&2; exit 2; }
+# BUILD names the build dir (default build-dbg; e.g. BUILD=build-o2 for the optimized Debug build).
+BUILD="${BUILD:-build-dbg}"
+CLIENT=./$BUILD/takclient
+SERVER=./$BUILD/takserver
+[ -x "$CLIENT" ] && [ -x "$SERVER" ] || { echo "$BUILD binaries missing -- cmake --build $BUILD" >&2; exit 2; }
 
 OUT="${TMPDIR:-/tmp}/desync-hunt-$$"
 mkdir -p "$OUT"
@@ -211,7 +214,8 @@ run_one() {
   local hit=""
   grep -qi "DESYNCED" "$slog" && hit="${hit}server-reported-desync "
   grep -qi "REFEREE SUSPECT" "$slog" && hit="${hit}referee-suspect "
-  grep -qi "desync" "$clog" && hit="${hit}client-reported-desync "
+  # The messages themselves, never a bare "desync": log paths carry the desync-hunt-<pid> directory name.
+  grep -Eqi "desync detected|DESYNCED|desync at" "$clog" && hit="${hit}client-reported-desync "
   local done_line
   done_line=$(grep -E "mp-headless done" "$clog" | tail -1)
   [ -z "$done_line" ] && hit="${hit}no-completion(rc=$rc) "

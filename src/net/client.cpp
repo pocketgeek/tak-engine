@@ -694,14 +694,18 @@ void MpClient::createGame(const std::string& name, const std::string& password,
                           const std::string& mapId, const GameOptions& o, uint8_t capacity,
                           bool spectate, bool priv, const std::string& mission) {
     if(roomRequestPending_)return;
-    joinError_.clear();
+    joinError_.clear();createError_.clear();
     resetModTransfer();resetMapTransfer();
     mapStatus_ = "CHECKING MAP";
     if (mission.empty() && !mapgen::isGeneratedMapId(mapId)) {
         try {
             mapPackage_ = maps::build(hpi::mountRetailRoot(mapRoot_,
                 o.gameMods?hostGameModPacks():std::vector<std::string>{}), mapId);
-        } catch (const std::exception& e) { err_ = mapStatus_ = e.what(); return; }
+        } catch (const std::exception& e) {
+            // The map cannot be built here: nothing was sent, and the connection is fine. Say why
+            // (the lobby shows it, a headless run ends on it) without poisoning the link's error().
+            createError_ = mapStatus_ = e.what(); return;
+        }
     }
     Writer w; w.str(name); w.str(password); w.str(mapId); w.str(mission);
     put(w, o);

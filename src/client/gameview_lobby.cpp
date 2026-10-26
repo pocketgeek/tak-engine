@@ -618,8 +618,13 @@ float createOptionPx(float maxW) {
             mp_->createGame(createName_, createPass_, mpMapId_, o, mpCapacity(o.mapScenario != 0),
                             singlePlayer_ && spSpectate_, singlePlayer_);
             specAutoSeated_ = false;   // arm the one-shot auto-seat for this new room
-            lobbyScreen_ = singlePlayer_ ? LobbyScreen::Create : LobbyScreen::Browser;
+            // A map that cannot build sends nothing: stay here, where the reason is shown.
+            lobbyScreen_ = singlePlayer_ || !mp_->createError().empty() ? LobbyScreen::Create : LobbyScreen::Browser;
         });
+        if (!mp_->createError().empty()) {
+            const std::string why = "CANNOT CREATE: " + mp_->createError();
+            blockText(tak::uiTextFit(why, 1.3f, kLobbyW - 2 * x - 2 * bw - 140.0f), x + bw + 20, by + 9, 1.3f, {255, 130, 110, 255});
+        }
         if (!singlePlayer_)   // a private single-player game has no browser to go back to
             lbBtn(kLobbyW - x - bw - 122, by, 110, 30, "BROWSER", true,
                   [this] { lobbyScreen_ = LobbyScreen::Browser; });

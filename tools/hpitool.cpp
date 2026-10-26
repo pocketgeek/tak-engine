@@ -13,6 +13,11 @@
 #include <iterator>
 #include <vector>
 
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 namespace fs = std::filesystem;
 
 static int usage() {
@@ -61,6 +66,9 @@ int main(int argc, char** argv) {
                 return 1;
             }
             auto data = ar.read(*e);
+#ifdef _WIN32
+            _setmode(_fileno(stdout), _O_BINARY);   // text mode would turn each LF into CRLF
+#endif
             std::cout.write(reinterpret_cast<const char*>(data.data()),
                             static_cast<std::streamsize>(data.size()));
         } else if (cmd == "extract" && argc >= 4) {

@@ -31,6 +31,14 @@
 #include <stdexcept>
 #include <vector>
 
+// MinGW's create_symlink always fails with ENOSYS: fall back to a hard link, then a copy.
+static void linkOrCopy(const std::filesystem::path& target, const std::filesystem::path& link) {
+    std::error_code ec;
+    std::filesystem::create_symlink(target, link, ec);
+    if (ec) std::filesystem::create_hard_link(target, link, ec);
+    if (ec) std::filesystem::copy_file(target, link, std::filesystem::copy_options::overwrite_existing, ec);
+}
+
 // Toolbar button centres (editorstate.h layout).
 static int toolX(int tool) {return cart::Editor::kToolX+tool*cart::Editor::kToolW+30;}
 static int modeX(int mode) {return cart::Editor::kModeX+mode*cart::Editor::kModeW+30;}
@@ -494,7 +502,7 @@ static int aiModWorkflow(const char* data) {
     fs::create_directory(root);isolateProfile(root.string().c_str());
     const auto install=root/"data";fs::create_directory(install);
     for(const auto& entry:fs::directory_iterator(data))
-        if(tak::hpi::MountSet::key(entry.path().filename().string())!="mods")fs::create_symlink(fs::absolute(entry.path()),install/entry.path().filename());
+        if(tak::hpi::MountSet::key(entry.path().filename().string())!="mods")linkOrCopy(fs::absolute(entry.path()),install/entry.path().filename());
     const auto ai=install/"Mods"/"Game"/"Harder"/"AI";fs::create_directories(ai);
     auto put=[](const fs::path& p,const std::string& text) {std::ofstream(p,std::ios::binary)<<text;};
     auto slurp=[](const fs::path& p) {std::ifstream f(p,std::ios::binary);return std::string(std::istreambuf_iterator<char>(f),{});};
@@ -688,7 +696,7 @@ static int aiModNoMapWorkflow(const char* data,const char* self) {
     fs::create_directory(root);isolateProfile(root.string().c_str());
     const auto install=root/"data";fs::create_directory(install);
     for(const auto& entry:fs::directory_iterator(data))
-        if(tak::hpi::MountSet::key(entry.path().filename().string())!="mods")fs::create_symlink(fs::absolute(entry.path()),install/entry.path().filename());
+        if(tak::hpi::MountSet::key(entry.path().filename().string())!="mods")linkOrCopy(fs::absolute(entry.path()),install/entry.path().filename());
     fs::create_directories(install/"mods"/"game"/"Other"/"ai");   // another pack: listed, never touched
     std::ofstream(install/"mods"/"game"/"Other"/"ai"/"takengine.txt",std::ios::binary)<<"weight araarch 2\n";
     const auto record=root/"client-args.txt";
@@ -860,7 +868,7 @@ static int aiPackListWorkflow(const char* data) {
     fs::create_directory(root);isolateProfile(root.string().c_str());
     const auto install=root/"data";fs::create_directory(install);
     for(const auto& entry:fs::directory_iterator(data))
-        if(tak::hpi::MountSet::key(entry.path().filename().string())!="mods")fs::create_symlink(fs::absolute(entry.path()),install/entry.path().filename());
+        if(tak::hpi::MountSet::key(entry.path().filename().string())!="mods")linkOrCopy(fs::absolute(entry.path()),install/entry.path().filename());
     constexpr int kPacks=22;
     for(int i=0;i<kPacks;++i) {
         char name[16];std::snprintf(name,sizeof name,"Pack%02d",i);
@@ -949,7 +957,7 @@ static int aiExtrasWorkflow(const char* data) {
     fs::create_directory(root);isolateProfile(root.string().c_str());
     const auto install=root/"data";fs::create_directory(install);
     for(const auto& entry:fs::directory_iterator(data))
-        if(tak::hpi::MountSet::key(entry.path().filename().string())!="mods")fs::create_symlink(fs::absolute(entry.path()),install/entry.path().filename());
+        if(tak::hpi::MountSet::key(entry.path().filename().string())!="mods")linkOrCopy(fs::absolute(entry.path()),install/entry.path().filename());
     const auto pack=install/"mods"/"game"/"Extra";fs::create_directories(pack/"units");
     // A synthetic unit: no retail text.
     std::ofstream(pack/"units"/"zzpack.fbi",std::ios::binary)<<"[UNITINFO]\n{\n\tUnitName=zzpack;\n\tName=Pack Test Unit;\n\tSide=ARAMON;\n\tCategory=ARA LAND;\n\tMaxVelocity=1;\n}\n";
