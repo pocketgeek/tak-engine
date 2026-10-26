@@ -359,7 +359,8 @@ int main(int argc, char** argv) {
                 check(world.stateHash()!=before,"infinite production lock participates in lockstep hash");
                 world.unit(id)->repeatType=output;
                 for (int kind=0;kind<=int(net::Cmd::SetSquad);++kind) {
-                    c.kind=net::Cmd(kind);if (c.kind==net::Cmd::Stop || c.kind==net::Cmd::Move || c.kind==net::Cmd::Patrol) continue;
+                    c.kind=net::Cmd(kind);if (c.kind==net::Cmd::Stop || c.kind==net::Cmd::Move || c.kind==net::Cmd::Patrol ||
+                                            c.kind==net::Cmd::Attack || c.kind==net::Cmd::AttackMove) continue;
                     c.targetId=enemy;c.x=1500;c.z=1500;
                     for (int queued : {0,1}) {
                         c.queue=uint8_t(queued);sim::applyCommand(world,registry,c);
@@ -368,18 +369,20 @@ int main(int argc, char** argv) {
                     }
                 }
             }
-            for (auto kind : {net::Cmd::Move, net::Cmd::Patrol}) {
+            for (auto kind : {net::Cmd::Move, net::Cmd::Patrol, net::Cmd::Attack, net::Cmd::AttackMove}) {
                 world.unit(id)->rally.clear();
-                c.kind=kind;c.queue=0;c.x=1400;c.z=1400;c.player=1;
+                c.kind=kind;c.queue=0;c.x=1400;c.z=1400;c.targetId=enemy;c.player=1;
                 sim::applyCommand(world,registry,c);
                 check(world.unit(id)->rally.empty(),"another player cannot set producer rally");
                 c.player=0;sim::applyCommand(world,registry,c);
                 const size_t initial=world.unit(id)->rally.size();
-                check(initial==(kind==net::Cmd::Move ? 1u : 2u),"mobile producer accepts replacement rally");
+                check(initial==(kind==net::Cmd::Patrol ? 2u : 1u),"mobile producer accepts replacement rally");
                 c.queue=1;c.x=1600;sim::applyCommand(world,registry,c);
                 check(world.unit(id)->rally.size()==initial+1 &&
-                      world.unit(id)->rally.back().patrol==(kind==net::Cmd::Patrol),
-                      "queued move/patrol extends producer rally");
+                      world.unit(id)->rally.back().patrol==(kind==net::Cmd::Patrol) &&
+                      world.unit(id)->rally.back().attackMove==(kind==net::Cmd::Patrol || kind==net::Cmd::AttackMove) &&
+                      (world.unit(id)->rally.back().targetId==enemy)==(kind==net::Cmd::Attack),
+                      "queued move/patrol/attack/fight-move extends producer rally");
                 check(world.unit(id)->orders.empty() && world.unit(id)->repeatType==output &&
                       world.unit(id)->x==sim::Fixed::fromInt(800) && world.unit(id)->z==sim::Fixed::fromInt(800),
                       "rally commands leave the builder stationary and repeating");
@@ -389,6 +392,7 @@ int main(int argc, char** argv) {
             c.player=0;sim::applyCommand(world,registry,c);
             check(!world.unit(id)->repeatType && world.unit(id)->buildQueue.empty(),
                   "Stop clears infinite production");
+            check(world.unit(id)->rally.empty(),"Stop clears the producer's rally plan");
             // Same command batch: do not require a later tick/render snapshot to unlock.
             c.kind=net::Cmd::Move;c.queue=0;sim::applyCommand(world,registry,c);
             check(!world.unit(id)->orders.empty(),"Move immediately after Stop works normally");
@@ -425,6 +429,10 @@ int main(int argc, char** argv) {
                 c.kind=net::Cmd::Move;sim::applyCommand(world,registry,c);
                 c.kind=net::Cmd::Build;std::snprintf(c.type,sizeof(c.type),"zonlode");
                 sim::applyCommand(world,registry,c);
+                // The Move became the output's rally (hashed state); everything
+                // else, the conjure site and hover included, must be untouched.
+                check(world.unit(id)->rally.size()==1,"the Move set the output rally");
+                world.unit(id)->rally.clear();
                 check(world.stateHash()==before,"rejected orders preserve active conjure site and hover state");
             }
             const auto* builder=world.unit(id);

@@ -493,6 +493,137 @@ static void rallyReplaces() {
           std::to_string(arrived) + " of " + std::to_string(n));
 }
 
+// ---------------------------------------------------------------------------
+// 4. Rally PLANS: Move, fight-move, patrol and attack, Shift-queued, on a
+//    factory and on a mobile builder repeating production. Every output runs
+//    the whole plan in order; a queued patrol step loops as a unit's own does.
+// ---------------------------------------------------------------------------
+static UnitType producerType(bool mobile) {
+    UnitType t = factoryType();
+    if (mobile) { t.maxVel = soldierType().maxVel; t.canMove = true; }
+    return t;
+}
+
+static UnitType armedSoldierType() {
+    UnitType t = soldierType();
+    Weapon weapon; weapon.name = "rally-test-weapon"; weapon.range = 120; weapon.damage = 100;
+    weapon.reload = 0.1f; weapon.aimTol = 32767; t.weapon = weapon; t.weapons.push_back(weapon);
+    return t;
+}
+
+// The first finished output of `producer`, after which production stops so a
+// stream of later outputs does not crowd the route being watched.
+static int firstOutput(World& w, int producer, int maxTicks) {
+    for (int n = 0; n < maxTicks; ++n) {
+        w.tick(1.0f / 30.0f);
+        for (const auto& u : w.units())
+            if (u.id != producer && u.alive() && u.type && !u.type->isStructure() &&
+                !u.underConstruction && u.player == w.unit(producer)->player) {
+                Unit* p = w.unit(producer);
+                p->repeatType = nullptr; p->buildQueue.clear();
+                return u.id;
+            }
+    }
+    return 0;
+}
+
+static bool within(const Unit& u, float x, float z, float r) {
+    const float dx = u.x.toFloat() - x, dz = u.z.toFloat() - z;
+    return dx * dx + dz * dz < r * r;
+}
+
+static void rallyPlanIsFollowed(bool mobile) {
+    std::printf("%s: queued move, fight-move and patrol rally:\n", mobile ? "mobile producer" : "factory");
+    auto ownedWorld = makeWorld(160, 160);
+    World& w = *ownedWorld;
+    UnitType prod = producerType(mobile), sol = soldierType();
+    const int id = w.spawn(&prod, 600, 600, 0, 0);
+    w.player(0).mana = 1e9f;
+    w.setRepeat(id, &sol);
+    w.order(id, 1100, 600, false);           // A
+    w.attackMove(id, 1600, 600, true);       // Shift: fight-move B
+    w.queuePatrol(id, 1600, 1100);           // Shift: patrol C
+    const auto& r = w.unit(id)->rally;
+    check(r.size() == 3 && !r[0].attackMove && !r[0].patrol && r[1].attackMove && !r[1].patrol &&
+          r[2].patrol && r[2].patrolOpen, "the plan is stored in order: move, fight-move, open patrol",
+          std::to_string(r.size()));
+    check(w.unit(id)->orders.empty() && w.unit(id)->repeatType == &sol,
+          "the producer itself keeps producing and does not move");
+    const int child = firstOutput(w, id, 900);
+    check(child != 0, "an output is produced");
+    if (!child) return;
+    // A, then B, then C, then back to B and C again: the patrol loops B <-> C.
+    const std::pair<float, float> stops[] = {{1100, 600}, {1600, 600}, {1600, 1100}, {1600, 600}, {1600, 1100}};
+    size_t stage = 0;
+    for (int n = 0; n < 30 * 180 && stage < 5; ++n) {
+        w.tick(1.0f / 30.0f);
+        if (const Unit* u = w.unit(child); u && within(*u, stops[stage].first, stops[stage].second, 96.0f)) ++stage;
+    }
+    check(stage == 5, "the output visits A, B, C, then loops the patrol B <-> C",
+          "reached " + std::to_string(stage) + " of 5 stops");
+    check(w.unit(id)->x == Fixed::fromInt(600) && w.unit(id)->z == Fixed::fromInt(600),
+          "the producer stayed where it was");
+}
+
+static void rallyAttackThenMove(bool mobile) {
+    std::printf("%s: attack rally, then a queued move:\n", mobile ? "mobile producer" : "factory");
+    auto ownedWorld = makeWorld(160, 160);
+    World& w = *ownedWorld;
+    UnitType prod = producerType(mobile), sol = armedSoldierType(), dummy = soldierType();
+    dummy.maxVel = Fixed();  dummy.id = "dummy";                           // stands still
+    const int id = w.spawn(&prod, 600, 600, 0, 0);
+    const int enemy = w.spawn(&dummy, 1400, 600, 0, 1);
+    w.player(0).mana = 1e9f;
+    w.setRepeat(id, &sol);
+    w.attack(id, enemy, false);
+    w.order(id, 1400, 1200, true);
+    const auto& r = w.unit(id)->rally;
+    check(r.size() == 2 && r[0].targetId == enemy && !r[1].targetId,
+          "attack is a rally step and the move queues behind it", std::to_string(r.size()));
+    check(w.unit(id)->orders.empty(), "the producer does not attack itself");
+    const int child = firstOutput(w, id, 900);
+    check(child != 0, "an output is produced");
+    if (!child) return;
+    bool killed = false, arrived = false;
+    for (int n = 0; n < 30 * 120 && !arrived; ++n) {
+        w.tick(1.0f / 30.0f);
+        const Unit* e = w.unit(enemy);
+        killed |= !e || !e->alive();
+        if (const Unit* u = w.unit(child); killed && u && within(*u, 1400, 1200, 96.0f)) arrived = true;
+    }
+    check(killed && arrived, "the output kills the target, then moves on",
+          std::string(killed ? "killed" : "alive") + (arrived ? ", arrived" : ", not arrived"));
+}
+
+static void rallyQueueStopAndHash(bool mobile) {
+    std::printf("%s: rally replace, Stop and lockstep hash:\n", mobile ? "mobile producer" : "factory");
+    auto make = [&](World& w, UnitType& prod, UnitType& sol) {
+        const int id = w.spawn(&prod, 600, 600, 0, 0);
+        w.player(0).mana = 1e9f;
+        w.setRepeat(id, &sol);
+        return id;
+    };
+    UnitType prod = producerType(mobile), sol = soldierType();
+    auto a = makeWorld(160, 160), b = makeWorld(160, 160);
+    const int ia = make(*a, prod, sol), ib = make(*b, prod, sol);
+    check(a->stateHash() == b->stateHash(), "two identical worlds hash alike");
+    a->order(ia, 1100, 600, false);
+    check(a->stateHash() != b->stateHash(), "a rally plan is part of the lockstep hash");
+    a->attackMove(ia, 1600, 600, true);
+    a->queuePatrol(ia, 1600, 1100);
+    b->order(ib, 1100, 600, false);
+    b->attackMove(ib, 1600, 600, true);
+    b->queuePatrol(ib, 1600, 1100);
+    for (int n = 0; n < 30 * 40; ++n) { a->tick(1.0f / 30.0f); b->tick(1.0f / 30.0f); }
+    check(a->stateHash() == b->stateHash(), "the same plan runs to the same hash twice");
+    a->order(ia, 300, 1400, false);
+    check(a->unit(ia)->rally.size() == 1, "an unqueued order replaces the whole plan",
+          std::to_string(a->unit(ia)->rally.size()));
+    a->stop(ia);
+    check(a->unit(ia)->rally.empty(), "Stop clears the rally plan",
+          std::to_string(a->unit(ia)->rally.size()));
+}
+
 static void scriptControlsReadinessAndPosition() {
     std::printf("factory script readiness and exact piece position:\n");
     auto ownedWorld = makeWorld(160,160);
@@ -712,6 +843,11 @@ int main(int argc,char** argv) {
     rallyIsAdopted();
     rallyReplaces();
     mobileRallyIsAdopted();
+    for (bool mobile : {false, true}) {
+        rallyPlanIsFollowed(mobile);
+        rallyAttackThenMove(mobile);
+        rallyQueueStopAndHash(mobile);
+    }
     if (g_pathfinding == PathfindingMode::Legion) {
         std::printf("Legion routed:");
         for (size_t k = 0; k < 16; ++k) if (g_legionSaw[k]) std::printf(" %zu", k);

@@ -1221,12 +1221,14 @@ struct alignas(64) Unit {
     // Nonzero only when the player's construction share (Player::constructionShare)
     // bought part of a tick. Hashed when set.
     uint16_t buildFraction = 0;
-    // RALLY orders for a production building: what the units it makes should do once
-    // they have walked clear of the exit. Kept OUT of `orders` on purpose -- a
+    // RALLY orders for a production building (or a mobile builder while it repeats
+    // production): what the units it makes should do once they have walked clear
+    // of the exit. Kept OUT of `orders` on purpose -- a
     // structure must never enter the mover (it has no velocity, but the mover still
     // turns a unit's heading toward its goal, which is how right-clicking used to spin
     // a keep). Nothing reads this but tickProduction, which copies it onto each new
-    // unit. Move, attack, fight-move and patrol all land here, and they queue.
+    // unit. Move, attack, fight-move and patrol all land here, and they queue;
+    // Stop clears them. Hashed when set.
     std::vector<Order> rally;
 
     // Retail scenario rename: cosmetic label, independent of FBI type identity.

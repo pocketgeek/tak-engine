@@ -7456,7 +7456,14 @@
                 // as retail's order list held goals and not path nodes.
                 if (!o.goal) continue;
                 if (o.manaBuildArea || o.reclaimArea) continue;
-                const float qx = o.x.toFloat(), qz = o.z.toFloat();
+                float qx = o.x.toFloat(), qz = o.z.toFloat();
+                if (o.targetId && !o.guard && !o.load) {
+                    // An attack step marks its target where the player can see it.
+                    // A rally's attack entry never moves, so its point stays empty.
+                    const UnitR* tu = frameUnitP(o.targetId);
+                    if (tu && tu->alive() && canPickUnit(*tu)) { qx = tu->x; qz = tu->z; }
+                    else if (o.x.v == 0 && o.z.v == 0) continue;
+                }
                 const bool line = o.targetId == 0;         // attack orders: marker only
                 if (beads && line) {
                     float dx = qx - px, dz = qz - pz;

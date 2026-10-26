@@ -4556,8 +4556,15 @@ void World::queuePatrol(int unitId, float x, float z) {
     // starts. Armed and builder flyers fly patrols on the ordinary VTOL_Move
     // path and close the loop in openFlightPatrol; without it a lone queued
     // point was reached once and then hovered over for good.
-    if (u->type->isStructure() || u->repeatType ||
-        (u->type->canFly && !u->type->isBuilder && u->type->weapons.empty())) return;
+    if (u->type->isStructure() || u->repeatType) {
+        // A queued patrol rally step stays OPEN, as a unit's own queued patrol
+        // does: each output closes the loop from where it starts that leg, so
+        // "move A, Shift-patrol B" makes every output patrol A <-> B.
+        if ((u->type->producesUnits() || u->repeatType) && !u->rally.empty())
+            u->rally.back().patrolOpen = true;
+        return;
+    }
+    if (u->type->canFly && !u->type->isBuilder && u->type->weapons.empty()) return;
     for (size_t i = before; i < u->orders.size(); ++i) u->orders[i].patrolOpen = true;
 }
 
@@ -4615,6 +4622,7 @@ void World::stop(int unitId) {
     Unit* u = unit(unitId);
     if (!u) return;
     u->orders.clear();
+    u->rally.clear();        // a producer's Stop drops the plan it hands its output too
     u->landing.reset(); u->standbyActive=false;
     cancelPath(*u);          // stop means stop: do not finish routing where it was going
     // Stop also halts a conjurer: cancel the infinite loop and drain the queue.
@@ -4742,8 +4750,10 @@ void World::attack(int unitId, int targetId, bool queue) {
     if (!u || !u->alive() || !u->type) return;
     // A production building sends its OUTPUT at the target rather than shooting it
     // itself -- and it may well have no weapon, so this is checked before the
-    // weapon gate below.
-    if (u->type->isStructure() && u->type->producesUnits()) {
+    // weapon gate below. A mobile builder on infinite production does the same:
+    // while it repeats, every order it accepts is a rally for its output (the
+    // rule Move and Patrol already follow), so an armed one does not walk off.
+    if ((u->type->isStructure() && u->type->producesUnits()) || u->repeatType) {
         Order o{Fixed(), Fixed(), targetId};
         setRally(*u, o, queue);
         return;
@@ -12815,17 +12825,28 @@ void World::tickProduction(Unit& u, float dt) {
             if (ro.targetId) {
                 const Unit* tg = unit(ro.targetId);
                 if (!tg || !tg->alive()) continue;
+                // Through attack(), as the player's own Attack would go: an
+                // output that cannot attack (no weapon) drops the step.
+                attack(id,ro.targetId,true);
+                continue;
             }
-            if (!t->canFly && !ro.targetId) {
+            if (!t->canFly) {
                 // Raw rally entries belong to the producer. Give each child
                 // the same point controller/arrival handling as a direct order.
                 // This also preserves the requested point across partial routes.
+                const size_t before=nu->orders.size();
                 order(id,ro.x.toFloat(),ro.z.toFloat(),true);
-                nu->orders.back().attackMove=ro.attackMove;
-                nu->orders.back().patrol=ro.patrol;
+                for (size_t i=before;i<nu->orders.size();++i) {
+                    nu->orders[i].attackMove=ro.attackMove;
+                    nu->orders[i].patrol=ro.patrol;
+                    nu->orders[i].patrolOpen=ro.patrolOpen;
+                }
             } else {
                 nu->orders.push_back(ro);
                 nu->orders.back().issuedTick = tickCounter_;
+                // An unarmed, non-building flyer's patrol handler closes its own
+                // loop (plainFlightPatrol), as queuePatrol leaves it.
+                if (!t->isBuilder && t->weapons.empty()) nu->orders.back().patrolOpen=false;
             }
         }
     // A rally whose every entry was dropped (its attack targets are dead) hands
@@ -15460,6 +15481,15 @@ uint64_t World::stateHash() const {
             mix(u.routeFailed);mix(u.routeDetour);
         }
         mix(uint64_t(u.orders.size()));
+        // A producer's rally plan is handed to every output, so it is gameplay
+        // state. Folded only when set: a unit with none hashes as before.
+        if (!u.rally.empty()) {
+            mix(0x52414c59u); mix(uint64_t(u.rally.size()));
+            for (const Order& r : u.rally) {
+                mix(uint32_t(r.x.v)); mix(uint32_t(r.z.v)); mix(uint32_t(r.targetId));
+                mix(uint32_t(r.attackMove) | uint32_t(r.patrol) << 1 | uint32_t(r.patrolOpen) << 2);
+            }
+        }
         mix(u.missionEvents);
         mix(u.standbyAllowed); mix(u.standbyActive);
         if (u.legionLift) { mix(0x4c494654u); mix(u.legionLiftUntil); mix(uint32_t(u.legionLiftX.v)); mix(uint32_t(u.legionLiftZ.v)); mix(u.legionLiftSince); }

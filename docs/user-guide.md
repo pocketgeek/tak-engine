@@ -644,8 +644,17 @@ Each icon shows how many are queued. No progress bar is drawn over the building
 grows, and the information panel shows its progress. A new unit is started on the building's pad
 only when there is room for its whole body there; if the last unit has not
 cleared the pad yet, the building waits a moment and tries again, as in the
-original game. Give the building a **move** or **patrol**
-order to set a **rally point** for new units; Shift adds more rally steps.
+original game. Give the building a **move**, **patrol**,
+**attack** or **fight-move** order to set a **rally point** for new units;
+Shift adds more rally steps, exactly as Shift queues a unit's own orders.
+Every new unit carries out the whole plan in order: "move to A, Shift
+fight-move to B, Shift patrol to C" sends each one to A, then fights its way
+to B, then patrols between B and C. An **attack** rally sends new units at
+that enemy; once the enemy is dead, later units skip that step. A plain
+(un-Shifted) order replaces the plan, and **Stop** clears it along with the
+production queue. With the building selected, hold Shift to see the plan as
+waypoint markers. The original game kept only move and patrol rallies; attack
+and fight-move rallies are this engine's addition.
 Without a rally point, as in the original game, each new unit moves off the pad
 to a spot a short way from the building and waits there; a ship only picks a
 spot it can sail to. A new flyer with no rally point flies to a random spot on
@@ -658,9 +667,12 @@ in a column and block the door.
 
 **Mobile production.** Some builders conjure units in the field (Zhon's Beast
 Handler, for example). They place what they build like a structure. A mobile
-builder running infinite production treats **Move** and **Patrol** as rally
-orders for its output; **Shift** adds rally steps and shows the route. **Stop**
-ends production and gives you the builder back.
+builder running infinite production treats **Move**, **Patrol**, **Attack**
+and **fight-move** as rally orders for its output, just like a production
+building (the builder itself stays put and keeps producing); **Shift** adds
+rally steps and shows the route. **Stop** ends production, clears the rally
+and gives you the builder back. A builder making a limited number of units
+(no infinite production) still takes those orders itself.
 
 The build menu only appears when exactly one builder or production building is
 selected.
@@ -1308,7 +1320,9 @@ loop the same way, armed flyers and flying builders included.
 | Patrol B, then Shift-patrol C | Adds C to the existing patrol loop. |
 | Move A, Shift-move B, Shift-move C | Visits A, B and C once each, then stops. |
 
-**Production buildings** take Shift-queued rally orders the same way.
+**Production buildings** (and mobile builders running infinite production)
+take Shift-queued rally orders the same way: move, fight-move, patrol and
+attack, and every unit they make follows the whole queue.
 
 In **Legion** mode, a group's queued moves are planned for the group as a whole,
 just like its first move.

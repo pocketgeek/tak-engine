@@ -86,14 +86,15 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
     using tak::net::Cmd;
     if (c.kind == Cmd::Order) { applySelectionOrder(world, reg, c); return; }
     // An infinitely producing mobile builder stays on that job until Stop.
-    // Move/patrol describe its output rally, without redirecting construction.
+    // Move/patrol/attack/fight-move describe its output rally, without
+    // redirecting construction.
     // Gate before redirect(): rejected orders must not cancel its construction.
     // Test repeatType rather than queue size so item transitions, mana shortages
     // and blocked output positions do not briefly unlock the producer.
     const auto* producer=world.unit(c.unitId);
     const bool repeatingMobile = producer && producer->type &&
         !producer->type->isStructure() && producer->repeatType;
-    if (repeatingMobile && c.kind!=Cmd::Stop && c.kind!=Cmd::Move && c.kind!=Cmd::Patrol && c.kind!=Cmd::GiveUnit && c.kind!=Cmd::ShareMana && c.kind!=Cmd::Disco && c.kind!=Cmd::Headbang && c.kind!=Cmd::PowerCode) return;
+    if (repeatingMobile && c.kind!=Cmd::Stop && c.kind!=Cmd::Move && c.kind!=Cmd::Patrol && c.kind!=Cmd::Attack && c.kind!=Cmd::AttackMove && c.kind!=Cmd::GiveUnit && c.kind!=Cmd::ShareMana && c.kind!=Cmd::Disco && c.kind!=Cmd::Headbang && c.kind!=Cmd::PowerCode) return;
     auto owns = [&](int id) {
         const auto* u = world.unit(id);
         return u && u->player == int(c.player);

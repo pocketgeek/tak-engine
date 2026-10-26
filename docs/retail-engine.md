@@ -980,6 +980,34 @@ idle (retail's AI takes it through `0x50b4f0`). Tests:
 a rally of only a dead target),
 and an emulation probe of `0x402220` kept outside the repo (`~/tak-tmp/scratch/fix-091/shipyard-fix/probe_getbuilt_release.py`).
 
+### Which orders a producer keeps (retail: QMove/QPatrol only)
+
+Retail's mission-definition table (the name/code pairs from `0x5eb605`) holds
+exactly two factory-side kinds, `QMove` and `QPatrol`, both under
+`UNITMISSIONCODE_READYORDERS`; there is no queued attack or fight kind.
+The order code (`0x5214b0`) resolves each selected unit's mission through
+`0x4de530` and adds it with `0x4d7a30`; `0x521c08..0x521c5b` compares the
+resolved definition against `Move_Ground`, `VTOL_Move` and `QMove`, so a Move
+on a structure builder resolves to `QMove`. GetBuilt copies only those two
+kinds onto the output (above), so a retail factory's rally is moves and
+patrols, Shift-queued like any mission list.
+
+Ours, not retail (user request, 2026-10-26): `World::setRally` also takes
+**Attack** (a target id; an output that cannot attack, or a dead target,
+drops the step) and **fight-move**, from the HUD's ATTACK button, the attack
+hotkey or a right-click on an enemy. A **Shift-queued patrol** rally step is
+stored open (`Order::patrolOpen`) and copied that way, so an output closes
+the loop from where it starts that leg, as a unit's own queued patrol does
+("move A, Shift-patrol B" patrols A <-> B). **Stop** clears the rally with
+the queue. The rally plan is folded into `World::stateHash` when set. A
+mobile builder repeating production (retail gives its output nothing) holds
+the same rally plan: while `repeatType` is set, Move, Patrol, Attack and
+fight-move all set the rally and leave the builder producing in place
+(`applyCommand` rejects its other orders); with finite or no production they
+command the builder itself. Tests: `production_test` (factory and mobile
+plans, attack-then-move, replace/Stop/hash) and `conjure_test` (the shipped
+Zhon builders through the command path).
+
 ### Legion: a spot of its own (ours, not retail, protocol 295)
 
 Retail's ground PARK steers to the ring's mid-radius along the unit's own

@@ -108,8 +108,11 @@ struct UnitR {
             if (o.manaBuildArea) {areaVisited=o.manaBuildArea->visited;break;}
     }
     void clearOrders() {orders.clear();rally.clear();areaVisited.clear();}
+    // Orders given to this unit set its output's rally instead (World::setRally):
+    // a production building, or a mobile builder while it repeats production.
+    bool holdsRally() const { return type && (type->producesUnits() || repeatType); }
     const std::vector<RenderOrder>& displayedOrders() const {
-        return type && (type->producesUnits() || repeatType) ? rally : orders;
+        return holdsRally() ? rally : orders;
     }
     // Construction still pending anywhere in the queue (builds are ordinary
     // orders now, so this is just "is one of them a build").

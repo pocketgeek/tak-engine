@@ -353,6 +353,8 @@ namespace {
                 bool anySelected=false,hasAirstrike=false,allAirstrike=!selection_.empty();
                 for(int id:selection_) {
                     const UnitR* unit=frameUnitP(id);
+                    // A rally holder's Attack sends its output (World::attack).
+                    if(unit && unit->alive() && !unit->underConstruction && unit->holdsRally()) {anySelected=true;allAirstrike=false;continue;}
                     if(!unit || !unit->alive() || unit->embarked() || unit->underConstruction || !unit->type ||
                        !unit->type->hasPrimaryWeaponBlock || (unit->repeatType && !unit->type->isStructure()))continue;
                     anySelected=true;
@@ -395,9 +397,10 @@ namespace {
             const bool capable=std::any_of(selection_.begin(),selection_.end(),[&](int id) {
                 const auto* u=frameUnitP(id);
                 if (!u || !u->alive() || u->embarked() || u->underConstruction || !u->type) return false;
+                // Move/patrol on a rally holder set its output's rally.
                 switch (pendingCmd_) {
-                    case 'm': return u->type->canMove;
-                    case 'p': return u->type->canPatrol;
+                    case 'm': return u->type->canMove || u->holdsRally();
+                    case 'p': return u->type->canPatrol || u->holdsRally();
                     case 'g': return u->type->canGuard;
                     case 'c': return u->type->canReclaim;
                     case 'r': return u->type->isBuilder && !u->type->isStructure();
@@ -523,14 +526,19 @@ namespace {
                 // Native 0x521cd0 keeps the lowest per-unit slot: any selected
                 // unit that can attack shows Attack, else TooFar when some
                 // selected unit is an attacker at all.
-                bool canAttack=false;
+                bool canAttack=false,rally=false;
                 for (int id : selection_) {
                     const UnitR* attacker = frameUnitP(id);
+                    if (attacker && attacker->alive() && !attacker->underConstruction &&
+                        attacker->holdsRally()) rally=true;
                     if (!attacker || !isCursorAttacker(*attacker)) continue;
                     canAttack=true;
                     if (attackerCanHitEnemy(*attacker,*target,ignoreAirstrikeWeapons))
                         return tak::CursorId::Attack;
                 }
+                // Ours, not retail (whose factories take only QMove/QPatrol): a
+                // rally holder's right-click on an enemy sends its output at it.
+                if (rally) return tak::CursorId::Attack;
                 return canAttack ? tak::CursorId::TooFar : tak::CursorId::Normal;
             }
 
@@ -1376,7 +1384,10 @@ namespace {
         };
         bool mobile = front->type->maxVel > tak::sim::Fixed();        // inverse of isStructure()
         bool armed = !front->type->weapons.empty();
-        const bool rally = front->type->producesUnits();
+        // A production building, or a mobile builder repeating production, takes
+        // Move/Patrol/Attack as RALLY orders for its output (World::setRally);
+        // while it repeats, a mobile builder refuses Guard (matchsetup.cpp).
+        const bool rally = front->holdsRally();
         // The five order slots sit at fixed .gui positions that nothing else uses, so
         // retail keeps them on screen and swaps in the Disabled face when the order
         // doesn't apply (Gadget slot 0). Emitting them as UPPERCASE marks them
@@ -1386,8 +1397,8 @@ namespace {
         // blanked -- retail hides those the same way.
         add("MOVE", (mobile || rally) ? 'm' : 'M');
         add("PATROL", (mobile || rally) ? 'p' : 'P');
-        add("GUARD", mobile ? 'g' : 'G');
-        add("ATTACK", armed ? 'a' : 'A');
+        add("GUARD", (mobile && !rally) ? 'g' : 'G');
+        add("ATTACK", (armed || rally) ? 'a' : 'A');
         add("STOP", 's');
         // Context orders: reclaim (a mobile reclaiming builder), and transport
         // load/unload. CLEAR and UNLOAD share a .gui slot (599,213) but a unit is
@@ -1396,8 +1407,8 @@ namespace {
         for (int id : selection_) {
             const auto* u = frameUnitP(id);
             if (!u || !u->alive() || !u->type || !u->type->isBuilder ||
-                !u->type->canMove || u->player != localPlayer_)
-                continue;
+                !u->type->canMove || u->player != localPlayer_ || u->repeatType)
+                continue;   // a repeating producer refuses repair/reclaim
             builder = true;
             if (u->type->canReclaim) reclaimer = true;
         }
