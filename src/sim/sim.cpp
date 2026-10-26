@@ -3380,7 +3380,7 @@ void World::tickGroundMission(Unit& u) {
                 resetGoal,[&] {
                     // Target scoring and retaliation eligibility still use the
                     // World's combat host; the mission owns when to poll it.
-                    int target=w.findTarget(u,true,true);
+                    int target=w.findTarget(u,true,true,response.mode<0);
                     if (!target && u.fireState!=0 && u.lastHitBy) {
                         const Unit* enemy=w.unit(u.lastHitBy);
                         if (enemy && enemy->alive() && !enemy->embarked() && enemy->type &&
@@ -5475,7 +5475,7 @@ bool World::canAttackTarget(const Unit& from,const Unit& target) const {
     return std::any_of(from.type->weapons.begin(),from.type->weapons.end(),usable);
 }
 
-int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
+int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chases) {
     // VTOL landing also clears active. Only switchable units interpret it as
     // power-off; ordinary landed flyers must still acquire and fire.
     if (u.type->onOffable && !u.active) return false;
@@ -5595,7 +5595,9 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse) {
             // targets. The reach is tickCombat's own (combatReach): the arc for
             // a ballistic weapon, else the selected weapon's range (the longest
             // when all fire) padded for a structure. Melee keeps the old reach.
-            if (!(u.type->canMove && u.moveState != 0)) {
+            // A ground mission's attack response (chases: not an auto target)
+            // may chase, as tickCombat's mayChase says, so it is not held to it.
+            if (!(u.type->canMove && (u.moveState != 0 || chases))) {
                 const CombatReach cr=combatReach(u,e,std::sqrt(d));
                 if (cr.weapon && !cr.weapon->melee && !cr.in) return;
             }

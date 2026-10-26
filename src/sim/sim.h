@@ -3037,7 +3037,9 @@ private:
     bool combatLineOfSight(const Unit& from, const Unit& to) const;
     bool canCaptureTarget(int player, const Unit& target) const;
     bool canAttackTarget(const Unit& from, const Unit& target) const;
-    int findTarget(Unit& u, bool missionPoll, bool groundResponse = false);
+    // chases: the attack it installs is not an auto target (tickCombat's
+    // mayChase), so the hold-post reach filter does not apply.
+    int findTarget(Unit& u, bool missionPoll, bool groundResponse = false, bool chases = false);
     // --- retail weapon-slot layer (fire-at-will sweep, icd 40f330) ----------
     void setSlotsAuto(Unit& u);                    // 519b10(3)
     void setSlotsManual(Unit& u,uint8_t cause);    // 519b70(3)
