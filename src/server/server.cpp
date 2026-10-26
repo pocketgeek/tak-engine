@@ -23,15 +23,11 @@
 #include "util/stoptoken.h"
 #include "server/roomtick.h"
 #include "server/status.h"
-#include "net/crusades.h"
 #include "net/matchconfig.h"
 #include "tnt/mapgen.h"
 #include "tnt/ota.h"
 #include "net/netcompat.h"
 #include "util/winargv.h"
-#ifdef __APPLE__
-#include <CoreFoundation/CoreFoundation.h>
-#endif
 
 #include <algorithm>
 #include <array>
@@ -71,11 +67,6 @@
 #include "server/limits.h"
 #include "net/crypto.h"
 #include "server/accounts.h"
-#include "server/crusades/allegiance.h"
-#include "server/crusades/network.h"
-#include "server/crusades/replayfiles.h"
-#include "server/crusades/matchmaking.h"
-#include "server/filelease.h"
 #include "tdf/tdf.h"
 #include "net/conn.h"
 #include "net/protocol.h"
@@ -217,21 +208,6 @@ struct Client {
     uint64_t lastPingMs = 0;
     bool loaded = false;
     uint32_t mapReadyRoom = 0, mapOfferedRoom = 0;
-    // Strategic subscription and query budget are connection-local metadata.
-    // They never feed room command queues, referee state or tick/replay logs.
-    bool campaignProtocol = false;
-    std::string campaignSubscription;
-    uint64_t campaignRevision = tak::net::crusades::kUnknownRevision;
-    uint64_t campaignActivityVersion = 0;
-    std::string campaignMatchSubscription;
-    std::optional<tak::net::crusades::MatchmakingStatus> campaignMatchBoard;
-    uint64_t campaignReadWindow = 0;
-    unsigned campaignReads = 0;
-    uint64_t campaignReplayWindow = 0;
-    unsigned campaignReplayReads = 0;
-    WorkBudget campaignWork, campaignReplayWork;
-    uint64_t campaignLimitedWindow = 0;
-    bool campaignLimitNotified = false;
     tak::net::maps::Receiver modReceive;
     tak::net::maps::Sender modSend;
     std::string modReady,modOffered;
@@ -336,17 +312,6 @@ struct Room {
     // itself). Set at start; a Controller holds a reference, so they live with the room.
     std::array<tak::ai::Profile, tak::ai::kAiLevels> aiProfiles;
 
-    // Persistent Crusades identity is server-owned, never part of CreateGame.
-    std::string campaignBattleId, campaignLaunchToken, campaignRoomToken, campaignId;
-    std::string campaignAccounts[2];
-    int64_t campaignExpires = 0;
-    uint32_t campaignTerritory = 0;
-    bool campaignCancelled = false;
-    std::optional<tak::srv::crusades::VerifiedMatchResult> campaignResult;
-    std::optional<tak::srv::crusades::ResultOutcome> campaignFault;
-    uint64_t campaignResultDue = 0;
-    bool campaignResultRecorded = false;
-    bool campaignResigned[2] = {}, campaignDisconnected[2] = {}, campaignTimeout[2] = {}, campaignLoaded[2] = {};
     std::string mission;           // campaign mission stem (empty = ordinary skirmish/MP)
     GameOptions opts;
     uint32_t hostId = 0;
@@ -470,52 +435,6 @@ public:
     bool loadAccounts(const std::string& path, std::string& err) {
         return accounts_.load(path, &err);
     }
-    void enableCrusades(const std::filesystem::path& database,
-                        const std::filesystem::path& definition) {
-        if (!requireAuth_) throw std::runtime_error("Crusades requires account authentication");
-        std::optional<tak::srv::crusades::CampaignDefinition> bootstrap;
-        if(!definition.empty()) {
-            bootstrap=tak::srv::crusades::loadDefinition(definition);
-            tak::srv::crusades::validateCampaignNetworkState(*bootstrap,tak::srv::crusades::makeInitialState(*bootstrap));
-        }
-        campaignLease_ = std::make_unique<tak::srv::FileLease>(database);
-        crusades_ = std::make_unique<tak::srv::crusades::CampaignStore>(campaignLease_->path());
-        // Validate every page, including campaigns other than the configured
-        // bootstrap, before admitting clients or auditing startup mutations.
-        std::string after;
-        for(;;) {
-            const auto page=crusades_->campaignIds(after,64);
-            for(const auto& id:page.ids) {
-                const auto existing=crusades_->load(id);
-                tak::srv::crusades::validateCampaignNetworkState(existing.definition,existing.state,existing.rules);
-            }
-            if(!page.truncated)break;
-            after=page.ids.back();
-        }
-        const auto unixNow=std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
-        campaignSession_ = tak::crypto::toHex(tak::crypto::randomVec(32));
-        campaignReplayDir_ = replayDir_.empty() ? std::filesystem::absolute(database).parent_path()/"crusades-replays"
-                                             : std::filesystem::absolute(std::filesystem::u8path(replayDir_));
-        if (bootstrap) {
-            const auto& campaign = *bootstrap;
-            if (!crusades_->hasCampaign(campaign.id())) {
-                crusades_->adminStart(campaign,{}, {"takserver","server configured campaign definition",-1,unixNow});
-            } else {
-                const auto existing = crusades_->load(campaign.id());
-                bool same = campaign.displayName() == existing.definition.displayName() &&
-                    campaign.territories().size() == existing.definition.territories().size();
-                for (const auto& [id,t] : campaign.territories()) {
-                    const auto* old = existing.definition.find(id);
-                    same = same && old && t.id == old->id && t.displayName == old->displayName &&
-                        t.nativeFaction == old->nativeFaction && t.terrain == old->terrain &&
-                        t.mapIdentifier == old->mapIdentifier && t.neighbors == old->neighbors;
-                }
-                if (!same) throw std::runtime_error("authored campaign differs from persisted definition");
-            }
-        }
-        crusades_->recoverInterruptedBattles(unixNow);
-    }
     // `dataRoot` is never empty -- main() refuses to start without --data.
     Server(uint16_t port, const std::string& dataRoot,const std::string& mapRoot) : port_(port), dataRoot_(dataRoot),mapRoot_(mapRoot.empty()?dataRoot:mapRoot) {
         // The referee reads the retail install directly, plus the ROOM's game
@@ -554,8 +473,6 @@ private:
     std::shared_ptr<tak::srv::AcmeCertificates> acme_;
     bool loopbackOnly_ = false;
     tak::srv::AccountStore accounts_;
-    std::unique_ptr<tak::srv::FileLease> campaignLease_;
-    std::unique_ptr<tak::srv::crusades::CampaignStore> crusades_;
     SharedWorkBudget acceptKeys_,lobbyWorkKeys_;
     WorkBudget acceptWork_,commandBytes_,commandCount_,commandLogs_;
     SharedWorkBudget commandByteKeys_,commandCountKeys_;
@@ -578,41 +495,8 @@ private:
     tak::srv::ValidationWorker validationWorker_;
     void validatePackage(Client& c,Room& room,bool mods,bool cache);
     void finishValidations();
-    SharedWorkBudget campaignWorkKeys_, campaignReplayKeys_;
     SharedWorkBudget loginWorkKeys_{tak::srv::LoginThrottle::kForgetMs};
-    WorkBudget campaignGlobalWork_, campaignGlobalReplay_, loginGlobalWork_;
-    bool allowCampaignWork(Client& c,const Frame& f);
-    std::string campaignSession_;
-    std::filesystem::path campaignReplayDir_;
-    int64_t campaignSweepTime_ = -1;
-    uint64_t campaignActivityVersion_ = 1;
-    uint64_t campaignMatchGeneration_ = 1;
-    uint64_t campaignMatchRetryMs_ = 0, campaignMatchRetrySequence_ = 0;
-    void retryCampaignMatches();
-    tak::srv::crusades::MatchQueue campaignMatchQueue_;
-    std::map<std::string,std::shared_ptr<tak::net::maps::Package>> campaignMapCache_;
-    std::map<std::string,bool> campaignMapEligibility_;
-    bool campaignMapEligible(const std::string& map);
-    std::shared_ptr<tak::net::maps::Package> campaignBattleMap(const std::string& map);
-    Client* campaignAvailablePeer(const std::string& account);
-    bool createCampaignBattle(Client& caller, const std::string& campaign, uint32_t territory, const std::string& opponent);
-    void campaignMatchmaking(Client& c, const Frame& f);
-    void sendCampaignMatchmaking(Client& c, const std::string& campaign, uint32_t requestId);
-    void refreshCampaignMatchmaking(Client& c);
-    void pruneCampaignSearches();
-    std::optional<tak::net::crusades::BattleActivity> campaignActivity(const std::string& campaign, uint32_t territory) const;
-    void campaignRead(Client& c, const Frame& f);
-    void campaignReplayChunk(Client& c, const Frame& f);
-    std::optional<uint32_t> campaignRoomId(const std::string& battleId) const;
-    void notifyCampaignBattle(const std::string& battleId);
-    void refreshCampaignSnapshot(Client& c, bool force = false);
-    void notifyCampaignPlayer(Client& c, const std::string& campaignId);
-    void issueCampaignBattle(Client& c, const Frame& f);
-    tak::srv::crusades::BattleContext campaignContext(const Room& r, bool requirePresent) const;
-    void cancelCampaignBattle(Room& r);
-    void closeCampaignLobby(uint32_t roomId, const char* reason);
-    void finalizeCampaign(Room& room, bool abandoning = false);
-    std::pair<std::string,std::string> saveCampaignReplay(Room& room);
+    WorkBudget loginGlobalWork_;
     Writer replayBytes(Room& room);
     tak::srv::LoginThrottle throttle_;
     // A mounted data set (retail, or retail + one room's game mods): the VFS, its base + Crusades
@@ -809,7 +693,7 @@ Writer Server::replayBytes(Room& r) {
     return w;
 }
 void Server::writeReplay(Room& r) {
-    if (replayDir_.empty() || r.log.empty() || !r.campaignBattleId.empty()) return;
+    if (replayDir_.empty() || r.log.empty()) return;
     try {tak::storageRoom(tak::storageUsage(replayDir_),r.logBytes+65536,limits_.replayDisk);}
     catch(const std::exception& e) {std::fprintf(stderr,"replay not saved: %s\n",e.what());return;}
     const Writer w=replayBytes(r);
@@ -1085,665 +969,15 @@ void Server::authMsg(Client& c, const Frame& f) {
     c.conn.fail("no login");
 }
 
-namespace {
-int64_t campaignNow() {
-    return std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-}
-Writer battleReply(uint8_t status, const std::string& campaign = "", const std::string& battle = "",
-                   uint32_t room = 0, const std::string& map = "", int64_t expires = 0, const std::string& reason = "") {
-    Writer w;w.u8(status);w.str(campaign);w.str(battle);w.u32(room);w.str(map);w.u64(uint64_t(expires));w.str(reason);return w;
-}
-}
-
-tak::srv::crusades::BattleContext Server::campaignContext(const Room& r, bool requirePresent) const {
-    if (r.campaignBattleId.empty() && requirePresent) throw std::runtime_error("not a campaign room");
-    if (!r.mapPackage || r.cap != 2 || !r.mission.empty() || !r.spectators.empty())
-        throw std::runtime_error("invalid campaign room");
-    tak::srv::crusades::BattleContext context;
-    context.mapIdentifier = r.mapId;context.mapDigest = r.mapPackage->digest;
-    context.crusadesBalance = r.opts.crusades == 1;
-    const SlotInfo* slots=r.running ? r.startSlots : r.slots;
-    const Writer rules=tak::net::crusadesRulesPreimage(r.seed,r.opts,slots);
-    for (int i=0;i<kMaxSlots;++i) {
-        const auto& slot=slots[i];
-        if(i>=2) {if(slot.type!=3 || r.slotClient[i]>=0)throw std::runtime_error("extra campaign participant");continue;}
-        if(slot.type!=1)throw std::runtime_error("campaign requires two human participants");
-        std::string account=r.campaignAccounts[i];
-        if(r.slotClient[i]>=0) {
-            const auto peer=clients_.find(uint32_t(r.slotClient[i]));
-            if(peer==clients_.end() || peer->second->account.empty() || peer->second->roomId!=r.id || peer->second->slot!=i)
-                throw std::runtime_error("campaign participant connection missing");
-            account=tak::auth::foldUsername(peer->second->account);
-            if(account!=r.campaignAccounts[i])throw std::runtime_error("campaign participant changed");
-        } else if(requirePresent)throw std::runtime_error("campaign participant not joined");
-        context.participants.push_back(account);
-    }
-    context.rulesDigest=tak::crypto::toHex(tak::crypto::sha256(rules.b.data(),rules.b.size()));
-    return context;
-}
-
-std::pair<std::string,std::string> Server::saveCampaignReplay(Room& r) {
-    namespace fs=std::filesystem;
-    const Writer bytes=replayBytes(r);
-    const auto digest=tak::crypto::toHex(tak::crypto::sha256(bytes.b.data(),bytes.b.size()));
-    // Content-addressed filename plus issued identity: immutable, safe on Windows,
-    // and directly traceable from the database without changing replay format.
-    const auto identity=tak::crypto::toHex(tak::crypto::sha256(r.campaignBattleId));
-    const std::string name="battle-"+identity+"-"+digest+".takrep";
-    fs::create_directories(campaignReplayDir_);
-    const auto final=campaignReplayDir_/name;
-    const auto matches=[&]() {
-        std::ifstream input(final,std::ios::binary);if(!input)return false;
-        tak::crypto::Sha256 hash;char buffer[16384];
-        while(input.read(buffer,sizeof buffer) || input.gcount())hash.update(buffer,size_t(input.gcount()));
-        return input.eof() && !input.bad() && tak::crypto::toHex(hash.final())==digest;
-    };
-    const auto synchronize=[&]() {
-#ifdef _WIN32
-        HANDLE file=CreateFileW(final.c_str(),GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
-        if(file==INVALID_HANDLE_VALUE)throw std::runtime_error("cannot open published replay for sync");
-        const bool synced=FlushFileBuffers(file)!=0;const bool closed=CloseHandle(file)!=0;
-        if(!synced || !closed)throw std::runtime_error("cannot durably sync published replay");
-#else
-        // Also required on the retry path: a previous publication could have
-        // succeeded before its directory durability barrier failed.
-        const auto syncPath=[](const fs::path& path) {
-            const int fd=::open(path.c_str(),O_RDONLY);
-            if(fd<0)throw std::runtime_error("cannot open replay artifact for sync");
-            const bool synced=::fsync(fd)==0;const bool closed=::close(fd)==0;
-            if(!synced || !closed)throw std::runtime_error("cannot durably publish campaign replay");
-        };
-        syncPath(final);
-        for(auto directory=campaignReplayDir_;;directory=directory.parent_path()) {
-            syncPath(directory);
-            if(directory==directory.parent_path())break;
-        }
-#endif
-    };
-    if(fs::exists(final)) {
-        if(!matches())throw std::runtime_error("campaign replay artifact failed verification");
-        synchronize();
-        return {name,digest};
-    }
-    tak::storageRoom(tak::storageUsage(campaignReplayDir_),bytes.b.size(),limits_.replayDisk);
-    auto temporary=final;temporary+="."+tak::crypto::toHex(tak::crypto::randomVec(8))+".tmp";
-    struct Cleanup {fs::path path;~Cleanup(){std::error_code ec;fs::remove(path,ec);}} cleanup{temporary};
-#ifdef _WIN32
-    HANDLE file=CreateFileW(temporary.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_WRITE_THROUGH,nullptr);
-    if(file==INVALID_HANDLE_VALUE)throw std::runtime_error("cannot create campaign replay");
-    bool ok=true;
-    for(size_t offset=0;offset<bytes.b.size();) {
-        DWORD count=0;const DWORD amount=DWORD(std::min<size_t>(bytes.b.size()-offset,1u<<20));
-        if(!WriteFile(file,bytes.b.data()+offset,amount,&count,nullptr) || !count){ok=false;break;}
-        offset+=count;
-    }
-    if(ok && !FlushFileBuffers(file))ok=false;
-    if(!CloseHandle(file))ok=false;
-    if(!ok)throw std::runtime_error("cannot durably write campaign replay");
-    if(!MoveFileExW(temporary.c_str(),final.c_str(),MOVEFILE_WRITE_THROUGH) && !matches())
-        throw std::runtime_error("cannot publish campaign replay");
-#else
-    const int file=::open(temporary.c_str(),O_WRONLY|O_CREAT|O_EXCL,0600);
-    if(file<0)throw std::runtime_error("cannot create campaign replay");
-    bool ok=true;
-    for(size_t offset=0;offset<bytes.b.size();) {
-        const auto count=::write(file,bytes.b.data()+offset,bytes.b.size()-offset);
-        if(count<0 && errno==EINTR)continue;
-        if(count<=0){ok=false;break;}offset+=size_t(count);
-    }
-    if(ok && ::fsync(file)!=0)ok=false;
-    if(::close(file)!=0)ok=false;
-    if(!ok)throw std::runtime_error("cannot durably write campaign replay");
-    // Publish without replacing an existing immutable artifact.
-    if(::link(temporary.c_str(),final.c_str())!=0 && !matches())
-        throw std::runtime_error("cannot publish campaign replay");
-    fs::remove(temporary);
-#endif
-    if(!matches())throw std::runtime_error("campaign replay verification failed");
-    synchronize();
-    return {name,digest};
-}
-
-void Server::finalizeCampaign(Room& r,bool abandoning) {
-    namespace campaign=tak::srv::crusades;
-    using Outcome=campaign::ResultOutcome;
-    if(r.campaignBattleId.empty() || !r.running || r.campaignResultRecorded || r.tickJob.valid())return;
-    if(!r.campaignResult) {
-        std::optional<Outcome> reason=r.campaignFault;
-        int winner=-1;
-        if(!reason && !r.ref)reason=Outcome::RefereeFailure;
-        if(!reason && r.ref && r.ref->winningTeam()>=0) {
-            for(int i=0;i<2;++i)if(r.startSlots[i].team==r.ref->winningTeam())winner=i;
-            if(winner<0 || r.tick==0 || !r.campaignLoaded[0] || !r.campaignLoaded[1])reason=Outcome::InvalidClient;
-            else if(r.campaignTimeout[0] || r.campaignTimeout[1])reason=Outcome::Timeout;
-            else if(r.campaignDisconnected[1-winner] && !r.campaignResigned[1-winner])reason=Outcome::Disconnect;
-            else reason=r.campaignResigned[1-winner]?Outcome::Resignation:Outcome::Victory;
-        }
-        if(!reason && r.ref && r.ref->numPlayers()>=2 && r.ref->player(0).defeated && r.ref->player(1).defeated)
-            reason=Outcome::Draw;
-        if(!reason && abandoning)reason=(r.campaignTimeout[0]||r.campaignTimeout[1])?Outcome::Timeout:
-            (r.campaignDisconnected[0]||r.campaignDisconnected[1])?Outcome::Disconnect:Outcome::ServerAbort;
-        if(!reason)return;
-        campaign::VerifiedMatchResult result;
-        result.outcome=*reason;result.finalTick=r.log.size();result.finalStateHash=r.ref?r.ref->stateHash():0;
-        result.gameplayFingerprint=roomData(r).hash;result.engineBuild=tak::kBuildId;
-        if(*reason==Outcome::Victory || *reason==Outcome::Resignation)result.winners.push_back(r.campaignAccounts[winner]);
-        static const char* factions[]={"aramon","taros","veruna","zhon","creon"};
-        for(int i=0;i<2;++i) {
-            campaign::ParticipantMatchResult row;
-            row.accountId=r.campaignAccounts[i];row.faction=factions[r.startSlots[i].faction%5];row.team=r.startSlots[i].team;
-            if(r.ref && i<r.ref->numPlayers()) {
-                const auto& p=r.ref->player(i);
-                row.kills=p.kills;row.losses=p.losses;row.score=p.score;row.built=p.built;
-                row.currentUnits=p.unitCount;row.defeated=p.defeated;
-            }
-            result.participantResults.push_back(std::move(row));
-        }
-        if(result.finalTick) {
-            const auto tick=uint32_t(result.finalTick-1);
-            const uint64_t pd=r.ref?r.ref->posDigest():0;
-            if(!r.replayChecks.empty() && r.replayChecks.back().tick==tick)r.replayChecks.back()={tick,result.finalStateHash,pd};
-            else r.replayChecks.push_back({tick,result.finalStateHash,pd});
-        }
-        r.campaignResult=std::move(result);
-        ++campaignActivityVersion_; ++campaignMatchGeneration_; // Frozen matches cease being active before durable completion.
-        // Freeze the referee and replay at this terminal snapshot, while allowing
-        // two seconds for already-in-flight client hashes to invalidate integrity.
-        r.campaignResultDue=nowMs()+((*reason==Outcome::Victory || *reason==Outcome::Resignation)?2000:0);
-    }
-    auto& result=*r.campaignResult;
-    if(r.campaignFault) {result.outcome=*r.campaignFault;result.winners.clear();}
-    if(nowMs()<r.campaignResultDue)return;
-    if(result.replayId.empty()) {
-        try {auto artifact=saveCampaignReplay(r);result.replayId=std::move(artifact.first);result.replayDigest=std::move(artifact.second);}
-        catch(const std::exception& e) {
-            std::fprintf(stderr,"campaign replay: %s\n",e.what());
-            if(result.outcome==Outcome::Victory || result.outcome==Outcome::Resignation) {
-                result.outcome=Outcome::ServerAbort;result.winners.clear();
-            }
-        }
-    }
-    try {
-        const auto context=campaignContext(r,false);
-        try {crusades_->recordVerifiedResult(r.campaignBattleId,r.campaignRoomToken,context,result,campaignNow());}
-        catch(const campaign::StaleBattleError&) {
-            if(result.outcome!=Outcome::Victory && result.outcome!=Outcome::Resignation)throw;
-            // A proven stale allegiance/campaign cannot
-            // become points. Retain the exact room snapshot as a no-credit abort.
-            result.outcome=Outcome::ServerAbort;result.winners.clear();
-            crusades_->recordVerifiedResult(r.campaignBattleId,r.campaignRoomToken,context,result,campaignNow());
-        }
-        r.campaignResultRecorded=true;
-        notifyCampaignBattle(r.campaignBattleId);
-        std::fprintf(stderr,"campaign battle %s recorded outcome %d at tick %llu\n",r.campaignBattleId.c_str(),int(result.outcome),
-            static_cast<unsigned long long>(result.finalTick));
-    } catch(const std::exception& e) {
-        try {if(crusades_->verifiedResult(r.campaignBattleId)) {r.campaignResultRecorded=true;notifyCampaignBattle(r.campaignBattleId);return;}}catch(const std::exception&) {}
-        std::fprintf(stderr,"campaign result persistence: %s\n",e.what());
-        r.campaignResultDue=nowMs()+1000; // Keep the frozen room; never discard an unrecorded outcome.
-    }
-}
-
-void Server::cancelCampaignBattle(Room& r) {
-    if(r.campaignBattleId.empty() || !crusades_)return;
-    r.campaignCancelled=true; // Never expose a closing room, even during its notification.
-    ++campaignActivityVersion_;++campaignMatchGeneration_;
-    try {
-        const auto status=crusades_->battle(r.campaignBattleId).status;
-        if(status==tak::srv::crusades::BattleStatus::Issued || status==tak::srv::crusades::BattleStatus::Started)
-            crusades_->cancelBattle(r.campaignBattleId,campaignNow());
-        notifyCampaignBattle(r.campaignBattleId);
-    }
-    catch(const std::exception& e) {std::fprintf(stderr,"campaign cancellation: %s\n",e.what());}
-}
-
-void Server::closeCampaignLobby(uint32_t roomId,const char* reason) {
-    auto it=rooms_.find(roomId);if(it==rooms_.end())return;
-    auto& r=it->second;cancelCampaignBattle(r);
-    for(auto& [id,peer]:clients_) {
-        (void)id;if(peer->roomId!=roomId)continue;
-        dropPendingCommands(*peer,r);peer->state=Client::Lobby;peer->roomId=0;peer->slot=-1;peer->loaded=false;
-        peer->conn.send(Msg::CrusadesBattleResult,battleReply(4,r.campaignId,r.campaignBattleId,0,"",0,reason));
-    }
-    rooms_.erase(it);
-}
-
-std::optional<uint32_t> Server::campaignRoomId(const std::string& battleId) const {
-    for(const auto& [id,room]:rooms_)
-        if(room.campaignBattleId==battleId && !room.campaignCancelled && !room.campaignResultRecorded &&
-            !room.campaignResult && !room.campaignFault && (room.running || campaignNow()<room.campaignExpires))return id;
-    return {};
-}
-
-std::optional<tak::net::crusades::BattleActivity> Server::campaignActivity(const std::string& campaign,uint32_t territory) const {
-    tak::net::crusades::BattleActivity activity;
-    for(const auto& [id,room]:rooms_) {
-        (void)id;
-        if(room.campaignId!=campaign || room.campaignTerritory!=territory || room.campaignBattleId.empty() ||
-            room.campaignCancelled || room.campaignResultRecorded || room.campaignResult || room.campaignFault)continue;
-        if(room.running)++activity.active;
-        else if(campaignNow()<room.campaignExpires)++activity.offered;
-    }
-    return activity;
-}
-
-void Server::campaignRead(Client& c,const Frame& f) {
-    namespace wire=tak::net::crusades;
-    // Limit synchronous database work and snapshot amplification per peer.
-    // The connection already bounds incoming frames and queued outgoing bytes.
-    const auto now=nowMs();
-    if(now-c.campaignReadWindow>=1000) {c.campaignReadWindow=now;c.campaignReads=0;}
-    if(c.campaignReads>=32) {
-        if(c.campaignReads==32) {
-            uint32_t requestId=0;
-            if(f.payload.size()>=6)for(unsigned i=0;i<4;++i)requestId|=uint32_t(f.payload[2+i])<<(8*i);
-            c.conn.send(Msg::CrusadesError,wire::encode(wire::Response{
-                wire::Error{requestId,wire::ErrorCode::Unavailable,"",{},"campaign query rate exceeded; retry later"}}));
-            ++c.campaignReads;
-        }
-        return;
-    }
-    ++c.campaignReads;
-    const bool authenticated=requireAuth_ && !c.account.empty() &&
-        (c.state==Client::Lobby || c.state==Client::InGame);
-    const auto account=authenticated?tak::auth::foldUsername(c.account):std::string{};
-    const auto reply=tak::srv::crusades::handleCampaignRead(crusades_.get(),account,f.kind,f.payload,
-        [this](const std::string& id){return campaignRoomId(id);},
-        [this](const std::string& campaign,uint32_t territory){return campaignActivity(campaign,territory);},
-        [this](const auto& battle,const auto& result){return tak::srv::crusades::ReplayFiles(campaignReplayDir_).inspect(battle,result);});
-    c.conn.send(reply.kind,reply.payload);
-    if(authenticated) c.campaignProtocol=true;
-    if(reply.kind==Msg::CrusadesCampaignSnapshot) {
-        const auto snapshot=wire::decodeSnapshot(reply.payload.b);
-        c.campaignSubscription=snapshot.campaignId;c.campaignRevision=snapshot.revision;
-        c.campaignActivityVersion=campaignActivityVersion_;
-    }
-}
-
-void Server::campaignReplayChunk(Client& c,const Frame& f) {
-    namespace wire=tak::net::crusades;
-    uint32_t requestId=0;
-    if(f.payload.size()>=6)for(unsigned i=0;i<4;++i)requestId|=uint32_t(f.payload[2+i])<<(8*i);
-    auto error=[&](wire::ErrorCode code){const auto reply=tak::srv::crusades::campaignReadError(requestId,code);c.conn.send(reply.kind,reply.payload);};
-    // A paced 64KiB transfer uses up to 50 requests/s. Give it its own quota;
-    // archive downloads must not starve campaign reads or allocate whole files.
-    const auto now=nowMs();
-    if(now-c.campaignReplayWindow>=1000){c.campaignReplayWindow=now;c.campaignReplayReads=0;}
-    if(c.campaignReplayReads>=64){if(c.campaignReplayReads==64){++c.campaignReplayReads;error(wire::ErrorCode::Unavailable);}return;}
-    ++c.campaignReplayReads;
-    if(!requireAuth_ || c.account.empty() || (c.state!=Client::Lobby&&c.state!=Client::InGame)) {
-        error(wire::ErrorCode::AuthenticationRequired);return;
-    }
-    if(!crusades_){error(wire::ErrorCode::Disabled);return;}
-    try {
-        const auto request=std::get<wire::ReplayChunkRequest>(wire::decodeRequest(wire::RequestKind::ReplayChunk,f.payload));
-        tak::srv::crusades::IssuedBattle battle;
-        try{battle=crusades_->battle(request.battleId);}catch(const std::exception&){error(wire::ErrorCode::NotFound);return;}
-        const auto result=crusades_->verifiedResult(battle.id);
-        if(!result || (battle.status!=tak::srv::crusades::BattleStatus::Completed&&battle.status!=tak::srv::crusades::BattleStatus::Cancelled)) {
-            error(wire::ErrorCode::NotFound);return;
-        }
-        if(!crusades_->allegiance(battle.campaignId,tak::auth::foldUsername(c.account))){error(wire::ErrorCode::Forbidden);return;}
-        const auto chunk=tak::srv::crusades::ReplayFiles(campaignReplayDir_).read(battle,*result,requestId,request.offset,request.limit);
-        if(!chunk){error(wire::ErrorCode::Unavailable);return;}
-        c.conn.send(Msg::CrusadesReplayChunk,wire::encode(wire::Response{*chunk}));c.campaignProtocol=true;
-    }catch(const wire::DecodeError& e){error(e.code);}
-    catch(const std::exception&){error(wire::ErrorCode::Unavailable);}
-}
-
-void Server::refreshCampaignSnapshot(Client& c,bool force) {
-    namespace wire=tak::net::crusades;
-    if(!crusades_ || !c.campaignProtocol || c.campaignSubscription.empty() || c.account.empty() ||
-        c.conn.txPending()>wire::kMaxPayload)return;
-    try {
-        if(!force && c.campaignActivityVersion==campaignActivityVersion_ &&
-            uint64_t(crusades_->campaignRevision(c.campaignSubscription))==c.campaignRevision)return;
-        const auto reply=tak::srv::crusades::campaignReadResponse(crusades_.get(),tak::auth::foldUsername(c.account),
-            wire::Request{wire::SnapshotRequest{0,c.campaignSubscription,c.campaignRevision}}, {},
-            [this](const std::string& campaign,uint32_t territory){return campaignActivity(campaign,territory);});
-        const auto snapshot=wire::decodeSnapshot(reply.payload.b);
-        c.conn.send(reply.kind,reply.payload);c.campaignRevision=snapshot.revision;
-        c.campaignActivityVersion=campaignActivityVersion_;
-    } catch(const std::exception& e) {
-        std::fprintf(stderr,"campaign snapshot refresh: %s\n",e.what());
-        // End a broken subscription; an explicit request can correct it. Never
-        // spin each second on a campaign too large for the bounded wire format.
-        c.campaignSubscription.clear();c.campaignRevision=wire::kUnknownRevision;
-        c.conn.send(Msg::CrusadesError,wire::encode(wire::Response{
-            wire::Error{0,wire::ErrorCode::Unavailable,"",{},"campaign subscription unavailable; request a new snapshot"}}));
-    }
-}
-
-void Server::notifyCampaignPlayer(Client& c,const std::string& campaignId) {
-    if(!crusades_ || !c.campaignProtocol || c.account.empty() ||
-        c.conn.txPending()>tak::net::crusades::kMaxPayload)return;
-    try {
-        const auto reply=tak::srv::crusades::campaignReadResponse(crusades_.get(),tak::auth::foldUsername(c.account),
-            tak::net::crusades::Request{tak::net::crusades::PlayerStatusRequest{0,campaignId}});
-        c.conn.send(reply.kind,reply.payload);
-    } catch(const std::exception& e) {std::fprintf(stderr,"campaign player status: %s\n",e.what());}
-}
-
-void Server::notifyCampaignBattle(const std::string& battleId) {
-    if(!crusades_)return;
-    ++campaignActivityVersion_;++campaignMatchGeneration_;
-    try {
-        const auto battle=crusades_->battle(battleId);
-        for(auto& [id,peer]:clients_) {
-            (void)id;
-            if(!peer->campaignProtocol || peer->account.empty() ||
-                peer->conn.txPending()>tak::net::crusades::kMaxPayload)continue;
-            const auto account=tak::auth::foldUsername(peer->account);
-            if(std::find(battle.context.participants.begin(),battle.context.participants.end(),account)==battle.context.participants.end())continue;
-            const auto reply=tak::srv::crusades::campaignReadResponse(crusades_.get(),account,
-                tak::net::crusades::Request{tak::net::crusades::BattleStatusRequest{0,battleId}},
-                [this](const std::string& key){return campaignRoomId(key);});
-            peer->conn.send(reply.kind,reply.payload);
-            notifyCampaignPlayer(*peer,battle.campaignId);
-            refreshCampaignSnapshot(*peer);
-        }
-    } catch(const std::exception& e) {std::fprintf(stderr,"campaign battle notification: %s\n",e.what());}
-}
-
-Client* Server::campaignAvailablePeer(const std::string& account) {
-    Client* available=nullptr;
-    unsigned connections=0;
-    for(auto& [id,peer]:clients_) {
-        (void)id;
-        if(peer->account.empty() || tak::auth::foldUsername(peer->account)!=account)continue;
-        // Failed peers still own their account's queue cleanup until dropClient
-        // runs at the end of this poll iteration. Do not let a replacement
-        // session inherit that entry or enqueue one the old cleanup would erase.
-        ++connections;
-        if(peer->conn.ok() && peer->state==Client::Lobby && !peer->roomId)available=peer.get();
-    }
-    return connections==1?available:nullptr;
-}
-
-std::shared_ptr<tak::net::maps::Package> Server::campaignBattleMap(const std::string& map) {
-    if(auto found=campaignMapCache_.find(map);found!=campaignMapCache_.end())return found->second;
-    if(auto found=campaignMapEligibility_.find(map);found!=campaignMapEligibility_.end() && !found->second)return {};
-    try {
-        if(map.empty() || map.size()>4096 || tak::mapgen::isGeneratedMapId(map))throw std::runtime_error("unsupported campaign map");
-        auto package=tak::net::maps::build(retail_.vfs,map);
-        if(tak::net::maps::authoredScenario(*package))throw std::runtime_error("campaign map is a mission");
-        auto ota=package->mapPath;ota.replace(ota.size()-4,4,".ota");
-        const auto file=package->files->find(ota);
-        if(file==package->files->end())throw std::runtime_error("campaign map metadata missing");
-        const auto& data=file->second;
-        if(tak::tnt::Scenario::parse(std::string(data.begin(),data.end())).starts.size()<2)
-            throw std::runtime_error("campaign map has fewer than two starts");
-        campaignMapEligibility_[map]=true;
-        size_t size=package->bytes.size();for(const auto& [name,bytes]:*package->files){(void)name;size+=bytes.size();}
-        constexpr size_t budget=64u<<20;
-        if(size<=budget) {
-            size_t held=0;
-            for(const auto& [name,cached]:campaignMapCache_) {
-                (void)name;held+=cached->bytes.size();for(const auto& [path,bytes]:*cached->files){(void)path;held+=bytes.size();}
-            }
-            if(campaignMapCache_.size()>=8 || held>budget-size)campaignMapCache_.clear();
-            campaignMapCache_[map]=package;
-        }
-        return package;
-    } catch(const std::exception&) {campaignMapEligibility_[map]=false;return {};}
-}
-
-bool Server::campaignMapEligible(const std::string& map) {
-    if(auto found=campaignMapEligibility_.find(map);found!=campaignMapEligibility_.end())return found->second;
-    return bool(campaignBattleMap(map));
-}
-
-void Server::pruneCampaignSearches() {
-    if(!crusades_)return;
-    const auto now=campaignNow();
-    if(!campaignMatchQueue_.expire(now).empty())++campaignMatchGeneration_;
-    std::map<std::string,tak::srv::crusades::StoredCampaign> campaigns;
-    for(const auto& entry:campaignMatchQueue_.entries()) {
-        bool valid=false;
-        try {
-            if(!campaignAvailablePeer(entry.accountId) || crusades_->activeBattleForAccount(entry.accountId,now))
-                throw std::runtime_error("search participant unavailable");
-            auto saved=campaigns.find(entry.campaignId);
-            if(saved==campaigns.end())saved=campaigns.emplace(entry.campaignId,crusades_->load(entry.campaignId)).first;
-            const auto side=crusades_->allegiance(entry.campaignId,entry.accountId);
-            const auto* parcel=saved->second.definition.find(entry.territory);
-            if(!parcel || saved->second.revision!=entry.campaignRevision || !side ||
-                side->revision!=entry.allegianceRevision || side->alliance!=entry.alliance)
-                throw std::runtime_error("search enrollment changed");
-            const auto& live=saved->second.state.territories.at(entry.territory);
-            const auto map=live.assignedMap?live.assignedMap:parcel->mapIdentifier;
-            valid=haveCb_ && map && campaignMapEligible(*map);
-        } catch(const std::exception&) {}
-        if(!valid && campaignMatchQueue_.erase(entry.accountId))++campaignMatchGeneration_;
-    }
-}
-
-void Server::retryCampaignMatches() {
-    const auto now=nowMs();if(now<campaignMatchRetryMs_)return;
-    campaignMatchRetryMs_=now+5000;
-    using Entry=tak::srv::crusades::MatchEntry;
-    using Key=std::tuple<std::string,uint32_t,int64_t>;
-    std::map<Key,std::array<std::optional<Entry>,2>> groups;
-    for(const auto& entry:campaignMatchQueue_.entries()) {
-        auto& side=groups[{entry.campaignId,entry.territory,entry.campaignRevision}][entry.alliance==tak::srv::crusades::Alliance::Honor?0:1];
-        if(!side || entry.sequence<side->sequence)side=entry;
-    }
-    std::map<uint64_t,std::pair<Entry,Entry>> pairs;
-    for(const auto& [key,sides]:groups) {
-        (void)key;if(!sides[0] || !sides[1])continue;
-        const bool honorFirst=sides[0]->sequence<sides[1]->sequence;
-        const auto& host=*sides[honorFirst?0:1];const auto& guest=*sides[honorFirst?1:0];
-        pairs.emplace(host.sequence,std::make_pair(host,guest));
-    }
-    if(pairs.empty())return;
-    auto next=pairs.upper_bound(campaignMatchRetrySequence_);if(next==pairs.end())next=pairs.begin();
-    campaignMatchRetrySequence_=next->first;
-    const auto& [host,guest]=next->second;
-    // Reattempt one pair per interval after pruning; transient issuance failure
-    // neither discards valid searches nor stalls unrelated lobby traffic in a loop.
-    if(auto* peer=campaignAvailablePeer(host.accountId))
-        createCampaignBattle(*peer,host.campaignId,host.territory,guest.accountId);
-}
-
-void Server::sendCampaignMatchmaking(Client& c,const std::string& campaign,uint32_t requestId) {
-    namespace wire=tak::net::crusades;
-    try {
-        if(!crusades_->hasCampaign(campaign)) {
-            const auto error=tak::srv::crusades::campaignReadError(requestId,wire::ErrorCode::NotFound);
-            c.conn.send(error.kind,error.payload);return;
-        }
-        const auto saved=crusades_->load(campaign);
-        const auto account=tak::auth::foldUsername(c.account);
-        const auto side=crusades_->allegiance(campaign,account);
-        wire::MatchmakingStatus board;board.requestId=requestId;board.campaignId=campaign;
-        board.campaignRevision=uint64_t(saved.revision);board.generation=campaignMatchGeneration_;
-        board.canSearch=haveCb_ && side && campaignAvailablePeer(account)==&c && !crusades_->activeBattleForAccount(account,campaignNow());
-        std::map<uint32_t,wire::MatchTerritory> rows;
-        for(const auto& [id,parcel]:saved.definition.territories()) {
-            const auto& live=saved.state.territories.at(id);
-            const auto map=live.assignedMap?live.assignedMap:parcel.mapIdentifier;
-            rows[id]={id,haveCb_ && map && campaignMapEligible(*map),0,0,0,0};
-        }
-        for(const auto& entry:campaignMatchQueue_.entries())if(entry.campaignId==campaign) {
-            const auto row=rows.find(entry.territory);if(row==rows.end())continue;
-            if(entry.alliance==tak::srv::crusades::Alliance::Honor)++row->second.waitingHonor;
-            else ++row->second.waitingTerror;
-            if(entry.accountId==account) {board.searchingTerritory=entry.territory;board.searchExpiresUnix=uint64_t(entry.expiresUnix);}
-        }
-        for(const auto& [id,room]:rooms_) {
-            (void)id;
-            if(room.campaignId!=campaign || room.campaignBattleId.empty() || room.campaignCancelled ||
-                room.campaignResultRecorded || room.campaignResult || room.campaignFault)continue;
-            const auto row=rows.find(room.campaignTerritory);if(row==rows.end())continue;
-            if(room.running)++row->second.active;
-            else if(campaignNow()<room.campaignExpires)++row->second.offered;
-        }
-        for(const auto& [id,row]:rows){(void)id;board.territories.push_back(row);}
-        if(c.campaignMatchBoard) {
-            auto before=*c.campaignMatchBoard,after=board;
-            before.requestId=after.requestId=0;before.generation=after.generation=0;
-            if(wire::encode(wire::Response{before})!=wire::encode(wire::Response{after}))++campaignMatchGeneration_;
-        }
-        board.generation=campaignMatchGeneration_;
-        c.conn.send(Msg::CrusadesMatchmakingStatus,wire::encode(wire::Response{board}));
-        c.campaignMatchSubscription=campaign;c.campaignMatchBoard=std::move(board);c.campaignProtocol=true;
-    } catch(const std::exception& e) {
-        std::fprintf(stderr,"campaign matchmaking read: %s\n",e.what());
-        const auto error=tak::srv::crusades::campaignReadError(requestId,wire::ErrorCode::Unavailable);
-        c.conn.send(error.kind,error.payload);
-    }
-}
-
-void Server::refreshCampaignMatchmaking(Client& c) {
-    if(!crusades_ || c.account.empty() || c.campaignMatchSubscription.empty() ||
-        c.conn.txPending()>tak::net::crusades::kMaxPayload)return;
-    try {
-        // Only aggregate/room mutations or a personal availability/revision change
-        // need a new board; idle peers never rebuild every territory each tick.
-        const auto& previous=c.campaignMatchBoard;
-        const auto account=tak::auth::foldUsername(c.account);
-        if(previous && previous->generation==campaignMatchGeneration_ &&
-            previous->campaignRevision==uint64_t(crusades_->campaignRevision(c.campaignMatchSubscription))) {
-            const auto side=crusades_->allegiance(c.campaignMatchSubscription,account);
-            const bool available=haveCb_ && side && campaignAvailablePeer(account)==&c && !crusades_->activeBattleForAccount(account,campaignNow());
-            if(available==previous->canSearch)return;
-        }
-        sendCampaignMatchmaking(c,c.campaignMatchSubscription,0);
-    } catch(const std::exception&) {c.campaignMatchSubscription.clear();c.campaignMatchBoard.reset();}
-}
-
-void Server::campaignMatchmaking(Client& c,const Frame& f) {
-    namespace wire=tak::net::crusades;
-    uint32_t requestId=0;if(f.payload.size()>=6)for(unsigned i=0;i<4;++i)requestId|=uint32_t(f.payload[2+i])<<(8*i);
-    const auto error=[&](wire::ErrorCode code) {const auto reply=tak::srv::crusades::campaignReadError(requestId,code);c.conn.send(reply.kind,reply.payload);};
-    const auto now=nowMs();
-    if(now-c.campaignReadWindow>=1000){c.campaignReadWindow=now;c.campaignReads=0;}
-    if(c.campaignReads>=32){if(c.campaignReads==32){++c.campaignReads;error(wire::ErrorCode::Unavailable);}return;}
-    ++c.campaignReads;
-    if(!requireAuth_ || c.account.empty() || (c.state!=Client::Lobby && c.state!=Client::InGame)) {error(wire::ErrorCode::AuthenticationRequired);return;}
-    if(!crusades_){error(wire::ErrorCode::Disabled);return;}
-    try {
-        const auto kind=f.kind==Msg::CrusadesGetMatchmaking?wire::RequestKind::Matchmaking:
-            f.kind==Msg::CrusadesSearchBattle?wire::RequestKind::MatchSearch:wire::RequestKind::MatchCancel;
-        const auto request=wire::decodeRequest(kind,f.payload);
-        const auto campaign=std::visit([](const auto& value)->std::string {
-            using T=std::decay_t<decltype(value)>;
-            if constexpr(std::is_same_v<T,wire::MatchmakingRequest> || std::is_same_v<T,wire::MatchSearchRequest> || std::is_same_v<T,wire::MatchCancelRequest>)return value.campaignId;
-            else return {};
-        },request);
-        if(!crusades_->hasCampaign(campaign)){error(wire::ErrorCode::NotFound);return;}
-        pruneCampaignSearches();
-        const auto account=tak::auth::foldUsername(c.account);
-        if(const auto* search=std::get_if<wire::MatchSearchRequest>(&request)) {
-            const auto saved=crusades_->load(campaign);
-            const auto side=crusades_->allegiance(campaign,account);
-            const auto* parcel=saved.definition.find(search->territory);
-            if(!haveCb_ || !side || !parcel || campaignAvailablePeer(account)!=&c || crusades_->activeBattleForAccount(account,campaignNow()))
-                throw std::runtime_error("search participant unavailable");
-            const auto& live=saved.state.territories.at(search->territory);
-            const auto map=live.assignedMap?live.assignedMap:parcel->mapIdentifier;
-            if(!map || !campaignMapEligible(*map))throw std::runtime_error("search territory unavailable");
-            const auto entry=campaignMatchQueue_.put({account,campaign,search->territory,side->alliance,side->revision,saved.revision,
-                campaignNow()+tak::srv::crusades::MatchQueue::kLifetimeSeconds,0},campaignNow());
-            ++campaignMatchGeneration_;
-            if(const auto pair=campaignMatchQueue_.firstPair(campaign,entry.territory,entry.campaignRevision,campaignNow())) {
-                const auto& [host,guest]=*pair;
-                auto* peer=campaignAvailablePeer(host.accountId);
-                if(!peer || !createCampaignBattle(*peer,campaign,search->territory,guest.accountId)) {
-                    throw std::runtime_error("match creation rejected; valid searches retained");
-                }
-            }
-        } else if(std::holds_alternative<wire::MatchCancelRequest>(request)) {
-            const auto* entry=campaignMatchQueue_.find(account);
-            if(entry && entry->campaignId==campaign && campaignMatchQueue_.erase(account))++campaignMatchGeneration_;
-        }
-        sendCampaignMatchmaking(c,campaign,requestId);
-    } catch(const wire::DecodeError& e){error(e.code);}
-    catch(const std::exception& e){std::fprintf(stderr,"campaign matchmaking: %s\n",e.what());error(wire::ErrorCode::Unavailable);}
-}
-
-void Server::issueCampaignBattle(Client& c,const Frame& f) {
-    if(!requireAuth_ || c.account.empty() || (c.state!=Client::Lobby && c.state!=Client::InGame)) {
-        c.conn.send(Msg::CrusadesBattleResult,battleReply(2,"","",0,"",0,"account authentication required"));return;
-    }
-    if(!crusades_) {c.conn.send(Msg::CrusadesBattleResult,battleReply(3,"","",0,"",0,"campaign service disabled"));return;}
-    if(f.payload.size()<11 || f.payload.size()>156) {c.conn.send(Msg::CrusadesBattleResult,battleReply(1));return;}
-    Reader rd(f.payload.data(),f.payload.size());const auto campaign=rd.str();const auto territory=rd.u32();const auto opponentName=rd.str();
-    if(!rd.ok || rd.p!=rd.end || campaign.empty() || campaign.size()>128 || campaign.find('\0')!=std::string::npos ||
-        !territory || !tak::auth::validUsername(opponentName)) {c.conn.send(Msg::CrusadesBattleResult,battleReply(1));return;}
-    createCampaignBattle(c,campaign,territory,tak::auth::foldUsername(opponentName));
-}
-
-bool Server::createCampaignBattle(Client& c,const std::string& campaign,uint32_t territory,const std::string& opponentName) {
-    std::string issued;
-    uint32_t roomId=0;
-    try {
-        if(rooms_.size()>=limits_.rooms)throw std::runtime_error("server game capacity reached");
-        if(c.state!=Client::Lobby || c.roomId || !haveCb_)throw std::runtime_error("campaign match unavailable");
-        const auto caller=tak::auth::foldUsername(c.account),opponent=tak::auth::foldUsername(opponentName);
-        if(caller==opponent)throw std::runtime_error("opponent must be another account");
-        if(campaignAvailablePeer(caller)!=&c)throw std::runtime_error("issuer has multiple available connections");
-        Client* invited=campaignAvailablePeer(opponent);
-        if(!invited)throw std::runtime_error("opponent is not available in the lobby");
-        if(crusades_->activeBattleForAccount(caller,campaignNow()) || crusades_->activeBattleForAccount(opponent,campaignNow()))
-            throw std::runtime_error("account already has an authoritative battle");
-        const auto saved=crusades_->load(campaign);
-        const auto* parcel=saved.definition.find(territory);
-        if(!parcel)throw std::runtime_error("unknown campaign territory");
-        const auto& live=saved.state.territories.at(territory);
-        const auto map=live.assignedMap ? live.assignedMap : parcel->mapIdentifier;
-        if(!map || map->size()>4096 || tak::mapgen::isGeneratedMapId(*map))throw std::runtime_error("territory has no installed battle map");
-        auto package=campaignBattleMap(*map);
-        if(!package)throw std::runtime_error("territory has no eligible battle map");
-        auto a=crusades_->allegiance(campaign,caller),b=crusades_->allegiance(campaign,opponent);
-        if(!a || !b || a->alliance==b->alliance)throw std::runtime_error("opponents must have opposite campaign allegiances");
-        Room room;room.id=nextRoomId_++;roomId=room.id;room.hostId=c.id;room.name="Crusades battle";
-        room.mapId=*map;room.mapPackage=std::move(package);room.mapVfs=std::make_unique<tak::hpi::Vfs>(&retail_.vfs);
-        room.mapVfs->setMapFiles(room.mapPackage->files);room.cap=2;room.createdMs=nowMs();
-        room.seed=fixedSeedSet_?fixedSeed_:uint32_t(randToken());room.opts.crusades=1;room.opts.gameMods=0;
-        room.opts.fogExplored=0;room.opts.forfeitSelfDestruct=1;room.opts.allowSpectators=0; // never watched (Spectate refuses)
-        room.opts.mapScenario=0; // a campaign battle is a plain skirmish (outside the rules digest)
-        room.opts.powerCodes=0;  // and never plays with power codes
-        room.campaignId=campaign;room.campaignTerritory=territory;room.campaignAccounts[0]=caller;room.campaignAccounts[1]=opponent;
-        room.campaignRoomToken=campaignSession_+":"+std::to_string(room.id);
-        room.campaignExpires=campaignNow()+600;
-        for(int i=0;i<kMaxSlots;++i) {room.slots[i].type=i<2?1:3;room.slots[i].color=uint8_t(i);room.slots[i].team=uint8_t(i);}
-        // Minimal modern match policy; not a historical faction eligibility rule.
-        room.slots[0].faction=a->alliance==tak::srv::crusades::Alliance::Honor?0:1;
-        room.slots[1].faction=b->alliance==tak::srv::crusades::Alliance::Honor?0:1;
-        room.slots[0].name=c.name;room.slots[1].name=invited->name;
-        const auto battle=crusades_->issueBattle(campaign,saved.revision,territory,campaignContext(room,false),campaignNow(),room.campaignExpires);
-        issued=battle.id;room.campaignBattleId=battle.id;room.campaignLaunchToken=battle.launchToken;
-        room.slotClient[0]=int(c.id);
-        rooms_.emplace(room.id,std::move(room));
-        c.clearCommands();c.state=Client::InGame;c.roomId=roomId;c.slot=0;c.loaded=false;
-        const auto& stored=rooms_.at(roomId);
-        const auto reply=battleReply(0,campaign,issued,roomId,*map,stored.campaignExpires);
-        c.conn.send(Msg::CrusadesBattleResult,reply);invited->conn.send(Msg::CrusadesBattleResult,reply);
-        campaignMatchQueue_.erase(caller);campaignMatchQueue_.erase(opponent);++campaignMatchGeneration_;
-        notifyCampaignBattle(issued);
-        Writer joined;joined.u8(1);joined.u8(0);joined.str("");c.conn.send(Msg::JoinResult,joined);
-        broadcastLobby(rooms_.at(roomId));
-        return true;
-    } catch(const std::exception& e) {
-        if(roomId && rooms_.count(roomId))closeCampaignLobby(roomId,"campaign issuance failed");
-        else if(!issued.empty()) {try{crusades_->cancelBattle(issued,campaignNow());}catch(const std::exception&) {}}
-        std::fprintf(stderr,"campaign issuance: %s\n",e.what());
-        c.conn.send(Msg::CrusadesBattleResult,battleReply(4,campaign,"",0,"",0,"campaign battle issuance rejected"));
-        return false;
-    }
-}
-
 void Server::sendGameList(Client& c) {
     Writer w;
     uint64_t t = nowMs();
     // Private (single-player) games are not advertised in the browser.
     uint32_t n = 0;
-    for (auto& [id, r] : rooms_) if (!r.priv && r.campaignBattleId.empty()) ++n;
+    for (auto& [id, r] : rooms_) if (!r.priv) ++n;
     w.u32(n);
     for (auto& [id, r] : rooms_) {
-        if (r.priv || !r.campaignBattleId.empty()) continue;
+        if (r.priv) continue;
         w.u32(r.id);
         w.str(r.name);
         w.str(r.mapId);
@@ -2070,16 +1304,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             if (room.running) { reject("game already started"); break; }
             if (!room.password.empty() && room.password != pass) { reject("wrong password"); break; }
             int freeSlot = -1;
-            if(!room.campaignBattleId.empty()) {
-                if(!requireAuth_ || c.account.empty() || c.state!=Client::Lobby || c.roomId ||
-                    tak::auth::foldUsername(c.account)!=room.campaignAccounts[1] || room.slotClient[1]>=0 ||
-                    campaignNow()>=room.campaignExpires) {reject("not an eligible campaign participant");break;}
-                try {
-                    if(crusades_->battle(room.campaignBattleId).status!=tak::srv::crusades::BattleStatus::Issued)
-                        throw std::runtime_error("campaign battle unavailable");
-                } catch(const std::exception&) {reject("campaign battle unavailable");break;}
-                freeSlot=1;
-            } else for (int i = 0; i < kMaxSlots; ++i)
+            for (int i = 0; i < kMaxSlots; ++i)
                 if (room.slots[i].type == 0) { freeSlot = i; break; }
             if (freeSlot < 0) { reject("game is full"); break; }
             room.slots[freeSlot].type = 1;
@@ -2117,16 +1342,6 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
                 break;
             }
             if (fromTick > room.log.size()) { reject("the game has no such tick"); break; }
-            if(!room.campaignBattleId.empty()) {
-                if(room.campaignResult || room.campaignFault || room.campaignResultRecorded) {
-                    reject("campaign battle has ended");break;
-                }
-                if(slot>=2 || !requireAuth_ || c.account.empty() || tak::auth::foldUsername(c.account)!=room.campaignAccounts[slot]) {
-                    reject("resume account does not match campaign participant");break;
-                }
-                try { (void)crusades_->authorizeBattleReport(room.campaignBattleId,room.campaignRoomToken,campaignContext(room,false),campaignNow()); }
-                catch(const std::exception&) {reject("campaign battle is no longer eligible");break;}
-            }
             // The seat's old connection, when the server has not seen it go yet (a
             // client that lost its link first): this one replaces it.
             if (int old = room.slotClient[slot]; old >= 0 && uint32_t(old) != c.id) {
@@ -2135,7 +1350,6 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             }
             // Re-seat the client and rotate the token (single use).
             room.slotClient[slot] = int(c.id);
-            if(!room.campaignBattleId.empty() && slot<2)room.campaignDisconnected[slot]=false;
             room.slotToken[slot] = randToken();
             c.clearCommands();   // never inherit a previous room's queue
             c.state = Client::InGame; c.roomId = gid; c.slot = slot; c.loaded = true;
@@ -2168,7 +1382,6 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             };
             if (it == rooms_.end() || !it->second.running) { reject("game not found or ended"); break; }
             Room& room = it->second;
-            if(!room.campaignBattleId.empty()) {reject("campaign battles do not allow spectators");break;}
             // The host's ALLOW SPECTATORS rule. This is the ONLY way into a room without
             // a slot after creation, so refusing it here covers a browser's WATCH, a
             // seated player who left and asks to watch, and a dropped spectator coming
@@ -2288,14 +1501,6 @@ void Server::dropPendingCommands(Client& c, Room& r) {
 void Server::leaveRoom(Client& c, const char* reason) {
     Room* r = roomOf(c);
     if (!r) return;
-    if(!r->campaignBattleId.empty()) {
-        if(!r->running) {closeCampaignLobby(r->id,"campaign participant left");return;}
-        finalizeCampaign(*r);
-        if(c.slot>=0 && c.slot<2 && !r->campaignResult) {
-            if(std::strcmp(reason,"left")==0) r->campaignResigned[c.slot]=true;
-            else r->campaignDisconnected[c.slot]=true;
-        }
-    }
     dropPendingCommands(c, *r);
     // A spectator just detaches from the stream -- no slot, nothing to forfeit.
     {
@@ -2316,7 +1521,7 @@ void Server::leaveRoom(Client& c, const char* reason) {
             // Voluntary leave mid-game = immediate forfeit (sequenced event so the
             // sim disposes the units in lockstep).
             r->slots[c.slot].type = 3;
-            r->pendingEvents.push_back({r->campaignBattleId.empty()?tak::net::Event::Kind::Leave:tak::net::Event::Kind::CampaignForfeit, uint8_t(c.slot)});
+            r->pendingEvents.push_back({tak::net::Event::Kind::Leave, uint8_t(c.slot)});
             endWait(*r, c.slot);   // it was silent, came back and left: nothing to wait for
         }
     }
@@ -2426,10 +1631,10 @@ void Server::modMsg(Client& c,const Frame& f) {
     Room* room=roomOf(c);if(!room)return;
     // Only the host of a skirmish room with game mods on (every room a current host
     // creates; a 0.8.12 or 0.8.13 host may still turn them off) may upload game packs.
-    // Anyone else (a guest, or any player of a campaign/Crusades room) is refused
+    // Anyone else (a guest, or any player of a campaign mission room) is refused
     // outright, with an error rather than silence, so a modified client learns it.
     if(f.kind==Msg::ModOffer || f.kind==Msg::ModChunk) {
-        const char* refused=!room->mission.empty() || !room->campaignBattleId.empty() ? "game mods are not allowed in campaigns"
+        const char* refused=!room->mission.empty() ? "game mods are not allowed in campaigns"
             : room->hostId!=c.id ? "only the host selects game mods"
             : !room->opts.gameMods && f.kind==Msg::ModOffer ? "game mods are off in this game" : nullptr;
         if(refused) {
@@ -2446,7 +1651,7 @@ void Server::modMsg(Client& c,const Frame& f) {
             return;
         }
     }
-    if(!room->mission.empty() || !room->campaignBattleId.empty())return;
+    if(!room->mission.empty())return;
     try {
         Reader rd(f.payload.data(),f.payload.size());
         if(f.kind==Msg::ModOffer){
@@ -2484,7 +1689,6 @@ void Server::modMsg(Client& c,const Frame& f) {
 
 void Server::mapMsg(Client& c, const Frame& f) {
     Room* room = roomOf(c); if (!room) return;
-    if(!room->campaignBattleId.empty() && (f.kind==Msg::MapOffer || f.kind==Msg::MapChunk))return;
     try {
         Reader rd(f.payload.data(), f.payload.size());
         if (f.kind == Msg::MapOffer) {
@@ -2593,11 +1797,6 @@ void Server::tryStart(Client& c) {
     if (!r || r->hostId != c.id || r->running) return;
     if(std::count_if(rooms_.begin(),rooms_.end(),[](const auto& entry){return entry.second.running;})>=limits_.running) {
         sendReject(c,"server running-game capacity reached; retry later");return;
-    }
-    if(!r->campaignBattleId.empty()) {
-        try { (void)campaignContext(*r,true); }
-        catch(const std::exception&) {return;}
-        if(campaignNow()>=r->campaignExpires) {closeCampaignLobby(r->id,"campaign battle expired");return;}
     }
     if (!mapsReady(*r)) {
         Writer w; w.u32(r->id); w.str("waiting for every player and the server to verify the map");
@@ -2829,17 +2028,6 @@ void Server::tryStart(Client& c) {
                              r->opts.mapScenario ? "MAP SCENARIO" : "Test Map copy", r->ref->units().size());
         }
     }
-    if(!r->campaignBattleId.empty()) {
-        try {
-            crusades_->startBattle(r->campaignBattleId,r->campaignLaunchToken,r->campaignRoomToken,
-                campaignContext(*r,true),campaignNow());
-            r->campaignLaunchToken.clear(); // Single-use launch credential never sent to clients.
-            notifyCampaignBattle(r->campaignBattleId);
-        } catch(const std::exception&) {
-            r->running=false;r->ref.reset();r->ai.clear();
-            closeCampaignLobby(r->id,"campaign battle no longer eligible to start");return;
-        }
-    }
     // GameStarting: final slot table + options + seed + a per-slot resume token
     // (used to reconnect to the seat inside the disconnect wait).
     for (int i = 0; i < kMaxSlots; ++i) {
@@ -2873,12 +2061,6 @@ void Server::gameMsg(Client& c, const Frame& f) {
             uint8_t type = rd.u8(), faction = rd.u8(), color = rd.u8(), team = rd.u8(), ready = rd.u8();
             uint8_t aiLevel = rd.u8();
             if (!rd.ok || slot < 0 || slot >= kMaxSlots || r->running) return;
-            if(!r->campaignBattleId.empty()) {
-                const auto& current=r->slots[slot];
-                if(rd.p!=rd.end || slot!=c.slot || type!=current.type || faction!=current.faction || color!=current.color ||
-                    team!=current.team || aiLevel!=current.aiLevel || ready>1)return;
-                r->slots[slot].ready=ready;broadcastLobby(*r);break;
-            }
             bool isHost = (r->hostId == c.id);
             // A player edits only their own slot; the host may edit any.
             if (!isHost && slot != c.slot) return;
@@ -2914,12 +2096,11 @@ void Server::gameMsg(Client& c, const Frame& f) {
             // A seated human takes another seat: only an OPEN one inside the map's
             // capacity, only in the lobby. Under START LOCATIONS: BY SLOT the seat is
             // the start position, and under FIXED the seat order decides it, so this
-            // is how a player picks where they open. Never in a Crusades battle (its
-            // two seats are the issued participants) or a campaign mission (the
+            // is how a player picks where they open. Never in a campaign mission (the
             // mission says which seat is the player's).
             Reader rd(f.payload.data(), f.payload.size());
             const int to = int(rd.u8());
-            if (!rd.ok || rd.p != rd.end || r->running || !r->campaignBattleId.empty() || !r->mission.empty()) return;
+            if (!rd.ok || rd.p != rd.end || r->running || !r->mission.empty()) return;
             const int from = c.slot;
             if (from < 0 || from >= kMaxSlots || r->slotClient[from] != int(c.id)) return;   // spectators have no seat
             if (to < 0 || to >= kMaxSlots || to == from || to >= r->cap) return;
@@ -2940,7 +2121,6 @@ void Server::gameMsg(Client& c, const Frame& f) {
             break;
         }
         case Msg::Kick: {
-            if(!r->campaignBattleId.empty())return;
             if (r->hostId != c.id || r->running) return;
             Reader rd(f.payload.data(), f.payload.size());
             int slot = int(rd.u8());
@@ -2953,7 +2133,6 @@ void Server::gameMsg(Client& c, const Frame& f) {
             break;
         }
         case Msg::SetPause: {
-            if(!r->campaignBattleId.empty())return; // Issued matches cannot be held indefinitely by a host.
             // A player asking to pause. Only the host may (in single-player the host
             // IS the only human), and only in a running game. Unlike the disconnect
             // wait this one never runs out: nobody has disconnected.
@@ -2975,7 +2154,6 @@ void Server::gameMsg(Client& c, const Frame& f) {
             break;
         }
         case Msg::SetGameOptions: {
-            if(!r->campaignBattleId.empty())return;
             if (r->hostId != c.id) return;   // host only
             Reader rd(f.payload.data(), f.payload.size());
             GameOptions o; get(rd, o);
@@ -3010,8 +2188,8 @@ void Server::gameMsg(Client& c, const Frame& f) {
                 o.unitCap = r->opts.unitCap;
                 // Lobby: adopt the remaining options and rebroadcast the slot table.
                 o.gameMods = o.gameMods ? 1 : 0;
-                // Campaign and Crusades rooms never run game mods.
-                if(!r->mission.empty() || !r->campaignBattleId.empty())o.gameMods=0;
+                // Campaign mission rooms never run game mods.
+                if(!r->mission.empty())o.gameMods=0;
                 if(o.gameMods!=r->opts.gameMods){
                     r->modData.reset();r->modPackage.reset();
                     r->mapVfs.reset();r->mapPackage.reset();
@@ -3040,13 +2218,6 @@ void Server::gameMsg(Client& c, const Frame& f) {
             // here, before the first tick, instead of desyncing mid-game.
             Reader rd(f.payload.data(), f.payload.size());
             uint64_t clientHash = rd.u64();
-            if(!r->campaignBattleId.empty()) {
-                if(!rd.ok || rd.p!=rd.end || !clientHash || clientHash!=roomData(*r).hash || c.slot<0 || c.slot>=2) {
-                    r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;
-                    c.conn.fail("invalid campaign gameplay fingerprint");return;
-                }
-                r->campaignLoaded[c.slot]=true;
-            }
             if (rd.ok && clientHash != 0) {
                 uint64_t want = roomData(*r).hash;
                 if (clientHash != want) {
@@ -3097,7 +2268,6 @@ void Server::gameMsg(Client& c, const Frame& f) {
         case Msg::PlayerCommands: {
             if (!r->running) return;
             if (c.slot < 0) { c.conn.fail("spectators cannot issue commands"); return; }
-            if (!r->campaignBattleId.empty() && (r->campaignResult || r->campaignFault)) return;
             Reader header(f.payload.data(),f.payload.size());
             const auto count=header.u32();
             if(!header.ok || count>f.payload.size()/35) {c.conn.fail("invalid player command count");return;}
@@ -3117,8 +2287,6 @@ void Server::gameMsg(Client& c, const Frame& f) {
             }
             std::vector<Command> parsed;
             if (!tak::srv::parsePlayerCommands(f.payload,parsed)) {
-                if (!r->campaignBattleId.empty())
-                    r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;
                 c.conn.fail("invalid player commands");
                 return;
             }
@@ -3143,10 +2311,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if (r->opts.pathfindingMode != tak::sim::PathfindingMode::Legion) {
                 c.conn.fail("explicit orders are for Legion games"); return;
             }
-            if (!r->campaignBattleId.empty() && (r->campaignResult || r->campaignFault)) return;
             if (!handleOrderFrame(c, *r, f)) {
-                if (!r->campaignBattleId.empty())
-                    r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;
                 c.conn.fail("invalid order transaction");
                 return;
             }
@@ -3159,10 +2324,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             Reader rd(f.payload.data(), f.payload.size());
             uint32_t tk = rd.u32(), rtt = rd.u32();
             const uint32_t arrived = rd.p != rd.end ? rd.u32() : tk;   // optional (protocol 276)
-            if (!rd.ok || rd.p != rd.end) {
-                if(!r->campaignBattleId.empty())r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;
-                return;
-            }
+            if (!rd.ok || rd.p != rd.end) return;
             if (tk >= r->tick) break;
             if (tk > c.ackTick) c.ackTick = tk;
             if (arrived >= tk && arrived < r->tick && arrived > c.arrivedTick) c.arrivedTick = arrived;
@@ -3174,12 +2336,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
             if (!r->running) return;
             Reader rd(f.payload.data(), f.payload.size());
             uint32_t tk = rd.u32(); uint64_t h = rd.u64();
-            if(!r->campaignBattleId.empty() && (!rd.ok || rd.p!=rd.end)) {
-                r->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;return;
-            }
             if (!rd.ok) return;
-            if(!r->campaignBattleId.empty() && r->refHash.count(tk) && h!=r->refHash.at(tk))
-                r->campaignFault=tak::srv::crusades::ResultOutcome::Desync;
             // A report is only meaningful for a tick the server has actually CLOSED.
             // Without this check `tk` is whatever the peer says: a future tick both
             // advanced ackTick (so the client claimed flow-control progress it had not
@@ -3252,7 +2409,6 @@ void Server::checkHashes(Room& r, uint32_t tick) {
         for (auto& [cid, h] : it->second) ++ctally[h];
         if (ctally.size() == 1 && it->second.begin()->second != canon && !r.refSuspect) {
             r.refSuspect = true;
-            if(!r.campaignBattleId.empty())r.campaignFault=tak::srv::crusades::ResultOutcome::RefereeFailure;
             std::fprintf(stderr, "game %u: REFEREE SUSPECT at tick %u -- all %d clients agree "
                                  "with each other but disagree with the server sim; not dropping.\n",
                          r.id, tick, live);
@@ -3262,7 +2418,6 @@ void Server::checkHashes(Room& r, uint32_t tick) {
     for (auto& [cid, h] : it->second) {
         if (h != canon && !r.desyncFlagged[cid]) {
             r.desyncFlagged[cid] = true;
-            if(!r.campaignBattleId.empty())r.campaignFault=tak::srv::crusades::ResultOutcome::Desync;
             auto ci = clients_.find(cid);
             if (ci != clients_.end()) {
                 Writer w; w.u32(tick); w.str("desync detected (state diverged from the game)");
@@ -3275,7 +2430,6 @@ void Server::checkHashes(Room& r, uint32_t tick) {
 }
 
 bool Server::canAdvance(const Room& r) const {
-    if(r.campaignResult || r.campaignFault)return false;
     // Slow to the slowest CONSUMER so nobody is flooded past what they can process:
     // the server may not run more than a consumer's lead past its acked tick
     // (kMaxLeadTicks, or flowLeadTicks() once it sends Msg::Progress -- WE S3).
@@ -3387,7 +2541,6 @@ void Server::finishTick(Room& r) {
     catch(...) {r.simulationError="unknown simulation failure";}
     if(!r.simulationError.empty() || result.resourceLimited) {
         r.resourceLimited=result.resourceLimited;
-        if(!r.campaignBattleId.empty())r.campaignFault=tak::srv::crusades::ResultOutcome::RefereeFailure;
         if(!r.simulationError.empty())std::fprintf(stderr,"game %u simulation failed: %s\n",r.id,r.simulationError.c_str());
         return;
     }
@@ -3436,7 +2589,6 @@ void Server::dropClient(uint32_t id, const char* reason) {
         // the resume token), then an AI takes the seat (takeOver). A seat already
         // waiting (it went silent first) keeps its countdown.
         int s = c.slot;
-        if(!r->campaignBattleId.empty() && s<2)r->campaignDisconnected[s]=true;
         dropPendingCommands(c, *r);   // the seat is HELD; its in-flight orders are not
         r->slotClient[s] = -1;
         // Silence counts as it does for a stall (the run loop): only once the game has
@@ -3448,7 +2600,6 @@ void Server::dropClient(uint32_t id, const char* reason) {
         leaveRoom(c, reason);
     }
     std::fprintf(stderr, "client %u dropped (%s)\n", id, reason);
-    if(!c.account.empty() && campaignMatchQueue_.erase(tak::auth::foldUsername(c.account)))++campaignMatchGeneration_;
     clients_.erase(it);
 }
 
@@ -3614,31 +2765,22 @@ void Server::takeOver(Room& r, int slot) {
     }
     r.takenToken[slot] = r.slotToken[slot];
     r.slotToken[slot] = 0;
-    if (!r.campaignBattleId.empty()) {
-        // An issued Crusades battle is a duel between two accounts: it does not go on
-        // with a stand-in. The absent participant times out and forfeits, as before.
-        if (slot < 2) r.campaignTimeout[slot] = true;
-        r.slots[slot].type = 3;
-        r.pendingEvents.push_back({tak::net::Event::Kind::CampaignForfeit, uint8_t(slot)});
-        std::fprintf(stderr, "game %u: player %d FORFEIT (disconnect wait ran out)\n", r.id, slot);
-    } else {
-        r.slots[slot].type = 2;
-        r.slots[slot].aiLevel = uint8_t(tak::ai::Difficulty::Normal);
-        r.pendingEvents.push_back({tak::net::Event::Kind::AiTakeover, uint8_t(slot)});
-        if (r.ref) {
-            std::vector<std::pair<float, float>> enemyStarts;
-            for (int j = 0; j < int(r.slotPos.size()); ++j) {
-                if (j == slot || (r.slots[j].type != 1 && r.slots[j].type != 2)) continue;
-                if (r.ref->allied(slot, j)) continue;
-                if (r.slotPos[size_t(j)].first == 0.0f && r.slotPos[size_t(j)].second == 0.0f) continue;
-                enemyStarts.push_back(r.slotPos[size_t(j)]);
-            }
-            r.ai.emplace_back(slot, *r.reg, r.aiProfiles[size_t(tak::ai::Difficulty::Normal)],
-                              r.seed + uint32_t(slot),
-                              tak::ai::Difficulty::Normal, std::move(enemyStarts));
+    r.slots[slot].type = 2;
+    r.slots[slot].aiLevel = uint8_t(tak::ai::Difficulty::Normal);
+    r.pendingEvents.push_back({tak::net::Event::Kind::AiTakeover, uint8_t(slot)});
+    if (r.ref) {
+        std::vector<std::pair<float, float>> enemyStarts;
+        for (int j = 0; j < int(r.slotPos.size()); ++j) {
+            if (j == slot || (r.slots[j].type != 1 && r.slots[j].type != 2)) continue;
+            if (r.ref->allied(slot, j)) continue;
+            if (r.slotPos[size_t(j)].first == 0.0f && r.slotPos[size_t(j)].second == 0.0f) continue;
+            enemyStarts.push_back(r.slotPos[size_t(j)]);
         }
-        std::fprintf(stderr, "game %u: player %d stopped communicating -- AI (Normal) takes over\n", r.id, slot);
+        r.ai.emplace_back(slot, *r.reg, r.aiProfiles[size_t(tak::ai::Difficulty::Normal)],
+                          r.seed + uint32_t(slot),
+                          tak::ai::Difficulty::Normal, std::move(enemyStarts));
     }
+    std::fprintf(stderr, "game %u: player %d stopped communicating -- AI (Normal) takes over\n", r.id, slot);
     // The host's in-game controls (pause, speed) pass to a player still connected.
     const auto host = clients_.find(r.hostId);
     if (host == clients_.end() || host->second->roomId != r.id || !host->second->conn.ok())
@@ -3646,48 +2788,6 @@ void Server::takeOver(Room& r, int slot) {
             if (r.slots[i].type == 1 && r.slotClient[i] >= 0) { r.hostId = uint32_t(r.slotClient[i]); break; }
     if (!r.held()) r.rebasePace(nowUs());
     broadcastWaiting(r);
-}
-
-bool Server::allowCampaignWork(Client& c,const Frame& f) {
-    const bool replay=f.kind==Msg::CrusadesGetReplayChunk;
-    auto& local=replay?c.campaignReplayWork:c.campaignWork;
-    auto& keys=replay?campaignReplayKeys_:campaignWorkKeys_;
-    auto& global=replay?campaignGlobalReplay_:campaignGlobalWork_;
-    const auto now=nowMs();
-    // A catalog page loads up to 64 full definitions/states. Charge its
-    // requested page size so maximum pages cannot amplify a cheap query budget.
-    unsigned cost=1;
-    if(f.kind==Msg::CrusadesListCampaigns) {
-        cost=8;
-        if(f.payload.size()>=10) {
-            const size_t afterSize=size_t(f.payload[6])|(size_t(f.payload[7])<<8);
-            if(afterSize<=128 && f.payload.size()==10+afterSize) {
-                const auto offset=8+afterSize;
-                const unsigned limit=unsigned(f.payload[offset])|(unsigned(f.payload[offset+1])<<8);
-                cost=std::max(1u,(std::min(limit,64u)+7)/8);
-            }
-        }
-    }
-    if(local.take(now,64,cost) &&
-        (c.account.empty() || keys.take("account:"+tak::auth::foldUsername(c.account),now,64,cost)) &&
-        keys.take("ip:"+c.peer,now,256,cost) && global.take(now,1024,cost))return true;
-    if(now-c.campaignLimitedWindow>=1000) {c.campaignLimitedWindow=now;c.campaignLimitNotified=false;}
-    if(c.campaignLimitNotified)return false;
-    c.campaignLimitNotified=true;
-    const char* reason="campaign request rate exceeded; retry later";
-    if(f.kind==Msg::CrusadesIssueBattle) {
-        c.conn.send(Msg::CrusadesBattleResult,battleReply(4,"","",0,"",0,reason));
-    } else if(f.kind==Msg::CrusadesGetAllegiance || f.kind==Msg::CrusadesSetAllegiance) {
-        Writer reply;reply.u8(f.kind==Msg::CrusadesSetAllegiance?1:0);reply.u8(4);reply.str("");
-        reply.u8(0);reply.u64(UINT64_MAX);reply.u64(0);reply.u64(0);reply.str(reason);
-        c.conn.send(Msg::CrusadesAllegianceResult,reply);
-    } else {
-        uint32_t requestId=0;
-        if(f.payload.size()>=6)for(unsigned i=0;i<4;++i)requestId|=uint32_t(f.payload[2+i])<<(8*i);
-        const auto reply=tak::srv::crusades::campaignReadError(requestId,tak::net::crusades::ErrorCode::Unavailable);
-        c.conn.send(reply.kind,reply.payload);
-    }
-    return false;
 }
 
 // Ordinary lobby work needs a wall-clock budget too; a per-poll frame cap
@@ -3703,7 +2803,7 @@ bool Server::allowLobbyWork(Client& c,const Frame& f) {
         case Msg::Ping: case Msg::Pong: case Msg::SlotUpdate: case Msg::MoveSeat: case Msg::SetGameOptions:
         case Msg::LeaveGame: case Msg::Rejoin: case Msg::Kick: case Msg::SetPause:
         case Msg::VoiceListen: break;
-        default:return true; // Login, campaign and command queues have their own budgets.
+        default:return true; // Login and command queues have their own budgets.
     }
     auto& keys=lobbyWorkKeys_;
     auto& global=lobbyGlobalWork_;
@@ -3745,53 +2845,6 @@ void Server::onFrame(Client& c, const Frame& f) {
         return;
     }
     if (f.kind == Msg::VoiceDown) { c.conn.fail("invalid voice message"); return; }   // server-to-client only
-    switch(f.kind) {
-        case Msg::CrusadesListCampaigns: case Msg::CrusadesGetSnapshot:
-        case Msg::CrusadesGetPlayerStatus: case Msg::CrusadesGetBattleStatus:
-        case Msg::CrusadesGetTerritoryHistory: case Msg::CrusadesGetReplayChunk:
-        case Msg::CrusadesGetMatchmaking: case Msg::CrusadesSearchBattle:
-        case Msg::CrusadesCancelSearch: case Msg::CrusadesIssueBattle:
-        case Msg::CrusadesGetAllegiance: case Msg::CrusadesSetAllegiance:
-            if(!allowCampaignWork(c,f))return;
-            break;
-        default: break;
-    }
-    if(auto* room=roomOf(c); room && !room->campaignBattleId.empty() && room->running &&
-        (f.kind==Msg::CrusadesBattleResult || f.kind==Msg::GameStarting || f.kind==Msg::TickBundle || f.kind==Msg::MissionOutcome ||
-         f.kind==Msg::CrusadesCampaignList || f.kind==Msg::CrusadesCampaignSnapshot || f.kind==Msg::CrusadesPlayerStatus ||
-         f.kind==Msg::CrusadesBattleStatus || f.kind==Msg::CrusadesMatchmakingStatus || f.kind==Msg::CrusadesTerritoryHistory ||
-         f.kind==Msg::CrusadesReplayChunk || f.kind==Msg::CrusadesError)) {
-        room->campaignFault=tak::srv::crusades::ResultOutcome::InvalidClient;return;
-    }
-    if(f.kind==Msg::CrusadesListCampaigns || f.kind==Msg::CrusadesGetSnapshot ||
-        f.kind==Msg::CrusadesGetPlayerStatus || f.kind==Msg::CrusadesGetBattleStatus || f.kind==Msg::CrusadesGetTerritoryHistory) {
-        campaignRead(c,f);return;
-    }
-    if(f.kind==Msg::CrusadesGetReplayChunk){campaignReplayChunk(c,f);return;}
-    if(f.kind==Msg::CrusadesGetMatchmaking || f.kind==Msg::CrusadesSearchBattle || f.kind==Msg::CrusadesCancelSearch) {
-        campaignMatchmaking(c,f);return;
-    }
-    if (f.kind == Msg::CrusadesIssueBattle) { issueCampaignBattle(c,f); return; }
-    if (f.kind == Msg::CrusadesGetAllegiance || f.kind == Msg::CrusadesSetAllegiance) {
-        // Only successful SCRAM proof/registration populates account. Hello's
-        // display name, a pending AuthBegin, and --no-auth never grant access.
-        const bool authenticated = requireAuth_ &&
-            (c.state == Client::Lobby || c.state == Client::InGame) && !c.account.empty();
-        const std::string account = authenticated ? tak::auth::foldUsername(c.account) : "";
-        const auto unixTime = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
-        const auto reply=tak::srv::crusades::handleAllegiance(crusades_.get(),account,f.kind,f.payload,unixTime);
-        c.conn.send(Msg::CrusadesAllegianceResult,reply);
-        if(f.kind==Msg::CrusadesSetAllegiance && reply.b.size()>1 && reply.b[1]==0) {
-            campaignMatchQueue_.erase(account);++campaignMatchGeneration_;
-            Reader request(f.payload.data(),f.payload.size());const auto campaign=request.str();
-            for(auto& [id,peer]:clients_) {
-                (void)id;if(!peer->account.empty() && tak::auth::foldUsername(peer->account)==account)
-                    notifyCampaignPlayer(*peer,campaign);
-            }
-        }
-        return;
-    }
     if(c.state==Client::InGame && f.kind>=Msg::ModOffer && f.kind<=Msg::ModError){modMsg(c,f);return;}
     if (c.state == Client::InGame && (f.kind == Msg::MapOffer || f.kind == Msg::MapRequest ||
         f.kind == Msg::MapChunk || f.kind == Msg::MapReady || f.kind == Msg::MapError)) {
@@ -3880,11 +2933,6 @@ int Server::run() {
         for (auto& [rid, r] : rooms_) {
             (void)rid;
             if(r.tickJob.valid()) {soonest=std::min(soonest,now+2);continue;}
-            if(r.campaignResult || r.campaignFault) {
-                if(r.campaignResult && !r.campaignResultRecorded && r.campaignResultDue>now)
-                    soonest=std::min(soonest,r.campaignResultDue);
-                continue;
-            }
             // Round the deadline UP to the poll's millisecond, so the wake-up is never
             // early (an early wake finds nothing due and polls again with timeout 0).
             const uint64_t dueMs = (r.nextTickUs() + 999) / 1000;
@@ -3988,18 +3036,6 @@ int Server::run() {
             if (!c.conn.ok()) { dead.push_back(id); continue; }
             if (pfds[i].revents & POLLOUT) c.conn.flushWrite();
         }
-        if(crusades_ && campaignSweepTime_!=campaignNow()) {
-            campaignSweepTime_=campaignNow();
-            try {crusades_->expireBattles(campaignSweepTime_);}catch(const std::exception& e) {
-                std::fprintf(stderr,"campaign expiration: %s\n",e.what());
-            }
-            std::vector<uint32_t> expired;
-            for(const auto& [rid,room]:rooms_)if(!room.campaignBattleId.empty() && !room.running && campaignSweepTime_>=room.campaignExpires)
-                expired.push_back(rid);
-            for(auto rid:expired)closeCampaignLobby(rid,"campaign battle expired");
-            pruneCampaignSearches();retryCampaignMatches();
-            for(auto& [id,peer]:clients_) {(void)id;refreshCampaignSnapshot(*peer);refreshCampaignMatchmaking(*peer);}
-        }
         // The disconnect wait. A seated player the room has heard nothing from for
         // gStallMs stops the game (the same as a closed connection, see dropClient), the
         // countdown already short by that silence; one that talks again, on the same
@@ -4035,11 +3071,7 @@ int Server::run() {
                 for(auto& [cid,peer]:clients_)if(peer->roomId==rid) {
                     sendReject(*peer,r.resourceLimited?"game replay memory limit reached":"game simulation failed");peer->conn.fail("game stopped");
                 }
-                if(r.campaignBattleId.empty()) {doneRooms.push_back({rid,r.resourceLimited?"replay memory limit":"simulation failure"});continue;}
-            }
-            if(!r.campaignBattleId.empty()) {
-                finalizeCampaign(r,!roomOccupied(r) || !roomActive(r));
-                if(!r.campaignResultRecorded)continue;
+                doneRooms.push_back({rid,r.resourceLimited?"replay memory limit":"simulation failure"});continue;
             }
             if (!roomOccupied(r)) doneRooms.push_back({rid, "last player left"});
             else if (!roomActive(r)) doneRooms.push_back({rid, "all players gone"});
@@ -4061,7 +3093,6 @@ int Server::run() {
         }
         // No global batch join: slow rooms keep their own worker busy while
         // networking and other rooms continue. Only one tick per room is in flight.
-        for(auto& [id,room]:rooms_) {(void)id;if(!room.campaignBattleId.empty() && room.running)finalizeCampaign(room);}
         now=nowMs();
         const uint64_t nowTickUs=nowUs();
         size_t running=0;for(const auto& [id,room]:rooms_) {(void)id;running+=room.running;}
@@ -4069,15 +3100,14 @@ int Server::run() {
             (void)id;
             // A pause or a wait is not a seat's hold: suspend those running (trackHolds).
             if(room.running && room.held())for(auto& seen:room.holdSeen)seen=0;
-            if(!room.running || room.held() || room.tickJob.valid() || room.campaignResult ||
-               room.campaignFault || room.resourceLimited || !room.simulationError.empty() ||
+            if(!room.running || room.held() || room.tickJob.valid() ||
+               room.resourceLimited || !room.simulationError.empty() ||
                !roomOccupied(room) || !roomActive(room) || room.nextTickUs()>nowTickUs)continue;
             trackHolds(room,now);
             if(!canAdvance(room)) {room.rebasePace(nowTickUs+kFlowRetryMs*1000);continue;}
             try {closeTick(room,running>1);}
             catch(const std::exception& e) {
                 room.simulationError=e.what();
-                if(!room.campaignBattleId.empty())room.campaignFault=tak::srv::crusades::ResultOutcome::RefereeFailure;
                 std::fprintf(stderr,"game %u tick submission failed: %s\n",id,e.what());
             }
         }
@@ -4160,7 +3190,6 @@ static int serverMain(int argc, char** argv) {
     bool allowPlaintext=false;
     bool statusQuery=false;
     std::string accountsPath = "takserver-accounts.conf";
-    std::string crusadesDb, crusadesDefinition;
     uint32_t fixedSeed = 0;
     bool fixedSeedGiven = false;   // --seed 0 is a pinned seed, not "unset"
     tak::srv::Limits limits;
@@ -4186,8 +3215,14 @@ static int serverMain(int argc, char** argv) {
 #endif
         else if (!std::strcmp(argv[i], "--map-cache-dir") && i+1<argc)mapRoot=argv[++i];
         else if (!std::strcmp(argv[i], "--accounts") && i + 1 < argc) accountsPath = argv[++i];
-        else if (!std::strcmp(argv[i], "--crusades-db") && i + 1 < argc) crusadesDb = argv[++i];
-        else if (!std::strcmp(argv[i], "--crusades-definition") && i + 1 < argc) crusadesDefinition = argv[++i];
+        else if (!std::strcmp(argv[i], "--crusades-db") || !std::strcmp(argv[i], "--crusades-definition")) {
+            // The Darien Crusades service (persistent campaigns, allegiance, issued battles)
+            // was removed in 0.9.4. Refuse rather than start a server that silently lacks
+            // what its operator asked for; its database and replays are simply not read.
+            std::fprintf(stderr, "takserver: %s was removed in 0.9.4 (the Darien Crusades campaign service "
+                                 "no longer exists); remove the option. The Crusades balance is a room option.\n", argv[i]);
+            return 1;
+        }
         else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc)
             { fixedSeed = uint32_t(std::strtoul(argv[++i], nullptr, 0)); fixedSeedGiven = true; }
         else if (!std::strcmp(argv[i], "--no-auth")) noAuth = true;
@@ -4217,7 +3252,6 @@ static int serverMain(int argc, char** argv) {
                         "                 [--max-games N] [--max-running-games N] [--max-accounts N]\n"
                         "                 [--map-memory-mib N] [--map-storage-mib N]\n"
                         "                 [--replay-memory-mib N] [--replay-storage-mib N]\n"
-                        "                 [--crusades-db <file>] [--crusades-definition <file>]\n"
                         "       takserver --status [--port N]\n"
                         "  --status queries the local running server and prints JSON, then exits.\n"
                         "  No data, account, or TLS arguments are needed; default port is 7677.\n"
@@ -4232,11 +3266,6 @@ static int serverMain(int argc, char** argv) {
                         "  Players sign in with a name and password; an unused name is\n"
                         "  registered on the spot. No password is stored or transmitted --\n"
                         "  see src/net/auth.h.\n"
-                        "  --crusades-db enables persistent authenticated campaign allegiance.\n"
-                        "  It must be separate from the account file; --no-auth is incompatible.\n"
-                        "  --crusades-definition imports a new campaign or verifies the saved definition.\n"
-                        "  Allegiance switching currently uses an immediate, free modern policy,\n"
-                        "  not historical rank penalties or house restrictions.\n"
                         "  --no-auth serves anyone who connects, with no account at all. Only\n"
                         "  for a private or LAN server; pair it with --local.\n"
                         "  --local binds loopback only, so nothing off this machine connects.\n"
@@ -4278,65 +3307,6 @@ static int serverMain(int argc, char** argv) {
             "  Run with --help for the full usage.\n");
         return 1;
     }
-    if ((!crusadesDb.empty() && noAuth) || (!crusadesDefinition.empty() && crusadesDb.empty())) {
-        std::fprintf(stderr,"takserver: Crusades requires --crusades-db and authenticated accounts; --no-auth is incompatible.\n");
-        return 1;
-    }
-    if (!crusadesDb.empty()) {
-        try {
-            namespace fs = std::filesystem;
-            const auto database = fs::u8path(crusadesDb), accounts = fs::u8path(accountsPath);
-            // Check both the database and SQLite's reserved companion files.
-            // SQLite may resolve a database symlink before naming its journal,
-            // so guard companions of the supplied and resolved paths alike.
-            const auto canonical = [](const fs::path& path) {
-                return fs::weakly_canonical(fs::absolute(path));
-            };
-            const auto accountCanonical = canonical(accounts);
-            const auto aliasesAccount = [&](const fs::path& path) {
-                std::error_code ec;
-                if (fs::equivalent(path,accounts,ec)) return true; // Existing hard links.
-                const auto resolved = canonical(path);
-#ifdef _WIN32
-                // path::operator== is case-sensitive even on Windows. Neither
-                // file must already exist for these names to be aliases.
-                const auto& a = resolved.native();
-                const auto& b = accountCanonical.native();
-                return CompareStringOrdinal(a.data(),static_cast<int>(a.size()),
-                    b.data(),static_cast<int>(b.size()),TRUE) == CSTR_EQUAL;
-#elif defined(__APPLE__)
-                // Most Mac volumes ignore case and canonical Unicode spelling.
-                // Conservatively reserve these aliases on case-sensitive APFS
-                // too; this comparison must also work before either file exists.
-                const auto& a = resolved.native();
-                const auto& b = accountCanonical.native();
-                struct CfString {
-                    CFStringRef value;
-                    ~CfString() { if (value) CFRelease(value); }
-                };
-                const CfString left{CFStringCreateWithBytes(kCFAllocatorDefault,
-                    reinterpret_cast<const UInt8*>(a.data()),static_cast<CFIndex>(a.size()),kCFStringEncodingUTF8,false)};
-                const CfString right{CFStringCreateWithBytes(kCFAllocatorDefault,
-                    reinterpret_cast<const UInt8*>(b.data()),static_cast<CFIndex>(b.size()),kCFStringEncodingUTF8,false)};
-                if (!left.value || !right.value)
-                    throw std::runtime_error("cannot compare campaign and account paths");
-                return CFStringCompare(left.value,right.value,
-                    kCFCompareCaseInsensitive | kCFCompareNonliteral) == kCFCompareEqualTo;
-#else
-                return resolved == accountCanonical;
-#endif
-            };
-            for (const auto& base : {database,canonical(database)}) {
-                for (const char* suffix : {"","-journal","-wal","-shm"}) {
-                    auto reserved = base; reserved += suffix;
-                    if (aliasesAccount(reserved))
-                        throw std::runtime_error("campaign database and its SQLite companion files must be separate from account credentials");
-                }
-            }
-        } catch (const std::exception& e) {
-            std::fprintf(stderr,"takserver: %s\n",e.what());return 1;
-        }
-    }
     Server s(port, dataRoot,mapRoot);
 #ifndef NDEBUG
     if(allowTestWork)s.allowBenchmarks();
@@ -4359,13 +3329,6 @@ static int serverMain(int argc, char** argv) {
             // accounts while actually having none of them.
             std::fprintf(stderr, "takserver: %s\n", err.c_str());
             return 1;
-        }
-    }
-    if (!crusadesDb.empty()) {
-        try {
-            s.enableCrusades(std::filesystem::u8path(crusadesDb),std::filesystem::u8path(crusadesDefinition));
-        } catch (const std::exception& e) {
-            std::fprintf(stderr,"takserver: cannot start Crusades: %s\n",e.what());return 1;
         }
     }
     return s.run();

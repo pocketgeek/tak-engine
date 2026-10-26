@@ -7,7 +7,7 @@ import argparse
 import contextlib
 import os
 from pathlib import Path
-import struct
+import subprocess
 import tempfile
 
 import server_net as net
@@ -40,7 +40,18 @@ def run(binary, data):
         stored = (root / 'accounts.conf').read_bytes()
         password = secrets[0]
         assert password not in stored, 'the password reached the accounts file'
-    print('PASS: live SCRAM register, login, wrong proof, pending registration and restart')
+        # The Darien Crusades service was removed in 0.9.4: its options are refused,
+        # not silently ignored, and nothing is created.
+        for flag in ('--crusades-db', '--crusades-definition'):
+            result = subprocess.run([str(binary), '--data', str(data), '--local', '--port', '1',
+                                     '--accounts', str(root / 'accounts.conf'), flag, str(root / 'campaign.sqlite')],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30)
+            assert result.returncode != 0, flag + ' was accepted'
+            assert b'removed' in result.stderr, result.stderr
+        assert not (root / 'campaign.sqlite').exists()
+        usage = subprocess.run([str(binary), '--help'], capture_output=True, timeout=30)
+        assert usage.returncode == 0 and b'crusades' not in usage.stdout.lower(), 'takserver --help lists Crusades options'
+    print('PASS: live SCRAM register, login, wrong proof, pending registration and restart; Crusades options refused')
 
 
 def main():

@@ -3160,10 +3160,7 @@ set_tests_properties(acme PROPERTIES TIMEOUT 30)
 add_executable(acme_test_driver tools/acme_test_driver.cpp)
 target_link_libraries(acme_test_driver PRIVATE tak-acme)
 add_executable(takserver src/server/server.cpp src/server/status.cpp src/server/accounts.cpp src/server/roomtick.cpp src/server/rosterdump.cpp ${TAK_AI_SOURCES})
-target_link_libraries(takserver PRIVATE tak-acme tak-formats tak-crusades-allegiance tak-crusades-network)
-if(APPLE)
-  target_link_libraries(takserver PRIVATE "-framework CoreFoundation")
-endif()
+target_link_libraries(takserver PRIVATE tak-acme tak-formats)
 if(Python3_Interpreter_FOUND)
   add_test(NAME server_status_cli COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/tools/server_status_test.py" --server "$<TARGET_FILE:takserver>")
@@ -3201,10 +3198,6 @@ if(TAK_TEST_DATA)
         set_tests_properties(cartographer_ai_profile_e2e PROPERTIES TIMEOUT 600)
       endif()
     endif()
-    add_test(NAME crusades_hardening_network COMMAND "${Python3_EXECUTABLE}"
-      "${CMAKE_SOURCE_DIR}/tools/crusades_hardening_network_test.py"
-      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --admin "$<TARGET_FILE:crusades_admin>")
-    set_tests_properties(crusades_hardening_network PROPERTIES TIMEOUT 180)
     add_test(NAME server_command_flood COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_command_flood_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
@@ -3274,30 +3267,6 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/account_auth_network_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(account_auth_network PROPERTIES TIMEOUT 120)
-    add_test(NAME crusades_auth_network COMMAND "${Python3_EXECUTABLE}"
-      "${CMAKE_SOURCE_DIR}/tools/crusades_auth_network_test.py"
-      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
-    set_tests_properties(crusades_auth_network PROPERTIES TIMEOUT 120)
-    add_test(NAME crusades_battle_network COMMAND "${Python3_EXECUTABLE}"
-      "${CMAKE_SOURCE_DIR}/tools/crusades_battle_network_test.py"
-      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
-    set_tests_properties(crusades_battle_network PROPERTIES TIMEOUT 120)
-    add_test(NAME crusades_result_network COMMAND "${Python3_EXECUTABLE}"
-      "${CMAKE_SOURCE_DIR}/tools/crusades_result_network_test.py"
-      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
-    set_tests_properties(crusades_result_network PROPERTIES TIMEOUT 120)
-    add_test(NAME crusades_history_network COMMAND "${Python3_EXECUTABLE}"
-      "${CMAKE_SOURCE_DIR}/tools/crusades_history_network_test.py"
-      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
-    set_tests_properties(crusades_history_network PROPERTIES TIMEOUT 180)
-    add_test(NAME crusades_protocol_network COMMAND "${Python3_EXECUTABLE}"
-      "${CMAKE_SOURCE_DIR}/tools/crusades_protocol_network_test.py"
-      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
-    set_tests_properties(crusades_protocol_network PROPERTIES TIMEOUT 120)
-    add_test(NAME crusades_matchmaking_network COMMAND "${Python3_EXECUTABLE}"
-      "${CMAKE_SOURCE_DIR}/tools/crusades_matchmaking_network_test.py"
-      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
-    set_tests_properties(crusades_matchmaking_network PROPERTIES TIMEOUT 180)
     if(TARGET takclient AND CMAKE_BUILD_TYPE STREQUAL "Debug")
       # Replays are saved however a game ends: crash, kill, play on after the result,
       # SIGTERM, a dead server (the headless harness is debug-only).
