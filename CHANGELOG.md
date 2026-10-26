@@ -20,7 +20,7 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
 ## 0.9.4
-*unreleased · protocol 298 · replay format 15 · does not play with 0.9.3 or earlier, nor their replays*
+*2026-10-26 · protocol 298 · replay format 15 · does not play with 0.9.3 or earlier, nor their replays*
 
 - **The Darien Crusades meta game is removed.** Everything built for the online
   campaign is gone from the client and the server: the strategic map of Darien
@@ -101,6 +101,8 @@ are untouched. See [public-server.md](docs/public-server.md#versions).
 beside `settings.ini` (downloaded Crusades battle replays) is no longer used and
 can be deleted; your settings, including the remembered Crusades choice of the
 game setup screen, are kept.
+
+[Release notes](docs/release-0.9.4-notes.md) · [Validation report](docs/release-0.9.4-validation.md) · [Source at v0.9.4](https://github.com/pocketgeek/tak-engine/tree/v0.9.4)
 
 ## 0.9.3
 *2026-10-26 · protocol 297 · replay format 15 · does not play with 0.9.2 or earlier, nor their replays*
