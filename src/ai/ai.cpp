@@ -349,6 +349,9 @@ const std::vector<Controller::Rect>& Controller::doorStrips(const tak::sim::Unit
     // Outputs that all fly (or none at all) leave no ground traffic at a door.
     if (output==0) return it->second;
     const float depth=float(std::clamp((output+builder)*16,80,112));
+    // A named reference: lambdas may not capture the structured binding `it`
+    // (C++20 allows it, Apple clang rejects it).
+    auto& strips=it->second;
     auto open=[&](int i,int j){const char c=type->yardMap[size_t(j)*fx+i];return c=='c' || c=='C';};
     // One edge: `n` cells along it, at(k) whether cell k is open, strip(a,b) the
     // strip for the span a..b along it. A corner cell alone opens no door (a yard
@@ -357,7 +360,7 @@ const std::vector<Controller::Rect>& Controller::doorStrips(const tak::sim::Unit
     auto edge=[&](int n,auto&& at,auto&& strip) {
         int lo=n,hi=-1;bool inner=false;
         for (int k=0;k<n;++k) if (at(k)) {lo=std::min(lo,k);hi=k;inner=inner || (k>0 && k<n-1) || n<3;}
-        if (inner) it->second.push_back(strip(float((lo-1)*16),float((hi+2)*16)));
+        if (inner) strips.push_back(strip(float((lo-1)*16),float((hi+2)*16)));
     };
     edge(fx,[&](int k){return open(k,0);},[&](float a,float b){return Rect{a,-depth,b,0};});
     edge(fx,[&](int k){return open(k,fz-1);},[&](float a,float b){return Rect{a,float(fz*16),b,float(fz*16)+depth};});
