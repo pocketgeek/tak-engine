@@ -3,7 +3,7 @@
 Protocol **297** (was 296 in 0.9.2), replay format **15** (unchanged),
 generator version **9**, campaign payload **4**, database schema **9**.
 
-<!-- TODO-LEAD: tag line: "Tagged `v0.9.3` at `<short sha>` (full `<sha>`, annotated tag object `<obj>`, "TAK Engine 0.9.3") and published on <date time> UTC." -->
+Tagged `v0.9.3` at `a255d930` (full `a255d9300393eb98445e16fcdb7cf2e4b484dfd3`, annotated tag object `c1b02a8e`, "TAK Engine 0.9.3") and published on 2026-10-26 04:15:30 UTC. The tag was moved once before publication: it first pointed at `c5090471` (tag object `30a241cd`); that tag's CI failed macOS `streaming_rtmps` (see `a916402d`), so the unpublished draft and the tag were deleted and recreated on the fix. No release was ever public at the old commit.
 
 ## Scope and compatibility
 
@@ -54,7 +54,13 @@ commit `43d22d18`). Every code change landed on main linearly after `43d22d18`
   Reproduced and passed with OpenSSL 1.1.1w, LibreSSL 3.3.6 and OpenSSL 3.5.x
   on the MacBook and Linux. The v0.9.3 tag was moved to it before publication.
 
-<!-- TODO-LEAD: diff stat: `git diff --stat v0.9.2 v0.9.3 -- src` (files, insertions, deletions) and the list of files outside src. At 4e766af8, `git diff --stat v0.9.2 4e766af8` touches 28 files (702 insertions, 170 deletions), 4 of them in .github/workflows. -->
+`git diff --stat v0.9.2 v0.9.3 -- src`: 17 files changed, 358 insertions(+), 73 deletions(-) (`src/client` 10 files, `src/net` 3, `src/sim` 3, `src/video` 1). The same diff over the whole tree: 48 files changed, 1,497 insertions(+), 212 deletions(-). The 31 files outside `src` are:
+- `.github/workflows/{determinism,linux,macos,windows}.yml`
+- `CHANGELOG.md`, `CMakeLists.txt`, `README.md`, `STREAMING-LICENSES.txt`
+- `docs/`: `cartographer-guide.md`, `development.md`, `img/README.md`, `img/title.jpg`, `multiplayer-design.md`, `public-server.md`, `release-0.9.2-validation.md`, `release-0.9.3-notes.md`, `release-0.9.3-validation.md`, `retail-engine.md`, `streaming.md`, `user-guide.md`
+- `tools/`: `ballistic_line_test.cpp`, `build-ffmpeg-bink.sh`, `build-stream-deps.sh`, `check-stream-rtmps.py`, `ffmpeg-securetransport-nonblock.patch` (deleted), `hudcorner_test.cpp`, `naval_combat_test.cpp`, `replay_test.cpp`, `retailgap_test.cpp`, `settings_test.cpp`, `stream_network_test.cpp`
+
+There are 13 commits between `v0.9.2` and `v0.9.3`.
 
 The preparation commit on top of `4e766af8` changes no code: `CMakeLists.txt`
 (the version line), `CHANGELOG.md` (dated, links), `README.md`, the version
@@ -164,15 +170,15 @@ So there are no 0.9.3 reference ticks and hashes for the sweep's cases.
 
 ## CI and packages
 
-<!-- TODO-LEAD: tag CI: the four workflow runs (Determinism, Linux packages, Windows, macOS) with links, result and any reruns. Note that every platform's FFmpeg cache misses once on the tag (cache keys changed in 9da5f2d1), so the first CI build is slow. -->
+The first tag CI run, on `c5090471`, failed: [macOS 40262620996](https://github.com/pocketgeek/tak-engine/actions/runs/40262620996) failed `streaming_rtmps` on both runners (the runners' OpenSSL 1.1.1 command-line tool made a bad throwaway CA, see `a916402d`). Its Windows run (40262621011) was cancelled by the lead when the tag moved; Linux packages (40262621088) and the dispatched Determinism (40262620794) had passed. The tag was moved to `a255d930` and the workflows ran again. On the final tag, all four workflows passed on the first attempt, with no reruns, all on `a255d930`: [Determinism](https://github.com/pocketgeek/tak-engine/actions/runs/40265495407) (dispatched on the tag; sim-equiv, detmath and unit-tests jobs success; GCC and Clang x86-64 at -O0/-O2/-O3 all agree on golden `dcef618cd2e4d558`, "DETERMINISM OK", unchanged from 0.9.2; aarch64 skipped as before), [Linux packages](https://github.com/pocketgeek/tak-engine/actions/runs/40265495795) (18 jobs, all success), [Windows](https://github.com/pocketgeek/tak-engine/actions/runs/40265495773) (x64, arm64, sign and publish) and [macOS](https://github.com/pocketgeek/tak-engine/actions/runs/40265495756) (arm64 and x64 build, sign and notarize). Every platform's FFmpeg cache missed once on the tag (cache keys changed in `9da5f2d1`), so the first CI build was slow (macOS about 25 minutes). The macOS logs show `tools/check-stream-rtmps.py build/stream_network_test` ran on both arches and printed "PASS: RTMPS upload stayed live through a CA-issued chain; wrong host and untrusted root refused with their reason". Several earlier push-triggered runs for `c5090471`, `a916402d` and `a255d930` were cancelled as superseded by the tag runs.
 
-<!-- TODO-LEAD: packages: 29 assets vs GitHub digests; file set vs 0.9.2; build strings v0.9.3 and --version; no libva/__vaDriverInit_; licence files incl. STREAMING-LICENSES.txt (which gained 3 lines in 9da5f2d1); no mods/overrides/click.hpi; packaged `--help`; RPM takserver protocol v297 run. -->
+All 29 assets were downloaded and match GitHub's SHA-256 digests. The file set is the same as 0.9.2's: every package, zip, installer and DMG lists exactly the same files, and sizes differ by -0.03% to +0.04%. Every takclient and takserver (62 binaries) carries the `v0.9.3` build string and none carries an older one. Every one that can run here reports `0.9.3 (build v0.9.3)` (Slackware, Debian, Ubuntu, Fedora, openSUSE x86-64 and the debug tarball); the Arch client needs Arch's newer glibc (`GLIBC_2.44`) and does not start on this Fedora machine, as with 0.9.0 to 0.9.2, while its server reports the same version. None of the 72 Linux ELF binaries (takclient, takserver, cartographer, crusades_admin) has a libva, libdrm, libsecret or GLib `NEEDED` entry, and none contains `__vaDriverInit_`. The licence files (`OPUS-LICENSE.txt`, `CHAT-FONT-LICENSE.txt`, `EDITOR-FONT-LICENSE.txt`, `STREAMING-LICENSES.txt`, `ACME-LICENSES.txt`) are in every package, zip, installer, DMG and app, and every `STREAMING-LICENSES.txt` carries the new OpenSSL notice (the only difference from 0.9.2's is those 3 lines). No `mods/`, `overrides/` or `click.hpi` is shipped. The packaged Linux `takclient --help` lists only `--data`, `--play-map`, `--game-mod` and `--version`. The Fedora 44 x86-64 RPM's `takserver` (`0.9.3 (build v0.9.3)`, "listening ... (protocol v297)") ran the Retail AI game on Inner Circle with `--local --no-auth --seed 1` and a scratch HOME. The client was the `-O2`-class Debug build at `a255d930`, with `TAK_AI_LEVEL=6 TAK_SPEED=80 --mpai --time 60`, and the game ended `hash=c5846d769e0a7d93 units=4 err=none end=timelimit` (tick 1800), the same as 0.9.2. No desync or referee-suspect line appeared. The same RPM's `cartographer "Inner Circle" --bundle` loaded the map (96 x 96 blocks, 4 start positions, 215 features, 1261 sections), wrote a 379,088-byte `.kmp` and exited 0, as in 0.9.2. Every `blob`/`tree` `v0.9.3` link in the release notes (6 links, 2 with anchors) resolves to a file and heading present at the tag.
 
-<!-- TODO-LEAD: Windows Authenticode on oden-win (9 signed files expected). -->
+Windows: on oden-win, `Get-AuthenticodeSignature` reports **Valid** (timestamped, "Curtis Edge") for all 9 signed files: the x64 installer and `takclient`, `takserver`, `cartographer` and `crusades_admin` in both the x64 and arm64 zips, the same 9 as 0.9.2. The x64 `takclient.exe` and `takserver.exe` report `0.9.3 (build v0.9.3)`, and the arm64 ones carry the `v0.9.3` build string. `--mpai` was not run on Windows or macOS, per the release rule (no build flags, compilers or CI determinism coverage changed); the Windows and macOS tag CI determinism tests cover them.
 
-<!-- TODO-LEAD: macOS DMG and app notarisation on the Neo (stapler, spctl, codesign); optionally run a real RTMPS stream from the shipped macOS build. -->
+macOS: on the MacBook (no builds), both DMGs and all four apps (the game and TAK Cartographer, from the DMGs and from the zips) pass `stapler validate`, and `spctl -a -vv` accepts them as "Notarized Developer ID" (Curtis Edge, L479Y59RN8). Each passes `codesign --verify --strict`, has `NSHighResolutionCapable` true and `NSMicrophoneUsageDescription`, and the takclient has the `audio-input` entitlement (the other binaries do not). The bare zip programs pass `codesign --strict`; `spctl` calls them "not an app", as expected. The macOS `takclient` and `takserver` report `0.9.3 (build v0.9.3)` (arm64 and x64, apps, bare programs and debug zips) and contain the MP4 muxer strings. No licence file is missing. No `mods/`, `overrides/` or `click.hpi` is present. OpenSSL: `otool -L` of the shipped arm64 and x64 `takclient` and `takserver` shows no `libssl` or `libcrypto` dylib. Both takclients contain the string `OpenSSL 3.5.8 25 Aug 2026` and have no SecureTransport TLS symbols (`SSLCreateContext`, `SSLHandshake`, `SSLRead`). Security.framework is still linked, for the exported system root anchors (`tak::net::systemRootsPem()`). A real RTMPS upload from the shipped macOS build was not run: the streaming code cannot be driven headless. The macOS tag CI ran `check-stream-rtmps.py` and printed PASS on both arm64 and x64 (see above).
 
-<!-- TODO-LEAD: publication: `gh release edit v0.9.3 --draft=false --latest` date and time UTC, 29 assets, Latest; 0.9.0 to 0.9.2 stay. -->
+Published with `gh release edit v0.9.3 --draft=false --latest` on 2026-10-26 04:15:30 UTC with 29 assets; it is the Latest release. 0.9.0, 0.9.1 and 0.9.2 stay on the releases page.
 
 ## Limits
 
@@ -194,4 +200,4 @@ So there are no 0.9.3 reference ticks and hashes for the sweep's cases.
   [release-0.9.2-validation.md](release-0.9.2-validation.md#limits)), except
   that macOS streaming no longer uses SecureTransport and the mixed-version
   notes now concern 0.9.2.
-- <!-- TODO-LEAD: Tag CI: whether any workflow needed a rerun. -->
+- Tag CI: the first tag CI run (on `c5090471`) failed macOS `streaming_rtmps` and the tag was moved to `a255d930` before publication. On the final tag, no workflow needed a rerun; all four passed on the first attempt.
