@@ -3290,7 +3290,6 @@
             SDL_SetRenderDrawColor(ren_, 235, 205, 110, 255);
             SDL_RenderFillRectF(ren_, &fill);
             hudFont_.draw(ren_, sb, bx, by - 14, 1.6f, {235, 230, 210, 255});
-            if (campaignReplayReturn_) hudFont_.draw(ren_, "ESC: RETURN TO CAMPAIGN", bx, by + 21, 1.1f, {235, 230, 210, 255});
         }
 
         drawVoiceIndicator(winW, winH);   // who is talking (voice chat), top-left
@@ -3351,7 +3350,7 @@
             btn("OPTIONS", [this] { exitMenu_ = false; openOptions(); });
             btn("CONTROLS", [this] { exitMenu_ = false; openHotkeys(); });   // hotkey rebinding
             btn("VOICE CHAT", [this] { exitMenu_ = false; openVoiceOptions(); });
-            if (canReturnToMenu_) btn(campaignReplayReturn_ ? "CAMPAIGN" : "MAIN MENU", [this] { menuRequested_ = true; });
+            if (canReturnToMenu_) btn("MAIN MENU", [this] { menuRequested_ = true; });
             btn("QUIT", [this] { quitRequested_ = true; });
         }
         drawUnitInfo(winW, winH);   // retail Unit Info dialog, above the HUD

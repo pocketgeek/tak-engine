@@ -147,8 +147,6 @@
 #include "client/appglobals.h"   // kProjY/kProjZ, kSortZ/kSortY
 #include "client/hudcorner.h"    // the top-left overlays' shared column
 
-namespace tak { class CrusadesScreen; }
-
 class GameView {
 public:
 #ifndef NDEBUG
@@ -173,7 +171,7 @@ public:
     // gpuvram budget across sessions -- a few benchmark runs used to pin the
     // budget and starve terrain-chunk uploads (map stuck at the low-res underlay).
     // Interactive teardown: cancel, do not drain (see simCancel_).
-    ~GameView();   // out of line (gameview_impl.cpp): crusadesScreen_ is forward-declared here
+    ~GameView();   // out of line (gameview_impl.cpp)
     // This client's replay of the game, streamed to disk WHILE it is played
     // (net/replaywriter.h) into the user's config directory, beside settings.ini.
     // Opened when the game is set up (startMpGame), topped up from mpStep, finished
@@ -223,12 +221,6 @@ public:
     // (labels change, no password / no game browser).
     void setSinglePlayer() { lobbyScreen_ = LobbyScreen::Create; singlePlayer_ = true; }
     void prepareLobbyMaps(tak::LoadScreen& progress) { buildMapList(&progress); }
-    void openCrusades(uint32_t territory = 0);
-    uint32_t crusadesSelectedTerritory() const;
-    std::string takeCrusadesReplayPath();
-    void setCrusadesReplayError(const std::string& error);
-    void setCampaignReplayReturn() { campaignReplayReturn_ = true; }
-    bool reconnectRequested() const { return reconnectRequested_; }
     // Return-to-menu request: a lobby/in-game action sets this; main()'s outer loop
     // tears the session down and re-shows the front-end menu.
     bool menuRequested() const { return menuRequested_; }
@@ -2077,7 +2069,6 @@ private:
     bool paused_ = false;
     bool briefingPaused_ = false;  // reset the render clock after the startup modal
     bool exitMenu_ = false;          // in-game exit overlay (Esc) is open
-    bool campaignReplayReturn_ = false; // Escape/return restores retained strategic view
     bool canReturnToMenu_ = false;   // launched from the front-end -> offer MAIN MENU
     std::vector<std::pair<SDL_FRect, std::function<void()>>> exitHots_;   // overlay hit-rects (screen space)
     // ---- Options (local display/input; see viewer/settings.h) ----
@@ -2260,9 +2251,7 @@ private:
     float replayAccum_ = 0;
     bool mpReadied_ = false, mpStarted_ = false, mpSetupDone_ = false;
     // interactive lobby UI state
-    enum class LobbyScreen { Browser, Create, Crusades } lobbyScreen_ = LobbyScreen::Browser;
-    std::unique_ptr<tak::CrusadesScreen> crusadesScreen_;
-    bool reconnectRequested_ = false;
+    enum class LobbyScreen { Browser, Create } lobbyScreen_ = LobbyScreen::Browser;
     bool menuRequested_ = false;   // set by a MAIN MENU action -> main() returns to the front-end
     bool quitRequested_ = false;   // set by the in-game QUIT button -> main() exits the app
     bool singlePlayer_ = false;    // menu single-player: private local game (SP-flavoured lobby)

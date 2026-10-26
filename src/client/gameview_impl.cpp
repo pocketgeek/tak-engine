@@ -4,7 +4,6 @@
 #include "client/gameview.h"
 #include "client/buildline.h"
 #include "client/gamespeed.h"
-#include "client/crusadesscreen.h"
 #include "client/shadowmask.h"
 #include "client/retailfeatureclock.h"
 #include "client/retailbuilderanimation.h"

@@ -314,12 +314,11 @@ static tak::DataFolderOrigin resolveDataDir(std::string& dataRoot, tak::Settings
     return choice.origin;
 }
 
-// Ordinary local replay launch and campaign Watch Replay share this loader and
-// the existing GameView playback path. No multiplayer client is attached here.
+// The local replay launch: loads a .takrep into a GameView playing it back. No
+// multiplayer client is attached here.
 std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& path,
                                         const std::string& dataRoot,
-                                        tak::Settings& settings, bool canReturn,
-                                        bool requireMatchingData = false) {
+                                        tak::Settings& settings, bool canReturn) {
     ReplayFile rf;
     if (!loadReplayFile(path, rf))
         throw std::runtime_error(rf.error.empty() ? "cannot read that replay" : rf.error);
@@ -339,9 +338,8 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
         if(!pack)throw std::runtime_error("the verified game mods for this replay are missing");
         game=*pack->files;
     }
-    // A campaign mission or a Crusades battle (the read-only Crusades replay,
-    // requireMatchingData) loads no ticked cosmetic packs, as the live game did.
-    const bool campaignReplay=!rf.mission.empty() || requireMatchingData;
+    // A campaign mission loads no ticked cosmetic packs, as the live game did.
+    const bool campaignReplay=!rf.mission.empty();
     std::vector<std::string> skippedMods;
     auto rvfs = tak::hpi::mountPlayVfs(std::filesystem::u8path(dataRoot),std::move(game),
         campaignReplay?std::vector<std::string>{}:settings.cosmeticModPacks,true,&skippedMods);
@@ -366,7 +364,6 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     }
     const uint64_t myDataHash = tak::hpi::gameplayHash(rvfs);
     if (rf.dataHash && rf.dataHash != myDataHash) {
-        if (requireMatchingData) throw std::runtime_error("this replay needs different gameplay data");
         std::fprintf(stderr, "replay: WARNING -- recorded on gameplay data %016llx, yours is %016llx. Playback will diverge from the recording.\n",
                      (unsigned long long)rf.dataHash, (unsigned long long)myDataHash);
     }
@@ -1071,9 +1068,6 @@ int main(int argc, char** argv) {
     GameStreamAudio gameStreamAudio{&streaming.stream(), &menuMusic};
     tak::PresentationPacer streamPacer;
     tak::SessionFailure menuFailure;   // failed menu launch -> shown where it came from
-    // Restore strategic navigation only for the same server/account; never keep a password.
-    std::string crusadesReturnServer, crusadesReturnAccount, crusadesReturnCampaign;
-    uint32_t crusadesReturnTerritory = 0;
     for (;;) {
     if (tak::termRequested()) { quitApp = true; break; }   // SIGTERM/SIGINT between sessions
     if (fromMenu || !pendingCampaign.empty()) { serverHost = launchServerHost;
@@ -1400,8 +1394,6 @@ int main(int argc, char** argv) {
     std::unique_ptr<MapView> mapView;
     std::unique_ptr<ModelView> modelView;
     std::unique_ptr<GameView> gameView;
-    std::unique_ptr<GameView> crusadesView; // retained strategic view during read-only playback
-    bool returnToCrusades = false;
     try {
         if (mode == "replay" && !args.empty() && !dataRoot.empty()) {
             try {
@@ -1481,20 +1473,7 @@ int main(int argc, char** argv) {
                 log->append(tick,player,group,action,rule);
             });
             if (mp) {
-                mp->setCampaignReplayCacheRoot(std::filesystem::u8path(tak::settingsPath()).parent_path() / "ReplayCache");
                 gameView->setMpClient(mp.get());
-                const std::string strategicServer = tak::formatServerAddress(serverHost, uint16_t(serverPort));
-                if (strategicServer == crusadesReturnServer && mp->account() == crusadesReturnAccount &&
-                    !crusadesReturnCampaign.empty()) {
-                    mp->subscribeCampaign(crusadesReturnCampaign);
-                    gameView->openCrusades(crusadesReturnTerritory);
-                }
-#ifndef NDEBUG
-                if (const char* campaign = tak::devEnv("TAK_SHOT_CRUSADES")) {
-                    if (*campaign) mp->subscribeCampaign(campaign);
-                    gameView->openCrusades();
-                }
-#endif
                 gameView->setLocalServerPid(localServer.pid());
                 gameView->setMpMapId(args[0]);
                 if (fromMenu) { gameView->setExternalLobbyMusic();  // front-end owns the lobby BGM
@@ -1876,9 +1855,6 @@ int main(int argc, char** argv) {
         SDL_Event e;
         bool targetsReset = false, windowResized = false;
         while (SDL_PollEvent(&e)) {
-            if (crusadesView && e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
-                returnToCrusades = true; continue;
-            }
             // The window-manager close button (title-bar X) fires SDL_QUIT; we
             // deliberately IGNORE it so it can't yank the player out of a game. Quit
             // only through real paths: the menu's Exit door, the in-game QUIT button
@@ -2047,7 +2023,6 @@ int main(int argc, char** argv) {
             if (benchFrozen) {
                 // frozen -- fall through to draw() so the overlay still renders
             } else if (gameView->replayMode()) {
-                if (crusadesView && mp) mp->poll(); // campaign presence only; never pump battle commands
                 gameView->replayStep(dt);   // play back a recorded .takrep
             } else if (gameView->isNet()) {
                 // Server-sequenced lockstep: one mpAutoStep pumps the connection,
@@ -2540,53 +2515,6 @@ int main(int argc, char** argv) {
         }
         // A MAIN MENU button or post-game Escape ends the session; the outer loop
         // then tears it down and re-shows the menu (quitApp stays false).
-        if (crusadesView && (returnToCrusades || (gameView && gameView->menuRequested()))) {
-            std::fprintf(stderr,"crusades: replay return tick=%zu/%zu hash=%016llx%s\n",
-                         gameView->replayTick(),gameView->replayLength(),
-                         (unsigned long long)gameView->worldHashPublic(),
-                         gameView->replayDiverged()?" DIVERGED":"");
-            gameView->setAudioTap(nullptr,nullptr); gameView.reset();
-            gameView = std::move(crusadesView); returnToCrusades = false;
-            gameView->applySettings(settings);
-            gameView->setAudioTap(&gameStreamAudio,
-                [](void* context,const int16_t* pcm,int frames,int channels) {
-                    auto& audio=*static_cast<GameStreamAudio*>(context);
-                    if (!audio.menu->playing()) audio.stream->audio(pcm,frames,channels);
-                });
-            if (fromMenu) menuMusic.start(vfs, 15);
-            gameView->resumeAudioOutput();
-            last = SDL_GetPerformanceCounter();
-            std::fprintf(stderr, "crusades: returned from read-only replay\n");
-            continue;
-        }
-        if (gameView && !crusadesView && mp) {
-            const auto path = gameView->takeCrusadesReplayPath();
-            if (!path.empty()) try {
-                gameView->setAudioTap(nullptr,nullptr);
-                gameView->suspendAudioOutput();
-                menuMusic.stop();
-                auto replay = makeReplayView(ren, path, dataRoot, settings, true, true);
-                replay->setCampaignReplayReturn();
-                replay->setAudioTap(&gameStreamAudio,
-                    [](void* context,const int16_t* pcm,int frames,int channels) {
-                        auto& audio=*static_cast<GameStreamAudio*>(context);
-                        if (!audio.menu->playing()) audio.stream->audio(pcm,frames,channels);
-                    });
-                crusadesView = std::move(gameView); gameView = std::move(replay);
-                last = SDL_GetPerformanceCounter();
-                std::fprintf(stderr, "crusades: watching retained replay without joining a battle\n");
-                continue;
-            } catch (const std::exception& e) {
-                gameView->setAudioTap(&gameStreamAudio,
-                    [](void* context,const int16_t* pcm,int frames,int channels) {
-                        auto& audio=*static_cast<GameStreamAudio*>(context);
-                        if (!audio.menu->playing()) audio.stream->audio(pcm,frames,channels);
-                    });
-                if (fromMenu) menuMusic.start(vfs,15);
-                gameView->resumeAudioOutput();
-                gameView->setCrusadesReplayError(e.what());
-            }
-        }
         if (gameView && gameView->menuRequested()) running = false;
         // The in-game QUIT button exits the whole app.
         if (gameView && gameView->quitRequested()) { running = false; quitApp = true; }
@@ -2789,19 +2717,7 @@ int main(int argc, char** argv) {
 #ifndef NDEBUG
     if(studyQuery)studyDeleteQuery(GLsizei(kStudyQueries),studyQueries);
 #endif
-    if (crusadesView) {
-        if (gameView) gameView->setAudioTap(nullptr,nullptr);
-        gameView.reset(); gameView=std::move(crusadesView);
-    }
     if (gameView) gameView->setAudioTap(nullptr,nullptr);
-    if (mp && gameView && !mp->account().empty() && !menuInteractive && !benchmarkLaunch && campaignStem.empty()) {
-        crusadesReturnServer = tak::formatServerAddress(serverHost, uint16_t(serverPort));
-        crusadesReturnAccount = mp->account();
-        crusadesReturnCampaign = mp->subscribedCampaign();
-        crusadesReturnTerritory = gameView->crusadesSelectedTerritory();
-        if (gameView->reconnectRequested())
-            menuFailure = {tak::FailTo::ServerSelect, "Sign in again to restore your Crusades campaign"};
-    }
     // Campaign mission ended (and resolved -- not a mid-mission quit): advance
     // persisted progress on a win, then show the result screen and act on the choice.
     if (!campaignStem.empty() && !campaignId.empty() && gameView && !quitApp &&

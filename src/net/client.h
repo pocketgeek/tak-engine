@@ -19,7 +19,6 @@
 #include <vector>
 
 #include "net/auth.h"
-#include "net/crusades.h"
 #include "net/crypto.h"
 #include "net/mappackage.h"
 #include "net/modpackage.h"
@@ -84,7 +83,7 @@ public:
     // The VFS a game in this room mounts: the room's verified game-mod package
     // (when game mods are on), then the always-enabled cosmetic packs of
     // mods/cosmetic/always_enabled/ (every room), then this player's own ticked cosmetic packs (every room but
-    // a campaign mission or Crusades battle; packs no longer on disk are skipped).
+    // a campaign mission; packs no longer on disk are skipped).
     // `withCosmetic` false (debug --mods none|game) leaves every cosmetic layer out.
     // A cosmetic layer that cannot load or would change the gameplay hash is left
     // out and named in `skipped` (hpi::mountPlayVfs).
@@ -129,42 +128,6 @@ public:
     State state() const { return state_; }
     const std::string& error() const { return err_; }
     uint32_t myClientId() const { return myId_; }
-
-    // Independent campaign messages never enter tactical bundles or replay logs.
-    // Zero return means unavailable or request rejected locally; IDs are per connection.
-    uint32_t listCampaigns(const std::string& after = "", uint16_t limit = 64);
-    uint32_t getCampaignSnapshot(const std::string& campaign, uint64_t expected = crusades::kUnknownRevision);
-    uint32_t getPlayerCampaignStatus(const std::string& campaign);
-    uint32_t getCampaignBattleStatus(const std::string& battle);
-    uint32_t getCampaignMatchmaking(const std::string& campaign);
-    uint32_t searchCampaignBattle(const std::string& campaign, uint32_t territory);
-    uint32_t cancelCampaignSearch(const std::string& campaign);
-    const std::optional<crusades::MatchmakingStatus>& campaignMatchmaking() const { return campaignMatchmaking_; }
-    uint32_t getTerritoryHistory(const std::string& campaign, uint32_t territory,
-        std::optional<crusades::HistoryCursor> cursor = {}, uint16_t limit = 16);
-    const crusades::TerritoryHistory* territoryHistory(const std::string& campaign, uint32_t territory) const;
-    void setCampaignReplayCacheRoot(const std::filesystem::path& root) { if (root != campaignReplayCacheRoot_) cancelCampaignReplayDownload(); campaignReplayCacheRoot_ = root; }
-    enum class CampaignReplayState { Idle, Downloading, Ready, Failed };
-    struct CampaignReplayDownload {
-        CampaignReplayState state = CampaignReplayState::Idle;
-        std::string battleId, digest; uint64_t receivedBytes = 0, totalBytes = 0;
-        std::filesystem::path path; std::string error;
-    };
-    uint32_t requestCampaignReplay(const std::string& battle);
-    void cancelCampaignReplayDownload();
-    const CampaignReplayDownload& campaignReplayDownload() const { return campaignReplayDownload_; }
-    void subscribeCampaign(const std::string& campaign);
-    bool campaignRoom() const { return campaignRoomBindings_.count(room_.id) != 0; }
-    const std::string& subscribedCampaign() const { return campaignSubscription_; }
-    const crusades::Replica& campaignReplica() const { return campaignReplica_; }
-    const std::optional<crusades::CampaignList>& campaignList() const { return campaignList_; }
-    const std::optional<crusades::PlayerStatus>& playerCampaignStatus() const { return campaignPlayer_; }
-    const std::map<std::string, crusades::BattleStatus>& campaignBattles() const { return campaignBattles_; }
-    const std::optional<crusades::Error>& campaignError() const { return campaignError_; }
-    void setCampaignAllegiance(const std::string& campaign, uint64_t expectedRevision, crusades::Alliance alliance);
-    void issueCampaignBattle(const std::string& campaign, uint32_t territory, const std::string& opponent);
-    struct CampaignInvitation { std::string campaignId, battleId, map; uint32_t roomId=0; uint64_t expiresUnix=0; };
-    const std::optional<CampaignInvitation>& campaignInvitation() const { return campaignInvitation_; }
 
     // ---- lobby actions -----------------------------------------------------
     void listGames();
@@ -361,38 +324,6 @@ public:
     std::string desyncReason() const { return desyncReason_; }
 
 private:
-    bool campaignAuthenticated() const;
-    void clearCampaignCache();
-    uint32_t sendCampaignRequest(Msg kind, crusades::Request request, const std::string& target);
-    void campaignFrame(const Frame& frame);
-    void refreshCampaignOnce(const std::string& campaign);
-    struct CampaignPending {
-        Msg kind; std::string target; uint64_t sentMs;
-        std::optional<crusades::TerritoryHistoryRequest> history;
-    };
-    std::map<uint32_t, CampaignPending> campaignPending_;
-    uint32_t campaignRequestId_ = 0;
-    std::string campaignSubscription_, campaignRefreshAttempt_;
-    crusades::Replica campaignReplica_;
-    std::optional<crusades::CampaignList> campaignList_;
-    std::optional<crusades::PlayerStatus> campaignPlayer_;
-    std::optional<crusades::MatchmakingStatus> campaignMatchmaking_;
-    std::map<std::string, crusades::BattleStatus> campaignBattles_;
-    using HistoryKey = std::pair<std::string, uint32_t>;
-    std::map<HistoryKey, crusades::TerritoryHistory> campaignHistory_;
-    std::map<HistoryKey, uint32_t> campaignHistoryRequests_;
-    std::map<std::pair<std::string, std::string>, crusades::HistoryBattle> campaignHistoryRecords_;
-    CampaignReplayDownload campaignReplayDownload_;
-    std::filesystem::path campaignReplayCacheRoot_, campaignReplayPartial_;
-    std::ofstream campaignReplayOutput_;
-    crypto::Sha256 campaignReplayHash_;
-    uint32_t campaignReplayRequest_ = 0;
-    uint64_t campaignReplayNextPullMs_ = 0;
-    void failCampaignReplay(const std::string& error);
-    void acceptCampaignReplayChunk(const crusades::ReplayChunk& chunk);
-    std::map<uint32_t, std::string> campaignRoomBindings_;
-    std::optional<crusades::Error> campaignError_;
-    std::optional<CampaignInvitation> campaignInvitation_;
     void onFrame(const Frame& f);
     void sendAuthBegin();            // Hello answered with AuthRequired -> start SCRAM
     void onAuthChallenge(Reader& r);

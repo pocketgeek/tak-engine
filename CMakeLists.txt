@@ -171,12 +171,6 @@ add_library(tak-formats
 target_include_directories(tak-formats PUBLIC src)
 target_link_libraries(tak-formats PUBLIC ZLIB::ZLIB JPEG::JPEG tak-crypto Threads::Threads)
 
-add_library(tak-crusades-map STATIC src/client/crusadesmap.cpp)
-target_link_libraries(tak-crusades-map PUBLIC tak-formats)
-add_executable(crusades_presentation_test tools/crusades_presentation_test.cpp)
-target_link_libraries(crusades_presentation_test PRIVATE tak-crusades-map)
-add_test(NAME crusades_presentation COMMAND crusades_presentation_test)
-
 # Inject the project version (src/version.h) into every target that links
 # tak-formats -- one source of truth, set by project(... VERSION ...) above.
 target_compile_definitions(tak-formats PUBLIC TAK_VERSION="${PROJECT_VERSION}")
@@ -2036,7 +2030,7 @@ set_tests_properties(credstore PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/crusadesscreen.cpp src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp)
+    add_executable(takclient src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp)
     # Local dev/test harness (standalone scenario/demo/FFA setup, --testbuild/--firetest...):
     # debug builds only. The file is also wrapped in #ifndef NDEBUG, as are its callers, so
     # this just skips an empty TU when the config's flags define NDEBUG.
@@ -2139,11 +2133,6 @@ if(TAK_BUILD_CLIENT)
     add_executable(hudcorner_test tools/hudcorner_test.cpp)
     target_include_directories(hudcorner_test PRIVATE src)
     add_test(NAME hudcorner COMMAND hudcorner_test)
-    add_executable(crusades_ui_test tools/crusades_ui_test.cpp src/client/crusadesscreen.cpp)
-    target_compile_definitions(crusades_ui_test PRIVATE SDL_MAIN_HANDLED)
-    target_link_libraries(crusades_ui_test PRIVATE tak-crusades-map tak-uifont ${_tak_sdl2})
-    add_test(NAME crusades_ui COMMAND crusades_ui_test)
-    set_tests_properties(crusades_ui PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 60)
     add_executable(crusades_effective_audit tools/crusades_effective_audit.cpp)
     target_compile_definitions(crusades_effective_audit PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(crusades_effective_audit PRIVATE tak-formats ${_tak_sdl2})
@@ -2881,7 +2870,7 @@ if(TAK_BUILD_CLIENT)
       endif()
     endif()
 
-    target_link_libraries(takclient PRIVATE tak-crusades-map tak-formats tak-gpustats tak-credstore tak-voice ${_tak_sdl2})
+    target_link_libraries(takclient PRIVATE tak-formats tak-gpustats tak-credstore tak-voice ${_tak_sdl2})
     # We provide our own main() and call SDL_SetMainReady(). Define SDL_MAIN_HANDLED for
     # the WHOLE target (not just main.cpp) so it applies before ANY header pulls in
     # <SDL.h> -- otherwise, on Windows, SDL_main.h renames our main to SDL_main via a
@@ -3037,11 +3026,6 @@ endif()
 # no tactical simulation dependency. Persistence has a separate library.
 add_library(tak-crusades STATIC src/server/crusades/campaign.cpp src/server/crusades/rules.cpp)
 target_include_directories(tak-crusades PUBLIC src)
-add_executable(crusades_import tools/crusades_import.cpp)
-target_link_libraries(crusades_import PRIVATE tak-crusades-map tak-crusades)
-if(WIN32)
-  target_link_libraries(crusades_import PRIVATE shell32)
-endif()
 add_executable(crusades_campaign_test tools/crusades_campaign_test.cpp)
 target_link_libraries(crusades_campaign_test PRIVATE tak-crusades)
 add_test(NAME crusades_campaign COMMAND crusades_campaign_test)
@@ -3125,10 +3109,6 @@ add_test(NAME crusades_network_service COMMAND crusades_network_service_test)
 add_executable(crusades_replay_files_test tools/crusades_replay_files_test.cpp)
 target_link_libraries(crusades_replay_files_test PRIVATE tak-crusades-network tak-formats)
 add_test(NAME crusades_replay_files COMMAND crusades_replay_files_test)
-add_executable(crusades_client_network_test tools/crusades_client_network_test.cpp)
-target_link_libraries(crusades_client_network_test PRIVATE tak-formats)
-add_test(NAME crusades_client_network COMMAND crusades_client_network_test)
-set_tests_properties(crusades_client_network PROPERTIES TIMEOUT 60)
 # ALLOW SPECTATORS as a real MpClient sees it (scripted loopback server, no data).
 add_executable(spectator_client_test tools/spectator_client_test.cpp)
 target_link_libraries(spectator_client_test PRIVATE tak-formats)
@@ -3333,20 +3313,6 @@ if(TAK_TEST_DATA)
           --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
         set_tests_properties(disconnect_client PROPERTIES TIMEOUT 300)
       endif()
-    endif()
-    if(TARGET takclient AND CMAKE_BUILD_TYPE STREQUAL "Debug" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-      add_test(NAME crusades_ui_network COMMAND "${Python3_EXECUTABLE}"
-        "${CMAKE_SOURCE_DIR}/tools/crusades_ui_network_test.py"
-        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
-      set_tests_properties(crusades_ui_network PROPERTIES TIMEOUT 180)
-      add_test(NAME crusades_history_ui_network COMMAND "${Python3_EXECUTABLE}"
-        "${CMAKE_SOURCE_DIR}/tools/crusades_history_ui_network_test.py"
-        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
-      set_tests_properties(crusades_history_ui_network PROPERTIES TIMEOUT 240)
-      add_test(NAME crusades_matchmaking_ui_network COMMAND "${Python3_EXECUTABLE}"
-        "${CMAKE_SOURCE_DIR}/tools/crusades_matchmaking_network_test.py"
-        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
-      set_tests_properties(crusades_matchmaking_ui_network PROPERTIES TIMEOUT 240)
     endif()
   endif()
 endif()

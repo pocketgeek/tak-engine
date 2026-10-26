@@ -1,6 +1,5 @@
 #include "util/virtualpath.h"
 #include "client/gameview.h"
-#include "client/crusadesscreen.h"
 #include "net/matchconfig.h"
 #include "client/startmarkers.h"
 #include <cctype>
@@ -62,25 +61,6 @@ float createOptionPx(float maxW) {
 }
 }  // namespace
 
-    void GameView::openCrusades(uint32_t territory) {
-        if (!mp_ || singlePlayer_) return;
-        if (!crusadesScreen_) crusadesScreen_ = std::make_unique<tak::CrusadesScreen>(ren_, vfs_, *mp_);
-        crusadesScreen_->selectTerritory(territory);
-        lobbyScreen_ = LobbyScreen::Crusades;
-        lbField_ = 0; SDL_StopTextInput();
-    }
-
-    uint32_t GameView::crusadesSelectedTerritory() const {
-        return crusadesScreen_ ? crusadesScreen_->selectedTerritory() : 0;
-    }
-
-    std::string GameView::takeCrusadesReplayPath() {
-        return crusadesScreen_ ? crusadesScreen_->takeReplayPath() : std::string{};
-    }
-    void GameView::setCrusadesReplayError(const std::string& error) {
-        if (crusadesScreen_) crusadesScreen_->setReplayError(error);
-    }
-
     void GameView::drawLobby(int winW, int winH) {
         lobbyHots_.clear();
         // Map-picker geometry is only live while the create screen is shown; clear it
@@ -92,12 +72,6 @@ float createOptionPx(float maxW) {
         // The ground + centred panel frame are painted by the caller (the viewport is
         // already offset to this panel); RenderClear would ignore the viewport.
         SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-        if (mp_ && lobbyScreen_ == LobbyScreen::Crusades && crusadesScreen_ &&
-            mp_->state() != tak::net::MpClient::State::InRoom) {
-            crusadesScreen_->update();
-            crusadesScreen_->draw(winW, winH);
-            return;
-        }
         float cx = winW / 2.0f;
         const char* title = singlePlayer_ ? "SINGLE PLAYER VS AI" : "TA:KINGDOMS  MULTIPLAYER";
         blockText(title, cx - blockWidth(title, 2.6f) / 2, 24, 2.6f, {210, 200, 150, 255});
@@ -619,7 +593,7 @@ float createOptionPx(float maxW) {
             tak::net::GameOptions o; o.crusades = createCrusades_ ? 1 : 0;
             // Game mods are on in every room (multiplayer works like single player): the
             // host ticks mods/game packs in the room, and they and the always-enabled
-            // ones are sent to every player. The server turns this off for campaigns.
+            // ones are sent to every player. The server turns this off for missions.
             o.gameMods = 1;
             mp_->setGameModsAllowed(mods_.game);
             mp_->setGameModPacks(settings_ ? settings_->gameModPacks : std::vector<std::string>{});
@@ -944,7 +918,6 @@ float createOptionPx(float maxW) {
 
     void GameView::drawRoom(int winW, int winH) {
         const auto& room = mp_->room();
-        const bool campaign = mp_->campaignRoom();
         float x = 40, y = 78;
         if (!singlePlayer_) blockText(room.name, x, y, 2.2f, {210, 210, 220, 255});
         blockText(std::string("MAP  ") + mapTitle(room.mapId), x, y - 24, 1.8f, {180, 185, 195, 255});
@@ -965,10 +938,10 @@ float createOptionPx(float maxW) {
         const uint8_t needSeats = scenarioOn ? scenarioLobby_.requiredSeats() : 0;
         // The room's own MAP SCENARIO line reads ON from the option alone (a joiner sees it
         // before the package is verified); the rule cells that follow it agree with it.
-        const bool scenarioShown = fileMap && !campaign && (room.opts.mapScenario != 0 || scenarioOn);
+        const bool scenarioShown = fileMap && (room.opts.mapScenario != 0 || scenarioOn);
         // The room's map, with its starts numbered and coloured by who opens there,
         // heads the right column; the mod packs and the chat sit below it.
-        const bool roomMap = !campaign && room.mission.empty();
+        const bool roomMap = room.mission.empty();
         const float kRoomMap = 140, mapDrop = roomMap ? kRoomMap + 5 : 0;
         float modBottom=112+mapDrop;
         {
@@ -976,12 +949,12 @@ float createOptionPx(float maxW) {
             // packs (mods/<kind>/always_enabled/<pack>), named and locked, never ticked.
             // The cosmetic ones load in every game (campaigns included).
             // COSMETIC: every player ticks their own mods/cosmetic packs (not in a
-            // campaign room); they are never sent anywhere and cannot change the game.
+            // mission room); they are never sent anywhere and cannot change the game.
             // GAME: only the host of a skirmish room ticks mods/game packs; they and the
             // host's always-enabled game packs are sent to every player, and everyone
             // else sees the host's choice. A room is OFF only when a 0.8.12 or 0.8.13 host chose so.
             scanModPacks();
-            const bool gameRoom=!campaign && room.mission.empty();
+            const bool gameRoom=room.mission.empty();
             const bool gameOn=gameRoom && room.opts.gameMods;
             const auto& alwaysGame=mp_->alwaysGameModPacks();
             const bool alwaysGameLine=gameOn && host && !alwaysGame.empty();
@@ -1036,7 +1009,7 @@ float createOptionPx(float maxW) {
                 if(shown<n)line+=" +"+std::to_string(n-shown);
                 blockText(line,winW-296.0f,py,1.3f,{170,200,170,255});py+=20;
             };
-            // COSMETIC MODS heads the always-enabled and the ticked packs alike (a campaign
+            // COSMETIC MODS heads the always-enabled and the ticked packs alike (a mission
             // room shows the heading only when it has always-enabled packs to list).
             if(gameRoom || !alwaysCosmeticMods_.empty()){blockText("COSMETIC MODS",winW-296.0f,py,1.6f,{205,210,225,255});py+=22;}
             alwaysLine(alwaysCosmeticMods_);
@@ -1130,7 +1103,7 @@ float createOptionPx(float maxW) {
                 blockText(tak::uiTextFit(t, fpx, colW), cx, cy + (px - fpx) * 3.5f, fpx, c);
             };
             cell(typeName[s.type % 4], x + 34, y + 8, 1.6f, 56, tcol);
-            if (host && !campaign && s.type != 1) {
+            if (host && s.type != 1) {
                 // Host cycles an empty slot OPEN -> AI -> CLOSED. AI opponents are
                 // seated (and run) on the server; this is how you set up multi-AI
                 // games (including single-player vs several AIs).
@@ -1168,7 +1141,7 @@ float createOptionPx(float maxW) {
                     blockText(gap + 1, x + 178, y + 13, 1.1f, diffCol[lvl]);
                 } else
                     blockText(diffName[lvl], x + 178, y + 9, 1.4f, diffCol[lvl]);
-                if (host && !campaign) { SDL_FRect db{x + 176, y + 2, 82, 26};
+                if (host) { SDL_FRect db{x + 176, y + 2, 82, 26};
                     lobbyHots_.push_back({db, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
                         mp_->setSlot(i, s2.type, s2.faction, s2.color, s2.team, s2.ready,
                                      uint8_t((s2.aiLevel + direction + kLevels) % kLevels)); }}); }
@@ -1180,7 +1153,7 @@ float createOptionPx(float maxW) {
                           x + 100, y + 21.5f, 1.1f, {235, 205, 120, 255});
             }
             // faction / color / team edit: your own row, or (host) any AI row.
-            bool canEdit = !campaign && (mine || (host && s.type == 2));
+            bool canEdit = (mine || (host && s.type == 2));
             cell(factionName(s.faction), x + 260, y + 8, 1.6f, 94, {200, 205, 215, 255});
             if (canEdit) { SDL_FRect fb{x + 260, y + 6, 90, 18};
                 lobbyHots_.push_back({fb, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
@@ -1210,14 +1183,14 @@ float createOptionPx(float maxW) {
                 blockText(s.ready ? "READY" : "NOT READY", x + 440, y + 8, 1.6f, rc);
             }
             // host kick button for other humans
-            if (host && !campaign && s.type == 1 && !mine) {
+            if (host && s.type == 1 && !mine) {
                 lbBtn(x + row.w - 54, y + 3, 50, 22, "KICK", true, [this, i] { mp_->kick(i); });
             }
             // Any seated player may take an OPEN seat (Msg::MoveSeat): the seat is the
             // start under BY SLOT, and the order under FIXED. Open seats are always
             // inside the map's capacity (the server closes the rest). Not in a campaign
-            // mission or a Crusades battle, whose seats are given.
-            if (!campaign && room.mission.empty() && room.mySlot >= 0 && s.type == 0)
+            // mission, whose seats are given.
+            if (room.mission.empty() && room.mySlot >= 0 && s.type == 0)
                 lbBtn(x + row.w - 94, y + 3, 90, 22, "MOVE HERE", true, [this, i] { mp_->moveSeat(i); });
             y += 30;   // slot row pitch: 8 rows must leave room for the option toggles below
         }
@@ -1247,10 +1220,8 @@ float createOptionPx(float maxW) {
         lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); },
               {70, 110, 70, 255});
         lbBtn(bx + 142, y, 120, 30, "LEAVE", true, [this] {
-            const bool campaign = mp_->campaignRoom();
             mp_->leaveGame();
-            if (campaign) openCrusades(crusadesSelectedTerritory());
-            else lobbyScreen_ = singlePlayer_ ? LobbyScreen::Create : LobbyScreen::Browser;
+            lobbyScreen_ = singlePlayer_ ? LobbyScreen::Create : LobbyScreen::Browser;
             spSpectate_ = false;
             mpReadied_ = false; mpStarted_ = false; specAutoSeated_ = false; });
         // Room readiness also includes game mods and other players. A
@@ -1288,14 +1259,14 @@ float createOptionPx(float maxW) {
         info(2,1,std::string("FOG OF WAR: ")+fogNames[std::min<int>(room.opts.fogExplored,2)]);
         info(3,0,startLocationsLabel(room.opts.randomStarts));
         info(4,0,pathfindingLabel(room.opts.pathfindingMode));
-        if(!campaign && room.mission.empty())
+        if(room.mission.empty())
             info(5,0,std::string("POWER CODES: ")+onOff(room.opts.powerCodes));
         // ALLOW SPECTATORS is the one room rule the host may still flip here: it only
         // decides who may WATCH once the game runs, so no player has planned around it.
         // The server adopts it until START and refuses Spectate while it is off.
         // For the host it lights up under the pointer (the button hover colour), the one
         // hint that this line of the read-only list is a toggle.
-        if(!singlePlayer_ && !campaign) {
+        if(!singlePlayer_) {
             const std::string label=std::string("ALLOW SPECTATORS: ")+onOff(room.opts.allowSpectators);
             const SDL_FRect hit{x+300.0f,y+4*kInfoPitch-2,blockWidth(label,1.6f),18};
             blockText(label,hit.x,y+4*kInfoPitch,1.6f,host && lbHot(hit) ? SDL_Color{180,200,240,255} : infoColor);
@@ -1304,7 +1275,7 @@ float createOptionPx(float maxW) {
         }
         if(singlePlayer_)
             info(3,1,std::string("SPECTATE (WATCH AIS): ")+onOff(mp_->isSpectator()));
-        else if(!campaign) {
+        else {
             const auto& games=mp_->games();
             const auto game=std::find_if(games.begin(),games.end(),[&](const auto& g){return g.id==room.id;});
             // Show whether access is protected, never the password itself.
@@ -1312,9 +1283,8 @@ float createOptionPx(float maxW) {
                 info(3,1,std::string("PASSWORD: ")+((game!=games.end()?game->passworded:!createPass_.empty())?"SET":"NONE"));
         }
         // MAP SCENARIO, under the grid for a file map (the rows a generated map's recipe
-        // uses): the rule, and when on, what it changes and the seats it needs. Not in a
-        // Crusades battle room, which never plays one (the server keeps it 0 there).
-        if(fileMap && !campaign) {
+        // uses): the rule, and when on, what it changes and the seats it needs.
+        if(fileMap) {
             const SDL_Color amber{235,205,120,255};
             const bool testCopy=mp_->mapPackage() && scenarioLobby_.marker && scenarioLobby_.runnable();
             const bool wanted=room.opts.mapScenario!=0 || testCopy;
@@ -1497,19 +1467,6 @@ float createOptionPx(float maxW) {
 
     void GameView::lobbyInput(const SDL_Event& e, int winW, int winH) {
         (void)winW; (void)winH;
-        if (lobbyScreen_ == LobbyScreen::Crusades && crusadesScreen_ && mp_ &&
-            mp_->state() != tak::net::MpClient::State::InRoom) {
-            if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
-            if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) { mouseX_ = float(e.button.x); mouseY_ = float(e.button.y); }
-            float mx, my; lobbyMouse(mx, my);
-            const auto action = crusadesScreen_->input(e, int(mx), int(my));
-            if (action == tak::CrusadesScreen::Action::Back) {
-                lobbyScreen_ = LobbyScreen::Browser; mp_->subscribeCampaign(""); SDL_StopTextInput();
-            } else if (action == tak::CrusadesScreen::Action::Reconnect) {
-                reconnectRequested_ = true; menuRequested_ = true; SDL_StopTextInput();
-            }
-            return;
-        }
         if (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
             if (genSlider_ >= 0 || lbField_ == 5) applyGenParams();
             genSlider_ = -1; mapDrag_ = false;
