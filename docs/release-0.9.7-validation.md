@@ -156,7 +156,8 @@ up to each tick). Retail run: 7 assists, 2 guard repairs, 11 guard HelpBuilds,
 guard HelpBuilds, 3 helper-work events and 2 helper-finished products.
 
 **What the sweeps did not drive.** A guard repairing an ally (the AIs do not
-damage their allies; the test covers it), a flying builder (escort only), and
+damage their allies; the test covers it), a flying builder on guard (added
+after these sweeps; `helpbuild_test` covers it and the gates were re-run), and
 the unreachable-repair skip. No remote multiplayer sweep
 (`tools/desync-hunt-remote.sh`) was run for 0.9.7.
 
@@ -182,7 +183,8 @@ TODO-LEAD: publication time, asset count, Latest flag.
   0.9.6 binary.
 - No Windows or macOS `--mpai` for 0.9.7; their tag CI determinism tests cover
   them.
-- Flying builders that guard only escort; no test covers a guard skipping an
+- A flying guard holds near the guarded unit instead of circling it; no test
+  covers a guard skipping an
   unreachable repair; the repair re-aims on a once-a-second schedule (see the
   [release notes](release-0.9.7-notes.md#known-limits)).
 - Local only: `vashim_unavailable` fails against a `third_party/ffmpeg-bink`

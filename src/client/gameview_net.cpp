@@ -1213,14 +1213,15 @@ void GameView::autoplayStep() {
 // the seat has a builder put down a factory (or anything on its menu) near
 // itself, trains at its factories, puts a conjurer on a repeat queue, has a
 // builder guard a busy unit of its own (guard-help: repair, HelpBuild on a
-// site or on a factory's / conjurer's output) and has a builder assist an
-// unfinished unit -- so autoplay desync sweeps run construction, shared
+// site or on a factory's / conjurer's output), has a FLYING builder guard one
+// (VTOL_Follow's help and repair: its approach, orbit and cadence) and has a
+// builder assist an unfinished unit -- so autoplay desync sweeps run construction, shared
 // production progress and guard-help between clients and the referee. All
 // through issue(); the sim judges every order, so an ineligible one (a
 // blocked spot, an off-menu type) is refused on every peer alike.
 void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
     struct Mine { int id; const tak::sim::UnitType* type; float x, z; };
-    std::vector<Mine> factories, builders;
+    std::vector<Mine> factories, builders, flyers;
     std::vector<int> busy, unfinished;
     {
         const auto live = liveWorld();
@@ -1233,7 +1234,10 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
                                  (!u.orders.empty() && (u.orders.front().buildType || u.orders.front().guard));
             // Only an idle builder takes a new job: the jobs get to finish.
             if (u.type->isStructure()) factories.push_back(m);
-            else if (!working) builders.push_back(m);
+            else if (!working) {
+                builders.push_back(m);
+                if (u.type->canFly) flyers.push_back(m);
+            }
             if (u.buildSiteId || u.repairId || u.productionSiteId) busy.push_back(u.id);
         }
     }
@@ -1282,6 +1286,12 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
     case 4:     // a builder guards a busy unit: it helps / repairs what that unit works on
         if (builders.empty() || busy.empty()) return;
         c.kind = tak::net::Cmd::Guard; c.unitId = builders[rnd() % builders.size()].id;
+        c.targetId = busy[rnd() % busy.size()];
+        if (c.unitId == c.targetId) return;
+        break;
+    case 6:     // a flying builder guards a busy unit (flyers are few: give them their own turn)
+        if (flyers.empty() || busy.empty()) return;
+        c.kind = tak::net::Cmd::Guard; c.unitId = flyers[rnd() % flyers.size()].id;
         c.targetId = busy[rnd() % busy.size()];
         if (c.unitId == c.targetId) return;
         break;

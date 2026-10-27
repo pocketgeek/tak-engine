@@ -88,6 +88,21 @@ target now stands, so a repaired unit that walks off is followed and repaired to
 full (the test walks it 900 px; the guard never fell more than 250 px behind).
 A conjurer on a repeat queue and a builder at work on its own job do not look.
 
+**Flying builders** (the original's `VTOL_Follow`, emulated) run the same three
+checks in the same order, with two differences in what they help: a flying
+guard also helps a flying producer (a Thirsha's output or site) and joins a
+flyer's repair, which a ground guard does not; and a flying guard counts every
+target as reachable except one whose top is under the sea. Its cadence also
+differs: a look that finds nothing looks again after exactly 15 ticks, and a
+look that starts a job sleeps 15 plus 0 to 29 ticks. Its jobs are the
+original's flyer jobs: it flies to the target until it is inside twice its
+build distance, starts work there and then circles the target at about its
+build distance (re-picking its point now and then, as the original does). Help
+work is never re-measured once started; a repair pauses and flies back in
+whenever the target is more than twice the build distance away. The same
+approach and circling now apply to a flying builder told to Assist or Repair
+directly.
+
 ## For modders and mapmakers
 
 No file format changed. A builder's menu now comes with its type
@@ -99,7 +114,10 @@ No file format changed. A builder's menu now comes with its type
   `Order::helpSite` (hashed when set), `Order::guardRepair` (hashed when set);
   `Unit::productionOwner` is a hint and is not hashed. New functions
   `World::canHelpBuild`, `canRepairUnit`, `productionOwnerOf`,
-  `workProduction`, `finishProduction`, `tickGuardHelp`. The producer's own
+  `workProduction`, `finishProduction`, `tickGuardHelp`, `helpApproach`,
+  `tickFlyingRepair`, `payRepair`; `tickConjureHover` takes the repair re-pick
+  rule. A flyer's help admission is `conjureHoverTarget` (already hashed), so
+  a flying repairer's orbit uses the same hashed fields as flying construction. The producer's own
   step is a full tick (65,536 sub-ticks) as before, so its solo timing is
   unchanged.
 - Net: `kNetVersion` 300 -> 301, no new command, replay format 15.
@@ -108,14 +126,16 @@ No file format changed. A builder's menu now comes with its type
   unfinished target; nothing else about selection or cursors changed.
 - Harness (debug builds only, `#ifndef NDEBUG`): `TAK_AUTOPLAY` also builds,
   trains, toggles repeat on conjurers, has builders guard busy units and assist
-  unfinished ones (`GameView::autoplayHelpStep`). It prints `AUTOPLAY_HELP`
+  unfinished ones, and gives idle flying builders their own guard turn
+  (`GameView::autoplayHelpStep`). It prints `AUTOPLAY_HELP`
   lines to stderr. Release builds do not read it.
 - Tests: new `helpbuild` (shared production, eligibility, the repeat
-  conjurer, guard-help, a moving repair, determinism); `replay_test` now pins
+  conjurer, guard-help, a moving repair, flying guards and flying help/repair
+  reach and orbit, determinism); `replay_test` now pins
   301 and refuses 300.
 - `--mpai` Inner Circle seed 1, `TAK_SPEED=80`: **the gate hashes did not
   change** (the AIs never guard or assist, and no helper ever works on their
-  production): Retail 60 s `d0da4ccc71d2067c`, 300 s `e820d37865085bd9`; Legion
+  production; the flying-guard port left them unchanged too): Retail 60 s `d0da4ccc71d2067c`, 300 s `e820d37865085bd9`; Legion
   60 s `c3f6a3a13f0c167f`, 300 s `0783cb05f7f128cf`; Retail AI 60 s
   `4952493f51b9a568`; Crusades 300 s Retail `f2f51dc1703fc209`, Legion
   `c4189ae189dd68dc`. The cross-compiler golden (`check-determinism`) is
@@ -126,9 +146,11 @@ No file format changed. A builder's menu now comes with its type
 
 New with 0.9.7:
 
-- **Flying builders that guard only escort.** The original's flyer missions
-  (`VTOL_Follow`, `VTOL_MobileBuild`) are not ported; a flying producer is not
-  helped by a ground guard.
+- **A flying guard with nothing to do holds near the guarded unit.** The
+  original circles it at 320 px (or its weapon range plus 160) and looks again
+  each time it reaches a point of that circle; here it looks every 15 ticks
+  only. A flying repair's optional leash (from where the order was given) is
+  not ported.
 - **Guard re-checks use the sim's random generator,** 15 plus 0 to 14 ticks, the
   same range as the original's mission wait; retail's exact random stream is not
   reproduced.

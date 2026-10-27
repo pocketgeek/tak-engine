@@ -46,7 +46,8 @@ static void check(bool cond, const char* what, const std::string& detail = {}) {
 }
 
 struct Types {
-    UnitType factory, sol, builder, limited, conjurer, tower;
+    UnitType factory, sol, builder, limited, conjurer, tower, flyer, flylimited, flyconj, flysol,
+             ground, slow, slowfac;
     Types() {
         factory.name = factory.id = "factory";
         factory.maxVel = Fixed();                       // a structure
@@ -76,6 +77,34 @@ struct Types {
 
         tower = factory;                                // a builder structure (never helps)
         tower.name = tower.id = "tower";
+
+        flyer = builder;                                // a flying builder (arafly-like)
+        flyer.name = flyer.id = "flyer";
+        flyer.canFly = true; flyer.cruiseAlt = 80;
+        flyer.maxVel = Fixed::fromInt(4); flyer.accel = flyer.brake = Fixed::fromInt(1);
+        flyer.turnRate = flyer.turnInPlaceRate = 1200;
+        flyer.buildDist = 100;
+
+        flylimited = flyer;
+        flylimited.name = flylimited.id = "flylimited";
+        flylimited.builderLimited = true; flylimited.buildMenu = {"factory"};
+
+        flyconj = flyer;                                // a flying producer (Thirsha-like)
+        flyconj.name = flyconj.id = "flyconj";
+        flyconj.buildMenu = {"sol"};
+
+        ground = sol;                                   // stands on the terrain (groundY = its height)
+        ground.name = ground.id = "ground"; ground.upright = true;
+
+        slow = sol;                                     // 900 ticks of factory work
+        slow.name = slow.id = "slow"; slow.buildTime = 300; slow.buildCost = 300;
+
+        slowfac = factory;
+        slowfac.name = slowfac.id = "slowfac"; slowfac.buildMenu = {"slow"};
+
+        flysol = flyer;                                 // an unarmed flyer that is no builder
+        flysol.name = flysol.id = "flysol";
+        flysol.isBuilder = false; flysol.buildMenu.clear();
     }
 };
 
@@ -466,6 +495,271 @@ static void guardHelps() {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Flying guard (VTOL_Follow stage 2) and its VTOL jobs.
+// ---------------------------------------------------------------------------
+static float dist(const World& w, int a, int b) {
+    const Unit* x = w.unit(a);
+    const Unit* y = w.unit(b);
+    const float dx = (x->x - y->x).toFloat(), dz = (x->z - y->z).toFloat();
+    return std::sqrt(dx * dx + dz * dz);
+}
+
+// Runs until `helper`'s first tick of construction work; the distance from
+// `target` it was at then, or -1.
+static float firstWorkDistance(World& w, int helper, int target, int ticks) {
+    const uint32_t before = w.unit(helper)->constructionEmissions[0];
+    for (int i = 0; i < ticks; ++i) {
+        const float d = dist(w, helper, target);
+        w.tick(1.0f / 30.0f);
+        if (w.unit(helper)->constructionEmissions[0] != before) return std::max(d, dist(w, helper, target));
+    }
+    return -1;
+}
+
+// Watches `repairer` mend `target`: where the work starts, the farthest it is
+// paid from, how far the flyer moves while working, and that it finishes.
+static void flyingRepairShape(World& w, int repairer, int target, const char* lead) {
+    char d[200];
+    float firstWork = -1, worst = 0;
+    int mended = -1;
+    float lastX = w.unit(repairer)->x.toFloat(), lastZ = w.unit(repairer)->z.toFloat();
+    float travel = 0, nearest = 1e9f;
+    int workTicks = 0;
+    for (int i = 0; i < 900 && mended < 0; ++i) {
+        const Fixed hp = w.unit(target)->hp;
+        const float dBefore = dist(w, repairer, target);
+        w.tick(1.0f / 30.0f);
+        if (w.unit(target)->hp > hp) {
+            if (firstWork < 0) firstWork = std::max(dBefore, dist(w, repairer, target));
+            worst = std::max(worst, dist(w, repairer, target));
+            travel += std::fabs(w.unit(repairer)->x.toFloat() - lastX) + std::fabs(w.unit(repairer)->z.toFloat() - lastZ);
+            if (++workTicks > 60) nearest = std::min(nearest, dist(w, repairer, target));
+        }
+        lastX = w.unit(repairer)->x.toFloat(); lastZ = w.unit(repairer)->z.toFloat();
+        if (w.unit(target)->hp.toFloat() >= 299.9f) mended = i;
+    }
+    std::snprintf(d, sizeof d, "first work %.1f px, worst %.1f px, nearest once settled %.1f px, moved %.0f px, mended t=%d",
+                  firstWork, worst, nearest, travel, mended);
+    const std::string l(lead);
+    check(firstWork >= 0 && firstWork < 201.0f, (l + "work starts once inside 2 x builddistance").c_str(), d);
+    check(worst <= 201.0f, (l + "and is only paid within 2 x builddistance").c_str(), d);
+    check(travel > 50.0f && nearest >= 60.0f && nearest < 1e9f,
+          (l + "while the flyer orbits at about builddistance, not parked over it").c_str(), d);
+    check(mended >= 0, (l + "to full health").c_str(), d);
+}
+
+static void flyingGuardHelps() {
+    std::printf("a guarding flying builder:\n");
+    Types ty;
+    char d[200];
+    {   // a busy factory 1300 px away: latches at once, flies in, works only inside 2 x builddistance
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        const int fac = w.spawn(&ty.slowfac, 600, 600, 0.0f, 0);
+        w.train(fac, &ty.slow, 1);
+        const int g = w.spawn(&ty.flyer, 1500, 1600, 0.0f, 0);
+        w.tick(1.0f / 30.0f);
+        const int site = w.unit(fac)->productionSiteId;
+        command(w, tak::net::Cmd::Guard, g, fac);
+        const int at = guardLatch(w, g, 3, site, false);
+        std::snprintf(d, sizeof d, "latched after %d ticks, %.0f px away", at, dist(w, g, site));
+        check(at >= 0, "guarding a distant busy factory, it helps the output at once (no distance gate)", d);
+        check(guardUnder(w, g), "...with its guard order kept under the help");
+        const uint32_t wait = w.unit(g)->guardHelpTick - w.tickCount();
+        std::snprintf(d, sizeof d, "next look in %u ticks", wait);
+        check(wait >= 14 && wait < 45, "...and the guard sleeps 15 + rand(30) after the insert", d);
+        const int start = int(w.tickCount());
+        const float wd = firstWorkDistance(w, g, site, 900);
+        const int flown = int(w.tickCount()) - start;
+        std::snprintf(d, sizeof d, "first work at %.1f px after %d ticks (2 x builddistance = 200)", wd, flown);
+        check(wd >= 0 && wd < 201.0f, "...it works only once flown inside 2 x builddistance", d);
+        int finish = -1;
+        float worst = 0;
+        for (int i = 0; i < 900 && finish < 0; ++i) {
+            w.tick(1.0f / 30.0f);
+            if (i > 60) worst = std::max(worst, std::fabs(dist(w, g, site) - 100.0f));
+            if (const Unit* s = w.unit(site); s && !s->underConstruction) finish = i;
+        }
+        std::snprintf(d, sizeof d, "finished %d ticks after the first work (alone: %d), worst orbit error %.0f px",
+                      finish, 899 - flown, worst);
+        check(finish >= 0 && finish < (899 - flown) * 2 / 3, "...finishing the output sooner than the factory alone", d);
+        check(worst < 40.0f, "...while orbiting it at about builddistance", d);
+        for (int i = 0; i < 5; ++i) w.tick(1.0f / 30.0f);
+        check(!w.unit(g)->buildSiteId && !w.unit(g)->orders.empty() && w.unit(g)->orders.back().guard &&
+              w.unit(g)->orders.back().targetId == fac, "...then the guard order is back in charge");
+    }
+    {   // a flying producer: helped by a flying guard, never by a ground guard
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        w.spawn(&ty.factory, 300, 300, 0.0f, 0);       // storage for the pool
+        const int prod = w.spawn(&ty.flyconj, 1000, 1000, 0.0f, 0);
+        w.train(prod, &ty.sol, 3);
+        const int fg = w.spawn(&ty.flyer, 1200, 1200, 0.0f, 0);
+        const int gg = w.spawn(&ty.builder, 800, 1200, 0.0f, 0);
+        for (int i = 0; i < 5 && !w.unit(prod)->productionSiteId; ++i) w.tick(1.0f / 30.0f);
+        const int site = w.unit(prod)->productionSiteId;
+        check(site != 0, "a flying producer has its output under way");
+        command(w, tak::net::Cmd::Guard, fg, prod);
+        command(w, tak::net::Cmd::Guard, gg, prod);
+        check(guardLatch(w, fg, 3, site, false) >= 0, "a flying guard helps a flying producer's output");
+        int latched = 0;
+        for (int i = 0; i < 90; ++i) { w.tick(1.0f / 30.0f); latched |= w.unit(gg)->buildSiteId; }
+        check(!latched, "...a ground guard does not (Follow_Ground lists no VTOL mission)");
+    }
+    {   // the guarded unit's repair target: an ally, flying guard yes; ground guard of a flying repairer no
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        w.setTeam(1, 0);
+        w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+        const int ally = w.spawn(&ty.ground, 1000, 1000, 1.0f, 1);
+        w.unit(ally)->hp = Fixed::fromInt(30);
+        const int repairer = w.spawn(&ty.builder, 1050, 1050, 0.0f, 0);
+        const int fg = w.spawn(&ty.flyer, 1400, 1400, 0.0f, 0);
+        w.repair(repairer, ally, false);
+        for (int i = 0; i < 3; ++i) w.tick(1.0f / 30.0f);
+        command(w, tak::net::Cmd::Guard, fg, repairer);
+        check(guardLatch(w, fg, 3, ally, true) >= 0, "a flying guard repairs the ally its guarded builder repairs");
+        check(guardUnder(w, fg), "...guard order kept under the repair");
+        const int ally2 = w.spawn(&ty.ground, 400, 1600, 1.0f, 1);
+        w.unit(ally2)->hp = Fixed::fromInt(30);
+        const int flyRepairer = w.spawn(&ty.flyer, 450, 1650, 0.0f, 0);
+        const int gg = w.spawn(&ty.builder, 600, 1700, 0.0f, 0);
+        w.repair(flyRepairer, ally2, false);
+        for (int i = 0; i < 3; ++i) w.tick(1.0f / 30.0f);
+        command(w, tak::net::Cmd::Guard, gg, flyRepairer);
+        check(guardLatch(w, gg, 60, ally2, true) < 0,
+              "a ground guard does not join a flyer's VTOL_RepairUnit");
+    }
+    {   // the guarded unit itself damaged: flown in, orbited, mended; the repair holds 2 x builddistance
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+        const int hurt = w.spawn(&ty.ground, 1000, 1000, 0.0f, 0);
+        w.unit(hurt)->hp = Fixed::fromInt(50);
+        const int g = w.spawn(&ty.flyer, 1600, 1600, 0.0f, 0);
+        command(w, tak::net::Cmd::Guard, g, hurt);
+        check(guardLatch(w, g, 3, hurt, true) >= 0, "a damaged guarded unit is repaired by a flying guard");
+        flyingRepairShape(w, g, hurt, "...");
+        for (int i = 0; i < 5; ++i) w.tick(1.0f / 30.0f);
+        check(!w.unit(g)->repairId && !w.unit(g)->orders.empty() && w.unit(g)->orders.front().guard,
+              "...then the guard resumes");
+    }
+    {   // negatives and the look cadence
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        const int idle = w.spawn(&ty.sol, 1000, 1000, 0.0f, 0);
+        const int g = w.spawn(&ty.flyer, 1100, 1100, 0.0f, 0);
+        command(w, tak::net::Cmd::Guard, g, idle);
+        w.tick(1.0f / 30.0f);
+        const uint32_t wait = w.unit(g)->guardHelpTick - (w.tickCount() - 1);
+        std::snprintf(d, sizeof d, "next look in %u ticks", wait);
+        check(!w.unit(g)->buildSiteId && !w.unit(g)->repairId && w.unit(g)->orders.size() == 1,
+              "a flying guard of an idle unit only escorts", d);
+        int looks = 0;
+        bool fixed = true;
+        uint32_t prev = w.unit(g)->guardHelpTick;
+        for (int i = 0; i < 200; ++i) {
+            w.tick(1.0f / 30.0f);
+            if (w.unit(g)->guardHelpTick != prev) {
+                fixed = fixed && w.unit(g)->guardHelpTick - prev == 15;
+                prev = w.unit(g)->guardHelpTick;
+                ++looks;
+            }
+        }
+        std::snprintf(d, sizeof d, "%d looks", looks);
+        check(fixed && looks >= 12, "...re-looking every 15 ticks exactly (no draw)", d);
+        const int fac = w.spawn(&ty.factory, 400, 400, 0.0f, 0);
+        w.train(fac, &ty.sol, 1);
+        const int lim = w.spawn(&ty.flylimited, 500, 600, 0.0f, 0);
+        const int nb = w.spawn(&ty.flysol, 550, 600, 0.0f, 0);
+        w.tick(1.0f / 30.0f);
+        command(w, tak::net::Cmd::Guard, lim, fac);
+        command(w, tak::net::Cmd::Guard, nb, fac);
+        check(guardLatch(w, lim, 40, w.unit(fac)->productionSiteId, false) < 0,
+              "a builderlimited flying guard does not help an output off its menu");
+        check(!w.unit(nb)->buildSiteId, "a flyer that is no builder only escorts");
+        UnitType onMenu = ty.flylimited; onMenu.id = "flyonmenu"; onMenu.buildMenu = {"sol"};
+        const int lim2 = w.spawn(&onMenu, 450, 650, 0.0f, 0);
+        command(w, tak::net::Cmd::Guard, lim2, fac);
+        check(guardLatch(w, lim2, 3, w.unit(fac)->productionSiteId, false) >= 0,
+              "...one with the output's type on its menu does");
+    }
+    {   // a repair target below the sea is not taken on by a flyer
+        auto ownedWorld = std::make_unique<World>();
+        World& w = *ownedWorld;
+        w.setVisPlayer(-1);
+        w.setTerrain(std::vector<uint8_t>(size_t(128) * 128, 0), 128, 128, 60);   // all deep water
+        w.setPathService(true);
+        w.player(0).mana = 100000;
+        UnitType sub = ty.ground; sub.id = "sub"; sub.modelTop = Fixed::fromInt(10).v;
+        const int hurt = w.spawn(&sub, 1000, 1000, 0.0f, 0);
+        w.unit(hurt)->hp = Fixed::fromInt(50);
+        const int g = w.spawn(&ty.flyer, 1100, 1100, 0.0f, 0);
+        command(w, tak::net::Cmd::Guard, g, hurt);
+        std::snprintf(d, sizeof d, "target ground y %d, sea 60", w.unit(hurt)->groundY.floorInt());
+        check(guardLatch(w, g, 40, hurt, true) < 0, "a flying guard does not repair a unit under the sea", d);
+        const int hurtFlyer = w.spawn(&ty.flysol, 1300, 1000, 0.0f, 0);
+        w.order(hurtFlyer, 1300, 1300, false);           // up to its cruise height
+        for (int i = 0; i < 120; ++i) w.tick(1.0f / 30.0f);
+        w.unit(hurtFlyer)->hp = Fixed::fromInt(50);
+        const int g2 = w.spawn(&ty.flyer, 1400, 1100, 0.0f, 0);
+        command(w, tak::net::Cmd::Guard, g2, hurtFlyer);
+        std::snprintf(d, sizeof d, "flyer y %d", w.unit(hurtFlyer)->flightY.floorInt());
+        check(guardLatch(w, g2, 3, hurtFlyer, true) >= 0, "...but does repair a flyer above it", d);
+    }
+    {   // a plain Repair order to a flyer (VTOL_RepairUnit): flown in, orbited
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+        const int hurt = w.spawn(&ty.ground, 1000, 1000, 0.0f, 0);
+        w.unit(hurt)->hp = Fixed::fromInt(50);
+        const int f = w.spawn(&ty.flyer, 1500, 1200, 0.0f, 0);
+        w.repair(f, hurt, false);
+        flyingRepairShape(w, f, hurt, "a flyer told to repair: ");
+    }
+    {   // a plain Assist by a flyer on a site already begun: no work from afar
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        const int fac = w.spawn(&ty.slowfac, 500, 500, 0.0f, 0);
+        w.train(fac, &ty.slow, 1);
+        const int f = w.spawn(&ty.flyer, 1700, 1700, 0.0f, 0);
+        for (int i = 0; i < 5 && !w.unit(fac)->productionSiteId; ++i) w.tick(1.0f / 30.0f);
+        const int site = w.unit(fac)->productionSiteId;
+        w.assist(f, site, false);
+        const float wd = firstWorkDistance(w, f, site, 900);
+        std::snprintf(d, sizeof d, "first work at %.1f px", wd);
+        check(wd >= 0 && wd < 201.0f, "a flyer assisting a begun site flies within 2 x builddistance before working", d);
+    }
+}
+
+static uint64_t flyingRun() {
+    Types ty;
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
+    w.setTeam(1, 0);
+    const int fac = w.spawn(&ty.factory, 1000, 1000, 0.0f, 0);
+    w.train(fac, &ty.sol, 3);
+    const int prod = w.spawn(&ty.flyconj, 1500, 600, 0.0f, 0);
+    w.train(prod, &ty.sol, 2);
+    const int hurt = w.spawn(&ty.ground, 600, 1500, 0.0f, 1);
+    w.unit(hurt)->hp = Fixed::fromInt(40);
+    const int repairer = w.spawn(&ty.builder, 650, 1450, 0.0f, 0);
+    w.repair(repairer, hurt, false);
+    std::vector<int> guards;
+    for (int i = 0; i < 4; ++i) guards.push_back(w.spawn(&ty.flyer, 1200.0f + 80 * i, 1600, 0.0f, 0));
+    command(w, tak::net::Cmd::Guard, guards[0], fac);
+    command(w, tak::net::Cmd::Guard, guards[1], prod);
+    command(w, tak::net::Cmd::Guard, guards[2], repairer);
+    command(w, tak::net::Cmd::Guard, guards[3], guards[0]);
+    for (int i = 0; i < 1500; ++i) {
+        w.tick(1.0f / 30.0f);
+        if (i == 400) w.unit(guards[0])->hp = Fixed::fromInt(60);
+    }
+    return w.stateHash();
+}
+
 // ---------------------------------------------------------------------------
 // Determinism: the same mixed scenario twice gives the same hash.
 // ---------------------------------------------------------------------------
@@ -496,6 +790,9 @@ static void determinism() {
     char d[64];
     std::snprintf(d, sizeof d, "%016llx / %016llx", (unsigned long long)a, (unsigned long long)b);
     check(a == b, "guard-help, assist and shared production hash the same twice", d);
+    const uint64_t c = flyingRun(), e = flyingRun();
+    std::snprintf(d, sizeof d, "%016llx / %016llx", (unsigned long long)c, (unsigned long long)e);
+    check(c == e, "flying guards' help and repair hash the same twice", d);
 }
 
 int main() {
@@ -506,6 +803,7 @@ int main() {
     eligibility();
     repeatConjurer();
     guardHelps();
+    flyingGuardHelps();
     determinism();
     std::printf(g_fail ? "\n%d FAILED\n" : "\nall passed\n", g_fail);
     return g_fail ? 1 : 0;

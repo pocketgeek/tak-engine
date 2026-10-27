@@ -8934,6 +8934,27 @@ Unit* World::productionOwnerOf(const Unit& site) {
 // always did. The approach leg carries helpSite, so it goes when the job ends.
 static float helpApproachZ(const Unit& site) { return site.z.toFloat()+float(site.type->footZ)*8+24; }
 
+// A ground helper walks there (a Move). A flyer's VTOL_HelpBuild stage 1
+// (0x41f7f0) installs one point goal at the site's centre that accepts within
+// 2 x builddistance (flags 0x30): no VTOL_Move, so none of its draws.
+void World::helpApproach(Unit& b, const Unit& site, bool queue) {
+    const int builderId=b.id,siteId=site.id;
+    if (!b.type->canFly) {
+        order(builderId,site.x.toFloat(),helpApproachZ(site),queue);
+    } else {
+        if (!queue) { cancelPath(b); b.orders.clear(); }
+        Order o;
+        o.x=site.x; o.z=site.z;
+        o.goal=true;
+        o.issuedTick=tickCounter_;
+        o.flightGoal=RetailFlightGoal{{site.x.v,0,site.z.v},0x30,0,int16_t(2*std::max(0,int(b.type->buildDist)))};
+        b.orders.push_back(o);
+        noteOrders(builderId);
+    }
+    Unit* u=unit(builderId);
+    if (u && !u->orders.empty()) u->orders.back().helpSite=siteId;
+}
+
 void World::assist(int builderId, int siteId, bool queue) {
     Unit* b = unit(builderId);
     Unit* site = unit(siteId);
@@ -8946,9 +8967,8 @@ void World::assist(int builderId, int siteId, bool queue) {
     // A repeating conjurer's move is a rally for its output (World::order);
     // this approach is its own.
     const UnitType* repeat=b->repeatType; b->repeatType=nullptr;
-    order(builderId, site->x.toFloat(), helpApproachZ(*site), queue);
+    helpApproach(*b,*site,queue);
     b=unit(builderId); b->repeatType=repeat;
-    if (!b->orders.empty()) b->orders.back().helpSite=siteId;
 }
 
 float World::sacredIncomeMultiplier(int x,int z,int fx,int fz) const {
@@ -9619,36 +9639,55 @@ void World::tickReclaim(Unit& b) {
 // that finds nothing sleeps 15 + rand(15) ticks (the mission's own wait; the
 // draw is the sim's one game RNG, as every retail mission's is); after an
 // insert the guard looks again on its first tick back. A builder still
-// walking to its MobileBuild site (no site begun yet) is just followed, and
-// a flying producer is not helped from the ground. Flying guards are not
-// handled: VTOL_Follow's VTOL missions are not ported, so a flying builder
-// escorts only, as before.
+// walking to its MobileBuild site (no site begun yet) is just followed. The
+// ground guard's list is MobileBuild, BuildingBuild, HelpBuild and RepairUnit
+// only (0x408431..0x408486): a flying producer's VTOL_MobileBuild, its output
+// or its VTOL_RepairUnit is not helped from the ground, though a guarded
+// flyer's own unfinished or damaged body is.
+//
+// A flying builder's guard is VTOL_Follow (0x418860, stage 2; emulated): the
+// same checks in the same order, with the VTOL build and repair missions
+// added to the guarded unit's list, so a flying guard helps ground and flying
+// producers alike. Its jobs are VTOL_HelpBuild / VTOL_RepairUnit (approach to
+// 2 x builddistance, then orbit; tickConstruction, tickRepair). Every target
+// counts as reachable, but VTOL_RepairUnit refuses a target whose model top is
+// under the sea (0x519d40, flying branch). Its cadence differs: a look that
+// finds nothing re-looks after a fixed 15 ticks with no draw (0x419154), and
+// an insert returns 3, which the dispatcher (0x4d8511) turns into a sleep of
+// 15 + rand(30) ticks. (Its idle orbit at 320 px / weapon range + 160 is not
+// ported: a flying guard still holds near the guarded unit.)
 void World::tickGuardHelp(Unit& u) {
-    if (u.orders.empty() || !u.type || !u.type->isBuilder || u.type->isStructure() || u.type->canFly ||
+    if (u.orders.empty() || !u.type || !u.type->isBuilder || u.type->isStructure() ||
         u.underConstruction || u.embarked() || u.incapacitated() || u.repeatType ||
         u.buildSiteId || u.repairId || u.reclaimId) return;
     const size_t end=currentLeg(u.orders);
     if (!u.orders[end].guard || tickCounter_<u.guardHelpTick) return;
     const Unit* g=unit(u.orders[end].targetId);
     if (!g || !g->alive() || !g->type) return;   // tickCombat retires the guard
+    const bool flying=u.type->canFly;
     int help=0,mend=0;
     // A repair the guard could never walk to (a damaged flyer over water or
     // a cliff) is not taken on: the guard just follows. Retail's RepairUnit
     // has no give-up of its own; this keeps the guard from parking forever.
+    // A flyer reaches anything above the sea: 0x519d40's flying branch wants
+    // the target's model top (UnitDef+0x14c) plus its world Y (+0x6e) at or
+    // above the sea level.
     auto reachable=[&](const Unit& t) {
+        if (flying)
+            return (t.type->modelTop>>16)+(t.type->canFly ? t.flightY : t.groundY).floorInt()>=seaLevel_;
         return pathExists(u.type,t.x.toFloat(),t.z.toFloat(),u.x.toFloat(),u.z.toFloat());
     };
     if (canRepairUnit(u,*g)) { if (reachable(*g)) mend=g->id; }
     else if (canHelpBuild(u,*g)) help=g->id;
-    else if (!g->type->canFly && g->buildSiteId) {
+    else if ((flying || !g->type->canFly) && g->buildSiteId) {
         if (const Unit* s=unit(g->buildSiteId); s && s->buildBegun && canHelpBuild(u,*s)) help=s->id;
-    } else if (!g->type->canFly && g->productionSiteId && !g->buildQueue.empty()) {
+    } else if ((flying || !g->type->canFly) && g->productionSiteId && !g->buildQueue.empty()) {
         if (const Unit* s=unit(g->productionSiteId); s && canHelpBuild(u,*s)) help=s->id;
-    } else if (g->repairId) {
+    } else if ((flying || !g->type->canFly) && g->repairId) {
         if (const Unit* t=unit(g->repairId); t && canRepairUnit(u,*t) && reachable(*t)) mend=t->id;
     }
-    if (!help && !mend) { u.guardHelpTick=tickCounter_+15+pathRand(15); return; }
-    u.guardHelpTick=tickCounter_+1;
+    if (!help && !mend) { u.guardHelpTick=tickCounter_+15+(flying ? 0 : pathRand(15)); return; }
+    u.guardHelpTick=flying ? tickCounter_+15+pathRand(30) : tickCounter_+1;
     // Keep the guard as one order (its route corners belong to the old
     // walk), and put the job in front of it.
     u.orders.erase(u.orders.begin(),u.orders.begin()+long(end));
@@ -9661,11 +9700,9 @@ void World::tickGuardHelp(Unit& u) {
         repair(u.id,mend,true);
         if (!u.orders.empty() && u.orders.back().repairTarget==mend) u.orders.back().guardRepair=true;
     } else {
-        const Unit& s=*unit(help);
         u.buildSiteId=help;
         u.buildStuckT=0;u.buildStuckD=INT32_MAX;
-        order(u.id,s.x.toFloat(),helpApproachZ(s),false);
-        if (!u.orders.empty()) u.orders.back().helpSite=help;
+        helpApproach(u,*unit(help),false);
     }
     u.orders.insert(u.orders.end(),std::make_move_iterator(rest.begin()),std::make_move_iterator(rest.end()));
     noteOrders(u.id);
@@ -9763,6 +9800,7 @@ void World::tickRepair(Unit& b, float dt) {
             if (lx*lx+lz*lz>leash*leash) {endRepair();return;}
         }
     }
+    if (b.type->canFly) { tickFlyingRepair(b,*t,dt); return; }
     float reach = std::max(half + 40.0f,
                            b.type->buildDist > 0 ? b.type->buildDist + half : 0.0f);
     if (dx * dx + dz * dz > reach * reach) {
@@ -9809,20 +9847,81 @@ void World::tickRepair(Unit& b, float dt) {
     // every work tick, before the repair is paid (icd 0x4076ae, then 0x429d90);
     // VTOL_RepairUnit does not.
     if (!b.type->canFly) blockCloak(b, 150);
-    float total = t->type->buildTime / std::max(b.type->workerTime, 0.01f);
+    if (payRepair(b,*t,dt)) endRepair();   // mended: on to the next order
+}
+
+// One tick of repair work, paid from the owner's pool; true once the target
+// is at full health.
+bool World::payRepair(Unit& b, Unit& t, float dt) {
+    float total = t.type->buildTime / std::max(b.type->workerTime, 0.01f);
     Player& tm = players_[size_t(b.player)];
-    float cost = t->type->buildCost * dt / std::max(total, 0.01f);
+    float cost = t.type->buildCost * dt / std::max(total, 0.01f);
     const double share = tm.constructionShare(cost);
-    if (share <= 0) return;   // can't afford: pause the repair
+    if (share <= 0) return false;   // can't afford: pause the repair
     tm.payMana(std::min(tm.mana, double(cost) * share));
-    float mend = t->type->maxHp * dt / std::max(total, 0.01f);
+    float mend = t.type->maxHp * dt / std::max(total, 0.01f);
     if (share < 1) mend = float(double(mend) * share);
-    t->hp = fxMin(Fixed::fromFloat(t->type->maxHp), t->hp + Fixed::fromFloat(mend));
+    t.hp = fxMin(Fixed::fromFloat(t.type->maxHp), t.hp + Fixed::fromFloat(mend));
     // Native RepairUnit 4076d0..4076f0 emits only after successful repair:
     // falling particles at the worker and rising particles at the target.
     emitConstruction(b, false);
-    emitConstruction(*t, true);
-    if (t->hp >= Fixed::fromFloat(t->type->maxHp)) endRepair();   // mended: on to the next order
+    emitConstruction(t, true);
+    return t.hp >= Fixed::fromFloat(t.type->maxHp);
+}
+
+// VTOL_RepairUnit (0x420e60; emulated). Stage 1 flies one point goal at the
+// target that accepts strictly inside 2 x builddistance, centre to centre
+// (no footprint half, no floor); arrival drops the weapon targets, faces the
+// target and starts the build animation, then the flyer orbits it at
+// builddistance -/+ 7 like VTOL_HelpBuild (tickConjureHover, with the repair
+// re-pick rule). It works while the integer pixel distance is at most
+// 2 x builddistance; beyond that the mission restarts and flies back in. No
+// cloak block (that is the ground RepairUnit's).
+void World::tickFlyingRepair(Unit& b, Unit& t, float dt) {
+    auto endRepair = [&] {
+        stopWorkAnimation(b);
+        if (!b.orders.empty()) {
+            if (b.orders[currentLeg(b.orders)].patrolRepair) dropLeg(b);
+            else if (b.orders.front().repairTarget) b.orders.erase(b.orders.begin());
+        }
+        b.repairId = 0;
+    };
+    const int reach=2*std::max(0,int(b.type->buildDist));
+    const Fixed ddx=t.x-b.x,ddz=t.z-b.z;
+    const bool admitted=b.conjureHoverTarget==t.id;
+    const double fdx=double(ddx.v)/65536.0,fdz=double(ddz.v)/65536.0;
+    const bool inReach=admitted ? fxLen(ddx,ddz).floorInt()<=reach
+                                : fdx*fdx+fdz*fdz<double(reach)*reach;
+    if (!inReach) {
+        if (admitted) {
+            stopWorkAnimation(b);
+            b.conjureHoverTarget=0;b.conjureHoverGoal.reset();
+        }
+        // The approach: the repair entry itself, re-aimed at the target.
+        if (b.orders.empty()) { repair(b.id,t.id,false); if (b.orders.empty()) { b.repairId=0; return; } }
+        const size_t end=currentLeg(b.orders);
+        Order& job=b.orders[end];
+        job.x=t.x;job.z=t.z;
+        if (!job.flightGoal || job.flightGoal->flags!=0x30 || job.flightGoal->radius!=reach)
+            job.flightGoal=RetailFlightGoal{{t.x.v,0,t.z.v},0x30,0,int16_t(reach)};
+        return;
+    }
+    // 421218: 519b70(3) drops every weapon target, then the work stance
+    // (startWorkAnimation does both).
+    startWorkAnimation(b,t.x,t.z);
+    if (!admitted) {
+        // A patrol detour or a guard's repair keeps its own entry as the job.
+        if (!b.orders.empty() && (b.orders[currentLeg(b.orders)].patrolRepair ||
+                                  b.orders[currentLeg(b.orders)].guardRepair)) {
+            const size_t end=currentLeg(b.orders);
+            if (b.orders[end].repairTarget==b.repairId)
+                b.orders.erase(b.orders.begin(),b.orders.begin()+long(end));
+        }
+    }
+    if (!b.orders.empty() && b.orders.front().repairTarget==t.id) b.orders.front().flightGoal.reset();
+    b.constructionHolding=true;
+    tickConjureHover(b,t,true);
+    if (payRepair(b,t,dt)) endRepair();
 }
 
 void World::startEmote(int player, int unitId, bool disco, bool append) {
@@ -10199,12 +10298,17 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
 // Flying construction (retail 41ef00, stages 4--6) wanders near builddistance
 // while facing the site. Use the same flight controller as ordinary flight;
 // this is construction mission behavior, independent of ground navigation.
-void World::tickConjureHover(Unit& b, const Unit& site) {
+// VTOL_RepairUnit (0x420e60) orbits the same way; its stage 4 re-picks when
+// the flyer is still, else -- with the target still -- on rand(5)==0, else
+// on rand(50)==0 (0x421302..0x42133d).
+void World::tickConjureHover(Unit& b, const Unit& site, bool repair) {
     if (b.conjureHoverTarget!=site.id) {
         b.conjureHoverTarget=site.id;
         b.conjureHoverGoal.reset();
     }
-    if (!b.conjureHoverGoal || ((!b.speed.v && !b.turnReqBam) || pathRand(50)==0)) {
+    const auto moving=[](const Unit& x) { return x.speed.v || x.turnReqBam; };
+    if (!b.conjureHoverGoal || !moving(b) ||
+        (repair && !moving(site) && pathRand(5)==0) || pathRand(50)==0) {
         b.conjureHoverGoal=retailConstructionHoverGoal(
             {b.x.v,0,b.z.v},{site.x.v,0,site.z.v},std::max(8,int(b.type->buildDist)),
             [&](int n) {return int(pathRand(uint32_t(n)));});
@@ -10259,12 +10363,14 @@ void World::tickConstruction(Unit& b, float dt) {
     float reach = std::max(half + 40.0f,
                            b.type->buildDist > 0 ? b.type->buildDist + half : 0.0f);
     float gd = dx * dx + dz * dz;
-    // Flying construction admits the site at 2*builddistance, then works
-    // while entering its tighter orbit. Retain admission once work begins;
-    // direct startBuild callers must still approach a distant fresh site.
+    // Flying construction admits the site at 2*builddistance (the approach
+    // goal accepts strictly inside it), then works while entering its tighter
+    // orbit and never measures again (VTOL_HelpBuild 0x41f7f0 stage 5 works
+    // from any distance; emulated). Admission is the hover latched on this
+    // site: a flyer helping a site someone else began must fly there first.
     const float flyingReach=2.0f*b.type->buildDist;
     const bool outOfReach=b.type->canFly
-        ? !site->buildBegun && gd>=flyingReach*flyingReach
+        ? b.conjureHoverTarget!=site->id && gd>=flyingReach*flyingReach
         : gd>reach*reach;
     if (outOfReach) {                                  // out of range: still walking there
         // Give-up watchdog: if the builder gets no closer (~20px, squared 400) for ~8s,
@@ -13961,7 +14067,7 @@ void World::tick(float dt) {
         Unit& u = units_[i];
         u.constructionHolding=false;
         if (u.conjureHoverTarget && u.conjureHoverTarget!=u.buildSiteId &&
-            u.conjureHoverTarget!=u.productionSiteId) {
+            u.conjureHoverTarget!=u.productionSiteId && u.conjureHoverTarget!=u.repairId) {
             u.conjureHoverTarget=0;u.conjureHoverGoal.reset();
         }
         if (u.alive() && u.type && u.retailBuild) {
@@ -14660,7 +14766,7 @@ void World::tick(float dt) {
         if (u.orders.empty() && !u.type->wanders) { u.homeX = u.x; u.homeZ = u.z; }
         // Retail dispatches each unit's missions immediately before its mover,
         // not all ground missions before every other unit's activity.
-        if (u.constructionHolding && u.buildSiteId) continue;
+        if (u.constructionHolding && (u.buildSiteId || u.repairId)) continue;
         if (u.legionLift && tickLegionLift(u)) continue;
         // MobileBuild/FlyingBuild standing (or hovering) at its site, waiting
         // out mobile units on it (405824..405911, 41f301..41f3e5): navigation

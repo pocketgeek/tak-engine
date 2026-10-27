@@ -2712,6 +2712,7 @@ private:
     bool workProduction(Unit& producer, Unit& site, const UnitType* t, uint32_t step);
     void finishProduction(int producerId, Unit& site);
     void tickGuardHelp(Unit& u);
+    void helpApproach(Unit& b, const Unit& site, bool queue);
     void initializeRetailSite(Unit& site, int builderId);
     void tickRetailAiBase(int owner,unsigned index);
     void tickRetailAiStrike(int owner,unsigned index);
@@ -2741,7 +2742,9 @@ private:
     // Drop a queued path search whose orders have been replaced. See the definition.
     void cancelPath(Unit& u);
     void tickConstruction(Unit& u, float dt);
-    void tickConjureHover(Unit& builder, const Unit& site);
+    void tickConjureHover(Unit& builder, const Unit& site, bool repair = false);
+    void tickFlyingRepair(Unit& b, Unit& target, float dt);
+    bool payRepair(Unit& b, Unit& target, float dt);
     void tickRetailConstruction(Unit& u);
     void emitConstruction(Unit& u,bool rising);
     void tickRetailGetBuilt(Unit& u);

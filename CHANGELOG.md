@@ -39,7 +39,14 @@ their validation reports; both live in [`docs/`](docs/).
   unfinished, and otherwise helps with what that unit is building, producing,
   helping with or repairing. The help goes ahead of the guard order, which
   resumes afterwards; a guarding builder repairing a unit that walks off follows
-  it. A flying builder that guards still only escorts.
+  it.
+- **Flying builders guard the same way,** as the original's flyers do: a
+  guarding Flying Builder, Dark Priest or Thirsha repairs and helps build, and
+  also helps flying producers (a Thirsha's output), which a ground guard does
+  not. Flying builders now fly in to twice their build distance before they
+  start helping or repairing, then circle the job at about their build
+  distance; before, a flyer helping a site someone else had begun worked on it
+  from any distance, and a flying repairer hovered on top of its target.
 - **Who may help is checked by the game, not just the screen.** A builder helps
   only a unit of its own side, only if it can move (buildings never help), and,
   when it may build only what is on its own menu, only a type on that menu. A
