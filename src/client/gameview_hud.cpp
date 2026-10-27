@@ -67,9 +67,12 @@ namespace {
         return pick.id;
     }
 
+    // Mirrors World::canHelpBuild (retail HelpBuild, 0x519e60), which the sim
+    // enforces again: no repeat/rally/busy test -- a conjurer on a repeat queue
+    // helps too.
     bool GameView::canAssistSite(const UnitR& b,const UnitR& site) const {
         if (b.id==site.id || !b.alive() || b.embarked() || b.underConstruction ||
-            !b.type || !b.type->isBuilder || b.type->isStructure() || b.repeatType ||
+            !b.type || !b.type->isBuilder || b.type->isStructure() ||
             !site.alive() || !site.type || !site.underConstruction ||
             b.player!=site.player) return false;
         const auto& menu=registry_.buildable(b.type->id);
@@ -933,7 +936,8 @@ namespace {
                 for (int id:selection_) {
                     const auto* b=frameUnitP(id);
                     if (!b || !b->alive() || b->embarked() || b->underConstruction || !b->type ||
-                        !b->type->isBuilder || b->type->isStructure() || b->repeatType ||
+                        !b->type->isBuilder || b->type->isStructure() ||
+                        (b->repeatType && !target->underConstruction) ||
                         b->id==target->id || !worldTables().allied(b->player,target->player)) continue;
                     if (target->underConstruction ? !canAssistSite(*b,*target) : target->hp>=target->type->maxHp) continue;
                     worker=id;targetId=target->id;best=d;break;
