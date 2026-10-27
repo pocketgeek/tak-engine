@@ -36,6 +36,11 @@ their validation reports; both live in [`docs/`](docs/).
   game gives produced units only Move and Patrol rallies, and only from
   buildings; Attack and Move-fight rallies, and rallies from mobile builders,
   are additions.
+- **The mana bulb shows mana requested.** The red number on the right of the
+  mana bulb is now what all your builders and producers are asking for each
+  second, as in the original game, instead of only what could be paid. When
+  your mana runs short it can be larger than the green income number on the
+  left; both are averaged over the last second.
 
 ## 0.9.5
 *2026-10-26 · protocol 299 · replay format 15 · does not play with 0.9.4 or earlier, nor their replays*
