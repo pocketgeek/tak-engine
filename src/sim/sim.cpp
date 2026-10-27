@@ -2244,10 +2244,11 @@ static void holdFlight(Unit& u) { u.flightVelocity={}; u.speed=Fixed(); }
 
 void World::tickFlightMovement(Unit& u, bool persistent) {
     auto& order=u.orders.front();
-    // A guard VTOL_Follow runs (tickFlyingGuard) flies its orbit controller.
+    // A guard VTOL_Follow runs (tickFlyingGuard) flies its orbit controller,
+    // or before stage 0 the one back onto the map (waiting on its events).
     // A guard it has not started (a builder at work looks for none) holds
     // near the guarded unit.
-    const bool orbit=order.guard && order.mission.stage==2;
+    const bool orbit=order.guard && (order.mission.stage==2 || order.mission.waitMask);
     if (order.guard && !orbit) {
         const auto* target=unit(order.targetId);
         if (target && fxLen(target->x-u.x,target->z-u.z)<=Fixed::fromInt(70)) { holdFlight(u); return; }
@@ -9775,10 +9776,12 @@ void World::tickFlyingGuard(Unit& u) {
     const Unit* g=unit(u.orders[end].targetId);
     if (!g || !g->alive() || !g->type) return;   // tickCombat retires the guard
     Order& o=u.orders[end];
-    // The dispatcher's wake: the look's deadline, or a controller event the
-    // mission waits on.
+    // The dispatcher's wake: a new mission at once, then the look's deadline
+    // (the mission's own, so a later guard never inherits it) or a controller
+    // event the mission waits on.
     const uint32_t events=o.mission.pending&o.mission.waitMask&0x700u;
-    if (tickCounter_<u.guardHelpTick && !events) return;
+    const bool fresh=o.mission.stage==0 && !o.mission.waitMask;
+    if (!fresh && tickCounter_<o.mission.deadline && !events) return;
     o.mission.pending&=~events;
     o.mission.waitMask=0;
     auto install=[&](RetailFlightVector point) {
@@ -9803,7 +9806,7 @@ void World::tickFlyingGuard(Unit& u) {
             Fixed::raw(std::bit_cast<int32_t>(uint32_t(position.z)-uint32_t(inside.z)))).v);
         install(retailAirRunPoint(position,position.y,heading,800));
         o.mission.waitMask=0x700;
-        u.guardHelpTick=UINT32_MAX;
+        o.mission.deadline=0xffffffffu;
         return;
     }
     bool woken=events!=0;
@@ -9819,7 +9822,7 @@ void World::tickFlyingGuard(Unit& u) {
     int help=0,mend=0;
     if (u.type->isBuilder) guardHelpPick(u,*g,help,mend);
     if (help || mend) {
-        u.guardHelpTick=tickCounter_+15+pathRand(30);
+        o.mission.deadline=tickCounter_+15+pathRand(30);
         guardInsertJob(u,help,mend);   // `o` is not read past this point
         return;
     }
@@ -9834,7 +9837,7 @@ void World::tickFlyingGuard(Unit& u) {
     const int32_t gy=(g->type->canFly && g->flightGroundMode==2 ? g->flightY : g->groundY).v;
     install(retailAirRunPoint({g->x.v,gy,g->z.v},gy,o.guardOrbitAngle,uint32_t(std::max(0,radius))));
     o.mission.waitMask=0x718;
-    u.guardHelpTick=tickCounter_+15;
+    o.mission.deadline=tickCounter_+15;
 }
 
 void World::tickPatrolRepair(Unit& b) {
@@ -16076,8 +16079,8 @@ uint64_t World::stateHash() const {
                     mix(g.flags); mix(g.heading); mix(uint16_t(g.radius));
                 }
                 // VTOL_Follow (tickFlyingGuard) runs on a guard order's mission.
-                if (order.guard && order.mission.stage) {
-                    mix(0x564f5242u); mix(order.guardOrbitAngle);
+                if (order.guard && (order.mission.stage || order.mission.waitMask)) {
+                    mix(0x564f5242u); mix(order.guardOrbitAngle); mix(order.mission.deadline);
                     mix(order.mission.stage); mix(order.mission.waitMask); mix(order.mission.pending);
                 }
                 // AirToGround (tickAirToGround) runs on an attack order's mission.

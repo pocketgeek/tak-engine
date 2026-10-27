@@ -824,7 +824,8 @@ struct alignas(64) Order {
     // orbit angle around the guarded unit (mission +0x4e, read as a word).
     // Drawn once (rand(0x10000)) when the guard starts, stepped back by
     // 0x4000 + rand(0x2000) each time the orbit point is reached. The guard
-    // runs on `mission` (stage 2 once started). Hashed with a tag then.
+    // runs on `mission` (stage 2 once started; its deadline is the next look).
+    // Hashed with a tag once the mission runs.
     uint16_t guardOrbitAngle = 0;
 };
 // Which line each field sits on (WE D2). Moving a field across a line, or
@@ -1271,9 +1272,9 @@ struct alignas(64) Unit {
     uint32_t cloakBlockedUntil = 0;
     // A mobile builder's guard (Follow_Ground 0x407f90 stage 1): the tick its
     // next look for work to help with or repair is due. Re-armed 15 + rand(15)
-    // ticks out when it finds nothing. A flyer's guard (VTOL_Follow) uses it
-    // for every flyer: 15 ticks after a look, sooner when its orbit point is
-    // reached. Hashed with a tag when set.
+    // ticks out when it finds nothing. (A flyer's guard, VTOL_Follow, keeps
+    // its look deadline on the guard order's mission instead.) Hashed with a
+    // tag when set.
     uint32_t guardHelpTick = 0;
     // On a factory/conjurer output: the producer whose buildProgress is this
     // unit's one shared progress (retail +0x108). A hint only -- read through

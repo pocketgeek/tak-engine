@@ -555,6 +555,13 @@ static void flyingRepairShape(World& w, int repairer, int target, const char* le
     check(mended >= 0, (l + "to full health").c_str(), d);
 }
 
+// A flyer's guard (VTOL_Follow) keeps its next look on its mission.
+static uint32_t flyLook(const World& w, int guard) {
+    for (const auto& o : w.unit(guard)->orders)
+        if (o.guard) return o.mission.deadline;
+    return 0;
+}
+
 static void flyingGuardHelps() {
     std::printf("a guarding flying builder:\n");
     Types ty;
@@ -572,7 +579,7 @@ static void flyingGuardHelps() {
         std::snprintf(d, sizeof d, "latched after %d ticks, %.0f px away", at, dist(w, g, site));
         check(at >= 0, "guarding a distant busy factory, it helps the output at once (no distance gate)", d);
         check(guardUnder(w, g), "...with its guard order kept under the help");
-        const uint32_t wait = w.unit(g)->guardHelpTick - w.tickCount();
+        const uint32_t wait = flyLook(w, g) - w.tickCount();
         std::snprintf(d, sizeof d, "next look in %u ticks", wait);
         check(wait >= 14 && wait < 45, "...and the guard sleeps 15 + rand(30) after the insert", d);
         const int start = int(w.tickCount());
@@ -658,23 +665,23 @@ static void flyingGuardHelps() {
         const int g = w.spawn(&ty.flyer, 1100, 1100, 0.0f, 0);
         command(w, tak::net::Cmd::Guard, g, idle);
         w.tick(1.0f / 30.0f);
-        const uint32_t wait = w.unit(g)->guardHelpTick - (w.tickCount() - 1);
+        const uint32_t wait = flyLook(w, g) - (w.tickCount() - 1);
         std::snprintf(d, sizeof d, "next look in %u ticks", wait);
         check(!w.unit(g)->buildSiteId && !w.unit(g)->repairId && w.unit(g)->orders.size() == 1,
               "a flying guard of an idle unit only escorts", d);
         int looks = 0, early = 0;
         bool fixed = true;
-        uint32_t prev = w.unit(g)->guardHelpTick;
+        uint32_t prev = flyLook(w, g);
         for (int i = 0; i < 200; ++i) {
             const bool arrived = (w.unit(g)->orders.front().mission.pending & 0x100) != 0;
             w.tick(1.0f / 30.0f);
-            if (w.unit(g)->guardHelpTick != prev) {
+            if (flyLook(w, g) != prev) {
                 // Every look re-arms 15 ticks out; one woken by the orbit
                 // point's arrival comes before its deadline.
-                fixed = fixed && w.unit(g)->guardHelpTick == w.tickCount() + 15 &&
-                        (w.unit(g)->guardHelpTick - prev == 15 || arrived);
-                early += w.unit(g)->guardHelpTick - prev != 15;
-                prev = w.unit(g)->guardHelpTick;
+                fixed = fixed && flyLook(w, g) == w.tickCount() + 15 &&
+                        (flyLook(w, g) - prev == 15 || arrived);
+                early += flyLook(w, g) - prev != 15;
+                prev = flyLook(w, g);
                 ++looks;
             }
         }
@@ -905,6 +912,57 @@ static void flyingGuardOrbit() {
     }
 }
 
+// A guard VTOL_Follow has not started yet: a flyer that takes the order off
+// the map first flies back onto it (0x4188bc) and keeps the guard, and a new
+// guard mission starts at once, whatever an earlier guard's look left behind.
+static void flyingGuardStarts() {
+    std::printf("a flying guard's mission starts (VTOL_Follow stage 0):\n");
+    Types ty;
+    char d[240];
+    {   // ordered to guard while off the map
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        const int idle = w.spawn(&ty.sol, 1000, 1000, 0.0f, 0);
+        const int g = w.spawn(&ty.flysol, 2, 1000, 0.0f, 0);
+        const Unit* f = w.unit(g);
+        const bool off = footprintOrigin(f->x, f->type->footX) < 0;
+        command(w, tak::net::Cmd::Guard, g, idle);
+        bool lost = false;
+        for (int i = 0; i < 900 && !lost; ++i) {
+            w.tick(1.0f / 30.0f);
+            lost = w.unit(g)->orders.empty() || !w.unit(g)->orders.front().guard;
+        }
+        const OrbitPoint p = orbitPoint(w, g, idle);
+        std::snprintf(d, sizeof d, "off map at start: %d; guard lost: %d; point %.1f px out (stage %d)",
+                      int(off), int(lost), p.distance, lost ? -1 : int(w.unit(g)->orders.front().mission.stage));
+        check(off && !lost && p.set && std::fabs(p.distance - 320.0f) < 1.5f,
+              "a flyer told to guard off the map flies back, keeps its guard and orbits at 320 px", d);
+    }
+    {   // a queued guard becomes current between an earlier guard's looks
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        const int first = w.spawn(&ty.sol, 1000, 1000, 0.0f, 0);
+        const int second = w.spawn(&ty.sol, 1400, 1000, 0.0f, 0);
+        const int g = w.spawn(&ty.flysol, 1100, 1100, 0.0f, 0);
+        command(w, tak::net::Cmd::Guard, g, first);
+        w.guard(g, second, true);
+        for (int i = 0; i < 3; ++i) w.tick(1.0f / 30.0f);
+        w.destroy(first);   // a self-destruct countdown: the guard ends at its expiry
+        for (int i = 0; i < 300 && w.unit(g)->orders.front().targetId == first; ++i) w.tick(1.0f / 30.0f);
+        int started = -1;
+        for (int i = 0; i < 40 && started < 0; ++i) {
+            w.tick(1.0f / 30.0f);
+            const Unit* u = w.unit(g);
+            if (!u->orders.empty() && u->orders.front().guard && u->orders.front().targetId == second &&
+                u->orders.front().mission.stage == 2) started = i;
+        }
+        const OrbitPoint p = orbitPoint(w, g, second);
+        std::snprintf(d, sizeof d, "second guard started %d ticks after the first ended; point %.1f px out", started, p.distance);
+        check(started >= 0 && started <= 2 && p.set && std::fabs(p.distance - 320.0f) < 1.5f,
+              "a queued flying guard starts its mission at once (no earlier guard's sleep)", d);
+    }
+}
+
 static uint64_t orbitRun() {
     Types ty;
     auto ownedWorld = makeWorld();
@@ -1001,6 +1059,7 @@ int main() {
     guardHelps();
     flyingGuardHelps();
     flyingGuardOrbit();
+    flyingGuardStarts();
     determinism();
     std::printf(g_fail ? "\n%d FAILED\n" : "\nall passed\n", g_fail);
     return g_fail ? 1 : 0;
