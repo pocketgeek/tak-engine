@@ -652,7 +652,25 @@
             // busy simulating for >15s stops ponging and the server drops it ("peer
             // closed"). poll() is cheap (recv + ping/pong + flush); we ignore its result
             // here, the next top-of-mpStep poll() surfaces any real error.
-            if ((drained & 63) == 0) mp_->poll();
+            //
+            // An INLINE sim (the headless harness) also polls on the wall clock. There every
+            // tick is simulated right here, and a stress game under CPU load runs 200-500 ms
+            // per tick, so 64 ticks between polls left the socket unread and our StateHash
+            // reports unsent for 15-30 s: the server dropped the seat for silence. Every
+            // kInlinePollMs keeps the server hearing from us while we simulate. Pure pacing:
+            // bundles are still taken in tick order, so the sim and its hashes are unchanged.
+            constexpr uint64_t kInlinePollMs = 250;
+            if (useSimThread_) {
+                if ((drained & 63) == 0) mp_->poll();
+            } else if ((drained & 63) == 0 || SDL_GetTicks64() - netPollMs_ >= kInlinePollMs) {
+                mp_->poll();
+                netPollMs_ = SDL_GetTicks64();
+            }
+        };
+        // Another bundle may be played: below the --time stop tick and, for the harness, not
+        // past the tick the result landed (setNetStopAtOutcome).
+        const auto mayPlay = [&] {
+            return netTick_ < netStopTick_ && !(netStopAtOutcome_ && outcome_.load() != 0);
         };
         if (netDelay_ == -2) {   // one-time init from the env
             // The adaptive jitter buffer is ON by default: it only ever reduces
@@ -693,7 +711,7 @@
         }
         if (netDelay_ <= 0) {
             // Default: drain to the newest delivered bundle every frame.
-            while (!inboxFull && drained < 512 && netTick_ < netStopTick_ && mp_->takeBundle(netTick_, bd)) simTick();
+            while (!inboxFull && drained < 512 && mayPlay() && mp_->takeBundle(netTick_, bd)) simTick();
             // Stall metric: 0 ticks played this frame while future bundles ARE
             // buffered means the one we need is late (head-of-line block) -- a stall.
             ++netBenchFrames_;
@@ -732,7 +750,7 @@
             paceBuffered = buffered; paceRate = rate; paceFF = fastForward;
 #endif
             budget = std::min(budget, 512);
-            while (drained < budget && netTick_ < netStopTick_ && mp_->takeBundle(netTick_, bd)) simTick();
+            while (drained < budget && mayPlay() && mp_->takeBundle(netTick_, bd)) simTick();
             // Stall metric: the wall clock wanted more ticks than we could play
             // because the next bundle isn't buffered yet (jitter exceeded the
             // reserve). One count per starved frame.
@@ -1449,7 +1467,7 @@ void GameView::autoplayStep() {
             // so render caches never take a new unit for the old one with its id.
             worldEpoch_.fetch_add(1, std::memory_order_release);
             writableWorld().resetForReplay();
-            netTick_ = 0; outcome_ = 0; resultStartedMs_ = 0; netError_.clear();
+            netTick_ = 0; outcome_ = 0; outcomeTick_ = 0; resultStartedMs_ = 0; netError_.clear();
             // Replaying history from tick 0: hold our own orders and stop counting
             // acknowledgements until the log is spent (see cmdCatchUp_).
             // The SERVER says where history ends; we do not guess (see

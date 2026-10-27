@@ -426,6 +426,7 @@ public:
     // Did this game resolve, and how? +1 win, -1 loss, 0 still running. Unlike
     // missionOutcomePublic this also covers a skirmish/MP last-team-standing result.
     int outcomePublic() const { return outcome_; }
+    uint32_t outcomeTickPublic() const { return outcomeTick_; }
     // The hash this client REPORTS to the referee. A spectator's is never checked --
     // Server::checkHashes returns immediately when no human slot is seated -- so it
     // sends a cheap 0 instead of folding thousands of units into an FNV every period.
@@ -497,6 +498,10 @@ public:
     // Headless harness only: never play past this tick, so a --time run's final hash is
     // taken at exactly that tick instead of wherever a burst of buffered bundles overshot to.
     void setNetStopTick(uint32_t t) { netStopTick_ = t; }
+    // Headless harness only: stop playing at the tick the game's result lands, so a concluded
+    // run reports the hash of exactly that tick. A client behind the server holds many buffered
+    // bundles, and draining them all past the result made the reported end tick depend on load.
+    void setNetStopAtOutcome(bool on) { netStopAtOutcome_ = on; }
 #ifndef NDEBUG
     // TAK_AUTOPLAY=N -- a headless human issues roughly N orders per 10 seconds of
     // game time, so a multi-client run exercises the COMMAND path instead of eight
@@ -2666,6 +2671,8 @@ private:
     float wallOcclusionY(float wx, float wz);
     uint32_t netTick_ = 0;
     uint32_t netStopTick_ = UINT32_MAX;   // see setNetStopTick
+    bool netStopAtOutcome_ = false;       // see setNetStopAtOutcome
+    uint64_t netPollMs_ = 0;              // last mid-drain poll of an inline sim (see simTick)
 #ifndef NDEBUG
     uint32_t autoplayNext_ = 0;    // next sim tick an autoplay order is due
     uint32_t autoplayRng_ = 0;     // per-player stream; seeded from slot + game seed
@@ -3908,6 +3915,7 @@ private:
     uint32_t salt_ = 0;
     uint64_t resultStartedMs_ = 0;   // main-thread wall clock, independent of sim speed/pause
     std::atomic<int> outcome_{0};   // 0 = playing, 1 = victory, -1 = defeat (worker writes, main reads)
+    std::atomic<uint32_t> outcomeTick_{0};   // sim ticks played when outcome_ landed (0 = none yet)
     // TAK_FAKE_DESYNC=TICK: report a wrong hash from this tick on (see reportedHash).
     // Debug-only -- devEnv reads no environment at all in a release build, so this is
     // constant 0 there and the branch folds away.

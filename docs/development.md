@@ -306,6 +306,16 @@ as the single-player local server) accepts those speeds, and every other server
 clamps them to 2×. `TAK_SPEED=<tenths>` (up to 80) sets the starting speed of a
 headless harness game the same way.
 
+A headless harness game ends with an `mp-headless done: tick=… hash=… end=… result=…`
+line. `end=timelimit` stops at exactly the `--time` tick; `end=concluded` stops at
+exactly the tick the result landed (`result=`, 0 when there was none), however far
+behind the server the client was, so two runs of one game compare the same tick's hash.
+The harness simulates inline and services its connection every 250 ms of wall time while
+it does, so a slow stress game on a loaded machine keeps its seat
+(`TAK_SIM_SLOW_US=<us>` plays such a client; `harness_seat_load` tests both).
+`TAK_DEFEAT_TEST=1` destroys the player's Monarch and plays on through the results
+transition; any other value only destroys it, and the run ends at its result.
+
 ## Server authentication
 
 Sign-in uses SCRAM-SHA-256-style challenge/response over the game's binary

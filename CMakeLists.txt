@@ -3241,6 +3241,12 @@ if(TAK_TEST_DATA)
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}"
         --hpitool "$<TARGET_FILE:hpitool>")
       set_tests_properties(harness_createfail PROPERTIES TIMEOUT 150)
+      # A slowly simulating harness client (a stress game under load) keeps its seat, and a
+      # concluded run reports exactly its result tick.
+      add_test(NAME harness_seat_load COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/harness_seat_load_test.py"
+        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
+      set_tests_properties(harness_seat_load PROPERTIES TIMEOUT 300)
       if(NOT WIN32)
         # The disconnect wait end to end (SIGSTOP): AI takeover with no desync and a replay
         # that verifies, resume and reconnect inside the wait ending on the same hash.

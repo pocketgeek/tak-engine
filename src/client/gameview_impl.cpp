@@ -609,7 +609,10 @@
         // not write -- simStep runs on the sim worker, while the net client appends to
         // its recorded bundles and hashes from the main thread. The main thread picks
         // this up (pumpReplayRecording). The recording itself goes on.
-        if (previousOutcome == 0 && outcome_ != 0) replayResultSync_.store(true, std::memory_order_relaxed);
+        if (previousOutcome == 0 && outcome_ != 0) {
+            outcomeTick_.store(world_.tickCount(), std::memory_order_relaxed);
+            replayResultSync_.store(true, std::memory_order_relaxed);
+        }
 #ifndef NDEBUG
         PaceSpan captureSpan(paceCaptureNs_);
 #endif

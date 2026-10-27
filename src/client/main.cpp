@@ -1612,6 +1612,12 @@ int main(int argc, char** argv) {
         if (mpHeadless == 8) gameView->setMissionStem(missionStem);
         int limitTicks = int((startTime > 0 ? startTime : 60) * 30);
         gameView->setNetStopTick(uint32_t(limitTicks));
+        // TAK_DEFEAT_TEST=1 is the defeat probe: play on through the three-second results
+        // transition. Any other value only issues the self-destroy, and the run ends at its
+        // result like an ordinary one -- at exactly the result's tick (setNetStopAtOutcome).
+        const char* defeatEnv = tak::devEnv("TAK_DEFEAT_TEST");
+        const bool defeatProbe = defeatEnv && std::string(defeatEnv) == "1";
+        gameView->setNetStopAtOutcome(!defeatProbe);
         // Jitter benchmark: run the client loop at a FIXED 60 fps (so the stall
         // metric is frame-rate-consistent) and enable the RTT probe. Otherwise the
         // usual tight poll loop.
@@ -1636,7 +1642,6 @@ int main(int argc, char** argv) {
             // Ordinary headless runs finish at their result. The defeat probe waits
             // for the same three-second transition the interactive client uses.
             static uint64_t defeatAt = 0;
-            const bool defeatProbe = tak::devFlag("TAK_DEFEAT_TEST");
             if (defeatProbe && gameView->outcomePublic() < 0 && !defeatAt)
                 defeatAt = SDL_GetTicks64();
             if (defeatProbe && gameView->menuRequested()) {
@@ -1674,11 +1679,13 @@ int main(int argc, char** argv) {
         // 20k and one that ran the clock out both used to print the same line, so a
         // short run was indistinguishable from a stall.
         const int endOutcome = gameView->outcomePublic();
-        std::fprintf(stderr, "mp-headless done: tick=%u hash=%016llx units=%zu err=%s end=%s\n",
+        // result=: the tick the result landed (0 = none). A concluded run stops there, so it
+        // equals tick= -- whatever the load, the end hash is that tick's.
+        std::fprintf(stderr, "mp-headless done: tick=%u hash=%016llx units=%zu err=%s end=%s result=%u\n",
                      gameView->netTick(), (unsigned long long)gameView->worldHashPublic(),
                      gameView->aliveUnits(),
                      gameView->netError().empty() ? "none" : gameView->netError().c_str(),
-                     endOutcome != 0 ? "concluded" : "timelimit");
+                     endOutcome != 0 ? "concluded" : "timelimit", gameView->outcomeTickPublic());
         if (const auto* legion = gameView->legionPublic()) {
             // Which mission goals Legion routed in this game (legs taken on,
             // arrivals raised, failed approaches handed back), by kind.
