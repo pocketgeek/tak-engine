@@ -153,6 +153,35 @@ int main(int argc, char** argv) try {
         check(cart::validateCrusadesRoster(scenario, cart::toPlaced(scenario, &standard), standard, crusades).empty(),
               "Check Map warned about a scenario Crusades plays whole");
     }
+    {   // (d) A Test Map copy's Use Only entry that only the other balance has permits
+        // nothing under CRUSADES; a name neither balance has is still the author's typo.
+        const auto ota = "kmap/crusades scenario.ota";
+        auto text = std::string((*files)[ota].begin(), (*files)[ota].end());
+        auto metadata = tnt::Scenario::parse(text);
+        metadata.useOnlyUnits = "crusades scenario.tdf";
+        text = metadata.write() + "\n[TAKPlaytest]\n{\nauthoredscenario=1;\n}\n";
+        (*files)[ota] = {text.begin(), text.end()};
+        auto useOnly = [&](const char* list) {
+            const std::string tdf = list;
+            (*files)["kmap/crusades scenario.tdf"] = {tdf.begin(), tdf.end()};
+        };
+        useOnly("[ARAKING]\n{\n}\n[ZONSPIDE]\n{\n}\n");
+        sim::World world;
+        std::string refused;
+        try { play(scenario, world, crusades); } catch (const std::exception& e) { refused = e.what(); }
+        check(refused.empty(), "a Crusades Test Map refused a Use Only unit of the standard balance: " + refused);
+        check(world.units().size() == 2, "the Crusades Test Map lost its placements");
+        check(sim::inspectScenario(view, cfg.mapPath, &crusades).status == sim::ScenarioStatus::Ok,
+              "the create screen does not offer a Crusades Test Map whose Use Only names zonspide");
+        useOnly("[ARAKING]\n{\n}\n[ZONSPIDX]\n{\n}\n");
+        sim::World typo;
+        refused.clear();
+        try { play(scenario, typo, crusades); } catch (const std::exception& e) { refused = e.what(); }
+        check(refused.find("Unknown authored Use Only unit: zonspidx") != std::string::npos,
+              "a Test Map's Use Only typo was accepted: " + refused);
+        check(sim::inspectScenario(view, cfg.mapPath, &crusades).status == sim::ScenarioStatus::MissingType,
+              "the create screen offers a Test Map with a Use Only typo");
+    }
     std::printf("PASS: Crusades scenario custom types skipped, placed types refused by name, Check Map warns\n");
     return 0;
 } catch (const std::exception& e) {

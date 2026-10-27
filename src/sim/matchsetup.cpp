@@ -275,6 +275,10 @@ std::string scenarioTypeMissingText(const ScenarioTypeMissing& missing, const Ty
     return "this scenario's " + named + " does not exist with the CRUSADES balance on -- turn CRUSADES off to play it";
 }
 
+bool balanceUnitFile(const hpi::Vfs& vfs, const std::string& name) {
+    return vfs.has("units/" + name + ".fbi") || vfs.has("unitscb/" + name + ".fbi");
+}
+
 std::vector<std::pair<float, float>> parseStartPositions(const hpi::Vfs& vfs,
                                                          const std::string& mapPath) {
     std::vector<std::pair<float, float>> out;
@@ -641,8 +645,9 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                             // MAP SCENARIO plays maps made for the original game, whose lists
                             // can name units no install has (NeverGlory: 44 of its 242). A name
                             // no unit answers to permits nothing, so it is left out. A Test Map
-                            // copy still refuses it: there it is the author's own typo.
-                            if (!authoredPlaytest) continue;
+                            // copy still refuses it: there it is the author's own typo,
+                            // unless the other balance has it (zonspide with CRUSADES on).
+                            if (!authoredPlaytest || balanceUnitFile(vfs, name)) continue;
                             throw std::runtime_error("Unknown authored Use Only unit: " + name);
                         }
                         allowed.push_back(name);

@@ -2,6 +2,7 @@
 
 #include "crt/crt.h"
 #include "hpi/hpi.h"
+#include "sim/matchsetup.h"
 #include "sim/sim.h"
 #include "tdf/tdf.h"
 #include "util/virtualpath.h"
@@ -57,7 +58,7 @@ ScenarioInfo inspectScenario(const hpi::Vfs& vfs, const std::string& mapPath, co
                     int known = 0;
                     for (const auto& name : whitelist.childOrder) {
                         if (!reg || reg->find(name)) { ++known; continue; }
-                        if (info.marker && missingType.empty()) missingType = name;
+                        if (info.marker && missingType.empty() && !balanceUnitFile(vfs, name)) missingType = name;
                     }
                     info.useOnlyTypes = info.marker ? int(whitelist.childOrder.size()) : known;
                 } catch (const std::exception&) { useOnlyBroken = true; }

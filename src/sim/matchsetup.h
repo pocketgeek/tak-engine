@@ -141,6 +141,12 @@ struct ScenarioTypeMissing : std::runtime_error {
 // that does not exist with CRUSADES on.
 std::string scenarioTypeMissingText(const ScenarioTypeMissing& missing, const TypeRegistry* standard);
 
+// Whether either balance's unit directory (units/, unitscb/) has `name`.fbi. A Test Map
+// copy refuses a Use Only entry its roster lacks as the author's typo, but not one the
+// other balance has (zonspide with CRUSADES on): that entry permits nothing, as an
+// unknown entry does on a retail map. setupMatch and inspectScenario agree on it.
+bool balanceUnitFile(const hpi::Vfs& vfs, const std::string& name);
+
 // Start positions from the map's .ota (world pixels), ordered by StartPos index.
 std::vector<std::pair<float, float>> parseStartPositions(const hpi::Vfs& vfs,
                                                          const std::string& mapPath);
