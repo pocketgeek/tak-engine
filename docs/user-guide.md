@@ -635,6 +635,7 @@ target underneath.
   moment. A builder on a repeat queue can be told to assist too; its own product
   waits until it has finished helping.
 - **Guarding with a builder**: a mobile builder told to **Guard** a unit
+  (the **G** key, or a right-click on one of your finished, undamaged units)
   follows it and lends a hand. If the guarded unit is damaged, the builder
   repairs it (allies too); if the guarded unit is itself unfinished, it helps
   build it; otherwise it helps with what the guarded unit is building,
@@ -1101,6 +1102,7 @@ speed keys are fixed.
 | **Shift** + select | Add to the selection. |
 | **Ctrl** + select | Remove from the selection. |
 | **Right-click** | The natural order for what is under the cursor: move, attack, guard, repair, load, reclaim and so on. |
+| **Right-click one of your units** | If it is unfinished, the selected builders that can build it help build it and the other units do nothing. Otherwise each selected unit decides for itself: a mobile builder repairs it if it is damaged, and every other unit that can guard (builders included, gods not) guards it. The pointer shows repair when a builder will repair; for a guard it stays the select arrow, as in the original. |
 | **Right-click an enemy** | Attack it. As in the original, the pointer shows the attack cursor whenever a selected unit's active weapon can hurt that enemy; a unit that can move walks into range, however far away the enemy is. The "too far" cursor means no selected unit can attack it from where it is: the active weapon cannot hurt that enemy (it does no damage to it, the unit is never allowed to target that kind of unit, it is an anti-air weapon and the enemy is on the ground, a ground weapon and the enemy is flying, or a stoning or freezing weapon and the enemy is immune), or a tower or other building has the enemy out of range or inside its minimum range. A building still takes the order and fires once the enemy comes in range. A selected factory sends the units it builds after that enemy. |
 | **Shift + right-click** | Queue that order after the current ones. |
 | **Right-drag** with a reclaiming builder | Reclaim everything in the box (at least about 32 × 32 pixels; a smaller drag is an ordinary right-click). |

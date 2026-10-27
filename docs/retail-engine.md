@@ -3147,6 +3147,40 @@ order code does not consult the selector; `World::attack` then rallies a
 factory's output at the target, keeps an out-of-range tower's order until the
 target comes in reach, and drops the order for a unit with no weapon.
 
+## Right-click on a friendly unit: per-unit, Guard by `canguard` (icd, 2026-10-27)
+
+The default-order resolver `0x4de530` (action mode 1, jump table `0x4df87c`)
+runs once per selected unit. With `UseLeftClickIface` clear (options+5, the
+right-click interface; the string's only reference is `0x499891`) mode 1
+tries, in order: ATTACK (re-entered as mode 3) over an enemy when the type has
+`canattack` (UnitDef+0x264 bit 0x20); HELPBUILD when `0x519e60` allows it;
+REPAIRUNIT when `0x519d40` does; a load (`0x519f50`); then FOLLOW_GROUND
+(VTOL_FOLLOW for a flyer), the guard mission, when the target is allied and the
+type has `canguard` (UnitDef+0x264 bit 0x40, set by the FBI parser at
+`0x4c0685`); then resurrect/animate/reclaim at the point; then MOVE_GROUND when
+the type has `canmove` (bit 0x100). The guard test never looks at a weapon, so
+a builder over a healthy unit guards it, and in a mixed selection over a
+damaged unit the builders repair while the others guard. Every shipped mobile
+builder has `canguard=1`; the five gods do not. With `UseLeftClickIface` set,
+the same mode has no guard step (an own selectable unit resolves to nothing:
+the click selects it).
+
+The hover cursor for that mode (`0x4dd780`, right-click interface branch
+`0x4de03b`) never shows the defend glyph: over a friendly unit it is Select
+(slot 15) for an own selectable unit, else Grn (18); slots follow the
+`cursors` GAF order at `0x4bdc0e` (1 attack, 2 airstrike, 3 toofar, 4 capture,
+5 defend, 6 repair, 7 patrol, ..., 14 move, 15 select, 17 red, 18 grn, 19
+normal). Our hover shows Repair over a site or damaged unit a selected builder
+can work on (the left-click interface's order cursors), Select over another own
+unit and Green over an ally's; a guard keeps Select, as retail's does.
+
+Ours, by `src/client/friendlyorder.h` (`friendly_order` test): per unit,
+repair when a mobile builder (not repeating production) and the target is
+damaged, else Guard when `canguard`. Differences kept: a unit that can neither
+repair nor guard does nothing (retail moves it to the point), a non-builder over
+an unfinished unit does nothing (retail guards it), and an ally's unit is
+offered the guard but `World::guard` accepts only its own side's units.
+
 ## Drag boxes: world-anchored corners and the 32-pixel test (icd, 2026-10-21)
 
 Retail keeps a map drag box as two WORLD points (game state `+0x175fc..+0x17614`,

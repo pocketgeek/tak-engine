@@ -6,6 +6,7 @@
 #include "client/artscale.h"
 #include "client/cursorpath.h"
 #include "client/cursorrange.h"
+#include "client/friendlyorder.h"
 #include "client/reclaimpick.h"
 #include "client/gpuvram.h"
 #include "client/renderdriver.h"
@@ -147,8 +148,10 @@ namespace {
             // Right-clicking a friendly unit is contextual, never a move:
             //  - a conjure-in-progress: selected builders that can build that type
             //    resume/assist it (revives a decaying site); other units do nothing.
-            //  - any other friendly unit: selected units that can attack guard it;
-            //    the rest do nothing.
+            //  - any other friendly unit: each selected unit decides for itself
+            //    (friendlyUnitOrder, retail's per-unit resolver): a mobile builder
+            //    repairs it when it is damaged, else any unit that can guard
+            //    (builders included) guards it; the rest do nothing.
             // Either case consumes the click (no move fallthrough).
             {
                 int siteId = -1;   float bestSite = 1e18f;
@@ -181,27 +184,23 @@ namespace {
                 }
                 if (allyId >= 0) {
                     const auto* target=frameUnitP(allyId);
-                    bool repaired=false;
-                    if (target && target->hp<target->type->maxHp) for (int id:selection_) {
-                        const auto* b=frameUnitP(id);
-                        if (!b || !b->type || !b->type->isBuilder || b->type->isStructure() ||
-                            b->underConstruction || b->id==allyId || b->repeatType) continue;
-                        tak::net::Command c;c.kind=tak::net::Cmd::Repair;c.unitId=id;
-                        c.targetId=allyId;c.queue=queue;issue(c);repaired=true;
-                    }
-                    if (repaired) return;
+                    const bool damaged=target && target->hp<target->type->maxHp;
                     bool any = false;
                     for (int id : selection_) {
-                        const auto* gu = frameUnitP(id);
-                        if (!gu || !gu->type || gu->type->weapon.damage <= 0) continue;
+                        const auto* u = frameUnitP(id);
+                        if (!u || !u->type || !u->alive() || u->embarked()) continue;
+                        const auto order=tak::client::friendlyUnitOrder(*u->type,!u->underConstruction,
+                            u->repeatType!=nullptr,id==allyId,damaged);
+                        if (order==tak::client::FriendlyOrder::None) continue;
                         tak::net::Command c;
-                        c.kind = tak::net::Cmd::Guard;
+                        c.kind = order==tak::client::FriendlyOrder::Repair ? tak::net::Cmd::Repair
+                                                                           : tak::net::Cmd::Guard;
                         c.unitId = id; c.targetId = allyId; c.queue = queue;
                         issue(c);
                         any = true;
                     }
                     if (any) voice(selection_.front(), "move");
-                    return;   // non-attackers: nothing happens
+                    return;   // units that can neither repair nor guard: nothing happens
                 }
             }
             // Clicking near an enemy = attack; else formation move. (Allies are
