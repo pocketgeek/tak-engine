@@ -1135,8 +1135,10 @@ struct alignas(64) Unit {
     bool corpseFading = false;
     int reviveTarget = 0;    // priest: dead unit id being channelled back (0 = none)
     int8_t reviveMode = 0;   // 1 = resurrect (own corpse), 2 = animate (raise ghoul)
-    int32_t reviveLeft = 0;  // ticks of channel remaining
-    int32_t reviveTotal = 1; // full channel length in ticks (mana drains proportionally)
+    // Retail mission +0x52: the channel's work left, 16.16. Each tick takes the
+    // owner's allocation x 65536 (icd 0x406d3b); the revive completes at <= 0.
+    // Hashed while channelling.
+    int32_t reviveWork = 0;
     bool corpseBlocks = false;   // installed corpse feature blocks its own footprint
     // Retail unit+0x10e: the 1/256-HP remainder self-repair carries between calls
     // (retailSelfRepairPoints). Zero at creation, like retail's (0x511ae2).
@@ -1676,6 +1678,11 @@ struct Player {
     // Unused for a player with retailResources, which runs the native object.
     double constructionDemand = 0;
     double constructionAllocation = 1;
+    // Retail's resource object +8: the fraction of full-rate work this tick's
+    // pool affords (stored / last demand, capped at 1).
+    double allocation() const {
+        return retailResources ? double(retailResources->allocation) : constructionAllocation;
+    }
     // The fraction of `cost` (one tick of full-rate work) this consumer may do
     // now. Records the request; the caller pays cost * share, capped at mana,
     // with payMana (the request is already counted).

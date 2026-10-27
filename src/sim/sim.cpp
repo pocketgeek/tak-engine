@@ -10726,7 +10726,18 @@ void World::tickAuras(float dt) {
     }
 }
 
-void World::tickAbilities(float dt) {
+// Retail's revive work counter (icd 0x406c2e, 0x4201e9): 65536 x buildtime /
+// (workertime x 0.03333333), times 0.3 for a resurrect, truncated like ftol --
+// which answers its integer indefinite for a result out of range, so a caster
+// with no workertime finishes on its first tick.
+static int32_t retailReviveWork(float buildTime, float workerTime, bool resurrect) {
+    double work = double(buildTime);
+    if (resurrect) work *= 0.3;
+    work = work / (double(workerTime) * 0.03333333) * 65536.0;
+    return work > -2147483649.0 && work < 2147483648.0 ? int32_t(work) : INT32_MIN;
+}
+
+void World::tickAbilities(float) {
     // A corpse is a dead unit whose body still lies on the field: the death
     // anim has finished (4s) and decomposetime hasn't expired. Whether it can
     // be RAISED again is the corpse def's `resurrectable` (81 of the 150
@@ -10827,30 +10838,28 @@ void World::tickAbilities(float dt) {
         const size_t i = ai;
         Unit& u = units_[i];
 
-        // A revive is a CHANNEL, not an instant (retail order-0xA task states:
-        // work = target buildtime / caster workertime, x0.3 for animate). The
-        // mana drain is OURS: retail's task (0x41fe70) never pays or requests
-        // mana, it only scales each tick's work by the player's allocation
-        // (resource +8). A stalled channel requests nothing, which matches
-        // retail's -N; see docs/mana-hud-and-ai-placement-2026-09-20.md.
+        // A revive is a CHANNEL, not an instant: retail's Resurrect task (icd
+        // 0x4068b0; VTOL_Resurrect 0x41fe70 is the same). It costs NOTHING and
+        // requests nothing -- the task never reaches 0x429af0/0x429d90 or the
+        // resource object -- but each tick's work is the owner's allocation
+        // (0x406d3b: work -= ftol(allocation x 65536)), so a starved economy
+        // slows it and an empty, contested store stops it. At the end
+        // (0x406e79) a computer player whose allocation is under 0.7 abandons
+        // it unraised.
         if (u.reviveTarget) {
             Unit* c = unit(u.reviveTarget);
             if (!c || !isCorpse(*c)) { u.reviveTarget = 0; continue; }
             float dx = (c->x - u.x).toFloat(), dz = (c->z - u.z).toFloat();
             if (dx * dx + dz * dz > kR * kR * 4) { u.reviveTarget = 0; continue; }
-            bool animate = u.reviveMode == 2;
+            const bool animate = u.reviveMode == 2;
             const UnitType* out = animate ? u.type->animateType : c->type;
-            float totalMana = out->buildCost * (animate ? 0.3f : 1.0f);
-            float inc = totalMana / float(std::max(u.reviveTotal, 1));
-            Player& tm = players_[size_t(u.player)];
-            if (tm.mana < inc) continue;   // starved: the channel stalls, not drops
-            tm.debitMana(inc);
-            --u.reviveLeft;
-            if (u.reviveLeft <= 0) {
-                revives.push_back({out, c->x.toFloat(), c->z.toFloat(), u.player, animate});
-                retire(*c);
-                u.reviveTarget = 0;
-            }
+            const double allocation = players_[size_t(u.player)].allocation();
+            u.reviveWork -= int32_t(allocation * 65536.0);
+            if (u.reviveWork > 0) continue;
+            u.reviveTarget = 0;
+            if (computerOwned(u.player) && allocation < 0.7) continue;
+            revives.push_back({out, c->x.toFloat(), c->z.toFloat(), u.player, animate});
+            retire(*c);
             continue;
         }
 
@@ -10864,27 +10873,21 @@ void World::tickAbilities(float dt) {
             const FeatType* cd = corpseDef(c);
             if (!cd) continue;
             if (u.type->canResurrect && c.player == u.player && cd->resurrectable) {
-                // Channel length: buildtime / workertime seconds (retail
-                // 0x4201e9), mana drained over it; unit returns at 10% HP.
+                // Resurrect: 0.3 x the corpse's buildtime (retail 0x406c2e,
+                // +0x56 clear); the unit returns at 10% HP.
                 u.reviveTarget = c.id;
                 u.reviveMode = 1;
-                // TICKS. This was seconds assigned straight into an int32 tick
-                // count, so a 170s resurrect became 170 ticks -- 5.7 seconds.
-                u.reviveTotal = u.reviveLeft = int32_t(
-                    std::max(c.type->buildTime / std::max(u.type->workerTime, 0.01f),
-                             0.5f) * kTick + 0.5f);
+                u.reviveWork = retailReviveWork(c.type->buildTime, u.type->workerTime, true);
                 break;
             } else if (u.type->canAnimate && u.type->animateType &&
                        cd->resurrectable) {
                 // Animate (tarpries animatetype=MONGHOUL): ANY resurrectable
                 // corpse -- friend or foe -- rises as the caster's creature,
-                // at 0.3x the work and FULL HP (retail 0x420257/0x4206ba).
+                // at the animatetype's FULL buildtime (no 0.3: +0x56 is set)
+                // and FULL HP (retail 0x406c2e/0x407038).
                 u.reviveTarget = c.id;
                 u.reviveMode = 2;
-                u.reviveTotal = u.reviveLeft = int32_t(
-                    std::max(u.type->animateType->buildTime /
-                                 std::max(u.type->workerTime, 0.01f) * 0.3f,
-                             0.5f) * kTick + 0.5f);
+                u.reviveWork = retailReviveWork(u.type->animateType->buildTime, u.type->workerTime, false);
                 break;
             } else if (u.type->canReclaim && cd->reclaimable) {
                 // Ours, not retail RECLAIM (406250, which pays nothing either):
@@ -15727,6 +15730,9 @@ uint64_t World::stateHash() const {
         mix(u.standingOrder);
         mix(uint64_t((u.cloakOn ? 1u : 0u) | (u.active ? 2u : 0u)));
         if (u.cloakBlockedUntil) { mix(0x434c4f4bu); mix(u.cloakBlockedUntil); }
+        if (u.reviveTarget) {
+            mix(0x52455649u);mix(uint32_t(u.reviveTarget));mix(uint32_t(u.reviveWork));mix(uint8_t(u.reviveMode));
+        }
         if (u.conjureHoverTarget) {
             mix(0x484f5645u);mix(uint32_t(u.conjureHoverTarget));
             if (u.conjureHoverGoal) {

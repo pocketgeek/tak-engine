@@ -137,3 +137,15 @@ channel and requests exactly what it pays, so a stalled one requests
 nothing. That charge is ours, not retail's -- retail revives are free and
 only paced by the allocation -- and is recorded here as a known difference,
 not changed in this pass.
+
+### Follow-up, same day: ported
+
+The task above is `VTOL_Resurrect`; the ground one is `0x4068b0`
+(`Resurrect`, registry row `0x5eb9e4`), the same machine without the flight
+states, with the same economy: work set in stage 3 (`0x406c2e`), the
+allocation taken in stage 4 (`0x406d3b`), the 0.7 rule in stage 5
+(`0x406e79`). The 0.3 applies to a resurrect (`+0x56` clear), not to an
+animate. Ours now matches it: a revive pays and requests nothing, its work is
+retail's counter less the allocation x 65536 a tick, and a computer player
+under 0.7 abandons it at the end. See
+[retail-engine.md](retail-engine.md#revive-costs-no-mana-the-allocation-paces-it-icd-2026-10-26).

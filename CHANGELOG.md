@@ -77,6 +77,13 @@ their validation reports; both live in [`docs/`](docs/).
   out it becomes visible for three seconds and then cloaks again. The Trapdoor
   Spider, which has no separate moving cost, now pays the original game's much
   smaller cost while it moves.
+- **Raising the dead costs no mana.** As in the original game, resurrecting
+  and animating are free: they no longer drain your mana pool or show in the
+  mana bulb. A short mana supply still slows them, as it slows construction.
+  Resurrection now takes three tenths of the unit's build time, and animation
+  the creature's whole build time (until now they were the other way round).
+  A computer player whose mana is well short abandons a raising at its end, as
+  in the original.
 - **Computer players judge a mana shortage as the original game does.** The
   Retail AI, and the Passive, Easy, Normal and Absurdly Defensive levels, now
   compare their income with the mana their builders and producers ask for,

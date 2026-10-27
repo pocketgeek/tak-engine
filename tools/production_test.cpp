@@ -270,6 +270,77 @@ static void cloakSpendsUnitMana() {
     check(!w.unit(dry)->cloaked, "a unit without a mana pool cannot pay to cloak");
 }
 
+// REVIVING COSTS NOTHING; THE ECONOMY ONLY PACES IT. Retail's Resurrect task
+// (icd 0x4068b0) never pays or requests mana. It sets its work to 65536 x
+// buildtime / (workertime x 0.03333333), x0.3 for a resurrect but not for an
+// animate, takes allocation x 65536 a tick, and at the end a computer player
+// whose allocation is under 0.7 abandons it. A buildtime-100 corpse under a
+// workertime-10 priest is 90 ticks at full allocation and 180 at half; ours
+// took 300 and debited the corpse's buildcost across them.
+struct ReviveRun { int ticks = -1; double mana = 0; float request = 0; int hp = 0; bool raised = false; };
+static ReviveRun reviveRun(bool animate, double allocation, bool computer) {
+    auto ownedWorld = makeWorld(64, 64);
+    World& w = *ownedWorld;
+    FeatType body; body.name = "victim_dead"; body.resurrectable = true; body.decomposeTicks = 100000;
+    w.setFeatureTypes({body});
+    UnitType victim = soldierType(); victim.id = "victim"; victim.buildTime = 100; victim.buildCost = 400;
+    UnitType ghoul = soldierType(); ghoul.id = "ghoul"; ghoul.buildTime = 30; ghoul.buildCost = 400;
+    UnitType priest = soldierType(); priest.id = "priest"; priest.workerTime = 10;
+    if (animate) { priest.canAnimate = true; priest.animateType = &ghoul; }
+    else priest.canResurrect = true;
+    w.mapCorpse(&victim, 0);
+    w.player(0).automaticGates = computer;
+    w.spawn(&priest, 300, 300, 0, 0);
+    const int dead = w.spawn(&victim, 330, 300, 0, animate ? 1 : 0);
+    w.unit(dead)->hp = {}; w.unit(dead)->deathType = 9;
+    const UnitType* out = animate ? &ghoul : &victim;
+    auto raised = [&]() -> const Unit* {
+        for (const auto& u : w.units()) if (u.alive() && u.type == out && u.player == 0) return &u;
+        return nullptr;
+    };
+    auto channelling = [&] {
+        for (const auto& u : w.units()) if (u.type == &priest && u.reviveTarget) return true;
+        return false;
+    };
+    ReviveRun r;
+    w.player(0).mana = 80;
+    int started = -1;
+    for (int t = 0; t < 600; ++t) {
+        // A demand the store cannot meet sets the next tick's allocation
+        // (stored / demand); nothing spends the store.
+        w.player(0).constructionDemand = allocation < 1 ? w.player(0).mana / allocation : 0;
+        w.tick(1.0f / 30);
+        r.request = std::max(r.request, w.player(0).displayResources.samples.back()[1]);
+        if (started < 0 && channelling()) started = t;
+        if (const Unit* u = raised()) { r.raised = true; r.ticks = t - started; r.hp = int(u->hp.toFloat() + 0.5f); break; }
+        if (started >= 0 && !channelling()) { r.ticks = t - started; break; }   // abandoned
+    }
+    r.mana = w.player(0).mana;
+    return r;
+}
+
+static void reviveCostsNothing() {
+    std::printf("reviving costs nothing; the allocation paces it:\n");
+    char detail[160];
+    const ReviveRun full = reviveRun(false, 1.0, false), half = reviveRun(false, 0.5, false);
+    std::snprintf(detail, sizeof detail, "full %d ticks, mana %.1f, request %.1f; half %d ticks, mana %.1f",
+                  full.ticks, full.mana, full.request, half.ticks, half.mana);
+    check(full.raised && full.mana == 80.0 && full.request == 0, "a resurrect pays and requests no mana", detail);
+    check(full.ticks == 90, "...takes 0.3 x buildtime / workertime at full allocation", detail);
+    check(half.raised && half.mana == 80.0 && half.ticks == 180, "...and twice that at half allocation", detail);
+    check(full.hp == 10, "a resurrected unit returns at 10% health", detail);
+    const ReviveRun ghoul = reviveRun(true, 1.0, false);
+    std::snprintf(detail, sizeof detail, "raised %d after %d ticks, hp %d, mana %.1f", ghoul.raised, ghoul.ticks,
+                  ghoul.hp, ghoul.mana);
+    check(ghoul.raised && ghoul.ticks == 90 && ghoul.hp == 100 && ghoul.mana == 80.0,
+          "an animate takes the full buildtime, free, and rises at full health", detail);
+    const ReviveRun aiShort = reviveRun(false, 0.5, true), aiFull = reviveRun(false, 1.0, true);
+    std::snprintf(detail, sizeof detail, "short: raised %d after %d ticks; full: raised %d",
+                  aiShort.raised, aiShort.ticks, aiFull.raised);
+    check(!aiShort.raised && aiShort.ticks == 180 && aiFull.raised,
+          "a computer player under 0.7 allocation abandons it at the end", detail);
+}
+
 // A LODESTONE UPGRADE FINISHES UNDER A SHORT SHARE. Playtest (protocol 273):
 // a Zhon Shaman's divine lodestone sat at full hp, completedWork 1-2^-53, for
 // 3.5 minutes, and finished the tick after the player stopped one producer.
@@ -958,6 +1029,7 @@ int main(int argc,char** argv) {
     shortIncomeIsShared();
     hudShowsRequestedMana();
     cloakSpendsUnitMana();
+    reviveCostsNothing();
     aiShortfallReadsRequests();
     lodestoneUpgradeFinishesUnderShortShare();
     outputExistsDuringConstruction();

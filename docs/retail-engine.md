@@ -3210,3 +3210,50 @@ at `0x5302d6`; ours in `World::fire`); construction, repair, production and
 the healing aura go through the player's resource object (`0x429af0`,
 `0x429d90`), as ours do. No other `0x4010d0` caller touches a unit pool except
 the debug drain at `0x4280e0`.
+
+## Revive costs no mana; the allocation paces it (icd, 2026-10-26)
+
+The ground task is RESURRECT, `0x4068b0` (registry row `0x5eb9e4`: code
+`UNITMISSIONCODE_RESURRECT`, name `Resurrect`; jump table `0x407168`, seven
+states). `VTOL_Resurrect`, `0x41fe70` (row `0x5ebe18`, jump table `0x42079c`),
+is the same machine with flight states in front. The registry row layout is
+code, handler, 13 bytes, name (stride `0x19`); the other handlers named below
+come from the same table.
+
+- Stage 0 picks the kind: `+0x56 = 0` when the corpse is resurrectable
+  (`0x497100`) and the caster's type has canresurrect (`+0x264 & 0x1000`,
+  loader `0x4c0752`); `+0x56 = 1` when `0x496fd0` holds and the caster has
+  cananimate (`+0x264 & 0x20000000`, `0x4c0778`).
+- Stage 3 (`0x406c2e`) takes the output type -- the caster's animatetype
+  (`+0x24c`) for an animate, the corpse's unit (its feature name up to `_`)
+  for a resurrect -- and sets the work counter `+0x52 = ftol(buildtime x
+  65536 / (workertime x 0.03333333))`, times 0.3 (`0x5ebaa0`) only for a
+  RESURRECT (`+0x56` clear). The constant at `0x5eb780` is the double
+  0.03333333, not 1/30.
+- Stage 4 (`0x406d3b`) subtracts `ftol(allocation x 65536)` every tick, the
+  allocation being the owner's resource object `+8` (stored / last demand,
+  capped at 1). While work is left it sets the caster's `+0xcc` cloak block
+  to `max(+0xcc, now + 300)` and sleeps one tick; at <= 0 it advances.
+- Stage 5 (`0x406e79`) is the end. An active owner of kind 2 (computer)
+  with a player number under 10, the player record's `+0xe3` flag (seated)
+  and the caster's `+0x130 & 0x20` (set at creation by `0x511b18`, cleared
+  only by a scenario path) abandons it, unraised, when the allocation is under
+  0.7 (`0x5ebb10`). Otherwise it creates the unit: full health for an animate
+  (`+0x10c = +0x1be`), a tenth (at least 1) for a resurrect.
+
+Nothing in it pays or requests mana: it never calls `0x429af0` or `0x429d90`
+and writes neither the resource object's store nor its request total, and
+its completion notifier `0x429990` does not either. So a revive is free, a
+starved economy slows it (an empty store with construction asking stops it),
+and it never shows in the mana bulb.
+
+Ours charged the output's buildcost (x0.3 for an animate) across a channel of
+buildtime / workertime seconds -- the 0.3 on the wrong kind: an animate took
+0.3 of the time and a resurrect the whole of it. `World::tickAbilities` now
+keeps retail's 16.16 work counter (`Unit::reviveWork`, hashed while
+channelling) from `retailReviveWork`, takes `Player::allocation()` x 65536 a
+tick, pays nothing, and applies the computer-player rule through
+`computerOwned`. Ours is still an idle caster's automatic search, not an
+order; a computer caster that abandons a revive takes the same corpse up again
+on its next tick, so while its economy is short its revive simply never
+finishes.
