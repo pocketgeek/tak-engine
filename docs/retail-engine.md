@@ -438,6 +438,14 @@ the retained navigation during these holds, as `tickRetainedFlightMovement`
 does for an empty list (and `pathblock_test`'s flying-builder case expects the
 flyer to stay where it arrived).
 
+**Since protocol 301 (0.9.7)** two of these holds are narrower. A flyer's
+guard runs VTOL_Follow (see "Helping to build and guarding" below) and flies
+its orbit; the 70 px hold is left only for a guard whose look has not started
+(a flying builder still busy with its own job). A flying helper or repairer
+approaches to 2 x `builddistance` and then circles the job at about
+`builddistance` (`tickConjureHover`, as FlyingBuild did), so it no longer
+hovers on its repair point; the reclaim point hold is unchanged.
+
 ### Impact damage: the direct hit or the 3D area pass (protocol 263)
 
 Every weapon class ends in impact dispatch `529c10`: Melee, Ballistic and
@@ -1768,6 +1776,11 @@ about to be walked; orders behind it get theirs when they become current.
 
 ### Port plan
 
+> **Status:** done and since superseded. `pathBudget_` and the inline A* are
+> gone; gameplay routes now run the executable-verified `RetailSearchWorker`
+> phases (`src/sim/pathsearch.h`, `PathSearch` kept only as a comparison
+> harness). Current state: [pathfinding-port.md](pathfinding-port.md).
+
 1. `PathService` owning a request queue, replacing nothing at first -- run it
    alongside the current mover behind a flag.
 2. Per-tick scheduler: count pending requests, `quantum = budget / (A + 5*B)`,
@@ -2517,7 +2530,8 @@ for ever. And `Go` CALLs startbuild (the doors) and then OpenYard, so that
 thread never returns and the state machine never reaches Stop/stopbuild -- the
 doors open and never close.
 
-Measured on the real COBs with our own VM (`tools/cobyard_test.cpp`): answering
+Measured on the real COBs with our own VM (`tools/cobyard_test.cpp`, a one-off
+probe since removed): answering
 0 issues BUGGER_OFF 25-27 times in 40 simulated seconds and rises for ever;
 answering 1 issues it 0 times. We now grant it unconditionally, since our sim
 has no notion of a unit blocking a yard and we never act on BUGGER_OFF anyway.
@@ -2863,8 +2877,15 @@ and that trade deserves a decision rather than a default.
 ## The steering layer: why our units stack and will not go around each other
 
 RE'd 2026-09-16, static analysis only, after a report that units pile up and
-drive into obstacles instead of around them. Nothing here is implemented yet --
-this section exists so the port has a spec before any sim change lands.
+drive into obstacles instead of around them. Nothing here was implemented yet
+when it was written -- this section exists so the port has a spec before any
+sim change lands.
+
+> **Status:** the unit-aware grades (parked 0, moving 1, a same-way mover the
+> search may pass, 2 for a body the search may not pass) have since been
+> ported into the search (`src/sim/pathsearch.h`); the tracer now routes
+> around bodies. See [pathfinding-port.md](pathfinding-port.md) for what is
+> verified and what still differs.
 
 ### There are TWO pathfinding subsystems, and we ported one
 
@@ -3355,6 +3376,51 @@ was not the cause -- and the corpse stays (only the success path removes it).
 Ours spawned past both limits; since protocol 302 the end refuses at the unit
 limit and at totalallowed (the ai-profile limit is the server AI's, not the
 sim's, and is not checked).
+
+## Helping to build and guarding (icd, 2026-10-27, protocol 301)
+
+Found by emulating the routines; ported in 0.9.7. Details and the remaining
+differences are in [the 0.9.7 notes](release-0.9.7-notes.md).
+
+- **Eligibility (`0x519e60`).** The target is alive, unfinished, not the
+  helper and has the helper's owner (an ally's site does not qualify). The
+  helper is a builder with a mover, so a structure never helps; a
+  builderlimited one needs the target's type on its own build menu. Nothing
+  about the helper's queue, repeat build or current job is consulted. Ours:
+  `World::canHelpBuild`, checked by `World::assist` and the command handler.
+- **HelpBuild (`0x405cf0`).** Every worker on a site works through the same
+  construction step (`0x429af0`): it takes its workertime-scaled share off the
+  site's remaining fraction (+0x108) and pays for exactly that. A factory's or
+  mobile producer's output therefore has one progress, finishes once and costs
+  its buildcost however many help. Ours keeps the producer's tick count as
+  that progress (`World::workProduction`); each helper's work is converted
+  into it, the producer is freed the tick the unit completes, and the output's
+  PARK, rally or exit step is given once. Its work stage sets the 300-tick
+  cloak block (`0x4060bb`, table above).
+- **Follow_Ground (`0x407f90`), a mobile builder's guard.** Each look: the
+  guarded unit damaged and repairable (`0x519d40`, allies included) ->
+  RepairUnit on it; else its own unfinished body, if eligible -> HelpBuild;
+  else the target of its MobileBuild, BuildingBuild, HelpBuild or RepairUnit
+  (`0x408431..0x408486`; no VTOL mission is in the list, so a flying producer
+  is not helped from the ground). The job is inserted ahead of the guard,
+  which resumes when it ends; no distance is checked. A look that finds
+  nothing sleeps 15 + rand(15) ticks. Ours: `World::tickGuardHelp`,
+  `guardHelpPick`, `guardInsertJob`.
+- **VTOL_Follow (`0x418860`), every flyer's guard** (the order dispatch
+  `0x4de530` picks it by canfly alone). Off the map it first flies to a point
+  800 px toward the map. A flying builder runs Follow_Ground's checks with the
+  VTOL build and repair missions added, so it also helps flying producers; a
+  repair target whose model top is under the sea is refused (`0x519d40`'s
+  flying branch). Its jobs are VTOL_HelpBuild (`0x41f7f0`) and
+  VTOL_RepairUnit (`0x420e60`): approach to 2 x builddistance, then orbit at
+  builddistance -/+ 7. A job sleeps the guard 15 + rand(30) ticks. With
+  nothing to do it orbits the guarded unit (`0x419053`): 320 px, or the
+  active weapon's range + 160 when armed, the angle stepping back
+  0x4000 + rand(0x2000) on each arrival, looking again after 15 ticks. Ours:
+  `World::tickFlyingGuard`. The guarded unit's attacker check
+  (event 0x10) is ported since protocol 302 (next section). Not ported: the landed step-out (+0x12a >= 5), the stage-2 attack scan
+  (`0x51d1e0`, whose work our target acquisition does) and the optional leash.
+  Our draws come from the sim's RNG over the same ranges, not retail's stream.
 
 ## A guard answers its guarded unit's attacker (icd, 2026-10-27)
 

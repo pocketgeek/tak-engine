@@ -158,6 +158,9 @@ Run the focused tests with:
 ./build/mapgen_test /path/to/tak_data --sweep
 ./build/mapgen_test /path/to/tak_data --naval
 ./build/mapgen_test /path/to/tak_data --large
+./build/mapgen_test /path/to/tak_data --mana
+./build/mapgen_test /path/to/tak_data --themes
+./build/mapgen_test /path/to/tak_data --ports
 ```
 
 The asset-free test has a fixed generated-map hash and deliberately non-square
@@ -167,10 +170,13 @@ sizes, and zero/medium/maximum densities. It checks generator invariants and
 periodically regenerates encoded recipes to compare their complete output.
 The large-map check covers all five worlds and three layouts at 64×64 with eight
 players, checking connectivity, mana-site ruins, and recipe reproducibility.
-The naval test uses the real simulation and produces two of each of the six Sea
-Fort ship types in every world and both balance modes (60 production cases).
+The naval test uses the real simulation and produces two of each ship on the
+Sea Fort's build menu on a generated Islands map of every world, in both
+balance modes. `--mana` checks the extra-mana slider's complete rounds.
 CTest includes the asset-free test; a configured `TAK_TEST_DATA` additionally
-includes the smaller retail-map roster and naval production checks.
+includes the smaller retail-map roster, extra-mana, naval production, themed
+layout and Ports checks (`mapgen_roster`, `mapgen_mana`, `mapgen_naval`,
+`mapgen_themes`, `mapgen_ports`).
 
 The development audit also compared 30 version-1/version-2 maps against the
 pre-change generator, with identical heights, features, tile references, names,
@@ -189,7 +195,8 @@ filtering, edits, and renderer reset.
 The lobby distributes generated-map recipes, not independently chosen random seeds.
 Once the match starts, the host, every client (including spectators), and the server
 save a reusable `Maps/Generated-<recipe SHA-256>.kmp` in their per-user folder (the
-client's beside `settings.ini`, the server's `--map-cache-dir`), never in the game data
+client's beside `settings.ini`, the server's `--map-cache-dir` or, without one,
+`TAKengine/takserver` in its per-user folder), never in the game data
 folder; maps saved in a data folder's `Maps/` by versions before 0.9.5 stay listed there. The archive
 contains the terrain, starting positions, original recipe, and retail tile artwork.
 Repeated starts of the same recipe reuse that file. Previewing/canceling does not save

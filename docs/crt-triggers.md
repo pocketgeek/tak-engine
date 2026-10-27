@@ -55,7 +55,11 @@ SCENARIO option is on (`MatchConfig::mapScenario`) or the map
 carries the Test Map opt-in `[TAKPlaytest] { authoredscenario=1; }`; the world
 ticks it and hashes its rule state. On the MAP SCENARIO route a Use Only entry
 that names no installed unit type is left out (maps made for the original game
-list such names); a Test Map copy refuses it, as the author's typo.
+list such names); a Test Map copy refuses it, as the author's typo, unless the
+other balance (Standard or Crusades) has that unit, in which case it permits
+nothing. A custom type that names no unit of the active balance is skipped, as
+retail's resolve loop does (a standard-balance scenario played with CRUSADES on);
+a *placement* of such a unit is refused with a message naming it.
 `src/sim/scenarioinfo.cpp` reads the same files without building a world, for
 the create screens, the room and the server's START checks.
 Messages are filtered for the local viewer without changing that state.
@@ -110,7 +114,8 @@ they contain CRT companions. Cached Test Map snapshots retain the opt-in. It doe
 any standalone/debug simulation. The editing session stays open. Temporary source
 files are removed when the editor observes game exit; closing the editor first
 leaves the running game and its temporary source undisturbed. Verified MapCache
-copies remain selectable, as with downloaded maps.
+copies (kept in the per-user data folder since 0.9.5, not the install) remain
+selectable, as with downloaded maps.
 
 Cartographer's optional **Log Test Map triggers** setting adds a local diagnostic
 request to its temporary snapshot. Only the client explicitly launched with

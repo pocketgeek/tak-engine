@@ -1,5 +1,13 @@
 # Retail save comparison coverage
 
+> **Status (0.9.7):** a historical log of the save-fixture work at protocols
+> 130-131 (last edited for 0.6.9); its "next work" and "not yet wired" notes
+> describe that time. Since then `retailGroundPatrol` drives ground patrols in
+> the World (`src/sim/sim.cpp`), and the commander's threat response
+> (`0x40c890` / `0x40d370`) is ported in the Retail AI's brain
+> (`src/ai/classicproduction.h`, `src/ai/classicdefence.h`; see [classic-ai-acceptance.md](classic-ai-acceptance.md)).
+> The fixture replay counts below were not re-run for this note.
+
 The eight-player `test2` snapshots on Valysia City broaden the existing
 single-save replay. Files and runtime captures remain in ignored
 `assets/tmp/retail-traces/saves/`, keyed by the first 16 SHA-256 digits.

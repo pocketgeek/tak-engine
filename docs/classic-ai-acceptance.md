@@ -1,7 +1,9 @@
 # Classic AI: P8 acceptance ledger
 
-Players see this level as **DEFAULT** (the lobby's name for AI level 6 since 2026-10-23, after
-the `ai/default.txt` profile that drives it); "Classic" remains its internal and developer name.
+Players see this level as **RETAIL** (the lobby's name for AI level 6 since 0.8.12; 0.8.11
+called it **DEFAULT**, after the `ai/default.txt` profile that drives it), the **Retail AI** in
+the user guide; "Classic" remains its internal and developer name. The server log and
+Cartographer's AI Profiles tab still say **DEFAULT AI**.
 
 2026-10-23, branch `task-classic-ai`. The acceptance rule of the plan
 ([classic-ai-plan.md](classic-ai-plan.md) §5, P8): every ported routine has a passing

@@ -2034,3 +2034,20 @@ Cartographer or mission-runtime parity.
 
 No retail GUI was launched. The separate untracked retail-weapon probe is
 unrelated and is not part of this work.
+
+## Later changes (status at 0.9.7)
+
+This ledger stops with the AI-mod work of 2026-10-23. Later editor changes are
+described in the [user guide](cartographer-guide.md) and the
+[CHANGELOG](../CHANGELOG.md):
+
+- 0.8.13: a bare launch opens an empty window (NO MAP OPEN) and maps are
+  started from the File menu.
+- 0.9.5: Test Map copies (and downloaded maps) are kept in `MapCache` in the
+  game's per-user folder beside `settings.ini`, not in the game data folder;
+  Cartographer's own saves still go to the data folder's `Maps` (or `--out`).
+- 0.9.6: Check Map also checks the scenario against the Crusades unit set
+  (placed units, custom-type stats and rule operands Crusades lacks);
+  `--version`/`-v` and `--help`/`-h`; the editor follows the game's NATIVE
+  WAYLAND setting on Linux and converts its UI scale and window size when
+  switching.

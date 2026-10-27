@@ -79,9 +79,9 @@ Ron Gilbert (design).
   heights(u8/cell) · features(u16/cell) · feature-name table(count x 132B:
   {u32 seq, 128B name}) · tile keys(u32/block) · cols(u8) · rows(u8) ·
   small minimap(126x126 {u32 w,u32 h,bytes}) · large overview minimap
-  ({u32 w,u32 h,bytes}). All row-major. Minimap regeneration (from tiles +
-  the 256-colour terrain palette) is still needed for NEW/resized maps --
-  round-trip preserves the loaded ones verbatim.
+  ({u32 w,u32 h,bytes}). All row-major. Both minimaps are regenerated (from
+  tiles + the 256-colour terrain palette) when the terrain was painted, and on
+  new/resized maps; an untouched round-trip keeps the loaded ones verbatim.
 - A shipped map is a **`.kmp` = HPI archive** of 5 members (kmap\<name>.{tnt,
   ota,tdf,crt,txt}); only .tnt + .ota are needed for a game-loadable map. The
   .crt holds placed game units as raw 568-byte binary structs (editor-internal).
@@ -90,7 +90,7 @@ Ron Gilbert (design).
   (`W x H`, cells/32), memory=`32 MB`, useonlyunits, hasscenario; nested
   [Map Data]: Type=`Network 1`, aiprofile=`DEFAULT`; nested [specials] /
   [special%d]: specialwhat=`StartPos%d`, XPos, ZPos. Start positions are
-  16-byte records (XPos, ZPos, number). WRITER still to build (phase 4).
+  16-byte records (XPos, ZPos, number). Writer: DONE (`tak::ota`, `src/tnt/ota.{h,cpp}`).
 - Tile sections come from the retail install's `terrain/<hexkey>.jpg` +
   `sections.hpi` prefabs — reuse `terrain::Compositor` + the section prefab loader.
 
@@ -151,8 +151,10 @@ twins and clipboard data are in `symmetry.cpp`).
     maps by name via the VFS, not a file-open dialog.]
 
 The Cartographer port is FEATURE-COMPLETE: all editor tools, the full Scenario
-menu, and the .kmp writer. Remaining work is engine-side (playing scenario maps:
-apply .crt unit stats + a typed trigger evaluator) and cosmetic polish.
+menu, and the .kmp writer. The engine-side work this left (playing scenario
+maps: applying .crt unit stats and a typed trigger evaluator) is done too; see
+[Engine: `.crt` scenario RUNNER](#engine-crt-scenario-runner-is-now-in-the-sim-done-knetversion-36)
+below.
 
 ## Deep RE findings (tools + triggers, confirmed from the binary)
 
@@ -277,7 +279,7 @@ TXT 0x41c4e0 · CRT 0x40d8d0 · bundle 0x418b80. GetCell 0x419120 · SectionStam
 
 ## Browser scrollbar, edge scrolling and borderless fullscreen (2026-10-14)
 
-Next-release UI work (not in 0.8.2). The math is SDL-free in
+Shipped in 0.8.3. The math is SDL-free in
 `src/cartographer/scrolling.h`; `palette.cpp` draws and wires the scrollbar,
 `chrome.cpp` the display mode, F11 and edge scrolling, `dialogs.cpp` the
 Preferences dialog.
@@ -332,6 +334,8 @@ Preferences dialog.
   Each check was shown to fail against a deliberately broken build.
 
 ## Game data folder in Preferences (2026-10-14)
+
+Shipped in 0.8.3.
 
 View > Preferences ends with **GAME DATA FOLDER (SHARED WITH THE GAME)**: the
 install this editor mounted, elided at its start, and **CHANGE...**, which opens
@@ -393,6 +397,8 @@ registry key the retail installer wrote.
 
 ## BLOCKED tool (2026-10-14, not retail)
 
+Shipped in 0.8.3.
+
 A non-retail addition: retail Cartographer has no blocker tool (no such string or
 command in the binary; blockers came only with stamped sections). The fifth tool
 paints and erases the TNT plane's 0xFFFC hard blocker (`src/cartographer/blockers.h`):
@@ -410,6 +416,9 @@ test, Retail and Legion).
   RegionDef 272B, per-player group structure): **DONE** — proven byte-exact,
   implemented as `tak::crt::parse`/`write` in the shared lib, round-trip tested
   by `tnttool crt` across all 27 shipped scenario maps.
-- Pending deep RE (for later phases): minimap-generation exact downsample;
-  HPI/.kmp bundle writer; whether the loader consumes UnitRecord 0x224/0x228
-  (type cache) or re-derives from objectName (almost certainly the latter).
+- `.kmp` bundle writer (retail 0x418b80): **DONE** as the shared
+  `tak::hpi::pack`.
+- Not pursued: the minimap's exact retail downsample (ours regenerates it from
+  the tiles and the world palette); whether the loader consumes UnitRecord
+  0x224/0x228 (type cache) or re-derives from objectName (almost certainly the
+  latter; a zero-filled cache loads identically).

@@ -182,8 +182,12 @@ Campaigns run through the shared authoritative server simulation. The client and
 referee independently construct the same mission world and execute its script;
 client-owned presentation consumes cosmetic events. Mission conditions, rather
 than skirmish last-team-standing, determine the campaign result. Script-driven
-reinforcements can revive otherwise empty factions. Strategic opponents use this
-project's AI with mission tuning; this is not a port of retail strategic AI.
+reinforcements can revive otherwise empty factions. Strategic opponents play the
+**Retail AI** (since 0.8.11, with no choice): a port of retail's strategic AI
+over the mission's `aiprofile` file (`ai/mission<NN>.txt`, else
+`ai/default.txt`), its `.ota` StartPos table and its Player lines' `massattack`
+(see [classic-ai-acceptance.md](classic-ai-acceptance.md#campaign)). A player
+who disconnects is still taken over by the Normal level.
 
 The mission `.tdf` restricts the player's build menu. Server-side enforcement of
 that restriction is a separate limitation. The player is seated as retail seats
@@ -228,7 +232,7 @@ reports; they do not imply an end-to-end retail GUI comparison.
 
 GCC/Clang determinism checks retained golden `dcef618cd2e4d558`. The harness skipped
 ARM cross-build checks because target build dependencies were unavailable.
-Protocol **183** requires matching client/server builds and rejects earlier
+Protocol **183** (the protocol of this pass; 0.9.7 uses 301) requires matching client/server builds and rejects earlier
 protocol recordings under the existing replay-version policy.
 
 Two fresh ordinary skirmish multiplayer runs also retained the pre-change hash

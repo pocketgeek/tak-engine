@@ -8,7 +8,10 @@ apply `−heading` outside that tree. `modelmath.h` shares these conversions bet
 unit rendering, shadows, effect anchors and the model viewer. See
 [the transport/animation audit](transport-animation-audit-2026-09-21.md) for native
 coverage and remaining limitations. The dated sections below retain the earlier
-investigation and must not be used as the current transform specification.
+investigation and must not be used as the current transform specification: the
+rendering code they cite in `src/client/main.cpp` has since moved into
+`src/client/modelmath.h` and the `GameView` sources, and the `TAK_NO_HALFTURN`
+and `TAK_NEGX` dev toggles they mention no longer exist.
 
 
 Status: **RESOLVED (2026-09-05, commit 7d9d71e).** Final fix = negate BOTH piece X and Y rotations in

@@ -42,6 +42,13 @@ shipped data no menu has a priority tie or a missing priority, so the stable
 priority sort gives the same order as the earlier (priority, name) sort, and
 every Crusades menu equals its standard menu.
 
+Scenario maps follow the same roster (0.9.6): a scenario's custom unit-type
+stats for a type the Crusades roster lacks are skipped, as retail does, while a
+scenario that places such a unit is refused with a message naming it.
+Cartographer's Check Map also loads a Crusades registry and warns about units a
+Crusades game will not have, and Test Map accepts Use Only entries from the
+other balance (they permit nothing).
+
 ## Reproduce the source comparison
 
 ```sh
@@ -276,6 +283,6 @@ The loader and research probes now preserve that native default instead of
 silently repairing the authored spelling. This changes the affected units'
 terrain-speed input; it does not replace the navigation algorithms.
 
-The combat and terrain-input corrections require **development protocol 204**.
-Clients and servers must be rebuilt/updated together. No release tag is created
-by this milestone.
+The combat and terrain-input corrections required **development protocol 204**
+when they landed (no release tag was cut for that milestone); the current
+protocol is in the [CHANGELOG](../CHANGELOG.md).

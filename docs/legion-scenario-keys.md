@@ -60,11 +60,14 @@ audit's quantity, so do not compare them with an audit number:
 - island-1x150 and strait-3x80, which depend on how a selection of more than 64
   bodies reaches the server: `.scn` orders go through the client's
   64-per-tick uplink (`issueSelection`), the probes issued every order in one
-  tick. They are known-failing or report-only until W3 changes the order merge.
+  tick. They were known-failing or report-only until W3 changed the order merge (convoys,
+  and since protocol 267 one explicit selection order per click; `docs/legion-pathfinding.md`
+  "Convoys"); they now run as nightly-labelled `legion_scenario_*` tests and strait-3x80 is
+  still KNOWN-FAILING in its header.
 - gapsweep gaps 8, 14 and 20 (five groups share one navigator) and every fixture
   listed as KNOWN-FAILING in its header.
 
-## Situations (`tools/scenarios/situation-*.scn`)
+## Situations (`tools/scenarios/situations/situation-*.scn`)
 
 A situation is a moment cut out of one of the user's recordings by `TAK_SITUATION=<tick>:<path>` on
 a debug replay (`src/client/situation.h`): every live body with its exact position, heading, hit

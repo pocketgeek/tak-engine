@@ -1,5 +1,12 @@
 # Water-yard building placement
 
+> **Status (0.9.7):** a historical change report; the placement rules below are
+> still current. The protocol numbers are those of the time (0.9.7 uses 301).
+> Where the computer players *choose* to put a Navy Yard is separate: since
+> 0.9.2 every level except Retail prefers a site with open water straight out
+> of the yard's door (`navalDoorSteps` in `src/ai/ai.cpp`; see the
+> [0.9.2 notes](release-0.9.2-notes.md#computer-players-navy-yards)).
+
 The Sea Fort could not be placed in open water on Varro Passage because
 `World::canPlace` treated its uppercase `C` yard cells as a land foundation.
 It also checked `w` cells against the ship navigation grid, imposing the

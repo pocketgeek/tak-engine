@@ -14,9 +14,13 @@ thousands of units at once. Code: `src/sim/legion.{h,cpp}`; hooks in
 `src/sim/sim.cpp` next to the Retail dispatch, and the
 group right-click in `src/client/gameview_hud.cpp`.
 
-This document describes Legion as of ae3df2d (after the W0 instruments, before
-the behaviour workstreams; per-commit history is in git, and each feature below
-names its commit). The historical five-mode
+The "Design" sections below describe Legion as of ae3df2d (after the W0
+instruments, before the behaviour workstreams). The sections from "Features
+added after round 4" on add what came after, through the Legion 10,000 program
+and the ~100-body rounds (protocol 286), each naming its commit or protocol;
+per-commit history is in git. Since then Legion's own steering has changed only
+for factory PARK spots (see the mission table under "Scope"); 0.9.7 (protocol
+301) still steers as described here. The historical five-mode
 comparison (Retail, Retail+, Flowfield, Cooperative, Legion) and its tables are
 in `docs/navigation-comparison-2026-10-05.md`; they are not repeated here.
 
@@ -907,7 +911,7 @@ The mission goals (`LegionMission`):
 | Load | passenger to its carrier, ground carrier to its passenger | the transport circle's centre | the native circle: `0x500` on `transportMission`; elsewhere `0x200` |
 | Unload | ground carrier's surface-unload approach | the drop point | as Load |
 | Exit | automatic production exit step | the generated exit point | arrival `0x500`; or, without headway for a crowd window, once the whole birthplace is clear (or after two windows when a rally follows) |
-| Park | PARK sequences (factory output, released cargo) | the ring's navigation point | the ring (`park->ring`): `0x500`; elsewhere `0x200` |
+| Park | PARK sequences (factory output, released cargo) | the ring's navigation point; since protocol 295 (0.9.1) a factory output's own spot over the ring band (`World::legionParkSpot`: two footprints apart, nearest the door first, never in the door lane, reachable, free of claims and bodies; growing past the band when full) | the ring (`park->ring`): `0x500`, a spread PARK only at its spot; elsewhere `0x200` and the next spot (`ctest:legion_park`) |
 
 Legion is the route provider only. The mission handlers keep every mission
 rule: when to fire, when the unit is in range, target acquisition during a
@@ -988,7 +992,7 @@ workers (`legion_movement_orders_trolls_maze`).
 
 ## Tests
 
-* `legion_world_test`, 38 cases: clearance, groupreuse, jagged, trapped,
+* `legion_world_test`, 73 cases, among them: clearance, groupreuse, jagged, trapped,
   crowdhold, replace, unreachable, quota, pens, determinism, formation,
   slotblock, deaths, deathsshared, splitgoal, farclick, churn, approachhold,
   approachopen, churnfield, approachchurn, legacyyield, planeincremental,
@@ -1000,8 +1004,8 @@ workers (`legion_movement_orders_trolls_maze`).
   from the shared observer (see "Instruments"). Since protocol 257 also
   lonetrees, slideback, stillturn and forestedge, and `legion_still_test` for the
   headway window alone (see "Livelock").
-* `legion_acceptance_test`, five checks run in all five modes; Legion
-  asserts, the others report. singleunit, jagged, trapped and group pass for
+* `legion_acceptance_test`, five checks run in Legion and Retail; Legion
+  asserts, Retail reports. singleunit, jagged, trapped and group pass for
   Legion; crowdheld is a ratchet (61 of 64 in goal or better, below).
 * `navigation_determinism` and `legion_determinism`.
 * `convoy_test`: one convoy per click (see "Convoys").
@@ -1791,7 +1795,8 @@ step down the field clear of soft bodies (a body held only by its own command or
 by movers is not blocked: a refresh would give it the same way); each turn to
 blocked counts `work.blocked_rerequests`. `movingTick` and `blockedTick` are
 not hashed: they are functions of the last 2 ticks' hashed member updates, and no
-path rebuilds Legion from a snapshot (a mid-game `--mprejoin` stays in sync).
+path rebuilds Legion from a snapshot (a mid-game `--mprejoin` stayed in sync; since protocol 289 a
+disconnect wait and AI takeover replace the rejoin).
 `legion_staticidle`: parked guards beside continuous construction do no refresh
 work (764640 relaxations -> 0), and a pair held at a plugged gap re-plans through
 a gap that opens by the blocked rule alone. In the live 8-AI Ulasem benchmark
@@ -4788,8 +4793,8 @@ went wrong.
 
 | Instrument | Sees | Blind to |
 |---|---|---|
-| `legion_world_test` (38 cases) | arrival, spins, cell oscillation, legality, hold and detour counters on synthetic 2x2 movers (instant acceleration, flat 16-px cells, feature walls); per-case metrics from the shared observer | real turn rates, combat, timing, multi-group selections |
-| `legion_acceptance_test` | single unit, group, jagged, trapped, crowd-held, in all five-era modes | anything outside its seven fixtures |
+| `legion_world_test` (73 cases) | arrival, spins, cell oscillation, legality, hold and detour counters on synthetic 2x2 movers (instant acceleration, flat 16-px cells, feature walls); per-case metrics from the shared observer | real turn rates, combat, timing, multi-group selections |
+| `legion_acceptance_test` | single unit, group, jagged, trapped, crowd-held, in Legion (asserted) and Retail (reported) | anything outside its five fixtures |
 | crowdbench (`crowdbench`, `crowdbench_matrix`, the nightly screen) | 18 scenarios x two modes x several populations, deterministic keys only, Retail on the same binary | formation play: its orders are per-unit goals, which form no formation |
 | `.scn` scenarios and `legion_scenario` (`tools/scenarios/`) | the client's real order path (`issueSelection`: 64 commands per tick, the per-axis offsets for non-shared units, SetSquad), serial and `--workers`, three start offsets, the observer's keys; on stderr, per run, the wall time of the whole run and of `World::tick` per tick (`tick_max_ms=M@T`, the slowest tick and which it was, and `tick_p99_ms`; the observer's sampling is outside them, and none of it reaches the JSON) | the AI, fog and economy; production; anything not in the file |
 | `tools/legion_observe.h` | progress, held-by-design vs no-progress age classes, the stall clock against the headway clock (`stall_stale_ticks`, Legion only), lane crossings and files, contact and clearance, flyer metrics, per-tick work counters (`work.legion_total`, and `work.legion_all`, which adds the awareness, lane and pinwheel work the W7 and W8 instruments report, `aware_work`, `lane_work` and `pivot_work` less its one unit per line sweep; report-only); a command is one convoy (W3 exit, lead ruling W3 round 4 (1)): `legion_scenario` runs the file's clicks through a `ConvoyTable` of its own, so selections clicked to one point a few ticks apart are one command for `contact_settled` and share one arrival disc sized for all of their bodies, in both modes | wall time (never read); it is const and adds nothing to hashed state (`observer_neutral`) |

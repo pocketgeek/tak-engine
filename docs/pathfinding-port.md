@@ -6,6 +6,16 @@
 > far-tile fields) were removed with the mode. Retail (the default) and
 > [Legion](legion-pathfinding.md) remain. Mentions of the removed modes in the
 > Retail port log and Retail audit sections below are history.
+>
+> **Status (0.9.7, protocol 301):** this file is a dated log. The newest
+> entries are the "Retail audit" sections at the top (2026-10-15); the rest
+> runs from "Current status" (protocol 179) back to the first notes, and any
+> protocol number, hash or test count in an entry is the one of its day. Later
+> retail movement and order work is recorded in
+> [retail-engine.md](retail-engine.md): factory output release and PARK
+> (GetBuilt, protocol 295), reclaim reach (`0x406250`), and the 0.9.7
+> help-build and guard follow (HelpBuild `0x405cf0`, Follow_Ground `0x407f90`,
+> VTOL_Follow `0x418860`).
 
 ## Retail audit: entity pools grow as needed (2026-10-15)
 
