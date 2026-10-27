@@ -67,7 +67,7 @@ network changes so the client, server, and tools use the same code.
 Releases from 0.9.0 on stay on the GitHub releases page; versions before 0.9.0
 are no longer offered for download. To play such a version's replays, or with
 friends who have not updated, build that version from its git
-tag (every release has one, `v0.9.3`, `v0.9.2` and so on; the
+tag (every release has one, `v0.9.7`, `v0.9.6` and so on; the
 [CHANGELOG](../CHANGELOG.md) lists them):
 
 ```sh
@@ -133,8 +133,8 @@ frameworks. CI checks these dependency boundaries for release packages.
   not emulation. Dependencies and caches are isolated by distro and architecture;
   both architectures run the same package-workflow regression tests, ELF checks,
   package metadata checks, and static-link gate. Ubuntu 22.04 supplies each
-  architecture's Debug tarball. ARM64 artifacts are available from CI and will
-  be attached to releases starting with 0.7.23. This does not cover 32-bit ARM or certify
+  architecture's Debug tarball. ARM64 artifacts are available from CI and have
+  been attached to releases since 0.7.23. This does not cover 32-bit ARM or certify
   graphical performance on individual ARM boards.
 - **Slackware64 15.0:** CI builds inside the Slackware 15.0 container referenced by
   [SlackDocs](https://docs.slackware.com/howtos:misc:slackware_docker_image), using
@@ -169,8 +169,8 @@ the platform checks, Windows signing and complete asset verification pass.
 - **Builds.** CMake uses `ccache` and `mold` automatically when they are installed
   (a second build of the same sources, or of another worktree, is mostly cache hits).
 - **Targeted tests: `ctest -L quick -j 8`.** Every test that is not `nightly` and takes
-  under 5 s is labelled `quick` (about 255 tests, roughly 30 s at `-j 8`, against about
-  6 minutes for the full suite). Use it for a task's own checks; run the full suite
+  under 5 s is labelled `quick` (about 510 of the roughly 775 tests, about a minute at `-j 8`,
+  against several minutes for the full suite). Use it for a task's own checks; run the full suite
   (`ctest -j 8`) before handing a change over. Other labels: `legion`, `w2`, `nightly`
   (`ctest -L legion`, `-LE nightly`).
 - **Tests never touch your profile.** CTest gives every test its own `XDG_DATA_HOME`,
@@ -292,8 +292,9 @@ timing cores), against ~70 minutes.
 
 ## Developer launch modes
 
-Release clients accept `--data` and `--version` and launch games through the
-menus. Debug builds also expose asset viewers, direct game/replay launch, and
+Release clients accept only `--data`, `--version`, `--help` and the Cartographer
+handoff `--play-map <snapshot.kmp>` (with optional `--game-mod <pack>`), and launch
+games through the menus. Debug builds also expose asset viewers, direct game/replay launch, and
 headless diagnostic harnesses. See the [command-line reference](user-guide.md#command-line)
 and `build-o2/takclient --help`; additional harness arguments are defined in
 [src/client/main.cpp](../src/client/main.cpp). Client `TAK_*` diagnostic
@@ -349,12 +350,12 @@ attacks.
 | `src/campaign/` | campaign spine (`camps/*.tdf`) + in-sim mission/god-script runner |
 | `src/sim/` | deterministic simulation (movement, pathfinding, combat, economy) |
 | `src/net/` | multiplayer wire format, framed TCP, client protocol |
-| `src/server/` | `takserver`, the headless lobby + lockstep relay |
+| `src/server/` | `takserver`, the headless lobby, lockstep relay, referee sim and server-run AI |
 | `src/ai/` | the skirmish AI (server-portable; emits commands) |
 | `src/terrain/` | terrain / palette handling |
 | `src/util/` | shared helpers |
 | `src/gui/` | retail `.gui` HUD/gadget layout parsing |
 | `src/client/` | the SDL2 app (`takclient`: asset viewer + game) |
-| `src/cartographer/` | `cartographer`, a clean-room port of the retail map editor (in progress) |
+| `src/cartographer/` | `cartographer`, a clean-room port of the retail map editor |
 | `tools/` | CLI dev tools (`hpitool`, `gaftool`, `tnttool`, `modeltool`, `cobtool`, `tdftool`, `missiontool`, `biktool`, `aitool`); a tool given too few arguments prints its usage on stderr and exits 2, `cartographer --version` / `--help` answer without opening the editor, and `simperf` (a benchmark, not a ctest target) generates its default map with the current random-map recipe; `tools/cli_tools_test.py` is the `cli_tools` test |
 | `docs/` | format notes + reverse-engineering findings (`retail-engine.md` = the `KINGDOMS.icd` disassembly) |

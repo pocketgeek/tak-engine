@@ -52,8 +52,9 @@ allocated after the screen closed.
   (`a5a69304ffacaa64`). A scratch copy of the server added only an orderly test
   loop exit; existing grace-timer overrides were shortened to 100 ms. All five
   rooms dissolved, clients and server exited cleanly, and LeakSanitizer reported
-  no leaks. The production server has no orderly signal exit, so merely killing
-  it would not have been adequate exit-leak verification.
+  no leaks. The production server had no orderly signal exit then, so merely
+  killing it would not have been adequate exit-leak verification. (It has one
+  now: SIGTERM or Ctrl-C writes the running games' replays and exits.)
 
 ## Reproduction
 

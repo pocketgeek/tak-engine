@@ -1,9 +1,19 @@
 # Multiplayer Design: Client–Server, 8 Players, Teams
 
-Status: **proposed** (v1 scope agreed 2026-09-04; revised after adversarial
-design review). Supersedes the 2-player peer-to-peer lockstep in
-`src/net/lockstep.{h,cpp}` as the multiplayer story; the deterministic-sim
-substrate underneath it is kept.
+Status: **implemented** (v1 scope agreed 2026-09-04; milestones M0-M6 all
+shipped). It superseded the 2-player peer-to-peer lockstep (`net::Session`,
+since removed; `src/net/lockstep.h` is now header-only); the deterministic-sim
+substrate underneath it is kept. Sections 1-12 are the original design, kept as
+written apart from short notes where it has since moved on; the later sections
+and the protocol history (to protocol 301, 0.9.7) describe the current engine.
+Notable changes since the v1 design: single-player runs a private local
+`takserver` (`--local --no-auth`) instead of in-process AI
+([sp-mp-equivalence.md](sp-mp-equivalence.md)); the server requires `--data`
+(there is no relay-only mode) and hosts the AI; accounts with sign-in are the
+default and public listeners use native TLS ([public-server.md](public-server.md));
+allied mana sharing and unit gifting exist ([unit-gifting.md](unit-gifting.md));
+the headless test client is `TAK_HEADLESS=1 takclient game ... --mpai`
+(debug builds), not `--headless-net`.
 
 ## 1. Goals
 
@@ -33,6 +43,9 @@ The current implementation supports spectators and [verified map transfer](map-t
 Remaining non-goals for v1 (tracked in §10): allied mana sharing / unit gifting, mid-game diplomacy, persistent
 accounts or ratings, wire encryption (deploy behind a TLS proxy — and on
 untrusted networks that proxy is *not* optional, see resume tokens in §4).
+*(Since shipped: mana sharing and unit gifting, persistent accounts with
+SCRAM-style sign-in, and native TLS. Mid-game diplomacy and ratings remain
+open.)*
 
 ## 2. What exists today (and what survives)
 
@@ -207,8 +220,9 @@ agreed:
   **`Loaded`** the client sends its gameplay hash *with the room's game mods*, and
   the referee (mounted with the same package) rejects a mismatch — so a player
   lacking or differing on a game mod is caught before tick 0 rather than as a
-  mid-game desync. A pure relay (no `--data`) has no referee hash and falls back
-  to the live `StateHash` cross-check.
+  mid-game desync. *(The pure-relay mode without `--data`, which had no referee
+  hash and fell back to a client `StateHash` cross-check, has been removed:
+  `takserver` refuses to start without `--data`.)*
 - The old `overrides/` folder is never read. A client that finds one logs one
   line at startup and leaves it untouched.
 
@@ -411,7 +425,7 @@ silently skipped.)
 | Msg | Payload | Notes |
 |---|---|---|
 | `Hello` / `Welcome` | proto ver, build id, data hash / assigned session id | version + data gate |
-| `SetName` | display name | no accounts in v1 |
+| `SetName` | display name | no accounts in v1 *(superseded: players sign in to an account by default, `--no-auth` serves without one)* |
 | `ListGames` / `GameList` | — / entries: id, name, map, players/capacity, state (lobby/running), passworded, uptime | running games listed but unjoinable |
 | `CreateGame` | name, password?, map id, options (crusades, gods, speed, unit cap, forfeit rule) | creator becomes host |
 | `JoinGame` / `JoinResult` | game id, password? / slot or error | error: full, bad password, running |

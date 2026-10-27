@@ -4,6 +4,16 @@ A recurring, fair worry about a lockstep engine: could single-player and
 multiplayer *do things differently*? Here is the precise answer for this engine,
 with the guardrail that keeps it honest.
 
+> **Status (0.9.7):** the in-process single-player driver described in the table
+> below is gone. Single-player now launches a private local `takserver`
+> (`--local --no-auth`) and plays through exactly the same server-sequenced
+> bundles, fixed 1/30 step and server-run AI as multiplayer, so the latency,
+> substep, ordering, AI-tick and AI-seed differences no longer exist (a room's
+> RNG seed is now rolled per room, or pinned with `takserver --seed`). The
+> table is kept as the history of why that change was made. The direct-vs-wire
+> regression test below still stands: the server referee applies commands
+> directly, while every client applies them after the wire.
+
 ## The rules are one code path
 
 Single-player (offline, immediate apply, in-process AI) and multiplayer
@@ -54,8 +64,9 @@ to guard — is narrower than "SP == MP":
 
 - **Part 1 (CI-gated, no game data):** the wire format round-trips commands,
   events, and a full tick bundle byte-for-byte (1040 command cases across every
-  `Cmd` kind and edge-value floats/ids), and the server's per-tick command sort
-  is stable and player-ordered.
+  `Cmd` kind and edge-value floats/ids), the server's per-tick command sort
+  is stable and player-ordered, and leave events agree between the referee,
+  direct and wire paths.
 - **Part 2 (local / anyone with the assets):** builds two real worlds and drives
   an identical schedule — including a same-tick two-player command pair and a
   forfeit event — through the direct path vs the wire path, asserting equal
