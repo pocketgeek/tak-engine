@@ -523,12 +523,21 @@ Still deviating:
 
 In the same routine (`51a3c2..51a408`), after the 16-bit HP subtraction, a
 unit whose construction remaining (+0x108, a float) is nonzero gets
-`remaining = 1 - hp / maxdamage` from the new signed HP word, whatever the
-damage source (weapon, fire, script). The work routine `429af0` derives a
-site's HP from that fraction, so retail construction HP is bounded by
-maxdamage by construction. We mirror this in `applyHit` for retail sites, and
-cap the legacy `tickConstruction` growth at maxdamage in 64 bits (a very short
-buildtime or a tall type used to wrap the 16.16 word).
+`remaining = 1 - hp / maxdamage` from the new HP word read signed (`movsx`
+at `51a3e0`), whatever the damage source (weapon, fire, script). The work
+routine `429af0` derives a site's HP from that fraction, so retail
+construction HP is bounded by maxdamage by construction. We mirror this in
+`applyHit` for retail sites, and cap the legacy `tickConstruction` growth at
+maxdamage in 64 bits (a very short buildtime or a tall type used to wrap the
+16.16 word).
+
+A lethal hit leaves remaining above 1, so the next work call's
+`(1 - remaining) * maxdamage` is negative; `429af0` stores `_ftol`'s low word
+(`429c93`), as `retailConstructionWork` now does through `retailFtol`. Retail
+then sets the site's dying bit (`51a639`, owner record +0xea 1 or 2), as for
+any unit at HP <= 0. Our death sweep still exempts a retail site (a fresh one
+sits at HP 0), so a site hit to HP <= 0 stays up here; it only arises in the
+restored-save probe, the one place retail sites (`retailResources`) exist.
 
 ### A dying unit takes no more hits
 

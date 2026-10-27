@@ -134,6 +134,13 @@ inline RetailConstructionCompletionEffects retailCompleteConstruction(
     return effects;
 }
 
+// 5d3d54 (_ftol): truncate through a 64-bit fistp and keep the low word. Out of
+// range stores the integer indefinite, whose low word is zero.
+inline uint32_t retailFtol(double x) {
+    if (!(x>-9223372036854775808.0 && x<9223372036854775808.0)) return 0;
+    return uint32_t(uint64_t(int64_t(x)));
+}
+
 // 429af0: work is the builder's per-update contribution. Negative work is
 // unconjuring. Requested consumption is recorded BEFORE affordability scaling.
 // Completion/death callbacks remain with the host; flags and return behavior
@@ -165,14 +172,16 @@ inline RetailConstructionResult retailConstructionWork(
             site.remaining=0;site.hp=uint16_t(type.maxHp);
             return RetailConstructionResult::Completed;
         }
-        site.hp=uint16_t(uint32_t((1.0-double(site.remaining))*double(type.maxHp)));
+        // 429c93 stores _ftol's low word: a lethal hit (51a3e0) can leave remaining
+        // above 1, so the product may be negative (UB through an unsigned cast).
+        site.hp=uint16_t(retailFtol((1.0-double(site.remaining))*double(type.maxHp)));
         site.flags|=0x800u;
         return RetailConstructionResult::Worked;
     }
     const double remaining=double(site.remaining)+progress;
     site.remaining=float(remaining);
     if (remaining>=1) { site.hp=0;return RetailConstructionResult::Removed; }
-    site.hp=uint16_t(uint32_t((1.0-remaining)*double(type.maxHp)));
+    site.hp=uint16_t(retailFtol((1.0-remaining)*double(type.maxHp)));
     site.flags|=0x800u;
     resources.stored=float(double(resources.stored)+double(cost));
     resources.totalProduced+=double(cost);
@@ -184,13 +193,6 @@ inline RetailConstructionResult retailConstructionWork(
 // reciprocal at UnitType+0x216, which every build and repair multiplies by.
 inline float retailInverseBuildTime(float buildTime) {
     return float(1.0/double(buildTime>0 ? buildTime : 100.0f));
-}
-
-// 5d3d54 (_ftol): truncate through a 64-bit fistp and keep the low word. Out of
-// range stores the integer indefinite, whose low word is zero.
-inline uint32_t retailFtol(double x) {
-    if (!(x>-9223372036854775808.0 && x<9223372036854775808.0)) return 0;
-    return uint32_t(uint64_t(int64_t(x)));
 }
 
 // SELF-REPAIR, 51e1a8 -> 429d90 (unpaid). healtime is the unit's own worker time,

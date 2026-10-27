@@ -4905,12 +4905,14 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
                                                       -int64_t(INT32_MAX), INT32_MAX)));
         // Retail 51a3c2..51a408: every non-heal hit on an unfinished site (progress
         // remaining at +0x108 nonzero) rewrites remaining = 1 - hp/maxdamage from
-        // the new signed hp word, whatever the damage source. Without it the next
-        // work tick restored hp from the stale progress and erased the damage.
+        // the new SIGNED hp word (movsx 51a3e0), whatever the damage source. Without
+        // it the next work tick restored hp from the stale progress and erased the
+        // damage. A lethal hit leaves remaining above 1; read unsigned, the word made
+        // it hugely negative and the next work tick completed the site at full HP.
         if (e.retailSite && e.underConstruction && e.retailSite->progress.remaining!=0) {
             auto& progress=e.retailSite->progress;
             progress.hp=uint16_t(e.hp.floorInt());
-            progress.remaining=float(1.0-double(progress.hp)/std::max(1,e.maximumHp()));
+            progress.remaining=float(1.0-double(int16_t(progress.hp))/std::max(1,e.maximumHp()));
         }
         // Retail 409f7a..409fb2 routes the local monarch's hit to AlarmMon.
         // Keep ownership at impact, including splash and fatal hits; no visibility

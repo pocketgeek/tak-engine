@@ -6,6 +6,7 @@
 // wrapped past -32768 to about +26500 HP, signed overflow in fixed.h, and the
 // last hitter stole the kill credit. A hit above 32767 overflowed fromInt.
 #include "sim/sim.h"
+#include <cmath>
 #include <cstdio>
 using namespace tak;
 
@@ -117,6 +118,29 @@ int main() {
         check(pr.hp==uint16_t(w.unit(s)->hp.floorInt()),"a hit on a retail site updates its progress hp");
         check(std::fabs(pr.remaining-float(1.0-double(w.unit(s)->hp.floorInt())/500))<1e-6f,
               "...and its remaining work (1 - hp/maxdamage)");
+    }
+    {
+        // A LETHAL hit on a retail site: 51a3e0 reads the hp word signed (movsx), so
+        // remaining = 1 - (negative)/maxdamage lands above 1. Read unsigned, the word
+        // (e.g. 65486) made remaining about -130 and the next work call (429af0)
+        // completed the site at full health.
+        sim::World w;setup(w);
+        const int a=w.spawn(&attacker,200,200,0,0),s=w.spawn(&victim,230,260,0,1);
+        auto* site=w.unit(s);site->underConstruction=true;site->retailSite.emplace();
+        site->retailSite->progress.remaining=0.9f;site->retailSite->progress.hp=50;
+        site->retailSite->type.maxHp=500;site->retailSite->type.inverseTime=0.01f;
+        site->hp=Fixed::fromInt(50);
+        sim::RetailReplayProbe::hit(w,blow(100),a,s);   // 85..115: hp -65..-35
+        auto& pr=w.unit(s)->retailSite->progress;
+        const int hp=w.unit(s)->hp.floorInt();
+        check(hp<0,"the lethal hit takes the site's hp below zero");
+        check(pr.remaining>1.0f && std::fabs(pr.remaining-float(1.0-double(hp)/500))<1e-6f,
+              "...and its remaining work above 1 (signed hp word)");
+        sim::RetailConstructionResources res;res.allocation=1;res.stored=1e6f;
+        const auto r=sim::retailConstructionWork(pr,w.unit(s)->retailSite->type,res,1.0f);
+        check(r==sim::RetailConstructionResult::Worked,"the next work call does not complete it");
+        check(pr.hp==uint16_t(sim::retailFtol((1.0-double(pr.remaining))*500.0)),
+              "...and stores _ftol's low word of the negative hp");
     }
     return failures?1:0;
 }
