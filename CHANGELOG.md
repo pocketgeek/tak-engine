@@ -74,6 +74,11 @@ their validation reports; both live in [`docs/`](docs/).
   out it becomes visible for three seconds and then cloaks again. The Trapdoor
   Spider, which has no separate moving cost, now pays the original game's much
   smaller cost while it moves.
+- **Computer players judge a mana shortage as the original game does.** The
+  Retail AI, and the Passive, Easy, Normal and Absurdly Defensive levels, now
+  compare their income with the mana their builders and producers ask for,
+  not with what a short pool could pay them, when deciding whether they need
+  another lodestone.
 
 ## 0.9.5
 *2026-10-26 · protocol 299 · replay format 15 · does not play with 0.9.4 or earlier, nor their replays*
