@@ -538,11 +538,11 @@ int Controller::desire(BuildCat c, const Needs& n) const {
 }
 
 // Retail builds a lodestone when it runs short of mana (icd 0x410810, ported as
-// sim::retailBuildPriority): the store under 30% full, spending outpacing income
-// over the last second, and none of that lodestone unfinished. Its constructor
-// planner then draws among the menu's lodestones separately (0x412d00) and builds
-// that instead of the ordinary pick wherever 0x412f80 finds a free deposit in the
-// base radius (retailLodestoneRadius) -- unless a builder of the base is already on
+// sim::retailBuildPriority): the store under 30% full, mana requested outpacing
+// income over the last second (401330 - 401350: requests, not what was paid),
+// and none of that lodestone unfinished. Its constructor planner then draws
+// among the menu's lodestones separately (0x412d00) and builds that instead of
+// the ordinary pick wherever 0x412f80 finds a free deposit in the base radius (retailLodestoneRadius) -- unless a builder of the base is already on
 // one (0x40c830). Normal and the tiers sharing its economy add that trigger to their
 // own ladder, whose income target alone held them to one lodestone where a deposit
 // pays 100 a second and the store ran dry; Hard and Absurd keep their own expansion

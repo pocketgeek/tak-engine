@@ -14802,7 +14802,6 @@ void World::tick(float dt) {
             r.finishTick();player.mana=r.stored;player.storage=r.capacity;
             player.displayResources.income=r.produced;
             player.displayResources.usage=r.requested;
-            player.displayResources.requested=r.requested;
             if (player.buildCache) {
                 auto& history=player.buildCache->resources;
                 history.income=r.produced;history.usage=r.requested;history.advance();

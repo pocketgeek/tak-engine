@@ -188,7 +188,8 @@ void ClassicBrain::recount(const tak::sim::World& world) {
 void ClassicBrain::recomputePriorities(const tak::sim::World& world) {
     // The owner's live unit count (player+0xe8) and its store: fill = stored /
     // capacity (0 under 0.01 capacity), shortfall from the 29-of-30-tick income
-    // and spend history the World keeps for every player (displayResources).
+    // and REQUEST history the World keeps for every player (displayResources):
+    // 410928/410938 subtract 401350, the requested total, not mana paid.
     unsigned population = 0;
     for (const auto& u : world.units())
         if (u.player == player_ && u.alive() && u.type) ++population;

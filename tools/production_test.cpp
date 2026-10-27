@@ -205,8 +205,27 @@ static void hudShowsRequestedMana() {
     check(std::fabs(shown.expenditure - 210.0f) < 0.05f,
           "-N is the 210/s both producers request, above +N", detail);
     const auto before = hash();
-    w.player(0).displayResources.requests.fill(1e6f);
+    for (auto& sample : w.player(0).displayResources.samples) sample[1] = 1e6f;
     check(hash() == before, "...and the request history is not lockstep state");
+}
+
+// THE AI'S SHORTFALL TEST READS MANA REQUESTED. Retail's 410810 subtracts 401350
+// (the averaged request total, +0x10) from 401330 (income), not what was paid.
+// A player earning 5 a tick whose builders ask for 10 but are paid 2 is short,
+// with a full store: paid usage alone said it was not.
+static void aiShortfallReadsRequests() {
+    std::printf("the AI's shortfall test reads mana requested, not paid:\n");
+    Player p;
+    p.mana = 500;
+    for (int t = 0; t < 30; ++t) {
+        p.creditMana(5); p.requestMana(10); p.payMana(2);
+        p.displayResources.advance();
+    }
+    check(p.displayResources.shortfall(float(p.mana)), "requests above income are a shortfall, whatever was paid");
+    Player calm;
+    calm.mana = 500;
+    for (int t = 0; t < 30; ++t) { calm.creditMana(5); calm.debitMana(4); calm.displayResources.advance(); }
+    check(!calm.displayResources.shortfall(float(calm.mana)), "...and requests below income are not");
 }
 
 // CLOAKING SPENDS THE UNIT'S OWN MANA. Retail's cloak step (icd 0x401160)
@@ -229,7 +248,7 @@ static void cloakSpendsUnitMana() {
     std::snprintf(detail, sizeof detail, "unit %.4f, player %.4f", w.unit(spy)->mana, w.player(0).mana);
     check(w.unit(spy)->cloaked && std::fabs(w.unit(spy)->mana - (10.0 - 0.5)) < 1e-4 &&
           w.player(0).mana == 50.0, "a cloaked tick takes 15/30 from the unit, nothing from the store", detail);
-    check(w.player(0).displayResources.requests.back() == 0, "the mana bulb's -N never shows cloaking");
+    check(w.player(0).displayResources.samples.back()[1] == 0, "the mana bulb's -N never shows cloaking");
     int cloakedTicks = 1, blockedFrom = 0;
     for (int t = 2; t <= 200 && !blockedFrom; ++t) {
         w.tick(1.0f / 30);
@@ -939,6 +958,7 @@ int main(int argc,char** argv) {
     shortIncomeIsShared();
     hudShowsRequestedMana();
     cloakSpendsUnitMana();
+    aiShortfallReadsRequests();
     lodestoneUpgradeFinishesUnderShortShare();
     outputExistsDuringConstruction();
     scriptControlsReadinessAndPosition();

@@ -65,15 +65,42 @@ counting as income.
 
 So the -N is what consumers ask for, not what a short pool could pay: a
 starved economy shows a larger -N than +N. Ordinary matches recorded the mana
-actually paid. `RetailResourceHistory` now keeps a separate `requests` history:
-`Player::constructionShare` records the full-rate cost of construction, repair
-and production, the healing aura records its whole pulse, and every other
-`debitMana` requests exactly what it pays. The HUD reads `requests`; the AIs'
-shortfall test still reads the paid usage (`samples[i][1]`), so AI behaviour
-and the --mpai hashes are unchanged (retail's own AI pressure reads the
-requested figure; switching the AI over would change gameplay and is left
-separate). Nothing here is hashed.
+actually paid. `Player::constructionShare` now records the full-rate cost of
+construction, repair and production, the healing aura records its whole pulse,
+and every other `debitMana` requests exactly what it pays. (This first landed
+as a separate display-only history beside the paid one; see the AI section
+below for why there is now one.)
 
 Debug capture: `TAK_CONJURE_TEST=1 TAK_CONJURE_MANA=0 TAK_SHOT_MS=500
 takclient game "Ulasem Arena" --data <install> --testbuild --time 4 --shot
 out.png` shows `0/10000`, `+19`, `-26` while the Zhon monarch conjures a Hunter.
+
+## 2026-10-26: the AI's shortfall reads the request too
+
+The build manager's priority refresh (`0x410810`) reads the same two
+averages as the bulb: at `0x410928` it calls `0x401330` (produced) and at
+`0x410938` `0x401350` (requested, +0x10), and takes net = produced -
+requested. With fill = stored / capacity (0 when capacity is not above 0.01,
+`0x5eb790` = 0.01), it is short when net < -0.01 (`0x5ebbf0`) or when net <
+0.01 and stored < 0.01. The formula was already ported and emulation-checked
+(`tools/re/check_resource_history.py`); only its input was wrong: ours fed it
+the mana paid, which never exceeds what a short pool holds, so a starved
+economy whose store kept a little mana read as balanced.
+
+`RetailResourceHistory` is again one history, `samples[i] = {produced,
+requested}`, and `Player::requestMana` is what fills the second figure; the
+paid amount is no longer recorded. Every reader of the shortfall moves with
+it:
+
+- Retail AI (lobby RETAIL, `ClassicBrain::recomputePriorities`): the direct
+  port of `0x410810`.
+- Our Passive, Easy, Normal and Absurdly Defensive levels
+  (`Controller::manaShort`, the store-under-30% lodestone trigger ported from
+  the same branch); Hard and Absurd do not use it.
+- The restored retail build cache (`World::tick`, used by the replay probes
+  and tests, hashed there as before).
+
+The history is still not folded into `stateHash`: only the server's AI reads
+it, from its own World, and it is built only from hashed sim arithmetic, so a
+seed reproduces it exactly; clients and replays receive the AI's commands, not
+its inputs. This is how the paid history was treated.

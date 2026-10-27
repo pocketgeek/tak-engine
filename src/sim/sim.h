@@ -1620,6 +1620,8 @@ void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool bloc
 struct Player {
     // Accounting for the HUD and the server-side skirmish AI's mana-pressure test
     // (src/ai): never read by the simulation itself or folded into stateHash().
+    // Only the server's AI reads it, from its own World, and it is built from
+    // hashed sim arithmetic alone, so it is the same in every run of a seed.
     RetailResourceHistory displayResources;
     bool automaticGates=false; // normal AI capability; human gates remain manually controlled
     bool defensiveAi = false; // Passive AI defends in place from the moment units spawn
@@ -1636,25 +1638,22 @@ struct Player {
         }
         if (buildCache) buildCache->resources.income=float(double(buildCache->resources.income)+amount);
     }
-    // Records a consumer's full-rate request for the HUD (display only, never
-    // hashed). debitMana requests exactly what it pays; construction work
-    // requests through constructionShare and pays its share with payMana.
+    // Records a consumer's full-rate request: retail's resource object +0x10,
+    // which the HUD's -N and the AIs' shortfall test both average (401350).
+    // debitMana requests exactly what it pays; construction work requests
+    // through constructionShare and pays its share with payMana.
     void requestMana(double amount) {
-        displayResources.requested=float(double(displayResources.requested)+amount);
+        displayResources.usage=float(double(displayResources.usage)+amount);
+        if (retailResources) retailResources->requested=float(double(retailResources->requested)+amount);
+        if (buildCache) buildCache->resources.usage=float(double(buildCache->resources.usage)+amount);
     }
     void debitMana(double amount) {
         requestMana(amount);
         payMana(amount);
     }
     void payMana(double amount) {
-        displayResources.usage=float(double(displayResources.usage)+amount);
         mana-=amount;
-        if (retailResources) {
-            auto& r=*retailResources;
-            mana=r.stored=float(mana);
-            r.requested=float(double(r.requested)+amount);
-        }
-        if (buildCache) buildCache->resources.usage=float(double(buildCache->resources.usage)+amount);
+        if (retailResources) { auto& r=*retailResources; mana=r.stored=float(mana); }
     }
     // Restored retail AI is separate from the command-emitting skirmish AI.
     // Unsupported planner branches stop diagnostic replay explicitly.

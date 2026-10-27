@@ -231,7 +231,7 @@ struct PlayerR {
         double produced=0,used=0;
         for (size_t i=0;i<29;++i) {
             produced+=player.displayResources.samples[i][0];
-            used+=player.displayResources.requests[i];
+            used+=player.displayResources.samples[i][1];
         }
         income=float(produced*double(1.034482717514038f));
         expenditure=float(used*double(1.034482717514038f));
