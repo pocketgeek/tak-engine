@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.9.6**. Which versions it plays with, and whose
+This guide covers **TAK Engine 0.9.7**. Which versions it plays with, and whose
 replays it plays: see [Versions](#versions). What changed in each release: see
 the [CHANGELOG](../CHANGELOG.md). It is written for three kinds of reader:
 
@@ -624,8 +624,24 @@ target underneath.
   Shift-queued area starts from where the previous order ends, and **Stop**
   cancels the job. Builders given overlapping areas split the spots between
   them instead of heading for the same one.
-- **Assisting**: right-click an unfinished building with another builder to help
-  build it.
+- **Assisting**: right-click an unfinished unit of yours with a builder to help
+  finish it. The builder must be a mobile builder (buildings never help), the
+  unfinished unit must be yours rather than an ally's, and a builder that can
+  only build what is on its own menu helps only with types on that menu. Helpers
+  share the work: the unit finishes sooner and the mana is spent faster, but the
+  total cost is still its build cost. This works on a building going up, and on a
+  unit a factory or a Zhon builder is still producing: the helpers advance that
+  unit's one build, it finishes once, and its producer is free again at that
+  moment. A builder on a repeat queue can be told to assist too; its own product
+  waits until it has finished helping.
+- **Guarding with a builder**: a mobile builder told to **Guard** a unit
+  follows it and lends a hand. If the guarded unit is damaged, the builder
+  repairs it (allies too); if the guarded unit is itself unfinished, it helps
+  build it; otherwise it helps with what the guarded unit is building,
+  producing, helping with or repairing. The help goes ahead of the guard order,
+  which resumes when the job is done, and it ignores distance. A guarding
+  builder looks for work about every half second (15 to 29 game ticks). A
+  guarding builder that can fly only escorts.
 - **Clearing the site**: a builder that can reclaim automatically clears trees
   and rocks from a valid building site before it starts.
 - **Blocked sites**: when the builder arrives and units stand on the site, it
@@ -2051,16 +2067,16 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 0.9.6 uses network protocol **300** and replay format **15**. No
-earlier release uses protocol 300, so:
+TAK Engine 0.9.7 uses network protocol **301** and replay format **15**. No
+earlier release uses protocol 301, so:
 
-- **Multiplayer:** 0.9.6 plays only with 0.9.6. A server turns away a client
-  whose protocol differs from its own, so a 0.9.5 or older player cannot join a
-  0.9.6 server, nor a 0.9.6 player an older one; the connection fails with a
+- **Multiplayer:** 0.9.7 plays only with 0.9.7. A server turns away a client
+  whose protocol differs from its own, so a 0.9.6 or older player cannot join a
+  0.9.7 server, nor a 0.9.7 player an older one; the connection fails with a
   *protocol version mismatch* message. When a release changes the protocol, a
   server and all of its players update together.
-- **Replays:** 0.9.6 plays only replays recorded by 0.9.6. A replay recorded by
-  0.9.5 or earlier needs a version with that replay's protocol; keep an old
+- **Replays:** 0.9.7 plays only replays recorded by 0.9.7. A replay recorded by
+  0.9.6 or earlier needs a version with that replay's protocol; keep an old
   copy of the engine (built from its tag, see the
   [development guide](development.md)) if you want to keep watching old
   replays.

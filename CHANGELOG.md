@@ -19,6 +19,48 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.7
+*2026-10-27 · protocol 301 · replay format 15 · does not play with 0.9.6 or earlier, nor their replays*
+
+- **Helping to build now works the way the original game does.** A mobile
+  builder can help finish any unfinished unit of its own side (not an ally's),
+  including a unit a factory or a Zhon builder is still producing. The helpers
+  and the producer work on one shared build: the unit finishes sooner, the mana
+  is spent faster, and the total cost is still its build cost. Before, a helper
+  on a produced unit finished it early while its producer kept its slot and was
+  charged the full cost again (a Zhon builder paid 108 mana too much on a unit
+  costing 311) and kept healing it for free. Now the producer is freed the
+  moment the unit is finished, the unit's finishing orders (the factory's exit
+  step or the rally) are given once, and orders you gave the unit while it was
+  unfinished are kept. A factory with no helper finishes on exactly the tick it
+  did before.
+- **Guarding builders lend a hand.** A mobile builder told to Guard a unit
+  repairs it when it is damaged (allies too), helps build it when it is
+  unfinished, and otherwise helps with what that unit is building, producing,
+  helping with or repairing. The help goes ahead of the guard order, which
+  resumes afterwards; a guarding builder repairing a unit that walks off follows
+  it. A flying builder that guards still only escorts.
+- **Who may help is checked by the game, not just the screen.** A builder helps
+  only a unit of its own side, only if it can move (buildings never help), and,
+  when it may build only what is on its own menu, only a type on that menu. A
+  modified client cannot get around this.
+- **Builders on a repeat queue can help.** A Zhon builder repeating a unit can
+  be told to help with an unfinished unit; its own product waits until it has
+  finished helping. Move, Patrol and Attack orders still set its rally.
+- **For testers:** a debug build's `TAK_AUTOPLAY` now also builds, trains, puts
+  conjurers on a repeat queue, guards busy units and assists unfinished ones, so
+  the desync sweeps cover these orders. Release builds are unchanged.
+- **Protocol 301:** the shared build progress, the guard's next look and the
+  help walk are part of the game state the players compare, so 0.9.7 plays only
+  with 0.9.7 and plays only replays recorded by 0.9.7. A 0.9.6 client or server
+  is turned away with a *protocol version mismatch* message, and a 0.9.6 replay
+  is refused with the version message.
+
+**Upgrading (server operators):** update `takserver` together with your
+players.
+
+[Release notes](docs/release-0.9.7-notes.md) · [Validation report](docs/release-0.9.7-validation.md) · [Source at v0.9.7](https://github.com/pocketgeek/tak-engine/tree/v0.9.7)
+
 ## 0.9.6
 *2026-10-27 · protocol 300 · replay format 15 · does not play with 0.9.5 or earlier, nor their replays*
 
