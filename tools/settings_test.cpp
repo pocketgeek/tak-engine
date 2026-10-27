@@ -430,6 +430,26 @@ int main() {
             start(k, W, 1.45f, 0, 5297);
             check("x11 rec: kde same", k.uiScale == 2.0f && k.cursorScale == 4);
         }
+        {   // Widths from different monitors (docked / undocked between the sessions) or a
+            // mixed-scale real-pixel X11 desktop give a ratio neither kind has: not measured.
+            check("x11: other monitor", wl::classifyX11(2560, 5297, 1.45f) == U);
+            check("x11: mixed real", wl::classifyX11(1920 + 3840, 3840, 2.0f) == U);
+            // Native on the 57", then Off on the KDE laptop alone (real pixels, 2560 wide):
+            // read as stretched this would shrink everything by 1.45.
+            Settings s; s.uiScale = 1.5f; s.cursorScale = 4;
+            s.displayMode = W; s.displayScale = 1.45f; s.displayLogicalWidth = 5297;
+            check("dock: kde x11 same", start(s, U, 0, 2560, 0) == 1.0f && s.uiScale == 1.5f && s.displayMode == R);
+            check("dock: back same", start(s, W, 1.45f, 0, 5297) == 1.0f && s.uiScale == 1.5f && s.cursorScale == 4);
+        }
+        {   // An X11 start that cannot measure itself against a known earlier window (a
+            // native history from the build before widths were recorded) uses the fallback
+            // and remembers it, so the next native start does not convert a second time.
+            Settings s; s.uiScale = 1.0f; s.cursorScale = 2; s.displayMode = W; s.displayScale = 1.5f;
+            check("guess: x11 left", start(s, U, 0, 1707, 0) == 1.0f && s.displayMode == R && s.uiScale == 1.0f);
+            probed = 1707; probeCalls = 0;
+            check("guess: no compounding", start(s, W, 1.5f, 0, 1707) == 1.0f && s.uiScale == 1.0f &&
+                                           s.cursorScale == 2 && probeCalls == 0);
+        }
         {   // The scale must be settled: an unsettled native start (0) records and changes nothing,
             // so the next start still converts.
             Settings g; g.uiScale = 1.0f; g.cursorScale = 2;

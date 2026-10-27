@@ -77,11 +77,13 @@ inline float displayScaleOf(SDL_Window* win) {
 // display's, up to `budgetMs`; on time-out a scale above 1 is the compositor's (accepted),
 // while 1 against a scaled display is not settled: 0, and nothing is recorded this start.
 inline float settledNativeScale(SDL_Window* win, SDL_Renderer* ren, int budgetMs = 1500) {
-    const float want = displayScaleOf(win);
     const Uint32 t0 = SDL_GetTicks();
     float got = 1.0f;
     for (;;) {
         SDL_PumpEvents();
+        // Asked again each time: until the surface is on an output SDL may name another
+        // display than the one the compositor puts the window on.
+        const float want = displayScaleOf(win);
         int ww = 0, wh = 0, ow = 0, oh = 0;
         SDL_GetWindowSize(win, &ww, &wh);
         if (SDL_GetRendererOutputSize(ren, &ow, &oh) == 0) got = backingScale(ww, ow);

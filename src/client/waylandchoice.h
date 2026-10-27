@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -196,11 +197,16 @@ inline int parseMode(std::string_view v) {
 
 // The X11 kind from the X11 desktop width and the Wayland logical desktop width at
 // native scale S: real pixels give x11W = logicalW x S (KDE: x the largest output scale),
-// stretching gives x11W = logicalW. Split halfway; kModeX11 when it cannot tell (a number
-// missing, or S = 1 where both kinds are the same).
+// stretching gives x11W = logicalW. Real above halfway, stretched only within 3% of equal;
+// kModeX11 when it cannot tell: a number missing, S = 1 (both kinds are the same), or a
+// ratio neither kind gives on one desktop -- the two widths were measured on different
+// monitors (a laptop docked or undocked between the sessions) or the X11 one spans
+// outputs with different real-pixel scales.
 inline int classifyX11(int x11W, int logicalW, float S) {
     if (x11W <= 0 || logicalW <= 0 || !(S > 1.01f)) return kModeX11;
-    return float(x11W) > float(logicalW) * (1.0f + S) * 0.5f ? kModeX11Real : kModeX11Stretched;
+    const float r = float(x11W) / float(logicalW);
+    if (r > (1.0f + S) * 0.5f) return kModeX11Real;
+    return std::abs(r - 1.0f) <= 0.03f ? kModeX11Stretched : kModeX11;
 }
 
 // The kind to assume when it could not be measured: kwinrc on KDE (its "scaled by the
@@ -272,10 +278,17 @@ inline float advanceDisplay(DisplayHistory& h, const Observation& now, int assum
         }
     }
     int cur = now.mode == kModeX11 ? classifyX11(next.x11Width, next.logicalWidth, S) : now.mode;
-    next.mode = cur;   // unmeasured stays kModeX11, for a later native start to settle
-    h = next;
     if (kinds) { (*kinds)[0] = prev; (*kinds)[1] = cur; }
+    // Unmeasured stays kModeX11, for a later native start to settle -- while the sizes are
+    // still in this X11 window's own units. Once they were converted (or deliberately left)
+    // against a known earlier window with the fallback standing in, they are in the
+    // fallback's units: remember that, so a later start does not convert them a second
+    // time against a different answer.
+    const bool prevKnown = prev != kModeX11 && prev != kModeUnknown;
     if (prev == kModeX11) prev = fallback;
+    if (cur == kModeX11 && prevKnown && S > 1.01f) cur = fallback;
+    next.mode = cur;
+    h = next;
     if (cur == kModeX11) cur = fallback;
     if (prev == kModeUnknown || inPoints(prev, u) == inPoints(cur, u) || !(S > 1.01f)) return 1.0f;
     return inPoints(prev, u) ? S : 1.0f / S;

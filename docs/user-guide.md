@@ -2684,11 +2684,13 @@ Scale** and **Cursor Size** once to keep the interface the same size on screen:
 
 The game does not guess which kind the X11 window was: it compares the size of
 the X11 desktop with the Wayland desktop. If it cannot tell (no X11 server to
-ask), it leaves the sizes as they are. It also waits for the desktop to report
-the Wayland window's scale before deciding, and remembers which window it last
-had, so this never adds up over several switches. UI Scale stops at 200% and Cursor Size at 8×, so a value at the top
-cannot grow and comes back a little smaller after switching back; set it again in
-Options if so.
+ask, or the monitors changed between the two starts), it leaves the sizes as they
+are, except on KDE Plasma set to "scaled by the system", which it reads from
+Plasma's settings. It also waits for the desktop to report the Wayland window's
+scale before deciding, and remembers which window it last had, so this never adds
+up over several switches. UI Scale stops at 200% and Cursor Size at 8×, so a
+value at the top cannot grow and comes back a little smaller after switching
+back; set it again in Options if so.
 
 ### The whole screen flickers on a large display
 
