@@ -77,6 +77,12 @@ their validation reports; both live in [`docs/`](docs/).
   out it becomes visible for three seconds and then cloaks again. The Trapdoor
   Spider, which has no separate moving cost, now pays the original game's much
   smaller cost while it moves.
+- **Fighting and working reveal a cloaked unit, as in the original game.**
+  Each shot keeps the unit visible for 20 seconds. Building, reclaiming or
+  raising the dead keeps it visible while it works and for 10 seconds after,
+  and repairing for 5 seconds after. Enemies close by no longer make a cloaked
+  unit visible (the original game has no such rule), and a cloaked unit pays
+  its moving cost for any movement, even turning on the spot.
 - **Raising the dead costs no mana.** As in the original game, resurrecting
   and animating are free: they no longer drain your mana pool or show in the
   mana bulb. A short mana supply still slows them, as it slows construction.

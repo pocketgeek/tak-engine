@@ -341,6 +341,174 @@ static void reviveCostsNothing() {
           "a computer player under 0.7 allocation abandons it at the end", detail);
 }
 
+// WORK AND SHOTS KEEP A CLOAKER VISIBLE. Retail sets the unit's cloak block
+// (+0xcc) to max(+0xcc, now + N) on every shot (600 ticks, 0x52af41), on every
+// MobileBuild/HelpBuild work tick (300, 0x405bc8/0x4060bb), on every RECLAIM
+// wake with countdown left (300, 0x406576), on every resurrect channel tick
+// (300, 0x406e45) and on every RepairUnit work tick (150, 0x4076ae). The cloak
+// step decloaks while the block lies ahead.
+static UnitType cloakerType(const char* id) {
+    UnitType t = soldierType();
+    t.id = id; t.canCloak = true; t.cloakCost = 3; t.cloakCostMove = 3;
+    t.maxMana = 1000; t.manaRegen = 300;
+    return t;
+}
+// Runs `w` until `done`, tracking the largest block written ahead of the
+// tick and whether the unit was ever cloaked while `working` once the work
+// stage had begun (the first block).
+struct BlockRun { uint32_t ahead = 0; bool cloakedWhileWorking = false; int ticks = 0; };
+template <class Working, class Done>
+static BlockRun watchBlock(World& w, int id, int limit, Working working, Done done) {
+    BlockRun r;
+    for (; r.ticks < limit && !done(); ++r.ticks) {
+        const uint32_t before = w.unit(id)->cloakBlockedUntil;
+        w.tick(1.0f / 30);
+        const Unit& u = *w.unit(id);
+        if (u.cloakBlockedUntil != before) r.ahead = std::max(r.ahead, u.cloakBlockedUntil - w.tickCount());
+        if (r.ahead && working() && u.cloaked) r.cloakedWhileWorking = true;
+    }
+    return r;
+}
+
+static void workAndShotsBlockCloak() {
+    std::printf("shots and work keep a cloaker visible:\n");
+    char detail[160];
+    {
+        auto ownedWorld = makeWorld(64, 64);
+        World& w = *ownedWorld;
+        UnitType spy = cloakerType("spy");
+        Weapon weapon; weapon.name = "cloak-test-weapon"; weapon.range = 300; weapon.damage = 1;
+        weapon.reload = 1000; weapon.aimTol = 32767; spy.weapon = weapon; spy.weapons.push_back(weapon);
+        UnitType dummy = soldierType(); dummy.id = "dummy"; dummy.maxHp = 30000;
+        const int id = w.spawn(&spy, 300, 300, 0, 0);
+        w.setCloak(id, true);
+        for (int t = 0; t < 5; ++t) w.tick(1.0f / 30);
+        const bool cloakedBefore = w.unit(id)->cloaked;
+        w.spawn(&dummy, 400, 300, 0, 1);
+        int shot = -1, visible = 0;
+        for (int t = 0; t < 300 && shot < 0; ++t) {
+            w.tick(1.0f / 30);
+            if (w.unit(id)->cloakBlockedUntil) shot = t;
+        }
+        const uint32_t ahead = shot >= 0 ? w.unit(id)->cloakBlockedUntil - w.tickCount() : 0;
+        if (shot >= 0) {
+            visible = 1;   // the tick it fired
+            for (w.tick(1.0f / 30); !w.unit(id)->cloaked && visible < 1000; w.tick(1.0f / 30)) ++visible;
+        }
+        std::snprintf(detail, sizeof detail, "cloaked before %d, shot at %d, block %u ahead, visible %d ticks",
+                      cloakedBefore, shot, ahead, visible);
+        check(cloakedBefore && shot >= 0 && ahead == 600 && visible == 600,
+              "a cloaked unit that fires is visible for 600 ticks", detail);
+    }
+    {
+        auto ownedWorld = makeWorld(128, 128);
+        World& w = *ownedWorld;
+        UnitType mason = cloakerType("mason"); mason.isBuilder = true; mason.workerTime = 10;
+        UnitType hall = factoryType(); hall.id = "hall"; hall.isBuilder = false; hall.footX = hall.footZ = 2;
+        hall.buildTime = 100000; hall.buildCost = 10;
+        const int id = w.spawn(&mason, 500, 500, 0, 0);
+        w.setCloak(id, true);
+        w.tick(1.0f / 30);
+        w.player(0).mana = 90;
+        const int site = w.startBuild(id, &hall, 540, 500, World::Approach::None);
+        const BlockRun r = watchBlock(w, id, 120, [&] { return w.unit(id)->buildSiteId != 0; }, [] { return false; });
+        std::snprintf(detail, sizeof detail, "site %d, block %u ahead, cloaked while building %d",
+                      site, r.ahead, r.cloakedWhileWorking);
+        check(site && r.ahead == 300 && !r.cloakedWhileWorking, "construction work blocks cloaking for 300 ticks", detail);
+    }
+    {
+        auto ownedWorld = makeWorld(128, 128);
+        World& w = *ownedWorld;
+        UnitType mender = cloakerType("mender"); mender.isBuilder = true; mender.workerTime = 1;
+        UnitType hurt = soldierType(); hurt.id = "hurt"; hurt.maxHp = 30000; hurt.buildTime = 100000; hurt.buildCost = 1;
+        const int id = w.spawn(&mender, 500, 500, 0, 0);
+        const int patient = w.spawn(&hurt, 530, 500, 0, 0);
+        w.unit(patient)->hp = Fixed::fromInt(10);
+        w.setCloak(id, true);
+        w.tick(1.0f / 30);
+        w.repair(id, patient, false);
+        const BlockRun r = watchBlock(w, id, 120, [&] { return w.unit(id)->repairId != 0; }, [] { return false; });
+        std::snprintf(detail, sizeof detail, "block %u ahead, cloaked while repairing %d", r.ahead, r.cloakedWhileWorking);
+        check(r.ahead == 150 && !r.cloakedWhileWorking, "repair work blocks cloaking for 150 ticks", detail);
+    }
+    {
+        auto ownedWorld = makeWorld(128, 128);
+        World& w = *ownedWorld;
+        UnitType clearer = cloakerType("clearer"); clearer.isBuilder = true; clearer.canReclaim = true;
+        clearer.footX = clearer.footZ = 1; clearer.turnInPlaceRate = 0; clearer.workerTime = 10;
+        w.addFeature(1, 20 * 16 + 8, 20 * 16 + 8, 250, 1, 1, false);
+        const int id = w.spawn(&clearer, 19 * 16 + 8, 20 * 16 + 8, 0.0f, 0);
+        w.setCloak(id, true);
+        w.tick(1.0f / 30);
+        w.reclaim(id, 1, false);
+        const BlockRun r = watchBlock(w, id, 400, [&] { return w.unit(id)->reclaimId != 0; },
+                                      [&] { return !w.feature(1)->alive; });
+        std::snprintf(detail, sizeof detail, "block %u ahead, cloaked while reclaiming %d, %d ticks",
+                      r.ahead, r.cloakedWhileWorking, r.ticks);
+        check(r.ahead == 300 && !r.cloakedWhileWorking, "reclaim work blocks cloaking for 300 ticks", detail);
+    }
+    {
+        auto ownedWorld = makeWorld(64, 64);
+        World& w = *ownedWorld;
+        FeatType body; body.name = "victim_dead"; body.resurrectable = true; body.decomposeTicks = 100000;
+        w.setFeatureTypes({body});
+        UnitType victim = soldierType(); victim.id = "victim"; victim.buildTime = 100;
+        UnitType priest = cloakerType("priest"); priest.workerTime = 10; priest.canResurrect = true;
+        w.mapCorpse(&victim, 0);
+        const int id = w.spawn(&priest, 300, 300, 0, 0);
+        w.setCloak(id, true);
+        w.tick(1.0f / 30);
+        const int dead = w.spawn(&victim, 330, 300, 0, 0);
+        w.unit(dead)->hp = {}; w.unit(dead)->deathType = 9;
+        const BlockRun r = watchBlock(w, id, 200, [&] { return w.unit(id)->reviveTarget != 0; }, [] { return false; });
+        std::snprintf(detail, sizeof detail, "block %u ahead, cloaked while channelling %d", r.ahead, r.cloakedWhileWorking);
+        check(r.ahead == 300 && !r.cloakedWhileWorking, "a resurrect channel blocks cloaking for 300 ticks", detail);
+    }
+}
+
+// THE CLOAK STEP'S OWN TESTS. Retail charges cloakcostmoving whenever the
+// unit's MoveRate tier (+0x130 bits 2-3) is not 0 -- any motion at all, where
+// ours wanted more than 3 px/s -- and nothing but its own mana and the block
+// decloaks it: mincloakdistance only draws a circle (0x4d6530).
+static void cloakStepFollowsRetail() {
+    std::printf("the cloak step follows retail:\n");
+    char detail[160];
+    {
+        auto ownedWorld = makeWorld(64, 64);
+        World& w = *ownedWorld;
+        UnitType creeper = soldierType(); creeper.id = "creeper";
+        creeper.maxVel = Fixed::fromFloat(1.5f / 30.0f);   // 1.5 px/s
+        creeper.canCloak = true; creeper.cloakCost = 3; creeper.cloakCostMove = 30;
+        creeper.maxMana = 1000; creeper.manaRegen = 0;
+        const int id = w.spawn(&creeper, 300, 300, 0, 0);
+        w.setCloak(id, true);
+        w.order(id, 300, 800, false);
+        for (int t = 0; t < 30; ++t) w.tick(1.0f / 30);
+        const double before = w.unit(id)->mana;
+        w.tick(1.0f / 30);
+        const double paid = before - w.unit(id)->mana;
+        std::snprintf(detail, sizeof detail, "speed %.3f px/s, paid %.4f a tick",
+                      w.unit(id)->speed.toFloat() * 30, paid);
+        check(w.unit(id)->speed.v > 0 && w.unit(id)->cloaked && std::fabs(paid - 1.0) < 1e-4,
+              "a slow walker pays the moving cost", detail);
+    }
+    {
+        auto ownedWorld = makeWorld(64, 64);
+        World& w = *ownedWorld;
+        UnitType spy = soldierType(); spy.id = "spy";
+        spy.canCloak = true; spy.cloakCost = 3; spy.cloakCostMove = 3; spy.minCloakDist = 80;
+        spy.maxMana = 1000; spy.manaRegen = 300;
+        UnitType enemy = soldierType(); enemy.id = "enemy";
+        const int id = w.spawn(&spy, 300, 300, 0, 0);
+        w.spawn(&enemy, 330, 300, 0, 1);
+        w.setCloak(id, true);
+        int cloaked = 0;
+        for (int t = 0; t < 30; ++t) { w.tick(1.0f / 30); cloaked += w.unit(id)->cloaked; }
+        std::snprintf(detail, sizeof detail, "cloaked %d of 30 ticks with an enemy 30 px away", cloaked);
+        check(cloaked == 30, "an enemy inside mincloakdistance does not decloak", detail);
+    }
+}
+
 // A LODESTONE UPGRADE FINISHES UNDER A SHORT SHARE. Playtest (protocol 273):
 // a Zhon Shaman's divine lodestone sat at full hp, completedWork 1-2^-53, for
 // 3.5 minutes, and finished the tick after the player stopped one producer.
@@ -1030,6 +1198,8 @@ int main(int argc,char** argv) {
     hudShowsRequestedMana();
     cloakSpendsUnitMana();
     reviveCostsNothing();
+    workAndShotsBlockCloak();
+    cloakStepFollowsRetail();
     aiShortfallReadsRequests();
     lodestoneUpgradeFinishesUnderShortShare();
     outputExistsDuringConstruction();

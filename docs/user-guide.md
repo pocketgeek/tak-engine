@@ -817,9 +817,15 @@ they rank up. Some units, such as Monarchs, never gain ranks.
 
 **Cloaking.** Units that can cloak turn invisible with **K**. Cloaking spends
 the unit's own mana (the blue bar when it is selected), not your mana pool;
-most cloakers pay more while they move. When the unit's mana runs out it becomes
-visible for three seconds, then cloaks again once its mana can pay, for as
-long as cloaking stays on.
+most cloakers pay more while they move, and any movement counts, even turning
+on the spot. When the unit's mana runs out it becomes visible for three seconds,
+then cloaks again once its mana can pay, for as long as cloaking stays on.
+
+As in the original game, work and fighting give a cloaked unit away. Each shot
+it fires keeps it visible for 20 seconds. Building, reclaiming or raising the
+dead keeps it visible while it works and for 10 seconds after, and repairing
+for 5 seconds after (a flying builder stays hidden while it builds or
+repairs). Enemies standing next to a cloaked unit do not reveal it.
 
 **Gates.** Your gates open and close with **O**. Your own units can pass an open
 gate. Clicking the doorway of an open gate is like clicking the ground, so a

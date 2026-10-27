@@ -5160,6 +5160,9 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         if (!scriptTriggered && u.mana < w.manaCost) return;
         u.mana -= w.manaCost;
     }
+    // Every shot keeps the shooter visible for 600 ticks (icd 0x52af41, set just
+    // before the release 0x530220).
+    blockCloak(u, 600);
     // Veterans reload faster (retail divides the cooldown by the veteran multiplier).
     const float rl = w.reload / std::max(u.vetMul(), 0.01f);
     if(!scriptTriggered) {u.reloads[slot] = int32_t(rl * kTick + 0.5f);u.fireAnimations|=uint32_t(1)<<slot;u.weaponAnimations.add(tak::RetailWeaponAnimation::Fire,slot);}   // seconds -> ticks, as retail stores it
@@ -9555,6 +9558,9 @@ void World::tickReclaim(Unit& b) {
     }
     if (retailReclaimWork(work.mission,work.reclaimCountdown,tickCounter_).particle)
         emitConstruction(b,false);
+    // A wake with countdown left keeps the reclaimer visible for 300 ticks
+    // (Reclaim 0x406576, VTOL_Reclaim 0x420b02).
+    if (work.reclaimCountdown>0) blockCloak(b,300);
     if (target<0) {
         // 4065xx: a corpse being reclaimed does not decay (object+0x3c reset
         // to decomposetime*30 on every wake).
@@ -9694,6 +9700,10 @@ void World::tickRepair(Unit& b, float dt) {
     const int32_t diff = bamDiff(want, b.heading);
     b.heading = b.heading + Bam(std::clamp(diff, -bPivotMax, bPivotMax));
     b.turnReqBam = diff;   // builder pivot request -> TurnDirection anim (icd 0x4d9593)
+    // RepairUnit's work stage keeps a ground repairer visible for 150 ticks on
+    // every work tick, before the repair is paid (icd 0x4076ae, then 0x429d90);
+    // VTOL_RepairUnit does not.
+    if (!b.type->canFly) blockCloak(b, 150);
     float total = t->type->buildTime / std::max(b.type->workerTime, 0.01f);
     Player& tm = players_[size_t(b.player)];
     float cost = t->type->buildCost * dt / std::max(total, 0.01f);
@@ -10166,6 +10176,10 @@ void World::tickConstruction(Unit& b, float dt) {
         return;
     }
     b.buildStuckT = 0; b.buildStuckD = INT32_MAX;      // in range: reset the watchdog
+    // MobileBuild's and HelpBuild's work stages (icd 0x405bc8, 0x4060bb) keep a
+    // ground builder visible for 300 ticks on every work tick, paid or not;
+    // FlyingBuild's do not.
+    if (!b.type->canFly) blockCloak(b, 300);
     // HelpBuild's work stage owns the weapons, like the MobileBuild placement.
     setSlotsManual(b,kSlotsWork);
     site->buildBegun = true;   // in range: the site starts materialising now
@@ -10855,7 +10869,8 @@ void World::tickAbilities(float) {
             const UnitType* out = animate ? u.type->animateType : c->type;
             const double allocation = players_[size_t(u.player)].allocation();
             u.reviveWork -= int32_t(allocation * 65536.0);
-            if (u.reviveWork > 0) continue;
+            // Work left: the caster stays visible 300 ticks (0x406e45, 0x420477).
+            if (u.reviveWork > 0) { blockCloak(u, 300); continue; }
             u.reviveTarget = 0;
             if (computerOwned(u.player) && allocation < 0.7) continue;
             revives.push_back({out, c->x.toFloat(), c->z.toFloat(), u.player, animate});
@@ -14551,22 +14566,20 @@ void World::tick(float dt) {
         // Cloaking spends the UNIT'S OWN mana, never the player's store (icd
         // 0x401160, after the regeneration above: 0x4010d0 on unit +0xd8, so it
         // never shows in the mana bulb). A tick costs cloakcost/30, or
-        // cloakcostmoving/30 while moving; a unit whose pool cannot pay it
-        // decloaks and may not cloak again for 90 ticks (+0xcc = max(+0xcc,
-        // now + 90)), then retries while the order stands. An enemy within
-        // mincloakdistance also forces a decloak (engine rule, not retail's).
+        // cloakcostmoving/30 while the unit's MoveRate tier (+0x130 bits 2-3,
+        // set by 4db350 after its mover) is not 0 -- moving or turning; a unit
+        // whose pool cannot pay it decloaks and may not cloak again for 90
+        // ticks (+0xcc = max(+0xcc, now + 90)), then retries while the order
+        // stands. Shots, construction, repair, reclaim and revive work set
+        // +0xcc too (blockCloak). Nothing else decloaks: retail reads
+        // mincloakdistance only to draw a circle round a cloaked unit (0x4d6530,
+        // under the renderer 0x4fc5b0), and the +0x130 & 0x400 veto it tests
+        // has no writer.
         if (u.type->canCloak && u.cloakOn) {
-            bool enemyNear = false;
-            float md = std::max(float(u.type->minCloakDist), 1.0f);
-            forEachNear(u.x.toFloat(), u.z.toFloat(), md, [&](int idx) {
-                const Unit& e = units_[size_t(idx)];
-                if (e.alive() && !e.embarked() && !allied(e.player, u.player) && e.type) {
-                    float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
-                    if (dx * dx + dz * dz <= md * md) enemyNear = true;
-                }
-            });
-            const float cost = (u.speed.toFloat() * kTick > 3.0f ? u.type->cloakCostMove : u.type->cloakCost) * dt;
-            if (enemyNear || u.cloakBlockedUntil > tickCounter_) u.cloaked = false;
+            const UnitScript* script = unitScript(u.id);
+            const bool moving = script ? script->movementRate != 0 : u.speed.v != 0;
+            const float cost = (moving ? u.type->cloakCostMove : u.type->cloakCost) * dt;
+            if (u.cloakBlockedUntil > tickCounter_) u.cloaked = false;
             else if (double(cost) <= u.mana) { u.mana -= double(cost); u.cloaked = true; }
             else {
                 u.cloakBlockedUntil = std::max(u.cloakBlockedUntil, tickCounter_ + 90u);

@@ -454,7 +454,7 @@ struct UnitType {
     bool  canCloak = false;       // cancloak
     float cloakCost = 0;          // cloakcost: the unit's OWN mana/sec while cloaked and idle
     float cloakCostMove = 0;      // cloakcostmoving: the same while moving (default cloakcost/30)
-    int32_t minCloakDist = 0;     // mincloakdistance (readInt): an enemy this close forces uncloak
+    int32_t minCloakDist = 0;     // mincloakdistance (readInt): retail only draws it round a cloaked unit
     // FBI fireatwillrandom (icd: UnitDef+0x264 bit 24, parsed at 0x4c0a3a; its ONLY
     // reader is the auto-target scorer at 0x4129bc). Retail scores each candidate
     // n = dist^2 / damageVsTarget and keeps the lowest of rand(n)/2 + rand(n); this
@@ -2711,6 +2711,16 @@ private:
     void startWorkAnimation(Unit& u,Fixed targetX,Fixed targetZ);
     void stopWorkAnimation(Unit& u);
     void notifyMovementRate(Unit& u);
+    // Retail's writers of unit +0xcc (shots, construction, repair, reclaim and
+    // revive work): max(+0xcc, now + ticks), so the cloak step keeps the unit
+    // visible until then. Written for cloakers only, the step's only reader.
+    void blockCloak(Unit& u, uint32_t ticks) {
+        if (!u.type || !u.type->canCloak) return;
+        u.cloakBlockedUntil = std::max(u.cloakBlockedUntil, tickCounter_ + ticks);
+        // A writer after this tick's cloak step stands for one before it in
+        // retail's unit update (missions and weapons precede 0x401160).
+        u.cloaked = false;
+    }
     void updateLegionStill(Unit& u, Fixed beforeX, Fixed beforeZ);
     // Each unit's position at the start of the tick, by id (Legion only),
     // before Legion's own start-of-tick steps (yields). Derived each tick,

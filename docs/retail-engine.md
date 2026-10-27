@@ -3192,17 +3192,59 @@ Ours matched none of this: it charged the PLAYER's store (`debitMana`), kept
 cloaking while the store could pay, had no recloak delay, and defaulted
 cloakcostmoving to cloakcost. `World::tick` now takes the cost from
 `Unit::mana` after the unit's regeneration, and `Unit::cloakBlockedUntil` is
-`+0xcc` (hashed when set). Our mincloakdistance rule (an enemy that close
-decloaks) is unchanged: retail reads mincloakdistance (`+0x22a`, default 80
-when cloakcost > 0, `0x4c17c4`) only at `0x4d6542`, where a cloaked unit
-registers a circle of that radius with `0x4d5c40`; what that circle does was
-not traced.
+`+0xcc` (hashed when set).
 
-Other writers of `+0xcc`, not ported (each sets `max(+0xcc, now + N)`, which
-decloaks a cloaker for N ticks): every shot from the weapon step
-(`0x52af41`, 600 ticks, before `0x530220` fires), the resurrect channel
-(`0x42045b`, 300 ticks), and the build/repair task stages at `0x405bc8`,
-`0x4060bb`, `0x406576`, `0x406e45`, `0x4076ae` and `0x420b02` (not traced).
+### What else blocks cloaking (icd, 2026-10-26)
+
+Every writer of `+0xcc` sets `max(+0xcc, now + N)` on the unit doing the work;
+the cloak step then keeps it visible until the tick counter reaches it. The
+handlers come from the mission registry (rows of code, handler, 13 bytes,
+name; stride `0x19`, from `0x5eb7f0`):
+
+| Site | Task (handler) | Stage | N |
+| --- | --- | --- | --- |
+| `0x52af41` | weapon step `0x52ae90` | each shot: the slot's release bit (`+0x1a & 0x10`, set by `0x50d5b8`), just before `0x530220`, the only caller of the release | 600 |
+| `0x405bc8` | MobileBuild `0x405560` | every work tick, after `0x429af0`, paid or not | 300 |
+| `0x4060bb` | HelpBuild `0x405cf0` | the same | 300 |
+| `0x406576` | Reclaim `0x406250` | every 2-tick work wake that leaves countdown > 0 | 300 |
+| `0x406e45` | Resurrect `0x4068b0` | every channel tick that leaves work > 0 | 300 |
+| `0x4076ae` | RepairUnit `0x407190` | every work tick (target not full, not moving), before `0x429d90` | 150 |
+| `0x420477` | VTOL_Resurrect `0x41fe70` | as Resurrect | 300 |
+| `0x420b02` | VTOL_Reclaim `0x4207d0` | as Reclaim | 300 |
+
+FlyingBuild, VTOL_HelpBuild and VTOL_RepairUnit write nothing, nor does a
+factory's or a mobile producer's output (GetBuilt `0x401c20`). The other
+`mov [reg+0xcc]` stores in `.text` belong to other structures, unit creation
+(`0x511b58`, 0) and the save loader (`0x513606`). In the per-unit update
+(`0x51d3e0`) missions (`0x4d4520`) and the weapon step (`0x51d9d4`) run before
+`0x51de30`, which calls the cloak step: a block written on tick T makes the
+unit visible from tick T, for exactly N ticks.
+
+Port: `World::blockCloak` at each of these points -- `World::fire` after the
+manapershot test, `tickConstruction` and `tickRepair` for ground workers,
+`tickReclaim` after a wake with countdown left, and the revive channel. It is
+written only for cloakers, the step's only reader. Our cloak step runs before
+combat and revive, so `blockCloak` also clears `cloaked` at once; that is the
+same visible span.
+
+The step's other inputs, checked at the same time:
+
+- **Moving** is `+0x130 & 0xc`, the MoveRate tier (bits 2-3) that `0x4db350`
+  writes after the mover: 0 only when speed and turn are both 0 (or the unit
+  is refused/carried). Ours tested speed above 3 px/s; it now reads the
+  tier our `notifyMovementRate` keeps for the unit's script (speed != 0 for a
+  unit without one). Our tier is the one from the unit's previous update,
+  since our cloak step runs before our mover.
+- **`+0x130 & 0x400`** vetoes cloaking, but no store in `.text` sets that bit
+  (every `mov [reg+0x130], reg` was traced back for an or-mask, and the save
+  loader skips it): nothing to port.
+- **mincloakdistance** (`+0x22a`, default 80 when cloakcost > 0, `0x4c17c4`)
+  is read only at `0x4d6542`, in `0x4d6530`, called from `0x4d6340` under the
+  renderer `0x4fc5b0`: it builds a circle of that radius (`0x4d5c40`,
+  radius x 2pi x 0.125 segments) round a cloaked unit for display. No enemy
+  near a cloaked unit decloaks it, and nothing but the cloak step clears the
+  cloaked bit (`0x51e4d0(4, x)` has no other caller). Our "an enemy that close
+  decloaks" rule is removed.
 
 Every other mana drain was checked for a cost retail charges to the unit:
 weapon `manapershot` already spends the unit's pool (`0x530220` -> `0x4010d0`
