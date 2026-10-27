@@ -19,6 +19,24 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+*protocol 300 · replay format 15 · does not play with 0.9.5 or earlier, nor their replays*
+
+- **Double-click selects every unit of that type.** Double-click one of your
+  units (or buildings) to select all units of the same type that are finished
+  and visible on screen. Hold Shift while double-clicking to add them to your
+  selection, or Ctrl to remove them. Double-clicking an enemy or allied unit
+  selects just that one. The original game has no double-click select; this
+  follows the player request.
+- **Rally orders for production.** Production buildings, and builders producing
+  on an endless queue (such as the Zhon mobile builders), now accept Move,
+  Patrol, Attack and Move-fight as rally orders, and Shift queues them in the
+  same way as a unit's own orders. Every unit produced then runs the whole list
+  in order; a Shift-queued patrol loops. Stop clears the rally. The original
+  game gives produced units only Move and Patrol rallies, and only from
+  buildings; Attack and Move-fight rallies, and rallies from mobile builders,
+  are additions.
+
 ## 0.9.5
 *2026-10-26 · protocol 299 · replay format 15 · does not play with 0.9.4 or earlier, nor their replays*
 

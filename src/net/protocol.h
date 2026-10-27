@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 299;      // 299: a unit at 0 HP or below takes no more hits in the tick it dies (retail
+constexpr uint32_t kNetVersion = 300;      // 300: producer rally plans: a repeating mobile builder also takes Attack and fight-move
+                                           //      rallies, Shift-queued patrol rally steps loop, Stop (and ending the
+                                           //      repeat) clears the rally, and a non-empty rally is folded into stateHash.
+                                           //      No new command; replay format unchanged.
+                                           // 299: a unit at 0 HP or below takes no more hits in the tick it dies (retail
                                            //      51a140: the CRT draw is still spent, but HP, kill credit, death type,
                                            //      overkill, hit response and status come from the fatal hit only); HP
                                            //      damage, construction decay and deadly-water subtractions saturate and

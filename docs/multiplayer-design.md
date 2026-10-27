@@ -1023,6 +1023,11 @@ per-user folder (see [map-transfer.md](map-transfer.md)), which the wire does
 not see. 0.9.5 ships protocol 299; it plays with neither 0.9.4 nor any earlier
 version, nor their replays.
 
+Protocol 300 (after 0.9.5) adds producer rally plans: the rally list is part of
+`stateHash` when non-empty, a repeating mobile builder accepts Attack and
+fight-move rallies, and Stop clears the rally. No command changes; replay
+format 15 is unchanged.
+
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
 in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each
