@@ -22,6 +22,10 @@ their validation reports; both live in [`docs/`](docs/).
 ## Unreleased
 *protocol 300 · replay format 15 · does not play with 0.9.5 or earlier, nor their replays*
 
+- **Slow loaders are no longer dropped.** The server now allows 30 s of
+  silence, up from 15 s, while a player's game is loading, so a slow PC or a
+  huge map no longer drops the seat before it finishes. Play and the lobby keep
+  15 s.
 - **Double-click selects every unit of that type.** Double-click one of your
   units (or buildings) to select all units of the same type that are finished
   and visible on screen. Hold Shift while double-clicking to add them to your

@@ -567,7 +567,11 @@ attackMove) all map onto existing `Train` / `Build` / `AttackMove` commands.
   against the registry, unit/target ids sane. Malformed ⇒ disconnect.
 - Lobby rate limits (CreateGame, Chat, ListGames floods).
 - Keepalive with numbers: client pings every 2 s; either side times out after
-  15 s of silence. Load-bearing during pause, when no bundles flow.
+  15 s of silence. Load-bearing during pause, when no bundles flow. The
+  server's allowance is 30 s for a seated client that is loading (from its
+  `GameStarting` until its `Loaded`; `Client::loaded` is false in between),
+  since the client loads on its main thread without reading the socket. The
+  drop reason reads `timed out while loading (30 s)`. No protocol change.
 - `--server <host>` resolves via `getaddrinfo` — IPv6 and hostnames (today's
   `join()` is IPv4-literal-only).
 

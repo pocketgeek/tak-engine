@@ -3194,6 +3194,11 @@ if(TAK_TEST_DATA)
       "${CMAKE_SOURCE_DIR}/tools/server_disconnect_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
     set_tests_properties(server_disconnect PROPERTIES TIMEOUT 300)
+    # Silence timeouts around game start: a seat that is loading gets 30 s, play keeps 15 s.
+    add_test(NAME server_load_timeout COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/tools/server_load_timeout_test.py"
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+    set_tests_properties(server_load_timeout PROPERTIES TIMEOUT 120)
     add_test(NAME server_seat_move COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/server_seat_move_test.py"
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")

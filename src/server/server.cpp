@@ -93,7 +93,11 @@ uint64_t nowUs() {   // the same clock in microseconds, for the tick deadline
 }
 
 constexpr uint64_t kPingIdleMs = 5000;    // ping a quiet client after this
-constexpr uint64_t kTimeoutMs = 15000;    // drop a silent seated player after this
+uint64_t gTimeoutMs = 15000;              // drop a silent seated player after this
+// A seated client that has been sent GameStarting but has not yet answered Loaded is
+// loading on its main thread and does not poll its socket (a slow PC or a huge map can
+// take well over 15 s), so it gets longer. Window: GameStarting sent -> its Loaded.
+uint64_t gLoadTimeoutMs = 30000;
 // A SPECTATOR is display-only and non-authoritative: it holds up nobody (canAdvance
 // paces to it only in an all-AI game, and even then a stale ack just slows the sim,
 // never desyncs it). A busy client render loop -- e.g. a VRAM-starved frame that
@@ -3174,8 +3178,12 @@ int Server::run() {
             const Room* in = c->state == Client::InGame && c->slot >= 0 ? roomOf(*c) : nullptr;
             const bool waitedFor = in && c->slot < kMaxSlots && in->waitDeadline[c->slot] &&
                                    in->slotClient[c->slot] == int(id);
-            if (!waitedFor && now - c->lastRecvMs > (spectator ? kSpectatorTimeoutMs : kTimeoutMs)) {
-                c->conn.fail(spectator ? "silent past the spectator timeout" : "silent past the player timeout");
+            const bool loading = in && !c->loaded;   // GameStarting sent, Loaded not yet received
+            const uint64_t limit = spectator ? kSpectatorTimeoutMs : loading ? gLoadTimeoutMs : gTimeoutMs;
+            if (!waitedFor && now - c->lastRecvMs > limit) {
+                c->conn.fail(spectator ? "silent past the spectator timeout"
+                             : loading ? "timed out while loading (" + std::to_string(gLoadTimeoutMs / 1000) + " s)"
+                                       : "silent past the player timeout");
                 dead.push_back(id);
             }
         }
@@ -3214,9 +3222,11 @@ std::string defaultMapCacheDir() {
 }  // namespace
 
 static int serverMain(int argc, char** argv) {
-    // Test overrides for the disconnect wait (milliseconds).
+    // Test overrides for the disconnect wait and the silence timeouts (milliseconds).
     if (const char* g = std::getenv("TAK_STALL_MS")) gStallMs = uint64_t(std::max(100ll, std::atoll(g)));
     if (const char* b = std::getenv("TAK_DROP_WAIT_MS")) gDropWaitMs = uint64_t(std::max(100ll, std::atoll(b)));
+    if (const char* t = std::getenv("TAK_TIMEOUT_MS")) gTimeoutMs = uint64_t(std::max(500ll, std::atoll(t)));
+    if (const char* t = std::getenv("TAK_LOAD_TIMEOUT_MS")) gLoadTimeoutMs = uint64_t(std::max(500ll, std::atoll(t)));
     uint16_t port = 7677;
     std::string dataRoot, replayDir,tlsCert,tlsKey,mapRoot;
     tak::srv::AcmeOptions acme;acme.state="takserver-acme";

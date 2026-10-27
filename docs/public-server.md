@@ -388,6 +388,14 @@ with `TAK_STALL_MS` and `TAK_DROP_WAIT_MS` (milliseconds) in the server's
 environment; `server_disconnect_test.py` checks the wait, the takeover, a
 resume and a reconnect against a real server.
 
+Silence timeouts: a seated player silent for 15 seconds is disconnected (the server
+pings after 5 s of quiet). While a client is loading a game (from the server's
+`GameStarting` to the client's `Loaded`) the allowance is 30 seconds, because a slow
+machine or a huge map can load for longer than 15 s without reading its connection;
+the log then says `timed out while loading (30 s)`. The lobby and play keep 15 s, a
+spectator has 120 s. Tests can scale them with `TAK_TIMEOUT_MS` and
+`TAK_LOAD_TIMEOUT_MS`; `server_load_timeout_test.py` checks all three cases.
+
 Voice chat is relayed, never stored or recorded: a client's
 frames go only to the room members that have switched voice chat on and that
 its diplomacy mask picks (the whole room before the game starts), never back
