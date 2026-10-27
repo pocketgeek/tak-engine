@@ -1636,7 +1636,7 @@ missed are silent while the game catches up.
 | **Fullscreen** | On | Borderless fullscreen. |
 | **VSync** | On | Match the frame rate to the display. While it is on, the game also waits for each display refresh itself if the graphics driver does not. |
 | **Max FPS** | 60 | Frame-rate cap when VSync is off (30–240). Greyed out while VSync is on, because the display then sets the frame rate. |
-| **Native Wayland** | Auto | Linux only. **Auto** opens a native Wayland window on a Wayland desktop (GNOME, Sway and other wlroots desktops, Hyprland, KDE Plasma with legacy X11 apps "scaled by the system"), so the game draws at the screen's real resolution at any display scale, 125%, 150% and 200% included, instead of an X11 window that the desktop enlarges and blurs. On KDE Plasma with its default "Legacy applications (X11): apply scaling themselves", X11 already gets real pixels, so Auto keeps X11 there. On GNOME, Auto also keeps X11 if the libdecor library (which draws the window's title bar there) is not installed. **On** uses Wayland whenever there is a Wayland desktop; **Off** always uses X11. Takes effect after a restart; the row's help says which one is running. If Wayland cannot start, the game opens on X11 by itself. Switching keeps the interface the same size on screen: where the X11 window was enlarged by the desktop, UI Scale and Cursor Size are multiplied by the display scale the first time the Wayland window opens (and divided again if you switch back); on KDE Plasma's default, where X11 already had real pixels, they stay exactly as you set them. Cartographer follows the same setting and keeps its UI Scale and window size the same way. |
+| **Native Wayland** | Auto | Linux only. **Auto** opens a native Wayland window on any Wayland desktop (GNOME, KDE Plasma, Sway and other wlroots desktops, Hyprland), so the game draws at the screen's real resolution at any display scale, 125%, 150% and 200% included, instead of an X11 window that many desktops enlarge and blur. On GNOME, Auto keeps X11 if the libdecor library (which draws the window's title bar there) is not installed. On an X11 desktop the game always uses X11. **On** uses Wayland whenever there is a Wayland desktop; **Off** always uses X11. Takes effect after a restart; the row's help says which one is running. If Wayland cannot start, the game opens on X11 by itself. Switching keeps the interface the same size on screen: the game measures whether its X11 window had real pixels (KDE Plasma's default, and Hyprland or GNOME set up that way) or was enlarged by the desktop. In the first case UI Scale and Cursor Size stay exactly as you set them; in the second they are multiplied by the display scale the first time the Wayland window opens, and divided again if you switch back. Cartographer follows the same setting and keeps its UI Scale and window size the same way. |
 
 ### Graphics
 
@@ -2664,25 +2664,29 @@ files) in your install folder. See [Creon](#creon).
 At a display scale above 100% on a Wayland desktop, an X11 window is drawn at
 the small size and enlarged by the desktop, which blurs it. Check **Options →
 Display → Native Wayland**: its help line says what is running. If it says X11,
-set it to **On** and restart. If your desktop is KDE Plasma, its own setting
-**System Settings → Display & Monitor → Legacy Applications (X11)** set to
-"Apply scaling themselves" also gives the X11 window real pixels.
+set it to **Auto** or **On** and restart. If it is Auto and still X11 on GNOME,
+install the libdecor package (`libdecor` or `libdecor-0-0`) or choose **On**.
 
 ### The interface changed size after switching Native Wayland
 
-Switching **Native Wayland** (or KDE's legacy X11 scaling) changes how many screen
-pixels the game's window has, so on the first start after a switch the game adjusts
-**UI Scale** and **Cursor Size** once to keep the interface the same size on screen:
+Switching **Native Wayland** (including the first start of a version whose Auto
+picks Wayland where the previous one ran X11) changes how many screen pixels the
+game's window has, so on the first start after a switch the game adjusts **UI
+Scale** and **Cursor Size** once to keep the interface the same size on screen:
 
-- From an X11 window the desktop enlarged (GNOME, Sway, Hyprland, KDE "scaled by the
-  system") to Wayland, they are multiplied by the display scale; switching back
-  divides them again.
-- On KDE Plasma's default ("apply scaling themselves"), the X11 window already had
-  real pixels, so switching between X11 and Wayland leaves them as they are.
+- From an X11 window the desktop enlarged (GNOME, Sway and Hyprland by default) to
+  Wayland, they are multiplied by the display scale; switching back divides them
+  again.
+- Where the X11 window already had real pixels (KDE Plasma's default, Hyprland
+  with `xwayland:force_zero_scaling`, GNOME with Xwayland native scaling),
+  switching between X11 and Wayland leaves them as they are.
 - Changing the desktop's display scale while on Wayland leaves them as they are.
 
-The game remembers which window it last had, so this never adds up over several
-switches. UI Scale stops at 200% and Cursor Size at 8×, so a value at the top
+The game does not guess which kind the X11 window was: it compares the size of
+the X11 desktop with the Wayland desktop. If it cannot tell (no X11 server to
+ask), it leaves the sizes as they are. It also waits for the desktop to report
+the Wayland window's scale before deciding, and remembers which window it last
+had, so this never adds up over several switches. UI Scale stops at 200% and Cursor Size at 8×, so a value at the top
 cannot grow and comes back a little smaller after switching back; set it again in
 Options if so.
 

@@ -70,6 +70,7 @@
 #include "client/settings.h"
 #include "client/hidpi.h"
 #include "client/waylandchoice.h"
+#include "client/waylandmeasure.h"
 #include "client/renderdriver.h"
 #include "net/crypto.h"
 #include "net/replaywriter.h"   // recoverReplayParts
@@ -1028,39 +1029,57 @@ int main(int argc, char** argv) {
         // (NATIVE WAYLAND switched, or KDE's legacy-X11 scaling changed): a stretched X11
         // window measured them in points of S screen pixels, a real-pixel X11 window and a
         // native Wayland one in screen pixels -- see client/waylandchoice.h.
-        const auto& wl = tak::wayland::startup();
-        float osScale = 0.0f;
-        if (wl.native) {
-            // The scale arrives from the compositor once the surface is on an output, so
-            // let SDL take in those events before reading output / window.
-            SDL_PumpEvents();
-            osScale = tak::hidpi::scale(ren);
-            std::fprintf(stderr, "dpi: native Wayland resolution; backing scale %.2f\n", osScale);
-        }
+        namespace wlc = tak::wayland;
+        const auto& wl = wlc::startup();
         const char* drv = SDL_GetCurrentVideoDriver();
-        const int now = tak::wayland::sessionMode(drv ? drv : "", wl.native, wl.session);
+        wlc::Observation now;
+        now.mode = wlc::sessionMode(drv ? drv : "", wl.native, wl.session);
+        if (now.mode == wlc::kModeWayland) {
+            // The scale arrives from the compositor once the surface is on an output: wait
+            // for it rather than read an unsettled 1 (client/waylandmeasure.h).
+            const Uint32 t0 = SDL_GetTicks();
+            now.scale = wlc::settledNativeScale(win, ren);
+            now.logicalWidth = wlc::desktopWidth();
+            std::fprintf(stderr, "dpi: native Wayland resolution; backing scale %.2f%s after %u ms, logical desktop %d\n",
+                         now.scale, now.scale > 0.0f ? "" : " (not settled -- sizes left for the next start)",
+                         unsigned(SDL_GetTicks() - t0), now.logicalWidth);
+        } else if (now.mode == wlc::kModeX11) {
+            now.x11Width = wlc::desktopWidth();
+        }
         // No history yet: a file from a build that migrated on the first native start
-        // (dpiMigrated) already holds native sizes; otherwise every earlier Linux build ran
-        // this session's X11 window.
-        const int assumed = settings.dpiMigrated && now == tak::wayland::kModeWayland
-                                ? int(tak::wayland::kModeWayland) : tak::wayland::x11Mode(wl.session);
-        tak::wayland::DisplayHistory h{settings.displayMode, settings.displayScale};
-        const int prev = h.mode;
-        const float f = tak::wayland::advanceDisplay(h, now, osScale, assumed, tak::wayland::Units::GamePixels);
+        // (dpiMigrated) already holds native sizes; otherwise every earlier Linux build ran X11.
+        const int assumed = settings.dpiMigrated && now.mode == wlc::kModeWayland
+                                ? int(wlc::kModeWayland) : int(wlc::kModeX11);
+        wlc::DisplayHistory h{settings.displayMode, settings.displayScale, settings.displayX11Width,
+                              settings.displayLogicalWidth};
+        int kinds[2] = {0, 0};
+        const float f = wlc::advanceDisplay(h, now, assumed, wlc::Units::GamePixels,
+                                            wlc::fallbackX11Kind(wl.session), wlc::probeXWaylandWidth, &kinds);
+        if (now.mode != wlc::kModeUnknown) {
+            const bool guessed = kinds[0] == wlc::kModeX11 || kinds[1] == wlc::kModeX11;
+            std::fprintf(stderr, "dpi: X11 desktop %d, logical %d, scale %.2f: last window %s, this one %s%s%s%s\n",
+                         h.x11Width, h.logicalWidth, h.scale, wlc::modeName(kinds[0]), wlc::modeName(kinds[1]),
+                         guessed ? " (x11 = not measured, counted as " : "",
+                         guessed ? wlc::modeName(wlc::fallbackX11Kind(wl.session)) : "", guessed ? ")" : "");
+        }
         const bool resized = tak::rescaleUi(settings, f);
-        if (resized || h.mode != settings.displayMode || h.scale != settings.displayScale) {
+        if (resized || h.mode != settings.displayMode || h.scale != settings.displayScale ||
+            h.x11Width != settings.displayX11Width || h.logicalWidth != settings.displayLogicalWidth) {
             if (resized)
                 std::fprintf(stderr, "dpi: display %s -> %s: UI Scale and Cursor Size x%.3f -> uiScale=%.2f cursorScale=%d\n",
-                             tak::wayland::modeName(prev != tak::wayland::kModeUnknown ? prev : assumed),
-                             tak::wayland::modeName(now), f, settings.uiScale, settings.cursorScale);
+                             wlc::modeName(kinds[0]), wlc::modeName(kinds[1]), f, settings.uiScale, settings.cursorScale);
             settings.displayMode = h.mode;
             settings.displayScale = h.scale;
+            settings.displayX11Width = h.x11Width;
+            settings.displayLogicalWidth = h.logicalWidth;
             // Save just these into the file, not this run's command-line overrides.
             tak::Settings disk = tak::loadSettings();
             disk.uiScale = settings.uiScale;
             disk.cursorScale = settings.cursorScale;
             disk.displayMode = settings.displayMode;
             disk.displayScale = settings.displayScale;
+            disk.displayX11Width = settings.displayX11Width;
+            disk.displayLogicalWidth = settings.displayLogicalWidth;
             tak::saveSettings(disk);
         }
     }

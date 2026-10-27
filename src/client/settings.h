@@ -41,11 +41,15 @@ struct Settings {
     // at startup only (restart required); see client/waylandchoice.h.
     int   nativeWayland = 0;
     // Linux bookkeeping, not preferences: the window the last session got
-    // (tak::wayland::Mode: 0 none yet, 1 x11-real, 2 x11-stretched, 3 wayland) and the last
-    // native Wayland scale seen (0 = none), so a NATIVE WAYLAND switch converts UI Scale and
+    // (tak::wayland::Mode: 0 none yet, 1 x11-real, 2 x11-stretched, 3 wayland, 4 x11 not yet
+    // measured), the last native Wayland scale seen (0 = none), and what tells the two X11
+    // kinds apart: the X11 desktop width an X11 window got and the Wayland logical desktop
+    // width a native one saw (0 = none). A NATIVE WAYLAND switch then converts UI Scale and
     // Cursor Size once, in the right direction (tak::wayland::advanceDisplay).
     int   displayMode = 0;
     float displayScale = 0.0f;
+    int   displayX11Width = 0;
+    int   displayLogicalWidth = 0;
     float scorecardScale = 1.0f;   // independent F4 scorecard scale; 0.5..2.0
     float uiScale    = 1.0f;       // in-game HUD scale; 0.5..2.0 (1.0 = 100%)
     // TEXTURE FILTERING for the game area (client/texturefilter.h): 0 = Off (retail's
@@ -246,6 +250,7 @@ struct Settings {
             && a.ignoreDpiScaling == b.ignoreDpiScaling && a.dpiMigrated == b.dpiMigrated
             && a.nativeWayland == b.nativeWayland
             && a.displayMode == b.displayMode && a.displayScale == b.displayScale
+            && a.displayX11Width == b.displayX11Width && a.displayLogicalWidth == b.displayLogicalWidth
             && a.hotkeys == b.hotkeys
             && a.campaignCompleted == b.campaignCompleted;
     }
@@ -331,6 +336,8 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.dpiMigrated = cur.dpiMigrated;              // bookkeeping, not a preference
     d.displayMode = cur.displayMode;              // likewise
     d.displayScale = cur.displayScale;
+    d.displayX11Width = cur.displayX11Width;
+    d.displayLogicalWidth = cur.displayLogicalWidth;
     // Voice chat has its own screen and its own DEFAULTS (voiceDefaults below).
     d.voiceEnabled = cur.voiceEnabled;
     d.voiceActivation = cur.voiceActivation;

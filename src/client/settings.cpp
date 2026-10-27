@@ -125,6 +125,10 @@ Settings loadSettings() {
             const float v = float(std::atof(val.c_str()));
             s.displayScale = v >= 1.0f && v <= 8.0f ? v : 0.0f;
         }
+        else if (key == "displayX11Width" || key == "displayLogicalWidth") {
+            const int v = std::atoi(val.c_str());
+            (key == "displayX11Width" ? s.displayX11Width : s.displayLogicalWidth) = v >= 1 && v <= 65536 ? v : 0;
+        }
         else if (key == "scorecardScale")  s.scorecardScale = asFloat(0.5f, 2.0f);
         else if (key == "uiScale")         s.uiScale = asFloat(0.5f, 2.0f);
         else if (key == "textureFilter")   textureFilter = asInt(0, 2);
@@ -253,6 +257,8 @@ std::string serializeSettings(const Settings& s) {
     o << "nativeWayland = " << (s.nativeWayland == 1 ? "on" : s.nativeWayland == 2 ? "off" : "auto") << "\n";
     if (s.displayMode != wayland::kModeUnknown) o << "displayMode = " << wayland::modeName(s.displayMode) << "\n";
     if (s.displayScale > 0.0f) o << "displayScale = " << s.displayScale << "\n";
+    if (s.displayX11Width > 0) o << "displayX11Width = " << s.displayX11Width << "\n";
+    if (s.displayLogicalWidth > 0) o << "displayLogicalWidth = " << s.displayLogicalWidth << "\n";
     o << "scorecardScale = " << s.scorecardScale << "\n";
     o << "uiScale = " << s.uiScale << "\n";
     o << "textureFilter = " << std::clamp(s.textureFilter, 0, 2) << "\n";

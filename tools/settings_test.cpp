@@ -59,6 +59,8 @@ int main() {
     flips("nativeWayland",   [](Settings& s) { s.nativeWayland = 2; });
     flips("displayMode",     [](Settings& s) { s.displayMode = 3; });
     flips("displayScale",    [](Settings& s) { s.displayScale = 1.45f; });
+    flips("displayX11Width", [](Settings& s) { s.displayX11Width = 7680; });
+    flips("displayLogicalW", [](Settings& s) { s.displayLogicalWidth = 5297; });
     flips("uiScale",         [](Settings& s) { s.uiScale += 0.25f; });
     flips("textureFilter",   [](Settings& s) { s.textureFilter = (s.textureFilter + 1) % 3; });
     flips("textureFilter 0", [](Settings& s) { s.textureFilter = 0; });
@@ -330,8 +332,9 @@ int main() {
         wl::Session forced = gnome; forced.driverForced = true;
         wl::Session kdeSelf = gnome; kdeSelf.kde = true;
         wl::Session kdeSystem = kdeSelf; kdeSystem.kdeX11RealPixels = false;
+        // The Auto matrix: every Wayland session is native except GNOME without libdecor.
         check("wl: auto gnome", wl::wantNative(wl::kAuto, gnome));
-        check("wl: auto kde self", !wl::wantNative(wl::kAuto, kdeSelf));
+        check("wl: auto kde default", wl::wantNative(wl::kAuto, kdeSelf));   // Plasma's default: now native too
         check("wl: auto kde system", wl::wantNative(wl::kAuto, kdeSystem));
         check("wl: on kde self", wl::wantNative(wl::kOn, kdeSelf));
         check("wl: off", !wl::wantNative(wl::kOff, gnome) && !wl::wantNative(wl::kOff, kdeSystem));
@@ -340,94 +343,152 @@ int main() {
         check("wl: gnome list", wl::desktopIs("ubuntu:GNOME", "GNOME") && !wl::desktopIs("KDE", "GNOME"));
         wl::Session gnomeBare = gnome; gnomeBare.gnome = true; gnomeBare.libdecor = false;
         wl::Session swayBare = gnome; swayBare.libdecor = false;   // server-side title bars
+        wl::Session gnomeDecor = gnomeBare; gnomeDecor.libdecor = true;
         check("wl: gnome no libdecor", !wl::wantNative(wl::kAuto, gnomeBare) && wl::wantNative(wl::kOn, gnomeBare));
+        check("wl: gnome libdecor", wl::wantNative(wl::kAuto, gnomeDecor));
         check("wl: other no libdecor", wl::wantNative(wl::kAuto, swayBare));
+        wl::Session kdeForced = kdeSelf; kdeForced.driverForced = true;
+        check("wl: env wins on kde", !wl::wantNative(wl::kAuto, kdeForced) && !wl::wantNative(wl::kOn, kdeForced));
         check("wl: default auto", Settings{}.nativeWayland == wl::kAuto);
 
         // UI Scale / Cursor Size across window-kind switches (advanceDisplay). One
-        // simulated start: what the game does with the settings at startup.
-        auto start = [](Settings& s, int now, float scale, int assumed) {
-            wl::DisplayHistory h{s.displayMode, s.displayScale};
-            const float f = wl::advanceDisplay(h, now, scale, assumed, wl::Units::GamePixels);
+        // simulated start: what the game does with the settings at startup. The numbers are
+        // the user's 57" (7680 x 2160 at 1.45: 5297 logical) and a 2560-wide GNOME laptop
+        // at 1.5 (1707 logical). An X11 start under Wayland measures the X11 desktop width
+        // (`x11W`); a native start the scale and the logical width.
+        static int probed = 0, probeCalls = 0;
+        auto probe = []() { ++probeCalls; return probed; };
+        auto start = [&](Settings& s, int now, float scale, int x11W, int logicalW,
+                         int fallback = wl::kModeX11Real) {
+            wl::DisplayHistory h{s.displayMode, s.displayScale, s.displayX11Width, s.displayLogicalWidth};
+            wl::Observation o{now, scale, x11W, logicalW};
+            const int assumed = s.dpiMigrated && now == wl::kModeWayland ? int(wl::kModeWayland) : int(wl::kModeX11);
+            const float f = wl::advanceDisplay(h, o, assumed, wl::Units::GamePixels, fallback, probe);
             tak::rescaleUi(s, f);
             s.displayMode = h.mode; s.displayScale = h.scale;
+            s.displayX11Width = h.x11Width; s.displayLogicalWidth = h.logicalWidth;
             return f;
         };
         auto near = [](float a, float b) { return std::abs(a - b) < 0.001f; };
-        const int R = wl::kModeX11Real, X = wl::kModeX11Stretched, W = wl::kModeWayland;
-        {   // KDE default (X11 at real pixels, the user's 7680x2160 @ 1.45): Off -> On -> Off
-            // keeps the hand-set sizes; they are screen pixels in both windows.
-            Settings s; s.uiScale = 2.0f; s.cursorScale = 4;
-            start(s, R, 0, R);
-            check("mig: kde x11 records", s.displayMode == R && s.uiScale == 2.0f && s.cursorScale == 4);
-            s.uiScale = 1.25f;   // hand-set at real pixels
-            const float f = start(s, W, 1.45f, R);
-            check("mig: kde x11->wl same", f == 1.0f && s.uiScale == 1.25f && s.cursorScale == 4);
-            check("mig: kde wl records", s.displayMode == W && near(s.displayScale, 1.45f));
-            start(s, R, 0, R);
-            check("mig: kde wl->x11 same", s.uiScale == 1.25f && s.cursorScale == 4 && s.displayMode == R);
+        const int R = wl::kModeX11Real, X = wl::kModeX11Stretched, W = wl::kModeWayland, U = wl::kModeX11;
+        {   // The measurement: real pixels give an X11 desktop S times the logical one.
+            check("x11: kde real", wl::classifyX11(7680, 5297, 1.45f) == R);
+            check("x11: stretched", wl::classifyX11(5297, 5297, 1.45f) == X && wl::classifyX11(1707, 1707, 1.5f) == X);
+            check("x11: kde max scale", wl::classifyX11(2 * 3627, 3627, 1.25f) == R);   // 2 outputs, X11 at the larger 2.0
+            check("x11: unknown", wl::classifyX11(0, 5297, 1.45f) == U && wl::classifyX11(7680, 0, 1.45f) == U &&
+                                  wl::classifyX11(7680, 7680, 1.0f) == U);
+            wl::Session kdeSys = kdeSystem, kde = kdeSelf;
+            check("x11: fallback", wl::fallbackX11Kind(kde) == R && wl::fallbackX11Kind(kdeSys) == X &&
+                                   wl::fallbackX11Kind(gnome) == R);
         }
-        {   // GNOME and friends: stretched X11 -> native x S, back / S, again x S (no compounding).
+        {   // Upgrade from 0.9.5 on KDE default (the user's own case): no history, Auto now
+            // native. XWayland is asked: 7680 = real pixels, so nothing is enlarged.
+            Settings s; s.uiScale = 1.25f; s.cursorScale = 4;
+            probed = 7680; probeCalls = 0;
+            const float f = start(s, W, 1.45f, 0, 5297);
+            check("up: kde default same", f == 1.0f && s.uiScale == 1.25f && s.cursorScale == 4 && probeCalls == 1);
+            check("up: kde records", s.displayMode == W && near(s.displayScale, 1.45f) && s.displayX11Width == 7680 &&
+                                     s.displayLogicalWidth == 5297);
+            start(s, U, 0, 7680, 0);   // Off again: measured real against the remembered logical width
+            check("up: kde back same", s.uiScale == 1.25f && s.cursorScale == 4 && s.displayMode == R);
+            // Even where kwinrc would say otherwise (the X11 setting is not readable from
+            // here, or another desktop configured real pixels), the measurement decides.
+            Settings h; h.uiScale = 1.0f; h.cursorScale = 2;
+            probed = 3840; probeCalls = 0;
+            start(h, W, 1.5f, 0, 2560, X);   // Hyprland force_zero_scaling, GNOME xwayland-native-scaling
+            check("up: real anywhere", h.uiScale == 1.0f && h.cursorScale == 2);
+        }
+        {   // Upgrade from 0.9.5 on GNOME (stretched): XWayland's screen is the logical size: x S.
+            Settings g; g.uiScale = 1.0f; g.cursorScale = 2;
+            probed = 1707; probeCalls = 0;
+            start(g, W, 1.5f, 0, 1707);
+            check("up: gnome xS", near(g.uiScale, 1.5f) && g.cursorScale == 3 && g.displayMode == W);
+        }
+        {   // Unknown: XWayland could not be asked. The fallback decides: real pixels (leave
+            // the sizes) everywhere but KDE "scaled by the system".
             Settings s; s.uiScale = 1.0f; s.cursorScale = 2;
-            start(s, X, 0, X);
-            check("mig: x11 stretched rec", s.displayMode == X && s.uiScale == 1.0f && s.displayScale == 0.0f);
-            start(s, W, 1.5f, X);
-            check("mig: stretched->wl xS", near(s.uiScale, 1.5f) && s.cursorScale == 3);
-            start(s, W, 1.5f, X);
-            check("mig: wl->wl once", near(s.uiScale, 1.5f) && s.cursorScale == 3);
-            start(s, X, 0, X);   // an X11 window cannot see the scale: the remembered 1.5
-            check("mig: wl->stretched /S", near(s.uiScale, 1.0f) && s.cursorScale == 2);
-            start(s, W, 1.5f, X);
-            check("mig: no compounding", near(s.uiScale, 1.5f) && s.cursorScale == 3);
+            probed = 0; probeCalls = 0;
+            start(s, W, 1.5f, 0, 1707);
+            check("up: unknown same", s.uiScale == 1.0f && s.cursorScale == 2 && probeCalls == 1);
+            Settings k; k.uiScale = 1.0f; k.cursorScale = 2;
+            start(k, W, 1.5f, 0, 1707, X);
+            check("up: unknown kde sys xS", near(k.uiScale, 1.5f) && k.cursorScale == 3);
+        }
+        {   // An X11 history recorded by an X11 start is used without asking XWayland.
+            Settings s; s.uiScale = 1.0f; s.cursorScale = 2;
+            start(s, U, 0, 1707, 0);
+            check("x11 rec: unmeasured", s.displayMode == U && s.displayX11Width == 1707 && s.uiScale == 1.0f);
+            probed = 9999; probeCalls = 0;
+            start(s, W, 1.5f, 0, 1707);
+            check("x11 rec: stretched xS", near(s.uiScale, 1.5f) && s.cursorScale == 3 && probeCalls == 0);
+            start(s, U, 0, 1707, 0);   // and back: measured stretched now, / S
+            check("x11 rec: back /S", near(s.uiScale, 1.0f) && s.cursorScale == 2 && s.displayMode == X);
+            start(s, W, 1.5f, 0, 1707);
+            check("x11 rec: no compounding", near(s.uiScale, 1.5f) && s.cursorScale == 3);
+            Settings k; k.uiScale = 2.0f; k.cursorScale = 4;
+            start(k, U, 0, 7680, 0);
+            start(k, W, 1.45f, 0, 5297);
+            check("x11 rec: kde same", k.uiScale == 2.0f && k.cursorScale == 4);
+        }
+        {   // The scale must be settled: an unsettled native start (0) records and changes nothing,
+            // so the next start still converts.
+            Settings g; g.uiScale = 1.0f; g.cursorScale = 2;
+            start(g, U, 0, 1707, 0);
+            check("settle: none", start(g, W, 0.0f, 0, 1707) == 1.0f && g.displayMode == U && g.displayScale == 0.0f &&
+                                  g.uiScale == 1.0f);
+            start(g, W, 1.5f, 0, 1707);
+            check("settle: next start", near(g.uiScale, 1.5f) && g.displayMode == W);
         }
         {   // Changing the desktop scale while native: sizes are screen pixels, unchanged.
             Settings s; s.uiScale = 1.5f; s.cursorScale = 3; s.displayMode = W; s.displayScale = 1.5f;
-            const float f = start(s, W, 2.0f, X);
+            s.displayLogicalWidth = 1707; s.displayX11Width = 1707;
+            const float f = start(s, W, 2.0f, 0, 1280);
             check("mig: wl scale change", f == 1.0f && s.uiScale == 1.5f && s.cursorScale == 3 && s.displayScale == 2.0f);
-            start(s, X, 0, X);   // back to stretched X11 now uses the latest scale
-            check("mig: latest scale", near(s.uiScale, 0.75f) && s.cursorScale == 2);
+            start(s, U, 0, 1280, 0);   // back to stretched X11 now uses the latest scale
+            check("mig: latest scale", near(s.uiScale, 0.75f) && s.cursorScale == 2 && s.displayMode == X);
         }
-        {   // First start with no history: earlier Linux builds always ran this session's X11.
-            Settings g; g.uiScale = 1.0f; g.cursorScale = 2;
-            start(g, W, 1.45f, X);   // GNOME: was stretched
-            check("mig: first gnome xS", near(g.uiScale, 1.45f) && g.cursorScale == 3 && g.displayMode == W);
-            Settings k; k.uiScale = 2.0f; k.cursorScale = 4;
-            start(k, W, 1.45f, R);   // KDE default: was real pixels (the reported bug: x1.45)
-            check("mig: first kde same", k.uiScale == 2.0f && k.cursorScale == 4);
+        {   // Never native: X11 starts only record; with no scale known nothing converts.
             Settings x; x.uiScale = 1.0f;
-            const float f = start(x, X, 0, X);
-            check("mig: first x11 none", f == 1.0f && x.displayMode == X);
+            check("mig: x11 only none", start(x, U, 0, 1707, 0) == 1.0f && start(x, U, 0, 1707, 0) == 1.0f &&
+                                        x.uiScale == 1.0f && x.displayMode == U);
+            Settings p;   // a plain X11 desktop is always real pixels
+            check("mig: plain x11", start(p, R, 0, 0, 0) == 1.0f && p.displayMode == R);
             Settings u;
-            check("mig: unknown driver", start(u, wl::kModeUnknown, 0, X) == 1.0f && u.displayMode == 0);
+            check("mig: unknown driver", start(u, wl::kModeUnknown, 0, 0, 0) == 1.0f && u.displayMode == 0);
             Settings one; one.cursorScale = 2;
-            start(one, W, 1.0f, X);   // 100% desktop: nothing to convert
+            start(one, W, 1.0f, 0, 2560);   // 100% desktop: nothing to convert
             check("mig: scale 1 none", one.uiScale == 1.0f && one.cursorScale == 2);
         }
-        {   // KDE "scaled by the system" -> "apply scaling themselves" with no Wayland run
-            // in between: the scale is unknown to an X11 window, so nothing changes.
-            Settings s; s.displayMode = X;
-            check("mig: no scale known", start(s, R, 0, R) == 1.0f && s.displayMode == R);
+        {   // A file from the build that migrated on the first native start (dpiMigrated, no
+            // displayMode: the user's own file) already holds native sizes: never converted.
+            Settings s; s.dpiMigrated = true; s.nativeWayland = wl::kOn; s.uiScale = 1.45484f; s.cursorScale = 6;
+            probed = 5297; probeCalls = 0;
+            start(s, W, 1.45f, 0, 5297);
+            check("mig: dpiMigrated kept", s.uiScale == 1.45484f && s.cursorScale == 6 && probeCalls == 0);
         }
         {   // Cartographer sizes in window points: only the real-pixel X11 window differs.
-            auto cart = [](wl::DisplayHistory& h, int now, float scale, int assumed) {
-                return wl::advanceDisplay(h, now, scale, assumed, wl::Units::CartographerPoints);
+            auto cart = [](wl::DisplayHistory& h, int now, float scale, int x11W, int logicalW) {
+                return wl::advanceDisplay(h, wl::Observation{now, scale, x11W, logicalW}, wl::kModeX11,
+                                          wl::Units::CartographerPoints, wl::kModeX11Real);
             };
             wl::DisplayHistory h;
-            check("cart: kde first", cart(h, R, 0, R) == 1.0f && h.mode == R);
-            check("cart: kde x11->wl /S", near(cart(h, W, 1.45f, R), 1.0f / 1.45f));
-            check("cart: wl scale same", cart(h, W, 2.0f, R) == 1.0f);
-            check("cart: kde wl->x11 xS", near(cart(h, R, 0, R), 2.0f));
+            check("cart: kde first", cart(h, U, 0, 7680, 0) == 1.0f && h.mode == U);
+            check("cart: kde x11->wl /S", near(cart(h, W, 1.45f, 0, 5297), 1.0f / 1.45f));
+            check("cart: wl scale same", cart(h, W, 2.0f, 0, 3840) == 1.0f);
+            check("cart: kde wl->x11 xS", near(cart(h, U, 0, 7680, 0), 2.0f) && h.mode == R);
             wl::DisplayHistory g;
-            check("cart: gnome same", cart(g, X, 0, X) == 1.0f && cart(g, W, 1.5f, X) == 1.0f && cart(g, X, 0, X) == 1.0f);
+            check("cart: gnome same", cart(g, U, 0, 1707, 0) == 1.0f && cart(g, W, 1.5f, 0, 1707) == 1.0f &&
+                                      cart(g, U, 0, 1707, 0) == 1.0f && g.mode == X);
         }
         {   // The window kind from SDL's driver and the session.
-            wl::Session kde = kdeSelf, sys = kdeSystem, plain;
-            check("mode: drivers", wl::sessionMode("x11", false, kde) == R && wl::sessionMode("x11", false, sys) == X &&
-                                   wl::sessionMode("x11", false, gnome) == X && wl::sessionMode("x11", false, plain) == R &&
+            wl::Session kde = kdeSelf, plain;
+            check("mode: drivers", wl::sessionMode("x11", false, kde) == U && wl::sessionMode("x11", false, gnome) == U &&
+                                   wl::sessionMode("x11", false, plain) == R &&
                                    wl::sessionMode("wayland", true, kde) == W && wl::sessionMode("wayland", false, gnome) == X &&
                                    wl::sessionMode("dummy", false, gnome) == wl::kModeUnknown);
             check("mode: names", wl::parseMode(wl::modeName(R)) == R && wl::parseMode(wl::modeName(X)) == X &&
-                                 wl::parseMode(wl::modeName(W)) == W && wl::parseMode("junk") == wl::kModeUnknown);
+                                 wl::parseMode(wl::modeName(W)) == W && wl::parseMode(wl::modeName(U)) == U &&
+                                 wl::parseMode("junk") == wl::kModeUnknown);
         }
         {   // Clamped at the range ends: 2.0 cannot grow, so the way back is not exact.
             Settings s; s.uiScale = 2.0f; s.cursorScale = 8;
@@ -561,9 +622,14 @@ int main() {
         check("wayland: absent auto", loadFrom("masterVol = 7\n").nativeWayland == 0);
         check("wayland: junk auto", loadFrom("nativeWayland = maybe\n").nativeWayland == 0);
         Settings dm{};
-        dm.displayMode = 3; dm.displayScale = 1.45f;
+        dm.displayMode = 3; dm.displayScale = 1.45f; dm.displayX11Width = 7680; dm.displayLogicalWidth = 5297;
         check("display: trip", loadFrom(tak::serializeSettings(dm)).displayMode == 3 &&
                                std::abs(loadFrom(tak::serializeSettings(dm)).displayScale - 1.45f) < 0.001f);
+        check("display: widths", loadFrom(tak::serializeSettings(dm)).displayX11Width == 7680 &&
+                                 loadFrom(tak::serializeSettings(dm)).displayLogicalWidth == 5297 &&
+                                 tak::preferenceDefaults(dm).displayX11Width == 7680 &&
+                                 loadFrom("displayMode = x11\ndisplayX11Width = -3\n").displayMode == tak::wayland::kModeX11 &&
+                                 loadFrom("displayX11Width = -3\n").displayX11Width == 0);
         check("display: absent", loadFrom("masterVol = 7\n").displayMode == 0 && loadFrom("masterVol = 7\n").displayScale == 0.0f);
         check("display: junk", loadFrom("displayMode = x\ndisplayScale = 99\n").displayMode == 0 &&
                                loadFrom("displayMode = x\ndisplayScale = 99\n").displayScale == 0.0f);

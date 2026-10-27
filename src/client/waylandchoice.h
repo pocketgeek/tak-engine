@@ -9,11 +9,10 @@
 // and the window then speaks points exactly as a macOS Retina window does
 // (client/hidpi.h).
 //
-// KDE Plasma is the exception that is already crisp: with "Legacy applications (X11):
-// apply scaling themselves" (Plasma's default; kwinrc [Xwayland] XwaylandClientsScale
-// absent or true) kwin gives X11 apps the real pixel size -- XWayland's screen is the
-// output's native size. Auto keeps X11 there, so a player whose KDE desktop already
-// shows the game crisply sees no change; "scaled by the system" gets native Wayland.
+// Auto picks native Wayland in every Wayland session, KDE Plasma included: even where
+// Plasma already gives X11 apps real pixels ("Legacy applications (X11): apply scaling
+// themselves", its default) the native window is the same size and as crisp, and it
+// avoids XWayland altogether.
 //
 // GNOME (Mutter) draws no title bars for Wayland windows: SDL2 draws them with libdecor,
 // loaded at run time. Without libdecor-0.so.0 a GNOME window would have no title bar, so
@@ -45,12 +44,13 @@ inline const char* settingLabel(int s) {
     return s == kOn ? "ON" : s == kOff ? "OFF" : "AUTO";
 }
 
-// What the session looks like, gathered from the environment (and kwinrc on KDE).
+// What the session looks like, gathered from the environment (and kwinrc on KDE: only the
+// fallback for an X11 window kind that could not be measured, see classifyX11).
 struct Session {
     bool wayland = false;          // a Wayland compositor to talk to (WAYLAND_DISPLAY / session type)
     bool driverForced = false;     // SDL_VIDEODRIVER set by the user (or a test): leave SDL alone
     bool kde = false;              // XDG_CURRENT_DESKTOP lists KDE
-    bool kdeX11RealPixels = true;  // kwinrc [Xwayland] XwaylandClientsScale (default true)
+    bool kdeX11RealPixels = true;  // kwinrc [Xwayland] XwaylandClientsScale (default true); fallback only
     bool gnome = false;            // XDG_CURRENT_DESKTOP lists GNOME (no server-side title bars)
     bool libdecor = true;          // libdecor-0.so.0 loads (SDL2 draws GNOME title bars with it)
 };
@@ -96,13 +96,11 @@ inline bool desktopIs(std::string_view desktops, std::string_view name) {
 inline bool desktopIsKde(std::string_view desktops) { return desktopIs(desktops, "KDE"); }
 
 // The decision. Off never, On whenever a Wayland compositor is there, Auto likewise
-// except on KDE when X11 apps already get real pixels (Plasma's default), and on GNOME
-// when libdecor is missing (the window would have no title bar).
+// except on GNOME when libdecor is missing (the window would have no title bar).
 inline bool wantNative(int setting, const Session& s) {
     if (setting == kOff || s.driverForced || !s.wayland) return false;
     if (setting == kOn) return true;
-    if (s.gnome && !s.libdecor) return false;
-    return !(s.kde && s.kdeX11RealPixels);
+    return !(s.gnome && !s.libdecor);
 }
 
 inline Session probeSession() {
@@ -173,24 +171,52 @@ inline Startup& startup() { static Startup s; return s; }
 // is the native Wayland scale: measured now when this session is native, else the last
 // one remembered (an X11 window cannot see the compositor's scale); unknown = 1 = no
 // change.
-enum Mode : int { kModeUnknown = 0, kModeX11Real = 1, kModeX11Stretched = 2, kModeWayland = 3 };
+//
+// Which X11 kind a Wayland desktop gives is MEASURED, not looked up per desktop (KDE's
+// kwinrc, Hyprland's xwayland:force_zero_scaling and GNOME's experimental
+// xwayland-native-scaling all give X11 apps real pixels): an X11 window records the X11
+// desktop width it got (XWayland's screen), a native window records the desktop's
+// logical width (Wayland's xdg-output, in points) and scale S. Real pixels make the X11
+// desktop S times the logical one, stretching makes them equal (classifyX11). Whichever
+// session comes second has both numbers. With no X11 record yet (a settings file from
+// 0.9.5 or earlier), the native start asks XWayland directly for its screen width
+// (waylandmeasure.h); only if that fails too does kwinrc decide on KDE, and anywhere
+// else the kind counts as real pixels, which leaves the sizes alone (fallbackX11Kind).
+enum Mode : int { kModeUnknown = 0, kModeX11Real = 1, kModeX11Stretched = 2, kModeWayland = 3,
+                  kModeX11 = 4 /* X11 under a Wayland desktop, kind not measured yet */ };
 
 inline const char* modeName(int m) {
-    return m == kModeX11Real ? "x11-real" : m == kModeX11Stretched ? "x11-stretched" : m == kModeWayland ? "wayland" : "";
+    return m == kModeX11Real ? "x11-real" : m == kModeX11Stretched ? "x11-stretched" : m == kModeWayland ? "wayland"
+         : m == kModeX11 ? "x11" : "";
 }
 inline int parseMode(std::string_view v) {
-    return v == "x11-real" ? kModeX11Real : v == "x11-stretched" ? kModeX11Stretched : v == "wayland" ? kModeWayland : kModeUnknown;
+    return v == "x11-real" ? kModeX11Real : v == "x11-stretched" ? kModeX11Stretched : v == "wayland" ? kModeWayland
+         : v == "x11" ? kModeX11 : kModeUnknown;
 }
 
-// What an X11 window gets in this session.
-inline int x11Mode(const Session& s) {
-    return s.wayland && !(s.kde && s.kdeX11RealPixels) ? kModeX11Stretched : kModeX11Real;
+// The X11 kind from the X11 desktop width and the Wayland logical desktop width at
+// native scale S: real pixels give x11W = logicalW x S (KDE: x the largest output scale),
+// stretching gives x11W = logicalW. Split halfway; kModeX11 when it cannot tell (a number
+// missing, or S = 1 where both kinds are the same).
+inline int classifyX11(int x11W, int logicalW, float S) {
+    if (x11W <= 0 || logicalW <= 0 || !(S > 1.01f)) return kModeX11;
+    return float(x11W) > float(logicalW) * (1.0f + S) * 0.5f ? kModeX11Real : kModeX11Stretched;
 }
 
-// This session's mode from SDL's video driver; unknown for anything else (dummy, kmsdrm).
+// The kind to assume when it could not be measured: kwinrc on KDE (its "scaled by the
+// system" stretches), otherwise real pixels. Real is the safe guess because it never
+// converts against a native window: a wrong x S would make the HUD and cursor S times too
+// big (clamped at 200%), a wrong / S S times too small, while leaving the numbers keeps
+// what the player chose. It only applies when even asking XWayland failed.
+inline int fallbackX11Kind(const Session& s) {
+    return s.kde && !s.kdeX11RealPixels ? kModeX11Stretched : kModeX11Real;
+}
+
+// This session's window from SDL's video driver; unknown for anything else (dummy, kmsdrm).
+// An X11 window under a Wayland desktop is kModeX11 until measured (advanceDisplay).
 inline int sessionMode(std::string_view driver, bool native, const Session& s) {
     if (driver == "wayland") return native ? kModeWayland : kModeX11Stretched;   // no HiDPI: stretched too
-    if (driver == "x11") return x11Mode(s);
+    if (driver == "x11") return s.wayland ? kModeX11 : kModeX11Real;
     return kModeUnknown;
 }
 
@@ -199,23 +225,59 @@ inline bool inPoints(int mode, Units u) {
     return u == Units::GamePixels ? mode == kModeX11Stretched : mode != kModeX11Real;
 }
 
-// The remembered mode and native scale (0 = none seen yet).
+// The remembered window kind and measurements (0 = none seen yet).
 struct DisplayHistory {
     int mode = kModeUnknown;
-    float scale = 0.0f;
+    float scale = 0.0f;     // last settled native Wayland scale
+    int x11Width = 0;       // X11 desktop width an X11 window got under this Wayland desktop
+    int logicalWidth = 0;   // Wayland logical desktop width (points) a native window saw
 };
 
-// Records this session in `h` and returns the factor for the size settings (1 = leave
+// What this start measured.
+struct Observation {
+    int mode = kModeUnknown;   // sessionMode()
+    float scale = 0.0f;        // native: the SETTLED scale; 0 = not settled (nothing is recorded)
+    int x11Width = 0;          // X11 under Wayland: the X11 desktop width
+    int logicalWidth = 0;      // native: the logical desktop width
+};
+
+// Records this start in `h` and returns the factor for the size settings (1 = leave
 // them). `assumedPrev` stands in for a history that does not exist yet: the mode the
-// settings were last chosen in (for a file from before this was recorded, the X11 window
-// of this session -- every earlier Linux build ran X11).
-inline float advanceDisplay(DisplayHistory& h, int now, float nowScale, int assumedPrev, Units u) {
-    if (now == kModeUnknown) return 1.0f;
-    const int prev = h.mode != kModeUnknown ? h.mode : assumedPrev;
-    if (now == kModeWayland && nowScale > 0.0f) h.scale = nowScale;
-    const float S = h.scale;
-    h.mode = now;
-    if (prev == kModeUnknown || inPoints(prev, u) == inPoints(now, u) || !(S > 1.01f)) return 1.0f;
+// settings were last chosen in (for a file from before this was recorded, kModeX11 --
+// every earlier Linux build ran X11). `probeX11Width` (may be null) asks XWayland for its
+// desktop width now; it is called only when a native start must know an unmeasured X11
+// kind. `fallback` is fallbackX11Kind(session). `kinds` (may be null) receives the
+// previous and this window's kind as measured (kModeX11 where the fallback stood in).
+using ProbeX11Width = int (*)();
+inline float advanceDisplay(DisplayHistory& h, const Observation& now, int assumedPrev, Units u, int fallback,
+                            ProbeX11Width probeX11Width = nullptr, int (*kinds)[2] = nullptr) {
+    if (now.mode == kModeUnknown) return 1.0f;
+    // A native start whose scale has not arrived from the compositor yet could read 1 and
+    // record it, losing the conversion: leave everything for the next start instead.
+    if (now.mode == kModeWayland && !(now.scale > 0.0f)) return 1.0f;
+    DisplayHistory next = h;
+    if (now.mode == kModeWayland) {
+        next.scale = now.scale;
+        if (now.logicalWidth > 0) next.logicalWidth = now.logicalWidth;
+    }
+    if (now.mode == kModeX11 && now.x11Width > 0) next.x11Width = now.x11Width;
+    const float S = next.scale;
+    int prev = h.mode != kModeUnknown ? h.mode : assumedPrev;
+    if (prev == kModeX11) {   // the earlier X11 window, measured against what is known now
+        prev = classifyX11(h.x11Width, next.logicalWidth, S);
+        if (prev == kModeX11 && now.mode == kModeWayland && S > 1.01f && probeX11Width) {
+            const int w = probeX11Width();
+            if (w > 0) next.x11Width = w;
+            prev = classifyX11(w, next.logicalWidth, S);
+        }
+    }
+    int cur = now.mode == kModeX11 ? classifyX11(next.x11Width, next.logicalWidth, S) : now.mode;
+    next.mode = cur;   // unmeasured stays kModeX11, for a later native start to settle
+    h = next;
+    if (kinds) { (*kinds)[0] = prev; (*kinds)[1] = cur; }
+    if (prev == kModeX11) prev = fallback;
+    if (cur == kModeX11) cur = fallback;
+    if (prev == kModeUnknown || inPoints(prev, u) == inPoints(cur, u) || !(S > 1.01f)) return 1.0f;
     return inPoints(prev, u) ? S : 1.0f / S;
 }
 

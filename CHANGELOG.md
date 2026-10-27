@@ -56,11 +56,13 @@ their validation reports; both live in [`docs/`](docs/).
   grow past its maximum, and a hit on an unfinished retail-style site now
   rewrites its build progress as the original does.
 - **Native Wayland on Linux.** Options, Display has a new NATIVE WAYLAND setting
-  (Auto, On, Off; restart required). On Wayland desktops that scale X11 windows
-  (such as GNOME), the game and Cartographer now open sharp and at the right
-  size at 150% or 200% scaling. KDE Plasma keeps X11 by default. Switching keeps
-  UI Scale and Cursor Size the same size on screen: they are converted only when
-  the old X11 window was enlarged by the desktop, so on KDE Plasma they stay as set.
+  (Auto, On, Off; restart required). On a Wayland desktop (GNOME, KDE Plasma,
+  Sway, Hyprland and others) the game and Cartographer now open native Wayland
+  windows, sharp and at the right size at 150% or 200% scaling; GNOME without
+  the libdecor library keeps X11. Switching keeps UI Scale and Cursor Size the
+  same size on screen: the game measures whether its old X11 window had real
+  pixels or was enlarged by the desktop and converts them only in the second
+  case, so on KDE Plasma's default they stay as set.
 - **Command-line tools.** `cartographer --version` and `--help` work, the dev
   tools print their usage when given a missing or bad argument, and `simperf`
   works with the current random-map recipe.

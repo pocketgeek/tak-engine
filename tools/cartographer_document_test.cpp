@@ -462,6 +462,14 @@ int main() {
             const auto rejected=cart::loadEditorPreferences(root);
             check(!rejected.edgeScroll && !rejected.fullscreen,"malformed display preferences keep the defaults");
             check(!rejected.showBlocked,"blocked cells are hidden by default");
+            auto wl=preferences;wl.displayMode=4;wl.displayScale=1.45f;wl.displayX11Width=7680;wl.displayLogicalWidth=5297;
+            check(cart::saveEditorPreferences(root,wl,prefsError),prefsError.c_str());
+            const auto wlLoaded=cart::loadEditorPreferences(root);
+            check(wlLoaded.displayMode==4 && std::abs(wlLoaded.displayScale-1.45f)<.001f && wlLoaded.displayX11Width==7680 &&
+                  wlLoaded.displayLogicalWidth==5297,"display kind, scale and desktop widths roundtrip");
+            std::ofstream(root/"preferences.txt")<<"display wayland 1.45\n";
+            const auto older=cart::loadEditorPreferences(root);
+            check(older.displayMode==3 && older.displayX11Width==0 && older.displayLogicalWidth==0,"display row without widths still loads");
         }
         {
             auto groups=preferences;groups.sectionGroups={{"Zhon","folder:coast cliffs sandy"},{"Aramon","kind:Water & coast"}};

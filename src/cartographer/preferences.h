@@ -12,9 +12,10 @@ struct EditorPreferences {
     bool edgeScroll=false;    // hover at the canvas edge pans (retail only auto-scrolled drags past the view)
     bool fullscreen=false;    // borderless desktop fullscreen; width/height stay the windowed size
     bool showBlocked=false;   // the blocked-cell overlay with every tool (the BLOCKED tool always shows it)
-    // Linux bookkeeping: the window kind of the last session and the last native Wayland
-    // scale (tak::wayland::advanceDisplay), so a NATIVE WAYLAND switch keeps the UI size.
-    int displayMode=0;float displayScale=0;
+    // Linux bookkeeping: the window kind of the last session, the last native Wayland
+    // scale and the X11 / logical desktop widths that tell the X11 kinds apart
+    // (tak::wayland::advanceDisplay), so a NATIVE WAYLAND switch keeps the UI size.
+    int displayMode=0;float displayScale=0;int displayX11Width=0,displayLogicalWidth=0;
     std::vector<std::string> recent;
     std::map<std::string,std::string> sectionGroups;   // world -> terrain browser group id
     void remember(const std::string& request);
