@@ -527,6 +527,7 @@ public:
     // golden-hash test: use it to prove clients agree with each other and the referee,
     // never to compare a hash against a previous run.
     void autoplayStep();
+    void autoplayHelpStep(const std::function<uint32_t()>& rnd);
     // TAK_BUILDLINE_NET: shift-drag build lines in a server game (see gameview_net.cpp).
     void buildlineNetProbe();
     struct NetLine {const tak::sim::UnitType* type; std::vector<std::pair<float, float>> sites;};

@@ -1182,10 +1182,13 @@ void GameView::autoplayStep() {
         const auto live = liveWorld();
         for (const auto& u : live->units())
             if (u.alive() && u.type && int(u.player) == localPlayer_ && u.type->maxVel > tak::sim::Fixed() &&
-                !u.embarked() && !u.underConstruction)
+                !u.embarked() && !u.underConstruction &&
+                // A builder at work is left to it (autoplayHelpStep's jobs would never finish).
+                !(u.type->isBuilder && (u.buildSiteId || u.repairId || u.productionSiteId ||
+                                        (!u.orders.empty() && u.orders.front().buildType))))
                 mine.push_back(u.id);
     }
-    if (mine.empty()) return;
+    if (mine.empty()) { autoplayHelpStep(rnd); return; }
 
     // Order a handful at a time: one unit per order is too thin to collide with
     // another client's commands in the same tick, which is the thing being tested.
@@ -1203,6 +1206,97 @@ void GameView::autoplayStep() {
         c.queue = 0;
         issue(c);
     }
+    autoplayHelpStep(rnd);
+}
+
+// TAK_AUTOPLAY's production and HelpBuild orders (protocol 301): now and then
+// the seat has a builder put down a factory (or anything on its menu) near
+// itself, trains at its factories, puts a conjurer on a repeat queue, has a
+// builder guard a busy unit of its own (guard-help: repair, HelpBuild on a
+// site or on a factory's / conjurer's output) and has a builder assist an
+// unfinished unit -- so autoplay desync sweeps run construction, shared
+// production progress and guard-help between clients and the referee. All
+// through issue(); the sim judges every order, so an ineligible one (a
+// blocked spot, an off-menu type) is refused on every peer alike.
+void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
+    struct Mine { int id; const tak::sim::UnitType* type; float x, z; };
+    std::vector<Mine> factories, builders;
+    std::vector<int> busy, unfinished;
+    {
+        const auto live = liveWorld();
+        for (const auto& u : live->units()) {
+            if (!u.alive() || !u.type || int(u.player) != localPlayer_ || u.embarked()) continue;
+            if (u.underConstruction) { unfinished.push_back(u.id); continue; }
+            if (!u.type->isBuilder) continue;
+            const Mine m{u.id, u.type, u.x.toFloat(), u.z.toFloat()};
+            const bool working = u.buildSiteId || u.repairId || u.productionSiteId ||
+                                 (!u.orders.empty() && (u.orders.front().buildType || u.orders.front().guard));
+            // Only an idle builder takes a new job: the jobs get to finish.
+            if (u.type->isStructure()) factories.push_back(m);
+            else if (!working) builders.push_back(m);
+            if (u.buildSiteId || u.repairId || u.productionSiteId) busy.push_back(u.id);
+        }
+    }
+    const auto menu = [&](const Mine& m, bool structures) {
+        std::vector<const tak::sim::UnitType*> out;
+        for (const auto& name : registry_.buildable(m.type->id))
+            if (const auto* t = registry_.find(name); t && t->isStructure() == structures) out.push_back(t);
+        return out;
+    };
+    tak::net::Command c;
+    c.queue = 0;
+    switch (rnd() % 8) {
+    case 0: {   // a builder puts a structure down near itself
+        if (builders.empty()) return;
+        const Mine& b = builders[rnd() % builders.size()];
+        auto types = menu(b, true);
+        // Mostly something that builds in turn: a factory gives the guards work.
+        std::vector<const tak::sim::UnitType*> producers;
+        for (const auto* t : types) if (t->isBuilder) producers.push_back(t);
+        if (!producers.empty() && rnd() % 4) types = producers;
+        if (types.empty()) return;
+        c.kind = tak::net::Cmd::Build; c.unitId = b.id;
+        c.x = b.x + float(int(rnd() % 321) - 160); c.z = b.z + 96.0f + float(rnd() % 160);
+        std::snprintf(c.type, sizeof c.type, "%s", types[rnd() % types.size()]->id.c_str());
+        break;
+    }
+    case 1: {   // a factory trains one mobile unit
+        if (factories.empty()) return;
+        const Mine& f = factories[rnd() % factories.size()];
+        const auto types = menu(f, false);
+        if (types.empty()) return;
+        c.kind = tak::net::Cmd::Train; c.unitId = f.id; c.targetId = 1 + int(rnd() % 3);
+        std::snprintf(c.type, sizeof c.type, "%s", types[rnd() % types.size()]->id.c_str());
+        break;
+    }
+    case 2: {   // a conjurer on a repeat queue (or off it again: the same command toggles)
+        if (builders.empty()) return;
+        const Mine& b = builders[rnd() % builders.size()];
+        const auto types = menu(b, false);
+        if (types.empty() || b.type->commander) return;   // the monarch keeps building
+        c.kind = tak::net::Cmd::RepeatTrain; c.unitId = b.id;
+        std::snprintf(c.type, sizeof c.type, "%s", types[rnd() % types.size()]->id.c_str());
+        break;
+    }
+    case 3:
+    case 4:     // a builder guards a busy unit: it helps / repairs what that unit works on
+        if (builders.empty() || busy.empty()) return;
+        c.kind = tak::net::Cmd::Guard; c.unitId = builders[rnd() % builders.size()].id;
+        c.targetId = busy[rnd() % busy.size()];
+        if (c.unitId == c.targetId) return;
+        break;
+    case 5:     // a builder assists an unfinished unit (a site, or a factory's output)
+        if (builders.empty() || unfinished.empty()) return;
+        c.kind = tak::net::Cmd::Assist; c.unitId = builders[rnd() % builders.size()].id;
+        c.targetId = unfinished[rnd() % unfinished.size()];
+        break;
+    default:
+        return;
+    }
+    // Coverage probe (stderr only): what the seat asked for, at which tick.
+    std::fprintf(stderr, "AUTOPLAY_HELP tick=%u kind=%d unit=%d target=%d type=%s\n", netTick_, int(c.kind),
+                 c.unitId, c.targetId, c.type);
+    issue(c);
 }
 #endif
 
