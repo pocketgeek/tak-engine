@@ -439,7 +439,8 @@ void OptionsScreen::build(int channels) {
 #if defined(__linux__)
     // NATIVE WAYLAND: a Wayland window in real pixels instead of X11 through XWayland,
     // which most Wayland desktops stretch (blurry) above 100% scale. AUTO = on in a
-    // Wayland session, except KDE when it already gives X11 apps real pixels. Applied at
+    // Wayland session, except KDE when it already gives X11 apps real pixels (and GNOME
+    // without libdecor, which draws the title bar there). Applied at
     // startup only (client/waylandchoice.h).
     dropdown("NATIVE WAYLAND",
         [] { return std::vector<std::string>{"Auto", "On", "Off"}; },
@@ -459,7 +460,7 @@ void OptionsScreen::build(int channels) {
         else now += "X11";
         return std::vector<std::string>{now,
             "AUTO: NATIVE WAYLAND ON A WAYLAND DESKTOP, EXCEPT KDE PLASMA WHEN IT ALREADY LETS X11 APPS "
-            "SCALE THEMSELVES. ON: WAYLAND WHENEVER IT IS THERE. OFF: ALWAYS X11. RESTART TO APPLY."};
+            "SCALE THEMSELVES, AND GNOME WITHOUT LIBDECOR (NO TITLE BAR). ON: WAYLAND WHENEVER IT IS THERE. OFF: ALWAYS X11. RESTART TO APPLY."};
     };
 #endif
 

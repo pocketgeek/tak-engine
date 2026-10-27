@@ -15,6 +15,10 @@
 // output's native size. Auto keeps X11 there, so a player whose KDE desktop already
 // shows the game crisply sees no change; "scaled by the system" gets native Wayland.
 //
+// GNOME (Mutter) draws no title bars for Wayland windows: SDL2 draws them with libdecor,
+// loaded at run time. Without libdecor-0.so.0 a GNOME window would have no title bar, so
+// Auto keeps X11 there (On still means Wayland).
+//
 // Options -> Display -> NATIVE WAYLAND (Settings::nativeWayland): Auto, On, Off. Applied
 // before SDL_Init (restart required). SDL_VIDEODRIVER in the environment always wins.
 // Pure decision code here; main.cpp and Cartographer apply it.
@@ -22,11 +26,16 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <string_view>
+
+#if defined(__linux__)
+#include <dlfcn.h>
+#endif
 
 namespace tak::wayland {
 
@@ -42,6 +51,8 @@ struct Session {
     bool driverForced = false;     // SDL_VIDEODRIVER set by the user (or a test): leave SDL alone
     bool kde = false;              // XDG_CURRENT_DESKTOP lists KDE
     bool kdeX11RealPixels = true;  // kwinrc [Xwayland] XwaylandClientsScale (default true)
+    bool gnome = false;            // XDG_CURRENT_DESKTOP lists GNOME (no server-side title bars)
+    bool libdecor = true;          // libdecor-0.so.0 loads (SDL2 draws GNOME title bars with it)
 };
 
 // kwinrc [Xwayland] XwaylandClientsScale: Plasma's "Legacy applications (X11)" choice.
@@ -71,23 +82,26 @@ inline bool kwinXwaylandClientsScale(std::string_view kwinrc) {
     return clientsScale;
 }
 
-// Does XDG_CURRENT_DESKTOP (a colon-separated list) name KDE?
-inline bool desktopIsKde(std::string_view desktops) {
+// Does XDG_CURRENT_DESKTOP (a colon-separated list) name this desktop (upper case)?
+inline bool desktopIs(std::string_view desktops, std::string_view name) {
     while (!desktops.empty()) {
         const size_t c = desktops.find(':');
         std::string item(desktops.substr(0, c));
         std::transform(item.begin(), item.end(), item.begin(), [](unsigned char ch) { return char(std::toupper(ch)); });
-        if (item == "KDE") return true;
+        if (item == name) return true;
         desktops = c == std::string_view::npos ? std::string_view() : desktops.substr(c + 1);
     }
     return false;
 }
+inline bool desktopIsKde(std::string_view desktops) { return desktopIs(desktops, "KDE"); }
 
 // The decision. Off never, On whenever a Wayland compositor is there, Auto likewise
-// except on KDE when X11 apps already get real pixels (Plasma's default).
+// except on KDE when X11 apps already get real pixels (Plasma's default), and on GNOME
+// when libdecor is missing (the window would have no title bar).
 inline bool wantNative(int setting, const Session& s) {
     if (setting == kOff || s.driverForced || !s.wayland) return false;
     if (setting == kOn) return true;
+    if (s.gnome && !s.libdecor) return false;
     return !(s.kde && s.kdeX11RealPixels);
 }
 
@@ -100,6 +114,14 @@ inline Session probeSession() {
     s.wayland = !env("WAYLAND_DISPLAY").empty() || env("XDG_SESSION_TYPE") == "wayland";
     s.driverForced = !env("SDL_VIDEODRIVER").empty();
     s.kde = desktopIsKde(env("XDG_CURRENT_DESKTOP"));
+    s.gnome = desktopIs(env("XDG_CURRENT_DESKTOP"), "GNOME");
+#if defined(__linux__)
+    if (s.gnome && s.wayland) {
+        void* lib = dlopen("libdecor-0.so.0", RTLD_LAZY | RTLD_LOCAL);
+        s.libdecor = lib != nullptr;
+        if (lib) dlclose(lib);
+    }
+#endif
     if (s.kde) {
         std::string dir(env("XDG_CONFIG_HOME"));
         if (dir.empty() && !env("HOME").empty()) dir = std::string(env("HOME")) + "/.config";

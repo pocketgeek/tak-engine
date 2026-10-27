@@ -335,6 +335,11 @@ int main() {
         check("wl: off", !wl::wantNative(wl::kOff, gnome) && !wl::wantNative(wl::kOff, kdeSystem));
         check("wl: no wayland", !wl::wantNative(wl::kOn, x11) && !wl::wantNative(wl::kAuto, x11));
         check("wl: env wins", !wl::wantNative(wl::kOn, forced) && !wl::wantNative(wl::kAuto, forced));
+        check("wl: gnome list", wl::desktopIs("ubuntu:GNOME", "GNOME") && !wl::desktopIs("KDE", "GNOME"));
+        wl::Session gnomeBare = gnome; gnomeBare.gnome = true; gnomeBare.libdecor = false;
+        wl::Session swayBare = gnome; swayBare.libdecor = false;   // server-side title bars
+        check("wl: gnome no libdecor", !wl::wantNative(wl::kAuto, gnomeBare) && wl::wantNative(wl::kOn, gnomeBare));
+        check("wl: other no libdecor", wl::wantNative(wl::kAuto, swayBare));
         check("wl: default auto", Settings{}.nativeWayland == wl::kAuto);
     }
 
