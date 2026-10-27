@@ -1,5 +1,6 @@
 #include "sim/pathsearch.h"
 #include "sim/retailtrace.h"
+#include "util/devenv.h"
 
 #include <bit>
 #include <algorithm>
@@ -9,7 +10,7 @@
 
 namespace tak::sim {
 
-static const bool g_pathDbg = getenv("TAK_PATHDBG") != nullptr;
+static const bool g_pathDbg = tak::devEnv("TAK_PATHDBG") != nullptr;
 
 int pathDist(PathCell a, PathCell b) {
     return std::max(std::abs(a.x - b.x), std::abs(a.z - b.z));

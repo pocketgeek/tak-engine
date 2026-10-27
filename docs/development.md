@@ -297,8 +297,11 @@ handoff `--play-map <snapshot.kmp>` (with optional `--game-mod <pack>`), and lau
 games through the menus. Debug builds also expose asset viewers, direct game/replay launch, and
 headless diagnostic harnesses. See the [command-line reference](user-guide.md#command-line)
 and `build-o2/takclient --help`; additional harness arguments are defined in
-[src/client/main.cpp](../src/client/main.cpp). Client `TAK_*` diagnostic
-environment hooks are disabled in Release builds.
+[src/client/main.cpp](../src/client/main.cpp). `TAK_*` diagnostic
+environment hooks (client, server, sim, AI and Cartographer) are disabled in Release
+builds; the only ones a release build reads are takserver's test timers
+`TAK_TIMEOUT_MS`, `TAK_LOAD_TIMEOUT_MS`, `TAK_STALL_MS` and `TAK_DROP_WAIT_MS`
+([public server](public-server.md)).
 
 Game speed follows the original's −9..+10 levels (0.1× to 2×). For testing, a
 debug client run with `TAK_FAST_SPEED=1` keeps stepping past +10 in 0.5× steps up

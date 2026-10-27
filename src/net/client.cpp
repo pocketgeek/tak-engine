@@ -8,6 +8,7 @@
 #include "net/auth.h"
 #include "net/crypto.h"
 #include "tnt/mapgen.h"
+#include "util/devenv.h"
 
 namespace tak::net {
 
@@ -124,9 +125,9 @@ void MpClient::leaveRunningGame() {
 bool MpClient::poll() {
     if (state_ == State::Offline || state_ == State::Done) return false;
     if (jitterMs_ < 0) {   // one-time init of the test link model
-        const char* j = std::getenv("TAK_NET_JITTER_MS");
-        const char* b = std::getenv("TAK_NET_BASE_MS");
-        const char* l = std::getenv("TAK_NET_LOSS_PCT");
+        const char* j = tak::devEnv("TAK_NET_JITTER_MS");
+        const char* b = tak::devEnv("TAK_NET_BASE_MS");
+        const char* l = tak::devEnv("TAK_NET_LOSS_PCT");
         jitterMs_ = j ? std::max(0, std::atoi(j)) : 0;
         baseMs_ = b ? std::max(0, std::atoi(b)) : 0;
         lossPct_ = l ? std::clamp(std::atoi(l), 0, 100) : 0;

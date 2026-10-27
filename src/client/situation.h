@@ -25,6 +25,7 @@
 #include "client/ordershape.h"
 #include "net/protocol.h"
 #include "sim/sim.h"
+#include "util/devenv.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -44,7 +45,7 @@ namespace tak::situation {
 inline constexpr uint32_t kCommandWindow = 600;   // ticks of commands kept (TAK_SITUATION_CMDS=N overrides: timing runs
                                                   // that simulate more than 600 ticks keep the recording's commands for all of them)
 inline uint32_t commandWindow() {
-    if (const char* e = std::getenv("TAK_SITUATION_CMDS")) if (const unsigned long n = std::strtoul(e, nullptr, 10)) return uint32_t(n);
+    if (const char* e = tak::devEnv("TAK_SITUATION_CMDS")) if (const unsigned long n = std::strtoul(e, nullptr, 10)) return uint32_t(n);
     return kCommandWindow;
 }
 inline constexpr uint32_t kTruthTicks[] = {100, 300};   // where the recording's positions are sampled (the last ends the harvest)
@@ -86,7 +87,7 @@ public:
     // situation converges on the recording's queues).
     void arm(const Request& r, const Meta& m) {
         req_ = r; meta_ = m; armed_ = r.valid;
-        if (const char* e = std::getenv("TAK_SITUATION_SHAPES")) shapeEnd_ = r.valid ? uint32_t(std::strtoul(e, nullptr, 10)) : 0;
+        if (const char* e = tak::devEnv("TAK_SITUATION_SHAPES")) shapeEnd_ = r.valid ? uint32_t(std::strtoul(e, nullptr, 10)) : 0;
     }
     bool armed() const { return armed_ || shapeEnd_ != 0; }
 

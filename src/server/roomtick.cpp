@@ -2,6 +2,7 @@
 #include "server/rosterdump.h"
 #include "ai/ai.h"
 #include "sim/matchsetup.h"
+#include "util/devenv.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -15,10 +16,10 @@ TickResult simulateRoomTick(sim::World& world,const sim::TypeRegistry& registry,
     const auto start=std::chrono::steady_clock::now();
     for(auto& controller:controllers)
         controller.tick(world,input.tick,[&](const Command& command) {input.commands.push_back(command);});
-    static const bool report=std::getenv("TAK_AIPHASE")!=nullptr;
+    static const bool report=tak::devEnv("TAK_AIPHASE")!=nullptr;
     if(report) {
         const double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
-        static const double threshold=std::getenv("TAK_AIPHASE_MS")?std::atof(std::getenv("TAK_AIPHASE_MS")):8.0;
+        static const double threshold=tak::devEnv("TAK_AIPHASE_MS")?std::atof(tak::devEnv("TAK_AIPHASE_MS")):8.0;
         if(ms>threshold)std::fprintf(stderr,"AIPHASE tick=%u ai=%.1fms controllers=%zu room=%u\n",input.tick,ms,controllers.size(),input.roomId);
     }
     // Preserve the existing FIFO: immediate humans, AI, delayed humans. The

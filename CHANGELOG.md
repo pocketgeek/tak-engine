@@ -49,6 +49,11 @@ their validation reports; both live in [`docs/`](docs/).
   armed or not. An unfinished unit is still helped to build, an enemy still
   attacked and a transport still boarded. A god, which the original cannot
   tell to guard, no longer guards on a right-click either.
+- **Release builds read no diagnostic environment variables.** The remaining
+  `TAK_*` logging and tuning hooks in the server, simulation, AI, network code
+  and Cartographer now work only in debug builds, as the client's already did.
+  A release `takserver` still honours its four test timers (`TAK_TIMEOUT_MS`,
+  `TAK_LOAD_TIMEOUT_MS`, `TAK_STALL_MS`, `TAK_DROP_WAIT_MS`).
 
 ## 0.9.7
 *2026-10-27 · protocol 301 · replay format 15 · does not play with 0.9.6 or earlier, nor their replays*

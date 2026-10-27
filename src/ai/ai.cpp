@@ -10,6 +10,7 @@
 #include "sim/detmath.h"
 #include "sim/footprint.h"
 #include "sim/retailai.h"
+#include "util/devenv.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -729,7 +730,7 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
     }
     // TAK_AI_PICK: why a producer chose nothing. A stalled economy is almost always
     // "every menu entry scored 0", and this says which gate did it.
-    static const bool kPickLog = std::getenv("TAK_AI_PICK") != nullptr;
+    static const bool kPickLog = tak::devEnv("TAK_AI_PICK") != nullptr;
     if (kPickLog && best <= 0) {
         std::fprintf(stderr, "    pick %s: nothing usable (mana=%.0f income=%.0f)\n",
                      producer.type->id.c_str(), world.player(player_).mana, income);
@@ -891,7 +892,7 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
                 emit(sink, tak::net::Cmd::Build, p.id, pick->id, x, z);
                 return true;
             } else {
-                static const bool kPickLog = std::getenv("TAK_AI_PICK") != nullptr;
+                static const bool kPickLog = tak::devEnv("TAK_AI_PICK") != nullptr;
                 if (kPickLog)
                     std::fprintf(stderr, "    NO SITE: %s#%d cannot site %s near (%.0f,%.0f)\n",
                                  p.type->id.c_str(), p.id, pick->id.c_str(), ox, oz);
@@ -926,7 +927,7 @@ bool Controller::produce(const tak::sim::World& world, const tak::sim::Unit& p,
                     return true;
                 }
             }
-        static const bool kPickLog = std::getenv("TAK_AI_PICK") != nullptr;
+        static const bool kPickLog = tak::devEnv("TAK_AI_PICK") != nullptr;
         if (kPickLog)
             std::fprintf(stderr, "    NO SPOT: %s#%d at (%.0f,%.0f) cannot place %s "
                                  "anywhere in r=40..170\n",
@@ -1907,7 +1908,7 @@ void Controller::stationArmy(const tak::sim::World& world, std::vector<int>& ass
                 ++issued;
                 moved = true;
             }
-        static const bool kStationLog = std::getenv("TAK_AI_STATION") != nullptr;
+        static const bool kStationLog = tak::devEnv("TAK_AI_STATION") != nullptr;
         if (!moved && kStationLog)   // a fighter with no free spot it can walk to
             std::fprintf(stderr, "    STATION FAIL %s#%d at (%.0f,%.0f) d=%.0f base=%.0f\n", u.type->id.c_str(), u.id, ux, uz,
                          std::sqrt(dx*dx+dz*dz), base);

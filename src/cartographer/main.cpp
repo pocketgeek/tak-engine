@@ -63,10 +63,22 @@ cart::FreshMap cart::buildFreshMap(const tak::hpi::Vfs& vfs, cart::SectionLibrar
     return out;
 }
 
-// Preferences/recovery folder. TAK_CARTOGRAPHER_PROFILE (tests) names it outright, in any build type;
-// otherwise the per-user folder, which follows XDG_DATA_HOME in tests on every platform (util/prefpath.h).
+// TAK_CARTOGRAPHER_PROFILE names a test profile folder. Debug builds and the editor's test
+// executables (TAK_CARTOGRAPHER_TEST, every build type) read it; a release editor reads no
+// TAK_* variable, like a release takclient.
+static const char* testProfile() {
+#if !defined(NDEBUG) || defined(TAK_CARTOGRAPHER_TEST)
+    const char* o=SDL_getenv("TAK_CARTOGRAPHER_PROFILE");
+    return o && *o ? o : nullptr;
+#else
+    return nullptr;
+#endif
+}
+
+// Preferences/recovery folder. A test profile (above) names it outright; otherwise the
+// per-user folder, which follows XDG_DATA_HOME in tests on every platform (util/prefpath.h).
 static std::filesystem::path profileFolder() {
-    if(const char* o=SDL_getenv("TAK_CARTOGRAPHER_PROFILE")) if(*o) return std::filesystem::u8path(o);
+    if(const char* o=testProfile()) return std::filesystem::u8path(o);
     const std::string path=tak::prefPath("Cartographer");
     return path.empty()?std::filesystem::path():std::filesystem::u8path(path);
 }
@@ -93,7 +105,7 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     launchArgs.assign(argv+std::min(argc,1),argv+argc);
     // A test profile has its own copy of the game's settings file, so a test can
     // exercise the shared data folder without ever touching the player's real one.
-    if(const char* profile=SDL_getenv("TAK_CARTOGRAPHER_PROFILE"); profile && *profile)
+    if(const char* profile=testProfile())
         tak::setSettingsPath(pathText(std::filesystem::u8path(profile)/"game-settings.ini"));
     // Data root, by the game's own rules (tak::chooseDataFolder): --data wins; then the
     // local directory if it holds a valid install (drop the editor into a game folder

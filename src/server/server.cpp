@@ -21,6 +21,7 @@
 #include "server/tickpacer.h"
 #include "server/validationworker.h"
 #include "util/stoptoken.h"
+#include "util/devenv.h"
 #include "server/roomtick.h"
 #include "server/status.h"
 #include "net/matchconfig.h"
@@ -2500,11 +2501,11 @@ void Server::closeTick(Room& r, bool multipleGames) {
     // The ONE place a client's commands enter a tick: strict FIFO, one budget per
     // client per tick, and the same input-delay rule for all of them.
     //
-    // Server-side input delay (TAK_SRV_DELAY=K, default 0) buckets commands K ticks
+    // Server-side input delay (debug builds: TAK_SRV_DELAY=K, default 0) buckets commands K ticks
     // into the future so one never "just misses" a tick boundary; costs K ticks of
     // latency.
     static const int srvDelay = [] {
-        const char* e = std::getenv("TAK_SRV_DELAY"); return e ? std::max(0, std::atoi(e)) : 0;
+        const char* e = tak::devEnv("TAK_SRV_DELAY"); return e ? std::max(0, std::atoi(e)) : 0;
     }();
     //
     // An explicit order (Cmd::Order) is ONE item of its client's FIFO: it is taken
@@ -2589,10 +2590,10 @@ void Server::finishTick(Room& r) {
     }
     ++r.tick;
     r.pace.advance(r.tick, nowUs());
-    // TAK_SRV_PACELOG=N: log the wall time every N published ticks, to measure the
+    // TAK_SRV_PACELOG=N (debug builds): log the wall time every N published ticks, to measure the
     // real tick rate (8x must be 240.0 ticks/s, 1x 30.0).
     static const uint32_t paceLog = [] {
-        const char* e = std::getenv("TAK_SRV_PACELOG"); return e ? uint32_t(std::max(0, std::atoi(e))) : 0u;
+        const char* e = tak::devEnv("TAK_SRV_PACELOG"); return e ? uint32_t(std::max(0, std::atoi(e))) : 0u;
     }();
     if (paceLog && r.tick % paceLog == 0)
         std::fprintf(stderr, "PACE game %u tick %u us %llu speed %d\n", r.id, r.tick,
@@ -3239,7 +3240,9 @@ std::string defaultMapCacheDir() {
 }  // namespace
 
 static int serverMain(int argc, char** argv) {
-    // Test overrides for the disconnect wait and the silence timeouts (milliseconds).
+    // Test overrides for the disconnect wait and the silence timeouts (milliseconds). The
+    // only TAK_* variables a release build reads (docs/public-server.md); every other hook
+    // goes through devEnv() and is debug-only.
     if (const char* g = std::getenv("TAK_STALL_MS")) gStallMs = uint64_t(std::max(100ll, std::atoll(g)));
     if (const char* b = std::getenv("TAK_DROP_WAIT_MS")) gDropWaitMs = uint64_t(std::max(100ll, std::atoll(b)));
     if (const char* t = std::getenv("TAK_TIMEOUT_MS")) gTimeoutMs = uint64_t(std::max(500ll, std::atoll(t)));

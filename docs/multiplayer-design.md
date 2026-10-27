@@ -166,7 +166,7 @@ Only game ticks are gated by this buffer; camera, zoom, and edge-scroll run ever
 render frame in `cameraFrame(dt)`, independent of the sim, so input feel is never
 coupled to link latency.
 
-*Test harness.* A synthetic link model injects receive delay on the client with
+*Test harness.* A synthetic link model (debug builds) injects receive delay on the client with
 no server needed: `TAK_NET_BASE_MS` (constant one-way), `TAK_NET_JITTER_MS`
 (uniform 0..N added), `TAK_NET_LOSS_PCT` (probability of a ~2·base retransmit
 spike). `TAK_NETBENCH=1` runs the headless client at a fixed 60 fps and reports

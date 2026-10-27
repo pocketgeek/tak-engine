@@ -6,7 +6,7 @@
 # measured window and simulate only warm-up + window. A round is about 15 minutes. It is TIMING only: identity (hashes,
 # replays, crowdbench rows) still comes from the full replays and tools/legion_identity.sh.
 #
-# BUILD is a build dir holding legion_scenario of an -O2 (Debug -O2 -g) or Release tree; BOTH trees need the tool
+# BUILD is a build dir holding legion_scenario of an -O2 (Debug -O2 -g) tree (TAK_PHASE is debug-only); BOTH trees need the tool
 # files of this commit (map named, TAK_SITUATION_CMDS): cherry-pick the commit onto a base/candidate that predates it.
 #   --base DIR --cand DIR   the two build dirs (required)
 #   --sits LIST             comma list of situations (default: every tools/scenarios/we-timing/*.scn.gz)

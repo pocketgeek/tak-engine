@@ -390,8 +390,9 @@ registry key the retail installer wrote.
   file and the new editor reopening it, a missing map opening the editor, a
   failed SAVE calling the restart off). The test profile
   (`TAK_CARTOGRAPHER_PROFILE`) redirects the game's settings file to
-  `game-settings.ini` inside it (`tak::setSettingsPath`), in every build type,
-  so no test reads or writes the player's real settings.
+  `game-settings.ini` inside it (`tak::setSettingsPath`), in the test
+  executables of every build type and in a debug editor (a release editor
+  ignores it), so no test reads or writes the player's real settings.
   `TAK_CARTO_SHOT_DIR=<dir>` writes the dialog's states as screenshots. Each
   check was shown to fail against a deliberately broken build.
 

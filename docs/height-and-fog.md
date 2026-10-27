@@ -86,7 +86,7 @@ state and **are** hashed.
 
 ## Tuning knobs (env)
 
-`TAK_HSCALE`, `TAK_HSCALEX` and `TAK_HDEBUG` are read only by debug builds.
+All of these are read only by debug builds; a release build uses the defaults.
 
 | Var | Effect | Default |
 | --- | --- | --- |
