@@ -67,10 +67,11 @@ cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
   are debug-only). The server needs `--data` to run the referee + AI, and enforces a
   gameplay-data hash, so client and server must point at the same install. **A server
   now requires an account login by default** — pass `--no-auth` for a harness run (or
-  give the client `--user NAME --pass PASSWORD`; an unused name registers itself). The
-  server takes a couple seconds to mount + load, so wait for its "listening" line
+  give the client `--user NAME --pass PASSWORD`; an unused name registers itself), and
+  **`--local`** (loopback only): a non-loopback listener without TLS refuses to start
+  unless given `--tls-cert`/`--acme-domain` or `--allow-plaintext`. The server takes a couple seconds to mount + load, so wait for its "listening" line
   before the client:
-  `XDG_DATA_HOME=$(mktemp -d) ./build-dbg/takserver --port 7677 --data <install> --no-auth --seed 1 &` then
+  `XDG_DATA_HOME=$(mktemp -d) ./build-dbg/takserver --port 7677 --data <install> --no-auth --local --seed 1 &` then
   `XDG_DATA_HOME=$(mktemp -d) TAK_HEADLESS=1 SDL_VIDEODRIVER=dummy ./build-dbg/takclient game "<map>" --data <install> --server 127.0.0.1 --serverport 7677 --mpai --time 60` —
   prints a state `hash=`. **`--seed` is required for a repeatable hash**: a game is
   otherwise seeded randomly (so Random Start Locations differ game to game), and the

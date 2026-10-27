@@ -23,7 +23,7 @@ keeps it running too. Stop it with **Stop Streaming**, or by exiting the applica
 The key is masked on screen and is never written to the settings file or any other
 file, and it is left out of encoder and network diagnostics. It stays in memory for
 that session only, unless you tick [Remember Key](#remembering-the-key). The video
-settings also last for that application session only.
+settings are remembered between sessions (see below).
 
 ## Video settings
 

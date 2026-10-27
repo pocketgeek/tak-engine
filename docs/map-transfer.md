@@ -45,9 +45,10 @@ The data folder is only read; a `MapCache/` that a version before 0.9.5 left in 
 ignored and left as it is.
 
 Generated recipes still need no terrain download. At match start each participant
-saves a reusable `.kmp` under `Maps/`; see [random map generation](random-map-generation.md).
-The data directory must be writable for persistent saving. A client reports a cache
-save failure in its log; it can still play using its verified in-memory copy.
+saves a reusable `.kmp` under `Maps/` in the same per-user map folder (the server in
+its `--map-cache-dir`), never in the data folder; see [random map generation](random-map-generation.md).
+A client reports a save failure (`MAP SAVE FAILED`) in chat and its log; it can still
+play using its in-memory copy.
 
 Validation: `map_transfer_test` checks canonical identity, resource isolation,
 cache/catalog reuse, malformed packages, checksums, and chunk ordering. With a data

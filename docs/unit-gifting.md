@@ -2,7 +2,9 @@
 
 Press **D** during a skirmish or multiplayer match to open **Diplomacy**.
 Every participating player appears, including defeated players; empty slots do not.
-Each row has **Share Mana**, **Chat**, and **Give Selected Units**. Gifts and mana
+Each row has **Share Mana**, **Chat**, **Voice**, a voice **Volume** slider (other
+human players only) and **Give Selected Units**; Voice and Volume belong to voice
+chat (see [voice chat](multiplayer-design.md#voice-chat-protocol-276)). Gifts and mana
 sharing are available only for living teammates, not yourself or opponents.
 The gift button additionally requires at least one eligible selected unit.
 Clicking it leaves the window open and removes submitted units from the selection,
