@@ -644,9 +644,16 @@ target underneath.
   A **flying builder** (Flying Builder, Dark Priest, Darkest Priest, Thirsha)
   guards the same way, and also helps a flying producer such as a Thirsha and
   joins a flyer's repair. It looks every half second (15 game ticks) while it
-  finds nothing; it flies in to within twice its build distance before it
-  starts work, then circles the job at about its build distance. It never
-  repairs a unit under the sea.
+  finds nothing, or as soon as it reaches its next point while circling (see
+  below); it flies in to within twice its build distance before it starts
+  work, then circles the job at about its build distance. It never repairs a
+  unit under the sea.
+- **Flyers on guard circle**: any flyer told to **Guard** a unit (armed or
+  not, and a flying builder with nothing to help) circles it, about 320 pixels
+  out, or its weapon's range plus 160 when it is armed. Each time it reaches
+  its point it moves on a quarter to three-eighths of a turn round the circle,
+  and the circle moves with the guarded unit. A flyer given the guard while
+  off the edge of the map flies back onto it first.
 - **Clearing the site**: a builder that can reclaim automatically clears trees
   and rocks from a valid building site before it starts.
 - **Blocked sites**: when the builder arrives and units stand on the site, it

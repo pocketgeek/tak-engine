@@ -48,6 +48,12 @@ their validation reports; both live in [`docs/`](docs/).
   their build distance; before, a flyer helping a site someone else had begun worked on it
   from any distance, and a flying repairer hovered on top of its target. A
   flying builder does not repair a unit under the sea.
+- **Flyers on guard circle what they guard,** as the original's do. Any flyer
+  told to Guard (armed, unarmed or a builder with nothing to help) now circles
+  the guarded unit about 320 pixels out, or its weapon's range plus 160 when it
+  is armed, and follows it when it moves; before, it hovered close by. A
+  flyer given the guard while off the map flies back onto it first and keeps
+  the guard.
 - **Who may help is checked by the game, not just the screen.** A builder helps
   only a unit of its own side, only if it can move (buildings never help), and,
   when it may build only what is on its own menu, only a type on that menu. A
@@ -56,11 +62,16 @@ their validation reports; both live in [`docs/`](docs/).
   be told to help with an unfinished unit; its own product waits until it has
   finished helping. Move, Patrol and Attack orders still set its rally.
 - **For testers:** a debug build's `TAK_AUTOPLAY` now also builds, trains, puts
-  conjurers on a repeat queue, guards busy units and assists unfinished ones, so
-  the desync sweeps cover these orders. Release builds are unchanged.
-- **Protocol 301:** the shared build progress, the guard's next look and the
-  help walk are part of the game state the players compare, so 0.9.7 plays only
-  with 0.9.7 and plays only replays recorded by 0.9.7. A 0.9.6 client or server
+  conjurers on a repeat queue, guards busy units and assists unfinished ones,
+  and sends idle flying builders to guard damaged or busy units, so the desync
+  sweeps cover these orders. `TAK_START_FLYERS=N` (set on every peer) starts
+  each player with N flying builders, every other one damaged, and
+  `TAK_AUTOPLAY_SIDE` picks the autoplay seat's side. Release builds are
+  unchanged.
+- **Protocol 301:** the shared build progress, the guard's next look, a flying
+  guard's circling and the help walk are part of the game state the players
+  compare, so 0.9.7 plays only with 0.9.7 and plays only replays recorded by
+  0.9.7. A 0.9.6 client or server
   is turned away with a *protocol version mismatch* message, and a 0.9.6 replay
   is refused with the version message.
 

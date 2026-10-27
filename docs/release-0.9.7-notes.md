@@ -2,12 +2,13 @@
 
 0.9.7 follows 0.9.6. It makes builders help the way the original game's
 builders do: they can finish a unit that a factory or a Zhon builder is still
-producing, a guarding builder repairs and helps what it guards, and the game
-itself decides who may help.
+producing, a guarding builder repairs and helps what it guards, a flyer on
+guard circles what it guards, and the game itself decides who may help.
 
-**Compatibility first.** The shared build progress, the guard's next look and
-the help walk join the game state the players compare, so 0.9.7 uses network
-protocol **301** (replay format **15**, unchanged). **0.9.7 does not play with
+**Compatibility first.** The shared build progress, the guard's next look, a
+flying guard's circling and the help walk join the game state the players
+compare, so 0.9.7 uses network protocol **301** (replay format **15**,
+unchanged). **0.9.7 does not play with
 0.9.6 or any earlier version, and does not play their replays.**
 
 - **Everyone updates together.** A 0.9.7 player cannot join a 0.9.6 server, and
@@ -94,9 +95,10 @@ guard also helps a flying producer (a Thirsha's output or site) and joins a
 flyer's repair, which a ground guard does not; and a flying guard counts every
 target as reachable except one whose top is under the sea, which it treats as
 not repairable at all (so it goes on to help with what that unit is doing, as
-the original does). Its cadence also
-differs: a look that finds nothing looks again after exactly 15 ticks, and a
-look that starts a job sleeps 15 plus 0 to 29 ticks. Its jobs are the
+the original does). Its cadence also differs: a look that finds nothing looks
+again after exactly 15 ticks, or on the next tick once the flyer reaches its
+point on the circle (below), and a look that starts a job sleeps 15 plus 0 to
+29 ticks. Its jobs are the
 original's flyer jobs: it flies to the target until it is inside twice its
 build distance, starts work there and then circles the target at about its
 build distance (re-picking its point now and then, as the original does). Help
@@ -105,6 +107,30 @@ whenever the target is more than twice the build distance away. The same
 approach and circling now apply to a flying builder told to Assist or Repair
 directly, and a flyer refuses to repair a unit under the sea.
 
+## Flyers on guard
+
+Every flyer's Guard order runs the original's `VTOL_Follow`: the original
+picks it for a guard by the unit's ability to fly alone, so armed flyers,
+unarmed flyers and flying builders all use it. When a flying builder finds
+nothing to help or repair (the checks above come first), and always for any
+other flyer, the guard **circles the guarded unit**:
+
+- The circle's radius is 320 px, or the active weapon's range plus 160 when the
+  flyer is armed (a weapon switcher's selected weapon, otherwise its first).
+  The original reads "armed" from a unit flag whose setter was not found; the
+  engine takes it from the type's weapons, as its AI port does.
+- The guard starts at a random angle on the circle (0 to 65,535). It flies to
+  the point at that angle from the guarded unit's current position and counts
+  as there within 128 px. Each arrival steps the angle back by a quarter turn
+  plus 0 to an eighth of a turn and wakes the look on the next tick; otherwise
+  the look comes again after a fixed 15 ticks with no random draw, and the point
+  follows the guarded unit from look to look.
+- A flyer given the guard while off the map first heads 800 px back toward it,
+  as the original does, and keeps its guard. The look's deadline belongs to the
+  guard order itself, so a queued guard starts at once.
+- Before, a flyer on guard hovered within 70 px of the guarded unit, braking
+  there; that hold is gone for flyers on a running guard.
+
 ## For modders and mapmakers
 
 No file format changed. A builder's menu now comes with its type
@@ -112,13 +138,17 @@ No file format changed. A builder's menu now comes with its type
 
 ## For contributors
 
-- Sim (protocol 301): `Unit::guardHelpTick` (hashed when set),
+- Sim (protocol 301): `Unit::guardHelpTick` (hashed when set; a ground
+  guard's, while a flying guard keeps its next look on its order's mission),
+  `Order::guardOrbitAngle` (hashed with the guard's mission once it runs),
   `Order::helpSite` (hashed when set), `Order::guardRepair` (hashed when set);
   `Unit::productionOwner` is a hint and is not hashed. New functions
   `World::canHelpBuild`, `canRepairUnit`, `productionOwnerOf`,
   `workProduction`, `finishProduction`, `tickGuardHelp`, `helpApproach`,
-  `tickFlyingRepair`, `payRepair`; `tickConjureHover` takes the repair re-pick
-  rule. A flyer's help admission is `conjureHoverTarget` (already hashed), so
+  `tickFlyingRepair`, `payRepair`, `tickFlyingGuard` (with the shared
+  `guardHelpPick` and `guardInsertJob`); `tickConjureHover` takes the repair
+  re-pick rule; `tickFlightMovement` flies a running flying guard's own
+  controller. A flyer's help admission is `conjureHoverTarget` (already hashed), so
   a flying repairer's orbit uses the same hashed fields as flying construction. The producer's own
   step is a full tick (65,536 sub-ticks) as before, so its solo timing is
   unchanged.
@@ -129,15 +159,24 @@ No file format changed. A builder's menu now comes with its type
 - Harness (debug builds only, `#ifndef NDEBUG`): `TAK_AUTOPLAY` also builds,
   trains, toggles repeat on conjurers, has builders guard busy units and assist
   unfinished ones, and gives idle flying builders their own guard turn
-  (`GameView::autoplayHelpStep`). It prints `AUTOPLAY_HELP`
-  lines to stderr. Release builds do not read it.
+  (`GameView::autoplayHelpStep`), sending idle or idly circling flying
+  builders to guard damaged units (busy ones if none are damaged). It prints
+  `AUTOPLAY_HELP` and `AUTOPLAY_FLYGUARD` lines to stderr. `TAK_START_FLYERS=N`
+  (at most 16, set on every peer, as `TAK_GODS`) starts each player with N
+  finished flying builders of its side, every other one at half health (Aramon
+  and Taros; the Zhon flying builder is its Monarch, so Zhon gets none), and
+  `TAK_AUTOPLAY_SIDE` picks the autoplay seat's side. Release builds read none
+  of these.
 - Tests: new `helpbuild` (shared production, eligibility, the repeat
   conjurer, guard-help, a moving repair, flying guards and flying help/repair
-  reach and orbit, determinism); `replay_test` now pins
+  reach and orbit, a flying guard's circle around the guarded unit, an
+  off-map and a queued flying guard, determinism); `flyer_combat_test` now
+  checks that a guarding Zongryp or Creaeri circles its charge instead of
+  holding over it; `replay_test` now pins
   301 and refuses 300.
 - `--mpai` Inner Circle seed 1, `TAK_SPEED=80`: **the gate hashes did not
   change** (the AIs never guard or assist, and no helper ever works on their
-  production; the flying-guard port left them unchanged too): Retail 60 s `d0da4ccc71d2067c`, 300 s `e820d37865085bd9`; Legion
+  production; the flying-guard port and its circling left them unchanged too): Retail 60 s `d0da4ccc71d2067c`, 300 s `e820d37865085bd9`; Legion
   60 s `c3f6a3a13f0c167f`, 300 s `0783cb05f7f128cf`; Retail AI 60 s
   `4952493f51b9a568`; Crusades 300 s Retail `f2f51dc1703fc209`, Legion
   `c4189ae189dd68dc`. The cross-compiler golden (`check-determinism`) is
@@ -148,11 +187,12 @@ No file format changed. A builder's menu now comes with its type
 
 New with 0.9.7:
 
-- **A flying guard with nothing to do holds near the guarded unit.** The
-  original circles it at 320 px (or its weapon range plus 160) and looks again
-  each time it reaches a point of that circle; here it looks every 15 ticks
-  only. A flying repair's optional leash (from where the order was given) is
-  not ported.
+- **Parts of the original's flying guard are not ported:** its reaction when
+  the guarded unit is attacked, its step-out after landing and its own attack
+  scan; the engine's target acquisition does a guard's fighting instead. A
+  flying builder at work on its own job, or on a repeat queue, does not run its
+  guard and still hovers near the guarded unit until it does. A flying repair's
+  optional leash (from where the order was given) is not ported.
 - **A flyer's re-pick costs no ticks here.** When a flying helper or repairer
   picks a new point to circle to, the original appears to spend two ticks
   without work before it works again; the engine re-picks and works in the same
@@ -163,7 +203,8 @@ New with 0.9.7:
   the paths differ.
 - **Guard re-checks use the sim's random generator** (15 plus 0 to 14 ticks for
   a ground guard that found nothing, 15 plus 0 to 29 for a flying guard that
-  started a job), the same ranges as the original's waits; retail's exact random
+  started a job, and a flying guard's circle angle and steps), the same ranges
+  as the original's; retail's exact random
   stream is not reproduced.
 - **A guard's repair re-aims once a second,** not on retail's 7 to 21 tick
   schedule, to avoid extra random draws. While chasing a unit that moves at its
@@ -180,13 +221,13 @@ New with 0.9.7:
   at completion; a monarch can assist its own product.
 - **Right-click Guard is still offered only to armed units** (as before); a
   builder gets the order from the G key or the command panel.
-- **The sweeps never had a guard repair an ally** (the AIs do not damage their
-  allies): all 14 guard repairs seen were of the guarded unit itself. Ally repair
-  is covered by `helpbuild_test`.
-- **No multiplayer run had a flying guard help or repair.** The desync sweep's
-  autoplay seat never had a finished, idle flying builder with work to find,
-  even in targeted runs on the Taros side. Flying guards are covered by
-  `helpbuild_test`.
+- **No sweep showed a guard repairing an ally** (the AIs do not damage their
+  allies): all 14 guard repairs counted in the first desync sweep were of the
+  guarded unit itself. Ally repair is covered by `helpbuild_test`.
+- **Zhon flying guards were driven only by scratch harness changes.** The Zhon
+  flying builder is its Monarch, which the committed autoplay never puts on
+  guard; Aramon and Taros flying guards helped and repaired in the multiplayer
+  checks (see the [validation report](release-0.9.7-validation.md)).
 - **0.9.6's limits still apply:** see the [0.9.6 notes](release-0.9.6-notes.md#known-limits) (Wayland testing,
   rally and cloak orders against a remote referee, producer rallies) and, through it, the [0.9.5 notes](release-0.9.5-notes.md#known-limits).
 

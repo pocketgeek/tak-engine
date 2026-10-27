@@ -1134,8 +1134,9 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
 #ifndef NDEBUG
         // Harness fixture (TAK_START_FLYERS=N, at most 16): every player also
         // starts with N finished flying builders of its side (every other one at
-        // half health), name-sorted and round-robin (Aramon arafly, Taros tarprie2/tarpries, Zhon zonhunt;
-        // Veruna and Creon have none), in rows just north of its Monarch, so
+        // half health), round-robin by type (Aramon arafly, Taros tarprie2/
+        // tarpries; Zhon's, zonhunt, is its Monarch and so skipped, and Veruna
+        // and Creon have none), in rows just north of its Monarch, so
         // autoplay runs put flying guards to work (VTOL_Follow's help, repair
         // and orbit) from the first minute. A shared input to the lockstep
         // setup, as TAK_GODS: set it for EVERY peer in the run, the server too.

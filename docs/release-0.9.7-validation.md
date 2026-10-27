@@ -10,8 +10,8 @@ object, publication time).
 
 0.9.7 follows 0.9.6 (protocol 300; tag `v0.9.6` -> `f4073c83`). It is one
 feature branch, `task-097-helpbuild`, on top of `ee52e546`, and the flying-guard
-port, `task-097-flyguard`, on top of the prepared docs; the code tested below is
-`7b810f95`. In order of landing:
+port, `task-097-flyguard`, on top of the prepared docs, then its idle orbit,
+`task-097-flyorbit`; the code tested below is `3b44b94c`. In order of landing:
 
 - `1f9dc49f` Sim: retail HelpBuild, one shared production progress, sim-checked
   Assist (`kNetVersion` 300 -> 301).
@@ -30,12 +30,23 @@ port, `task-097-flyguard`, on top of the prepared docs; the code tested below is
   fixes: the refusal lets a flying guard go on to its next checks, a flyer's
   Repair order and patrol repair skip such targets, and a flying repair
   measures reach in whole pixels).
+- `ff17f1e4` 0.9.7 docs for the flying guards (no code).
+- `1e1c8a98` Sim: flying guards orbit the guarded unit (the original's
+  `VTOL_Follow` idle orbit, for every flyer on guard), with the debug-only
+  `TAK_START_FLYERS` / `TAK_AUTOPLAY_SIDE` harness hooks and a flying-guard
+  autoplay turn.
+- `3b44b94c` Sim: a flying guard's look deadline lives on its mission, and an
+  off-map start keeps the guard (review fixes: a flyer told to guard while off
+  the map lost its guard on the way back; a queued guard inherited the earlier
+  guard's sleep, or never looked after an off-map wait).
+- The docs commit after it changes no code but a comment in the debug-only
+  `TAK_START_FLYERS` fixture.
 
-`git diff --stat ee52e546 7b810f95`: 20 files changed, 1886 insertions(+), 99
-deletions(-); `-- src`: 7 files changed, 542 insertions(+), 67 deletions(-)
+`git diff --stat ee52e546 3b44b94c`: 21 files changed, 2385 insertions(+), 114
+deletions(-); `-- src`: 7 files changed, 755 insertions(+), 74 deletions(-)
 (`src/sim` 3 files, `src/client` 3, `src/net` 1; the rest is
-`tools/helpbuild_test.cpp`, `tools/replay_test.cpp`, `CMakeLists.txt` and
-documentation).
+`tools/helpbuild_test.cpp`, `tools/flyer_combat_test.cpp`,
+`tools/replay_test.cpp`, `CMakeLists.txt` and documentation).
 
 TODO-LEAD: final `git diff --stat v0.9.6 v0.9.7` (whole tree and `-- src`) and
 the commit count, once the tag exists.
@@ -56,7 +67,8 @@ map generator's `formatVer` **9** is unchanged.
   format is 1..15 and its protocol equals `kNetVersion`, so 0.9.7 refuses every
   0.9.6 (protocol 300) replay. `tools/replay_test.cpp` pins 301 and refuses 300.
 - **Hashed state.** It gains `Unit::guardHelpTick`, `Order::helpSite` and
-  `Order::guardRepair` (each folded in when set); shared production progress
+  `Order::guardRepair` (each folded in when set), and a flying guard's mission
+  with `Order::guardOrbitAngle` (folded in once the guard runs); shared production progress
   changes the game only where a helper works on a produced unit. No gate game
   does, so **the gate hashes did not change** (below).
 - **Maps, mods and settings.** No map, recipe, package or settings format
@@ -66,20 +78,30 @@ map generator's `formatVer` **9** is unchanged.
 
 All ran on Linux with optimized Debug builds (`build-o2`, `-O2 -g`, ccache +
 mold, `TAK_TEST_DATA` set so the data-backed tests ran) and a Release build,
-all at `7b810f95` in the worktree `~/tak-tmp/wt/flyguard-097`. Every takclient
+all at `3b44b94c` in the worktree `~/tak-tmp/wt/flyorbit-097`. Every takclient
 and takserver run used scratch `HOME`, `XDG_DATA_HOME` and `XDG_CONFIG_HOME`.
 
 - **Builds.** All targets built clean in `build-o2` and in Release
   (`build-rel`). The Release build was only built: a release `takclient` is
   hardened and cannot run the gates, which use the `build-o2` binaries.
-- **`helpbuild` test** at the final code: all checks pass. Its determinism
+- **`helpbuild` test** at the final code: all checks pass, including the new
+  orbit sections (the 320 px and 360 px rings, 128 px acceptance, angle steps of
+  0x4000 to 0x5fff only on arrival, the next-tick wake, an orbit that follows a
+  moving unit, the orbit resuming after a repair, an off-map guard that returns
+  and keeps its guard, a queued guard that starts at once). Its determinism
   checks give the same hash twice: `be0f5f65d009b19c` for guard-help, assist and
-  shared production (the same value as before the flying-guard port) and
-  `323ecfd1bcbee9b2` for flying guards' help and repair.
-- **Full suite**, nightly label included (`ctest -j12`, `build-o2`, 775 tests):
-  **774 of 775** passed; the one failure is `vashim_unavailable`, the known
-  failure on this host (the local `third_party/ffmpeg-bink` predates the libva
-  shim, which CI builds); `vashim_system_loader` skipped (known). No test timed
+  shared production (unchanged since before the flying-guard port),
+  `aee0614708017998` for flying guards' help and repair, and `258154c60853265e`
+  for flying guards' orbits. The orbit checks failed on `ff17f1e4` and the
+  off-map and queued-guard checks on `1e1c8a98`. `flyer_combat_test` now checks
+  that a guarding Zongryp or Creaeri circles its charge.
+- **Full suite**, nightly label included (`ctest -j12`, `build-o2`, 771 tests):
+  **769 of 771** passed. `vashim_unavailable` is the known failure on this host
+  (the local `third_party/ffmpeg-bink` predates the libva shim, which CI
+  builds); `vashim_system_loader` skipped (known). `disconnect_client` failed 3
+  of its 4 cases ("the verified game mods for this replay are missing") and
+  fails the same way on `ff17f1e4`, so this change did not cause it; it looks
+  environmental (a game-mod pack the replay names is not found). No test timed
   out.
 - **Legion scenario gate.** `legion_check` validate reports 0 problems and the
   `legion_check_*` tests passed, so no baseline hash key moved and no retake was
@@ -104,8 +126,8 @@ and takserver run used scratch `HOME`, `XDG_DATA_HOME` and `XDG_CONFIG_HOME`.
 
 **The gate hashes are the 0.9.6 values.** The AIs never give Guard or Assist
 orders and never have a helper on their production, so none of the new paths
-runs in these games (flying guards included), and the new hashed fields stay
-zero. The cross-compiler golden is unchanged for the same reason.
+runs in these games (flying guards and their circling included), and the new
+hashed fields stay zero. The cross-compiler golden is unchanged for the same reason.
 
 ## Screenshots
 
@@ -118,51 +140,50 @@ at). Nothing else in 0.9.7 changes a picture, so none was retaken or deleted.
 
 ## Desync sweeps
 
-**Local sweep.** `tools/desync-hunt.sh --minutes 20 --jobs 8` at `7b810f95`,
-with `TAK_AUTOPLAY=15` exported so the debug autoplay seat issues the new
-orders, on cores 16-23 after the gates had finished: 33 runs, **no desyncs**, no
-referee suspect, no client desync report, and every run ended with `err=none`.
-Two of them are the benchmark runs (`flow-bench-high`, `flow-bench-absurd`),
-which compare no hashes by design.
+**Local sweep.** `tools/desync-hunt.sh --minutes 20 --jobs 8` at `3b44b94c`
+(`build-o2`), with `TAK_AUTOPLAY=15` exported so the debug autoplay seat issues
+the new orders, on cores 16-23 and scratch `HOME` / `XDG_*`: 34 runs, **no
+desyncs**, no referee suspect, and every run finished cleanly. Two of them are
+the benchmark runs (`flow-bench-high`, `flow-bench-absurd`), which compare no
+hashes by design. (An earlier sweep of the same size at `7b810f95` counted
+2,830 Guard and 1,285 Assist orders from the autoplay seat and 275 ground guard
+decisions, 261 HelpBuild and 14 repairs, matching the referee exactly, but no
+flying guard ever got work.)
 
-The counts below come from a private, uncommitted copy of `7b810f95`
-(`~/tak-tmp/wt/flyguard-count`) that only adds stderr counters; it changes no
-sim state (it gives the Retail 60 s gate hash, `d0da4ccc71d2067c`), but the
-counts did not come from the exact `build-o2` binaries.
+**Flying guards in multiplayer.** Twelve headless 900 s games at `3b44b94c`,
+each a `takserver` referee with `--seed` plus two autoplay clients
+(`--mphost` / `--mpjoin`), `TAK_START_FLYERS=4` on every peer,
+`TAK_AUTOPLAY=15`, `TAK_SPEED=80`: Inner Circle with no AIs (seeds 1, 2, 3, 9,
+11, 13) and Ulasem Arena with 2 to 6 AIs (seeds 4 to 8 and 12), with Aramon,
+Taros and Zhon seats in six side pairings. The counts come from a private,
+uncommitted copy of `3b44b94c` (`~/tak-tmp/wt/flyorbit-count`) that only adds
+stderr counters, printed every 1,800 ticks by every peer.
 
-| What the sweep exercised (33 runs) | Count |
-|---|---|
-| Guard orders the autoplay seat issued | 2,830 |
-| Assist orders | 1,285 |
-| Train orders | 3,649 |
-| Build orders | 2,245 |
-| RepeatTrain orders | 1,350 |
-| Ground guard decisions (help or repair started) | 275 |
-| of which HelpBuild | 261 |
-| of which repair | 14 |
-| Ground guard help work, in ticks | 342,769 |
-| Flying guard helps or repairs | 0 |
-
-**The referee compared every client.** In every run the referee's guard
-decisions equalled the clients' exactly. (The work-tick count comes from the
-client logs only: the referee is stopped before it prints its totals.)
-
-**Flying guards were not exercised in multiplayer.** The autoplay seat plays
-Aramon in every run and never trained a Flying Builder. 40 more targeted runs
-from scratch harness changes (the seat on other sides, finally Taros, biased
-towards training flying builders, flyers forced to take the guard turn) also
-had no desync and matching guard decisions, but still no flying guard helped or
-repaired: the Dark Priest was usually still unfinished, and one that finished
-held a guard order with nothing to help. Flying guards are covered by
-`helpbuild_test` only.
+- **Every counter line was identical** on both clients and the referee at every
+  common tick, and there were no `DESYNCED`, `REFEREE SUSPECT` or crashes.
+  Both clients ended on the same hash, except in one Ulasem game (seed 5) whose
+  first client's team was eliminated at tick 21,968: it is compared up to
+  there, and the second client played on to tick 27,000.
+- Over the twelve games (final checkpoint, tick 25,200; 21,600 for seed 5),
+  flying guards took on **37 help and 64 repair jobs**, worked 298,124 help
+  ticks and 81,228 repair ticks (about 52,500 HP repaired), installed 32,137
+  orbit points and stepped the angle on 2,552 arrivals. Ground guards took on
+  59 help and 7 repair jobs (47,843 and 9,824 work ticks), alongside 68 assists
+  and 983 finished products.
+- **Zhon needed scratch harness changes.** The Zhon flying builder is its
+  Monarch (Thirsha), which `TAK_START_FLYERS` skips and the committed autoplay
+  never puts on guard. Three of the twelve games (seeds 11, 12, 13) used a
+  scratch fixture that also puts a working flying Monarch on guard; there the
+  Monarch took on 8 jobs, installed 3,222 orbit points and worked 14,975 help
+  and 3,510 repair ticks. Six more Zhon runs (three with the committed harness,
+  three escort-only) also matched on every peer and are not in the totals.
 
 **What the sweeps did not drive.** A guard repairing an ally (the AIs do not
-damage their allies; the test covers it), a flying builder on guard (above),
-and the unreachable-repair skip.
+damage their allies; the test covers it), the unreachable-repair skip, and
+Zhon flying guards without the scratch fixture.
 
 No remote multiplayer sweep (`tools/desync-hunt-remote.sh`) was run for 0.9.7;
-the local sweep with the autoplay hook compared every client against the
-referee.
+the local runs compared every client against the referee.
 
 ## CI and packages
 
@@ -184,10 +205,15 @@ TODO-LEAD: publication time, asset count, Latest flag.
   0.9.6 binary.
 - No Windows or macOS `--mpai` for 0.9.7; their tag CI determinism tests cover
   them.
-- A flying guard holds near the guarded unit instead of circling it, and no
-  multiplayer run has had a flying guard help or repair; no test covers a guard
-  skipping an unreachable repair; the repair re-aims on a once-a-second schedule
-  (see the [release notes](release-0.9.7-notes.md#known-limits)).
+- The original flying guard's attacked-guarded-unit reaction, landed step-out
+  and attack scan are not ported, and a flying builder busy with its own job
+  hovers near the guarded unit until its guard runs; Zhon flying guards were
+  driven only by scratch harness changes; no test covers a guard skipping an
+  unreachable repair; the repair re-aims on a once-a-second schedule (see the
+  [release notes](release-0.9.7-notes.md#known-limits)).
+- Local only: `disconnect_client` fails 3 of 4 cases here, on the base
+  `ff17f1e4` too (a game-mod pack its replay names is missing); not yet looked
+  into.
 - Local only: `vashim_unavailable` fails against a `third_party/ffmpeg-bink`
   built before the shim; CI builds FFmpeg with it.
 - TODO-LEAD: tag CI limits (failures, reruns, stalls).
