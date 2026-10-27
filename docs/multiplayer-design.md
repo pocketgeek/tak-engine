@@ -5,7 +5,8 @@ shipped). It superseded the 2-player peer-to-peer lockstep (`net::Session`,
 since removed; `src/net/lockstep.h` is now header-only); the deterministic-sim
 substrate underneath it is kept. Sections 1-12 are the original design, kept as
 written apart from short notes where it has since moved on; the later sections
-and the protocol history (to protocol 301, 0.9.7) describe the current engine.
+and the protocol history (to protocol 302, on main after 0.9.7) describe the
+current engine.
 Notable changes since the v1 design: single-player runs a private local
 `takserver` (`--local --no-auth`) instead of in-process AI
 ([sp-mp-equivalence.md](sp-mp-equivalence.md)); the server requires `--data`
@@ -1065,6 +1066,17 @@ build menu when builderlimited) and is accepted from a repeating conjurer,
 whose own output waits while it works elsewhere. No command changes; replay
 format 15 is unchanged; 300 replays are refused. 0.9.7 ships protocol 301; it
 plays with neither 0.9.6 nor any earlier version, nor their replays.
+
+Protocol 302 (on main after 0.9.7) ports a guard's answer to an attack on what
+it guards. Every hit that runs the hit response stamps the victim's
+`attackedTick` (not hashed); a ground or flying guard whose guarded unit has a
+newer stamp than its `guardHeard` (hashed when set) attacks that unit's
+`lastHitBy` ahead of the guard order, past Hold Fire and Hold Position and with
+no leash, and resumes guarding when the attack ends. An idle computer caster
+takes up no resurrect or animate while its allocation is under 0.7, and none
+starts or ends past the unit limit or the type's `totalallowed` (the corpse
+stays). No command changes; replay format 15 is unchanged; 301 replays are
+refused.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte

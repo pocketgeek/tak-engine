@@ -176,7 +176,7 @@ Patrols queued with Shift loop back to where the patrol started.
 | **A** | Attack: click an enemy, or the ground to attack-move there. |
 | **F** | Fight-move: move, fighting whatever is met on the way. |
 | **P** | Patrol (Shift-click more points to make a loop). |
-| **G** | Guard a friendly unit. A guarding builder repairs it and helps with what it builds; a guarding flyer circles it. |
+| **G** | Guard a friendly unit. An armed guard attacks whatever attacks it; a guarding builder repairs it and helps with what it builds; a guarding flyer circles it. |
 | **H** | Heal / repair a damaged friendly unit, or help finish an unfinished unit or building of yours (builders). |
 | **L** | Load: with a transport selected, click the unit to pick up. |
 | **U** | Unload: with a transport selected, click where to drop its cargo. |

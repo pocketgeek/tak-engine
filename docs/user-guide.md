@@ -768,7 +768,12 @@ health. An idle priest starts on a body lying close by of its own accord.
   share of full speed your mana can support, and stops while your pool is
   empty and builders are waiting for mana.
 - A computer player whose mana is well short of its needs gives a raising up
-  at the end, as in the original.
+  at the end, as in the original, and its priests start no other until its
+  mana recovers.
+- Raising respects the unit cap and a unit's own limit (such as one dragon),
+  as in the original: a raising that would go past either ends without raising
+  anything and leaves the body, and a priest whose side is already at the cap
+  does not start one.
 
 ### Repairing and healing
 
@@ -837,6 +842,13 @@ if it can reach it:
 | **Offensive** | Chases the attacker, but no further than its leash from where it was hit, then walks back and carries on with what it was doing. |
 | **Defensive** | Fires back from where it stands, if the attacker is in range. On patrol it chases within its leash, like Offensive, and then returns to the patrol. |
 | **Passive** | Does not respond. |
+
+**Guards defend what they guard.** As in the original, an armed unit on
+**Guard** (ground or flying) goes after whatever attacks the unit it guards,
+however far away the attacker is shooting from and whatever its own stance
+(Defensive and Passive included), then goes back to guarding once the attacker
+is dead. An unarmed guard, such as a builder, keeps helping and repairing
+instead.
 
 **Units that are never auto-targeted.** As in the original, your units do not
 pick a few special objects as targets on their own, such as Creon Gates. Attack
