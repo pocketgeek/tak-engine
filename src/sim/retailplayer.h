@@ -15,12 +15,19 @@ struct UnitType;
 
 // 401270 rolls thirty samples; 401330/401350 deliberately average only the
 // oldest twenty-nine. The newest sample does not affect this tick's pressure.
+// `requests` is the HUD's -N: what consumers asked the pool for at full rate,
+// which retail's resource object keeps at +0x10 and 401350 averages. Retail
+// construction and repair (429af0, 429d90) add the whole request before the
+// allocation scales it or the store caps it, so a short economy shows more
+// requested than it earns. `samples[i][1]` stays the mana actually paid: the
+// AIs' shortfall test reads it, and it is not the HUD figure.
 struct RetailResourceHistory {
     std::array<std::array<float,2>,30> samples{};
-    float income=0,usage=0;
+    std::array<float,30> requests{};
+    float income=0,usage=0,requested=0;
     void advance() {
-        for (size_t i=1;i<samples.size();++i) samples[i-1]=samples[i];
-        samples.back()={income,usage}; income=usage=0;
+        for (size_t i=1;i<samples.size();++i) { samples[i-1]=samples[i];requests[i-1]=requests[i]; }
+        samples.back()={income,usage};requests.back()=requested; income=usage=requested=0;
     }
     bool shortfall(float stored) const {
         double produced=0,used=0;

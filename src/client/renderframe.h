@@ -220,16 +220,18 @@ struct UnitR {
 struct PlayerR {
     std::string side; // Stable faction identity, including after elimination.
     uint8_t manaShareMask = 0xff;
-    float mana = 0, storage = 0, income = 0, expenditure = 0;
+    float mana = 0, storage = 0, income = 0, expenditure = 0; // expenditure: requested mana/s
     void captureEconomy(const tak::sim::Player& player) {
         mana=float(player.mana);
         storage=player.manaCapacity();
-        // Retail HUD calls 401330/401350: the oldest 29 tick samples,
-        // scaled to mana/second. The current sample enters next tick.
+        // Retail HUD calls 401330/401350: the oldest 29 tick samples of
+        // produced and REQUESTED mana, scaled to mana/second. The request is
+        // not capped by what the pool could pay, so -N can exceed +N.
+        // The current sample enters next tick.
         double produced=0,used=0;
         for (size_t i=0;i<29;++i) {
             produced+=player.displayResources.samples[i][0];
-            used+=player.displayResources.samples[i][1];
+            used+=player.displayResources.requests[i];
         }
         income=float(produced*double(1.034482717514038f));
         expenditure=float(used*double(1.034482717514038f));

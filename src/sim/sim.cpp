@@ -9684,7 +9684,7 @@ void World::tickRepair(Unit& b, float dt) {
     float cost = t->type->buildCost * dt / std::max(total, 0.01f);
     const double share = tm.constructionShare(cost);
     if (share <= 0) return;   // can't afford: pause the repair
-    tm.debitMana(std::min(tm.mana, double(cost) * share));
+    tm.payMana(std::min(tm.mana, double(cost) * share));
     float mend = t->type->maxHp * dt / std::max(total, 0.01f);
     if (share < 1) mend = float(double(mend) * share);
     t->hp = fxMin(Fixed::fromFloat(t->type->maxHp), t->hp + Fixed::fromFloat(mend));
@@ -10181,10 +10181,10 @@ void World::tickConstruction(Unit& b, float dt) {
         const double gap=1.0-progress;
         if (work>=gap) {
             work=gap;
-            tm.debitMana(std::min(tm.mana,site->type->buildCost*gap));
+            tm.payMana(std::min(tm.mana,site->type->buildCost*gap));
             progress=1.0;
         } else {
-            tm.debitMana(std::min(tm.mana,cost*share));
+            tm.payMana(std::min(tm.mana,cost*share));
             progress=std::min(1.0,progress+work);
         }
         site->hp=fxMin(Fixed::fromInt(site->type->maxHp),site->hp+
@@ -10193,7 +10193,7 @@ void World::tickConstruction(Unit& b, float dt) {
         float cost = site->type->buildCost * dt / std::max(total, 0.01f);
         const double share = tm.constructionShare(cost);
         if (share <= 0) return;
-        tm.debitMana(std::min(tm.mana, double(cost) * share));
+        tm.payMana(std::min(tm.mana, double(cost) * share));
         float grow = site->type->maxHp * 0.95f * dt / std::max(total, 0.01f);
         if (share < 1) grow = float(double(grow) * share);
         site->hp += Fixed::fromFloat(grow);
@@ -10584,11 +10584,12 @@ void World::tickHealAuras() {
                 float need = 1.0f - e.hp.toFloat() / std::max(float(e.type->maxHp), 1.0f);
                 prog = std::min(prog, need);
                 float cost = e.type->buildCost * prog;
+                tm.requestMana(cost);   // the HUD's -N shows the whole pulse asked for
                 if (cost > tm.mana) {   // short on mana: heal proportionally less
                     prog *= tm.mana / std::max(cost, 1e-6f);
                     cost = tm.mana;
                 }
-                tm.debitMana(cost);
+                tm.payMana(cost);
                 e.hp = fxMin(Fixed::fromFloat(e.type->maxHp),
                              e.hp + Fixed::fromFloat(e.type->maxHp * prog));
             });
@@ -12756,7 +12757,7 @@ void World::tickProduction(Unit& u, float dt) {
         // Never buy past the end of the build.
         if (total-producer->buildProgress==1) step=std::min(step,65536u-producer->buildFraction);
         if (!step) return;
-        tm.debitMana(std::min(tm.mana,step==65536u ? cost : cost*double(step)/65536.0));
+        tm.payMana(std::min(tm.mana,step==65536u ? cost : cost*double(step)/65536.0));
         // Grow the site by what the cumulative work says it should have, so a run
         // of partial ticks adds exactly `work` per whole tick and the completion
         // rounding below still holds.
@@ -14769,6 +14770,7 @@ void World::tick(float dt) {
             r.finishTick();player.mana=r.stored;player.storage=r.capacity;
             player.displayResources.income=r.produced;
             player.displayResources.usage=r.requested;
+            player.displayResources.requested=r.requested;
             if (player.buildCache) {
                 auto& history=player.buildCache->resources;
                 history.income=r.produced;history.usage=r.requested;history.advance();

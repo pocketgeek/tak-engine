@@ -1630,7 +1630,17 @@ struct Player {
         }
         if (buildCache) buildCache->resources.income=float(double(buildCache->resources.income)+amount);
     }
+    // Records a consumer's full-rate request for the HUD (display only, never
+    // hashed). debitMana requests exactly what it pays; construction work
+    // requests through constructionShare and pays its share with payMana.
+    void requestMana(double amount) {
+        displayResources.requested=float(double(displayResources.requested)+amount);
+    }
     void debitMana(double amount) {
+        requestMana(amount);
+        payMana(amount);
+    }
+    void payMana(double amount) {
         displayResources.usage=float(double(displayResources.usage)+amount);
         mana-=amount;
         if (retailResources) {
@@ -1662,9 +1672,11 @@ struct Player {
     double constructionDemand = 0;
     double constructionAllocation = 1;
     // The fraction of `cost` (one tick of full-rate work) this consumer may do
-    // now. Records the request; the caller debits cost * share, capped at mana.
+    // now. Records the request; the caller pays cost * share, capped at mana,
+    // with payMana (the request is already counted).
     double constructionShare(double cost) {
         if (cost <= 0) return mana >= cost ? 1.0 : 0.0;
+        requestMana(cost);
         if (!retailResources) constructionDemand += cost;
         if (mana <= 0) return 0.0;
         return std::min(constructionAllocation, mana / cost);

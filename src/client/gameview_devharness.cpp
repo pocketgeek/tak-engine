@@ -2250,6 +2250,14 @@
                 tak::sim::applyCommand(writableWorld(),registry_,command);
                 std::printf("repair capture: worker #%d -> target #%d\n",id,targetId);
             } else writableWorld().queueBuild(id,targetType,siteX,siteZ,false);
+            // TAK_CONJURE_MANA=<n>: start the local pool at n, so a capture can show
+            // the bulb short of mana (-N requested above +N income).
+            if (const char* value=tak::devEnv("TAK_CONJURE_MANA")) {
+                float mana=0;
+                if (!parseFloat("TAK_CONJURE_MANA",value,mana) || mana<0) return;
+                auto& p=writableWorld().player(localPlayer_);p.mana=mana;
+                if (p.retailResources) p.retailResources->stored=mana;
+            }
             if (const auto* u=world_.unit(id))
                 std::printf("conjure fixture: %s #%d at %.0f,%.0f -> %s at %.0f,%.0f; orders=%zu\n",
                             builder,id,u->x.toFloat(),u->z.toFloat(),target,siteX,siteZ,u->orders.size());

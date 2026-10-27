@@ -47,3 +47,33 @@ Validation:
   ARM toolchain legs were unavailable. Two local optimized-debug Crusades
   multiplayer runs reached tick 600 with hash `b879f25ebe4532bf` and no errors.
 - No remote binaries were deployed.
+
+## 2026-10-26: the -N is mana requested
+
+The bulb's two numbers, from the HUD at `0x4b2239..0x4b2324`: `PositiveM` is
+`"+%d"` of `0x401330` and `NegativeM` is `"-%d"` of `0x401350`, each the sum of
+the oldest 29 of the resource object's 30 per-tick samples times `30/29`
+(`1.034482717514038`), plus 0.5 and truncated. `0x401270` rolls the samples
+from resource `+0xc` (produced) and `+0x10` (requested). Every writer of
+`+0x10` in the binary: construction (`0x429ba8`) and repair (`0x429ddd`) add
+`inverseBuildTime x cost x work` -- the full-rate request, before the
+allocation scales the work and before the store caps the payment -- and the
+mana transfer at `0x4f61c0` adds what the giver sends. Only the economy step
+(`0x51d837`) and unconjure refunds add to `+0xc`; reclaim (`0x4ea1b0`) and a
+new storage building's start bonus (`0x5123e7`) credit the store without
+counting as income.
+
+So the -N is what consumers ask for, not what a short pool could pay: a
+starved economy shows a larger -N than +N. Ordinary matches recorded the mana
+actually paid. `RetailResourceHistory` now keeps a separate `requests` history:
+`Player::constructionShare` records the full-rate cost of construction, repair
+and production, the healing aura records its whole pulse, and every other
+`debitMana` requests exactly what it pays. The HUD reads `requests`; the AIs'
+shortfall test still reads the paid usage (`samples[i][1]`), so AI behaviour
+and the --mpai hashes are unchanged (retail's own AI pressure reads the
+requested figure; switching the AI over would change gameplay and is left
+separate). Nothing here is hashed.
+
+Debug capture: `TAK_CONJURE_TEST=1 TAK_CONJURE_MANA=0 TAK_SHOT_MS=500
+takclient game "Ulasem Arena" --data <install> --testbuild --time 4 --shot
+out.png` shows `0/10000`, `+19`, `-26` while the Zhon monarch conjures a Hunter.

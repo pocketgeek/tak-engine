@@ -28,6 +28,7 @@
 
 #include "sim/sim.h"
 #include "sim/legion.h"
+#include "client/renderframe.h"
 #include "hpi/hpi.h"
 
 #include <cmath>
@@ -172,6 +173,40 @@ static void shortIncomeIsShared() {
           "...both advance at the same fraction of full speed", detail);
     check(w.player(0).mana >= 0 && w.player(0).mana < 0.01,
           "...and the pool is spent, never overdrawn", detail);
+}
+
+// THE MANA BULB'S -N IS MANA REQUESTED. Retail's NegativeM shows 401350, the
+// average of the resource object's requested total, which construction work
+// (429af0) adds to at full rate before the allocation scales it. Starved
+// production therefore reads -210 against +60, not the -60 actually paid.
+static void hudShowsRequestedMana() {
+    std::printf("the HUD's -N is the mana requested, not what a short pool paid:\n");
+    auto ownedWorld = makeWorld(128, 128);
+    World& w = *ownedWorld;
+    UnitType fac = factoryType(), cheap = soldierType(), costly = soldierType();
+    fac.workerTime = 1; fac.storage = 10000;
+    cheap.id = "cheap"; cheap.buildTime = 10; cheap.buildCost = 900;     // 90/s at full rate
+    costly.id = "costly"; costly.buildTime = 10; costly.buildCost = 1200; // 120/s
+    UnitType well{}; well.name = well.id = "well"; well.maxHp = 100;
+    well.footX = well.footZ = 2; well.income = 60;
+    const int first = w.spawn(&fac, 600, 600, 0, 0);
+    const int second = w.spawn(&fac, 1400, 600, 0, 0);
+    w.spawn(&well, 1000, 1400, 0, 0);
+    w.player(0).mana = 0;
+    w.train(first, &cheap, 1);
+    w.train(second, &costly, 1);
+    const auto hash = [&] { return w.stateHash(); };
+    run(w, 3.0f);
+    PlayerR shown; shown.captureEconomy(w.player(0));
+    char detail[128];
+    std::snprintf(detail, sizeof detail, "+%.3f -%.3f, mana %.3f",
+                  shown.income, shown.expenditure, w.player(0).mana);
+    check(std::fabs(shown.income - 60.0f) < 0.01f, "+N is the 60/s income", detail);
+    check(std::fabs(shown.expenditure - 210.0f) < 0.05f,
+          "-N is the 210/s both producers request, above +N", detail);
+    const auto before = hash();
+    w.player(0).displayResources.requests.fill(1e6f);
+    check(hash() == before, "...and the request history is not lockstep state");
 }
 
 // A LODESTONE UPGRADE FINISHES UNDER A SHORT SHARE. Playtest (protocol 273):
@@ -860,6 +895,7 @@ int main(int argc,char** argv) {
     mobileProducerFacesSite();
     productionNeedsMana();
     shortIncomeIsShared();
+    hudShowsRequestedMana();
     lodestoneUpgradeFinishesUnderShortShare();
     outputExistsDuringConstruction();
     scriptControlsReadinessAndPosition();
