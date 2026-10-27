@@ -92,7 +92,9 @@ A conjurer on a repeat queue and a builder at work on its own job do not look.
 checks in the same order, with two differences in what they help: a flying
 guard also helps a flying producer (a Thirsha's output or site) and joins a
 flyer's repair, which a ground guard does not; and a flying guard counts every
-target as reachable except one whose top is under the sea. Its cadence also
+target as reachable except one whose top is under the sea, which it treats as
+not repairable at all (so it goes on to help with what that unit is doing, as
+the original does). Its cadence also
 differs: a look that finds nothing looks again after exactly 15 ticks, and a
 look that starts a job sleeps 15 plus 0 to 29 ticks. Its jobs are the
 original's flyer jobs: it flies to the target until it is inside twice its
@@ -101,7 +103,7 @@ build distance (re-picking its point now and then, as the original does). Help
 work is never re-measured once started; a repair pauses and flies back in
 whenever the target is more than twice the build distance away. The same
 approach and circling now apply to a flying builder told to Assist or Repair
-directly.
+directly, and a flyer refuses to repair a unit under the sea.
 
 ## For modders and mapmakers
 

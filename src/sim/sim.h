@@ -1954,8 +1954,12 @@ public:
     // mover whose build menu holds the site's type when it is builderlimited.
     bool canHelpBuild(const Unit& b, const Unit& site) const;
     // Retail repair eligibility (0x519d40): a damaged, finished, allied unit
-    // other than b, which is a mobile builder.
+    // other than b, which is a mobile builder; a flying b also needs the
+    // target's top above the sea (repairTopAboveSea).
     bool canRepairUnit(const Unit& b, const Unit& target) const;
+    // 0x519d40's flying branch: the target's model top (UnitDef+0x14c) plus
+    // its world Y (+0x6e) is at or above the sea level.
+    bool repairTopAboveSea(const Unit& target) const;
     // The producer whose progress `site` shares, or null for an ordinary site.
     Unit* productionOwnerOf(const Unit& site);
     // Cosmetic emotes. A positive ID targets one owned living unit; callers

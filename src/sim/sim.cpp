@@ -8916,10 +8916,16 @@ bool World::canHelpBuild(const Unit& b, const Unit& site) const {
 
 bool World::canRepairUnit(const Unit& b, const Unit& t) const {
     // World::repair's own acceptance (0x519d40: a damaged, finished unit of
-    // an ally, never the repairer itself), for a builder with a mover.
+    // an ally, never the repairer itself), for a builder with a mover. Its
+    // flying branch refuses a target under the sea.
     return b.id!=t.id && b.alive() && b.type && b.type->isBuilder && b.type->canMove &&
            !b.type->isStructure() && t.alive() && t.type && !t.underConstruction && !t.embarked() &&
-           t.hp>Fixed() && allied(t.player,b.player) && t.hp<Fixed::fromFloat(t.type->maxHp);
+           t.hp>Fixed() && allied(t.player,b.player) && t.hp<Fixed::fromFloat(t.type->maxHp) &&
+           (!b.type->canFly || repairTopAboveSea(t));
+}
+
+bool World::repairTopAboveSea(const Unit& t) const {
+    return (t.type->modelTop>>16)+(t.type->canFly ? t.flightY : t.groundY).floorInt()>=seaLevel_;
 }
 
 Unit* World::productionOwnerOf(const Unit& site) {
@@ -9669,13 +9675,11 @@ void World::tickGuardHelp(Unit& u) {
     // A repair the guard could never walk to (a damaged flyer over water or
     // a cliff) is not taken on: the guard just follows. Retail's RepairUnit
     // has no give-up of its own; this keeps the guard from parking forever.
-    // A flyer reaches anything above the sea: 0x519d40's flying branch wants
-    // the target's model top (UnitDef+0x14c) plus its world Y (+0x6e) at or
-    // above the sea level.
+    // A flyer reaches anything: canRepairUnit already refuses (0x519d40's
+    // flying branch) a target under the sea, and as in VTOL_Follow that
+    // refusal lets the look go on to the next checks.
     auto reachable=[&](const Unit& t) {
-        if (flying)
-            return (t.type->modelTop>>16)+(t.type->canFly ? t.flightY : t.groundY).floorInt()>=seaLevel_;
-        return pathExists(u.type,t.x.toFloat(),t.z.toFloat(),u.x.toFloat(),u.z.toFloat());
+        return flying || pathExists(u.type,t.x.toFloat(),t.z.toFloat(),u.x.toFloat(),u.z.toFloat());
     };
     if (canRepairUnit(u,*g)) { if (reachable(*g)) mend=g->id; }
     else if (canHelpBuild(u,*g)) help=g->id;
@@ -9723,7 +9727,7 @@ void World::tickPatrolRepair(Unit& b) {
             !allied(b.player,t.player) || t.hp<=Fixed() || t.hp>=Fixed::fromInt(t.type->maxHp)) return;
         const float dx=t.x.toFloat()-x,dz=t.z.toFloat()-z,d=dx*dx+dz*dz;
         if (d>bestDistance || (d==bestDistance && target && t.id>target)) return;
-        if (!b.type->canFly && !pathExists(b.type,t.x.toFloat(),t.z.toFloat(),x,z)) return;
+        if (b.type->canFly ? !repairTopAboveSea(t) : !pathExists(b.type,t.x.toFloat(),t.z.toFloat(),x,z)) return;
         bestDistance=d;target=t.id;
     });
     if (!target) return;
@@ -9754,6 +9758,8 @@ void World::repair(int builderId, int targetId, bool queue) {
     if (!t || !t->alive() || !t->type || t->id == b->id || t->underConstruction ||
         !allied(t->player, b->player) || t->hp >= Fixed::fromFloat(t->type->maxHp))
         return;
+    // VTOL_RepairUnit's stage 0 (0x519d40, flying branch): never under the sea.
+    if (b->type->canFly && !repairTopAboveSea(*t)) return;
     // An order, in sequence, like construction and reclaim.
     if (!queue) {
         cancelPath(*b);
@@ -9890,13 +9896,19 @@ void World::tickFlyingRepair(Unit& b, Unit& t, float dt) {
     const Fixed ddx=t.x-b.x,ddz=t.z-b.z;
     const bool admitted=b.conjureHoverTarget==t.id;
     const double fdx=double(ddx.v)/65536.0,fdz=double(ddz.v)/65536.0;
-    const bool inReach=admitted ? fxLen(ddx,ddz).floorInt()<=reach
+    // Stage 5 (0x42139b) measures whole pixels: the integer parts of both
+    // positions (+0x6a, +0x72), a square root truncated to an integer.
+    const int64_t px=int64_t(t.x.floorInt())-b.x.floorInt(),pz=int64_t(t.z.floorInt())-b.z.floorInt();
+    const bool inReach=admitted ? isqrt64(uint64_t(px*px+pz*pz))<=uint64_t(reach)
                                 : fdx*fdx+fdz*fdz<double(reach)*reach;
     if (!inReach) {
         if (admitted) {
             stopWorkAnimation(b);
             b.conjureHoverTarget=0;b.conjureHoverGoal.reset();
         }
+        // Out of reach the mission restarts at stage 0, which checks 0x519d40
+        // again: a target now under the sea ends the job.
+        if (!repairTopAboveSea(t)) { endRepair(); return; }
         // The approach: the repair entry itself, re-aimed at the target.
         if (b.orders.empty()) { repair(b.id,t.id,false); if (b.orders.empty()) { b.repairId=0; return; } }
         const size_t end=currentLeg(b.orders);

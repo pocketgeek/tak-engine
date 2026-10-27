@@ -708,6 +708,27 @@ static void flyingGuardHelps() {
         command(w, tak::net::Cmd::Guard, g2, hurtFlyer);
         std::snprintf(d, sizeof d, "flyer y %d", w.unit(hurtFlyer)->flightY.floorInt());
         check(guardLatch(w, g2, 3, hurtFlyer, true) >= 0, "...but does repair a flyer above it", d);
+        const int f3 = w.spawn(&ty.flyer, 1050, 1150, 0.0f, 0);
+        w.repair(f3, hurt, false);
+        check(w.unit(f3)->orders.empty() && !w.unit(f3)->repairId,
+              "a flyer told to repair a unit under the sea refuses (VTOL_RepairUnit stage 0)");
+        // VTOL_Follow: the refused repair is no repair, so the look goes on to
+        // what the guarded unit is doing -- here, repairing a flyer above.
+        const int hurtFlyer2 = w.spawn(&ty.flysol, 400, 400, 0.0f, 0);
+        w.order(hurtFlyer2, 400, 420, false);
+        for (int i = 0; i < 120; ++i) w.tick(1.0f / 30.0f);
+        w.unit(hurtFlyer2)->hp = Fixed::fromInt(50);
+        UnitType subBuilder = sub; subBuilder.id = "subbuilder";
+        subBuilder.isBuilder = true; subBuilder.workerTime = 1; subBuilder.buildDist = 300;
+        const int diver = w.spawn(&subBuilder, 420, 440, 0.0f, 0);
+        w.unit(diver)->hp = Fixed::fromInt(50);
+        w.repair(diver, hurtFlyer2, false);
+        w.tick(1.0f / 30.0f);
+        const int g3 = w.spawn(&ty.flyer, 700, 700, 0.0f, 0);
+        command(w, tak::net::Cmd::Guard, g3, diver);
+        std::snprintf(d, sizeof d, "diver y %d, its repair %d", w.unit(diver)->groundY.floorInt(), w.unit(diver)->repairId);
+        check(w.unit(diver)->repairId == hurtFlyer2 && guardLatch(w, g3, 3, hurtFlyer2, true) >= 0,
+              "a damaged guarded unit under the sea: the flying guard joins its repair instead", d);
     }
     {   // a plain Repair order to a flyer (VTOL_RepairUnit): flown in, orbited
         auto ownedWorld = makeWorld();
