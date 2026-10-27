@@ -820,6 +820,12 @@ struct alignas(64) Order {
     // put ahead of its guard): the unfinished unit it walks to. The leg goes
     // when that job ends, however it ends. Hashed with a tag when set.
     int helpSite = 0;
+    // A flyer's guard (VTOL_Follow 0x418860, World::tickFlyingGuard): its
+    // orbit angle around the guarded unit (mission +0x4e, read as a word).
+    // Drawn once (rand(0x10000)) when the guard starts, stepped back by
+    // 0x4000 + rand(0x2000) each time the orbit point is reached. The guard
+    // runs on `mission` (stage 2 once started). Hashed with a tag then.
+    uint16_t guardOrbitAngle = 0;
 };
 // Which line each field sits on (WE D2). Moving a field across a line, or
 // growing line 0/1 past 64 bytes, is a compile error here. (offsetof on a type
@@ -1265,7 +1271,9 @@ struct alignas(64) Unit {
     uint32_t cloakBlockedUntil = 0;
     // A mobile builder's guard (Follow_Ground 0x407f90 stage 1): the tick its
     // next look for work to help with or repair is due. Re-armed 15 + rand(15)
-    // ticks out when it finds nothing. Hashed with a tag when set.
+    // ticks out when it finds nothing. A flyer's guard (VTOL_Follow) uses it
+    // for every flyer: 15 ticks after a look, sooner when its orbit point is
+    // reached. Hashed with a tag when set.
     uint32_t guardHelpTick = 0;
     // On a factory/conjurer output: the producer whose buildProgress is this
     // unit's one shared progress (retail +0x108). A hint only -- read through
@@ -2716,6 +2724,9 @@ private:
     bool workProduction(Unit& producer, Unit& site, const UnitType* t, uint32_t step);
     void finishProduction(int producerId, Unit& site);
     void tickGuardHelp(Unit& u);
+    void tickFlyingGuard(Unit& u);
+    void guardHelpPick(Unit& u, const Unit& g, int& help, int& mend);
+    void guardInsertJob(Unit& u, int help, int mend);
     void helpApproach(Unit& b, const Unit& site, bool queue);
     void initializeRetailSite(Unit& site, int builderId);
     void tickRetailAiBase(int owner,unsigned index);

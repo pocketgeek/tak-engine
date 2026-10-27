@@ -1183,9 +1183,12 @@ void GameView::autoplayStep() {
         for (const auto& u : live->units())
             if (u.alive() && u.type && int(u.player) == localPlayer_ && u.type->maxVel > tak::sim::Fixed() &&
                 !u.embarked() && !u.underConstruction &&
-                // A builder at work is left to it (autoplayHelpStep's jobs would never finish).
+                // A builder at work is left to it (autoplayHelpStep's jobs would never finish),
+                // and so is a flyer on guard: VTOL_Follow's help, repair and orbit are what
+                // its guard is for, and a random move would end it.
                 !(u.type->isBuilder && (u.buildSiteId || u.repairId || u.productionSiteId ||
-                                        (!u.orders.empty() && u.orders.front().buildType))))
+                                        (!u.orders.empty() && u.orders.front().buildType))) &&
+                !(u.type->canFly && !u.orders.empty() && u.orders.back().guard))
                 mine.push_back(u.id);
     }
     if (mine.empty()) { autoplayHelpStep(rnd); return; }
@@ -1214,20 +1217,30 @@ void GameView::autoplayStep() {
 // itself, trains at its factories, puts a conjurer on a repeat queue, has a
 // builder guard a busy unit of its own (guard-help: repair, HelpBuild on a
 // site or on a factory's / conjurer's output), has a FLYING builder guard one
-// (VTOL_Follow's help and repair: its approach, orbit and cadence) and has a
-// builder assist an unfinished unit -- so autoplay desync sweeps run construction, shared
-// production progress and guard-help between clients and the referee. All
+// or a damaged unit (VTOL_Follow's help and repair: its approach, orbit and
+// cadence; its idle orbit when there is nothing to do) and has a builder
+// assist an unfinished unit -- so autoplay desync sweeps run construction, shared
+// production progress and guard-help between clients and the referee. (A
+// seat with flying builders from the start: TAK_START_FLYERS on every peer,
+// TAK_AUTOPLAY_SIDE ara|tar|zon for the seat.) All
 // through issue(); the sim judges every order, so an ineligible one (a
 // blocked spot, an off-menu type) is refused on every peer alike.
 void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
     struct Mine { int id; const tak::sim::UnitType* type; float x, z; };
-    std::vector<Mine> factories, builders, flyers;
-    std::vector<int> busy, unfinished;
+    std::vector<Mine> factories, builders, flyers, orbiting;
+    std::vector<int> busy, unfinished, damaged;
+    int flyGuards = 0, flyHelping = 0, flyRepairing = 0;
     {
         const auto live = liveWorld();
         for (const auto& u : live->units()) {
             if (!u.alive() || !u.type || int(u.player) != localPlayer_ || u.embarked()) continue;
             if (u.underConstruction) { unfinished.push_back(u.id); continue; }
+            if (u.hp < tak::sim::Fixed::fromFloat(u.type->maxHp)) damaged.push_back(u.id);
+            if (u.type->canFly && !u.orders.empty() && u.orders.back().guard) {
+                ++flyGuards;
+                flyHelping += u.buildSiteId != 0;
+                flyRepairing += u.repairId != 0;
+            }
             if (!u.type->isBuilder) continue;
             const Mine m{u.id, u.type, u.x.toFloat(), u.z.toFloat()};
             const bool working = u.buildSiteId || u.repairId || u.productionSiteId ||
@@ -1237,6 +1250,9 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
             else if (!working) {
                 builders.push_back(m);
                 if (u.type->canFly) flyers.push_back(m);
+            } else if (u.type->canFly && !u.buildSiteId && !u.repairId && !u.productionSiteId &&
+                       !u.orders.empty() && u.orders.front().guard) {
+                orbiting.push_back(m);   // a flying guard with nothing to do: free to guard elsewhere
             }
             if (u.buildSiteId || u.repairId || u.productionSiteId) busy.push_back(u.id);
         }
@@ -1247,6 +1263,12 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
             if (const auto* t = registry_.find(name); t && t->isStructure() == structures) out.push_back(t);
         return out;
     };
+    // Coverage probe (stderr only): the seat's flying guards and what they do.
+    if (flyGuards && netTick_ >= autoplayFlyReport_) {
+        autoplayFlyReport_ = netTick_ + 300u;
+        std::fprintf(stderr, "AUTOPLAY_FLYGUARD tick=%u guards=%d helping=%d repairing=%d\n", netTick_,
+                     flyGuards, flyHelping, flyRepairing);
+    }
     tak::net::Command c;
     c.queue = 0;
     switch (rnd() % 8) {
@@ -1295,6 +1317,16 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
         c.targetId = busy[rnd() % busy.size()];
         if (c.unitId == c.targetId) return;
         break;
+    case 7: {   // an idle (or idly orbiting) flying builder guards a damaged unit, else a busy one
+        const std::vector<Mine>& pick = !flyers.empty() ? flyers : orbiting;
+        if (pick.empty()) return;
+        c.kind = tak::net::Cmd::Guard; c.unitId = pick[rnd() % pick.size()].id;
+        const std::vector<int>& pool = !damaged.empty() ? damaged : busy;
+        if (pool.empty()) return;
+        c.targetId = pool[rnd() % pool.size()];
+        if (c.unitId == c.targetId) return;
+        break;
+    }
     case 5:     // a builder assists an unfinished unit (a site, or a factory's output)
         if (builders.empty() || unfinished.empty()) return;
         c.kind = tak::net::Cmd::Assist; c.unitId = builders[rnd() % builders.size()].id;
@@ -1528,8 +1560,11 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
                 }
                 mpReadied_ = true;
             } else if (r.mySlot >= 0) {
-                mp_->setSlot(r.mySlot, 1, uint8_t(r.mySlot % 5), uint8_t(r.mySlot),
-                             uint8_t(r.mySlot), 1);
+                // TAK_AUTOPLAY_SIDE=ara|tar|ver|zon|cre: the seat's faction (default by
+                // slot), e.g. a side with flying builders for TAK_START_FLYERS.
+                const char* autoSide = tak::devEnv("TAK_AUTOPLAY_SIDE");
+                mp_->setSlot(r.mySlot, 1, autoSide ? facIdx(autoSide) : uint8_t(r.mySlot % 5),
+                             uint8_t(r.mySlot), uint8_t(r.mySlot), 1);
                 // autoMode 4 (AI-game host): also seat one AI opponent in slot 1.
                 if (autoMode == 4 && r.mySlot == 0)
                     mp_->setSlot(1, 2, 1, 1, 1, 1, aiLevelEnv());   // AI, tar, colour 1, team 1

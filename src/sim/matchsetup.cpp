@@ -1131,6 +1131,31 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         assigned.push_back({mx, mz});
         world.spawn(monarch, mx, mz, 0, i);
         world.player(i).mana = cfg.startMana;
+#ifndef NDEBUG
+        // Harness fixture (TAK_START_FLYERS=N, at most 16): every player also
+        // starts with N finished flying builders of its side (every other one at
+        // half health), name-sorted and round-robin (Aramon arafly, Taros tarprie2/tarpries, Zhon zonhunt;
+        // Veruna and Creon have none), in rows just north of its Monarch, so
+        // autoplay runs put flying guards to work (VTOL_Follow's help, repair
+        // and orbit) from the first minute. A shared input to the lockstep
+        // setup, as TAK_GODS: set it for EVERY peer in the run, the server too.
+        if (const char* e = std::getenv("TAK_START_FLYERS"); e && monarch) {
+            std::vector<const UnitType*> flyers;
+            for (const auto& [id, t] : reg.types())
+                if (t.side == monarch->side && t.canFly && t.isBuilder && !t.isStructure() && !t.commander)
+                    flyers.push_back(&t);
+            const int n = std::clamp(std::atoi(e), 0, 16);
+            const float right = float(map.width) * 16.0f - 48.0f, bottom = float(map.height) * 16.0f - 48.0f;
+            for (int k = 0; k < n && !flyers.empty(); ++k) {
+                const float fx = std::clamp(mx + float(k % 4) * 48.0f - 72.0f, 48.0f, std::max(48.0f, right));
+                const float fz = std::clamp(mz - 96.0f - float(k / 4) * 48.0f, 48.0f, std::max(48.0f, bottom));
+                const int id = world.spawn(flyers[size_t(k) % flyers.size()], fx, fz, 0, i);
+                // Every other one starts at half health: a repair job for a flying guard.
+                if (Unit* f = world.unit(id); f && (k & 1))
+                    f->hp = Fixed::fromInt(std::max(1, int(f->type->maxHp) / 2));
+            }
+        }
+#endif
         // Reserve per-type slots for both immediate stress spawns and the future
         // benchmark plan. Continue round-robin with eligible types so unique
         // units do not either multiply or shrink the requested workload.

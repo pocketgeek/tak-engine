@@ -2677,6 +2677,7 @@ private:
 #ifndef NDEBUG
     uint32_t autoplayNext_ = 0;    // next sim tick an autoplay order is due
     uint32_t autoplayRng_ = 0;     // per-player stream; seeded from slot + game seed
+    uint32_t autoplayFlyReport_ = 0;   // next tick of the AUTOPLAY_FLYGUARD coverage line
     // TAK_AUTOPLAY_FORMATION delivery probe (Legion 10,000 phase 0; stderr only, never read by the
     // sim): the tick the formation order was issued, its command count, and how many of them and on
     // which ticks have come back in a bundle (the tick the server applied them).

@@ -23,6 +23,11 @@
 // repair what it is working on; the job goes ahead of the guard, which resumes
 // after it; a look that finds nothing sleeps 15 + rand(15) ticks.
 //
+// Guard by a flyer (VTOL_Follow 0x418860): the same look for a builder, and
+// for every flyer an idle orbit around the guarded unit at 320 px (weapon
+// range + 160 when armed), a point controller accepting at 128 px whose angle
+// steps back by 0x4000 + rand(0x2000) on each arrival.
+//
 // Every scenario uses synthetic types (no game data) on a flat map.
 
 #include "sim/sim.h"
@@ -657,19 +662,24 @@ static void flyingGuardHelps() {
         std::snprintf(d, sizeof d, "next look in %u ticks", wait);
         check(!w.unit(g)->buildSiteId && !w.unit(g)->repairId && w.unit(g)->orders.size() == 1,
               "a flying guard of an idle unit only escorts", d);
-        int looks = 0;
+        int looks = 0, early = 0;
         bool fixed = true;
         uint32_t prev = w.unit(g)->guardHelpTick;
         for (int i = 0; i < 200; ++i) {
+            const bool arrived = (w.unit(g)->orders.front().mission.pending & 0x100) != 0;
             w.tick(1.0f / 30.0f);
             if (w.unit(g)->guardHelpTick != prev) {
-                fixed = fixed && w.unit(g)->guardHelpTick - prev == 15;
+                // Every look re-arms 15 ticks out; one woken by the orbit
+                // point's arrival comes before its deadline.
+                fixed = fixed && w.unit(g)->guardHelpTick == w.tickCount() + 15 &&
+                        (w.unit(g)->guardHelpTick - prev == 15 || arrived);
+                early += w.unit(g)->guardHelpTick - prev != 15;
                 prev = w.unit(g)->guardHelpTick;
                 ++looks;
             }
         }
-        std::snprintf(d, sizeof d, "%d looks", looks);
-        check(fixed && looks >= 12, "...re-looking every 15 ticks exactly (no draw)", d);
+        std::snprintf(d, sizeof d, "%d looks, %d woken early by an arrival", looks, early);
+        check(fixed && looks >= 12, "...re-looking 15 ticks after each look, or on reaching its orbit point", d);
         const int fac = w.spawn(&ty.factory, 400, 400, 0.0f, 0);
         w.train(fac, &ty.sol, 1);
         const int lim = w.spawn(&ty.flylimited, 500, 600, 0.0f, 0);
@@ -755,6 +765,168 @@ static void flyingGuardHelps() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// VTOL_Follow's idle orbit (0x419053): every flyer on guard, armed or not.
+// ---------------------------------------------------------------------------
+// The guard order's orbit point, relative to the guarded unit: its distance
+// and its angle (retail BAM: the point is the guarded unit less (sin, cos)).
+struct OrbitPoint { bool set = false; float distance = 0; int angle = 0; int16_t radius = 0; uint16_t flags = 0; float x = 0, z = 0; };
+static OrbitPoint orbitPoint(const World& w, int guard, int guarded) {
+    OrbitPoint p;
+    const Unit* g = w.unit(guard);
+    const Unit* t = w.unit(guarded);
+    if (g->orders.empty() || !g->orders.front().guard || !g->orders.front().flightGoal) return p;
+    const auto& goal = *g->orders.front().flightGoal;
+    p.set = true;
+    p.x = Fixed::raw(goal.point.x).toFloat(); p.z = Fixed::raw(goal.point.z).toFloat();
+    const float dx = t->x.toFloat() - p.x, dz = t->z.toFloat() - p.z;
+    p.distance = std::sqrt(dx * dx + dz * dz);
+    p.angle = int(std::lround(std::atan2(dx, dz) / (2 * 3.14159265358979) * 65536.0)) & 0xffff;
+    p.radius = goal.radius; p.flags = goal.flags;
+    return p;
+}
+
+static void flyingGuardOrbit() {
+    std::printf("a guarding flyer's idle orbit (VTOL_Follow):\n");
+    Types ty;
+    char d[240];
+    UnitType armed = ty.flysol;
+    armed.name = armed.id = "armedfly";
+    Weapon spear; spear.name = "spear"; spear.range = 200; spear.damage = 10;
+    armed.weapons.push_back(spear);
+    armed.weapon = spear;
+    struct Case { const UnitType* type; float radius; const char* what; };
+    const Case cases[] = {
+        {&ty.flysol, 320.0f, "an unarmed flyer that is no builder"},
+        {&ty.flyer, 320.0f, "a flying builder with nothing to help"},
+        {&armed, 360.0f, "an armed flyer (weapon range 200)"},
+    };
+    for (const Case& c : cases) {
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        const int idle = w.spawn(&ty.sol, 1000, 1000, 0.0f, 0);
+        const int g = w.spawn(c.type, 1200, 1100, 0.0f, 0);
+        command(w, tak::net::Cmd::Guard, g, idle);
+        w.tick(1.0f / 30.0f);
+        const OrbitPoint p = orbitPoint(w, g, idle);
+        std::snprintf(d, sizeof d, "point %.1f px out, accepts at %d (flags %#x)", p.distance, p.radius, p.flags);
+        const std::string l(c.what);
+        check(p.set && std::fabs(p.distance - c.radius) < 1.5f,
+              (l + (c.radius > 320 ? ": orbits at weapon range + 160" : ": orbits at 320 px")).c_str(), d);
+        check(p.set && p.radius == 128 && (p.flags & 0x10), "...a point controller accepting at 128 px", d);
+        // Watch it fly: each arrival (inside 128 of its point) steps the angle
+        // back by 0x4000 + rand(0x2000) at the next tick's look; nothing else does.
+        int arrivals = 0, steps = 0, badSteps = 0, badArrive = 0, offRadius = 0;
+        float minFly = 1e9f, maxFly = 0;
+        OrbitPoint last = p;
+        for (int i = 0; i < 1500; ++i) {
+            const float px = w.unit(g)->x.toFloat(), pz = w.unit(g)->z.toFloat();
+            w.tick(1.0f / 30.0f);
+            const Unit* u = w.unit(g);
+            const OrbitPoint now = orbitPoint(w, g, idle);
+            if (!now.set) { ++badSteps; break; }
+            if (std::fabs(now.distance - c.radius) > 1.5f) ++offRadius;
+            const bool arrived = (u->orders.front().mission.pending & 0x100) != 0;
+            if (arrived) {
+                const float dx = px - now.x, dz = pz - now.z;
+                if (std::sqrt(dx * dx + dz * dz) >= 128.5f) ++badArrive;
+            }
+            if (now.angle != last.angle) {
+                const int delta = (last.angle - now.angle) & 0xffff;
+                ++steps;
+                if (delta < 0x4000 - 0x100 || delta > 0x6000 + 0x100) ++badSteps;
+            }
+            if (arrived) {
+                ++arrivals;
+                // The arrival wakes the look on the very next tick.
+                w.tick(1.0f / 30.0f);
+                const OrbitPoint next = orbitPoint(w, g, idle);
+                const int delta = (now.angle - next.angle) & 0xffff;
+                if (!next.set || delta < 0x4000 - 0x100 || delta > 0x6000 + 0x100) ++badSteps;
+                ++steps;
+                last = next;
+                continue;
+            }
+            last = now;
+            if (i > 200) {
+                const float dx = u->x.toFloat() - 1000, dz = u->z.toFloat() - 1000;
+                minFly = std::min(minFly, std::sqrt(dx * dx + dz * dz));
+                maxFly = std::max(maxFly, std::sqrt(dx * dx + dz * dz));
+            }
+        }
+        std::snprintf(d, sizeof d, "%d arrivals, %d steps (%d bad), %d late arrivals, %d off radius; flew %.0f..%.0f px out",
+                      arrivals, steps, badSteps, badArrive, offRadius, minFly, maxFly);
+        check(arrivals >= 4 && steps == arrivals && !badSteps && !badArrive && !offRadius,
+              "...steps its angle by 0x4000..0x5fff only on reaching its point", d);
+        // Between points 0x4000..0x6000 apart it cuts inside the ring, and it
+        // turns for the next point 128 px short of each.
+        check(minFly > 0.2f * c.radius && maxFly < c.radius + 40,
+              "...and keeps circling the guarded unit, never parking over it", d);
+    }
+    {   // the orbit follows a guarded unit that moves, from look to look
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        const int walker = w.spawn(&ty.sol, 500, 1000, 0.0f, 0);
+        const int g = w.spawn(&ty.flysol, 500, 800, 0.0f, 0);
+        command(w, tak::net::Cmd::Guard, g, walker);
+        w.tick(1.0f / 30.0f);
+        w.order(walker, 1500, 1000, false);
+        float worstPoint = 0, worstFlyer = 0;
+        for (int i = 0; i < 600; ++i) {
+            w.tick(1.0f / 30.0f);
+            const OrbitPoint p = orbitPoint(w, g, walker);
+            // The point is set at the look (at most 15 ticks old): the walker
+            // has moved up to 15 x 2 px since.
+            if (p.set) worstPoint = std::max(worstPoint, std::fabs(p.distance - 320.0f));
+            if (i > 150) worstFlyer = std::max(worstFlyer, dist(w, g, walker));
+        }
+        std::snprintf(d, sizeof d, "point off its ring by up to %.0f px; flyer at most %.0f px from the walker",
+                      worstPoint, worstFlyer);
+        check(worstPoint < 40.0f && worstFlyer < 520.0f, "a flying guard's orbit point follows a moving guarded unit", d);
+    }
+    {   // a flying builder's job ends: the guard resumes its orbit
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+        const int hurt = w.spawn(&ty.ground, 1000, 1000, 0.0f, 0);
+        w.unit(hurt)->hp = Fixed::fromInt(250);
+        const int g = w.spawn(&ty.flyer, 1300, 1300, 0.0f, 0);
+        command(w, tak::net::Cmd::Guard, g, hurt);
+        int mended = -1;
+        for (int i = 0; i < 900 && mended < 0; ++i) {
+            w.tick(1.0f / 30.0f);
+            if (w.unit(hurt)->hp.toFloat() >= 299.9f) mended = i;
+        }
+        for (int i = 0; i < 60; ++i) w.tick(1.0f / 30.0f);
+        const OrbitPoint p = orbitPoint(w, g, hurt);
+        std::snprintf(d, sizeof d, "mended t=%d, then point %.1f px out", mended, p.distance);
+        check(mended >= 0 && p.set && std::fabs(p.distance - 320.0f) < 1.5f,
+              "after its repair a flying guard goes back to its 320 px orbit", d);
+    }
+}
+
+static uint64_t orbitRun() {
+    Types ty;
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
+    UnitType armed = ty.flysol;
+    armed.name = armed.id = "armedfly";
+    Weapon spear; spear.name = "spear"; spear.range = 150; spear.damage = 10;
+    armed.weapons.push_back(spear); armed.weapon = spear;
+    const int walker = w.spawn(&ty.sol, 600, 1000, 0.0f, 0);
+    const int idle = w.spawn(&ty.sol, 1400, 1400, 0.0f, 0);
+    std::vector<int> guards;
+    for (int i = 0; i < 6; ++i)
+        guards.push_back(w.spawn(i % 3 == 0 ? &ty.flysol : i % 3 == 1 ? &armed : &ty.flyer, 900.0f + 70 * i, 900, 0.0f, 0));
+    for (int i = 0; i < 6; ++i) command(w, tak::net::Cmd::Guard, guards[size_t(i)], i < 3 ? walker : idle);
+    for (int i = 0; i < 1200; ++i) {
+        w.tick(1.0f / 30.0f);
+        if (i == 100) w.order(walker, 1600, 600, false);
+        if (i == 500) w.unit(idle)->hp = Fixed::fromInt(100);
+    }
+    return w.stateHash();
+}
+
 static uint64_t flyingRun() {
     Types ty;
     auto ownedWorld = makeWorld();
@@ -814,6 +986,9 @@ static void determinism() {
     const uint64_t c = flyingRun(), e = flyingRun();
     std::snprintf(d, sizeof d, "%016llx / %016llx", (unsigned long long)c, (unsigned long long)e);
     check(c == e, "flying guards' help and repair hash the same twice", d);
+    const uint64_t f = orbitRun(), h = orbitRun();
+    std::snprintf(d, sizeof d, "%016llx / %016llx", (unsigned long long)f, (unsigned long long)h);
+    check(f == h, "flying guards' orbits hash the same twice", d);
 }
 
 int main() {
@@ -825,6 +1000,7 @@ int main() {
     repeatConjurer();
     guardHelps();
     flyingGuardHelps();
+    flyingGuardOrbit();
     determinism();
     std::printf(g_fail ? "\n%d FAILED\n" : "\nall passed\n", g_fail);
     return g_fail ? 1 : 0;

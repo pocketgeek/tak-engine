@@ -434,8 +434,7 @@ int main(int argc,char** argv) {
             check(refreshes>20 && ringed==refreshes,"a hover attacker rings the led SweetSpot at its hover distance");
         }
         // World's other flyer holds skip the flight body the same way, and none
-        // stopped both. SetMission's wait ("w N") and ambush ("wa"), a guard
-        // within 70 px of its charge and FlyingBuild waiting out mobile units on
+        // stopped both. SetMission's wait ("w N") and ambush ("wa") and FlyingBuild waiting out mobile units on
         // its site kept the velocity the flyer came in with and only braked its
         // speed; an emptied order list (until standby lands it) zeroed the
         // velocity but only braked the speed; a flying builder at its repair or
@@ -455,14 +454,13 @@ int main(int argc,char** argv) {
             check(v.x==0 && v.y==0 && v.z==0 && u.speed==tak::sim::Fixed(),"a held flyer reports no velocity or speed");
             if (!turning) check(rate==0,"a held flyer that is not turning reports MoveRate 0");
         };
-        for (const char* name:{"zongryp","creaeri"}) for (int hold=0;hold<5;++hold) {
-            static const char* const holds[]={"wait","ambush","queued wait","stop","guard"};
+        for (const char* name:{"zongryp","creaeri"}) for (int hold=0;hold<4;++hold) {
+            static const char* const holds[]={"wait","ambush","queued wait","stop"};
             tak::sim::World w;w.setVisPlayer(-1);
             w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
             w.buildNavClasses(registry);
-            const int charge=hold==4 ? w.spawn(registry.find("tarzom"),1600,1000,0,0) : 0;
             const int flyer=w.spawn(registry.find(name),1000,1000,0,0);
-            w.order(flyer,hold==2 ? 1300.f : hold==4 ? 1050.f : 3000.f,1000,false);
+            w.order(flyer,hold==2 ? 1300.f : 3000.f,1000,false);
             // The queued wait starts where VTOL_Move retires: on its coarse
             // arrival, still flying, because another order follows.
             if (hold==2) w.orderWait(flyer,10,true);
@@ -471,9 +469,8 @@ int main(int argc,char** argv) {
             if (hold==0) w.orderWait(flyer,10,false);
             if (hold==1) w.orderWaitAttack(flyer,false);
             if (hold==3) w.stop(flyer);
-            if (hold==4) w.guard(flyer,charge,false);
             bool held=false;
-            for (int tick=0;tick<(hold==4 ? 600 : 1) && !held;++tick) {
+            for (int tick=0;tick<1 && !held;++tick) {
                 const auto* u=w.unit(flyer);
                 const int32_t x=u->x.v,y=u->flightY.v,z=u->z.v;
                 w.tick(1.f/30.f);
@@ -481,6 +478,32 @@ int main(int argc,char** argv) {
             }
             reportHold(w,flyer,holds[hold],held,false);
             if (hold==3) check(!w.unit(flyer)->moving(),"a flyer stopped with no orders is not moving");
+        }
+        // A guard used to hold within 70 px of its charge too. Retail's
+        // VTOL_Follow (0x418860) never holds: it circles the guarded unit at
+        // its weapon range + 160 (320 px unarmed), so the flyer keeps flying.
+        for (const char* name:{"zongryp","creaeri"}) {
+            tak::sim::World w;w.setVisPlayer(-1);
+            w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            w.buildNavClasses(registry);
+            const int charge=w.spawn(registry.find("tarzom"),1600,1000,0,0);
+            const int flyer=w.spawn(registry.find(name),1000,1000,0,0);
+            w.guard(flyer,charge,false);
+            const auto* type=w.unit(flyer)->type;
+            const float ring=type->weapons.empty() ? 320.f : float(type->weapons.front().range+160);
+            int stillTicks=0;float far=0;
+            for (int tick=0;tick<900;++tick) {
+                const auto* u=w.unit(flyer);
+                const int32_t x=u->x.v,y=u->flightY.v,z=u->z.v;
+                w.tick(1.f/30.f);
+                if (tick<300) continue;
+                stillTicks+=still(*w.unit(flyer),x,y,z);
+                far=std::max(far,std::hypot((w.unit(flyer)->x-w.unit(charge)->x).toFloat(),
+                                            (w.unit(flyer)->z-w.unit(charge)->z).toFloat()));
+            }
+            std::printf("guard balance=%s unit=%s ring=%.0f still=%d farthest=%.0f\n",
+                crusades?"Crusades":"standard",name,ring,stillTicks,far);
+            check(stillTicks==0 && far<ring+60,"a guarding flyer circles its charge instead of holding");
         }
         for (int hold=0;hold<3;++hold) {
             static const char* const holds[]={"repair","reclaim","placement retry"};

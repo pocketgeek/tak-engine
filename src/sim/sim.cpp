@@ -2244,11 +2244,21 @@ static void holdFlight(Unit& u) { u.flightVelocity={}; u.speed=Fixed(); }
 
 void World::tickFlightMovement(Unit& u, bool persistent) {
     auto& order=u.orders.front();
-    if (order.guard) {
+    // A guard VTOL_Follow runs (tickFlyingGuard) flies its orbit controller.
+    // A guard it has not started (a builder at work looks for none) holds
+    // near the guarded unit.
+    const bool orbit=order.guard && order.mission.stage==2;
+    if (order.guard && !orbit) {
         const auto* target=unit(order.targetId);
         if (target && fxLen(target->x-u.x,target->z-u.z)<=Fixed::fromInt(70)) { holdFlight(u); return; }
     }
     if (u.flightGroundMode!=2) { u.flightGroundMode=2;groundMove(u); }   // 51b3b0: taking off unstamps
+    if (orbit && !order.flightGoal) {
+        // Its controller went with a job (4d4d40(0)): the mover flies on to
+        // the navigator's last destination until the next look installs one.
+        tickFlightBody(u);
+        return;
+    }
     const int cruise=flightGround(u)+u.type->cruiseAlt;
     if (!order.flightGoal) {
         RetailFlightGoal goal;
@@ -2259,11 +2269,11 @@ void World::tickFlightMovement(Unit& u, bool persistent) {
     // Pickup pursues the passenger during approach, then uses a separate
     // departure point during transfer, just like unloading.
     const bool pickupDeparture=order.transportPickup && order.transportMission.stage==2;
-    if (!order.patrol && !order.unload && !pickupDeparture) {
+    if (!order.patrol && !order.unload && !pickupDeparture && !orbit) {
         goal.point.x=order.x.v; goal.point.z=order.z.v;
     }
     // Legion: travel with a mixed formation's ground members.
-    if (const auto* station=legionFlightStation(u)) {
+    if (const auto* station=orbit ? nullptr : legionFlightStation(u)) {
         if (station->steer) { goal.point.x=station->x.v; goal.point.z=station->z.v; }
         if (station->hold) persistent=true;
     }
@@ -2280,6 +2290,14 @@ void World::tickFlightMovement(Unit& u, bool persistent) {
         // retains its passenger reference and therefore posts only arrival.
         order.transportMission.pending|=0x500;
         order.flightGoal.reset();
+        tickFlightBody(u);
+        return;
+    }
+    if (orbit) {
+        // 524c10 posts arrival to the guard and the navigator lets the
+        // controller go (0x400); the body flies on until the look (woken by
+        // them) installs the next point.
+        if (goal.accepts(position)) order.mission.pending|=0x500;
         tickFlightBody(u);
         return;
     }
@@ -6514,7 +6532,8 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
                 brakeGround(u);
                 groundMovementHandled=true;
                 if (legion_ && isLegionPathfinding(pathfindingMode_)) legion_->noteEngaged(u);   // W5 step 0 counter
-            } else u.speed=fxMax(Fixed(),u.speed-u.type->brake);
+            } else if (!u.type->canFly || !o.mission.stage) u.speed=fxMax(Fixed(),u.speed-u.type->brake);
+            // (VTOL_Follow's orbit never brakes near the guarded unit.)
         }
         return;   // movement walks toward o when out of reach
     }
@@ -9651,27 +9670,29 @@ void World::tickReclaim(Unit& b) {
 // or its VTOL_RepairUnit is not helped from the ground, though a guarded
 // flyer's own unfinished or damaged body is.
 //
-// A flying builder's guard is VTOL_Follow (0x418860, stage 2; emulated): the
-// same checks in the same order, with the VTOL build and repair missions
-// added to the guarded unit's list, so a flying guard helps ground and flying
-// producers alike. Its jobs are VTOL_HelpBuild / VTOL_RepairUnit (approach to
-// 2 x builddistance, then orbit; tickConstruction, tickRepair). Every target
-// counts as reachable, but VTOL_RepairUnit refuses a target whose model top is
-// under the sea (0x519d40, flying branch). Its cadence differs: a look that
-// finds nothing re-looks after a fixed 15 ticks with no draw (0x419154), and
-// an insert returns 3, which the dispatcher (0x4d8511) turns into a sleep of
-// 15 + rand(30) ticks. (Its idle orbit at 320 px / weapon range + 160 is not
-// ported: a flying guard still holds near the guarded unit.)
+// A flyer's guard is VTOL_Follow (0x418860, emulated): tickFlyingGuard.
 void World::tickGuardHelp(Unit& u) {
-    if (u.orders.empty() || !u.type || !u.type->isBuilder || u.type->isStructure() ||
+    if (u.orders.empty() || !u.type || u.type->isStructure() ||
         u.underConstruction || u.embarked() || u.incapacitated() || u.repeatType ||
         u.buildSiteId || u.repairId || u.reclaimId) return;
+    if (u.type->canFly) { tickFlyingGuard(u); return; }
+    if (!u.type->isBuilder) return;
     const size_t end=currentLeg(u.orders);
     if (!u.orders[end].guard || tickCounter_<u.guardHelpTick) return;
     const Unit* g=unit(u.orders[end].targetId);
     if (!g || !g->alive() || !g->type) return;   // tickCombat retires the guard
-    const bool flying=u.type->canFly;
     int help=0,mend=0;
+    guardHelpPick(u,*g,help,mend);
+    if (!help && !mend) { u.guardHelpTick=tickCounter_+15+pathRand(15); return; }
+    u.guardHelpTick=tickCounter_+1;
+    guardInsertJob(u,help,mend);
+}
+
+// The guard's look for a job, Follow_Ground's and VTOL_Follow's alike (see
+// above): the guarded unit's repair or its own help, else its build, its
+// output or its repair target. The ground guard's list has no VTOL mission.
+void World::guardHelpPick(Unit& u, const Unit& g, int& help, int& mend) {
+    const bool flying=u.type->canFly;
     // A repair the guard could never walk to (a damaged flyer over water or
     // a cliff) is not taken on: the guard just follows. Retail's RepairUnit
     // has no give-up of its own; this keeps the guard from parking forever.
@@ -9681,23 +9702,29 @@ void World::tickGuardHelp(Unit& u) {
     auto reachable=[&](const Unit& t) {
         return flying || pathExists(u.type,t.x.toFloat(),t.z.toFloat(),u.x.toFloat(),u.z.toFloat());
     };
-    if (canRepairUnit(u,*g)) { if (reachable(*g)) mend=g->id; }
-    else if (canHelpBuild(u,*g)) help=g->id;
-    else if ((flying || !g->type->canFly) && g->buildSiteId) {
-        if (const Unit* s=unit(g->buildSiteId); s && s->buildBegun && canHelpBuild(u,*s)) help=s->id;
-    } else if ((flying || !g->type->canFly) && g->productionSiteId && !g->buildQueue.empty()) {
-        if (const Unit* s=unit(g->productionSiteId); s && canHelpBuild(u,*s)) help=s->id;
-    } else if ((flying || !g->type->canFly) && g->repairId) {
-        if (const Unit* t=unit(g->repairId); t && canRepairUnit(u,*t) && reachable(*t)) mend=t->id;
+    if (canRepairUnit(u,g)) { if (reachable(g)) mend=g.id; }
+    else if (canHelpBuild(u,g)) help=g.id;
+    else if ((flying || !g.type->canFly) && g.buildSiteId) {
+        if (const Unit* s=unit(g.buildSiteId); s && s->buildBegun && canHelpBuild(u,*s)) help=s->id;
+    } else if ((flying || !g.type->canFly) && g.productionSiteId && !g.buildQueue.empty()) {
+        if (const Unit* s=unit(g.productionSiteId); s && canHelpBuild(u,*s)) help=s->id;
+    } else if ((flying || !g.type->canFly) && g.repairId) {
+        if (const Unit* t=unit(g.repairId); t && canRepairUnit(u,*t) && reachable(*t)) mend=t->id;
     }
-    if (!help && !mend) { u.guardHelpTick=tickCounter_+15+(flying ? 0 : pathRand(15)); return; }
-    u.guardHelpTick=flying ? tickCounter_+15+pathRand(30) : tickCounter_+1;
+}
+
+// Puts the guard's job ahead of its guard order, which stays queued under it.
+void World::guardInsertJob(Unit& u, int help, int mend) {
+    const size_t end=currentLeg(u.orders);
     // Keep the guard as one order (its route corners belong to the old
     // walk), and put the job in front of it.
     u.orders.erase(u.orders.begin(),u.orders.begin()+long(end));
     Order& guard=u.orders.front();
     guard.hasSegment=false;guard.flightGoal.reset();guard.controller=0;
     guard.navigationExhausted=guard.navigationConsumed=false;
+    // VTOL_Follow drops its controller (4d4d40(0)) and clears its wait mask
+    // before the insert: it wakes only at the dispatcher's sleep.
+    if (u.type->canFly) guard.mission.waitMask=0;
     std::vector<Order> rest;rest.swap(u.orders);
     cancelPath(u);u.routeStamp=0;
     if (mend) {
@@ -9710,6 +9737,104 @@ void World::tickGuardHelp(Unit& u) {
     }
     u.orders.insert(u.orders.end(),std::make_move_iterator(rest.begin()),std::make_move_iterator(rest.end()));
     noteOrders(u.id);
+}
+
+// A flyer's guard: VTOL_Follow (0x418860, emulated), the guard mission of
+// every flyer (the order dispatch 0x4de530 picks it by canfly alone, armed
+// or builder). Each look:
+//  - off the map (unit +0xa4 is the off-map cell): a point 800 px from the
+//    flyer toward the map (clamped 192 px inside), accepting at 128, and a
+//    wait for that controller's events only (4188bc..4189b9);
+//  - stage 0 (41918b): Activate and BeginFlight (416c50), the orbit angle
+//    rand(0x10000); stage 1 (519b10(3), World's slot mode) and stage 2 follow
+//    in the same dispatch, with no events;
+//  - stage 2: the guard's help and repair look (guardHelpPick, a builder's;
+//    canHelpBuild / canRepairUnit refuse any other flyer), Follow_Ground's
+//    checks in the same order with the VTOL build and repair missions added
+//    to the guarded unit's list, so a flying guard helps ground and flying
+//    producers alike. Every target counts as reachable, but VTOL_RepairUnit
+//    refuses one whose model top is under the sea (0x519d40, flying branch).
+//    Its jobs are VTOL_HelpBuild / VTOL_RepairUnit (approach to 2 x
+//    builddistance, then orbit; tickConstruction, tickRepair). A job goes
+//    ahead of the guard, and the guard sleeps 15 + rand(30) ticks (an insert
+//    returns 3, which the dispatcher 0x4d8511 turns into that sleep);
+//  - else the idle orbit (419053): on a controller event (0x100 arrival, 0x400
+//    release) the angle steps back by 0x4000 + rand(0x2000); a point
+//    controller (flags 0x30) accepting at 128 px goes to the guarded unit's
+//    position less (sin, cos)(angle) x radius -- 320 px, or the active
+//    weapon's range + 160 when armed (unit +0x130 0x8000000; derived from the
+//    type's weapons, as the AI port does); wait mask 0x718, and a look again
+//    after a fixed 15 ticks (no draw). The point follows the guarded unit
+//    from look to look; reaching it wakes the look at once.
+// Not ported: the guarded unit's attacker check (event 0x10, guarded +0xf8),
+// the landed step-out (unit +0x12a >= 5) and the stage-2 attack scan
+// (51d1e0), whose work World's target acquisition does for a guard.
+void World::tickFlyingGuard(Unit& u) {
+    const size_t end=currentLeg(u.orders);
+    if (!u.orders[end].guard) return;
+    const Unit* g=unit(u.orders[end].targetId);
+    if (!g || !g->alive() || !g->type) return;   // tickCombat retires the guard
+    Order& o=u.orders[end];
+    // The dispatcher's wake: the look's deadline, or a controller event the
+    // mission waits on.
+    const uint32_t events=o.mission.pending&o.mission.waitMask&0x700u;
+    if (tickCounter_<u.guardHelpTick && !events) return;
+    o.mission.pending&=~events;
+    o.mission.waitMask=0;
+    auto install=[&](RetailFlightVector point) {
+        // 4e40e0 + 4e4540(0x80); 4d4d40 clears the pending controller events.
+        o.flightGoal=RetailFlightGoal{point,0x30,0,128};
+        o.mission.pending&=~0x3700u;
+    };
+    const RetailFlightVector position{u.x.v,u.flightY.v,u.z.v};
+    // 5066f0: off the map when the footprint does not fit the cell grid.
+    const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
+    if (!(ox>=0 && oz>=0 && ox+u.type->footX<hW_ && oz+u.type->footZ<hH_)) {
+        RetailFlightVector inside=position;
+        auto clamp=[](int32_t& v,int32_t size) {
+            if (v<0xc00000) v=0xc00000;
+            else if (const int32_t edge=std::bit_cast<int32_t>(uint32_t(size+0xff40)<<16);v>edge) v=edge;
+        };
+        // 50ef03: the playable map is 32 px narrower and 128 px shorter.
+        clamp(inside.x,hW_*16-32);clamp(inside.z,hH_*16-128);
+        // 51b340(unit, point): the heading of the unit as seen from the point.
+        const uint16_t heading=uint16_t(retailDirection(
+            Fixed::raw(std::bit_cast<int32_t>(uint32_t(position.x)-uint32_t(inside.x))),
+            Fixed::raw(std::bit_cast<int32_t>(uint32_t(position.z)-uint32_t(inside.z)))).v);
+        install(retailAirRunPoint(position,position.y,heading,800));
+        o.mission.waitMask=0x700;
+        u.guardHelpTick=UINT32_MAX;
+        return;
+    }
+    bool woken=events!=0;
+    if (o.mission.stage==0) {
+        if (auto script=unitScripts_.find(u.id);script!=unitScripts_.end() && !script->second.activated) {
+            script->second.activated=true;notifyUnitScript(u,"Activate");
+        }
+        notifyUnitScript(u,"BeginFlight");
+        o.guardOrbitAngle=uint16_t(pathRand(0x10000));
+        o.mission.stage=2;
+        woken=false;
+    }
+    int help=0,mend=0;
+    if (u.type->isBuilder) guardHelpPick(u,*g,help,mend);
+    if (help || mend) {
+        u.guardHelpTick=tickCounter_+15+pathRand(30);
+        guardInsertJob(u,help,mend);   // `o` is not read past this point
+        return;
+    }
+    if (woken) o.guardOrbitAngle=uint16_t(o.guardOrbitAngle-0x4000u-pathRand(0x2000));
+    // 519ac0: a switcher's selected slot, otherwise the first slot.
+    int32_t radius=320;
+    if (!u.type->weapons.empty()) {
+        const int slot=u.type->weaponSwitching
+            ? std::clamp(u.weaponSlot,0,int(std::min<size_t>(3,u.type->weapons.size()))-1) : 0;
+        radius=u.type->weapons[size_t(slot)].range+160;
+    }
+    const int32_t gy=(g->type->canFly && g->flightGroundMode==2 ? g->flightY : g->groundY).v;
+    install(retailAirRunPoint({g->x.v,gy,g->z.v},gy,o.guardOrbitAngle,uint32_t(std::max(0,radius))));
+    o.mission.waitMask=0x718;
+    u.guardHelpTick=tickCounter_+15;
 }
 
 void World::tickPatrolRepair(Unit& b) {
@@ -15950,8 +16075,13 @@ uint64_t World::stateHash() const {
                     mix(uint32_t(g.point.x)); mix(uint32_t(g.point.y)); mix(uint32_t(g.point.z));
                     mix(g.flags); mix(g.heading); mix(uint16_t(g.radius));
                 }
+                // VTOL_Follow (tickFlyingGuard) runs on a guard order's mission.
+                if (order.guard && order.mission.stage) {
+                    mix(0x564f5242u); mix(order.guardOrbitAngle);
+                    mix(order.mission.stage); mix(order.mission.waitMask); mix(order.mission.pending);
+                }
                 // AirToGround (tickAirToGround) runs on an attack order's mission.
-                if (order.targetId && (order.mission.stage || order.mission.waitMask || order.airRunCount)) {
+                else if (order.targetId && (order.mission.stage || order.mission.waitMask || order.airRunCount)) {
                     mix(0x41495252554eull);
                     mix(order.mission.stage); mix(order.mission.waitMask); mix(order.mission.deadline);
                     mix(order.mission.pending); mix(order.mission.flags); mix(uint32_t(order.airRunCount));
