@@ -153,15 +153,25 @@ New with 0.9.7:
   each time it reaches a point of that circle; here it looks every 15 ticks
   only. A flying repair's optional leash (from where the order was given) is
   not ported.
-- **Guard re-checks use the sim's random generator,** 15 plus 0 to 14 ticks, the
-  same range as the original's mission wait; retail's exact random stream is not
-  reproduced.
+- **A flyer's re-pick costs no ticks here.** When a flying helper or repairer
+  picks a new point to circle to, the original appears to spend two ticks
+  without work before it works again; the engine re-picks and works in the same
+  tick, as its flying construction already did, so the random draws fall on
+  different ticks.
+- **A flying repairer chases a moving target continuously;** the original flies
+  to a fixed point, arrives and starts the repair over. Neither gets stuck, but
+  the paths differ.
+- **Guard re-checks use the sim's random generator** (15 plus 0 to 14 ticks for
+  a ground guard that found nothing, 15 plus 0 to 29 for a flying guard that
+  started a job), the same ranges as the original's waits; retail's exact random
+  stream is not reproduced.
 - **A guard's repair re-aims once a second,** not on retail's 7 to 21 tick
   schedule, to avoid extra random draws. While chasing a unit that moves at its
   own speed the guard trails it by about the gap it started with (140 to 200 px
   in the test).
-- **A guard skips a repair it cannot walk to** (a damaged flyer over water, say)
-  and just follows; the original has no such test. The reachability test falls
+- **A ground guard skips a repair it cannot walk to** (a damaged flyer over
+  water, say) and just follows; the original instead tests the target's height
+  against the sea. The reachability test falls
   back to the nearest walkable cell within 24 cells, so a unit over water near a
   shore still counts as reachable and the builder waits on the shore. No test
   covers the unreachable case.
@@ -171,8 +181,12 @@ New with 0.9.7:
 - **Right-click Guard is still offered only to armed units** (as before); a
   builder gets the order from the G key or the command panel.
 - **The sweeps never had a guard repair an ally** (the AIs do not damage their
-  allies): all 10 guard repairs seen were of the guarded unit itself. Ally repair
+  allies): all 14 guard repairs seen were of the guarded unit itself. Ally repair
   is covered by `helpbuild_test`.
+- **No multiplayer run had a flying guard help or repair.** The desync sweep's
+  autoplay seat never had a finished, idle flying builder with work to find,
+  even in targeted runs on the Taros side. Flying guards are covered by
+  `helpbuild_test`.
 - **0.9.6's limits still apply:** see the [0.9.6 notes](release-0.9.6-notes.md#known-limits) (Wayland testing,
   rally and cloak orders against a remote referee, producer rallies) and, through it, the [0.9.5 notes](release-0.9.5-notes.md#known-limits).
 

@@ -640,8 +640,13 @@ target underneath.
   build it; otherwise it helps with what the guarded unit is building,
   producing, helping with or repairing. The help goes ahead of the guard order,
   which resumes when the job is done, and it ignores distance. A guarding
-  builder looks for work every half second to one second (15 to 29 game ticks). A
-  guarding builder that can fly only escorts.
+  builder looks for work every half second to one second (15 to 29 game ticks).
+  A **flying builder** (Flying Builder, Dark Priest, Darkest Priest, Thirsha)
+  guards the same way, and also helps a flying producer such as a Thirsha and
+  joins a flyer's repair. It looks every half second (15 game ticks) while it
+  finds nothing; it flies in to within twice its build distance before it
+  starts work, then circles the job at about its build distance. It never
+  repairs a unit under the sea.
 - **Clearing the site**: a builder that can reclaim automatically clears trees
   and rocks from a valid building site before it starts.
 - **Blocked sites**: when the builder arrives and units stand on the site, it
