@@ -4614,6 +4614,7 @@ void World::guard(int unitId, int targetId, bool queue) {
         u->orders.clear();
         cancelPath(*u);
         u->routeStamp = -1;
+        u->guardHelpTick = 0;   // a fresh guard looks for work at once
     }
     Order o;
     o.targetId = targetId;
@@ -8912,6 +8913,14 @@ bool World::canHelpBuild(const Unit& b, const Unit& site) const {
     return !b.type->builderLimited || std::find(menu.begin(),menu.end(),site.type->id)!=menu.end();
 }
 
+bool World::canRepairUnit(const Unit& b, const Unit& t) const {
+    // World::repair's own acceptance (0x519d40: a damaged, finished unit of
+    // an ally, never the repairer itself), for a builder with a mover.
+    return b.id!=t.id && b.alive() && b.type && b.type->isBuilder && b.type->canMove &&
+           !b.type->isStructure() && t.alive() && t.type && !t.underConstruction && !t.embarked() &&
+           t.hp>Fixed() && allied(t.player,b.player) && t.hp<Fixed::fromFloat(t.type->maxHp);
+}
+
 Unit* World::productionOwnerOf(const Unit& site) {
     if (!site.productionOwner || !site.underConstruction || site.retailSite) return nullptr;
     Unit* p=unit(site.productionOwner);
@@ -9600,6 +9609,60 @@ void World::tickReclaim(Unit& b) {
     }
 }
 
+// A mobile builder's guard (Follow_Ground 0x407f90, stage 1; emulated). First
+// the guarded unit itself: damaged and repairable -> RepairUnit on it; its own
+// unfinished body (HelpBuild eligible) -> HelpBuild on it. Else what it is
+// working on now: the target of its MobileBuild / BuildingBuild / HelpBuild,
+// or of its RepairUnit. The job goes AHEAD of the guard, which stays queued
+// under it and resumes when the job ends; nothing gates on distance. A look
+// that finds nothing sleeps 15 + rand(15) ticks (the mission's own wait; the
+// draw is the sim's one game RNG, as every retail mission's is); after an
+// insert the guard looks again on its first tick back. A builder still
+// walking to its MobileBuild site (no site begun yet) is just followed, and
+// a flying producer is not helped from the ground. Flying guards are not
+// handled: VTOL_Follow's VTOL missions are not ported, so a flying builder
+// escorts only, as before.
+void World::tickGuardHelp(Unit& u) {
+    if (u.orders.empty() || !u.type || !u.type->isBuilder || u.type->isStructure() || u.type->canFly ||
+        u.underConstruction || u.embarked() || u.incapacitated() || u.repeatType ||
+        u.buildSiteId || u.repairId || u.reclaimId) return;
+    const size_t end=currentLeg(u.orders);
+    if (!u.orders[end].guard || tickCounter_<u.guardHelpTick) return;
+    const Unit* g=unit(u.orders[end].targetId);
+    if (!g || !g->alive() || !g->type) return;   // tickCombat retires the guard
+    int help=0,mend=0;
+    if (canRepairUnit(u,*g)) mend=g->id;
+    else if (canHelpBuild(u,*g)) help=g->id;
+    else if (!g->type->canFly && g->buildSiteId) {
+        if (const Unit* s=unit(g->buildSiteId); s && s->buildBegun && canHelpBuild(u,*s)) help=s->id;
+    } else if (!g->type->canFly && g->productionSiteId && !g->buildQueue.empty()) {
+        if (const Unit* s=unit(g->productionSiteId); s && canHelpBuild(u,*s)) help=s->id;
+    } else if (g->repairId) {
+        if (const Unit* t=unit(g->repairId); t && canRepairUnit(u,*t)) mend=t->id;
+    }
+    if (!help && !mend) { u.guardHelpTick=tickCounter_+15+pathRand(15); return; }
+    u.guardHelpTick=tickCounter_+1;
+    // Keep the guard as one order (its route corners belong to the old
+    // walk), and put the job in front of it.
+    u.orders.erase(u.orders.begin(),u.orders.begin()+long(end));
+    Order& guard=u.orders.front();
+    guard.hasSegment=false;guard.flightGoal.reset();guard.controller=0;
+    guard.navigationExhausted=guard.navigationConsumed=false;
+    std::vector<Order> rest;rest.swap(u.orders);
+    cancelPath(u);u.routeStamp=0;
+    if (mend) {
+        repair(u.id,mend,true);
+    } else {
+        const Unit& s=*unit(help);
+        u.buildSiteId=help;
+        u.buildStuckT=0;u.buildStuckD=INT32_MAX;
+        order(u.id,s.x.toFloat(),helpApproachZ(s),false);
+        if (!u.orders.empty()) u.orders.back().helpSite=help;
+    }
+    u.orders.insert(u.orders.end(),std::make_move_iterator(rest.begin()),std::make_move_iterator(rest.end()));
+    noteOrders(u.id);
+}
+
 void World::tickPatrolRepair(Unit& b) {
     if (!patrolRepairs_ || !b.type || !b.type->isBuilder || !b.type->canMove || b.type->isStructure() ||
         b.type->workerTime<=0 || b.underConstruction || b.embarked() || b.incapacitated() ||
@@ -10160,7 +10223,8 @@ static Fixed addCapped(Fixed hp,Fixed grow,int maxHp) {
 }
 
 // A HelpBuild ends with its target, however it ends: a builder still walking
-// there drops the approach instead of finishing the walk.
+// there drops the approach instead of finishing the walk (a guard's order,
+// queued under it, then resumes).
 static void endHelp(World& w, Unit& b, int siteId) {
     if (!b.orders.empty() && b.orders[World::currentLeg(b.orders)].helpSite==siteId) w.dropLeg(b);
 }
@@ -10225,7 +10289,9 @@ void World::tickConstruction(Unit& b, float dt) {
     // Drop the APPROACH leg, but never the queued build order itself: that entry
     // IS the job, and it is what holds the rest of the queue back until the
     // building is finished (popBuildOrder retires it when the job ends).
-    if (b.orders.empty() || !b.orders.front().buildType) dropLeg(b);   // never the build order
+    // Nor a guard: a guarding builder's help sits ahead of its guard order,
+    // which resumes when the help ends (Follow_Ground 0x407f90).
+    if (b.orders.empty() || (!b.orders.front().buildType && !b.orders.front().guard)) dropLeg(b);
     b.constructionHolding = true;
     if (b.type->canFly) tickConjureHover(b,*site);
     else b.speed = Fixed();
@@ -14591,6 +14657,7 @@ void World::tick(float dt) {
             u.orders.front().placementFailures>0;
         if (!placementWait) {
             tickManaBuildArea(u);
+            tickGuardHelp(u);
             tickPatrolRepair(u);
             if (g_phase) {
                 PhaseSpan span(g_moveMs,probe::kMovement);
@@ -15862,6 +15929,7 @@ uint64_t World::stateHash() const {
         mix(u.standingOrder);
         mix(uint64_t((u.cloakOn ? 1u : 0u) | (u.active ? 2u : 0u)));
         if (u.cloakBlockedUntil) { mix(0x434c4f4bu); mix(u.cloakBlockedUntil); }
+        if (u.guardHelpTick) { mix(0x47554152u); mix(u.guardHelpTick); }
         if (u.reviveTarget) {
             mix(0x52455649u);mix(uint32_t(u.reviveTarget));mix(uint32_t(u.reviveWork));mix(uint8_t(u.reviveMode));
         }

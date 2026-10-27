@@ -811,8 +811,8 @@ struct alignas(64) Order {
     // to before the stance wait: retail heading from the target to the builder,
     // as MobileBuild's turn. Hashed on reclaim legs.
     uint16_t reclaimHeading = 0;
-    // The approach of a HelpBuild (World::assist): the unfinished unit it
-    // walks to. The leg goes
+    // The approach of a HelpBuild (World::assist, or one a guarding builder
+    // put ahead of its guard): the unfinished unit it walks to. The leg goes
     // when that job ends, however it ends. Hashed with a tag when set.
     int helpSite = 0;
 };
@@ -1257,6 +1257,10 @@ struct alignas(64) Unit {
     // hashed when set. Cold: only cloakers read it, so it sits past the
     // prefetched lines.
     uint32_t cloakBlockedUntil = 0;
+    // A mobile builder's guard (Follow_Ground 0x407f90 stage 1): the tick its
+    // next look for work to help with or repair is due. Re-armed 15 + rand(15)
+    // ticks out when it finds nothing. Hashed with a tag when set.
+    uint32_t guardHelpTick = 0;
     // On a factory/conjurer output: the producer whose buildProgress is this
     // unit's one shared progress (retail +0x108). A hint only -- read through
     // World::productionOwnerOf, which checks the producer still holds it, so a
@@ -1943,6 +1947,9 @@ public:
     // not `b`, has b's OWNER (allies do not qualify), and b is a builder with a
     // mover whose build menu holds the site's type when it is builderlimited.
     bool canHelpBuild(const Unit& b, const Unit& site) const;
+    // Retail repair eligibility (0x519d40): a damaged, finished, allied unit
+    // other than b, which is a mobile builder.
+    bool canRepairUnit(const Unit& b, const Unit& target) const;
     // The producer whose progress `site` shares, or null for an ordinary site.
     Unit* productionOwnerOf(const Unit& site);
     // Cosmetic emotes. A positive ID targets one owned living unit; callers
@@ -2698,6 +2705,7 @@ private:
     int32_t productionTotal(const Unit& producer, const UnitType* t) const;
     bool workProduction(Unit& producer, Unit& site, const UnitType* t, uint32_t step);
     void finishProduction(int producerId, Unit& site);
+    void tickGuardHelp(Unit& u);
     void initializeRetailSite(Unit& site, int builderId);
     void tickRetailAiBase(int owner,unsigned index);
     void tickRetailAiStrike(int owner,unsigned index);
