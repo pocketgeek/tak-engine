@@ -1557,8 +1557,8 @@ game. Changes apply immediately; **Save** keeps them. **Defaults** puts the
 options back to their defaults; it leaves your player name, data folder, key
 bindings and voice chat settings alone. It also sets UI Scale and Cursor Size
 back to their defaults, undoing the one-time enlargement made by Ignore Windows
-Display Scaling or Native Retina Resolution, so raise them again on a scaled
-or Retina display.
+Display Scaling, Native Retina Resolution or Native Wayland, so raise them again
+on a scaled or Retina display.
 
 Every choice here is remembered. When a new version changes a default, a
 settings file you already have keeps the values saved in it; press **Defaults**
@@ -1633,6 +1633,7 @@ missed are silent while the game catches up.
 | **Fullscreen** | On | Borderless fullscreen. |
 | **VSync** | On | Match the frame rate to the display. While it is on, the game also waits for each display refresh itself if the graphics driver does not. |
 | **Max FPS** | 60 | Frame-rate cap when VSync is off (30–240). Greyed out while VSync is on, because the display then sets the frame rate. |
+| **Native Wayland** | Auto | Linux only. **Auto** opens a native Wayland window on a Wayland desktop (GNOME, Sway and other wlroots desktops, Hyprland, KDE Plasma set to scale legacy X11 apps itself), so the game draws at the screen's real resolution at any display scale, 125%, 150% and 200% included, instead of an X11 window that the desktop enlarges and blurs. On KDE Plasma with its default "Legacy applications (X11): apply scaling themselves", X11 already gets real pixels, so Auto keeps X11 there. **On** uses Wayland whenever there is a Wayland desktop; **Off** always uses X11. Takes effect after a restart; the row's help says which one is running. If Wayland cannot start, the game opens on X11 by itself. The first time it runs at a display scale above 100%, UI Scale and Cursor Size are raised by that scale so the interface stays the same size, now sharp. Cartographer follows the same setting. |
 
 ### Graphics
 
@@ -2654,6 +2655,15 @@ files) in your install folder. See [Creon](#creon).
 - In Legion mode, armies of several thousand units cost more processor time than
   in Retail.
 - The **Benchmark** gives comparable numbers if you want to measure a change.
+
+### The game looks blurry on Linux
+
+At a display scale above 100% on a Wayland desktop, an X11 window is drawn at
+the small size and enlarged by the desktop, which blurs it. Check **Options →
+Display → Native Wayland**: its help line says what is running. If it says X11,
+set it to **On** and restart. If your desktop is KDE Plasma, its own setting
+**System Settings → Display & Monitor → Legacy Applications (X11)** set to
+"Apply scaling themselves" also gives the X11 window real pixels.
 
 ### The whole screen flickers on a large display
 

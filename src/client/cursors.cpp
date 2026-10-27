@@ -267,9 +267,10 @@ bool CursorSet::applyHardware(CursorId c, int scale, SDL_Color tint) {
     if (frames.empty()) return false;
     if (scale < 1) scale = 1;
     float pixelScale = 1;   // renderer-output pixels per cursor-image pixel
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__linux__)
     // SDL2's Cocoa cursor is sized in points, so on a Retina window it already shows
     // backing-scale times bigger than the pixel-drawn software cursor (client/hidpi.h).
+    // SDL2's Wayland cursor is the same (buffer scale 1); X11 windows are always 1.
     // The scale is remembered while the pointer is outside every window, so leaving the
     // window does not rebuild the cache.
     static float backing = 1.0f;

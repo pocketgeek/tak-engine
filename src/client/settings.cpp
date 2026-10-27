@@ -118,6 +118,7 @@ Settings loadSettings() {
         else if (key == "renderer")        s.renderer = renderdriver::normalize(val);
         else if (key == "ignoreDpiScaling") s.ignoreDpiScaling = asBool();
         else if (key == "dpiMigrated")     s.dpiMigrated = asBool();
+        else if (key == "nativeWayland")   s.nativeWayland = val == "on" ? 1 : val == "off" ? 2 : 0;
         else if (key == "scorecardScale")  s.scorecardScale = asFloat(0.5f, 2.0f);
         else if (key == "uiScale")         s.uiScale = asFloat(0.5f, 2.0f);
         else if (key == "textureFilter")   textureFilter = asInt(0, 2);
@@ -243,6 +244,7 @@ std::string serializeSettings(const Settings& s) {
     o << "renderer = " << (s.renderer.empty() ? "auto" : s.renderer) << "\n";
     o << "ignoreDpiScaling = " << (s.ignoreDpiScaling ? 1 : 0) << "\n";
     o << "dpiMigrated = " << (s.dpiMigrated ? 1 : 0) << "\n";
+    o << "nativeWayland = " << (s.nativeWayland == 1 ? "on" : s.nativeWayland == 2 ? "off" : "auto") << "\n";
     o << "scorecardScale = " << s.scorecardScale << "\n";
     o << "uiScale = " << s.uiScale << "\n";
     o << "textureFilter = " << std::clamp(s.textureFilter, 0, 2) << "\n";

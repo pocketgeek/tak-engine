@@ -69,6 +69,7 @@
 #include "util/prefpath.h"
 #include "client/settings.h"
 #include "client/hidpi.h"
+#include "client/waylandchoice.h"
 #include "client/renderdriver.h"
 #include "net/crypto.h"
 #include "net/replaywriter.h"   // recoverReplayParts
@@ -647,11 +648,42 @@ int main(int argc, char** argv) {
     // The window then speaks points and the renderer pixels -- see client/hidpi.h.
     if (mpHeadless == 0 && shot.empty() && tak::loadSettings().ignoreDpiScaling)
         tak::dpiIgnoredAtStartup() = true;
+#elif defined(__linux__)
+    bool waylandAppIdSet = false;   // SDL_Init reads it; unset after, so child processes do not inherit it
+    // Linux: SDL2 prefers X11, which under a Wayland desktop is XWayland -- stretched
+    // (blurry) at a display scale above 100% on most compositors. NATIVE WAYLAND asks for
+    // a Wayland window instead (real pixels, SDL_WINDOW_ALLOW_HIGHDPI below); SDL falls
+    // back to X11 by itself if Wayland cannot start. See client/waylandchoice.h.
+    if (mpHeadless == 0 && shot.empty()) {
+        auto& wl = tak::wayland::startup();
+        wl.setting = tak::loadSettings().nativeWayland;
+        wl.requested = tak::wayland::wantNative(wl.setting, tak::wayland::probeSession());
+        if (wl.requested) {
+            SDL_SetHint(SDL_HINT_VIDEODRIVER, "wayland,x11");
+            // Wayland matches a window to its .desktop launcher (and icon) by app id.
+            if (!std::getenv("SDL_VIDEO_WAYLAND_WMCLASS")) {
+                setenv("SDL_VIDEO_WAYLAND_WMCLASS", "tak-client", 0);
+                waylandAppIdSet = true;
+            }
+        }
+    }
 #endif
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
+#if defined(__linux__)
+    if (waylandAppIdSet) unsetenv("SDL_VIDEO_WAYLAND_WMCLASS");
+    {
+        auto& wl = tak::wayland::startup();
+        const char* drv = SDL_GetCurrentVideoDriver();
+        wl.native = wl.requested && drv && std::strcmp(drv, "wayland") == 0;
+        if (wl.requested || wl.setting != tak::wayland::kAuto)
+            std::fprintf(stderr, "video: native wayland %s (setting %s), driver %s\n",
+                         wl.native ? "on" : wl.requested ? "unavailable -- using X11" : "off",
+                         tak::wayland::settingLabel(wl.setting), drv ? drv : "?");
+    }
+#endif
     tak::installSignalHandlers();
     // Persisted Options (audio/camera/display prefs). CLI flags still win where they
     // apply; the file is the source of truth for anything not passed on the CLI.
@@ -767,6 +799,8 @@ int main(int argc, char** argv) {
                                        SDL_WINDOW_RESIZABLE
 #ifdef __APPLE__
                                        | (tak::dpiIgnoredAtStartup() ? SDL_WINDOW_ALLOW_HIGHDPI : 0)
+#elif defined(__linux__)
+                                       | (tak::wayland::startup().native ? SDL_WINDOW_ALLOW_HIGHDPI : 0)
 #endif
                                        );
     {   // Application icon: the crown badge (src/util/appicon).
@@ -987,6 +1021,16 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "dpi: native Retina resolution; backing scale %.2f\n", osScale);
         if (tak::applyDpiMigration(settings, osScale)) tak::saveSettings(settings);
     }
+#elif defined(__linux__)
+    if (tak::wayland::startup().native) {
+        // Same one-time UI/cursor migration: X11 through XWayland used to be stretched by
+        // the desktop scale. The scale arrives from the compositor once the surface is on
+        // an output, so let SDL take in those events before reading output / window.
+        SDL_PumpEvents();
+        const float osScale = tak::hidpi::scale(ren);
+        std::fprintf(stderr, "dpi: native Wayland resolution; backing scale %.2f\n", osScale);
+        if (osScale > 1.01f && tak::applyDpiMigration(settings, osScale)) tak::saveSettings(settings);
+    }
 #endif
     // Set texture-build policy before loading art. Options hosts rebuild the current
     // interface when smoothing changes; ordinary frames reuse those textures.
@@ -1016,6 +1060,15 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "dpi: window %dx%d, renderer output %dx%d, display dpi %.0f (scale %.2f), ignoreDpiScaling=%d uiScale=%.2f cursorScale=%d\n",
                      ww, wh, ow, oh, dpiOk == 0 ? ddpi : 0.f, dpiOk == 0 ? ddpi / 96.f : 0.f,
                      settings.ignoreDpiScaling ? 1 : 0, settings.uiScale, settings.cursorScale);
+    }
+#elif defined(__linux__)
+    {   // With native Wayland the renderer output is window points x the desktop scale.
+        int ww = 0, wh = 0, ow = 0, oh = 0;
+        SDL_GetWindowSize(win, &ww, &wh);
+        SDL_GetRendererOutputSize(ren, &ow, &oh);
+        const char* drv = SDL_GetCurrentVideoDriver();
+        std::fprintf(stderr, "dpi: %s window %dx%d, renderer output %dx%d (scale %.2f), uiScale=%.2f cursorScale=%d\n",
+                     drv ? drv : "?", ww, wh, ow, oh, tak::backingScale(ww, ow), settings.uiScale, settings.cursorScale);
     }
 #endif
     // ---- outer session loop: menu -> game -> menu (menu launches only) ----------

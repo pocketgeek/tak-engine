@@ -17,6 +17,7 @@
 // how DEFAULTS-wipes-campaign-progress got past it.
 
 #include "client/settings.h"
+#include "client/waylandchoice.h"
 
 #include <cstdio>
 #include <string>
@@ -55,6 +56,7 @@ int main() {
     flips("renderer",        [](Settings& s) { s.renderer = "software"; });
     flips("ignoreDpiScaling",[](Settings& s) { s.ignoreDpiScaling = !s.ignoreDpiScaling; });
     flips("dpiMigrated",     [](Settings& s) { s.dpiMigrated = !s.dpiMigrated; });
+    flips("nativeWayland",   [](Settings& s) { s.nativeWayland = 2; });
     flips("uiScale",         [](Settings& s) { s.uiScale += 0.25f; });
     flips("textureFilter",   [](Settings& s) { s.textureFilter = (s.textureFilter + 1) % 3; });
     flips("textureFilter 0", [](Settings& s) { s.textureFilter = 0; });
@@ -300,6 +302,40 @@ int main() {
         check("dpi: hw cursor 1x", tak::hardwareCursorScale(3, 1.0f) == 3 && tak::hardwareCursorScale(0, 1.0f) == 1);
         check("dpi: hw cursor 2x", tak::hardwareCursorScale(2, 2.0f) == 1 && tak::hardwareCursorScale(4, 2.0f) == 2 &&
                                    tak::hardwareCursorScale(1, 2.0f) == 1);
+        // Linux native Wayland at a fractional desktop scale (e.g. 150%, 1.45 measured on KDE).
+        check("dpi: backing 1.5x", tak::backingScale(1280, 1920) == 1.5f);
+        check("dpi: points 1.5x up", tak::pixelsToPoints(1201, 1.5f) == 801 && tak::pixelsToPoints(480, 1.5f) == 320);
+        check("dpi: hw cursor 1.5x", tak::hardwareCursorScale(2, 1.5f) == 1 && tak::hardwareCursorScale(3, 1.5f) == 2);
+    }
+
+    // NATIVE WAYLAND decision (client/waylandchoice.h).
+    {
+        auto check = [&](const char* what, bool ok) {
+            std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++g_fail;
+        };
+        namespace wl = tak::wayland;
+        check("wl: kwinrc default", wl::kwinXwaylandClientsScale("") &&
+                                    wl::kwinXwaylandClientsScale("[Xwayland]\nScale=1.45\nXwaylandEisNoPromptApps=x\n"));
+        check("wl: kwinrc system", !wl::kwinXwaylandClientsScale("[General]\nX=1\n[Xwayland]\nScale=2\nXwaylandClientsScale=false\n"));
+        check("wl: kwinrc crlf", !wl::kwinXwaylandClientsScale("[Xwayland]\r\n XwaylandClientsScale = False \r\n"));
+        check("wl: kwinrc true", wl::kwinXwaylandClientsScale("[Xwayland]\nXwaylandClientsScale=true\n"));
+        check("wl: kwinrc group", wl::kwinXwaylandClientsScale("[Other]\nXwaylandClientsScale=false\n"));
+        check("wl: kde list", wl::desktopIsKde("KDE") && wl::desktopIsKde("ubuntu:GNOME:kde") && !wl::desktopIsKde("GNOME") &&
+                              !wl::desktopIsKde("") && !wl::desktopIsKde("KDEX"));
+        wl::Session gnome; gnome.wayland = true;
+        wl::Session x11; x11.wayland = false;
+        wl::Session forced = gnome; forced.driverForced = true;
+        wl::Session kdeSelf = gnome; kdeSelf.kde = true;
+        wl::Session kdeSystem = kdeSelf; kdeSystem.kdeX11RealPixels = false;
+        check("wl: auto gnome", wl::wantNative(wl::kAuto, gnome));
+        check("wl: auto kde self", !wl::wantNative(wl::kAuto, kdeSelf));
+        check("wl: auto kde system", wl::wantNative(wl::kAuto, kdeSystem));
+        check("wl: on kde self", wl::wantNative(wl::kOn, kdeSelf));
+        check("wl: off", !wl::wantNative(wl::kOff, gnome) && !wl::wantNative(wl::kOff, kdeSystem));
+        check("wl: no wayland", !wl::wantNative(wl::kOn, x11) && !wl::wantNative(wl::kAuto, x11));
+        check("wl: env wins", !wl::wantNative(wl::kOn, forced) && !wl::wantNative(wl::kAuto, forced));
+        check("wl: default auto", Settings{}.nativeWayland == wl::kAuto);
     }
 
     // Texture Filtering migration (resolveTextureFilter; -1 = key absent). The new key
@@ -417,6 +453,14 @@ int main() {
         check("res: 6 snaps", loadFrom("streamResolution = 6\n").streamResolution == 5);
         check("res: -1 snaps", loadFrom("streamResolution = -1\n").streamResolution == 5);
         check("res: junk snaps", loadFrom("streamResolution = big\n").streamResolution == 5);
+        // NATIVE WAYLAND: saved as auto/on/off, Auto when absent or unknown.
+        Settings nw{};
+        nw.nativeWayland = 2;
+        check("wayland: off trip", loadFrom(tak::serializeSettings(nw)).nativeWayland == 2);
+        nw.nativeWayland = 1;
+        check("wayland: on trip", loadFrom(tak::serializeSettings(nw)).nativeWayland == 1);
+        check("wayland: absent auto", loadFrom("masterVol = 7\n").nativeWayland == 0);
+        check("wayland: junk auto", loadFrom("nativeWayland = maybe\n").nativeWayland == 0);
         check("fps: 30 ok", loadFrom("streamFps = 30\n").streamFps == 30);
         check("fps: 45 snaps", loadFrom("streamFps = 45\n").streamFps == 60);
         check("fps: junk snaps", loadFrom("streamFps = x\n").streamFps == 60);

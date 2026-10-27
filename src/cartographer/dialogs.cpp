@@ -455,7 +455,7 @@ void cart::Editor::chooseObject(int row,bool edit) {
     int w,h;SDL_GetRendererOutputSize(ren,&w,&h);
     if(std::isfinite(unit.x) && std::isfinite(unit.z)) {
         const float x=std::clamp(unit.x,0.f,mapView.map().width*16.f),z=std::clamp(unit.z,0.f,mapView.map().height*16.f);
-        mapView.setOffset(x-(w/kUIScale-kPaletteW)/(2*mapView.zoom()),z-(h/kUIScale-kMenuH-kStatusH)/(2*mapView.zoom()));
+        mapView.setOffset(x-(w/renderScale()-kPaletteW)/(2*mapView.zoom()),z-(h/renderScale()-kMenuH-kStatusH)/(2*mapView.zoom()));
     }
     modal=M_NONE;SDL_StopTextInput();if(edit)openModal(M_UNIT,index);
 }
@@ -490,7 +490,7 @@ void cart::Editor::showMapIssue() {
     const auto& issue=mapIssues[issueIndex];
     if(issue.x>=0 && issue.z>=0) {
         int w,h;SDL_GetRendererOutputSize(ren,&w,&h);
-        mapView.setOffset(issue.x-(w/kUIScale-kPaletteW)/(2*mapView.zoom()),issue.z-(h/kUIScale-kMenuH-kStatusH)/(2*mapView.zoom()));
+        mapView.setOffset(issue.x-(w/renderScale()-kPaletteW)/(2*mapView.zoom()),issue.z-(h/renderScale()-kMenuH-kStatusH)/(2*mapView.zoom()));
     }
     openMessage("MAP ISSUE "+std::to_string(issueIndex+1)+" / "+std::to_string(mapIssues.size()),
         std::string(issue.severity==cart::MapIssue::Severity::Error?"ERROR: ":"WARNING: ")+issue.message+". Scenario > Next issue moves to the next result. Recheck after edits.");

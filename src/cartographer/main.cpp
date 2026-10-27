@@ -20,6 +20,7 @@
 #include "cartographer/generator.h"
 #include "version.h"
 #include "client/settings.h"
+#include "client/waylandchoice.h"
 #include "client/datafolder.h"
 #include "client/dirpicker.h"
 #include "cartographer/restart.h"
@@ -34,6 +35,7 @@
 #include <chrono>
 
 float cart::kUIScale = 1.5f;
+float cart::kBacking = 1.0f;
 
 cart::FreshMap cart::buildFreshMap(const tak::hpi::Vfs& vfs, cart::SectionLibrary& sections,
                        tak::terrain::Compositor& comp, const std::string& world,
@@ -126,10 +128,29 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     }
 
     SDL_SetMainReady();   // we own main() (SDL_MAIN_HANDLED); tell SDL not to hijack it
+#if defined(__linux__)
+    // NATIVE WAYLAND, the game's Display option (shared settings file): a Wayland window in
+    // real pixels instead of X11 through XWayland, stretched at a desktop scale above 100%.
+    bool appIdSet=false;
+    if(shotPath.empty() && exportPath.empty() && bundlePath.empty() && stampName.empty() &&
+       tak::wayland::wantNative(tak::loadSettings().nativeWayland,tak::wayland::probeSession())) {
+        tak::wayland::startup().requested=true;
+        SDL_SetHint(SDL_HINT_VIDEODRIVER,"wayland,x11");   // X11 if Wayland cannot start
+        if(!std::getenv("SDL_VIDEO_WAYLAND_WMCLASS")) {setenv("SDL_VIDEO_WAYLAND_WMCLASS","tak-cartographer",0);appIdSet=true;}
+    }
+#endif
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         throw Exit{1};
     }
+#if defined(__linux__)
+    if(appIdSet)unsetenv("SDL_VIDEO_WAYLAND_WMCLASS");   // read by SDL_Init; keep it out of TEST IN GAME
+    if(tak::wayland::startup().requested) {
+        const char* drv=SDL_GetCurrentVideoDriver();
+        tak::wayland::startup().native=drv && std::string(drv)=="wayland";
+        std::fprintf(stderr,"video: native wayland %s, driver %s\n",tak::wayland::startup().native?"on":"unavailable -- using X11",drv?drv:"?");
+    }
+#endif
     sdlLifetime.active=true;
     preferencesFolder=profileFolder();
     preferences=cart::loadEditorPreferences(preferencesFolder);
@@ -138,7 +159,11 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     const int initialHeight=std::min(preferences.height?preferences.height:1000,std::max(600,int(display.h*.9f)));
     win = SDL_CreateWindow(
         ("Cartographer -- " + mapName).c_str(), SDL_WINDOWPOS_CENTERED,
-        SDL_WINDOWPOS_CENTERED, initialWidth, initialHeight, SDL_WINDOW_RESIZABLE);
+        SDL_WINDOWPOS_CENTERED, initialWidth, initialHeight, SDL_WINDOW_RESIZABLE
+#if defined(__linux__)
+        | (tak::wayland::startup().native ? SDL_WINDOW_ALLOW_HIGHDPI : 0)
+#endif
+        );
     windowOwner.reset(win);
     {   // Application icon: the compass-rose badge (src/util/appicon).
         std::vector<uint8_t> ic = tak::appicon::render(tak::appicon::Kind::Cartographer, 64);
@@ -333,9 +358,10 @@ int cart::Editor::run() {
             openMessage(playtestAiMod?"TEST IN GAME ENDED":"TEST MAP ENDED", "The game exited with an error ("+std::to_string(*result)+")."+
                         (aiModOnly?" Your AI mod is still open here.":noDocument?std::string():" Your map is still open here."));
         SDL_GetRendererOutputSize(ren, &w, &h);
-        kUIScale=std::max(.5f,std::min({preferences.scalePercent/100.f,float(w)/900.0f,float(h)/600.0f}));
-        SDL_RenderSetScale(ren,kUIScale,kUIScale);
-        w /= kUIScale; h /= kUIScale;   // physical -> logical (SDL_RenderSetScale)
+        {int ww=0,wh=0;SDL_GetWindowSize(win,&ww,&wh);kBacking=tak::backingScale(ww,w);}
+        kUIScale=std::max(.5f,std::min({preferences.scalePercent/100.f,float(w)/kBacking/900.0f,float(h)/kBacking/600.0f}));
+        SDL_RenderSetScale(ren,renderScale(),renderScale());
+        w /= renderScale(); h /= renderScale();   // physical -> logical (SDL_RenderSetScale)
         canvasH = h - kMenuH - kStatusH;
         canvasW = w - kPaletteW;
         const float miniScale=140.0f/std::max(mapView.map().width,mapView.map().height);

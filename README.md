@@ -129,6 +129,9 @@ provides only graphics, sound and windowing.
   `zypper install ./tak-engine-….rpm`, `pacman -U ./tak-engine-….pkg.tar.zst`
   or `upgradepkg --install-new ./tak-engine-….txz`. The application menu then
   shows **Total Annihilation: Kingdoms** and **Cartographer**.
+  On a Wayland desktop the game and Cartographer open native Wayland windows,
+  sharp at any display scale (KDE Plasma keeps X11, which it already scales
+  sharply); **Options → Display → Native Wayland** changes this.
 
 Every package holds the game, the Cartographer map editor and the dedicated
 server `takserver`. No server shortcut is added and no server starts by itself.

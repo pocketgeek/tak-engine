@@ -104,7 +104,7 @@ void cart::Editor::menuAction(int menu,int row) {
         else if(row==4) {tool=TERRAIN;regionCanvas=false;copyTerrainSelection();}
         else if(row==5)useTerrainClipboard();
     } else if(menu==2) {
-        int w,h;SDL_GetRendererOutputSize(ren,&w,&h);w=int(w/kUIScale)-kPaletteW;h=int(h/kUIScale)-kMenuH-kStatusH;
+        int w,h;SDL_GetRendererOutputSize(ren,&w,&h);w=int(w/renderScale())-kPaletteW;h=int(h/renderScale())-kMenuH-kStatusH;
         if(row==17)previewModel();
         if(row==18)openModal(M_PREFERENCES);
         if(row==19) {preferences.showBlocked=!preferences.showBlocked;persistPreferences();}

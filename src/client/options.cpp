@@ -8,6 +8,7 @@
 #include "client/gpuvram.h"
 #include "client/hotkeys.h"
 #include "client/renderdriver.h"
+#include "client/waylandchoice.h"
 
 #include <algorithm>
 #include <cctype>
@@ -435,6 +436,32 @@ void OptionsScreen::build(int channels) {
     slider("MAX FPS", 30, 240, [&] { return float(s_.maxFps); },
            [&](float v) { s_.maxFps = int(v + 0.5f); }, [](float v) { return std::to_string(int(v + 0.5f)); });
     ctls_.back().enabled = [&] { return !s_.vsync; };   // vsync paces frames; the cap does nothing
+#if defined(__linux__)
+    // NATIVE WAYLAND: a Wayland window in real pixels instead of X11 through XWayland,
+    // which most Wayland desktops stretch (blurry) above 100% scale. AUTO = on in a
+    // Wayland session, except KDE when it already gives X11 apps real pixels. Applied at
+    // startup only (client/waylandchoice.h).
+    dropdown("NATIVE WAYLAND",
+        [] { return std::vector<std::string>{"Auto", "On", "Off"}; },
+        [this] { return float(std::clamp(s_.nativeWayland, 0, 2)); },
+        [this](float idx) { s_.nativeWayland = std::clamp(int(idx + 0.5f), 0, 2); });
+    ctls_.back().note = [this] {
+        return s_.nativeWayland != wayland::startup().setting ? std::string("RESTART REQUIRED") : std::string();
+    };
+    ctls_.back().help = [this] {
+        const auto& wl = wayland::startup();
+        std::string now = "NOW: ";
+        if (wl.native) {
+            char buf[48];
+            std::snprintf(buf, sizeof buf, "NATIVE WAYLAND, %.2fX DISPLAY SCALE", hidpi::scale(ren_));
+            now += buf;
+        } else if (wl.requested) now += "X11 (WAYLAND COULD NOT START)";
+        else now += "X11";
+        return std::vector<std::string>{now,
+            "AUTO: NATIVE WAYLAND ON A WAYLAND DESKTOP, EXCEPT KDE PLASMA WHEN IT ALREADY LETS X11 APPS "
+            "SCALE THEMSELVES. ON: WAYLAND WHENEVER IT IS THERE. OFF: ALWAYS X11. RESTART TO APPLY."};
+    };
+#endif
 
     // GRAPHICS. TEXTURE FILTERING's UNITS level is retail's video option (BiLinearFilter).
     section("GRAPHICS");

@@ -91,5 +91,27 @@ else
   cmake --install "$s/build"
 fi
 
+# Linux: the static SDL2 must carry its Wayland backend, loaded at run time (dlopen), so
+# NATIVE WAYLAND (client/waylandchoice.h) can open a real-pixel window without adding a hard
+# libwayland dependency; and libdecor, which draws the title bar on GNOME (no server-side
+# decorations there). Whatever -devel package is missing at build time is silently left
+# out by SDL's configure, and a CI cache would keep that SDL2 -- so check the cached build
+# too. Missing Wayland fails; missing libdecor only warns (Wayland still works; GNOME
+# windows would lack a title bar). STATIC_DEPS_SKIP_WAYLAND_CHECK=1 skips it.
+cfg="$PREFIX/include/SDL2/SDL_config.h"
+if [ "$(uname -s)" = "Linux" ] && [ -z "${SKIP_SDL2:-}" ] && [ -z "${STATIC_DEPS_SKIP_WAYLAND_CHECK:-}" ] && [ -f "$cfg" ]; then
+  if ! grep -q '^#define SDL_VIDEO_DRIVER_WAYLAND 1' "$cfg" || \
+     ! grep -q '^#define SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC ' "$cfg"; then
+    echo "static-deps: ERROR: SDL2 was built without its dynamically loaded Wayland backend" >&2
+    echo "  install the wayland, wayland-protocols and xkbcommon -devel packages, delete $PREFIX and rebuild" >&2
+    exit 1
+  fi
+  if grep -q '^#define SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_LIBDECOR ' "$cfg"; then
+    echo "static-deps: SDL2 Wayland backend ok (dynamic, with libdecor)"
+  else
+    echo "::warning::static-deps: SDL2 has Wayland but no libdecor (install libdecor -devel and rebuild): GNOME windows would have no title bar"
+  fi
+fi
+
 echo "static-deps: done -> $PREFIX (zlib + libjpeg-turbo + SDL2 static archives)"
 echo "  the engine links these automatically: cmake -B build -G Ninja"

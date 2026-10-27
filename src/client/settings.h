@@ -35,6 +35,10 @@ struct Settings {
     // Applied at startup only (restart required); see applyDpiMigration below.
     bool  ignoreDpiScaling = true;
     bool  dpiMigrated = false;     // one-time: uiScale/cursorScale already adapted to the OS scale
+    // Linux only (ignored elsewhere): 0 = Auto, 1 = On, 2 = Off -- open a native Wayland
+    // window (real pixels at any display scale) instead of X11 through XWayland. Applied
+    // at startup only (restart required); see client/waylandchoice.h.
+    int   nativeWayland = 0;
     float scorecardScale = 1.0f;   // independent F4 scorecard scale; 0.5..2.0
     float uiScale    = 1.0f;       // in-game HUD scale; 0.5..2.0 (1.0 = 100%)
     // TEXTURE FILTERING for the game area (client/texturefilter.h): 0 = Off (retail's
@@ -233,6 +237,7 @@ struct Settings {
             && a.voiceOutputSameAsGame == b.voiceOutputSameAsGame && a.voiceOutputDevice == b.voiceOutputDevice
             && a.voiceMicVolume == b.voiceMicVolume && a.voiceOutputVolume == b.voiceOutputVolume
             && a.ignoreDpiScaling == b.ignoreDpiScaling && a.dpiMigrated == b.dpiMigrated
+            && a.nativeWayland == b.nativeWayland
             && a.hotkeys == b.hotkeys
             && a.campaignCompleted == b.campaignCompleted;
     }
@@ -418,9 +423,10 @@ inline bool applyDpiMigration(Settings& s, float osScale) {
     return true;
 }
 
-// macOS Retina (client/hidpi.h). With SDL_WINDOW_ALLOW_HIGHDPI the window is measured in
-// points and the renderer in pixels; backingScale = pixels per point (1 when they agree,
-// which is every Linux and Windows window here, so all of these are then identities).
+// macOS Retina and Linux native Wayland (client/hidpi.h). With SDL_WINDOW_ALLOW_HIGHDPI
+// the window is measured in points and the renderer in pixels; backingScale = pixels per
+// point, possibly fractional on Wayland (1 when they agree, which is every Windows and
+// Linux X11 window here, so all of these are then identities).
 inline float backingScale(int windowW, int outputW) {
     return windowW > 0 && outputW > windowW ? float(outputW) / float(windowW) : 1.0f;
 }

@@ -50,7 +50,7 @@ bool cart::Session::saveDocument(const std::string& destination,bool bundle) {
             SDL_SetWindowTitle(win,(title+" - SAVING").c_str());
             while(job.wait_for(std::chrono::milliseconds(0))!=std::future_status::ready) {
                 int width,height;SDL_GetRendererOutputSize(ren,&width,&height);
-                const int w=int(width/kUIScale),h=int(height/kUIScale);
+                const int w=int(width/renderScale()),h=int(height/renderScale());
                 const SDL_Rect cancel{w/2-70,h/2+34,140,24};
                 SDL_Event event;
                 while(SDL_PollEvent(&event)) {

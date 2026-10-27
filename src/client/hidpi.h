@@ -1,12 +1,13 @@
-// hidpi -- window points vs renderer pixels (macOS Retina).
+// hidpi -- window points vs renderer pixels (macOS Retina, Linux native Wayland).
 //
 // The engine works in renderer OUTPUT pixels throughout: layout, hit tests, the world
-// camera. On Linux and Windows the window is created without SDL_WINDOW_ALLOW_HIGHDPI,
-// so window coordinates, mouse positions and output pixels are the same numbers (Windows
-// gets real pixels from per-monitor DPI awareness instead). On macOS a Retina window
-// opts in with SDL_WINDOW_ALLOW_HIGHDPI (main.cpp): the window, mouse and window-size
-// APIs then speak POINTS while the renderer has backingScale (normally 2) pixels per
-// point. The main event loops already map mouse events with SDL_RenderWindowToLogical;
+// camera. On Windows and on Linux X11 the window is created without
+// SDL_WINDOW_ALLOW_HIGHDPI, so window coordinates, mouse positions and output pixels are
+// the same numbers (Windows gets real pixels from per-monitor DPI awareness instead). On
+// macOS a Retina window opts in with SDL_WINDOW_ALLOW_HIGHDPI (main.cpp), and so does a
+// native Wayland window on Linux (client/waylandchoice.h): the window, mouse and
+// window-size APIs then speak POINTS while the renderer has backingScale pixels per
+// point -- 1 or 2 on macOS, any desktop scale on Wayland (1.25, 1.5, 2, ...). The main event loops already map mouse events with SDL_RenderWindowToLogical;
 // these helpers cover the places that read the mouse or size the window directly.
 // Every one is an identity when the scale is 1.
 #pragma once

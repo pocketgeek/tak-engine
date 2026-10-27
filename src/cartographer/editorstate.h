@@ -67,6 +67,12 @@ namespace cart {
 // glyph, and dialog doubles uniformly on hi-DPI displays. Input coordinates are
 // divided back down to logical space at the event source.
 extern float kUIScale;
+// Renderer pixels per window point: 1 except in a Linux native Wayland window (opened with
+// SDL_WINDOW_ALLOW_HIGHDPI, client/waylandchoice.h), where it is the desktop scale (1.5,
+// 2, ...). Mouse positions and window sizes are points, so they divide by kUIScale alone;
+// the renderer output divides by renderScale(). Updated every frame.
+extern float kBacking;
+inline float renderScale() { return kUIScale * kBacking; }
 
 inline std::string pathText(const std::filesystem::path& path) {const auto text=path.u8string();return {text.begin(),text.end()};}
 inline std::string lowerText(std::string value) {std::transform(value.begin(),value.end(),value.begin(),[](unsigned char c){return char(std::tolower(c));});return value;}
