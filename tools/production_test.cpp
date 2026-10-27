@@ -341,6 +341,31 @@ static void reviveCostsNothing() {
           "a computer player under 0.7 allocation abandons it at the end", detail);
 }
 
+// THE REVIVE COUNTER WRAPS LIKE _FTOL. Retail's 5d3d54 keeps the low word of
+// a 64-bit fistp, so araking (workertime 10) resurrecting a buildtime-100000
+// vermage starts at 1603273293 (5898240589 mod 2^32) and takes 24464 ticks;
+// ours answered INT32_MIN for anything past 2^31 and raised it at once.
+static void reviveWorkWrapsLikeFtol() {
+    std::printf("the revive counter wraps like _ftol:\n");
+    auto ownedWorld = makeWorld(64, 64);
+    World& w = *ownedWorld;
+    FeatType body; body.name = "victim_dead"; body.resurrectable = true; body.decomposeTicks = 100000;
+    w.setFeatureTypes({body});
+    UnitType victim = soldierType(); victim.id = "victim"; victim.buildTime = 100000;
+    UnitType priest = soldierType(); priest.id = "priest"; priest.workerTime = 10; priest.canResurrect = true;
+    w.mapCorpse(&victim, 0);
+    const int id = w.spawn(&priest, 300, 300, 0, 0);
+    const int dead = w.spawn(&victim, 330, 300, 0, 0);
+    w.unit(dead)->hp = {}; w.unit(dead)->deathType = 9;
+    int32_t first = 0; int t = 0;
+    for (; t < 600 && !first; ++t) { w.tick(1.0f / 30); if (w.unit(id)->reviveTarget) first = w.unit(id)->reviveWork; }
+    for (int n = 0; n < 60; ++n) w.tick(1.0f / 30);
+    char detail[160];
+    std::snprintf(detail, sizeof detail, "work %d at the start, still channelling %d", first, w.unit(id)->reviveTarget != 0);
+    check(first == 1603273293 && w.unit(id)->reviveTarget != 0,
+          "a counter past 2^31 keeps ftol's low word and keeps channelling", detail);
+}
+
 // WORK AND SHOTS KEEP A CLOAKER VISIBLE. Retail sets the unit's cloak block
 // (+0xcc) to max(+0xcc, now + N) on every shot (600 ticks, 0x52af41), on every
 // MobileBuild/HelpBuild work tick (300, 0x405bc8/0x4060bb), on every RECLAIM
@@ -1198,6 +1223,7 @@ int main(int argc,char** argv) {
     hudShowsRequestedMana();
     cloakSpendsUnitMana();
     reviveCostsNothing();
+    reviveWorkWrapsLikeFtol();
     workAndShotsBlockCloak();
     cloakStepFollowsRetail();
     aiShortfallReadsRequests();

@@ -1581,7 +1581,7 @@ int main(int argc,char** argv) {
             "cloak command queues its pose callback without running it inline");
         cloakWorld.tick(1.f/30);
         require(!cloakWorld.unit(spy)->cloaked && RetailReplayProbe::scriptStatics(cloakWorld,spy)[0]==1,
-            "StartCloaking reaches the script even when a nearby enemy prevents invisibility");
+            "StartCloaking reaches the script even when the unit cannot pay to turn invisible");
         cloakWorld.unit(nearby)->hp={};cloakWorld.player(0).mana=0;
         cloakWorld.tick(1.f/30);
         require(!cloakWorld.unit(spy)->cloaked && RetailReplayProbe::scriptStatics(cloakWorld,spy)[0]==1,

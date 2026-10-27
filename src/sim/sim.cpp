@@ -9960,7 +9960,10 @@ void World::tickRetailConstruction(Unit& builder) {
             if (result==RetailConstructionResult::Worked || result==RetailConstructionResult::Completed) {
                 w.emitConstruction(b,false);w.emitConstruction(*site,true);
             }
-            if (!job.flying) job.activityDeadline=std::max(job.activityDeadline,w.tickCounter_+300u);
+            if (!job.flying) {
+                job.activityDeadline=std::max(job.activityDeadline,w.tickCounter_+300u);
+                w.blockCloak(b,300);   // the same +0xcc, on the unit (0x405bc8)
+            }
             if (state.progress.remaining==0) return 1;
             m.sleep(w.tickCounter_,1);m.waitMask|=0xa;
             if (job.flying) { m.stage=5;return 4; }
@@ -10741,14 +10744,15 @@ void World::tickAuras(float dt) {
 }
 
 // Retail's revive work counter (icd 0x406c2e, 0x4201e9): 65536 x buildtime /
-// (workertime x 0.03333333), times 0.3 for a resurrect, truncated like ftol --
-// which answers its integer indefinite for a result out of range, so a caster
-// with no workertime finishes on its first tick.
+// (workertime x 0.03333333), times 0.3 for a resurrect, through _ftol (5d3d54),
+// which keeps the LOW word of a 64-bit fistp: past 2^31 it wraps (araking
+// resurrecting a buildtime-100000 vermage starts at 1603273293, not 5.9e9),
+// and a caster with no workertime (infinity: the indefinite, low word 0)
+// finishes on its first tick.
 static int32_t retailReviveWork(float buildTime, float workerTime, bool resurrect) {
     double work = double(buildTime);
     if (resurrect) work *= 0.3;
-    work = work / (double(workerTime) * 0.03333333) * 65536.0;
-    return work > -2147483649.0 && work < 2147483648.0 ? int32_t(work) : INT32_MIN;
+    return int32_t(retailFtol(work / (double(workerTime) * 0.03333333) * 65536.0));
 }
 
 void World::tickAbilities(float) {
@@ -10867,12 +10871,14 @@ void World::tickAbilities(float) {
             if (dx * dx + dz * dz > kR * kR * 4) { u.reviveTarget = 0; continue; }
             const bool animate = u.reviveMode == 2;
             const UnitType* out = animate ? u.type->animateType : c->type;
-            const double allocation = players_[size_t(u.player)].allocation();
-            u.reviveWork -= int32_t(allocation * 65536.0);
+            const float allocation = players_[size_t(u.player)].allocation();
+            // 32-bit sub, signed test, as retail: a counter ftol wrapped negative
+            // finishes at once, and nothing here is C++ signed overflow.
+            u.reviveWork = int32_t(uint32_t(u.reviveWork) - retailFtol(double(allocation) * 65536.0));
             // Work left: the caster stays visible 300 ticks (0x406e45, 0x420477).
             if (u.reviveWork > 0) { blockCloak(u, 300); continue; }
             u.reviveTarget = 0;
-            if (computerOwned(u.player) && allocation < 0.7) continue;
+            if (computerOwned(u.player) && double(allocation) < 0.7) continue;
             revives.push_back({out, c->x.toFloat(), c->z.toFloat(), u.player, animate});
             retire(*c);
             continue;

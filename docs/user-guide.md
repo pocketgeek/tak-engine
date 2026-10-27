@@ -699,24 +699,6 @@ move, and removes wrecks before a priest can raise them.
   faster builder is no quicker, and several builders on one object do not
   share the work: the first to finish removes it.
 
-### Raising the dead
-
-Some priests raise the dead. A priest that can resurrect brings back your own
-fallen units from their bodies, at a tenth of their health; one that can
-animate raises any body, friend or foe, as one of its own creatures at full
-health. An idle priest starts on a body lying close by by
-itself.
-
-- As in the original game, raising costs no mana and never shows in the mana
-  bulb.
-- A resurrection takes three tenths of the unit's build time for that priest;
-  an animation takes the creature's whole build time.
-- It does go slower when your mana is short: like construction, it runs at the
-  share of full speed your mana can support, and stops while your pool is
-  empty and builders are waiting for mana.
-- A computer player whose mana is well short of its needs gives a raising up
-  at the end, as in the original.
-
 - Right-click a single object to reclaim it. Every selected builder that can
   reclaim goes for it; other selected units keep their orders.
 - **Right-drag a box** to reclaim a whole area. As in the original game, every
@@ -734,6 +716,23 @@ itself.
   drag is an ordinary right-click order. The orange box and the broom cursor
   appear once the drag is big enough, and the box stays on the ground you
   pressed if the view scrolls or zooms while you drag.
+
+### Raising the dead
+
+Some priests raise the dead. A priest that can resurrect brings back your own
+fallen units from their bodies, at a tenth of their health; one that can
+animate raises any body, friend or foe, as one of its own creatures at full
+health. An idle priest starts on a body lying close by of its own accord.
+
+- As in the original game, raising costs no mana and never shows in the mana
+  bulb.
+- A resurrection takes three tenths of the unit's build time for that priest;
+  an animation takes the creature's whole build time.
+- It does go slower when your mana is short: like construction, it runs at the
+  share of full speed your mana can support, and stops while your pool is
+  empty and builders are waiting for mana.
+- A computer player whose mana is well short of its needs gives a raising up
+  at the end, as in the original.
 
 ### Repairing and healing
 

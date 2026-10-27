@@ -3221,7 +3221,8 @@ factory's or a mobile producer's output (GetBuilt `0x401c20`). The other
 unit visible from tick T, for exactly N ticks.
 
 Port: `World::blockCloak` at each of these points -- `World::fire` after the
-manapershot test, `tickConstruction` and `tickRepair` for ground workers,
+manapershot test, `tickConstruction` (and the restored-save MobileBuild work
+stage, beside its own copy `activityDeadline`) and `tickRepair` for ground workers,
 `tickReclaim` after a wake with countdown left, and the revive channel. It is
 written only for cloakers, the step's only reader. Our cloak step runs before
 combat and revive, so `blockCloak` also clears `cloaked` at once; that is the
@@ -3271,7 +3272,10 @@ come from the same table.
   for a resurrect -- and sets the work counter `+0x52 = ftol(buildtime x
   65536 / (workertime x 0.03333333))`, times 0.3 (`0x5ebaa0`) only for a
   RESURRECT (`+0x56` clear). The constant at `0x5eb780` is the double
-  0.03333333, not 1/30.
+  0.03333333, not 1/30. `_ftol` keeps the low word of a 64-bit `fistp`, so a
+  counter past 2^31 wraps: araking (workertime 10) resurrecting a
+  buildtime-100000 vermage starts at 1603273293, about 24464 ticks, and the
+  stage-4 `sub` is a plain 32-bit one.
 - Stage 4 (`0x406d3b`) subtracts `ftol(allocation x 65536)` every tick, the
   allocation being the owner's resource object `+8` (stored / last demand,
   capped at 1). While work is left it sets the caster's `+0xcc` cloak block
@@ -3298,4 +3302,7 @@ tick, pays nothing, and applies the computer-player rule through
 `computerOwned`. Ours is still an idle caster's automatic search, not an
 order; a computer caster that abandons a revive takes the same corpse up again
 on its next tick, so while its economy is short its revive simply never
-finishes.
+finishes. Ours also has no walk, turn or INBUILDSTANCE wait (stages 0-2) and
+takes its first allocation the tick after the corpse is found, where retail's
+stage 3 returns 1 and the dispatcher runs stage 4 in the same wake; the end
+(stage 5) follows the last subtraction in the same wake in both.

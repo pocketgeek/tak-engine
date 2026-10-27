@@ -1679,9 +1679,10 @@ struct Player {
     double constructionDemand = 0;
     double constructionAllocation = 1;
     // Retail's resource object +8: the fraction of full-rate work this tick's
-    // pool affords (stored / last demand, capped at 1).
-    double allocation() const {
-        return retailResources ? double(retailResources->allocation) : constructionAllocation;
+    // pool affords (stored / last demand, capped at 1). A float, as retail
+    // stores it.
+    float allocation() const {
+        return retailResources ? retailResources->allocation : float(constructionAllocation);
     }
     // The fraction of `cost` (one tick of full-rate work) this consumer may do
     // now. Records the request; the caller pays cost * share, capped at mana,
