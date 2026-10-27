@@ -3,8 +3,7 @@
 Protocol **301** (was 300 in 0.9.6), replay format **15** (unchanged),
 generator version **9** (unchanged).
 
-TODO-LEAD: tag line (tag `v0.9.7` at which commit, full sha, annotated tag
-object, publication time).
+Tagged `v0.9.7` at `3c4cf3b2` (full `3c4cf3b2c1be40465995bcfb581c550543ffb7a6`, annotated tag object `58ebb376`) and published on 2026-10-27 19:48:12 UTC.
 
 ## Scope and compatibility
 
@@ -48,8 +47,7 @@ deletions(-); `-- src`: 7 files changed, 755 insertions(+), 74 deletions(-)
 `tools/helpbuild_test.cpp`, `tools/flyer_combat_test.cpp`,
 `tools/replay_test.cpp`, `CMakeLists.txt` and documentation).
 
-TODO-LEAD: final `git diff --stat v0.9.6 v0.9.7` (whole tree and `-- src`) and
-the commit count, once the tag exists.
+Final `git diff --stat v0.9.6 v0.9.7 -- src`: 7 files changed, 756 insertions(+), 74 deletions(-) (`src/sim` 3 files, `src/client` 3, `src/net` 1); that is `3b44b94c` plus one comment in `src/sim/matchsetup.cpp` (the debug-only `TAK_START_FLYERS` fixture). Outside `src`: 15 files changed, 1,725 insertions(+), 46 deletions(-). Over the whole tree: 22 files changed, 2,481 insertions(+), 120 deletions(-). `v0.9.6..v0.9.7` is 15 commits, linear, no merges. The tag differs from `3b44b94c` only in `CHANGELOG.md`, `docs/release-0.9.7-notes.md`, `docs/user-guide.md`, this report and that one comment.
 
 The preparation commit and the review's doc fixes after it change no code:
 `CMakeLists.txt` (the version line), `CHANGELOG.md`, `README.md`, the version
@@ -187,16 +185,19 @@ the local runs compared every client against the referee.
 
 ## CI and packages
 
-TODO-LEAD: tag workflows and their results, package verification (assets,
-digests, build strings, `--version` of each package).
+All four tag workflows ran on `3c4cf3b2` and are green. Three passed on attempt 1: [Linux packages 40564746420](https://github.com/pocketgeek/tak-engine/actions/runs/40564746420) (18 jobs, all success, finished 19:29 UTC), [Windows 40564746132](https://github.com/pocketgeek/tak-engine/actions/runs/40564746132) (x64, arm64, sign and publish, cache prune; finished 19:21 UTC) and [macOS 40564746434](https://github.com/pocketgeek/tak-engine/actions/runs/40564746434) (arm64 and x64 build, then sign and notarize for each; finished 19:19 UTC). [Determinism 40564746743](https://github.com/pocketgeek/tak-engine/actions/runs/40564746743) (dispatched on the tag) needed a second attempt: on attempt 1 detmath and sim-equiv passed, but the `unit-tests` job sat in "Install build deps" from 18:59:08 to 19:23:04 UTC (about 24 minutes, a runner stall, no output) and was cancelled; attempt 2 ran `unit-tests` in about 10 minutes and passed (`100% tests passed out of 8`). GCC and Clang x86-64 at -O0/-O2/-O3 all agree on golden `dcef618cd2e4d558` ("DETERMINISM OK", unchanged from 0.9.6); the driver-equivalence test printed OK.
+
+All 29 assets were downloaded fresh and match GitHub's SHA-256 digests and sizes. The file set is identical to 0.9.6's: the per-asset file lists of the 27 packages, installer, zips and debug archives match 0.9.6's exactly (after replacing the version string), and the two DMGs hold the same three entries (the two apps and the Applications link). Sizes grew slightly, from +0.07% (openSUSE x86-64 RPM) to +0.19% (Arch package); the Slackware package shrank by 0.10% (-8,924 bytes); the largest absolute growth is the Linux x64 debug tarball at +86,572 bytes. Every one of the 54 Linux ELF binaries carries the `v0.9.7` build string and no older `v0.9.x` string. Every one of the 46 release takclient and takserver binaries (Linux, Windows, macOS, apps and bare programs) contains no `AUTOPLAY`, `TAK_START_FLYERS` or `TAK_AUTOPLAY_SIDE` string, so the harness hooks are debug-only; the Linux and macOS debug archives do contain them, as intended. None of the 54 Linux ELF binaries has a libva, libdrm, libsecret, GLib or libsqlite `NEEDED` entry, and none contains `__vaDriverInit_`, `SQLite format` or `sqlite3_`; the `NEEDED` list of every one of the 54 is identical to 0.9.6's. The licence files (`OPUS-LICENSE.txt`, `CHAT-FONT-LICENSE.txt`, `EDITOR-FONT-LICENSE.txt`, `STREAMING-LICENSES.txt`, `ACME-LICENSES.txt`) are in every package, zip, installer, DMG and app (the Cartographer app carries `EDITOR-FONT-LICENSE.txt` only, as before). All 27 `STREAMING-LICENSES.txt` copies are byte-identical to 0.9.6's (the same two checksums, 22 and 5 copies) and all 27 carry the OpenSSL notice. No `mods/`, `overrides/` or `click.hpi` is shipped. The packaged Linux `takclient --help` lists only `--data`, `--play-map`, `--game-mod` and `--version`, and the Fedora 44 x86-64 RPM's `takclient`, `takserver` and `cartographer` all report `0.9.7 (build v0.9.7)`. That RPM's `takserver` printed "listening ... (protocol v301)" with retail gameplay hash `d6000f4fa9095a51`. It ran the Retail AI game on Inner Circle with `--local --no-auth --seed 1` and a scratch HOME and `XDG_DATA_HOME`; the client was the Debug build at `3c4cf3b2` (`build-dbg`, rebuilt for this check) with `TAK_AI_LEVEL=6 TAK_SPEED=80 --mpai --time 60`, and the game ended `hash=4952493f51b9a568 units=4 err=none end=timelimit` (tick 1800), the same as the local gate in this report; no desync or referee-suspect line appeared. The same RPM's `cartographer "Inner Circle" --bundle <file>` (headless) loaded the map (96 x 96 blocks, 4 start positions, 215 features, 1261 sections), wrote a 379,088-byte `.kmp` and exited 0, as in 0.9.6. The packaged release `takclient --data <read-only link farm> --play-map <that .kmp>` reached the single-player lobby (local server on a private port, game created, map verified, 141 features placed, 4 mana deposits) with the retail data folder as a `chmod a-w` copy that symlinks every file (1,108 entries, the same count as the real `assets/game`). Nothing was created or modified in that copy or in the real `assets/game`, and the map cache, mod cache and `settings.ini` landed under the scratch `XDG_DATA_HOME/TAKengine/TAKingdoms`. Every `blob` `v0.9.7` link in the release notes (5 links, 3 with anchors: `public-server.md#versions`, `release-0.9.5-notes.md#known-limits` and `release-0.9.6-notes.md#known-limits`) resolves to a file and heading present at the tag.
 
 ## Signing
 
-TODO-LEAD: Windows Authenticode and macOS notarisation results.
+Signing. Windows: on oden-win, `Get-AuthenticodeSignature` reports **Valid** (timestamped, "Curtis Edge") for all 7 signed files: the x64 installer and `takclient`, `takserver` and `cartographer` in both the x64 and arm64 zips, the same 7 as 0.9.6. The x64 `takclient.exe` and `takserver.exe` report `0.9.7 (build v0.9.7)`, and the arm64 ones carry the `v0.9.7` build string. `--mpai` was not run on Windows or macOS, per the release rule (no build flags, compilers or CI determinism coverage changed); the Windows and macOS tag CI determinism tests cover them.
+
+macOS: on the MacBook (no builds), both DMGs and all four apps (the game and TAK Cartographer, from the DMGs and from the zips) pass `stapler validate`, and `spctl -a -vv` accepts them as "Notarized Developer ID" (Curtis Edge, L479Y59RN8). Both DMGs themselves are also stapled and accepted as Notarized Developer ID. Each app passes `codesign --verify --strict --deep` and has `NSHighResolutionCapable` true; the game apps have `NSMicrophoneUsageDescription`, and the takclient has the `audio-input` entitlement (the other binaries do not). The bare zip programs (takclient, takserver, cartographer) pass `codesign --strict` with the same team id; `spctl` calls them "not an app", as expected. The macOS `takclient` and `takserver` report `0.9.7 (build v0.9.7)` (arm64 and x64, apps, bare programs and the debug zips' takclient) and contain the MP4 muxer strings. No licence file is missing, and no `mods/`, `overrides/` or `click.hpi` is present. `otool -L` of the shipped arm64 and x64 `takclient`, `takserver` and `cartographer` shows no `libssl`, `libcrypto`, `libsqlite` or libopus dylib. Both takclients contain `OpenSSL 3.5.8 25 Aug 2026` and no SecureTransport TLS symbols, and Security.framework is still linked for the system root anchors.
 
 ## Publication
 
-TODO-LEAD: publication time, asset count, Latest flag.
+Published with `gh release edit v0.9.7 --draft=false --latest` on 2026-10-27 19:48:12 UTC with 29 assets; it is the Latest release. 0.9.0 to 0.9.6 stay on the releases page.
 
 ## Limits
 
@@ -216,6 +217,6 @@ TODO-LEAD: publication time, asset count, Latest flag.
   into.
 - Local only: `vashim_unavailable` fails against a `third_party/ffmpeg-bink`
   built before the shim; CI builds FFmpeg with it.
-- TODO-LEAD: tag CI limits (failures, reruns, stalls).
+- Tag CI: no failures. Linux packages, Windows and macOS passed on attempt 1. Determinism needed one rerun: its `unit-tests` job stalled in "Install build deps" for about 24 minutes on attempt 1 (a runner stall; it had not started building) and was cancelled; attempt 2 passed in about 10 minutes, and detmath and sim-equiv passed on attempt 1.
 - All of 0.9.6's limits carry over (see
   [release-0.9.6-validation.md](release-0.9.6-validation.md#limits)).
