@@ -3178,7 +3178,9 @@ int Server::run() {
             const Room* in = c->state == Client::InGame && c->slot >= 0 ? roomOf(*c) : nullptr;
             const bool waitedFor = in && c->slot < kMaxSlots && in->waitDeadline[c->slot] &&
                                    in->slotClient[c->slot] == int(id);
-            const bool loading = in && !c->loaded;   // GameStarting sent, Loaded not yet received
+            // GameStarting sent, Loaded not yet received. Only in a RUNNING room: a seat in a
+            // room that has not started is also unloaded, and the lobby keeps the play limit.
+            const bool loading = in && in->running && !c->loaded;
             const uint64_t limit = spectator ? kSpectatorTimeoutMs : loading ? gLoadTimeoutMs : gTimeoutMs;
             if (!waitedFor && now - c->lastRecvMs > limit) {
                 c->conn.fail(spectator ? "silent past the spectator timeout"

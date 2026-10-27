@@ -394,7 +394,7 @@ pings after 5 s of quiet). While a client is loading a game (from the server's
 machine or a huge map can load for longer than 15 s without reading its connection;
 the log then says `timed out while loading (30 s)`. The lobby and play keep 15 s, a
 spectator has 120 s. Tests can scale them with `TAK_TIMEOUT_MS` and
-`TAK_LOAD_TIMEOUT_MS`; `server_load_timeout_test.py` checks all three cases.
+`TAK_LOAD_TIMEOUT_MS`; `server_load_timeout_test.py` checks these cases.
 
 Voice chat is relayed, never stored or recorded: a client's
 frames go only to the room members that have switched voice chat on and that

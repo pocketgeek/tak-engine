@@ -13,6 +13,8 @@ instead of the 15 s of play and the lobby. The server runs with both scaled down
              'timed out while loading (6 s)'.
   midgame    Bob has loaded and then goes silent for 4.5 s: dropped at the play timeout,
              the log says 'silent past the player timeout'.
+  lobby      Bob has joined a room that has not started (seated, never loaded) and goes
+             silent for 4.5 s: dropped at the play timeout, not the loading one.
 """
 import argparse
 import os
@@ -98,7 +100,26 @@ def scenario_midgame(port, h, log):
         alice.close(); bob.close()
 
 
-SCENARIOS = [scenario_kept, scenario_dropped, scenario_midgame]
+def scenario_lobby(port, h, log):
+    """A seat in a room that has not started is not loading: the play timeout applies."""
+    alice, bob = Player(login(port, h, 'Alice4')), Player(login(port, h, 'Bob4'))
+    try:
+        alice.send('CreateGame', auth.field('wait') + auth.field('') + auth.field(recipe()) + auth.field('') +
+                   options() + bytes([2, 0, 0]))
+        assert alice.take('JoinResult').num('<B') == 1
+        state = lobby(alice.take('LobbyState'))
+        bob.send('JoinGame', struct.pack('<I', state[0]) + auth.field(''))
+        assert bob.take('JoinResult').num('<B') == 1
+        before = log().count('silent past the player timeout')
+        silent(alice, SILENT_KEPT)
+        bob.pump(2)
+        assert bob.closed, 'a silent seat in an unstarted room got the loading timeout'
+        assert log().count('silent past the player timeout') > before, log()[-1500:]
+    finally:
+        alice.close(); bob.close()
+
+
+SCENARIOS = [scenario_kept, scenario_dropped, scenario_midgame, scenario_lobby]
 
 
 def main():
@@ -111,11 +132,13 @@ def main():
     # No disconnect wait: a silent seat must meet the plain silence timeout.
     os.environ['TAK_STALL_MS'] = '60000'
     failed = []
-    with tempfile.TemporaryDirectory(prefix='tak-loadto-') as tmp:
-        root = Path(tmp)
-        with server(a.server.resolve(), a.data.resolve(), root) as (port, h, process):
-            for scenario in SCENARIOS:
-                name = scenario.__name__[len('scenario_'):]
+    # A fresh server per scenario: one server refuses new accounts from one address
+    # after a few registrations, and every scenario registers two.
+    for scenario in SCENARIOS:
+        name = scenario.__name__[len('scenario_'):]
+        with tempfile.TemporaryDirectory(prefix='tak-loadto-') as tmp:
+            root = Path(tmp)
+            with server(a.server.resolve(), a.data.resolve(), root) as (port, h, process):
                 try:
                     scenario(port, h, lambda: (root / 'log').read_text(errors='replace'))
                     print('ok   ' + name)
@@ -123,10 +146,10 @@ def main():
                     failed.append(name)
                     print('FAIL ' + name)
                     traceback.print_exc()
-            assert process.poll() is None, 'server exited'
+                assert process.poll() is None, 'server exited'
     if failed:
         raise SystemExit('FAIL: ' + ', '.join(failed))
-    print('PASS: loading seats get the longer silence timeout; play keeps the short one')
+    print('PASS: loading seats get the longer silence timeout; play and the room lobby keep the short one')
 
 
 if __name__ == '__main__':
