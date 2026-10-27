@@ -29,6 +29,7 @@ interface art and sound straight from its installation folder.
 ## What's new in 0.9.7
 
 - Builders help the way the original game does: they can finish a unit a factory or Zhon builder is still producing (the unit finishes sooner and costs its build cost once), and a builder told to Guard repairs and helps what it guards.
+- Flying builders guard and help the same way, and any flyer told to Guard circles the unit it guards.
 - A modified client can no longer have a builder help a unit it should not.
 
 Does not play with 0.9.6 or its replays (protocol 301). Details in the
@@ -107,7 +108,7 @@ installer, DMGs) or `takclient-<version>-` (ZIPs), followed by:
 | Debian 12 / 13 | `debian<version>-amd64.deb` or `-arm64.deb` |
 | Fedora 44 | `fedora44-x86_64.rpm` or `-aarch64.rpm` |
 | openSUSE Leap 16.0 | `opensuse-leap16.0-x86_64.rpm` or `-aarch64.rpm` |
-| Arch Linux (x64) | `x86_64.pkg.tar.zst` |
+| Arch Linux (x64) | `1-x86_64.pkg.tar.zst` |
 | Slackware64 15.0 | `x86_64-1_slack15.0.txz` |
 
 The `-debug` downloads are for diagnosing problems, not for playing. The macOS
@@ -152,7 +153,7 @@ online game and a campaign mission, and lists the controls on one page. If the
 game turns your folder down, see [Game data](docs/user-guide.md#game-data).
 
 From the command line, the game accepts `--data <folder>`, `--play-map
-<map.kmp>` (with `--game-mod <pack>`) and `--version`; see
+<map.kmp>` (with `--game-mod <pack>`), `--version` and `--help`; see
 [Command line](docs/user-guide.md#command-line).
 
 ## Playing

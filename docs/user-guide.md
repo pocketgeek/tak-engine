@@ -131,8 +131,11 @@ has to provide graphics, sound and windowing.
 
 Install the new version over the old one, in the same way. Everything of yours
 carries over: your settings, your data folder choice, key bindings, the maps in
-your install's `Maps` folder (including saved generated maps), and your mod
-packs and their ticks.
+your install's `Maps` folder, the downloaded and generated maps in your
+per-user folder (see [Where files are kept](#where-files-are-kept)), and your
+mod packs and their ticks. Maps that a version before 0.9.5 downloaded into the
+game folder's `MapCache` are not read; each is downloaded again the first time
+a room uses it.
 
 - **Multiplayer:** you can play only with the versions that share your network
   protocol, and a server turns away any other. When a release changes the
@@ -260,8 +263,7 @@ the details.
 The version number is shown on the title screen.
 
 In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
-**Options**, **Controls**, **Voice Chat**, **Main Menu** (or **Campaign**) and
-**Quit**.
+**Options**, **Controls**, **Voice Chat**, **Main Menu** and **Quit**.
 
 ---
 
@@ -339,10 +341,10 @@ except passwords, Spectate and Map scenario.
 At every difficulty except Retail, the AI's Monarch fights back when it is attacked, or when
 an armed enemy comes within its reach, instead of carrying on with a build.
 
-Defensive, Easy and Normal also build another lodestone whenever they run short
-of mana (less than 30% of their storage left while spending faster than they
-earn), one at a time, on a free deposit near their own base, as the original
-game's AI does.
+Defensive, Easy, Normal and Absurdly Defensive also build another lodestone
+whenever they run short of mana (less than 30% of their storage left while
+their builders and producers ask for more mana than they earn), one at a time,
+on a free deposit near their own base, as the original game's AI does.
 
 On a team, an AI leaves the free mana deposits around an ally's start to that
 ally until they have gone unclaimed for two minutes. After that, of the other
@@ -488,7 +490,7 @@ claimed.*
 2. **Stats panel** (optional; see [Interface](#interface)).
 3. **Orders** for the selected units, such as move, attack, patrol, guard and stop.
 4. **Weapons and stances** for the selected units.
-5. **Mana**: your current mana and storage, with income and spending beside the orb.
+5. **Mana**: your current mana and storage, with income (green) and mana requested (red) beside the orb.
 6. **Build menu** of the selected builder or production building.
 7. **Information bar**: the selected unit's portrait, name, health and what it is doing.
    With several units selected it shows the total selected instead, the health
@@ -543,8 +545,13 @@ Some things to know before you play one:
 
 ### Mana: the only resource
 
-TA:K has a single resource, **mana**. Your current mana and storage are shown at
-the top of the screen.
+TA:K has a single resource, **mana**. Your current mana and storage are shown
+above the mana bulb on the right-hand panel (5 in the picture above). The green
+number left of the bulb is your income each second; the red number on its right
+is the mana all your builders and producers are asking for each second, as in
+the original game, not only what could be paid. Both are averaged over the last
+second, so when your mana runs short the red number can be larger than the
+green one.
 
 Mana comes from:
 
@@ -770,6 +777,9 @@ friendly units and buildings near their route, at their ordinary repair rate and
 cost, then carry on with the same patrol. They do not follow a unit that leaves
 the area, and they leave unfinished buildings to an explicit build or help
 order.
+
+A mobile builder told to **Guard** a unit also repairs it when it is damaged,
+allies' units included (see [Building](#building)).
 
 Damaged units and buildings also repair themselves slowly, for free, at the rate
 the original game's data sets: most mobile units are back to full health in
@@ -1679,9 +1689,9 @@ missed are silent while the game catches up.
 
 ### Display
 
-![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, then Renderer set to Auto (OpenGL), Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Screen Shake off, Hardware Cursor on with the note OS CURSOR 16X25 beside it, Smooth Motion on, and GPU Memory Limit set to 1.25 GB (default)](img/guide/options-graphics.jpg)
+![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, Native Wayland set to Auto, then Renderer set to Auto (OpenGL), Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Screen Shake off, Hardware Cursor on with the note OS CURSOR 16X25 beside it, Smooth Motion on, and GPU Memory Limit set to 1.25 GB (default)](img/guide/options-graphics.jpg)
 
-*Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on. Renderer reads Auto (OpenGL): Auto, and the backend it started with. The picture was taken in a window, so Fullscreen shows Off.*
+*Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on. Renderer reads Auto (OpenGL): Auto, and the backend it started with. The picture was taken in a window, so Fullscreen shows Off, and on Linux, so Native Wayland shows and Ignore Windows Display Scaling does not.*
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -2459,7 +2469,9 @@ win when they change the same file. Game packs load first, then cosmetic packs.
   starts; the room shows the transfer's progress, then **GAME MODS VERIFIED**
   once the packs check out (nothing when the host has no game pack in play).
   Transfers are limited to 256 MB, and downloaded packs are kept in a
-  `ModCache` folder, never over your installed files. Rooms hosted by older
+  `ModCache` folder in your per-user folder (see
+  [Where files are kept](#where-files-are-kept)), never over your installed
+  files. Rooms hosted by older
   versions: see [Versions](#versions).
 - **Campaigns** use the original game data plus your
   always-enabled cosmetic packs only: no game packs (always-enabled ones
@@ -2835,6 +2847,7 @@ Released builds keep the command line deliberately small:
 | `--play-map <map.kmp>` | Open a Cartographer map snapshot in a private game lobby. |
 | `--game-mod <pack>` | With `--play-map` only: tick this one game pack (`mods/game/<pack>`) in that lobby, for this run. Your own ticks stay saved. Your always-enabled game packs apply too, as in every room you host; naming one of them ticks nothing more. Cartographer's **TEST IN GAME...** uses it. |
 | `--version` | Print the version and exit. |
+| `--help` | List these options and exit. |
 
 Everything else is set in the menus. Developer builds have many more options;
 see the [development guide](development.md).
@@ -2861,6 +2874,11 @@ differences:
 - **Builders clear their own building sites** of trees and rocks, and can build
   lodestones over a whole area at once.
 - **Patrolling builders repair** nearby friendly units.
+- **Double-click select**: double-click a unit to select every unit of its type
+  on the screen (see [Mouse](#mouse)).
+- **Attack and fight-move rallies**, and rallies from mobile builders on an
+  endless queue: the original gave produced units only move and patrol rallies,
+  and only from buildings (see [Building](#building)).
 - **Area reclaim** with a right-drag box.
 - **Mana sharing and unit gifting** between allies through the Diplomacy screen.
 - **Sound fades with distance** from the view instead of using one off-screen
