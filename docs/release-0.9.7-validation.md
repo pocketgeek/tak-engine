@@ -32,9 +32,10 @@ deletions(-); `-- src`: 7 files changed, 390 insertions(+), 50 deletions(-)
 TODO-LEAD: final `git diff --stat v0.9.6 v0.9.7` (whole tree and `-- src`) and
 the commit count, once the tag exists.
 
-The preparation commit on top changes no code: `CMakeLists.txt` (the version
-line), `CHANGELOG.md`, `README.md`, the version and protocol lines in `docs/`,
-the notes, this report, `docs/img/README.md` and `docs/img/title.jpg`.
+The preparation commit on top, and the review's doc fixes after it, change no
+code: `CMakeLists.txt` (the version line), `CHANGELOG.md`, `README.md`, the
+version and protocol lines in `docs/`, the notes, this report,
+`docs/img/README.md` and `docs/img/title.jpg`.
 
 **Compatibility.** `kNetVersion` is **301** in `src/net/protocol.h` (300 at
 `v0.9.6`). `kReplayFormat` is **15** in `src/net/replayhdr.h`, unchanged. The

@@ -47,7 +47,7 @@ the original's code or data):
   rate; mana is paid per unit of progress, so the total is the unit's build
   cost however many help, and more helpers finish it sooner and spend the mana
   faster. The unit finishes once, and its producer is freed at that moment (the
-  next queued unit can start the same tick). A buildings' site that has no
+  next queued unit can start the same tick). A building site that has no
   producer grows from its own hit points, as before.
 - **What was wrong before.** Helping with a produced unit marked it finished
   early while the producer kept its slot until its own timer ran out, charged
@@ -67,8 +67,8 @@ the original's code or data):
 ## Guarding builders
 
 A mobile builder with a Guard order looks at what it guards (a new guard looks at
-once; one that found nothing looks again 15 to 29 game ticks, about half a
-second, later; one that started a job looks again on the first tick after the
+once; one that found nothing looks again 15 to 29 game ticks, half a second
+to a second, later; one that started a job looks again on the first tick after the
 job ends). In the original's
 order:
 

@@ -640,7 +640,7 @@ target underneath.
   build it; otherwise it helps with what the guarded unit is building,
   producing, helping with or repairing. The help goes ahead of the guard order,
   which resumes when the job is done, and it ignores distance. A guarding
-  builder looks for work about every half second (15 to 29 game ticks). A
+  builder looks for work every half second to one second (15 to 29 game ticks). A
   guarding builder that can fly only escorts.
 - **Clearing the site**: a builder that can reclaim automatically clears trees
   and rocks from a valid building site before it starts.

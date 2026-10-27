@@ -30,10 +30,10 @@ their validation reports; both live in [`docs/`](docs/).
   on a produced unit finished it early while its producer kept its slot and was
   charged the full cost again (a Zhon builder paid 108 mana too much on a unit
   costing 311) and kept healing it for free. Now the producer is freed the
-  moment the unit is finished, the unit's finishing orders (the factory's exit
-  step or the rally) are given once, and orders you gave the unit while it was
-  unfinished are kept. A factory with no helper finishes on exactly the tick it
-  did before.
+  moment the unit is finished, the unit's finishing orders (a Zhon builder's
+  exit step, or a factory's PARK or rally) are given once, and orders you gave
+  the unit while it was unfinished are kept. A factory with no helper finishes
+  on exactly the tick it did before.
 - **Guarding builders lend a hand.** A mobile builder told to Guard a unit
   repairs it when it is damaged (allies too), helps build it when it is
   unfinished, and otherwise helps with what that unit is building, producing,
