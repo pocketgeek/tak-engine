@@ -3179,8 +3179,9 @@ int Server::run() {
                 dead.push_back(id);
             }
         }
-        // Say WHY: a bare "disconnected" hid a rate-limit or backlog failure behind what
-        // the client only sees as "peer closed" (the mod_transfer flake, 0.9.4).
+        // Say WHY: a bare "disconnected" hid whether a drop was silence, a deadline or a
+        // send backlog, all of which the client only sees as "peer closed" (the
+        // mod_transfer flake, 0.9.4, was a seat silent while its test client loaded).
         for (uint32_t id : dead) {
             const auto it = clients_.find(id);
             if (it == clients_.end()) continue;
