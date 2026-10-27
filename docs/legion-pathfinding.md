@@ -19,8 +19,8 @@ instruments, before the behaviour workstreams). The sections from "Features
 added after round 4" on add what came after, through the Legion 10,000 program
 and the ~100-body rounds (protocol 286), each naming its commit or protocol;
 per-commit history is in git. Since then Legion's own steering has changed only
-for factory PARK spots (see the mission table under "Scope"); 0.9.7 (protocol
-301) still steers as described here. The historical five-mode
+for factory PARK spots (see the mission table under "Scope"); 0.9.8 (protocol
+302) still steers as described here. The historical five-mode
 comparison (Retail, Retail+, Flowfield, Cooperative, Legion) and its tables are
 in `docs/navigation-comparison-2026-10-05.md`; they are not repeated here.
 

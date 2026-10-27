@@ -39,7 +39,8 @@ those listeners. 0.9.8 ports that answer, found by running the retail routines
 - **The alarm.** Every hit that runs the hit response stamps the victim
   (`Unit::attackedTick`, the tick after the hit; not hashed). A guard whose
   guarded unit carries a newer stamp than the one it last answered
-  (`Unit::guardHeard`) hears the alarm on its next look and records it.
+  (`Unit::guardHeard`) hears the alarm at once (the alarm wakes its look)
+  and records it.
 - **The answer.** The guard takes the guarded unit's last attacker
   (`lastHitBy`). If it is alive, not allied and not in the guard's
   `notargetcategory`, the guard attacks it with a plain attack order put ahead
@@ -62,12 +63,13 @@ Right-clicking a finished unit of yours now decides **per selected unit**, as
 the original's default-order resolver does with the right-click interface
 (`friendlyUnitOrder`, `src/client/friendlyorder.h`):
 
-1. A mobile builder that is not repeating production repairs the unit when it
-   is damaged.
-2. Otherwise any unit whose type can guard (`canguard`) guards it, armed or
+1. A mobile builder repeating production does nothing (the game refuses its
+   Guard, and it did not repair before either).
+2. A mobile builder repairs the unit when it is damaged.
+3. Otherwise any unit whose type can guard (`canguard`) guards it, armed or
    not. The original's test does not look at weapons, so a builder guards a
    healthy unit just as a soldier does.
-3. Otherwise that unit does nothing.
+4. Otherwise that unit does nothing.
 
 So a builder now guards an undamaged unit on a right-click (before, it did
 nothing; the G key and the command panel were the only way), and a builder's
@@ -185,9 +187,10 @@ New with 0.9.8:
   - There is no guard cursor, as in the original.
 - **0.9.7's limits still apply:** see the
   [0.9.7 notes](release-0.9.7-notes.md#known-limits) (flying guard parts not
-  ported, guard re-check timing, the unreachable-repair skip), except that
-  right-click Guard is no longer limited to armed units; and, through it, the
-  0.9.6 and 0.9.5 notes.
+  ported, guard re-check timing, the unreachable-repair skip), except that a
+  flying guard now answers an attack on what it guards (its landed step-out
+  and own attack scan are still not ported) and right-click Guard is no longer
+  limited to armed units; and, through it, the 0.9.6 and 0.9.5 notes.
 
 ## Compatibility
 

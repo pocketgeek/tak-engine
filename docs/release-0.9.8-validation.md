@@ -124,7 +124,8 @@ No local or remote desync sweep (`tools/desync-hunt.sh`,
 no multiplayer run had a guard answering an alarm (the AIs never guard); the
 answer is covered by `helpbuild_test` (including its same-hash check).
 
-TODO-LEAD: say whether a remote multiplayer sweep is wanted before the tag.
+None is planned before the tag: by the project's testing rule a release runs
+no remote sweep, and the tag CI determinism tests are the cross-platform check.
 
 ## CI and packages
 
@@ -153,4 +154,6 @@ TODO-LEAD: publication time, asset count, Latest flag.
   built before the shim; CI builds FFmpeg with it.
 - TODO-LEAD: tag CI limits (failures, reruns, stalls).
 - All of 0.9.7's limits carry over (see
-  [release-0.9.7-validation.md](release-0.9.7-validation.md#limits)).
+  [release-0.9.7-validation.md](release-0.9.7-validation.md#limits)), except
+  that the flying guard's attacked-guarded-unit reaction is ported in 0.9.8
+  and `disconnect_client` passed in this release's full suite.
