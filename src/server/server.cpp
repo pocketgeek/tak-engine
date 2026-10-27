@@ -2038,6 +2038,17 @@ void Server::tryStart(Client& c) {
                              r->opts.mapScenario ? "MAP SCENARIO" : "Test Map copy", r->ref->units().size());
         }
     }
+#ifndef NDEBUG
+    // Test hook: make the referee build slow (a huge map, a slow host) without a huge map.
+    if (const char* d = std::getenv("TAK_TEST_REFEREE_DELAY_MS"))
+        std::this_thread::sleep_for(std::chrono::milliseconds(std::max(0, std::atoi(d))));
+#endif
+    // Everything above (package/map verification, AI profiles, the referee world build)
+    // ran on this thread without reading any socket, so no connection's last-heard time
+    // can have advanced meanwhile. Silence is the CLIENT's: restart every clock now, or a
+    // build longer than the timeout drops the whole room the moment the game starts. A
+    // genuinely dead client is still dropped one normal timeout after this point.
+    for (auto& [cid, cl] : clients_) cl->lastRecvMs = std::max(cl->lastRecvMs, nowMs());
     // GameStarting: final slot table + options + seed + a per-slot resume token
     // (used to reconnect to the seat inside the disconnect wait).
     for (int i = 0; i < kMaxSlots; ++i) {

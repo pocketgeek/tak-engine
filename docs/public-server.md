@@ -395,6 +395,11 @@ machine or a huge map can load for longer than 15 s without reading its connecti
 the log then says `timed out while loading (30 s)`. The lobby and play keep 15 s, a
 spectator has 120 s. Tests can scale them with `TAK_TIMEOUT_MS` and
 `TAK_LOAD_TIMEOUT_MS`; `server_load_timeout_test.py` checks these cases.
+The server's own blocking work at game start (map and package checks, AI profiles,
+the referee world build) is not client silence: when it ends, every connection's
+silence clock restarts, so a slow build cannot time out the room as the game begins.
+A client that is really gone is still dropped one normal timeout later (debug builds
+can slow the build with `TAK_TEST_REFEREE_DELAY_MS`).
 
 Voice chat is relayed, never stored or recorded: a client's
 frames go only to the room members that have switched voice chat on and that

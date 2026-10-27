@@ -15,6 +15,10 @@ instead of the 15 s of play and the lobby. The server runs with both scaled down
              the log says 'silent past the player timeout'.
   lobby      Bob has joined a room that has not started (seated, never loaded) and goes
              silent for 4.5 s: dropped at the play timeout, not the loading one.
+  refbuild   The server's own referee build takes 7.5 s (TAK_TEST_REFEREE_DELAY_MS, debug
+             builds), longer than even the loading timeout, while it reads no socket. Both
+             seats are still connected afterwards and the game ticks: the build is not
+             client silence. A client that then goes quiet is still dropped.
 """
 import argparse
 import os
@@ -119,7 +123,19 @@ def scenario_lobby(port, h, log):
         alice.close(); bob.close()
 
 
-SCENARIOS = [scenario_kept, scenario_dropped, scenario_midgame, scenario_lobby]
+def scenario_refbuild(port, h, log):
+    """Time the server spends building the referee world is not the clients' silence."""
+    alice, bob = begin(port, h, 'Alice5', 'Bob5', True)   # begin() asserts ticks reach both
+    try:
+        assert not alice.closed and not bob.closed, 'a slow referee build dropped the room'
+        silent(alice, SILENT_KEPT)
+        bob.pump(2)
+        assert bob.closed, 'the refreshed clock masked a genuinely silent client'
+    finally:
+        alice.close(); bob.close()
+
+
+SCENARIOS = [scenario_kept, scenario_dropped, scenario_midgame, scenario_lobby, scenario_refbuild]
 
 
 def main():
@@ -136,6 +152,10 @@ def main():
     # after a few registrations, and every scenario registers two.
     for scenario in SCENARIOS:
         name = scenario.__name__[len('scenario_'):]
+        if name == 'refbuild':
+            os.environ['TAK_TEST_REFEREE_DELAY_MS'] = str(int(SILENT_DROPPED * 1000))
+        else:
+            os.environ.pop('TAK_TEST_REFEREE_DELAY_MS', None)
         with tempfile.TemporaryDirectory(prefix='tak-loadto-') as tmp:
             root = Path(tmp)
             with server(a.server.resolve(), a.data.resolve(), root) as (port, h, process):
