@@ -5,7 +5,7 @@ shipped). It superseded the 2-player peer-to-peer lockstep (`net::Session`,
 since removed; `src/net/lockstep.h` is now header-only); the deterministic-sim
 substrate underneath it is kept. Sections 1-12 are the original design, kept as
 written apart from short notes where it has since moved on; the later sections
-and the protocol history (to protocol 302, on main after 0.9.7) describe the
+and the protocol history (to protocol 302, 0.9.8) describe the
 current engine.
 Notable changes since the v1 design: single-player runs a private local
 `takserver` (`--local --no-auth`) instead of in-process AI
@@ -1067,7 +1067,7 @@ whose own output waits while it works elsewhere. No command changes; replay
 format 15 is unchanged; 300 replays are refused. 0.9.7 ships protocol 301; it
 plays with neither 0.9.6 nor any earlier version, nor their replays.
 
-Protocol 302 (on main after 0.9.7) ports a guard's answer to an attack on what
+Protocol 302 ports a guard's answer to an attack on what
 it guards. Every hit that runs the hit response stamps the victim's
 `attackedTick` (not hashed); a ground or flying guard whose guarded unit has a
 newer stamp than its `guardHeard` (hashed when set) attacks that unit's
@@ -1076,7 +1076,8 @@ no leash, and resumes guarding when the attack ends. An idle computer caster
 takes up no resurrect or animate while its allocation is under 0.7, and none
 starts or ends past the unit limit or the type's `totalallowed` (the corpse
 stays). No command changes; replay format 15 is unchanged; 301 replays are
-refused.
+refused. 0.9.8 ships protocol 302; it plays with neither 0.9.7 nor any earlier
+version, nor their replays.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
@@ -1367,6 +1368,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.9.7 (peers and server) requires protocol 301; 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.9.8 (peers and server) requires protocol 302; 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions remain fixed to Retail.

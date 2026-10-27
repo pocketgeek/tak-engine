@@ -19,8 +19,8 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
-## Unreleased
-*protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*
+## 0.9.8
+*2026-10-27 · protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*
 
 - **Guards defend what they guard,** as in the original game. When something
   attacks the unit a guard is guarding, the guard goes after the attacker,
@@ -54,6 +54,23 @@ their validation reports; both live in [`docs/`](docs/).
   and Cartographer now work only in debug builds, as the client's already did.
   A release `takserver` still honours its four test timers (`TAK_TIMEOUT_MS`,
   `TAK_LOAD_TIMEOUT_MS`, `TAK_STALL_MS`, `TAK_DROP_WAIT_MS`).
+- **Documentation checked against the game.** The README, user guide, quick
+  start, Cartographer guide and the developer, server, multiplayer, pathfinding,
+  AI, campaign and research documents were checked against 0.9.7 and brought
+  up to date. Among the fixes: the user guide no longer says a guarding
+  builder repairs an ally's unit it guards (you cannot guard an ally's unit;
+  the game refuses it), and the development guide lists the release client's
+  options correctly.
+- **Protocol 302:** a guard's answer to an attack on what it guards is part of
+  the game state the players compare, and so are the new raising rules, so
+  0.9.8 plays only with 0.9.8 and plays only replays recorded by 0.9.8. A 0.9.7
+  client or server is turned away with a *protocol version mismatch* message,
+  and a 0.9.7 replay is refused with the version message.
+
+**Upgrading (server operators):** update `takserver` together with your
+players.
+
+[Release notes](docs/release-0.9.8-notes.md) · [Validation report](docs/release-0.9.8-validation.md) · [Source at v0.9.8](https://github.com/pocketgeek/tak-engine/tree/v0.9.8)
 
 ## 0.9.7
 *2026-10-27 · protocol 301 · replay format 15 · does not play with 0.9.6 or earlier, nor their replays*

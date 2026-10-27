@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.7-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.8-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,14 +26,14 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.7
+## What's new in 0.9.8
 
-- Builders help the way the original game does: they can finish a unit a factory or Zhon builder is still producing (the unit finishes sooner and costs its build cost once), and a builder told to Guard repairs and helps what it guards.
-- Flying builders guard and help the same way, and any flyer told to Guard circles the unit it guards.
-- A modified client can no longer have a builder help a unit it should not.
+- Guards defend what they guard: a guard goes after whatever attacks the unit it guards, however far away it shoots from, then comes back.
+- Right-click a finished unit of yours with a builder selected to have it Guard (or repair) that unit, as in the original game.
+- Raising the dead respects the unit limit, and a computer player short of mana stops retrying the same raising.
 
-Does not play with 0.9.6 or its replays (protocol 301). Details in the
-[CHANGELOG](CHANGELOG.md#097).
+Does not play with 0.9.7 or its replays (protocol 302). Details in the
+[CHANGELOG](CHANGELOG.md#098).
 
 ## Features
 
