@@ -3159,3 +3159,54 @@ on EITHER axis (retail has no zoom, so world and screen pixels agree). Our clien
 (`src/client/areadrag.h`) keeps the world anchoring and the 32-pixel distance, but
 requires it on BOTH axes and from a real pointer movement, and drops the held-time
 rule, so a twitch or a pause never becomes an area clear.
+
+## Cloaking spends the unit's own mana (icd, 2026-10-26)
+
+The cloak step is `0x401160`, called for every unit from `0x51e1c2` right
+after the self-repair check. In order:
+
+1. Regeneration: when the unit is complete (`+0x108`, the construction
+   remainder, is 0) it adds ManaRechargeRate (type `+0x1a6`) to the unit's
+   pool at `+0xd8` through `0x401100`, which caps it at the pool's maximum
+   (`+0xdc`).
+2. Cloak: if the cloak order bit (`+0x130 & 0x200`) is set and `+0x130 & 0x400`
+   is clear, and the tick counter (`game+0x19f44`) has reached `+0xcc`, the
+   cost is cloakcostmoving (type `+0x19e`) when the unit is moving
+   (`+0x130 & 0xc`) and cloakcost (`+0x19a`) otherwise. When cost <= the pool,
+   `0x4010d0` subtracts it from `+0xd8` and `0x51e4d0(4,1)` sets the cloaked
+   bit (`+0x114 & 4`). When the pool is short, nothing is paid,
+   `+0xcc = max(+0xcc, now + 90)` and the unit decloaks (`0x51e4d0(4,0)`).
+   While `+0xcc` lies ahead, or the order bit is clear, the unit decloaks.
+
+So the player's store never pays for cloaking, and nothing reaches the
+resource object's request total (`+0x10`), so the mana bulb never shows it.
+A unit with no pool and a positive cost can never cloak (every shipped
+cloaker has maxmana 20-5000). The loader (`0x4c01a1`) reads cloakcost and
+scales it by 1/30 to a per-tick cost, then passes that already scaled value as
+cloakcostmoving's DEFAULT before scaling the result by 1/30 again: a unit that
+omits cloakcostmoving (zonspide, the Trapdoor Spider) pays cloakcost/30 per
+second while moving. Both costs, like ManaRechargeRate (`0x4bffe3`), are per
+second in the FBI and per tick in the engine.
+
+Ours matched none of this: it charged the PLAYER's store (`debitMana`), kept
+cloaking while the store could pay, had no recloak delay, and defaulted
+cloakcostmoving to cloakcost. `World::tick` now takes the cost from
+`Unit::mana` after the unit's regeneration, and `Unit::cloakBlockedUntil` is
+`+0xcc` (hashed when set). Our mincloakdistance rule (an enemy that close
+decloaks) is unchanged: retail reads mincloakdistance (`+0x22a`, default 80
+when cloakcost > 0, `0x4c17c4`) only at `0x4d6542`, where a cloaked unit
+registers a circle of that radius with `0x4d5c40`; what that circle does was
+not traced.
+
+Other writers of `+0xcc`, not ported (each sets `max(+0xcc, now + N)`, which
+decloaks a cloaker for N ticks): every shot from the weapon step
+(`0x52af41`, 600 ticks, before `0x530220` fires), the resurrect channel
+(`0x42045b`, 300 ticks), and the build/repair task stages at `0x405bc8`,
+`0x4060bb`, `0x406576`, `0x406e45`, `0x4076ae` and `0x420b02` (not traced).
+
+Every other mana drain was checked for a cost retail charges to the unit:
+weapon `manapershot` already spends the unit's pool (`0x530220` -> `0x4010d0`
+at `0x5302d6`; ours in `World::fire`); construction, repair, production and
+the healing aura go through the player's resource object (`0x429af0`,
+`0x429d90`), as ours do. No other `0x4010d0` caller touches a unit pool except
+the debug drain at `0x4280e0`.

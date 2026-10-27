@@ -209,6 +209,48 @@ static void hudShowsRequestedMana() {
     check(hash() == before, "...and the request history is not lockstep state");
 }
 
+// CLOAKING SPENDS THE UNIT'S OWN MANA. Retail's cloak step (icd 0x401160)
+// takes cloakcost/30 a tick from the unit's pool at +0xd8 after its regeneration,
+// never from the player's store; a pool that cannot pay decloaks the unit and
+// blocks recloaking for 90 ticks. A spy with 10 mana regenerating 3/s and paying
+// 15/s spends its pool in under a second, then sits visible for three.
+static void cloakSpendsUnitMana() {
+    std::printf("cloaking spends the unit's own mana, never the player's:\n");
+    auto ownedWorld = makeWorld(64, 64);
+    World& w = *ownedWorld;
+    UnitType spyType = soldierType();
+    spyType.id = "spy"; spyType.canCloak = true; spyType.cloakCost = 15; spyType.cloakCostMove = 21;
+    spyType.maxMana = 10; spyType.manaRegen = 3;
+    const int spy = w.spawn(&spyType, 300, 300, 0, 0);
+    w.player(0).mana = 50;
+    w.setCloak(spy, true);
+    w.tick(1.0f / 30);
+    char detail[128];
+    std::snprintf(detail, sizeof detail, "unit %.4f, player %.4f", w.unit(spy)->mana, w.player(0).mana);
+    check(w.unit(spy)->cloaked && std::fabs(w.unit(spy)->mana - (10.0 - 0.5)) < 1e-4 &&
+          w.player(0).mana == 50.0, "a cloaked tick takes 15/30 from the unit, nothing from the store", detail);
+    check(w.player(0).displayResources.requests.back() == 0, "the mana bulb's -N never shows cloaking");
+    int cloakedTicks = 1, blockedFrom = 0;
+    for (int t = 2; t <= 200 && !blockedFrom; ++t) {
+        w.tick(1.0f / 30);
+        if (w.unit(spy)->cloaked) ++cloakedTicks; else blockedFrom = t;
+    }
+    // Full pools do not regenerate, so the first tick leaves 9.5; tick k (k >= 2)
+    // then has 9.6 - 0.4*(k-2) before paying 0.5: tick 24 has 0.8, tick 25 has 0.4.
+    std::snprintf(detail, sizeof detail, "cloaked %d ticks, decloaked at tick %d", cloakedTicks, blockedFrom);
+    check(blockedFrom == 25, "the unit decloaks the tick its own pool cannot pay", detail);
+    int visible = 1;   // the tick it decloaked
+    for (w.tick(1.0f / 30); !w.unit(spy)->cloaked && visible < 200; w.tick(1.0f / 30)) ++visible;
+    std::snprintf(detail, sizeof detail, "visible %d ticks", visible);
+    check(visible == 90, "...and stays visible 90 ticks before it may recloak", detail);
+    check(w.player(0).mana == 50.0, "the player's store paid none of it");
+    UnitType noPool = spyType; noPool.id = "nopool"; noPool.maxMana = 0; noPool.manaRegen = 0;
+    const int dry = w.spawn(&noPool, 600, 300, 0, 0);
+    w.setCloak(dry, true);
+    w.tick(1.0f / 30);
+    check(!w.unit(dry)->cloaked, "a unit without a mana pool cannot pay to cloak");
+}
+
 // A LODESTONE UPGRADE FINISHES UNDER A SHORT SHARE. Playtest (protocol 273):
 // a Zhon Shaman's divine lodestone sat at full hp, completedWork 1-2^-53, for
 // 3.5 minutes, and finished the tick after the player stopped one producer.
@@ -896,6 +938,7 @@ int main(int argc,char** argv) {
     productionNeedsMana();
     shortIncomeIsShared();
     hudShowsRequestedMana();
+    cloakSpendsUnitMana();
     lodestoneUpgradeFinishesUnderShortShare();
     outputExistsDuringConstruction();
     scriptControlsReadinessAndPosition();

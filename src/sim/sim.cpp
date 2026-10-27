@@ -342,7 +342,11 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.canCapture = info->numberOr("cancapture", 0) != 0;
             t.canCloak = info->numberOr("cancloak", 0) != 0;
             t.cloakCost = float(info->numberOr("cloakcost", 0));
-            t.cloakCostMove = float(info->numberOr("cloakcostmoving", t.cloakCost));
+            // Retail (0x4c01a1) reads cloakcost, scales it by 1/30 to a per-tick
+            // cost, and passes that SCALED value as cloakcostmoving's default before
+            // scaling the result by 1/30 again: a unit without the key (zonspide)
+            // pays cloakcost/30 per second while moving.
+            t.cloakCostMove = float(info->numberOr("cloakcostmoving", t.cloakCost / 30.0f));
             t.minCloakDist = float(info->numberOr("mincloakdistance", 0));
             // Boolean in retail too: the parser does `and eax,1`.
             t.fireAtWillRandom = (int(info->numberOr("fireatwillrandom", 0)) & 1) != 0;
@@ -14538,8 +14542,13 @@ void World::tick(float dt) {
                   u.homeZ.toFloat() + detmath::cos(ang) * r, false);
         }
 
-        // Cloaking: drains player mana; an enemy within mincloakdistance forces a
-        // decloak, and so does running dry of mana.
+        // Cloaking spends the UNIT'S OWN mana, never the player's store (icd
+        // 0x401160, after the regeneration above: 0x4010d0 on unit +0xd8, so it
+        // never shows in the mana bulb). A tick costs cloakcost/30, or
+        // cloakcostmoving/30 while moving; a unit whose pool cannot pay it
+        // decloaks and may not cloak again for 90 ticks (+0xcc = max(+0xcc,
+        // now + 90)), then retries while the order stands. An enemy within
+        // mincloakdistance also forces a decloak (engine rule, not retail's).
         if (u.type->canCloak && u.cloakOn) {
             bool enemyNear = false;
             float md = std::max(float(u.type->minCloakDist), 1.0f);
@@ -14550,10 +14559,13 @@ void World::tick(float dt) {
                     if (dx * dx + dz * dz <= md * md) enemyNear = true;
                 }
             });
-            float cost = (u.speed.toFloat() * kTick > 3.0f ? u.type->cloakCostMove : u.type->cloakCost) * dt;
-            Player& tm = players_[size_t(u.player)];
-            if (!enemyNear && tm.mana >= cost) { tm.debitMana(cost); u.cloaked = true; }
-            else u.cloaked = false;
+            const float cost = (u.speed.toFloat() * kTick > 3.0f ? u.type->cloakCostMove : u.type->cloakCost) * dt;
+            if (enemyNear || u.cloakBlockedUntil > tickCounter_) u.cloaked = false;
+            else if (double(cost) <= u.mana) { u.mana -= double(cost); u.cloaked = true; }
+            else {
+                u.cloakBlockedUntil = std::max(u.cloakBlockedUntil, tickCounter_ + 90u);
+                u.cloaked = false;
+            }
         } else if (u.cloaked) {
             u.cloaked = false;   // toggled off (or no longer a cloaker): decloak now
         }
@@ -15712,6 +15724,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(u.moveState) * 3 + uint64_t(u.fireState));
         mix(u.standingOrder);
         mix(uint64_t((u.cloakOn ? 1u : 0u) | (u.active ? 2u : 0u)));
+        if (u.cloakBlockedUntil) { mix(0x434c4f4bu); mix(u.cloakBlockedUntil); }
         if (u.conjureHoverTarget) {
             mix(0x484f5645u);mix(uint32_t(u.conjureHoverTarget));
             if (u.conjureHoverGoal) {

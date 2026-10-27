@@ -797,8 +797,11 @@ they rank up. Some units, such as Monarchs, never gain ranks.
 **Status effects.** Some weapons and spells **petrify**, **freeze** or
 **paralyse** their targets. Affected units cannot act until the effect wears off.
 
-**Cloaking.** Units that can cloak turn invisible with **K**. Cloaking drains
-mana while active.
+**Cloaking.** Units that can cloak turn invisible with **K**. Cloaking spends
+the unit's own mana (the blue bar when it is selected), not your mana pool, and
+costs more while the unit moves. When the unit's mana runs out it becomes
+visible for three seconds, then cloaks again once its mana can pay, for as
+long as cloaking stays on.
 
 **Gates.** Your gates open and close with **O**. Your own units can pass an open
 gate. Clicking the doorway of an open gate is like clicking the ground, so a

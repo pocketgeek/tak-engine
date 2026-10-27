@@ -452,8 +452,8 @@ struct UnitType {
     bool  canResurrect = false;   // canresurrect: can revive nearby corpses
     bool  canCapture = false;     // cancapture: can convert an enemy unit to its player
     bool  canCloak = false;       // cancloak
-    float cloakCost = 0;          // cloakcost: mana/sec while cloaked and idle
-    float cloakCostMove = 0;      // cloakcostmoving: mana/sec while cloaked and moving
+    float cloakCost = 0;          // cloakcost: the unit's OWN mana/sec while cloaked and idle
+    float cloakCostMove = 0;      // cloakcostmoving: the same while moving (default cloakcost/30)
     int32_t minCloakDist = 0;     // mincloakdistance (readInt): an enemy this close forces uncloak
     // FBI fireatwillrandom (icd: UnitDef+0x264 bit 24, parsed at 0x4c0a3a; its ONLY
     // reader is the auto-target scorer at 0x4129bc). Retail scores each candidate
@@ -1242,6 +1242,12 @@ struct alignas(64) Unit {
         uint8_t fx=0,fz=0,flags=0;
         uint32_t link=0;   // sector lists are newest first (506630 pushes at the head)
     } ground;
+    // Retail unit +0xcc: the tick before which the unit may not cloak. The cloak
+    // step (icd 0x401160) decloaks while it lies ahead, and sets it to now + 90
+    // when the unit's own mana cannot pay a tick of cloaking. 0 when never set;
+    // hashed when set. Cold: only cloakers read it, so it sits past the
+    // prefetched lines.
+    uint32_t cloakBlockedUntil = 0;
     const std::string& displayName() const { return scenarioName.empty() ? type->name : scenarioName; }
     bool alive() const { return deadFor < 0; }
     int32_t maximumHp() const { return retailSite ? int32_t(retailSite->type.maxHp) : type->maxHp; }

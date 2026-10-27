@@ -68,6 +68,12 @@ their validation reports; both live in [`docs/`](docs/).
   simulation is slow, and report the exact tick the result landed. A mod
   transfer test no longer drops a player while loading, and the server log now
   says why a client was dropped.
+- **Cloaking spends the unit's own mana.** As in the original game, a cloaked
+  unit pays for cloaking from its own mana (its blue bar), not from your mana
+  pool, so cloaking no longer shows in the mana bulb. When the unit's mana runs
+  out it becomes visible for three seconds and then cloaks again. The Trapdoor
+  Spider, which has no separate moving cost, now pays the original game's much
+  smaller cost while it moves.
 
 ## 0.9.5
 *2026-10-26 · protocol 299 · replay format 15 · does not play with 0.9.4 or earlier, nor their replays*
