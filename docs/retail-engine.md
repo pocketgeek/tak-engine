@@ -1004,7 +1004,9 @@ mobile builder repeating production (retail gives its output nothing) holds
 the same rally plan: while `repeatType` is set, Move, Patrol, Attack and
 fight-move all set the rally and leave the builder producing in place
 (`applyCommand` rejects its other orders); with finite or no production they
-command the builder itself. Tests: `production_test` (factory and mobile
+command the builder itself. Ending the repeat (Stop, the +++ toggle, or
+subtracting the last copy) clears a mobile builder's rally, so a later limited
+queue never inherits a plan the player can no longer see. Tests: `production_test` (factory and mobile
 plans, attack-then-move, replace/Stop/hash) and `conjure_test` (the shipped
 Zhon builders through the command path).
 

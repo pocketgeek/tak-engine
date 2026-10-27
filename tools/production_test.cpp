@@ -469,6 +469,31 @@ static void mobileRallyIsAdopted() {
     check(!w.unit(id)->repeatType && w.unit(id)->buildQueue.empty(), "Stop cancels mobile repeat production");
 }
 
+// A mobile builder holds a rally only while it repeats. Ending the repeat any
+// other way than Stop (the +++ toggle, or subtracting the last copy) gives the
+// builder back too, so its plan must not linger for a later limited queue.
+static void mobileRallyEndsWithRepeat() {
+    std::printf("mobile producer: ending the repeat drops its rally:\n");
+    UnitType builder = factoryType(), sol = soldierType();
+    builder.maxVel = sol.maxVel; builder.canMove = true;
+    for (bool toggle : {true, false}) {
+        auto ownedWorld = makeWorld(160, 160);
+        World& w = *ownedWorld;
+        const int id = w.spawn(&builder, 600, 600, 0, 0);
+        w.player(0).mana = 1e9f;
+        w.setRepeat(id, &sol);
+        w.order(id, 1500, 600, false);
+        check(w.unit(id)->rally.size() == 1, "a repeating builder's Move sets its rally");
+        if (toggle) w.setRepeat(id, &sol); else w.dequeue(id, &sol, 1);
+        check(!w.unit(id)->repeatType && w.unit(id)->rally.empty(),
+              toggle ? "toggling the repeat off clears the rally" : "subtracting the last copy clears the rally",
+              std::to_string(w.unit(id)->rally.size()));
+        w.order(id, 900, 900, false);
+        check(!w.unit(id)->orders.empty() && w.unit(id)->rally.empty(),
+              "the builder's next Move commands the builder itself");
+    }
+}
+
 static void rallyReplaces() {
     std::printf("re-setting a rally replaces it (unqueued):\n");
     auto ownedWorld = makeWorld(160, 160);
@@ -843,6 +868,7 @@ int main(int argc,char** argv) {
     rallyIsAdopted();
     rallyReplaces();
     mobileRallyIsAdopted();
+    mobileRallyEndsWithRepeat();
     for (bool mobile : {false, true}) {
         rallyPlanIsFollowed(mobile);
         rallyAttackThenMove(mobile);

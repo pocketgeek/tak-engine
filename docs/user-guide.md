@@ -671,7 +671,8 @@ builder running infinite production treats **Move**, **Patrol**, **Attack**
 and **fight-move** as rally orders for its output, just like a production
 building (the builder itself stays put and keeps producing); **Shift** adds
 rally steps and shows the route. **Stop** ends production, clears the rally
-and gives you the builder back. A builder making a limited number of units
+and gives you the builder back; turning infinite production off clears the
+rally too. A builder making a limited number of units
 (no infinite production) still takes those orders itself.
 
 The build menu only appears when exactly one builder or production building is

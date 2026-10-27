@@ -10499,7 +10499,13 @@ void World::dequeue(int builderId, const UnitType* type, int count) {
     if (b->repeatType == type) {
         bool any = false;
         for (const auto* q : b->buildQueue) if (q == type) { any = true; break; }
-        if (!any) b->repeatType = nullptr;
+        if (!any) {
+            b->repeatType = nullptr;
+            // A mobile builder holds a rally only while it repeats: once it is
+            // given back, a later limited queue must not inherit a plan the
+            // player can no longer see or change (its orders command it again).
+            if (b->type && !b->type->isStructure()) b->rally.clear();
+        }
     }
 }
 
@@ -10511,6 +10517,7 @@ void World::setRepeat(int builderId, const UnitType* type) {
         // ctrl+click the +++ icon again: stop now and clear what's pending.
         b->repeatType = nullptr;
         b->buildQueue.clear();
+        if (b->type && !b->type->isStructure()) b->rally.clear();   // as in dequeue()
         for(auto& order:b->orders)order.transportProductionAhead=0;
         b->buildProgress = 0; b->buildFraction = 0;
         b->productionSiteId = 0;
