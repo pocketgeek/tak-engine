@@ -3300,9 +3300,65 @@ keeps retail's 16.16 work counter (`Unit::reviveWork`, hashed while
 channelling) from `retailReviveWork`, takes `Player::allocation()` x 65536 a
 tick, pays nothing, and applies the computer-player rule through
 `computerOwned`. Ours is still an idle caster's automatic search, not an
-order; a computer caster that abandons a revive takes the same corpse up again
-on its next tick, so while its economy is short its revive simply never
-finishes. Ours also has no walk, turn or INBUILDSTANCE wait (stages 0-2) and
-takes its first allocation the tick after the corpse is found, where retail's
-stage 3 returns 1 and the dispatcher runs stage 4 in the same wake; the end
-(stage 5) follows the last subtraction in the same wake in both.
+order. Retail's revive is only ever an order (a click, or a caster's area
+reclaim 0x406670 through 0x509cc0), so nothing takes an abandoned one up
+again; our search took the same corpse up on the next tick and abandoned it
+at every end while the economy stayed short. Since protocol 302 the search
+starts no revive the end would refuse: none for a computer caster while its
+allocation is under 0.7, none past the unit limits below. Ours also has no
+walk, turn or INBUILDSTANCE wait (stages 0-2) and takes its first allocation
+the tick after the corpse is found, where retail's stage 3 returns 1 and the
+dispatcher runs stage 4 in the same wake; the end (stage 5) follows the last
+subtraction in the same wake in both.
+
+The end creates the unit with `0x512060(player, type, ..., +0x28 = 1)`
+(`0x406f0c`), which refuses a type at its totalallowed (`+0x136`, live units
+of the player), a computer player's ai-profile limit for the type (`0x409890`,
+also checked when stage 3 starts) and a player at its unit limit
+(`game +0x14e7c` against the player's `+0x24ec` count). Refused, the revive
+ends unraised -- `UNITCHATTER_NOMOREUNITS` (`0x604ac0`) when the profile limit
+was not the cause -- and the corpse stays (only the success path removes it).
+Ours spawned past both limits; since protocol 302 the end refuses at the unit
+limit and at totalallowed (the ai-profile limit is the server AI's, not the
+sim's, and is not checked).
+
+## A guard answers its guarded unit's attacker (icd, 2026-10-27)
+
+The hit response `0x409a50` first sends event `0x10` to the victim's listener
+list (`0x519a90(victim, 0x10)`: unit `+0xc4`, each node's object vtable[0]),
+before any of its own gates and whether or not there is an attacker; a
+guard's Follow mission is one such listener. After it the damage routine
+(`0x51a35a`) stores the live attacker at victim `+0xf8`. Heals (damage type
+12) and type 13 never call it.
+
+Follow_Ground (`0x407f90`) sleeps between looks on wait mask `0x718`, so the
+event wakes the look at once; VTOL_Follow (`0x418860`) idles on the same mask.
+The look's first check (Follow_Ground stage 1 `0x40814b`, VTOL_Follow stage 2
+`0x418bb1`), only when the wake's events hold `0x10`: the guarded unit's
+`+0xf8` attacker, alive and not dying, whose player does not count the
+guard's as an ally, and whose type is not in the guard's notargetcategory set
+(UnitDef `+0x9a`), gets `0x4d7de0(guard, attacker, explicit 1, 0, auto 0,
+0)`. With explicit set, 4d7de0 skips both the Hold Position (`+0x130 &
+0x30000`) and the Hold Fire (`& 0xc0000`) gates and never takes the leash /
+return-move path; with an attack mission for the pair (`0x4de530` kind 3) it
+inserts a plain attack ahead of the guard, the look clears its wait mask and
+returns 3 (the dispatcher's `15 + rand(30)` sleep). Otherwise a guard not on
+Hold Fire hands the attacker to each auto weapon slot (`+0x1a & 4`, not
+commandfire, a switcher's selected slot only) whose current target is gone,
+out of reach (`0x52ad60`; Follow_Ground also `0x52adf0`, the minimum range)
+or a bad target (UnitDef `+0x8e[slot]`) -- 409a50's part (b) without its test
+that the attacker itself is in reach -- and the look goes on to the help and
+repair checks. An unarmed guard (no attack mission) does nothing here.
+Emulated with `0x4d7de0` and the slot calls hooked (scratch probe): the event
+bit, an ally, a dying attacker, no attacker and the notargetcategory each
+skip it; an insert returns 3 with the mask clear and comes before
+MobileBuild's help; a failed insert retargets slots and then helps.
+
+Ours (protocol 302): `World::retailHitResponse` stamps the victim's
+`attackedTick`; a guard whose guarded unit's stamp is newer than its own
+`guardHeard` hears the alarm at its next look (`tickGuardHelp` for every ground
+guard, `tickFlyingGuard` as event `0x10` in the wait mask), and
+`World::guardDefend` takes `lastHitBy` as `+0xf8`. The attack is
+`retailIssueAutoAttack(..., forced)`, not an auto target, so it chases until
+the attacker dies, and the guard order under it resumes. The step-out and the
+attack scan (`0x51d1e0`) stay unported; the latter is our target acquisition.

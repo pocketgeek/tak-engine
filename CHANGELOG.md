@@ -19,6 +19,28 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+*protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*
+
+- **Guards defend what they guard,** as in the original game. When something
+  attacks the unit a guard is guarding, the guard goes after the attacker,
+  however far away it is shooting from, and comes back to guarding once it is
+  dead. Before, a guard only fought what came within its own reach, so an
+  archer or a tower outranging it could shoot the guarded unit unanswered.
+  Flying guards do the same. As in the original, the guard answers even on
+  Hold Fire or Hold Position, and an unarmed guard (a builder) keeps helping
+  and repairing instead.
+- **A computer player short of mana no longer tries the same raising over and
+  over.** A computer priest gives up a resurrect or animate at its end when
+  its side is well short of mana; it then took the same corpse up again at
+  once and gave it up again, for as long as the shortage lasted. It now waits
+  until the economy recovers before it raises anything.
+- **Raising the dead respects the unit limit.** A resurrect or animate that
+  would take a side past the game's unit limit (or a unit past its own limit,
+  such as a second dragon) now ends without raising anything and leaves the
+  corpse, as in the original. Before, it raised the unit anyway. A priest
+  already at the limit does not start one.
+
 ## 0.9.7
 *2026-10-27 · protocol 301 · replay format 15 · does not play with 0.9.6 or earlier, nor their replays*
 
