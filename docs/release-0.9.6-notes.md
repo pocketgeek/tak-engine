@@ -166,8 +166,9 @@ names.
 
 New with 0.9.6:
 
-- **Wayland was tested in a nested KWin 6.7.5 and by hand** on the maintainer's
-  KDE laptop and 57-inch monitor; GNOME, Sway and Hyprland native windows were
+- **Wayland was tested in a nested KWin 6.7.5**; the by-hand check on the
+  maintainer's KDE laptop and 57-inch monitor is pending confirmation
+  (see the validation report). GNOME, Sway and Hyprland native windows were
   not run on real desktops, and the GNOME libdecor case is by code reading.
 - **Rally, cloak, resurrect and animate orders were not exercised against a
   remote referee**: the AIs and the test autoplay never give them. Covered by
