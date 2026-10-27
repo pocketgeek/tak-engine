@@ -93,14 +93,11 @@ ScenarioInfo inspectScenario(const hpi::Vfs& vfs, const std::string& mapPath, co
                 for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
                 return s;
             };
-            // setupMatch's order: Use Only entries, then custom types, then placements.
-            if (reg && missingType.empty()) {
-                for (const auto& type : scenario.customTypes)
-                    if (!reg->find(lower(type.name))) { missingType = type.name; break; }
-                if (missingType.empty())
-                    for (const auto& unit : scenario.units)
-                        if (!reg->find(lower(unit.objectName))) { missingType = unit.objectName; break; }
-            }
+            // setupMatch's order: Use Only entries, then placements. A custom type no unit
+            // answers to is skipped there, as retail does, so it is not a missing type.
+            if (reg && missingType.empty())
+                for (const auto& unit : scenario.units)
+                    if (!reg->find(lower(unit.objectName))) { missingType = unit.objectName; break; }
             // Who has something to command once the placements replace the Monarchs. A
             // Create action (7) makes units for its bank's owner, or for every player
             // from All Players (bank 0).

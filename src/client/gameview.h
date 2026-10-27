@@ -2289,7 +2289,7 @@ private:
     tak::sim::ScenarioInfo createScenario_;   // the selected map's scenario facts (with registry check)
     void syncCreateScenario();
     bool createScenarioOn() const;            // the create choice plays the map's scenario
-    // Whether the create screen offers a map's scenario. A placed or custom unit type
+    // Whether the create screen offers a map's scenario. A placed unit type
     // this install lacks may come from a game mod pack (ticked by the host in the room,
     // or always enabled), so MissingType is offered (with a warning) when this install
     // has a game pack; the server's START refuses it if no applied pack supplies the

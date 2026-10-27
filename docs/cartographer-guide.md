@@ -1171,7 +1171,7 @@ such as "hold the hill for five minutes to win".
 >   scenario changes. It starts off and turns off again whenever another map is
 >   picked, so a map chosen with it off plays as a plain skirmish map. It is
 >   greyed, with the reason, for a map without a playable scenario: one with no
->   scenario, an empty one, one that needs a placed or custom unit type this
+>   scenario, an empty one, one that needs a placed unit type this
 >   install lacks, or one whose placed units give Player 1 nothing to command
 >   (*PLAYER 1 GETS NO ARMY*). Player 1 is the player who creates the game, and
 >   placed units replace every Monarch, so Player 1 needs a placed unit that can
@@ -1825,6 +1825,7 @@ small separate areas.
 | | *unit model is missing* | The unit has no 3D model in this install. |
 | | *initial naval output site cannot place …* | A placed shipyard has no room to launch its ships; check the water in front of it. |
 | | *vertical placement is preserved but ignored*; *custom-type health is preserved but …* | Values in some shipped maps that the game ignores; usually harmless. |
+| Crusades | *(Unit) does not exist with CRUSADES on: … stop a CRUSADES game from starting this scenario*; *Custom stats for (unit) are skipped with CRUSADES on*; *rule …: (unit) does not exist with CRUSADES on* | The Crusades balance has no Trapdoor Spider, Heligrin, Cult of Lokken Ship, Sea Serpent, Mummy or second Lokken unit. A game with Crusades on cannot start a scenario that places one; replace it if the map should also be played with Crusades. |
 | Terrain and features | *Unreadable terrain image …*; *Invalid terrain dimensions …* | The map's terrain is damaged. |
 | | *Missing feature definition: (name)* | The feature does not exist in this world; erase the red dots. |
 | Regions | *Region name is empty or duplicated*; *Region has out-of-map bounds* | Rename or resize the region. |

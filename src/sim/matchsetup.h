@@ -5,6 +5,7 @@
 // world -- same terrain, feature nav-blocking, mana deposits, players, teams,
 // and monarch spawns -- so their state hashes agree in lockstep.
 
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -123,6 +124,22 @@ extern const char* const kMonarchs[5];
 // filtered by that roster. Iron Plague and community units are already merged
 // into these namespaces by the VFS. Deterministic.
 void setupRegistry(TypeRegistry& reg, const hpi::Vfs& vfs, bool crusades);
+
+// setupMatch's refusal of a scenario that PLACES a unit type its registry lacks.
+// Retail cannot play one either: its CRT loader dereferences the failed name lookup
+// (0x4cc8e1 -> 0x4cc8e6). The type rides along so a caller can say why: under the
+// Crusades balance it is usually a standard unit the Crusades roster leaves out
+// (monelem, monmum, tarcship, tarhel, tarnecr2, zonspide). A custom type the registry
+// lacks is not refused: retail skips it (see setupMatch).
+struct ScenarioTypeMissing : std::runtime_error {
+    std::string type;   // as the CRT spells it
+    explicit ScenarioTypeMissing(const std::string& name)
+        : std::runtime_error("Scenario unit type is missing: " + name), type(name) {}
+};
+// The player-facing text for that refusal. `standard` is the standard-balance registry
+// when the game plays the Crusades one (else null): a type it has is named as a unit
+// that does not exist with CRUSADES on.
+std::string scenarioTypeMissingText(const ScenarioTypeMissing& missing, const TypeRegistry* standard);
 
 // Start positions from the map's .ota (world pixels), ordered by StartPos index.
 std::vector<std::pair<float, float>> parseStartPositions(const hpi::Vfs& vfs,

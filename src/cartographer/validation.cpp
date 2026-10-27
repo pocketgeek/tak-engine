@@ -9,6 +9,7 @@
 #include <cctype>
 #include <charconv>
 #include <limits>
+#include <map>
 #include <cmath>
 #include <memory>
 
@@ -289,6 +290,57 @@ std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
                 for(auto problem:validateRuleOperands(action,rules[r],scenario,registry)) {
                     problem.message=label+problem.message;issues.push_back(std::move(problem));
                 }
+            }
+        }
+    }
+    return issues;
+}
+std::vector<MapIssue> validateCrusadesRoster(const tak::crt::Scenario& scenario,
+    const std::vector<PlacedUnit>& units,const tak::sim::TypeRegistry& standard,
+    const tak::sim::TypeRegistry& crusades) {
+    std::vector<MapIssue> issues;
+    // The standard unit a name means, when CRUSADES leaves it out.
+    auto lost=[&](const std::string& name)->const tak::sim::UnitType* {
+        const auto id=folded(name);
+        return crusades.find(id)?nullptr:standard.find(id);
+    };
+    auto label=[](const tak::sim::UnitType& type,const std::string& name) {
+        std::string upper=name;
+        std::transform(upper.begin(),upper.end(),upper.begin(),[](unsigned char c){return char(std::toupper(c));});
+        return type.name.empty()?upper:type.name+" ("+upper+")";
+    };
+    auto warn=[&](std::string text,float x=-1,float z=-1) {issues.push_back({MapIssue::Severity::Warning,std::move(text),x,z});};
+    // One line per type, at its first placement.
+    std::map<std::string,std::pair<size_t,size_t>> placed;   // folded type -> (count, first index)
+    for(size_t i=0;i<units.size();++i)if(lost(units[i].type)) {
+        ++placed.try_emplace(folded(units[i].type),0,i).first->second.first;
+    }
+    for(const auto& [id,use]:placed) {
+        const auto& unit=units[use.second];
+        warn(label(*lost(unit.type),unit.type)+" does not exist with CRUSADES on: "+
+             (use.first==1?std::string("this placed unit stops"):std::to_string(use.first)+" placed units stop")+
+             " a CRUSADES game from starting this scenario",unit.x,unit.z);
+    }
+    for(const auto& custom:scenario.customTypes)if(const auto* type=lost(custom.name))
+        warn("Custom stats for "+label(*type,custom.name)+" are skipped with CRUSADES on: the unit does not exist there");
+    for(size_t p=0;p<scenario.players.size();++p)for(size_t g=0;g<scenario.players[p].size();++g) {
+        const auto& group=scenario.players[p][g];
+        for(bool action:{false,true}) {
+            const auto& rules=action?group.actions:group.conditions;
+            const auto& definitions=action?actionDefs():conditionDefs();
+            for(size_t r=0;r<rules.size();++r) {
+                const auto& rule=rules[r];
+                if(rule.opcode<0 || size_t(rule.opcode)>=definitions.size())continue;
+                const auto& params=definitions[size_t(rule.opcode)].params;
+                for(size_t s=0;s<params.size();++s)if(params[s]==PKind::UnitType)
+                    if(const auto* type=lost(rule.slot[s]))
+                        // An unknown name resolves to type 0 (retail 515ac0): Create makes
+                        // nothing; the other rules match any unit (or, for loss and kill
+                        // counts, the first type counted) instead.
+                        warn((p==0?std::string("All Players"):"Player "+std::to_string(p))+", rule "+std::to_string(g+1)+", "+
+                             (action?"action ":"condition ")+std::to_string(r+1)+": "+label(*type,rule.slot[s])+
+                             " does not exist with CRUSADES on, so there this rule "+
+                             (action && rule.opcode==7?"creates nothing":"counts other units instead"));
             }
         }
     }

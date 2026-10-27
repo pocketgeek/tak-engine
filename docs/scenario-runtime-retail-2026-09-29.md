@@ -142,6 +142,18 @@ health conversion uses retail's own float-to-integer routine. The custom-default
 probe substitutes the veteran setter only to observe its arguments, rather than
 claiming that those cases test the entire experience system. No retail GUI is used.
 
+**Unknown type names (2026-10-26).** The name lookup `0x515ac0` (binary search
+`0x5159f0` over type slots 1..n, slot 0 a sentinel) answers id 0 for a name no type
+has. The custom-type resolve loop `0x4cd243`–`0x4cd258` stores that 0 with no test
+and no message, and `0x4cd590` then matches no unit (every real type id is at least
+1): a missing custom type is skipped silently. The CRT loader resolves a placed
+unit with `0x5159f0` itself and dereferences the result unchecked (`0x4cc8e6`), so
+a missing placed type faults. This is the case of a standard-balance scenario
+played with CRUSADES on, whose roster leaves out monelem, monmum, tarcship, tarhel,
+tarnecr2 and zonspide. The engine matches the first (setupMatch skips the custom
+type) and refuses the second by name. `python3 tools/re/check_scenario_missing_type.py`
+runs the lookup, the resolve loop and `0x4cd590` over a synthetic type table.
+
 Neutral placement support is an engine policy: separate nonparticipant ownership,
 no automatic hostility, explicit eligible attacks/capture, and a neutral display
 color. The CRT rule-set count does not establish retail neutral-unit behavior;

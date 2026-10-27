@@ -300,8 +300,9 @@ int main() {
         auto info = expect(c, ScenarioStatus::MissingType);
         check(info.detail == "npckrell", "unknown placed unit detail");
         check(inspect(c, false).status == ScenarioStatus::Ok, "placed types are checked only with a registry");
+        // setupMatch skips a custom type no unit answers to (as retail does), so it is offered.
         c = good; c.name = "custom type unknown"; c.scenario.customTypes.push_back({"npckrell", {200, 100, 100, 0}});
-        check(expect(c, ScenarioStatus::MissingType).detail == "npckrell", "unknown custom type detail");
+        expect(c, ScenarioStatus::Ok);
     }
     {
         Case c = good; c.name = "owner 9"; c.scenario.units.push_back(unit("soldier", 9));

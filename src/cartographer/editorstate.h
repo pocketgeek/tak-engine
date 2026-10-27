@@ -200,6 +200,9 @@ struct Session {
     FeatureLibrary features;
     std::vector<std::string> unitTypes;
     tak::sim::TypeRegistry unitRegistry;
+    // The same install's CRUSADES roster (unitscb/ alone): Check Map names what the
+    // map's scenario loses with CRUSADES on (validateCrusadesRoster).
+    tak::sim::TypeRegistry crusadesRegistry;
     // Stamp a named section into the map at block (bx,by) (canvas.cpp).
     bool stampByName(const std::string& name, int bx, int by);
 };

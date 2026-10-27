@@ -1968,6 +1968,13 @@ void Server::tryStart(Client& c) {
             const int maxSlot = int(cfg.slots.size()) - 1;
             std::vector<std::pair<float,float>> spots;
             try { spots = tak::sim::setupMatch(*r->ref, *r->reg, cfg); }
+            catch (const tak::sim::ScenarioTypeMissing& e) {
+                // Named for the player: under CRUSADES it is usually a standard unit the
+                // Crusades roster leaves out, and turning CRUSADES off is the way to play.
+                r->ref.reset(); r->running = false; r->ai.clear();
+                refuseStart(c, *r, tak::sim::scenarioTypeMissingText(e, r->reg == &ds->regCb ? &ds->reg : nullptr));
+                return;
+            }
             catch (const std::exception& e) {
                 r->ref.reset(); r->running = false; r->ai.clear();
                 refuseStart(c, *r, e.what());

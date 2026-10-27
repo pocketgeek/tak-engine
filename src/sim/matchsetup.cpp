@@ -265,6 +265,16 @@ void setupRegistry(TypeRegistry& reg, const hpi::Vfs& input, bool crusades) {
     reg.loadBuildTree(vfs, "canbuild");
 }
 
+std::string scenarioTypeMissingText(const ScenarioTypeMissing& missing, const TypeRegistry* standard) {
+    auto lower = missing.type, upper = missing.type;
+    for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
+    for (char& c : upper) c = char(std::toupper(static_cast<unsigned char>(c)));
+    const auto* type = standard ? standard->find(lower) : nullptr;
+    if (!type) return "this scenario places " + upper + ", a unit this game's data does not have";
+    const auto named = type->name.empty() ? upper : type->name + " (" + upper + ")";
+    return "this scenario's " + named + " does not exist with the CRUSADES balance on -- turn CRUSADES off to play it";
+}
+
 std::vector<std::pair<float, float>> parseStartPositions(const hpi::Vfs& vfs,
                                                          const std::string& mapPath) {
     std::vector<std::pair<float, float>> out;
@@ -758,7 +768,12 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
             for (const auto& type : scenario.customTypes) {
                 auto name = type.name;
                 std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-                if (!reg.find(name)) throw std::runtime_error("Scenario custom unit type is missing: " + type.name);
+                // Retail skips a custom type no unit answers to, silently: its resolve loop
+                // (0x4cd243) stores the lookup's 0 for an unknown name with no test and no
+                // message, and 0x4cd590 then matches no unit (type ids start at 1). That is
+                // how a scenario made for the standard balance plays with CRUSADES on, where
+                // zonspide, monmum and four others do not exist (check_scenario_missing_type.py).
+                if (!reg.find(name)) continue;
                 world.setScenarioTypeStats(name, std::clamp(type.stat[1],0,1000),
                     std::clamp(type.stat[2],0,1000), std::clamp(type.stat[3],0,10));
             }
@@ -774,7 +789,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
                 requirePlayer(placed.player);
                 auto name = placed.objectName;
                 std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-                if (!reg.find(name)) throw std::runtime_error("Scenario unit type is missing: " + placed.objectName);
+                if (!reg.find(name)) throw ScenarioTypeMissing(placed.objectName);
                 if (placed.x < 0 || placed.z < 0 || placed.x >= map.width || placed.z >= map.height)
                     throw std::runtime_error("Scenario unit is outside the map: " + placed.objectName);
             }

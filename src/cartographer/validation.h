@@ -25,6 +25,16 @@ std::vector<MapIssue> validateRuleOperands(bool action,const tak::crt::Rule& rul
 // AI Profiles window's own Check; none of these block saving.
 std::vector<MapIssue> validateAiProfiles(const AiFiles& files,const std::string& aiProfile,
     const tak::sim::TypeRegistry& registry,const tak::hpi::Vfs& vfs);
+// What the map's scenario loses with the CRUSADES balance on, where the roster is
+// unitscb/ alone and six standard units (monelem, monmum, tarcship, tarhel, tarnecr2,
+// zonspide) do not exist. Only types `standard` has and `crusades` lacks are named
+// (a type neither has is validateMap's "unknown unit type"). Warnings, by severity of
+// effect: a placed unit stops a CRUSADES game from starting; custom stats are skipped
+// (as retail does); a rule naming one creates nothing, or counts other units instead.
+// Nothing when the install has no Crusades balance (the two registries agree).
+std::vector<MapIssue> validateCrusadesRoster(const tak::crt::Scenario& scenario,
+    const std::vector<PlacedUnit>& units,const tak::sim::TypeRegistry& standard,
+    const tak::sim::TypeRegistry& crusades);
 // Observational: builds a private engine world; never modifies the document.
 std::vector<MapIssue> validateMap(const tak::tnt::Map& map,
     const tak::tnt::Scenario& metadata,const tak::crt::Scenario& scenario,

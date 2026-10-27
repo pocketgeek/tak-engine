@@ -1239,8 +1239,11 @@ float createOptionPx(float maxW) {
                 bx + 280, y + 9, 1.3f, {235, 205, 120, 255});
         // Why the server refused the last START (a needed seat, setupMatch's refusal...).
         if (!mp_->startError().empty()) {
+            // Shrunk before it is cut: a refusal that names a unit and the way out (a
+            // scenario unit CRUSADES leaves out) should be read whole.
             const std::string why = "CANNOT START: " + mp_->startError();
-            blockText(tak::uiTextFit(why, 1.1f, winW - 360.0f), x, y + 33, 1.1f, {255, 130, 110, 255});
+            const float px = tak::uiTextFitPx(why, 1.1f, winW - 360.0f, 0.8f);
+            blockText(tak::uiTextFit(why, px, winW - 360.0f), x, y + 33, px, {255, 130, 110, 255});
         }
         // Creation settings are read-only here and come from the room, not
         // this client's saved preferences. Keep every rule visible with 8 slots.

@@ -2922,6 +2922,15 @@ if(TAK_BUILD_CLIENT)
       src/cartographer/aiprofiles.cpp src/cartographer/document.cpp src/cartographer/units.cpp src/ai/classicprofile.cpp src/ai/builtinprofile.cpp)
     target_link_libraries(cartographer_validation_test PRIVATE tak-formats)
     add_test(NAME cartographer_validation COMMAND cartographer_validation_test)
+    # A map scenario under the CRUSADES roster (skipped custom types, the named refusal,
+    # Check Map's warning). Needs the retail unitscb/, so only with -DTAK_TEST_DATA.
+    if(TAK_TEST_DATA)
+      add_executable(crusades_scenario_test tools/crusades_scenario_test.cpp
+        src/cartographer/validation.cpp src/cartographer/triggers.cpp src/cartographer/aiprofiles.cpp
+        src/cartographer/document.cpp src/cartographer/units.cpp src/ai/classicprofile.cpp src/ai/builtinprofile.cpp)
+      target_link_libraries(crusades_scenario_test PRIVATE tak-formats)
+      add_test(NAME crusades_scenario COMMAND crusades_scenario_test "${TAK_TEST_DATA}")
+    endif()
     # The AI-profile editor's model, checked against the engine's own profile parsers.
     # It links the whole AI, so the levels' limits in play are checked against ai::paramsFor.
     add_executable(cartographer_aiprofile_test tools/cartographer_aiprofile_test.cpp

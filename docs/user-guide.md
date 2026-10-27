@@ -533,6 +533,13 @@ Some things to know before you play one:
   (*NO PLACED UNITS: PLAYER N*).
 - Maps made for the original game sometimes list units in their Use Only list
   that no install has; those names are ignored.
+- **With Crusades on**, the six units the Crusades balance leaves out (the
+  Trapdoor Spider, Heligrin, Cult of Lokken Ship, Sea Serpent, Mummy and the
+  second Lokken unit) do not exist. A scenario that places one cannot start,
+  and the room names the unit (*CANNOT START: this scenario's Trapdoor Spider
+  (ZONSPIDE) does not exist with the CRUSADES balance on*); turn Crusades off
+  to play it. Custom stats the scenario sets for such a unit are skipped, as in
+  the original game.
 
 ### Mana: the only resource
 

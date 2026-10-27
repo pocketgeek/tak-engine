@@ -31,7 +31,7 @@ enum class ScenarioStatus : uint8_t {
     Empty,          // no placed unit and no rule group with a condition or action
     BadOwner,       // a placement owner outside 0..8 (or rules past the neutral bank)
     UseOnlyBroken,  // useonlyunits is not "<map>.tdf" beside the map, or the file is missing/unreadable
-    MissingType,    // (registry check) a placed, custom or Use Only type this install lacks
+    MissingType,    // (registry check) a placed or Use Only type this install lacks
 };
 
 struct ScenarioInfo {
@@ -77,8 +77,8 @@ struct ScenarioInfo {
 };
 
 // Reads <map>.ota, <map>.crt and the named Use Only .tdf through `vfs` (a package view
-// or the local install). Never throws. With `reg`, also checks every placed and custom
-// type, and a Test Map copy's Use Only entries (setupMatch's refusals), and fills
+// or the local install). Never throws. With `reg`, also checks every placed type (a
+// custom type the registry lacks is skipped, as setupMatch and retail do), and a Test Map copy's Use Only entries (setupMatch's refusals), and fills
 // armySeats. Placement bounds are the one refusal left out (setupMatch keeps that
 // check and its message, which the room shows as the server's start refusal; checking it
 // here would mean decompressing every scenario map's TNT while the map list is built).

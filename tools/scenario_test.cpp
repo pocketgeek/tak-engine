@@ -231,8 +231,26 @@ int main() try {
                   "new match retained scenario defaults");
         }
         auto invalid=scene;invalid.units[0].objectName="missing";refuses(invalid,"unknown placed unit silently dropped");
+        {
+            // The refusal names the type, for the room's CRUSADES wording.
+            (*files)["kmap/authored.crt"]=crt::write(invalid);sim::World w;std::string type;
+            try {sim::setupMatch(w,registry,config);}catch(const sim::ScenarioTypeMissing& e) {type=e.type;}
+            check(type=="missing","unknown placed unit refused without its type");
+        }
+        {
+            // Retail skips a custom type no unit answers to (0x4cd243 stores type 0, which
+            // no unit has): the scenario starts and the known type keeps its stats.
+            auto skipped=scene;skipped.customTypes.push_back({"missing",{200,100,100,0}});
+            skipped.customTypes.push_back({"soldier",{200,200,50,7}});
+            (*files)["kmap/authored.crt"]=crt::write(skipped);sim::World w,peer;std::string refused;
+            try {sim::setupMatch(w,registry,config);sim::setupMatch(peer,registry,config);}
+            catch(const std::exception& e) {refused=e.what();}
+            check(refused.empty() && w.scenario(),("missing custom type refused the scenario: "+refused).c_str());
+            check(w.stateHash()==peer.stateHash(),"skipped custom type set peers up differently");
+            const int id=w.spawn(soldier,400,400,0,0);
+            check(w.unit(id)->scenarioArmor==2.f && w.unit(id)->veteran==7,"known custom type lost its stats beside a skipped one");
+        }
         invalid=scene;invalid.units[0].x=64;refuses(invalid,"off-map placement accepted");
-        invalid=scene;invalid.customTypes.push_back({"missing",{200,100,100,0}});refuses(invalid,"missing custom type accepted");
         config.slots.resize(1);refuses(scene,"unseated player's placements silently reassigned");
     }
     std::cout<<"PASS: CRT control operands, wildcard counts, region/owner filters and flag messages\n";
