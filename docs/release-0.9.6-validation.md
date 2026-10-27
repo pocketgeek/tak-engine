@@ -232,7 +232,7 @@ with a scale but no width), and by hand by the maintainer on a KDE laptop and a
 libdecor, were not run on real desktops. Windows and macOS code paths are
 unchanged.
 
-TODO-LEAD: confirm the by-hand Wayland result (KDE laptop and 57" monitor) in the maintainer's words before publication.
+The maintainer's by-hand result, in their words: "wayland on my laptop here kde seems to be just fine"; on the 57-inch monitor, "Edge scrolling still worked after alt-tabbing I tested on the 57, seems fine."
 
 ## CI and packages
 
