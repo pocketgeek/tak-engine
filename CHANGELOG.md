@@ -41,6 +41,27 @@ their validation reports; both live in [`docs/`](docs/).
   second, as in the original game, instead of only what could be paid. When
   your mana runs short it can be larger than the green income number on the
   left; both are averaged over the last second.
+- **Crusades and scenario maps.** A scenario map that gives stats to a custom
+  unit type the Crusades balance does not have now simply skips that type, as
+  the original does, instead of refusing to start. A scenario that places a unit
+  Crusades lacks is still refused, and the message now names the unit and tells
+  you to turn CRUSADES off. Test Map accepts Use Only entries from the other
+  balance. Cartographer's Check Map warns about units a Crusades game will not
+  have.
+- **Construction hit points.** An unfinished building's hit points can no longer
+  grow past its maximum, and a hit on an unfinished retail-style site now
+  rewrites its build progress as the original does.
+- **Native Wayland on Linux.** Options, Display has a new NATIVE WAYLAND setting
+  (Auto, On, Off; restart required). On Wayland desktops that scale X11 windows
+  (such as GNOME), the game and Cartographer now open sharp and at the right
+  size at 150% or 200% scaling. KDE Plasma keeps X11 by default.
+- **Command-line tools.** `cartographer --version` and `--help` work, the dev
+  tools print their usage when given a missing or bad argument, and `simperf`
+  works with the current random-map recipe.
+- **Test harness reliability.** Headless runs keep their server seat while the
+  simulation is slow, and report the exact tick the result landed. A mod
+  transfer test no longer drops a player while loading, and the server log now
+  says why a client was dropped.
 
 ## 0.9.5
 *2026-10-26 · protocol 299 · replay format 15 · does not play with 0.9.4 or earlier, nor their replays*
