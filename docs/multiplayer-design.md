@@ -1039,6 +1039,18 @@ runs. No command changes; replay format 15 is unchanged; 299 replays are
 refused. 0.9.6 ships protocol 300; it plays with neither 0.9.5 nor any earlier
 version, nor their replays.
 
+Protocol 301 ports retail HelpBuild. A factory's or conjurer's output has one
+progress, its producer's: helpers advance it (converted from their own
+workertime), so the output finishes once, sooner, for its buildcost in total,
+and the producer is freed at that moment. A guarding mobile builder repairs or
+helps what it guards, or what that unit is building, producing, helping or
+repairing; the job goes ahead of the guard order, and the next look is due at
+`guardHelpTick` (hashed when set). A HelpBuild approach leg carries `helpSite`
+(hashed when set). Assist is checked by the sim (same owner, mobile builder,
+build menu when builderlimited) and is accepted from a repeating conjurer,
+whose own output waits while it works elsewhere. No command changes; replay
+format 15 is unchanged; 300 replays are refused.
+
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
 in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each

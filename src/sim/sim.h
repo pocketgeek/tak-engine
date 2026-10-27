@@ -301,6 +301,9 @@ struct UnitType {
     uint8_t buildMovementCode=0; // Authored bmcode byte (retail default 0), used by construction visuals.
     bool isBuilder = false;
     bool builderLimited = false; // native assist is restricted to the build menu only when set
+    // The type's canbuild/<id>/ menu (TypeRegistry::loadBuildTree), so the sim
+    // can apply HelpBuild's builderlimited test (0x519e60) without a registry.
+    std::vector<std::string> buildMenu;
     // Can this type train units (and therefore hold a rally)? Set for any builder
     // structure; used to decide whether a move/attack/patrol order on a BUILDING
     // means "set the rally" rather than "do nothing".
@@ -808,6 +811,10 @@ struct alignas(64) Order {
     // to before the stance wait: retail heading from the target to the builder,
     // as MobileBuild's turn. Hashed on reclaim legs.
     uint16_t reclaimHeading = 0;
+    // The approach of a HelpBuild (World::assist): the unfinished unit it
+    // walks to. The leg goes
+    // when that job ends, however it ends. Hashed with a tag when set.
+    int helpSite = 0;
 };
 // Which line each field sits on (WE D2). Moving a field across a line, or
 // growing line 0/1 past 64 bytes, is a compile error here. (offsetof on a type
@@ -1250,6 +1257,11 @@ struct alignas(64) Unit {
     // hashed when set. Cold: only cloakers read it, so it sits past the
     // prefetched lines.
     uint32_t cloakBlockedUntil = 0;
+    // On a factory/conjurer output: the producer whose buildProgress is this
+    // unit's one shared progress (retail +0x108). A hint only -- read through
+    // World::productionOwnerOf, which checks the producer still holds it, so a
+    // stale value is harmless and it is not hashed.
+    int productionOwner = 0;
     const std::string& displayName() const { return scenarioName.empty() ? type->name : scenarioName; }
     bool alive() const { return deadFor < 0; }
     int32_t maximumHp() const { return retailSite ? int32_t(retailSite->type.maxHp) : type->maxHp; }
@@ -1927,6 +1939,12 @@ public:
     // conjuring it (e.g. reviving a decaying site). Resumes at THIS builder's
     // rate from the site's current HP. The caller checks the build tree.
     void assist(int builderId, int siteId, bool queue = false);
+    // Retail HelpBuild eligibility (0x519e60): `site` is alive and unfinished,
+    // not `b`, has b's OWNER (allies do not qualify), and b is a builder with a
+    // mover whose build menu holds the site's type when it is builderlimited.
+    bool canHelpBuild(const Unit& b, const Unit& site) const;
+    // The producer whose progress `site` shares, or null for an ordinary site.
+    Unit* productionOwnerOf(const Unit& site);
     // Cosmetic emotes. A positive ID targets one owned living unit; callers
     // resolve empty-selection monarch fallback. ID 0 queries the latest trigger kind. The viewer owns real-time duration.
     void startDisco(int player, int unitId, bool append = false);
@@ -2674,6 +2692,12 @@ private:
                   std::optional<std::array<int32_t,3>> impact = {});
 
     void tickProduction(Unit& u, float dt);
+    // One product's shared progress (see the definitions): the producer's own
+    // work and every helper's advance the same counter; finishing releases the
+    // output and frees the producer, once.
+    int32_t productionTotal(const Unit& producer, const UnitType* t) const;
+    bool workProduction(Unit& producer, Unit& site, const UnitType* t, uint32_t step);
+    void finishProduction(int producerId, Unit& site);
     void initializeRetailSite(Unit& site, int builderId);
     void tickRetailAiBase(int owner,unsigned index);
     void tickRetailAiStrike(int owner,unsigned index);

@@ -19,7 +19,12 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 300;      // 300: producer rally plans: a repeating mobile builder also takes Attack and fight-move
+constexpr uint32_t kNetVersion = 301;      // 301: retail HelpBuild: one shared progress for a factory/conjurer output (helpers
+                                           //      finish it sooner for its buildcost, the producer is freed once), a guarding
+                                           //      mobile builder helps/repairs what it guards (guardHelpTick, helpSite hashed),
+                                           //      Assist is checked in the sim and allowed for repeating conjurers.
+                                           //      No new command; replay format unchanged.
+                                           // 300: producer rally plans: a repeating mobile builder also takes Attack and fight-move
                                            //      rallies, Shift-queued patrol rally steps loop, Stop (and ending the
                                            //      repeat) clears the rally, and a non-empty rally is folded into stateHash.
                                            //      No new command; replay format unchanged.

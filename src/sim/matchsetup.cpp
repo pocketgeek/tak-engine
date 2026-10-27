@@ -94,7 +94,10 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
     const auto* producer=world.unit(c.unitId);
     const bool repeatingMobile = producer && producer->type &&
         !producer->type->isStructure() && producer->repeatType;
-    if (repeatingMobile && c.kind!=Cmd::Stop && c.kind!=Cmd::Move && c.kind!=Cmd::Patrol && c.kind!=Cmd::Attack && c.kind!=Cmd::AttackMove && c.kind!=Cmd::GiveUnit && c.kind!=Cmd::ShareMana && c.kind!=Cmd::Disco && c.kind!=Cmd::Headbang && c.kind!=Cmd::PowerCode) return;
+    // Assist is the exception: retail's HelpBuild has no repeat check, so a
+    // repeating conjurer told to help an unfinished unit helps (its own output
+    // waits meanwhile; see tickProduction).
+    if (repeatingMobile && c.kind!=Cmd::Stop && c.kind!=Cmd::Assist && c.kind!=Cmd::Move && c.kind!=Cmd::Patrol && c.kind!=Cmd::Attack && c.kind!=Cmd::AttackMove && c.kind!=Cmd::GiveUnit && c.kind!=Cmd::ShareMana && c.kind!=Cmd::Disco && c.kind!=Cmd::Headbang && c.kind!=Cmd::PowerCode) return;
     auto owns = [&](int id) {
         const auto* u = world.unit(id);
         return u && u->player == int(c.player);
@@ -150,17 +153,16 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
             }
             break;
         case Cmd::Assist:
-            // Resume/assist an existing conjure: allowed only if the builder can
-            // actually build the site's type (authoritative check, same as the UI).
+            // Help/resume an unfinished unit: HelpBuild's own eligibility
+            // (World::canHelpBuild -- same owner, a mobile builder, the build
+            // menu when builderlimited), checked before anything is cancelled
+            // so a refused order leaves the builder's work alone.
             if (owns(c.unitId)) {
                 const Unit* b = world.unit(c.unitId);
                 const Unit* site = world.unit(c.targetId);
-                if (b && b->type && site && site->type) {
-                    const auto& menu = reg.buildable(b->type->id);
-                    if (!b->type->builderLimited || std::find(menu.begin(), menu.end(), site->type->id) != menu.end()) {
-                        redirect();
-                        world.assist(c.unitId, c.targetId, c.queue);
-                    }
+                if (b && site && !b->underConstruction && world.canHelpBuild(*b, *site)) {
+                    redirect();
+                    world.assist(c.unitId, c.targetId, c.queue);
                 }
             }
             break;

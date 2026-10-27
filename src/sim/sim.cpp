@@ -872,6 +872,7 @@ void TypeRegistry::loadBuildTree(const hpi::Vfs& vfs, const std::string& prefix)
         for (auto& [p, id] : entries)
             if (std::find(list.begin(), list.end(), id) == list.end())
                 list.push_back(id);
+        if (auto t = types_.find(builder); t != types_.end()) t->second.buildMenu = list;
     }
 }
 
@@ -1775,6 +1776,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
             o.reclaimFeat = tmpl.reclaimFeat;
             o.reclaimCountdown = tmpl.reclaimCountdown; o.reclaimHeading = tmpl.reclaimHeading;
             o.repairTarget = tmpl.repairTarget;
+            o.helpSite = tmpl.helpSite;
             o.patrolRepair = tmpl.patrolRepair;
             o.patrolOpen = tmpl.patrolOpen;
             o.buildRectangle = tmpl.buildRectangle;
@@ -8897,20 +8899,46 @@ void World::cancelBuilds(int builderId) {
     }
 }
 
+bool World::canHelpBuild(const Unit& b, const Unit& site) const {
+    // 0x519e60, emulated: the target is alive, unfinished and not the helper,
+    // and has the helper's OWNER -- an ally's site does not qualify. The helper
+    // is a builder with a mover (a structure never helps); a builderlimited
+    // one needs the target's type on its own build menu. Nothing about the
+    // helper's queue, repeat build or current job is consulted.
+    if (b.id==site.id || !b.alive() || !b.type || !b.type->isBuilder || b.type->isStructure() ||
+        !site.alive() || !site.type || !site.underConstruction || site.hp<=Fixed() || site.player!=b.player)
+        return false;
+    const auto& menu=b.type->buildMenu;
+    return !b.type->builderLimited || std::find(menu.begin(),menu.end(),site.type->id)!=menu.end();
+}
+
+Unit* World::productionOwnerOf(const Unit& site) {
+    if (!site.productionOwner || !site.underConstruction || site.retailSite) return nullptr;
+    Unit* p=unit(site.productionOwner);
+    if (!p || !p->alive() || p->productionSiteId!=site.id || p->player!=site.player ||
+        p->buildQueue.empty() || p->buildQueue.front()!=site.type) return nullptr;
+    return p;
+}
+
+// Where a HelpBuild walks to: just south of the unfinished unit, as Assist
+// always did. The approach leg carries helpSite, so it goes when the job ends.
+static float helpApproachZ(const Unit& site) { return site.z.toFloat()+float(site.type->footZ)*8+24; }
+
 void World::assist(int builderId, int siteId, bool queue) {
     Unit* b = unit(builderId);
     Unit* site = unit(siteId);
-    if (!b || !b->alive() || !b->type || !b->type->isBuilder || b->type->isStructure() ||
-        b->underConstruction)
-        return;
-    if (!site || !site->alive() || !site->underConstruction ||
-        site->player != b->player)
-        return;
-    // Latch onto the existing site; tickConstruction walks there and resumes at
-    // this builder's rate (buildTime / workerTime) from the site's current HP.
+    if (!b || !site || b->underConstruction || !canHelpBuild(*b,*site)) return;
+    // Latch onto the existing site; tickConstruction walks there and works at
+    // this builder's rate. A factory's or conjurer's output shares its
+    // producer's progress (workProduction); any other site grows from its hp.
     b->buildSiteId = siteId;
     b->buildStuckT = 0; b->buildStuckD = INT32_MAX;   // fresh job: reset the reach watchdog
-    order(builderId, site->x.toFloat(), site->z.toFloat() + float(site->type->footZ) * 8 + 24, queue);
+    // A repeating conjurer's move is a rally for its output (World::order);
+    // this approach is its own.
+    const UnitType* repeat=b->repeatType; b->repeatType=nullptr;
+    order(builderId, site->x.toFloat(), helpApproachZ(*site), queue);
+    b=unit(builderId); b->repeatType=repeat;
+    if (!b->orders.empty()) b->orders.back().helpSite=siteId;
 }
 
 float World::sacredIncomeMultiplier(int x,int z,int fx,int fz) const {
@@ -10131,9 +10159,16 @@ static Fixed addCapped(Fixed hp,Fixed grow,int maxHp) {
     return Fixed::raw(int32_t(std::min<int64_t>(cap,int64_t(hp.v)+grow.v)));
 }
 
+// A HelpBuild ends with its target, however it ends: a builder still walking
+// there drops the approach instead of finishing the walk.
+static void endHelp(World& w, Unit& b, int siteId) {
+    if (!b.orders.empty() && b.orders[World::currentLeg(b.orders)].helpSite==siteId) w.dropLeg(b);
+}
+
 void World::tickConstruction(Unit& b, float dt) {
     Unit* site = unit(b.buildSiteId);
     if (!site || !site->alive() || !site->underConstruction) {
+        endHelp(*this,b,b.buildSiteId);
         b.buildSiteId = 0;
         popBuildOrder(b);
         return;
@@ -10172,6 +10207,7 @@ void World::tickConstruction(Unit& b, float dt) {
                 groundRemove(*site);
                 site->deadFor = kRetiredTicks;
             }
+            endHelp(*this,b,b.buildSiteId);
             b.buildSiteId = 0;
             popBuildOrder(b);
             
@@ -10203,6 +10239,37 @@ void World::tickConstruction(Unit& b, float dt) {
     site->conjureRate = Fixed::fromFloat(site->type->maxHp * 0.95f
                                          / (std::max(total, 0.01f) * kTick));
     Player& tm = players_[size_t(b.player)];
+    if (Unit* producer=productionOwnerOf(*site)) {
+        // A factory's or conjurer's output has ONE progress, its producer's
+        // (retail 429af0: every worker takes its workertime-scaled share off
+        // the site's remaining fraction +0x108 and pays for exactly that).
+        // This helper's tick of work, buildtime/workertime seconds for the
+        // whole unit, is converted into the producer's 1/65536-tick units, so
+        // the output finishes once, sooner, for its buildcost in total.
+        bool done=false;
+        const int32_t ptotal=productionTotal(*producer,site->type);
+        if (gInstantBuild) {
+            producer->buildProgress=ptotal;producer->buildFraction=0;
+            site->hp=Fixed::fromFloat(site->type->maxHp);
+            done=true;
+        } else {
+            const double request=std::min({double(ptotal)*65536.0,double(UINT32_MAX),
+                double(ptotal)*65536.0*double(dt)/double(std::max(total,0.01f))});
+            const double cost=double(site->type->buildCost)/double(ptotal)*request/65536.0;
+            const double share=tm.constructionShare(cost);
+            if (share<=0) return;
+            done=workProduction(*producer,*site,site->type,uint32_t(request*std::min(share,1.0)));
+        }
+        emitConstruction(b,false);
+        if (done) {
+            finishProduction(producer->id,*site);
+            Unit* helper=unit(b.id);
+            endHelp(*this,*helper,helper->buildSiteId);
+            helper->buildSiteId=0;
+            popBuildOrder(*helper);
+        }
+        return;
+    }
     if (gInstantBuild) {
         site->hp = Fixed::fromFloat(site->type->maxHp);   // finishes this tick, free
         if (site->lodestoneReplacement) site->lodestoneReplacement->completedWork=1;
@@ -12725,10 +12792,14 @@ void World::tickProduction(Unit& u, float dt) {
     // Production queued after a boarding request must not overtake it either.
     if(!u.orders.empty() && u.orders.front().load &&
        !u.orders.front().transportProductionAhead)return;
+    // A conjurer works one job at a time, as retail runs one mission: while
+    // it builds or helps elsewhere (buildSiteId) its own output waits, held
+    // (protectedSite keeps it from decaying) rather than growing unattended.
+    if (!u.type->isStructure() && u.buildSiteId) return;
     const UnitType* t = u.buildQueue.front();
     if (!buildAllowed(t)) return;
     const int producerId=u.id, player=u.player;
-    const int32_t total=std::max(1,truncSat32(t->buildTime/std::max(u.type->workerTime,0.01f)*kTick+0.5f));
+    const int32_t total=productionTotal(u,t);
     Unit* site=u.productionSiteId ? unit(u.productionSiteId) : nullptr;
     if (u.productionSiteId && (!site || !site->alive() || (site->hp<=Fixed() && !site->retailSite) || site->player!=player)) {
         u.productionSiteId=0; u.buildProgress=0; u.buildFraction=0;
@@ -12753,6 +12824,7 @@ void World::tickProduction(Unit& u, float dt) {
         groundMove(*site);
         site->flightSectorX=spawnX.v>>23;site->flightSectorZ=spawnZ.v>>23;
         site->underConstruction=site->buildBegun=true;
+        site->productionOwner=producerId;
         site->hp=Fixed::fromFloat(t->maxHp*0.05f);
         if (players_[size_t(player)].retailResources) initializeRetailSite(*site,producerId);
         unit(producerId)->productionSiteId=siteId;
@@ -12804,10 +12876,34 @@ void World::tickProduction(Unit& u, float dt) {
         const double cost=double(t->buildCost)/double(total);
         const double share=tm.constructionShare(cost);
         // Work in 1/65536 of a tick; a full share is exactly one tick, as before.
-        uint32_t step=share>=1 ? 65536u : uint32_t(share*65536.0);
-        // Never buy past the end of the build.
-        if (total-producer->buildProgress==1) step=std::min(step,65536u-producer->buildFraction);
-        if (!step) return;
+        const uint32_t step=share>=1 ? 65536u : uint32_t(share*65536.0);
+        if (!workProduction(*producer,*site,t,step)) return;
+    }
+    finishProduction(producerId,*site);
+}
+
+int32_t World::productionTotal(const Unit& producer,const UnitType* t) const {
+    return std::max(1,truncSat32(t->buildTime/std::max(producer.type->workerTime,0.01f)*kTick+0.5f));
+}
+
+// The product's one progress: the producer's buildProgress + buildFraction,
+// in ticks of the PRODUCER's work. Its own tickProduction adds `step` (a full
+// tick when it can afford one) and every helper adds its own work converted
+// to these units (tickConstruction), so helpers really finish the unit
+// sooner. Mana is paid per unit of progress -- buildcost over the whole
+// count -- whoever does the work, so the total stays the buildcost.
+// True when the product is complete (its hp then corrected to full).
+bool World::workProduction(Unit& producer,Unit& site,const UnitType* t,uint32_t step) {
+    const int32_t total=productionTotal(producer,t);
+    const Fixed work=Fixed::fromFloat(t->maxHp*0.95f/float(total));
+    // Never buy past the end of the build. (Alone, the producer is only ever
+    // clamped on its last tick, exactly as before helpers shared the count.)
+    const int64_t left=int64_t(total-producer.buildProgress)*65536-producer.buildFraction;
+    if (left>0) {
+        step=uint32_t(std::min<int64_t>(step,left));
+        if (!step) return false;
+        Player& tm=players_[size_t(producer.player)];
+        const double cost=double(t->buildCost)/double(total);
         tm.payMana(std::min(tm.mana,step==65536u ? cost : cost*double(step)/65536.0));
         // Grow the site by what the cumulative work says it should have, so a run
         // of partial ticks adds exactly `work` per whole tick and the completion
@@ -12815,22 +12911,36 @@ void World::tickProduction(Unit& u, float dt) {
         const auto grown=[&](int64_t ticks,uint32_t fraction) {
             return int64_t(work.v)*ticks+((int64_t(work.v)*fraction)>>16);
         };
-        const int64_t before=grown(producer->buildProgress,producer->buildFraction);
-        const uint32_t fraction=producer->buildFraction+step;
-        producer->buildProgress+=int32_t(fraction>>16);
-        producer->buildFraction=uint16_t(fraction&0xffffu);
-        const int64_t after=grown(producer->buildProgress,producer->buildFraction);
-        site->hp=fxMin(Fixed::fromFloat(t->maxHp),site->hp+Fixed::raw(int32_t(after-before)));
-        emitConstruction(*site,true);
-        if (producer->buildProgress<total) return;
-        // Correct accumulated fixed-point rounding without undoing combat damage.
-        const Fixed rounding=Fixed::fromFloat(t->maxHp)-
-            (Fixed::fromFloat(t->maxHp*0.05f)+Fixed::raw(int32_t(int64_t(work.v)*total)));
-        site->hp=fxMin(Fixed::fromFloat(t->maxHp),site->hp+rounding);
+        const int64_t before=grown(producer.buildProgress,producer.buildFraction);
+        const uint64_t fraction=uint64_t(producer.buildFraction)+step;
+        producer.buildProgress+=int32_t(fraction>>16);
+        producer.buildFraction=uint16_t(fraction&0xffffu);
+        const int64_t after=grown(producer.buildProgress,producer.buildFraction);
+        site.hp=fxMin(Fixed::fromFloat(t->maxHp),site.hp+Fixed::raw(int32_t(after-before)));
+        emitConstruction(site,true);
     }
+    if (producer.buildProgress<total) return false;
+    // Correct accumulated fixed-point rounding without undoing combat damage.
+    const Fixed rounding=Fixed::fromFloat(t->maxHp)-
+        (Fixed::fromFloat(t->maxHp*0.05f)+Fixed::raw(int32_t(int64_t(work.v)*total)));
+    site.hp=fxMin(Fixed::fromFloat(t->maxHp),site.hp+rounding);
+    return true;
+}
+
+// The product is finished, once: the producer is freed (its next item may
+// start this same tick) and the output is released with the producer's exit
+// step / PARK and rally, exactly once. An output that already holds orders
+// keeps them instead: they can only be the player's (or a script's), given
+// while it was unfinished, and the release must not override them.
+void World::finishProduction(int producerId,Unit& finished) {
+    Unit* site=&finished;
+    const UnitType* t=site->type;
+    Unit* producer=unit(producerId);
     const int id=site->id;
     const float sx=site->x.toFloat(),sz=site->z.toFloat();
+    const bool commanded=!site->orders.empty();
     site->underConstruction=false;
+    site->productionOwner=0;
     producer->productionSiteId=0;
     producer->buildProgress=0;producer->buildFraction=0;
     retireProductionItem(*producer,0);
@@ -12864,7 +12974,9 @@ void World::tickProduction(Unit& u, float dt) {
     const Unit* factory=unit(producerId);
     const bool getBuilt=factory && factory->type->isStructure();
     bool hasExitStep=false;
-    if (getBuilt) {
+    if (commanded) {
+        // Orders it was given while unfinished stand: no exit step, PARK or rally.
+    } else if (getBuilt) {
         if (factory->rally.empty()) parkProductionOutput(id,producerId);
     } else if (float gx = sx, gz = sz + float(productionExitDistance(t)); exitSpot(t, gx, gz, gx, gz,id)) {
         order(id, gx, gz, false);
@@ -12875,7 +12987,7 @@ void World::tickProduction(Unit& u, float dt) {
     // itself, so they describe what its OUTPUT should do. Behind the exit step where
     // there is one; a factory's output, flyers included, takes the rally alone, as
     // GetBuilt copies it with nothing before it.
-    if (const Unit* pb = unit(producerId))
+    if (const Unit* pb = unit(producerId); pb && !commanded)
         for (const Order& ro : pb->rally) {
             Unit* nu = unit(id);
             if (!nu) break;
@@ -12911,7 +13023,7 @@ void World::tickProduction(Unit& u, float dt) {
     // A rally whose every entry was dropped (its attack targets are dead) hands
     // over nothing: park instead, as GetBuilt does when there is nothing to copy,
     // rather than leave the output standing on the pad.
-    if (const Unit* pb=unit(producerId),*nu=unit(id); getBuilt && pb && !pb->rally.empty() && nu && nu->orders.empty())
+    if (const Unit* pb=unit(producerId),*nu=unit(id); getBuilt && !commanded && pb && !pb->rally.empty() && nu && nu->orders.empty())
         parkProductionOutput(id,producerId);
     // Legion routes the automatic exit as its own mission (LegionMission::
     // Exit): the birthplace lets a held-up exit finish once clear of it.
@@ -15582,6 +15694,7 @@ uint64_t World::stateHash() const {
                 mix(a.stage);mix(uint32_t(a.lastX));mix(uint32_t(a.lastZ));
             }
             if (order.reclaimAreaApproach) mix(0x52434c4d41505052ull);
+            if (order.helpSite) { mix(0x48454c50u); mix(uint32_t(order.helpSite)); }
             if (order.reclaimFeat && (order.mission.stage || order.mission.pending)) {
                 mix(0x52434c4d50454e44ull);mix(order.mission.pending);
                 mix(order.mission.stage);mix(order.mission.waitMask);mix(order.mission.deadline);
