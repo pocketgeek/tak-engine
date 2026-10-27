@@ -644,11 +644,12 @@ target underneath.
 - **Guarding with a builder**: a mobile builder told to **Guard** a unit
   (the **G** key, or a right-click on one of your finished, undamaged units)
   follows it and lends a hand. If the guarded unit is damaged, the builder
-  repairs it (allies too); if the guarded unit is itself unfinished, it helps
-  build it; otherwise it helps with what the guarded unit is building,
-  producing, helping with or repairing. The help goes ahead of the guard order,
-  which resumes when the job is done, and it ignores distance. A guarding
-  builder looks for work every half second to one second (15 to 29 game ticks).
+  repairs it; if the guarded unit is itself unfinished, it helps build it;
+  otherwise it helps with what the guarded unit is building, producing,
+  helping with or repairing (an ally's unit too). The help goes ahead of the
+  guard order, which resumes when the job is done, and it ignores distance. A
+  guarding builder looks for work every half second to one second (15 to 29
+  game ticks).
   A **flying builder** (Flying Builder, Dark Priest, Darkest Priest, Thirsha)
   guards the same way, and also helps a flying producer such as a Thirsha and
   joins a flyer's repair. It looks every half second (15 game ticks) while it
@@ -772,8 +773,8 @@ health. An idle priest starts on a body lying close by of its own accord.
   mana recovers.
 - Raising respects the unit cap and a unit's own limit (such as one dragon),
   as in the original: a raising that would go past either ends without raising
-  anything and leaves the body, and a priest whose side is already at the cap
-  does not start one.
+  anything and leaves the body, and a priest whose side is already at either
+  limit does not start one.
 
 ### Repairing and healing
 
@@ -784,8 +785,9 @@ cost, then carry on with the same patrol. They do not follow a unit that leaves
 the area, and they leave unfinished buildings to an explicit build or help
 order.
 
-A mobile builder told to **Guard** a unit also repairs it when it is damaged,
-allies' units included (see [Building](#building)).
+A mobile builder told to **Guard** one of your units also repairs it when it
+is damaged, and helps repair whatever that unit is repairing, an ally's unit
+included (see [Building](#building)).
 
 Damaged units and buildings also repair themselves slowly, for free, at the rate
 the original game's data sets: most mobile units are back to full health in
@@ -845,9 +847,9 @@ if it can reach it:
 
 **Guards defend what they guard.** As in the original, an armed unit on
 **Guard** (ground or flying) goes after whatever attacks the unit it guards,
-however far away the attacker is shooting from and whatever its own stance
-(Defensive and Passive included), then goes back to guarding once the attacker
-is dead. An unarmed guard, such as a builder, keeps helping and repairing
+if its weapons can hit it, however far away the attacker is shooting from
+and whatever its own stance (Defensive and Passive included), then goes back to
+guarding once the attacker is dead. An unarmed guard, such as a builder, keeps helping and repairing
 instead.
 
 **Units that are never auto-targeted.** As in the original, your units do not
