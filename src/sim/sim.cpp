@@ -10828,8 +10828,11 @@ void World::tickAbilities(float dt) {
         Unit& u = units_[i];
 
         // A revive is a CHANNEL, not an instant (retail order-0xA task states:
-        // work = target buildtime / caster workertime, x0.3 for animate; mana
-        // drains across the channel at the same total as the build cost).
+        // work = target buildtime / caster workertime, x0.3 for animate). The
+        // mana drain is OURS: retail's task (0x41fe70) never pays or requests
+        // mana, it only scales each tick's work by the player's allocation
+        // (resource +8). A stalled channel requests nothing, which matches
+        // retail's -N; see docs/mana-hud-and-ai-placement-2026-09-20.md.
         if (u.reviveTarget) {
             Unit* c = unit(u.reviveTarget);
             if (!c || !isCorpse(*c)) { u.reviveTarget = 0; continue; }

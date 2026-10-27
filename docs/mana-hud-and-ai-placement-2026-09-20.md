@@ -104,3 +104,36 @@ The history is still not folded into `stateHash`: only the server's AI reads
 it, from its own World, and it is built only from hashed sim arithmetic, so a
 seed reproduces it exactly; clients and replays receive the AI's commands, not
 its inputs. This is how the paid history was treated.
+
+## 2026-10-26: retail's revive requests nothing -- and pays nothing
+
+The question was whether a revive that stalls on low mana should still add
+its request to the -N. Retail's resurrect/animate task is the state machine
+at `0x41fe70` (jump table `0x42079c`, ten states). It never calls the
+construction request path `0x429af0` (its callers are `0x402027`,
+`0x405b81`, `0x406074`, `0x41f69d`, `0x41fcdb` and the repair wrapper
+`0x429d85`), and it neither writes the resource object's request total
+(`+0x10`) nor subtracts from its store (`[res]`): the function has no
+`fsub`/`fadd` on either. The completion notifier it calls at `0x4206c1`
+(`0x429990`) does not touch the resource object either.
+
+What it does with the economy:
+
+- State 1 (`0x4201e9..0x420257`) sets the channel's work counter `+0x52` to
+  `65536 x buildtime(target) / (workertime(caster) / 30)`, times 0.3
+  (`0x5ebaa0`) when `+0x56` is clear.
+- State 7 (`0x42036b..0x42038f`) subtracts `ftol(allocation x 65536)` each
+  tick, the allocation being the resource object's `+8` (stored / demand,
+  capped at 1). So a starved economy slows a revive -- it stops when the
+  store is empty -- but the revive itself costs nothing and asks for
+  nothing. The same state also sets the caster's `+0xcc` cloak block to
+  `now + 300`.
+- State 8 (`0x4204af..0x42050d`) abandons the task for a computer player
+  whose allocation is under 0.7 (`0x5ebb10`).
+
+So retail does not count a revive in the -N, stalled or not, and ours is
+left as it is: a revive debits `buildCost` (x0.3 for animate) across the
+channel and requests exactly what it pays, so a stalled one requests
+nothing. That charge is ours, not retail's -- retail revives are free and
+only paced by the allocation -- and is recorded here as a known difference,
+not changed in this pass.
