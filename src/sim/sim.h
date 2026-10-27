@@ -732,6 +732,11 @@ struct alignas(64) Order {
     // Shift-patrol B" laps A<->B, and Shift-patrols B, C lap start, B, C.
     // Hashed when set; ordinary patrol() loops never set it.
     bool patrolOpen = false;
+    // A RepairUnit a guarding builder put ahead of its guard (tickGuardHelp).
+    // Like retail's RepairUnit, it follows the target: while out of reach
+    // its approach is re-aimed at where the target is now (tickRepair).
+    // Hashed when set.
+    bool guardRepair = false;
     bool transportUnloadReleasePending = false; // unload's one-tick empty mission tail
     bool transportUnloadTransferDeferred = false; // approach arrival wakes unload next tick
     // Retail Move_Ground_Formation (402880) pushed ahead of a Move_Ground:
@@ -841,6 +846,7 @@ TAK_ORDER_LINE(hasSegment, 0);
 TAK_ORDER_LINE(issuedTick, 1); TAK_ORDER_LINE(convoyTick, 1); TAK_ORDER_LINE(controller, 1);
 TAK_ORDER_LINE(park, 1); TAK_ORDER_LINE(buildRectangle, 1); TAK_ORDER_LINE(flightGoal, 1);
 TAK_ORDER_LINE(missionTarget, 1); TAK_ORDER_LINE(patrolRepair, 1); TAK_ORDER_LINE(patrolOpen, 1);
+TAK_ORDER_LINE(guardRepair, 1);
 TAK_ORDER_LINE(transportUnloadReleasePending, 1); TAK_ORDER_LINE(transportUnloadTransferDeferred, 1);
 TAK_ORDER_LINE(formationLevel, 1); TAK_ORDER_LINE(stationFree, 1); TAK_ORDER_LINE(missionRadius, 1);
 TAK_ORDER_LINE(orderSerial, 4);

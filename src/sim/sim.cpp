@@ -1778,6 +1778,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
             o.repairTarget = tmpl.repairTarget;
             o.helpSite = tmpl.helpSite;
             o.patrolRepair = tmpl.patrolRepair;
+            o.guardRepair = tmpl.guardRepair;
             o.patrolOpen = tmpl.patrolOpen;
             o.buildRectangle = tmpl.buildRectangle;
             o.buildX = tmpl.buildX; o.buildZ = tmpl.buildZ;
@@ -9631,14 +9632,20 @@ void World::tickGuardHelp(Unit& u) {
     const Unit* g=unit(u.orders[end].targetId);
     if (!g || !g->alive() || !g->type) return;   // tickCombat retires the guard
     int help=0,mend=0;
-    if (canRepairUnit(u,*g)) mend=g->id;
+    // A repair the guard could never walk to (a damaged flyer over water or
+    // a cliff) is not taken on: the guard just follows. Retail's RepairUnit
+    // has no give-up of its own; this keeps the guard from parking forever.
+    auto reachable=[&](const Unit& t) {
+        return pathExists(u.type,t.x.toFloat(),t.z.toFloat(),u.x.toFloat(),u.z.toFloat());
+    };
+    if (canRepairUnit(u,*g)) { if (reachable(*g)) mend=g->id; }
     else if (canHelpBuild(u,*g)) help=g->id;
     else if (!g->type->canFly && g->buildSiteId) {
         if (const Unit* s=unit(g->buildSiteId); s && s->buildBegun && canHelpBuild(u,*s)) help=s->id;
     } else if (!g->type->canFly && g->productionSiteId && !g->buildQueue.empty()) {
         if (const Unit* s=unit(g->productionSiteId); s && canHelpBuild(u,*s)) help=s->id;
     } else if (g->repairId) {
-        if (const Unit* t=unit(g->repairId); t && canRepairUnit(u,*t)) mend=t->id;
+        if (const Unit* t=unit(g->repairId); t && canRepairUnit(u,*t) && reachable(*t)) mend=t->id;
     }
     if (!help && !mend) { u.guardHelpTick=tickCounter_+15+pathRand(15); return; }
     u.guardHelpTick=tickCounter_+1;
@@ -9652,6 +9659,7 @@ void World::tickGuardHelp(Unit& u) {
     cancelPath(u);u.routeStamp=0;
     if (mend) {
         repair(u.id,mend,true);
+        if (!u.orders.empty() && u.orders.back().repairTarget==mend) u.orders.back().guardRepair=true;
     } else {
         const Unit& s=*unit(help);
         u.buildSiteId=help;
@@ -9762,10 +9770,15 @@ void World::tickRepair(Unit& b, float dt) {
         if (!b.orders.empty()) {
             const size_t end=currentLeg(b.orders);
             Order job=b.orders[end];
-            // Only automatic patrol detours follow a moving ally. Refresh its
-            // approach at most once per second, keeping the saved patrol tail.
-            if (job.patrolRepair && (uint32_t(b.id)+tickCounter_)%30==0 &&
-                (fxAbs(job.x-t->x)>=Fixed::fromInt(16) || fxAbs(job.z-t->z)>=Fixed::fromInt(16))) {
+            // Automatic patrol detours and a guard's repair follow a moving
+            // ally (retail RepairUnit measures from the target's current
+            // position, 0x40733b). Refresh the approach at most once per
+            // second, keeping the saved patrol or guard tail. A guard's
+            // repair also re-aims when it has stopped short (the target
+            // drifted a few pixels off its approach after the work began).
+            const bool moved=fxAbs(job.x-t->x)>=Fixed::fromInt(16) || fxAbs(job.z-t->z)>=Fixed::fromInt(16);
+            const bool stalled=job.guardRepair && b.speed<=Fixed::fromFloat(0.1f) && (job.x!=t->x || job.z!=t->z);
+            if ((job.patrolRepair || job.guardRepair) && (uint32_t(b.id)+tickCounter_)%30==0 && (moved || stalled)) {
                 job.x=t->x;job.z=t->z;job.hasSegment=false;job.flightGoal.reset();
                 cancelPath(b);b.routeStamp=0;
                 b.orders.erase(b.orders.begin(),b.orders.begin()+long(end));b.orders.front()=job;
@@ -9778,7 +9791,8 @@ void World::tickRepair(Unit& b, float dt) {
     // (40749b -> 4d4ab0), before facing and before any affordable repair work.
     startWorkAnimation(b,t->x,t->z);
     // ...but never the REPAIR order itself: that entry is the job.
-    if (!b.orders.empty() && b.orders[currentLeg(b.orders)].patrolRepair) {
+    if (!b.orders.empty() && (b.orders[currentLeg(b.orders)].patrolRepair ||
+                              b.orders[currentLeg(b.orders)].guardRepair)) {
         cancelPath(b);
         const size_t end=currentLeg(b.orders);
         if (b.orders[end].repairTarget==b.repairId)
@@ -15762,6 +15776,7 @@ uint64_t World::stateHash() const {
             }
             if (order.reclaimAreaApproach) mix(0x52434c4d41505052ull);
             if (order.helpSite) { mix(0x48454c50u); mix(uint32_t(order.helpSite)); }
+            if (order.guardRepair) { mix(0x47524550u); mix(uint32_t(order.repairTarget)); }
             if (order.reclaimFeat && (order.mission.stage || order.mission.pending)) {
                 mix(0x52434c4d50454e44ull);mix(order.mission.pending);
                 mix(order.mission.stage);mix(order.mission.waitMask);mix(order.mission.deadline);

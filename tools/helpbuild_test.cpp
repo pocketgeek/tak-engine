@@ -374,6 +374,35 @@ static void guardHelps() {
         check(w.unit(hurt)->hp.toFloat() >= 299.9f && !w.unit(g3)->orders.empty() && w.unit(g3)->orders.front().guard,
               "...to full, then the guard resumes");
     }
+    {   // a damaged guarded unit that walks away: the guard's repair follows it
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        w.spawn(&ty.factory, 300, 300, 0.0f, 0);       // mana storage
+        const int hurt = w.spawn(&ty.sol, 1000, 1000, 0.0f, 0);
+        w.unit(hurt)->hp = Fixed::fromInt(50);
+        const int g = w.spawn(&ty.builder, 1300, 1000, 0.0f, 0);
+        command(w, tak::net::Cmd::Guard, g, hurt);
+        check(guardLatch(w, g, 3, hurt, true) >= 0, "a damaged guarded unit about to walk off is repaired");
+        tak::net::Command mv;
+        mv.kind = tak::net::Cmd::Move; mv.player = 0; mv.unitId = hurt; mv.x = 1000; mv.z = 1900;
+        applyCommand(w, emptyRegistry(), mv);
+        float worst = 0;
+        for (int i = 0; i < 900; ++i) {
+            w.tick(1.0f / 30.0f);
+            const Unit* a = w.unit(g);
+            const Unit* b = w.unit(hurt);
+            if (i < 120) continue;                       // the first catch-up
+            const float dx = (a->x - b->x).toFloat(), dz = (a->z - b->z).toFloat();
+            worst = std::max(worst, std::sqrt(dx * dx + dz * dz));
+        }
+        std::snprintf(d, sizeof d, "worst distance %.0f, hp %.0f", worst, w.unit(hurt)->hp.toFloat());
+        check(worst < 250.0f, "...the guard keeps up with it while it moves", d);   // was ~1300
+        check(w.unit(hurt)->hp.toFloat() >= 299.9f, "...and repairs it to full once in reach", d);
+        for (int i = 0; i < 3; ++i) w.tick(1.0f / 30.0f);
+        const Unit* gu = w.unit(g);
+        check(!gu->repairId && !gu->orders.empty() && gu->orders.front().guard &&
+              gu->orders.front().targetId == hurt, "...then the guard order is in front again");
+    }
     {   // negative cases: idle guarded unit, off-menu limited guard, enemy-free
         auto ownedWorld = makeWorld();
         World& w = *ownedWorld;
