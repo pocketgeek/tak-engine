@@ -4635,6 +4635,7 @@ void World::guard(int unitId, int targetId, bool queue) {
         cancelPath(*u);
         u->routeStamp = -1;
         u->guardHelpTick = 0;   // a fresh guard looks for work at once
+        u->guardHeard = t->attackedTick;   // nor hears an alarm older than itself
     }
     Order o;
     o.targetId = targetId;
@@ -6366,6 +6367,24 @@ void World::slotHitResponse(Unit& victim,const Unit& attacker) {
     }
 }
 
+void World::guardSlotRetarget(Unit& u,const Unit& attacker) {
+    if (!u.type || u.type->weapons.empty() || !attacker.alive() || !attacker.type) return;
+    syncSlotMode(u);
+    if (!u.slotAuto) return;
+    // Follow_Ground keeps a current target that is inside its minimum range
+    // (52adf0) out; VTOL_Follow tests only 52ad60.
+    const bool flying=u.type->canFly;
+    for (int s=0;s<int(std::min<size_t>(3,u.type->weapons.size()));++s) {
+        if (!(u.slotAuto>>s&1)) continue;
+        if (u.type->weapons[size_t(s)].commandFire) continue;
+        if (u.type->weaponSwitching && s!=u.weaponSlot) continue;
+        if (const Unit* t=unit(u.slotTarget[size_t(s)]);
+            t && t->alive() && t->hp>Fixed() && (flying || !slotInsideMinRange(u,*t,s)) &&
+            slotInRange(u,*t,s) && slotClearShot(u,*t,s) && !slotBadTarget(u,s,*t)) continue;
+        if (u.slotTarget[size_t(s)]!=attacker.id) setSlotTarget(u,s,attacker.id);
+    }
+}
+
 // 40f411..40fb92 host: the per-slot facts, the selected slot's target (the
 // 51a9a0 lookup) and the enemy/ally counts around it, from the owner's 7-tick
 // visible lists by live centre distance (411ae0/411dd0).
@@ -6425,17 +6444,17 @@ void World::retailAiWeaponSwitch(Unit& u) {
     if (choice>=0) switchWeaponSlot(u,choice,false);
 }
 
-bool World::retailIssueAutoAttack(Unit& u,int targetId,bool forceReturn) {
+bool World::retailIssueAutoAttack(Unit& u,int targetId,bool forceReturn,bool forced) {
     if (targetId==u.id) return false;
-    if (u.moveState==0 && !forceReturn) return false;   // Defensive/Hold Position: part (b) only
-    if (u.fireState==0) return false;                   // Hold Fire
+    if (u.moveState==0 && !forceReturn && !forced) return false;   // Defensive/Hold Position: part (b) only
+    if (u.fireState==0 && !forced) return false;                   // Hold Fire
     const Unit* t=unit(targetId);
     // 4de530 kind 3 (no attack mission for this pair) -> the closest host test.
     if (!t || !canAttackTarget(u,*t)) return false;
     const RetailGroundPoint pos{int16_t(u.x.floorInt()),int16_t(u.z.floorInt())};
     Order attack{Fixed(),Fixed(),targetId};
-    attack.autoTarget=attack.goal=true;attack.issuedTick=tickCounter_;
-    if (u.type->canMove && (forceReturn || u.moveState==1)) {
+    attack.autoTarget=!forced;attack.goal=true;attack.issuedTick=tickCounter_;
+    if (u.type->canMove && (forceReturn || (u.moveState==1 && !forced))) {
         // [Attack(leash, origin), return Move to the hit position (response
         // mode 1), the previous head].
         Order back{Fixed::fromInt(pos.x),Fixed::fromInt(pos.z),0};
@@ -6462,6 +6481,9 @@ bool World::retailIssueAutoAttack(Unit& u,int targetId,bool forceReturn) {
 
 void World::retailHitResponse(Unit& e,const Unit* a,int dmgType) {
     if (dmgType==12 || dmgType==13) return;   // 51a2f2/51a333 never call 409a50
+    // 409a59: event 0x10 to the victim's listeners (519a90) before any gate,
+    // attacker or not; a guard hears it through attackedTick (guardAlarm).
+    e.attackedTick=tickCounter_+1;
     if (!e.alive() || !e.type || e.hp<=Fixed()) return;
     if (a && (!a->alive() || !a->type || a->hp<=Fixed())) a=nullptr;
     // 409a8a: an AI Monarch hit, attacker or not, rolls the threat deadline;
@@ -9660,7 +9682,8 @@ void World::tickReclaim(Unit& b) {
 // the guarded unit itself: damaged and repairable -> RepairUnit on it; its own
 // unfinished body (HelpBuild eligible) -> HelpBuild on it. Else what it is
 // working on now: the target of its MobileBuild / BuildingBuild / HelpBuild,
-// or of its RepairUnit. The job goes AHEAD of the guard, which stays queued
+// or of its RepairUnit. Before both, any guard (armed or not) answers its
+// guarded unit's attacker (guardDefend). The job goes AHEAD of the guard, which stays queued
 // under it and resumes when the job ends; nothing gates on distance. A look
 // that finds nothing sleeps 15 + rand(15) ticks (the mission's own wait; the
 // draw is the sim's one game RNG, as every retail mission's is); after an
@@ -9677,11 +9700,18 @@ void World::tickGuardHelp(Unit& u) {
         u.underConstruction || u.embarked() || u.incapacitated() || u.repeatType ||
         u.buildSiteId || u.repairId || u.reclaimId) return;
     if (u.type->canFly) { tickFlyingGuard(u); return; }
-    if (!u.type->isBuilder) return;
     const size_t end=currentLeg(u.orders);
-    if (!u.orders[end].guard || tickCounter_<u.guardHelpTick) return;
+    if (!u.orders[end].guard) return;
     const Unit* g=unit(u.orders[end].targetId);
     if (!g || !g->alive() || !g->type) return;   // tickCombat retires the guard
+    // Stage 1 sleeps on wait mask 0x718: the guarded unit's event 0x10 wakes
+    // the look at once, and the look answers it first.
+    const bool alarm=guardAlarm(u,*g);
+    if (alarm) {
+        u.guardHeard=g->attackedTick;
+        if (guardDefend(u,*g)) { u.guardHelpTick=tickCounter_+1; return; }
+    }
+    if (!u.type->isBuilder || (!alarm && tickCounter_<u.guardHelpTick)) return;
     int help=0,mend=0;
     guardHelpPick(u,*g,help,mend);
     if (!help && !mend) { u.guardHelpTick=tickCounter_+15+pathRand(15); return; }
@@ -9714,11 +9744,10 @@ void World::guardHelpPick(Unit& u, const Unit& g, int& help, int& mend) {
     }
 }
 
-// Puts the guard's job ahead of its guard order, which stays queued under it.
-void World::guardInsertJob(Unit& u, int help, int mend) {
+// The guard's step aside for a job put ahead of it: the guard stays one
+// order (its route corners belong to the old walk) at the front.
+Order& World::guardStandAside(Unit& u) {
     const size_t end=currentLeg(u.orders);
-    // Keep the guard as one order (its route corners belong to the old
-    // walk), and put the job in front of it.
     u.orders.erase(u.orders.begin(),u.orders.begin()+long(end));
     Order& guard=u.orders.front();
     guard.hasSegment=false;guard.flightGoal.reset();guard.controller=0;
@@ -9726,6 +9755,37 @@ void World::guardInsertJob(Unit& u, int help, int mend) {
     // VTOL_Follow drops its controller (4d4d40(0)) and clears its wait mask
     // before the insert: it wakes only at the dispatcher's sleep.
     if (u.type->canFly) guard.mission.waitMask=0;
+    return guard;
+}
+
+// The guarded unit's attacker, the first check of a look of Follow_Ground
+// (stage 1, 0x40814b) and VTOL_Follow (stage 2, 0x418bb1), run only when the
+// look woke on event 0x10 (409a50 on the guarded unit; emulated). The
+// attacker is the guarded unit's last (+0xf8, our lastHitBy): alive, not
+// dying, not allied to the guard and not of a type in the guard's
+// notargetcategory (UnitDef +0x9a). Then 4d7de0(guard, attacker, explicit 1,
+// 0, auto 0, 0): with an attack mission for the pair (4de530 kind 3) a plain
+// attack goes ahead of the guard -- whatever the guard's Hold Fire or Hold
+// Position, with no leash and no return move -- and the guard resumes when
+// it ends (the look returns 3: the dispatcher's 15 + rand(30) sleep). Without
+// one, a guard not on Hold Fire hands the attacker to its auto slots
+// (guardSlotRetarget) and the look goes on. Whether the attack went in.
+bool World::guardDefend(Unit& u, const Unit& g) {
+    const Unit* a=g.lastHitBy ? unit(g.lastHitBy) : nullptr;
+    if (!a || !a->alive() || a->hp<=Fixed() || !a->type || allied(a->player,u.player) ||
+        categoryMatch(u.type->noTargetCats,*a->type)) return false;
+    if (a->id==u.id || !canAttackTarget(u,*a)) {
+        if (u.fireState!=0) guardSlotRetarget(u,*a);
+        return false;
+    }
+    Order& guard=guardStandAside(u);
+    if (u.type->canFly) guard.mission.deadline=tickCounter_+15+pathRand(30);
+    return retailIssueAutoAttack(u,a->id,false,true);
+}
+
+// Puts the guard's job ahead of its guard order, which stays queued under it.
+void World::guardInsertJob(Unit& u, int help, int mend) {
+    guardStandAside(u);
     std::vector<Order> rest;rest.swap(u.orders);
     cancelPath(u);u.routeStamp=0;
     if (mend) {
@@ -9767,9 +9827,10 @@ void World::guardInsertJob(Unit& u, int help, int mend) {
 //    type's weapons, as the AI port does); wait mask 0x718, and a look again
 //    after a fixed 15 ticks (no draw). The point follows the guarded unit
 //    from look to look; reaching it wakes the look at once.
-// Not ported: the guarded unit's attacker check (event 0x10, guarded +0xf8),
-// the landed step-out (unit +0x12a >= 5) and the stage-2 attack scan
-// (51d1e0), whose work World's target acquisition does for a guard.
+//  - first in stage 2, a look woken by the guarded unit's event 0x10 answers
+//    its attacker (guardDefend), before the help and repair look;
+// Not ported: the landed step-out (unit +0x12a >= 5) and the stage-2 attack
+// scan (51d1e0), whose work World's target acquisition does for a guard.
 void World::tickFlyingGuard(Unit& u) {
     const size_t end=currentLeg(u.orders);
     if (!u.orders[end].guard) return;
@@ -9779,10 +9840,11 @@ void World::tickFlyingGuard(Unit& u) {
     // The dispatcher's wake: a new mission at once, then the look's deadline
     // (the mission's own, so a later guard never inherits it) or a controller
     // event the mission waits on.
-    const uint32_t events=o.mission.pending&o.mission.waitMask&0x700u;
+    const uint32_t events=(o.mission.pending|(guardAlarm(u,*g) ? 0x10u : 0u))&o.mission.waitMask&0x710u;
     const bool fresh=o.mission.stage==0 && !o.mission.waitMask;
     if (!fresh && tickCounter_<o.mission.deadline && !events) return;
     o.mission.pending&=~events;
+    if (events&0x10u) u.guardHeard=g->attackedTick;
     o.mission.waitMask=0;
     auto install=[&](RetailFlightVector point) {
         // 4e40e0 + 4e4540(0x80); 4d4d40 clears the pending controller events.
@@ -9809,7 +9871,7 @@ void World::tickFlyingGuard(Unit& u) {
         o.mission.deadline=0xffffffffu;
         return;
     }
-    bool woken=events!=0;
+    bool woken=(events&0x700u)!=0,attacked=(events&0x10u)!=0;
     if (o.mission.stage==0) {
         if (auto script=unitScripts_.find(u.id);script!=unitScripts_.end() && !script->second.activated) {
             script->second.activated=true;notifyUnitScript(u,"Activate");
@@ -9817,8 +9879,9 @@ void World::tickFlyingGuard(Unit& u) {
         notifyUnitScript(u,"BeginFlight");
         o.guardOrbitAngle=uint16_t(pathRand(0x10000));
         o.mission.stage=2;
-        woken=false;
+        woken=attacked=false;
     }
+    if (attacked && guardDefend(u,*g)) return;   // `o` is not read past this point
     int help=0,mend=0;
     if (u.type->isBuilder) guardHelpPick(u,*g,help,mend);
     if (help || mend) {
@@ -11166,6 +11229,20 @@ void World::tickAbilities(float) {
     auto retire = [&](Unit& c) { retireCorpse(c); };
     struct Revive { const UnitType* type; float x, z; int player; bool animate; };
     std::vector<Revive> revives;
+    // Revives finished this tick, per player: they spawn after the loop, so
+    // the limits below count them in.
+    std::vector<int> pendingRevives(players_.size(), 0);
+    auto reviveRefused = [&](int player, const UnitType* out) {
+        if (!out || player < 0 || player >= int(players_.size())) return true;
+        if (unitCap_ > 0 && players_[size_t(player)].unitCount + pendingRevives[size_t(player)] >= unitCap_)
+            return true;
+        if (out->totalAllowed <= 0) return false;
+        int n = 0;
+        for (const auto& r : revives) n += r.player == player && r.type == out;
+        for (const auto& o : units_)
+            if (o.alive() && o.type == out && o.player == player) ++n;
+        return n >= out->totalAllowed;
+    };
     const float kR = 56.0f;
 
     // COLLECT THE CORPSES ONCE, not once per caster.
@@ -11272,10 +11349,23 @@ void World::tickAbilities(float) {
             if (u.reviveWork > 0) { blockCloak(u, 300); continue; }
             u.reviveTarget = 0;
             if (computerOwned(u.player) && double(allocation) < 0.7) continue;
+            // 0x406f0c creates the unit through 0x512060, which refuses one
+            // past the type's totalallowed or the player's unit limit: the
+            // revive ends unraised (UNITCHATTER_NOMOREUNITS) and the corpse
+            // stays. Earlier revives this tick count as raised (`pending`).
+            if (reviveRefused(u.player, out)) continue;
+            ++pendingRevives[size_t(u.player)];
             revives.push_back({out, c->x.toFloat(), c->z.toFloat(), u.player, animate});
             retire(*c);
             continue;
         }
+        // Ours, not retail (whose revive is only ever an order): the idle
+        // search. It takes up no revive the end would refuse -- a computer
+        // caster while its allocation is under 0.7 (the 0x406e79 abandon), any
+        // caster at its unit limit -- or it would take the same corpse up
+        // again on its next tick, for as long as the shortage lasted.
+        const bool casterIdle = !(computerOwned(u.player) &&
+            double(players_[size_t(u.player)].allocation()) < 0.7);
 
         // Corpses only -- collected once above, in ascending unit id.
         for (uint32_t ci : corpseIdx_) {
@@ -11286,15 +11376,16 @@ void World::tickAbilities(float) {
             if (dx * dx + dz * dz > kR * kR) continue;
             const FeatType* cd = corpseDef(c);
             if (!cd) continue;
-            if (u.type->canResurrect && c.player == u.player && cd->resurrectable) {
+            if (casterIdle && u.type->canResurrect && c.player == u.player && cd->resurrectable &&
+                !reviveRefused(u.player, c.type)) {
                 // Resurrect: 0.3 x the corpse's buildtime (retail 0x406c2e,
                 // +0x56 clear); the unit returns at 10% HP.
                 u.reviveTarget = c.id;
                 u.reviveMode = 1;
                 u.reviveWork = retailReviveWork(c.type->buildTime, u.type->workerTime, true);
                 break;
-            } else if (u.type->canAnimate && u.type->animateType &&
-                       cd->resurrectable) {
+            } else if (casterIdle && u.type->canAnimate && u.type->animateType &&
+                       cd->resurrectable && !reviveRefused(u.player, u.type->animateType)) {
                 // Animate (tarpries animatetype=MONGHOUL): ANY resurrectable
                 // corpse -- friend or foe -- rises as the caster's creature,
                 // at the animatetype's FULL buildtime (no 0.3: +0x56 is set)
@@ -16196,6 +16287,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t((u.cloakOn ? 1u : 0u) | (u.active ? 2u : 0u)));
         if (u.cloakBlockedUntil) { mix(0x434c4f4bu); mix(u.cloakBlockedUntil); }
         if (u.guardHelpTick) { mix(0x47554152u); mix(u.guardHelpTick); }
+        if (u.guardHeard) { mix(0x47484541u); mix(u.guardHeard); }
         if (u.reviveTarget) {
             mix(0x52455649u);mix(uint32_t(u.reviveTarget));mix(uint32_t(u.reviveWork));mix(uint8_t(u.reviveMode));
         }

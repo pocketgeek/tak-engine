@@ -1,5 +1,6 @@
 // helpbuild_test -- retail HelpBuild: shared production progress, assist
-// eligibility, and a guarding builder that helps (protocol 301).
+// eligibility, a guarding builder that helps (protocol 301), and a guard that
+// goes after whoever attacks what it guards (protocol 302).
 //
 // Retail (KINGDOMS.icd, emulated) keeps ONE remaining fraction per unfinished
 // unit (+0x108). Every worker -- the factory or conjurer making it and any
@@ -27,6 +28,14 @@
 // for every flyer an idle orbit around the guarded unit at 320 px (weapon
 // range + 160 when armed), a point controller accepting at 128 px whose angle
 // steps back by 0x4000 + rand(0x2000) on each arrival.
+//
+// The guarded unit's attacker (Follow_Ground stage 1 / VTOL_Follow stage 2,
+// first in the look): the hit response 409a50 sends the guarded unit's
+// listeners event 0x10; a guard's look woken by it takes the attacker from
+// guarded +0xf8 and, when it is an enemy the guard can attack and not of its
+// notargetcategory, puts an attack on it ahead of the guard (4d7de0 explicit:
+// past Hold Fire / Hold Position, no leash). Ours ignored it, so an attacker
+// out of the guard's acquisition range shot what it guarded unanswered.
 //
 // Every scenario uses synthetic types (no game data) on a flat map.
 
@@ -963,6 +972,117 @@ static void flyingGuardStarts() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// A guard answers its guarded unit's attacker.
+// ---------------------------------------------------------------------------
+struct DefendRun {
+    int firstHit = -1;        // tick the guarded unit was first hit
+    int answered = -1;        // tick the guard's front order became an attack on the attacker
+    bool guardKept = false;   // the guard order stayed queued under that attack
+    int killed = -1;          // tick the attacker died
+    bool resumed = false;     // the guard order is in front again afterwards
+};
+static DefendRun defendRun(const UnitType& guardType, float attackerDist, int fireState) {
+    Types ty;
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
+    UnitType archer = ty.sol;                       // a ranged enemy that outranges the guard's acquisition
+    archer.name = archer.id = "archer";
+    Weapon bow; bow.name = "bow"; bow.range = attackerDist + 40; bow.damage = 3; bow.reload = 1.0f; bow.aimTol = 32767;
+    archer.weapons.push_back(bow); archer.weapon = bow;
+    const int guarded = w.spawn(&ty.sol, 1000, 1000, 0.0f, 0);
+    const int g = w.spawn(&guardType, 1000, 1060, 0.0f, 0);
+    w.unit(g)->fireState = uint8_t(fireState);
+    const int enemy = w.spawn(&archer, 1000 + attackerDist, 1000, 0.0f, 1);
+    command(w, tak::net::Cmd::Guard, g, guarded);
+    w.attack(enemy, guarded, false);
+    DefendRun r;
+    for (int i = 0; i < 2400; ++i) {
+        w.tick(1.0f / 30.0f);
+        const Unit* v = w.unit(guarded);
+        if (r.firstHit < 0 && v && v->hp < Fixed::fromInt(v->type->maxHp)) r.firstHit = i;
+        const Unit* u = w.unit(g);
+        if (r.answered < 0 && !u->orders.empty() && !u->orders.front().guard && u->orders.front().targetId == enemy) {
+            r.answered = i;
+            r.guardKept = u->orders.back().guard && u->orders.back().targetId == guarded;
+        }
+        const Unit* e = w.unit(enemy);
+        if (r.killed < 0 && (!e || !e->alive())) r.killed = i;
+        if (r.killed >= 0 && i > r.killed + 5) {
+            r.resumed = !u->orders.empty() && u->orders.front().guard && u->orders.front().targetId == guarded;
+            break;
+        }
+    }
+    return r;
+}
+
+static void guardDefends() {
+    std::printf("a guard answers its guarded unit's attacker:\n");
+    Types ty;
+    char d[240];
+    UnitType soldier = ty.sol;                     // a ground guard; acquisition reach 120 + 90
+    soldier.name = soldier.id = "soldier";
+    Weapon sword; sword.name = "sword"; sword.range = 120; sword.damage = 100; sword.reload = 0.5f; sword.aimTol = 32767;
+    soldier.weapons.push_back(sword); soldier.weapon = sword;
+    UnitType hawk = ty.flysol;                     // a flying guard; acquisition reach 150 + 90, orbit 310
+    hawk.name = hawk.id = "hawk";
+    Weapon claw; claw.name = "claw"; claw.range = 150; claw.damage = 100; claw.reload = 0.5f; claw.aimTol = 32767;
+    hawk.weapons.push_back(claw); hawk.weapon = claw;
+    auto report = [&](const DefendRun& r) {
+        std::snprintf(d, sizeof d, "hit %d, answered %d (guard kept %d), attacker dead %d, guard resumed %d",
+                      r.firstHit, r.answered, int(r.guardKept), r.killed, int(r.resumed));
+    };
+    {
+        const DefendRun r = defendRun(soldier, 400, 2);
+        report(r);
+        check(r.firstHit >= 0 && r.answered >= r.firstHit && r.answered <= r.firstHit + 2,
+              "a ground guard goes after an attacker beyond its acquisition at the first hit", d);
+        check(r.guardKept, "...with its guard order kept under the attack", d);
+        check(r.killed >= 0 && r.resumed, "...kills it, and the guard order is in front again", d);
+    }
+    {
+        const DefendRun r = defendRun(soldier, 400, 0);
+        report(r);
+        check(r.answered >= 0 && r.killed >= 0, "a ground guard on Hold Fire still answers (4d7de0 explicit)", d);
+    }
+    {
+        const DefendRun r = defendRun(ty.sol, 400, 2);
+        report(r);
+        check(r.firstHit >= 0 && r.answered < 0, "an unarmed guard has nothing to answer with", d);
+    }
+    {
+        const DefendRun r = defendRun(hawk, 800, 2);
+        report(r);
+        check(r.firstHit >= 0 && r.answered >= r.firstHit && r.answered <= r.firstHit + 16,
+              "a flying guard goes after an attacker beyond its orbit and acquisition", d);
+        check(r.guardKept, "...with its guard order kept under the attack", d);
+        check(r.killed >= 0 && r.resumed, "...kills it, and goes back to guarding", d);
+    }
+}
+
+static uint64_t defendRunHash() {
+    Types ty;
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
+    UnitType soldier = ty.sol;
+    soldier.name = soldier.id = "soldier";
+    Weapon sword; sword.name = "sword"; sword.range = 120; sword.damage = 40; sword.reload = 0.5f; sword.aimTol = 32767;
+    soldier.weapons.push_back(sword); soldier.weapon = sword;
+    UnitType hawk = ty.flysol;
+    hawk.name = hawk.id = "hawk";
+    hawk.weapons.push_back(sword); hawk.weapon = sword;
+    UnitType archer = ty.sol;
+    archer.name = archer.id = "archer";
+    Weapon bow; bow.name = "bow"; bow.range = 500; bow.damage = 3; bow.reload = 1.0f; bow.aimTol = 32767;
+    archer.weapons.push_back(bow); archer.weapon = bow;
+    const int guarded = w.spawn(&ty.sol, 1000, 1000, 0.0f, 0);
+    for (int i = 0; i < 4; ++i)
+        command(w, tak::net::Cmd::Guard, w.spawn(i % 2 ? &hawk : &soldier, 950.0f + 30 * i, 1080, 0.0f, 0), guarded);
+    for (int i = 0; i < 3; ++i) w.attack(w.spawn(&archer, 1450, 900.0f + 100 * i, 0.0f, 1), guarded, false);
+    for (int i = 0; i < 1500; ++i) w.tick(1.0f / 30.0f);
+    return w.stateHash();
+}
+
 static uint64_t orbitRun() {
     Types ty;
     auto ownedWorld = makeWorld();
@@ -1047,6 +1167,9 @@ static void determinism() {
     const uint64_t f = orbitRun(), h = orbitRun();
     std::snprintf(d, sizeof d, "%016llx / %016llx", (unsigned long long)f, (unsigned long long)h);
     check(f == h, "flying guards' orbits hash the same twice", d);
+    const uint64_t k = defendRunHash(), m = defendRunHash();
+    std::snprintf(d, sizeof d, "%016llx / %016llx", (unsigned long long)k, (unsigned long long)m);
+    check(k == m, "guards answering attackers hash the same twice", d);
 }
 
 int main() {
@@ -1060,6 +1183,7 @@ int main() {
     flyingGuardHelps();
     flyingGuardOrbit();
     flyingGuardStarts();
+    guardDefends();
     determinism();
     std::printf(g_fail ? "\n%d FAILED\n" : "\nall passed\n", g_fail);
     return g_fail ? 1 : 0;

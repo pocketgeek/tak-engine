@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 301;      // 301: retail HelpBuild: one shared progress for a factory/conjurer output (helpers
+constexpr uint32_t kNetVersion = 302;      // 302: a guard (ground or flying) attacks its guarded unit's attacker
+                                           //      (guardHeard hashed), a computer caster takes up no revive while short,
+                                           //      and a revive past the unit limit or totalallowed ends unraised.
+                                           //      No new command; replay format unchanged.
+                                           // 301: retail HelpBuild: one shared progress for a factory/conjurer output (helpers
                                            //      finish it sooner for its buildcost, the producer is freed once), a guarding
                                            //      mobile builder helps/repairs what it guards (guardHelpTick, helpSite hashed),
                                            //      Assist is checked in the sim and allowed for repeating conjurers.

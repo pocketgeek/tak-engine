@@ -1276,6 +1276,16 @@ struct alignas(64) Unit {
     // its look deadline on the guard order's mission instead.) Hashed with a
     // tag when set.
     uint32_t guardHelpTick = 0;
+    // Retail's attacked alarm: every hit that runs the hit response (409a50,
+    // which first sends event 0x10 to the unit's listeners, a guard's Follow
+    // mission among them) stamps tick + 1 here; the attacker is lastHitBy
+    // (retail +0xf8). Read only by guards (guardHeard), so not hashed.
+    uint32_t attackedTick = 0;
+    // On a guard: the guarded unit's attackedTick it has already answered
+    // (Follow_Ground / VTOL_Follow consume event 0x10 when a look runs with
+    // it). A larger attackedTick is an alarm still to hear. Hashed with a tag
+    // when set.
+    uint32_t guardHeard = 0;
     // On a factory/conjurer output: the producer whose buildProgress is this
     // unit's one shared progress (retail +0x108). A hint only -- read through
     // World::productionOwnerOf, which checks the producer still holds it, so a
@@ -2728,6 +2738,11 @@ private:
     void tickFlyingGuard(Unit& u);
     void guardHelpPick(Unit& u, const Unit& g, int& help, int& mend);
     void guardInsertJob(Unit& u, int help, int mend);
+    Order& guardStandAside(Unit& u);
+    bool guardAlarm(const Unit& u, const Unit& g) const {
+        return g.attackedTick>u.guardHeard;
+    }
+    bool guardDefend(Unit& u, const Unit& g);
     void helpApproach(Unit& b, const Unit& site, bool queue);
     void initializeRetailSite(Unit& site, int builderId);
     void tickRetailAiBase(int owner,unsigned index);
@@ -3170,6 +3185,10 @@ private:
     void tickFireSweep(int player);
     void tickSlotWeapons(Unit& u);
     void slotHitResponse(Unit& victim,const Unit& attacker);
+    // A guard's slot retarget at its guarded unit's attacker (Follow_Ground
+    // 0x4081fa, VTOL_Follow 0x418c60): 409a50 part (b) without the attacker's
+    // reach test; a flyer's keeps a current target inside its minimum range.
+    void guardSlotRetarget(Unit& u,const Unit& attacker);
     // 51a8b0 (SwitchWeapon): the command and AI paths share it. fromCommand
     // routes the clear/switch animations through pendingWeaponAnimations.
     bool switchWeaponSlot(Unit& u,int slot,bool fromCommand);
@@ -3181,7 +3200,10 @@ private:
     void retailHitResponse(Unit& victim,const Unit* attacker,int dmgType);
     // 4d7de0 with explicit=0, auto=1: insert an auto attack, leashed with a
     // return move on the Maneuver/patrol path. Whether orders were inserted.
-    bool retailIssueAutoAttack(Unit& u,int targetId,bool forceReturn);
+    // forced (explicit=1, auto=0, the guards' call): neither the Hold
+    // Position nor the Hold Fire gate, no leash or return move, and the
+    // attack is not an auto target.
+    bool retailIssueAutoAttack(Unit& u,int targetId,bool forceReturn,bool forced=false);
     std::vector<std::vector<int>> sweepIds_;   // per-player id-ordered scratch; not state
 public:
     // Why a unit's slots are manual (Unit::slotManual).
