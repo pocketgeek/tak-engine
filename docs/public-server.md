@@ -12,11 +12,13 @@ independent security audit or protection against a volumetric DDoS.
 ## Versions
 
 Server and clients must speak the same gameplay protocol; update the server and
-every client together when it changes. **0.9.5 changes it (protocol 299):** a
-0.9.5 `takserver` accepts only 0.9.5 players and turns away 0.9.4 and older
-clients with a *protocol version mismatch* message, and a 0.9.4 or older server
-turns away 0.9.5 players, so update `takserver` when you announce 0.9.5 to your
-players. Which versions play together is listed in
+every client together when it changes. **0.9.6 changes it (protocol 300):** a
+0.9.6 `takserver` accepts only 0.9.6 players and turns away 0.9.5 and older
+clients with a *protocol version mismatch* message, and a 0.9.5 or older server
+turns away 0.9.6 players, so update `takserver` when you announce 0.9.6 to your
+players. A 0.9.6 server also allows a seat 30 s of silence while its game is
+loading (15 s elsewhere), and its own start-up work no longer counts as player
+silence. Which versions play together is listed in
 the [user guide](user-guide.md#versions) and in the [CHANGELOG](../CHANGELOG.md).
 
 **0.9.4 removes the Darien Crusades campaign service.** `--crusades-db` and

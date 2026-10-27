@@ -19,8 +19,8 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
-## Unreleased
-*protocol 300 · replay format 15 · does not play with 0.9.5 or earlier, nor their replays*
+## 0.9.6
+*2026-10-27 · protocol 300 · replay format 15 · does not play with 0.9.5 or earlier, nor their replays*
 
 - **Slow loaders are no longer dropped.** The server now allows 30 s of
   silence, up from 15 s, while a player's game is loading, so a slow PC or a
@@ -63,7 +63,10 @@ their validation reports; both live in [`docs/`](docs/).
   the libdecor library keeps X11. Switching keeps UI Scale and Cursor Size the
   same size on screen: the game measures whether its old X11 window had real
   pixels or was enlarged by the desktop and converts them only in the second
-  case, so on KDE Plasma's default they stay as set.
+  case, so on KDE Plasma's default they stay as set. Cartographer follows the
+  same setting, converts its UI Scale and window size the same way and
+  re-centres its window after the conversion. Set NATIVE WAYLAND to Off to
+  return to the X11 window; the sizes are converted back.
 - **Command-line tools.** `cartographer --version` and `--help` work, the dev
   tools print their usage when given a missing or bad argument, and `simperf`
   works with the current random-map recipe.
@@ -95,6 +98,25 @@ their validation reports; both live in [`docs/`](docs/).
   compare their income with the mana their builders and producers ask for,
   not with what a short pool could pay them, when deciding whether they need
   another lodestone.
+- **Protocol 300:** rally plans, the cloak block and the raising-the-dead
+  channel are now part of the game state the players compare, so 0.9.6 plays
+  only with 0.9.6 and plays only replays recorded by 0.9.6. A 0.9.5 client or
+  server is turned away with a *protocol version mismatch* message, and a
+  0.9.5 replay is refused with the version message.
+
+**Upgrading (Linux players on a Wayland desktop):** the first start of 0.9.6
+opens a native Wayland window instead of an X11 one, on KDE Plasma as well as
+GNOME, Sway, Hyprland and the others; GNOME without the `libdecor` library
+keeps X11. UI Scale and Cursor Size keep the same size on screen. If the
+native window misbehaves on your desktop, set Options, Display, NATIVE WAYLAND
+to Off and restart.
+
+**Upgrading (server operators):** update `takserver` together with your
+players. A server without `--map-cache-dir` keeps its maps in
+`TAKengine/takserver` in its per-user folder (since 0.9.5). A 0.9.6 server
+allows a loading seat 30 s of silence and logs why it dropped a client.
+
+[Release notes](docs/release-0.9.6-notes.md) · [Validation report](docs/release-0.9.6-validation.md) · [Source at v0.9.6](https://github.com/pocketgeek/tak-engine/tree/v0.9.6)
 
 ## 0.9.5
 *2026-10-26 · protocol 299 · replay format 15 · does not play with 0.9.4 or earlier, nor their replays*

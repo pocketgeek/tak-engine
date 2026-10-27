@@ -1027,10 +1027,17 @@ per-user folder (see [map-transfer.md](map-transfer.md)), which the wire does
 not see. 0.9.5 ships protocol 299; it plays with neither 0.9.4 nor any earlier
 version, nor their replays.
 
-Protocol 300 (after 0.9.5) adds producer rally plans: the rally list is part of
+Protocol 300 (0.9.6) adds producer rally plans: the rally list is part of
 `stateHash` when non-empty, a repeating mobile builder accepts Attack and
-fight-move rallies, and Stop clears the rally. No command changes; replay
-format 15 is unchanged.
+fight-move rallies, and Stop clears the rally. It also changes hashed sim
+state for cloaking and raising the dead: a cloak-capable unit's cloak block
+(`cloakBlockedUntil`, set by shots, building, reclaiming, repairing and
+resurrecting, and by an empty cloak pool) is hashed when set; cloaking pays
+from the unit's own mana; resurrect and animate cost no mana, and their
+channel counter (`reviveWork`, retail's 16.16 work word) is hashed while it
+runs. No command changes; replay format 15 is unchanged; 299 replays are
+refused. 0.9.6 ships protocol 300; it plays with neither 0.9.5 nor any earlier
+version, nor their replays.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
@@ -1321,6 +1328,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.9.5 (peers and server) requires protocol 299; 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.9.6 (peers and server) requires protocol 300; 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions remain fixed to Retail.

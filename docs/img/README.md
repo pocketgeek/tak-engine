@@ -1,6 +1,23 @@
 # README and user-guide screenshots
 
-**Retaken for 0.9.5** (2026-10-26): `title.jpg` only, by the 0.9.5 build (Debug
+**Retaken for 0.9.6** (2026-10-27): `title.jpg` and `guide/options-graphics.jpg`,
+by the 0.9.6 build (Debug with `-O2`, CMake `VERSION 0.9.6` in the release
+commit). `title.jpg` is the 0.9.1 title capture (`takclient menu --shot`,
+offscreen video driver, a 1920 × 1080 window, the 0.9.1 scratch install and
+settings; script in `~/tak-tmp/scratch/release-096/shots/`), cropped to the
+artwork as before; it reads VERSION 0.9.6 and shows the three doors.
+`guide/options-graphics.jpg` shows the new **NATIVE WAYLAND** row (Auto) between
+MAX FPS and the Graphics heading, which Linux builds now have in Options,
+Display. It was captured with the 0.9.1 capture-only patch applied to the
+working tree (not committed: `TAK_CAP_OPTIONS=9`, a 1600 × 1100 window, a
+fresh profile whose only setting is `fullscreen = 0`, cropped to 840 × 1024
+as before); the row shows because the capture ran on Linux. Windows and macOS
+builds have no such row, so the guide's picture is the Linux view. The mana
+bulb's red number (now mana requested), rally markers, double-click select,
+cloaking and revive changes appear in no picture in this folder as a visible
+difference, so no other picture was retaken and none was deleted.
+
+**Earlier: retaken for 0.9.5** (2026-10-26): `title.jpg` only, by the 0.9.5 build (Debug
 with `-O2`, CMake `VERSION 0.9.5` in the release commit), with the 0.9.1 title
 capture (`takclient menu --shot`, offscreen video driver, a 1920 × 1080 window,
 the 0.9.1 scratch install and settings; script in
@@ -254,7 +271,7 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.9.5 (0.9.5 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
+| `title.jpg` | Title menu showing version 0.9.6 (0.9.6 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
 | `mp-connect.jpg` | New in 0.9.0. The Multiplayer door's CONNECT TO SERVER panel over the title menu: the official TAK Engine server, tak.pgnet.us (marked DEFAULT), selected at the top of the list, two sample remembered servers the debug `TAK_SHOT_SERVER` capture seeds into an empty list (192.168.1.50:7677 and example.dyndns.org), CUSTOM..., the account name *aldric* typed and a ten-character password shown as pips, the A NEW NAME IS REGISTERED WHEN YOU SIGN IN note, CONNECT and BACK. `TAK_SHOT_SERVER=4` with the name and password set by the capture-only patch; nothing connected to any server. 1600 × 900, cropped to the panel (600 × 494, not scaled). Rendered by the 0.9.0 build |
 | `mp-connect-custom.jpg` | New in 0.9.0. The same panel with CUSTOM... selected (`TAK_SHOT_SERVER=2`): the address box below the list holds *tak.example.org* (typed by the capture-only patch), the account name *aldric*, the password empty. Nothing connected. 1600 × 900, cropped to the panel (600 × 550, not scaled). Rendered by the 0.9.0 build |
 | `battle.jpg` | **Benchmark** run (Settings → Benchmark, Absurd intensity) on Ulasem Arena, 55 game seconds in. Eight server AIs fight, all five sides. The camera, at 1.3× zoom, shows Aramon (magenta) and Taros (yellow) armies, with Black Dragons, clashing at a sandy arena; damaged units of every side show health bars. A real feature with no fixture; spectator view, so no fog. Rendered by the 0.9.0 build |
@@ -284,7 +301,7 @@ replace them. The unchanged views contain no version text.
 | `side-aramon.jpg` … `side-creon.jpg` | One per side, rendered by the 0.9.0 build. A local-server game with a **stress-test start** (250-unit cap, Normal AI opponent), about 10 s in, 1600 × 900, scaled. The player's Monarch is selected: Elsin, Lokken, Kirenna, Thirsha or the Sage. Each shows that side's interface and build menu |
 | `shift-queue.jpg` | From the 0.9.0 build. Elsin with a move and three Shift-queued moves (**scripted orders**), Shift held, about 3 s after the orders; the status reads MOVING. 1.7× zoom |
 | `flyers-retail-legion.jpg` | **Development scene, spawned.** From the 0.9.0 build (both halves). A spawned Zhon formation of ground units and flyers (`TAK_CAP_SCENE`) given one formation move order, 22 s in, run once in Retail (flyers far ahead) and once in Legion (flyers over the leading ground units). The same 1.05× camera is used for both, and the two captures are placed side by side with labels |
-| `options-graphics.jpg` | 0.9.1 build. Options screen in a 1600 × 1100 window, scrolled so that Display and the whole Graphics section show (the last Audio rows above, the Interface heading and UI FONT below), cropped to the panel: Fullscreen (OFF), VSync (ON), Max FPS (60, greyed out because VSync is on), Renderer (Auto (OpenGL): Auto, and the backend it started), Texture Filtering at EVERYTHING, Shadows, Smooth GUI Art, Smooth Movies, Trees Sway in Wind and Tactical Dots (ON), Tactical Dots Zoom (0%), Screen Shake (OFF), Hardware Cursor (ON, with the note OS CURSOR 16X25 beside it) and Smooth Motion (ON) and GPU Memory Limit at 1.25 GB (default). A fresh profile whose only setting is `fullscreen = 0`. The capture-only patch hands the cursor to the system before drawing, as the menu loop would, so the note shows. Linux build, so the Windows-only Ignore Windows Display Scaling row is absent |
+| `options-graphics.jpg` | 0.9.6 build (0.9.1 layout). Options screen in a 1600 × 1100 window, scrolled so that Display and the whole Graphics section show (the last Audio rows above, the Interface heading and UI FONT below), cropped to the panel: Fullscreen (OFF), VSync (ON), Max FPS (60, greyed out because VSync is on), Native Wayland (Auto; new in 0.9.6, Linux only, retaken for it), Renderer (Auto (OpenGL): Auto, and the backend it started), Texture Filtering at EVERYTHING, Shadows, Smooth GUI Art, Smooth Movies, Trees Sway in Wind and Tactical Dots (ON), Tactical Dots Zoom (0%), Screen Shake (OFF), Hardware Cursor (ON, with the note OS CURSOR 16X25 beside it) and Smooth Motion (ON) and GPU Memory Limit at 1.25 GB (default). A fresh profile whose only setting is `fullscreen = 0`. The capture-only patch hands the cursor to the system before drawing, as the menu loop would, so the note shows. Linux build, so the Windows-only Ignore Windows Display Scaling row is absent |
 | `fire-on-the-move.jpg` | **From the 0.9.0 build. Development scene, two-player spawned.** Ulasem Arena, Retail pathfinding, 14 s after one plain move order east (**scripted orders**). 14 Aramon Archers and 2 Mage Builders were spawned in a 4-wide grid; 6 Taros Zombies and 6 Skeleton Archers (enemy, no AI) stand south of their path. Shift is held, so the move line shows. Zombies have reached the back of the column, which keeps walking and shooting; the flashes are hits, and three of the sixteen have fallen, so the information bar shows two portraits (2 Mage Builders, 11 Archers) and 13 SELECTED. 1.4× zoom, fog off |
 | `cartographer-terrain.jpg` | Cartographer Terrain tab on Ulasem Arena (`--shot --shot-tool terrain`, fresh editor profile, 921 × 691), retaken by the 0.9.0 build (byte-identical to the 0.8.3 picture): the grouped section browser, All sections (555 pieces, 1261 sections), with readable piece names, variant badges and the scrollbar, and five tools on the toolbar |
 | `tactical-dots.jpg` | From the 0.9.0 build. **Benchmark** run (Absurd) on Ulasem Arena, 50 game seconds in, spectator view fully zoomed out (zoom 0.1875, the floor for this map in a 1920 × 1080 window), where the default Tactical Dots Zoom of 0% shows dots. The deterministic run was rendered twice at the same tick and camera, with Tactical Dots off and on in otherwise identical profiles. The same 800 × 900 region (the east of the map: the blue and red armies) is cropped from each at 1:1 and placed side by side under labels. With models, fire and spell effects show among the armies; with dots none are drawn |

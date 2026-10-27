@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.5-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.6-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,14 +26,14 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.5
+## What's new in 0.9.6
 
-- A unit that has just been killed no longer takes more hits, so a "dead" unit can no longer wrap round to nearly full health and stand back up.
-- The game no longer writes into your game data folder: downloaded maps and mods, random maps and test maps go in your per-user folder.
-- A game room whose map cannot be built now shows *CANNOT CREATE* and the reason.
+- Double-click a unit to select every unit of its type on screen; production buildings and repeating builders accept Move, Patrol, Attack and fight-move rally orders.
+- Native Wayland windows on Linux (Options, Display, NATIVE WAYLAND), sharp at any display scale, now by default on KDE Plasma too.
+- Cloaking, raising the dead and the mana bulb's red number follow the original game more closely; Crusades scenarios that name a missing unit now say so.
 
-Does not play with 0.9.4 or its replays (protocol 299). Details in the
-[CHANGELOG](CHANGELOG.md#095).
+Does not play with 0.9.5 or its replays (protocol 300). Details in the
+[CHANGELOG](CHANGELOG.md#096).
 
 ## Features
 
