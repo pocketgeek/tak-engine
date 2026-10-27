@@ -202,8 +202,11 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
             preferences.scalePercent=std::clamp(int(preferences.scalePercent*f+.5f),50,200);
             if(preferences.width)preferences.width=std::clamp(int(preferences.width*f+.5f),640,8192);
             if(preferences.height)preferences.height=std::clamp(int(preferences.height*f+.5f),480,8192);
-            if(!preferences.fullscreen)SDL_SetWindowSize(win,std::min(preferences.width?preferences.width:1600,std::max(800,int(display.w*.9f))),
-                                                       std::min(preferences.height?preferences.height:1000,std::max(600,int(display.h*.9f))));
+            if(!preferences.fullscreen) {
+                SDL_SetWindowSize(win,std::min(preferences.width?preferences.width:1600,std::max(800,int(display.w*.9f))),
+                                  std::min(preferences.height?preferences.height:1000,std::max(600,int(display.h*.9f))));
+                SDL_SetWindowPosition(win,SDL_WINDOWPOS_CENTERED,SDL_WINDOWPOS_CENTERED);   // X11 grows from the top-left
+            }
             std::fprintf(stderr,"dpi: display %s -> %s: UI scale x%.3f -> %d%%\n",tak::wayland::modeName(preferences.displayMode?preferences.displayMode:tak::wayland::x11Mode(wl.session)),
                          tak::wayland::modeName(now),f,preferences.scalePercent);
         }
