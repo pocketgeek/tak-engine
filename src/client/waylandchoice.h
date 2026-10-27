@@ -143,7 +143,80 @@ struct Startup {
     int setting = kAuto;    // Settings::nativeWayland as read at startup
     bool requested = false; // wantNative() said yes, so SDL was asked for "wayland,x11"
     bool native = false;    // SDL's video driver really is wayland
+    Session session;        // probeSession() as seen at startup (what an X11 window gets)
 };
 inline Startup& startup() { static Startup s; return s; }
+
+// ---- Keeping UI Scale / Cursor Size the same physical size across a switch ----------
+//
+// Which window a session got decides what a size setting means:
+//   x11-real       X11 at real pixels (an X11 desktop, or KDE Plasma's default "apply
+//                  scaling themselves"): window points = renderer pixels = screen pixels.
+//   x11-stretched  X11 that the Wayland desktop draws at 1x and enlarges by its scale S
+//                  (GNOME, wlroots, Hyprland, KDE "scaled by the system"; also SDL's
+//                  wayland driver forced without HiDPI): one renderer pixel = S screen
+//                  pixels, window points = renderer pixels.
+//   wayland        native Wayland (SDL_WINDOW_ALLOW_HIGHDPI): window points x S =
+//                  renderer pixels = screen pixels.
+// The game sizes its HUD and cursor in RENDERER PIXELS (client/hidpi.h), so its UI Scale
+// and Cursor Size are in screen pixels in x11-real and wayland, and in points (S screen
+// pixels each) only in x11-stretched. Cartographer scales by its UI SCALE times the
+// backing scale (window points), so its scale and window size are in screen pixels only
+// in x11-real and in points otherwise.
+//
+// A value keeps its physical size across a switch by converting between those units:
+// x S going from points to pixels, / S from pixels to points, unchanged when the unit is
+// the same -- so KDE's x11-real <-> wayland leaves the game's settings alone, GNOME's
+// x11-stretched -> wayland multiplies them by S, and switching back divides again. The
+// previous session's mode is remembered (Settings::displayMode, Cartographer's
+// preferences), so each start converts at most once per switch and never compounds. S
+// is the native Wayland scale: measured now when this session is native, else the last
+// one remembered (an X11 window cannot see the compositor's scale); unknown = 1 = no
+// change.
+enum Mode : int { kModeUnknown = 0, kModeX11Real = 1, kModeX11Stretched = 2, kModeWayland = 3 };
+
+inline const char* modeName(int m) {
+    return m == kModeX11Real ? "x11-real" : m == kModeX11Stretched ? "x11-stretched" : m == kModeWayland ? "wayland" : "";
+}
+inline int parseMode(std::string_view v) {
+    return v == "x11-real" ? kModeX11Real : v == "x11-stretched" ? kModeX11Stretched : v == "wayland" ? kModeWayland : kModeUnknown;
+}
+
+// What an X11 window gets in this session.
+inline int x11Mode(const Session& s) {
+    return s.wayland && !(s.kde && s.kdeX11RealPixels) ? kModeX11Stretched : kModeX11Real;
+}
+
+// This session's mode from SDL's video driver; unknown for anything else (dummy, kmsdrm).
+inline int sessionMode(std::string_view driver, bool native, const Session& s) {
+    if (driver == "wayland") return native ? kModeWayland : kModeX11Stretched;   // no HiDPI: stretched too
+    if (driver == "x11") return x11Mode(s);
+    return kModeUnknown;
+}
+
+enum class Units { GamePixels, CartographerPoints };
+inline bool inPoints(int mode, Units u) {
+    return u == Units::GamePixels ? mode == kModeX11Stretched : mode != kModeX11Real;
+}
+
+// The remembered mode and native scale (0 = none seen yet).
+struct DisplayHistory {
+    int mode = kModeUnknown;
+    float scale = 0.0f;
+};
+
+// Records this session in `h` and returns the factor for the size settings (1 = leave
+// them). `assumedPrev` stands in for a history that does not exist yet: the mode the
+// settings were last chosen in (for a file from before this was recorded, the X11 window
+// of this session -- every earlier Linux build ran X11).
+inline float advanceDisplay(DisplayHistory& h, int now, float nowScale, int assumedPrev, Units u) {
+    if (now == kModeUnknown) return 1.0f;
+    const int prev = h.mode != kModeUnknown ? h.mode : assumedPrev;
+    if (now == kModeWayland && nowScale > 0.0f) h.scale = nowScale;
+    const float S = h.scale;
+    h.mode = now;
+    if (prev == kModeUnknown || inPoints(prev, u) == inPoints(now, u) || !(S > 1.01f)) return 1.0f;
+    return inPoints(prev, u) ? S : 1.0f / S;
+}
 
 }  // namespace tak::wayland

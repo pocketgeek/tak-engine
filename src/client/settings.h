@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <charconv>
 #include <cstdlib>
 #include "sim/pathmode.h"
@@ -39,6 +40,12 @@ struct Settings {
     // window (real pixels at any display scale) instead of X11 through XWayland. Applied
     // at startup only (restart required); see client/waylandchoice.h.
     int   nativeWayland = 0;
+    // Linux bookkeeping, not preferences: the window the last session got
+    // (tak::wayland::Mode: 0 none yet, 1 x11-real, 2 x11-stretched, 3 wayland) and the last
+    // native Wayland scale seen (0 = none), so a NATIVE WAYLAND switch converts UI Scale and
+    // Cursor Size once, in the right direction (tak::wayland::advanceDisplay).
+    int   displayMode = 0;
+    float displayScale = 0.0f;
     float scorecardScale = 1.0f;   // independent F4 scorecard scale; 0.5..2.0
     float uiScale    = 1.0f;       // in-game HUD scale; 0.5..2.0 (1.0 = 100%)
     // TEXTURE FILTERING for the game area (client/texturefilter.h): 0 = Off (retail's
@@ -238,6 +245,7 @@ struct Settings {
             && a.voiceMicVolume == b.voiceMicVolume && a.voiceOutputVolume == b.voiceOutputVolume
             && a.ignoreDpiScaling == b.ignoreDpiScaling && a.dpiMigrated == b.dpiMigrated
             && a.nativeWayland == b.nativeWayland
+            && a.displayMode == b.displayMode && a.displayScale == b.displayScale
             && a.hotkeys == b.hotkeys
             && a.campaignCompleted == b.campaignCompleted;
     }
@@ -321,6 +329,8 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.campaignCompleted = cur.campaignCompleted;
     d.knownServers = cur.knownServers;
     d.dpiMigrated = cur.dpiMigrated;              // bookkeeping, not a preference
+    d.displayMode = cur.displayMode;              // likewise
+    d.displayScale = cur.displayScale;
     // Voice chat has its own screen and its own DEFAULTS (voiceDefaults below).
     d.voiceEnabled = cur.voiceEnabled;
     d.voiceActivation = cur.voiceActivation;
@@ -413,13 +423,21 @@ inline bool& dpiIgnoredAtStartup() { static bool v = false; return v; }
 // scale into uiScale/cursorScale (clamped to their ranges). Runs once (dpiMigrated);
 // returns true if the settings changed and should be saved. osScale = display DPI / 96 on
 // Windows, the Retina backing scale (drawable / window, normally 2) on macOS.
+inline bool rescaleUi(Settings& s, float factor);
 inline bool applyDpiMigration(Settings& s, float osScale) {
     if (s.dpiMigrated) return false;
     s.dpiMigrated = true;
-    if (s.ignoreDpiScaling && osScale > 1.01f) {
-        s.uiScale = std::clamp(s.uiScale * osScale, 0.5f, 2.0f);
-        s.cursorScale = std::clamp(int(float(s.cursorScale) * osScale + 0.5f), 1, 8);
-    }
+    if (s.ignoreDpiScaling && osScale > 1.01f) rescaleUi(s, osScale);
+    return true;
+}
+
+// UI Scale and Cursor Size times `factor`, clamped to their ranges (so a value at the edge
+// of a range does not come back exactly after the inverse factor). Returns true when the
+// factor is not 1.
+inline bool rescaleUi(Settings& s, float factor) {
+    if (!(factor > 0.0f) || std::abs(factor - 1.0f) < 0.005f) return false;
+    s.uiScale = std::clamp(s.uiScale * factor, 0.5f, 2.0f);
+    s.cursorScale = std::clamp(int(float(s.cursorScale) * factor + 0.5f), 1, 8);
     return true;
 }
 

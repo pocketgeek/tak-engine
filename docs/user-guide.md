@@ -1633,7 +1633,7 @@ missed are silent while the game catches up.
 | **Fullscreen** | On | Borderless fullscreen. |
 | **VSync** | On | Match the frame rate to the display. While it is on, the game also waits for each display refresh itself if the graphics driver does not. |
 | **Max FPS** | 60 | Frame-rate cap when VSync is off (30–240). Greyed out while VSync is on, because the display then sets the frame rate. |
-| **Native Wayland** | Auto | Linux only. **Auto** opens a native Wayland window on a Wayland desktop (GNOME, Sway and other wlroots desktops, Hyprland, KDE Plasma with legacy X11 apps "scaled by the system"), so the game draws at the screen's real resolution at any display scale, 125%, 150% and 200% included, instead of an X11 window that the desktop enlarges and blurs. On KDE Plasma with its default "Legacy applications (X11): apply scaling themselves", X11 already gets real pixels, so Auto keeps X11 there. On GNOME, Auto also keeps X11 if the libdecor library (which draws the window's title bar there) is not installed. **On** uses Wayland whenever there is a Wayland desktop; **Off** always uses X11. Takes effect after a restart; the row's help says which one is running. If Wayland cannot start, the game opens on X11 by itself. The first time it runs at a display scale above 100%, UI Scale and Cursor Size are raised by that scale so the interface stays the same size, now sharp. Cartographer follows the same setting. |
+| **Native Wayland** | Auto | Linux only. **Auto** opens a native Wayland window on a Wayland desktop (GNOME, Sway and other wlroots desktops, Hyprland, KDE Plasma with legacy X11 apps "scaled by the system"), so the game draws at the screen's real resolution at any display scale, 125%, 150% and 200% included, instead of an X11 window that the desktop enlarges and blurs. On KDE Plasma with its default "Legacy applications (X11): apply scaling themselves", X11 already gets real pixels, so Auto keeps X11 there. On GNOME, Auto also keeps X11 if the libdecor library (which draws the window's title bar there) is not installed. **On** uses Wayland whenever there is a Wayland desktop; **Off** always uses X11. Takes effect after a restart; the row's help says which one is running. If Wayland cannot start, the game opens on X11 by itself. Switching keeps the interface the same size on screen: where the X11 window was enlarged by the desktop, UI Scale and Cursor Size are multiplied by the display scale the first time the Wayland window opens (and divided again if you switch back); on KDE Plasma's default, where X11 already had real pixels, they stay exactly as you set them. Cartographer follows the same setting and keeps its UI Scale and window size the same way. |
 
 ### Graphics
 
@@ -2664,6 +2664,24 @@ Display → Native Wayland**: its help line says what is running. If it says X11
 set it to **On** and restart. If your desktop is KDE Plasma, its own setting
 **System Settings → Display & Monitor → Legacy Applications (X11)** set to
 "Apply scaling themselves" also gives the X11 window real pixels.
+
+### The interface changed size after switching Native Wayland
+
+Switching **Native Wayland** (or KDE's legacy X11 scaling) changes how many screen
+pixels the game's window has, so on the first start after a switch the game adjusts
+**UI Scale** and **Cursor Size** once to keep the interface the same size on screen:
+
+- From an X11 window the desktop enlarged (GNOME, Sway, Hyprland, KDE "scaled by the
+  system") to Wayland, they are multiplied by the display scale; switching back
+  divides them again.
+- On KDE Plasma's default ("apply scaling themselves"), the X11 window already had
+  real pixels, so switching between X11 and Wayland leaves them as they are.
+- Changing the desktop's display scale while on Wayland leaves them as they are.
+
+The game remembers which window it last had, so this never adds up over several
+switches. UI Scale stops at 200% and Cursor Size at 8×, so a value at the top
+cannot grow and comes back a little smaller after switching back; set it again in
+Options if so.
 
 ### The whole screen flickers on a large display
 

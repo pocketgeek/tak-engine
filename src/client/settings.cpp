@@ -2,6 +2,7 @@
 
 #include "client/dev.h"
 #include "client/renderdriver.h"
+#include "client/waylandchoice.h"
 #include "util/prefpath.h"
 
 #include <algorithm>
@@ -119,6 +120,11 @@ Settings loadSettings() {
         else if (key == "ignoreDpiScaling") s.ignoreDpiScaling = asBool();
         else if (key == "dpiMigrated")     s.dpiMigrated = asBool();
         else if (key == "nativeWayland")   s.nativeWayland = val == "on" ? 1 : val == "off" ? 2 : 0;
+        else if (key == "displayMode")     s.displayMode = wayland::parseMode(val);
+        else if (key == "displayScale") {
+            const float v = float(std::atof(val.c_str()));
+            s.displayScale = v >= 1.0f && v <= 8.0f ? v : 0.0f;
+        }
         else if (key == "scorecardScale")  s.scorecardScale = asFloat(0.5f, 2.0f);
         else if (key == "uiScale")         s.uiScale = asFloat(0.5f, 2.0f);
         else if (key == "textureFilter")   textureFilter = asInt(0, 2);
@@ -245,6 +251,8 @@ std::string serializeSettings(const Settings& s) {
     o << "ignoreDpiScaling = " << (s.ignoreDpiScaling ? 1 : 0) << "\n";
     o << "dpiMigrated = " << (s.dpiMigrated ? 1 : 0) << "\n";
     o << "nativeWayland = " << (s.nativeWayland == 1 ? "on" : s.nativeWayland == 2 ? "off" : "auto") << "\n";
+    if (s.displayMode != wayland::kModeUnknown) o << "displayMode = " << wayland::modeName(s.displayMode) << "\n";
+    if (s.displayScale > 0.0f) o << "displayScale = " << s.displayScale << "\n";
     o << "scorecardScale = " << s.scorecardScale << "\n";
     o << "uiScale = " << s.uiScale << "\n";
     o << "textureFilter = " << std::clamp(s.textureFilter, 0, 2) << "\n";

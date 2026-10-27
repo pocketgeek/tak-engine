@@ -30,6 +30,8 @@
 #include "util/virtualpath.h"
 #include "terrain/terrain.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <chrono>
@@ -132,8 +134,9 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     // NATIVE WAYLAND, the game's Display option (shared settings file): a Wayland window in
     // real pixels instead of X11 through XWayland, stretched at a desktop scale above 100%.
     bool appIdSet=false;
+    if(shotPath.empty() && exportPath.empty() && bundlePath.empty() && stampName.empty())tak::wayland::startup().session=tak::wayland::probeSession();
     if(shotPath.empty() && exportPath.empty() && bundlePath.empty() && stampName.empty() &&
-       tak::wayland::wantNative(tak::loadSettings().nativeWayland,tak::wayland::probeSession())) {
+       tak::wayland::wantNative(tak::loadSettings().nativeWayland,tak::wayland::startup().session)) {
         tak::wayland::startup().requested=true;
         SDL_SetHint(SDL_HINT_VIDEODRIVER,"wayland,x11");   // X11 if Wayland cannot start
         if(!std::getenv("SDL_VIDEO_WAYLAND_WMCLASS")) {setenv("SDL_VIDEO_WAYLAND_WMCLASS","tak-cartographer",0);appIdSet=true;}
@@ -183,6 +186,33 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
         std::fprintf(stderr, "window/renderer: %s\n", SDL_GetError());
         throw Exit{1};
     }
+#if defined(__linux__)
+    if(shotPath.empty() && exportPath.empty() && bundlePath.empty() && stampName.empty()) {
+        // UI SCALE and the window size are in window points except on a real-pixel X11
+        // window (KDE's default), so keep them the same physical size when that changes
+        // (NATIVE WAYLAND switched): client/waylandchoice.h.
+        const auto& wl=tak::wayland::startup();
+        float scale=0;
+        if(wl.native) {SDL_PumpEvents();int ww=0,wh=0,ow=0,oh=0;SDL_GetWindowSize(win,&ww,&wh);SDL_GetRendererOutputSize(ren,&ow,&oh);scale=tak::backingScale(ww,ow);}
+        const char* drv=SDL_GetCurrentVideoDriver();
+        const int now=tak::wayland::sessionMode(drv?drv:"",wl.native,wl.session);
+        tak::wayland::DisplayHistory h{preferences.displayMode,preferences.displayScale};
+        const float f=tak::wayland::advanceDisplay(h,now,scale,tak::wayland::x11Mode(wl.session),tak::wayland::Units::CartographerPoints);
+        if(std::abs(f-1)>=.005f) {
+            preferences.scalePercent=std::clamp(int(preferences.scalePercent*f+.5f),50,200);
+            if(preferences.width)preferences.width=std::clamp(int(preferences.width*f+.5f),640,8192);
+            if(preferences.height)preferences.height=std::clamp(int(preferences.height*f+.5f),480,8192);
+            if(!preferences.fullscreen)SDL_SetWindowSize(win,std::min(preferences.width?preferences.width:1600,std::max(800,int(display.w*.9f))),
+                                                       std::min(preferences.height?preferences.height:1000,std::max(600,int(display.h*.9f))));
+            std::fprintf(stderr,"dpi: display %s -> %s: UI scale x%.3f -> %d%%\n",tak::wayland::modeName(preferences.displayMode?preferences.displayMode:tak::wayland::x11Mode(wl.session)),
+                         tak::wayland::modeName(now),f,preferences.scalePercent);
+        }
+        if(std::abs(f-1)>=.005f || h.mode!=preferences.displayMode || h.scale!=preferences.displayScale) {
+            preferences.displayMode=h.mode;preferences.displayScale=h.scale;
+            std::string error;if(!cart::saveEditorPreferences(preferencesFolder,preferences,error))std::fprintf(stderr,"editor preferences: %s\n",error.c_str());
+        }
+    }
+#endif
 
     editorFont.emplace(ren);
 

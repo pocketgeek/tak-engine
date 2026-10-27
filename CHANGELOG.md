@@ -58,7 +58,9 @@ their validation reports; both live in [`docs/`](docs/).
 - **Native Wayland on Linux.** Options, Display has a new NATIVE WAYLAND setting
   (Auto, On, Off; restart required). On Wayland desktops that scale X11 windows
   (such as GNOME), the game and Cartographer now open sharp and at the right
-  size at 150% or 200% scaling. KDE Plasma keeps X11 by default.
+  size at 150% or 200% scaling. KDE Plasma keeps X11 by default. Switching keeps
+  UI Scale and Cursor Size the same size on screen: they are converted only when
+  the old X11 window was enlarged by the desktop, so on KDE Plasma they stay as set.
 - **Command-line tools.** `cartographer --version` and `--help` work, the dev
   tools print their usage when given a missing or bad argument, and `simperf`
   works with the current random-map recipe.

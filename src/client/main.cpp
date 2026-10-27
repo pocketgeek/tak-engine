@@ -657,7 +657,8 @@ int main(int argc, char** argv) {
     if (mpHeadless == 0 && shot.empty()) {
         auto& wl = tak::wayland::startup();
         wl.setting = tak::loadSettings().nativeWayland;
-        wl.requested = tak::wayland::wantNative(wl.setting, tak::wayland::probeSession());
+        wl.session = tak::wayland::probeSession();
+        wl.requested = tak::wayland::wantNative(wl.setting, wl.session);
         if (wl.requested) {
             SDL_SetHint(SDL_HINT_VIDEODRIVER, "wayland,x11");
             // Wayland matches a window to its .desktop launcher (and icon) by app id.
@@ -1022,14 +1023,46 @@ int main(int argc, char** argv) {
         if (tak::applyDpiMigration(settings, osScale)) tak::saveSettings(settings);
     }
 #elif defined(__linux__)
-    if (tak::wayland::startup().native) {
-        // Same one-time UI/cursor migration: X11 through XWayland used to be stretched by
-        // the desktop scale. The scale arrives from the compositor once the surface is on
-        // an output, so let SDL take in those events before reading output / window.
-        SDL_PumpEvents();
-        const float osScale = tak::hidpi::scale(ren);
-        std::fprintf(stderr, "dpi: native Wayland resolution; backing scale %.2f\n", osScale);
-        if (osScale > 1.01f && tak::applyDpiMigration(settings, osScale)) tak::saveSettings(settings);
+    if (mpHeadless == 0 && shot.empty()) {
+        // Keep UI Scale / Cursor Size the same physical size when the window kind changes
+        // (NATIVE WAYLAND switched, or KDE's legacy-X11 scaling changed): a stretched X11
+        // window measured them in points of S screen pixels, a real-pixel X11 window and a
+        // native Wayland one in screen pixels -- see client/waylandchoice.h.
+        const auto& wl = tak::wayland::startup();
+        float osScale = 0.0f;
+        if (wl.native) {
+            // The scale arrives from the compositor once the surface is on an output, so
+            // let SDL take in those events before reading output / window.
+            SDL_PumpEvents();
+            osScale = tak::hidpi::scale(ren);
+            std::fprintf(stderr, "dpi: native Wayland resolution; backing scale %.2f\n", osScale);
+        }
+        const char* drv = SDL_GetCurrentVideoDriver();
+        const int now = tak::wayland::sessionMode(drv ? drv : "", wl.native, wl.session);
+        // No history yet: a file from a build that migrated on the first native start
+        // (dpiMigrated) already holds native sizes; otherwise every earlier Linux build ran
+        // this session's X11 window.
+        const int assumed = settings.dpiMigrated && now == tak::wayland::kModeWayland
+                                ? int(tak::wayland::kModeWayland) : tak::wayland::x11Mode(wl.session);
+        tak::wayland::DisplayHistory h{settings.displayMode, settings.displayScale};
+        const int prev = h.mode;
+        const float f = tak::wayland::advanceDisplay(h, now, osScale, assumed, tak::wayland::Units::GamePixels);
+        const bool resized = tak::rescaleUi(settings, f);
+        if (resized || h.mode != settings.displayMode || h.scale != settings.displayScale) {
+            if (resized)
+                std::fprintf(stderr, "dpi: display %s -> %s: UI Scale and Cursor Size x%.3f -> uiScale=%.2f cursorScale=%d\n",
+                             tak::wayland::modeName(prev != tak::wayland::kModeUnknown ? prev : assumed),
+                             tak::wayland::modeName(now), f, settings.uiScale, settings.cursorScale);
+            settings.displayMode = h.mode;
+            settings.displayScale = h.scale;
+            // Save just these into the file, not this run's command-line overrides.
+            tak::Settings disk = tak::loadSettings();
+            disk.uiScale = settings.uiScale;
+            disk.cursorScale = settings.cursorScale;
+            disk.displayMode = settings.displayMode;
+            disk.displayScale = settings.displayScale;
+            tak::saveSettings(disk);
+        }
     }
 #endif
     // Set texture-build policy before loading art. Options hosts rebuild the current
