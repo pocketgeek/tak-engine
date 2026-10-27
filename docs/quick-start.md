@@ -131,7 +131,8 @@ sans-serif, as in these pictures) or *Classic* (the engine's old lettering).
 | Right-click a setting in a menu | Previous choice (left-click is the next). |
 
 **Double-click** one of your units to select every unit of that type on the screen
-(**Shift** + double-click adds them to the selection). **Ctrl+Z** selects the same
+(**Shift** + double-click adds them to the selection, **Ctrl** + double-click
+removes them). **Ctrl+Z** selects the same
 type everywhere; **Ctrl+X** the same type on screen.
 
 ![Left-dragging a green box around seventeen Aramon units](img/quick/box-select.jpg)
@@ -151,7 +152,7 @@ the orders for the selection on the right-hand panel.*
 | An enemy | any units | Attack it. Units that can move walk into range. A selected production building sends its new units after it. |
 | Your own unit | any unit that can guard, builders included | Guard it. |
 | A damaged friendly unit | a mobile builder | Repair it. |
-| An unfinished building | a builder that can build it | Help build it. |
+| An unfinished unit or building of yours | a mobile builder | Help build it, also a unit a factory or Zhon builder is still producing. |
 | Your transport | units it can carry | Board it. |
 | Any point | a transport carrying units | Go there and unload. |
 | A tree, rock or wreck | a reclaiming builder | Reclaim (clear) it. It gives no mana. |
@@ -175,8 +176,8 @@ Patrols queued with Shift loop back to where the patrol started.
 | **A** | Attack: click an enemy, or the ground to attack-move there. |
 | **F** | Fight-move: move, fighting whatever is met on the way. |
 | **P** | Patrol (Shift-click more points to make a loop). |
-| **G** | Guard a friendly unit. |
-| **H** | Heal / repair a damaged friendly unit, or help finish a building (builders). |
+| **G** | Guard a friendly unit. A guarding builder repairs it and helps with what it builds; a guarding flyer circles it. |
+| **H** | Heal / repair a damaged friendly unit, or help finish an unfinished unit or building of yours (builders). |
 | **L** | Load: with a transport selected, click the unit to pick up. |
 | **U** | Unload: with a transport selected, click where to drop its cargo. |
 | **S** | Stop: cancel all orders at once. |
@@ -204,7 +205,7 @@ and cloakers a cloak button; units with several weapons get weapon buttons.*
 | Upgrade a lodestone | Place your side's divine lodestone on one of your finished basic lodestones. |
 | Train at a production building | Left-click an icon: +1. Shift: +5. Ctrl+Shift: +10. Right-click (same modifiers) removes. |
 | Endless production | Ctrl + left-click an icon (again to stop). |
-| Rally point | With the building selected, right-click the ground or press **M** / **P** and click. Shift adds rally steps. A mobile builder in endless production takes **Move** and **Patrol** as rally orders too; **Stop** ends its production. |
+| Rally point | With the building selected, right-click the ground, or press **M**, **P**, **A** or **F** and click (right-click an enemy for an attack rally). Shift adds rally steps; **Stop** clears them. A mobile builder in endless production takes the same rally orders; **Stop** ends its production. |
 
 ![A Mage Builder selected, the Barracks icon chosen from the build menu, and the Barracks ghost under the pointer](img/quick/build-placement.jpg)
 
