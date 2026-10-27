@@ -149,7 +149,7 @@ the orders for the selection on the right-hand panel.*
 | --- | --- | --- |
 | Open ground | any units | Move. |
 | An enemy | any units | Attack it. Units that can move walk into range. A selected production building sends its new units after it. |
-| Your own or an allied unit | armed units | Guard it. |
+| Your own unit | any unit that can guard, builders included | Guard it. |
 | A damaged friendly unit | a mobile builder | Repair it. |
 | An unfinished building | a builder that can build it | Help build it. |
 | Your transport | units it can carry | Board it. |

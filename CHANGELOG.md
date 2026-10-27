@@ -19,6 +19,18 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+
+- **Builders guard on a right-click,** as in the original game. Right-clicking
+  one of your finished, undamaged units with a builder selected now tells the
+  builder to Guard it, as the G key does; before, a right-click guarded only
+  with armed units and a builder did nothing. Each selected unit decides for
+  itself: a builder repairs a damaged unit while the soldiers selected with it
+  guard it (before, they did nothing), and any unit that can guard does so,
+  armed or not. An unfinished unit is still helped to build, an enemy still
+  attacked and a transport still boarded. A god, which the original cannot
+  tell to guard, no longer guards on a right-click either.
+
 ## 0.9.7
 *2026-10-27 · protocol 301 · replay format 15 · does not play with 0.9.6 or earlier, nor their replays*
 
