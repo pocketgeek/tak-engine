@@ -27,5 +27,6 @@ The CD cabinet's `Crusades_Files` group establishes that metagame assets,
 Darien.def, help and Boneyards components shipped on the expansion media.
 It does not prove which optional groups a user selected, the installer's full
 conditional logic, or the order of subsequent online patches. Campaign
-implementation research continues to use the explicitly fingerprinted standalone
-3.0 patch executable and Rover, not offsets borrowed from the CD or GOG versions.
+implementation research used the explicitly fingerprinted standalone 3.0 patch
+executable and Rover, not offsets borrowed from the CD or GOG versions. (That
+meta-game work was removed in 0.9.4; see the [README](README.md).)

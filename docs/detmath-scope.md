@@ -1,15 +1,19 @@
 # Cross-build determinism: the `detmath` shim — scoping
 
 **Status: IMPLEMENTED** (commit `ae54375`). `src/sim/detmath.{h,cpp}` ships the
-`sin`/`cos`/`atan2`/`len` described below; all ~10 sim call sites route through
+`sin`/`cos`/`atan2`/`len` described below (plus a later double-precision
+`atan`, used for retail ballistic angles); all sim call sites route through
 it; `tools/detmath_test` checks accuracy + emits a golden hash, and
 `tools/check-detmath.sh` guards against regressions. Verified: accuracy vs libm
 sin/cos ≤ 3e-8, atan2 ≤ 1.25e-7; golden hash identical across g++
 `-O0`/`-O2`/`-O3`; sim stays bit-identical (`--mpai` 1800 ticks × 2, 1v1).
 Resolved open questions: (1) `double` intermediates rounded once; (2) `sqrt`/
-`fmod` left as `std::` (already deterministic) — not wrapped; (3) clang and
-x86-vs-ARM CI legs left for when a target needs them. The rest of this doc is
-the original scoping, kept for the rationale.
+`fmod` left as `std::` (already deterministic) — not wrapped; (3) the
+cross-build legs have since landed: `tools/check-determinism.sh` (run by the
+`determinism.yml` workflow) builds the shim with every available compiler ×
+optimization level and asserts one golden hash, and the Windows and Apple-silicon
+macOS CI jobs check the same golden natively. The rest of this doc is the
+original scoping, kept for the rationale.
 
 This was the last open item of the multiplayer plan (see
 `docs/multiplayer-design.md`). Everything else — lobby, referee sim, server AI,
@@ -29,7 +33,10 @@ Same-binary determinism is in place and heavily tested (headless 2-client runs
 are bit-identical over hundreds of ticks; the referee bit-matches clients). The
 contract today:
 
-- **No RNG in the sim.** All variation comes from ordered state.
+- **No unseeded randomness in the sim.** At scoping time the sim had no RNG at
+  all; it now has retail's seeded game RNG (`sim/retailrng.h`,
+  `World::setGameSeed`), whose seed every peer and replay receives, so its draws
+  are ordered state like everything else.
 - **Fixed timestep** (1/30 s), fixed iteration orders, `mixf` hashes the *exact*
   float bits (`src/sim/sim.cpp` `stateHash`).
 - **`-ffp-contract=off`** on EVERY target (directory-wide in CMakeLists.txt), so
@@ -67,16 +74,18 @@ that yield identical bits everywhere.** Basic ops, `sqrt`, and `fmod` stay as-is
 Grepped across the entire deterministic path (`sim.cpp`, `matchsetup.cpp`,
 `ai.cpp`); confirmed nothing hides in `terrain.cpp`, `tnt.cpp`, `lockstep.cpp`,
 or the COB VM, and that **COB/piece animation state is not in `stateHash`**
-(animation is cosmetic and out of scope).
+(animation was cosmetic and out of scope then; unit COB threads and piece motion
+have since moved into `World` and are hashed, and they use only the shim).
 
 **This table is the original audit, not a live index.** It records which call
 sites drove the shim decision at the time it was taken; the line numbers have
 drifted since and the "flow field" entry names a system that no longer exists
 (steering now aims straight at the front order's point, and routing is the
 boundary tracer in `sim/pathsearch.h`). The verdicts still hold, and the live
-check is `tools/check-detmath.sh`, which fails the build on any direct libm
-transcendental in `src/sim/` — that, not this table, is what keeps the
-inventory complete.
+check is `tools/check-detmath.sh`, which fails (in CI, via
+`tools/check-determinism.sh`) on any direct libm transcendental in the sim and
+AI sources it lists (`sim.cpp`, `matchsetup.cpp`, `retailaim.h`, `ai.cpp` and the
+classic-AI files) — that, not this table, is what keeps the inventory complete.
 
 | Function | Sites | Where / what | Verdict |
 |---|---|---|---|

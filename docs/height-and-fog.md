@@ -4,7 +4,8 @@ TA:Kingdoms terrain is a **flat tile mosaic** — cliff/slope relief is painted
 into the 32px tile art, and the heightmap drives gameplay (nav) plus a **per-unit
 screen lift**, *not* geometric terrain displacement. This matches the retail
 engine (KINGDOMS.icd: flat-tile software renderer + vertical unit lift, no
-terrain skew). Everything below lives in `src/client/main.cpp` unless noted.
+terrain skew). Everything below lives in the client's `GameView`
+(`src/client/gameview*.{h,cpp}`) unless noted.
 
 ## Unit lift
 
@@ -13,12 +14,13 @@ terrain skew). Everything below lives in `src/client/main.cpp` unless noted.
   map lifts nothing.
 - `terrainLift = heightAbove * kHeightScale_` (screen-Y, toward north) and
   `terrainLiftX = heightAbove * kHeightScaleX_` (screen-X). The 2.5D view is
-  tilted diagonally, so height would displace both axes. Current constants:
-  `kHeightScale_ = 1.1` (art-calibrated; shared by the seat lift, wall occlusion,
-  and picking) and `kHeightScaleX_ = 0` (horizontal **off** — a nonzero X scale
-  can't be inverted cleanly for both N-S and E-W walls, so vertical-only is the
-  retail-faithful choice; the residual "east offset" on diagonal walls is the
-  accepted limit). Live-tunable via `TAK_HSCALE` / `TAK_HSCALEX`.
+  tilted diagonally, so height could displace both axes. Current constants:
+  `kHeightScale_ = 0.5` (retail's: its screen projection at `0x426820` forms
+  `screenY = (z << 4) - cameraY - (height >> 1)`, confirmed under emulation;
+  shared by the seat lift, wall occlusion, and picking — an earlier art-calibrated
+  1.1 lifted units 2.2× too far) and `kHeightScaleX_ = 0` (horizontal **off**:
+  retail's screen X has no height term at all). Live-tunable via `TAK_HSCALE` /
+  `TAK_HSCALEX` (debug builds).
 - Applied to **every height-anchored draw** of a mobile unit: sprite, shadow,
   HP bars, selection brackets, order rings, build ghosts, projectiles,
   particles, effects.
@@ -57,10 +59,16 @@ apply the lift — a flat `offX + sx/zoom` map lands on the wrong cell:
 ## Fog of war
 
 Fog is a **local display** computation, **not** part of the deterministic sim:
-`World::updateVisibility` (`src/sim/sim.cpp`) runs at 4 Hz and is skipped for the
-headless referee (`visPlayer_ < 0`), and `vis_` is **not** folded into
-`stateHash`. So fog and line-of-sight math may use plain floats freely (no
-`detmath` requirement).
+`World::updateVisibility` (`src/sim/sim.cpp`) runs every 0.25 s, does its
+expensive part (`visCompute`) on a worker thread so the result lands one pass
+late, and is skipped for the headless referee (`visPlayer_ < 0`); `vis_` is
+**not** folded into `stateHash`. So fog and line-of-sight math may use plain
+floats freely (no `detmath` requirement).
+
+This display fog is separate from the sim's own retail-style vision: per-player
+view counts on a 32px grid (`viewCounts_`, retail `0x4c6800`) plus persistent
+exploration bits, which `World::playerSees` and the AI read. Those are gameplay
+state and **are** hashed.
 
 - **Reveal + line of sight.** Each unit reveals cells within
   `max(sight, radar) / 16`, but a cell is revealed only if `sightClear()` finds no
@@ -78,10 +86,12 @@ headless referee (`visPlayer_ < 0`), and `vis_` is **not** folded into
 
 ## Tuning knobs (env)
 
+`TAK_HSCALE`, `TAK_HSCALEX` and `TAK_HDEBUG` are read only by debug builds.
+
 | Var | Effect | Default |
 | --- | --- | --- |
-| `TAK_HSCALE` | unit lift per height unit (screen-Y) | 1.1 |
+| `TAK_HSCALE` | unit lift per height unit (screen-Y) | 0.5 |
 | `TAK_HSCALEX` | unit lift per height unit (screen-X) | 0 (off) |
 | `TAK_FOG_EYE` | fog eye height above the unit's ground cell | 40 |
 | `TAK_FOG_MARGIN` | how far terrain must clear the sight line to block | 16 |
-| `TAK_HDEBUG` | force-enable the height debug overlay (also F7 in game) | off |
+| `TAK_HDEBUG` | enable the height debug overlay | off |

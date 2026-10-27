@@ -386,7 +386,7 @@ controls** shows a summary of the controls.
 | **FILE** | New map (Ctrl+N), Open map (Ctrl+O), Save (Ctrl+S), Save As (Ctrl+Shift+S), Export loose files, Test Map (F5), New AI mod... (Ctrl+Shift+N), Open AI mod... (Ctrl+Shift+O), Exit |
 | **EDIT** | Undo (Ctrl+Z), Redo (Ctrl+Y), Clear area (K), Brush: protect objects (checkbox), Copy terrain selection (Ctrl+C), Paste terrain clipboard (Ctrl+V) |
 | **VIEW** | Fit map, 100% terrain zoom, Toggle grid (G), Toggle regions, Frame selection, Store view bookmark, Restore view bookmark, Overlay: movement / buildability / water depth / slopes, Hide terrain overlay, Smaller UI, Larger UI, Show features, Show units, Show starts, Unit model preview (F6), Preferences (F11 fullscreen), Show blocked cells (B) |
-| **SCENARIO** | Properties (P), Resize (R), Use Only units (U), Check map (C), Scripting (T), Next issue, Regions, Validation results, Regenerate from recipe, Log Test Map triggers (checkbox), Placed units |
+| **SCENARIO** | Properties (P), Resize (R), Use Only units (U), Check map (C), Scripting (T), Next issue, Regions, Validation results, Regenerate from recipe, Log Test Map triggers (checkbox), Placed units, AI Profiles... (A) |
 | **SYMMETRY** | Live symmetry (M), Symmetrize map (Shift+M), seven mirror choices, Locate unmirrored terrain |
 | **HELP** | Editor controls, About |
 
@@ -2303,6 +2303,11 @@ works, but only for that launch: it is not remembered. The folder must contain `
 Change **UI SCALE** in Preferences, or use **View → Smaller UI** / **Larger UI**.
 The scale is limited so that the editor fits the window; make the window bigger
 to allow a larger scale.
+On a Linux Wayland desktop at a display scale above 100%, blurry text means
+Cartographer is running in an X11 window: it follows the game's **Options →
+Display → Native Wayland** setting (see the
+[game user guide](user-guide.md#display)), which takes effect when Cartographer
+is restarted.
 
 **What happened to my unsaved work after a crash?**
 Start Cartographer from its shortcut and choose **Recover**. See
