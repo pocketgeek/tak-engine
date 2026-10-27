@@ -2325,6 +2325,7 @@ namespace {
                 SDL_SetRenderDrawColor(ren_, 96, 84, 60, 255);
                 SDL_RenderDrawRectF(ren_, &box);
             }
+            bool tipShown = false;   // the hover tooltip takes the TRAINING line's spot
             for (int i = 0; i < n; ++i) {
                 const auto* bt = menu[size_t(i)];
                 const auto& li = lay.icons[size_t(i)];
@@ -2398,10 +2399,11 @@ namespace {
                                  tw + 12, 26 * bScale};
                     SDL_RenderFillRectF(ren_, &tb);
                     blockText(tip, tipx, iconTop - 24 * bScale, px, {255, 240, 190, 255});
+                    tipShown = true;
                 }
                 iconRects_.push_back({r, bt});
             }
-            if (!b->buildQueue.empty()) {
+            if (!b->buildQueue.empty() && !tipShown) {
                 char q[64];
                 std::snprintf(q, sizeof q, "TRAINING %s (%zu)",
                               b->buildQueue.front()->name.c_str(),
