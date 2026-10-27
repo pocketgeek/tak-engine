@@ -3141,7 +3141,7 @@ if(TAK_TEST_DATA)
       add_test(NAME ai_mod_profile COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/ai_mod_profile_test.py"
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --hpitool "$<TARGET_FILE:hpitool>"
         --data "${TAK_TEST_DATA}")
-      set_tests_properties(ai_mod_profile PROPERTIES TIMEOUT 600)
+      set_tests_properties(ai_mod_profile PROPERTIES TIMEOUT 900)
       # The Classic AI reads ai/default.txt from the room's layers: game mod over map
       # package (a single-map archive's own file) over base; a mission plays Classic.
       add_test(NAME classic_ai_map_profile COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/classic_ai_map_profile_test.py"

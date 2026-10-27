@@ -20,6 +20,8 @@ def main():
         with server(a.server.resolve(),referee,root,'--no-auth','--seed','1','--map-cache-dir',str(root/'server-cache')) as (port,_,process):
             result=subprocess.run([str(a.client.resolve()),str(port),str(host),str(peer)],capture_output=True,text=True,timeout=110)
             print(result.stdout,end='')
+            # The client's first SAVE FAILED line is the test's own (a file named ModCache
+            # in the peer's cache); the failure is on its last line.
             assert result.returncode==0,result.stderr+'\n'+(root/'log').read_text()
             assert process.poll() is None
             log=(root/'log').read_text()

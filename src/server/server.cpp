@@ -3167,17 +3167,26 @@ int Server::run() {
             // Spectators (in a game, no seat) get a far longer grace than seated players.
             bool spectator = c->state == Client::InGame && c->slot < 0;
             if((c->state==Client::Handshake || c->state==Client::Auth) && now-c->connectedMs>kLoginDeadlineMs)
-                dead.push_back(id);
+                {c->conn.fail("login deadline exceeded");dead.push_back(id);}
             // A seat the room is waiting for is the wait's to end (takeOver), not this
             // timeout's: closing it here would only restart nothing and lose the chance
             // of the same connection coming back.
             const Room* in = c->state == Client::InGame && c->slot >= 0 ? roomOf(*c) : nullptr;
             const bool waitedFor = in && c->slot < kMaxSlots && in->waitDeadline[c->slot] &&
                                    in->slotClient[c->slot] == int(id);
-            if (!waitedFor && now - c->lastRecvMs > (spectator ? kSpectatorTimeoutMs : kTimeoutMs))
+            if (!waitedFor && now - c->lastRecvMs > (spectator ? kSpectatorTimeoutMs : kTimeoutMs)) {
+                c->conn.fail(spectator ? "silent past the spectator timeout" : "silent past the player timeout");
                 dead.push_back(id);
+            }
         }
-        for (uint32_t id : dead) dropClient(id, "disconnected");
+        // Say WHY: a bare "disconnected" hid a rate-limit or backlog failure behind what
+        // the client only sees as "peer closed" (the mod_transfer flake, 0.9.4).
+        for (uint32_t id : dead) {
+            const auto it = clients_.find(id);
+            if (it == clients_.end()) continue;
+            const std::string why = it->second->conn.error().empty() ? "disconnected" : it->second->conn.error();
+            dropClient(id, why.c_str());
+        }
     }
     return 0;
 }

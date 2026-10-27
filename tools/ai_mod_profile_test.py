@@ -32,6 +32,7 @@ EASY_SEAT, NORMAL_SEAT = 0, 1
 WATCHED = {EASY_SEAT: ('araat', 'aralode'), NORMAL_SEAT: ('tarcage', 'targarg')}
 SECONDS = '120'
 MAP = 'AI Circle'
+GAME_TIMEOUT = 240   # per game; ctest allows 900 s for all three
 
 
 def ban(units):
@@ -121,9 +122,19 @@ def play(a, root, name, mod_n, map_n):
                        SDL_VIDEODRIVER='dummy', SDL_AUDIODRIVER='dummy')
             env.pop('TAK_ROSTER_DUMP')
             env.pop('TAK_AI_LEVEL', None)
-            result = subprocess.run([str(a.client.resolve()), 'game', MAP, '--data', str(data),
-                                     '--server', '127.0.0.1', '--serverport', str(port), '--mphost', '--time', SECONDS],
-                                    env=env, capture_output=True, text=True, timeout=600)
+            # One game takes about 20 s (56 s for all three alone, 75 s beside five more
+            # copies and a CPU hog). Its own deadline sits well inside ctest's, so a stuck
+            # game is reported with the client's output and the server log (0.8.11 and
+            # 0.8.13 each hit ctest's 600 s limit, which kills the test silently).
+            try:
+                result = subprocess.run([str(a.client.resolve()), 'game', MAP, '--data', str(data),
+                                         '--server', '127.0.0.1', '--serverport', str(port), '--mphost', '--time', SECONDS],
+                                        env=env, capture_output=True, text=True, timeout=GAME_TIMEOUT)
+            except subprocess.TimeoutExpired as e:
+                text = lambda b: b.decode(errors='replace') if isinstance(b, bytes) else (b or '')
+                raise AssertionError('the %s game did not finish in %d s\n--- client stdout\n%s\n--- client stderr\n%s\n'
+                                     '--- server log\n%s' % (name, GAME_TIMEOUT, text(e.stdout), text(e.stderr),
+                                                              (work / 'log').read_text()))
             log = (work / 'log').read_text()
             assert result.returncode == 0 and 'hash=' in result.stdout + result.stderr, \
                 result.stdout + result.stderr + '\n' + log

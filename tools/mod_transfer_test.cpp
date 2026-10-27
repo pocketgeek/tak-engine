@@ -1,7 +1,9 @@
 #include "net/client.h"
 #include "sim/matchsetup.h"
 #include <chrono>
+#include <array>
 #include <filesystem>
+#include <future>
 #include <fstream>
 #include <iostream>
 #include <regex>
@@ -44,22 +46,32 @@ int main(int argc,char** argv){try{
  check(host.connect(serverHost,uint16_t(std::stoi(argv[1])),"pack-host"),"host connect");check(peer.connect(serverHost,uint16_t(std::stoi(argv[1])),"pack-peer"),"peer connect");
  sim::TypeRegistry registry;hpi::Vfs hostData,peerData;sim::World wh,wp;
  bool created=false,joined=false,ready=false,started=false,loaded=false,saveFailed=false;int transition=0,campaign=0;std::string initialDigest,alphaDigest;uint32_t ht=0,pt=0;std::map<uint32_t,uint64_t> hashes;
- auto setup=[&](net::MpClient& c,hpi::Vfs& data,sim::World& world){
+ // Loading builds both worlds on a worker while the main loop keeps polling both
+ // clients, as a player's loading screen keeps its connection alive: the server drops
+ // a seat silent for 15 s, and two Ulasem Arena loads in a row under a loaded test
+ // machine took the peer past that ("peer closed" right after "starting", 0.9.4).
+ // Everything a load reads from its client is taken on this thread first.
+ struct Load{net::MpClient* c;hpi::Vfs* data;sim::World* world;std::shared_ptr<net::mods::Package> mod;std::shared_ptr<net::maps::Package> map;uint32_t seed;uint8_t fog;uint64_t hash=0;};
+ auto prepare=[&](net::MpClient& c,hpi::Vfs& data,sim::World& world){
   data=c.modVfs(&c==&host?std::vector<std::string>{"HostArt"}:std::vector<std::string>{"Local","Removed pack"});
+  return Load{&c,&data,&world,c.modPackage(),c.mapPackage(),c.startSeed(),c.room().opts.fogExplored};
+ };
+ auto setup=[&](Load& l){
+  auto& data=*l.data;auto& world=*l.world;const bool isHost=l.c==&host;
   check(hpi::gameplayHash(data)!=stockHash,"game pack did not change gameplay");
-  if(&c==&host) {sim::setupRegistry(registry,data,false);check(registry.find("araking")->maxHp==23456,"alphabetical pack precedence lost");check(data.has("sounds/host-art.wav"),"host cosmetic pack not loaded");
+  if(isHost) {sim::setupRegistry(registry,data,false);check(registry.find("araking")->maxHp==23456,"alphabetical pack precedence lost");check(data.has("sounds/host-art.wav"),"host cosmetic pack not loaded");
    check(data.has("sounds/host-always.wav") && !data.has("sounds/peer-always.wav"),"host always-enabled cosmetic pack not loaded (or a guest's was sent)");
    check(data.has("sounds/host-rules.wav") && !data.has("sounds/peer-rules.wav"),"host always-enabled game pack not applied (or a guest's was)");}
   else {check(hpi::gameplayHash(data)==hpi::gameplayHash(hostData),"peer cosmetics changed gameplay");check(data.read("sounds/pack-test.wav")==std::vector<uint8_t>({'l','o','c','a','l'}),"peer cosmetic pack not loaded over its always-on archive");check(!data.has("sounds/host-art.wav"),"host cosmetic pack was transferred");
    check(data.has("sounds/peer-always.wav") && !data.has("sounds/host-always.wav"),"peer always-enabled cosmetic pack not loaded (or the host's was sent)");
    check(!data.has("sounds/peer-root.wav"),"an archive directly in mods/cosmetic/ was loaded");
-   check(data.has("sounds/host-rules.wav") && c.modPackage()->mapPath.find("HostRules")!=std::string::npos,"the host's always-enabled game pack was not sent");
-   check(!data.has("sounds/peer-rules.wav") && c.modPackage()->mapPath.find("PeerRules")==std::string::npos,"a guest's own always-enabled game pack applied in the host's room");
+   check(data.has("sounds/host-rules.wav") && l.mod->mapPath.find("HostRules")!=std::string::npos,"the host's always-enabled game pack was not sent");
+   check(!data.has("sounds/peer-rules.wav") && l.mod->mapPath.find("PeerRules")==std::string::npos,"a guest's own always-enabled game pack applied in the host's room");
    {sim::TypeRegistry mine;sim::setupRegistry(mine,data,false);check(mine.find("araking")->maxHp==23456,"the guest's always-enabled game pack changed the host's units");}
-   check(!c.modPackage()->files->count("sounds/host-always.wav") && !c.modPackage()->files->count("sounds/host-art.wav"),"the game-mod package carried cosmetic files");}
-  data.setMapFiles(c.mapPackage()->files);sim::MatchConfig cfg;cfg.vfs=&data;cfg.mapPath=c.mapPackage()->mapPath;cfg.startSeed=c.startSeed();cfg.slots={{true,0,0,1,false,false},{true,1,1,1,false,false}};cfg.unitCap=2000;
-  cfg.roomMapRevealed=c.room().opts.fogExplored>=1;cfg.roomLosOff=c.room().opts.fogExplored==2;   // hashed room vision, as net::matchConfigFor sets it
-  world.setVisPlayer(-1);sim::setupMatch(world,registry,cfg);c.reportLoaded(hpi::gameplayHash(data) ^ (badLoaded && &c==&host ? 1 : 0));
+   check(!l.mod->files->count("sounds/host-always.wav") && !l.mod->files->count("sounds/host-art.wav"),"the game-mod package carried cosmetic files");}
+  data.setMapFiles(l.map->files);sim::MatchConfig cfg;cfg.vfs=&data;cfg.mapPath=l.map->mapPath;cfg.startSeed=l.seed;cfg.slots={{true,0,0,1,false,false},{true,1,1,1,false,false}};cfg.unitCap=2000;
+  cfg.roomMapRevealed=l.fog>=1;cfg.roomLosOff=l.fog==2;   // hashed room vision, as net::matchConfigFor sets it
+  world.setVisPlayer(-1);sim::setupMatch(world,registry,cfg);l.hash=hpi::gameplayHash(data) ^ (badLoaded && isHost ? 1 : 0);
  };
  const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(90);
  while(std::chrono::steady_clock::now()<end){
@@ -92,7 +104,12 @@ int main(int argc,char** argv){try{
    } else if(transition==4 && !host.modPending() && host.room().mapsReady && peer.modPackage() && peer.modPackage()->digest==initialDigest){check(std::filesystem::exists(peerCache/"ModCache"/(initialDigest+".takmods")),"peer cache not saved after recovery");transition=5;}
   }
   if(!started && transition==5 && ready && host.room().mapsReady && host.room().slots[1].ready){check(host.modPackage()&&peer.modPackage(),"start allowed before packs received");check(host.modPackage()->digest==peer.modPackage()->digest,"pack digest mismatch");host.startGame();started=true;}
-  if(!loaded && !campaign && host.starting() && peer.starting()){setup(host,hostData,wh);setup(peer,peerData,wp);loaded=true;}
+  if(!loaded && !campaign && host.starting() && peer.starting()){
+   std::array<Load,2> loads{prepare(host,hostData,wh),prepare(peer,peerData,wp)};
+   auto worker=std::async(std::launch::async,[&]{for(auto& l:loads)setup(l);});
+   while(worker.wait_for(std::chrono::milliseconds(1))!=std::future_status::ready){check(host.poll(),host.error().c_str());check(peer.poll(),peer.error().c_str());}
+   worker.get();for(auto& l:loads)l.c->reportLoaded(l.hash);loaded=true;
+  }
   if(loaded){
    auto advance=[&](net::MpClient& c,sim::World& world,uint32_t& tick,bool first){net::Bundle b;while((first || hashes.count(tick))&&c.takeBundle(tick,b)){
     for(const auto& cmd:b.cmds)sim::applyCommand(world,registry,cmd);for(const auto& ev:b.events)sim::applyEvent(world,ev);world.tick(1.f/net::kServerHz);auto h=world.stateHash();if(first)hashes[tick]=h;else check(hashes.at(tick)==h,"peers diverged");if(tick%net::kHashPeriod==0)c.sendHash(tick,h);++tick;}};
