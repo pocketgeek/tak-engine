@@ -1796,6 +1796,7 @@ static tak::ai::ClassicProfileScript classicProfileFor(const Room& r, const std:
 }
 
 void Server::tryStart(Client& c) {
+    const uint64_t blockedFrom = nowMs();   // see the clock shift before GameStarting
     Room* r = roomOf(c);
     if (!r || r->hostId != c.id || r->running) return;
     if(std::count_if(rooms_.begin(),rooms_.end(),[](const auto& entry){return entry.second.running;})>=limits_.running) {
@@ -2045,10 +2046,13 @@ void Server::tryStart(Client& c) {
 #endif
     // Everything above (package/map verification, AI profiles, the referee world build)
     // ran on this thread without reading any socket, so no connection's last-heard time
-    // can have advanced meanwhile. Silence is the CLIENT's: restart every clock now, or a
-    // build longer than the timeout drops the whole room the moment the game starts. A
-    // genuinely dead client is still dropped one normal timeout after this point.
-    for (auto& [cid, cl] : clients_) cl->lastRecvMs = std::max(cl->lastRecvMs, nowMs());
+    // can have advanced meanwhile. Silence is the CLIENT's: move every clock forward by
+    // the time this thread was busy, or a build longer than the timeout drops the whole
+    // room (and anyone else on the server) the moment the game starts. Shifted by the
+    // stall, not reset to now: a dead client gains only the server's own busy time, so
+    // games starting over and over elsewhere cannot keep it alive.
+    const uint64_t now = nowMs(), blocked = now - blockedFrom;
+    for (auto& [cid, cl] : clients_) cl->lastRecvMs = std::min(cl->lastRecvMs + blocked, now);
     // GameStarting: final slot table + options + seed + a per-slot resume token
     // (used to reconnect to the seat inside the disconnect wait).
     for (int i = 0; i < kMaxSlots; ++i) {

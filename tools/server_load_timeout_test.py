@@ -123,10 +123,18 @@ def scenario_lobby(port, h, log):
         alice.close(); bob.close()
 
 
+class Skipped(Exception):
+    pass
+
+
 def scenario_refbuild(port, h, log):
     """Time the server spends building the referee world is not the clients' silence."""
+    started = time.monotonic()
     alice, bob = begin(port, h, 'Alice5', 'Bob5', True)   # begin() asserts ticks reach both
     try:
+        # The hook is debug-only: a release takserver starts at once, which proves nothing.
+        if time.monotonic() - started < SILENT_DROPPED:
+            raise Skipped('TAK_TEST_REFEREE_DELAY_MS not honoured (a release takserver)')
         assert not alice.closed and not bob.closed, 'a slow referee build dropped the room'
         silent(alice, SILENT_KEPT)
         bob.pump(2)
@@ -162,6 +170,8 @@ def main():
                 try:
                     scenario(port, h, lambda: (root / 'log').read_text(errors='replace'))
                     print('ok   ' + name)
+                except Skipped as why:
+                    print('skip ' + name + ': ' + str(why))
                 except Exception:
                     failed.append(name)
                     print('FAIL ' + name)
