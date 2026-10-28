@@ -95,7 +95,10 @@ Every takclient and takserver run used scratch `HOME`, `XDG_DATA_HOME` and
   **780 of 781** passed; the one failure, `pathblock` (its expectation for a
   guard that stepped off a site, which the guard ring changed), was fixed by
   the test commit `fd124c2f` (the guard is back on its guard ring).
-- TODO-LEAD: full suite on `233073b0` (result of the run in progress).
+- **Full suite on `233073b0`** (the final code; -O2 debug, `ctest -j12`, scratch
+  HOME and XDG folders): 780 of 781 passed. The one failure is
+  `vashim_unavailable`, the known local failure (a render node without libva);
+  CI builds FFmpeg with the shim and runs it there.
 - **Detmath guard** (`tools/check-detmath.sh`, on the prepared tree): OK.
 - **Cross-compiler golden hash** (`tools/check-determinism.sh`): golden
   `dcef618cd2e4d558`, expected unchanged from 0.9.8 (the gate hashes did not
