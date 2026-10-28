@@ -1850,8 +1850,8 @@ effects only without dots.*
 building stand in front of. It marks only units you would see anyway: your
 own, your allies' and enemies you can currently see, never anything under fog;
 another unit in front never counts as cover, and flying units are never
-covered. **Shadow** makes the tree, rock or wall see-through just where it
-hides a unit: the hidden part shows through as a faint shadow (a little
+covered. **Shadow** makes the tree, rock or wall see-through around a unit
+it hides: the hidden part shows through as a faint shadow (a little
 stronger through a building, whose light stone would wash it out), while the
 part in plain sight, and anything standing in front of the cover, looks
 exactly as before. **Dots** puts the unit's tactical dot (same size, colour and
@@ -1859,9 +1859,9 @@ selection outline as Tactical Dots) on top when the unit's centre is hidden; a
 unit whose centre is in sight gets none, and clicking the dot selects the
 unit. Nothing is added while Tactical Dots is showing. Shadow draws each hidden
 unit and what covers it a second time, so with hundreds of units behind trees
-or buildings at once it costs a little more than Dots. Flat scenery (stumps,
-crops, smudges and mana deposits) is always drawn under units, as in the
-original game, so it never hides anyone.
+or buildings at once it costs a few milliseconds a frame; Dots is cheaper.
+Flat scenery (stumps, crops, smudges and mana deposits) is always drawn under
+units, as in the original game, so it never hides anyone.
 
 #### Renderer
 
