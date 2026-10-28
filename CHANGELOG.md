@@ -20,6 +20,8 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
 ## Unreleased
+*protocol 303 · replay format 15 · does not play with 0.9.8 or earlier, nor their replays*
+
 - **Make Poster is Shift+P.** The default key for MAKE POSTER (power codes) is
   now **Shift+P** instead of Print Screen, which many desktops take for their
   own screenshots and Mac keyboards lack. A key you set yourself in CONTROLS is
@@ -37,7 +39,6 @@ their validation reports; both live in [`docs/`](docs/).
   red and the click is refused. Before, the order was accepted and the builder
   set off, then gave up. This goes beyond the original game, which accepted
   such sites. Flying builders still place anywhere they could build.
-*protocol 303 · replay format 15 · does not play with 0.9.8 or earlier, nor their replays*
 - **Your units get out of the way of a build.** When a builder reaches its
   site and some of your own idle units, or units guarding something (the
   builder itself, say), stand on it, they now step just off the site, and the
