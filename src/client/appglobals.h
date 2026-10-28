@@ -26,11 +26,12 @@
 // flipping it put every z-separated pair in backwards order. The original signs
 // were right; only the magnitudes were wrong.
 //
-// Retail does not sort at all: it z-buffers (Glide grDepthBuffer*, and the
-// DirectDraw path's "no hardware support for zbuffer blting" complaint; the
-// piece walk at icd 0x4eea20 has no depth compare in it). So this remains an
-// approximation of a depth buffer -- correct ordering between triangles, still
-// unable to resolve two that interpenetrate.
+// Retail does not sort at all. Its software path draws each model into its own
+// image with an 8-bit depth plane keyed on vertex height (icd 0x4d47e0,
+// 0x4ed2d0, 0x5415a0); the Glide path's order inside a model is not traced
+// (docs/retail-engine.md, "Retail does not sort 3DO primitives"). So this is an
+// approximation of a per-model depth test -- correct ordering between
+// triangles, still unable to resolve two that interpenetrate.
 inline constexpr float kSortY = 2.0f;   // weight on model Y along the view ray
 inline constexpr float kSortZ = 1.0f;   // weight on model Z (opposite sign to Y)
 

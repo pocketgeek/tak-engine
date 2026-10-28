@@ -2019,33 +2019,61 @@ paraphrases of missions retail names differently:
     CLOAK        -> "Cloaking"          (we said CLOAKED)
     SEEKATTACK   -> "Seeking to attack" (we said ADVANCING)
 
-## Retail does not sort 3DO primitives -- it z-buffers them (2026-09-12)
+## Retail does not sort 3DO primitives (2026-09-12, corrected 2026-10-28)
 
-The open question from the projection work, settled: there is no primitive sort
-to copy, because retail resolves visibility per pixel.
+This section first said retail "z-buffers" 3DO primitives, settled by the Glide
+depth API in the import list. The imports alone did not settle it, and the
+2026-10-28 study (static analysis of `KINGDOMS.icd`) found the Glide depth
+buffer is not shown in use. What is established now, and how firmly:
 
-  * The binary imports the Glide depth API outright -- `_grDepthBufferMode@4`,
-    `_grDepthBufferFunction@4`, `_grDepthMask@4`, `_grDepthRange@8`,
-    `_grDepthBiasLevel@4`, `_grLfbConstantDepth@4`, alongside `_grBufferClear@12`
-    and `_grRenderBuffer@4`. That is a hardware depth buffer, configured and
-    written, in the 3dfx path (the install ships glide2x/glide3x and a
-    ChooseRenderer.exe to pick it).
-  * The DirectDraw path wants one too: the error text
+  * **No primitive sort (established, both renderers share the walk).**
+    `0x4eea20` is the piece-tree walk -- it recurses over child/sibling, applies
+    the 3x3 piece rotation to each vertex, and hands the result on. There is no
+    depth comparison, no insertion into an ordered list, no swap loop in it, nor
+    in the per-primitive loop below.
+  * **Software path: a per-unit 8-bit depth plane (established, high
+    confidence).** Each model is drawn into its own offscreen image the size of
+    its screen rectangle (at most 512 x 512): `0x4ec430` -> `0x4ebb00(rect, 1)`
+    -> `0x4d47e0`, which allocates `2*w*h + 0x18` bytes, colour at `+0x10`
+    (filled with 9, the key colour also stored at `+8`) and a depth plane at `+0x14` (zeroed). The
+    plain image allocator `0x4d4750` leaves `+0x14` null. `0x4ed2d0` then walks
+    the pieces (records of `0x38` at `+0x1cc`, last to first) and each piece's
+    primitives in file order: it projects every vertex to
+    `(x, -z - y/2, base + y)` with `base` 50, or 125 when UnitDef `+0x260` bit
+    `0x40000000` is set (`0x4ed46b..0x4ed4c3`); culls by the sign of the 2-D
+    winding (`0x4ed79b`, `js` skips); lights the face; and rasterises with
+    `0x5415a0` (or `0x542080`). The span loops there (`0x541819..0x54188a`
+    textured, `0x5418b4..0x541907` and kin) interpolate that third value and,
+    when the target has a `+0x14` plane, draw a pixel only where the value is
+    `>=` the byte already there, then store it (`cmp cl,al / ja skip`, write
+    colour, write depth). So inside one model visibility IS resolved per pixel
+    -- but the key is the vertex's HEIGHT (plus the base), not depth along the
+    view ray, and ties go to the later primitive. The finished image is then
+    blitted to the screen like a sprite; the depth plane never leaves it.
+  * **Glide path: depth buffer not shown in use (medium-high confidence).**
+    `grDepthBufferMode`/`grDepthMask` (driver slots `+0x130`/`+0x134`, resolved
+    by name from `Glide3x.dll`) are reached only from the clear method
+    `0x5b7730` and a D3D-style render-state shim `0x5b7fe0` (depth states
+    7/14/23/47). Every clear call found (`0x423258`, `0x5293a5`, ...) pushes
+    depth off (`0,1,0`), and no constant depth-enable was found. Some call sites
+    pass the state in a register, so this is a scan, not a proof. How the Glide
+    path orders the primitives inside one model -- whether it also renders to a
+    per-unit image, or relies on draw order and the cull -- has NOT been traced.
+  * The DirectDraw error text
     "...because there is no hardware support for zbuffer blting. (NOZBUFFERHW)"
-    is a capability complaint about z-buffered blitting, not about sorting.
+    is a capability complaint about z-buffered blitting; it shows the API was
+    probed, not that the game draws with one.
 
-Following the draw path corroborates it. `0x4eea20` is the piece-tree walk --
-it recurses over child/sibling, applies the 3x3 piece rotation to each vertex,
-and hands the result on. There is no depth comparison, no insertion into an
-ordered list, no swap loop anywhere in it.
+**So our triangle sort stands in for a per-model depth test, not for a retail
+sort**, and no choice of sort weights can match a per-pixel test exactly,
+because a single key per triangle cannot express what it does for
+interpenetrating geometry. (Retail's software key is height, ours is depth along
+the view ray -- see below; the two agree on most convex pieces once back faces
+are culled.) Between units, retail has no per-pixel test at all: see "The world
+draw order" below.
 
-**So our triangle sort is not an approximation of retail's sort -- it is an
-approximation of retail's Z-BUFFER**, and no choice of sort weights can match it
-exactly, because a single key per triangle cannot express what a per-pixel test
-does for interpenetrating geometry.
-
-That reframes `kSortZ`/`kSortY`: they are our own stand-in for a depth buffer,
-not a retail constant. But a stand-in can still be WRONG, and ours was.
+That reframes `kSortZ`/`kSortY`: they are our own stand-in for a per-model depth
+test, not a retail constant. But a stand-in can still be WRONG, and ours was.
 
 The sort key has to be depth along the view ray, and the projection hands that
 over directly: `screenY = z - y/2` means points differing by `(y,z) = (2,1)`
@@ -2083,6 +2111,53 @@ What remains beyond this is two triangles that genuinely interpenetrate, which
 one key per triangle cannot resolve. That is the real depth-buffer case, and it
 means taking models off `SDL_RenderGeometry` -- worth doing only if artifacts
 survive a correct key and a cull.
+
+## The world draw order: 16-pixel rows, no depth test between sprites (icd, 2026-10-28)
+
+How retail orders units and features against each other, from the world pass
+`0x4fc648..0x4fcc46`. It paints by 16-pixel map rows, not by a per-object depth
+key:
+
+  1. **Bucket the units.** Every unit, buildings included, goes into the bucket
+     of its row: `((short)unit+0x72 >> 4) - camRow + 0x20` (`0x4fc748..0x4fc7d5`).
+  2. **Flat features first.** A full-screen cell scan (`0x4fc8d9..0x4fc963`)
+     draws at once (call `0x4fd430`) every feature whose def byte `+0x138` is
+     below 10. That byte is the TDF `height` key (parsed at `0x4939ef`, stored at
+     `0x493a0e`). Taller features are deferred: the scan sets cell `+0xd` bit
+     `0x40` (`0x4fc954`).
+  3. **Rows, top to bottom** (`0x4fc9c1..0x4fcb2c`): that row's ground units
+     (`+0x130 & 3 == 1`, drawn by `0x4ee700`), then that row's deferred tall
+     features (`0x4fca83..0x4fcaf6`).
+  4. **Everything else last** (`0x4fcbab..0x4fcc27`): the units with
+     `+0x130 & 3 != 1`, inferred to be the airborne ones.
+
+So a stump, crop row, smudge or mana decal is never painted over a unit, a tree
+paints over every ground unit of its own row and the rows above it, and a flyer paints over everything.
+
+There is no per-pixel depth test between sprites and models (medium-high
+confidence): see the Glide depth-buffer scan in "Retail does not sort 3DO
+primitives" above, and the software path's depth plane lives inside each unit's
+own image. Nor does retail show a unit hidden behind scenery in any way -- no
+indicator was found (inferred from absence; the feature bit `0x400`
+`nodrawundergray` is a fog check at `0x4f7070`, not an occlusion one).
+
+**Our port** (`src/client/gameview_render.cpp`, layers in
+`src/client/hiddenunits.h`) builds one painter list per frame and stable-sorts
+it by layer, then by map z:
+
+  * `kLayerLowFeature` (-1): features of TDF height below 10 -- retail's step 2.
+    Before 2026-10-28 every feature sorted with the units by z, so a flat
+    feature just south of a unit painted over its feet; the `-24` bias that
+    kept mana decals under lodestones went with the change.
+  * `kLayerGround` (0): ground units and tall features together, by plain depth
+    (map z), not by 16-pixel rows. Inside one row retail draws all the units
+    before all the tall features; we interleave them by z, which differs only
+    when a unit and a tall feature share a row.
+  * `kLayerAir` (1): airborne flyers, after everything -- retail's step 4.
+
+HIDDEN UNITS (Options > Graphics, default SHADOW) is a non-retail extra on top
+of this order: a ground unit that a tall feature or a building paints over is
+shown as a tactical dot or a faint see-through shadow. OFF is the retail look.
 
 ## Unit shadows are PROJECTED SILHOUETTES -- and the Glide path is the one that matters (2026-09-12)
 
@@ -2243,10 +2318,10 @@ for free and stays consistent with what is drawn).
 
 `gTilt` is gone entirely, along with the `--tilt` flag that tuned it: there is
 no camera angle here to tune. What remains is a triangle depth-sort key inside a
-model (`kSortZ`/`kSortY`, the old cos/sin values kept as plain weights), needed
-only because we draw without a depth buffer. What retail's software renderer
-sorts 3DO primitives by has NOT been established -- that is the open question
-here, and the constants say so.
+model (`kSortZ`/`kSortY`, now the derived weights 1 and 2), needed only because
+we draw without a depth buffer. Retail's software renderer sorts nothing: it
+depth-tests each model inside its own image by vertex height (see "Retail does
+not sort 3DO primitives"); the Glide path's order inside a model is still open.
 
 ## The terrain-height lift is height/2 (2026-09-12)
 

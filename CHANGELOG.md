@@ -20,13 +20,27 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
 ## Unreleased
+*protocol 303 · replay format 15*
 
+- **Hidden Units** (Options → Graphics; not in the original game): units
+  behind trees, rocks and buildings stay visible. **Shadow**, the default,
+  makes the cover see-through where it hides a unit, so the hidden part shows
+  as a faint shadow and the part in sight is unchanged; **Dots** puts its
+  tactical dot on top; **Off** hides it as before. Only units you can see
+  anyway are marked.
+- **Flat scenery is drawn under units**, as in the original game: features
+  whose height is below 10 (stumps, crops, smudges, mana deposits) no longer
+  paint over the feet of a unit standing just north of them.
 - **macOS: Auto renderer now picks OpenGL**, as Windows and Linux do, so the
   game's OpenGL-only fast drawing paths run on a Mac too (2.6 times as fast as
   Metal at 2,000 units on a MacBook Neo). Apple's software OpenGL is passed
   over; Metal follows if OpenGL cannot start. A saved **Metal** choice is
   kept. If OpenGL misbehaves, choose **Metal** under Options → Graphics →
   Renderer.
+- **Metal: no stray drawing from off-screen clips.** A part of the screen
+  clipped away entirely (a hidden unit's shadow past the view's edge, a list
+  in a window too small for it) no longer draws over the view on the Metal
+  renderer.
 
 ## 0.9.9
 *2026-10-28 · protocol 303 · replay format 15 · does not play with 0.9.8 or earlier, nor their replays*

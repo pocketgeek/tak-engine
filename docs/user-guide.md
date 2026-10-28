@@ -1743,7 +1743,7 @@ missed are silent while the game catches up.
 
 ### Display
 
-![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, Native Wayland set to Auto, then Renderer set to Auto (OpenGL), Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Screen Shake off, Hardware Cursor on with the note OS CURSOR 16X25 beside it, Smooth Motion on, and GPU Memory Limit set to 1.25 GB (default)](img/guide/options-graphics.jpg)
+![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, Native Wayland set to Auto, then Renderer set to Auto (OpenGL), Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Hidden Units at Shadow, Screen Shake off, Hardware Cursor on with the note OS CURSOR 16X25 beside it, Smooth Motion on, and GPU Memory Limit set to 1.25 GB (default)](img/guide/options-graphics.jpg)
 
 *Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on. Renderer reads Auto (OpenGL): Auto, and the backend it started with. The picture was taken in a window, so Fullscreen shows Off, and on Linux, so Native Wayland shows and Ignore Windows Display Scaling does not.*
 
@@ -1768,6 +1768,7 @@ missed are silent while the game catches up.
 | **Trees Sway in Wind** | On | Animated trees and their shadows. |
 | **Tactical Dots** | On | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. |
 | **Tactical Dots Zoom** | 0% | How far out you must zoom before dots replace models. Greyed out while Tactical Dots is off. See below. |
+| **Hidden Units** | Shadow | Units behind trees, rocks and buildings. **Off**: hidden, as in the original game. **Dots**: a unit whose centre is hidden shows its tactical dot on top. **Shadow**: the hidden part of a unit shows through the tree or wall as a faint shadow. Not in the original game. See below. |
 | **Screen Shake** | Off | Shakes the camera on heavy impacts (weapons that shake the screen in the original game) and on mission earthquakes. Applies at once. |
 | **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. It stays on while you stream; the stream draws the same cursor into the video. Beside the switch the game shows what it gave the system, for example `OS CURSOR 64X100`, or `UNAVAILABLE - SOFTWARE` if the system refused a cursor that size and the game is drawing it itself. |
 | **Smooth Motion** | On | Units glide between the game's 30 updates per second instead of stepping. Adds about 33 ms of visual delay. |
@@ -1844,6 +1845,25 @@ faster.
 in a 1920 × 1080 window, at the default Tactical Dots Zoom of 0%. Left, Tactical
 Dots off; right, on. Trees and terrain are drawn either way; the battle's
 effects only without dots.*
+
+**Hidden Units** shows the units that trees, rocks and other tall scenery or a
+building stand in front of. It marks only units you would see anyway: your
+own, your allies' and enemies you can currently see, never anything under fog;
+another unit in front never counts as cover, and flying units are never
+covered. **Shadow** makes the tree, rock or wall see-through around a unit
+it hides: the hidden part shows through as a faint shadow (a little
+stronger through a building, whose light stone would wash it out), while the
+part in plain sight, and anything standing in front of the cover, looks
+exactly as before. **Dots** puts the unit's tactical dot (same size, colour and
+selection outline as Tactical Dots) on top when the unit's centre is hidden; a
+unit whose centre is in sight gets none, and clicking the dot selects the
+unit. Nothing is added while Tactical Dots is showing. Shadow draws what
+covers a hidden unit a second time (with a renderer other than OpenGL, the
+hidden unit too, which costs more), so with hundreds of units
+behind trees or buildings at once it costs a few milliseconds a frame; Dots is
+cheaper.
+Flat scenery (stumps, crops, smudges and mana deposits) is always drawn under
+units, as in the original game, so it never hides anyone.
 
 #### Renderer
 

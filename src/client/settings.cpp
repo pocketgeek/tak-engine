@@ -1,6 +1,7 @@
 #include "client/settings.h"
 
 #include "client/dev.h"
+#include "client/hiddenunits.h"
 #include "client/renderdriver.h"
 #include "client/waylandchoice.h"
 #include "util/prefpath.h"
@@ -150,6 +151,7 @@ Settings loadSettings() {
         else if (key == "tacticalDots")    s.tacticalDots = asBool();
         else if (key == "screenShake")     s.screenShake = asBool();
         else if (key == "tacticalDotsZoom") s.tacticalDotsZoom = asInt(0, 100);
+        else if (key == "hiddenUnits")     s.hiddenUnits = hiddenunits::parse(val);
         else if (key == "unitShadows")     s.unitShadows = asBool();
         else if (key == "gpuMemoryLimit")  s.gpuMemoryLimit = parseGpuMemoryLimit(val);
         else if (key == "smoothArt")       s.smoothArt = asBool();
@@ -274,6 +276,7 @@ std::string serializeSettings(const Settings& s) {
     o << "tacticalDots = " << (s.tacticalDots ? 1 : 0) << "\n";
     o << "screenShake = " << (s.screenShake ? 1 : 0) << "\n";
     o << "tacticalDotsZoom = " << s.tacticalDotsZoom << "\n";
+    o << "hiddenUnits = " << hiddenunits::name(s.hiddenUnits) << "\n";
     o << "unitShadows = " << (s.unitShadows ? 1 : 0) << "\n";
     o << "gpuMemoryLimit = " << gpuMemoryLimitValue(s.gpuMemoryLimit) << "\n";
     o << "smoothArt = " << (s.smoothArt ? 1 : 0) << "\n";

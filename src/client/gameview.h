@@ -59,6 +59,8 @@
 #include "client/dirpicker.h"   // first-run data-dir folder picker
 #include "client/distantmodels.h"
 #include "client/tacticaldots.h"   // zoomed-out unit dots (Options > Graphics)
+#include "client/hiddenunits.h"    // units behind scenery (Options > Graphics)
+#include "client/hiddenstencil.h"   // ...SHADOW on OpenGL: the stencil form
 #include "client/featureindex.h"
 #include "client/unitindex.h"
 #include "client/unittypetable.h"
@@ -1225,6 +1227,15 @@ private:
         // frame, bodyDeferred = the body was left pending this frame.
         uint8_t bodyPending=0, bodyRun=0;
         bool bodyDeferred=false;
+        // HIDDEN UNITS: screen bounds of verts, valid for boundsRevision == revision.
+        std::array<float,4> bodyBounds{};
+        uint64_t boundsRevision=~uint64_t(0);
+        // HIDDEN UNITS: where the body pass drew this unit's body (its vertices or its
+        // distant image's quad) from the body arena -- storage slot and first vertex --
+        // valid for arenaFrame == bodyArenaFrame_: a SHADOW ghost draws it from there.
+        uint64_t arenaFrame=0;
+        uint32_t arenaFirst=0;
+        int8_t arenaStorage=-1;
         // The silhouette cell this entry's shadow occupies (workstream F,
         // client/shadowatlas.h). Render thread only. Validated against the
         // allocation's recorded owner (handleKey), so an entry that changed owner,
@@ -1240,7 +1251,7 @@ private:
         void makeCold() {
             nextCost=tak::render::GeometryCostModel::pack(tak::render::GeometryCostModel::kColdNs);
             localKey.clear();localLayout={};owner=-1;reused=false;stages=0;
-            bodyPending=bodyRun=0;bodyDeferred=false;
+            bodyPending=bodyRun=0;bodyDeferred=false;boundsRevision=~uint64_t(0);
             verts.clear();runs.clear();shadowVerts.clear();
             maskedShadowVerts.clear();maskedShadowRuns.clear();shadowAtlasPage=nullptr;
             localPos.clear();baseColor.clear();shadowLocal.clear();maskedShadowLocal.clear();
@@ -1313,6 +1324,9 @@ private:
     // therefore paints over every tree and rock and cannot be occluded by feature
     // clutter. Sorting by z alone, as we did, let any tree with a larger z draw
     // over a flyer at any altitude -- which is what "flying under trees" was.
+    // Features of TDF height below 10 sit in a layer BEFORE the ground units
+    // (tak::hiddenunits::kLayerLowFeature): retail draws them in its cell scan
+    // before any unit, so a stump or a mana decal never paints over a unit.
     struct PaintItem { float z; const UnitR* u; const FeatureInst* f; int layer = 0; };
     std::vector<PaintItem> paintItems_;   // per-frame painter list (capacity reused)
     std::unordered_set<int> targetSet_;   // per-frame attack-target ids (reused)
@@ -1345,7 +1359,8 @@ private:
     // D's arithmetic is the CPU's, bit for bit).
     struct BodySource { const SDL_Vertex* data; uint32_t count, slot, generation; uint64_t revision;
                         uint32_t arena = UINT32_MAX;      // planner index (arena frames)
-                        uint32_t assembled = 0; };        // of its vertices copied into assembled commands
+                        uint32_t assembled = 0;           // of its vertices copied into assembled commands
+                        int32_t geom = -1; };             // visGeom slot of a unit (HIDDEN UNITS)
     struct BodyRange { uint32_t source, offset, count; };
     // One vertex copy into bodyVerts_ (an assembled command, or a changed arena
     // source staged behind them for the frame's single upload).
@@ -1363,7 +1378,12 @@ private:
                     int16_t page = -1;
                     int32_t passEnd = -1;
                     GLuint spanName = 0;
-                    SDL_Texture* passPrime = nullptr; };
+                    SDL_Texture* passPrime = nullptr;
+                    int32_t ghost = -1;       // HIDDEN UNITS: a SHADOW ghost (hiddenGhosts_ index)
+                    uint8_t hidden = 0;       // HIDDEN UNITS, stencil form: its HiddenMark
+                    // ...a Cover in a native pass: its see-through vertices in
+                    // hiddenVeilBuffer_ (first, count), -1 = drawn from client memory.
+                    int32_t veilFirst = -1, veilCount = 0; };
     std::vector<BodySource> bodySources_;
     std::vector<BodyRange> bodyRanges_;
     std::vector<GLint> bodyArenaFirsts_;
@@ -1605,11 +1625,14 @@ private:
     size_t nativeMin_ = 512;         // this frame's native batch threshold (TAK_BODY_ARENA_MIN)
     tak::NativePassGL nativePass_;
     // Draws the pass planned at drawOps_[first] (passEnd > first); returns passEnd, or
-    // `first` when the pass was refused (the caller then draws command by command).
+    // `first` when the pass was refused (the caller then draws command by command), or
+    // the index of a ghost it could not scissor (the caller draws on from there).
     size_t drawNativeSpan(size_t first);
     // One run of body commands from `first`: one past its last command, whether a
     // command in it is drawn natively anyway, whether it holds indexed runs, and the
     // texture that primes it. Resolves each scanned command's texture into its DrawOp.
+    // An exact SHADOW ghost whose textures all join is part of the run (drawn inside
+    // the pass under its own scissor); any other ghost ends it.
     struct SpanScan { size_t end = 0; bool nativeAnyway = false, palette = false, primePremultiplied = false;
                       SDL_Texture* prime = nullptr; };
     SpanScan scanNativeSpan(size_t first);
@@ -1821,7 +1844,9 @@ private:
     void verifyMonolithicBody(const UnitGeom& g, const std::vector<Tri>& sorted,
                               std::span<const size_t> order, const UnitGeomInputs& in);
 
-    void drawUnit(const UnitR& u);
+    // bodyAlpha < 255: the body see-through by that much, the effects as always (the
+    // HIDDEN UNITS stencil form's second draw of a building that covers a unit).
+    void drawUnit(const UnitR& u, uint8_t bodyAlpha = 255);
 
     // Project model triangles relative to the unit anchor: yaw by heading,
     // fixed tilt so models read against TAK's painted top-down terrain.
@@ -2642,6 +2667,144 @@ private:
     }
     // One batched draw of every radar-visible unit in view; returns dots drawn.
     size_t drawTacticalDots(int mvw, int winH);
+    // One unit's dot (rim, then body) at c, appended to b: shared by the Tactical
+    // Dots pass and the HIDDEN UNITS dots.
+    void appendDot(std::vector<SDL_Vertex>& b, const UnitR& u, SDL_FPoint c, const SDL_Color& rim);
+
+    // ---- HIDDEN UNITS (Options > Graphics; not in retail; client/hiddenunits.h) ----
+    // Before the body pass, findHiddenUnits looks for units the frame draws that a
+    // later tree, rock or building overlaps. SHADOW: each gets a ghost op in the
+    // body pass right after the last cover over it (drawHiddenGhost). DOTS: after
+    // the body pass, a dot on top of each whose centre is covered (drawHiddenDots).
+    // Nothing at all runs while the option is OFF or the frame is a Tactical Dots
+    // frame.
+    int hiddenUnitsMode_ = tak::hiddenunits::kDefault;
+    void findHiddenUnits(int mvw, int winH);
+    void drawHiddenDots(int mvw, int winH);
+    // The painter items the search considers (ground layer and air), collected by
+    // the backwards walk: kind, screen rectangle (exact body bounds for covers and
+    // candidates; the model's box otherwise, with SHADOW a reach that holds the body:
+    // see findHiddenUnits).
+    enum class HiddenKind : uint8_t { Feature, Structure, Unit, Other };
+    struct HiddenRec {
+        uint32_t item;          // index into paintItems_
+        HiddenKind kind;
+        bool candidate = false; // a Unit whose body a later cover's overlaps
+        int slot = -1;          // geometry slot (units)
+        uint32_t coversAfter = 0; // a Unit: CoverGrid ids below this paint after it
+        tak::hiddenunits::Rect rect;
+        uint32_t lastCover = 0; // a candidate: painter index of the last cover over it
+        bool loose = false;     // SHADOW: rect is a reach, not the body's exact bounds
+    };
+    std::vector<HiddenRec> hiddenRecs_;    // in REVERSE painter order
+    std::vector<uint32_t> hiddenCoverRec_; // CoverGrid id -> hiddenRecs_ index
+    tak::hiddenunits::CoverGrid hiddenGrid_;      // the covers
+    tak::hiddenunits::CoverGrid hiddenItemGrid_;  // SHADOW: every item (id == hiddenRecs_ index)
+    tak::hiddenunits::CoverGrid hiddenGhostGrid_; // SHADOW: chainStarts' bins
+    std::vector<int> hiddenDotIds_;        // sorted: units given a hidden dot this frame (picking)
+    // SHADOW: the frame's ghosts in draw order (by last cover; client/hiddenunits.h,
+    // Ghost and groupOverlaps), the hidden units each stands for, and what each
+    // redraws: painter items in order, a unit as drawn (Body) or a cover see-through
+    // (Veil). A ghost that cannot be redrawn exactly draws its units alone,
+    // translucent (exact = false).
+    struct HiddenGhost {
+        tak::hiddenunits::Ghost range;   // bounding rectangle and painter range
+        bool exact = true;
+        uint32_t first = 0, count = 0;   // hiddenRedraw_ entries
+        uint32_t members = 0, memberCount = 0;   // hiddenMembers_ entries
+    };
+    struct HiddenMember { uint32_t item, last; int slot; bool plain; tak::hiddenunits::Rect rect; };
+    enum class HiddenRedraw : uint8_t { Body, Veil };
+    struct HiddenRedrawItem { uint32_t item; HiddenRedraw how; int slot; };
+    std::vector<HiddenGhost> hiddenGhosts_;
+    std::vector<HiddenMember> hiddenMembers_, hiddenSortedMembers_;
+    std::vector<HiddenRedrawItem> hiddenRedraw_;
+    std::vector<tak::hiddenunits::Rect> hiddenGroupRects_;   // groupOverlaps' input (scratch)
+    std::vector<uint32_t> hiddenGroup_, hiddenGroupGhost_;   // its output; group -> ghost (scratch)
+    tak::hiddenunits::CoverGrid hiddenGroupGrid_;
+    // The batch a ghost's redraw is gathering: one texture, its vertices (alpha
+    // scaled where asked), drawn as one run when the texture changes.
+    std::vector<SDL_Vertex> hiddenVerts_;
+    std::vector<GLint> hiddenFirsts_;      // the native ghost's pending arena ranges
+    std::vector<GLsizei> hiddenCounts_;
+    SDL_Texture* hiddenBatchTex_ = nullptr;
+    const SDL_Vertex* hiddenBatchOnly_ = nullptr;   // a single unscaled body: drawn in place
+    int hiddenBatchOnlyCount_ = 0;
+    void hiddenBatchFlush();
+    void hiddenBatchAdd(SDL_Texture* texture, const SDL_Vertex* vertices, int count, uint8_t alpha, bool premultiplied);
+    void drawHiddenGhost(const HiddenGhost& ghost);
+    // An exact ghost in one native pass (OpenGL, as the body pass draws), bodies read
+    // from the body arena where it holds them; false: not drawn (SDL's path then).
+    bool drawHiddenGhostNative(const HiddenGhost& ghost);
+    // Can every texture of an exact ghost's redraw join a native pass? The prime it
+    // would open with (first BLEND texture, else first premultiplied; null: none).
+    bool hiddenGhostJoins(const HiddenGhost& ghost, SDL_Texture*& prime, SDL_Texture*& premultipliedPrime);
+    // An exact ghost's redraw into the open native pass; returns the commands issued.
+    uint64_t drawHiddenGhostInPass(const HiddenGhost& ghost);
+    // The ghost's clip: its rectangle on whole pixels, inside `within`; false: empty.
+    static bool hiddenGhostClip(const HiddenGhost& ghost, const SDL_Rect* within, SDL_Rect& clip);
+    // Debug TAK_HIDDEN_IN_SPAN=0: every ghost breaks the body pass's native spans and
+    // opens its own pass, as before ghosts joined the spans (A/B checks).
+    bool hiddenInSpan_ = true;
+    // One unit's body as the body pass drew it (its distant image or its runs), with
+    // every alpha scaled by `alpha` (255: unchanged), into the batch.
+    void drawHiddenBody(int slot, uint8_t alpha);
+    // The exact screen bounds of a unit's body this frame: its distant image's quad,
+    // or its triangles (cached per geometry revision in the UnitGeom).
+    tak::hiddenunits::Rect hiddenBodyBounds(int slot);
+    // SHADOW, stencil form (client/hiddenstencil.h; OpenGL with a stencil on the
+    // window, else the redraw form above). findHiddenUnits marks painter items
+    // instead of planning ghosts: a unit that could be hidden (Unit: writes 1), a
+    // cover over a hidden one (Cover: drawn under 0 opaque, under 1 see-through);
+    // every other body in the stencil window writes 0, other features leave the
+    // stencil alone. The window runs from the op of the first hidden unit to the last
+    // cover's (hiddenStencilFirst_/Last_, op indices); nothing is set outside it. Debug TAK_HIDDEN_STENCIL=0
+    // forces the redraw form (A/B, tests).
+    enum HiddenMark : uint8_t { kHiddenNone = 0, kHiddenUnit = 1, kHiddenCover = 2 };
+    tak::HiddenStencilGL hiddenStencil_;
+    bool hiddenStencilAllowed_ = true;      // the redraw form when false (debug switch)
+    bool hiddenStencilFrame_ = false;       // this frame marks items (a hidden unit was found)
+    std::vector<uint8_t> hiddenItemMark_;   // per painter item, HiddenMark (stencil frames)
+    size_t hiddenStencilFirst_ = SIZE_MAX, hiddenStencilLast_ = 0;
+    size_t hiddenStencilFirstItem_ = SIZE_MAX;   // painter index of the first hidden unit
+    size_t hiddenVeils_ = 0;                // covers drawn see-through this frame
+    bool hiddenStencilUsable();
+    // One op's stencil state, and a Cover op's see-through draw (its vertices, alpha
+    // scaled by the cover's veil) inside or outside a native pass.
+    void hiddenStencilUse(tak::HiddenStencilGL::State state, bool inPass = false);
+    tak::HiddenStencilGL::State hiddenOpState(size_t opi) const;
+    void drawHiddenVeil(const DrawOp& op, bool inPass);
+    // A Cover's see-through vertices appended to `out` (the alpha scaled, and the
+    // colour too where the page is premultiplied).
+    void appendHiddenVeil(const DrawOp& op, bool premultiplied, std::vector<SDL_Vertex>& out);
+    // Before the body pass: every Cover inside a native pass gets its see-through
+    // vertices in one buffer uploaded once (DrawOp::veilFirst), so its second draw
+    // reads a buffer like any arena command instead of client memory.
+    void prepareHiddenVeils();
+    tak::render::VertexArenaBuffer hiddenVeilBuffer_;
+    std::vector<SDL_Vertex> hiddenVeilVerts_;
+    bool hiddenDot(int id) const {
+        return std::binary_search(hiddenDotIds_.begin(), hiddenDotIds_.end(), id);
+    }
+#ifndef NDEBUG
+    size_t debugHiddenCandidates_ = 0;
+    std::vector<int> debugHiddenGhostIds_;      // units given a ghost this frame
+    std::vector<int> debugHiddenExactIds_;      // ...of which redrawn exactly
+    bool debugHiddenStencil_ = false;           // the last frame drew SHADOW by the stencil
+    bool debugHiddenStencilEnvRead_ = false;    // TAK_HIDDEN_STENCIL applied to this view
+    uint64_t debugHiddenPassVeils_ = 0;         // ...of its see-through covers, drawn in a native pass
+#endif
+    // The sprite a feature shows this frame (burn playback, animation frame, wind
+    // sway), in screen space: what the body pass draws and the cover tests read.
+    struct FeatureSprite {
+        SDL_Texture* tex = nullptr;
+        const tak::hiddenunits::AlphaMask* mask = nullptr;
+        SDL_FRect dst{};
+        float shear = 0;   // top edge shifted sideways by this much (sway)
+        bool sway = false;      // drawn as a sheared quad (Trees Sway In Wind)
+        bool burning = false;   // the burn playback (never sways)
+    };
+    FeatureSprite featureSprite(const FeatureInst& f, float zm);
 #ifndef NDEBUG
     size_t debugDotCount_ = 0;                  // dots in the last drawTacticalDots
     std::vector<int> debugDotIds_;              // ...and whose they were
@@ -3171,6 +3334,9 @@ private:
         bool glowy = false;  // the animated "Sacred Stone" centre -- the actual
                              // buildable spot; category=mana + animating=1. The
                              // static "Standing Stones" (animating=0) are decoration.
+        // TDF height below 10 (tak::hiddenunits::lowFeature): drawn under every unit,
+        // as retail draws such features before any unit. Follows the burnt swap.
+        bool low = false;
     };
     std::vector<FeatureInst> features_;
     tak::FeatureIndex featureIndex_;
@@ -3223,6 +3389,9 @@ private:
         bool shadowLoop = false;
         bool bodyLoop = false;
         std::vector<FGeom> fgeom;   // per-frame geometry, parallel to frames
+        // Opaque texels per frame, parallel to frames: the HIDDEN UNITS dot test
+        // (client/hiddenunits.h) asks whether a sprite covers a unit's centre.
+        std::vector<tak::hiddenunits::AlphaMask> masks;
         std::vector<int> tickEnd;   // cumulative end tick per frame
         int totalTicks = 0;         // full loop length in 30Hz ticks
     };

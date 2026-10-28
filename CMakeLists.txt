@@ -1439,6 +1439,7 @@ add_executable(statsfit_test tools/statsfit_test.cpp)
 add_executable(settings_test tools/settings_test.cpp)
 add_executable(start_markers_test tools/start_markers_test.cpp)
 add_executable(texture_filter_test tools/texture_filter_test.cpp)
+add_executable(hidden_units_test tools/hidden_units_test.cpp)
 add_executable(gpuvram_test tools/gpuvram_test.cpp)
     add_executable(footprobe tools/footprobe.cpp)
 target_link_libraries(retailgap_test PRIVATE tak-formats)
@@ -1477,6 +1478,7 @@ target_link_libraries(statsfit_test PRIVATE tak-formats)
 target_link_libraries(settings_test PRIVATE tak-formats)
 target_link_libraries(start_markers_test PRIVATE tak-formats)
 target_link_libraries(texture_filter_test PRIVATE tak-formats)
+target_link_libraries(hidden_units_test PRIVATE tak-formats)
 target_link_libraries(gpuvram_test PRIVATE tak-formats)
 
 # ctest registration. Without this `ctest` reports "No tests were found", which
@@ -1521,6 +1523,7 @@ add_test(NAME simpool COMMAND simpool_test)
 add_test(NAME settings COMMAND settings_test)
 add_test(NAME start_markers COMMAND start_markers_test)
 add_test(NAME texture_filter COMMAND texture_filter_test)
+add_test(NAME hidden_units_policy COMMAND hidden_units_test)
 add_test(NAME gpuvram COMMAND gpuvram_test)
 add_test(NAME door_animation COMMAND door_animation_test)
 add_test(NAME pathgeom COMMAND pathgeom_test)
@@ -2052,7 +2055,7 @@ set_tests_properties(credstore PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp)
+    add_executable(takclient src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/gameview_hidden.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp)
     # Local dev/test harness (standalone scenario/demo/FFA setup, --testbuild/--firetest...):
     # debug builds only. The file is also wrapped in #ifndef NDEBUG, as are its callers, so
     # this just skips an empty TU when the config's flags define NDEBUG.
@@ -2538,6 +2541,33 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/tactical-dots.png")
       set_tests_properties(tactical_dots PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: tactical dots \\(threshold")
+      # HIDDEN UNITS (Options > Graphics): flat features under every unit, the cover
+      # rules of DOTS (tree, building, open ground, in front, fog), the click target,
+      # and SHADOW's pixels (changed only on the cover and inside the ghosts, the
+      # part in sight as with OFF) at three output scales and, where the renderer has
+      # them, from distant images; TAK_HIDDEN_VERIFY checks each ghost's redraw list
+      # against a plain scan of its painter range.
+      add_test(NAME hidden_units COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_HIDDEN_UNITS_TEST=1 TAK_HIDDEN_VERIFY=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/hidden-units-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/hidden-units-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/hidden-units.png")
+      set_tests_properties(hidden_units PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: hidden units \\(")
+      # The same on OpenGL (offscreen): SHADOW by the stencil (client/hiddenstencil.h)
+      # and by the redraw form, the same pixel checks, every native pass's GL state
+      # checked. Skipped where no OpenGL renderer can be made.
+      add_test(NAME hidden_units_gl COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=opengl SDL_AUDIODRIVER=dummy
+          TAK_HIDDEN_UNITS_TEST=1 TAK_HIDDEN_UNITS_GL=1 TAK_HIDDEN_VERIFY=1 TAK_NATIVE_PASS_VERIFY=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/hidden-units-gl-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/hidden-units-gl-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/hidden-units-gl.png")
+      set_tests_properties(hidden_units_gl PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: hidden units \\(opengl\\)"
+          SKIP_REGULAR_EXPRESSION "SKIP: hidden units")
       add_test(NAME spectator_health_bars COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_SPECTATOR_BARS_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/spectator-bars-profile
@@ -2598,7 +2628,7 @@ if(TAK_BUILD_CLIENT)
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
           render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail render_unit_index render_unit_index_jump
-          tactical_dots spectator_health_bars
+          tactical_dots hidden_units hidden_units_gl spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()

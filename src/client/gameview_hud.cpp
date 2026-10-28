@@ -1,6 +1,7 @@
 #include <ctime>
 #include <type_traits>
 #include "client/guiart.h"
+#include "client/cliprect.h"
 #include "client/gameview.h"
 #include "client/gamespeed.h"
 #include "client/artscale.h"
@@ -2533,6 +2534,16 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
             if (d2) { float dx = c.x - mx, dy = c.y - my; *d2 = dx * dx + dy * dy; }
             return true;
         }
+        // A HIDDEN UNITS dot on screen (the unit behind scenery) is clickable like a
+        // tactical dot, as well as the model's own box.
+        if (hiddenDot(u.id)) {
+            const SDL_FPoint c = dotCentre(u);
+            const float half = std::max(dotSide(u) * 0.5f + 1.0f, 9.0f);
+            if (std::fabs(mx - c.x) <= half && std::fabs(my - c.y) <= half) {
+                if (d2) { float dx = c.x - mx, dy = c.y - my; *d2 = dx * dx + dy * dy; }
+                return true;
+            }
+        }
         float zms = mapView_.zoom();
         SDL_FPoint p = unitScreen(u);
         const SDL_FRect& hb = unitHitBox(u.type);
@@ -2722,9 +2733,9 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
 
         // Clip so a row can never draw outside the box (a long unbroken name, say).
         SDL_Rect clip{int(box.x), int(box.y), int(std::ceil(box.w)), int(std::ceil(box.h))};
-        SDL_RenderSetClipRect(ren_, &clip);
+        const bool inSight = tak::cliprect::set(ren_, clip);   // off the target: no rows (Metal)
         float y = box.y + pad;
-        for (size_t i = 0; i < rows.size(); ++i) {
+        for (size_t i = 0; inSight && i < rows.size(); ++i) {
             const Row& r = rows[i];
             if (r.composer && i == composerAt && i > 0) {   // a rule between history and composer
                 SDL_SetRenderDrawColor(ren_, 96, 84, 60, 200);

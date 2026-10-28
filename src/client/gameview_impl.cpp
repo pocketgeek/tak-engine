@@ -224,6 +224,7 @@
         statsPanel_ = s.statsPanel;                       // Options: minimap-strip readout
         tacticalDotsOpt_ = s.tacticalDots;                // Options: zoomed-out unit dots
         tacticalDotsZoom_ = s.tacticalDotsZoom;
+        hiddenUnitsMode_ = std::clamp(s.hiddenUnits, 0, 2);   // Options: units behind scenery
         hotkeys_.load(s.hotkeys);                         // Options: rebindable hotkeys
     }
 

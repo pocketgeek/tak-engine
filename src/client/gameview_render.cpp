@@ -5,6 +5,7 @@
 #include <cstring>
 #include <functional>
 #include "client/gameview.h"
+#include "client/cliprect.h"
 #include "client/cursortiming.h"
 #include "client/buildghost.h"
 #include "client/reclaimpick.h"
@@ -224,11 +225,14 @@
             float sx = (f.x - mapView_.offX()) * zm0 - terrainLiftX(f.x, f.z) * zm0;
             float sy = (f.z - mapView_.offY()) * zm0 - terrainLift(f.x, f.z) * zm0;
             if (sx < -200 || sy < -200 || sx > winW + 200 || sy > winH + 200) continue;
-            // Mana deposit markers are flat ground decals a lodestone is built
-            // on top of, so bias their sort key back to keep them painted
-            // under the building rather than over it.
-            float key = f.mana ? f.z - 24.0f : f.z;
-            items.push_back({key, nullptr, &f, 0});
+            // Retail draws every feature whose TDF height is below 10 before any
+            // unit (client/hiddenunits.h): the low layer. Taller ones sort with the
+            // ground units by depth. (Mana deposit decals, height 0, used to need a
+            // -24 sort bias to stay under the lodestone built on them; the low layer
+            // keeps them under every unit, so the bias is gone -- the tall henge
+            // stones of a mana site now sort by plain depth like any tall feature.)
+            namespace hu = tak::hiddenunits;
+            items.push_back({f.z, nullptr, &f, f.low ? hu::kLayerLowFeature : hu::kLayerGround});
         }
         renderStats_.add(RS::FeatureCandidates, candidates.size());
         renderStats_.add(RS::FeaturesPainted, items.size());
@@ -316,7 +320,7 @@
         {
         tak::render::ScopedPhase sortPhase(renderStats_, RP::PainterSort);
         std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
-            if (a.layer != b.layer) return a.layer < b.layer;   // ground, then air
+            if (a.layer != b.layer) return a.layer < b.layer;   // low features, ground, then air
             return a.z < b.z;
         });
         }
@@ -1569,6 +1573,10 @@
         }
         profShadowMs_ += (double(SDL_GetPerformanceCounter()) - _sh0) / _ptFreq;
 
+        // HIDDEN UNITS: the units a later tree, rock or building overlaps; with SHADOW
+        // their ghosts join the body plan below (nothing with the option off).
+        findHiddenUnits(mvw, winH);
+
         const double _bdy0 = double(SDL_GetPerformanceCounter());
         // Pass 2: bodies (feature sprites + unit models) in depth order. Unit
         // models are accumulated into one batch and flushed only when the texture
@@ -1588,11 +1596,13 @@
         SDL_Texture* segTex = nullptr;
         uint32_t segFirst = 0;
         int segCount = 0;
+        uint8_t segMark = kHiddenNone;   // HIDDEN UNITS, stencil form: one mark per segment
         auto closeSeg = [&] {
             if (segCount > 0) {
                 DrawOp op{nullptr, nullptr, segTex, -1, segCount};
                 op.firstRange = segFirst;
                 op.ranges = uint32_t(bodyRanges_.size()) - segFirst;
+                op.hidden = segMark;
                 drawOps_.push_back(op);
                 segCount = 0;
             }
@@ -1602,14 +1612,34 @@
             // anchor and draw an earlier unit's vertices in its place.
             segTex = nullptr;
         };
-        auto openSeg = [&](SDL_Texture* tex) {
-            if (tex != segTex || segCount == 0) {
+        auto openSeg = [&](SDL_Texture* tex, uint8_t mark) {
+            if (tex != segTex || segCount == 0 || mark != segMark) {
                 closeSeg();
                 segTex = tex;
+                segMark = mark;
                 segFirst = uint32_t(bodyRanges_.size());
             }
         };
-        for (const auto& it : items) {
+        // HIDDEN UNITS (SHADOW): each ghost right after the last cover over its unit
+        // (client/hiddenunits.h, Ghost). A tree is an op of its own anyway; after a
+        // building the running segment closes. Every ghost is in the ground layer.
+        size_t nextGhost = 0;
+        hiddenStencilFirst_ = SIZE_MAX;
+        const auto ghostsBefore = [&](size_t item) {
+            for (; nextGhost < hiddenGhosts_.size() && hiddenGhosts_[nextGhost].range.last < item; ++nextGhost) {
+                closeSeg();
+                DrawOp op{nullptr, nullptr, nullptr, 0, 0};
+                op.ghost = int32_t(nextGhost);
+                drawOps_.push_back(op);
+            }
+        };
+        for (size_t itemIndex = 0; itemIndex < items.size(); ++itemIndex) {
+            const auto& it = items[itemIndex];
+            ghostsBefore(itemIndex);
+            const uint8_t mark = hiddenStencilFrame_ ? hiddenItemMark_[itemIndex] : uint8_t(kHiddenNone);
+            // The first hidden unit's op is this index or later (an open segment it may
+            // join is pushed here): the stencil window starts no later.
+            if (itemIndex == hiddenStencilFirstItem_) hiddenStencilFirst_ = drawOps_.size();
             // The ground -> air boundary is where the held-back flyer shadows go. Close
             // the running segment so it lands on a real op boundary rather than inside a
             // batched run.
@@ -1620,6 +1650,7 @@
             if (it.f) {
                 closeSeg();
                 drawOps_.push_back({nullptr, it.f, nullptr, 0, 0});
+                drawOps_.back().hidden = mark;
             } else {
                 const auto& u = *it.u;
                 int gslot = geomSlot(u.id);
@@ -1628,14 +1659,16 @@
                 if (special(u, g)) {
                     closeSeg();
                     drawOps_.push_back({&u, nullptr, nullptr, 0, 0});
+                    drawOps_.back().hidden = mark;
                     renderStats_.add(RS::SpecialUnits);
                     continue;
                 }
                 const auto& distant=distantModelItems_[size_t(gslot)];
                 if(distant.texture) {
-                    openSeg(distant.texture);
+                    openSeg(distant.texture, mark);
                     const uint32_t src = uint32_t(bodySources_.size());
-                    bodySources_.push_back({distant.quad.data(), 6, g.handle.index, g.handle.generation, 0});
+                    bodySources_.push_back({distant.quad.data(), 6, g.handle.index, g.handle.generation, 0,
+                                            UINT32_MAX, 0, gslot});
                     bodyRanges_.push_back({src, 0, 6});
                     segCount += 6;
                     continue;
@@ -1646,17 +1679,26 @@
                 const uint32_t src = uint32_t(bodySources_.size());
                 bodySources_.push_back({g.verts.data(), uint32_t(g.verts.size()),
                                         g.bodyPending ? tak::render::kArenaNoSlot : g.handle.index,
-                                        g.handle.generation, g.revision});
+                                        g.handle.generation, g.revision, UINT32_MAX, 0, gslot});
                 uint32_t offset = 0;
                 for (const auto& r : g.runs) {
-                    openSeg(r.first);
+                    openSeg(r.first, mark);
                     bodyRanges_.push_back({src, offset, uint32_t(r.second)});
                     segCount += r.second;
                     offset += uint32_t(r.second);
                 }
             }
         }
+        ghostsBefore(items.size());
         closeSeg();
+        // HIDDEN UNITS, stencil form: the window of ops the stencil serves, from the
+        // first hidden unit's to the last cover's (nothing to veil: no stencil frame).
+        hiddenStencilLast_ = 0;
+        if (hiddenStencilFrame_) {
+            for (size_t i = drawOps_.size(); i-- > 0;)
+                if (drawOps_[i].hidden == kHiddenCover) { hiddenStencilLast_ = i; break; }
+            if (hiddenStencilFirst_ == SIZE_MAX || hiddenStencilLast_ < hiddenStencilFirst_) hiddenStencilFrame_ = false;
+        }
 
         // Workstream H: native-size commands draw from the retained vertex arena
         // (client/vertexarena.h) when most of their content is resident or
@@ -1695,6 +1737,7 @@
             buffer.setSimulated(tak::devFlag("TAK_BODY_ARENA_SOFTWARE"));
             buffer.endFrame();
         }
+        hiddenVeilBuffer_.endFrame();
         ++bodyArenaFrame_;
         bool arenaPlanned = false, arenaFrame = false;
         if (const char* v = tak::devEnv("TAK_BODY_ARENA_HEADROOM")) {   // debug: tighter storage (tests)
@@ -1870,9 +1913,17 @@
                     op.arenaSlot = int8_t(bodyArena_.commandSlot(command));
                     for (uint32_t k = 0; k < op.ranges; ++k) {
                         const BodyRange& r = bodyRanges_[op.firstRange + k];
-                        tak::render::appendArenaRange(bodyArenaFirsts_, bodyArenaCounts_, begin,
-                            bodyArena_.first(command, first + k), r.count);
-                        if (!bodyArena_.written(bodySources_[r.source].arena)) arenaRetained += r.count;
+                        const uint32_t at = bodyArena_.first(command, first + k);
+                        tak::render::appendArenaRange(bodyArenaFirsts_, bodyArenaCounts_, begin, at, r.count);
+                        const BodySource& src = bodySources_[r.source];
+                        if (!bodyArena_.written(src.arena)) arenaRetained += r.count;
+                        if (src.geom >= 0 && !bodyArenaBuffers_[op.arenaSlot].simulated()) {
+                            // HIDDEN UNITS: a command's storage holds each of its sources whole.
+                            UnitGeom& g = visGeom(size_t(src.geom));
+                            g.arenaFrame = bodyArenaFrame_;
+                            g.arenaFirst = at - r.offset;
+                            g.arenaStorage = op.arenaSlot;
+                        }
                     }
                     op.arenaRanges = uint32_t(bodyArenaFirsts_.size() - begin);
                 }
@@ -1959,7 +2010,13 @@
         debugFeatureFlameDrawCount_ = 0;
         debugFeatureSmokeDrawCount_ = 0;
 #endif
+        using HS = tak::HiddenStencilGL::State;
+        if (hiddenStencilFrame_) {
+            prepareHiddenVeils();
+            hiddenStencil_.clear(ren_);
+        }
         for (size_t opi = 0; opi < drawOps_.size(); ++opi) {
+            if (hiddenStencilFrame_) hiddenStencilUse(hiddenOpState(opi));
             if (opi == airShadowOp_) drainAirShadows();
             const DrawOp& op = drawOps_[opi];
             if (nativePassesOn_ && op.passEnd > int32_t(opi)) {
@@ -2059,76 +2116,60 @@
 #endif
                 };
                 drawFlame(f.backFlame);
-                // Retail feature playback: one shared clock per TYPE (every
-                // instance of a sequence shows the identical frame -- variety
-                // comes from the 16 different wave sequences, not phase), 30Hz
-                // engine ticks holding each frame for its GAF delay (waves ship
-                // delay=2 -> 15fps), looping continuously. Each frame is drawn at
-                // its OWN size + anchor -- the wave art authors motion that way.
-                SDL_Texture* tex = f.tex;
-                int fw = f.w, fh = f.h, fxo = f.xoff, fyo = f.yoff;
-                // Burning: seqnameburn playback replaces the standing art
-                // (retail swaps to the burn anim + flame overlays on ignition).
-                if (f.burnVis && f.burnArt && f.burnArt->tex) {
-                    const FeatArt* ba = f.burnArt;
-                    tex = ba->tex; fw = ba->w; fh = ba->h; fxo = ba->xoff; fyo = ba->yoff;
-                    if (ba->frames.size() > 1 && ba->totalTicks > 0) {
-                        int tick = int(burnAge % uint32_t(ba->totalTicks));
-                        size_t idx = size_t(std::upper_bound(ba->tickEnd.begin(),
-                                                             ba->tickEnd.end(), tick) -
-                                            ba->tickEnd.begin());
-                        if (idx >= ba->frames.size()) idx = 0;
-                        tex = ba->frames[idx];
-                        const auto& g = ba->fgeom[idx];
-                        fw = g.w; fh = g.h; fxo = g.xoff; fyo = g.yoff;
+                // The sprite (burn playback, animation frame, sway): featureSprite.
+                const FeatureSprite sprite = featureSprite(f, zm0);
+                // HIDDEN UNITS, stencil form: a cover over a hidden unit draws its sprite
+                // opaque where the stencil holds 0, see-through where it holds 1.
+                const bool veil = op.hidden == kHiddenCover && hiddenStencilFrame_ &&
+                                  opi >= hiddenStencilFirst_ && opi <= hiddenStencilLast_;
+                const auto drawSprite = [&](uint8_t alpha) {
+                    if (sprite.burning || (!sprite.sway && alpha != 255)) {
+                        if (!sprite.tex) return;
+                        Uint8 was = 255;
+                        if (alpha != 255) { SDL_GetTextureAlphaMod(sprite.tex, &was); SDL_SetTextureAlphaMod(sprite.tex, alpha); }
+                        SDL_RenderCopyF(ren_, sprite.tex, nullptr, &sprite.dst);
+                        if (alpha != 255) SDL_SetTextureAlphaMod(sprite.tex, was);
+                    } else if (sprite.sway) {
+                        // Wind sway (Options; beyond-retail -- retail trees are static
+                        // single-frame GAFs): shear the crown sideways on two blended
+                        // gust sines, pivoting at the trunk base (the GAF anchor sits
+                        // there). Per-tree phase so a forest ripples instead of rocking
+                        // in unison. Display-only; the sim never sees it.
+                        const SDL_FRect& dst = sprite.dst;
+                        const float shear = sprite.shear;
+                        const SDL_Color wc{255, 255, 255, alpha};
+                        SDL_Vertex v[4] = {
+                            {{dst.x + shear, dst.y}, wc, {0, 0}},
+                            {{dst.x + dst.w + shear, dst.y}, wc, {1, 0}},
+                            {{dst.x + dst.w, dst.y + dst.h}, wc, {1, 1}},
+                            {{dst.x, dst.y + dst.h}, wc, {0, 1}},
+                        };
+                        static const int wIdx[6] = {0, 1, 2, 0, 2, 3};
+                        if (sprite.tex) SDL_RenderGeometry(ren_, sprite.tex, v, 4, wIdx, 6);
+                    } else {
+                        if (sprite.tex) SDL_RenderCopyF(ren_, sprite.tex, nullptr, &sprite.dst);
                     }
-                    SDL_FRect dst{(f.x - mapView_.offX() - float(fxo)) * zm0 - lfx,
-                                  (f.z - mapView_.offY() - float(fyo)) * zm0 - lfy,
-                                  float(fw) * zm0, float(fh) * zm0};
-                    SDL_RenderCopyF(ren_, tex, nullptr, &dst);
-                    drawFlame(f.frontFlame);
-                    drawFeatureSmoke();
-                    continue;
-                }
-                if (f.frames && !f.frames->empty() && f.art && f.art->totalTicks > 0) {
-                    const uint32_t age = front().gameTick;
-                    int tick = int(age % uint32_t(f.art->totalTicks));
-                    size_t idx = size_t(std::upper_bound(f.art->tickEnd.begin(),
-                                                         f.art->tickEnd.end(), tick) -
-                                        f.art->tickEnd.begin());
-                    if (idx >= f.frames->size()) idx = 0;
-                    tex = (*f.frames)[idx];
-                    const auto& g = f.art->fgeom[idx];
-                    fw = g.w; fh = g.h; fxo = g.xoff; fyo = g.yoff;
-                    if (!f.art->bodyLoop && age >= uint32_t(f.art->totalTicks)) tex = nullptr;
-                }
-                SDL_FRect dst{(f.x - mapView_.offX() - float(fxo)) * zm0 - lfx,
-                              (f.z - mapView_.offY() - float(fyo)) * zm0 - lfy,
-                              float(fw) * zm0, float(fh) * zm0};
-                if (swayTree) {
-                    // Wind sway (Options; beyond-retail -- retail trees are static
-                    // single-frame GAFs): shear the crown sideways on two blended
-                    // gust sines, pivoting at the trunk base (the GAF anchor sits
-                    // there). Per-tree phase so a forest ripples instead of rocking
-                    // in unison. Display-only; the sim never sees it.
-                    float shear = sway * dst.h * 0.04f;
-                    const SDL_Color wc{255, 255, 255, 255};
-                    SDL_Vertex v[4] = {
-                        {{dst.x + shear, dst.y}, wc, {0, 0}},
-                        {{dst.x + dst.w + shear, dst.y}, wc, {1, 0}},
-                        {{dst.x + dst.w, dst.y + dst.h}, wc, {1, 1}},
-                        {{dst.x, dst.y + dst.h}, wc, {0, 1}},
-                    };
-                    static const int wIdx[6] = {0, 1, 2, 0, 2, 3};
-                    if (tex) SDL_RenderGeometry(ren_, tex, v, 4, wIdx, 6);
-                } else {
-                    if (tex) SDL_RenderCopyF(ren_, tex, nullptr, &dst);
+                };
+                if (veil) hiddenStencilUse(HS::Under0);
+                drawSprite(255);
+                if (veil) {
+                    hiddenStencilUse(HS::Under1);
+                    drawSprite(tak::hiddenunits::kVeilAlpha);
+                    hiddenStencilUse(HS::Off);   // flames and smoke leave the stencil alone
                 }
                 drawFlame(f.frontFlame);
                 drawFeatureSmoke();
             } else if (op.u) {
                 tak::render::countLogicalDraw();   // one special unit (drawUnit issues several)
                 drawUnit(*op.u);
+                if (op.hidden == kHiddenCover && hiddenOpState(opi) != HS::Off) {
+                    // A building under repair still covers: drawn again where the stencil
+                    // holds 1, its body see-through, its particles as always.
+                    hiddenStencilUse(HS::Under1);
+                    drawUnit(*op.u, tak::hiddenunits::kBuildingVeilAlpha);
+                }
+            } else if (op.ghost >= 0) {
+                drawHiddenGhost(hiddenGhosts_[size_t(op.ghost)]);
             } else if (op.count > 0 && op.tex) {   // null atlas page: skip, no white
                 renderStats_.add(RS::BodySubmissions);
                 if (op.arenaFirst >= 0) {
@@ -2182,8 +2223,13 @@
                     bodySubmit_.draw(ren_,op.tex,std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(op.count)),
                                      bodyDirect);
                 }
+                if (op.hidden == kHiddenCover && hiddenOpState(opi) != HS::Off) {
+                    hiddenStencilUse(HS::Under1);
+                    drawHiddenVeil(op, false);
+                }
             }
         }
+        if (hiddenStencilFrame_) hiddenStencilUse(HS::Off);
         // Fallback drain: if the air layer produced no draw ops at all (every flyer
         // special-cased or slotless), airShadowOp_ lands on drawOps_.size() and the replay
         // loop never reaches it -- which would silently DROP those shadows rather than
@@ -2208,6 +2254,9 @@
         // (a dot under a tree crown would vanish). Shots and effects do not draw
         // on a dots frame at all (worldFxFrame()).
         if (dotsFrame_) drawTacticalDots(mvw, winH);
+        // HIDDEN UNITS (DOTS): units the scenery or a building painted over get their
+        // dot on top (nothing on a dots frame or with another setting).
+        drawHiddenDots(mvw, winH);
         // Ghosts of the local player's queued (shift) build orders. Only the units the
         // snapshot lists as holding such an order (Frame::buildGhostUnits, in live
         // order) can draw one (workstream L: no walk over every unit).
@@ -4280,6 +4329,16 @@
         for(;end<drawOps_.size();++end) {
             if(end>first && end==airShadowOp_)break;
             DrawOp& op=drawOps_[end];
+            if(op.ghost>=0) {
+                // HIDDEN UNITS: an exact SHADOW ghost draws inside the pass, under its
+                // own scissor (drawNativeSpan), instead of closing it and opening one
+                // of its own: two primings fewer per ghost.
+                const HiddenGhost& ghost=hiddenGhosts_[size_t(op.ghost)];
+                SDL_Texture* prime=nullptr;
+                SDL_Texture* premultiplied=nullptr;
+                if(!hiddenInSpan_ || !ghost.exact || !hiddenGhostJoins(ghost,prime,premultiplied))break;
+                continue;
+            }
             if(op.f || op.u)break;
             if(op.count<=0 || !op.tex)continue;   // skipped by the replay anyway (null atlas page)
             op.page=int16_t(palettePage(op.tex));
@@ -4309,7 +4368,7 @@
         const bool arena=nativePassArena_ && nativePassMode_==NativePassMode::All;
         for(size_t i=0;i<drawOps_.size();) {
             DrawOp& head=drawOps_[i];
-            if(head.f || head.u || head.count<=0 || !head.tex ||
+            if(head.f || head.u || head.ghost>=0 || head.count<=0 || !head.tex ||
                (nativePassMode_==NativePassMode::Palette && palettePage(head.tex)<0)) {++i;continue;}
             const SpanScan scan=scanNativeSpan(i);
             if(scan.nativeAnyway && scan.end>i) {
@@ -4330,16 +4389,51 @@
     size_t GameView::drawNativeSpan(size_t first) {
         using RS = tak::render::Counter;
         const DrawOp& head=drawOps_[first];
-        const size_t end=size_t(head.passEnd);
+        size_t end=size_t(head.passEnd);
+        // A ghost's clip in GL window coordinates, from the box SDL primed for its own
+        // clip (the world clip): same scale, and flipped on the window (SDL's GL
+        // scissor counts y up from the bottom there; on a target it does not).
+        SDL_Rect world{};
+        const bool clipped=SDL_RenderIsClipEnabled(ren_);
+        if(clipped)SDL_RenderGetClipRect(ren_,&world);
+        float sx=1,sy=1;
+        SDL_RenderGetScale(ren_,&sx,&sy);
+        const bool flipped=!SDL_GetRenderTarget(ren_);
         if(!nativePass_.begin(bodySubmit_,ren_,head.passPrime,head.passPremultipliedPrime)) {
             ++nativePassRefused_;
             if(!nativePass_.usable())nativePassesOn_=false;   // refused by the state check: not this context
             return first;
         }
+        GLint box[4]={0,0,0,0};
+        const bool scissored=clipped && nativePass_.primedScissor(box) &&
+                             box[2]==GLint(float(world.w)*sx) && box[3]==GLint(float(world.h)*sy);
         uint64_t commands=0;
+        // HIDDEN UNITS, stencil form: each command's state (no flush inside a pass);
+        // the pass ends in the state it began with (its verify compares them).
+        using HS=tak::HiddenStencilGL::State;
+        const HS stencilAtBegin=hiddenStencil_.state();
         for(size_t i=first;i<end;++i) {
             const DrawOp& op=drawOps_[i];
+            if(op.ghost>=0) {
+                // Not expected (SDL clips the world): the caller draws on from the ghost.
+                if(!scissored) {end=i;break;}
+                const HiddenGhost& ghost=hiddenGhosts_[size_t(op.ghost)];
+                SDL_Rect clip{};
+                if(!hiddenGhostClip(ghost,&world,clip))continue;
+                tak::render::ScopedPhase phase(renderStats_,tak::render::Phase::HiddenUnits);
+                tak::render::countLogicalDraw();
+                const GLint at[4]={box[0]+GLint(float(clip.x-world.x)*sx),
+                                   flipped ? box[1]+GLint(float(world.y+world.h-clip.y-clip.h)*sy)
+                                           : box[1]+GLint(float(clip.y-world.y)*sy),
+                                   GLint(float(clip.w)*sx),GLint(float(clip.h)*sy)};
+                nativePass_.setScissor(at);
+                commands+=drawHiddenGhostInPass(ghost);
+                nativePass_.restoreScissor();
+                continue;
+            }
             if(op.count<=0 || !op.tex)continue;
+            const HS stencil=hiddenStencilFrame_ ? hiddenOpState(i) : HS::Off;
+            if(hiddenStencilFrame_)hiddenStencilUse(stencil,true);
             useSpanTexture(op.page,op.spanName,op.premultiplied);
             renderStats_.add(RS::BodySubmissions);
             ++commands;
@@ -4352,7 +4446,22 @@
             } else {
                 bodySubmit_.passDraw(std::span<const SDL_Vertex>(bodyVerts_.data()+op.start,size_t(op.count)));
             }
+            if(op.hidden==kHiddenCover && stencil!=HS::Off) {
+                hiddenStencilUse(HS::Under1,true);
+                if(op.veilFirst>=0) {
+                    const GLint veilFirst=op.veilFirst;
+                    const GLsizei veilCount=op.veilCount;
+                    bodySubmit_.passDrawBuffer(hiddenVeilBuffer_.id(),std::span<const GLint>(&veilFirst,1),
+                                               std::span<const GLsizei>(&veilCount,1),size_t(veilCount));
+                } else {
+                    drawHiddenVeil(op,true);
+                }
+#ifndef NDEBUG
+                ++debugHiddenPassVeils_;
+#endif
+            }
         }
+        if(hiddenStencilFrame_)hiddenStencilUse(stencilAtBegin,true);
         nativePass_.end(bodySubmit_);
         ++nativePasses_;
         nativePassCommands_+=commands;
@@ -4603,6 +4712,7 @@
         shadowSilhouetteAtlasActive_=false;
         atlasTracker_.clear();   // whatever was painted died with the atlases
         releaseBodyArena();      // retained body vertices (H): re-uploaded on the next stable frame
+        hiddenVeilBuffer_.release();   // HIDDEN UNITS' see-through covers: refilled every frame
     }
 
     void GameView::destroyGpuTextures() {
@@ -5688,7 +5798,7 @@
         return !same;
     }
 
-    void GameView::drawUnit(const UnitR& u) {
+    void GameView::drawUnit(const UnitR& u, uint8_t bodyAlpha) {
         // A placed-but-not-yet-started site shows as a faint ghost until the
         // builder arrives and it begins conjuring for real.
         if (u.underConstruction && !u.buildBegun) {
@@ -5716,18 +5826,19 @@
         int outW = 0, outH = 0;
         SDL_bool hadClip = SDL_FALSE;
         SDL_Rect prevClip{};
+        bool topShows = true;   // false: the wall top is at or above the target's top edge
         if (occluded) {
             SDL_GetRendererOutputSize(ren_, &outW, &outH);
             hadClip = SDL_RenderIsClipEnabled(ren_);
             if (hadClip) SDL_RenderGetClipRect(ren_, &prevClip);
             int line = std::clamp(int(occY), 0, outH);
             SDL_Rect top{0, 0, outW, line};   // only pixels above the wall top show
-            SDL_RenderSetClipRect(ren_, &top);
+            topShows = tak::cliprect::set(ren_, top);   // an empty clip draws nothing (Metal: skip)
         }
         // Shadows are emitted once by the dedicated ground/air passes. Special
         // body rendering must not composite the same shadow a second time.
         // Disco dance floor: a pulsing, hue-cycling glow disc under a dancing unit.
-        if (dancing(u)) {
+        if (topShows && dancing(u)) {
             float t = emoteSeconds(u.player);
             SDL_Color dc = discoHue(t * 0.8f + 0.5f);   // offset from the body tint
             float rad = (float(std::max(u.type->footX, u.type->footZ)) * 12.0f + 22.0f)
@@ -5752,7 +5863,7 @@
             SDL_SetRenderDrawBlendMode(ren_, pbm);
         }
         // Headbang: a red mosh-pit glow that flares on each downbeat.
-        if (headbanging(u)) {
+        if (topShows && headbanging(u)) {
             float ph = emoteSeconds(u.player) * 2.533f * 6.2831853f;
             float bang = std::pow(std::max(0.0f, std::sin(ph)), 2.0f);
             SDL_Color dc{Uint8(150 + 90 * bang), Uint8(20 + 20 * bang), 20, 255};
@@ -5778,7 +5889,7 @@
             SDL_SetRenderDrawBlendMode(ren_, pbm);
         }
         auto constructionParticles=[&](bool frontPass) {
-            if (u.constructionParticles.empty()) return;
+            if (!topShows || u.constructionParticles.empty()) return;
             SDL_FPoint anchor{ax,ay};
             if (u.replacementModel) {
                 // Particle offsets belong to the new site even while its old
@@ -5815,7 +5926,12 @@
         // already baked into the vertices on the worker pool.
         // Workstream M: a unit with indexed palette runs draws all its runs in one
         // native pass when every run texture can join (one priming, not one per run).
-        if (!drawRunsNative(g.runs, g.verts.data())) {
+        if (!topShows) {
+            // Nothing above the wall top: only the silhouette below.
+        } else if (bodyAlpha != 255) {
+            drawHiddenBody(gslot, bodyAlpha);
+            hiddenBatchFlush();
+        } else if (!drawRunsNative(g.runs, g.verts.data())) {
             int off = 0;
             for (const auto& r : g.runs) {
                 // A null run texture (an atlas page that failed to allocate under
@@ -5834,7 +5950,7 @@
         if (occluded) {
             int line = std::clamp(int(occY), 0, outH);
             SDL_Rect bot{0, line, outW, std::max(0, outH - line)};
-            SDL_RenderSetClipRect(ren_, &bot);
+            const bool botShows = tak::cliprect::set(ren_, bot);   // empty: no silhouette (Metal: skip)
             SDL_Color tc = playerColor(u.player);
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
             // The silhouette is flat, untextured and single-colour, so the whole
@@ -5846,7 +5962,7 @@
                 v.color = SDL_Color{tc.r, tc.g, tc.b, 70};
                 triBatch_.push_back(v);
             }
-            if (!triBatch_.empty())
+            if (botShows && !triBatch_.empty())
                 SDL_RenderGeometry(ren_, nullptr, triBatch_.data(), int(triBatch_.size()), nullptr, 0);
             if (hadClip) SDL_RenderSetClipRect(ren_, &prevClip);
             else SDL_RenderSetClipRect(ren_, nullptr);
@@ -5862,7 +5978,6 @@
         debugDotIds_.clear();
 #endif
         const SDL_Color rim{12, 12, 16, 220};     // dark edge: reads on grass and sand
-        const SDL_Color selRim{255, 255, 255, 255};
         size_t drawn = 0;
         // Ground first, airborne flyers second, so a flyer's dot sits on top of the
         // army it is flying over, as its model would.
@@ -5877,18 +5992,10 @@
                 }
                 if (aloft != (pass == 1)) continue;
                 const SDL_FPoint c = dotCentre(u);   // terrain lift + flyer altitude
-                const float side = dotSide(u), half = side * 0.5f;
+                const float half = dotSide(u) * 0.5f;
                 if (c.x + half < -4 || c.x - half > mvw + 4 ||
                     c.y + half < -4 || c.y - half > winH + 4) continue;
-                const bool selected = selSet_.contains(u.id);
-                // Selected: a bright 2px outline; otherwise a 1px dark rim.
-                const float edge = selected ? 2.0f : 1.0f;
-                pushQuad(overlayBatch_, c.x - half - edge, c.y - half - edge,
-                         side + 2 * edge, side + 2 * edge, selected ? selRim : rim);
-                SDL_Color col = playerColor(u.player);
-                // An unfinished conjure reads as half there, like its ghosted model.
-                if (u.underConstruction) col.a = 150;
-                pushQuad(overlayBatch_, c.x - half, c.y - half, side, side, col);
+                appendDot(overlayBatch_, u, c, rim);
                 ++drawn;
 #ifndef NDEBUG
                 debugDotIds_.push_back(u.id);
@@ -5904,6 +6011,20 @@
         debugDotCount_ = drawn;
 #endif
         return drawn;
+    }
+
+    void GameView::appendDot(std::vector<SDL_Vertex>& b, const UnitR& u, SDL_FPoint c, const SDL_Color& rim) {
+        const SDL_Color selRim{255, 255, 255, 255};
+        const float side = dotSide(u), half = side * 0.5f;
+        const bool selected = selSet_.contains(u.id);
+        // Selected: a bright 2px outline; otherwise a 1px rim.
+        const float edge = selected ? 2.0f : 1.0f;
+        pushQuad(b, c.x - half - edge, c.y - half - edge,
+                 side + 2 * edge, side + 2 * edge, selected ? selRim : rim);
+        SDL_Color col = playerColor(u.player);
+        // An unfinished conjure reads as half there, like its ghosted model.
+        if (u.underConstruction) col.a = 150;
+        pushQuad(b, c.x - half, c.y - half, side, side, col);
     }
 
     void GameView::drawRing(float wx, float wz, float r) {
@@ -6021,6 +6142,73 @@
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
     }
 
+    // Retail feature playback: one shared clock per TYPE (every instance of a
+    // sequence shows the identical frame -- variety comes from the 16 different wave
+    // sequences, not phase), 30Hz engine ticks holding each frame for its GAF delay
+    // (waves ship delay=2 -> 15fps), looping continuously. Each frame is drawn at its
+    // OWN size + anchor -- the wave art authors motion that way. Burning: seqnameburn
+    // playback replaces the standing art (retail swaps to the burn anim + flame
+    // overlays on ignition). The body pass draws exactly this; the HIDDEN UNITS
+    // cover tests read it.
+    GameView::FeatureSprite GameView::featureSprite(const FeatureInst& f, float zm) {
+        FeatureSprite out;
+        // Lifted onto the terrain relief just like a unit (see the body pass).
+        const float lfx = terrainLiftX(f.x, f.z) * zm, lfy = terrainLift(f.x, f.z) * zm;
+        const auto place = [&](int fw, int fh, int fxo, int fyo) {
+            out.dst = {(f.x - mapView_.offX() - float(fxo)) * zm - lfx,
+                       (f.z - mapView_.offY() - float(fyo)) * zm - lfy,
+                       float(fw) * zm, float(fh) * zm};
+        };
+        const auto maskOf = [](const FeatArt* art, size_t idx) -> const tak::hiddenunits::AlphaMask* {
+            return art && idx < art->masks.size() ? &art->masks[idx] : nullptr;
+        };
+        if (f.burnVis && f.burnArt && f.burnArt->tex) {
+            const uint32_t burnAge = int32_t(front().gameTick-f.burnStarted) < 0
+                ? 0 : front().gameTick-f.burnStarted;
+            const FeatArt* ba = f.burnArt;
+            out.tex = ba->tex;
+            size_t idx = 0;
+            int fw = ba->w, fh = ba->h, fxo = ba->xoff, fyo = ba->yoff;
+            if (ba->frames.size() > 1 && ba->totalTicks > 0) {
+                int tick = int(burnAge % uint32_t(ba->totalTicks));
+                idx = size_t(std::upper_bound(ba->tickEnd.begin(), ba->tickEnd.end(), tick) -
+                             ba->tickEnd.begin());
+                if (idx >= ba->frames.size()) idx = 0;
+                out.tex = ba->frames[idx];
+                const auto& g = ba->fgeom[idx];
+                fw = g.w; fh = g.h; fxo = g.xoff; fyo = g.yoff;
+            }
+            place(fw, fh, fxo, fyo);
+            out.mask = maskOf(ba, idx);
+            out.burning = true;
+            return out;
+        }
+        out.tex = f.tex;
+        size_t idx = 0;
+        int fw = f.w, fh = f.h, fxo = f.xoff, fyo = f.yoff;
+        if (f.frames && !f.frames->empty() && f.art && f.art->totalTicks > 0) {
+            const uint32_t age = front().gameTick;
+            int tick = int(age % uint32_t(f.art->totalTicks));
+            idx = size_t(std::upper_bound(f.art->tickEnd.begin(), f.art->tickEnd.end(), tick) -
+                         f.art->tickEnd.begin());
+            if (idx >= f.frames->size()) idx = 0;
+            out.tex = (*f.frames)[idx];
+            const auto& g = f.art->fgeom[idx];
+            fw = g.w; fh = g.h; fxo = g.xoff; fyo = g.yoff;
+            if (!f.art->bodyLoop && age >= uint32_t(f.art->totalTicks)) out.tex = nullptr;
+        }
+        place(fw, fh, fxo, fyo);
+        out.mask = out.tex ? maskOf(f.art, idx) : nullptr;
+        if (f.tree && settings_ && settings_->treeSway) {
+            const float phase = f.x*0.043f+f.z*0.029f;
+            const float sway = std::sin(animClock_*1.1f+phase)*0.7f+
+                               std::sin(animClock_*2.7f+phase*1.7f)*0.3f;
+            out.sway = true;
+            out.shear = sway * out.dst.h * 0.04f;
+        }
+        return out;
+    }
+
     GameView::FeatArt* GameView::featureArtFor(const tak::tdf::Node& def,
                                                const char* seqKey, const char* shadKey) {
         std::string file = def.valueOr("filename", "");
@@ -6073,6 +6261,8 @@
                             else premulUpload(t, ff.rgba, ff.width);
                             SDL_SetTextureScaleMode(t, worldScaleMode());
                             a.frames.push_back(t);
+                            a.masks.emplace_back();
+                            if (!blank) a.masks.back().build(ff.rgba.data(), ff.width, ff.height);
                             a.fgeom.push_back({ff.width, ff.height, ff.xoff, ff.yoff});
                             acc += std::max(1, int(ff.retailDelayTicks));
                             a.tickEnd.push_back(acc);
@@ -6149,6 +6339,7 @@
         // The buildable spot is the animated Sacred Stone centre; the static
         // Standing Stones sharing the category are just ruins around it.
         inst.glowy = inst.mana && di->second.numberOr("animating", 0) != 0;
+        inst.low = tak::hiddenunits::lowFeature(int(di->second.numberOr("height", 0)));
         features_.push_back(inst);
         featureIndexDirty_=true;
         // NO NAV BLOCKING HERE. Feature blocking belongs to the SIM, and
@@ -6171,6 +6362,8 @@
         fi.frontFlame = fi.backFlame = nullptr;
         fi.tree = false;   // a burnt stump/smudge doesn't sway
         auto di = featureDefs_.find(name);
+        fi.low = di != featureDefs_.end() &&
+                 tak::hiddenunits::lowFeature(int(di->second.numberOr("height", 0)));
         FeatArt* a = di != featureDefs_.end() ? featureArtFor(di->second) : nullptr;
         if (!a) { fi.tex = nullptr; fi.frames = nullptr; fi.art = nullptr;
                   fi.shadow = nullptr; return; }   // no art: vanish (draw skips)

@@ -4,6 +4,7 @@
 #include "client/chatbox.h"   // wrap
 #include "client/cursorpath.h"
 #include "client/hidpi.h"
+#include "client/cliprect.h"
 #include "client/datafolder.h"
 #include "client/gpuvram.h"
 #include "client/hotkeys.h"
@@ -551,6 +552,20 @@ void OptionsScreen::build(int channels) {
            [&](float v) { s_.tacticalDotsZoom = std::clamp(int(v + 0.5f), 0, 100); },
            [](float v) { return pctOf(v, 100); });
     ctls_.back().enabled = [&] { return s_.tacticalDots; };   // only meaningful with dots on
+    // A unit behind a tree, rock or building, shown anyway (not in retail;
+    // client/hiddenunits.h). Three stops like HEALTH BARS; applied live.
+    slider("HIDDEN UNITS", 0, 2, [&] { return float(s_.hiddenUnits); },
+           [&](float v) { s_.hiddenUnits = std::clamp(int(v + 0.5f), 0, 2); },
+           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "SHADOW" : l >= 1 ? "DOTS" : "OFF"); });
+    ctls_.back().help = [&] {
+        const char* lines[] = {
+            "OFF: TREES, ROCKS AND BUILDINGS HIDE THE UNITS BEHIND THEM, AS IN THE ORIGINAL GAME.",
+            "DOTS: A UNIT WHOSE CENTRE IS HIDDEN SHOWS ITS TACTICAL DOT ON TOP.",
+            "SHADOW: THE HIDDEN PART OF A UNIT SHOWS THROUGH THE TREE OR WALL AS A FAINT SHADOW."};
+        std::vector<std::string> out;
+        for (int i = 0; i < 3; ++i) out.push_back(std::string(i == s_.hiddenUnits ? "> " : "  ") + lines[i]);
+        return out;
+    };
     // Camera shake on heavy impacts and mission quakes; off unless asked for.
     toggle("SCREEN SHAKE", [&] { return s_.screenShake ? 1.0f : 0.0f; },
            [&](float v) { s_.screenShake = v > 0.5f; });
@@ -941,10 +956,12 @@ void OptionsScreen::render(int winW, int winH) {
     float titleH = 3.4f * 7 * u_ + 26 * u_, footerH = 52 * u_;
     SDL_Rect clip{int(panel_.x), int(panel_.y + titleH), int(panel_.w),
                   int(panel_.h - titleH - footerH)};
-    SDL_RenderSetClipRect(ren_, &clip);
+    // No room (a tiny window): no rows -- on Metal they would draw unclipped.
+    const bool rowsShow = tak::cliprect::set(ren_, clip);
 
     float fpx = 2.0f * u_;
     for (auto& c : ctls_) {
+        if (!rowsShow) break;
         if (c.row.y + c.row.h < clip.y || c.row.y > clip.y + clip.h) continue;   // off-screen
         if (c.kind == Control::Section) {
             // Caps end 7 * 2.2 = 15.4 below y, the divider 3 px above the row's bottom:
@@ -1151,8 +1168,8 @@ void OptionsScreen::render(int winW, int winH) {
         SDL_SetRenderDrawColor(ren_, 140, 150, 185, 255); SDL_RenderDrawRectF(ren_, &bg);
         // Clip the rows to the viewport so a list taller than the panel scrolls under it.
         SDL_Rect clip{int(x), int(y0), int(cw) + 1, int(viewH) + 1};
-        SDL_RenderSetClipRect(ren_, &clip);
-        for (size_t i = 0; i < opts.size(); ++i) {
+        const bool rowsShow = tak::cliprect::set(ren_, clip);
+        for (size_t i = 0; rowsShow && i < opts.size(); ++i) {
             float iy = y0 + float(i) * itemH - dropScroll_;
             if (iy + itemH < y0 || iy > y0 + viewH) continue;   // fully scrolled out
             SDL_FRect it{x, iy, cw, itemH};
