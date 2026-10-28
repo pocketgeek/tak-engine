@@ -433,8 +433,10 @@ void OptionsScreen::build(int channels) {
     toggle("FULLSCREEN", [&] { return s_.fullscreen ? 1.0f : 0.0f; },
            [&](float v) { s_.fullscreen = v > 0.5f; });
     toggle("VSYNC", [&] { return s_.vsync ? 1.0f : 0.0f; }, [&](float v) { s_.vsync = v > 0.5f; });
-    slider("MAX FPS", 30, 240, [&] { return float(s_.maxFps); },
-           [&](float v) { s_.maxFps = int(v + 0.5f); }, [](float v) { return std::to_string(int(v + 0.5f)); });
+    // 30..240, and the stretch past 240 is UNLIMITED (stored as 0).
+    slider("MAX FPS", 30, 250, [&] { return s_.maxFps > 0 ? float(s_.maxFps) : 250.0f; },
+           [&](float v) { s_.maxFps = v > 240.5f ? 0 : int(v + 0.5f); },
+           [](float v) { return v > 240.5f ? std::string("UNLIMITED") : std::to_string(int(v + 0.5f)); });
     ctls_.back().enabled = [&] { return !s_.vsync; };   // vsync paces frames; the cap does nothing
 #if defined(__linux__)
     // NATIVE WAYLAND: a Wayland window in real pixels instead of X11 through XWayland,

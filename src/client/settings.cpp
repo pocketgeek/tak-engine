@@ -115,7 +115,10 @@ Settings loadSettings() {
         }
         if      (key == "fullscreen")      s.fullscreen = asBool();
         else if (key == "vsync")           s.vsync = asBool();
-        else if (key == "maxFps")          s.maxFps = asInt(30, 480);
+        else if (key == "maxFps") {        // 0 (or anything past 240) = unlimited
+            const int v = std::atoi(val.c_str());
+            s.maxFps = v <= 0 || v > 240 ? 0 : clampv(v, 30, 240);
+        }
         else if (key == "renderer")        s.renderer = renderdriver::normalize(val);
         else if (key == "ignoreDpiScaling") s.ignoreDpiScaling = asBool();
         else if (key == "dpiMigrated")     s.dpiMigrated = asBool();

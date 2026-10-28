@@ -595,6 +595,31 @@ int main() {
         std::error_code ec;
         std::filesystem::remove(path, ec);
     }
+    // MAX FPS: 30..240, and 0 means unlimited; a saved cap past 240 (once allowed up to
+    // 480) loads as unlimited, and unlimited survives a save.
+    {
+        auto fpsFrom = [&](const std::string& body) {
+            const auto path = std::filesystem::temp_directory_path() /
+                              ("settings_test_fps_" + std::to_string(std::random_device{}()) + ".ini");
+            { std::ofstream(path) << body; }
+            tak::setSettingsPath(path.string());
+            const int v = tak::loadSettings().maxFps;
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+            return v;
+        };
+        auto check = [&](const char* what, bool ok) {
+            std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++g_fail;
+        };
+        check("maxFps: 144 kept", fpsFrom("maxFps = 144\n") == 144);
+        check("maxFps: 10 -> 30", fpsFrom("maxFps = 10\n") == 30);
+        check("maxFps: 0 unlimited", fpsFrom("maxFps = 0\n") == 0);
+        check("maxFps: 480 unlimited", fpsFrom("maxFps = 480\n") == 0);
+        Settings w{};
+        w.maxFps = 0;
+        check("maxFps: 0 round trip", fpsFrom(tak::serializeSettings(w)) == 0);
+    }
     // The streaming panel's BITRATE: saved, reloaded, and invalid values snap to 6000.
     {
         auto loadFrom = [&](const std::string& body) {

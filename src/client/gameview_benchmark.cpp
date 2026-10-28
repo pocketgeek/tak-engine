@@ -166,7 +166,8 @@
         }
         sl(std::string("FULLSCREEN  ") + (settings_ && settings_->fullscreen ? "ON" : "OFF"));
         sl(std::string("VSYNC       ") + (settings_ && settings_->vsync ? "ON" : "OFF"));
-        if (settings_ && !settings_->vsync) { std::snprintf(b, sizeof b, "MAX FPS     %d", settings_->maxFps); sl(b); }
+        if (settings_ && !settings_->vsync && settings_->maxFps <= 0) sl("MAX FPS     UNLIMITED");
+        else if (settings_ && !settings_->vsync) { std::snprintf(b, sizeof b, "MAX FPS     %d", settings_->maxFps); sl(b); }
         else sl("MAX FPS     (VSYNC)");
         {   const int tf = settings_ ? std::clamp(settings_->textureFilter, 0, 2) : 0;
             sl(std::string("TEXFILTER   ") + (tf == 2 ? "EVERYTHING" : tf == 1 ? "UNITS" : "OFF")); }

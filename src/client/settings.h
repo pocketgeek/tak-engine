@@ -27,7 +27,7 @@ struct Settings {
     // ---- display / window ----
     bool  fullscreen = true;       // borderless-desktop fullscreen (default on)
     bool  vsync      = true;
-    int   maxFps     = 60;         // frame cap when vsync is off; clamp 30..480
+    int   maxFps     = 60;         // frame cap when vsync is off: 30..240, 0 = unlimited
     std::string renderer;          // SDL render driver id ("opengl", "software", ...);
                                    // "" = AUTO, SDL's own choice. Applied at startup
                                    // only (restart required); see client/renderdriver.h.

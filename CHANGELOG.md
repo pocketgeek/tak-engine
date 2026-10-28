@@ -19,6 +19,12 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+
+- **Max FPS can be unlimited.** The Options slider runs from 30 to 240 frames
+  a second, and its far right end is **Unlimited**. A saved cap above 240 (the
+  settings file used to allow up to 480) now reads as Unlimited.
+
 ## 0.9.8
 *2026-10-27 · protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*
 
