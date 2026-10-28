@@ -627,11 +627,11 @@
             // HIDDEN UNITS through the real draw(): a flat feature sorts under every
             // unit; units behind a tree or a building get a dot (DOTS) or show through
             // it (SHADOW: changed pixels only on the cover, the part in sight as with
-            // OFF, also at output scale 1.5 and from distant images); units in the
+            // OFF, also at output scales 1.5 and 2 and from distant images); units in the
             // open, in front of the tree or on a flat feature get nothing; fog still
             // hides enemies; OFF and Tactical Dots frames do nothing; a hidden dot is
             // clickable. TAK_HIDDEN_UNITS_CAPTURE=<prefix> writes <prefix>-off/-dots/
-            // -shadow.png (and -x1.5 / -z0.5 pairs).
+            // -shadow.png (and -x1.5 / -x2 / -z0.5 pairs).
             namespace hu = tak::hiddenunits;
             const auto check=[](bool ok,const std::string& what) {
                 if (!ok) throw std::runtime_error("hidden units: "+what);
@@ -924,6 +924,10 @@
             }
             SDL_RenderSetScale(ren_,1.5f,1.5f);
             shadowRound(" (output scale 1.50)",shot("off-x1.5"),shot("shadow-x1.5"));
+            // A whole output scale keeps OpenGL's native passes, where a ghost draws
+            // inside the body pass's span under a scissor of its own.
+            SDL_RenderSetScale(ren_,2,2);
+            shadowRound(" (output scale 2.00)",shot("off-x2"),shot("shadow-x2"));
             SDL_RenderSetScale(ren_,1,1);
             {   // Zoomed out: still units are drawn from their distant images (where the
                 // renderer has them); their image is redrawn, never their model.

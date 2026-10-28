@@ -1620,11 +1620,14 @@ private:
     size_t nativeMin_ = 512;         // this frame's native batch threshold (TAK_BODY_ARENA_MIN)
     tak::NativePassGL nativePass_;
     // Draws the pass planned at drawOps_[first] (passEnd > first); returns passEnd, or
-    // `first` when the pass was refused (the caller then draws command by command).
+    // `first` when the pass was refused (the caller then draws command by command), or
+    // the index of a ghost it could not scissor (the caller draws on from there).
     size_t drawNativeSpan(size_t first);
     // One run of body commands from `first`: one past its last command, whether a
     // command in it is drawn natively anyway, whether it holds indexed runs, and the
     // texture that primes it. Resolves each scanned command's texture into its DrawOp.
+    // An exact SHADOW ghost whose textures all join is part of the run (drawn inside
+    // the pass under its own scissor); any other ghost ends it.
     struct SpanScan { size_t end = 0; bool nativeAnyway = false, palette = false, primePremultiplied = false;
                       SDL_Texture* prime = nullptr; };
     SpanScan scanNativeSpan(size_t first);
@@ -2726,6 +2729,16 @@ private:
     // An exact ghost in one native pass (OpenGL, as the body pass draws), bodies read
     // from the body arena where it holds them; false: not drawn (SDL's path then).
     bool drawHiddenGhostNative(const HiddenGhost& ghost);
+    // Can every texture of an exact ghost's redraw join a native pass? The prime it
+    // would open with (first BLEND texture, else first premultiplied; null: none).
+    bool hiddenGhostJoins(const HiddenGhost& ghost, SDL_Texture*& prime, SDL_Texture*& premultipliedPrime);
+    // An exact ghost's redraw into the open native pass; returns the commands issued.
+    uint64_t drawHiddenGhostInPass(const HiddenGhost& ghost);
+    // The ghost's clip: its rectangle on whole pixels, inside `within`; false: empty.
+    static bool hiddenGhostClip(const HiddenGhost& ghost, const SDL_Rect* within, SDL_Rect& clip);
+    // Debug TAK_HIDDEN_IN_SPAN=0: every ghost breaks the body pass's native spans and
+    // opens its own pass, as before ghosts joined the spans (A/B checks).
+    bool hiddenInSpan_ = true;
     // One unit's body as the body pass drew it (its distant image or its runs), with
     // every alpha scaled by `alpha` (255: unchanged), into the batch.
     void drawHiddenBody(int slot, uint8_t alpha);

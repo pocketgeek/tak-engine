@@ -4275,7 +4275,17 @@
         for(;end<drawOps_.size();++end) {
             if(end>first && end==airShadowOp_)break;
             DrawOp& op=drawOps_[end];
-            if(op.f || op.u || op.ghost>=0)break;
+            if(op.ghost>=0) {
+                // HIDDEN UNITS: an exact SHADOW ghost draws inside the pass, under its
+                // own scissor (drawNativeSpan), instead of closing it and opening one
+                // of its own: two primings fewer per ghost.
+                const HiddenGhost& ghost=hiddenGhosts_[size_t(op.ghost)];
+                SDL_Texture* prime=nullptr;
+                SDL_Texture* premultiplied=nullptr;
+                if(!hiddenInSpan_ || !ghost.exact || !hiddenGhostJoins(ghost,prime,premultiplied))break;
+                continue;
+            }
+            if(op.f || op.u)break;
             if(op.count<=0 || !op.tex)continue;   // skipped by the replay anyway (null atlas page)
             op.page=int16_t(palettePage(op.tex));
             if(op.page>=0) {
@@ -4325,15 +4335,44 @@
     size_t GameView::drawNativeSpan(size_t first) {
         using RS = tak::render::Counter;
         const DrawOp& head=drawOps_[first];
-        const size_t end=size_t(head.passEnd);
+        size_t end=size_t(head.passEnd);
+        // A ghost's clip in GL window coordinates, from the box SDL primed for its own
+        // clip (the world clip): same scale, and flipped on the window (SDL's GL
+        // scissor counts y up from the bottom there; on a target it does not).
+        SDL_Rect world{};
+        const bool clipped=SDL_RenderIsClipEnabled(ren_);
+        if(clipped)SDL_RenderGetClipRect(ren_,&world);
+        float sx=1,sy=1;
+        SDL_RenderGetScale(ren_,&sx,&sy);
+        const bool flipped=!SDL_GetRenderTarget(ren_);
         if(!nativePass_.begin(bodySubmit_,ren_,head.passPrime,head.passPremultipliedPrime)) {
             ++nativePassRefused_;
             if(!nativePass_.usable())nativePassesOn_=false;   // refused by the state check: not this context
             return first;
         }
+        GLint box[4]={0,0,0,0};
+        const bool scissored=clipped && nativePass_.primedScissor(box) &&
+                             box[2]==GLint(float(world.w)*sx) && box[3]==GLint(float(world.h)*sy);
         uint64_t commands=0;
         for(size_t i=first;i<end;++i) {
             const DrawOp& op=drawOps_[i];
+            if(op.ghost>=0) {
+                // Not expected (SDL clips the world): the caller draws on from the ghost.
+                if(!scissored) {end=i;break;}
+                const HiddenGhost& ghost=hiddenGhosts_[size_t(op.ghost)];
+                SDL_Rect clip{};
+                if(!hiddenGhostClip(ghost,&world,clip))continue;
+                tak::render::ScopedPhase phase(renderStats_,tak::render::Phase::HiddenUnits);
+                tak::render::countLogicalDraw();
+                const GLint at[4]={box[0]+GLint(float(clip.x-world.x)*sx),
+                                   flipped ? box[1]+GLint(float(world.y+world.h-clip.y-clip.h)*sy)
+                                           : box[1]+GLint(float(clip.y-world.y)*sy),
+                                   GLint(float(clip.w)*sx),GLint(float(clip.h)*sy)};
+                nativePass_.setScissor(at);
+                commands+=drawHiddenGhostInPass(ghost);
+                nativePass_.restoreScissor();
+                continue;
+            }
             if(op.count<=0 || !op.tex)continue;
             useSpanTexture(op.page,op.spanName,op.premultiplied);
             renderStats_.add(RS::BodySubmissions);
