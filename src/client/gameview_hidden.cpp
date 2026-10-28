@@ -63,10 +63,11 @@ namespace hu = tak::hiddenunits;
         // TAK_HIDDEN_STENCIL=0 draws SHADOW by the redraw form on OpenGL too (A/B).
         static const char* forced = tak::devEnv("TAK_HIDDEN_UNITS");
         if (forced) hiddenUnitsMode_ = hu::parse(forced);
-        static bool stencilEnvRead = false;
-        if (!stencilEnvRead) {
-            stencilEnvRead = true;
-            if (const char* v = tak::devEnv("TAK_HIDDEN_STENCIL")) hiddenStencilAllowed_ = std::atoi(v) != 0;
+        // Once per view (a new game makes a new one), then the harness may switch it.
+        if (!debugHiddenStencilEnvRead_) {
+            debugHiddenStencilEnvRead_ = true;
+            static const char* stencilEnv = tak::devEnv("TAK_HIDDEN_STENCIL");
+            if (stencilEnv) hiddenStencilAllowed_ = std::atoi(stencilEnv) != 0;
         }
         static const char* inSpan = tak::devEnv("TAK_HIDDEN_IN_SPAN");
         hiddenInSpan_ = !inSpan || std::strcmp(inSpan, "0") != 0;

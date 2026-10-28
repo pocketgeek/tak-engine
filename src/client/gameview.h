@@ -2779,6 +2779,7 @@ private:
     std::vector<int> debugHiddenGhostIds_;      // units given a ghost this frame
     std::vector<int> debugHiddenExactIds_;      // ...of which redrawn exactly
     bool debugHiddenStencil_ = false;           // the last frame drew SHADOW by the stencil
+    bool debugHiddenStencilEnvRead_ = false;    // TAK_HIDDEN_STENCIL applied to this view
     uint64_t debugHiddenPassVeils_ = 0;         // ...of its see-through covers, drawn in a native pass
 #endif
     // The sprite a feature shows this frame (burn playback, animation frame, wind
