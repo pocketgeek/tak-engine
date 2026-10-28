@@ -559,6 +559,7 @@ TELEMETRY_PHASES = ["t_candidates", "t_painter_sort", "t_atlas", "t_geometry", "
                     "t_shadow_pack", "t_shadow_alloc", "t_shadow_prep", "t_shadow_raster",
                     "t_shadow_composite", "t_body_assembly", "t_body_submit", "t_terrain",
                     "t_terrain_upload", "t_effects", "t_fog", "t_pool_dispatch", "t_pool_wait", "t_schedule_plan",
+                    "t_hidden_units",
                     "w_geometry_key", "w_geometry_build", "w_pool_busy", "w_pool_wake",
                     "w_terrain_compose", "w_section_decode", "w_terrain_upload", "w_terrain_wasted",
                     "w_unit_grid_build"]
@@ -614,7 +615,9 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "native_pass_refused", "native_primes",
                     # workstream H: retained body arena (per frame)
                     "arena_append", "arena_rebuild", "arena_stream", "arena_verts_retained",
-                    "arena_verts_uploaded", "arena_verts_twice", "arena_fallbacks"]
+                    "arena_verts_uploaded", "arena_verts_twice", "arena_fallbacks",
+                    # HIDDEN UNITS option (client/hiddenunits.h)
+                    "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_pixels"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",

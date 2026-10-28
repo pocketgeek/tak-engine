@@ -2533,6 +2533,16 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
             if (d2) { float dx = c.x - mx, dy = c.y - my; *d2 = dx * dx + dy * dy; }
             return true;
         }
+        // A HIDDEN UNITS dot on screen (the unit behind scenery) is clickable like a
+        // tactical dot, as well as the model's own box.
+        if (hiddenDot(u.id)) {
+            const SDL_FPoint c = dotCentre(u);
+            const float half = std::max(dotSide(u) * 0.5f + 1.0f, 9.0f);
+            if (std::fabs(mx - c.x) <= half && std::fabs(my - c.y) <= half) {
+                if (d2) { float dx = c.x - mx, dy = c.y - my; *d2 = dx * dx + dy * dy; }
+                return true;
+            }
+        }
         float zms = mapView_.zoom();
         SDL_FPoint p = unitScreen(u);
         const SDL_FRect& hb = unitHitBox(u.type);

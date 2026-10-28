@@ -59,7 +59,7 @@
 #include "client/dirpicker.h"   // first-run data-dir folder picker
 #include "client/distantmodels.h"
 #include "client/tacticaldots.h"   // zoomed-out unit dots (Options > Graphics)
-#include "client/hiddenunits.h"    // painter layers: flat features under every unit
+#include "client/hiddenunits.h"    // units behind scenery (Options > Graphics)
 #include "client/featureindex.h"
 #include "client/unitindex.h"
 #include "client/unittypetable.h"
@@ -2646,6 +2646,60 @@ private:
     }
     // One batched draw of every radar-visible unit in view; returns dots drawn.
     size_t drawTacticalDots(int mvw, int winH);
+    // One unit's dot (rim, then body) at c, appended to b: shared by the Tactical
+    // Dots pass and the HIDDEN UNITS dots.
+    void appendDot(std::vector<SDL_Vertex>& b, const UnitR& u, SDL_FPoint c, const SDL_Color& rim);
+
+    // ---- HIDDEN UNITS (Options > Graphics; not in retail; client/hiddenunits.h) ----
+    // After the body pass: units the frame drew that scenery or a building painted
+    // over get their dot (DOTS) or the covered part outlined (OUTLINE). Nothing at
+    // all runs while the option is OFF or the frame is a Tactical Dots frame.
+    int hiddenUnitsMode_ = tak::hiddenunits::kDefault;
+    void drawHiddenUnits(int mvw, int winH);
+    // The painter items the pass considers (ground layer and air), collected by the
+    // backwards walk: kind, rectangle, and for a feature the sprite it showed.
+    enum class HiddenKind : uint8_t { Feature, Structure, Unit, Other };
+    struct HiddenRec {
+        uint32_t item;          // index into paintItems_
+        HiddenKind kind;
+        bool candidate = false; // a Unit some later cover overlaps
+        int slot = -1;          // geometry slot (units)
+        uint32_t coversAfter = 0; // a Unit: CoverGrid ids below this paint after it
+        tak::hiddenunits::Rect rect;
+    };
+    std::vector<HiddenRec> hiddenRecs_;    // in REVERSE painter order
+    std::vector<uint32_t> hiddenCoverRec_; // CoverGrid id -> hiddenRecs_ index
+    tak::hiddenunits::CoverGrid hiddenGrid_;
+    std::vector<int> hiddenDotIds_;        // sorted: units given a hidden dot this frame (picking)
+    std::vector<float> hiddenXY_;          // outline pass: positions in target pixels
+    std::vector<SDL_Vertex> hiddenQuad_;   // outline pass: sprite quads in target pixels
+    SDL_Texture* hiddenMask_ = nullptr;    // outline pass: coverage, then the hidden part
+    SDL_Texture* hiddenEdge_ = nullptr;    // outline pass: eroded, then the edge
+    int hiddenTexW_ = 0, hiddenTexH_ = 0;
+    uint64_t hiddenUsedMs_ = 0;            // last frame the outline targets were used
+    bool hiddenOutlineUnsupported_ = false;// no targets / blend modes: DOTS instead
+    // The outline pass proper; false when this renderer cannot do it (the caller
+    // then draws DOTS for the frame).
+    bool drawHiddenOutlines(int mvw, int winH, const tak::hiddenunits::Rect& area);
+    void releaseHiddenTargets();
+    bool hiddenDot(int id) const {
+        return std::binary_search(hiddenDotIds_.begin(), hiddenDotIds_.end(), id);
+    }
+#ifndef NDEBUG
+    size_t debugHiddenCandidates_ = 0, debugHiddenOutlined_ = 0;
+    bool debugHiddenOutlineRan_ = false;
+#endif
+    // The sprite a feature shows this frame (burn playback, animation frame, wind
+    // sway), in screen space: what the body pass draws and the cover tests read.
+    struct FeatureSprite {
+        SDL_Texture* tex = nullptr;
+        const tak::hiddenunits::AlphaMask* mask = nullptr;
+        SDL_FRect dst{};
+        float shear = 0;   // top edge shifted sideways by this much (sway)
+        bool sway = false;      // drawn as a sheared quad (Trees Sway In Wind)
+        bool burning = false;   // the burn playback (never sways)
+    };
+    FeatureSprite featureSprite(const FeatureInst& f, float zm);
 #ifndef NDEBUG
     size_t debugDotCount_ = 0;                  // dots in the last drawTacticalDots
     std::vector<int> debugDotIds_;              // ...and whose they were
@@ -3230,6 +3284,9 @@ private:
         bool shadowLoop = false;
         bool bodyLoop = false;
         std::vector<FGeom> fgeom;   // per-frame geometry, parallel to frames
+        // Opaque texels per frame, parallel to frames: the HIDDEN UNITS dot test
+        // (client/hiddenunits.h) asks whether a sprite covers a unit's centre.
+        std::vector<tak::hiddenunits::AlphaMask> masks;
         std::vector<int> tickEnd;   // cumulative end tick per frame
         int totalTicks = 0;         // full loop length in 30Hz ticks
     };

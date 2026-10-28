@@ -73,6 +73,12 @@ struct Settings {
     bool  tacticalDots = true;     // zoomed far out, draw units as minimap-style dots
     int   tacticalDotsZoom = 0;    // when: 0 = only fully zoomed out .. 100 = from normal size
                                    // instead of models (non-retail extra; default on)
+    // HIDDEN UNITS (client/hiddenunits.h; a non-retail extra): a unit behind a tree, rock or
+    // building is shown anyway -- 0 = OFF (as retail), 1 = DOTS (its tactical dot on top
+    // when its centre is covered), 2 = OUTLINE (the covered part as a player-coloured
+    // outline; the default). Persisted as hiddenUnits = off | dots | outline; absent (a
+    // settings file from before it) = OUTLINE.
+    int   hiddenUnits = 2;
     bool  screenShake = false;     // camera shake on heavy impacts / mission quakes; default off
     bool  videoDeblock = true;     // deblock the Bink clips before upload. They are
                                    // 640x360 and get stretched ~12x on a wide display,
@@ -224,7 +230,8 @@ struct Settings {
             && a.buildBarAlign == b.buildBarAlign && a.buildBarScale == b.buildBarScale
             && a.chatScale == b.chatScale && a.chatAlign == b.chatAlign && a.uiFont == b.uiFont
             && a.treeSway == b.treeSway && a.tacticalDots == b.tacticalDots
-            && a.tacticalDotsZoom == b.tacticalDotsZoom && a.screenShake == b.screenShake
+            && a.tacticalDotsZoom == b.tacticalDotsZoom && a.hiddenUnits == b.hiddenUnits
+            && a.screenShake == b.screenShake
             && a.unitShadows == b.unitShadows && a.smoothArt == b.smoothArt
             && a.gpuMemoryLimit == b.gpuMemoryLimit
             && a.videoDeblock == b.videoDeblock

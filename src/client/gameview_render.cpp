@@ -2062,59 +2062,18 @@
 #endif
                 };
                 drawFlame(f.backFlame);
-                // Retail feature playback: one shared clock per TYPE (every
-                // instance of a sequence shows the identical frame -- variety
-                // comes from the 16 different wave sequences, not phase), 30Hz
-                // engine ticks holding each frame for its GAF delay (waves ship
-                // delay=2 -> 15fps), looping continuously. Each frame is drawn at
-                // its OWN size + anchor -- the wave art authors motion that way.
-                SDL_Texture* tex = f.tex;
-                int fw = f.w, fh = f.h, fxo = f.xoff, fyo = f.yoff;
-                // Burning: seqnameburn playback replaces the standing art
-                // (retail swaps to the burn anim + flame overlays on ignition).
-                if (f.burnVis && f.burnArt && f.burnArt->tex) {
-                    const FeatArt* ba = f.burnArt;
-                    tex = ba->tex; fw = ba->w; fh = ba->h; fxo = ba->xoff; fyo = ba->yoff;
-                    if (ba->frames.size() > 1 && ba->totalTicks > 0) {
-                        int tick = int(burnAge % uint32_t(ba->totalTicks));
-                        size_t idx = size_t(std::upper_bound(ba->tickEnd.begin(),
-                                                             ba->tickEnd.end(), tick) -
-                                            ba->tickEnd.begin());
-                        if (idx >= ba->frames.size()) idx = 0;
-                        tex = ba->frames[idx];
-                        const auto& g = ba->fgeom[idx];
-                        fw = g.w; fh = g.h; fxo = g.xoff; fyo = g.yoff;
-                    }
-                    SDL_FRect dst{(f.x - mapView_.offX() - float(fxo)) * zm0 - lfx,
-                                  (f.z - mapView_.offY() - float(fyo)) * zm0 - lfy,
-                                  float(fw) * zm0, float(fh) * zm0};
-                    SDL_RenderCopyF(ren_, tex, nullptr, &dst);
-                    drawFlame(f.frontFlame);
-                    drawFeatureSmoke();
-                    continue;
-                }
-                if (f.frames && !f.frames->empty() && f.art && f.art->totalTicks > 0) {
-                    const uint32_t age = front().gameTick;
-                    int tick = int(age % uint32_t(f.art->totalTicks));
-                    size_t idx = size_t(std::upper_bound(f.art->tickEnd.begin(),
-                                                         f.art->tickEnd.end(), tick) -
-                                        f.art->tickEnd.begin());
-                    if (idx >= f.frames->size()) idx = 0;
-                    tex = (*f.frames)[idx];
-                    const auto& g = f.art->fgeom[idx];
-                    fw = g.w; fh = g.h; fxo = g.xoff; fyo = g.yoff;
-                    if (!f.art->bodyLoop && age >= uint32_t(f.art->totalTicks)) tex = nullptr;
-                }
-                SDL_FRect dst{(f.x - mapView_.offX() - float(fxo)) * zm0 - lfx,
-                              (f.z - mapView_.offY() - float(fyo)) * zm0 - lfy,
-                              float(fw) * zm0, float(fh) * zm0};
-                if (swayTree) {
+                // The sprite (burn playback, animation frame, sway): featureSprite.
+                const FeatureSprite sprite = featureSprite(f, zm0);
+                if (sprite.burning) {
+                    SDL_RenderCopyF(ren_, sprite.tex, nullptr, &sprite.dst);
+                } else if (sprite.sway) {
                     // Wind sway (Options; beyond-retail -- retail trees are static
                     // single-frame GAFs): shear the crown sideways on two blended
                     // gust sines, pivoting at the trunk base (the GAF anchor sits
                     // there). Per-tree phase so a forest ripples instead of rocking
                     // in unison. Display-only; the sim never sees it.
-                    float shear = sway * dst.h * 0.04f;
+                    const SDL_FRect& dst = sprite.dst;
+                    const float shear = sprite.shear;
                     const SDL_Color wc{255, 255, 255, 255};
                     SDL_Vertex v[4] = {
                         {{dst.x + shear, dst.y}, wc, {0, 0}},
@@ -2123,9 +2082,9 @@
                         {{dst.x, dst.y + dst.h}, wc, {0, 1}},
                     };
                     static const int wIdx[6] = {0, 1, 2, 0, 2, 3};
-                    if (tex) SDL_RenderGeometry(ren_, tex, v, 4, wIdx, 6);
+                    if (sprite.tex) SDL_RenderGeometry(ren_, sprite.tex, v, 4, wIdx, 6);
                 } else {
-                    if (tex) SDL_RenderCopyF(ren_, tex, nullptr, &dst);
+                    if (sprite.tex) SDL_RenderCopyF(ren_, sprite.tex, nullptr, &sprite.dst);
                 }
                 drawFlame(f.frontFlame);
                 drawFeatureSmoke();
@@ -2211,6 +2170,9 @@
         // (a dot under a tree crown would vanish). Shots and effects do not draw
         // on a dots frame at all (worldFxFrame()).
         if (dotsFrame_) drawTacticalDots(mvw, winH);
+        // HIDDEN UNITS: units the scenery or a building painted over, shown anyway
+        // (nothing on a dots frame or with the option off).
+        drawHiddenUnits(mvw, winH);
         // Ghosts of the local player's queued (shift) build orders. Only the units the
         // snapshot lists as holding such an order (Frame::buildGhostUnits, in live
         // order) can draw one (workstream L: no walk over every unit).
@@ -4606,6 +4568,8 @@
         shadowSilhouetteAtlasActive_=false;
         atlasTracker_.clear();   // whatever was painted died with the atlases
         releaseBodyArena();      // retained body vertices (H): re-uploaded on the next stable frame
+        releaseHiddenTargets();  // HIDDEN UNITS outline layers (redrawn every frame anyway)
+        hiddenOutlineUnsupported_ = false;   // a new renderer gets asked again
     }
 
     void GameView::destroyGpuTextures() {
@@ -5865,7 +5829,6 @@
         debugDotIds_.clear();
 #endif
         const SDL_Color rim{12, 12, 16, 220};     // dark edge: reads on grass and sand
-        const SDL_Color selRim{255, 255, 255, 255};
         size_t drawn = 0;
         // Ground first, airborne flyers second, so a flyer's dot sits on top of the
         // army it is flying over, as its model would.
@@ -5880,18 +5843,10 @@
                 }
                 if (aloft != (pass == 1)) continue;
                 const SDL_FPoint c = dotCentre(u);   // terrain lift + flyer altitude
-                const float side = dotSide(u), half = side * 0.5f;
+                const float half = dotSide(u) * 0.5f;
                 if (c.x + half < -4 || c.x - half > mvw + 4 ||
                     c.y + half < -4 || c.y - half > winH + 4) continue;
-                const bool selected = selSet_.contains(u.id);
-                // Selected: a bright 2px outline; otherwise a 1px dark rim.
-                const float edge = selected ? 2.0f : 1.0f;
-                pushQuad(overlayBatch_, c.x - half - edge, c.y - half - edge,
-                         side + 2 * edge, side + 2 * edge, selected ? selRim : rim);
-                SDL_Color col = playerColor(u.player);
-                // An unfinished conjure reads as half there, like its ghosted model.
-                if (u.underConstruction) col.a = 150;
-                pushQuad(overlayBatch_, c.x - half, c.y - half, side, side, col);
+                appendDot(overlayBatch_, u, c, rim);
                 ++drawn;
 #ifndef NDEBUG
                 debugDotIds_.push_back(u.id);
@@ -5907,6 +5862,20 @@
         debugDotCount_ = drawn;
 #endif
         return drawn;
+    }
+
+    void GameView::appendDot(std::vector<SDL_Vertex>& b, const UnitR& u, SDL_FPoint c, const SDL_Color& rim) {
+        const SDL_Color selRim{255, 255, 255, 255};
+        const float side = dotSide(u), half = side * 0.5f;
+        const bool selected = selSet_.contains(u.id);
+        // Selected: a bright 2px outline; otherwise a 1px rim.
+        const float edge = selected ? 2.0f : 1.0f;
+        pushQuad(b, c.x - half - edge, c.y - half - edge,
+                 side + 2 * edge, side + 2 * edge, selected ? selRim : rim);
+        SDL_Color col = playerColor(u.player);
+        // An unfinished conjure reads as half there, like its ghosted model.
+        if (u.underConstruction) col.a = 150;
+        pushQuad(b, c.x - half, c.y - half, side, side, col);
     }
 
     void GameView::drawRing(float wx, float wz, float r) {
@@ -6024,6 +5993,73 @@
         SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
     }
 
+    // Retail feature playback: one shared clock per TYPE (every instance of a
+    // sequence shows the identical frame -- variety comes from the 16 different wave
+    // sequences, not phase), 30Hz engine ticks holding each frame for its GAF delay
+    // (waves ship delay=2 -> 15fps), looping continuously. Each frame is drawn at its
+    // OWN size + anchor -- the wave art authors motion that way. Burning: seqnameburn
+    // playback replaces the standing art (retail swaps to the burn anim + flame
+    // overlays on ignition). The body pass draws exactly this; the HIDDEN UNITS
+    // cover tests read it.
+    GameView::FeatureSprite GameView::featureSprite(const FeatureInst& f, float zm) {
+        FeatureSprite out;
+        // Lifted onto the terrain relief just like a unit (see the body pass).
+        const float lfx = terrainLiftX(f.x, f.z) * zm, lfy = terrainLift(f.x, f.z) * zm;
+        const auto place = [&](int fw, int fh, int fxo, int fyo) {
+            out.dst = {(f.x - mapView_.offX() - float(fxo)) * zm - lfx,
+                       (f.z - mapView_.offY() - float(fyo)) * zm - lfy,
+                       float(fw) * zm, float(fh) * zm};
+        };
+        const auto maskOf = [](const FeatArt* art, size_t idx) -> const tak::hiddenunits::AlphaMask* {
+            return art && idx < art->masks.size() ? &art->masks[idx] : nullptr;
+        };
+        if (f.burnVis && f.burnArt && f.burnArt->tex) {
+            const uint32_t burnAge = int32_t(front().gameTick-f.burnStarted) < 0
+                ? 0 : front().gameTick-f.burnStarted;
+            const FeatArt* ba = f.burnArt;
+            out.tex = ba->tex;
+            size_t idx = 0;
+            int fw = ba->w, fh = ba->h, fxo = ba->xoff, fyo = ba->yoff;
+            if (ba->frames.size() > 1 && ba->totalTicks > 0) {
+                int tick = int(burnAge % uint32_t(ba->totalTicks));
+                idx = size_t(std::upper_bound(ba->tickEnd.begin(), ba->tickEnd.end(), tick) -
+                             ba->tickEnd.begin());
+                if (idx >= ba->frames.size()) idx = 0;
+                out.tex = ba->frames[idx];
+                const auto& g = ba->fgeom[idx];
+                fw = g.w; fh = g.h; fxo = g.xoff; fyo = g.yoff;
+            }
+            place(fw, fh, fxo, fyo);
+            out.mask = maskOf(ba, idx);
+            out.burning = true;
+            return out;
+        }
+        out.tex = f.tex;
+        size_t idx = 0;
+        int fw = f.w, fh = f.h, fxo = f.xoff, fyo = f.yoff;
+        if (f.frames && !f.frames->empty() && f.art && f.art->totalTicks > 0) {
+            const uint32_t age = front().gameTick;
+            int tick = int(age % uint32_t(f.art->totalTicks));
+            idx = size_t(std::upper_bound(f.art->tickEnd.begin(), f.art->tickEnd.end(), tick) -
+                         f.art->tickEnd.begin());
+            if (idx >= f.frames->size()) idx = 0;
+            out.tex = (*f.frames)[idx];
+            const auto& g = f.art->fgeom[idx];
+            fw = g.w; fh = g.h; fxo = g.xoff; fyo = g.yoff;
+            if (!f.art->bodyLoop && age >= uint32_t(f.art->totalTicks)) out.tex = nullptr;
+        }
+        place(fw, fh, fxo, fyo);
+        out.mask = out.tex ? maskOf(f.art, idx) : nullptr;
+        if (f.tree && settings_ && settings_->treeSway) {
+            const float phase = f.x*0.043f+f.z*0.029f;
+            const float sway = std::sin(animClock_*1.1f+phase)*0.7f+
+                               std::sin(animClock_*2.7f+phase*1.7f)*0.3f;
+            out.sway = true;
+            out.shear = sway * out.dst.h * 0.04f;
+        }
+        return out;
+    }
+
     GameView::FeatArt* GameView::featureArtFor(const tak::tdf::Node& def,
                                                const char* seqKey, const char* shadKey) {
         std::string file = def.valueOr("filename", "");
@@ -6076,6 +6112,8 @@
                             else premulUpload(t, ff.rgba, ff.width);
                             SDL_SetTextureScaleMode(t, worldScaleMode());
                             a.frames.push_back(t);
+                            a.masks.emplace_back();
+                            if (!blank) a.masks.back().build(ff.rgba.data(), ff.width, ff.height);
                             a.fgeom.push_back({ff.width, ff.height, ff.xoff, ff.yoff});
                             acc += std::max(1, int(ff.retailDelayTicks));
                             a.tickEnd.push_back(acc);

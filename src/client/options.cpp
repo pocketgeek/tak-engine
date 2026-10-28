@@ -551,6 +551,20 @@ void OptionsScreen::build(int channels) {
            [&](float v) { s_.tacticalDotsZoom = std::clamp(int(v + 0.5f), 0, 100); },
            [](float v) { return pctOf(v, 100); });
     ctls_.back().enabled = [&] { return s_.tacticalDots; };   // only meaningful with dots on
+    // A unit behind a tree, rock or building, shown anyway (not in retail;
+    // client/hiddenunits.h). Three stops like HEALTH BARS; applied live.
+    slider("HIDDEN UNITS", 0, 2, [&] { return float(s_.hiddenUnits); },
+           [&](float v) { s_.hiddenUnits = std::clamp(int(v + 0.5f), 0, 2); },
+           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "OUTLINE" : l >= 1 ? "DOTS" : "OFF"); });
+    ctls_.back().help = [&] {
+        const char* lines[] = {
+            "OFF: TREES, ROCKS AND BUILDINGS HIDE THE UNITS BEHIND THEM, AS IN THE ORIGINAL GAME.",
+            "DOTS: A UNIT WHOSE CENTRE IS HIDDEN SHOWS ITS TACTICAL DOT ON TOP.",
+            "OUTLINE: THE HIDDEN PART OF A UNIT SHOWS AS AN OUTLINE IN ITS PLAYER COLOUR."};
+        std::vector<std::string> out;
+        for (int i = 0; i < 3; ++i) out.push_back(std::string(i == s_.hiddenUnits ? "> " : "  ") + lines[i]);
+        return out;
+    };
     // Camera shake on heavy impacts and mission quakes; off unless asked for.
     toggle("SCREEN SHAKE", [&] { return s_.screenShake ? 1.0f : 0.0f; },
            [&](float v) { s_.screenShake = v > 0.5f; });
