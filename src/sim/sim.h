@@ -2738,6 +2738,7 @@ private:
     void tickFlyingGuard(Unit& u);
     void guardHelpPick(Unit& u, const Unit& g, int& help, int& mend);
     void guardInsertJob(Unit& u, int help, int mend);
+    RetailRingGoal guardRing(const Unit& u, const Unit& g) const;
     Order& guardStandAside(Unit& u);
     bool guardAlarm(const Unit& u, const Unit& g) const {
         return g.attackedTick>u.guardHeard;

@@ -10214,7 +10214,7 @@ struct LegionNavigator::Impl {
     bool buildRing(Group& g) {
         auto& r=g.ring;
         r.tried=true;
-        if(g.approach||g.reachIds.size()<kRingMembers||g.reachCentre<0||g.kind==Kind::Guard)return false;   // a guard's 70 px is a stance round its ward: no ring
+        if(g.approach||g.reachIds.size()<kRingMembers||g.reachCentre<0||g.kind==Kind::Guard)return false;   // a guard keeps a stance round its ward (World::guardRing): no ring
         const Unit* t=w.unit(g.reachTarget);
         if(!t||!t->alive()||!t->type)return false;
         int R=INT_MAX;bool los=false,naval=false,blind=false;

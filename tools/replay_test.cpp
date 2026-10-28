@@ -190,9 +190,11 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 302, "replay format 11 is kept under protocol 302");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 302");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 302");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 303, "replay format 11 is kept under protocol 303");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 303");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 303");
+    // 303 keeps a ground guard on Follow_Ground's ring round its ward (hashed movement).
+    check(!supportedReplayProtocol(15, 302), "previous protocol with the 70 px guard stance is refused");
     // 301 shares a product's progress with its helpers and lets a guarding builder help (hashed state).
     check(!supportedReplayProtocol(15, 300), "previous protocol without shared production progress is refused");
     // 300 adds producer rally plans (rally in stateHash, mobile-builder attack/fight-move rallies).

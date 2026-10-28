@@ -790,7 +790,10 @@ int main() {
         for (int i = 0; i < 30 * 45; ++i) w.tick(1.0f / 30.0f);
         const Unit* u = w.unit(id);
         const float dx = u->x.toFloat() - 408, dz = u->z.toFloat() - 168;
-        check(dx * dx + dz * dz < 70 * 70,
+        // A guard stands on Follow_Ground's ring (1x1 guard and charge:
+        // 64..112 px, give or take a cell's rounding); an attacker in range.
+        const float d2 = dx * dx + dz * dz;
+        check(guard ? d2 >= 48 * 48 && d2 <= 128 * 128 : d2 < 70 * 70,
               guard ? "guard routes around terrain to its target"
                     : "attack routes around terrain to its target");
         check(!u->orders.empty() && u->orders.front().targetId == target &&

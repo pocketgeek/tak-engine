@@ -59245,6 +59245,41 @@
    "mode": "legion",
    "reason": "Legion ~100 round 6 (2026-10-21, task-l6-land, from a371ae1f): Legion gatehouse corridors -- a braked ring member that would plug a pinched approach walks on past the shot, onward only (task-l6-gateA), and deep rings fill back to front (task-l6-gateB); protocol 286: work.slot_search_cells.max 4089 at the L100-R6 gate (base 3360): higher than allowed (per-step vs head base 3360 x1.10; cumulative vs reference 3360 x1.10), got 4089",
    "scenario": "attackring-wall-mixed-56"
+  },
+  {
+   "key": "open_still900",
+   "max": 64,
+   "mode": "legion",
+   "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing; 1x1 guard of a 2x2 ward: 80..128 px) instead of walking to within 70 px of its centre; 64 guards standing still for 900 ticks on the ring is the guard's stance, not a stall (they keep their open guard order); open_still900 64 at the task-doorway gate.",
+   "scenario": "attackring-guard-64"
+  },
+  {
+   "key": "still900_ever",
+   "max": 64,
+   "mode": "legion",
+   "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing; 1x1 guard of a 2x2 ward: 80..128 px) instead of walking to within 70 px of its centre; the same: every guard comes to rest on the ring; still900_ever 64 at the task-doorway gate.",
+   "scenario": "attackring-guard-64"
+  },
+  {
+   "key": "parked_held",
+   "max": 87189,
+   "mode": "legion",
+   "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing; 1x1 guard of a 2x2 ward: 80..128 px) instead of walking to within 70 px of its centre; guards held still on the ring for the rest of the run; parked_held 87189 at the task-doorway gate.",
+   "scenario": "attackring-guard-64"
+  },
+  {
+   "key": "reach.ring.farthest_held",
+   "max": 9,
+   "mode": "legion",
+   "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing; 1x1 guard of a 2x2 ward: 80..128 px) instead of walking to within 70 px of its centre; the farthest held guard is 9 cells out: the ring's outer edge (8 cells) and a cell's rounding; the old 70 px stance held none out of the 6-cell range; reach.ring.farthest_held 9 at the task-doorway gate.",
+   "scenario": "attackring-guard-64"
+  },
+  {
+   "key": "work.group_loop_iters.total",
+   "max": 1030,
+   "mode": "legion",
+   "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing; 1x1 guard of a 2x2 ward: 80..128 px) instead of walking to within 70 px of its centre; group loop work of the guards held on the ring over the whole run; work.group_loop_iters.total 1030 at the task-doorway gate.",
+   "scenario": "attackring-guard-64"
   }
  ],
  "entries": {
@@ -83448,7 +83483,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 52
+     "value": 161
     },
     "back": {
      "band": 1.1,
@@ -83456,7 +83491,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 0
+     "value": 152
     },
     "backward": {
      "band": 1.1,
@@ -83464,7 +83499,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 28
+     "value": 5921
     },
     "churn.bin0": {
      "band": 1.1,
@@ -83472,7 +83507,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1838877
+     "value": 9352864
     },
     "churn.bin1": {
      "band": 1.1,
@@ -83480,7 +83515,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 132112
+     "value": 7540534
     },
     "clearance_mean_x100": {
      "band": 1.1,
@@ -83512,7 +83547,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 969
+     "value": 928
     },
     "contact_settled_permille": {
      "band": 1.1,
@@ -83560,7 +83595,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 909
+     "value": 274
     },
     "detour_permille": {
      "band": 1.1,
@@ -83568,7 +83603,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 39
+     "value": 148
     },
     "engaged.member_ticks": {
      "band": 1.1,
@@ -83576,7 +83611,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 14216
+     "value": 71524
     },
     "engagement_on_flowing": {
      "band": 1.1,
@@ -83584,7 +83619,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 13
+     "value": 44
     },
     "flip_rate_per30_permille": {
      "band": 1.1,
@@ -83592,7 +83627,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 84
+     "value": 176
     },
     "flips": {
      "band": 1.1,
@@ -83600,7 +83635,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 534
+     "value": 1124
     },
     "follow_chain_max": {
      "band": 1.1,
@@ -83608,7 +83643,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 40
+     "value": 22
     },
     "follow_chain_mean_x100": {
      "band": 1.1,
@@ -83616,7 +83651,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1022
+     "value": 441
     },
     "g.A.arrived": {
      "band": 1.1,
@@ -83706,6 +83741,14 @@
      "since": "W5 step 0",
      "value": 180
     },
+    "g.A.stops": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 245
+    },
     "g.A.t50": {
      "band": 1.1,
      "dir": "lower",
@@ -83728,7 +83771,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 0
+     "value": 1
     },
     "g.T.complete_dist_max": {
      "band": 1.1,
@@ -83784,7 +83827,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1
+     "value": 0
     },
     "g.T.n": {
      "band": 1.1,
@@ -83810,6 +83853,14 @@
      "since": "W5 step 0",
      "value": 33
     },
+    "g.T.stops": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
     "g.T.t50": {
      "band": 1.1,
      "dir": "lower",
@@ -83832,7 +83883,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 7
+     "value": 44
     },
     "gauge.quota_peg_run_max": {
      "band": 1.1,
@@ -83855,77 +83906,77 @@
      "reason": "Legion ~100 round 4 (2026-10-20, task-l4-land, from 30813a73): lane order through turns (a lateral-rank ribbon through turns, lane exchange, settle-window slot wedge; task-l4-turnA), rings along walls (band-1 spots for waiting members, walks on through a still target's shadow, blind rings press into reach; task-l4-ringwall) and fight and guard members round still targets at travel speed (stillTarget, whole routes and fight-leg flow-around shuffles at speed, no shuffling without headway; task-l4-fight), with the round-4 repairs (big points keep the pinwheel, a blocked file is let go, the stall release counted from the rank; task-l4-fixturn; shadowed rings lift the still-window stop only for out-of-sight members, band-1 holders and band-0 holders still for 4 windows; task-l4-fixring) and room at a merge (members passing a queue head held 60 ticks at a corner's merge move over a lane; task-l4-funnelB); protocol 283; hash@-1 retaken (was e2dee195c977c10b). Before: Legion ~100 rounds 1-3 (round 1 protocol 279: one admission per narrow passage, head-on meets near goals, friendly settled bodies stepping aside, long detours at travel speed, ring upkeep and press-in; round 2 protocol 280: sub-cell presses and ring bends, passage lanes, flow-around at travel speed; round 3 on 0.8.6, 2026-10-20: rings round still targets (travel-speed detours, spent closed-off spots by sight test, outer-band waits, flush presses), a passage's green scaled to its crossing and small groups admitted, funnel claims and own-slot arrivals at corridor mouths); hash@-1 retaken (was a38c3461e18bbb77). Before: stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): no behaviour or work key of attackring-guard-64 moved; new hashed state: a formation member's slot record, the label flag of routes of 8 or more members, groups' own entrants (docs/legion-10000-progress.md 7.8). Hash retaken (was c40108431ec85326). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of attackring-guard-64 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was f57d58c1573c26b3). Before: W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "L100-R4",
-     "value": "06f8cbbd3aa96f3b"
+     "value": "d8c41501d1662073"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Legion ~100 round 4 (2026-10-20, task-l4-land, from 30813a73): lane order through turns (a lateral-rank ribbon through turns, lane exchange, settle-window slot wedge; task-l4-turnA), rings along walls (band-1 spots for waiting members, walks on through a still target's shadow, blind rings press into reach; task-l4-ringwall) and fight and guard members round still targets at travel speed (stillTarget, whole routes and fight-leg flow-around shuffles at speed, no shuffling without headway; task-l4-fight), with the round-4 repairs (big points keep the pinwheel, a blocked file is let go, the stall release counted from the rank; task-l4-fixturn; shadowed rings lift the still-window stop only for out-of-sight members, band-1 holders and band-0 holders still for 4 windows; task-l4-fixring) and room at a merge (members passing a queue head held 60 ticks at a corner's merge move over a lane; task-l4-funnelB); protocol 283; hash@-2 retaken (was 40a854078f459c14). Before: Legion ~100 rounds 1-3 (round 1 protocol 279: one admission per narrow passage, head-on meets near goals, friendly settled bodies stepping aside, long detours at travel speed, ring upkeep and press-in; round 2 protocol 280: sub-cell presses and ring bends, passage lanes, flow-around at travel speed; round 3 on 0.8.6, 2026-10-20: rings round still targets (travel-speed detours, spent closed-off spots by sight test, outer-band waits, flush presses), a passage's green scaled to its crossing and small groups admitted, funnel claims and own-slot arrivals at corridor mouths); hash@-2 retaken (was 2fce9147db074312). Before: stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): no behaviour or work key of attackring-guard-64 moved; new hashed state: a formation member's slot record, the label flag of routes of 8 or more members, groups' own entrants (docs/legion-10000-progress.md 7.8). Hash retaken (was b4234da98bbe4d55). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of attackring-guard-64 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was 3a13e726cfa23866). Before: W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "L100-R4",
-     "value": "1f49a14913da61f1"
+     "value": "d0e72dd7a1b4199e"
     },
     "hash@-3": {
      "dir": "lower",
      "reason": "Legion ~100 round 4 (2026-10-20, task-l4-land, from 30813a73): lane order through turns (a lateral-rank ribbon through turns, lane exchange, settle-window slot wedge; task-l4-turnA), rings along walls (band-1 spots for waiting members, walks on through a still target's shadow, blind rings press into reach; task-l4-ringwall) and fight and guard members round still targets at travel speed (stillTarget, whole routes and fight-leg flow-around shuffles at speed, no shuffling without headway; task-l4-fight), with the round-4 repairs (big points keep the pinwheel, a blocked file is let go, the stall release counted from the rank; task-l4-fixturn; shadowed rings lift the still-window stop only for out-of-sight members, band-1 holders and band-0 holders still for 4 windows; task-l4-fixring) and room at a merge (members passing a queue head held 60 ticks at a corner's merge move over a lane; task-l4-funnelB); protocol 283; hash@-3 retaken (was 5c60b61faca2a2c4). Before: Legion ~100 rounds 1-3 (round 1 protocol 279: one admission per narrow passage, head-on meets near goals, friendly settled bodies stepping aside, long detours at travel speed, ring upkeep and press-in; round 2 protocol 280: sub-cell presses and ring bends, passage lanes, flow-around at travel speed; round 3 on 0.8.6, 2026-10-20: rings round still targets (travel-speed detours, spent closed-off spots by sight test, outer-band waits, flush presses), a passage's green scaled to its crossing and small groups admitted, funnel claims and own-slot arrivals at corridor mouths); hash@-3 retaken (was 9acf1c657f7b7c5d). Before: stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): no behaviour or work key of attackring-guard-64 moved; new hashed state: a formation member's slot record, the label flag of routes of 8 or more members, groups' own entrants (docs/legion-10000-progress.md 7.8). Hash retaken (was ddc7936d3a82072b). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of attackring-guard-64 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was cfdfe0e8a85f291f). Before: W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "L100-R4",
-     "value": "e55522495de05e40"
+     "value": "2ef57afa914e9daf"
     },
     "hash@-4": {
      "dir": "lower",
      "reason": "Legion ~100 round 4 (2026-10-20, task-l4-land, from 30813a73): lane order through turns (a lateral-rank ribbon through turns, lane exchange, settle-window slot wedge; task-l4-turnA), rings along walls (band-1 spots for waiting members, walks on through a still target's shadow, blind rings press into reach; task-l4-ringwall) and fight and guard members round still targets at travel speed (stillTarget, whole routes and fight-leg flow-around shuffles at speed, no shuffling without headway; task-l4-fight), with the round-4 repairs (big points keep the pinwheel, a blocked file is let go, the stall release counted from the rank; task-l4-fixturn; shadowed rings lift the still-window stop only for out-of-sight members, band-1 holders and band-0 holders still for 4 windows; task-l4-fixring) and room at a merge (members passing a queue head held 60 ticks at a corner's merge move over a lane; task-l4-funnelB); protocol 283; hash@-4 retaken (was 2e918eba3b8bfd48). Before: Legion ~100 rounds 1-3 (round 1 protocol 279: one admission per narrow passage, head-on meets near goals, friendly settled bodies stepping aside, long detours at travel speed, ring upkeep and press-in; round 2 protocol 280: sub-cell presses and ring bends, passage lanes, flow-around at travel speed; round 3 on 0.8.6, 2026-10-20: rings round still targets (travel-speed detours, spent closed-off spots by sight test, outer-band waits, flush presses), a passage's green scaled to its crossing and small groups admitted, funnel claims and own-slot arrivals at corridor mouths); hash@-4 retaken (was 94b0968ac7b74925). Before: stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): no behaviour or work key of attackring-guard-64 moved; new hashed state: a formation member's slot record, the label flag of routes of 8 or more members, groups' own entrants (docs/legion-10000-progress.md 7.8). Hash retaken (was 52927c86714b7e27). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of attackring-guard-64 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was 09f9214bb4d9d72e). Before: W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "L100-R4",
-     "value": "704a09d30787325b"
+     "value": "e72abac5fa8aa076"
     },
     "hash@-5": {
      "dir": "lower",
      "reason": "Legion ~100 round 4 (2026-10-20, task-l4-land, from 30813a73): lane order through turns (a lateral-rank ribbon through turns, lane exchange, settle-window slot wedge; task-l4-turnA), rings along walls (band-1 spots for waiting members, walks on through a still target's shadow, blind rings press into reach; task-l4-ringwall) and fight and guard members round still targets at travel speed (stillTarget, whole routes and fight-leg flow-around shuffles at speed, no shuffling without headway; task-l4-fight), with the round-4 repairs (big points keep the pinwheel, a blocked file is let go, the stall release counted from the rank; task-l4-fixturn; shadowed rings lift the still-window stop only for out-of-sight members, band-1 holders and band-0 holders still for 4 windows; task-l4-fixring) and room at a merge (members passing a queue head held 60 ticks at a corner's merge move over a lane; task-l4-funnelB); protocol 283; hash@-5 retaken (was 34891e1f5ccb790a). Before: Legion ~100 rounds 1-3 (round 1 protocol 279: one admission per narrow passage, head-on meets near goals, friendly settled bodies stepping aside, long detours at travel speed, ring upkeep and press-in; round 2 protocol 280: sub-cell presses and ring bends, passage lanes, flow-around at travel speed; round 3 on 0.8.6, 2026-10-20: rings round still targets (travel-speed detours, spent closed-off spots by sight test, outer-band waits, flush presses), a passage's green scaled to its crossing and small groups admitted, funnel claims and own-slot arrivals at corridor mouths); hash@-5 retaken (was 5f677bc0c48286c0). Before: stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): no behaviour or work key of attackring-guard-64 moved; new hashed state: a formation member's slot record, the label flag of routes of 8 or more members, groups' own entrants (docs/legion-10000-progress.md 7.8). Hash retaken (was 0332d8224f2d7708). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of attackring-guard-64 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was 8c35dcc5df58f2a1). Before: W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "L100-R4",
-     "value": "21690a80248ec6cd"
+     "value": "c7e8927350fc6271"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Legion ~100 round 4 (2026-10-20, task-l4-land, from 30813a73): lane order through turns (a lateral-rank ribbon through turns, lane exchange, settle-window slot wedge; task-l4-turnA), rings along walls (band-1 spots for waiting members, walks on through a still target's shadow, blind rings press into reach; task-l4-ringwall) and fight and guard members round still targets at travel speed (stillTarget, whole routes and fight-leg flow-around shuffles at speed, no shuffling without headway; task-l4-fight), with the round-4 repairs (big points keep the pinwheel, a blocked file is let go, the stall release counted from the rank; task-l4-fixturn; shadowed rings lift the still-window stop only for out-of-sight members, band-1 holders and band-0 holders still for 4 windows; task-l4-fixring) and room at a merge (members passing a queue head held 60 ticks at a corner's merge move over a lane; task-l4-funnelB); protocol 283; hash@0 retaken (was c8ae90e39f58bac2). Before: Legion ~100 rounds 1-3 (round 1 protocol 279: one admission per narrow passage, head-on meets near goals, friendly settled bodies stepping aside, long detours at travel speed, ring upkeep and press-in; round 2 protocol 280: sub-cell presses and ring bends, passage lanes, flow-around at travel speed; round 3 on 0.8.6, 2026-10-20: rings round still targets (travel-speed detours, spent closed-off spots by sight test, outer-band waits, flush presses), a passage's green scaled to its crossing and small groups admitted, funnel claims and own-slot arrivals at corridor mouths); hash@0 retaken (was 94a68cd4f9a26e24). Before: stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): no behaviour or work key of attackring-guard-64 moved; new hashed state: a formation member's slot record, the label flag of routes of 8 or more members, groups' own entrants (docs/legion-10000-progress.md 7.8). Hash retaken (was 496e874e0e5fa560). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of attackring-guard-64 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was 8d0f643497a07db1). Before: W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "L100-R4",
-     "value": "9e5e27c1b8661e4c"
+     "value": "33a2e04250d555bf"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Legion ~100 round 4 (2026-10-20, task-l4-land, from 30813a73): lane order through turns (a lateral-rank ribbon through turns, lane exchange, settle-window slot wedge; task-l4-turnA), rings along walls (band-1 spots for waiting members, walks on through a still target's shadow, blind rings press into reach; task-l4-ringwall) and fight and guard members round still targets at travel speed (stillTarget, whole routes and fight-leg flow-around shuffles at speed, no shuffling without headway; task-l4-fight), with the round-4 repairs (big points keep the pinwheel, a blocked file is let go, the stall release counted from the rank; task-l4-fixturn; shadowed rings lift the still-window stop only for out-of-sight members, band-1 holders and band-0 holders still for 4 windows; task-l4-fixring) and room at a merge (members passing a queue head held 60 ticks at a corner's merge move over a lane; task-l4-funnelB); protocol 283; hash@1 retaken (was a8eddaeed2592be7). Before: Legion ~100 rounds 1-3 (round 1 protocol 279: one admission per narrow passage, head-on meets near goals, friendly settled bodies stepping aside, long detours at travel speed, ring upkeep and press-in; round 2 protocol 280: sub-cell presses and ring bends, passage lanes, flow-around at travel speed; round 3 on 0.8.6, 2026-10-20: rings round still targets (travel-speed detours, spent closed-off spots by sight test, outer-band waits, flush presses), a passage's green scaled to its crossing and small groups admitted, funnel claims and own-slot arrivals at corridor mouths); hash@1 retaken (was 7a00aa60cf30b484). Before: stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): no behaviour or work key of attackring-guard-64 moved; new hashed state: a formation member's slot record, the label flag of routes of 8 or more members, groups' own entrants (docs/legion-10000-progress.md 7.8). Hash retaken (was abceb242014de114). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of attackring-guard-64 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was 6c89ad8aee5f6911). Before: W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "L100-R4",
-     "value": "ff28b812aac5f920"
+     "value": "4914f0e475938a55"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Legion ~100 round 4 (2026-10-20, task-l4-land, from 30813a73): lane order through turns (a lateral-rank ribbon through turns, lane exchange, settle-window slot wedge; task-l4-turnA), rings along walls (band-1 spots for waiting members, walks on through a still target's shadow, blind rings press into reach; task-l4-ringwall) and fight and guard members round still targets at travel speed (stillTarget, whole routes and fight-leg flow-around shuffles at speed, no shuffling without headway; task-l4-fight), with the round-4 repairs (big points keep the pinwheel, a blocked file is let go, the stall release counted from the rank; task-l4-fixturn; shadowed rings lift the still-window stop only for out-of-sight members, band-1 holders and band-0 holders still for 4 windows; task-l4-fixring) and room at a merge (members passing a queue head held 60 ticks at a corner's merge move over a lane; task-l4-funnelB); protocol 283; hash@2 retaken (was bf266074fc0f363e). Before: Legion ~100 rounds 1-3 (round 1 protocol 279: one admission per narrow passage, head-on meets near goals, friendly settled bodies stepping aside, long detours at travel speed, ring upkeep and press-in; round 2 protocol 280: sub-cell presses and ring bends, passage lanes, flow-around at travel speed; round 3 on 0.8.6, 2026-10-20: rings round still targets (travel-speed detours, spent closed-off spots by sight test, outer-band waits, flush presses), a passage's green scaled to its crossing and small groups admitted, funnel claims and own-slot arrivals at corridor mouths); hash@2 retaken (was 1d246d5e90704d02). Before: stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): no behaviour or work key of attackring-guard-64 moved; new hashed state: a formation member's slot record, the label flag of routes of 8 or more members, groups' own entrants (docs/legion-10000-progress.md 7.8). Hash retaken (was 4719e9890951244b). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of attackring-guard-64 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was 4a550dba695e2a97). Before: W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "L100-R4",
-     "value": "b478c8593ef2fbe8"
+     "value": "6611cc121345bf43"
     },
     "hash@3": {
      "dir": "lower",
      "reason": "Legion ~100 round 4 (2026-10-20, task-l4-land, from 30813a73): lane order through turns (a lateral-rank ribbon through turns, lane exchange, settle-window slot wedge; task-l4-turnA), rings along walls (band-1 spots for waiting members, walks on through a still target's shadow, blind rings press into reach; task-l4-ringwall) and fight and guard members round still targets at travel speed (stillTarget, whole routes and fight-leg flow-around shuffles at speed, no shuffling without headway; task-l4-fight), with the round-4 repairs (big points keep the pinwheel, a blocked file is let go, the stall release counted from the rank; task-l4-fixturn; shadowed rings lift the still-window stop only for out-of-sight members, band-1 holders and band-0 holders still for 4 windows; task-l4-fixring) and room at a merge (members passing a queue head held 60 ticks at a corner's merge move over a lane; task-l4-funnelB); protocol 283; hash@3 retaken (was 09e20439a0d63b4a). Before: Legion ~100 rounds 1-3 (round 1 protocol 279: one admission per narrow passage, head-on meets near goals, friendly settled bodies stepping aside, long detours at travel speed, ring upkeep and press-in; round 2 protocol 280: sub-cell presses and ring bends, passage lanes, flow-around at travel speed; round 3 on 0.8.6, 2026-10-20: rings round still targets (travel-speed detours, spent closed-off spots by sight test, outer-band waits, flush presses), a passage's green scaled to its crossing and small groups admitted, funnel claims and own-slot arrivals at corridor mouths); hash@3 retaken (was 90b0e09031094628). Before: stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): no behaviour or work key of attackring-guard-64 moved; new hashed state: a formation member's slot record, the label flag of routes of 8 or more members, groups' own entrants (docs/legion-10000-progress.md 7.8). Hash retaken (was 6d5629ce58a57592). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of attackring-guard-64 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was 81dc602b60e536a6). Before: W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "L100-R4",
-     "value": "482e6518559c730b"
+     "value": "5d60215feca7e5bc"
     },
     "hash@4": {
      "dir": "lower",
      "reason": "Legion ~100 round 4 (2026-10-20, task-l4-land, from 30813a73): lane order through turns (a lateral-rank ribbon through turns, lane exchange, settle-window slot wedge; task-l4-turnA), rings along walls (band-1 spots for waiting members, walks on through a still target's shadow, blind rings press into reach; task-l4-ringwall) and fight and guard members round still targets at travel speed (stillTarget, whole routes and fight-leg flow-around shuffles at speed, no shuffling without headway; task-l4-fight), with the round-4 repairs (big points keep the pinwheel, a blocked file is let go, the stall release counted from the rank; task-l4-fixturn; shadowed rings lift the still-window stop only for out-of-sight members, band-1 holders and band-0 holders still for 4 windows; task-l4-fixring) and room at a merge (members passing a queue head held 60 ticks at a corner's merge move over a lane; task-l4-funnelB); protocol 283; hash@4 retaken (was e23875cdb9fc1327). Before: Legion ~100 rounds 1-3 (round 1 protocol 279: one admission per narrow passage, head-on meets near goals, friendly settled bodies stepping aside, long detours at travel speed, ring upkeep and press-in; round 2 protocol 280: sub-cell presses and ring bends, passage lanes, flow-around at travel speed; round 3 on 0.8.6, 2026-10-20: rings round still targets (travel-speed detours, spent closed-off spots by sight test, outer-band waits, flush presses), a passage's green scaled to its crossing and small groups admitted, funnel claims and own-slot arrivals at corridor mouths); hash@4 retaken (was f2069e504afa425f). Before: stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): no behaviour or work key of attackring-guard-64 moved; new hashed state: a formation member's slot record, the label flag of routes of 8 or more members, groups' own entrants (docs/legion-10000-progress.md 7.8). Hash retaken (was a27cc68f8317760b). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of attackring-guard-64 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was 65bd5d5e9c8989c8). Before: W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "L100-R4",
-     "value": "a42925fbbbf16937"
+     "value": "f7182662161fe236"
     },
     "hash@5": {
      "dir": "lower",
      "reason": "Legion ~100 round 4 (2026-10-20, task-l4-land, from 30813a73): lane order through turns (a lateral-rank ribbon through turns, lane exchange, settle-window slot wedge; task-l4-turnA), rings along walls (band-1 spots for waiting members, walks on through a still target's shadow, blind rings press into reach; task-l4-ringwall) and fight and guard members round still targets at travel speed (stillTarget, whole routes and fight-leg flow-around shuffles at speed, no shuffling without headway; task-l4-fight), with the round-4 repairs (big points keep the pinwheel, a blocked file is let go, the stall release counted from the rank; task-l4-fixturn; shadowed rings lift the still-window stop only for out-of-sight members, band-1 holders and band-0 holders still for 4 windows; task-l4-fixring) and room at a merge (members passing a queue head held 60 ticks at a corner's merge move over a lane; task-l4-funnelB); protocol 283; hash@5 retaken (was d3ec18f32b5111fb). Before: Legion ~100 rounds 1-3 (round 1 protocol 279: one admission per narrow passage, head-on meets near goals, friendly settled bodies stepping aside, long detours at travel speed, ring upkeep and press-in; round 2 protocol 280: sub-cell presses and ring bends, passage lanes, flow-around at travel speed; round 3 on 0.8.6, 2026-10-20: rings round still targets (travel-speed detours, spent closed-off spots by sight test, outer-band waits, flush presses), a passage's green scaled to its crossing and small groups admitted, funnel claims and own-slot arrivals at corridor mouths); hash@5 retaken (was 20c1e27f5acd3740). Before: stage 8 (protocol 272, 2026-10-17, Legion chokepoints, subgroups and arrivals): no behaviour or work key of attackring-guard-64 moved; new hashed state: a formation member's slot record, the label flag of routes of 8 or more members, groups' own entrants (docs/legion-10000-progress.md 7.8). Hash retaken (was 754dd10df8eca03c). Before: stage 4 (protocol 268, 2026-10-16, Legion fair scheduling and budgets): no outcome key of attackring-guard-64 moved; the work counters moved because field work is now served by job (a field, however many groups share it) in four classes -- Waiting, FirstRoute, AwareRepair, StaleRefresh -- each by deficit round robin over a window of its oldest jobs (kWindow 12, kRefreshWindow 3, kSlice 32768) with age promotion, instead of whole quotas to the lowest group id first; a start is admitted oldest first with a bounded fit scan, charges its initialisation (cells/16) to the quota, and the field cap is a fixed byte allowance (128 MiB) instead of 48 whole maps of cells (legion.cpp serveFields, sim/navbudget.h). Hash retaken (was 154a9933477a3c0f). Before: W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "L100-R4",
-     "value": "7d6c3c19fd86057c"
+     "value": "960a4863a7cdab29"
     },
     "legion_groups": {
      "band": 1.1,
@@ -83941,7 +83992,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 2
+     "value": 1
     },
     "open_still900": {
      "band": 1.1,
@@ -83951,13 +84002,21 @@
      "since": "W5 step 0",
      "value": 64
     },
+    "orders": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 1
+    },
     "parked_held": {
      "band": 1.1,
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 92500
+     "value": 87189
     },
     "parked_no_progress": {
      "band": 1.1,
@@ -83965,7 +84024,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 12806
+     "value": 0
     },
     "reach.ring.damage_end": {
      "band": 1.1,
@@ -83997,7 +84056,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 15
+     "value": 64
     },
     "reach.ring.ever_t1200": {
      "band": 1.1,
@@ -84005,7 +84064,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 15
+     "value": 40
     },
     "reach.ring.ever_t2400": {
      "band": 1.1,
@@ -84013,7 +84072,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 15
+     "value": 64
     },
     "reach.ring.farthest_held": {
      "band": 1.1,
@@ -84021,7 +84080,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 33
+     "value": 9
     },
     "reach.ring.first": {
      "band": 1.1,
@@ -84029,7 +84088,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 737
+     "value": 712
     },
     "reach.ring.hold0_max": {
      "band": 1.1,
@@ -84045,7 +84104,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1957
+     "value": 1004
     },
     "reach.ring.n": {
      "band": 1.1,
@@ -84061,7 +84120,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 15
+     "value": 62
     },
     "reach.ring.out600_end": {
      "band": 1.1,
@@ -84069,7 +84128,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 49
+     "value": 2
     },
     "reach.ring.out600_peak": {
      "band": 1.1,
@@ -84077,7 +84136,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 49
+     "value": 2
     },
     "reach.ring.t50": {
      "band": 1.1,
@@ -84085,7 +84144,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": -1
+     "value": 1125
     },
     "reach.ring.targets_dead_end": {
      "band": 1.1,
@@ -84101,7 +84160,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 0
+     "value": 129
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -84116,7 +84175,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 573
+     "value": 9818
     },
     "spacing_samples": {
      "band": 1.1,
@@ -84146,7 +84205,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 9513
+     "value": 0
     },
     "still900_ever": {
      "band": 1.1,
@@ -84162,7 +84221,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1144
+     "value": 1403
     },
     "stopped_permille": {
      "band": 1.1,
@@ -84170,7 +84229,39 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 658
+     "value": 627
+    },
+    "transit_far_held_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "transit_far_samples": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 32
+    },
+    "transit_held_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 85
+    },
+    "transit_samples": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 5690
     },
     "waiting_held": {
      "band": 1.1,
@@ -84178,7 +84269,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 13583
+     "value": 22129
     },
     "waiting_no_progress": {
      "band": 1.1,
@@ -84186,7 +84277,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1276
+     "value": 0
     },
     "walk_in_place": {
      "band": 1.1,
@@ -84194,6 +84285,22 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
+     "value": 0
+    },
+    "walk_net": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "walk_net_runs": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
      "value": 0
     },
     "wall_near_samples": {
@@ -84210,7 +84317,63 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 7147
+     "value": 8234
+    },
+    "wall_still_samples": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 10902
+    },
+    "wall_touch_corner_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "wall_touch_flat_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "wall_touch_gate_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "wall_touch_near_corner_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "wall_touch_near_flat_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "wall_touch_near_gate_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
     },
     "wall_touch_near_permille": {
      "band": 1.1,
@@ -84218,6 +84381,14 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
+     "value": 0
+    },
+    "wall_touch_near_ring_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
      "value": 0
     },
     "wall_touch_permille": {
@@ -84228,13 +84399,29 @@
      "since": "W5 step 0",
      "value": 0
     },
+    "wall_touch_ring_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "wall_touch_still_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
     "work.anchor_walk_iters.max": {
      "band": 1.1,
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 65
+     "value": 64
     },
     "work.anchor_walk_iters.p99": {
      "band": 1.1,
@@ -84242,7 +84429,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 65
+     "value": 64
     },
     "work.anchor_walk_iters.total": {
      "band": 1.1,
@@ -84250,7 +84437,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 194042
+     "value": 191872
     },
     "work.crowd_window_ring_cells.max": {
      "band": 1.1,
@@ -84282,7 +84469,7 @@
      "reason": "W5 exit, first non-zero at the W5 exit: the counter did not move at the step-0 base; battle / fixture bodies now plan rings, stand Engaged and re-seed, which starts refreshes of groups whose members stand firing (not Moving) -- a refresh counted as idle",
      "rule": "band",
      "since": "W5 exit",
-     "value": 2880
+     "value": 1857
     },
     "work.detour_cells.p99": {
      "band": 1.1,
@@ -84290,7 +84477,7 @@
      "reason": "W5 exit, first non-zero at the W5 exit: the counter did not move at the step-0 base; battle / fixture bodies now plan rings, stand Engaged and re-seed, which starts refreshes of groups whose members stand firing (not Moving) -- a refresh counted as idle",
      "rule": "band",
      "since": "W5 exit",
-     "value": 1166
+     "value": 1015
     },
     "work.detour_cells.total": {
      "band": 1.1,
@@ -84298,7 +84485,7 @@
      "reason": "W5 exit, first non-zero at the W5 exit: the counter did not move at the step-0 base; battle / fixture bodies now plan rings, stand Engaged and re-seed, which starts refreshes of groups whose members stand firing (not Moving) -- a refresh counted as idle",
      "rule": "band",
      "since": "W5 exit",
-     "value": 241132
+     "value": 216311
     },
     "work.detours.max": {
      "band": 1.1,
@@ -84306,7 +84493,7 @@
      "reason": "W5 exit, first non-zero at the W5 exit: the counter did not move at the step-0 base; battle / fixture bodies now plan rings, stand Engaged and re-seed, which starts refreshes of groups whose members stand firing (not Moving) -- a refresh counted as idle",
      "rule": "band",
      "since": "W5 exit",
-     "value": 5
+     "value": 4
     },
     "work.detours.p99": {
      "band": 1.1,
@@ -84322,7 +84509,7 @@
      "reason": "W5 exit, first non-zero at the W5 exit: the counter did not move at the step-0 base; battle / fixture bodies now plan rings, stand Engaged and re-seed, which starts refreshes of groups whose members stand firing (not Moving) -- a refresh counted as idle",
      "rule": "band",
      "since": "W5 exit",
-     "value": 413
+     "value": 438
     },
     "work.field_work.max": {
      "band": 1.1,
@@ -84338,7 +84525,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 0
+     "value": 96000
     },
     "work.field_work.total": {
      "band": 1.1,
@@ -84346,7 +84533,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 641968
+     "value": 16025328
     },
     "work.field_work_first_solo.max": {
      "band": 1.1,
@@ -84370,7 +84557,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 641968
+     "value": 239184
     },
     "work.field_work_refresh_moving.max": {
      "band": 1.1,
@@ -84380,13 +84567,21 @@
      "since": "W5 exit",
      "value": 96000
     },
+    "work.field_work_refresh_moving.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 96000
+    },
     "work.field_work_refresh_moving.total": {
      "band": 1.1,
      "dir": "lower",
      "reason": "W5 exit, first non-zero at the W5 exit: the counter did not move at the step-0 base; battle / fixture bodies now plan rings, stand Engaged and re-seed, which starts refreshes of groups whose members stand firing (not Moving) -- a refresh counted as idle",
      "rule": "band",
      "since": "W5 exit",
-     "value": 478368
+     "value": 15786144
     },
     "work.fields_built.max": {
      "band": 1.1,
@@ -84402,7 +84597,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 0
+     "value": 1
     },
     "work.fields_built.total": {
      "band": 1.1,
@@ -84410,7 +84605,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 3
+     "value": 67
     },
     "work.fields_started_by_kind_5.max": {
      "band": 1.1,
@@ -84426,7 +84621,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 0
+     "value": 1
     },
     "work.fields_started_by_kind_5.total": {
      "band": 1.1,
@@ -84434,7 +84629,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 3
+     "value": 67
     },
     "work.group_loop_iters.max": {
      "band": 1.1,
@@ -84442,7 +84637,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 126
+     "value": 63
     },
     "work.group_loop_iters.p99": {
      "band": 1.1,
@@ -84450,7 +84645,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1
+     "value": 5
     },
     "work.group_loop_iters.total": {
      "band": 1.1,
@@ -84458,7 +84653,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 420
+     "value": 1030
     },
     "work.groups.max": {
      "band": 1.1,
@@ -84482,7 +84677,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 3
+     "value": 1
     },
     "work.held_rechecks.max": {
      "band": 1.1,
@@ -84490,7 +84685,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 57
+     "value": 20
     },
     "work.held_rechecks.p99": {
      "band": 1.1,
@@ -84498,7 +84693,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 57
+     "value": 20
     },
     "work.held_rechecks.total": {
      "band": 1.1,
@@ -84506,7 +84701,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 98196
+     "value": 25492
     },
     "work.holds.max": {
      "band": 1.1,
@@ -84514,7 +84709,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 11
+     "value": 7
     },
     "work.holds.p99": {
      "band": 1.1,
@@ -84522,7 +84717,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 5
+     "value": 4
     },
     "work.holds.total": {
      "band": 1.1,
@@ -84530,7 +84725,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1185
+     "value": 1423
     },
     "work.join_iterations.max": {
      "band": 1.1,
@@ -84538,7 +84733,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 126
+     "value": 63
     },
     "work.join_iterations.p99": {
      "band": 1.1,
@@ -84554,7 +84749,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 315
+     "value": 63
     },
     "work.legion_total.max": {
      "band": 1.1,
@@ -84562,7 +84757,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 241753
+     "value": 241617
     },
     "work.legion_total.p99": {
      "band": 1.1,
@@ -84570,7 +84765,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 2814
+     "value": 96041
     },
     "work.legion_total.total": {
      "band": 1.1,
@@ -84578,7 +84773,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1970989
+     "value": 16893398
     },
     "work.line_sweeps.max": {
      "band": 1.1,
@@ -84586,7 +84781,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 228
+     "value": 64
     },
     "work.line_sweeps.p99": {
      "band": 1.1,
@@ -84594,7 +84789,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 196
+     "value": 32
     },
     "work.line_sweeps.total": {
      "band": 1.1,
@@ -84602,7 +84797,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 120494
+     "value": 13032
     },
     "work.midroute_completions.max": {
      "band": 1.1,
@@ -84674,7 +84869,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 65430
+     "value": 71535
     },
     "work.move_calls_by_state_2.max": {
      "band": 1.1,
@@ -84682,7 +84877,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 57
+     "value": 45
     },
     "work.move_calls_by_state_2.p99": {
      "band": 1.1,
@@ -84690,7 +84885,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 57
+     "value": 37
     },
     "work.move_calls_by_state_2.total": {
      "band": 1.1,
@@ -84698,7 +84893,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 112088
+     "value": 48813
     },
     "work.move_calls_by_state_3.max": {
      "band": 1.1,
@@ -84722,7 +84917,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 202
+     "value": 64
     },
     "work.move_calls_by_state_6.max": {
      "dir": "lower",
@@ -84762,7 +84957,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 129836
+     "value": 108232
     },
     "work.pass_scan_cells.max": {
      "band": 1.1,
@@ -84834,7 +85029,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 80180
+     "value": 53103
     },
     "work.plane_builds.max": {
      "band": 1.1,
@@ -84868,13 +85063,21 @@
      "since": "W5 exit",
      "value": 1
     },
+    "work.refresh_completed.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 1
+    },
     "work.refresh_completed.total": {
      "band": 1.1,
      "dir": "lower",
      "reason": "W5 exit, first non-zero at the W5 exit: the counter did not move at the step-0 base; battle / fixture bodies now plan rings, stand Engaged and re-seed, which starts refreshes of groups whose members stand firing (not Moving) -- a refresh counted as idle",
      "rule": "band",
      "since": "W5 exit",
-     "value": 2
+     "value": 66
     },
     "work.registrations.max": {
      "band": 1.1,
@@ -84898,7 +85101,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 192
+     "value": 64
     },
     "work.reseeds_in_place.max": {
      "dir": "lower",
@@ -84906,7 +85109,15 @@
      "reason": "W5 declared bound: work.reseeds_in_place is a class W5 adds (a moving goal's group re-seeded without a new group or field); bound 14.0 per unit, total / per tick, measured at most 9.0 per unit over the scenarios where it moves (PLAN 3.0, a step that adds a class declares its per-unit bound)",
      "rule": "bound",
      "since": "W5 exit",
-     "value": 14.0
+     "value": 8
+    },
+    "work.reseeds_in_place.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 4
     },
     "work.reseeds_in_place.total": {
      "dir": "lower",
@@ -84914,7 +85125,7 @@
      "reason": "W5 declared bound: work.reseeds_in_place is a class W5 adds (a moving goal's group re-seeded without a new group or field); bound 14.0 per unit, total / per tick, measured at most 9.0 per unit over the scenarios where it moves (PLAN 3.0, a step that adds a class declares its per-unit bound)",
      "rule": "bound",
      "since": "W5 exit",
-     "value": 14.0
+     "value": 225
     },
     "work.sched_group_visits.max": {
      "band": 1.1,
@@ -84922,7 +85133,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1
+     "value": 9
     },
     "work.sched_group_visits.p99": {
      "band": 1.1,
@@ -84930,7 +85141,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 0
+     "value": 5
     },
     "work.sched_group_visits.total": {
      "band": 1.1,
@@ -84938,7 +85149,31 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 4
+     "value": 867
+    },
+    "work.share_scan_iters.max": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 2
+    },
+    "work.share_scan_iters.p99": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "work.share_scan_iters.total": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 14
     },
     "work.slides.max": {
      "band": 1.1,
@@ -84946,7 +85181,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 14
+     "value": 4
     },
     "work.slides.p99": {
      "band": 1.1,
@@ -84954,7 +85189,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 5
+     "value": 2
     },
     "work.slides.total": {
      "band": 1.1,
@@ -84962,7 +85197,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1712
+     "value": 297
     },
     "work.still_units_processed.max": {
      "band": 1.1,
@@ -84978,7 +85213,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1
+     "value": 3
     },
     "work.still_units_processed.total": {
      "band": 1.1,
@@ -84986,7 +85221,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 103
+     "value": 2486
     },
     "work.trace_cells.max": {
      "band": 1.1,
@@ -84994,7 +85229,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 6884
+     "value": 6495
     },
     "work.trace_cells.p99": {
      "band": 1.1,
@@ -85002,7 +85237,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 2602
+     "value": 2468
     },
     "work.trace_cells.total": {
      "band": 1.1,
@@ -85010,7 +85245,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1162010
+     "value": 622737
     },
     "work.waiting_member_ticks.max": {
      "band": 1.1,
@@ -85044,7 +85279,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1211
+     "value": 448
     },
     "back": {
      "band": 1.1,
@@ -85052,7 +85287,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 225
+     "value": 118
     },
     "backward": {
      "band": 1.1,
@@ -85060,7 +85295,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 197
+     "value": 134
     },
     "clearance_mean_x100": {
      "band": 1.1,
@@ -85092,7 +85327,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 978
+     "value": 947
     },
     "contact_settled_permille": {
      "band": 1.1,
@@ -85108,7 +85343,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 179
+     "value": 121
     },
     "detour_permille": {
      "band": 1.1,
@@ -85116,7 +85351,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 261
+     "value": 133
     },
     "engagement_on_flowing": {
      "band": 1.1,
@@ -85132,7 +85367,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 34
+     "value": 29
     },
     "flips": {
      "band": 1.1,
@@ -85140,7 +85375,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 214
+     "value": 182
     },
     "follow_chain_max": {
      "band": 1.1,
@@ -85156,7 +85391,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 103
+     "value": 101
     },
     "g.A.arrived": {
      "band": 1.1,
@@ -85245,6 +85480,14 @@
      "rule": "band",
      "since": "W5 step 0",
      "value": 180
+    },
+    "g.A.stops": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
     },
     "g.A.t50": {
      "band": 1.1,
@@ -85350,6 +85593,14 @@
      "since": "W5 step 0",
      "value": 33
     },
+    "g.T.stops": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
     "g.T.t50": {
      "band": 1.1,
      "dir": "lower",
@@ -85371,77 +85622,77 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "e719bbc2ef5e8e5f"
+     "value": "ca296ac2ce81ad04"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "80b3ddaf660f3fd2"
+     "value": "74a9fa773442264d"
     },
     "hash@-3": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "08fab062f6405e63"
+     "value": "621f718e4dd4ca20"
     },
     "hash@-4": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "1121a15222e87009"
+     "value": "a0b3e50aa084f7dd"
     },
     "hash@-5": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "c3aa120a56b94428"
+     "value": "90326cde52d73361"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "a89417a574714e31"
+     "value": "8a123679884e5252"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "513014c93ed0c2b2"
+     "value": "c5ec28d2bbf4fb9c"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "aee4a13f7c100ef6"
+     "value": "f16662d33f6eba61"
     },
     "hash@3": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "6205447835887494"
+     "value": "00d8824c081f2bf6"
     },
     "hash@4": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "25a7895cfc7e3c47"
+     "value": "69f7f3b6e221299e"
     },
     "hash@5": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "728459be9a22f178"
+     "value": "19754fabf83938d1"
     },
     "open_still900": {
      "band": 1.1,
@@ -85450,6 +85701,14 @@
      "rule": "band",
      "since": "W5 step 0",
      "value": 64
+    },
+    "orders": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
     },
     "parked_held": {
      "band": 1.1,
@@ -85465,7 +85724,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 92067
+     "value": 105006
     },
     "reach.ring.damage_end": {
      "band": 1.1,
@@ -85505,7 +85764,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 27
+     "value": 59
     },
     "reach.ring.ever_t2400": {
      "band": 1.1,
@@ -85521,7 +85780,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 6
+     "value": 9
     },
     "reach.ring.first": {
      "band": 1.1,
@@ -85529,7 +85788,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 826
+     "value": 711
     },
     "reach.ring.hold0_max": {
      "band": 1.1,
@@ -85561,7 +85820,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 60
+     "value": 63
     },
     "reach.ring.out600_end": {
      "band": 1.1,
@@ -85569,7 +85828,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 4
+     "value": 1
     },
     "reach.ring.out600_peak": {
      "band": 1.1,
@@ -85577,7 +85836,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 4
+     "value": 1
     },
     "reach.ring.t50": {
      "band": 1.1,
@@ -85585,7 +85844,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1253
+     "value": 982
     },
     "reach.ring.targets_dead_end": {
      "band": 1.1,
@@ -85601,7 +85860,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 114
+     "value": 56
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -85616,7 +85875,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 3628
+     "value": 2525
     },
     "spacing_samples": {
      "band": 1.1,
@@ -85632,7 +85891,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1647
+     "value": 960
     },
     "statue_ticks": {
      "band": 1.1,
@@ -85640,7 +85899,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 162
+     "value": 99
     },
     "still900_ever": {
      "band": 1.1,
@@ -85656,7 +85915,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1658
+     "value": 787
     },
     "stopped_permille": {
      "band": 1.1,
@@ -85664,7 +85923,39 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 530
+     "value": 578
+    },
+    "transit_far_held_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "transit_far_samples": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 29
+    },
+    "transit_held_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "transit_samples": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 5337
     },
     "waiting_held": {
      "band": 1.1,
@@ -85680,7 +85971,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 9942
+     "value": 9764
     },
     "walk_in_place": {
      "band": 1.1,
@@ -85688,7 +85979,23 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 1060
+     "value": 4797
+    },
+    "walk_net": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 1867
+    },
+    "walk_net_runs": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 2
     },
     "wall_near_samples": {
      "band": 1.1,
@@ -85704,7 +86011,63 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 8964
+     "value": 7681
+    },
+    "wall_still_samples": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 11455
+    },
+    "wall_touch_corner_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "wall_touch_flat_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "wall_touch_gate_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "wall_touch_near_corner_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "wall_touch_near_flat_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "wall_touch_near_gate_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
     },
     "wall_touch_near_permille": {
      "band": 1.1,
@@ -85714,12 +86077,36 @@
      "since": "W5 step 0",
      "value": 0
     },
+    "wall_touch_near_ring_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
     "wall_touch_permille": {
      "band": 1.1,
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
+     "value": 0
+    },
+    "wall_touch_ring_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
+     "value": 0
+    },
+    "wall_touch_still_permille": {
+     "band": 1.1,
+     "dir": "lower",
+     "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
+     "rule": "band",
+     "since": "W0",
      "value": 0
     }
    }

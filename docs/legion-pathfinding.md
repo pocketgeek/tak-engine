@@ -904,7 +904,7 @@ The mission goals (`LegionMission`):
 | Fight | fight-move (`attackMove`) legs | the point, shared area per command | Legion arrival, or the native circle (`groundMissionAccepts`), raises `0x500` |
 | Patrol | patrol legs, single or group | the waypoint, shared area per command | as Fight; the body passes through (no anchor, cells released) |
 | Attack | explicit and auto-acquired attacks, chases | the target unit, re-seeded | combat: `tickCombat` stops the body in range; Legion never completes it |
-| Guard | guard/follow | the guarded unit, re-seeded | guard: stops within 70 px; Legion never completes it |
+| Guard | guard/follow | the guard ring's point on the guard's bearing (`World::guardRing`), re-seeded | guard: stops in Follow_Ground's ring; Legion never completes it |
 | Build | MobileBuild approaches (`buildRectangle`): single, queued, mana build area | the rectangle's `navigationCell`, else its nearest legal reachable perimeter origin | the rectangle itself (`accepts`): `0x500`; anywhere else `0x200` |
 | Repair | repair legs, and a patrolling builder's automatic repair detour (W2 RB-04) | the target's point | work: `tickRepair` starts at reach; Legion never completes it |
 | Reclaim | feature and corpse reclaims (also those an area reclaim queues) | the feature's point | work: `tickReclaim` starts at reach; Legion never completes it |
@@ -1834,8 +1834,9 @@ within their seed spread (aware headon contacts, landedflyers, tail wave p90).
   reach out to the reach edge (melee at contact; 0.5-1.5 bodies inside until
   2026-10-19, see "Ring upkeep"), legal, in the members' component and
   in line of sight of the target, and is the field's seeds; outer bands wait.
-  A guard group plans to its ward's point with no ring: its 70 px is a stance
-  round the ward, and a ring there kept twelve guards re-choosing spots for
+  A guard group plans to its ward's ring point (`World::guardRing`, since
+  protocol 303; the ward's centre and a 70 px stance before) with no reach
+  ring: its stance is Follow_Ground's own ring round the ward, and a ring there kept twelve guards re-choosing spots for
   ~2800 ticks (without it they are quiet by ~2000; the W4 head's settle rule
   parked them by 900, which reach kinds no longer take: `staticidle` warms up
   2400 ticks).

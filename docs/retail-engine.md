@@ -3406,6 +3406,23 @@ differences are in [the 0.9.7 notes](release-0.9.7-notes.md).
   which resumes when it ends; no distance is checked. A look that finds
   nothing sleeps 15 + rand(15) ticks. Ours: `World::tickGuardHelp`,
   `guardHelpPick`, `guardInsertJob`.
+- **Follow_Ground's escort ring (protocol 303, emulated 2026-10-27).** Stage 0
+  (`0x4087fd`) stores an inner radius (max(ward footX, footZ) + guard footX
+  + 2) x 16 at mission +0x4e and an outer one 3 cells more at +0x52. Every
+  look that inserts nothing installs `0x4d4e10(ward +0x68, outer, inner)`:
+  the `0x4e28f0` ring controller PARK uses (vtable `0x5f290c`), centred on
+  the guard-footprint origin under the ward, outer tolerance squared as
+  `0x4e2500`; a look woken by a controller event round a ward with no mover
+  (+8 null) only sleeps (`0x408783`). The guard steers to the ring's point on
+  its own bearing (`0x4e33b0`) and stands anywhere in the band. Ours walked
+  to the ward's centre and stopped within 70 px: for a factory that is its
+  yard (a Barracks pad lies 65 px from its centre), so a guarding builder
+  parked on the pad and BUILD stage 2 (`0x401deb`) refused every later output.
+  Ours: `World::guardRing`, read by `tickCombat` and the ground mover each
+  tick (retail re-aims at each look; for a structure the ring is the same).
+  Measured by `doorway_test` (216 cases, every shipped ground factory, guard
+  and assist, both modes and balances: 77 stalled or left the guard in the
+  yard before). Flyers keep VTOL_Follow's orbit and their 70 px hold.
 - **VTOL_Follow (`0x418860`), every flyer's guard** (the order dispatch
   `0x4de530` picks it by canfly alone). Off the map it first flies to a point
   800 px toward the map. A flying builder runs Follow_Ground's checks with the

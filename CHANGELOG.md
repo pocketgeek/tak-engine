@@ -19,6 +19,19 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+
+- **A builder guarding a factory no longer blocks its door.** A unit on
+  **Guard** used to walk up to the middle of what it guarded and stop about 70
+  pixels from it, which for a factory is its yard: the guard stood on the spot
+  where the next unit is made, and the factory could not start another one.
+  As in the original game, a ground unit now guards from a ring round the unit
+  or building it guards, two cells beyond its edge plus its own width and three
+  cells deep (a Barracks guard waits about 256 to 304 pixels from the
+  Barracks' centre), so a guarding builder walks in to help each unit being
+  made and back out between them. Guards of soldiers keep a little further off
+  than before for the same reason. Protocol 303.
+
 ## 0.9.8
 *2026-10-27 · protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*
 

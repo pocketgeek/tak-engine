@@ -19,7 +19,11 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 302;      // 302: a guard (ground or flying) attacks its guarded unit's attacker
+constexpr uint32_t kNetVersion = 303;      // 303: a ground guard keeps to Follow_Ground's ring round its ward
+                                           //      ((max ward foot + guard footX + 2) x 16 px, 3 cells deep) instead
+                                           //      of walking to within 70 px of its centre, so it never parks in a
+                                           //      factory's yard. No new command; replay format unchanged.
+                                           // 302: a guard (ground or flying) attacks its guarded unit's attacker
                                            //      (guardHeard hashed), a computer caster takes up no revive while short,
                                            //      and a revive past the unit limit or totalallowed ends unraised.
                                            //      No new command; replay format unchanged.
