@@ -21,6 +21,11 @@ their validation reports; both live in [`docs/`](docs/).
 
 ## Unreleased
 
+- **Back from a Settings screen returns to Settings.** Options, Controls,
+  Voice Chat, Benchmark and YouTube Streaming opened from the title screen's
+  SETTINGS menu now go back to it on BACK or Esc, as Load Replay already did,
+  instead of to the title screen.
+
 - **Max FPS can be unlimited.** The Options slider runs from 30 to 240 frames
   a second, and its far right end is **Unlimited**. A saved cap above 240 (the
   settings file used to allow up to 480) now reads as Unlimited.
