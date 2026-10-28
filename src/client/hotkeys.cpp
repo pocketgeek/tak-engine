@@ -61,7 +61,7 @@ const std::vector<HotkeyDef>& hotkeyDefs() {
         // The +MakePoster power code on a key: a whole-map picture into the screenshots
         // folder. Only in a match with POWER CODES on. Retail has no key for it; Print
         // Screen is free (gamedata/keys.tdf binds nothing to it).
-        {Act::MakePoster,     "view.poster",        "MAKE POSTER",     "POWER CODES",{SDLK_PRINTSCREEN, 0}},
+        {Act::MakePoster,     "view.poster",        "MAKE POSTER",     "POWER CODES",{SDLK_p, HK_SHIFT}},
     };
     return defs;
 }

@@ -1291,7 +1291,7 @@ group automatically.
 | **Pause** | Pause or resume. This pauses the game for every player. |
 | **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×): level *d* runs at (*d*+10)/10 of normal speed. **=** and the keypad **+**/**−** work too. In a replay they set the playback speed. A banner shows the new level, for example **GAME SPEED NORMAL** or **GAME SPEED +5**. The new speed takes effect at once, for spectators too. Only the host can change it, and only if **Allow speed change** was on. In a campaign mission you can always change it. |
 | **Enter** | Open chat; **Enter** sends, **Esc** cancels. Also where you type [power codes](#power-codes). Chat works in live games, single player included, but not in replays. |
-| **Print Screen** | Make a poster: save a picture of the whole map. Only in a game with **Power codes** on. If your desktop takes the key for its own screenshots, or your keyboard has none (Mac), set another key for **MAKE POSTER** in **CONTROLS**. See [Power codes](#power-codes). |
+| **Shift+P** | Make a poster: save a picture of the whole map. Only in a game with **Power codes** on. You can set another key for **MAKE POSTER** in **CONTROLS**. See [Power codes](#power-codes). |
 | **Space** (hold) | Push to talk, in multiplayer, when [voice chat](#voice-chat) is on with **Talk mode** Push to Talk. Never while you are typing in a text box. |
 | **Esc** | Close a dialog, cancel placement or an armed order, clear the selection, then open the game menu. |
 
@@ -1329,7 +1329,7 @@ players your chat reaches and does nothing else. Anything else that starts with
 | **+Mapping** | Turns the map on or off for you. With **Fog of war: Not Explored**, the first time reveals the whole map. The next time hides it again, and the ground you had explored is forgotten; your units explore it again as they see it. With **Explored** or **Full Vision** the map starts revealed, so the first **+Mapping** hides it. |
 | **+NowISee** | Turns line of sight and the map off for you: you see the whole map and every unit. Typing it again changes nothing; use **+LOS** and **+Mapping** to bring the fog back. |
 | **+Radar** | Your minimap shows every unit on the map. Type it again to turn it off. |
-| **+MakePoster** | Saves a picture of the whole map at full size, as **BIGSHOT0001.png**, **BIGSHOT0002.png** and so on, in a **screenshots** folder inside your game data folder. If that folder cannot be written, it uses the folder your settings are kept in. A chat line says when it starts and where the file was saved. **Print Screen** does the same. You can change that key in **CONTROLS** (**MAKE POSTER**). |
+| **+MakePoster** | Saves a picture of the whole map at full size, as **BIGSHOT0001.png**, **BIGSHOT0002.png** and so on, in a **screenshots** folder inside your game data folder. If that folder cannot be written, it uses the folder your settings are kept in. A chat line says when it starts and where the file was saved. **Shift+P** does the same. You can change that key in **CONTROLS** (**MAKE POSTER**). |
 
 **+MakePoster** shows the map as you see it, including your fog of war. Type
 **+NowISee** first to put everything in the picture. Selection rings, health
@@ -1341,11 +1341,9 @@ With **Fog of war: Full Vision** you already see the whole map and every unit,
 so **+LOS**, **+Mapping** and **+NowISee** change nothing on your screen. They
 still change which units your units can see and attack.
 
-**Print Screen** reaches the game only if nothing else takes it first. Some
-desktops use it for their own screenshot tool (KDE's Spectacle, or Windows 11
-with *Use the Print screen key to open screen capture* on), and Mac keyboards
-have no Print Screen key. Then set another key for **MAKE POSTER** in
-**CONTROLS**, or type **+MakePoster**.
+The poster key used to be Print Screen, which many desktops take for their own
+screenshot tool and Mac keyboards lack. If you bound **MAKE POSTER** yourself
+in **CONTROLS**, your key is kept.
 
 **+ATM**, **+ManaMe**, **+LOS**, **+Mapping** and **+NowISee** affect only the
 player who types them. **+DoubleShot** and **+HalfShot** affect the whole game.

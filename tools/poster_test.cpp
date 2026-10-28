@@ -66,22 +66,23 @@ int main(int, char**) {
     // The hotkey.
     Hotkeys hk;
     hk.load({});
-    check(hk.chord(Act::MakePoster) == KeyChord{SDLK_PRINTSCREEN, 0}, "MAKE POSTER defaults to Print Screen");
-    check(hk.match(SDLK_PRINTSCREEN, 0) == Act::MakePoster, "Print Screen makes a poster");
-    check(hk.match(SDLK_PRINTSCREEN, KMOD_LCTRL) != Act::MakePoster, "the chord is exact");
-    int printScreenUsers = 0;
-    for (const auto& d : hotkeyDefs()) printScreenUsers += d.def.key == SDLK_PRINTSCREEN;
-    check(printScreenUsers == 1, "no other default action takes Print Screen");
+    check(hk.chord(Act::MakePoster) == KeyChord{SDLK_p, HK_SHIFT}, "MAKE POSTER defaults to Shift+P");
+    check(hk.match(SDLK_p, KMOD_LSHIFT) == Act::MakePoster, "Shift+P makes a poster");
+    check(hk.match(SDLK_p, 0) == Act::Patrol, "P alone is still Patrol");
+    check(hk.match(SDLK_p, KMOD_LSHIFT | KMOD_LCTRL) != Act::MakePoster, "the chord is exact");
+    int shiftPUsers = 0;
+    for (const auto& d : hotkeyDefs()) shiftPUsers += d.def == KeyChord{SDLK_p, HK_SHIFT};
+    check(shiftPUsers == 1, "no other default action takes Shift+P");
     std::map<std::string, std::string> overrides;
     setChordOverride(overrides, Act::MakePoster, KeyChord{SDLK_F9, HK_CTRL});
     check(overrides.count("view.poster") == 1, "a rebind persists under view.poster");
     hk.load(overrides);
-    check(hk.match(SDLK_F9, KMOD_LCTRL) == Act::MakePoster && hk.match(SDLK_PRINTSCREEN, 0) != Act::MakePoster,
-          "the rebound key makes the poster, Print Screen no longer does");
+    check(hk.match(SDLK_F9, KMOD_LCTRL) == Act::MakePoster && hk.match(SDLK_p, KMOD_LSHIFT) != Act::MakePoster,
+          "the rebound key makes the poster, Shift+P no longer does");
     setChordOverride(overrides, Act::MakePoster, KeyChord{});
     hk.load(overrides);
     check(!hk.chord(Act::MakePoster).bound() && overrides["view.poster"] == "NONE", "MAKE POSTER can be unbound");
-    setChordOverride(overrides, Act::MakePoster, KeyChord{SDLK_PRINTSCREEN, 0});
+    setChordOverride(overrides, Act::MakePoster, KeyChord{SDLK_p, HK_SHIFT});
     check(!overrides.count("view.poster"), "back to the default drops the override");
 
     // The writer: an odd size, every byte checked after a decode.
@@ -102,6 +103,6 @@ int main(int, char**) {
     bool threw = false;
     try { png::writeRgb(file, w, h, std::vector<uint8_t>(10)); } catch (const std::exception&) { threw = true; }
     check(threw, "a wrong-sized buffer is refused");
-    std::puts("PASS: MAKE POSTER hotkey (Print Screen, rebindable) and the streaming RGB PNG writer");
+    std::puts("PASS: MAKE POSTER hotkey (Shift+P, rebindable) and the streaming RGB PNG writer");
     return 0;
 }

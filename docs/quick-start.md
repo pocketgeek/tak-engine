@@ -262,7 +262,7 @@ produce join the group.
 | **Pause** | Pause / resume, for every player. |
 | **+** / **−** | Game speed, one level per press from −9 (0.1×) to +10 (2×). Host only, and only with *Allow Speed Change* on; always in a campaign mission. |
 | **Enter** | Chat: Enter sends, Esc cancels. With *Power Codes* on, also where you type a [power code](#power-codes). There is no chat in replays. |
-| **Print Screen** | Save a picture of the whole map to the *screenshots* folder. Only with *Power Codes* on. |
+| **Shift+P** | Save a picture of the whole map to the *screenshots* folder. Only with *Power Codes* on. |
 | **Space** (hold) | Push to talk, in a multiplayer game with voice chat on. |
 | **Shift+D** / **Shift+H** | Emotes: disco / headbang. |
 | **Esc** | In order: close Unit Info, cancel placement or an armed order, clear the selection, open the game menu (Resume, Options, Controls, Voice Chat, Quit…). |
@@ -271,9 +271,8 @@ produce join the group.
 *Centered*, the default) set the chat box's size and place: **Options →
 Interface**.
 
-**Print Screen** has no other use: there is no ordinary screenshot key. If your
-desktop takes Print Screen for itself, or your keyboard has none (Mac), set
-another key for *MAKE POSTER* in *Controls*.
+There is no ordinary screenshot key. *MAKE POSTER* can be rebound in
+*Controls*.
 
 #### Power codes
 
@@ -290,7 +289,7 @@ never in campaigns). Press **Enter**, type the code, press
 | **+Mapping** | Reveal the map / hide it again (forgetting what was explored). |
 | **+NowISee** | Line of sight and map both off: you see everything. |
 | **+Radar** | Every unit on your minimap (again: off). |
-| **+MakePoster** | Whole-map picture, **BIGSHOTnnnn.png** in *screenshots* (same as Print Screen). |
+| **+MakePoster** | Whole-map picture, **BIGSHOTnnnn.png** in *screenshots* (same as Shift+P). |
 
 More in the user guide's [Power codes](user-guide.md#power-codes).
 

@@ -21,6 +21,11 @@ their validation reports; both live in [`docs/`](docs/).
 
 ## Unreleased
 
+- **Make Poster is Shift+P.** The default key for MAKE POSTER (power codes) is
+  now **Shift+P** instead of Print Screen, which many desktops take for their
+  own screenshots and Mac keyboards lack. A key you set yourself in CONTROLS is
+  kept.
+
 - **Back from a Settings screen returns to Settings.** Options, Controls,
   Voice Chat, Benchmark and YouTube Streaming opened from the title screen's
   SETTINGS menu now go back to it on BACK or Esc, as Load Replay already did,
