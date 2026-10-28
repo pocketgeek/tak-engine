@@ -168,9 +168,9 @@ namespace hu = tak::hiddenunits;
             rec.loose = loose;
             if (kind == HiddenKind::Unit && !box.empty()) {
                 ++eligible;
-                bool near = false;
-                hiddenGrid_.query(box, [&](uint32_t) { near = true; return false; });
-                if (near) {
+                bool nearCover = false;
+                hiddenGrid_.query(box, [&](uint32_t) { nearCover = true; return false; });
+                if (nearCover) {
                     const hu::Rect body = hiddenBodyBounds(slot).clipped(screen);
                     hiddenGrid_.query(body, [&](uint32_t id) {
                         const HiddenRec& cov = hiddenRecs_[hiddenCoverRec_[id]];
