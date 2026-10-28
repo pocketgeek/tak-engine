@@ -1226,6 +1226,9 @@ private:
         // frame, bodyDeferred = the body was left pending this frame.
         uint8_t bodyPending=0, bodyRun=0;
         bool bodyDeferred=false;
+        // HIDDEN UNITS: screen bounds of verts, valid for boundsRevision == revision.
+        std::array<float,4> bodyBounds{};
+        uint64_t boundsRevision=~uint64_t(0);
         // The silhouette cell this entry's shadow occupies (workstream F,
         // client/shadowatlas.h). Render thread only. Validated against the
         // allocation's recorded owner (handleKey), so an entry that changed owner,
@@ -1241,7 +1244,7 @@ private:
         void makeCold() {
             nextCost=tak::render::GeometryCostModel::pack(tak::render::GeometryCostModel::kColdNs);
             localKey.clear();localLayout={};owner=-1;reused=false;stages=0;
-            bodyPending=bodyRun=0;bodyDeferred=false;
+            bodyPending=bodyRun=0;bodyDeferred=false;boundsRevision=~uint64_t(0);
             verts.clear();runs.clear();shadowVerts.clear();
             maskedShadowVerts.clear();maskedShadowRuns.clear();shadowAtlasPage=nullptr;
             localPos.clear();baseColor.clear();shadowLocal.clear();maskedShadowLocal.clear();
@@ -2657,22 +2660,47 @@ private:
     int hiddenUnitsMode_ = tak::hiddenunits::kDefault;
     void drawHiddenUnits(int mvw, int winH);
     // The painter items the pass considers (ground layer and air), collected by the
-    // backwards walk: kind, rectangle, and for a feature the sprite it showed.
+    // backwards walk: kind, screen rectangle (exact body bounds for covers and
+    // candidates, the model's box otherwise).
     enum class HiddenKind : uint8_t { Feature, Structure, Unit, Other };
     struct HiddenRec {
         uint32_t item;          // index into paintItems_
         HiddenKind kind;
-        bool candidate = false; // a Unit some later cover overlaps
+        bool candidate = false; // a Unit whose body a later cover's overlaps
         int slot = -1;          // geometry slot (units)
         uint32_t coversAfter = 0; // a Unit: CoverGrid ids below this paint after it
         tak::hiddenunits::Rect rect;
+        // OUTLINE replay: a cover over an earlier candidate, or anything else drawn
+        // over one (it erases); nothing else is replayed.
+        bool replay = false;
     };
     std::vector<HiddenRec> hiddenRecs_;    // in REVERSE painter order
     std::vector<uint32_t> hiddenCoverRec_; // CoverGrid id -> hiddenRecs_ index
-    tak::hiddenunits::CoverGrid hiddenGrid_;
+    std::vector<uint32_t> hiddenCandRec_;  // candidate grid id -> hiddenRecs_ index
+    tak::hiddenunits::CoverGrid hiddenGrid_, hiddenCandGrid_;
     std::vector<int> hiddenDotIds_;        // sorted: units given a hidden dot this frame (picking)
-    std::vector<float> hiddenXY_;          // outline pass: positions in target pixels
-    std::vector<SDL_Vertex> hiddenQuad_;   // outline pass: sprite quads in target pixels
+    // OUTLINE replay, reordered: an item's layer is one more than any earlier item
+    // it overlaps that draws differently (texture/blend), and as much as one that
+    // draws the same way. Items of one layer and one way never overlap others of
+    // that layer, so each (layer, way) group is drawn in one go: a native pass of
+    // flat-colour bodies on OpenGL (hiddenSubmit_, primed with hiddenWhite_), else
+    // one SDL geometry call (positions in target pixels, one colour per vertex).
+    struct HiddenDraw {
+        uint32_t rec, layer;
+        SDL_Texture* tex;       // null: a body in one flat colour
+        uint8_t blend;          // 0 replace, 1 cover, 2 erase
+        tak::hiddenunits::Rect rect;
+    };
+    std::vector<HiddenDraw> hiddenDraws_;
+    tak::hiddenunits::CoverGrid hiddenLayerGrid_;
+    tak::GeometrySubmit hiddenSubmit_;
+    SDL_Texture* hiddenWhite_ = nullptr;
+    std::vector<float> hiddenXY_, hiddenUV_;
+    std::vector<SDL_Color> hiddenColor_;
+    std::vector<int> hiddenIndex_;
+    // The exact screen bounds of a unit's body this frame: its distant image's quad,
+    // or its triangles (cached per geometry revision in the UnitGeom).
+    tak::hiddenunits::Rect hiddenBodyBounds(int slot);
     SDL_Texture* hiddenMask_ = nullptr;    // outline pass: coverage, then the hidden part
     SDL_Texture* hiddenEdge_ = nullptr;    // outline pass: eroded, then the edge
     int hiddenTexW_ = 0, hiddenTexH_ = 0;

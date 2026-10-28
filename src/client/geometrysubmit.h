@@ -206,6 +206,30 @@ public:
         else for(size_t i=0;i<firsts.size();++i)draw_(GL_TRIANGLES,firsts[i],counts[i]);
         render::countNativeDraw(vertices,vertices*sizeof(SDL_Vertex),true);
     }
+    // Inside a pass: draws in ONE colour each -- passFlatBegin() turns the colour
+    // array off and translates positions by `offset` (before the pass scale),
+    // passFlat() draws vertices in a colour (texture coordinates still come from
+    // them), passFlatEnd() undoes both (the pass's popped attributes restore the
+    // current colour). False when this GL lacks glColor4ub (draw nothing then).
+    bool passFlatBegin(SDL_FPoint offset) {
+        if(!inPass_ || !colorConst_)return false;
+        disable_(GL_COLOR_ARRAY);
+        pushMatrix_();translate_(offset.x,offset.y,0);
+        return true;
+    }
+    void passFlat(std::span<const SDL_Vertex> vertices,SDL_Color color) {
+        if(vertices.empty())return;
+        if(passArrays_!=0)bindBuffer_(GL_ARRAY_BUFFER,0);
+        vertex_(2,GL_FLOAT,sizeof(SDL_Vertex),&vertices[0].position);
+        texcoord_(2,GL_FLOAT,sizeof(SDL_Vertex),&vertices[0].tex_coord);
+        passArrays_=0;
+        colorConst_(color.r,color.g,color.b,color.a);
+        draw_(GL_TRIANGLES,0,GLsizei(vertices.size()));
+        render::countNativeDraw(vertices.size(),vertices.size_bytes(),false);
+    }
+    void passFlatEnd() {
+        popMatrix_();enable_(GL_COLOR_ARRAY);
+    }
     void endPass() {
         if(!inPass_)return;
         popMatrix_();matrixMode_(GLenum(passMode_));
@@ -278,6 +302,8 @@ private:
            !proc(bufferData_,"glBufferData") || !proc(getBufferParameter_,"glGetBufferParameteriv"))genBuffers_=nullptr;
         // Optional (GL 1.4): ranges of one buffer in one call; else one draw per range.
         if(!proc(multiDraw_,"glMultiDrawArrays"))multiDraw_=nullptr;
+        // Optional: one colour for a whole draw (passFlat).
+        if(!proc(colorConst_,"glColor4ub"))colorConst_=nullptr;
         const auto* version=reinterpret_cast<const char*>(getString_(GL_VERSION));
         return version && (std::atoi(version)<3 || SDL_GL_ExtensionSupported("GL_ARB_compatibility"));
     }
@@ -310,5 +336,6 @@ private:
     void (APIENTRY *scale_)(GLfloat,GLfloat,GLfloat)=nullptr;
     void (APIENTRY *draw_)(GLenum,GLint,GLsizei)=nullptr;
     void (APIENTRY *multiDraw_)(GLenum,const GLint*,const GLsizei*,GLsizei)=nullptr;
+    void (APIENTRY *colorConst_)(GLubyte,GLubyte,GLubyte,GLubyte)=nullptr;
 };
 }

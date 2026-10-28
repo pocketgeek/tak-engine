@@ -79,8 +79,30 @@ struct SavedState {
     void GameView::releaseHiddenTargets() {
         if (hiddenMask_) gpuvram::destroy(hiddenMask_);
         if (hiddenEdge_) gpuvram::destroy(hiddenEdge_);
-        hiddenMask_ = hiddenEdge_ = nullptr;
+        if (hiddenWhite_) gpuvram::destroy(hiddenWhite_);
+        hiddenMask_ = hiddenEdge_ = hiddenWhite_ = nullptr;
         hiddenTexW_ = hiddenTexH_ = 0;
+    }
+
+    tak::hiddenunits::Rect GameView::hiddenBodyBounds(int slot) {
+        const auto& distant = distantModelItems_[size_t(slot)];
+        hu::Rect b{1e30f, 1e30f, -1e30f, -1e30f};
+        const auto add = [&](const SDL_FPoint& p) {
+            b.x0 = std::min(b.x0, p.x); b.y0 = std::min(b.y0, p.y);
+            b.x1 = std::max(b.x1, p.x); b.y1 = std::max(b.y1, p.y);
+        };
+        if (distant.texture) {   // drawn from its image this frame
+            for (const SDL_Vertex& v : distant.quad) add(v.position);
+            return b;
+        }
+        UnitGeom& g = visGeom(size_t(slot));
+        if (g.bodyDeferred) materializeDistantBody(size_t(slot));   // not expected: no image, no body
+        if (g.boundsRevision != g.revision) {
+            for (const SDL_Vertex& v : g.verts) add(v.position);
+            g.bodyBounds = {b.x0, b.y0, b.x1, b.y1};
+            g.boundsRevision = g.revision;
+        }
+        return {g.bodyBounds[0], g.bodyBounds[1], g.bodyBounds[2], g.bodyBounds[3]};
     }
 
     void GameView::drawHiddenUnits(int mvw, int winH) {
@@ -88,8 +110,6 @@ struct SavedState {
 #ifndef NDEBUG
         debugHiddenCandidates_ = debugHiddenOutlined_ = 0;
         debugHiddenOutlineRan_ = false;
-#endif
-#ifndef NDEBUG
         // Debug: TAK_HIDDEN_UNITS=off|dots|outline overrides the option (benchmarks).
         static const char* forced = tak::devEnv("TAK_HIDDEN_UNITS");
         if (forced) hiddenUnitsMode_ = hu::parse(forced);
@@ -107,9 +127,11 @@ struct SavedState {
         hiddenGrid_.reset(float(mvw), float(winH));
         size_t eligible = 0, candidates = 0;
         // Backwards through the painter list: when a unit is reached, every cover in
-        // the grid paints after it. A rectangle is the unit's box over all headings
-        // (unitHitBox) from its anchor, with room for animation past the rest pose;
-        // the exact tests below decide.
+        // the grid paints after it. A unit is looked at closely only when its model's
+        // box over all headings (unitHitBox, from its anchor, with room for animation
+        // past the rest pose) reaches a cover; then its exact body bounds must overlap
+        // a cover's (a sprite's rectangle, a structure's body bounds) to make it a
+        // candidate. The covers it overlaps are marked for the OUTLINE replay.
         for (size_t k = items.size(); k-- > 0;) {
             const PaintItem& it = items[k];
             if (it.layer == hu::kLayerLowFeature) break;   // sorted first: never over a unit
@@ -129,25 +151,39 @@ struct SavedState {
             if (slot < 0) continue;
             const UnitGeom& g = visGeom(size_t(slot));
             if (g.runs.empty() && !distantModelItems_[size_t(slot)].texture) continue;   // nothing drawn
-            const SDL_FRect& hb = unitHitBox(u.type);
-            constexpr float kPad = 4.0f;
-            const hu::Rect r = hu::Rect{g.ax + hb.x * zm - kPad, g.ay + hb.y * zm - kPad,
-                g.ax + (hb.x + hb.w) * zm + kPad, g.ay + (hb.y + hb.h) * zm + kPad}.clipped(screen);
-            if (r.empty()) continue;
             HiddenKind kind = HiddenKind::Other;
             if (it.layer == hu::kLayerGround) {
                 if (isStructure(u.type)) {
                     if (!specialUnit(u, g.canFly, g.occY, g.ay)) kind = HiddenKind::Structure;
                 } else if (u.alive() && !u.corpsePhase) kind = HiddenKind::Unit;
             }
-            HiddenRec rec{uint32_t(k), kind, false, slot, uint32_t(hiddenGrid_.size()), r};
             if (kind == HiddenKind::Structure) {
+                const hu::Rect r = hiddenBodyBounds(slot).clipped(screen);
+                if (r.empty()) continue;
                 hiddenCoverRec_.push_back(uint32_t(hiddenRecs_.size()));
                 hiddenGrid_.insert(r);
-            } else if (kind == HiddenKind::Unit) {
+                hiddenRecs_.push_back({uint32_t(k), kind, false, slot, 0, r});
+                continue;
+            }
+            const SDL_FRect& hb = unitHitBox(u.type);
+            constexpr float kPad = 4.0f;
+            const hu::Rect box = hu::Rect{g.ax + hb.x * zm - kPad, g.ay + hb.y * zm - kPad,
+                g.ax + (hb.x + hb.w) * zm + kPad, g.ay + (hb.y + hb.h) * zm + kPad}.clipped(screen);
+            if (box.empty()) continue;
+            HiddenRec rec{uint32_t(k), kind, false, slot, uint32_t(hiddenGrid_.size()), box};
+            if (kind == HiddenKind::Unit) {
                 ++eligible;
-                hiddenGrid_.query(r, [&](uint32_t) { rec.candidate = true; return false; });
-                candidates += rec.candidate;
+                bool near = false;
+                hiddenGrid_.query(box, [&](uint32_t) { near = true; return false; });
+                if (near) {
+                    const hu::Rect body = hiddenBodyBounds(slot).clipped(screen);
+                    hiddenGrid_.query(body, [&](uint32_t id) {
+                        HiddenRec& cov = hiddenRecs_[hiddenCoverRec_[id]];
+                        if (cov.rect.overlaps(body)) { rec.candidate = true; cov.replay = true; }
+                        return true;
+                    });
+                    if (rec.candidate) { rec.rect = body; ++candidates; }
+                }
             }
             hiddenRecs_.push_back(rec);
         }
@@ -157,24 +193,24 @@ struct SavedState {
         debugHiddenCandidates_ = candidates;
 #endif
         if (!candidates) return;   // no unit overlaps a later cover: nothing more to do
-        // A unit drawn from its distant image this frame left its body pending;
-        // the exact tests and the outline need the triangles.
-        const auto body = [&](int slot) -> const UnitGeom& {
-            if (visGeom(size_t(slot)).bodyDeferred) materializeDistantBody(size_t(slot));
-            return visGeom(size_t(slot));
-        };
         if (hiddenUnitsMode_ == hu::kOutline && !hiddenOutlineUnsupported_) {
-            // The exact extent of the candidates' bodies: the area the pass works in.
+            // Forward: what is drawn over a candidate without covering it (another
+            // unit, a flyer, a corpse) must erase it from the coverage layer.
             hu::Rect area;
-            for (const HiddenRec& rec : hiddenRecs_) {
-                if (!rec.candidate) continue;
-                const UnitGeom& g = body(rec.slot);
-                hu::Rect b{1e30f, 1e30f, -1e30f, -1e30f};
-                for (const SDL_Vertex& v : g.verts) {
-                    b.x0 = std::min(b.x0, v.position.x); b.y0 = std::min(b.y0, v.position.y);
-                    b.x1 = std::max(b.x1, v.position.x); b.y1 = std::max(b.y1, v.position.y);
+            hiddenCandGrid_.reset(float(mvw), float(winH));
+            hiddenCandRec_.clear();
+            for (size_t i = hiddenRecs_.size(); i-- > 0;) {
+                HiddenRec& rec = hiddenRecs_[i];
+                if (rec.candidate) {
+                    area.unite(rec.rect);
+                    hiddenCandRec_.push_back(uint32_t(i));
+                    hiddenCandGrid_.insert(rec.rect);
+                } else if (rec.kind == HiddenKind::Unit || rec.kind == HiddenKind::Other) {
+                    hiddenCandGrid_.query(rec.rect, [&](uint32_t id) {
+                        if (hiddenRecs_[hiddenCandRec_[id]].rect.overlaps(rec.rect)) { rec.replay = true; return false; }
+                        return true;
+                    });
                 }
-                area.unite(b.clipped(screen));
             }
             if (area.empty() || drawHiddenOutlines(mvw, winH, area)) return;
             // This renderer cannot draw the outline: dots for this frame instead.
@@ -199,7 +235,9 @@ struct SavedState {
                     covered = sp.mask && hu::spriteCovers(*sp.mask, sp.dst.x, sp.dst.y, sp.dst.w, sp.dst.h,
                                                           sp.shear, c.x, c.y);
                 } else {
-                    covered = hu::trianglesCover(std::span<const SDL_Vertex>(body(cov.slot).verts), c.x, c.y);
+                    if (visGeom(size_t(cov.slot)).bodyDeferred) materializeDistantBody(size_t(cov.slot));
+                    covered = hu::trianglesCover(std::span<const SDL_Vertex>(visGeom(size_t(cov.slot)).verts),
+                                                 c.x, c.y);
                 }
                 return !covered;
             });
@@ -216,11 +254,12 @@ struct SavedState {
     }
 
     // OUTLINE. Two off-screen layers the size of `area` (in output pixels):
-    //  1. coverage (hiddenMask_): the painter list replayed over the area -- eligible
-    //     units covered later as flat player colour at alpha 128 (replacing what was
-    //     there), covers raising the alpha of a unit pixel to 255 (and of nothing to
-    //     nothing), anything else erasing. Then alpha 128 -> 0 and 255 -> 255: the
-    //     layer holds exactly the hidden part, in its unit's colour.
+    //  1. coverage (hiddenMask_): the painter list replayed over the area -- each
+    //     candidate as flat player colour at alpha 128 (replacing what was there),
+    //     the covers over a candidate raising the alpha of a unit pixel to 255 (and
+    //     of nothing to nothing), anything else drawn over a candidate erasing. Then
+    //     alpha 128 -> 0 and 255 -> 255: the layer holds exactly the hidden part, in
+    //     its unit's colour.
     //  2. edge (hiddenEdge_): the hidden part eroded by shifted copies of it, then
     //     the hidden part minus that: an inner edge, edgePixels wide.
     // Composited over the frame: the hidden part faintly, its edge solid. Nothing in
@@ -287,76 +326,142 @@ struct SavedState {
                 SDL_RenderSetClipRect(ren_, &whole);
                 return true;
             };
-            const auto toTarget = [&](float x, float y) {
-                return SDL_FPoint{x * sx - float(px0), y * sy - float(py0)};
-            };
-            // Screen vertices -> target pixel positions (hiddenXY_), drawn untextured in
-            // one colour with the current draw blend mode.
-            const auto flat = [&](const std::vector<SDL_Vertex>& verts, SDL_Color color) {
-                if (verts.empty()) return;
-                hiddenXY_.resize(verts.size() * 2);
-                for (size_t i = 0; i < verts.size(); ++i) {
-                    const SDL_FPoint p = toTarget(verts[i].position.x, verts[i].position.y);
-                    hiddenXY_[2 * i] = p.x; hiddenXY_[2 * i + 1] = p.y;
+            // ---- the replay, in layers (see HiddenDraw) ----
+            const SDL_BlendMode blends[3] = {SDL_BLENDMODE_NONE, coverBlend(), eraseBlend()};
+            hiddenDraws_.clear();
+            hiddenLayerGrid_.reset(float(mvw), float(winH));
+            for (size_t i = hiddenRecs_.size(); i-- > 0;) {   // forward: painter order
+                HiddenRec& rec = hiddenRecs_[i];
+                if (!(rec.candidate || rec.replay) || !rec.rect.overlaps(logical)) continue;
+                HiddenDraw d{uint32_t(i), 0, nullptr, 0, rec.rect};
+                if (rec.kind == HiddenKind::Feature) {
+                    d.tex = featureSprite(*paintItems_[rec.item].f, zm).tex;
+                    if (!d.tex) continue;
+                    d.blend = 1;
+                } else {
+                    if (rec.candidate) {
+                        UnitGeom& g = visGeom(size_t(rec.slot));   // its body, never its image
+                        if (g.bodyDeferred) materializeDistantBody(size_t(rec.slot));
+                    } else {
+                        d.tex = distantModelItems_[size_t(rec.slot)].texture;   // null: its body
+                        d.blend = rec.kind == HiddenKind::Structure ? 1 : d.tex ? 2 : 0;
+                        d.rect = hiddenBodyBounds(rec.slot);   // exact: it is ordered by it
+                    }
                 }
-                tak::render::countSdlGeometry(verts.size(), verts.size() * sizeof(float) * 2);
-                SDL_RenderGeometryRaw(ren_, nullptr, hiddenXY_.data(), 2 * sizeof(float), &color, 0,
-                                      nullptr, 0, int(verts.size()), nullptr, 0, 0);
+                hiddenLayerGrid_.query(d.rect, [&](uint32_t id) {
+                    const HiddenDraw& o = hiddenDraws_[id];
+                    if (o.rect.overlaps(d.rect))
+                        d.layer = std::max(d.layer, o.layer + (o.tex != d.tex || o.blend != d.blend ? 1u : 0u));
+                    return true;
+                });
+                hiddenLayerGrid_.insert(d.rect);
+                hiddenDraws_.push_back(d);
+            }
+            std::stable_sort(hiddenDraws_.begin(), hiddenDraws_.end(), [](const HiddenDraw& x, const HiddenDraw& y) {
+                if (x.layer != y.layer) return x.layer < y.layer;
+                if (x.tex != y.tex) return std::less<SDL_Texture*>()(x.tex, y.tex);
+                return x.blend < y.blend;
+            });
+            // Native flat runs: OpenGL at output scale 1 (debug TAK_HIDDEN_NATIVE=0: SDL only).
+            static const bool nativeOff = tak::devEnv("TAK_HIDDEN_NATIVE") && !tak::devFlag("TAK_HIDDEN_NATIVE");
+            const bool native = !nativeOff && sx == 1 && sy == 1 && hiddenSubmit_.nativeCapable(ren_) && [&] {
+                if (hiddenWhite_) return true;
+                hiddenWhite_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, 1, 1);
+                const uint32_t white = 0xffffffffu;
+                return hiddenWhite_ && SDL_UpdateTexture(hiddenWhite_, nullptr, &white, 4) == 0;
+            }();
+            const auto put = [&](const SDL_FPoint& p, SDL_Color color) {
+                hiddenXY_.push_back(p.x * sx - float(px0));
+                hiddenXY_.push_back(p.y * sy - float(py0));
+                hiddenColor_.push_back(color);
             };
-            // A textured quad/triangle list in the given texture blend mode (the
-            // texture's own mode is put back afterwards).
-            const auto textured = [&](SDL_Texture* tex, const SDL_Vertex* verts, int count, const int* indices,
-                                      int indexCount, SDL_BlendMode mode) {
-                SDL_BlendMode was{};
-                SDL_GetTextureBlendMode(tex, &was);
-                SDL_SetTextureBlendMode(tex, mode);
-                hiddenQuad_.assign(verts, verts + count);
-                for (SDL_Vertex& v : hiddenQuad_) {
-                    v.position = toTarget(v.position.x, v.position.y);
-                    v.color = {255, 255, 255, 255};
+            // A body's flat colour: its player's at 128 for a candidate, else cover or erase.
+            const auto colourOf = [&](const HiddenDraw& d) -> SDL_Color {
+                const HiddenRec& rec = hiddenRecs_[d.rec];
+                if (rec.candidate) {
+                    const SDL_Color pc = playerColor(paintItems_[rec.item].u->player);
+                    return {pc.r, pc.g, pc.b, 128};
                 }
-                SDL_RenderGeometry(ren_, tex, hiddenQuad_.data(), count, indices, indexCount);
-                SDL_SetTextureBlendMode(tex, was);
+                return d.blend == 1 ? SDL_Color{0, 0, 0, 255} : SDL_Color{0, 0, 0, 0};
+            };
+            const auto drawGroup = [&](size_t first, size_t last) {
+                const HiddenDraw& head = hiddenDraws_[first];
+                if (!head.tex && native) {
+                    SDL_SetTextureBlendMode(hiddenWhite_, blends[head.blend]);
+                    if (hiddenSubmit_.beginPass(ren_, hiddenWhite_)) {
+                        const bool flat = hiddenSubmit_.passFlatBegin({-float(px0), -float(py0)});
+                        if (flat) {
+                            for (size_t k = first; k < last; ++k) {
+                                const HiddenDraw& d = hiddenDraws_[k];
+                                hiddenSubmit_.passFlat(visGeom(size_t(hiddenRecs_[d.rec].slot)).verts, colourOf(d));
+                            }
+                            hiddenSubmit_.passFlatEnd();
+                        }
+                        hiddenSubmit_.endPass();
+                        if (flat) return;
+                    }
+                    // (A refused pass drew nothing: the SDL path below draws the group.)
+                }
+                hiddenXY_.clear(); hiddenUV_.clear(); hiddenColor_.clear(); hiddenIndex_.clear();
+                for (size_t k = first; k < last; ++k) {
+                    const HiddenDraw& d = hiddenDraws_[k];
+                    const HiddenRec& rec = hiddenRecs_[d.rec];
+                    if (!d.tex) {
+                        const SDL_Color c = colourOf(d);
+                        for (const SDL_Vertex& v : visGeom(size_t(rec.slot)).verts) put(v.position, c);
+                        continue;
+                    }
+                    const SDL_Color white{255, 255, 255, 255};
+                    const int base = int(hiddenXY_.size() / 2);
+                    if (rec.kind == HiddenKind::Feature) {
+                        const FeatureSprite sp = featureSprite(*paintItems_[rec.item].f, zm);
+                        const SDL_FRect& r = sp.dst;
+                        const SDL_FPoint q[4] = {{r.x + sp.shear, r.y}, {r.x + r.w + sp.shear, r.y},
+                                                 {r.x + r.w, r.y + r.h}, {r.x, r.y + r.h}};
+                        const float uv[8] = {0, 0, 1, 0, 1, 1, 0, 1};
+                        for (int v = 0; v < 4; ++v) put(q[v], white);
+                        hiddenUV_.insert(hiddenUV_.end(), uv, uv + 8);
+                        for (int v : {0, 1, 2, 0, 2, 3}) hiddenIndex_.push_back(base + v);
+                    } else {
+                        // Drawn from its distant image: the image's own coverage.
+                        const auto& quad = distantModelItems_[size_t(rec.slot)].quad;
+                        for (size_t v = 0; v < quad.size(); ++v) {
+                            put(quad[v].position, white);
+                            hiddenUV_.push_back(quad[v].tex_coord.x); hiddenUV_.push_back(quad[v].tex_coord.y);
+                            hiddenIndex_.push_back(base + int(v));
+                        }
+                    }
+                }
+                const int n = int(hiddenXY_.size() / 2);
+                if (!n) return;
+                tak::render::countSdlGeometry(size_t(n), size_t(n) * (sizeof(float) * 4 + sizeof(SDL_Color)));
+                if (head.tex) {
+                    SDL_BlendMode was{};
+                    SDL_GetTextureBlendMode(head.tex, &was);
+                    SDL_SetTextureBlendMode(head.tex, blends[head.blend]);
+                    SDL_RenderGeometryRaw(ren_, head.tex, hiddenXY_.data(), 2 * sizeof(float), hiddenColor_.data(),
+                        sizeof(SDL_Color), hiddenUV_.data(), 2 * sizeof(float), n, hiddenIndex_.data(),
+                        int(hiddenIndex_.size()), sizeof(int));
+                    SDL_SetTextureBlendMode(head.tex, was);
+                } else {
+                    SDL_SetRenderDrawBlendMode(ren_, blends[head.blend]);
+                    SDL_RenderGeometryRaw(ren_, nullptr, hiddenXY_.data(), 2 * sizeof(float), hiddenColor_.data(),
+                        sizeof(SDL_Color), nullptr, 0, n, nullptr, 0, 0);
+                }
             };
             ok = target(hiddenMask_);
             if (ok) {
                 SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
                 SDL_SetRenderDrawColor(ren_, 0, 0, 0, 0);
                 SDL_RenderFillRect(ren_, &whole);
-                for (size_t i = hiddenRecs_.size(); i-- > 0;) {   // forward: painter order
-                    const HiddenRec& rec = hiddenRecs_[i];
-                    if (!rec.rect.overlaps(logical)) continue;
-                    if (rec.kind == HiddenKind::Feature) {
-                        const FeatureSprite sp = featureSprite(*paintItems_[rec.item].f, zm);
-                        if (!sp.tex) continue;
-                        const SDL_FRect& d = sp.dst;
-                        const SDL_Color white{255, 255, 255, 255};
-                        const SDL_Vertex q[4] = {{{d.x + sp.shear, d.y}, white, {0, 0}},
-                            {{d.x + d.w + sp.shear, d.y}, white, {1, 0}},
-                            {{d.x + d.w, d.y + d.h}, white, {1, 1}}, {{d.x, d.y + d.h}, white, {0, 1}}};
-                        static const int idx[6] = {0, 1, 2, 0, 2, 3};
-                        textured(sp.tex, q, 4, idx, 6, coverBlend());
-                        continue;
-                    }
-                    const auto& distant = distantModelItems_[size_t(rec.slot)];
-                    const bool unitCover = rec.kind == HiddenKind::Structure;
-                    if (rec.kind == HiddenKind::Unit && rec.candidate) {
-                        // The candidate's own pixels, replacing whatever was there.
-                        const UnitGeom& g = visGeom(size_t(rec.slot));   // materialized above
-                        const UnitR& u = *paintItems_[rec.item].u;
-                        const SDL_Color pc = playerColor(u.player);
-                        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_NONE);
-                        flat(g.verts, {pc.r, pc.g, pc.b, 128});
-                        ++outlined;
-                    } else if (distant.texture) {
-                        // Drawn from its distant image: the image's own coverage.
-                        textured(distant.texture, distant.quad.data(), int(distant.quad.size()), nullptr, 0,
-                                 unitCover ? coverBlend() : eraseBlend());
-                    } else {
-                        SDL_SetRenderDrawBlendMode(ren_, unitCover ? coverBlend() : SDL_BLENDMODE_NONE);
-                        flat(visGeom(size_t(rec.slot)).verts, unitCover ? SDL_Color{0, 0, 0, 255} : SDL_Color{0, 0, 0, 0});
-                    }
+                for (size_t g = 0; g < hiddenDraws_.size();) {
+                    size_t e = g + 1;
+                    while (e < hiddenDraws_.size() && hiddenDraws_[e].layer == hiddenDraws_[g].layer &&
+                           hiddenDraws_[e].tex == hiddenDraws_[g].tex && hiddenDraws_[e].blend == hiddenDraws_[g].blend) ++e;
+                    drawGroup(g, e);
+                    g = e;
                 }
+                for (const HiddenDraw& d : hiddenDraws_) outlined += hiddenRecs_[d.rec].candidate;
                 // 128 (in sight) -> 0, 255 (hidden) -> 127 -> 254.
                 SDL_SetRenderDrawBlendMode(ren_, lowerBlend());
                 SDL_SetRenderDrawColor(ren_, 0, 0, 0, 128);
