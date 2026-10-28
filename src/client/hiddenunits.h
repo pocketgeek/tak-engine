@@ -221,10 +221,15 @@ private:
 // drawn again, in painter order, clipped to that rectangle: units as they were
 // (opaque, so they repaint their own pixels), every cover see-through (kVeilAlpha;
 // kBuildingVeilAlpha for a building). Where a cover hides the unit the screen ends
-// up kShadowOpacity of the unit over the cover; anywhere else it keeps its pixels,
-// because an opaque redraw and a cover drawn over itself change nothing. (Except
-// the soft edge of a distant image, which drawn twice comes out a little stronger.)
-// No render target, no coverage mask, no special blending.
+// up kShadowOpacity of the unit over the cover; the part of a unit in sight keeps
+// its pixels, because an opaque redraw changes nothing. (Except the soft edge of a
+// distant image, which drawn twice comes out a little stronger.) Off the unit the
+// cover mostly keeps its pixels too, but not quite: inside the rectangle a cover
+// drawn over another (a tree over a tree) or over its own faces (a building), or
+// with soft or glowing texels (a lodestone), lets a little of what it painted over
+// back through (the hidden_units harness: up to ~75 levels on a few hundred pixels).
+// Exact there would take a coverage mask. No render target, no coverage mask, no
+// special blending.
 //
 // Why see-through COVER and not a darkened, tinted copy of the UNIT: a copy drawn
 // over the whole unit would change the part in sight too, and with plain blending

@@ -721,8 +721,15 @@
             const int onSmudge=spawn("arasword",features_[smudge].x,features_[smudge].z-6,0,0);
             const int keep=spawn("arakeep",x0+320,z0+40,0,0);
             const int behindKeep=spawn("arasword",x0+320,z0+10,0,0);
+            // Behind two overlapping trees, and behind a lodestone (a model with a
+            // translucent glow over its own faces).
+            const size_t treeC=place("aratree01",cx0+10,cz0-12);
+            place("aratree01",cx0+11,cz0-11);
+            const int behindTwo=spawn("arasword",features_[treeC].x+8,features_[treeC].z-behindDz,0,0);
+            const int lode=spawn("tarlode",x0+120,z0+300,0,0);
+            const int behindLode=spawn("arasword",x0+120,z0+270,0,0);
             check(behind>=0 && peek>=0 && open>=0 && front>=0 && foeSeen>=0 && foeFog>=0 && onSmudge>=0 && keep>=0 &&
-                  behindKeep>=0,"fixture spawned");
+                  behindKeep>=0 && behindTwo>=0 && lode>=0 && behindLode>=0,"fixture spawned");
             const char* capture=tak::devEnv("TAK_HIDDEN_UNITS_CAPTURE");
             const auto shot=[&](const std::string& mode) {
                 return capture ? std::string(capture)+"-"+mode+".png" : std::string();
@@ -877,6 +884,45 @@
                     // over itself, comes out a little stronger (a few edge pixels).
                     check(d.offCover==0 || (distantRound && d.offCover*8<=d.changed && d.offCoverMost<=32),
                           std::string("changed only on the cover (in sight as with OFF): ")+name+tag);
+                }
+                {   // Over the whole view: every changed pixel lies inside a ghost's rectangle
+                    // (its clip). Off the hidden bodies the cover may change a little -- a
+                    // tree redrawn see-through over another, a building's faces or glow over
+                    // its own -- which is reported, not failed. The stencil form changes
+                    // nothing but the hidden bodies' pixels.
+                    const int h=int(p0.size()/4/size_t(std::max(1,w0)));
+                    size_t changed=0,outside=0,offBody=0;
+                    int offBodyMost=0;
+                    for (int y=0;y<h;++y) for (int x=0;x<w0;++x) {
+                        const size_t i=(size_t(y)*size_t(w0)+size_t(x))*4;
+                        int most=0;
+                        for (int c=0;c<3;++c) most=std::max(most,std::abs(int(p0[i+c])-int(p1[i+c])));
+                        if (!most) continue;
+                        ++changed;
+                        const float lx=(float(x)+0.5f)/sx,ly=(float(y)+0.5f)/sy;
+                        bool inRect=stencilForm,onBody=false;
+                        for (const HiddenGhost& g:hiddenGhosts_) {
+                            const hu::Rect& r=g.range.rect;
+                            inRect=inRect || hu::Rect{std::floor(r.x0),std::floor(r.y0),std::ceil(r.x1),std::ceil(r.y1)}.contains(lx,ly);
+                        }
+                        for (int id:debugHiddenGhostIds_) {
+                            const int slot=geomSlot(id);
+                            if (!inRect || slot<0) continue;
+                            const auto& d=distantModelItems_[size_t(slot)];
+                            const auto verts=d.texture ? std::span<const SDL_Vertex>(d.quad)
+                                                       : std::span<const SDL_Vertex>(visGeom(size_t(slot)).verts);
+                            for (int dy=-1;dy<=1 && !onBody;++dy) for (int dx=-1;dx<=1 && !onBody;++dx)
+                                onBody=hu::trianglesCover(verts,lx+float(dx)/sx,ly+float(dy)/sy);
+                            if (onBody) break;
+                        }
+                        outside+=!inRect;
+                        if (inRect && !onBody && most>2) { ++offBody; offBodyMost=std::max(offBodyMost,most); }
+                    }
+                    std::fprintf(stderr,"  whole view%s: %zu changed, %zu outside the ghosts, %zu by more than 2 off the hidden bodies (by up to %d)\n",
+                                 tag.c_str(),changed,outside,offBody,offBodyMost);
+                    check(outside==0,"changed only inside the ghosts"+tag);
+                    if (stencilForm) check(offBody==0,"changed only on the hidden bodies"+tag);
+                    check(ghosted(behindTwo) && ghosted(behindLode),"ghosts behind two trees and a lodestone"+tag);
                 }
                 for (const auto& [id,name]:{std::pair{open,"in the open"},std::pair{front,"in front of the tree"}}) {
                     const Diff d=diff(p0,p1,w0,id);

@@ -2543,11 +2543,12 @@ if(TAK_BUILD_CLIENT)
           PASS_REGULAR_EXPRESSION "PASS: tactical dots \\(threshold")
       # HIDDEN UNITS (Options > Graphics): flat features under every unit, the cover
       # rules of DOTS (tree, building, open ground, in front, fog), the click target,
-      # and SHADOW's pixels (changed only on the cover, the part in sight as with
-      # OFF) at two output scales and, where the renderer has them, from distant
-      # images.
+      # and SHADOW's pixels (changed only on the cover and inside the ghosts, the
+      # part in sight as with OFF) at two output scales and, where the renderer has
+      # them, from distant images; TAK_HIDDEN_VERIFY checks each ghost's redraw list
+      # against a plain scan of its painter range.
       add_test(NAME hidden_units COMMAND ${CMAKE_COMMAND} -E env
-          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_HIDDEN_UNITS_TEST=1
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_HIDDEN_UNITS_TEST=1 TAK_HIDDEN_VERIFY=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/hidden-units-profile
           XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/hidden-units-profile
           $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
@@ -2559,7 +2560,7 @@ if(TAK_BUILD_CLIENT)
       # checked. Skipped where no OpenGL renderer can be made.
       add_test(NAME hidden_units_gl COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=opengl SDL_AUDIODRIVER=dummy
-          TAK_HIDDEN_UNITS_TEST=1 TAK_HIDDEN_UNITS_GL=1 TAK_NATIVE_PASS_VERIFY=1
+          TAK_HIDDEN_UNITS_TEST=1 TAK_HIDDEN_UNITS_GL=1 TAK_HIDDEN_VERIFY=1 TAK_NATIVE_PASS_VERIFY=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/hidden-units-gl-profile
           XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/hidden-units-gl-profile
           $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"

@@ -2677,7 +2677,8 @@ private:
     void drawHiddenDots(int mvw, int winH);
     // The painter items the search considers (ground layer and air), collected by
     // the backwards walk: kind, screen rectangle (exact body bounds for covers and
-    // candidates, the model's box otherwise).
+    // candidates; the model's box otherwise, with SHADOW a reach that holds the body:
+    // see findHiddenUnits).
     enum class HiddenKind : uint8_t { Feature, Structure, Unit, Other };
     struct HiddenRec {
         uint32_t item;          // index into paintItems_
@@ -2687,6 +2688,7 @@ private:
         uint32_t coversAfter = 0; // a Unit: CoverGrid ids below this paint after it
         tak::hiddenunits::Rect rect;
         uint32_t lastCover = 0; // a candidate: painter index of the last cover over it
+        bool loose = false;     // SHADOW: rect is a reach, not the body's exact bounds
     };
     std::vector<HiddenRec> hiddenRecs_;    // in REVERSE painter order
     std::vector<uint32_t> hiddenCoverRec_; // CoverGrid id -> hiddenRecs_ index

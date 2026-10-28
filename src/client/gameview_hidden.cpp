@@ -138,11 +138,27 @@ namespace hu = tak::hiddenunits;
             }
             const SDL_FRect& hb = unitHitBox(u.type);
             constexpr float kPad = 4.0f;
-            const hu::Rect box = hu::Rect{g.ax + hb.x * zm - kPad, g.ay + hb.y * zm - kPad,
-                g.ax + (hb.x + hb.w) * zm + kPad, g.ay + (hb.y + hb.h) * zm + kPad}.clipped(screen);
-            if (box.empty()) continue;
-            HiddenRec rec{uint32_t(k), kind, false, slot, uint32_t(hiddenGrid_.size()), box};
-            if (kind == HiddenKind::Unit) {
+            const hu::Rect full{g.ax + hb.x * zm - kPad, g.ay + hb.y * zm - kPad,
+                                g.ax + (hb.x + hb.w) * zm + kPad, g.ay + (hb.y + hb.h) * zm + kPad};
+            const hu::Rect box = full.clipped(screen);
+            // SHADOW by redrawing: a ghost must redraw every item of its range that it overlaps, and
+            // the box is the model at rest -- a swing reaches past it (over a third of the
+            // box measured), a fall further. So a ground unit is binned by its box grown
+            // by its size and its exact bounds read only when a ghost's rectangle meets
+            // that (loose); a dead, dying or unfinished one by its exact bounds.
+            hu::Rect reach = box;
+            bool loose = false;
+            if (ghosts && it.layer == hu::kLayerGround) {
+                if (kind == HiddenKind::Unit) {
+                    const float grow = std::max(hb.w, hb.h) * zm;
+                    reach = hu::Rect{full.x0 - grow, full.y0 - grow, full.x1 + grow, full.y1 + grow}.clipped(screen);
+                    loose = true;
+                } else reach = hiddenBodyBounds(slot).clipped(screen);
+            }
+            if (reach.empty()) continue;
+            HiddenRec rec{uint32_t(k), kind, false, slot, uint32_t(hiddenGrid_.size()), reach};
+            rec.loose = loose;
+            if (kind == HiddenKind::Unit && !box.empty()) {
                 ++eligible;
                 bool near = false;
                 hiddenGrid_.query(box, [&](uint32_t) { near = true; return false; });
@@ -162,6 +178,7 @@ namespace hu = tak::hiddenunits;
                         ++candidates;
                         if (stencil) mark(uint32_t(k), kHiddenUnit);
                     }
+                    if (ghosts) { rec.rect = body; rec.loose = false; }   // read anyway: exact
                 }
             }
             keep(rec);
@@ -245,8 +262,13 @@ namespace hu = tak::hiddenunits;
             ghost.first = uint32_t(hiddenRedraw_.size());
             if (ghost.exact)
                 hiddenItemGrid_.query(range.rect, [&](uint32_t id) {
-                    const HiddenRec& rec = hiddenRecs_[id];
+                    HiddenRec& rec = hiddenRecs_[id];
                     if (rec.item < range.start || rec.item > range.last || !rec.rect.overlaps(range.rect)) return true;
+                    if (rec.loose) {   // the reach meets it: does the body?
+                        rec.rect = hiddenBodyBounds(rec.slot).clipped(screen);
+                        rec.loose = false;
+                        if (!rec.rect.overlaps(range.rect)) return true;
+                    }
                     if (rec.kind == HiddenKind::Feature || rec.kind == HiddenKind::Structure) {
                         hiddenRedraw_.push_back({rec.item, HiddenRedraw::Veil, rec.slot});
                         return true;
@@ -271,6 +293,34 @@ namespace hu = tak::hiddenunits;
         }
         renderStats_.add(RS::HiddenMarked, hiddenMembers_.size());
         renderStats_.add(RS::HiddenRedrawn, hiddenRedraw_.size());
+#ifndef NDEBUG
+        // Debug TAK_HIDDEN_VERIFY=1: every exact ghost redraws each item of its range
+        // whose drawn body meets its rectangle (a plain scan of the range, exact bounds).
+        static const bool verify = tak::devFlag("TAK_HIDDEN_VERIFY");
+        if (verify)
+            for (const HiddenGhost& ghost : hiddenGhosts_) {
+                if (!ghost.exact) continue;
+                for (uint32_t k = ghost.range.start; k <= ghost.range.last; ++k) {
+                    hu::Rect r;
+                    if (const auto* f = items[k].f) {
+                        const FeatureSprite sp = featureSprite(*f, zm);
+                        if (!sp.tex) continue;
+                        r = {sp.dst.x + std::min(0.0f, sp.shear), sp.dst.y, sp.dst.x + sp.dst.w + std::max(0.0f, sp.shear),
+                             sp.dst.y + sp.dst.h};
+                    } else {
+                        const int slot = geomSlot(items[k].u->id);
+                        if (slot < 0 || (visGeom(size_t(slot)).runs.empty() && !distantModelItems_[size_t(slot)].texture))
+                            continue;
+                        r = hiddenBodyBounds(slot);
+                    }
+                    if (!r.clipped(screen).overlaps(ghost.range.rect)) continue;
+                    const HiddenRedrawItem* end = hiddenRedraw_.data() + ghost.first + ghost.count;
+                    if (std::find_if(end - ghost.count, end,
+                                     [&](const HiddenRedrawItem& d) { return d.item == k; }) == end)
+                        throw std::runtime_error("hidden units: a SHADOW ghost misses painter item " + std::to_string(k));
+                }
+            }
+#endif
     }
 
     void GameView::hiddenBatchFlush() {
