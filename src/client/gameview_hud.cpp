@@ -1,6 +1,7 @@
 #include <ctime>
 #include <type_traits>
 #include "client/guiart.h"
+#include "client/cliprect.h"
 #include "client/gameview.h"
 #include "client/gamespeed.h"
 #include "client/artscale.h"
@@ -2732,9 +2733,9 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
 
         // Clip so a row can never draw outside the box (a long unbroken name, say).
         SDL_Rect clip{int(box.x), int(box.y), int(std::ceil(box.w)), int(std::ceil(box.h))};
-        SDL_RenderSetClipRect(ren_, &clip);
+        const bool inSight = tak::cliprect::set(ren_, clip);   // off the target: no rows (Metal)
         float y = box.y + pad;
-        for (size_t i = 0; i < rows.size(); ++i) {
+        for (size_t i = 0; inSight && i < rows.size(); ++i) {
             const Row& r = rows[i];
             if (r.composer && i == composerAt && i > 0) {   // a rule between history and composer
                 SDL_SetRenderDrawColor(ren_, 96, 84, 60, 200);

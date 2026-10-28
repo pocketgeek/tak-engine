@@ -5,6 +5,7 @@
 #include <cstring>
 #include <functional>
 #include "client/gameview.h"
+#include "client/cliprect.h"
 #include "client/cursortiming.h"
 #include "client/buildghost.h"
 #include "client/reclaimpick.h"
@@ -5825,18 +5826,19 @@
         int outW = 0, outH = 0;
         SDL_bool hadClip = SDL_FALSE;
         SDL_Rect prevClip{};
+        bool topShows = true;   // false: the wall top is at or above the target's top edge
         if (occluded) {
             SDL_GetRendererOutputSize(ren_, &outW, &outH);
             hadClip = SDL_RenderIsClipEnabled(ren_);
             if (hadClip) SDL_RenderGetClipRect(ren_, &prevClip);
             int line = std::clamp(int(occY), 0, outH);
             SDL_Rect top{0, 0, outW, line};   // only pixels above the wall top show
-            SDL_RenderSetClipRect(ren_, &top);
+            topShows = tak::cliprect::set(ren_, top);   // an empty clip draws nothing (Metal: skip)
         }
         // Shadows are emitted once by the dedicated ground/air passes. Special
         // body rendering must not composite the same shadow a second time.
         // Disco dance floor: a pulsing, hue-cycling glow disc under a dancing unit.
-        if (dancing(u)) {
+        if (topShows && dancing(u)) {
             float t = emoteSeconds(u.player);
             SDL_Color dc = discoHue(t * 0.8f + 0.5f);   // offset from the body tint
             float rad = (float(std::max(u.type->footX, u.type->footZ)) * 12.0f + 22.0f)
@@ -5861,7 +5863,7 @@
             SDL_SetRenderDrawBlendMode(ren_, pbm);
         }
         // Headbang: a red mosh-pit glow that flares on each downbeat.
-        if (headbanging(u)) {
+        if (topShows && headbanging(u)) {
             float ph = emoteSeconds(u.player) * 2.533f * 6.2831853f;
             float bang = std::pow(std::max(0.0f, std::sin(ph)), 2.0f);
             SDL_Color dc{Uint8(150 + 90 * bang), Uint8(20 + 20 * bang), 20, 255};
@@ -5887,7 +5889,7 @@
             SDL_SetRenderDrawBlendMode(ren_, pbm);
         }
         auto constructionParticles=[&](bool frontPass) {
-            if (u.constructionParticles.empty()) return;
+            if (!topShows || u.constructionParticles.empty()) return;
             SDL_FPoint anchor{ax,ay};
             if (u.replacementModel) {
                 // Particle offsets belong to the new site even while its old
@@ -5924,7 +5926,9 @@
         // already baked into the vertices on the worker pool.
         // Workstream M: a unit with indexed palette runs draws all its runs in one
         // native pass when every run texture can join (one priming, not one per run).
-        if (bodyAlpha != 255) {
+        if (!topShows) {
+            // Nothing above the wall top: only the silhouette below.
+        } else if (bodyAlpha != 255) {
             drawHiddenBody(gslot, bodyAlpha);
             hiddenBatchFlush();
         } else if (!drawRunsNative(g.runs, g.verts.data())) {
@@ -5946,7 +5950,7 @@
         if (occluded) {
             int line = std::clamp(int(occY), 0, outH);
             SDL_Rect bot{0, line, outW, std::max(0, outH - line)};
-            SDL_RenderSetClipRect(ren_, &bot);
+            const bool botShows = tak::cliprect::set(ren_, bot);   // empty: no silhouette (Metal: skip)
             SDL_Color tc = playerColor(u.player);
             SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
             // The silhouette is flat, untextured and single-colour, so the whole
@@ -5958,7 +5962,7 @@
                 v.color = SDL_Color{tc.r, tc.g, tc.b, 70};
                 triBatch_.push_back(v);
             }
-            if (!triBatch_.empty())
+            if (botShows && !triBatch_.empty())
                 SDL_RenderGeometry(ren_, nullptr, triBatch_.data(), int(triBatch_.size()), nullptr, 0);
             if (hadClip) SDL_RenderSetClipRect(ren_, &prevClip);
             else SDL_RenderSetClipRect(ren_, nullptr);

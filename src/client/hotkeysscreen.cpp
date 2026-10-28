@@ -1,6 +1,7 @@
 #include "client/hotkeysscreen.h"
 
 #include "client/uitext.h"
+#include "client/cliprect.h"
 
 #include <algorithm>
 
@@ -142,10 +143,11 @@ void HotkeysScreen::render(int winW, int winH) {
     float titleH = 3.4f * 7 * u_ + 26 * u_, footerH = 52 * u_;
     SDL_Rect clip{int(panel_.x), int(panel_.y + titleH), int(panel_.w),
                   int(panel_.h - titleH - footerH)};
-    SDL_RenderSetClipRect(ren_, &clip);
+    // No room (a tiny window): no rows -- on Metal they would draw unclipped.
+    const bool rowsShow = tak::cliprect::set(ren_, clip);
 
     float fpx = 2.0f * u_;
-    for (size_t i = 0; i < rows_.size(); ++i) {
+    for (size_t i = 0; rowsShow && i < rows_.size(); ++i) {
         Row& r = rows_[i];
         if (r.rect.y + r.rect.h < clip.y || r.rect.y > clip.y + clip.h) continue;
         if (r.section) {

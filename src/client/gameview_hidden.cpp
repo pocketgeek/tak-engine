@@ -17,6 +17,8 @@
 // AFTER the unit. Another mobile unit is never a cover. Display only: nothing here
 // reads or writes simulation state.
 
+#include "client/cliprect.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -396,7 +398,9 @@ namespace hu = tak::hiddenunits;
         const SDL_bool hadClip = SDL_RenderIsClipEnabled(ren_);
         SDL_Rect prevClip{}, clip{};
         if (hadClip) SDL_RenderGetClipRect(ren_, &prevClip);
-        if (!hiddenGhostClip(ghost, hadClip ? &prevClip : nullptr, clip)) return;
+        // A clip off the target (a ghost past the edge at output scale 2): nothing to
+        // draw, and on Metal the draws would land under the previous scissor.
+        if (!hiddenGhostClip(ghost, hadClip ? &prevClip : nullptr, clip) || !tak::cliprect::covers(ren_, clip)) return;
         SDL_RenderSetClipRect(ren_, &clip);
         const float zm = mapView_.zoom();
         tak::render::countLogicalDraw();
