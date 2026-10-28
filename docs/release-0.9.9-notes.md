@@ -124,9 +124,9 @@ order exactly as before, so this changes no game state.
   built and, if needed, a priest's cost must be paid back by the extra mana
   within 15 minutes (20 for Absurdly Defensive). Richest deposit first, then
   nearest; one at a time.
-- **Saving up.** Before buying, the AI saves 60% of the next purchase (the
-  priest, then the divine lodestone), holding other new builds back but not a
-  lodestone it needs because it is short of mana. A threat within 900 pixels
+- **Saving up.** Before buying, the AI saves at least 60% of the next purchase
+  (the priest, then the divine lodestone), holding other new builds back but
+  not a lodestone it needs because it is short of mana. A threat within 900 pixels
   of home stops the saving; a stage not bought within 3 minutes is given up
   and tried again 5 minutes later. Nothing is planned where the store cannot
   hold the reserve, or past the type's limit.
@@ -221,9 +221,9 @@ every mod pack; test a game mod in an ordinary skirmish.
   `attackring-guard-64` counts guards within 144 px and its baseline and the
   navigation checkpoints after its guard order were retaken.
 - `--mpai` Inner Circle seed 1, `TAK_SPEED=80`: **the gate hashes did not
-  change** (the AIs never guard, and no gate game builds on a site its own
-  idle units stand on or reaches the divine-lodestone rules): Retail 60 s
-  `d0da4ccc71d2067c`, 300 s `e820d37865085bd9`; Legion 60 s
+  change** (the AIs never guard, no gate game builds on a site its own idle
+  units stand on, and the divine-lodestone rules change no pick in them):
+  Retail 60 s `d0da4ccc71d2067c`, 300 s `e820d37865085bd9`; Legion 60 s
   `c3f6a3a13f0c167f`, 300 s `0783cb05f7f128cf`; Retail AI 60 s
   `4952493f51b9a568`; Crusades 300 s Retail `f2f51dc1703fc209`, Legion
   `c4189ae189dd68dc`. The cross-compiler golden (`check-determinism`) is

@@ -64,9 +64,11 @@ test install is `d6000f4fa9095a51`.
 - **Hashed state.** No field is added. Units stepping off a build site and the
   guard ring change the game only where a build order meets the player's own
   idle or guarding units on its site, or a ground unit guards; the divine
-  lodestone rules only where our AI levels reach a full base (from 6 minutes
-  at the earliest), and the Retail AI change only where it would have upgraded
-  in place. No gate game does, so **the gate hashes did not change** (below).
+  lodestone rules only where one of our AI levels would have picked a divine
+  lodestone or a priest would have started troops (an upgrade itself comes at
+  6 minutes at the earliest), and the Retail AI change only where it would have
+  upgraded in place. No gate game does, so **the gate hashes did not change**
+  (below).
   The placement-reach check is client-only and not hashed.
 - **Maps, mods and settings.** No map, recipe, package or settings format
   changed; a saved `maxFps` above 240 (or 0) now loads as Unlimited.
@@ -114,7 +116,8 @@ Every takclient and takserver run used scratch `HOME`, `XDG_DATA_HOME` and
 **The gate hashes are the 0.9.6 to 0.9.8 values.** The AIs never give Guard
 orders, so no gate game has a guard ring; no gate game builds on a site its
 own idle units stand on; the gate games end before our levels' earliest
-divine upgrade, and the Retail AI never chose an in-place upgrade in them.
+divine upgrade (6 minutes), no AI in them picked a divine lodestone or had a
+priest start troops, and the Retail AI never chose an in-place upgrade in them.
 The cross-compiler golden is unchanged for the same reason.
 
 - **Real-data AI games** (all-AI, debug build): Inner Circle Normal, 1200 s,
