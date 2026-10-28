@@ -1,6 +1,6 @@
 #pragma once
 
-// HIDDEN UNITS (Options > Graphics; a non-retail extra, default SHADOW): a unit
+// HIDDEN UNITS (Options > Graphics; a non-retail extra, default FADE): a unit
 // that stands behind a tree, a rock or a building is still shown where it is.
 //   OFF     -- as retail: whatever paints over a unit hides it.
 //   DOTS    -- when the scenery covers the centre of a unit, that unit's tactical
@@ -9,9 +9,9 @@
 //   SHADOW  -- the cover turns see-through where it hides the unit: the covered
 //              part shows as a faint shadow through the tree or the wall, the part
 //              in sight is untouched (see Ghost below).
-//   FADE    -- a tree or rock over a unit fades out whole (kFadeOpacity) and back in
-//              once no unit is under it (CoverFades below); a building over a unit
-//              still shows it as with SHADOW.
+//   FADE    -- a tree, rock or building over a unit fades out whole (to the FADE
+//              OPACITY setting) and back in once no unit is under it (CoverFades
+//              below). The default.
 // Marked are the units the frame draws anyway (own, allied, and enemies in sight:
 // nothing under fog, no cloaked enemy that is not drawn), standing on the ground
 // (an airborne flyer paints after every tree and is never covered). What covers is
@@ -34,18 +34,19 @@
 namespace tak::hiddenunits {
 
 enum Mode : int { kOff = 0, kDots = 1, kShadow = 2, kFade = 3 };
-inline constexpr int kDefault = kShadow;
+inline constexpr int kDefault = kFade;
 inline constexpr int kModeCount = 4;
 
 // Persisted as hiddenUnits = off | dots | shadow | fade. A file from before the
 // option (no key), one from the OUTLINE mode SHADOW replaced ("outline") or an
 // unknown value reads as the default.
 inline const char* name(int mode) {
-    return mode == kOff ? "off" : mode == kDots ? "dots" : mode == kFade ? "fade" : "shadow";
+    return mode == kOff ? "off" : mode == kDots ? "dots" : mode == kShadow ? "shadow" : "fade";
 }
 inline int parse(std::string_view value) {
     if (value == "off" || value == "0") return kOff;
     if (value == "dots" || value == "1") return kDots;
+    if (value == "shadow" || value == "2") return kShadow;
     if (value == "fade" || value == "3") return kFade;
     return kDefault;
 }
@@ -330,32 +331,73 @@ inline void groupOverlaps(std::span<const Rect> rects, CoverGrid& grid, float wi
 }
 
 // ---- FADE ---------------------------------------------------------------------
-// A tree or rock (a feature cover) over a unit the frame looks at is drawn whole at
-// kFadeOpacity: the unit, its shadow and the ground under the crown show through.
+// A tree, rock or building (a cover) over a unit the frame looks at is drawn whole at
+// the FADE OPACITY setting: the unit, its shadow and the ground behind show through.
 // It fades out over kFadeOutMs when a unit comes under it and back in over kFadeInMs
-// after the last one has left (display time; smoothstep eased). A building over a
-// unit keeps SHADOW's look (the ghosts above), whatever FADE does to the trees.
-inline constexpr uint8_t kFadeOpacity = 115;   // ~45%, as kShadowOpacity
+// after the last one has left (display time; smoothstep eased). No ghost, no
+// stencil: the faded cover is simply drawn translucent where it stands.
+inline constexpr int kDefaultFadePercent = 65;   // the cover stays 65% visible
 inline constexpr float kFadeOutMs = 200.0f;
 inline constexpr float kFadeInMs = 350.0f;
+// The setting (percent the cover stays visible: 0 = gone, 100 = no fade) as an alpha.
+inline constexpr uint8_t fadeOpacity(int percent) {
+    return uint8_t((std::clamp(percent, 0, 100) * 255 + 50) / 100);
+}
 
-// Per-cover fade state, keyed by the feature's stable id and kept sorted by it. Each
-// frame: begin(), cover(id) for every feature cover over a unit, inView(id) for every
-// feature cover the frame draws, then advance(ms). A cover fully back, or not in view
-// this frame, is dropped. Storage is kept between frames.
+// A cover's fade key: a feature by its sim id, a building by its unit id (tagged so
+// the two never meet). A new game makes a new view, and with it new fades.
+inline constexpr uint64_t featureCover(uint32_t simId) { return simId; }
+inline constexpr uint64_t structureCover(uint32_t unitId) { return (uint64_t(1) << 32) | unitId; }
+
+// Do the triangle (a, b, c) and the rectangle share area? Separating axes: the
+// rectangle's two and the triangle's three edges.
+inline bool triangleOverlapsRect(float ax, float ay, float bx, float by, float cx, float cy, const Rect& r) {
+    if (std::max({ax, bx, cx}) <= r.x0 || std::min({ax, bx, cx}) >= r.x1 ||
+        std::max({ay, by, cy}) <= r.y0 || std::min({ay, by, cy}) >= r.y1) return false;
+    const float px[3] = {ax, bx, cx}, py[3] = {ay, by, cy};
+    const float rx[4] = {r.x0, r.x1, r.x1, r.x0}, ry[4] = {r.y0, r.y0, r.y1, r.y1};
+    for (int e = 0; e < 3; ++e) {
+        const int n = (e + 1) % 3, o = (e + 2) % 3;
+        const float nx = py[n] - py[e], ny = px[e] - px[n];   // the edge normal
+        const float side = nx * (px[o] - px[e]) + ny * (py[o] - py[e]);
+        if (side == 0.0f) continue;   // degenerate
+        bool apart = true;
+        for (int k = 0; k < 4 && apart; ++k)
+            apart = (nx * (rx[k] - px[e]) + ny * (ry[k] - py[e])) * side <= 0.0f;
+        if (apart) return false;
+    }
+    return true;
+}
+// A model's screen triangles (as trianglesCover): does one of them reach the rectangle?
+template <class Vertex>
+bool trianglesCoverRect(std::span<const Vertex> verts, const Rect& r) {
+    if (r.empty()) return false;
+    for (size_t i = 0; i + 2 < verts.size(); i += 3) {
+        const auto& a = verts[i].position;
+        const auto& b = verts[i + 1].position;
+        const auto& c = verts[i + 2].position;
+        if (triangleOverlapsRect(a.x, a.y, b.x, b.y, c.x, c.y, r)) return true;
+    }
+    return false;
+}
+
+// Per-cover fade state, keyed by featureCover/structureCover and kept sorted. Each
+// frame: begin(), cover(key) for every cover over a unit, inView(key) for every cover
+// the frame draws, then advance(ms). A cover fully back, or not in view this frame,
+// is dropped. Storage is kept between frames.
 class CoverFades {
 public:
     void begin() { hits_.clear(); ++frame_; }
-    void cover(uint32_t id) { hits_.push_back(id); }
-    void inView(uint32_t id) {
+    void cover(uint64_t id) { hits_.push_back(id); }
+    void inView(uint64_t id) {
         if (const size_t i = find(id); i < entries_.size()) entries_[i].seen = frame_;
     }
     void advance(float ms) {
         std::sort(hits_.begin(), hits_.end());
         hits_.erase(std::unique(hits_.begin(), hits_.end()), hits_.end());
-        // New covers join at level 0 (opaque), in id order.
+        // New covers join at level 0 (opaque), in key order.
         size_t at = 0;
-        for (const uint32_t id : hits_) {
+        for (const uint64_t id : hits_) {
             while (at < entries_.size() && entries_[at].id < id) ++at;
             if (at < entries_.size() && entries_[at].id == id) { entries_[at].seen = frame_; continue; }
             entries_.insert(entries_.begin() + std::ptrdiff_t(at), Entry{id, 0.0f, frame_});
@@ -372,28 +414,29 @@ public:
         }
         entries_.resize(out);
     }
-    // The cover's opacity now: 255 when it is not fading.
-    uint8_t alpha(uint32_t id) const {
+    // The cover's opacity now, fading towards `opacity` (fadeOpacity): 255 when it is
+    // not fading.
+    uint8_t alpha(uint64_t id, uint8_t opacity) const {
         const size_t i = find(id);
         if (i >= entries_.size()) return 255;
         const float level = entries_[i].level;
         const float t = level * level * (3.0f - 2.0f * level);   // smoothstep
-        return uint8_t(std::lround(255.0f - t * float(255 - kFadeOpacity)));
+        return uint8_t(std::lround(255.0f - t * float(255 - opacity)));
     }
     size_t size() const { return entries_.size(); }
     bool empty() const { return entries_.empty(); }
     void clear() { entries_.clear(); hits_.clear(); }
-    size_t capacityBytes() const { return entries_.capacity() * sizeof(Entry) + hits_.capacity() * sizeof(uint32_t); }
+    size_t capacityBytes() const { return entries_.capacity() * sizeof(Entry) + hits_.capacity() * sizeof(uint64_t); }
 
 private:
-    struct Entry { uint32_t id; float level; uint32_t seen; };
-    size_t find(uint32_t id) const {   // its index, or entries_.size()
+    struct Entry { uint64_t id; float level; uint32_t seen; };
+    size_t find(uint64_t id) const {   // its index, or entries_.size()
         const auto it = std::lower_bound(entries_.begin(), entries_.end(), id,
-                                         [](const Entry& e, uint32_t v) { return e.id < v; });
+                                         [](const Entry& e, uint64_t v) { return e.id < v; });
         return it != entries_.end() && it->id == id ? size_t(it - entries_.begin()) : entries_.size();
     }
     std::vector<Entry> entries_;
-    std::vector<uint32_t> hits_;
+    std::vector<uint64_t> hits_;
     uint32_t frame_ = 0;
 };
 

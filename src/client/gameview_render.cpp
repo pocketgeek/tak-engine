@@ -1656,11 +1656,21 @@
                 int gslot = geomSlot(u.id);
                 if (gslot < 0) continue;
                 const UnitGeom& g = visGeom(size_t(gslot));
+                // HIDDEN UNITS, FADE: a building over a unit, drawn whole and faded
+                // (drawUnit's translucent body: its own op, out of the batches).
+                const uint8_t fade = hiddenStructureAlpha(u);
                 if (special(u, g)) {
                     closeSeg();
                     drawOps_.push_back({&u, nullptr, nullptr, 0, 0});
                     drawOps_.back().hidden = mark;
+                    drawOps_.back().fade = fade;
                     renderStats_.add(RS::SpecialUnits);
+                    continue;
+                }
+                if (fade != 255) {
+                    closeSeg();
+                    drawOps_.push_back({&u, nullptr, nullptr, 0, 0});
+                    drawOps_.back().fade = fade;
                     continue;
                 }
                 const auto& distant=distantModelItems_[size_t(gslot)];
@@ -2162,7 +2172,7 @@
                 drawFeatureSmoke();
             } else if (op.u) {
                 tak::render::countLogicalDraw();   // one special unit (drawUnit issues several)
-                drawUnit(*op.u);
+                drawUnit(*op.u, op.fade);   // (FADE: a faded building, see-through)
                 if (op.hidden == kHiddenCover && hiddenOpState(opi) != HS::Off) {
                     // A building under repair still covers: drawn again where the stencil
                     // holds 1, its body see-through, its particles as always.

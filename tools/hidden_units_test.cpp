@@ -30,7 +30,7 @@ int main() {
     std::printf("hidden_units_test: the HIDDEN UNITS policy\n");
 
     // ---- the option ----
-    check("default is SHADOW", hu::kDefault == hu::kShadow);
+    check("default is FADE", hu::kDefault == hu::kFade);
     check("names round trip", hu::parse(hu::name(hu::kOff)) == hu::kOff &&
                               hu::parse(hu::name(hu::kDots)) == hu::kDots &&
                               hu::parse(hu::name(hu::kShadow)) == hu::kShadow &&
@@ -39,7 +39,8 @@ int main() {
     check("four modes", hu::kModeCount == 4 && hu::kFade == hu::kModeCount - 1);
     check("saved as shadow", std::string(hu::name(hu::kShadow)) == "shadow");
     check("unknown value reads as the default", hu::parse("") == hu::kDefault && hu::parse("halo") == hu::kDefault);
-    check("the replaced OUTLINE reads as SHADOW", hu::parse("outline") == hu::kShadow);
+    check("shadow still read", hu::parse("shadow") == hu::kShadow && hu::parse("2") == hu::kShadow);
+    check("the replaced OUTLINE reads as the default", hu::parse("outline") == hu::kDefault);
 
     // ---- the low layer ----
     check("height 0 and 9 are low, 10 and 226 are not",
@@ -170,36 +171,54 @@ int main() {
     }
 
     // ---- FADE ----
-    check("fade about 45%", hu::kFadeOpacity >= 100 && hu::kFadeOpacity <= 130);
+    check("fade default 65%", hu::kDefaultFadePercent == 65 && hu::fadeOpacity(65) == 166);
+    check("fade opacity ends", hu::fadeOpacity(0) == 0 && hu::fadeOpacity(100) == 255 &&
+                               hu::fadeOpacity(-3) == 0 && hu::fadeOpacity(140) == 255 && hu::fadeOpacity(50) == 128);
+    check("cover keys apart", hu::featureCover(5) != hu::structureCover(5) &&
+                              hu::structureCover(5) == hu::structureCover(5));
+    {
+        // The triangle (0,0) (100,0) (0,100): its hypotenuse runs x + y = 100.
+        check("tri-rect: inside", hu::triangleOverlapsRect(0, 0, 100, 0, 0, 100, {10, 10, 20, 20}));
+        check("tri-rect: past the hypotenuse", !hu::triangleOverlapsRect(0, 0, 100, 0, 0, 100, {60, 60, 80, 80}));
+        check("tri-rect: across the hypotenuse", hu::triangleOverlapsRect(0, 0, 100, 0, 0, 100, {45, 45, 80, 80}));
+        check("tri-rect: rect holds the triangle", hu::triangleOverlapsRect(10, 10, 12, 10, 10, 12, {0, 0, 50, 50}));
+        check("tri-rect: apart", !hu::triangleOverlapsRect(0, 0, 100, 0, 0, 100, {120, 0, 140, 20}));
+        struct V { struct { float x, y; } position; };
+        const std::vector<V> tris = {{{0, 0}}, {{100, 0}}, {{0, 100}}};
+        check("tris cover rect", hu::trianglesCoverRect(std::span<const V>(tris), {10, 10, 20, 20}) &&
+                                 !hu::trianglesCoverRect(std::span<const V>(tris), {60, 60, 80, 80}));
+    }
     check("fades out faster than back in", hu::kFadeOutMs >= 150 && hu::kFadeOutMs <= 250 &&
                                            hu::kFadeInMs >= 300 && hu::kFadeInMs <= 400);
     {
+        constexpr uint8_t kOp = hu::fadeOpacity(hu::kDefaultFadePercent);
         hu::CoverFades f;
-        const auto frame = [&](float ms, std::initializer_list<uint32_t> hits, std::initializer_list<uint32_t> view) {
+        const auto frame = [&](float ms, std::initializer_list<uint64_t> hits, std::initializer_list<uint64_t> view) {
             f.begin();
-            for (uint32_t id : view) f.inView(id);
-            for (uint32_t id : hits) f.cover(id);
+            for (uint64_t id : view) f.inView(id);
+            for (uint64_t id : hits) f.cover(id);
             f.advance(ms);
         };
-        check("fade: nothing fading", f.empty() && f.alpha(7) == 255);
+        check("fade: nothing fading", f.empty() && f.alpha(7, kOp) == 255);
         frame(16, {7, 7, 3}, {3, 7, 9});
-        check("fade: covers over a unit start fading", f.size() == 2 && f.alpha(7) < 255 && f.alpha(7) > 200 &&
-                                                       f.alpha(9) == 255);
+        check("fade: covers over a unit start fading", f.size() == 2 && f.alpha(7, kOp) < 255 && f.alpha(7, kOp) > 200 &&
+                                                       f.alpha(9, kOp) == 255);
         frame(hu::kFadeOutMs, {3, 7}, {3, 7, 9});
-        check("fade: fully faded after the fade-out time", f.alpha(7) == hu::kFadeOpacity &&
-                                                            f.alpha(3) == hu::kFadeOpacity);
+        check("fade: fully faded after the fade-out time", f.alpha(7, kOp) == kOp &&
+                                                            f.alpha(3, kOp) == kOp);
         frame(hu::kFadeInMs * 0.5f, {3}, {3, 7, 9});
-        check("fade: the unit gone, coming back", f.alpha(7) > hu::kFadeOpacity && f.alpha(7) < 255 &&
-                                                   f.alpha(3) == hu::kFadeOpacity);
+        check("fade: the unit gone, coming back", f.alpha(7, kOp) > kOp && f.alpha(7, kOp) < 255 &&
+                                                   f.alpha(3, kOp) == kOp);
         frame(hu::kFadeInMs * 0.6f, {3}, {3, 7, 9});
-        check("fade: fully back, dropped", f.alpha(7) == 255 && f.size() == 1);
+        check("fade: fully back, dropped", f.alpha(7, kOp) == 255 && f.size() == 1);
         frame(16, {}, {7});
-        check("fade: out of view, dropped", f.empty() && f.alpha(3) == 255);
+        check("fade: out of view, dropped", f.empty() && f.alpha(3, kOp) == 255);
         frame(16, {5}, {});
         frame(0, {5}, {});
-        const uint8_t still = f.alpha(5);
+        const uint8_t still = f.alpha(5, kOp);
         frame(0, {5}, {5});
-        check("fade: no time, no change", f.alpha(5) == still);
+        check("fade: no time, no change", f.alpha(5, kOp) == still);
+        check("fade: 100% never fades", f.alpha(5, 255) == 255);
     }
     {
         // The sprite: 4x2 texels, only the top-right one opaque, drawn 40x20 at (100, 50).

@@ -152,6 +152,7 @@ Settings loadSettings() {
         else if (key == "screenShake")     s.screenShake = asBool();
         else if (key == "tacticalDotsZoom") s.tacticalDotsZoom = asInt(0, 100);
         else if (key == "hiddenUnits")     s.hiddenUnits = hiddenunits::parse(val);
+        else if (key == "hiddenFadeOpacity") s.hiddenFadeOpacity = asInt(0, 100);
         else if (key == "unitShadows")     s.unitShadows = asBool();
         else if (key == "gpuMemoryLimit")  s.gpuMemoryLimit = parseGpuMemoryLimit(val);
         else if (key == "smoothArt")       s.smoothArt = asBool();
@@ -277,6 +278,7 @@ std::string serializeSettings(const Settings& s) {
     o << "screenShake = " << (s.screenShake ? 1 : 0) << "\n";
     o << "tacticalDotsZoom = " << s.tacticalDotsZoom << "\n";
     o << "hiddenUnits = " << hiddenunits::name(s.hiddenUnits) << "\n";
+    o << "hiddenFadeOpacity = " << std::clamp(s.hiddenFadeOpacity, 0, 100) << "\n";
     o << "unitShadows = " << (s.unitShadows ? 1 : 0) << "\n";
     o << "gpuMemoryLimit = " << gpuMemoryLimitValue(s.gpuMemoryLimit) << "\n";
     o << "smoothArt = " << (s.smoothArt ? 1 : 0) << "\n";

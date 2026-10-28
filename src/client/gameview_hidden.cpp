@@ -1,11 +1,11 @@
 #include "client/gameview.h"
 
-// HIDDEN UNITS (Options > Graphics; a non-retail extra, default SHADOW). Units that a
+// HIDDEN UNITS (Options > Graphics; a non-retail extra, default FADE). Units that a
 // tree, a rock or a building paints over are shown anyway: through the cover, as a
 // faint shadow (SHADOW: ghost ops in the body pass), or by their tactical dot on top
-// (DOTS: after the body pass); FADE fades a whole tree or rock over such a unit
-// (hiddenFades_, drawn faded by the body pass) and leaves buildings to SHADOW's
-// machinery. The policy -- modes, painter layers, cover tests,
+// (DOTS: after the body pass); FADE fades a whole tree, rock or building over such a
+// unit (hiddenFades_, drawn faded by the body pass; no ghost, no stencil). The
+// policy -- modes, painter layers, cover tests,
 // screen bins, ghost order -- is in client/hiddenunits.h; this file runs it against
 // the frame's painter list. On OpenGL with a stencil on the window, SHADOW marks the
 // hidden units and their covers for the body pass instead of planning ghosts
@@ -93,9 +93,9 @@ namespace hu = tak::hiddenunits;
         if (hiddenUnitsMode_ == hu::kOff || dotsFrame_) return;
         using RS = tak::render::Counter;
         tak::render::ScopedPhase phase(renderStats_, tak::render::Phase::HiddenUnits);
-        // FADE: trees and rocks fade (hiddenFades_); a building over a unit is SHADOW's.
+        // FADE: the covers over a unit fade (hiddenFades_); nothing of SHADOW runs.
         const bool fade = hiddenUnitsMode_ == hu::kFade;
-        const bool shadow = hiddenUnitsMode_ == hu::kShadow || fade;
+        const bool shadow = hiddenUnitsMode_ == hu::kShadow;
         // SHADOW by the stencil (client/hiddenstencil.h): the items are marked, the
         // ghosts below are not planned.
         const bool stencil = shadow && hiddenStencilUsable();
@@ -133,7 +133,7 @@ namespace hu = tak::hiddenunits;
                 const hu::Rect r = hu::Rect{sp.dst.x + std::min(0.0f, sp.shear), sp.dst.y,
                     sp.dst.x + sp.dst.w + std::max(0.0f, sp.shear), sp.dst.y + sp.dst.h}.clipped(screen);
                 if (r.empty()) continue;
-                if (fade && it.f->simId >= 0) hiddenFades_.inView(uint32_t(it.f->simId));
+                if (fade && it.f->simId >= 0) hiddenFades_.inView(hu::featureCover(uint32_t(it.f->simId)));
                 hiddenCoverRec_.push_back(uint32_t(hiddenRecs_.size()));
                 hiddenGrid_.insert(r);
                 keep({uint32_t(k), HiddenKind::Feature, false, -1, 0, r});
@@ -152,6 +152,10 @@ namespace hu = tak::hiddenunits;
                     // body as it is: those still cover.
                     const bool clipped = !g.canFly && g.occY < g.ay - 2.0f;   // drawUnit's wall clip
                     if (!u.underConstruction && !u.type->ghost && !clipped) kind = HiddenKind::Structure;
+                    // FADE draws its covers whole, through drawUnit when need be: a site
+                    // being conjured and one behind a wall fade too (not a placed site
+                    // still waiting for its builder: that is a faint ghost already).
+                    if (fade && !u.type->ghost && (!u.underConstruction || u.buildBegun)) kind = HiddenKind::Structure;
                 } else if (u.alive() && !u.corpsePhase) kind = HiddenKind::Unit;
             }
             // Stencil form: every unit that could be hidden writes 1, so the body batches
@@ -160,6 +164,7 @@ namespace hu = tak::hiddenunits;
             if (kind == HiddenKind::Structure) {
                 const hu::Rect r = hiddenBodyBounds(slot).clipped(screen);
                 if (r.empty()) continue;
+                if (fade) hiddenFades_.inView(hu::structureCover(uint32_t(u.id)));
                 hiddenCoverRec_.push_back(uint32_t(hiddenRecs_.size()));
                 hiddenGrid_.insert(r);
                 keep({uint32_t(k), kind, false, slot, 0, r});
@@ -202,7 +207,16 @@ namespace hu = tak::hiddenunits;
                             const FeatureSprite sp = featureSprite(f, zm);
                             if (f.simId >= 0 && (!sp.mask || hu::spriteCoversRect(*sp.mask, sp.dst.x, sp.dst.y, sp.dst.w,
                                                                                   sp.dst.h, sp.shear, body)))
-                                hiddenFades_.cover(uint32_t(f.simId));
+                                hiddenFades_.cover(hu::featureCover(uint32_t(f.simId)));
+                            return true;
+                        }
+                        if (fade) {
+                            // FADE: a building fades if one of its drawn triangles (or
+                            // its distant image) reaches the body.
+                            const auto& distant = distantModelItems_[size_t(cov.slot)];
+                            const UnitGeom& cg = visGeom(size_t(cov.slot));
+                            if (distant.texture || hu::trianglesCoverRect(std::span<const SDL_Vertex>(cg.verts), body))
+                                hiddenFades_.cover(hu::structureCover(uint32_t(items[cov.item].u->id)));
                             return true;
                         }
                         rec.candidate = true;
@@ -443,14 +457,11 @@ namespace hu = tak::hiddenunits;
                 if (d.slot >= 0) { drawHiddenBody(d.slot, hu::kBuildingVeilAlpha); continue; }   // a structure
                 // A feature, as the body pass drew it (same call, same sampling), see-through.
                 hiddenBatchFlush();
-                // (FADE: as the body pass drew it, faded or not.)
-                const FeatureInst& f = *paintItems_[d.item].f;
-                const FeatureSprite sp = featureSprite(f, zm);
+                const FeatureSprite sp = featureSprite(*paintItems_[d.item].f, zm);
                 if (!sp.tex) continue;
-                const uint8_t veil = hiddenGhostFeatureAlpha(f);
                 if (sp.sway) {
                     const SDL_FRect& dst = sp.dst;
-                    const SDL_Color wc{255, 255, 255, veil};
+                    const SDL_Color wc{255, 255, 255, hu::kVeilAlpha};
                     const SDL_Vertex v[4] = {
                         {{dst.x + sp.shear, dst.y}, wc, {0, 0}},
                         {{dst.x + dst.w + sp.shear, dst.y}, wc, {1, 0}},
@@ -462,7 +473,7 @@ namespace hu = tak::hiddenunits;
                 } else {
                     Uint8 was = 255;
                     SDL_GetTextureAlphaMod(sp.tex, &was);
-                    SDL_SetTextureAlphaMod(sp.tex, veil);
+                    SDL_SetTextureAlphaMod(sp.tex, hu::kVeilAlpha);
                     SDL_RenderCopyF(ren_, sp.tex, nullptr, &sp.dst);
                     SDL_SetTextureAlphaMod(sp.tex, was);
                 }
@@ -602,13 +613,11 @@ namespace hu = tak::hiddenunits;
             // alpha -- the swayed quad's (0 1 2, 0 2 3), or SDL's copy, a strip over
             // the other diagonal (0 1 3, 3 1 2 as GL takes it). The same triangles
             // sample the same texels.
-            // (FADE: as the body pass drew it, faded or not.)
-            const FeatureInst& f = *paintItems_[d.item].f;
-            const FeatureSprite sp = featureSprite(f, zm);
+            const FeatureSprite sp = featureSprite(*paintItems_[d.item].f, zm);
             if (!sp.tex) continue;
             const SDL_FRect& r = sp.dst;
             const float shear = sp.sway ? sp.shear : 0.0f;
-            const SDL_Color c{255, 255, 255, hiddenGhostFeatureAlpha(f)};
+            const SDL_Color c{255, 255, 255, hu::kVeilAlpha};
             const SDL_Vertex q[4] = {{{r.x + shear, r.y}, c, {0, 0}}, {{r.x + r.w + shear, r.y}, c, {1, 0}},
                                      {{r.x + r.w, r.y + r.h}, c, {1, 1}}, {{r.x, r.y + r.h}, c, {0, 1}}};
             const SDL_Vertex swayed[6] = {q[0], q[1], q[2], q[0], q[2], q[3]};

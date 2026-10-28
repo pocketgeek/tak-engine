@@ -1380,6 +1380,7 @@ private:
                     GLuint spanName = 0;
                     SDL_Texture* passPrime = nullptr;
                     int32_t ghost = -1;       // HIDDEN UNITS: a SHADOW ghost (hiddenGhosts_ index)
+                    uint8_t fade = 255;       // HIDDEN UNITS, FADE: a unit op's body alpha (a faded building)
                     uint8_t hidden = 0;       // HIDDEN UNITS, stencil form: its HiddenMark
                     // ...a Cover in a native pass: its see-through vertices in
                     // hiddenVeilBuffer_ (first, count), -1 = drawn from client memory.
@@ -2680,18 +2681,22 @@ private:
     // frame.
     int hiddenUnitsMode_ = tak::hiddenunits::kDefault;
     void findHiddenUnits(int mvw, int winH);
-    // FADE: the trees and rocks over a unit, faded per feature (simId) in display time
-    // (client/hiddenunits.h, CoverFades); buildings take SHADOW's path. Advanced by
+    // FADE: the trees, rocks and buildings over a unit, faded per cover (a feature's
+    // simId, a building's unit id) in display time (client/hiddenunits.h, CoverFades),
+    // towards hiddenFadeOpacity_ (the FADE OPACITY setting as an alpha). Advanced by
     // findHiddenUnits every frame (with nothing hit outside FADE: all fade back in).
+    // No SHADOW machinery runs: the body pass draws a faded cover translucent.
     tak::hiddenunits::CoverFades hiddenFades_;
     uint64_t hiddenFadeLastMs_ = 0;
-    // A feature's opacity in the body pass (255: not fading), and the alpha a ghost
-    // redraws it with (SHADOW: the veil; FADE: as the body pass drew it).
+    uint8_t hiddenFadeOpacity_ = tak::hiddenunits::fadeOpacity(tak::hiddenunits::kDefaultFadePercent);
+    // A cover's opacity in the body pass (255: not fading).
     uint8_t hiddenFeatureAlpha(const FeatureInst& f) const {
-        return hiddenFades_.empty() || f.simId < 0 ? 255 : hiddenFades_.alpha(uint32_t(f.simId));
+        return hiddenFades_.empty() || f.simId < 0
+            ? 255 : hiddenFades_.alpha(tak::hiddenunits::featureCover(uint32_t(f.simId)), hiddenFadeOpacity_);
     }
-    uint8_t hiddenGhostFeatureAlpha(const FeatureInst& f) const {
-        return hiddenUnitsMode_ == tak::hiddenunits::kFade ? hiddenFeatureAlpha(f) : tak::hiddenunits::kVeilAlpha;
+    uint8_t hiddenStructureAlpha(const UnitR& u) const {
+        return hiddenFades_.empty() || !isStructure(u.type)
+            ? 255 : hiddenFades_.alpha(tak::hiddenunits::structureCover(uint32_t(u.id)), hiddenFadeOpacity_);
     }
     void drawHiddenDots(int mvw, int winH);
     // The painter items the search considers (ground layer and air), collected by

@@ -75,11 +75,14 @@ struct Settings {
                                    // instead of models (non-retail extra; default on)
     // HIDDEN UNITS (client/hiddenunits.h; a non-retail extra): a unit behind a tree, rock or
     // building is shown anyway -- 0 = OFF (as retail), 1 = DOTS (its tactical dot on top
-    // when its centre is covered), 2 = SHADOW (the cover turns see-through over the unit;
-    // the default), 3 = FADE (a tree or rock over a unit fades out; a building as SHADOW).
+    // when its centre is covered), 2 = SHADOW (the cover turns see-through over the unit),
+    // 3 = FADE (a tree, rock or building over a unit fades out whole; the default).
     // Persisted as hiddenUnits = off | dots | shadow | fade; absent (a settings
-    // file from before it), "outline" (the mode SHADOW replaced) or unknown = SHADOW.
-    int   hiddenUnits = 2;
+    // file from before it), "outline" (an older mode) or unknown = FADE.
+    int   hiddenUnits = 3;
+    // FADE OPACITY: how visible a faded cover stays, percent -- 100 = no fade, 0 = gone.
+    // Persisted as hiddenFadeOpacity = 0..100 (clamped); absent = 65.
+    int   hiddenFadeOpacity = 65;
     bool  screenShake = false;     // camera shake on heavy impacts / mission quakes; default off
     bool  videoDeblock = true;     // deblock the Bink clips before upload. They are
                                    // 640x360 and get stretched ~12x on a wide display,
@@ -232,6 +235,7 @@ struct Settings {
             && a.chatScale == b.chatScale && a.chatAlign == b.chatAlign && a.uiFont == b.uiFont
             && a.treeSway == b.treeSway && a.tacticalDots == b.tacticalDots
             && a.tacticalDotsZoom == b.tacticalDotsZoom && a.hiddenUnits == b.hiddenUnits
+            && a.hiddenFadeOpacity == b.hiddenFadeOpacity
             && a.screenShake == b.screenShake
             && a.unitShadows == b.unitShadows && a.smoothArt == b.smoothArt
             && a.gpuMemoryLimit == b.gpuMemoryLimit

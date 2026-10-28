@@ -74,6 +74,7 @@ int main() {
     flips("tacticalDots",    [](Settings& s) { s.tacticalDots = !s.tacticalDots; });
     flips("hiddenUnits",     [](Settings& s) { s.hiddenUnits = 1; });
     flips("hiddenUnits 0",   [](Settings& s) { s.hiddenUnits = 0; });
+    flips("hiddenFadeOpacity", [](Settings& s) { s.hiddenFadeOpacity = 40; });
     flips("unitShadows",     [](Settings& s) { s.unitShadows = !s.unitShadows; });
     flips("gpuMemoryLimit",  [](Settings& s) { s.gpuMemoryLimit = 2048; });
     flips("gpuMemoryLimit -1", [](Settings& s) { s.gpuMemoryLimit = -1; });
@@ -205,6 +206,7 @@ int main() {
         cur.textureFilter = 0;
         cur.tacticalDots = false;
         cur.hiddenUnits = 0;
+        cur.hiddenFadeOpacity = 20;
         cur.screenShake = true;
         cur.renderer = "opengles2";
         cur.gpuMemoryLimit = 768;
@@ -257,7 +259,8 @@ int main() {
         reset("uiScale",          d.uiScale == fresh.uiScale);
         reset("textureFilter",    d.textureFilter == fresh.textureFilter && d.textureFilter == 2);
         reset("tacticalDots",     d.tacticalDots == fresh.tacticalDots && d.tacticalDots);
-        reset("hiddenUnits",      d.hiddenUnits == fresh.hiddenUnits && d.hiddenUnits == 2);
+        reset("hiddenUnits",      d.hiddenUnits == fresh.hiddenUnits && d.hiddenUnits == 3);
+        reset("hiddenFadeOpacity", d.hiddenFadeOpacity == fresh.hiddenFadeOpacity && d.hiddenFadeOpacity == 65);
         reset("screenShake",      d.screenShake == fresh.screenShake && !d.screenShake);
         reset("tacticalDotsZoom", d.tacticalDotsZoom == fresh.tacticalDotsZoom && d.tacticalDotsZoom == 0);
         reset("renderer",         d.renderer == fresh.renderer && d.renderer.empty());
@@ -685,26 +688,37 @@ int main() {
         check("display: kept by defaults", tak::preferenceDefaults(dm).displayMode == 3 &&
                                            tak::preferenceDefaults(dm).displayScale == 1.45f);
         // HIDDEN UNITS: off | dots | shadow | fade; a file from before the option (no key),
-        // one saved with OUTLINE (the mode SHADOW replaced) and an unknown value load
-        // as SHADOW, the default.
-        check("hidden: default 2", Settings{}.hiddenUnits == 2);
-        check("hidden: absent", loadFrom("masterVol = 7\n").hiddenUnits == 2);
+        // one saved with OUTLINE (an older mode) and an unknown value load as FADE, the
+        // default.
+        check("hidden: default 3", Settings{}.hiddenUnits == 3);
+        check("hidden: absent", loadFrom("masterVol = 7\n").hiddenUnits == 3);
         check("hidden: off", loadFrom("hiddenUnits = off\n").hiddenUnits == 0);
         check("hidden: dots", loadFrom("hiddenUnits = dots\n").hiddenUnits == 1);
         check("hidden: shadow", loadFrom("hiddenUnits = shadow\n").hiddenUnits == 2);
         check("hidden: fade", loadFrom("hiddenUnits = fade\n").hiddenUnits == 3);
-        check("hidden: outline reads as shadow", loadFrom("hiddenUnits = outline\n").hiddenUnits == 2);
-        check("hidden: junk", loadFrom("hiddenUnits = maybe\n").hiddenUnits == 2);
+        check("hidden: outline reads as fade", loadFrom("hiddenUnits = outline\n").hiddenUnits == 3);
+        check("hidden: junk", loadFrom("hiddenUnits = maybe\n").hiddenUnits == 3);
         for (int mode = 0; mode < 4; ++mode) {
             Settings hs{};
             hs.hiddenUnits = mode;
             check("hidden: round trip", loadFrom(tak::serializeSettings(hs)).hiddenUnits == mode);
         }
-        check("hidden: saved as name", tak::serializeSettings(Settings{}).find("hiddenUnits = shadow") != std::string::npos);
+        check("hidden: saved as name", tak::serializeSettings(Settings{}).find("hiddenUnits = fade") != std::string::npos);
         {
             Settings hs{};
-            hs.hiddenUnits = 3;
-            check("hidden: fade saved as name", tak::serializeSettings(hs).find("hiddenUnits = fade") != std::string::npos);
+            hs.hiddenUnits = 2;
+            check("hidden: shadow saved as name", tak::serializeSettings(hs).find("hiddenUnits = shadow") != std::string::npos);
+        }
+        // FADE OPACITY: percent 0..100, clamped; absent = 65.
+        check("fade opacity: default 65", Settings{}.hiddenFadeOpacity == 65);
+        check("fade opacity: absent", loadFrom("masterVol = 7\n").hiddenFadeOpacity == 65);
+        check("fade opacity: read", loadFrom("hiddenFadeOpacity = 30\n").hiddenFadeOpacity == 30);
+        check("fade opacity: clamped high", loadFrom("hiddenFadeOpacity = 250\n").hiddenFadeOpacity == 100);
+        check("fade opacity: clamped low", loadFrom("hiddenFadeOpacity = -5\n").hiddenFadeOpacity == 0);
+        for (int pct : {0, 1, 42, 65, 99, 100}) {
+            Settings hs{};
+            hs.hiddenFadeOpacity = pct;
+            check("fade opacity: round trip", loadFrom(tak::serializeSettings(hs)).hiddenFadeOpacity == pct);
         }
         check("fps: 30 ok", loadFrom("streamFps = 30\n").streamFps == 30);
         check("fps: 45 snaps", loadFrom("streamFps = 45\n").streamFps == 60);

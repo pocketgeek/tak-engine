@@ -1768,7 +1768,8 @@ missed are silent while the game catches up.
 | **Trees Sway in Wind** | On | Animated trees and their shadows. |
 | **Tactical Dots** | On | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. |
 | **Tactical Dots Zoom** | 0% | How far out you must zoom before dots replace models. Greyed out while Tactical Dots is off. See below. |
-| **Hidden Units** | Shadow | Units behind trees, rocks and buildings. **Off**: hidden, as in the original game. **Dots**: a unit whose centre is hidden shows its tactical dot on top. **Shadow**: the hidden part of a unit shows through the tree or wall as a faint shadow. **Fade**: a tree or rock over a unit fades out; buildings as with Shadow. Not in the original game. See below. |
+| **Hidden Units** | Fade | Units behind trees, rocks and buildings. **Off**: hidden, as in the original game. **Dots**: a unit whose centre is hidden shows its tactical dot on top. **Shadow**: the hidden part of a unit shows through the tree or wall as a faint shadow. **Fade**: a tree, rock or building over a unit fades out. Not in the original game. See below. |
+| **Fade Opacity** | 65% | How visible a faded tree, rock or building stays: 100% no fade, 0% gone. Greyed out unless Hidden Units is Fade. |
 | **Screen Shake** | Off | Shakes the camera on heavy impacts (weapons that shake the screen in the original game) and on mission earthquakes. Applies at once. |
 | **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. It stays on while you stream; the stream draws the same cursor into the video. Beside the switch the game shows what it gave the system, for example `OS CURSOR 64X100`, or `UNAVAILABLE - SOFTWARE` if the system refused a cursor that size and the game is drawing it itself. |
 | **Smooth Motion** | On | Units glide between the game's 30 updates per second instead of stepping. Adds about 33 ms of visual delay. |
@@ -1857,11 +1858,11 @@ part in plain sight, and anything standing in front of the cover, looks
 exactly as before. **Dots** puts the unit's tactical dot (same size, colour and
 selection outline as Tactical Dots) on top when the unit's centre is hidden; a
 unit whose centre is in sight gets none, and clicking the dot selects the
-unit. **Fade** fades a whole tree or rock to about half see-through while
-one of those units stands under it, so the unit, its shadow and the ground
-show through, and fades it back in shortly after the last one leaves; a
-building over a unit shows it as Shadow does. Nothing is added while Tactical
-Dots is showing. Shadow draws what
+unit. **Fade**, the default, fades a whole tree, rock or building while one of
+those units stands behind it, to the **Fade Opacity** setting (65% by
+default), so the unit, its shadow and the ground show through, and fades it
+back in shortly after the last one leaves. A faded building can show a few of
+its own back faces. Nothing is added while Tactical Dots is showing. Shadow draws what
 covers a hidden unit a second time (with a renderer other than OpenGL, the
 hidden unit too, which costs more). In an ordinary battle that costs about
 as much as Dots, well under a millisecond a frame; only with many thousands of
