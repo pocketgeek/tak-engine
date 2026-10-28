@@ -2689,8 +2689,7 @@ private:
     struct HiddenRec {
         uint32_t item;          // index into paintItems_
         HiddenKind kind;
-        bool candidate = false; // a Unit whose body a later cover's overlaps
-        int slot = -1;          // geometry slot (units)
+        int slot = -1;          // geometry slot (structures, units)
         uint32_t coversAfter = 0; // a Unit: CoverGrid ids below this paint after it
         tak::hiddenunits::Rect rect;
     };

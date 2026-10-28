@@ -320,8 +320,6 @@ public:
     }
     size_t size() const { return entries_.size(); }
     bool empty() const { return entries_.empty(); }
-    void clear() { entries_.clear(); hits_.clear(); }
-    size_t capacityBytes() const { return entries_.capacity() * sizeof(Entry) + hits_.capacity() * sizeof(uint64_t); }
 
 private:
     struct Entry { uint64_t id; float level; uint32_t seen; };

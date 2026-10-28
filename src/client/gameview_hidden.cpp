@@ -98,7 +98,7 @@ namespace hu = tak::hiddenunits;
                 if (fade && it.f->simId >= 0) hiddenFades_.inView(hu::featureCover(uint32_t(it.f->simId)));
                 hiddenCoverRec_.push_back(uint32_t(hiddenRecs_.size()));
                 hiddenGrid_.insert(r);
-                hiddenRecs_.push_back({uint32_t(k), HiddenKind::Feature, false, -1, 0, r});
+                hiddenRecs_.push_back({uint32_t(k), HiddenKind::Feature, -1, 0, r});
                 continue;
             }
             const UnitR& u = *it.u;
@@ -122,7 +122,7 @@ namespace hu = tak::hiddenunits;
                 if (fade) hiddenFades_.inView(hu::structureCover(uint32_t(u.id)));
                 hiddenCoverRec_.push_back(uint32_t(hiddenRecs_.size()));
                 hiddenGrid_.insert(r);
-                hiddenRecs_.push_back({uint32_t(k), HiddenKind::Structure, false, slot, 0, r});
+                hiddenRecs_.push_back({uint32_t(k), HiddenKind::Structure, slot, 0, r});
                 continue;
             }
             if (!u.alive() || u.corpsePhase) continue;
@@ -166,7 +166,7 @@ namespace hu = tak::hiddenunits;
             if (!hit) continue;
             ++candidates;
             if (!fade)   // DOTS: kept for the dot test after the body pass
-                hiddenRecs_.push_back({uint32_t(k), HiddenKind::Unit, true, slot, uint32_t(hiddenGrid_.size()), body});
+                hiddenRecs_.push_back({uint32_t(k), HiddenKind::Unit, slot, uint32_t(hiddenGrid_.size()), body});
         }
         hiddenFades_.advance(fadeMs);
         renderStats_.add(RS::HiddenEligible, eligible);
@@ -223,7 +223,7 @@ namespace hu = tak::hiddenunits;
         overlayBatch_.clear();
         for (size_t i = hiddenRecs_.size(); i-- > 0;) {   // forward: painter order
             const HiddenRec& rec = hiddenRecs_[i];
-            if (!rec.candidate) continue;
+            if (rec.kind != HiddenKind::Unit) continue;   // a cover
             const UnitR& u = *items[rec.item].u;
             const SDL_FPoint c = dotCentre(u);
             if (!screen.contains(c.x, c.y)) continue;
