@@ -370,8 +370,11 @@ struct SavedState {
                 if (x.blend != y.blend) return x.blend < y.blend;
                 return x.rec > y.rec;
             });
-            // Native flat runs: OpenGL at output scale 1 (debug TAK_HIDDEN_NATIVE=0: SDL only).
+            // Native flat runs: OpenGL at output scale 1 (debug TAK_HIDDEN_NATIVE=0: SDL only),
+            // a body the body pass drew from the arena drawn from there (debug
+            // TAK_HIDDEN_ARENA=0: always from its vertices).
             static const bool nativeOff = tak::devEnv("TAK_HIDDEN_NATIVE") && !tak::devFlag("TAK_HIDDEN_NATIVE");
+            static const bool arenaOff = tak::devEnv("TAK_HIDDEN_ARENA") && !tak::devFlag("TAK_HIDDEN_ARENA");
             const bool native = !nativeOff && sx == 1 && sy == 1 && hiddenSubmit_.nativeCapable(ren_) && [&] {
                 if (hiddenWhite_) return true;
                 hiddenWhite_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, 1, 1);
@@ -401,7 +404,13 @@ struct SavedState {
                         if (flat) {
                             for (size_t k = first; k < last; ++k) {
                                 const HiddenDraw& d = hiddenDraws_[k];
-                                hiddenSubmit_.passFlat(visGeom(size_t(hiddenRecs_[d.rec].slot)).verts, colourOf(d));
+                                const UnitGeom& g = visGeom(size_t(hiddenRecs_[d.rec].slot));
+                                if (!arenaOff && g.arenaFrame == bodyArenaFrame_ && g.arenaRevision == g.revision &&
+                                    g.arenaBuffer && bodyArenaBuffers_[size_t(g.arenaStorage)].id() == g.arenaBuffer)
+                                    hiddenSubmit_.passFlatBuffer(g.arenaBuffer, GLint(g.arenaFirst),
+                                                                 GLsizei(g.verts.size()), colourOf(d));
+                                else
+                                    hiddenSubmit_.passFlat(g.verts, colourOf(d));
                             }
                             hiddenSubmit_.passFlatEnd();
                         }

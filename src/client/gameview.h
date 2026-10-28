@@ -1229,6 +1229,13 @@ private:
         // HIDDEN UNITS: screen bounds of verts, valid for boundsRevision == revision.
         std::array<float,4> bodyBounds{};
         uint64_t boundsRevision=~uint64_t(0);
+        // HIDDEN UNITS: where the body pass drew verts from the body arena (storage,
+        // first vertex), valid for arenaFrame == bodyArenaFrame_ and arenaRevision ==
+        // revision: the outline replay draws it from there instead of copying it.
+        uint64_t arenaFrame=0, arenaRevision=0;
+        uint32_t arenaFirst=0;
+        GLuint arenaBuffer=0;
+        int8_t arenaStorage=-1;
         // The silhouette cell this entry's shadow occupies (workstream F,
         // client/shadowatlas.h). Render thread only. Validated against the
         // allocation's recorded owner (handleKey), so an entry that changed owner,
@@ -1352,7 +1359,8 @@ private:
     // D's arithmetic is the CPU's, bit for bit).
     struct BodySource { const SDL_Vertex* data; uint32_t count, slot, generation; uint64_t revision;
                         uint32_t arena = UINT32_MAX;      // planner index (arena frames)
-                        uint32_t assembled = 0; };        // of its vertices copied into assembled commands
+                        uint32_t assembled = 0;           // of its vertices copied into assembled commands
+                        int32_t geom = -1; };             // visGeom slot of a unit body (HIDDEN UNITS)
     struct BodyRange { uint32_t source, offset, count; };
     // One vertex copy into bodyVerts_ (an assembled command, or a changed arena
     // source staged behind them for the frame's single upload).

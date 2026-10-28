@@ -1649,7 +1649,7 @@
                 const uint32_t src = uint32_t(bodySources_.size());
                 bodySources_.push_back({g.verts.data(), uint32_t(g.verts.size()),
                                         g.bodyPending ? tak::render::kArenaNoSlot : g.handle.index,
-                                        g.handle.generation, g.revision});
+                                        g.handle.generation, g.revision, UINT32_MAX, 0, gslot});
                 uint32_t offset = 0;
                 for (const auto& r : g.runs) {
                     openSeg(r.first);
@@ -1873,9 +1873,17 @@
                     op.arenaSlot = int8_t(bodyArena_.commandSlot(command));
                     for (uint32_t k = 0; k < op.ranges; ++k) {
                         const BodyRange& r = bodyRanges_[op.firstRange + k];
-                        tak::render::appendArenaRange(bodyArenaFirsts_, bodyArenaCounts_, begin,
-                            bodyArena_.first(command, first + k), r.count);
-                        if (!bodyArena_.written(bodySources_[r.source].arena)) arenaRetained += r.count;
+                        const uint32_t at = bodyArena_.first(command, first + k);
+                        tak::render::appendArenaRange(bodyArenaFirsts_, bodyArenaCounts_, begin, at, r.count);
+                        const BodySource& src = bodySources_[r.source];
+                        if (!bodyArena_.written(src.arena)) arenaRetained += r.count;
+                        if (src.geom >= 0 && !bodyArenaBuffers_[op.arenaSlot].simulated()) {
+                            // A command's storage holds each of its sources whole.
+                            UnitGeom& g = visGeom(size_t(src.geom));
+                            g.arenaFrame = bodyArenaFrame_; g.arenaRevision = g.revision;
+                            g.arenaFirst = at - r.offset; g.arenaStorage = op.arenaSlot;
+                            g.arenaBuffer = bodyArenaBuffers_[op.arenaSlot].id();
+                        }
                     }
                     op.arenaRanges = uint32_t(bodyArenaFirsts_.size() - begin);
                 }

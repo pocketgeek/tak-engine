@@ -207,13 +207,15 @@ public:
         render::countNativeDraw(vertices,vertices*sizeof(SDL_Vertex),true);
     }
     // Inside a pass: draws in ONE colour each -- passFlatBegin() turns the colour
-    // array off and translates positions by `offset` (before the pass scale),
-    // passFlat() draws vertices in a colour (texture coordinates still come from
-    // them), passFlatEnd() undoes both (the pass's popped attributes restore the
+    // and texture coordinate arrays off (the pass's prime is a 1x1 white texture:
+    // every coordinate samples it) and translates positions by `offset` (before
+    // the pass scale), passFlat() draws vertices in a colour, passFlatBuffer() the
+    // same from a vertex buffer (`count` SDL_Vertex at vertex `first`: no copy),
+    // passFlatEnd() undoes all of it (the pass's popped attributes restore the
     // current colour). False when this GL lacks glColor4ub (draw nothing then).
     bool passFlatBegin(SDL_FPoint offset) {
         if(!inPass_ || !colorConst_)return false;
-        disable_(GL_COLOR_ARRAY);
+        disable_(GL_COLOR_ARRAY);disable_(GL_TEXTURE_COORD_ARRAY);
         pushMatrix_();translate_(offset.x,offset.y,0);
         return true;
     }
@@ -221,14 +223,26 @@ public:
         if(vertices.empty())return;
         if(passArrays_!=0)bindBuffer_(GL_ARRAY_BUFFER,0);
         vertex_(2,GL_FLOAT,sizeof(SDL_Vertex),&vertices[0].position);
-        texcoord_(2,GL_FLOAT,sizeof(SDL_Vertex),&vertices[0].tex_coord);
         passArrays_=0;
         colorConst_(color.r,color.g,color.b,color.a);
         draw_(GL_TRIANGLES,0,GLsizei(vertices.size()));
         render::countNativeDraw(vertices.size(),vertices.size_bytes(),false);
     }
+    void passFlatBuffer(GLuint vertexBuffer,GLint first,GLsizei count,SDL_Color color) {
+        if(count<=0 || !vertexBuffer)return;
+        if(passArrays_!=vertexBuffer) {
+            bindBuffer_(GL_ARRAY_BUFFER,vertexBuffer);
+            vertex_(2,GL_FLOAT,sizeof(SDL_Vertex),reinterpret_cast<const void*>(offsetof(SDL_Vertex,position)));
+            passArrays_=vertexBuffer;
+        }
+        colorConst_(color.r,color.g,color.b,color.a);
+        draw_(GL_TRIANGLES,first,count);
+        render::countNativeDraw(size_t(count),size_t(count)*sizeof(SDL_Vertex),true);
+    }
     void passFlatEnd() {
-        popMatrix_();enable_(GL_COLOR_ARRAY);
+        // Only the position pointer was set: the next draw of the pass sets all three.
+        popMatrix_();enable_(GL_COLOR_ARRAY);enable_(GL_TEXTURE_COORD_ARRAY);
+        passArrays_=kNoArrays;
     }
     void endPass() {
         if(!inPass_)return;
