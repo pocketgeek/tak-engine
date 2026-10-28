@@ -435,7 +435,8 @@ int main(int argc, char** argv) {
             "usage: takclient [mode] --data <retail-install-dir> [options]\n"
             "  With no mode (or only flags), launches the front-end MENU.\n"
             "  modes: menu | game <map> | map <map> | replay <file.takrep> | model <file.3do>\n"
-            "    game single-player: no --server -> auto-hosts a private game vs a server AI.\n"
+            "    game single-player: no --server -> auto-hosts a private game and opens its room\n"
+            "      (seat AIs, READY, START by hand; TAK_SP_AIS=N seats N AIs and starts at once).\n"
             "    game multiplayer:   add --server host [--serverport N] [--name X].\n"
             "    game --campaign <stem>: play a campaign mission (e.g. takmission01_mt).\n"
             "    game <stem> --mission: legacy alias for the same campaign launch.\n"
@@ -1396,7 +1397,8 @@ int main(int argc, char** argv) {
         }
         serverHost = "127.0.0.1"; serverPort = p;
         // Campaign mission -> auto-host it (mode 8); menu skirmish stops in the lobby
-        // (mode 0); CLI single-player auto-plays vs an AI (mode 7).
+        // (mode 0); CLI single-player creates its room and seats the player unready
+        // (mode 7), then also waits for AIs, READY and START unless TAK_SP_AIS is set.
         mpAutoMode = benchmarkLaunch ? 1
                    : !campaignStem.empty() ? 8 : (menuInteractive ? 0 : 7);
         std::fprintf(stderr, "single-player: local server on port %d%s\n", p,
