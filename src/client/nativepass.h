@@ -18,13 +18,11 @@
 //            pass, and the caller draws command by command as before.
 //            Then GeometrySubmit::openPass saves the vertex-array, colour,
 //            matrix and buffer state, and this saves the program, the active
-//            unit, units 1-4, the blend factors and the scissor box.
+//            unit, units 1-4 and the blend factors.
 //   use*()   select the program and texture of the next command: an
 //            SDL-identical RGBA program sampling unit 4 (useTexture), or a
 //            caller's program sampling units 1-3 (useProgram: the indexed
 //            palette). Unit 0 -- SDL's texture binding -- is never touched.
-//   setScissor() narrows the primed scissor box for the next draws (a SHADOW
-//            ghost's clip); restoreScissor() puts SDL's box back.
 //   end()    restores what begin() saved, in reverse, so SDL's cache is true.
 //
 // Joining textures (joinable()): SDL would draw them with SHADER_RGBA (ARGB8888 /
@@ -126,9 +124,6 @@ public:
         }
         if (!submit.openPass()) { ++refusedPrime_; return false; }
         savedProgram_ = program;
-        scissorOn_ = isEnabled_(GL_SCISSOR_TEST);
-        getInteger_(GL_SCISSOR_BOX, primedScissor_);
-        scissorMoved_ = false;
         getInteger_(GL_ACTIVE_TEXTURE, &savedActive_);
         for (int i = 0; i < kUnits; ++i) {
             activeTexture_(GLenum(GL_TEXTURE1 + i));
@@ -160,29 +155,8 @@ public:
         useBlend(false);
     }
 
-    // The scissor box SDL primed the pass with (its clip rectangle, GL window
-    // coordinates); false when SDL clips nothing.
-    bool primedScissor(GLint (&box)[4]) const {
-        if (!open_ || !scissorOn_) return false;
-        for (int k = 0; k < 4; ++k) box[k] = primedScissor_[k];
-        return true;
-    }
-    // Narrows the next draws to `box` (GL window coordinates, inside the primed box;
-    // only while SDL clips); restoreScissor() or end() puts SDL's box back.
-    void setScissor(const GLint (&box)[4]) {
-        if (!open_ || !scissorOn_) return;
-        scissor_(box[0], box[1], box[2], box[3]);
-        scissorMoved_ = true;
-    }
-    void restoreScissor() {
-        if (!open_ || !scissorMoved_) return;
-        scissor_(primedScissor_[0], primedScissor_[1], primedScissor_[2], primedScissor_[3]);
-        scissorMoved_ = false;
-    }
-
     void end(GeometrySubmit& submit) {
         if (!open_) return;
-        restoreScissor();
         useBlend(primedPremultiplied_);
         selectProgram(GLuint(savedProgram_));
         for (int i = 0; i < kUnits; ++i) bind(i, GLuint(savedBinding_[i]));
@@ -264,7 +238,7 @@ private:
             proc(getProgramiv_, "glGetProgramiv") && proc(getProgramInfoLog_, "glGetProgramInfoLog") &&
             proc(deleteProgram_, "glDeleteProgram") && proc(useProgram_, "glUseProgram") &&
             proc(getUniformLocation_, "glGetUniformLocation") && proc(uniform1i_, "glUniform1i") &&
-            proc(blendFuncSeparate_, "glBlendFuncSeparate") && proc(scissor_, "glScissor");
+            proc(blendFuncSeparate_, "glBlendFuncSeparate");
         if (!ok) { error_ = "GL 2.0 entry points"; return false; }
         const auto* version = reinterpret_cast<const char*>(getString_(GL_VERSION));
         if (!version || std::atoi(version) < 2) { error_ = "GL version"; return false; }
@@ -349,8 +323,6 @@ private:
     GLuint plain_ = 0, current_ = 0, bound_[kUnits] = {0, 0, 0, 0};
     GLint savedProgram_ = 0, savedActive_ = GL_TEXTURE0, savedBinding_[kUnits] = {0, 0, 0, 0}, primedBlend_[4] = {0, 0, 0, 0};
     bool open_ = false, premultiplied_ = false, primedPremultiplied_ = false;
-    GLint primedScissor_[4] = {0, 0, 0, 0};
-    bool scissorOn_ = false, scissorMoved_ = false;
     SDL_GLContext context_ = nullptr;
     bool usable_ = false, verify_ = false;
     std::string error_, lastFailure_;
@@ -379,7 +351,6 @@ private:
     GLint (APIENTRY* getUniformLocation_)(GLuint, const GLchar*) = nullptr;
     void (APIENTRY* uniform1i_)(GLint, GLint) = nullptr;
     void (APIENTRY* blendFuncSeparate_)(GLenum, GLenum, GLenum, GLenum) = nullptr;
-    void (APIENTRY* scissor_)(GLint, GLint, GLsizei, GLsizei) = nullptr;
 };
 
 }  // namespace tak

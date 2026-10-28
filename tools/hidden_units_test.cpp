@@ -3,9 +3,9 @@
 // The option's persisted names, the painter layer that puts flat features (TDF height
 // below 10) under every unit, the pieces the DOTS test is built from (the sprite
 // opacity mask with the sway shear, the model triangle test, the screen bins the frame
-// walks backwards) and the SHADOW ghosts' alpha and chained ranges. The draw itself
-// (cover order, fog, shadow pixels) is checked through the real renderer by the
-// hidden_units harness test (TAK_HIDDEN_UNITS_TEST).
+// walks backwards) and FADE's cover tests and fades. The draw itself (cover order,
+// fog, faded pixels) is checked through the real renderer by the hidden_units harness
+// test (TAK_HIDDEN_UNITS_TEST).
 
 #include "client/hiddenunits.h"
 
@@ -33,14 +33,15 @@ int main() {
     check("default is FADE", hu::kDefault == hu::kFade);
     check("names round trip", hu::parse(hu::name(hu::kOff)) == hu::kOff &&
                               hu::parse(hu::name(hu::kDots)) == hu::kDots &&
-                              hu::parse(hu::name(hu::kShadow)) == hu::kShadow &&
                               hu::parse(hu::name(hu::kFade)) == hu::kFade);
-    check("saved as fade", std::string(hu::name(hu::kFade)) == "fade" && hu::parse("3") == hu::kFade);
-    check("four modes", hu::kModeCount == 4 && hu::kFade == hu::kModeCount - 1);
-    check("saved as shadow", std::string(hu::name(hu::kShadow)) == "shadow");
+    check("saved by name", std::string(hu::name(hu::kOff)) == "off" && std::string(hu::name(hu::kDots)) == "dots" &&
+                           std::string(hu::name(hu::kFade)) == "fade");
+    check("three modes", hu::kModeCount == 3 && hu::kFade == hu::kModeCount - 1);
+    check("numbers read", hu::parse("0") == hu::kOff && hu::parse("1") == hu::kDots &&
+                          hu::parse("2") == hu::kFade && hu::parse("3") == hu::kFade);
     check("unknown value reads as the default", hu::parse("") == hu::kDefault && hu::parse("halo") == hu::kDefault);
-    check("shadow still read", hu::parse("shadow") == hu::kShadow && hu::parse("2") == hu::kShadow);
-    check("the replaced OUTLINE reads as the default", hu::parse("outline") == hu::kDefault);
+    check("the removed SHADOW and OUTLINE read as FADE", hu::parse("shadow") == hu::kFade &&
+                                                         hu::parse("outline") == hu::kFade);
 
     // ---- the low layer ----
     check("height 0 and 9 are low, 10 and 226 are not",
@@ -127,53 +128,18 @@ int main() {
 
     // ---- rectangles ----
     {
-        hu::Rect a{0, 0, 10, 10}, b{10, 0, 20, 10}, u;
+        hu::Rect a{0, 0, 10, 10}, b{10, 0, 20, 10};
         check("touching rectangles do not overlap", !a.overlaps(b));
-        u.unite(a); u.unite(b); u.unite(hu::Rect{});
-        check("union", u.x0 == 0 && u.x1 == 20 && u.y1 == 10);
+        check("a rectangle overlaps itself, an empty one nothing", a.overlaps(a) && !a.overlaps(hu::Rect{}));
         check("clip", a.clipped({5, 5, 50, 50}).x0 == 5 && hu::Rect{20, 20, 30, 30}.clipped(a).empty());
-    }
-
-    // ---- SHADOW ----
-    check("shadow about 45%, the veil the rest", hu::kShadowOpacity >= 100 && hu::kShadowOpacity <= 130 &&
-                                                 hu::kVeilAlpha + hu::kShadowOpacity == 255);
-    check("stronger through a building", hu::kBuildingShadowOpacity > hu::kShadowOpacity &&
-                                         hu::kBuildingVeilAlpha + hu::kBuildingShadowOpacity == 255);
-    check("alpha scaling", hu::scaleAlpha(255, 115) == 115 && hu::scaleAlpha(0, 200) == 0 &&
-                           hu::scaleAlpha(128, 255) == 128 && hu::scaleAlpha(200, 128) == 100);
-    {
-        // Draw order A, B, C, D (by last cover). A and B overlap, B and C overlap, D is
-        // apart: B starts no later than A, C no later than B (so A, through B), D keeps
-        // its own start.
-        std::vector<hu::Ghost> g = {{{0, 0, 20, 20}, 50, 60},
-                                    {{10, 10, 30, 30}, 55, 70},
-                                    {{25, 25, 45, 45}, 65, 80},
-                                    {{300, 300, 320, 320}, 10, 90}};
-        hu::CoverGrid grid;
-        hu::chainStarts(std::span<hu::Ghost>(g), grid, 640, 480);
-        check("chain: the first keeps its start", g[0].start == 50);
-        check("chain: an overlap starts no later than the earlier ghost", g[1].start == 50);
-        check("chain: through a chain of overlaps", g[2].start == 50);
-        check("chain: a ghost apart keeps its start", g[3].start == 10);
-        std::vector<hu::Ghost> touching = {{{0, 0, 10, 10}, 5, 6}, {{10, 0, 20, 10}, 7, 8}};
-        hu::chainStarts(std::span<hu::Ghost>(touching), grid, 640, 480);
-        check("chain: touching rectangles do not chain", touching[1].start == 7);
-    }
-    {
-        // A-B overlap, B-C overlap (A and C do not): one group; D apart; E empty.
-        const std::vector<hu::Rect> r = {{0, 0, 20, 20}, {300, 300, 320, 320}, {15, 15, 40, 40},
-                                         {35, 35, 60, 60}, {}};
-        std::vector<uint32_t> group;
-        hu::CoverGrid grid;
-        hu::groupOverlaps(std::span<const hu::Rect>(r), grid, 640, 480, group);
-        check("group: overlaps join, through others too", group[0] == 0 && group[2] == 0 && group[3] == 0);
-        check("group: apart and empty stay alone", group[1] == 1 && group[4] == 4);
     }
 
     // ---- FADE ----
     check("fade default 65%", hu::kDefaultFadePercent == 65 && hu::fadeOpacity(65) == 166);
     check("fade opacity ends", hu::fadeOpacity(0) == 0 && hu::fadeOpacity(100) == 255 &&
                                hu::fadeOpacity(-3) == 0 && hu::fadeOpacity(140) == 255 && hu::fadeOpacity(50) == 128);
+    check("alpha scaling", hu::scaleAlpha(255, 115) == 115 && hu::scaleAlpha(0, 200) == 0 &&
+                           hu::scaleAlpha(128, 255) == 128 && hu::scaleAlpha(200, 128) == 100);
     check("cover keys apart", hu::featureCover(5) != hu::structureCover(5) &&
                               hu::structureCover(5) == hu::structureCover(5));
     {

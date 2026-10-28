@@ -5,9 +5,9 @@
 // render target. A clip rectangle that is empty or wholly off the target leaves the
 // PREVIOUS scissor in force, so the draws it was meant to remove land clipped to
 // whatever was set before (often the whole view). OpenGL, Direct3D and the software
-// renderer clip them all away. Seen as the hidden-units SHADOW redraw form at output
-// scale 2: a ghost in the half of the view past the target's bottom edge set its clip
-// off the target, and its see-through redraw landed on the screen, on Metal only.
+// renderer clip them all away. First seen at output scale 2: a clip set for a part of
+// the view past the target's bottom edge was off the target, and the draws it was to
+// remove landed on the screen, on Metal only.
 //
 // So a clip rectangle that can miss the target is set through set(), and the draws it
 // clips are skipped when that returns false (covers() asks without setting anything).

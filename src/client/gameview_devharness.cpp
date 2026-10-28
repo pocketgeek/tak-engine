@@ -625,28 +625,16 @@
         }
         if (tak::devFlag("TAK_HIDDEN_UNITS_TEST")) {
             // HIDDEN UNITS through the real draw(): a flat feature sorts under every
-            // unit; units behind a tree or a building get a dot (DOTS) or show through
-            // it (SHADOW: changed pixels only on the cover, the part in sight as with
-            // OFF, also at output scales 1.5 and 2 and from distant images); units in the
-            // open, in front of the tree or on a flat feature get nothing; fog still
-            // hides enemies; OFF and Tactical Dots frames do nothing; a hidden dot is
-            // clickable. TAK_HIDDEN_UNITS_CAPTURE=<prefix> writes <prefix>-off/-dots/
-            // -shadow.png (and -x1.5 / -x2 / -z0.5 pairs).
+            // unit; units behind a tree or a building get a dot (DOTS) or fade that
+            // tree or building (FADE); units in the open, in front of the tree or on a
+            // flat feature get nothing; fog still hides enemies; OFF and Tactical Dots
+            // frames do nothing; a hidden dot is clickable.
+            // TAK_HIDDEN_UNITS_CAPTURE=<prefix> writes <prefix>-off/-dots/-fade-off/-fade.png.
             namespace hu = tak::hiddenunits;
             const auto check=[](bool ok,const std::string& what) {
                 if (!ok) throw std::runtime_error("hidden units: "+what);
                 std::fprintf(stderr,"PASS: hidden units: %s\n",what.c_str());
             };
-            // TAK_HIDDEN_UNITS_GL=1: the OpenGL form of the test (ctest hidden_units_gl):
-            // skipped where no OpenGL renderer could be made, and the stencil form required.
-            const bool glForm=tak::devFlag("TAK_HIDDEN_UNITS_GL");
-            {
-                SDL_RendererInfo ri{};SDL_GetRendererInfo(ren_,&ri);
-                if (glForm && (!ri.name || std::strcmp(ri.name,"opengl"))) {
-                    std::fprintf(stderr,"SKIP: hidden units: no OpenGL renderer here (%s)\n",ri.name ? ri.name : "?");
-                    return;
-                }
-            }
             constexpr int W=1280,H=960;
             float zoom=1.0f;
             noFog_=false;edgeScrollOn_=false;tacticalDotsOpt_=false;healthBars_=0;
@@ -683,10 +671,6 @@
                 if (mask.opaque(features_[treeA].xoff,y)) { if (top<0) top=y; bottom=y; }
             check(top>=0 && features_[treeA].yoff-(top+bottom)/2>12,"tree crown above its base");
             const float behindDz=float(features_[treeA].yoff-(top+bottom)/2);
-            // The crown's right edge on that row: a unit standing there is half hidden.
-            int crownRight=features_[treeA].xoff;
-            while (crownRight+1<mask.width() && mask.opaque(crownRight+1,(top+bottom)/2)) ++crownRight;
-            const float peekDx=float(crownRight-features_[treeA].xoff);
             int particlesOn=-1;   // a unit given one construction particle (drawUnit path)
             const auto frame=[&](const char* capture=nullptr) {
                 captureFrame();beginFrame();cosmeticStep(0);
@@ -711,7 +695,6 @@
                 return std::pair{px,ow};
             };
             const int behind=spawn("arasword",x0,z0-behindDz,0,0);
-            const int peek=spawn("arasword",x0+peekDx,z0-behindDz,0,0);
             const int open=spawn("arasword",x0-70,z0-behindDz,0,0);
             const int front=spawn("arasword",x0,z0+28,0,0);
             const int foeSeen=spawn("arasword",features_[treeB].x,features_[treeB].z-behindDz,0,1);
@@ -721,14 +704,14 @@
             const int onSmudge=spawn("arasword",features_[smudge].x,features_[smudge].z-6,0,0);
             const int keep=spawn("arakeep",x0+320,z0+40,0,0);
             const int behindKeep=spawn("arasword",x0+320,z0+10,0,0);
-            // Behind two overlapping trees, and behind a lodestone (a model with a
+            // Behind two overlapping trees, and behind a lodestone (a building with a
             // translucent glow over its own faces).
             const size_t treeC=place("aratree01",cx0+10,cz0-12);
             place("aratree01",cx0+11,cz0-11);
             const int behindTwo=spawn("arasword",features_[treeC].x+8,features_[treeC].z-behindDz,0,0);
             const int lode=spawn("tarlode",x0+120,z0+300,0,0);
             const int behindLode=spawn("arasword",x0+120,z0+270,0,0);
-            check(behind>=0 && peek>=0 && open>=0 && front>=0 && foeSeen>=0 && foeFog>=0 && onSmudge>=0 && keep>=0 &&
+            check(behind>=0 && open>=0 && front>=0 && foeSeen>=0 && foeFog>=0 && onSmudge>=0 && keep>=0 &&
                   behindKeep>=0 && behindTwo>=0 && lode>=0 && behindLode>=0,"fixture spawned");
             const char* capture=tak::devEnv("TAK_HIDDEN_UNITS_CAPTURE");
             const auto shot=[&](const std::string& mode) {
@@ -794,225 +777,13 @@
                 tacticalDotsOpt_=false;frame();
                 check(!dotsFrame_,"models back");
             }
-            // ---- SHADOW ----
-            float sx=1,sy=1;
-            // A unit's box (model box over all headings) in output pixels.
+            // A unit's box (model box over all headings), in pixels (output scale 1).
             const auto boxOf=[&](int id) {
                 const UnitR& u=frameUnit(id);
                 const SDL_FPoint a=dotCentre(u);
                 const SDL_FRect& hb=unitHitBox(u.type);
-                return SDL_Rect{int((a.x+hb.x*zoom)*sx),int((a.y+hb.y*zoom)*sy),
-                                int(hb.w*zoom*sx)+1,int(hb.h*zoom*sy)+1};
+                return SDL_Rect{int(a.x+hb.x*zoom),int(a.y+hb.y*zoom),int(hb.w*zoom)+1,int(hb.h*zoom)+1};
             };
-            // Is the logical point under an opaque pixel of the tree sprite or the
-            // keep's triangles (as drawn this frame)? One pixel of slack for edges.
-            const auto onCover=[&](float px,float py) {
-                for (int dy=-1;dy<=1;++dy) for (int dx=-1;dx<=1;++dx) {
-                    const float x=px+float(dx)/sx,y=py+float(dy)/sy;
-                    for (size_t t:{treeA,treeB}) {
-                        const FeatureSprite sp=featureSprite(features_[t],zoom);
-                        if (sp.mask && hu::spriteCovers(*sp.mask,sp.dst.x,sp.dst.y,sp.dst.w,sp.dst.h,sp.shear,x,y))
-                            return true;
-                    }
-                    const int slot=geomSlot(keep);
-                    if (slot>=0) {
-                        const auto& d=distantModelItems_[size_t(slot)];
-                        if (d.texture ? hu::trianglesCover(std::span<const SDL_Vertex>(d.quad),x,y)
-                                      : hu::trianglesCover(std::span<const SDL_Vertex>(visGeom(size_t(slot)).verts),x,y))
-                            return true;
-                    }
-                }
-                return false;
-            };
-            // In a unit's box: pixels changed between two frames, those changed by more
-            // than 2 levels (beyond rounding), and changed pixels NOT on a cover.
-            struct Diff { size_t changed=0,strong=0,offCover=0; int offCoverMost=0; };
-            const auto diff=[&](const std::vector<uint8_t>& p0,const std::vector<uint8_t>& p1,int w,int id) {
-                Diff d;
-                const SDL_Rect b=boxOf(id);
-                const int h=int(p0.size()/4/size_t(std::max(1,w)));
-                for (int y=std::max(0,b.y);y<std::min(h,b.y+b.h);++y)
-                    for (int x=std::max(0,b.x);x<std::min(w,b.x+b.w);++x) {
-                        const size_t i=(size_t(y)*size_t(w)+size_t(x))*4;
-                        int most=0;
-                        for (int c=0;c<3;++c) most=std::max(most,std::abs(int(p0[i+c])-int(p1[i+c])));
-                        if (!most) continue;
-                        ++d.changed;
-                        d.strong+=most>2;
-                        if (!onCover((float(x)+0.5f)/sx,(float(y)+0.5f)/sy)) {
-                            ++d.offCover;
-                            d.offCoverMost=std::max(d.offCoverMost,most);
-                        }
-                    }
-                return d;
-            };
-            const auto ghosted=[&](int id) {
-                return std::find(debugHiddenGhostIds_.begin(),debugHiddenGhostIds_.end(),id)!=debugHiddenGhostIds_.end();
-            };
-            const auto exact=[&](int id) {
-                return std::find(debugHiddenExactIds_.begin(),debugHiddenExactIds_.end(),id)!=debugHiddenExactIds_.end();
-            };
-            // OFF then SHADOW: the covered units change only on the cover, by a real
-            // shadow; the units in sight are untouched.
-            bool distantRound=false;
-            bool stencilForm=false;   // the form the SHADOW frames must have been drawn by
-            const auto shadowRound=[&](const std::string& tag,const std::string& off,const std::string& on) {
-                SDL_RenderGetScale(ren_,&sx,&sy);
-                hiddenUnitsMode_=hu::kOff;
-                const auto [p0,w0]=frame(at(off));
-                hiddenUnitsMode_=hu::kShadow;
-                hiddenStencil_.takeChanges();
-                auto [p1,w1]=frame(at(on));
-                std::fprintf(stderr,"  SHADOW frame%s: %llu native passes, %llu stencil state changes, %llu covers "
-                             "see-through in a pass\n",tag.c_str(),(unsigned long long)nativePasses_,
-                             (unsigned long long)hiddenStencil_.takeChanges(),(unsigned long long)debugHiddenPassVeils_);
-                check(!p0.empty() && p1.size()==p0.size() && w0==w1,"frames read back"+tag);
-                check(debugHiddenStencil_==stencilForm,std::string("drawn by the ")+(stencilForm ? "stencil" : "redraw")+
-                      " form"+tag);
-                check(ghosted(behind) && ghosted(peek) && ghosted(foeSeen) && ghosted(behindKeep),
-                      "ghosts for the units behind the trees and the keep"+tag);
-                check(!ghosted(open) && !ghosted(front) && !ghosted(onSmudge) && !ghosted(foeFog) && !ghosted(keep),
-                      "no ghost in the open, in front, on flat scenery, in fog, for a building"+tag);
-                check(hiddenDotIds_.empty(),"SHADOW draws no dots"+tag);
-                for (const auto& [id,name]:{std::pair{behind,"behind the tree"},std::pair{peek,"half behind the tree"},
-                                            std::pair{foeSeen,"enemy behind a tree"},std::pair{behindKeep,"behind the keep"}}) {
-                    const Diff d=diff(p0,p1,w0,id);
-                    std::fprintf(stderr,"  %s%s: %zu changed, %zu by more than 2, %zu off the cover (by up to %d), %s\n",
-                                 name,tag.c_str(),d.changed,d.strong,d.offCover,d.offCoverMost,exact(id) ? "exact" : "translucent");
-                    check(d.strong>20,std::string("shadow drawn: ")+name+tag);
-                    // A distant image is drawn filtered: its own soft edge, drawn again
-                    // over itself, comes out a little stronger (a few edge pixels).
-                    check(d.offCover==0 || (distantRound && d.offCover*8<=d.changed && d.offCoverMost<=32),
-                          std::string("changed only on the cover (in sight as with OFF): ")+name+tag);
-                }
-                {   // Over the whole view: every changed pixel lies inside a ghost's rectangle
-                    // (its clip). Off the hidden bodies the cover may change a little -- a
-                    // tree redrawn see-through over another, a building's faces or glow over
-                    // its own -- which is reported, not failed. The stencil form changes
-                    // nothing but the hidden bodies' pixels.
-                    const int h=int(p0.size()/4/size_t(std::max(1,w0)));
-                    size_t changed=0,outside=0,offBody=0;
-                    int offBodyMost=0;
-                    for (int y=0;y<h;++y) for (int x=0;x<w0;++x) {
-                        const size_t i=(size_t(y)*size_t(w0)+size_t(x))*4;
-                        int most=0;
-                        for (int c=0;c<3;++c) most=std::max(most,std::abs(int(p0[i+c])-int(p1[i+c])));
-                        if (!most) continue;
-                        ++changed;
-                        const float lx=(float(x)+0.5f)/sx,ly=(float(y)+0.5f)/sy;
-                        bool inRect=stencilForm,onBody=false;
-                        for (const HiddenGhost& g:hiddenGhosts_) {
-                            const hu::Rect& r=g.range.rect;
-                            inRect=inRect || hu::Rect{std::floor(r.x0),std::floor(r.y0),std::ceil(r.x1),std::ceil(r.y1)}.contains(lx,ly);
-                        }
-                        for (int id:debugHiddenGhostIds_) {
-                            const int slot=geomSlot(id);
-                            if (!inRect || slot<0) continue;
-                            const auto& d=distantModelItems_[size_t(slot)];
-                            const auto verts=d.texture ? std::span<const SDL_Vertex>(d.quad)
-                                                       : std::span<const SDL_Vertex>(visGeom(size_t(slot)).verts);
-                            for (int dy=-1;dy<=1 && !onBody;++dy) for (int dx=-1;dx<=1 && !onBody;++dx)
-                                onBody=hu::trianglesCover(verts,lx+float(dx)/sx,ly+float(dy)/sy);
-                            if (onBody) break;
-                        }
-                        outside+=!inRect;
-                        if (inRect && !onBody && most>2) { ++offBody; offBodyMost=std::max(offBodyMost,most); }
-                    }
-                    std::fprintf(stderr,"  whole view%s: %zu changed, %zu outside the ghosts, %zu by more than 2 off the hidden bodies (by up to %d)\n",
-                                 tag.c_str(),changed,outside,offBody,offBodyMost);
-                    check(outside==0,"changed only inside the ghosts"+tag);
-                    if (stencilForm) check(offBody==0,"changed only on the hidden bodies"+tag);
-                    check(ghosted(behindTwo) && ghosted(behindLode),"ghosts behind two trees and a lodestone"+tag);
-                }
-                for (const auto& [id,name]:{std::pair{open,"in the open"},std::pair{front,"in front of the tree"}}) {
-                    const Diff d=diff(p0,p1,w0,id);
-                    check(d.changed==0,std::string("unit ")+name+" untouched"+tag);
-                }
-                return std::pair{std::move(p1),w1};
-            };
-            // Both forms where the renderer has the stencil one (OpenGL with a stencil on
-            // the window: client/hiddenstencil.h), else the redraw form: the same checks.
-            // Captures: -shadow* (redraw), -shadow-stencil* (stencil).
-            hiddenStencilAllowed_=true;
-            const bool stencilHere=hiddenStencilUsable();
-            std::fprintf(stderr,"  stencil form %s (window stencil %d bits)\n",stencilHere ? "available" : "not available",
-                         hiddenStencil_.bits());
-            if (glForm) check(stencilHere,"OpenGL with a stencil on the window: the stencil form");
-            std::vector<uint8_t> formShots[2][4];   // [stencil, redraw][round]: the SHADOW frames
-            int formWidth[4]={0,0,0,0};
-            for (int form=stencilHere ? 0 : 1;form<2;++form) {
-                stencilForm=form==0;
-                hiddenStencilAllowed_=stencilForm;
-                const std::string f=stencilForm ? " [stencil]" : " [redraw]";
-                const std::string suffix=stencilForm ? "-stencil" : "";
-                const bool offShots=form==1;   // the OFF frames once
-                auto [p,w]=shadowRound(f,offShots ? shot("off") : std::string(),shot("shadow"+suffix));
-                formShots[form][0]=std::move(p);formWidth[0]=w;
-                check(exact(behind) && exact(peek) && exact(foeSeen) && exact(behindKeep),"plain bodies are redrawn exactly"+f);
-                {   // Under repair (its particles send it through drawUnit) the keep still covers;
-                    // a unit drawn through drawUnit itself: the redraw form's translucent ghost,
-                    // the stencil form's own pixels (effects included: changed only on a cover).
-                    const auto effects=[&](int on,int id,const std::string& name) {
-                        particlesOn=on;
-                        hiddenUnitsMode_=hu::kOff;
-                        const auto [p0,w0]=frame();
-                        hiddenUnitsMode_=hu::kShadow;
-                        const auto [p1,w1]=frame();
-                        particlesOn=-1;
-                        const Diff d=diff(p0,p1,w0,id);
-                        std::fprintf(stderr,"  %s%s: %zu changed, %zu by more than 2, %zu off the cover (by up to %d)\n",
-                                     name.c_str(),f.c_str(),d.changed,d.strong,d.offCover,d.offCoverMost);
-                        check(d.strong>20,"shadow drawn: "+name+f);
-                        if (stencilForm) check(d.offCover==0,"changed only on the cover: "+name+f);
-                    };
-                    effects(keep,behindKeep,"unit behind a building under repair");
-                    check(ghosted(behindKeep) && exact(behindKeep),"unit behind a building under repair: shadow"+f);
-                    effects(behind,behind,"unit with drawUnit effects");
-                    check(ghosted(behind) && exact(behind)==stencilForm,
-                          std::string("unit with drawUnit effects: ")+(stencilForm ? "exact" : "translucent")+" shadow"+f);
-                }
-                SDL_RenderSetScale(ren_,1.5f,1.5f);
-                std::tie(p,w)=shadowRound(" (output scale 1.50)"+f,offShots ? shot("off-x1.5") : std::string(),
-                                          shot("shadow"+suffix+"-x1.5"));
-                formShots[form][1]=std::move(p);formWidth[1]=w;
-                // A whole output scale keeps OpenGL's native passes, where a ghost draws
-                // inside the body pass's span under a scissor of its own.
-                SDL_RenderSetScale(ren_,2,2);
-                std::tie(p,w)=shadowRound(" (output scale 2.00)"+f,offShots ? shot("off-x2") : std::string(),
-                                          shot("shadow"+suffix+"-x2"));
-                formShots[form][2]=std::move(p);formWidth[2]=w;
-                SDL_RenderSetScale(ren_,1,1);
-                {   // Zoomed out: still units are drawn from their distant images (where the
-                    // renderer has them); the redraw form redraws the image, never the model.
-                    zoom=0.5f;
-                    for (int i=0;i<40;++i) frame();   // images baked, the fog's fade settled
-                    const int slot=geomSlot(behind);
-                    const bool images=slot>=0 && distantModelItems_[size_t(slot)].texture;
-                    distantRound=!stencilForm;   // the stencil form draws nothing twice
-                    if (images) {
-                        std::tie(p,w)=shadowRound(" (zoom 0.50, distant images)"+f,offShots ? shot("off-z0.5") : std::string(),
-                                                  shot("shadow"+suffix+"-z0.5"));
-                        formShots[form][3]=std::move(p);formWidth[3]=w;
-                    } else std::fprintf(stderr,"  (no distant images on this renderer: zoom 0.50 round skipped)\n");
-                    distantRound=false;
-                    zoom=1.0f;
-                }
-            }
-            hiddenStencilAllowed_=true;
-            if (stencilHere)   // how far apart the two forms are (information: the redraw
-                for (int r=0;r<4;++r) {   // form is approximate at soft edges and overlaps)
-                    const auto& a=formShots[0][r];
-                    const auto& b=formShots[1][r];
-                    if (a.empty() || a.size()!=b.size()) continue;
-                    size_t differ=0,strong=0;
-                    for (size_t i=0;i<a.size();i+=4) {
-                        int most=0;
-                        for (int c=0;c<3;++c) most=std::max(most,std::abs(int(a[i+c])-int(b[i+c])));
-                        differ+=most>0;strong+=most>8;
-                    }
-                    std::fprintf(stderr,"  stencil vs redraw, round %d (%d wide): %zu pixels differ, %zu by more than 8\n",
-                                 r,formWidth[r],differ,strong);
-                }
             // ---- FADE ----
             // A tree, rock or building over a unit the frame looks at fades whole once the
             // fade-out time has passed (FADE's clock is the harness's here); a tree with no
@@ -1020,7 +791,6 @@
             // the frame is OFF's. A small forest with units under it joins the view
             // (captures -fade-off / -fade).
             {
-                SDL_RenderGetScale(ren_,&sx,&sy);
                 uint64_t clock=1000;
                 const auto fadeFrame=[&](uint64_t stepMs,const std::string& capture=std::string()) {
                     clock+=stepMs;debugHiddenFadeNowMs_=clock;
@@ -1068,9 +838,7 @@
                 check(alphaOf(treeA)==faded && alphaOf(treeB)==faded && alphaOf(treeC)==faded,
                       "FADE: trees over units faded to 65% after the fade-out time");
                 check(keepAlpha()==faded,"FADE: the keep over a unit faded to 65%");
-                // No SHADOW machinery at all: no stencil, no ghost.
-                check(!debugHiddenStencil_ && !hiddenStencilFrame_ && hiddenGhosts_.empty() && debugHiddenGhostIds_.empty(),
-                      "FADE: no SHADOW stencil or ghosts");
+                check(hiddenStructureAlpha(frameUnit(lode))==faded,"FADE: the lodestone over a unit faded to 65%");
                 size_t forestFaded=0;
                 for (size_t t:forest) forestFaded+=alphaOf(t)==faded;
                 std::fprintf(stderr,"  FADE: %zu of %zu forest trees faded, %zu fading covers\n",forestFaded,
@@ -1079,8 +847,9 @@
                 check(alphaOf(treeLone)==255 && changedIn(p0,p1,w0,rectOf(treeLone))==0,
                       "FADE: a tree with no unit under it unchanged");
                 check(alphaOf(treeFog)==255,"FADE: an enemy in fog under a tree does not fade it");
-                check(diff(p0,p1,w0,behind).strong>20,"FADE: the unit behind the tree shows");
-                check(diff(p0,p1,w0,behindKeep).strong>20,"FADE: the unit behind the keep shows");
+                check(changedIn(p0,p1,w0,boxOf(behind))>20,"FADE: the unit behind the tree shows");
+                check(changedIn(p0,p1,w0,boxOf(behindKeep))>20,"FADE: the unit behind the keep shows");
+                check(changedIn(p0,p1,w0,boxOf(behindLode))>20,"FADE: the unit behind the lodestone shows");
                 // 100%: the covers stay whole -- the frame is OFF's.
                 hiddenFadeOpacity_=hu::fadeOpacity(100);
                 const auto [p100,w100]=fadeFrame(16);

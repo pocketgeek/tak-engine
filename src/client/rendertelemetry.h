@@ -181,7 +181,7 @@ enum class Phase : uint8_t {
     Effects,         // particles, effects, unit fx
     Fog,             // fog-of-war overlay
     SchedulePlan,    // (nested) building the cost plans of the pool passes (workstream I)
-    HiddenUnits,     // HIDDEN UNITS option: cover search, dot tests, SHADOW ghosts
+    HiddenUnits,     // HIDDEN UNITS option: cover search, fade and dot tests
     Count
 };
 
@@ -451,13 +451,12 @@ enum class Counter : uint8_t {
     NativePassRefused,
     NativePrimes,
     // HIDDEN UNITS (client/hiddenunits.h): eligible ground units looked at, of which
-    // a later cover overlaps (candidates), units given a dot or a SHADOW ghost, and
-    // the painter items the ghosts drew again (the stencil form: the covers drawn a
-    // second time, see-through).
+    // a later cover reaches (candidates; DOTS: overlaps), units given a dot (DOTS),
+    // and the covers drawn faded (FADE: fading out, faded, or fading back in).
     HiddenEligible,
     HiddenCandidates,
     HiddenMarked,
-    HiddenRedrawn,
+    HiddenFaded,
     Count
 };
 
@@ -542,7 +541,7 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "palette_mode", "palette_pages", "palette_gpu_bytes", "palette_cpu_bytes", "palette_upload_bytes",
     "palette_indexed_draws", "palette_fallbacks", "palette_switches", "palette_spans",
     "palette_span_commands", "native_passes", "native_pass_commands", "native_pass_refused",
-    "native_primes", "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_redrawn"};
+    "native_primes", "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

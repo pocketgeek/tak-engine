@@ -6,9 +6,6 @@
 //   DOTS    -- when the scenery covers the centre of a unit, that unit's tactical
 //              dot (client/tacticaldots.h: same size, colour and selection rim)
 //              is drawn on top. A unit whose centre is in plain sight gets none.
-//   SHADOW  -- the cover turns see-through where it hides the unit: the covered
-//              part shows as a faint shadow through the tree or the wall, the part
-//              in sight is untouched (see Ghost below).
 //   FADE    -- a tree, rock or building over a unit fades out whole (to the FADE
 //              OPACITY setting) and back in once no unit is under it (CoverFades
 //              below). The default.
@@ -21,7 +18,7 @@
 // This header is the policy, kept free of GameView so it can be tested on its own:
 // the option values, the painter layers (the retail order of low features), the
 // exact cover tests, the screen bins that find a unit's possible covers and the
-// order of the SHADOW ghosts.
+// fades.
 
 #include <algorithm>
 #include <cmath>
@@ -33,21 +30,19 @@
 
 namespace tak::hiddenunits {
 
-enum Mode : int { kOff = 0, kDots = 1, kShadow = 2, kFade = 3 };
+enum Mode : int { kOff = 0, kDots = 1, kFade = 2 };
 inline constexpr int kDefault = kFade;
-inline constexpr int kModeCount = 4;
+inline constexpr int kModeCount = 3;
 
-// Persisted as hiddenUnits = off | dots | shadow | fade. A file from before the
-// option (no key), one from the OUTLINE mode SHADOW replaced ("outline") or an
-// unknown value reads as the default.
+// Persisted as hiddenUnits = off | dots | fade. A file from before the option (no
+// key), one from a mode since removed ("outline", "shadow"), a number other than
+// 0 or 1, or an unknown value reads as the default.
 inline const char* name(int mode) {
-    return mode == kOff ? "off" : mode == kDots ? "dots" : mode == kShadow ? "shadow" : "fade";
+    return mode == kOff ? "off" : mode == kDots ? "dots" : "fade";
 }
 inline int parse(std::string_view value) {
     if (value == "off" || value == "0") return kOff;
     if (value == "dots" || value == "1") return kDots;
-    if (value == "shadow" || value == "2") return kShadow;
-    if (value == "fade" || value == "3") return kFade;
     return kDefault;
 }
 
@@ -75,12 +70,6 @@ struct Rect {
     bool contains(float x, float y) const { return x >= x0 && x < x1 && y >= y0 && y < y1; }
     Rect clipped(const Rect& o) const {
         return {std::max(x0, o.x0), std::max(y0, o.y0), std::min(x1, o.x1), std::min(y1, o.y1)};
-    }
-    void unite(const Rect& o) {
-        if (o.empty()) return;
-        if (empty()) { *this = o; return; }
-        x0 = std::min(x0, o.x0); y0 = std::min(y0, o.y0);
-        x1 = std::max(x1, o.x1); y1 = std::max(y1, o.y1);
     }
 };
 
@@ -234,108 +223,12 @@ private:
     size_t count_ = 0;
 };
 
-// ---- SHADOW ghosts ------------------------------------------------------------
-// The redraw form, for renderers without the stencil form (client/hiddenstencil.h:
-// OpenGL with a stencil on the window marks the hidden units' pixels and draws each
-// cover over them see-through at the same opacities, exact per pixel, with nothing
-// drawn again but the covers; only the cover search below is shared).
-// A covered unit gets a ghost: right after the LAST cover over it in painter order
-// (so whatever stands in front of that cover still paints over the ghost) the
-// painter items from `start` to `last` that overlap the unit's body rectangle are
-// drawn again, in painter order, clipped to that rectangle: units as they were
-// (opaque, so they repaint their own pixels), every cover see-through (kVeilAlpha;
-// kBuildingVeilAlpha for a building). Where a cover hides the unit the screen ends
-// up kShadowOpacity of the unit over the cover; the part of a unit in sight keeps
-// its pixels, because an opaque redraw changes nothing. (Except the soft edge of a
-// distant image, which drawn twice comes out a little stronger.) Off the unit the
-// cover mostly keeps its pixels too, but not quite: inside the rectangle a cover
-// drawn over another (a tree over a tree) or over its own faces (a building), or
-// with soft or glowing texels (a lodestone), lets a little of what it painted over
-// back through (the hidden_units harness: up to ~75 levels on a few hundred pixels).
-// Exact there would take a coverage mask. No render target, no coverage mask, no
-// special blending.
-//
-// Why see-through COVER and not a darkened, tinted copy of the UNIT: a copy drawn
-// over the whole unit would change the part in sight too, and with plain blending
-// nothing can undo that without knowing which pixels were covered. The cover's own
-// dark or stone pixels are what darken the shadow; the unit's player colours show
-// through like the rest of it.
-//
-// A ghost whose redraw would not be exact (the unit itself or an item in its range
-// is drawn translucent or through drawUnit with effects: conjuring, a builder at
-// work, an emote, a spectral unit) draws the unit alone at kShadowOpacity over the
-// cover instead; its visible part then shifts slightly where the model's own faces
-// overlap, and a unit in front of it within its rectangle shows it faintly.
-// Through a building the unit shows stronger: its light stone and roof tiles wash a
-// 45% unit out, where a tree's dark crown does not.
-inline constexpr uint8_t kShadowOpacity = 115;                         // ~45%: scenery
-inline constexpr uint8_t kBuildingShadowOpacity = 166;                 // ~65%: a building
-inline constexpr uint8_t kVeilAlpha = 255 - kShadowOpacity;            // the cover, redrawn over the unit
-inline constexpr uint8_t kBuildingVeilAlpha = 255 - kBuildingShadowOpacity;
-inline constexpr uint8_t scaleAlpha(uint8_t a, uint8_t by) { return uint8_t((int(a) * int(by) + 127) / 255); }
-
-// Where an earlier ghost's rectangle overlaps a later one's, the later must start
-// no later than the earlier did: else it veils the earlier ghost's covers again
-// over what that ghost drew (the earlier unit's shadow fading to kShadowOpacity
-// squared in a rectangle). With the earlier range included, the overlap is redrawn
-// from the same items and comes out the same. `ghosts` in draw order (by `last`);
-// `start` is lowered in place. Painter indices.
-struct Ghost {
-    Rect rect;
-    uint32_t start = 0, last = 0;
-};
-// `ghostOf(element)` gives the element's Ghost (by reference).
-template <class T, class GhostOf>
-void chainStarts(std::span<T> ghosts, GhostOf ghostOf, CoverGrid& grid, float width, float height) {
-    grid.reset(width, height);
-    for (T& element : ghosts) {
-        Ghost& g = ghostOf(element);
-        grid.query(g.rect, [&](uint32_t id) {
-            const Ghost& o = ghostOf(ghosts[id]);
-            if (o.rect.overlaps(g.rect)) g.start = std::min(g.start, o.start);
-            return true;
-        });
-        grid.insert(g.rect);   // id == index: inserted in order
-    }
-}
-inline void chainStarts(std::span<Ghost> ghosts, CoverGrid& grid, float width, float height) {
-    chainStarts(ghosts, [](Ghost& g) -> Ghost& { return g; }, grid, width, height);
-}
-
-// Hidden units whose rectangles overlap, directly or through others, share one ghost:
-// a redraw over the bounding rectangle of all of them, from the earliest start to the
-// latest last. An item near several hidden units is then drawn again once, not once
-// per unit, and the redraw batches like the body pass. (Extending a ghost's range to
-// a later last is always allowed: the items in between are redrawn in order.)
-// group[i] = the representative (lowest index) of rects[i]'s group; an empty
-// rectangle is a group of its own.
-inline void groupOverlaps(std::span<const Rect> rects, CoverGrid& grid, float width, float height,
-                          std::vector<uint32_t>& group) {
-    group.resize(rects.size());
-    for (size_t i = 0; i < rects.size(); ++i) group[i] = uint32_t(i);
-    const auto root = [&](uint32_t i) {
-        while (group[i] != i) i = group[i] = group[group[i]];
-        return i;
-    };
-    grid.reset(width, height);
-    for (size_t i = 0; i < rects.size(); ++i) {
-        grid.query(rects[i], [&](uint32_t id) {
-            if (!rects[id].overlaps(rects[i])) return true;
-            const uint32_t a = root(uint32_t(i)), b = root(id);
-            group[std::max(a, b)] = std::min(a, b);
-            return true;
-        });
-        grid.insert(rects[i]);   // id == index
-    }
-    for (size_t i = 0; i < rects.size(); ++i) group[i] = root(uint32_t(i));
-}
-
 // ---- FADE ---------------------------------------------------------------------
 // A tree, rock or building (a cover) over a unit the frame looks at is drawn whole at
 // the FADE OPACITY setting: the unit, its shadow and the ground behind show through.
 // It fades out over kFadeOutMs when a unit comes under it and back in over kFadeInMs
-// after the last one has left (display time; smoothstep eased). No ghost, no
-// stencil: the faded cover is simply drawn translucent where it stands.
+// after the last one has left (display time; smoothstep eased): the faded cover is
+// simply drawn translucent where it stands.
 inline constexpr int kDefaultFadePercent = 65;   // the cover stays 65% visible
 inline constexpr float kFadeOutMs = 200.0f;
 inline constexpr float kFadeInMs = 350.0f;
@@ -343,6 +236,8 @@ inline constexpr float kFadeInMs = 350.0f;
 inline constexpr uint8_t fadeOpacity(int percent) {
     return uint8_t((std::clamp(percent, 0, 100) * 255 + 50) / 100);
 }
+// An alpha (or a premultiplied colour channel) scaled by `by`, rounded.
+inline constexpr uint8_t scaleAlpha(uint8_t a, uint8_t by) { return uint8_t((int(a) * int(by) + 127) / 255); }
 
 // A cover's fade key: a feature by its sim id, a building by its unit id (tagged so
 // the two never meet). A new game makes a new view, and with it new fades.

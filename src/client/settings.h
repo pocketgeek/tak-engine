@@ -75,11 +75,11 @@ struct Settings {
                                    // instead of models (non-retail extra; default on)
     // HIDDEN UNITS (client/hiddenunits.h; a non-retail extra): a unit behind a tree, rock or
     // building is shown anyway -- 0 = OFF (as retail), 1 = DOTS (its tactical dot on top
-    // when its centre is covered), 2 = SHADOW (the cover turns see-through over the unit),
-    // 3 = FADE (a tree, rock or building over a unit fades out whole; the default).
-    // Persisted as hiddenUnits = off | dots | shadow | fade; absent (a settings
-    // file from before it), "outline" (an older mode) or unknown = FADE.
-    int   hiddenUnits = 3;
+    // when its centre is covered), 2 = FADE (a tree, rock or building over a unit fades
+    // out whole; the default). Persisted as hiddenUnits = off | dots | fade (by name:
+    // the numbers are not saved); absent (a settings file from before it), "outline"
+    // or "shadow" (modes since removed) or unknown = FADE.
+    int   hiddenUnits = 2;
     // FADE OPACITY: how visible a faded cover stays, percent -- 100 = no fade, 0 = gone.
     // Persisted as hiddenFadeOpacity = 0..100 (clamped); absent = 65.
     int   hiddenFadeOpacity = 65;

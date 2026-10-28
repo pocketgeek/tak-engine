@@ -675,12 +675,6 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
-    // An 8-bit stencil on every OpenGL window from here on (set before any window
-    // exists: the GL renderer re-creates the window with it, a GLX visual or a pixel
-    // format is chosen then): HIDDEN UNITS draws SHADOW with it (client/hiddenstencil.h).
-    // Other renderers ignore it; a renderer that cannot be made with it is retried
-    // without it below, and SHADOW then takes its redraw form.
-    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 #if defined(__linux__)
     if (waylandAppIdSet) unsetenv("SDL_VIDEO_WAYLAND_WMCLASS");
     {
@@ -1018,19 +1012,8 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "renderer: auto: no candidate kept -- SDL's own pick\n");
     }
     if (!ren) ren = SDL_CreateRenderer(win, -1, renFlags);
-    if (!ren) {   // no renderer with a stencil: once more without one
-        SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
-        ren = SDL_CreateRenderer(win, -1, renFlags);
-    }
     if (!ren) {
         std::fprintf(stderr, "renderer failed: %s\n", SDL_GetError());
-#ifndef NDEBUG
-        // ctest hidden_units_gl: no OpenGL window or renderer here at all (macOS's
-        // offscreen video driver makes every window OpenGL, over an EGL it lacks): skipped.
-        if (testbuild && tak::devFlag("TAK_HIDDEN_UNITS_GL"))
-            std::fprintf(stderr, "SKIP: hidden units: no OpenGL window or renderer here (%s)\n",
-                         win ? "renderer failed" : "window failed");
-#endif
         return 1;
     }
     if (shot.empty()) SDL_RenderSetVSync(ren, vsyncOn ? 1 : 0);
