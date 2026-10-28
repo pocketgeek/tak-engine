@@ -1324,6 +1324,9 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     // The general OPTIONS screen (SETTINGS > OPTIONS, and the VOICE CHAT page's BACK when
     // that page was opened from Options' own VOICE CHAT row).
     bool voiceFromOptions = false, optionsDirtyCarry = false;
+    // A screen opened from SETTINGS (Options, Controls, Voice Chat, Benchmark, YouTube
+    // Streaming) goes back to SETTINGS on BACK / Esc, as LOAD REPLAY does.
+    bool fromSettings = false;
     auto openGeneralOptions = [&] {
         d_->options_ = std::make_unique<OptionsScreen>(d_->ren, *settings,
             [this, ren = d_->ren, music, settings, fsWas = settings->fullscreen,
@@ -1377,7 +1380,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 e.button.x = int(lx); e.button.y = int(ly);
             }
 
-            if (streaming && streaming->input(e, w, h)) continue;
+            if (streaming && streaming->input(e, w, h)) {
+                if (fromSettings && !streaming->shown()) { fromSettings = false; d_->settingsMenu_ = true; }
+                continue;
+            }
             if (!d_->notice_.empty()) {   // launch-failure notice: the next press dismisses it
                 if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_KEYDOWN) d_->notice_.clear();
                 continue;
@@ -1471,7 +1477,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             }
 
             if (d_->hotkeys_) {   // hotkey overlay sits on top of Options
-                if (d_->hotkeys_->input(e, w, h)) d_->hotkeys_.reset();   // BACK / Esc -> Options
+                if (d_->hotkeys_->input(e, w, h)) {   // BACK / Esc -> Options, or SETTINGS
+                    d_->hotkeys_.reset();
+                    if (fromSettings && !d_->options_) { fromSettings = false; d_->settingsMenu_ = true; }
+                }
                 continue;
             }
             if (d_->options_) {   // Options overlay is up: route everything to it
@@ -1487,6 +1496,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         if (dirty) d_->options_->markDirty();
                     } else {
                         d_->options_.reset();
+                        if (fromSettings) { fromSettings = false; d_->settingsMenu_ = true; }
                     }
                 }
                 continue;
@@ -1499,6 +1509,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     SDL_Renderer* ren = d_->ren;
                     if (hit(d_->setBtnRect_[0])) {          // OPTIONS -> the audio/display screen
                         d_->settingsMenu_ = false;
+                        fromSettings = true;
                         // Cartographer may have changed the shared data folder since this
                         // launch read the file: show the setting as it is now.
                         if (const Settings disk = loadSettings(); !disk.dataDir.empty()) {
@@ -1508,14 +1519,17 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         openGeneralOptions();
                     } else if (hit(d_->setBtnRect_[2])) {   // VOICE CHAT -> its own page of Options
                         d_->settingsMenu_ = false;
+                        fromSettings = true;
                         d_->openVoicePage(settings);
                         voiceFromOptions = false;           // BACK -> the menu
                     } else if (hit(d_->setBtnRect_[5]) && streaming) {
                         d_->settingsMenu_ = false;
+                        fromSettings = true;
                         SDL_Event event{};event.type=SDL_USEREVENT;event.user.code=kStreamingEvent;
                         streaming->input(event,w,h);
                     } else if (hit(d_->setBtnRect_[1])) {   // CONTROLS -> hotkey rebinding
                         d_->settingsMenu_ = false;
+                        fromSettings = true;
                         d_->hotkeys_ = std::make_unique<HotkeysScreen>(ren, *settings,
                             [] {}, [settings] { saveSettings(*settings); });
                     } else if (hit(d_->setBtnRect_[4])) {   // LOAD REPLAY -> the picker
@@ -1556,7 +1570,10 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             }
 
             if (d_->benchMenu_) {   // benchmark intensity submenu (LOW..ABSURD)
-                if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) { d_->benchMenu_ = false; }
+                if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+                    d_->benchMenu_ = false;
+                    d_->settingsMenu_ = true;   // back to SETTINGS, not out of the menu
+                }
                 else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     float fx = float(e.button.x), fy = float(e.button.y);
                     auto hit = [&](const SDL_FRect& r) { return fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h; };
