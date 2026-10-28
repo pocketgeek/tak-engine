@@ -1,6 +1,17 @@
 # README and user-guide screenshots
 
-**Retaken for 0.9.8** (2026-10-27): `title.jpg` only, by the 0.9.8 build (Debug
+**Retaken for 0.9.9** (2026-10-28): `title.jpg` only, by the 0.9.9 build (Debug
+with `-O2`, CMake `VERSION 0.9.9` in the release commit), with the 0.9.1 title
+capture (`takclient menu --shot`, offscreen video driver, a 1920 x 1080 window,
+the 0.9.1 scratch install and settings, scratch `HOME`, `XDG_DATA_HOME` and
+`XDG_CONFIG_HOME`; script `title.sh` in `~/tak-tmp/scratch/release-099/shots/`),
+cropped to the artwork as before; it reads VERSION 0.9.9 and shows the three
+doors. The guard ring, units stepping off a build site, the placement-reach
+check, the AI's divine lodestones, Max FPS, Shift+P, the Settings return, the
+Benchmark's mods and the TRAINING line change no picture in this folder, so no
+other picture was retaken and none was deleted.
+
+**Earlier: retaken for 0.9.8** (2026-10-27): `title.jpg` only, by the 0.9.8 build (Debug
 with `-O2`, CMake `VERSION 0.9.8` in the release commit), with the 0.9.1 title
 capture (`takclient menu --shot`, offscreen video driver, a 1920 x 1080 window,
 the 0.9.1 scratch install and settings, scratch `HOME`, `XDG_DATA_HOME` and
@@ -288,7 +299,7 @@ simulation code. Every scene runs the normal game rules, AI and renderer.
 
 | Image | Scene |
 | --- | --- |
-| `title.jpg` | Title menu showing version 0.9.8 (0.9.8 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
+| `title.jpg` | Title menu showing version 0.9.9 (0.9.9 build), 1920 × 1080 window cropped to the 1440 × 1080 artwork |
 | `mp-connect.jpg` | New in 0.9.0. The Multiplayer door's CONNECT TO SERVER panel over the title menu: the official TAK Engine server, tak.pgnet.us (marked DEFAULT), selected at the top of the list, two sample remembered servers the debug `TAK_SHOT_SERVER` capture seeds into an empty list (192.168.1.50:7677 and example.dyndns.org), CUSTOM..., the account name *aldric* typed and a ten-character password shown as pips, the A NEW NAME IS REGISTERED WHEN YOU SIGN IN note, CONNECT and BACK. `TAK_SHOT_SERVER=4` with the name and password set by the capture-only patch; nothing connected to any server. 1600 × 900, cropped to the panel (600 × 494, not scaled). Rendered by the 0.9.0 build |
 | `mp-connect-custom.jpg` | New in 0.9.0. The same panel with CUSTOM... selected (`TAK_SHOT_SERVER=2`): the address box below the list holds *tak.example.org* (typed by the capture-only patch), the account name *aldric*, the password empty. Nothing connected. 1600 × 900, cropped to the panel (600 × 550, not scaled). Rendered by the 0.9.0 build |
 | `battle.jpg` | **Benchmark** run (Settings → Benchmark, Absurd intensity) on Ulasem Arena, 55 game seconds in. Eight server AIs fight, all five sides. The camera, at 1.3× zoom, shows Aramon (magenta) and Taros (yellow) armies, with Black Dragons, clashing at a sandy arena; damaged units of every side show health bars. A real feature with no fixture; spectator view, so no fog. Rendered by the 0.9.0 build |

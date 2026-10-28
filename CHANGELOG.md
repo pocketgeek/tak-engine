@@ -19,8 +19,8 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
-## Unreleased
-*protocol 303 · replay format 15 · does not play with 0.9.8 or earlier, nor their replays*
+## 0.9.9
+*2026-10-28 · protocol 303 · replay format 15 · does not play with 0.9.8 or earlier, nor their replays*
 
 - **The AI upgrades to divine lodestones only when it pays.** Defensive,
   Normal, Hard, Absurd and Absurdly Defensive now put a divine lodestone only
@@ -81,6 +81,20 @@ their validation reports; both live in [`docs/`](docs/).
   free site in reach, and with none it builds nothing. Before, it could order a
   Divine Lodestone on top of its own finished Lodestone. You can still upgrade
   a Lodestone in place yourself, and the other AI levels are unchanged.
+- **A build icon's tooltip is readable while something is training.** The
+  TRAINING line above the build menu and the tooltip of the icon under the
+  mouse were drawn in the same place and overlapped; the tooltip now takes the
+  line's place while it is shown.
+- **Protocol 303:** units stepping off a build site and the guard ring are
+  part of the game state the players compare, so 0.9.9 plays only with 0.9.9
+  and plays only replays recorded by 0.9.9. A 0.9.8 client or server is turned
+  away with a *protocol version mismatch* message, and a 0.9.8 replay is
+  refused with the version message.
+
+**Upgrading (server operators):** update `takserver` together with your
+players.
+
+[Release notes](docs/release-0.9.9-notes.md) · [Validation report](docs/release-0.9.9-validation.md) · [Source at v0.9.9](https://github.com/pocketgeek/tak-engine/tree/v0.9.9)
 
 ## 0.9.8
 *2026-10-27 · protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*

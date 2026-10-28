@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.8-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.9-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,14 +26,14 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.8
+## What's new in 0.9.9
 
-- Guards defend what they guard: a guard goes after whatever attacks the unit it guards, however far away it shoots from, then comes back.
-- Right-click a finished unit of yours with a builder selected to have it Guard (or repair) that unit, as in the original game.
-- Raising the dead respects the unit limit, and a computer player short of mana stops retrying the same raising.
+- A guarding builder keeps out of a factory's doorway: guards wait on a ring round what they guard, as in the original game.
+- Your idle and guarding units step off a site you build on, and a walking builder refuses a site it can never reach.
+- The AI builds divine lodestones only where they pay; Max FPS can be Unlimited; MAKE POSTER is Shift+P; the Benchmark runs without mods.
 
-Does not play with 0.9.7 or its replays (protocol 302). Details in the
-[CHANGELOG](CHANGELOG.md#098).
+Does not play with 0.9.8 or its replays (protocol 303). Details in the
+[CHANGELOG](CHANGELOG.md#099).
 
 ## Features
 

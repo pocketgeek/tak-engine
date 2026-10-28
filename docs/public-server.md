@@ -12,11 +12,11 @@ independent security audit or protection against a volumetric DDoS.
 ## Versions
 
 Server and clients must speak the same gameplay protocol; update the server and
-every client together when it changes. **0.9.8 changes it (protocol 302):** a
-0.9.8 `takserver` accepts only 0.9.8 players and turns away 0.9.7 and older
-clients with a *protocol version mismatch* message, and a 0.9.7 or older server
-turns away 0.9.8 players, so update `takserver` when you announce 0.9.8 to your
-players. A 0.9.8 release `takserver` reads only its four test timers
+every client together when it changes. **0.9.9 changes it (protocol 303):** a
+0.9.9 `takserver` accepts only 0.9.9 players and turns away 0.9.8 and older
+clients with a *protocol version mismatch* message, and a 0.9.8 or older server
+turns away 0.9.9 players, so update `takserver` when you announce 0.9.9 to your
+players. Since 0.9.8 a release `takserver` reads only its four test timers
 (`TAK_TIMEOUT_MS`, `TAK_LOAD_TIMEOUT_MS`, `TAK_STALL_MS`, `TAK_DROP_WAIT_MS`)
 from the environment; its other `TAK_*` diagnostic variables now work only in
 debug builds. Since 0.9.6 a server also allows a seat 30 s of silence while its
