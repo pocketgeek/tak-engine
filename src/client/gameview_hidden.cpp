@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace {
 namespace hu = tak::hiddenunits;
@@ -67,6 +68,8 @@ namespace hu = tak::hiddenunits;
             stencilEnvRead = true;
             if (const char* v = tak::devEnv("TAK_HIDDEN_STENCIL")) hiddenStencilAllowed_ = std::atoi(v) != 0;
         }
+        static const char* inSpan = tak::devEnv("TAK_HIDDEN_IN_SPAN");
+        hiddenInSpan_ = !inSpan || std::strcmp(inSpan, "0") != 0;
 #endif
         if (hiddenUnitsMode_ == hu::kOff || dotsFrame_) return;
         using RS = tak::render::Counter;
@@ -389,17 +392,10 @@ namespace hu = tak::hiddenunits;
     // after the last cover over its units, clipped to their bounding rectangle.
     void GameView::drawHiddenGhost(const HiddenGhost& ghost) {
         tak::render::ScopedPhase phase(renderStats_, tak::render::Phase::HiddenUnits);
-        const hu::Rect& r = ghost.range.rect;
-        SDL_Rect clip{int(std::floor(r.x0)), int(std::floor(r.y0)), 0, 0};
-        clip.w = int(std::ceil(r.x1)) - clip.x;
-        clip.h = int(std::ceil(r.y1)) - clip.y;
         const SDL_bool hadClip = SDL_RenderIsClipEnabled(ren_);
-        SDL_Rect prevClip{};
-        if (hadClip) {
-            SDL_RenderGetClipRect(ren_, &prevClip);
-            if (!SDL_IntersectRect(&prevClip, &clip, &clip)) return;
-        }
-        if (clip.w <= 0 || clip.h <= 0) return;
+        SDL_Rect prevClip{}, clip{};
+        if (hadClip) SDL_RenderGetClipRect(ren_, &prevClip);
+        if (!hiddenGhostClip(ghost, hadClip ? &prevClip : nullptr, clip)) return;
         SDL_RenderSetClipRect(ren_, &clip);
         const float zm = mapView_.zoom();
         tak::render::countLogicalDraw();
@@ -441,13 +437,20 @@ namespace hu = tak::hiddenunits;
         SDL_RenderSetClipRect(ren_, hadClip ? &prevClip : nullptr);
     }
 
-    bool GameView::drawHiddenGhostNative(const HiddenGhost& ghost) {
-        if (!nativePassesOn_) return false;
+    bool GameView::hiddenGhostClip(const HiddenGhost& ghost, const SDL_Rect* within, SDL_Rect& clip) {
+        const hu::Rect& r = ghost.range.rect;
+        clip = {int(std::floor(r.x0)), int(std::floor(r.y0)), 0, 0};
+        clip.w = int(std::ceil(r.x1)) - clip.x;
+        clip.h = int(std::ceil(r.y1)) - clip.y;
+        if (within && !SDL_IntersectRect(within, &clip, &clip)) return false;
+        return clip.w > 0 && clip.h > 0;
+    }
+
+    bool GameView::hiddenGhostJoins(const HiddenGhost& ghost, SDL_Texture*& prime, SDL_Texture*& premultipliedPrime) {
         const float zm = mapView_.zoom();
         // Every texture must join a pass (resolved before it opens); the prime is the
         // first BLEND one, else a premultiplied one (as scanNativeSpan picks).
-        SDL_Texture* prime = nullptr;
-        SDL_Texture* premultipliedPrime = nullptr;
+        prime = premultipliedPrime = nullptr;
         const auto joins = [&](SDL_Texture* texture) {
             if (!texture) return true;   // skipped when drawn
             if (palettePage(texture) >= 0) { if (!prime) prime = texture; return true; }
@@ -468,6 +471,14 @@ namespace hu = tak::hiddenunits;
             const HiddenRedrawItem& d = hiddenRedraw_[i];
             if (d.slot >= 0 ? !bodyJoins(d.slot) : !joins(featureSprite(*paintItems_[d.item].f, zm).tex)) return false;
         }
+        return true;
+    }
+
+    bool GameView::drawHiddenGhostNative(const HiddenGhost& ghost) {
+        if (!nativePassesOn_) return false;
+        SDL_Texture* prime = nullptr;
+        SDL_Texture* premultipliedPrime = nullptr;
+        if (!hiddenGhostJoins(ghost, prime, premultipliedPrime)) return false;
         const bool primePremultiplied = !prime;
         if (!prime) prime = premultipliedPrime;
         if (!prime) return true;   // nothing with a texture: nothing to draw
@@ -476,6 +487,14 @@ namespace hu = tak::hiddenunits;
             if (!nativePass_.usable()) nativePassesOn_ = false;   // not this context's way of drawing
             return false;
         }
+        nativePassCommands_ += drawHiddenGhostInPass(ghost);
+        nativePass_.end(bodySubmit_);
+        ++nativePasses_;
+        return true;
+    }
+
+    uint64_t GameView::drawHiddenGhostInPass(const HiddenGhost& ghost) {
+        const float zm = mapView_.zoom();
         uint64_t commands = 0;
         SDL_Texture* bound = nullptr;
         const auto use = [&](SDL_Texture* texture) {
@@ -563,10 +582,7 @@ namespace hu = tak::hiddenunits;
             bodySubmit_.passDraw(std::span<const SDL_Vertex>(tri, 6));
         }
         flush();
-        nativePass_.end(bodySubmit_);
-        ++nativePasses_;
-        nativePassCommands_ += commands;
-        return true;
+        return commands;
     }
 
     // ---- SHADOW, stencil form (client/hiddenstencil.h) ----

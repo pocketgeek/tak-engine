@@ -627,11 +627,11 @@
             // HIDDEN UNITS through the real draw(): a flat feature sorts under every
             // unit; units behind a tree or a building get a dot (DOTS) or show through
             // it (SHADOW: changed pixels only on the cover, the part in sight as with
-            // OFF, also at output scale 1.5 and from distant images); units in the
+            // OFF, also at output scales 1.5 and 2 and from distant images); units in the
             // open, in front of the tree or on a flat feature get nothing; fog still
             // hides enemies; OFF and Tactical Dots frames do nothing; a hidden dot is
             // clickable. TAK_HIDDEN_UNITS_CAPTURE=<prefix> writes <prefix>-off/-dots/
-            // -shadow.png (and -x1.5 / -z0.5 pairs).
+            // -shadow.png (and -x1.5 / -x2 / -z0.5 pairs).
             namespace hu = tak::hiddenunits;
             const auto check=[](bool ok,const std::string& what) {
                 if (!ok) throw std::runtime_error("hidden units: "+what);
@@ -938,8 +938,8 @@
             std::fprintf(stderr,"  stencil form %s (window stencil %d bits)\n",stencilHere ? "available" : "not available",
                          hiddenStencil_.bits());
             if (glForm) check(stencilHere,"OpenGL with a stencil on the window: the stencil form");
-            std::vector<uint8_t> formShots[2][3];   // [stencil, redraw][round]: the SHADOW frames
-            int formWidth[3]={0,0,0};
+            std::vector<uint8_t> formShots[2][4];   // [stencil, redraw][round]: the SHADOW frames
+            int formWidth[4]={0,0,0,0};
             for (int form=stencilHere ? 0 : 1;form<2;++form) {
                 stencilForm=form==0;
                 hiddenStencilAllowed_=stencilForm;
@@ -975,6 +975,12 @@
                 std::tie(p,w)=shadowRound(" (output scale 1.50)"+f,offShots ? shot("off-x1.5") : std::string(),
                                           shot("shadow"+suffix+"-x1.5"));
                 formShots[form][1]=std::move(p);formWidth[1]=w;
+                // A whole output scale keeps OpenGL's native passes, where a ghost draws
+                // inside the body pass's span under a scissor of its own.
+                SDL_RenderSetScale(ren_,2,2);
+                std::tie(p,w)=shadowRound(" (output scale 2.00)"+f,offShots ? shot("off-x2") : std::string(),
+                                          shot("shadow"+suffix+"-x2"));
+                formShots[form][2]=std::move(p);formWidth[2]=w;
                 SDL_RenderSetScale(ren_,1,1);
                 {   // Zoomed out: still units are drawn from their distant images (where the
                     // renderer has them); the redraw form redraws the image, never the model.
@@ -986,7 +992,7 @@
                     if (images) {
                         std::tie(p,w)=shadowRound(" (zoom 0.50, distant images)"+f,offShots ? shot("off-z0.5") : std::string(),
                                                   shot("shadow"+suffix+"-z0.5"));
-                        formShots[form][2]=std::move(p);formWidth[2]=w;
+                        formShots[form][3]=std::move(p);formWidth[3]=w;
                     } else std::fprintf(stderr,"  (no distant images on this renderer: zoom 0.50 round skipped)\n");
                     distantRound=false;
                     zoom=1.0f;
@@ -994,7 +1000,7 @@
             }
             hiddenStencilAllowed_=true;
             if (stencilHere)   // how far apart the two forms are (information: the redraw
-                for (int r=0;r<3;++r) {   // form is approximate at soft edges and overlaps)
+                for (int r=0;r<4;++r) {   // form is approximate at soft edges and overlaps)
                     const auto& a=formShots[0][r];
                     const auto& b=formShots[1][r];
                     if (a.empty() || a.size()!=b.size()) continue;
