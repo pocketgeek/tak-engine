@@ -8344,6 +8344,13 @@ bool World::canPlace(const UnitType* type, float x, float z, int player) const {
     return placementCheck(type,x,z,player,nullptr);
 }
 
+bool World::canPlaceOrder(const UnitType* type, float x, float z, int player) const {
+    // The plain test first: it reads the body index, the yielding one walks
+    // every unit and only runs for a site something stands on.
+    return placementCheck(type,x,z,player,nullptr) ||
+           (player>=0 && placementCheck(type,x,z,player,nullptr,nullptr,0,false,player));
+}
+
 std::vector<uint8_t> World::placementCells(const UnitType* type,const std::atomic_bool* cancel) {
     const auto cancelled=[&] {return cancel && cancel->load(std::memory_order_relaxed);};
     if(cancelled() || terW_<=0 || terH_<=0)return {};
@@ -8391,7 +8398,7 @@ std::vector<uint8_t> World::placementCells(const UnitType* type,const std::atomi
 
 bool World::placementCheck(const UnitType* type, float x, float z, int player,
                            std::vector<int>* clearFeatures,const std::vector<int>* candidates,int ignoreId,
-                           bool ignoreMobile) const {
+                           bool ignoreMobile,int yieldPlayer) const {
     if (!type) return false;
     const Unit* replacing=lodestoneUpgradeSource(type,x,z,player);
     // Lodestones must sit on a mana deposit — but only on maps that have any
@@ -8532,19 +8539,23 @@ bool World::placementCheck(const UnitType* type, float x, float z, int player,
             // Native Y has no occupancy bits; w and C both test bodies.
             return !(waterOnlyYard && type->yardMap[i]=='Y');
         };
-        if (ignoreMobile) {
+        if (ignoreMobile || yieldPlayer>=0) {
             // MobileBuild's second test (405824..405911) ignores every mobile
             // unit: only another building's occupied cells refuse the site.
             // The body plane keeps one occupant per cell, which a unit
-            // standing in a yard would hide, so stamp buildings alone.
+            // standing in a yard would hide, so stamp buildings alone. A
+            // build order's test (canPlaceOrder) stamps the mobile bodies too,
+            // as searchBodyRect does, but not the player's own that step aside.
             for (const auto& u:units_) {
-                if ((replacing && u.id==replacing->id) || !u.alive() || u.embarked() || !u.type ||
-                    !u.type->isStructure()) continue;
+                if ((replacing && u.id==replacing->id) || !u.alive() || u.embarked() || !u.type) continue;
+                const bool mobile=!u.type->isStructure();
+                if (mobile && (ignoreMobile || (u.type->canFly && u.flightGroundMode!=1) ||
+                               yieldsToSite(u,yieldPlayer))) continue;
                 const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
                 for (int j=std::max(cz,uz);j<std::min(cz+type->footZ,uz+u.type->footZ);++j)
                     for (int i=std::max(cx,ux);i<std::min(cx+type->footX,ux+u.type->footX);++i) {
                         if (!tested(size_t(j-cz)*type->footX+i-cx)) continue;
-                        if (!u.type->yardMap.empty()) {
+                        if (!mobile && !u.type->yardMap.empty()) {
                             const char yard=u.type->yardMap.at(size_t(j-uz)*u.type->footX+i-ux);
                             if (yard=='.') continue;
                             if (yard=='c' || yard=='C') {
@@ -8565,6 +8576,7 @@ bool World::placementCheck(const UnitType* type, float x, float z, int player,
     const auto overlaps=[&](const Unit& u) {
         if (!u.alive() || u.id==ignoreId) return false;
         if (ignoreMobile && !(u.type && u.type->isStructure())) return false;
+        if (yieldsToSite(u,yieldPlayer)) return false;
         float dx = u.x.toFloat() - x, dz = u.z.toFloat() - z;
         float min = 16.0f * float(std::max(type->footX, type->footZ)) / 2 + 12;
         return dx * dx + dz * dz < min * min;
@@ -8578,7 +8590,8 @@ bool World::clearableForPlacement(const UnitType* type, float x, float z,
                                   std::vector<int>& out, int player) const {
     out.clear();
     if (!type || !type->isStructure()) return false;
-    if (placementCheck(type,x,z,player,&out)) return true;
+    // A build order's test: the player's own units that step aside do not count.
+    if (placementCheck(type,x,z,player,&out,nullptr,0,false,player)) return true;
     out.clear();
     return false;
 }
@@ -8676,7 +8689,7 @@ void World::queueBuild(int builderId, const UnitType* type, float x, float z, bo
     if (!b || !b->alive() || !b->type || !b->type->isBuilder || b->type->isStructure() ||
         b->underConstruction || !type) return;
     std::vector<int> clearing;
-    if (!canPlace(type,x,z,b->player) &&
+    if (!canPlaceOrder(type,x,z,b->player) &&
         (!b->type->canReclaim || !b->type->canMove ||
          !clearableForPlacement(type,x,z,clearing,b->player))) return;
     // Stable nearest-first order, computed authoritatively on every peer.
@@ -9799,6 +9812,90 @@ void World::guardInsertJob(Unit& u, int help, int mend) {
     }
     u.orders.insert(u.orders.end(),std::make_move_iterator(rest.begin()),std::make_move_iterator(rest.end()));
     noteOrders(u.id);
+}
+
+bool World::yieldsToSite(const Unit& k, int player) const {
+    if (player<0 || k.player!=player || !k.alive() || !k.type || k.type->isStructure() ||
+        k.underConstruction || k.embarked() || k.incapacitated() || k.repeatType ||
+        k.buildSiteId || k.repairId || k.reclaimId) return false;
+    // Idle (an empty queue) or guarding: a unit already walking somewhere,
+    // fighting or working keeps its order, and the builder waits for it as
+    // retail's does.
+    return k.orders.empty() || k.orders[currentLeg(k.orders)].guard;
+}
+
+// Engine deviation (user-requested): retail's MobileBuild/FlyingBuild only
+// wait out the mobile units on a site, 31 tries 10 ticks apart, and drop the
+// order (405824..405911, 41f301..41f3e5); nothing in retail ever moves a
+// standing body (BUGGER_OFF is stored and never acted on). Ours, on each of
+// those tries, sends the builder player's own idle and guarding units that
+// stand on the site to just outside it: past the nearest side for an idle
+// unit, past the side nearest the guarded unit for a guard, whose guard
+// order stays queued under the move and resumes when it arrives. A side the
+// builder stands beyond is the last choice: the builder's body would stop
+// the unit in the site. Other players' units, and own units walking,
+// fighting or working, still make the builder wait as before.
+void World::clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, Fixed z) {
+    if (!type) return;
+    int left,right,top,bottom;   // the site's rectangle, world px
+    const auto blocks=[&](const Unit& k) {
+        if (k.type->canFly && k.flightGroundMode!=1) return false;
+        if (!type->isStructure()) {
+            // placementCheck's circle for a mobile site.
+            const int64_t dx=int64_t(k.x.floorInt())-x.floorInt(),dz=int64_t(k.z.floorInt())-z.floorInt();
+            const int64_t min=int64_t(8*std::max(type->footX,type->footZ)+12);
+            return dx*dx+dz*dz<min*min;
+        }
+        const int cx=footprintOrigin(x,type->footX),cz=footprintOrigin(z,type->footZ);
+        const int ux=footprintOrigin(k.x,k.type->footX),uz=footprintOrigin(k.z,k.type->footZ);
+        for (int j=std::max(cz,uz);j<std::min(cz+type->footZ,uz+k.type->footZ);++j)
+            for (int i=std::max(cx,ux);i<std::min(cx+type->footX,ux+k.type->footX);++i)
+                if (type->yardMap.empty() || type->yardMap[size_t(j-cz)*type->footX+i-cx]!='.') return true;
+        return false;
+    };
+    if (type->isStructure()) {
+        const int cx=footprintOrigin(x,type->footX),cz=footprintOrigin(z,type->footZ);
+        left=cx*16;right=(cx+type->footX)*16;top=cz*16;bottom=(cz+type->footZ)*16;
+    } else {
+        const int min=8*std::max(type->footX,type->footZ)+12;
+        left=x.floorInt()-min;right=x.floorInt()+min;top=z.floorInt()-min;bottom=z.floorInt()+min;
+    }
+    std::vector<int> movers;
+    for (const auto& k:units_)
+        if (k.id!=builder.id && yieldsToSite(k,builder.player) && blocks(k)) movers.push_back(k.id);
+    for (int id:movers) {
+        Unit& k=*unit(id);
+        const int kx=k.x.floorInt(),kz=k.z.floorInt();
+        // Clear of the rectangle by the body's half size plus a final goal's
+        // arrival circle (tickGroundMission: 16 px or the footprint) and 8.
+        const int foot=std::max(k.type->footX,k.type->footZ)*8;
+        const int gapX=k.type->footX*8+std::max(16,foot)+8,gapZ=k.type->footZ*8+std::max(16,foot)+8;
+        const std::array<std::pair<int,int>,4> sides{{{left-gapX,kz},{right+gapX,kz},{kx,top-gapZ},{kx,bottom+gapZ}}};
+        const Unit* guarded=k.orders.empty() ? nullptr : unit(k.orders[currentLeg(k.orders)].targetId);
+        const int bx=builder.x.floorInt(),bz=builder.z.floorInt();
+        const std::array<bool,4> builderSide{bx<left,bx>=right,bz<top,bz>=bottom};
+        const int rx=guarded ? guarded->x.floorInt() : kx,rz=guarded ? guarded->z.floorInt() : kz;
+        int best=-1;int64_t bestScore=0;
+        for (int i=0;i<4;++i) {
+            const auto [px,pz]=sides[size_t(i)];
+            if (px<16 || pz<16 || px>=terW_*16-16 || pz>=terH_*16-16) continue;
+            if (!k.type->canFly && (!passable(k.type,px/16,pz/16) ||
+                !pathExists(k.type,float(px),float(pz),float(kx),float(kz)))) continue;
+            const int64_t score=int64_t(px-rx)*(px-rx)+int64_t(pz-rz)*(pz-rz)+
+                (builderSide[size_t(i)] ? int64_t(1)<<40 : 0);
+            if (best<0 || score<bestScore) {best=i;bestScore=score;}
+        }
+        if (best<0) continue;
+        const float px=float(sides[size_t(best)].first),pz=float(sides[size_t(best)].second);
+        if (k.orders.empty()) {order(id,px,pz,false);continue;}
+        OrdersNote note{*this,id};
+        guardStandAside(k);
+        std::vector<Order> rest;rest.swap(k.orders);
+        cancelPath(k);k.routeStamp=0;
+        order(id,px,pz,false);
+        Unit& moved=*unit(id);
+        moved.orders.insert(moved.orders.end(),std::make_move_iterator(rest.begin()),std::make_move_iterator(rest.end()));
+    }
 }
 
 // A flyer's guard: VTOL_Follow (0x418860, emulated), the guard mission of
@@ -15067,6 +15164,7 @@ void World::tick(float dt) {
                     auto& order=builder.orders.front();
                     if (mobileBlocked && ++order.placementFailures<31) {
                         order.placementRetryTick=tickCounter_+10;
+                        clearBuildSite(builder,order.buildType,order.buildX,order.buildZ);
                         // FlyingBuild's point controller detached on arrival:
                         // nothing steers the hovering flyer during the wait,
                         // and its hold starts with this update's skipped body.

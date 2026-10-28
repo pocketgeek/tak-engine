@@ -19,7 +19,18 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
-## 0.9.8
+## Unreleased
+*protocol 303 · replay format 15 · does not play with 0.9.8 or earlier, nor their replays*
+
+- **Your units get out of the way of a build.** When a builder reaches its
+  site and some of your own idle units, or units guarding something (the
+  builder itself, say), stand on it, they now step just off the site, and the
+  builder starts as soon as it is clear. A guard keeps its Guard order and goes
+  back to guarding. You can also place a building on top of such units now;
+  before, the site was refused. Units of other players, and your units that are
+  moving, fighting or working, still make the builder wait and give up after
+  about ten seconds, as in the original game, where a builder only ever waits.
+
 *2026-10-27 · protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*
 
 - **Guards defend what they guard,** as in the original game. When something

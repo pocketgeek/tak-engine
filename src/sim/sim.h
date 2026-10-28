@@ -1988,6 +1988,11 @@ public:
     void startHeadbang(int player, int unitId, bool append = false);
     bool headbangTarget(int player, int unitId = 0) const;
     bool canPlace(const UnitType* type, float x, float z, int player = -1) const;
+    // Placement for a player's build ORDER (queueBuild and the build cursor):
+    // canPlace, except that the player's own units that would step aside for
+    // the builder (yieldsToSite) do not refuse the site. Engine deviation:
+    // retail's cursor test (429787 -> 507400) refuses any visible body.
+    bool canPlaceOrder(const UnitType* type, float x, float z, int player) const;
     // Observational whole-map query at cell centers. Returns empty on cancellation.
     // Reuses placementCheck with spatially bounded occupant candidates.
     std::vector<uint8_t> placementCells(const UnitType* type,const std::atomic_bool* cancel=nullptr);
@@ -1995,7 +2000,8 @@ public:
     // Would the site be placeable if the clearable doodads on it were gone? Fills
     // `out` with their feature ids, nearest-first is the caller's job. Returns false
     // when anything ELSE blocks -- terrain, a unit, a building, an unreclaimable
-    // feature -- because those are refusals retail makes too and we keep. Read-only:
+    // feature -- because those are refusals retail makes too and we keep (the
+    // player's own units that step aside excepted, as canPlaceOrder). Read-only:
     // this is a query for the UI, and it changes no sim state.
     bool clearableForPlacement(const UnitType* type, float x, float z,
                                std::vector<int>& out, int player = -1) const;
@@ -2711,7 +2717,13 @@ private:
     bool canPlaceProduction(int builderId,const UnitType* type,float x,float z) const;
     bool placementCheck(const UnitType* type, float x, float z, int player,
                         std::vector<int>* clearFeatures,const std::vector<int>* candidates=nullptr,
-                        int ignoreId=0,bool ignoreMobile=false) const;
+                        int ignoreId=0,bool ignoreMobile=false,int yieldPlayer=-1) const;
+    // The player's own units in a build site step aside for its builder
+    // (engine deviation, user-requested; retail's MobileBuild only waits for
+    // them, 405824..405911). A unit yields when it is the player's, mobile,
+    // able to move and idle or guarding (its guard resumes afterwards).
+    bool yieldsToSite(const Unit& k, int player) const;
+    void clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, Fixed z);
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
     void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
     bool tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept=false,const WeaponAimSolution* given=nullptr);

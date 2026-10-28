@@ -19,7 +19,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 302;      // 302: a guard (ground or flying) attacks its guarded unit's attacker
+constexpr uint32_t kNetVersion = 303;      // 303: a build order is accepted on a site its player's own idle or guarding
+                                           //      units stand on, and they step off it for the builder (a guard keeps
+                                           //      its guard). No new command; replay format unchanged.
+                                           // 302: a guard (ground or flying) attacks its guarded unit's attacker
                                            //      (guardHeard hashed), a computer caster takes up no revive while short,
                                            //      and a revive past the unit limit or totalallowed ends unraised.
                                            //      No new command; replay format unchanged.

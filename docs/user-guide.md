@@ -665,7 +665,13 @@ target underneath.
   off the edge of the map flies back onto it first.
 - **Clearing the site**: a builder that can reclaim automatically clears trees
   and rocks from a valid building site before it starts.
-- **Blocked sites**: when the builder arrives and units stand on the site, it
+- **Your units make way**: you can place a building on top of your own idle
+  units and units on a Guard order. When the builder arrives, those units
+  step just off the site (away from the builder's side), and a guard then goes
+  back to guarding. The original game never moves them: its builder only
+  waits, as below.
+- **Blocked sites**: when the builder arrives and other units stand on the
+  site (another player's, or yours that are moving, fighting or working), it
   waits where it is (a flying builder hovers) and tries again three times a
   second; if the site is still blocked after about ten seconds, it gives up and
   moves on to its next order. A site blocked by anything else, such as a

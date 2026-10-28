@@ -2543,6 +2543,19 @@ BUGGER_OFF: the setter (0x50d50e) only stores bit 3 of unit +0x12f, which GET 19
 shoved; BUILD stage 2's footprint test (401deb) holds the next output until it
 leaves. See [factory-output-2026-10-12.md](factory-output-2026-10-12.md).
 
+**Build sites (protocol 303, a deliberate deviation).** Retail never shoves a
+body off a MobileBuild/FlyingBuild site either: the placement test (`507d10`
+-> `507400`) has no side effect, and the order retries every 10 ticks, says
+WAITFORTARGETTOCLEAR on the 7th and TARGETBLOCKED on the 31st, and is dropped
+(`405824..405911`, `41f301..41f3e5`). Its build cursor (`429787` -> `507400`
+with the local player and no moving-unit pass) refuses a site any visible body
+stands on. At the user's request ours, on each of those retries, sends the
+builder player's own idle and guarding units on the site just off it
+(`World::clearBuildSite`; a guard keeps its guard under the move), and the
+build order and cursor accept such a site (`canPlaceOrder`). Other players'
+units and own units with other orders still make the builder wait as retail.
+`pathblock_test` checks both modes.
+
 Two false starts worth recording, because both are easy to repeat: thread counts
 do NOT work as the test observable. A factory legitimately keeps a thread open
 while active (Creon's `Go` ends with `START_SCRIPT FactoryFun`, the machinery

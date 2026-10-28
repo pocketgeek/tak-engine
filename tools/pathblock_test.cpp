@@ -190,7 +190,69 @@ static PlacementRun runSitePlacement(bool legion,int what,bool fly=false) {
     return r;
 }
 
+// The player's own units in a build site step aside (engine deviation,
+// user-requested: retail 405824..405911 only waits for them and drops the
+// order after 31 tries). The builder approaches a 4x4 site at (512,512) from
+// the west, standing next to it. `who`: 0 an idle unit of the builder's player, 1 one guarding the
+// builder, 2 an idle one on Hold Position, each standing inside the site;
+// 3 an own unit that walks onto the clear site after the order is given.
+// `built` is the tick the site went down; `guarding` whether the guard still
+// guards the builder, `guardNear` whether it ended up back beside it.
+struct ClearRun {int built=-1,dropped=-1,maxFailures=0;bool guarding=false,guardNear=false;};
+static ClearRun runSiteClear(bool legion,int who) {
+    ClearRun r;
+    World w;
+    w.setVisPlayer(-1);
+    w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+    w.setPathService(true);
+    if (legion) w.setPathfindingMode(PathfindingMode::Legion);
+    UnitType builder=soldier(),blocker=soldier(),site=soldier();
+    builder.id=builder.name="bld";builder.isBuilder=true;builder.buildDist=60;builder.turnInPlaceRate=1000;
+    blocker.id=blocker.name="blk";
+    site.id=site.name="site";site.maxVel=Fixed();site.buildTime=10000;site.buildCost=0;
+    site.footX=4;site.footZ=4;
+    // The builder starts beside the site and the blocker within a guard's
+    // 70 px of it, so a guard stands still on the site when the order comes.
+    const int bid=w.spawn(&builder,430,512,0,0);
+    const int kid=w.spawn(&blocker,495,who==3 ? 560 : 512,0,0);
+    if (who==1) w.guard(kid,bid,false);
+    if (who==2) w.unit(kid)->moveState=0;
+    w.queueBuild(bid,&site,512,512,false);
+    if (who==3) w.order(kid,495,512,false);   // walks on after the order
+    for (int t=0;t<1500;++t) {
+        w.tick(1.0f/30.0f);
+        const Unit* b=w.unit(bid);
+        if (r.built<0 && b->buildSiteId) r.built=t;
+        if (!b->orders.empty() && b->orders.front().buildType)
+            r.maxFailures=std::max(r.maxFailures,int(b->orders.front().placementFailures));
+        if (std::getenv("SITECLEAR_VERBOSE") && t%20==0) {const Unit* k=w.unit(kid);
+            std::printf("    t=%d b=(%.1f,%.1f) k=(%.1f,%.1f) korders=%zu fails=%d\n",t,b->x.toFloat(),b->z.toFloat(),
+                k->x.toFloat(),k->z.toFloat(),k->orders.size(),b->orders.empty()?-1:b->orders.front().placementFailures);}
+        bool pending=false;
+        for (const auto& o:b->orders) pending|=o.buildType!=nullptr;
+        if (r.built<0 && !pending) {r.dropped=t;break;}
+    }
+    const Unit* k=w.unit(kid);const Unit* b=w.unit(bid);
+    for (const auto& o:k->orders) r.guarding|=o.guard && o.targetId==bid;
+    const float dx=(k->x-b->x).toFloat(),dz=(k->z-b->z).toFloat();
+    r.guardNear=dx*dx+dz*dz<=100.0f*100.0f;
+    return r;
+}
+
 int main() {
+    for (bool legion:{false,true}) {
+        const std::string mode=legion?"Legion: ":"Retail: ";
+        static const char* names[]={"an idle own unit","a unit guarding the builder","an own unit on Hold Position",
+                                    "an own unit arriving"};
+        for (int who=0;who<4;++who) {
+            const auto run=runSiteClear(legion,who);
+            check(run.built>=0 && run.dropped<0 && run.maxFailures>0,mode+names[who]+" on the site steps aside and the site goes down",
+                  "built "+std::to_string(run.built)+", dropped "+std::to_string(run.dropped)+", failures "+std::to_string(run.maxFailures));
+            if (who==1)
+                check(run.guarding && run.guardNear,mode+"the guard keeps its guard order and returns beside the builder");
+        }
+    }
+
     {
         World w;
         w.setVisPlayer(-1);

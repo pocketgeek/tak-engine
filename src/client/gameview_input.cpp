@@ -570,7 +570,7 @@
     }
 
     bool GameView::canPlaceLocked(const tak::sim::UnitType* type, float x, float z) {
-        return liveWorld()->canPlace(type, x, z, localPlayer_);
+        return liveWorld()->canPlaceOrder(type, x, z, localPlayer_);
     }
 
     GameView::PlacePreview& GameView::placePreviewEntry(const tak::sim::UnitType* type, float x, float z) {
@@ -586,7 +586,7 @@
         const uint32_t tick = front().gameTick;
         if (e.tick != tick && !placePreviewBusy_) {
             if (const auto live = tryLiveWorld()) {
-                e.ok = (*live)->canPlace(type, x, z, localPlayer_);
+                e.ok = (*live)->canPlaceOrder(type, x, z, localPlayer_);
                 e.tick = tick; e.haveClear = false;
             } else placePreviewBusy_ = true;
         }
@@ -605,7 +605,7 @@
                 e.clearable = builder && builder->type->canReclaim &&
                     (*live)->clearableForPlacement(type, x, z, feats, localPlayer_) && !feats.empty();
                 e.haveClear = true;
-                if (e.tick != tick) {e.ok = (*live)->canPlace(type, x, z, localPlayer_); e.tick = tick;}
+                if (e.tick != tick) {e.ok = (*live)->canPlaceOrder(type, x, z, localPlayer_); e.tick = tick;}
             } else placePreviewBusy_ = true;
         }
         return e.haveClear && e.clearable;
@@ -919,7 +919,7 @@
                          !(r.x == line[k].first && r.z == line[k].second && r.w == fx && r.h == fz);
             if (taken) continue;
             std::vector<int> clearing;
-            if (!live->canPlace(placing_,x,z,localPlayer_) &&
+            if (!live->canPlaceOrder(placing_,x,z,localPlayer_) &&
                 !live->clearableForPlacement(placing_,x,z,clearing,localPlayer_)) continue;
             if (walks && sites.size() > 1) {
                 const auto [sx, sz] = line[k];
