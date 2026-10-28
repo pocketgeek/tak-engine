@@ -637,6 +637,16 @@
                 if (!ok) throw std::runtime_error("hidden units: "+what);
                 std::fprintf(stderr,"PASS: hidden units: %s\n",what.c_str());
             };
+            // TAK_HIDDEN_UNITS_GL=1: the OpenGL form of the test (ctest hidden_units_gl):
+            // skipped where no OpenGL renderer could be made, and the stencil form required.
+            const bool glForm=tak::devFlag("TAK_HIDDEN_UNITS_GL");
+            {
+                SDL_RendererInfo ri{};SDL_GetRendererInfo(ren_,&ri);
+                if (glForm && (!ri.name || std::strcmp(ri.name,"opengl"))) {
+                    std::fprintf(stderr,"SKIP: hidden units: no OpenGL renderer here (%s)\n",ri.name ? ri.name : "?");
+                    return;
+                }
+            }
             constexpr int W=1280,H=960;
             float zoom=1.0f;
             noFog_=false;edgeScrollOn_=false;tacticalDotsOpt_=false;healthBars_=0;
@@ -714,7 +724,7 @@
             check(behind>=0 && peek>=0 && open>=0 && front>=0 && foeSeen>=0 && foeFog>=0 && onSmudge>=0 && keep>=0 &&
                   behindKeep>=0,"fixture spawned");
             const char* capture=tak::devEnv("TAK_HIDDEN_UNITS_CAPTURE");
-            const auto shot=[&](const char* mode) {
+            const auto shot=[&](const std::string& mode) {
                 return capture ? std::string(capture)+"-"+mode+".png" : std::string();
             };
             const auto at=[](const std::string& path) { return path.empty() ? nullptr : path.c_str(); };
@@ -838,13 +848,20 @@
             // OFF then SHADOW: the covered units change only on the cover, by a real
             // shadow; the units in sight are untouched.
             bool distantRound=false;
+            bool stencilForm=false;   // the form the SHADOW frames must have been drawn by
             const auto shadowRound=[&](const std::string& tag,const std::string& off,const std::string& on) {
                 SDL_RenderGetScale(ren_,&sx,&sy);
                 hiddenUnitsMode_=hu::kOff;
                 const auto [p0,w0]=frame(at(off));
                 hiddenUnitsMode_=hu::kShadow;
-                const auto [p1,w1]=frame(at(on));
+                hiddenStencil_.takeChanges();
+                auto [p1,w1]=frame(at(on));
+                std::fprintf(stderr,"  SHADOW frame%s: %llu native passes, %llu stencil state changes, %llu covers "
+                             "see-through in a pass\n",tag.c_str(),(unsigned long long)nativePasses_,
+                             (unsigned long long)hiddenStencil_.takeChanges(),(unsigned long long)debugHiddenPassVeils_);
                 check(!p0.empty() && p1.size()==p0.size() && w0==w1,"frames read back"+tag);
+                check(debugHiddenStencil_==stencilForm,std::string("drawn by the ")+(stencilForm ? "stencil" : "redraw")+
+                      " form"+tag);
                 check(ghosted(behind) && ghosted(peek) && ghosted(foeSeen) && ghosted(behindKeep),
                       "ghosts for the units behind the trees and the keep"+tag);
                 check(!ghosted(open) && !ghosted(front) && !ghosted(onSmudge) && !ghosted(foeFog) && !ghosted(keep),
@@ -865,34 +882,85 @@
                     const Diff d=diff(p0,p1,w0,id);
                     check(d.changed==0,std::string("unit ")+name+" untouched"+tag);
                 }
+                return std::pair{std::move(p1),w1};
             };
-            shadowRound("",std::string(),shot("shadow"));
-            check(exact(behind) && exact(peek) && exact(foeSeen) && exact(behindKeep),"plain bodies are redrawn exactly");
-            {   // Under repair (its particles send it through drawUnit) the keep still covers;
-                // a unit drawn through drawUnit itself gets the translucent ghost.
-                particlesOn=keep;
-                frame();
-                check(ghosted(behindKeep) && exact(behindKeep),"unit behind a building under repair: shadow");
-                particlesOn=behind;
-                frame();
-                check(ghosted(behind) && !exact(behind),"unit with drawUnit effects: translucent shadow");
-                particlesOn=-1;
+            // Both forms where the renderer has the stencil one (OpenGL with a stencil on
+            // the window: client/hiddenstencil.h), else the redraw form: the same checks.
+            // Captures: -shadow* (redraw), -shadow-stencil* (stencil).
+            hiddenStencilAllowed_=true;
+            const bool stencilHere=hiddenStencilUsable();
+            std::fprintf(stderr,"  stencil form %s (window stencil %d bits)\n",stencilHere ? "available" : "not available",
+                         hiddenStencil_.bits());
+            if (glForm) check(stencilHere,"OpenGL with a stencil on the window: the stencil form");
+            std::vector<uint8_t> formShots[2][3];   // [stencil, redraw][round]: the SHADOW frames
+            int formWidth[3]={0,0,0};
+            for (int form=stencilHere ? 0 : 1;form<2;++form) {
+                stencilForm=form==0;
+                hiddenStencilAllowed_=stencilForm;
+                const std::string f=stencilForm ? " [stencil]" : " [redraw]";
+                const std::string suffix=stencilForm ? "-stencil" : "";
+                const bool offShots=form==1;   // the OFF frames once
+                auto [p,w]=shadowRound(f,offShots ? shot("off") : std::string(),shot("shadow"+suffix));
+                formShots[form][0]=std::move(p);formWidth[0]=w;
+                check(exact(behind) && exact(peek) && exact(foeSeen) && exact(behindKeep),"plain bodies are redrawn exactly"+f);
+                {   // Under repair (its particles send it through drawUnit) the keep still covers;
+                    // a unit drawn through drawUnit itself: the redraw form's translucent ghost,
+                    // the stencil form's own pixels (effects included: changed only on a cover).
+                    const auto effects=[&](int on,int id,const std::string& name) {
+                        particlesOn=on;
+                        hiddenUnitsMode_=hu::kOff;
+                        const auto [p0,w0]=frame();
+                        hiddenUnitsMode_=hu::kShadow;
+                        const auto [p1,w1]=frame();
+                        particlesOn=-1;
+                        const Diff d=diff(p0,p1,w0,id);
+                        std::fprintf(stderr,"  %s%s: %zu changed, %zu by more than 2, %zu off the cover (by up to %d)\n",
+                                     name.c_str(),f.c_str(),d.changed,d.strong,d.offCover,d.offCoverMost);
+                        check(d.strong>20,"shadow drawn: "+name+f);
+                        if (stencilForm) check(d.offCover==0,"changed only on the cover: "+name+f);
+                    };
+                    effects(keep,behindKeep,"unit behind a building under repair");
+                    check(ghosted(behindKeep) && exact(behindKeep),"unit behind a building under repair: shadow"+f);
+                    effects(behind,behind,"unit with drawUnit effects");
+                    check(ghosted(behind) && exact(behind)==stencilForm,
+                          std::string("unit with drawUnit effects: ")+(stencilForm ? "exact" : "translucent")+" shadow"+f);
+                }
+                SDL_RenderSetScale(ren_,1.5f,1.5f);
+                std::tie(p,w)=shadowRound(" (output scale 1.50)"+f,offShots ? shot("off-x1.5") : std::string(),
+                                          shot("shadow"+suffix+"-x1.5"));
+                formShots[form][1]=std::move(p);formWidth[1]=w;
+                SDL_RenderSetScale(ren_,1,1);
+                {   // Zoomed out: still units are drawn from their distant images (where the
+                    // renderer has them); the redraw form redraws the image, never the model.
+                    zoom=0.5f;
+                    for (int i=0;i<40;++i) frame();   // images baked, the fog's fade settled
+                    const int slot=geomSlot(behind);
+                    const bool images=slot>=0 && distantModelItems_[size_t(slot)].texture;
+                    distantRound=!stencilForm;   // the stencil form draws nothing twice
+                    if (images) {
+                        std::tie(p,w)=shadowRound(" (zoom 0.50, distant images)"+f,offShots ? shot("off-z0.5") : std::string(),
+                                                  shot("shadow"+suffix+"-z0.5"));
+                        formShots[form][2]=std::move(p);formWidth[2]=w;
+                    } else std::fprintf(stderr,"  (no distant images on this renderer: zoom 0.50 round skipped)\n");
+                    distantRound=false;
+                    zoom=1.0f;
+                }
             }
-            SDL_RenderSetScale(ren_,1.5f,1.5f);
-            shadowRound(" (output scale 1.50)",shot("off-x1.5"),shot("shadow-x1.5"));
-            SDL_RenderSetScale(ren_,1,1);
-            {   // Zoomed out: still units are drawn from their distant images (where the
-                // renderer has them); their image is redrawn, never their model.
-                zoom=0.5f;
-                for (int i=0;i<40;++i) frame();   // images baked, the fog's fade settled
-                const int slot=geomSlot(behind);
-                const bool images=slot>=0 && distantModelItems_[size_t(slot)].texture;
-                distantRound=true;
-                if (images) shadowRound(" (zoom 0.50, distant images)",shot("off-z0.5"),shot("shadow-z0.5"));
-                else std::fprintf(stderr,"  (no distant images on this renderer: zoom 0.50 round skipped)\n");
-                distantRound=false;
-                zoom=1.0f;
-            }
+            hiddenStencilAllowed_=true;
+            if (stencilHere)   // how far apart the two forms are (information: the redraw
+                for (int r=0;r<3;++r) {   // form is approximate at soft edges and overlaps)
+                    const auto& a=formShots[0][r];
+                    const auto& b=formShots[1][r];
+                    if (a.empty() || a.size()!=b.size()) continue;
+                    size_t differ=0,strong=0;
+                    for (size_t i=0;i<a.size();i+=4) {
+                        int most=0;
+                        for (int c=0;c<3;++c) most=std::max(most,std::abs(int(a[i+c])-int(b[i+c])));
+                        differ+=most>0;strong+=most>8;
+                    }
+                    std::fprintf(stderr,"  stencil vs redraw, round %d (%d wide): %zu pixels differ, %zu by more than 8\n",
+                                 r,formWidth[r],differ,strong);
+                }
             SDL_RendererInfo info{};SDL_GetRendererInfo(ren_,&info);
             // ---- the policy on its own ----
             {
