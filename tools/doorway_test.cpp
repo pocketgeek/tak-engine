@@ -13,7 +13,9 @@
 //    it helps each output, and between outputs it follows the factory);
 //  * assist: the builder helps the first output only, then stands where it was.
 // Both pathfinding modes. Every output must finish, and once all is done no unit
-// may stand in the factory's rectangle (its door rows included).
+// may stand in the factory's rectangle (its door rows included). A Navy Yard
+// guarded by a Flagship is held to the same, and guards of every size must come
+// to rest inside their ring rather than walk in place short of it.
 #include "sim/matchsetup.h"
 #include "hpi/hpi.h"
 #include <algorithm>
@@ -82,6 +84,71 @@ bool doorCase(const TypeRegistry& registry,const UnitType& factory,const UnitTyp
         (unsigned long long)world.stateHash());
     return pass;
 }
+// A guard of any size comes to rest in its ring (World::guardRing): a 4x4
+// siege engine round a Barracks, a 4x4 Flagship round a Navy Yard. The mover's
+// footprint-wide arrival once stopped such a guard short of the 48 px band,
+// held there walking in place.
+bool ringRest(const TypeRegistry& registry,const char* wardId,const char* guardId,bool water,bool legion) {
+    const UnitType* wardType=registry.find(wardId);const UnitType* guardType=registry.find(guardId);
+    if(!wardType || !guardType) {std::printf("FAIL: no %s or %s\n",wardId,guardId);return false;}
+    World world;world.setVisPlayer(-1);
+    if(legion)world.setPathfindingMode(PathfindingMode::Legion);
+    world.setTerrain(std::vector<uint8_t>(256*256,water?0:100),256,256,20);
+    world.setMapPlacementFeatures(std::vector<uint16_t>(256*256,0xffff),{});
+    world.buildNavClasses(registry);world.setPathService(true);
+    const int ward=world.spawn(wardType,2000,2000,0.f,0);
+    const int guard=world.spawn(guardType,2400,2300,0.f,0);
+    world.guard(guard,ward,false);
+    int stuck=0;Fixed lastX,lastZ;
+    for(int tick=0;tick<3000;++tick) {
+        world.tick(1.f/30);
+        const Unit* g=world.unit(guard);
+        if(tick>=2400 && g->x==lastX && g->z==lastZ && g->speed>Fixed())++stuck;
+        lastX=g->x;lastZ=g->z;
+    }
+    const Unit* g=world.unit(guard);const Unit* w=world.unit(ward);
+    const int dx=footprintOrigin(g->x,guardType->footX)-footprintOrigin(w->x,guardType->footX);
+    const int dz=footprintOrigin(g->z,guardType->footZ)-footprintOrigin(w->z,guardType->footZ);
+    const int inner=(std::max(wardType->footX,wardType->footZ)+guardType->footX+2)*16,outer=inner+48;
+    const int squared=(dx*dx+dz*dz)*256;
+    const bool pass=squared>=inner*inner && squared<=outer*outer && !stuck && g->orders.size()==1 && g->orders.front().guard;
+    std::printf("%s: ring mode=%s ward=%s guard=%s distance=%.0f band=%d-%d walkingInPlace=%d\n",pass?"PASS":"FAIL",
+        legion?"Legion":"Retail",wardId,guardId,std::sqrt(float(squared)),inner,outer,stuck);
+    return pass;
+}
+// A Navy Yard guarded by a Flagship from in front of its door: every Submersible
+// must leave and the Flagship must not sit in the yard (on main it did, from the
+// first Submersible on).
+bool navalDoor(const TypeRegistry& registry,bool legion,int side) {
+    auto yardType=*registry.find("crenavy");yardType.storage=1000000;
+    const UnitType* sub=registry.find("cresubm");const UnitType* flag=registry.find("verflag");
+    World world;world.setVisPlayer(-1);
+    if(legion)world.setPathfindingMode(PathfindingMode::Legion);
+    world.setTerrain(std::vector<uint8_t>(256*256,0),256,256,20);
+    world.setMapPlacementFeatures(std::vector<uint16_t>(256*256,0xffff),{});
+    world.buildNavClasses(registry);world.setPathService(true);
+    const int yard=world.spawn(&yardType,1800,1800,0.f,0);
+    world.player(0).mana=1000000;world.train(yard,sub,4);
+    int site=0;
+    for(int t=0;t<600 && !site;++t) {world.tick(1.f/30);site=world.unit(yard)->productionSiteId;}
+    if(!site) {std::printf("FAIL: crenavy never placed its first cresubm\n");return false;}
+    float dx=world.unit(site)->x.toFloat()-1800,dz=world.unit(site)->z.toFloat()-1800;
+    const float len=std::max(1.f,std::sqrt(dx*dx+dz*dz));dx/=len;dz/=len;
+    const float out=8.f*float(std::max(yardType.footX,yardType.footZ))+64.f;
+    const int guard=world.spawn(flag,1800+dx*out-dz*float(side)*out*0.75f,1800+dz*out+dx*float(side)*out*0.75f,0.f,0);
+    world.guard(guard,yard,false);
+    int complete=0,tick=0;
+    for(;tick<20000 && complete<4;++tick) {
+        world.tick(1.f/30);complete=0;
+        for(const auto& u:world.units())if(u.alive() && u.type==sub && !u.underConstruction)++complete;
+    }
+    for(int settle=0;settle<900;++settle)world.tick(1.f/30);
+    const bool inYard=intersects(footprint(*world.unit(guard)),footprint(*world.unit(yard)));
+    const bool pass=complete>=4 && !inYard;
+    std::printf("%s: naval mode=%s side=%d completed=%d guardInYard=%d ticks=%d\n",pass?"PASS":"FAIL",
+        legion?"Legion":"Retail",side,complete,int(inYard),tick);
+    return pass;
+}
 }
 int main(int argc,char** argv) {
     if(argc<2)return 2;
@@ -114,6 +181,14 @@ int main(int argc,char** argv) {
             for(bool legion:{false,true})for(Mode mode:{Mode::Guard,Mode::Assist})for(int side:{-1,0,1}) {
                 ++cases;if(!doorCase(registry,type,small,*helper,mode,legion,crusades,side))++failures;
             }
+        }
+    }
+    if(only.empty()) {
+        TypeRegistry registry;setupRegistry(registry,vfs,false);
+        for(bool legion:{false,true}) {
+            for(const char* g:{"arapult","zongiant","arasword"}) {++cases;if(!ringRest(registry,"arakeep",g,false,legion))++failures;}
+            for(const char* g:{"verflag","verscout"}) {++cases;if(!ringRest(registry,"crenavy",g,true,legion))++failures;}
+            for(int side:{-1,0,1}) {++cases;if(!navalDoor(registry,legion,side))++failures;}
         }
     }
     std::printf("doorway: %d cases, %d failures\n",cases,failures);

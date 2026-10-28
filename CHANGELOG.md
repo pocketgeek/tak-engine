@@ -26,11 +26,12 @@ their validation reports; both live in [`docs/`](docs/).
   pixels from it, which for a factory is its yard: the guard stood on the spot
   where the next unit is made, and the factory could not start another one.
   As in the original game, a ground unit now guards from a ring round the unit
-  or building it guards, two cells beyond its edge plus its own width and three
-  cells deep (a Barracks guard waits about 256 to 304 pixels from the
-  Barracks' centre), so a guarding builder walks in to help each unit being
-  made and back out between them. Guards of soldiers keep a little further off
-  than before for the same reason. Protocol 303.
+  or building it guards: measured from its centre, the guarded unit's full
+  longer side plus the guard's own width plus two cells, and three cells deep
+  (a Barracks guard waits about 256 to 304 pixels from the Barracks' centre),
+  so a guarding builder walks in to help each unit being made and back out
+  between them; a ship guarding a shipyard does the same. Guards of soldiers
+  keep a little further off than before for the same reason. Protocol 303.
 
 ## 0.9.8
 *2026-10-27 · protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*

@@ -85279,7 +85279,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 448
+     "value": 462
     },
     "back": {
      "band": 1.1,
@@ -85287,7 +85287,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 118
+     "value": 117
     },
     "backward": {
      "band": 1.1,
@@ -85295,7 +85295,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 134
+     "value": 123
     },
     "clearance_mean_x100": {
      "band": 1.1,
@@ -85343,7 +85343,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 121
+     "value": 144
     },
     "detour_permille": {
      "band": 1.1,
@@ -85351,7 +85351,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 133
+     "value": 139
     },
     "engagement_on_flowing": {
      "band": 1.1,
@@ -85359,7 +85359,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 49
+     "value": 47
     },
     "flip_rate_per30_permille": {
      "band": 1.1,
@@ -85367,7 +85367,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 29
+     "value": 28
     },
     "flips": {
      "band": 1.1,
@@ -85375,7 +85375,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 182
+     "value": 180
     },
     "follow_chain_max": {
      "band": 1.1,
@@ -85622,77 +85622,77 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "ca296ac2ce81ad04"
+     "value": "eeb350b68e245a30"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "74a9fa773442264d"
+     "value": "a00f32cbdd09803f"
     },
     "hash@-3": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "621f718e4dd4ca20"
+     "value": "ccb5e75fc41e486d"
     },
     "hash@-4": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "a0b3e50aa084f7dd"
+     "value": "7dc179479524f818"
     },
     "hash@-5": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "90326cde52d73361"
+     "value": "7f3f8c220fce1278"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "8a123679884e5252"
+     "value": "e0971c097e2c8968"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "c5ec28d2bbf4fb9c"
+     "value": "4d6e88000439ccfb"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "f16662d33f6eba61"
+     "value": "f55e24d67c0a5e30"
     },
     "hash@3": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "00d8824c081f2bf6"
+     "value": "896bdf8c58ea2bff"
     },
     "hash@4": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "69f7f3b6e221299e"
+     "value": "05ecdc15df1a3f38"
     },
     "hash@5": {
      "dir": "lower",
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "eq",
      "since": "W5 step 0",
-     "value": "19754fabf83938d1"
+     "value": "dd1e8681259591e6"
     },
     "open_still900": {
      "band": 1.1,
@@ -85724,7 +85724,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 105006
+     "value": 104668
     },
     "reach.ring.damage_end": {
      "band": 1.1,
@@ -85764,7 +85764,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 59
+     "value": 55
     },
     "reach.ring.ever_t2400": {
      "band": 1.1,
@@ -85844,7 +85844,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 982
+     "value": 979
     },
     "reach.ring.targets_dead_end": {
      "band": 1.1,
@@ -85860,7 +85860,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 56
+     "value": 62
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -85875,7 +85875,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 2525
+     "value": 2416
     },
     "spacing_samples": {
      "band": 1.1,
@@ -85891,7 +85891,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 960
+     "value": 1020
     },
     "statue_ticks": {
      "band": 1.1,
@@ -85899,7 +85899,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 99
+     "value": 96
     },
     "still900_ever": {
      "band": 1.1,
@@ -85915,7 +85915,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 787
+     "value": 800
     },
     "stopped_permille": {
      "band": 1.1,
@@ -85923,7 +85923,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 578
+     "value": 597
     },
     "transit_far_held_permille": {
      "band": 1.1,
@@ -85955,7 +85955,7 @@
      "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
      "rule": "band",
      "since": "W0",
-     "value": 5337
+     "value": 5334
     },
     "waiting_held": {
      "band": 1.1,
@@ -85971,7 +85971,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 9764
+     "value": 9767
     },
     "walk_in_place": {
      "band": 1.1,
@@ -85979,7 +85979,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 4797
+     "value": 867
     },
     "walk_net": {
      "band": 1.1,
@@ -85987,7 +85987,7 @@
      "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
      "rule": "band",
      "since": "W0",
-     "value": 1867
+     "value": 0
     },
     "walk_net_runs": {
      "band": 1.1,
@@ -85995,7 +85995,7 @@
      "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
      "rule": "band",
      "since": "W0",
-     "value": 2
+     "value": 0
     },
     "wall_near_samples": {
      "band": 1.1,
@@ -86011,7 +86011,7 @@
      "reason": "W5 step 0 (2026-10-09): the W5 fixtures' base on the W4 land head (6333e38d + instrument-only commits); the Windows gate-offset sweep",
      "rule": "band",
      "since": "W5 step 0",
-     "value": 7681
+     "value": 7721
     },
     "wall_still_samples": {
      "band": 1.1,
@@ -86019,7 +86019,7 @@
      "reason": "Protocol 303 (task-doorway): a ground guard keeps to Follow_Ground's ring round its ward (World::guardRing, 0x407f90 stage 0: (max ward foot + guard footX + 2) x 16 px, 3 cells deep; emulated) instead of walking to within 70 px of its centre, which parked guarding builders on factory pads. The scenario's reach range moved from 96 to 144 px (the ring's outer edge, 128 px for a 1x1 guard of a 2x2 ward, plus a cell): no ring guard can stand within 96. Retaken in both modes.",
      "rule": "band",
      "since": "W0",
-     "value": 11455
+     "value": 11415
     },
     "wall_touch_corner_permille": {
      "band": 1.1,

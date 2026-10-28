@@ -3420,9 +3420,15 @@ differences are in [the 0.9.7 notes](release-0.9.7-notes.md).
   parked on the pad and BUILD stage 2 (`0x401deb`) refused every later output.
   Ours: `World::guardRing`, read by `tickCombat` and the ground mover each
   tick (retail re-aims at each look; for a structure the ring is the same).
-  Measured by `doorway_test` (216 cases, every shipped ground factory, guard
-  and assist, both modes and balances: 77 stalled or left the guard in the
-  yard before). Flyers keep VTOL_Follow's orbit and their 70 px hold.
+  The ring controller's only arrival is the band itself, so the ground mover
+  never stops a guard on its footprint-wide final-goal radius: that radius
+  (32 px for a 4x4) is wider than half the 48 px band and left siege engines
+  and flagships walking in place just outside it.
+  Measured by `doorway_test` (216 factory cases, every shipped ground factory,
+  guard and assist, both modes and balances: 77 stalled or left the guard in
+  the yard before; plus ring-rest cases for 1x1 to 4x4 guards round a Barracks
+  and a Navy Yard, and a Navy Yard guarded by a Flagship). Flyers keep
+  VTOL_Follow's orbit and their 70 px hold.
 - **VTOL_Follow (`0x418860`), every flyer's guard** (the order dispatch
   `0x4de530` picks it by canfly alone). Off the map it first flies to a point
   800 px toward the map. A flying builder runs Follow_Ground's checks with the

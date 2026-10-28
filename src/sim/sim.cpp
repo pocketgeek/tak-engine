@@ -13906,7 +13906,12 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         // over one pixel, which is exactly what it looked like.)
         float foot = float(std::max(u.type->footX, u.type->footZ)) * 8.0f;
         float arrive = o.goal ? std::max(16.0f, foot) : 3.0f;
-        if (!groundMissionOrder(u,true) && !legHasRectangle && (u.type->canFly || o.goal) && dist < arrive) {
+        // A ground guard outside its ring keeps steering for the ring's point
+        // (accepted above): the ring is 48 px deep, and stopping a footprint
+        // short of its middle left a 4x4 guard (3x3 at sea) just outside the
+        // band, held there walking in place.
+        if (!groundMissionOrder(u,true) && !legHasRectangle && (u.type->canFly || o.goal) && dist < arrive &&
+            !(o.guard && !u.type->canFly)) {
             if (o.buildType || o.reclaimFeat || o.repairTarget)
                 return;   // the job is claimed above; its order blocks the queue
             if (o.targetId == 0 || !o.goal) {

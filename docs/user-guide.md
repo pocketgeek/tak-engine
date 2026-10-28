@@ -848,8 +848,9 @@ if it can reach it:
 
 **Where a guard stands.** As in the original, a ground unit on **Guard**
 keeps to a ring round the unit or building it guards rather than walking up
-to it: from two cells (32 pixels) beyond the guarded unit's longer side plus
-the guard's own width, three cells (48 pixels) deep. It walks to the ring
+to it. Measured from the guarded unit's centre, the ring starts at the
+guarded unit's full longer side plus the guard's own width plus two cells
+(16 pixels a cell) and is three cells (48 pixels) deep. It walks to the ring
 along its own bearing and stops anywhere on it, and the ring moves with the
 guarded unit. A guard never waits inside a factory's yard.
 
