@@ -570,7 +570,19 @@
     }
 
     bool GameView::canPlaceLocked(const tak::sim::UnitType* type, float x, float z) {
-        return liveWorld()->canPlace(type, x, z, localPlayer_);
+        const auto live = liveWorld();
+        return live->canPlace(type, x, z, localPlayer_) && siteReachable(*live, type, x, z);
+    }
+
+    int GameView::placementBuilderId() const {
+        if (const auto* b = selectedBuilder()) return b->id;
+        return selection_.empty() ? 0 : selection_.front();
+    }
+
+    bool GameView::siteReachable(const tak::sim::World& w, const tak::sim::UnitType* type,
+                                 float x, float z) const {
+        const int id = placementBuilderId();
+        return !id || w.buildSiteReachable(id, type, x, z);
     }
 
     GameView::PlacePreview& GameView::placePreviewEntry(const tak::sim::UnitType* type, float x, float z) {
@@ -587,6 +599,8 @@
         if (e.tick != tick && !placePreviewBusy_) {
             if (const auto live = tryLiveWorld()) {
                 e.ok = (*live)->canPlace(type, x, z, localPlayer_);
+                e.reach = siteReachable(**live, type, x, z);
+                e.ok = e.ok && e.reach;
                 e.tick = tick; e.haveClear = false;
             } else placePreviewBusy_ = true;
         }
@@ -602,10 +616,11 @@
             if (const auto live = tryLiveWorld()) {
                 const auto* builder = selectedBuilder();
                 std::vector<int> feats;
-                e.clearable = builder && builder->type->canReclaim &&
+                if (e.tick != tick) e.reach = siteReachable(**live, type, x, z);
+                e.clearable = builder && builder->type->canReclaim && e.reach &&
                     (*live)->clearableForPlacement(type, x, z, feats, localPlayer_) && !feats.empty();
                 e.haveClear = true;
-                if (e.tick != tick) {e.ok = (*live)->canPlace(type, x, z, localPlayer_); e.tick = tick;}
+                if (e.tick != tick) {e.ok = (*live)->canPlace(type, x, z, localPlayer_) && e.reach; e.tick = tick;}
             } else placePreviewBusy_ = true;
         }
         return e.haveClear && e.clearable;
@@ -626,7 +641,9 @@
                                std::vector<int>& outFeatures) {
         const auto* builder=selectedBuilder();
         if (!builder || !builder->type->canReclaim) return false;
-        return liveWorld()->clearableForPlacement(type, x, z, outFeatures, localPlayer_);
+        const auto live = liveWorld();
+        return siteReachable(*live, type, x, z) &&
+               live->clearableForPlacement(type, x, z, outFeatures, localPlayer_);
     }
 
     // The simulation queues footprint reclamation before admitting construction.
@@ -921,6 +938,7 @@
             std::vector<int> clearing;
             if (!live->canPlace(placing_,x,z,localPlayer_) &&
                 !live->clearableForPlacement(placing_,x,z,clearing,localPlayer_)) continue;
+            if (!siteReachable(*live,placing_,x,z)) continue;   // the builder can never get there
             if (walks && sites.size() > 1) {
                 const auto [sx, sz] = line[k];
                 const tak::sim::RetailRectGoal rect{sx - bt->footX, sx + fx, sz - bt->footZ, sz + fz};

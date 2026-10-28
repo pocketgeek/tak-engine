@@ -601,7 +601,9 @@ target underneath.
 *A Beast Tamer's menu at Build Menu Scale 150% in a 1024 × 768 window: two rows, clear of the command panel and the mana orb.*
 
 - **Structures**: click an icon, then click the map to place it. Placement shows
-  whether the spot is valid. Right-click or **Esc** cancels.
+  whether the spot is valid, which includes whether the builder can get close
+  enough to build there: a walking builder cannot place a shipyard out in open
+  sea or on a lake it has no way to walk to. Right-click or **Esc** cancels.
 - **Lines and queues**: hold **Shift** while placing to queue several sites, or
   Shift-drag to lay a line of walls or towers. A line starts tight: each
   building touches the last, with no gap (corner to corner on a diagonal). Turn

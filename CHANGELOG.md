@@ -19,6 +19,15 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+
+- **Builders only place what they can reach.** When a walking builder can
+  never get close enough to a spot to build there, such as a shipyard out in
+  open sea or on a lake it has no way to walk to, the placement ghost turns
+  red and the click is refused. Before, the order was accepted and the builder
+  set off, then gave up. This goes beyond the original game, which accepted
+  such sites. Flying builders still place anywhere they could build.
+
 ## 0.9.8
 *2026-10-27 · protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*
 

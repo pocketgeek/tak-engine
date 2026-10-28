@@ -2812,12 +2812,19 @@ private:
     // clicks only and rare (a ghost while positioning a building), so the brief
     // wait for the current tick is invisible; uncontended and cheap when inline.
     bool canPlaceLocked(const tak::sim::UnitType* type, float x, float z);
+    // The builder a placement click orders (issue sites use the same choice), and whether it
+    // can get within its build distance of the site (World::buildSiteReachable). An engine
+    // refusal beyond retail: retail accepts an unreachable site and the builder gives up
+    // when it gets there. Folded into every placement verdict below, so the ghost is red
+    // and the click refused where the selected builder can never build.
+    int placementBuilderId() const;
+    bool siteReachable(const tak::sim::World& w, const tak::sim::UnitType* type, float x, float z) const;
     // The PER-FRAME form for ghosts (drawGhost, build line, mana drag): the verdict is cached per
     // (type, x, z, published tick), a miss does a try_lock (never a blocking wait), and once a
     // try has failed this frame no more are made -- the previous verdict is reused instead. The
     // click path keeps canPlaceLocked's blocking lock, so a placement is never decided on a guess.
     struct PlacePreview {const tak::sim::UnitType* type=nullptr; float x=0,z=0; uint32_t tick=0;
-                         bool ok=false, clearable=false, haveClear=false;};
+                         bool ok=false, clearable=false, haveClear=false, reach=true;};
     std::vector<PlacePreview> placePreview_;
     bool placePreviewBusy_ = false;     // a try_lock failed this frame
     bool placePreviewLast_ = true;      // last verdict handed out (the no-data fallback)
