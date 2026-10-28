@@ -19,6 +19,18 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+*protocol 303 · replay format 15*
+
+- **Hidden Units** (Options → Graphics; not in the original game): units
+  behind trees, rocks and buildings stay visible. **Outline**, the default,
+  draws the hidden part of a unit as an outline in its player's colour;
+  **Dots** puts its tactical dot on top; **Off** hides it as before. Only
+  units you can see anyway are marked.
+- **Flat scenery is drawn under units**, as in the original game: features
+  whose height is below 10 (stumps, crops, smudges, mana deposits) no longer
+  paint over the feet of a unit standing just north of them.
+
 ## 0.9.9
 *2026-10-28 · protocol 303 · replay format 15 · does not play with 0.9.8 or earlier, nor their replays*
 
