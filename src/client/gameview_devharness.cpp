@@ -1013,6 +1013,91 @@
                     std::fprintf(stderr,"  stencil vs redraw, round %d (%d wide): %zu pixels differ, %zu by more than 8\n",
                                  r,formWidth[r],differ,strong);
                 }
+            // ---- FADE ----
+            // A tree or rock over a unit the frame looks at fades whole once the fade-out
+            // time has passed (FADE's clock is the harness's here); a tree with no unit
+            // under it, and one over an enemy in fog, are drawn as with OFF; a building
+            // over a unit keeps SHADOW's look. A small forest with units under it joins
+            // the view (captures -fade-off / -fade-shadow / -fade, with the form's suffix).
+            {
+                SDL_RenderGetScale(ren_,&sx,&sy);
+                uint64_t clock=1000;
+                const auto fadeFrame=[&](uint64_t stepMs,const std::string& capture=std::string()) {
+                    clock+=stepMs;debugHiddenFadeNowMs_=clock;
+                    return frame(at(capture));
+                };
+                std::vector<size_t> forest;
+                for (int j=0;j<3;++j) for (int i=0;i<4;++i) forest.push_back(place("aratree01",cx0-8+3*i,cz0+12+3*j));
+                const size_t treeLone=place("aratree01",cx0+22,cz0+16);
+                std::vector<int> underForest;
+                for (const auto& [i,j]:{std::pair{0,0},std::pair{1,1},std::pair{2,0},std::pair{3,2},std::pair{0,2}}) {
+                    const auto& t=features_[forest[size_t(j*4+i)]];
+                    underForest.push_back(spawn("arasword",t.x,t.z-behindDz,0,0));
+                }
+                check(std::all_of(underForest.begin(),underForest.end(),[](int id) { return id>=0; }),"forest units spawned");
+                const auto alphaOf=[&](size_t t) { return hiddenFeatureAlpha(features_[t]); };
+                const auto rectOf=[&](size_t t) {
+                    const FeatureSprite sp=featureSprite(features_[t],zoom);
+                    return SDL_Rect{int(sp.dst.x)-1,int(sp.dst.y)-1,int(sp.dst.w)+3,int(sp.dst.h)+3};
+                };
+                const auto changedIn=[&](const std::vector<uint8_t>& p0,const std::vector<uint8_t>& p1,int w,SDL_Rect b) {
+                    size_t strong=0;
+                    const int h=int(p0.size()/4/size_t(std::max(1,w)));
+                    for (int y=std::max(0,b.y);y<std::min(h,b.y+b.h);++y)
+                        for (int x=std::max(0,b.x);x<std::min(w,b.x+b.w);++x) {
+                            const size_t i=(size_t(y)*size_t(w)+size_t(x))*4;
+                            int most=0;
+                            for (int c=0;c<3;++c) most=std::max(most,std::abs(int(p0[i+c])-int(p1[i+c])));
+                            strong+=most>2;
+                        }
+                    return strong;
+                };
+                for (int form=stencilHere ? 0 : 1;form<2;++form) {
+                    const bool stencilFade=form==0;
+                    hiddenStencilAllowed_=stencilFade;
+                    const std::string f=stencilFade ? " [stencil]" : " [redraw]";
+                    const std::string suffix=stencilFade ? "-stencil" : "";
+                    hiddenUnitsMode_=hu::kOff;
+                    const auto [p0,w0]=fadeFrame(16,shot("fade-off"+suffix));
+                    hiddenUnitsMode_=hu::kShadow;
+                    const auto [pS,wS]=fadeFrame(16,shot("fade-shadow"+suffix));
+                    hiddenUnitsMode_=hu::kFade;
+                    fadeFrame(16);
+                    check(alphaOf(treeA)<255 && alphaOf(treeA)>hu::kFadeOpacity,"FADE: the tree starts fading"+f);
+                    fadeFrame(uint64_t(hu::kFadeOutMs));
+                    const auto [p1,w1]=fadeFrame(16,shot("fade"+suffix));
+                    check(!p0.empty() && p1.size()==p0.size() && pS.size()==p0.size(),"FADE frames read back"+f);
+                    check(alphaOf(treeA)==hu::kFadeOpacity && alphaOf(treeB)==hu::kFadeOpacity && alphaOf(treeC)==hu::kFadeOpacity,
+                          "FADE: trees over units faded after the fade-out time"+f);
+                    size_t forestFaded=0;
+                    for (size_t t:forest) forestFaded+=alphaOf(t)==hu::kFadeOpacity;
+                    std::fprintf(stderr,"  FADE%s: %zu of %zu forest trees faded, %zu fading covers\n",f.c_str(),forestFaded,
+                                 forest.size(),hiddenFades_.size());
+                    check(forestFaded>=underForest.size(),"FADE: the forest trees over units faded"+f);
+                    check(alphaOf(treeLone)==255 && changedIn(p0,p1,w0,rectOf(treeLone))==0,
+                          "FADE: a tree with no unit under it unchanged"+f);
+                    check(alphaOf(treeFog)==255,"FADE: an enemy in fog under a tree does not fade it"+f);
+                    {
+                        const Diff d=diff(p0,p1,w0,behind);
+                        check(d.strong>20,"FADE: the unit behind the tree shows"+f);
+                    }
+                    check(ghosted(behindKeep) && !ghosted(behind) && !ghosted(foeSeen) && debugHiddenStencil_==stencilFade,
+                          "FADE: only the unit behind the building gets SHADOW's look"+f);
+                    {
+                        SDL_Rect b=boxOf(behindKeep);
+                        check(changedIn(pS,p1,w0,b)==0 && changedIn(p0,p1,w0,b)>20,"FADE: the building as with SHADOW"+f);
+                    }
+                    // Tactical Dots frames: no fade (dropped).
+                    tacticalDotsOpt_=true;tacticalDotsZoom_=100;
+                    fadeFrame(16);
+                    check(dotsFrame_ && hiddenFades_.empty(),"FADE: nothing while Tactical Dots shows"+f);
+                    tacticalDotsOpt_=false;
+                    fadeFrame(16);
+                    check(!dotsFrame_,"FADE: models back"+f);
+                }
+                hiddenStencilAllowed_=true;
+                debugHiddenFadeNowMs_=0;
+            }
             SDL_RendererInfo info{};SDL_GetRendererInfo(ren_,&info);
             // ---- the policy on its own ----
             {

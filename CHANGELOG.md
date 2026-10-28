@@ -28,6 +28,8 @@ their validation reports; both live in [`docs/`](docs/).
   as a faint shadow and the part in sight is unchanged; **Dots** puts its
   tactical dot on top; **Off** hides it as before. Only units you can see
   anyway are marked.
+- **Hidden Units: Fade**: a tree or rock over a unit fades out while it is
+  there; buildings show the unit as with Shadow.
 - **Flat scenery is drawn under units**, as in the original game: features
   whose height is below 10 (stumps, crops, smudges, mana deposits) no longer
   paint over the feet of a unit standing just north of them.

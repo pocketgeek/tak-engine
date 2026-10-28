@@ -9,6 +9,9 @@
 //   SHADOW  -- the cover turns see-through where it hides the unit: the covered
 //              part shows as a faint shadow through the tree or the wall, the part
 //              in sight is untouched (see Ghost below).
+//   FADE    -- a tree or rock over a unit fades out whole (kFadeOpacity) and back in
+//              once no unit is under it (CoverFades below); a building over a unit
+//              still shows it as with SHADOW.
 // Marked are the units the frame draws anyway (own, allied, and enemies in sight:
 // nothing under fog, no cloaked enemy that is not drawn), standing on the ground
 // (an airborne flyer paints after every tree and is never covered). What covers is
@@ -30,18 +33,20 @@
 
 namespace tak::hiddenunits {
 
-enum Mode : int { kOff = 0, kDots = 1, kShadow = 2 };
+enum Mode : int { kOff = 0, kDots = 1, kShadow = 2, kFade = 3 };
 inline constexpr int kDefault = kShadow;
+inline constexpr int kModeCount = 4;
 
-// Persisted as hiddenUnits = off | dots | shadow. A file from before the option
-// (no key), one from the OUTLINE mode SHADOW replaced ("outline") or an unknown
-// value reads as the default.
+// Persisted as hiddenUnits = off | dots | shadow | fade. A file from before the
+// option (no key), one from the OUTLINE mode SHADOW replaced ("outline") or an
+// unknown value reads as the default.
 inline const char* name(int mode) {
-    return mode == kOff ? "off" : mode == kDots ? "dots" : "shadow";
+    return mode == kOff ? "off" : mode == kDots ? "dots" : mode == kFade ? "fade" : "shadow";
 }
 inline int parse(std::string_view value) {
     if (value == "off" || value == "0") return kOff;
     if (value == "dots" || value == "1") return kDots;
+    if (value == "fade" || value == "3") return kFade;
     return kDefault;
 }
 
@@ -118,6 +123,24 @@ inline bool spriteCovers(const AlphaMask& mask, float x, float y, float w, float
     const float u = (px - x - shear * (1.0f - v)) / w;
     if (!(u >= 0.0f && u < 1.0f)) return false;
     return mask.opaque(int(u * float(mask.width())), int(v * float(mask.height())));
+}
+
+// Does one of the sprite's opaque texels lie in the screen rectangle? Sampled on a
+// grid of `step` pixels (and the rectangle's far edges): a body a tree's crown
+// reaches, not one merely inside the transparent corners of its quad.
+inline bool spriteCoversRect(const AlphaMask& mask, float x, float y, float w, float h, float shear,
+                             const Rect& r, float step = 3.0f) {
+    const Rect q = r.clipped(Rect{x + std::min(0.0f, shear), y, x + w + std::max(0.0f, shear), y + h});
+    if (q.empty()) return false;
+    step = std::max(step, 1.0f);
+    for (float py = q.y0;; py = std::min(py + step, q.y1 - 0.01f)) {
+        for (float px = q.x0;; px = std::min(px + step, q.x1 - 0.01f)) {
+            if (spriteCovers(mask, x, y, w, h, shear, px, py)) return true;
+            if (px >= q.x1 - 0.01f) break;
+        }
+        if (py >= q.y1 - 0.01f) break;
+    }
+    return false;
 }
 
 // Is (px, py) inside the triangle (edges included)? Either winding.
@@ -305,5 +328,73 @@ inline void groupOverlaps(std::span<const Rect> rects, CoverGrid& grid, float wi
     }
     for (size_t i = 0; i < rects.size(); ++i) group[i] = root(uint32_t(i));
 }
+
+// ---- FADE ---------------------------------------------------------------------
+// A tree or rock (a feature cover) over a unit the frame looks at is drawn whole at
+// kFadeOpacity: the unit, its shadow and the ground under the crown show through.
+// It fades out over kFadeOutMs when a unit comes under it and back in over kFadeInMs
+// after the last one has left (display time; smoothstep eased). A building over a
+// unit keeps SHADOW's look (the ghosts above), whatever FADE does to the trees.
+inline constexpr uint8_t kFadeOpacity = 115;   // ~45%, as kShadowOpacity
+inline constexpr float kFadeOutMs = 200.0f;
+inline constexpr float kFadeInMs = 350.0f;
+
+// Per-cover fade state, keyed by the feature's stable id and kept sorted by it. Each
+// frame: begin(), cover(id) for every feature cover over a unit, inView(id) for every
+// feature cover the frame draws, then advance(ms). A cover fully back, or not in view
+// this frame, is dropped. Storage is kept between frames.
+class CoverFades {
+public:
+    void begin() { hits_.clear(); ++frame_; }
+    void cover(uint32_t id) { hits_.push_back(id); }
+    void inView(uint32_t id) {
+        if (const size_t i = find(id); i < entries_.size()) entries_[i].seen = frame_;
+    }
+    void advance(float ms) {
+        std::sort(hits_.begin(), hits_.end());
+        hits_.erase(std::unique(hits_.begin(), hits_.end()), hits_.end());
+        // New covers join at level 0 (opaque), in id order.
+        size_t at = 0;
+        for (const uint32_t id : hits_) {
+            while (at < entries_.size() && entries_[at].id < id) ++at;
+            if (at < entries_.size() && entries_[at].id == id) { entries_[at].seen = frame_; continue; }
+            entries_.insert(entries_.begin() + std::ptrdiff_t(at), Entry{id, 0.0f, frame_});
+        }
+        ms = std::max(0.0f, ms);
+        size_t out = 0;
+        for (size_t i = 0; i < entries_.size(); ++i) {
+            Entry e = entries_[i];
+            const bool hit = std::binary_search(hits_.begin(), hits_.end(), e.id);
+            if (!hit && e.seen != frame_) continue;   // left the view
+            e.level = hit ? std::min(1.0f, e.level + ms / kFadeOutMs) : std::max(0.0f, e.level - ms / kFadeInMs);
+            if (!hit && e.level <= 0.0f) continue;     // fully back
+            entries_[out++] = e;
+        }
+        entries_.resize(out);
+    }
+    // The cover's opacity now: 255 when it is not fading.
+    uint8_t alpha(uint32_t id) const {
+        const size_t i = find(id);
+        if (i >= entries_.size()) return 255;
+        const float level = entries_[i].level;
+        const float t = level * level * (3.0f - 2.0f * level);   // smoothstep
+        return uint8_t(std::lround(255.0f - t * float(255 - kFadeOpacity)));
+    }
+    size_t size() const { return entries_.size(); }
+    bool empty() const { return entries_.empty(); }
+    void clear() { entries_.clear(); hits_.clear(); }
+    size_t capacityBytes() const { return entries_.capacity() * sizeof(Entry) + hits_.capacity() * sizeof(uint32_t); }
+
+private:
+    struct Entry { uint32_t id; float level; uint32_t seen; };
+    size_t find(uint32_t id) const {   // its index, or entries_.size()
+        const auto it = std::lower_bound(entries_.begin(), entries_.end(), id,
+                                         [](const Entry& e, uint32_t v) { return e.id < v; });
+        return it != entries_.end() && it->id == id ? size_t(it - entries_.begin()) : entries_.size();
+    }
+    std::vector<Entry> entries_;
+    std::vector<uint32_t> hits_;
+    uint32_t frame_ = 0;
+};
 
 }  // namespace tak::hiddenunits

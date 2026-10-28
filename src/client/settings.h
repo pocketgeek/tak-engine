@@ -76,7 +76,8 @@ struct Settings {
     // HIDDEN UNITS (client/hiddenunits.h; a non-retail extra): a unit behind a tree, rock or
     // building is shown anyway -- 0 = OFF (as retail), 1 = DOTS (its tactical dot on top
     // when its centre is covered), 2 = SHADOW (the cover turns see-through over the unit;
-    // the default). Persisted as hiddenUnits = off | dots | shadow; absent (a settings
+    // the default), 3 = FADE (a tree or rock over a unit fades out; a building as SHADOW).
+    // Persisted as hiddenUnits = off | dots | shadow | fade; absent (a settings
     // file from before it), "outline" (the mode SHADOW replaced) or unknown = SHADOW.
     int   hiddenUnits = 2;
     bool  screenShake = false;     // camera shake on heavy impacts / mission quakes; default off

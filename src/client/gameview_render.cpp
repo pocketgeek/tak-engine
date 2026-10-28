@@ -2151,7 +2151,8 @@
                     }
                 };
                 if (veil) hiddenStencilUse(HS::Under0);
-                drawSprite(255);
+                // HIDDEN UNITS, FADE: a tree or rock over a unit drawn whole, faded.
+                drawSprite(hiddenFeatureAlpha(f));
                 if (veil) {
                     hiddenStencilUse(HS::Under1);
                     drawSprite(tak::hiddenunits::kVeilAlpha);

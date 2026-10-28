@@ -553,17 +553,21 @@ void OptionsScreen::build(int channels) {
            [](float v) { return pctOf(v, 100); });
     ctls_.back().enabled = [&] { return s_.tacticalDots; };   // only meaningful with dots on
     // A unit behind a tree, rock or building, shown anyway (not in retail;
-    // client/hiddenunits.h). Three stops like HEALTH BARS; applied live.
-    slider("HIDDEN UNITS", 0, 2, [&] { return float(s_.hiddenUnits); },
-           [&](float v) { s_.hiddenUnits = std::clamp(int(v + 0.5f), 0, 2); },
-           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "SHADOW" : l >= 1 ? "DOTS" : "OFF"); });
+    // client/hiddenunits.h). Four stops; applied live.
+    slider("HIDDEN UNITS", 0, 3, [&] { return float(s_.hiddenUnits); },
+           [&](float v) { s_.hiddenUnits = std::clamp(int(v + 0.5f), 0, 3); },
+           [](float v) {
+               int l = int(v + 0.5f);
+               return std::string(l >= 3 ? "FADE" : l >= 2 ? "SHADOW" : l >= 1 ? "DOTS" : "OFF");
+           });
     ctls_.back().help = [&] {
         const char* lines[] = {
             "OFF: TREES, ROCKS AND BUILDINGS HIDE THE UNITS BEHIND THEM, AS IN THE ORIGINAL GAME.",
             "DOTS: A UNIT WHOSE CENTRE IS HIDDEN SHOWS ITS TACTICAL DOT ON TOP.",
-            "SHADOW: THE HIDDEN PART OF A UNIT SHOWS THROUGH THE TREE OR WALL AS A FAINT SHADOW."};
+            "SHADOW: THE HIDDEN PART OF A UNIT SHOWS THROUGH THE TREE OR WALL AS A FAINT SHADOW.",
+            "FADE: A TREE OR ROCK OVER A UNIT FADES OUT; BUILDINGS SHOW IT AS A SHADOW."};
         std::vector<std::string> out;
-        for (int i = 0; i < 3; ++i) out.push_back(std::string(i == s_.hiddenUnits ? "> " : "  ") + lines[i]);
+        for (int i = 0; i < 4; ++i) out.push_back(std::string(i == s_.hiddenUnits ? "> " : "  ") + lines[i]);
         return out;
     };
     // Camera shake on heavy impacts and mission quakes; off unless asked for.

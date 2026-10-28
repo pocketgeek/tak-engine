@@ -2680,6 +2680,19 @@ private:
     // frame.
     int hiddenUnitsMode_ = tak::hiddenunits::kDefault;
     void findHiddenUnits(int mvw, int winH);
+    // FADE: the trees and rocks over a unit, faded per feature (simId) in display time
+    // (client/hiddenunits.h, CoverFades); buildings take SHADOW's path. Advanced by
+    // findHiddenUnits every frame (with nothing hit outside FADE: all fade back in).
+    tak::hiddenunits::CoverFades hiddenFades_;
+    uint64_t hiddenFadeLastMs_ = 0;
+    // A feature's opacity in the body pass (255: not fading), and the alpha a ghost
+    // redraws it with (SHADOW: the veil; FADE: as the body pass drew it).
+    uint8_t hiddenFeatureAlpha(const FeatureInst& f) const {
+        return hiddenFades_.empty() || f.simId < 0 ? 255 : hiddenFades_.alpha(uint32_t(f.simId));
+    }
+    uint8_t hiddenGhostFeatureAlpha(const FeatureInst& f) const {
+        return hiddenUnitsMode_ == tak::hiddenunits::kFade ? hiddenFeatureAlpha(f) : tak::hiddenunits::kVeilAlpha;
+    }
     void drawHiddenDots(int mvw, int winH);
     // The painter items the search considers (ground layer and air), collected by
     // the backwards walk: kind, screen rectangle (exact body bounds for covers and
@@ -2793,6 +2806,7 @@ private:
     bool debugHiddenStencil_ = false;           // the last frame drew SHADOW by the stencil
     bool debugHiddenStencilEnvRead_ = false;    // TAK_HIDDEN_STENCIL applied to this view
     uint64_t debugHiddenPassVeils_ = 0;         // ...of its see-through covers, drawn in a native pass
+    uint64_t debugHiddenFadeNowMs_ = 0;         // nonzero: FADE's display clock (harness)
 #endif
     // The sprite a feature shows this frame (burn playback, animation frame, wind
     // sway), in screen space: what the body pass draws and the cover tests read.
