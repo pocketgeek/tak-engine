@@ -25,10 +25,9 @@ their validation reports; both live in [`docs/`](docs/).
 - **Hidden Units** (Options → Graphics; not in the original game): units
   behind trees, rocks and buildings stay visible. **Fade**, the default,
   fades the whole tree, rock or building out while a unit is behind it (to
-  65% by default; **Fade Opacity** slider, 0-100%); **Shadow** makes the
-  cover see-through only where it hides a unit; **Dots** puts its tactical dot
-  on top; **Off** hides it as before. Only units you can see anyway are
-  marked.
+  65% by default; **Fade Opacity** slider, 0-100%); **Dots** puts the
+  unit's tactical dot on top; **Off** hides it as before. Only units you can
+  see anyway are marked.
 - **Flat scenery is drawn under units**, as in the original game: features
   whose height is below 10 (stumps, crops, smudges, mana deposits) no longer
   paint over the feet of a unit standing just north of them.
@@ -39,8 +38,8 @@ their validation reports; both live in [`docs/`](docs/).
   kept. If OpenGL misbehaves, choose **Metal** under Options → Graphics →
   Renderer.
 - **Metal: no stray drawing from off-screen clips.** A part of the screen
-  clipped away entirely (a hidden unit's shadow past the view's edge, a list
-  in a window too small for it) no longer draws over the view on the Metal
+  clipped away entirely (a unit behind a wall at the view's edge, a list in a
+  window too small for it) no longer draws over the view on the Metal
   renderer.
 
 ## 0.9.9

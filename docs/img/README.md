@@ -1,13 +1,17 @@
 # README and user-guide screenshots
 
 **Retaken after 0.9.9** (2026-10-28, unreleased): `guide/options-graphics.jpg`
-only, for the new **HIDDEN UNITS** row (SHADOW, the default) under Tactical Dots
-Zoom. Captured as for 0.9.6 (the capture-only hook in the working tree, not
-committed: `TAK_CAP_OPTIONS=9`, a 1600 × 1100 window, a fresh profile whose only
-setting is `fullscreen = 0`, cropped to 840 × 1024, JPEG quality 86) by a Debug
-`-O2` build of the hidden-units branch. Only the new row, the rows below it
-moving down one step (the Interface heading now just cut off at the bottom), the
-scroll bar and the Max FPS knob (its range is now 30 to Unlimited) differ.
+only, for the new **HIDDEN UNITS** row (FADE, the default; the options are now
+OFF, DOTS and FADE) and the **FADE OPACITY** slider below it (65%) under Tactical
+Dots Zoom. Captured as for 0.9.6 (the capture-only hook in the working tree, not
+committed: a 1600 × 1100 window, a fresh profile whose only setting is
+`fullscreen = 0`, cropped to 840 × 1024 at (380, 38), JPEG quality 86) by a Debug
+`-O2` build of the hidden-units branch, but scrolled one step further
+(`TAK_CAP_OPTIONS=10`, not 9) so the two new rows still leave GPU Memory Limit in
+the picture: the Display heading is now cut off at the top and the Interface
+heading just cut off at the bottom. Otherwise only the new rows, the rows below
+them, the scroll bar and the Max FPS knob (its range is now 30 to Unlimited)
+differ from the 0.9.6 picture.
 
 **Earlier: retaken for 0.9.9** (2026-10-28): `title.jpg` only, by the 0.9.9 build (Debug
 with `-O2`, CMake `VERSION 0.9.9` in the release commit), with the 0.9.1 title
@@ -338,7 +342,7 @@ replace them. The unchanged views contain no version text.
 | `side-aramon.jpg` … `side-creon.jpg` | One per side, rendered by the 0.9.0 build. A local-server game with a **stress-test start** (250-unit cap, Normal AI opponent), about 10 s in, 1600 × 900, scaled. The player's Monarch is selected: Elsin, Lokken, Kirenna, Thirsha or the Sage. Each shows that side's interface and build menu |
 | `shift-queue.jpg` | From the 0.9.0 build. Elsin with a move and three Shift-queued moves (**scripted orders**), Shift held, about 3 s after the orders; the status reads MOVING. 1.7× zoom |
 | `flyers-retail-legion.jpg` | **Development scene, spawned.** From the 0.9.0 build (both halves). A spawned Zhon formation of ground units and flyers (`TAK_CAP_SCENE`) given one formation move order, 22 s in, run once in Retail (flyers far ahead) and once in Legion (flyers over the leading ground units). The same 1.05× camera is used for both, and the two captures are placed side by side with labels |
-| `options-graphics.jpg` | Post-0.9.9 build (0.9.1 layout). Options screen in a 1600 × 1100 window, scrolled so that Display and the whole Graphics section show (the last Audio row above, the Interface heading just cut off below), cropped to the panel: Fullscreen (OFF), VSync (ON), Max FPS (60, greyed out because VSync is on), Native Wayland (Auto; new in 0.9.6, Linux only, retaken for it), Renderer (Auto (OpenGL): Auto, and the backend it started), Texture Filtering at EVERYTHING, Shadows, Smooth GUI Art, Smooth Movies, Trees Sway in Wind and Tactical Dots (ON), Tactical Dots Zoom (0%), Hidden Units at SHADOW (new after 0.9.9, retaken for it), Screen Shake (OFF), Hardware Cursor (ON, with the note OS CURSOR 16X25 beside it) and Smooth Motion (ON) and GPU Memory Limit at 1.25 GB (default). A fresh profile whose only setting is `fullscreen = 0`. The capture-only patch hands the cursor to the system before drawing, as the menu loop would, so the note shows. Linux build, so the Windows-only Ignore Windows Display Scaling row is absent |
+| `options-graphics.jpg` | Post-0.9.9 build (0.9.1 layout). Options screen in a 1600 × 1100 window, scrolled so that Display and the whole Graphics section show (the Display heading just cut off above, the Interface heading just cut off below), cropped to the panel: Fullscreen (OFF), VSync (ON), Max FPS (60, greyed out because VSync is on), Native Wayland (Auto; new in 0.9.6, Linux only, retaken for it), Renderer (Auto (OpenGL): Auto, and the backend it started), Texture Filtering at EVERYTHING, Shadows, Smooth GUI Art, Smooth Movies, Trees Sway in Wind and Tactical Dots (ON), Tactical Dots Zoom (0%), Hidden Units at FADE and Fade Opacity at 65% (new after 0.9.9, retaken for them), Screen Shake (OFF), Hardware Cursor (ON, with the note OS CURSOR 16X25 beside it) and Smooth Motion (ON) and GPU Memory Limit at 1.25 GB (default). A fresh profile whose only setting is `fullscreen = 0`. The capture-only patch hands the cursor to the system before drawing, as the menu loop would, so the note shows. Linux build, so the Windows-only Ignore Windows Display Scaling row is absent |
 | `fire-on-the-move.jpg` | **From the 0.9.0 build. Development scene, two-player spawned.** Ulasem Arena, Retail pathfinding, 14 s after one plain move order east (**scripted orders**). 14 Aramon Archers and 2 Mage Builders were spawned in a 4-wide grid; 6 Taros Zombies and 6 Skeleton Archers (enemy, no AI) stand south of their path. Shift is held, so the move line shows. Zombies have reached the back of the column, which keeps walking and shooting; the flashes are hits, and three of the sixteen have fallen, so the information bar shows two portraits (2 Mage Builders, 11 Archers) and 13 SELECTED. 1.4× zoom, fog off |
 | `cartographer-terrain.jpg` | Cartographer Terrain tab on Ulasem Arena (`--shot --shot-tool terrain`, fresh editor profile, 921 × 691), retaken by the 0.9.0 build (byte-identical to the 0.8.3 picture): the grouped section browser, All sections (555 pieces, 1261 sections), with readable piece names, variant badges and the scrollbar, and five tools on the toolbar |
 | `tactical-dots.jpg` | From the 0.9.0 build. **Benchmark** run (Absurd) on Ulasem Arena, 50 game seconds in, spectator view fully zoomed out (zoom 0.1875, the floor for this map in a 1920 × 1080 window), where the default Tactical Dots Zoom of 0% shows dots. The deterministic run was rendered twice at the same tick and camera, with Tactical Dots off and on in otherwise identical profiles. The same 800 × 900 region (the east of the map: the blue and red armies) is cropped from each at 1:1 and placed side by side under labels. With models, fire and spell effects show among the armies; with dots none are drawn |

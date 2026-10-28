@@ -2157,7 +2157,7 @@ it by layer, then by map z:
 
 HIDDEN UNITS (Options > Graphics, default FADE) is a non-retail extra on top
 of this order: a ground unit that a tall feature or a building paints over is
-shown as a tactical dot, a faint see-through shadow, or by fading the cover. OFF is the retail look.
+shown as a tactical dot or by fading the cover. OFF is the retail look.
 
 ## Unit shadows are PROJECTED SILHOUETTES -- and the Glide path is the one that matters (2026-09-12)
 
