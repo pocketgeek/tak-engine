@@ -72,6 +72,8 @@ int main() {
     flips("treeSway",        [](Settings& s) { s.treeSway = !s.treeSway; });
     flips("screenShake",    [](Settings& s) { s.screenShake = !s.screenShake; });
     flips("tacticalDots",    [](Settings& s) { s.tacticalDots = !s.tacticalDots; });
+    flips("hiddenUnits",     [](Settings& s) { s.hiddenUnits = 1; });
+    flips("hiddenUnits 0",   [](Settings& s) { s.hiddenUnits = 0; });
     flips("unitShadows",     [](Settings& s) { s.unitShadows = !s.unitShadows; });
     flips("gpuMemoryLimit",  [](Settings& s) { s.gpuMemoryLimit = 2048; });
     flips("gpuMemoryLimit -1", [](Settings& s) { s.gpuMemoryLimit = -1; });
@@ -202,6 +204,7 @@ int main() {
         cur.uiScale = 1.75f;
         cur.textureFilter = 0;
         cur.tacticalDots = false;
+        cur.hiddenUnits = 0;
         cur.screenShake = true;
         cur.renderer = "opengles2";
         cur.gpuMemoryLimit = 768;
@@ -254,6 +257,7 @@ int main() {
         reset("uiScale",          d.uiScale == fresh.uiScale);
         reset("textureFilter",    d.textureFilter == fresh.textureFilter && d.textureFilter == 2);
         reset("tacticalDots",     d.tacticalDots == fresh.tacticalDots && d.tacticalDots);
+        reset("hiddenUnits",      d.hiddenUnits == fresh.hiddenUnits && d.hiddenUnits == 2);
         reset("screenShake",      d.screenShake == fresh.screenShake && !d.screenShake);
         reset("tacticalDotsZoom", d.tacticalDotsZoom == fresh.tacticalDotsZoom && d.tacticalDotsZoom == 0);
         reset("renderer",         d.renderer == fresh.renderer && d.renderer.empty());
@@ -680,6 +684,20 @@ int main() {
                                loadFrom("displayMode = x\ndisplayScale = 99\n").displayScale == 0.0f);
         check("display: kept by defaults", tak::preferenceDefaults(dm).displayMode == 3 &&
                                            tak::preferenceDefaults(dm).displayScale == 1.45f);
+        // HIDDEN UNITS: off | dots | outline; a file from before the option (no key)
+        // and an unknown value load as OUTLINE, the default.
+        check("hidden: default 2", Settings{}.hiddenUnits == 2);
+        check("hidden: absent", loadFrom("masterVol = 7\n").hiddenUnits == 2);
+        check("hidden: off", loadFrom("hiddenUnits = off\n").hiddenUnits == 0);
+        check("hidden: dots", loadFrom("hiddenUnits = dots\n").hiddenUnits == 1);
+        check("hidden: outline", loadFrom("hiddenUnits = outline\n").hiddenUnits == 2);
+        check("hidden: junk", loadFrom("hiddenUnits = maybe\n").hiddenUnits == 2);
+        for (int mode = 0; mode < 3; ++mode) {
+            Settings hs{};
+            hs.hiddenUnits = mode;
+            check("hidden: round trip", loadFrom(tak::serializeSettings(hs)).hiddenUnits == mode);
+        }
+        check("hidden: saved as name", tak::serializeSettings(Settings{}).find("hiddenUnits = outline") != std::string::npos);
         check("fps: 30 ok", loadFrom("streamFps = 30\n").streamFps == 30);
         check("fps: 45 snaps", loadFrom("streamFps = 45\n").streamFps == 60);
         check("fps: junk snaps", loadFrom("streamFps = x\n").streamFps == 60);

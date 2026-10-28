@@ -623,6 +623,204 @@
                          zT,zT*td::kBuffer,mapView_.minZoom(W,H));
             return;
         }
+        if (tak::devFlag("TAK_HIDDEN_UNITS_TEST")) {
+            // HIDDEN UNITS through the real draw(): a flat feature sorts under every
+            // unit; units behind a tree or a building get a dot (DOTS) or an outline
+            // (OUTLINE; DOTS where the renderer cannot); units in the open, in front
+            // of the tree or on a flat feature get nothing; fog still hides enemies;
+            // OFF and Tactical Dots frames do nothing; a hidden dot is clickable.
+            // TAK_HIDDEN_UNITS_CAPTURE=<prefix> writes <prefix>-off/-dots/-outline.png.
+            namespace hu = tak::hiddenunits;
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("hidden units: "+what);
+                std::fprintf(stderr,"PASS: hidden units: %s\n",what.c_str());
+            };
+            constexpr int W=1280,H=960;
+            constexpr float zoom=1.0f;
+            noFog_=false;edgeScrollOn_=false;tacticalDotsOpt_=false;healthBars_=0;
+            const bool swayWas=settings_ && settings_->treeSway;
+            if (settings_) settings_->treeSway=false;   // a still crown: exact cover points
+            writableWorld().setPlayerCount(2);
+            loadFeatureDefs();
+            const auto heightOf=[&](const char* name) {
+                const auto it=featureDefs_.find(name);
+                return it==featureDefs_.end() ? -1 : int(it->second.numberOr("height",0));
+            };
+            check(heightOf("aratree01")>=hu::kLowFeatureHeight && heightOf("arasmudge01")==0,
+                  "fixture features: a tall tree and a flat smudge");
+            const int cx0=mapView_.map().blocksX/2,cz0=mapView_.map().blocksY/2;
+            // A clear stage: the map's own scenery around the fixture is not drawn.
+            for (auto& f:features_)
+                if (std::fabs(f.x-float(cx0*16+200))<700 && std::fabs(f.z-float(cz0*16+100))<600) f.tex=nullptr;
+            const auto place=[&](const char* name,int cx,int cz) {
+                check(addFeature(name,cx,cz),std::string("placed ")+name);
+                return features_.size()-1;
+            };
+            const size_t treeA=place("aratree01",cx0,cz0);
+            const size_t treeB=place("aratree01",cx0+8,cz0);
+            const size_t treeFog=place("aratree01",cx0+40,cz0+20);
+            const size_t smudge=place("arasmudge01",cx0-9,cz0+1);
+            const float x0=features_[treeA].x,z0=features_[treeA].z;
+            // The tree's crown: the opaque texel run up the sprite's anchor column; a
+            // unit whose dot centre sits in the middle of it is covered.
+            const FeatArt* art=features_[treeA].art;
+            check(art && !art->masks.empty(),"tree art has an opacity mask");
+            const auto& mask=art->masks[0];
+            int top=-1,bottom=-1;
+            for (int y=0;y<mask.height();++y)
+                if (mask.opaque(features_[treeA].xoff,y)) { if (top<0) top=y; bottom=y; }
+            check(top>=0 && features_[treeA].yoff-(top+bottom)/2>12,"tree crown above its base");
+            const float behindDz=float(features_[treeA].yoff-(top+bottom)/2);
+            const auto frame=[&](const char* capture=nullptr) {
+                captureFrame();beginFrame();cosmeticStep(0);
+                Frame& f=frameBuf_[renderReadIdx_];
+                f.visW=mapView_.map().blocksX*2;f.visH=mapView_.map().blocksY*2;
+                f.vis.assign(size_t(f.visW)*size_t(f.visH),1);
+                for (int cz=0;cz<f.visH;++cz) for (int cx=0;cx<f.visW;++cx) {
+                    const float dx=float(cx)*16+8-x0,dz=float(cz)*16+8-z0;
+                    if (dx*dx+dz*dz<500.0f*500.0f) f.vis[size_t(cz)*size_t(f.visW)+size_t(cx)]=2;
+                }
+                mapView_.setZoom(zoom);
+                mapView_.setOffset(x0+300-float(W-300)*0.5f/zoom,z0+100-float(H)*0.5f/zoom);
+                prepare(W,H);draw(W,H);
+                std::vector<uint8_t> px;
+                int ow=0,oh=0;SDL_GetRendererOutputSize(ren_,&ow,&oh);
+                px.resize(size_t(ow)*size_t(oh)*4);
+                if (SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px.data(),ow*4)!=0) px.clear();
+                else if (capture) tak::png::write(capture,ow,oh,px);
+                endFrame();
+                return std::pair{px,ow};
+            };
+            const int behind=spawn("arasword",x0,z0-behindDz,0,0);
+            const int open=spawn("arasword",x0-70,z0-behindDz,0,0);
+            const int front=spawn("arasword",x0,z0+28,0,0);
+            const int foeSeen=spawn("arasword",features_[treeB].x,features_[treeB].z-behindDz,0,1);
+            const int foeFog=spawn("arasword",features_[treeFog].x,features_[treeFog].z-behindDz,0,1);
+            // On the smudge, a little north of its anchor: the smudge sorts after it by
+            // depth, but flat scenery is drawn before every unit.
+            const int onSmudge=spawn("arasword",features_[smudge].x,features_[smudge].z-6,0,0);
+            const int keep=spawn("arakeep",x0+320,z0+40,0,0);
+            const int behindKeep=spawn("arasword",x0+320,z0+10,0,0);
+            check(behind>=0 && open>=0 && front>=0 && foeSeen>=0 && foeFog>=0 && onSmudge>=0 && keep>=0 &&
+                  behindKeep>=0,"fixture spawned");
+            const char* capture=tak::devEnv("TAK_HIDDEN_UNITS_CAPTURE");
+            const auto shot=[&](const char* mode) {
+                return capture ? std::string(capture)+"-"+mode+".png" : std::string();
+            };
+            const auto at=[](const std::string& path) { return path.empty() ? nullptr : path.c_str(); };
+            // ---- the low layer ----
+            hiddenUnitsMode_=hu::kOff;
+            frame(at(shot("off")));
+            {
+                size_t smudgeAt=SIZE_MAX,unitAt=SIZE_MAX,treeAt=SIZE_MAX,frontAt=SIZE_MAX,firstUnit=SIZE_MAX;
+                for (size_t i=0;i<paintItems_.size();++i) {
+                    const auto& it=paintItems_[i];
+                    if (it.f==&features_[smudge]) smudgeAt=i;
+                    if (it.f==&features_[treeA]) treeAt=i;
+                    if (it.u && it.u->id==onSmudge) unitAt=i;
+                    if (it.u && it.u->id==front) frontAt=i;
+                    if (it.u && firstUnit==SIZE_MAX) firstUnit=i;
+                }
+                check(features_[smudge].low && !features_[treeA].low,"TDF height decides the low layer");
+                check(features_[smudge].z>frameUnit(onSmudge).z,"the smudge is south of the unit on it");
+                check(smudgeAt<firstUnit && smudgeAt<unitAt && unitAt!=SIZE_MAX,"flat feature drawn before every unit");
+                check(treeAt!=SIZE_MAX && frontAt!=SIZE_MAX && treeAt<frontAt,"tall tree still sorts by depth");
+                check(hiddenDotIds_.empty() && debugHiddenCandidates_==0,"OFF: nothing looked at");
+            }
+            // ---- DOTS ----
+            hiddenUnitsMode_=hu::kDots;
+            frame(at(shot("dots")));
+            check(debugHiddenCandidates_>=3,"candidates found behind covers");
+            check(hiddenDot(behind),"own unit behind a tree: dot");
+            check(hiddenDot(foeSeen),"enemy in sight behind a tree: dot");
+            check(hiddenDot(behindKeep),"unit behind a building: dot");
+            check(!hiddenDot(open),"unit in the open: no dot");
+            check(!hiddenDot(front),"unit in front of the tree: no dot");
+            check(!hiddenDot(onSmudge),"unit on flat scenery: no dot");
+            check(!hiddenDot(foeFog),"enemy in fog behind a tree: no dot");
+            check(!hiddenDot(keep),"a building is never marked");
+            {   // The dot is a click target.
+                const SDL_FPoint c=dotCentre(frameUnit(behind));
+                SDL_Event e{};
+                const auto savedMod=SDL_GetModState();SDL_SetModState(KMOD_NONE);
+                selection_.clear();
+                e.type=SDL_MOUSEBUTTONDOWN;e.button.button=SDL_BUTTON_LEFT;e.button.x=int(c.x);e.button.y=int(c.y);
+                input(e,W,H);
+                e.type=SDL_MOUSEBUTTONUP;input(e,W,H);
+                SDL_SetModState(savedMod);
+                check(selection_==std::vector<int>{behind},"click on the hidden dot selects the unit");
+                selection_.clear();
+            }
+            // ---- Tactical Dots frames draw no hidden dots on top of their own ----
+            {
+                tacticalDotsOpt_=true;tacticalDotsZoom_=100;
+                frame();
+                check(dotsFrame_ && hiddenDotIds_.empty() && debugHiddenCandidates_==0,
+                      "Tactical Dots frame: nothing extra");
+                tacticalDotsOpt_=false;frame();
+                check(!dotsFrame_,"models back");
+            }
+            // ---- OUTLINE ----
+            // Pixels differing between two frames inside a unit's box (output pixels).
+            const auto changed=[&](const std::vector<uint8_t>& p0,const std::vector<uint8_t>& p1,int w,int id) {
+                float sx=1,sy=1;SDL_RenderGetScale(ren_,&sx,&sy);
+                const UnitR& u=frameUnit(id);
+                const SDL_FPoint a=dotCentre(u);
+                const SDL_FRect& hb=unitHitBox(u.type);
+                const int h=int(p0.size()/4/size_t(std::max(1,w)));
+                size_t n=0;
+                for (int y=std::max(0,int((a.y+hb.y*zoom)*sy));y<std::min(h,int((a.y+(hb.y+hb.h)*zoom)*sy));++y)
+                    for (int x=std::max(0,int((a.x+hb.x*zoom)*sx));x<std::min(w,int((a.x+(hb.x+hb.w)*zoom)*sx));++x) {
+                        const size_t i=(size_t(y)*size_t(w)+size_t(x))*4;
+                        n+=std::memcmp(&p0[i],&p1[i],3)!=0;
+                    }
+                return n;
+            };
+            // OFF then OUTLINE at the given output scale: the hidden parts change, the
+            // units in sight (in the open, in front of the tree) are untouched.
+            const auto outlineRound=[&](float scale,const std::string& off,const std::string& out) {
+                SDL_RenderSetScale(ren_,scale,scale);
+                hiddenUnitsMode_=hu::kOff;
+                const auto [p0,w0]=frame(at(off));
+                hiddenUnitsMode_=hu::kOutline;
+                const auto [p1,w1]=frame(at(out));
+                const bool ran=debugHiddenOutlineRan_;
+                const size_t outlined=debugHiddenOutlined_;
+                char tag[48];std::snprintf(tag,sizeof tag," (output scale %.2f)",scale);
+                if (ran) {
+                    check(hiddenDotIds_.empty() && outlined>=3,std::string("outline drawn for every covered unit")+tag);
+                    check(!p0.empty() && p1.size()==p0.size() && w0==w1,std::string("frames read back")+tag);
+                    check(changed(p0,p1,w0,behind)>20 && changed(p0,p1,w0,foeSeen)>20 &&
+                          changed(p0,p1,w0,behindKeep)>20,std::string("hidden parts outlined")+tag);
+                    check(changed(p0,p1,w0,open)==0,std::string("unit in the open untouched")+tag);
+                    check(changed(p0,p1,w0,front)==0,std::string("unit in front of the tree untouched")+tag);
+                }
+                SDL_RenderSetScale(ren_,1,1);
+                return ran;
+            };
+            const bool outlineRan=outlineRound(1.0f,std::string(),shot("outline"));
+            SDL_RendererInfo info{};SDL_GetRendererInfo(ren_,&info);
+            if (outlineRan) outlineRound(1.5f,shot("off-x1.5"),shot("outline-x1.5"));
+            else check(!(info.flags & SDL_RENDERER_ACCELERATED) && hiddenOutlineUnsupported_ && hiddenDot(behind),
+                       "renderer without targets/blending: OUTLINE falls back to DOTS");
+            // ---- the policy on its own ----
+            {
+                hu::AlphaMask m;
+                const uint8_t px[4*4]={0,0,0,0, 0,0,0,255, 0,0,0,255, 0,0,0,0};   // 2x2: TL clear, TR, BL opaque
+                m.build(px,2,2);
+                check(!hu::spriteCovers(m,10,10,20,20,0,12,12) && hu::spriteCovers(m,10,10,20,20,0,25,12),
+                      "sprite cover reads the texel under the point");
+                check(hu::spriteCovers(m,10,10,20,20,10,35,12) && !hu::spriteCovers(m,10,10,20,20,0,35,12) &&
+                      hu::spriteCovers(m,10,10,20,20,10,12,28),"sprite cover follows the sway shear");
+                check(hu::featureLayer(9)==hu::kLayerLowFeature && hu::featureLayer(10)==hu::kLayerGround,
+                      "height 9 is low, 10 is not");
+            }
+            if (settings_) settings_->treeSway=swayWas;
+            hiddenUnitsMode_=hu::kOutline;
+            std::fprintf(stderr,"PASS: hidden units (%s, outline %s)\n",info.name ? info.name : "?",
+                         outlineRan ? "drawn" : "fallback to dots");
+            return;
+        }
         if (tak::devFlag("TAK_RUIN_TEST")) {
             const bool previousShadows=shadowsOnFrame_;
             shadowsOnFrame_=true;
