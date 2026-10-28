@@ -25,15 +25,19 @@ their validation reports; both live in [`docs/`](docs/).
   now **Shift+P** instead of Print Screen, which many desktops take for their
   own screenshots and Mac keyboards lack. A key you set yourself in CONTROLS is
   kept.
-
 - **Back from a Settings screen returns to Settings.** Options, Controls,
   Voice Chat, Benchmark and YouTube Streaming opened from the title screen's
   SETTINGS menu now go back to it on BACK or Esc, as Load Replay already did,
   instead of to the title screen.
-
 - **Max FPS can be unlimited.** The Options slider runs from 30 to 240 frames
   a second, and its far right end is **Unlimited**. A saved cap above 240 (the
   settings file used to allow up to 480) now reads as Unlimited.
+- **Builders only place what they can reach.** When a walking builder can
+  never get close enough to a spot to build there, such as a shipyard out in
+  open sea or on a lake it has no way to walk to, the placement ghost turns
+  red and the click is refused. Before, the order was accepted and the builder
+  set off, then gave up. This goes beyond the original game, which accepted
+  such sites. Flying builders still place anywhere they could build.
 
 ## 0.9.8
 *2026-10-27 · protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*

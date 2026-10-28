@@ -3971,6 +3971,51 @@ bool World::pathExists(const UnitType* type, float gx, float gz, float fx, float
     return to >= 0 && to == from;
 }
 
+bool World::buildSiteReachable(int builderId, const UnitType* site, float x, float z) const {
+    const Unit* b = unit(builderId);
+    if (!site || !b || !b->alive() || !b->type || b->embarked() || b->type->canFly ||
+        b->type->isStructure()) return true;
+    const UnitType& bt = *b->type;
+    const NavGrid& grid = navFor(&bt);
+    if (grid.empty()) return true;
+    const int foot = std::clamp(std::max(bt.footX, bt.footZ), 1, 15);
+    const CompGrid* cg = components(grid, foot);
+    if (!cg || cg->empty()) return true;
+    // Where the builder can be: its own cell's component, or (shoved off a cell its
+    // body fits, as pathExists allows) the nearest one.
+    int32_t from = cg->componentAt(footprintCell(b->x, foot), footprintCell(b->z, foot));
+    if (from < 0) {
+        const int cx = std::clamp(footprintCell(b->x, foot), 0, cg->w - 1);
+        const int cz = std::clamp(footprintCell(b->z, foot), 0, cg->h - 1);
+        for (int r = 1; r < 24 && from < 0; ++r)
+            for (int j = -r; j <= r && from < 0; ++j)
+                for (int i = -r; i <= r; ++i) {
+                    if (std::max(std::abs(i), std::abs(j)) != r) continue;
+                    if ((from = cg->componentAt(cx + i, cz + j)) >= 0) break;
+                }
+    }
+    if (from < 0) return true;   // wedged nowhere a body fits: leave it to the order
+    // The site as makeBuildOrder snaps it (Order::buildX/buildZ).
+    const Fixed gx = footprintWaypoint(footprintCell(Fixed::fromFloat(x), site->footX), site->footX);
+    const Fixed gz = footprintWaypoint(footprintCell(Fixed::fromFloat(z), site->footZ), site->footZ);
+    const int reach = std::max(0, int(bt.buildDist));
+    // Every cell that can pass the test lies within reach plus both footprint
+    // half-diagonals (plus a cell of rounding) of the site.
+    const int span = (reach + 12 * (bt.footX + bt.footZ + site->footX + site->footZ)) / 16 + 2;
+    const int gcx = footprintCell(gx, foot), gcz = footprintCell(gz, foot);
+    // The common case, any site on the builder's own ground: it can stand on the site
+    // itself, which is within reach of anything. Answered without the scan below.
+    if (cg->componentAt(gcx, gcz) == from) return true;
+    for (int cz = std::max(0, gcz - span); cz <= std::min(cg->h - 1, gcz + span); ++cz)
+        for (int cx = std::max(0, gcx - span); cx <= std::min(cg->w - 1, gcx + span); ++cx) {
+            if (cg->componentAt(cx, cz) != from) continue;
+            if (retailBuildWithinReach(footprintWaypoint(cx, foot), footprintWaypoint(cz, foot), gx, gz,
+                    int16_t(bt.footX), int16_t(bt.footZ), int16_t(site->footX), int16_t(site->footZ),
+                    uint16_t(reach))) return true;
+        }
+    return false;
+}
+
 bool World::scriptYardOpen(int unitId) const {
     return size_t(unitId)<scriptYardById_.size() && scriptYardById_[size_t(unitId)];
 }

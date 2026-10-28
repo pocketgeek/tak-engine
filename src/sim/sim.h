@@ -2569,6 +2569,14 @@ public:
     // call and was the per-second AI hitch. Lets the AI pick a REACHABLE target
     // instead of one merely nearest in a straight line but walled off.
     bool pathExists(const UnitType* type, float gx, float gz, float fx, float fz) const;
+    // Can this mobile builder get close enough to build `site` at (x,z)? True when some
+    // cell its body can reach from where it stands (same component of its own nav grid)
+    // passes the MobileBuild reach test against the site (retailBuildWithinReach).
+    // A placement-preview question for the client, not an order rule: retail accepts the
+    // site and the builder walks, fails and says CANNOTREACHCONSTRUCTION, so the sim
+    // still admits such an order. Flyers, structures, missing or embarked builders
+    // answer true (nothing to decide). Not hashed; same answers whatever was queried before.
+    bool buildSiteReachable(int builderId, const UnitType* site, float x, float z) const;
     void patrol(int unitId, float x, float z);
     // Queue a patrol waypoint (SetMission "p X Y"): like a move but the completed
     // order re-queues at the back, so a chain of these loops the unit through them.
