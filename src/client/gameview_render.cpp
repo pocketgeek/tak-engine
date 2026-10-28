@@ -1736,6 +1736,7 @@
             buffer.setSimulated(tak::devFlag("TAK_BODY_ARENA_SOFTWARE"));
             buffer.endFrame();
         }
+        hiddenVeilBuffer_.endFrame();
         ++bodyArenaFrame_;
         bool arenaPlanned = false, arenaFrame = false;
         if (const char* v = tak::devEnv("TAK_BODY_ARENA_HEADROOM")) {   // debug: tighter storage (tests)
@@ -2009,7 +2010,10 @@
         debugFeatureSmokeDrawCount_ = 0;
 #endif
         using HS = tak::HiddenStencilGL::State;
-        if (hiddenStencilFrame_) hiddenStencil_.clear(ren_);
+        if (hiddenStencilFrame_) {
+            prepareHiddenVeils();
+            hiddenStencil_.clear(ren_);
+        }
         for (size_t opi = 0; opi < drawOps_.size(); ++opi) {
             if (hiddenStencilFrame_) hiddenStencilUse(hiddenOpState(opi));
             if (opi == airShadowOp_) drainAirShadows();
@@ -4443,7 +4447,14 @@
             }
             if(op.hidden==kHiddenCover && stencil!=HS::Off) {
                 hiddenStencilUse(HS::Under1,true);
-                drawHiddenVeil(op,true);
+                if(op.veilFirst>=0) {
+                    const GLint veilFirst=op.veilFirst;
+                    const GLsizei veilCount=op.veilCount;
+                    bodySubmit_.passDrawBuffer(hiddenVeilBuffer_.id(),std::span<const GLint>(&veilFirst,1),
+                                               std::span<const GLsizei>(&veilCount,1),size_t(veilCount));
+                } else {
+                    drawHiddenVeil(op,true);
+                }
 #ifndef NDEBUG
                 ++debugHiddenPassVeils_;
 #endif
@@ -4700,6 +4711,7 @@
         shadowSilhouetteAtlasActive_=false;
         atlasTracker_.clear();   // whatever was painted died with the atlases
         releaseBodyArena();      // retained body vertices (H): re-uploaded on the next stable frame
+        hiddenVeilBuffer_.release();   // HIDDEN UNITS' see-through covers: refilled every frame
     }
 
     void GameView::destroyGpuTextures() {

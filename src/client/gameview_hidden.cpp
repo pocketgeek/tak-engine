@@ -619,13 +619,22 @@ namespace hu = tak::hiddenunits;
             premultiplied = palettePage(op.tex) < 0 && mode != SDL_BLENDMODE_BLEND;
         }
         hiddenVerts_.clear();
+        appendHiddenVeil(op, premultiplied, hiddenVerts_);
+        if (hiddenVerts_.empty()) return;
+        if (inPass) bodySubmit_.passDraw(hiddenVerts_);
+        else drawModelRun(op.tex, hiddenVerts_.data(), int(hiddenVerts_.size()), true);
+    }
+
+    void GameView::appendHiddenVeil(const DrawOp& op, bool premultiplied, std::vector<SDL_Vertex>& out) {
+        const size_t at = out.size();
         for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
             const BodyRange& r = bodyRanges_[k];
             const SDL_Vertex* v = bodySources_[r.source].data + r.offset;
-            hiddenVerts_.insert(hiddenVerts_.end(), v, v + r.count);
+            out.insert(out.end(), v, v + r.count);
         }
         constexpr uint8_t a = hu::kBuildingVeilAlpha;
-        for (SDL_Vertex& v : hiddenVerts_) {
+        for (size_t i = at; i < out.size(); ++i) {
+            SDL_Vertex& v = out[i];
             if (premultiplied) {
                 v.color.r = hu::scaleAlpha(v.color.r, a);
                 v.color.g = hu::scaleAlpha(v.color.g, a);
@@ -633,9 +642,39 @@ namespace hu = tak::hiddenunits;
             }
             v.color.a = hu::scaleAlpha(v.color.a, a);
         }
-        if (hiddenVerts_.empty()) return;
-        if (inPass) bodySubmit_.passDraw(hiddenVerts_);
-        else drawModelRun(op.tex, hiddenVerts_.data(), int(hiddenVerts_.size()), true);
+    }
+
+    // Drawn from client memory, the 250-350 second draws a frame of the forest and
+    // army benchmark scenes cost 0.06-0.09 ms more than from this buffer (measured).
+    // The buffer is orphaned each frame (allocate), so no draw still in flight reads
+    // what this frame writes. Nothing is prepared under GPU-memory pressure: the
+    // covers then draw from client memory.
+    void GameView::prepareHiddenVeils() {
+        if (!hiddenStencilFrame_ || !nativePassesOn_ || gpuvram::blocked() || gpuvram::tightened() ||
+            !hiddenVeilBuffer_.ready())
+            return;
+        hiddenVeilVerts_.clear();
+        for (size_t i = 0; i < drawOps_.size() && i <= hiddenStencilLast_;) {
+            const DrawOp& head = drawOps_[i];
+            if (head.passEnd <= int32_t(i)) { ++i; continue; }
+            const size_t end = size_t(head.passEnd);
+            // The commands of this pass inside the stencil window (drawNativeSpan veils those).
+            for (size_t k = std::max(i, hiddenStencilFirst_); k < end && k <= hiddenStencilLast_; ++k) {
+                DrawOp& op = drawOps_[k];
+                if (op.hidden != kHiddenCover || op.ghost >= 0 || op.count <= 0 || !op.tex) continue;
+                const size_t first = hiddenVeilVerts_.size();
+                appendHiddenVeil(op, op.premultiplied, hiddenVeilVerts_);
+                op.veilFirst = int32_t(first);
+                op.veilCount = int32_t(hiddenVeilVerts_.size() - first);
+            }
+            i = end;
+        }
+        if (hiddenVeilVerts_.empty()) return;
+        const size_t bytes = hiddenVeilVerts_.size() * sizeof(SDL_Vertex);
+        if (!hiddenVeilBuffer_.allocate(bytes) || !hiddenVeilBuffer_.write(0, hiddenVeilVerts_.data(), hiddenVeilVerts_.size())) {
+            hiddenVeilBuffer_.release();
+            for (DrawOp& op : drawOps_) op.veilFirst = -1;
+        }
     }
 
     // DOTS: the unit's dot centre against the opaque pixels of every cover that

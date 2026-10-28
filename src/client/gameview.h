@@ -1380,7 +1380,10 @@ private:
                     GLuint spanName = 0;
                     SDL_Texture* passPrime = nullptr;
                     int32_t ghost = -1;       // HIDDEN UNITS: a SHADOW ghost (hiddenGhosts_ index)
-                    uint8_t hidden = 0; };    // HIDDEN UNITS, stencil form: its HiddenMark
+                    uint8_t hidden = 0;       // HIDDEN UNITS, stencil form: its HiddenMark
+                    // ...a Cover in a native pass: its see-through vertices in
+                    // hiddenVeilBuffer_ (first, count), -1 = drawn from client memory.
+                    int32_t veilFirst = -1, veilCount = 0; };
     std::vector<BodySource> bodySources_;
     std::vector<BodyRange> bodyRanges_;
     std::vector<GLint> bodyArenaFirsts_;
@@ -2771,6 +2774,15 @@ private:
     void hiddenStencilUse(tak::HiddenStencilGL::State state, bool inPass = false);
     tak::HiddenStencilGL::State hiddenOpState(size_t opi) const;
     void drawHiddenVeil(const DrawOp& op, bool inPass);
+    // A Cover's see-through vertices appended to `out` (the alpha scaled, and the
+    // colour too where the page is premultiplied).
+    void appendHiddenVeil(const DrawOp& op, bool premultiplied, std::vector<SDL_Vertex>& out);
+    // Before the body pass: every Cover inside a native pass gets its see-through
+    // vertices in one buffer uploaded once (DrawOp::veilFirst), so its second draw
+    // reads a buffer like any arena command instead of client memory.
+    void prepareHiddenVeils();
+    tak::render::VertexArenaBuffer hiddenVeilBuffer_;
+    std::vector<SDL_Vertex> hiddenVeilVerts_;
     bool hiddenDot(int id) const {
         return std::binary_search(hiddenDotIds_.begin(), hiddenDotIds_.end(), id);
     }
