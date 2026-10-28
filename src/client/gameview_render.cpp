@@ -224,11 +224,14 @@
             float sx = (f.x - mapView_.offX()) * zm0 - terrainLiftX(f.x, f.z) * zm0;
             float sy = (f.z - mapView_.offY()) * zm0 - terrainLift(f.x, f.z) * zm0;
             if (sx < -200 || sy < -200 || sx > winW + 200 || sy > winH + 200) continue;
-            // Mana deposit markers are flat ground decals a lodestone is built
-            // on top of, so bias their sort key back to keep them painted
-            // under the building rather than over it.
-            float key = f.mana ? f.z - 24.0f : f.z;
-            items.push_back({key, nullptr, &f, 0});
+            // Retail draws every feature whose TDF height is below 10 before any
+            // unit (client/hiddenunits.h): the low layer. Taller ones sort with the
+            // ground units by depth. (Mana deposit decals, height 0, used to need a
+            // -24 sort bias to stay under the lodestone built on them; the low layer
+            // keeps them under every unit, so the bias is gone -- the tall henge
+            // stones of a mana site now sort by plain depth like any tall feature.)
+            namespace hu = tak::hiddenunits;
+            items.push_back({f.z, nullptr, &f, f.low ? hu::kLayerLowFeature : hu::kLayerGround});
         }
         renderStats_.add(RS::FeatureCandidates, candidates.size());
         renderStats_.add(RS::FeaturesPainted, items.size());
@@ -316,7 +319,7 @@
         {
         tak::render::ScopedPhase sortPhase(renderStats_, RP::PainterSort);
         std::stable_sort(items.begin(), items.end(), [](const Item& a, const Item& b) {
-            if (a.layer != b.layer) return a.layer < b.layer;   // ground, then air
+            if (a.layer != b.layer) return a.layer < b.layer;   // low features, ground, then air
             return a.z < b.z;
         });
         }
@@ -6149,6 +6152,7 @@
         // The buildable spot is the animated Sacred Stone centre; the static
         // Standing Stones sharing the category are just ruins around it.
         inst.glowy = inst.mana && di->second.numberOr("animating", 0) != 0;
+        inst.low = tak::hiddenunits::lowFeature(int(di->second.numberOr("height", 0)));
         features_.push_back(inst);
         featureIndexDirty_=true;
         // NO NAV BLOCKING HERE. Feature blocking belongs to the SIM, and
@@ -6171,6 +6175,8 @@
         fi.frontFlame = fi.backFlame = nullptr;
         fi.tree = false;   // a burnt stump/smudge doesn't sway
         auto di = featureDefs_.find(name);
+        fi.low = di != featureDefs_.end() &&
+                 tak::hiddenunits::lowFeature(int(di->second.numberOr("height", 0)));
         FeatArt* a = di != featureDefs_.end() ? featureArtFor(di->second) : nullptr;
         if (!a) { fi.tex = nullptr; fi.frames = nullptr; fi.art = nullptr;
                   fi.shadow = nullptr; return; }   // no art: vanish (draw skips)

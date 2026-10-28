@@ -59,6 +59,7 @@
 #include "client/dirpicker.h"   // first-run data-dir folder picker
 #include "client/distantmodels.h"
 #include "client/tacticaldots.h"   // zoomed-out unit dots (Options > Graphics)
+#include "client/hiddenunits.h"    // painter layers: flat features under every unit
 #include "client/featureindex.h"
 #include "client/unitindex.h"
 #include "client/unittypetable.h"
@@ -1313,6 +1314,9 @@ private:
     // therefore paints over every tree and rock and cannot be occluded by feature
     // clutter. Sorting by z alone, as we did, let any tree with a larger z draw
     // over a flyer at any altitude -- which is what "flying under trees" was.
+    // Features of TDF height below 10 sit in a layer BEFORE the ground units
+    // (tak::hiddenunits::kLayerLowFeature): retail draws them in its cell scan
+    // before any unit, so a stump or a mana decal never paints over a unit.
     struct PaintItem { float z; const UnitR* u; const FeatureInst* f; int layer = 0; };
     std::vector<PaintItem> paintItems_;   // per-frame painter list (capacity reused)
     std::unordered_set<int> targetSet_;   // per-frame attack-target ids (reused)
@@ -3171,6 +3175,9 @@ private:
         bool glowy = false;  // the animated "Sacred Stone" centre -- the actual
                              // buildable spot; category=mana + animating=1. The
                              // static "Standing Stones" (animating=0) are decoration.
+        // TDF height below 10 (tak::hiddenunits::lowFeature): drawn under every unit,
+        // as retail draws such features before any unit. Follows the burnt swap.
+        bool low = false;
     };
     std::vector<FeatureInst> features_;
     tak::FeatureIndex featureIndex_;
