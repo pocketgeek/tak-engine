@@ -620,8 +620,8 @@ bool Controller::armedEnemyNear(const tak::sim::World& world, float x, float z, 
 // purchase's reserve first, holding every other new build back until the store
 // has it. Candidates: own finished lodestones at full HP within kBase of home,
 // no spotted armed enemy within kSafe, the richest deposit first, then the
-// nearest. A threat in home territory stops the saving at once; a save not met
-// within kSaveTicks gives up for kRetryTicks.
+// nearest. A threat in home territory stops the saving at once; a stage not
+// bought within kSaveTicks gives up for kRetryTicks.
 void Controller::planUpgrade(const tak::sim::World& world, Needs& needs) {
     constexpr float kBase = 1600, kSafe = 600, kTerritory = 900;
     constexpr uint32_t kSaveTicks = 3 * 60 * 30, kRetryTicks = 5 * 60 * 30;
@@ -706,6 +706,17 @@ void Controller::planUpgrade(const tak::sim::World& world, Needs& needs) {
     const float incomeMult = incomeMultFor(diff_);
     for (const auto& c : candidates) {
         if (!weighted(c.divine)) continue;
+        // The per-type limits weightedPick keeps (the FBI's, and a bounded
+        // level's scaled profile limit) bound the plan too: a reserve saved for a
+        // Divine Lodestone weightedPick then refuses would never be spent.
+        {
+            const auto l = profile_.limit.find(c.divine->id);
+            const auto count = needs.counts.find(c.divine);
+            const int have = count == needs.counts.end() ? 0 : count->second;
+            if ((c.divine->totalAllowed > 0 && have >= c.divine->totalAllowed) ||
+                (!dp_.unbounded && l != profile_.limit.end() && l->second > 0 &&
+                 have >= std::max(1, l->second * dp_.limitScale / 100))) continue;
+        }
         // The priest: one standing (finished or not) or ordered, else the type an
         // existing factory trains.
         const tak::sim::UnitType* priest = nullptr;
@@ -749,12 +760,32 @@ void Controller::planUpgrade(const tak::sim::World& world, Needs& needs) {
         // The save clock runs from the start of each stage, and stands still while
         // the priest is being trained.
         if (upgrade_.stage != was || upgrade_.stage == 2) upgrade_.saveStart = now_;
-        // A store too small to hold the reserve saves what it can hold; the
-        // affordability gate still asks savings plus income to cover the cost.
+        // The reserve: the level's fraction of the purchase, and for the Divine
+        // Lodestone at least what income over its build time leaves uncovered --
+        // weightedPick's affordability gate asks savings plus that income to cover
+        // the cost, so a smaller reserve met would buy nothing. A store too small
+        // to hold it saves what it can hold, and plans nothing where even that
+        // cannot buy the upgrade.
         const auto& me = world.player(player_);
-        needs.reserve = std::min(level.saveFraction * (train ? priest->buildCost : c.divine->buildCost),
-                                 me.manaCapacity() * 0.9f);
-        if (me.mana < needs.reserve && now_ - upgrade_.saveStart > kSaveTicks) {
+        const float capacity = me.manaCapacity() * 0.9f;
+        if (train) {
+            needs.reserve = std::min(level.saveFraction * priest->buildCost, capacity);
+        } else {
+            const float uncovered = c.divine->buildCost - me.income * secs;
+            needs.reserve = std::min(std::max(level.saveFraction * c.divine->buildCost, uncovered), capacity);
+            if (needs.reserve < uncovered) {
+                needs.reserve = 0;
+                upgrade_.target = 0;
+                upgrade_.divine = upgrade_.priest = nullptr;
+                upgrade_.stage = 0;
+                return;
+            }
+        }
+        // A stage not bought within kSaveTicks gives up -- the reserve not met, or
+        // met with nothing to spend it (the priest busy or unable to reach the
+        // site, the unit cap reached) -- rather than hold the store for ever.
+        // Stage 2's clock restarts every think while the priest trains.
+        if (now_ - upgrade_.saveStart > kSaveTicks) {
             upgrade_.retryAt = now_ + kRetryTicks;
             upgrade_.target = 0;
             upgrade_.divine = upgrade_.priest = nullptr;

@@ -354,8 +354,9 @@ within 15 minutes (20 for Absurdly Defensive), counting the income the old
 lodestone loses while the upgrade is built and the priest's cost if it has to
 train one. It upgrades one at a time, starting with the richest deposit nearest
 home, never a damaged lodestone or one with enemy troops nearby, and first
-saves 60% of the cost, holding other new builds back meanwhile (it stops
-saving if enemies come near its base, or after three minutes). If it has no
+saves at least 60% of the cost, holding other new builds back meanwhile (it
+stops saving if enemies come near its base, or if three minutes pass without
+the upgrade or its priest started; it tries again five minutes later). If it has no
 priest (shaman, engineer) for the job, an existing factory trains one. A priest
 starts a dragon only when the mana store is well stocked.
 

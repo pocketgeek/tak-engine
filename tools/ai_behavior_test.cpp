@@ -643,6 +643,9 @@ static void divineLodestones() {
         bool freeDeposit=false;   // a free deposit 1800 px from home
         int army=12;
         bool multOne=false;       // the lodestone's deposit pays x1, not x2
+        float storage=10000;
+        int divineLimit=9;        // the profile's tarmana limit
+        bool troops=false;        // the priest's tarang weighted too
     };
     // Home is the buildings' centre: the hell (400,800) and lodestone A (1400,800)
     // -- each finished Divine Lodestone stands on its own deposit in a row at
@@ -666,13 +669,14 @@ static void divineLodestones() {
         for (int i=0;i<s.army;++i) w.spawn(reg.find("targob"),300+float(i%6)*40,1200+float(i/6)*40,0,0);
         if (s.enemy) w.spawn(&archer,1950,800,0,1);
         auto& me=w.player(0);
-        me.storage=10000;me.mana=s.mana;me.income=s.income;
+        me.storage=s.storage;me.mana=s.mana;me.income=s.income;
         ai::Profile p;
-        p.weight["tarpries"]=10;p.limit["tarpries"]=3;p.weight["tarmana"]=5;p.limit["tarmana"]=9;
+        p.weight["tarpries"]=10;p.limit["tarpries"]=3;p.weight["tarmana"]=5;p.limit["tarmana"]=s.divineLimit;
         p.weight["tardrag"]=25;p.limit["tardrag"]=1;p.weight["targob"]=10;p.limit["targob"]=40;
+        if (s.troops) { p.weight["tarang"]=10;p.limit["tarang"]=40; }
         ai::Controller controller(0,reg,p,1,s.difficulty);
         const auto cs=think(controller,w,s.tick);
-        struct Out { bool upgrade=false,freeDivine=false,dragon=false,trains=false; } out;
+        struct Out { bool upgrade=false,freeDivine=false,dragon=false,trains=false,troop=false; } out;
         for (const auto& c:cs) {
             const std::string t=c.type;
             if (c.kind==net::Cmd::Build && t=="tarmana") {
@@ -680,6 +684,7 @@ static void divineLodestones() {
                 if (c.x==2700) out.freeDivine=true;
             }
             if (c.kind==net::Cmd::Build && t=="tardrag") out.dragon=true;
+            if (c.kind==net::Cmd::Build && t=="tarang" && c.unitId==priest) out.troop=true;
             if (c.kind==net::Cmd::Train && t=="tarpries") out.trains=true;
         }
         return out;
@@ -702,6 +707,12 @@ static void divineLodestones() {
         check(!run(s).upgrade,"Easy never upgrades");
         s=Setup{};s.mana=3000;
         check(!run(s).upgrade,"no upgrade until the store holds 60% of its cost");
+        // No reserve held for an upgrade weightedPick could never buy: the
+        // priest, with no plan, conjures a troop from that store instead.
+        s=Setup{};s.troops=true;s.mana=3000;s.divines=1;s.divineLimit=1;
+        check(run(s).troop,"no reserve for a Divine Lodestone past the profile's limit");
+        s=Setup{};s.troops=true;s.mana=3600;s.storage=4000;s.income=19;
+        check(run(s).troop,"no reserve a full store plus income over the build cannot turn into the upgrade");
     }
     {
         Setup s;s.priest=false;s.income=30;s.mana=3500;
