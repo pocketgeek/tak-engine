@@ -45,7 +45,7 @@ int main(int argc,char** argv){try{
  auto stockHash=hpi::gameplayHash(base);host.setDataHash(stockHash);peer.setDataHash(stockHash);
  check(host.connect(serverHost,uint16_t(std::stoi(argv[1])),"pack-host"),"host connect");check(peer.connect(serverHost,uint16_t(std::stoi(argv[1])),"pack-peer"),"peer connect");
  sim::TypeRegistry registry;hpi::Vfs hostData,peerData;sim::World wh,wp;
- bool created=false,joined=false,ready=false,started=false,loaded=false,saveFailed=false;int transition=0,campaign=0;std::string initialDigest,alphaDigest;uint32_t ht=0,pt=0;std::map<uint32_t,uint64_t> hashes;
+ bool created=false,joined=false,ready=false,started=false,loaded=false,saveFailed=false;int transition=0,campaign=0;uint8_t benchSpeed=0;std::chrono::steady_clock::time_point benchAt;std::string initialDigest,alphaDigest;uint32_t ht=0,pt=0;std::map<uint32_t,uint64_t> hashes;
  // Loading builds both worlds on a worker while the main loop keeps polling both
  // clients, as a player's loading screen keeps its connection alive: the server drops
  // a seat silent for 15 s, and two Ulasem Arena loads in a row under a loaded test
@@ -135,8 +135,24 @@ int main(int argc,char** argv){try{
    check(host.room().opts.gameMods==1,"a single-player room had game mods off");
    check(host.modPackage()->mapPath=="HostRules" && host.modPackage()->files->count("sounds/host-rules.wav"),"the single-player room's package lacks the always-enabled game pack");
    check(host.modVfs({}).has("sounds/host-rules.wav"),"the always-enabled game pack did not apply in single player");
+   host.leaveGame();campaign=5;benchAt=std::chrono::steady_clock::now()+std::chrono::milliseconds(1500);
+  }
+  // A Benchmark room plays the retail data: the server keeps GAME MODS off even when
+  // the host asks for it at creation and again in the lobby (a client that still
+  // offers its ticked and always-enabled game packs).
+  // (After a pause: the solo room's last frames are still in flight, and the lobby
+  // request budget is per second.)
+  if(campaign==5 && host.state()==net::MpClient::State::Lobby && std::chrono::steady_clock::now()>=benchAt){host.setGameModPacks({"Alpha"});net::GameOptions o;o.gameMods=1;o.benchmark=1;host.createGame("Benchmark","","Ulasem Arena",o,8,false,true);campaign=6;}
+  if(campaign==6 && host.state()==net::MpClient::State::InRoom && host.room().opts.benchmark){
+   check(host.room().opts.gameMods==0,"a Benchmark room adopted GAME MODS");
+   check(!host.hostGameModPacks().empty(),"fixture: the host no longer offers its game packs");
+   check(hpi::gameplayHash(host.modVfs({}))==stockHash,"a Benchmark room loaded game mods");
+   auto opts=host.room().opts;opts.gameMods=1;opts.speed=benchSpeed=uint8_t(opts.speed==10?12:10);host.setGameOptions(opts);campaign=7;
+  }
+  if(campaign==7 && host.state()==net::MpClient::State::InRoom && host.room().opts.speed==benchSpeed){
+   check(host.room().opts.gameMods==0,"a Benchmark room took GAME MODS in the lobby");
    host.leaveGame();
-   std::cout<<"PASS: multi-pack upload, peer download, cosmetic isolation, always-enabled cosmetic and game packs (host only, never a guest's, never in a campaign), gameplay loading, 90 lockstep ticks, a mod-free campaign room and a single-player room\n";return 0;
+   std::cout<<"PASS: multi-pack upload, peer download, cosmetic isolation, always-enabled cosmetic and game packs (host only, never a guest's, never in a campaign), gameplay loading, 90 lockstep ticks, a mod-free campaign room, a single-player room and a mod-free Benchmark room\n";return 0;
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(1));
  }
