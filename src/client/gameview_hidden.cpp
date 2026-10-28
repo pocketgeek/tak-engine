@@ -9,9 +9,10 @@
 // Who: the units the painter list holds (the frame draws them: own, allied, enemies
 // in sight -- never fog, never an undrawn cloaked enemy), alive, not a corpse, not a
 // structure, on the ground layer. Covers: tall features (the low layer is drawn
-// before every unit) and structures not drawn through drawUnit (a site still being
-// conjured is translucent), painted AFTER the unit. Another mobile unit is never a
-// cover. Display only: nothing here reads or writes simulation state.
+// before every unit) and structures drawn solid and whole (not a site still being
+// conjured or an FBI ghost: translucent; not clipped by a terrain wall), painted
+// AFTER the unit. Another mobile unit is never a cover. Display only: nothing here
+// reads or writes simulation state.
 
 #include <algorithm>
 #include <cmath>
@@ -154,7 +155,11 @@ struct SavedState {
             HiddenKind kind = HiddenKind::Other;
             if (it.layer == hu::kLayerGround) {
                 if (isStructure(u.type)) {
-                    if (!specialUnit(u, g.canFly, g.occY, g.ay)) kind = HiddenKind::Structure;
+                    // Its whole body solid on screen. Repair or conjure particles, a
+                    // builder at work and emotes go through drawUnit too, but leave the
+                    // body as it is: those still cover.
+                    const bool clipped = !g.canFly && g.occY < g.ay - 2.0f;   // drawUnit's wall clip
+                    if (!u.underConstruction && !u.type->ghost && !clipped) kind = HiddenKind::Structure;
                 } else if (u.alive() && !u.corpsePhase) kind = HiddenKind::Unit;
             }
             if (kind == HiddenKind::Structure) {
@@ -357,10 +362,13 @@ struct SavedState {
                 hiddenLayerGrid_.insert(d.rect);
                 hiddenDraws_.push_back(d);
             }
-            std::stable_sort(hiddenDraws_.begin(), hiddenDraws_.end(), [](const HiddenDraw& x, const HiddenDraw& y) {
+            // Painter order within a group: hiddenRecs_ runs backwards, so the later
+            // draw has the smaller rec. (std::sort: stable_sort allocates every frame.)
+            std::sort(hiddenDraws_.begin(), hiddenDraws_.end(), [](const HiddenDraw& x, const HiddenDraw& y) {
                 if (x.layer != y.layer) return x.layer < y.layer;
                 if (x.tex != y.tex) return std::less<SDL_Texture*>()(x.tex, y.tex);
-                return x.blend < y.blend;
+                if (x.blend != y.blend) return x.blend < y.blend;
+                return x.rec > y.rec;
             });
             // Native flat runs: OpenGL at output scale 1 (debug TAK_HIDDEN_NATIVE=0: SDL only).
             static const bool nativeOff = tak::devEnv("TAK_HIDDEN_NATIVE") && !tak::devFlag("TAK_HIDDEN_NATIVE");

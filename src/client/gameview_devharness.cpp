@@ -671,9 +671,12 @@
                 if (mask.opaque(features_[treeA].xoff,y)) { if (top<0) top=y; bottom=y; }
             check(top>=0 && features_[treeA].yoff-(top+bottom)/2>12,"tree crown above its base");
             const float behindDz=float(features_[treeA].yoff-(top+bottom)/2);
+            int particlesOn=-1;   // a unit given one construction particle (drawUnit path)
             const auto frame=[&](const char* capture=nullptr) {
                 captureFrame();beginFrame();cosmeticStep(0);
                 Frame& f=frameBuf_[renderReadIdx_];
+                for (auto& r:f.units)
+                    if (r.id==particlesOn && r.type) r.constructionParticles.assign(1,{});
                 f.visW=mapView_.map().blocksX*2;f.visH=mapView_.map().blocksY*2;
                 f.vis.assign(size_t(f.visW)*size_t(f.visH),1);
                 for (int cz=0;cz<f.visH;++cz) for (int cx=0;cx<f.visW;++cx) {
@@ -739,6 +742,13 @@
             check(!hiddenDot(onSmudge),"unit on flat scenery: no dot");
             check(!hiddenDot(foeFog),"enemy in fog behind a tree: no dot");
             check(!hiddenDot(keep),"a building is never marked");
+            {   // Under repair (its particles send it through drawUnit) it still covers.
+                particlesOn=keep;
+                frame();
+                particlesOn=-1;
+                check(!frameUnit(keep).constructionParticles.empty() && hiddenDot(behindKeep),
+                      "unit behind a building under repair: dot");
+            }
             {   // The dot is a click target.
                 const SDL_FPoint c=dotCentre(frameUnit(behind));
                 SDL_Event e{};
