@@ -2543,8 +2543,9 @@ if(TAK_BUILD_CLIENT)
           PASS_REGULAR_EXPRESSION "PASS: tactical dots \\(threshold")
       # HIDDEN UNITS (Options > Graphics): flat features under every unit, the cover
       # rules of DOTS (tree, building, open ground, in front, fog), the click target,
-      # and OUTLINE (on this software renderer: its fallback to DOTS; on OpenGL the
-      # same test checks the outline's pixels at two output scales).
+      # and SHADOW's pixels (changed only on the cover, the part in sight as with
+      # OFF) at two output scales and, where the renderer has them, from distant
+      # images.
       add_test(NAME hidden_units COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_HIDDEN_UNITS_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/hidden-units-profile

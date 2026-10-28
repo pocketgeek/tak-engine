@@ -555,12 +555,12 @@ void OptionsScreen::build(int channels) {
     // client/hiddenunits.h). Three stops like HEALTH BARS; applied live.
     slider("HIDDEN UNITS", 0, 2, [&] { return float(s_.hiddenUnits); },
            [&](float v) { s_.hiddenUnits = std::clamp(int(v + 0.5f), 0, 2); },
-           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "OUTLINE" : l >= 1 ? "DOTS" : "OFF"); });
+           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "SHADOW" : l >= 1 ? "DOTS" : "OFF"); });
     ctls_.back().help = [&] {
         const char* lines[] = {
             "OFF: TREES, ROCKS AND BUILDINGS HIDE THE UNITS BEHIND THEM, AS IN THE ORIGINAL GAME.",
             "DOTS: A UNIT WHOSE CENTRE IS HIDDEN SHOWS ITS TACTICAL DOT ON TOP.",
-            "OUTLINE: THE HIDDEN PART OF A UNIT SHOWS AS AN OUTLINE IN ITS PLAYER COLOUR."};
+            "SHADOW: THE HIDDEN PART OF A UNIT SHOWS THROUGH THE TREE OR WALL AS A FAINT SHADOW."};
         std::vector<std::string> out;
         for (int i = 0; i < 3; ++i) out.push_back(std::string(i == s_.hiddenUnits ? "> " : "  ") + lines[i]);
         return out;

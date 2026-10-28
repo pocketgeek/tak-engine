@@ -225,7 +225,6 @@
         tacticalDotsOpt_ = s.tacticalDots;                // Options: zoomed-out unit dots
         tacticalDotsZoom_ = s.tacticalDotsZoom;
         hiddenUnitsMode_ = std::clamp(s.hiddenUnits, 0, 2);   // Options: units behind scenery
-        if (hiddenUnitsMode_ != tak::hiddenunits::kOutline) releaseHiddenTargets();
         hotkeys_.load(s.hotkeys);                         // Options: rebindable hotkeys
     }
 

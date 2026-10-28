@@ -1572,6 +1572,10 @@
         }
         profShadowMs_ += (double(SDL_GetPerformanceCounter()) - _sh0) / _ptFreq;
 
+        // HIDDEN UNITS: the units a later tree, rock or building overlaps; with SHADOW
+        // their ghosts join the body plan below (nothing with the option off).
+        findHiddenUnits(mvw, winH);
+
         const double _bdy0 = double(SDL_GetPerformanceCounter());
         // Pass 2: bodies (feature sprites + unit models) in depth order. Unit
         // models are accumulated into one batch and flushed only when the texture
@@ -1612,7 +1616,21 @@
                 segFirst = uint32_t(bodyRanges_.size());
             }
         };
-        for (const auto& it : items) {
+        // HIDDEN UNITS (SHADOW): each ghost right after the last cover over its unit
+        // (client/hiddenunits.h, Ghost). A tree is an op of its own anyway; after a
+        // building the running segment closes. Every ghost is in the ground layer.
+        size_t nextGhost = 0;
+        const auto ghostsBefore = [&](size_t item) {
+            for (; nextGhost < hiddenGhosts_.size() && hiddenGhosts_[nextGhost].range.last < item; ++nextGhost) {
+                closeSeg();
+                DrawOp op{nullptr, nullptr, nullptr, 0, 0};
+                op.ghost = int32_t(nextGhost);
+                drawOps_.push_back(op);
+            }
+        };
+        for (size_t itemIndex = 0; itemIndex < items.size(); ++itemIndex) {
+            const auto& it = items[itemIndex];
+            ghostsBefore(itemIndex);
             // The ground -> air boundary is where the held-back flyer shadows go. Close
             // the running segment so it lands on a real op boundary rather than inside a
             // batched run.
@@ -1638,7 +1656,8 @@
                 if(distant.texture) {
                     openSeg(distant.texture);
                     const uint32_t src = uint32_t(bodySources_.size());
-                    bodySources_.push_back({distant.quad.data(), 6, g.handle.index, g.handle.generation, 0});
+                    bodySources_.push_back({distant.quad.data(), 6, g.handle.index, g.handle.generation, 0,
+                                            UINT32_MAX, 0, gslot});
                     bodyRanges_.push_back({src, 0, 6});
                     segCount += 6;
                     continue;
@@ -1659,6 +1678,7 @@
                 }
             }
         }
+        ghostsBefore(items.size());
         closeSeg();
 
         // Workstream H: native-size commands draw from the retained vertex arena
@@ -1878,11 +1898,11 @@
                         const BodySource& src = bodySources_[r.source];
                         if (!bodyArena_.written(src.arena)) arenaRetained += r.count;
                         if (src.geom >= 0 && !bodyArenaBuffers_[op.arenaSlot].simulated()) {
-                            // A command's storage holds each of its sources whole.
+                            // HIDDEN UNITS: a command's storage holds each of its sources whole.
                             UnitGeom& g = visGeom(size_t(src.geom));
-                            g.arenaFrame = bodyArenaFrame_; g.arenaRevision = g.revision;
-                            g.arenaFirst = at - r.offset; g.arenaStorage = op.arenaSlot;
-                            g.arenaBuffer = bodyArenaBuffers_[op.arenaSlot].id();
+                            g.arenaFrame = bodyArenaFrame_;
+                            g.arenaFirst = at - r.offset;
+                            g.arenaStorage = op.arenaSlot;
                         }
                     }
                     op.arenaRanges = uint32_t(bodyArenaFirsts_.size() - begin);
@@ -2099,6 +2119,8 @@
             } else if (op.u) {
                 tak::render::countLogicalDraw();   // one special unit (drawUnit issues several)
                 drawUnit(*op.u);
+            } else if (op.ghost >= 0) {
+                drawHiddenGhost(hiddenGhosts_[size_t(op.ghost)]);
             } else if (op.count > 0 && op.tex) {   // null atlas page: skip, no white
                 renderStats_.add(RS::BodySubmissions);
                 if (op.arenaFirst >= 0) {
@@ -2178,9 +2200,9 @@
         // (a dot under a tree crown would vanish). Shots and effects do not draw
         // on a dots frame at all (worldFxFrame()).
         if (dotsFrame_) drawTacticalDots(mvw, winH);
-        // HIDDEN UNITS: units the scenery or a building painted over, shown anyway
-        // (nothing on a dots frame or with the option off).
-        drawHiddenUnits(mvw, winH);
+        // HIDDEN UNITS (DOTS): units the scenery or a building painted over get their
+        // dot on top (nothing on a dots frame or with another setting).
+        drawHiddenDots(mvw, winH);
         // Ghosts of the local player's queued (shift) build orders. Only the units the
         // snapshot lists as holding such an order (Frame::buildGhostUnits, in live
         // order) can draw one (workstream L: no walk over every unit).
@@ -4253,7 +4275,7 @@
         for(;end<drawOps_.size();++end) {
             if(end>first && end==airShadowOp_)break;
             DrawOp& op=drawOps_[end];
-            if(op.f || op.u)break;
+            if(op.f || op.u || op.ghost>=0)break;
             if(op.count<=0 || !op.tex)continue;   // skipped by the replay anyway (null atlas page)
             op.page=int16_t(palettePage(op.tex));
             if(op.page>=0) {
@@ -4282,7 +4304,7 @@
         const bool arena=nativePassArena_ && nativePassMode_==NativePassMode::All;
         for(size_t i=0;i<drawOps_.size();) {
             DrawOp& head=drawOps_[i];
-            if(head.f || head.u || head.count<=0 || !head.tex ||
+            if(head.f || head.u || head.ghost>=0 || head.count<=0 || !head.tex ||
                (nativePassMode_==NativePassMode::Palette && palettePage(head.tex)<0)) {++i;continue;}
             const SpanScan scan=scanNativeSpan(i);
             if(scan.nativeAnyway && scan.end>i) {
@@ -4576,8 +4598,6 @@
         shadowSilhouetteAtlasActive_=false;
         atlasTracker_.clear();   // whatever was painted died with the atlases
         releaseBodyArena();      // retained body vertices (H): re-uploaded on the next stable frame
-        releaseHiddenTargets();  // HIDDEN UNITS outline layers (redrawn every frame anyway)
-        hiddenOutlineUnsupported_ = false;   // a new renderer gets asked again
     }
 
     void GameView::destroyGpuTextures() {

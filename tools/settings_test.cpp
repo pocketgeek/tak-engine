@@ -684,20 +684,22 @@ int main() {
                                loadFrom("displayMode = x\ndisplayScale = 99\n").displayScale == 0.0f);
         check("display: kept by defaults", tak::preferenceDefaults(dm).displayMode == 3 &&
                                            tak::preferenceDefaults(dm).displayScale == 1.45f);
-        // HIDDEN UNITS: off | dots | outline; a file from before the option (no key)
-        // and an unknown value load as OUTLINE, the default.
+        // HIDDEN UNITS: off | dots | shadow; a file from before the option (no key),
+        // one saved with OUTLINE (the mode SHADOW replaced) and an unknown value load
+        // as SHADOW, the default.
         check("hidden: default 2", Settings{}.hiddenUnits == 2);
         check("hidden: absent", loadFrom("masterVol = 7\n").hiddenUnits == 2);
         check("hidden: off", loadFrom("hiddenUnits = off\n").hiddenUnits == 0);
         check("hidden: dots", loadFrom("hiddenUnits = dots\n").hiddenUnits == 1);
-        check("hidden: outline", loadFrom("hiddenUnits = outline\n").hiddenUnits == 2);
+        check("hidden: shadow", loadFrom("hiddenUnits = shadow\n").hiddenUnits == 2);
+        check("hidden: outline reads as shadow", loadFrom("hiddenUnits = outline\n").hiddenUnits == 2);
         check("hidden: junk", loadFrom("hiddenUnits = maybe\n").hiddenUnits == 2);
         for (int mode = 0; mode < 3; ++mode) {
             Settings hs{};
             hs.hiddenUnits = mode;
             check("hidden: round trip", loadFrom(tak::serializeSettings(hs)).hiddenUnits == mode);
         }
-        check("hidden: saved as name", tak::serializeSettings(Settings{}).find("hiddenUnits = outline") != std::string::npos);
+        check("hidden: saved as name", tak::serializeSettings(Settings{}).find("hiddenUnits = shadow") != std::string::npos);
         check("fps: 30 ok", loadFrom("streamFps = 30\n").streamFps == 30);
         check("fps: 45 snaps", loadFrom("streamFps = 45\n").streamFps == 60);
         check("fps: junk snaps", loadFrom("streamFps = x\n").streamFps == 60);

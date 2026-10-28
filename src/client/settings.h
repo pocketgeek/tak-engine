@@ -75,9 +75,9 @@ struct Settings {
                                    // instead of models (non-retail extra; default on)
     // HIDDEN UNITS (client/hiddenunits.h; a non-retail extra): a unit behind a tree, rock or
     // building is shown anyway -- 0 = OFF (as retail), 1 = DOTS (its tactical dot on top
-    // when its centre is covered), 2 = OUTLINE (the covered part as a player-coloured
-    // outline; the default). Persisted as hiddenUnits = off | dots | outline; absent (a
-    // settings file from before it) = OUTLINE.
+    // when its centre is covered), 2 = SHADOW (the cover turns see-through over the unit;
+    // the default). Persisted as hiddenUnits = off | dots | shadow; absent (a settings
+    // file from before it), "outline" (the mode SHADOW replaced) or unknown = SHADOW.
     int   hiddenUnits = 2;
     bool  screenShake = false;     // camera shake on heavy impacts / mission quakes; default off
     bool  videoDeblock = true;     // deblock the Bink clips before upload. They are
