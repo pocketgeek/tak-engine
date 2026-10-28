@@ -1017,6 +1017,13 @@ int main(int argc, char** argv) {
     }
     if (!ren) {
         std::fprintf(stderr, "renderer failed: %s\n", SDL_GetError());
+#ifndef NDEBUG
+        // ctest hidden_units_gl: no OpenGL window or renderer here at all (macOS's
+        // offscreen video driver makes every window OpenGL, over an EGL it lacks): skipped.
+        if (testbuild && tak::devFlag("TAK_HIDDEN_UNITS_GL"))
+            std::fprintf(stderr, "SKIP: hidden units: no OpenGL window or renderer here (%s)\n",
+                         win ? "renderer failed" : "window failed");
+#endif
         return 1;
     }
     if (shot.empty()) SDL_RenderSetVSync(ren, vsyncOn ? 1 : 0);
