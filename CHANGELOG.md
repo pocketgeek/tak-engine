@@ -23,10 +23,11 @@ their validation reports; both live in [`docs/`](docs/).
 *protocol 303 · replay format 15*
 
 - **Hidden Units** (Options → Graphics; not in the original game): units
-  behind trees, rocks and buildings stay visible. **Outline**, the default,
-  draws the hidden part of a unit as an outline in its player's colour;
-  **Dots** puts its tactical dot on top; **Off** hides it as before. Only
-  units you can see anyway are marked.
+  behind trees, rocks and buildings stay visible. **Shadow**, the default,
+  makes the cover see-through where it hides a unit, so the hidden part shows
+  as a faint shadow and the part in sight is unchanged; **Dots** puts its
+  tactical dot on top; **Off** hides it as before. Only units you can see
+  anyway are marked.
 - **Flat scenery is drawn under units**, as in the original game: features
   whose height is below 10 (stumps, crops, smudges, mana deposits) no longer
   paint over the feet of a unit standing just north of them.
