@@ -22,6 +22,16 @@ their validation reports; both live in [`docs/`](docs/).
 ## Unreleased
 *protocol 303 · replay format 15 · does not play with 0.9.8 or earlier, nor their replays*
 
+- **The AI upgrades to divine lodestones only when it pays.** Defensive,
+  Normal, Hard, Absurd and Absurdly Defensive now put a divine lodestone only
+  on one of their own lodestones, once no free deposit near home is left, and
+  only where the upgrade pays for itself within 15 minutes (20 for Absurdly
+  Defensive). They save up for it first, do one at a time, and train a priest
+  for it when they have none. Hard and Absurd no longer start divine lodestones
+  on free deposits far from home with an empty store, and a priest no longer
+  starts a dragon it cannot pay for. From 15 minutes on Defensive (at most 5),
+  10 on Normal (2), 8 on Hard (6), 6 on Absurd and 8 on Absurdly Defensive (no
+  limit); Easy never upgrades.
 - **Make Poster is Shift+P.** The default key for MAKE POSTER (power codes) is
   now **Shift+P** instead of Print Screen, which many desktops take for their
   own screenshots and Mac keyboards lack. A key you set yourself in CONTROLS is

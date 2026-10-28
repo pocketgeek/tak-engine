@@ -85,6 +85,25 @@ inline constexpr float incomeMultFor(Difficulty d) {
     return d == Difficulty::Absurd || d == Difficulty::AbsurdlyDefensive ? 2.0f : 1.0f;
 }
 
+// When a level upgrades its own lodestones to Divine Lodestones (the faction's
+// "mana" building, World::lodestoneUpgradeBase): not before `earliestMin` minutes
+// of game time, only where the upgrade -- its cost, the old lodestone's income
+// lost while it builds, and a priest's cost when one must be trained first --
+// pays for itself out of the extra income within `horizonMin` minutes, at most
+// `limit` of them standing or under way (-1 no limit, 0 never), saving
+// `saveFraction` of the next purchase's cost before buying it. Controller::planUpgrade.
+struct UpgradeLevel { int earliestMin, horizonMin, limit; float saveFraction; };
+inline constexpr UpgradeLevel upgradeLevelFor(Difficulty d) {
+    switch (d) {
+        case Difficulty::Passive:           return {15, 15, 5, 0.6f};
+        case Difficulty::Normal:            return {10, 15, 2, 0.6f};
+        case Difficulty::Hard:              return {8, 15, 6, 0.6f};
+        case Difficulty::Absurd:            return {6, 15, -1, 0.6f};
+        case Difficulty::AbsurdlyDefensive: return {8, 20, -1, 0.6f};
+        default:                            return {0, 0, 0, 0.0f};   // Easy, Classic: never
+    }
+}
+
 // Behaviour knobs derived from Difficulty (paramsFor).
 struct DiffParams {
     int  thinkPeriod;      // sim ticks between decisions (30 = 1 Hz); lower = faster reactions
@@ -138,6 +157,10 @@ struct Needs {
                                // Monarch, those unfinished and those queued or ordered
     int   mobileBuilderCap = 2;// builderCap; a side with no factory buildings adds its factories
     bool  storeFull = false;   // mana at 90% of capacity or more: income goes unspent
+    int   upgrades = 0;        // Divine Lodestones standing (finished or not) or ordered
+    int   upgradeProjects = 0; // of upgrades, those unfinished or still only ordered
+    int   priests = 0;         // units that build Divine Lodestones: standing, trained or ordered
+    float reserve = 0;         // mana planUpgrade is saving; other builds wait below it
     float committed = 0;       // unbounded levels: build cost ordered this think, held
                                // against mana by the affordability gate
 };
@@ -260,6 +283,29 @@ private:
     BaseLayout baseLayout(const tak::sim::World&) const;
     mutable std::map<std::tuple<const tak::sim::UnitType*,const tak::sim::UnitType*,int,int,int,int>,int>
         navalDoorSteps_;   // per yard type, ship and site, for one think
+    // Divine Lodestone upgrades (planUpgrade). `target` is the own finished
+    // lodestone the plan names this think (0: none), at deposit (x,z); `priest`
+    // is the type a factory trains when no unit that builds `divine` exists.
+    // `stage` 1 saves for the priest, 2 waits for it to be trained, 3 saves for
+    // the Divine Lodestone; `saveStart` is when the current stage began, and
+    // after a save that timed out nothing is planned before `retryAt`.
+    struct UpgradePlan {
+        int target = 0;
+        float x = 0, z = 0;
+        const tak::sim::UnitType* divine = nullptr;
+        const tak::sim::UnitType* priest = nullptr;
+        int stage = 0;
+        uint32_t saveStart = 0, retryAt = 0;
+    };
+    UpgradePlan upgrade_;
+    void planUpgrade(const tak::sim::World&, Needs&);
+    // The Divine Lodestone in `type`'s menu, else nullptr (cached).
+    const tak::sim::UnitType* divineIn(const tak::sim::UnitType* type) const;
+    mutable std::unordered_map<const tak::sim::UnitType*,const tak::sim::UnitType*> divineIn_;
+    // A mobile builder with a Divine Lodestone in its menu (Taros's Priest, Aramon's...).
+    bool upgrader(const tak::sim::UnitType* type) const;
+    // A spotted, armed enemy within `r` of (x,z).
+    bool armedEnemyNear(const tak::sim::World&, float x, float z, float r) const;
     int   desire(BuildCat, const Needs&) const;
     // Retail's lodestone trigger: short of mana, with no lodestone under way.
     bool  manaShort(const tak::sim::World&, const Needs&) const;

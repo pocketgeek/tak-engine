@@ -346,6 +346,28 @@ whenever they run short of mana (less than 30% of their storage left while
 their builders and producers ask for more mana than they earn), one at a time,
 on a free deposit near their own base, as the original game's AI does.
 
+Every level except Easy and Retail upgrades its lodestones to divine lodestones
+once its base is full: when no free deposit within reach of home is left for a
+basic lodestone (a basic lodestone pays for itself in seconds, so it always
+comes first), and only where the upgrade pays for itself out of the extra mana
+within 15 minutes (20 for Absurdly Defensive), counting the income the old
+lodestone loses while the upgrade is built and the priest's cost if it has to
+train one. It upgrades one at a time, starting with the richest deposit nearest
+home, never a damaged lodestone or one with enemy troops nearby, and first
+saves 60% of the cost, holding other new builds back meanwhile (it stops
+saving if enemies come near its base, or after three minutes). If it has no
+priest (shaman, engineer) for the job, an existing factory trains one. A priest
+starts a dragon only when the mana store is well stocked.
+
+| Difficulty | Divine lodestones from | At most |
+| --- | --- | --- |
+| **Defensive** | 15 minutes | 5 |
+| **Easy** | never | none |
+| **Normal** | 10 minutes | 2 |
+| **Hard** | 8 minutes | 6 |
+| **Absurd** | 6 minutes | no limit |
+| **Absurdly Defensive** | 8 minutes | no limit |
+
 On a team, an AI leaves the free mana deposits around an ally's start to that
 ally until they have gone unclaimed for two minutes. After that, of the other
 allies, only the one whose start is nearest may build there, so no AI crosses

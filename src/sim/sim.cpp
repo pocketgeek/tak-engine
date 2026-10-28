@@ -8375,13 +8375,18 @@ void World::verifyNear(float x, float z, float radius, uint64_t players) const {
 
 #endif
 
-const Unit* World::lodestoneUpgradeSource(const UnitType* type,float x,float z,int player) const {
-    if (!type || !type->onMana || !type->isStructure() || player<0 || manaSpots_.empty()) return nullptr;
+std::string World::lodestoneUpgradeBase(const UnitType& type) {
+    if (!type.onMana || !type.isStructure()) return {};
     // Explicit retail pairs: do not treat arbitrary modded mana buildings as upgrades.
     static constexpr const char* factions[]={"ara","tar","ver","zon","cre"};
-    std::string base;
     for (const char* faction:factions)
-        if (type->id==std::string(faction)+"mana") base=std::string(faction)+"lode";
+        if (type.id==std::string(faction)+"mana") return std::string(faction)+"lode";
+    return {};
+}
+
+const Unit* World::lodestoneUpgradeSource(const UnitType* type,float x,float z,int player) const {
+    if (!type || player<0 || manaSpots_.empty()) return nullptr;
+    const std::string base=lodestoneUpgradeBase(*type);
     if (base.empty()) return nullptr;
     const std::pair<float,float>* spot=nullptr;
     float best=24.0f*24.0f;

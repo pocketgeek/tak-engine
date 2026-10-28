@@ -415,6 +415,11 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
         ++n.population;
         ++n.counts[u.type];
         if (u.underConstruction) ++n.unfinished[u.type];
+        if (u.type->isStructure() && !tak::sim::World::lodestoneUpgradeBase(*u.type).empty()) {
+            ++n.upgrades;
+            if (u.underConstruction) ++n.upgradeProjects;
+        }
+        if (upgrader(u.type)) ++n.priests;
         if (navalFactory(u.type)) ++n.navalFactories;
         if (navalProducer(u.type)) ++n.navalProducers;
         if (!u.type->isStructure() && !u.type->canFly && !u.type->isBuilder &&
@@ -431,6 +436,10 @@ Needs Controller::assessNeeds(const tak::sim::World& world) const {
         // factory's queue, or a producer walking to its conjuring spot. Count
         // it, or every think hands the next idle producer one more builder.
         auto planned = [&](const tak::sim::UnitType* t) {
+            if (t->isStructure() && !tak::sim::World::lodestoneUpgradeBase(*t).empty()) {
+                ++n.upgrades;++n.upgradeProjects;
+            }
+            if (upgrader(t)) ++n.priests;
             if (!mobileBuilder(t)) return;
             ++n.population;++n.counts[t];++n.mobileBuilders;
             if (categoryOf(t) == BuildCat::Factory) ++n.factories; else ++n.builders;
@@ -557,6 +566,205 @@ bool Controller::manaShort(const tak::sim::World& world, const Needs& needs) con
         me.displayResources.shortfall(float(me.mana));
 }
 
+const tak::sim::UnitType* Controller::divineIn(const tak::sim::UnitType* type) const {
+    auto [it,inserted]=divineIn_.try_emplace(type,nullptr);
+    if (inserted && type)
+        for (const auto& id:registry_.buildable(type->id)) {
+            const auto* child=registry_.find(id);
+            if (child && child->isStructure() && !tak::sim::World::lodestoneUpgradeBase(*child).empty()) {
+                it->second=child;
+                break;
+            }
+        }
+    return it->second;
+}
+
+bool Controller::upgrader(const tak::sim::UnitType* type) const {
+    return mobileBuilder(type) && divineIn(type);
+}
+
+bool Controller::armedEnemyNear(const tak::sim::World& world, float x, float z, float r) const {
+    std::vector<const tak::sim::Unit*> eyes;
+    bool any=false;
+    for (const auto& e:world.units()) {
+        if (!e.alive() || !e.type || e.embarked() || e.underConstruction || e.cloaked ||
+            world.isNeutralPlayer(e.player) || world.allied(player_,e.player)) continue;
+        if (!e.type->canCapture && e.type->weapon.damage<=0 &&
+            std::none_of(e.type->weapons.begin(),e.type->weapons.end(),[](const auto& w) {
+                return w.damage>0 || w.mindControl;
+            })) continue;
+        const float dx=e.x.toFloat()-x,dz=e.z.toFloat()-z;
+        if (dx*dx+dz*dz>r*r) continue;
+        if (!any) {
+            any=true;
+            for (const auto& u:world.units())
+                if (u.alive() && u.type && !u.embarked() && !u.underConstruction && world.allied(player_,u.player))
+                    eyes.push_back(&u);
+        }
+        const float ex=e.x.toFloat(),ez=e.z.toFloat();
+        if (std::any_of(eyes.begin(),eyes.end(),[&](const tak::sim::Unit* eye) {
+            const float s=std::max(world.sightDistance(*eye->type),world.radarDistance(*eye->type));
+            const float ax=ex-eye->x.toFloat(),az=ez-eye->z.toFloat();return ax*ax+az*az<=s*s;
+        })) return true;
+    }
+    return false;
+}
+
+// Divine Lodestone upgrades. The store, not the income, is what a level runs
+// short of: every level spends as it earns and holds next to nothing, and a
+// Divine Lodestone costs 20 to 30 plain ones (its priest as much again) while
+// the plain lodestone under it stops paying the moment the upgrade starts. So
+// the plan upgrades only a saturated base -- no free deposit within kBase of home
+// that a plain lodestone could take, which pays back in seconds -- upgrades only
+// what pays back within the level's horizon, one at a time, and saves the next
+// purchase's reserve first, holding every other new build back until the store
+// has it. Candidates: own finished lodestones at full HP within kBase of home,
+// no spotted armed enemy within kSafe, the richest deposit first, then the
+// nearest. A threat in home territory stops the saving at once; a save not met
+// within kSaveTicks gives up for kRetryTicks.
+void Controller::planUpgrade(const tak::sim::World& world, Needs& needs) {
+    constexpr float kBase = 1600, kSafe = 600, kTerritory = 900;
+    constexpr uint32_t kSaveTicks = 3 * 60 * 30, kRetryTicks = 5 * 60 * 30;
+    const UpgradeLevel level = upgradeLevelFor(diff_);
+    const int was = upgrade_.stage;
+    upgrade_.target = 0;
+    upgrade_.divine = upgrade_.priest = nullptr;
+    upgrade_.stage = 0;
+    if (level.limit == 0 || !world.hasManaSpots() || now_ < uint32_t(level.earliestMin) * 60u * 30u ||
+        now_ < upgrade_.retryAt || needs.upgradeProjects > 0 ||
+        (level.limit > 0 && needs.upgrades >= level.limit)) return;
+    const auto home = homeOf(world);
+    if (armedEnemyNear(world, home.first, home.second, kTerritory)) return;
+    auto near = [&](float x, float z, float r) {
+        const float dx = x - home.first, dz = z - home.second;
+        return dx * dx + dz * dz <= r * r;
+    };
+    // Our plain lodestones and what each upgrades to.
+    std::unordered_map<std::string, const tak::sim::UnitType*> upgrades;
+    for (const auto& [id, type] : registry_.types())
+        if (type.isStructure())
+            if (auto base = tak::sim::World::lodestoneUpgradeBase(type); !base.empty())
+                if (const auto* plain = registry_.find(base); plain && plain->side == type.side)
+                    upgrades.emplace(base, &type);
+    const tak::sim::UnitType* plainType = nullptr;
+    struct Candidate { const tak::sim::Unit* lode; const tak::sim::UnitType* divine; float x, z, mult, d2; };
+    std::vector<Candidate> candidates;
+    const auto& deposits = world.manaSpots();
+    for (const auto& u : world.units()) {
+        if (!u.alive() || u.player != player_ || !u.type || u.underConstruction) continue;
+        const auto up = upgrades.find(u.type->id);
+        if (up == upgrades.end()) continue;
+        plainType = u.type;
+        const float ux = u.x.toFloat(), uz = u.z.toFloat();
+        if (!near(ux, uz, kBase) || u.hp < tak::sim::Fixed::fromInt(u.maximumHp())) continue;
+        const std::pair<float, float>* spot = nullptr;
+        float best = 24.0f * 24.0f;
+        for (const auto& d : deposits) {
+            const float dx = d.first - ux, dz = d.second - uz;
+            if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; spot = &d; }
+        }
+        if (!spot || armedEnemyNear(world, ux, uz, kSafe) ||
+            !world.canPlace(up->second, spot->first, spot->second, player_)) continue;
+        const float hx = spot->first - home.first, hz = spot->second - home.second;
+        candidates.push_back({&u, up->second, spot->first, spot->second, 0, hx * hx + hz * hz});
+    }
+    if (candidates.empty()) return;
+    // Saturated: no deposit near home is free for a plain lodestone -- none
+    // standing on it, no builder of ours or an ally's bound for it, no ally's.
+    std::vector<std::pair<float, float>> reserved;
+    for (const auto& u : world.units()) {
+        if (!u.alive() || !world.allied(player_, u.player)) continue;
+        for (const auto& order : u.orders)
+            if (order.buildType && order.buildType->onMana && (order.buildX.v || order.buildZ.v))
+                reserved.emplace_back(order.buildX.toFloat(), order.buildZ.toFloat());
+    }
+    for (size_t i = 0; i < deposits.size(); ++i) {
+        const float sx = deposits[i].first, sz = deposits[i].second;
+        if (!near(sx, sz, kBase) || (i < allyHeldDeposits_.size() && allyHeldDeposits_[i]) ||
+            std::any_of(reserved.begin(), reserved.end(), [&](const auto& r) {
+                const float dx = r.first - sx, dz = r.second - sz; return dx * dx + dz * dz < 32 * 32;
+            })) continue;
+        if (world.canPlace(plainType, sx, sz, player_)) return;
+    }
+    // Who builds it: a priest we have (or have ordered), else one an existing
+    // factory can train -- no factory is built for this alone.
+    auto mult = [&](const tak::sim::UnitType* type, float x, float z) {
+        if (!type->sacredIncome) return 1.0f;
+        return world.sacredIncomeMultiplier(tak::sim::footprintOrigin(x, type->footX),
+                                            tak::sim::footprintOrigin(z, type->footZ), type->footX, type->footZ);
+    };
+    const auto weighted = [&](const tak::sim::UnitType* type) {
+        const auto w = profile_.weight.find(type->id);
+        const auto l = profile_.limit.find(type->id);
+        return w != profile_.weight.end() && w->second > 0 && (l == profile_.limit.end() || l->second != 0) &&
+               world.buildAllowed(type);
+    };
+    for (auto& c : candidates) c.mult = mult(c.divine, c.x, c.z);
+    std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+        return a.mult != b.mult ? a.mult > b.mult : a.d2 < b.d2;
+    });
+    const float incomeMult = incomeMultFor(diff_);
+    for (const auto& c : candidates) {
+        if (!weighted(c.divine)) continue;
+        // The priest: one standing (finished or not) or ordered, else the type an
+        // existing factory trains.
+        const tak::sim::UnitType* priest = nullptr;
+        bool ready = false;
+        for (const auto& u : world.units())
+            if (u.alive() && u.player == player_ && u.type && upgrader(u.type) && divineIn(u.type) == c.divine) {
+                priest = u.type;
+                ready = ready || !u.underConstruction;
+            }
+        const bool train = needs.priests == 0;
+        if (train) {
+            for (const auto& u : world.units()) {
+                if (priest || !u.alive() || u.player != player_ || !u.type || u.underConstruction) continue;
+                for (const auto& id : registry_.buildable(u.type->id)) {
+                    const auto* t = registry_.find(id);
+                    if (t && upgrader(t) && divineIn(t) == c.divine && weighted(t)) { priest = t; break; }
+                }
+            }
+            if (!priest) return;
+        }
+        if (!priest) {   // ordered, not yet begun: the trainee's type
+            for (const auto& u : world.units())
+                if (u.alive() && u.player == player_)
+                    for (const auto* t : u.buildQueue)
+                        if (t && upgrader(t) && divineIn(t) == c.divine) priest = t;
+            if (!priest) continue;
+        }
+        const float oldIncome = c.lode->type->income * mult(c.lode->type, c.lode->x.toFloat(), c.lode->z.toFloat()) *
+                                incomeMult;
+        const float extra = c.divine->income * c.mult * incomeMult - oldIncome;
+        if (extra <= 0) continue;
+        const float secs = c.divine->buildTime / std::max(priest->workerTime, 1.0f);
+        const float cost = c.divine->buildCost + oldIncome * secs + (train ? priest->buildCost : 0.0f);
+        if (cost / extra > float(level.horizonMin) * 60.0f) continue;
+        upgrade_.target = c.lode->id;
+        upgrade_.x = c.x;
+        upgrade_.z = c.z;
+        upgrade_.divine = c.divine;
+        upgrade_.priest = train ? priest : nullptr;
+        upgrade_.stage = train ? 1 : ready ? 3 : 2;
+        // The save clock runs from the start of each stage, and stands still while
+        // the priest is being trained.
+        if (upgrade_.stage != was || upgrade_.stage == 2) upgrade_.saveStart = now_;
+        // A store too small to hold the reserve saves what it can hold; the
+        // affordability gate still asks savings plus income to cover the cost.
+        const auto& me = world.player(player_);
+        needs.reserve = std::min(level.saveFraction * (train ? priest->buildCost : c.divine->buildCost),
+                                 me.manaCapacity() * 0.9f);
+        if (me.mana < needs.reserve && now_ - upgrade_.saveStart > kSaveTicks) {
+            upgrade_.retryAt = now_ + kRetryTicks;
+            upgrade_.target = 0;
+            upgrade_.divine = upgrade_.priest = nullptr;
+            upgrade_.stage = 0;
+            needs.reserve = 0;
+        }
+        return;
+    }
+}
+
 // The base radius retail searches for that lodestone's deposit (0x412f80 ->
 // 0x411510, radius 0x40cf30): 16 * max(5b, b*sqrt(n)/2), n the summed footprint
 // (footX + footZ) of the base's buildings and b 7 for the Monarch, 10 for any
@@ -593,8 +801,21 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
     // Orders already given this think draw on the same store (unbounded levels,
     // whose every idle producer may act in one think).
     const double mana = me.mana - (dp_.unbounded ? double(needs.committed) : 0.0);
+    // Zhon's mobile producers are its whole production line; a priest is not.
     const bool mobileFactory = !producer.type->isStructure() &&
-                               categoryOf(producer.type) == BuildCat::Factory;
+                               categoryOf(producer.type) == BuildCat::Factory &&
+                               mobileProduction(producer.type->side);
+    // A Divine Lodestone is built only where planUpgrade names its lodestone, and
+    // the priest it needs only when it asks for one; until the store holds the
+    // plan's reserve, nothing else is started but the short-of-mana lodestone.
+    auto divine = [](const tak::sim::UnitType* type) {
+        return type->isStructure() && !tak::sim::World::lodestoneUpgradeBase(*type).empty();
+    };
+    auto planPick = [&](const tak::sim::UnitType* type) {
+        return (upgrade_.stage == 3 && upgrade_.target && type == upgrade_.divine) ||
+               (upgrade_.stage == 1 && type == upgrade_.priest);
+    };
+    if (needs.reserve > 0 && mana < double(needs.reserve)) lodestoneOnly = true;
     std::unordered_map<const tak::sim::UnitType*,bool> coastalProduction;
     auto coastalProducer = [&](const tak::sim::UnitType* type) {
         auto [it,inserted]=coastalProduction.try_emplace(type,false);
@@ -620,7 +841,8 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
     const float triggerRadius = lodestoneTrigger ? retailLodestoneRadius(world, producer) : 0.0f;
     std::unordered_map<const tak::sim::UnitType*,bool> triggerSites;
     auto triggered = [&](const tak::sim::UnitType* type) {
-        if (!lodestoneTrigger || !type->onMana || !type->isStructure() || needs.unfinished.count(type)) return false;
+        if (!lodestoneTrigger || !type->onMana || !type->isStructure() || divine(type) ||
+            needs.unfinished.count(type)) return false;
         auto [it,inserted] = triggerSites.try_emplace(type,false);
         if (inserted) {
             float ox = producer.x.toFloat(), oz = producer.z.toFloat(), x, z;
@@ -632,6 +854,10 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
     auto priority = [&](const tak::sim::UnitType* type) {
         if (triggered(type)) return 96;
         if (lodestoneOnly) return 0;
+        // The upgrade outranks the Dragon (army, 50); its priest comes just
+        // below more factories (70).
+        if (divine(type)) return planPick(type) ? 62 : 0;
+        if (planPick(type)) return 66;
         const auto cat = categoryOf(type);
         int value = desire(cat, needs);
         const bool navalBudget=needs.income>0 || me.mana>=type->buildCost;
@@ -675,8 +901,13 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
         if (lim == 0) return 0;
         if (const auto r = refused_.find(producer.id);
             r != refused_.end() && r->second.type == ut && now_ < r->second.since) return 0;
-        // The difficulty's builder cap, the Monarch included (see assessNeeds).
-        if (mobileBuilder(ut) && needs.mobileBuilders >= needs.mobileBuilderCap) return 0;
+        // The difficulty's builder cap, the Monarch included (see assessNeeds);
+        // the one priest an upgrade asks for is outside it.
+        if (mobileBuilder(ut) && needs.mobileBuilders >= needs.mobileBuilderCap && !planPick(ut)) return 0;
+        // A priest starts a Dragon (or any of its troops) only on mana the
+        // store is actually floating: half its cost, or a 90% full store.
+        if (upgrader(producer.type) && categoryOf(ut) == BuildCat::Army &&
+            mana < std::min(double(ut->buildCost) * 0.5, double(me.manaCapacity()) * 0.9)) return 0;
         // The unbounded levels take no per-type limit from the profile; a disabled
         // entry (limit 0, above) stays disabled and FBI limits still apply.
         if (lim > 0 && !dp_.unbounded) {
@@ -699,7 +930,7 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
                 if (sustained && cat == BuildCat::Factory) limit = std::max(limit, needs.desiredFactories);
                 if (sustained && cat == BuildCat::Defense) limit = std::max(limit, needs.desiredDefenses);
             }
-            if (aggressive && cat == BuildCat::Economy && ut->income > 0) limit = INT_MAX;
+            if (aggressive && cat == BuildCat::Economy && ut->income > 0 && !divine(ut)) limit = INT_MAX;
             if (have >= limit) return 0;
         }
         if (ut->buildTime > 0) {
@@ -713,7 +944,10 @@ const tak::sim::UnitType* Controller::weightedPick(const tak::sim::World& world,
                 ((needs.navalProducers==0 && needs.factories>0 && navalProducer(ut)) ||
                  (needs.navalArmy==0 && !ut->isStructure() && !ut->canFly && !ut->isBuilder &&
                   ut->domain==tak::sim::UnitType::Domain::Water));
-            if (!firstNavy && mana + income * secs < ut->buildCost) return 0;
+            // Every pick but the plan's own and the short-of-mana lodestone
+            // leaves the plan's reserve in the store.
+            const double avail = planPick(ut) || triggered(ut) ? mana : mana - double(needs.reserve);
+            if (!firstNavy && avail + income * secs < ut->buildCost) return 0;
         }
         auto [it,inserted]=terrainWeights.try_emplace(ut,0);
         if (inserted) it->second=terrainWeight(world,producer,ut,w);
@@ -1172,6 +1406,14 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
         }
         return true;
     };
+    // A Divine Lodestone goes only on the lodestone planUpgrade names, never on a
+    // free deposit: the plain one there pays back in seconds, and upgrading it
+    // later costs less than building the Divine Lodestone outright.
+    if (t->isStructure() && !tak::sim::World::lodestoneUpgradeBase(*t).empty()) {
+        if (!upgrade_.target || t!=upgrade_.divine || !usable(upgrade_.x,upgrade_.z)) return false;
+        outX=upgrade_.x;outZ=upgrade_.z;
+        return true;
+    }
     if (t->onMana && world.hasManaSpots()) {
         float bestD = 1e18f;
         bool found = false;
@@ -1212,8 +1454,6 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
                 !world.lodestoneUpgradeSource(t,sx,sz,player_)) continue;
             if (!usable(sx, sz)) continue;   // taken or blocked
             float dx = sx - nx, dz = sz - nz, d = dx * dx + dz * dz;
-            // Claim new income before replacing a nearby existing lodestone.
-            if (aggressive && world.lodestoneUpgradeSource(t,sx,sz,player_)) d+=1e12f;
             if (d < bestD) { bestD = d; outX = sx; outZ = sz; found = true; }
         }
         return found;
@@ -2044,6 +2284,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     if (dp_.unbounded) updateIssuedBuilds(world, simTick);
     if (dp_.unbounded) unqueueStalled(world, simTick, sink);
     Needs needs = assessNeeds(world);   // one empire assessment drives every producer
+    planUpgrade(world, needs);
     // Snapshot the idle producers, then act on up to producersPerThink of them -- the
     // per-think cap is what paces the economy across difficulties (Easy builds one
     // thing per think, Hard many).
@@ -2148,8 +2389,19 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                 float siteLimit = 0;
                 const auto* pick = weightedPick(world, *p, needs, exclude, throttle, &siteLimit);
                 if (!pick) break;
+                const bool planned = (upgrade_.stage == 3 && pick == upgrade_.divine) ||
+                                     (upgrade_.stage == 1 && pick == upgrade_.priest);
                 if (produce(world, *p, pick, sink, siteLimit)) {
                     if (p->type && p->type->commander) commanderActed = true;
+                    if (planned) {
+                        // Bought: the store is free again, and the next stage
+                        // begins with the next think's plan.
+                        needs.reserve = 0;
+                        upgrade_.stage = 0;
+                        upgrade_.target = 0;
+                        if (pick == upgrade_.priest) ++needs.priests;
+                        else { ++needs.upgrades; ++needs.upgradeProjects; }
+                    }
                     ++acted;
                     assigned.push_back(pid);
                     needs.committed += pick->buildCost;

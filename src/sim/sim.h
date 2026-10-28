@@ -1997,6 +1997,9 @@ public:
     // Reuses placementCheck with spatially bounded occupant candidates.
     std::vector<uint8_t> placementCells(const UnitType* type,const std::atomic_bool* cancel=nullptr);
     const Unit* lodestoneUpgradeSource(const UnitType* type, float x, float z, int player) const;
+    // The plain lodestone `type` upgrades in place (retail's explicit faction
+    // pairs, "tarmana" -> "tarlode"), else empty: `type` is no upgrade.
+    static std::string lodestoneUpgradeBase(const UnitType& type);
     // Would the site be placeable if the clearable doodads on it were gone? Fills
     // `out` with their feature ids, nearest-first is the caller's job. Returns false
     // when anything ELSE blocks -- terrain, a unit, a building, an unreclaimable

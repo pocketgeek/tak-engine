@@ -441,7 +441,7 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
   `World::sacredSites()` (in a World without a feature plane, the sites' footprints). 0x507400 refuses a site
   any live entity stands on and retail has no in-place lodestone upgrade, so `siteOpen` also refuses a site
   where `World::lodestoneUpgradeSource` finds the player's own finished lodestone: `canPlace` admits a
-  Divine Lodestone there (our human-only upgrade), the Classic AI takes the next free site or none
+  Divine Lodestone there (the in-place upgrade humans and our own levels use), the Classic AI takes the next free site or none
   (`ClassicBrain::depositSite`; classic_ai_test's lodestone-site checks).
 
 ### 1.11 Retail sim behaviour the AI relies on (not AI code)
