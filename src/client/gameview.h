@@ -60,6 +60,7 @@
 #include "client/distantmodels.h"
 #include "client/tacticaldots.h"   // zoomed-out unit dots (Options > Graphics)
 #include "client/hiddenunits.h"    // units behind scenery (Options > Graphics)
+#include "client/hiddenstencil.h"   // ...SHADOW on OpenGL: the stencil form
 #include "client/featureindex.h"
 #include "client/unitindex.h"
 #include "client/unittypetable.h"
@@ -1378,7 +1379,8 @@ private:
                     int32_t passEnd = -1;
                     GLuint spanName = 0;
                     SDL_Texture* passPrime = nullptr;
-                    int32_t ghost = -1; };    // HIDDEN UNITS: a SHADOW ghost (hiddenGhosts_ index)
+                    int32_t ghost = -1;       // HIDDEN UNITS: a SHADOW ghost (hiddenGhosts_ index)
+                    uint8_t hidden = 0; };    // HIDDEN UNITS, stencil form: its HiddenMark
     std::vector<BodySource> bodySources_;
     std::vector<BodyRange> bodyRanges_;
     std::vector<GLint> bodyArenaFirsts_;
@@ -1836,7 +1838,9 @@ private:
     void verifyMonolithicBody(const UnitGeom& g, const std::vector<Tri>& sorted,
                               std::span<const size_t> order, const UnitGeomInputs& in);
 
-    void drawUnit(const UnitR& u);
+    // bodyAlpha < 255: the body see-through by that much, the effects as always (the
+    // HIDDEN UNITS stencil form's second draw of a building that covers a unit).
+    void drawUnit(const UnitR& u, uint8_t bodyAlpha = 255);
 
     // Project model triangles relative to the unit anchor: yaw by heading,
     // fixed tilt so models read against TAK's painted top-down terrain.
@@ -2730,6 +2734,27 @@ private:
     // The exact screen bounds of a unit's body this frame: its distant image's quad,
     // or its triangles (cached per geometry revision in the UnitGeom).
     tak::hiddenunits::Rect hiddenBodyBounds(int slot);
+    // SHADOW, stencil form (client/hiddenstencil.h; OpenGL with a stencil on the
+    // window, else the redraw form above). findHiddenUnits marks painter items
+    // instead of planning ghosts: a hidden unit (Unit: writes 1), a cover over one
+    // (Cover: drawn under 0 opaque, under 1 see-through); every other body in the
+    // stencil window writes 0, other features leave the stencil alone. The window
+    // runs from the first hidden unit's op to the last cover's (hiddenStencilFirst_/
+    // Last_, op indices); nothing is set outside it. Debug TAK_HIDDEN_STENCIL=0
+    // forces the redraw form (A/B, tests).
+    enum HiddenMark : uint8_t { kHiddenNone = 0, kHiddenUnit = 1, kHiddenCover = 2 };
+    tak::HiddenStencilGL hiddenStencil_;
+    bool hiddenStencilAllowed_ = true;      // the redraw form when false (debug switch)
+    bool hiddenStencilFrame_ = false;       // this frame marks items (a hidden unit was found)
+    std::vector<uint8_t> hiddenItemMark_;   // per painter item, HiddenMark (stencil frames)
+    size_t hiddenStencilFirst_ = SIZE_MAX, hiddenStencilLast_ = 0;
+    size_t hiddenVeils_ = 0;                // covers drawn see-through this frame
+    bool hiddenStencilUsable();
+    // One op's stencil state, and a Cover op's see-through draw (its vertices, alpha
+    // scaled by the cover's veil) inside or outside a native pass.
+    void hiddenStencilUse(tak::HiddenStencilGL::State state, bool inPass = false);
+    tak::HiddenStencilGL::State hiddenOpState(size_t opi) const;
+    void drawHiddenVeil(const DrawOp& op, bool inPass);
     bool hiddenDot(int id) const {
         return std::binary_search(hiddenDotIds_.begin(), hiddenDotIds_.end(), id);
     }
@@ -2737,6 +2762,8 @@ private:
     size_t debugHiddenCandidates_ = 0;
     std::vector<int> debugHiddenGhostIds_;      // units given a ghost this frame
     std::vector<int> debugHiddenExactIds_;      // ...of which redrawn exactly
+    bool debugHiddenStencil_ = false;           // the last frame drew SHADOW by the stencil
+    uint64_t debugHiddenPassVeils_ = 0;         // ...of its see-through covers, drawn in a native pass
 #endif
     // The sprite a feature shows this frame (burn playback, animation frame, wind
     // sway), in screen space: what the body pass draws and the cover tests read.

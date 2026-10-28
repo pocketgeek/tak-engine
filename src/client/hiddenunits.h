@@ -211,6 +211,10 @@ private:
 };
 
 // ---- SHADOW ghosts ------------------------------------------------------------
+// The redraw form, for renderers without the stencil form (client/hiddenstencil.h:
+// OpenGL with a stencil on the window marks the hidden units' pixels and draws each
+// cover over them see-through at the same opacities, exact per pixel, with nothing
+// drawn again but the covers; only the cover search below is shared).
 // A covered unit gets a ghost: right after the LAST cover over it in painter order
 // (so whatever stands in front of that cover still paints over the ghost) the
 // painter items from `start` to `last` that overlap the unit's body rectangle are

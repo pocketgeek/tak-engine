@@ -5,7 +5,9 @@
 // faint shadow (SHADOW: ghost ops in the body pass), or by their tactical dot on top
 // (DOTS: after the body pass). The policy -- modes, painter layers, cover tests,
 // screen bins, ghost order -- is in client/hiddenunits.h; this file runs it against
-// the frame's painter list.
+// the frame's painter list. On OpenGL with a stencil on the window, SHADOW marks the
+// hidden units and their covers for the body pass instead of planning ghosts
+// (client/hiddenstencil.h).
 //
 // Who: the units the painter list holds (the frame draws them: own, allied, enemies
 // in sight -- never fog, never an undrawn cloaked enemy), alive, not a corpse, not a
@@ -48,27 +50,46 @@ namespace hu = tak::hiddenunits;
         hiddenRecs_.clear();
         hiddenGhosts_.clear();
         hiddenRedraw_.clear();
+        hiddenStencilFrame_ = false;
+        hiddenVeils_ = 0;
 #ifndef NDEBUG
         debugHiddenCandidates_ = 0;
         debugHiddenGhostIds_.clear();
         debugHiddenExactIds_.clear();
-        // Debug: TAK_HIDDEN_UNITS=off|dots|shadow overrides the option (benchmarks).
+        debugHiddenStencil_ = false;
+        debugHiddenPassVeils_ = 0;
+        // Debug: TAK_HIDDEN_UNITS=off|dots|shadow overrides the option (benchmarks);
+        // TAK_HIDDEN_STENCIL=0 draws SHADOW by the redraw form on OpenGL too (A/B).
         static const char* forced = tak::devEnv("TAK_HIDDEN_UNITS");
         if (forced) hiddenUnitsMode_ = hu::parse(forced);
+        static bool stencilEnvRead = false;
+        if (!stencilEnvRead) {
+            stencilEnvRead = true;
+            if (const char* v = tak::devEnv("TAK_HIDDEN_STENCIL")) hiddenStencilAllowed_ = std::atoi(v) != 0;
+        }
 #endif
         if (hiddenUnitsMode_ == hu::kOff || dotsFrame_) return;
         using RS = tak::render::Counter;
         tak::render::ScopedPhase phase(renderStats_, tak::render::Phase::HiddenUnits);
         const bool shadow = hiddenUnitsMode_ == hu::kShadow;
+        // SHADOW by the stencil (client/hiddenstencil.h): the items are marked, the
+        // ghosts below are not planned.
+        const bool stencil = shadow && hiddenStencilUsable();
+        const auto mark = [&](uint32_t item, HiddenMark m) {
+            if (hiddenItemMark_.size() != paintItems_.size()) hiddenItemMark_.assign(paintItems_.size(), kHiddenNone);
+            hiddenItemMark_[item] = m;
+        };
+        if (stencil) hiddenItemMark_.clear();
         const float zm = mapView_.zoom();
         const hu::Rect screen{0, 0, float(mvw), float(winH)};
         const auto& items = paintItems_;
         hiddenCoverRec_.clear();
         hiddenGrid_.reset(float(mvw), float(winH));
-        if (shadow) hiddenItemGrid_.reset(float(mvw), float(winH));
-        // Every rec is binned for SHADOW (its id is its index): what a ghost redraws.
+        const bool ghosts = shadow && !stencil;
+        if (ghosts) hiddenItemGrid_.reset(float(mvw), float(winH));
+        // Every rec is binned for the redraw form (its id is its index): what a ghost redraws.
         const auto keep = [&](const HiddenRec& rec) {
-            if (shadow) hiddenItemGrid_.insert(rec.rect);
+            if (ghosts) hiddenItemGrid_.insert(rec.rect);
             hiddenRecs_.push_back(rec);
         };
         size_t eligible = 0, candidates = 0;
@@ -132,10 +153,15 @@ namespace hu = tak::hiddenunits;
                         if (cov.rect.overlaps(body)) {
                             rec.candidate = true;
                             rec.lastCover = std::max(rec.lastCover, cov.item);
+                            if (stencil) mark(cov.item, kHiddenCover);
                         }
                         return true;
                     });
-                    if (rec.candidate) { rec.rect = body; ++candidates; }
+                    if (rec.candidate) {
+                        rec.rect = body;
+                        ++candidates;
+                        if (stencil) mark(uint32_t(k), kHiddenUnit);
+                    }
                 }
             }
             keep(rec);
@@ -145,7 +171,23 @@ namespace hu = tak::hiddenunits;
 #ifndef NDEBUG
         debugHiddenCandidates_ = candidates;
 #endif
-        if (!candidates || !shadow) return;
+        if (stencil && candidates) {
+            // Every hidden unit writes 1, every cover over one is drawn twice.
+            hiddenStencilFrame_ = true;
+            for (const uint8_t m : hiddenItemMark_) hiddenVeils_ += m == kHiddenCover;
+            renderStats_.add(RS::HiddenMarked, candidates);
+            renderStats_.add(RS::HiddenRedrawn, hiddenVeils_);
+#ifndef NDEBUG
+            debugHiddenStencil_ = true;
+            for (const HiddenRec& rec : hiddenRecs_)
+                if (rec.candidate) {
+                    debugHiddenGhostIds_.push_back(items[rec.item].u->id);
+                    debugHiddenExactIds_.push_back(items[rec.item].u->id);   // per pixel, always
+                }
+#endif
+            return;
+        }
+        if (!candidates || !shadow || stencil) return;
         // SHADOW. The hidden units, in painter order. One drawn through drawUnit or
         // translucent cannot be redrawn exactly: a ghost of its own, translucent.
         const auto plain = [&](const UnitR& u, const UnitGeom& g) {
@@ -471,6 +513,58 @@ namespace hu = tak::hiddenunits;
         ++nativePasses_;
         nativePassCommands_ += commands;
         return true;
+    }
+
+    // ---- SHADOW, stencil form (client/hiddenstencil.h) ----
+    // OpenGL with a stencil on the window, the world drawn into the window (no render
+    // target), and not switched off (debug TAK_HIDDEN_STENCIL=0).
+    bool GameView::hiddenStencilUsable() {
+        return hiddenStencilAllowed_ && !SDL_GetRenderTarget(ren_) && hiddenStencil_.available(ren_);
+    }
+
+    void GameView::hiddenStencilUse(tak::HiddenStencilGL::State state, bool inPass) {
+        hiddenStencil_.use(ren_, state, inPass);
+    }
+
+    // Inside the window: a hidden unit writes 1, a cover starts with its opaque draw
+    // (under 0), any other body writes 0; a feature op sets its own states (its
+    // shadow, flames and smoke leave the stencil alone).
+    tak::HiddenStencilGL::State GameView::hiddenOpState(size_t opi) const {
+        using HS = tak::HiddenStencilGL::State;
+        if (!hiddenStencilFrame_ || opi < hiddenStencilFirst_ || opi > hiddenStencilLast_) return HS::Off;
+        const DrawOp& op = drawOps_[opi];
+        if (op.f) return HS::Off;
+        return op.hidden == kHiddenUnit ? HS::Unit : op.hidden == kHiddenCover ? HS::Under0 : HS::Other;
+    }
+
+    // A building's body command again, see-through (kBuildingVeilAlpha): its vertices
+    // with every alpha scaled (and the colour too where the page is premultiplied),
+    // drawn where the stencil holds 1. In a native pass the command's texture is bound.
+    void GameView::drawHiddenVeil(const DrawOp& op, bool inPass) {
+        bool premultiplied = op.premultiplied;
+        if (!inPass) {
+            SDL_BlendMode mode{};
+            SDL_GetTextureBlendMode(op.tex, &mode);
+            premultiplied = palettePage(op.tex) < 0 && mode != SDL_BLENDMODE_BLEND;
+        }
+        hiddenVerts_.clear();
+        for (uint32_t k = op.firstRange; k < op.firstRange + op.ranges; ++k) {
+            const BodyRange& r = bodyRanges_[k];
+            const SDL_Vertex* v = bodySources_[r.source].data + r.offset;
+            hiddenVerts_.insert(hiddenVerts_.end(), v, v + r.count);
+        }
+        constexpr uint8_t a = hu::kBuildingVeilAlpha;
+        for (SDL_Vertex& v : hiddenVerts_) {
+            if (premultiplied) {
+                v.color.r = hu::scaleAlpha(v.color.r, a);
+                v.color.g = hu::scaleAlpha(v.color.g, a);
+                v.color.b = hu::scaleAlpha(v.color.b, a);
+            }
+            v.color.a = hu::scaleAlpha(v.color.a, a);
+        }
+        if (hiddenVerts_.empty()) return;
+        if (inPass) bodySubmit_.passDraw(hiddenVerts_);
+        else drawModelRun(op.tex, hiddenVerts_.data(), int(hiddenVerts_.size()), true);
     }
 
     // DOTS: the unit's dot centre against the opaque pixels of every cover that

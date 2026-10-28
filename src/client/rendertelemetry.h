@@ -452,7 +452,8 @@ enum class Counter : uint8_t {
     NativePrimes,
     // HIDDEN UNITS (client/hiddenunits.h): eligible ground units looked at, of which
     // a later cover overlaps (candidates), units given a dot or a SHADOW ghost, and
-    // the painter items the ghosts drew again.
+    // the painter items the ghosts drew again (the stencil form: the covers drawn a
+    // second time, see-through).
     HiddenEligible,
     HiddenCandidates,
     HiddenMarked,
