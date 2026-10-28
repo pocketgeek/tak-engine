@@ -9833,19 +9833,24 @@ bool World::yieldsToSite(const Unit& k, int player) const {
 // unit, past the side nearest the guarded unit for a guard, whose guard
 // order stays queued under the move and resumes when it arrives. A side the
 // builder stands beyond is the last choice: the builder's body would stop
-// the unit in the site. Other players' units, and own units walking,
-// fighting or working, still make the builder wait as before.
+// the unit in the site, and a point another body stands on, or another
+// mover was sent to, gives way to the next one along that side. Other
+// players' units, and own units walking, fighting or working, still make
+// the builder wait as before.
 void World::clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, Fixed z) {
     if (!type) return;
     int left,right,top,bottom;   // the site's rectangle, world px
     const auto blocks=[&](const Unit& k) {
-        if (k.type->canFly && k.flightGroundMode!=1) return false;
         if (!type->isStructure()) {
-            // placementCheck's circle for a mobile site.
-            const int64_t dx=int64_t(k.x.floorInt())-x.floorInt(),dz=int64_t(k.z.floorInt())-z.floorInt();
-            const int64_t min=int64_t(8*std::max(type->footX,type->footZ)+12);
+            // placementCheck's circle for a mobile site, which counts a
+            // flyer in the air too (overlaps), so canPlaceOrder accepted it.
+            // In raw 16.16 units: whole-pixel floors would round a body a
+            // fraction inside the circle on its low side out of it.
+            const int64_t dx=int64_t(k.x.v)-x.v,dz=int64_t(k.z.v)-z.v;
+            const int64_t min=int64_t(8*std::max(type->footX,type->footZ)+12)<<16;
             return dx*dx+dz*dz<min*min;
         }
+        if (k.type->canFly && k.flightGroundMode!=1) return false;   // searchBodyRect's bodies
         const int cx=footprintOrigin(x,type->footX),cz=footprintOrigin(z,type->footZ);
         const int ux=footprintOrigin(k.x,k.type->footX),uz=footprintOrigin(k.z,k.type->footZ);
         for (int j=std::max(cz,uz);j<std::min(cz+type->footZ,uz+k.type->footZ);++j)
@@ -9863,6 +9868,8 @@ void World::clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, F
     std::vector<int> movers;
     for (const auto& k:units_)
         if (k.id!=builder.id && yieldsToSite(k,builder.player) && blocks(k)) movers.push_back(k.id);
+    // Points already given to a mover in this pass, in footprint cells.
+    std::vector<std::array<int,4>> taken;
     for (int id:movers) {
         Unit& k=*unit(id);
         const int kx=k.x.floorInt(),kz=k.z.floorInt();
@@ -9875,18 +9882,36 @@ void World::clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, F
         const int bx=builder.x.floorInt(),bz=builder.z.floorInt();
         const std::array<bool,4> builderSide{bx<left,bx>=right,bz<top,bz>=bottom};
         const int rx=guarded ? guarded->x.floorInt() : kx,rz=guarded ? guarded->z.floorInt() : kz;
-        int best=-1;int64_t bestScore=0;
-        for (int i=0;i<4;++i) {
-            const auto [px,pz]=sides[size_t(i)];
-            if (px<16 || pz<16 || px>=terW_*16-16 || pz>=terH_*16-16) continue;
-            if (!k.type->canFly && (!passable(k.type,px/16,pz/16) ||
-                !pathExists(k.type,float(px),float(pz),float(kx),float(kz)))) continue;
-            const int64_t score=int64_t(px-rx)*(px-rx)+int64_t(pz-rz)*(pz-rz)+
-                (builderSide[size_t(i)] ? int64_t(1)<<40 : 0);
-            if (best<0 || score<bestScore) {best=i;bestScore=score;}
-        }
+        // Level with the unit first, then sliding along that side a body at a
+        // time: a point another body stands on, or another mover was just
+        // sent to, is skipped, or a crowd of guards would each walk into the
+        // one ahead of it, give the move up and stay on the site.
+        int best=-1,bestX=0,bestZ=0;int64_t bestScore=0;
+        for (int i=0;i<4;++i)
+            for (int slot=0;slot<9;++slot) {
+                const int along=(slot+1)/2*(slot%2 ? 1 : -1);
+                const int px=sides[size_t(i)].first+(i<2 ? 0 : along*k.type->footX*16);
+                const int pz=sides[size_t(i)].second+(i<2 ? along*k.type->footZ*16 : 0);
+                if (px<16 || pz<16 || px>=terW_*16-16 || pz>=terH_*16-16) continue;
+                const int64_t score=int64_t(px-rx)*(px-rx)+int64_t(pz-rz)*(pz-rz)+
+                    (builderSide[size_t(i)] ? int64_t(1)<<40 : 0);
+                if (best>=0 && score>=bestScore) continue;
+                const int ox=footprintOrigin(Fixed::fromInt(px),k.type->footX);
+                const int oz=footprintOrigin(Fixed::fromInt(pz),k.type->footZ);
+                bool clash=false;
+                for (const auto& t:taken)
+                    clash|=ox<t[0]+t[2] && t[0]<ox+k.type->footX && oz<t[1]+t[3] && t[1]<oz+k.type->footZ;
+                if (clash) continue;
+                const auto bodies=searchBodyRect(ox,oz,k.type->footX,k.type->footZ,k.id);
+                if (std::any_of(bodies.cells.begin(),bodies.cells.end(),[](const Unit* b){return b!=nullptr;})) continue;
+                if (!k.type->canFly && (!passable(k.type,px/16,pz/16) ||
+                    !pathExists(k.type,float(px),float(pz),float(kx),float(kz)))) continue;
+                best=i;bestX=px;bestZ=pz;bestScore=score;
+            }
         if (best<0) continue;
-        const float px=float(sides[size_t(best)].first),pz=float(sides[size_t(best)].second);
+        taken.push_back({footprintOrigin(Fixed::fromInt(bestX),k.type->footX),
+                         footprintOrigin(Fixed::fromInt(bestZ),k.type->footZ),k.type->footX,k.type->footZ});
+        const float px=float(bestX),pz=float(bestZ);
         if (k.orders.empty()) {order(id,px,pz,false);continue;}
         OrdersNote note{*this,id};
         guardStandAside(k);

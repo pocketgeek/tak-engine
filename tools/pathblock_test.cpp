@@ -195,11 +195,13 @@ static PlacementRun runSitePlacement(bool legion,int what,bool fly=false) {
 // order after 31 tries). The builder approaches a 4x4 site at (512,512) from
 // the west, standing next to it. `who`: 0 an idle unit of the builder's player, 1 one guarding the
 // builder, 2 an idle one on Hold Position, each standing inside the site;
-// 3 an own unit that walks onto the clear site after the order is given.
+// 3 an own unit that walks onto the clear site after the order is given; 4
+// a crowd: the guard and `extraGuards` more guards of the builder in the site, where
+// each exit point must skip one another mover took or a body stands on.
 // `built` is the tick the site went down; `guarding` whether the guard still
 // guards the builder, `guardNear` whether it ended up back beside it.
 struct ClearRun {int built=-1,dropped=-1,maxFailures=0;bool guarding=false,guardNear=false;};
-static ClearRun runSiteClear(bool legion,int who) {
+static ClearRun runSiteClear(bool legion,int who,int extraGuards=0) {
     ClearRun r;
     World w;
     w.setVisPlayer(-1);
@@ -215,7 +217,13 @@ static ClearRun runSiteClear(bool legion,int who) {
     // 70 px of it, so a guard stands still on the site when the order comes.
     const int bid=w.spawn(&builder,430,512,0,0);
     const int kid=w.spawn(&blocker,495,who==3 ? 560 : 512,0,0);
-    if (who==1) w.guard(kid,bid,false);
+    if (who==1 || who==4) w.guard(kid,bid,false);
+    std::vector<int> extra;
+    if (who==4)
+        for (int e=0;e<extraGuards;++e) {   // body-disjoint cells of the site
+            extra.push_back(w.spawn(&blocker,e==0 ? 496 : 528,e==2 ? 512 : 480,0,0));
+            w.guard(extra.back(),bid,false);
+        }
     if (who==2) w.unit(kid)->moveState=0;
     w.queueBuild(bid,&site,512,512,false);
     if (who==3) w.order(kid,495,512,false);   // walks on after the order
@@ -236,6 +244,11 @@ static ClearRun runSiteClear(bool legion,int who) {
     for (const auto& o:k->orders) r.guarding|=o.guard && o.targetId==bid;
     const float dx=(k->x-b->x).toFloat(),dz=(k->z-b->z).toFloat();
     r.guardNear=dx*dx+dz*dz<=100.0f*100.0f;
+    for (int e:extra) {
+        bool guards=false;
+        for (const auto& o:w.unit(e)->orders) guards|=o.guard && o.targetId==bid;
+        r.guarding&=guards;
+    }
     return r;
 }
 
@@ -243,13 +256,13 @@ int main() {
     for (bool legion:{false,true}) {
         const std::string mode=legion?"Legion: ":"Retail: ";
         static const char* names[]={"an idle own unit","a unit guarding the builder","an own unit on Hold Position",
-                                    "an own unit arriving"};
-        for (int who=0;who<4;++who) {
-            const auto run=runSiteClear(legion,who);
+                                    "an own unit arriving","three guards of the builder"};
+        for (int who=0;who<5;++who) {
+            const auto run=runSiteClear(legion,who,2);
             check(run.built>=0 && run.dropped<0 && run.maxFailures>0,mode+names[who]+" on the site steps aside and the site goes down",
                   "built "+std::to_string(run.built)+", dropped "+std::to_string(run.dropped)+", failures "+std::to_string(run.maxFailures));
-            if (who==1)
-                check(run.guarding && run.guardNear,mode+"the guard keeps its guard order and returns beside the builder");
+            if (who==1 || who==4)
+                check(run.guarding && run.guardNear,mode+names[who]+": the guards keep their guard orders, the first back beside the builder");
         }
     }
 

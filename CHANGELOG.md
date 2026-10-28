@@ -31,6 +31,7 @@ their validation reports; both live in [`docs/`](docs/).
   moving, fighting or working, still make the builder wait and give up after
   about ten seconds, as in the original game, where a builder only ever waits.
 
+## 0.9.8
 *2026-10-27 · protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*
 
 - **Guards defend what they guard,** as in the original game. When something
