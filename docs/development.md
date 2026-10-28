@@ -303,6 +303,19 @@ builds; the only ones a release build reads are takserver's test timers
 `TAK_TIMEOUT_MS`, `TAK_LOAD_TIMEOUT_MS`, `TAK_STALL_MS` and `TAK_DROP_WAIT_MS`
 ([public server](public-server.md)).
 
+A debug `takclient game "<map>" --data <dir>` without `--server` is single-player: it
+starts a private local `takserver` (no auth, loopback) and opens that game's room with
+the player seated but not ready: the same room the menu's SINGLE PLAYER opens after
+CREATE. The game starts only when someone seats AIs, clicks READY and START, so a
+scripted run in a real window waits in the room forever. `TAK_SP_AIS=N` seats N AI
+opponents (the first plays `--aiside`, default Taros) and starts the game at once;
+add `TAK_QUIT_TICK=<tick>` to leave when the game reaches that tick. For example
+`TAK_SP_AIS=1 TAK_QUIT_TICK=300 build-o2/takclient game "Inner Circle" --data <dir>
+--winsize 1280 720` (on Windows, `set` the two variables first) loads, plays 300 ticks
+against one AI and exits.
+The `--mpai` harness (with its own `takserver`, `--server` and `--serverport`)
+needs neither.
+
 Game speed follows the original's −9..+10 levels (0.1× to 2×). For testing, a
 debug client run with `TAK_FAST_SPEED=1` keeps stepping past +10 in 0.5× steps up
 to 8×; only a debug `takserver` that is a test or private loopback server (such
