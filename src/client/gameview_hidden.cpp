@@ -80,6 +80,7 @@ namespace hu = tak::hiddenunits;
             hiddenItemMark_[item] = m;
         };
         if (stencil) hiddenItemMark_.clear();
+        hiddenStencilFirstItem_ = SIZE_MAX;
         const float zm = mapView_.zoom();
         const hu::Rect screen{0, 0, float(mvw), float(winH)};
         const auto& items = paintItems_;
@@ -128,6 +129,9 @@ namespace hu = tak::hiddenunits;
                     if (!u.underConstruction && !u.type->ghost && !clipped) kind = HiddenKind::Structure;
                 } else if (u.alive() && !u.corpsePhase) kind = HiddenKind::Unit;
             }
+            // Stencil form: every unit that could be hidden writes 1, so the body batches
+            // split only where such units meet other bodies.
+            if (stencil && kind == HiddenKind::Unit) mark(uint32_t(k), kHiddenUnit);
             if (kind == HiddenKind::Structure) {
                 const hu::Rect r = hiddenBodyBounds(slot).clipped(screen);
                 if (r.empty()) continue;
@@ -176,7 +180,7 @@ namespace hu = tak::hiddenunits;
                     if (rec.candidate) {
                         rec.rect = body;
                         ++candidates;
-                        if (stencil) mark(uint32_t(k), kHiddenUnit);
+                        if (stencil) hiddenStencilFirstItem_ = k;   // walking backwards: the first in the end
                     }
                     if (ghosts) { rec.rect = body; rec.loose = false; }   // read anyway: exact
                 }

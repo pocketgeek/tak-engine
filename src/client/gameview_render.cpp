@@ -1623,6 +1623,7 @@
         // (client/hiddenunits.h, Ghost). A tree is an op of its own anyway; after a
         // building the running segment closes. Every ghost is in the ground layer.
         size_t nextGhost = 0;
+        hiddenStencilFirst_ = SIZE_MAX;
         const auto ghostsBefore = [&](size_t item) {
             for (; nextGhost < hiddenGhosts_.size() && hiddenGhosts_[nextGhost].range.last < item; ++nextGhost) {
                 closeSeg();
@@ -1635,6 +1636,9 @@
             const auto& it = items[itemIndex];
             ghostsBefore(itemIndex);
             const uint8_t mark = hiddenStencilFrame_ ? hiddenItemMark_[itemIndex] : uint8_t(kHiddenNone);
+            // The first hidden unit's op is this index or later (an open segment it may
+            // join is pushed here): the stencil window starts no later.
+            if (itemIndex == hiddenStencilFirstItem_) hiddenStencilFirst_ = drawOps_.size();
             // The ground -> air boundary is where the held-back flyer shadows go. Close
             // the running segment so it lands on a real op boundary rather than inside a
             // batched run.
@@ -1688,13 +1692,10 @@
         closeSeg();
         // HIDDEN UNITS, stencil form: the window of ops the stencil serves, from the
         // first hidden unit's to the last cover's (nothing to veil: no stencil frame).
-        hiddenStencilFirst_ = SIZE_MAX;
         hiddenStencilLast_ = 0;
         if (hiddenStencilFrame_) {
-            for (size_t i = 0; i < drawOps_.size(); ++i) {
-                if (drawOps_[i].hidden == kHiddenUnit && hiddenStencilFirst_ == SIZE_MAX) hiddenStencilFirst_ = i;
-                if (drawOps_[i].hidden == kHiddenCover) hiddenStencilLast_ = i;
-            }
+            for (size_t i = drawOps_.size(); i-- > 0;)
+                if (drawOps_[i].hidden == kHiddenCover) { hiddenStencilLast_ = i; break; }
             if (hiddenStencilFirst_ == SIZE_MAX || hiddenStencilLast_ < hiddenStencilFirst_) hiddenStencilFrame_ = false;
         }
 

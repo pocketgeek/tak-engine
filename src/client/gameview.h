@@ -2738,11 +2738,11 @@ private:
     tak::hiddenunits::Rect hiddenBodyBounds(int slot);
     // SHADOW, stencil form (client/hiddenstencil.h; OpenGL with a stencil on the
     // window, else the redraw form above). findHiddenUnits marks painter items
-    // instead of planning ghosts: a hidden unit (Unit: writes 1), a cover over one
-    // (Cover: drawn under 0 opaque, under 1 see-through); every other body in the
-    // stencil window writes 0, other features leave the stencil alone. The window
-    // runs from the first hidden unit's op to the last cover's (hiddenStencilFirst_/
-    // Last_, op indices); nothing is set outside it. Debug TAK_HIDDEN_STENCIL=0
+    // instead of planning ghosts: a unit that could be hidden (Unit: writes 1), a
+    // cover over a hidden one (Cover: drawn under 0 opaque, under 1 see-through);
+    // every other body in the stencil window writes 0, other features leave the
+    // stencil alone. The window runs from the op of the first hidden unit to the last
+    // cover's (hiddenStencilFirst_/Last_, op indices); nothing is set outside it. Debug TAK_HIDDEN_STENCIL=0
     // forces the redraw form (A/B, tests).
     enum HiddenMark : uint8_t { kHiddenNone = 0, kHiddenUnit = 1, kHiddenCover = 2 };
     tak::HiddenStencilGL hiddenStencil_;
@@ -2750,6 +2750,7 @@ private:
     bool hiddenStencilFrame_ = false;       // this frame marks items (a hidden unit was found)
     std::vector<uint8_t> hiddenItemMark_;   // per painter item, HiddenMark (stencil frames)
     size_t hiddenStencilFirst_ = SIZE_MAX, hiddenStencilLast_ = 0;
+    size_t hiddenStencilFirstItem_ = SIZE_MAX;   // painter index of the first hidden unit
     size_t hiddenVeils_ = 0;                // covers drawn see-through this frame
     bool hiddenStencilUsable();
     // One op's stencil state, and a Cover op's see-through draw (its vertices, alpha
