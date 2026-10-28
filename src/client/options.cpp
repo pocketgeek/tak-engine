@@ -468,8 +468,8 @@ void OptionsScreen::build(int channels) {
 
     // GRAPHICS. TEXTURE FILTERING's UNITS level is retail's video option (BiLinearFilter).
     section("GRAPHICS");
-    // RENDERER: AUTO (Windows: OpenGL, else Direct3D 11, else Direct3D 9; elsewhere SDL's
-    // own pick; shown as "AUTO (OPENGL)" etc. while it is running) or any driver this
+    // RENDERER: AUTO (Windows: OpenGL, else Direct3D 11, else Direct3D 9; macOS: OpenGL,
+    // else Metal; Linux: SDL's own pick; shown as "AUTO (OPENGL)" etc. while it is running) or any driver this
     // SDL build reports. Applied at startup only, so the row says RESTART REQUIRED when
     // the pick differs from what is running (or UNAVAILABLE when startup already had to
     // fall back from it).

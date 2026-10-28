@@ -3,9 +3,9 @@
 // The RENDERER option: which SDL render driver the client asks for at startup.
 //
 // Settings::renderer stores SDL's own driver id ("opengl", "direct3d11", "metal",
-// "software", ...). "" means AUTO: SDL's own choice on Linux and macOS, as every build
-// made it before this option existed; on Windows an ordered try, OpenGL first (see
-// autoOrder below). The choice is applied ONCE, where main() creates the renderer;
+// "software", ...). "" means AUTO: on Windows and macOS an ordered try, OpenGL first
+// (see autoOrder below); on Linux SDL's own choice (OpenGL), as every build made it
+// before this option existed. The choice is applied ONCE, where main() creates the renderer;
 // changing it takes effect after a restart.
 //
 // The planning half (normalise / label / plan / verify, AUTO's order and judge) is
@@ -128,17 +128,23 @@ inline bool honoured(const std::string& hint, const char* createdName) {
 // ("GDI Generic", vendor Microsoft) for a machine with no GPU driver, and Microsoft's
 // OpenGL compatibility pack layers OpenGL over Direct3D 12 (also vendor Microsoft);
 // either is slower than Direct3D 11 on the same machine, so AUTO moves on.
-// Elsewhere AUTO is unchanged: no hint, SDL's own pick (OpenGL on Linux, Metal on
-// macOS), and an empty order here.
+// On macOS AUTO tries OpenGL, then Metal, for the same fast paths (SDL's own macOS
+// pick is Metal, which AUTO ran up to 0.9.9; in a 2026-10-25 test on a MacBook Neo
+// OpenGL drew a 2,000-unit view 2.6x faster than Metal). Apple's software OpenGL ("Apple Software
+// Renderer") is passed over like Windows' one.
+// On Linux AUTO is unchanged: no hint, SDL's own pick (OpenGL), and an empty order.
+enum class Platform { Windows, MacOS, Other };
 
 // AUTO's candidates, in the order startup tries them, from those this build has;
 // `skip` (a saved choice that already failed this launch) is left out. Empty = just
 // SDL's own pick. SDL's own pick always follows the list as the last resort.
-inline std::vector<std::string> autoOrder(bool windows, const std::vector<std::string>& available,
+inline std::vector<std::string> autoOrder(Platform platform, const std::vector<std::string>& available,
                                           std::string_view skip = {}) {
     std::vector<std::string> out;
-    if (!windows) return out;
-    for (std::string_view id : {"opengl", "direct3d11", "direct3d"}) {
+    std::vector<std::string_view> order;
+    if (platform == Platform::Windows) order = {"opengl", "direct3d11", "direct3d"};
+    else if (platform == Platform::MacOS) order = {"opengl", "metal"};
+    for (std::string_view id : order) {
         if (!skip.empty() && sameId(id, skip)) continue;
         if (std::any_of(available.begin(), available.end(),
                         [&](const std::string& d) { return sameId(d, id); }))
@@ -172,7 +178,7 @@ inline Verdict judge(std::string_view created, bool accelerated, std::string_vie
     }
     if (!sameId(created.substr(0, 6), "opengl")) return v;
     for (std::string_view soft : {"gdi generic", "llvmpipe", "softpipe", "swiftshader",
-                                  "software rasterizer"})
+                                  "software rasterizer", "software renderer"})
         if (containsNoCase(glRenderer, soft)) {
             v.keep = false;
             v.reason = "software OpenGL (" + std::string(glRenderer) + ")";

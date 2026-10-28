@@ -898,14 +898,19 @@ int main(int argc, char** argv) {
             renState.failed = settings.renderer;
         }
     }
-    // AUTO's ordered try (Windows; empty elsewhere). An SDL_RENDER_DRIVER set in the
+    // AUTO's ordered try (Windows and macOS; empty on Linux). An SDL_RENDER_DRIVER set in the
     // environment is SDL's own override and wins, as it always has.
     const char* envDriver = SDL_GetHint(SDL_HINT_RENDER_DRIVER);
     if (applyRenderer && !ren && !(envDriver && *envDriver)) {
-#ifdef _WIN32
-        constexpr bool kWindowsAuto = true;
+#if defined(_WIN32)
+        constexpr auto kAutoPlatform = tak::renderdriver::Platform::Windows;
+        constexpr const char* kAutoOrderName = "Windows";
+#elif defined(__APPLE__)
+        constexpr auto kAutoPlatform = tak::renderdriver::Platform::MacOS;
+        constexpr const char* kAutoOrderName = "macOS";
 #else
-        constexpr bool kWindowsAuto = false;
+        constexpr auto kAutoPlatform = tak::renderdriver::Platform::Other;
+        constexpr const char* kAutoOrderName = "";
 #endif
         const Uint32 autoFlags = renFlags & ~Uint32(SDL_RENDERER_SOFTWARE);
         // GL_VENDOR / GL_RENDERER of the current context.
@@ -952,7 +957,7 @@ int main(int argc, char** argv) {
             return err;
         };
         for (const std::string& id :
-             tak::renderdriver::autoOrder(kWindowsAuto, tak::renderdriver::available(), renState.failed)) {
+             tak::renderdriver::autoOrder(kAutoPlatform, tak::renderdriver::available(), renState.failed)) {
             std::string why;
             const bool gl = id.compare(0, 6, "opengl") == 0;
             if (gl) {
@@ -989,11 +994,12 @@ int main(int argc, char** argv) {
                 }
             }
             if (ren) {
+                const std::string first = std::string(" (first in the ") + kAutoOrderName + " order";
                 std::fprintf(stderr, "renderer: auto chose %s%s\n",
                              tak::renderdriver::label(id).c_str(),
                              !renState.autoNote.empty() ? (" after skipping " + renState.autoNote).c_str()
-                             : renState.failed.empty()  ? " (first in the Windows order)"
-                                                        : " (first in the Windows order after the saved choice)");
+                             : renState.failed.empty()  ? (first + ")").c_str()
+                                                        : (first + " after the saved choice)").c_str());
                 break;
             }
             std::fprintf(stderr, "renderer: auto: skipping %s: %s\n",

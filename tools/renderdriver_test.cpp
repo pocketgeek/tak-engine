@@ -91,22 +91,37 @@ int main() {
     {
         const std::vector<std::string> win{"direct3d", "direct3d11", "direct3d12", "opengl",
                                            "opengles2", "software"};
-        auto o = rd::autoOrder(true, win);
+        auto o = rd::autoOrder(rd::Platform::Windows, win);
         check(o == std::vector<std::string>({"opengl", "direct3d11", "direct3d"}),
               "windows auto: OpenGL, Direct3D 11, Direct3D 9");
-        check(rd::autoOrder(false, win).empty() && rd::autoOrder(false, linuxDrivers).empty(),
-              "linux/macOS auto: no order, SDL's own pick");
-        check(rd::autoOrder(true, {"direct3d", "direct3d11", "software"}) ==
+        check(rd::autoOrder(rd::Platform::Other, win).empty() &&
+                  rd::autoOrder(rd::Platform::Other, linuxDrivers).empty(),
+              "linux auto: no order, SDL's own pick");
+        const std::vector<std::string> mac{"metal", "opengl", "opengles2", "software"};
+        check(rd::autoOrder(rd::Platform::MacOS, mac) == std::vector<std::string>({"opengl", "metal"}),
+              "macOS auto: OpenGL, then Metal");
+        check(rd::autoOrder(rd::Platform::MacOS, mac, "opengl") == std::vector<std::string>({"metal"}),
+              "macOS auto: a failed saved OpenGL is not retried");
+        check(rd::autoOrder(rd::Platform::MacOS, mac, "metal") == std::vector<std::string>({"opengl"}),
+              "macOS auto: a failed saved Metal is not retried");
+        check(rd::autoOrder(rd::Platform::MacOS, {"metal", "software"}) ==
+                  std::vector<std::string>({"metal"}),
+              "macOS auto: a build without OpenGL starts at Metal");
+        check(rd::autoOrder(rd::Platform::MacOS, {"software"}).empty(), "macOS auto: neither -> SDL");
+        check(rd::autoOrder(rd::Platform::MacOS, {"direct3d11", "opengl"}) ==
+                  std::vector<std::string>({"opengl"}),
+              "macOS auto: never tries Direct3D");
+        check(rd::autoOrder(rd::Platform::Windows, {"direct3d", "direct3d11", "software"}) ==
                   std::vector<std::string>({"direct3d11", "direct3d"}),
               "windows auto: a build without OpenGL starts at Direct3D 11");
-        check(rd::autoOrder(true, {"software"}).empty(), "windows auto: none of the three -> SDL");
-        check(rd::autoOrder(true, win, "opengl") ==
+        check(rd::autoOrder(rd::Platform::Windows, {"software"}).empty(), "windows auto: none of the three -> SDL");
+        check(rd::autoOrder(rd::Platform::Windows, win, "opengl") ==
                   std::vector<std::string>({"direct3d11", "direct3d"}),
               "a chosen driver that failed is not retried");
-        check(rd::autoOrder(true, win, "DIRECT3D11") ==
+        check(rd::autoOrder(rd::Platform::Windows, win, "DIRECT3D11") ==
                   std::vector<std::string>({"opengl", "direct3d"}),
               "skip is case-insensitive");
-        check(rd::autoOrder(true, {"OpenGL", "Direct3D11"}) ==
+        check(rd::autoOrder(rd::Platform::Windows, {"OpenGL", "Direct3D11"}) ==
                   std::vector<std::string>({"opengl", "direct3d11"}),
               "availability is case-insensitive");
 
@@ -125,6 +140,14 @@ int main() {
         check(!rd::judge("opengl", true, "Mesa", "softpipe").keep, "judge: softpipe rejected");
         check(!rd::judge("opengl", true, "Google Inc.", "Google SwiftShader").keep,
               "judge: SwiftShader rejected");
+        auto va = rd::judge("opengl", true, "Apple Computer, Inc.", "Apple Software Renderer");
+        check(!va.keep && va.reason.find("Apple Software Renderer") != std::string::npos,
+              "judge: Apple's software OpenGL rejected, named in the reason");
+        check(rd::judge("opengl", true, "Apple", "Apple M2").keep, "judge: Apple M-series OpenGL kept");
+        check(rd::judge("opengl", true, "Apple", "Apple A18 Pro").keep, "judge: Apple A18 Pro OpenGL kept");
+        check(rd::judge("opengl", true, "Intel Inc.", "Intel(R) Iris(TM) Plus Graphics 655").keep,
+              "judge: Intel Mac OpenGL kept");
+        check(rd::judge("metal", true, "", "").keep, "judge: accelerated Metal kept");
         check(!rd::judge("opengl", true, "Microsoft Corporation",
                          "D3D12 (Qualcomm(R) Adreno(TM) X1-85 GPU)").keep,
               "judge: Microsoft's OpenGL-over-D3D12 rejected");

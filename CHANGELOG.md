@@ -19,6 +19,15 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+
+- **macOS: Auto renderer now picks OpenGL**, as Windows and Linux do, so the
+  game's OpenGL-only fast drawing paths run on a Mac too (2.6 times as fast as
+  Metal at 2,000 units on a MacBook Neo). Apple's software OpenGL is passed
+  over; Metal follows if OpenGL cannot start. A saved **Metal** choice is
+  kept. If OpenGL misbehaves, choose **Metal** under Options → Graphics →
+  Renderer.
+
 ## 0.9.9
 *2026-10-28 · protocol 303 · replay format 15 · does not play with 0.9.8 or earlier, nor their replays*
 

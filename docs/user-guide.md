@@ -1855,7 +1855,13 @@ effects only without dots.*
   and Microsoft's OpenGL compatibility layer, because Direct3D 11 is faster
   than either. OpenGL comes first because some of the game's drawing
   shortcuts work only with it. Versions before 0.9.1 used Direct3D 9 here.
-- **Linux:** OpenGL. **macOS:** Metal.
+- **macOS:** OpenGL, if it is a real hardware one; otherwise Metal. Auto
+  passes over Apple's software OpenGL ("Apple Software Renderer"). OpenGL
+  comes first for the same reason as on Windows: the game's fast drawing paths
+  work only with it. In a quick test on a MacBook Neo, OpenGL drew a
+  2,000-unit view 2.6 times as fast as Metal. Versions up to 0.9.9 used Metal
+  here.
+- **Linux:** OpenGL.
 
 While Auto is in use the row names what it picked, for example
 **Auto (OpenGL)**. The list also shows every other backend your copy of the
@@ -1875,6 +1881,8 @@ your system appear.
   **Direct3D 9** for exactly what earlier versions used, then restart the game.
   If the game does not get as far as the menu, see
   [The game will not start, or shows a black screen](#the-game-will-not-start-or-shows-a-black-screen).
+- **If OpenGL misbehaves on a Mac**, choose **Metal**, what versions up to
+  0.9.9 used, then restart the game.
 - A backend you choose yourself is used as it is, even a slow one: Auto's
   checks apply only to Auto.
 - **Software** draws everything on the processor without the graphics card. It
@@ -2850,6 +2858,9 @@ renderer = direct3d11
 ```
 
 or `renderer = direct3d` for Direct3D 9, what earlier versions used.
+
+On macOS, if the problem began after 0.9.9 and you never changed the Renderer,
+set the line to `renderer = metal`, what 0.9.9 and earlier used.
 
 ### There is no sound, or sound comes from the wrong device
 
