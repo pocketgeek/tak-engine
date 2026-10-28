@@ -116,9 +116,11 @@ put("attackring-fight-60", attackring("attackring-fight-60", 60, 10, 1, 96, [
     "(PLAN: 18 -> >= 40 in reach, Retail 54).",
 ], order="fight"))
 put("attackring-guard-64", attackring("attackring-guard-64", 64, 8, 1, 96, [
-    "Row: 64 attackers GUARD a stationary ally; `range=96` counts the guards within 6 cells of it",
-    "(audit: Legion 13/64 within 6 cells, Retail 64/64; PLAN: >= 50).",
-], target="mover", order="guard", guard_range=96, ally=True))
+    "Row: 64 attackers GUARD a stationary ally; `range=144` counts the guards within 9 cells of it",
+    "(audit: Legion 13/64 within 6 cells, Retail 64/64; PLAN: >= 50). Protocol 303: a guard stands on",
+    "Follow_Ground's ring (World::guardRing; 1x1 guard of a 2x2 ward: 80..128 px), not within 70 px, so the",
+    "count reads the ring's outer edge plus a cell (range=96 before, which no ring guard can reach).",
+], target="mover", order="guard", guard_range=144, ally=True))
 
 # the wall ring: a closed ring of wall cells round the target; ranged attackers can stand within reach outside
 # it but have no line of sight, so they hold at the field's goal (potential 0) without ever firing

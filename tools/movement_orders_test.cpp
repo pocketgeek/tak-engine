@@ -220,7 +220,9 @@ void guardFollow(PathfindingMode mode) {
     const auto& c=*w.unit(charge);const auto& e=*w.unit(escort);
     const float d=fxLen(c.x-e.x,c.z-e.z).toFloat();
     std::printf("guard mode=%d dist=%.1f orders=%zu legion=%d\n",int(mode),d,e.orders.size(),legion);
-    check(c.orders.empty()&&d<=140.f&&!e.orders.empty()&&e.orders.front().guard,
+    // Follow_Ground's ring for a 2x2 guard of a 2x2 charge: 96..144 px (origin
+    // cells, so up to a cell's rounding past either edge).
+    check(c.orders.empty()&&d>=80.f&&d<=160.f&&!e.orders.empty()&&e.orders.front().guard,
           "guard follows its charge around terrain and stays beside it");
     if(mode==PathfindingMode::Legion)check(legion,"Legion routes the guard escort");
 }

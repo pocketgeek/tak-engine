@@ -6595,8 +6595,22 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         Order& end = u.orders[currentLeg(u.orders)];
         end.x = t->x;
         end.z = t->z;
-        float dx = (t->x - u.x).toFloat(), dz = (t->z - u.z).toFloat();
-        if (dx * dx + dz * dz <= 70 * 70) {
+        // A ground guard keeps to Follow_Ground's ring round its ward (guardRing):
+        // it walks to the ring's point on its own bearing and stands anywhere in
+        // the band, so it never parks in a factory's yard.
+        bool escorted;
+        if (!u.type->canFly) {
+            const RetailRingGoal ring=guardRing(u,*t);
+            escorted=ring.accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
+            if (!escorted) {
+                const auto point=ring.navigationPoint(u.x,u.z,u.type->footX,u.type->footZ);
+                end.x=point.x;end.z=point.z;
+            }
+        } else {
+            const float dx = (t->x - u.x).toFloat(), dz = (t->z - u.z).toFloat();
+            escorted = dx * dx + dz * dz <= 70 * 70;
+        }
+        if (escorted) {
             if (!u.type->canFly && !u.type->isStructure()) {
                 brakeGround(u);
                 groundMovementHandled=true;
@@ -9801,6 +9815,25 @@ void World::guardHelpPick(Unit& u, const Unit& g, int& help, int& mend) {
     } else if ((flying || !g.type->canFly) && g.repairId) {
         if (const Unit* t=unit(g.repairId); t && canRepairUnit(u,*t) && reachable(*t)) mend=t->id;
     }
+}
+
+// Follow_Ground's escort ring (0x407f90; emulated reading of stage 0, 0x4087fd,
+// and the follow at 0x4087b5): round the ward's position, from the inner
+// radius (max(ward footX, footZ) + guard footX + 2) x 16 px out to 3 cells
+// more, installed through 4d4e10 as the 4e28f0 ring controller -- the one
+// PARK uses -- centred on the guard-footprint origin under the ward. The
+// ground guard steers to its point on the guard's own bearing (4e33b0) and
+// stands anywhere in the band. Ours walked to the ward's centre and stopped
+// within 70 px of it, which for a factory is its yard: the guard parked on
+// the pad and the next output could never be placed (BUILD stage 2, 401deb).
+// Retail re-aims the ring at each look (15 + rand(15) ticks) and not at all
+// round a ward with no mover once the controller has reported; ours re-aims
+// it every tick, which for a structure is the same ring.
+RetailRingGoal World::guardRing(const Unit& u, const Unit& g) const {
+    const int inner=(std::max(g.type->footX,g.type->footZ)+u.type->footX+2)*16;
+    const int outer=inner+3*16;
+    return {footprintOrigin(g.x,u.type->footX),footprintOrigin(g.z,u.type->footZ),
+            inner,outer,retailCircleRadiusSquared(outer)};
 }
 
 // The guard's step aside for a job put ahead of it: the guard stays one
@@ -14022,7 +14055,7 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         float dist = std::sqrt(dx * dx + dz * dz);
         if (o.guard) {
             const Unit* t = unit(o.targetId);
-            if (t && fxLen(t->x - u.x, t->z - u.z) <= Fixed::fromInt(70))
+            if (t && t->type && guardRing(u,*t).accepts(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ)))
                 return;   // in escort position, not merely near a waypoint
         }
         // A FINAL move goal completes a little short, so a crowd sharing one
@@ -14040,7 +14073,12 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         // over one pixel, which is exactly what it looked like.)
         float foot = float(std::max(u.type->footX, u.type->footZ)) * 8.0f;
         float arrive = o.goal ? std::max(16.0f, foot) : 3.0f;
-        if (!groundMissionOrder(u,true) && !legHasRectangle && (u.type->canFly || o.goal) && dist < arrive) {
+        // A ground guard outside its ring keeps steering for the ring's point
+        // (accepted above): the ring is 48 px deep, and stopping a footprint
+        // short of its middle left a 4x4 guard (3x3 at sea) just outside the
+        // band, held there walking in place.
+        if (!groundMissionOrder(u,true) && !legHasRectangle && (u.type->canFly || o.goal) && dist < arrive &&
+            !(o.guard && !u.type->canFly)) {
             if (o.buildType || o.reclaimFeat || o.repairTarget)
                 return;   // the job is claimed above; its order blocks the queue
             if (o.targetId == 0 || !o.goal) {

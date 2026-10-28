@@ -2626,7 +2626,9 @@ void navalmissions() {
         const auto& c=*f.world.unit(charge);const auto& e=*f.world.unit(escort);
         const float d=fxLen(c.x-e.x,c.z-e.z).toFloat();
         std::printf("navalmissions guard dist=%.1f legion=%d\n",d,legion);
-        check(legion&&c.orders.empty()&&d<=160.f&&!e.orders.empty()&&e.orders.front().guard,"boat guard escort");
+        // Follow_Ground's ring for a 3x3 escort of a 3x3 charge: 128..176 px
+        // (origin cells, so up to a cell's rounding past either edge).
+        check(legion&&c.orders.empty()&&d>=112.f&&d<=192.f&&!e.orders.empty()&&e.orders.front().guard,"boat guard escort");
     }
 }
 // A control formation (Alt+N: squad -N) commanded through the real command

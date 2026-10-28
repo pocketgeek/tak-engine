@@ -901,9 +901,10 @@ add_test(NAME legion_fightstill
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-fight-60.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_fightstill PROPERTIES LABELS legion
                      PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"statue_ticks\":(1?[0-9]?[0-9]?[0-9]),.*\"reach\\.ring\\.damage_end\":([2-9][0-9][0-9][0-9]|[1-9][0-9][0-9][0-9][0-9]+),")
-# The same for a guard round a ward standing still (no ring: its 70 px stance): attackring-guard-64 at offset 0 crept
-# 42,133 statue ticks and had half its guards within 6 cells at tick 1,837 (Retail 194 and 1,191). Passes when the
-# statue ticks are under 2,000 and half are within 6 cells by tick 1,500, serial equal to workers.
+# The same for a guard round a ward standing still (no reach ring: its stance is Follow_Ground's ring, World::guardRing,
+# since protocol 303): attackring-guard-64 at offset 0 crept 42,133 statue ticks and had half its guards within 6 cells
+# at tick 1,837 (Retail 194 and 1,191). Passes when the statue ticks are under 2,000 and half are within the scenario's
+# range (9 cells since protocol 303: the ring's outer edge and a cell) by tick 1,500, serial equal to workers.
 add_test(NAME legion_guardstill
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-guard-64.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_guardstill PROPERTIES LABELS legion
@@ -1549,6 +1550,8 @@ add_executable(naval_reach_test tools/naval_reach_test.cpp)
 target_link_libraries(naval_reach_test PRIVATE tak-formats)
 add_executable(production_exit_test tools/production_exit_test.cpp)
 target_link_libraries(production_exit_test PRIVATE tak-formats)
+add_executable(doorway_test tools/doorway_test.cpp)
+target_link_libraries(doorway_test PRIVATE tak-formats)
 add_executable(shipyard_park_test tools/shipyard_park_test.cpp ${TAK_AI_SOURCES})
 target_link_libraries(shipyard_park_test PRIVATE tak-formats)
 add_executable(legion_park_test tools/legion_park_test.cpp)
@@ -1600,6 +1603,7 @@ if(TAK_TEST_DATA)
         "Lake Lokken" vertrans araarch 240 120 240 350 1)
     add_test(NAME animation_roster COMMAND animation_roster_test "${TAK_TEST_DATA}")
     add_test(NAME production_exit COMMAND production_exit_test "${TAK_TEST_DATA}")
+    add_test(NAME doorway COMMAND doorway_test "${TAK_TEST_DATA}")
     add_test(NAME shipyard_park COMMAND shipyard_park_test "${TAK_TEST_DATA}")
     add_test(NAME legion_park COMMAND legion_park_test "${TAK_TEST_DATA}")
     add_test(NAME flyer_combat COMMAND flyer_combat_test "${TAK_TEST_DATA}")

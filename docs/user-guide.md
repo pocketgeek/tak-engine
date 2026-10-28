@@ -651,7 +651,8 @@ target underneath.
   helping with or repairing (an ally's unit too). The help goes ahead of the
   guard order, which resumes when the job is done, and it ignores distance. A
   guarding builder looks for work every half second to one second (15 to 29
-  game ticks).
+  game ticks). Between jobs it waits on the guard ring (below), so a builder
+  guarding a factory stands outside, clear of the door.
   A **flying builder** (Flying Builder, Dark Priest, Darkest Priest, Thirsha)
   guards the same way, and also helps a flying producer such as a Thirsha and
   joins a flyer's repair. It looks every half second (15 game ticks) while it
@@ -852,6 +853,14 @@ if it can reach it:
 | **Offensive** | Chases the attacker, but no further than its leash from where it was hit, then walks back and carries on with what it was doing. |
 | **Defensive** | Fires back from where it stands, if the attacker is in range. On patrol it chases within its leash, like Offensive, and then returns to the patrol. |
 | **Passive** | Does not respond. |
+
+**Where a guard stands.** As in the original, a ground unit on **Guard**
+keeps to a ring round the unit or building it guards rather than walking up
+to it. Measured from the guarded unit's centre, the ring starts at the
+guarded unit's full longer side plus the guard's own width plus two cells
+(16 pixels a cell) and is three cells (48 pixels) deep. It walks to the ring
+along its own bearing and stops anywhere on it, and the ring moves with the
+guarded unit. A guard never waits inside a factory's yard.
 
 **Guards defend what they guard.** As in the original, an armed unit on
 **Guard** (ground or flying) goes after whatever attacks the unit it guards,
