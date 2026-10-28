@@ -1857,9 +1857,11 @@ part in plain sight, and anything standing in front of the cover, looks
 exactly as before. **Dots** puts the unit's tactical dot (same size, colour and
 selection outline as Tactical Dots) on top when the unit's centre is hidden; a
 unit whose centre is in sight gets none, and clicking the dot selects the
-unit. Nothing is added while Tactical Dots is showing. Shadow draws each hidden
-unit and what covers it a second time, so with hundreds of units behind trees
-or buildings at once it costs a few milliseconds a frame; Dots is cheaper.
+unit. Nothing is added while Tactical Dots is showing. Shadow draws what
+covers a hidden unit a second time (with a renderer other than OpenGL, the
+hidden unit too, which costs about twice as much), so with hundreds of units
+behind trees or buildings at once it costs a few milliseconds a frame; Dots is
+cheaper.
 Flat scenery (stumps, crops, smudges and mana deposits) is always drawn under
 units, as in the original game, so it never hides anyone.
 
