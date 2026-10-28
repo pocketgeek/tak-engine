@@ -586,10 +586,11 @@
     }
 
     GameView::PlacePreview& GameView::placePreviewEntry(const tak::sim::UnitType* type, float x, float z) {
+        const int builder = placementBuilderId();
         for (auto& e : placePreview_)
-            if (e.type == type && e.x == x && e.z == z) return e;
+            if (e.type == type && e.x == x && e.z == z && e.builder == builder) return e;
         if (placePreview_.size() >= 256) placePreview_.clear();   // a build line is a few dozen
-        placePreview_.push_back({type, x, z, ~0u});
+        placePreview_.push_back({type, x, z, builder, ~0u});
         return placePreview_.back();
     }
 

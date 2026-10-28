@@ -2823,7 +2823,10 @@ private:
     // (type, x, z, published tick), a miss does a try_lock (never a blocking wait), and once a
     // try has failed this frame no more are made -- the previous verdict is reused instead. The
     // click path keeps canPlaceLocked's blocking lock, so a placement is never decided on a guess.
-    struct PlacePreview {const tak::sim::UnitType* type=nullptr; float x=0,z=0; uint32_t tick=0;
+    // Keyed on the builder too: reach is the builder's, and a paused game's tick never
+    // moves on to refresh a verdict made for a builder no longer selected.
+    struct PlacePreview {const tak::sim::UnitType* type=nullptr; float x=0,z=0; int builder=0;
+                         uint32_t tick=0;
                          bool ok=false, clearable=false, haveClear=false, reach=true;};
     std::vector<PlacePreview> placePreview_;
     bool placePreviewBusy_ = false;     // a try_lock failed this frame

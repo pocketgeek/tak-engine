@@ -4003,6 +4003,9 @@ bool World::buildSiteReachable(int builderId, const UnitType* site, float x, flo
     // half-diagonals (plus a cell of rounding) of the site.
     const int span = (reach + 12 * (bt.footX + bt.footZ + site->footX + site->footZ)) / 16 + 2;
     const int gcx = footprintCell(gx, foot), gcz = footprintCell(gz, foot);
+    // The common case, any site on the builder's own ground: it can stand on the site
+    // itself, which is within reach of anything. Answered without the scan below.
+    if (cg->componentAt(gcx, gcz) == from) return true;
     for (int cz = std::max(0, gcz - span); cz <= std::min(cg->h - 1, gcz + span); ++cz)
         for (int cx = std::max(0, gcx - span); cx <= std::min(cg->w - 1, gcx + span); ++cx) {
             if (cg->componentAt(cx, cz) != from) continue;
