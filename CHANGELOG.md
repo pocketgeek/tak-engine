@@ -58,6 +58,13 @@ their validation reports; both live in [`docs/`](docs/).
   so a guarding builder walks in to help each unit being made and back out
   between them; a ship guarding a shipyard does the same. Guards of soldiers
   keep a little further off than before for the same reason. Protocol 303.
+- **The Benchmark always runs the plain game, with no mods.** It used to load
+  your ticked cosmetic and game mods and the packs in `always_enabled`, so a
+  mod could change the units, the AI or the art being measured, and two
+  machines with different mods gave numbers that could not be compared. Now
+  the Benchmark leaves every mod pack out, and its private server plays the
+  original game data. Your mod choices are unchanged and apply again in your
+  next game.
 
 ## 0.9.8
 *2026-10-27 · protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*

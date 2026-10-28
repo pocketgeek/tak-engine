@@ -1432,6 +1432,13 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
             return false;
         }
         if (st == S::Lobby && (autoMode == 1 || autoMode == 4 || autoMode == 7 || autoMode == 8)) {
+            if (const char* be = tak::devEnv("TAK_BENCH")) {   // headless: benchmark run
+                int lv = std::atoi(be);                        // TAK_BENCH=<level 1..6>, default High
+                benchmarkLevel_ = (lv >= 1 && lv <= tak::sim::kBenchLevels) ? lv : 3;
+                benchmarkMode_ = true;                         // (forces watch + 8 AI + cap 8 + Ulasem below)
+            }
+            // The Benchmark runs with no mod packs at all (a menu run already applied this).
+            if (benchmarkMode_) tak::applyBenchmarkMods(mods_, mp_);
             tak::net::GameOptions o; o.crusades = crusades ? 1 : 0;
             o.gameMods = mods_.game ? 1 : 0;   // debug --mods override (the lobby always sends 1)
             // TAK_SPEED: set the game speed in tenths (10 = 1x) for headless timing
@@ -1441,11 +1448,6 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
             // allow them.
             if (tak::devEnv("TAK_SPEED_AT")) o.speedUnlock = 1;
             o.stressTest = tak::devFlag("TAK_STRESS") ? tak::net::kStressStaged : 0;   // headless: spawn ~95% cap per AI
-            if (const char* be = tak::devEnv("TAK_BENCH")) {   // headless: benchmark run
-                int lv = std::atoi(be);                        // TAK_BENCH=<level 1..6>, default High
-                benchmarkLevel_ = (lv >= 1 && lv <= tak::sim::kBenchLevels) ? lv : 3;
-                benchmarkMode_ = true;                         // (forces watch + 8 AI + cap 8 + Ulasem below)
-            }
             if (const char* uc = tak::devEnv("TAK_UNITCAP")) o.unitCap = uint16_t(std::atoi(uc));
             // The remaining room options, as headless knobs. Without these a harness
             // could not reach the code they gate -- and GODS in particular is where a
