@@ -243,7 +243,10 @@ static ClearRun runSiteClear(bool legion,int who,int extraGuards=0) {
     const Unit* k=w.unit(kid);const Unit* b=w.unit(bid);
     for (const auto& o:k->orders) r.guarding|=o.guard && o.targetId==bid;
     const float dx=(k->x-b->x).toFloat(),dz=(k->z-b->z).toFloat();
-    r.guardNear=dx*dx+dz*dz<=100.0f*100.0f;
+    // Back on its guard ring (World::guardRing: from (max builder foot + guard footX + 2)
+    // x 16 px, three cells deep), with a cell's slack for the footprint origins.
+    const float outer=float((std::max(b->type->footX,b->type->footZ)+k->type->footX+2)*16+48+16);
+    r.guardNear=dx*dx+dz*dz<=outer*outer;
     for (int e:extra) {
         bool guards=false;
         for (const auto& o:w.unit(e)->orders) guards|=o.guard && o.targetId==bid;
