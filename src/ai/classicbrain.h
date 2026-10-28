@@ -151,6 +151,13 @@ public:
         return double(capacity) > 0.01 ? stored / capacity : 0.0f;
     }
 
+    // 0x411510 for catalogue type `t` (lodestone class) around `centre` (16.16
+    // px) within `radius` px: the nearest sacred site that passes the placement
+    // test (siteOpen), as the footprint's top-left cell; none when every site
+    // in reach is taken (retail then builds nothing).
+    std::optional<std::pair<int16_t, int16_t>> depositSite(const tak::sim::World& world, uint16_t t,
+                                                           std::pair<int32_t, int32_t> centre, int32_t radius);
+
     // Runs every sim tick (the brain keeps retail's own clocks, not a think period).
     void tick(const tak::sim::World& world, uint32_t simTick,
               const std::function<void(const tak::net::Command&)>& sink);
@@ -244,6 +251,10 @@ private:
     // sacred, read from the World once.
     void readSites(const tak::sim::World& world);
     bool sacredCell(const tak::sim::World& world, int x, int z) const;
+    // 0x507d10(type, 0, cell, 1, 0) as the AI calls it, for type `t`'s footprint
+    // with its top-left on cell (x, z).
+    bool siteOpen(const tak::sim::World& world, uint16_t t, int16_t x, int16_t z) const;
+
     // A sacred-site record's footprint as the zone labelling reads it (its
     // sacred feature's, else 1 x 1).
     std::pair<int16_t, int16_t> siteFootprint(const tak::sim::World& world, const ClassicCell& cell) const;

@@ -65,6 +65,12 @@ their validation reports; both live in [`docs/`](docs/).
   the Benchmark leaves every mod pack out, and its private server plays the
   original game data. Your mod choices are unchanged and apply again in your
   next game.
+- **The Retail AI no longer upgrades its own Lodestones.** As in the original
+  game, the Retail AI level builds a Divine Lodestone only on a free sacred
+  site: one where its own Lodestone already stands is passed over for the next
+  free site in reach, and with none it builds nothing. Before, it could order a
+  Divine Lodestone on top of its own finished Lodestone. You can still upgrade
+  a Lodestone in place yourself, and the other AI levels are unchanged.
 
 ## 0.9.8
 *2026-10-27 · protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*

@@ -436,9 +436,13 @@ centre, radius, counts, firepower, shot cost, draw, busy-deposit test and placer
   on the base centre, trunc(sqrt(dx^2+dz^2) x 16 px), is <= R, whose cell still holds a sacred feature
   (0x50e600; off the map: none), and that passes 0x507d10 (asked only when nearer than the best so far,
   which starts at 2R; ties keep the first record). Its top-left cell goes on the deposit. No randomness.
-- Port (P4b): the placement test is `World::canPlace` at the footprint centre; the feature plane is the
-  World's map placement cells, with the sacred types those at the anchors of `World::sacredSites()` (in a
-  World without a feature plane, the sites' footprints).
+- Port (P4b): the placement test is `World::canPlace` at the footprint centre (`ClassicBrain::siteOpen`);
+  the feature plane is the World's map placement cells, with the sacred types those at the anchors of
+  `World::sacredSites()` (in a World without a feature plane, the sites' footprints). 0x507400 refuses a site
+  any live entity stands on and retail has no in-place lodestone upgrade, so `siteOpen` also refuses a site
+  where `World::lodestoneUpgradeSource` finds the player's own finished lodestone: `canPlace` admits a
+  Divine Lodestone there (our human-only upgrade), the Classic AI takes the next free site or none
+  (`ClassicBrain::depositSite`; classic_ai_test's lodestone-site checks).
 
 ### 1.11 Retail sim behaviour the AI relies on (not AI code)
 - The threat lists 0x411700, rebuilt every >= 7 ticks: **visible** enemies (32-px vision grid,
@@ -592,7 +596,7 @@ baseline moves. Prefer brain-side derivation.
 | Visible enemies on retail's clock | `World::visibleEnemies(p)` | filter differences (U10) handled brain-side |
 | Player allocation, shortfall history, stored/capacity, population, unit cap | `constructionAllocation`, `displayResources.shortfall`, `manaCapacity()`, `unitCap` | check that `constructionAllocation` = retail's min(1, stored/demand) for a World-pool player (U4) |
 | Unit mana/maxMana, castable current weapon | sim unit fields | a const accessor if needed |
-| Sacred-site (deposit) list with occupancy; start-location table; nav component per movement class | `manaSpots`, `enemyStarts`/start spots, `navFor`, `pathExists`, `retailRectangleReachable` | per-site occupancy test = `canPlace(lodeType, site)` + feature presence |
+| Sacred-site (deposit) list with occupancy; start-location table; nav component per movement class | `manaSpots`, `enemyStarts`/start spots, `navFor`, `pathExists`, `retailRectangleReachable` | per-site occupancy test = `canPlace(lodeType, site)` without an in-place upgrade (`lodestoneUpgradeSource`) + feature presence |
 | Yardmap placement validation (0x507400) | `canPlace(type,x,z,player)` | confirm it equals the yardmap test (no extra lane rule in the sim) |
 | Mission state: building, attacking (auto or ordered), idle-ish/patrol, factory queue busy | `orders`, `autoTarget`, `buildQueue`, `workScriptWorking` | a U1 mapping table |
 | Monarch hit event | `lastHitBy` / hp | brain-side hp-drop tracking per tick (no new sim field) |

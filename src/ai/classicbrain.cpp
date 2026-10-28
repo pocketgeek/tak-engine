@@ -461,6 +461,30 @@ const ClassicZoneLabels* ClassicBrain::unitLabels(const tak::sim::World& world, 
     return &zoneLabels(world, world.navFor(u->type), u->type->footX, u->type->footZ);
 }
 
+bool ClassicBrain::siteOpen(const tak::sim::World& world, uint16_t t, int16_t x, int16_t z) const {
+    // 0x507d10(type, 0, cell, 1, 0): the World's placement test at the
+    // footprint's centre. Retail's 0x507400 refuses a site any live entity
+    // stands on, and has no in-place upgrade; the World lets a Divine
+    // Lodestone replace the player's own finished lodestone (a human's
+    // order), which the Classic AI must not do: it takes the next free site.
+    const auto* type = t < catalogue_.types.size() ? catalogue_.types[t] : nullptr;
+    if (!type) return false;
+    const ClassicTypeInfo& f = info_[t];
+    const auto c = classicSiteCentre({x, z}, int16_t(f.footX), int16_t(f.footZ));
+    const float px = float(c.first) / 65536.0f, pz = float(c.second) / 65536.0f;
+    return world.canPlace(type, px, pz, player_) && !world.lodestoneUpgradeSource(type, px, pz, player_);
+}
+
+std::optional<std::pair<int16_t, int16_t>> ClassicBrain::depositSite(const tak::sim::World& world, uint16_t t,
+                                                                     std::pair<int32_t, int32_t> centre,
+                                                                     int32_t radius) {
+    if (!sitesRead_) readSites(world);
+    const ClassicTypeInfo& f = info_[t];
+    return classicDepositSite(sites_, centre, radius, int16_t(f.footX), int16_t(f.footZ),
+        [&](int16_t x, int16_t z) { return sacredCell(world, x, z); },
+        [&](int16_t x, int16_t z) { return siteOpen(world, t, x, z); });
+}
+
 bool ClassicBrain::sacredCell(const tak::sim::World& world, int x, int z) const {
     const auto& cells = world.mapPlacementCells();
     const int w = world.mapW(), h = world.mapH();
@@ -571,20 +595,11 @@ void ClassicBrain::planConstructor(const tak::sim::World& world, int slot, std::
         }
         std::optional<std::pair<int32_t, int32_t>> site(uint16_t t, int32_t r) {
             const ClassicSiteType s = placeType(t);
-            const auto* type = b.catalogue_.types[t];
-            auto valid = [&](int16_t x, int16_t z) {
-                // 0x507d10(type, 0, cell, 1, 0): the World's placement test at the
-                // footprint's centre.
-                const auto c = classicSiteCentre({x, z}, s.footX, s.footZ);
-                return type && world.canPlace(type, float(c.first) / 65536.0f, float(c.second) / 65536.0f, b.player_);
-            };
             return classicPlaceSite(s,
+                [&] { return b.depositSite(world, t, centre, r); },
                 [&] {
-                    return classicDepositSite(b.sites_, centre, r, s.footX, s.footZ,
-                        [&](int16_t x, int16_t z) { return b.sacredCell(world, x, z); }, valid);
-                },
-                [&] {
-                    return classicScatterSite(b.grids_, centre, r, s, rnd, valid,
+                    return classicScatterSite(b.grids_, centre, r, s, rnd,
+                        [&](int16_t x, int16_t z) { return b.siteOpen(world, t, x, z); },
                         [&](int x, int z) { return b.sacredCell(world, x, z); });
                 });
         }
