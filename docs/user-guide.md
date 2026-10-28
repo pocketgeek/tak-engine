@@ -1856,7 +1856,9 @@ before. **Dots** puts the unit's tactical dot (same size, colour and selection
 outline as Tactical Dots) on top when the unit's centre is hidden; a unit
 whose centre is in sight gets none, and clicking the dot selects the unit.
 Nothing is added while Tactical Dots is showing. With the software renderer,
-Outline shows dots instead. Flat scenery (stumps, crops, smudges and mana
+Outline shows dots instead. Outline draws every hidden unit a second time, so
+with many hundreds of units behind trees or buildings at once it costs a few
+milliseconds a frame; Dots stays cheap. Flat scenery (stumps, crops, smudges and mana
 deposits) is always drawn under units, as in the original game, so it never
 hides anyone.
 
