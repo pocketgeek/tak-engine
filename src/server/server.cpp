@@ -1216,6 +1216,7 @@ void Server::lobbyMsg(Client& c, const Frame& f) {
             // GAME MODS: OFF or a debug --mods launch, and is honoured as before.
             o.gameMods = o.gameMods ? 1 : 0;
             if(!mission.empty())o.gameMods=0;   // campaigns never run game mods
+            if(o.benchmark)o.gameMods=0;          // nor the Benchmark: plain retail data
             if (o.speed < 1) o.speed = 10;
             o.unitCap = clampUnitCap(o.unitCap);
             o.monarchExpendable = o.monarchExpendable ? 1 : 0;
@@ -2216,6 +2217,7 @@ void Server::gameMsg(Client& c, const Frame& f) {
                 o.gameMods = o.gameMods ? 1 : 0;
                 // Campaign mission rooms never run game mods.
                 if(!r->mission.empty())o.gameMods=0;
+                if(o.benchmark || r->opts.benchmark)o.gameMods=0;   // the Benchmark runs the plain retail data
                 if(o.gameMods!=r->opts.gameMods){
                     r->modData.reset();r->modPackage.reset();
                     r->mapVfs.reset();r->mapPackage.reset();

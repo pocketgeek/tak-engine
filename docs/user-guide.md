@@ -2693,6 +2693,11 @@ computer's capacity, 0–100%, and GPU use is measured as in the
 Unit limits still apply, so the highest intensities may not reach their
 requested unit counts. A slow machine can take longer than 60 real seconds.
 
+The Benchmark always plays the original game with **no mods**: it leaves out
+every cosmetic and game mod pack, ticked or in `always_enabled`, so results
+from different machines compare like for like. Your mod choices are kept for
+your other games.
+
 The engine is tested with up to **16,000 units** in a game. That is a test
 target, not a promise of smooth play at that size: the map, the mix of units,
 their orders, your hardware and your graphics settings all matter. The

@@ -32,6 +32,7 @@
 #include "gui/gui.h"
 #include "hpi/hpi.h"
 #include "net/client.h"
+#include "client/benchmarkmods.h"   // the Benchmark runs with no mod packs
 #include "client/replayfile.h"   // ReplayCheckTracker
 #include "net/replaywriter.h"    // the replay recording, streamed as the game is played
 #include "client/situation.h"    // TAK_SITUATION (debug builds)
@@ -311,7 +312,12 @@ public:
     void setSimThreadMode(bool on) { simThreadMode_ = on; }
     // Benchmark run: an all-AI watch game on Ulasem Arena with the staged benchmark spawn
     // plan (see MatchConfig::benchmark). Drives the createGame/seat path in mpAutoStep.
-    void setBenchmark(int level) { benchmarkLevel_ = level; benchmarkMode_ = level > 0; }
+    // It runs with no mod packs of any kind (applyBenchmarkMods), so call it after
+    // setMpClient and before the room is created.
+    void setBenchmark(int level) {
+        benchmarkLevel_ = level; benchmarkMode_ = level > 0;
+        if (benchmarkMode_) tak::applyBenchmarkMods(mods_, mp_);
+    }
     bool benchmarkMode() const { return benchmarkMode_; }
     void setLocalServerPid(long pid) { localServerPid_ = pid; }   // owned local server; shared by HUD and benchmark metrics
     bool benchmarkStatsShown() const { return benchStatsShown_; }

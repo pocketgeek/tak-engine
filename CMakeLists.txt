@@ -1286,6 +1286,10 @@ target_link_libraries(mod_transfer_test PRIVATE tak-formats)
 add_executable(mod_packs_test tools/mod_packs_test.cpp)
 target_link_libraries(mod_packs_test PRIVATE tak-formats)
 add_test(NAME mod_packs COMMAND mod_packs_test)
+# The menu Benchmark mounts and hosts no mod pack of any kind (src/client/benchmarkmods.h).
+add_executable(benchmark_mods_test tools/benchmark_mods_test.cpp)
+target_link_libraries(benchmark_mods_test PRIVATE tak-formats)
+add_test(NAME benchmark_mods COMMAND benchmark_mods_test)
 add_test(NAME no_game_mods_toggle COMMAND "${CMAKE_COMMAND}" -DLOBBY=${CMAKE_SOURCE_DIR}/src/client/gameview_lobby.cpp
          -P "${CMAKE_SOURCE_DIR}/tools/no_game_mods_toggle.cmake")
 # The server-side AI (src/ai): every executable that runs a Controller links these.

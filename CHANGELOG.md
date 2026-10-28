@@ -19,6 +19,16 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+
+- **The Benchmark always runs the plain game, with no mods.** It used to load
+  your ticked cosmetic and game mods and the packs in `always_enabled`, so a
+  mod could change the units, the AI or the art being measured, and two
+  machines with different mods gave numbers that could not be compared. Now
+  the Benchmark leaves every mod pack out, and its private server plays the
+  original game data. Your mod choices are unchanged and apply again in your
+  next game.
+
 ## 0.9.8
 *2026-10-27 · protocol 302 · replay format 15 · does not play with 0.9.7 or earlier, nor their replays*
 
