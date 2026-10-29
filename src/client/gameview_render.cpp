@@ -166,16 +166,16 @@
         {
             const double _t0 = double(SDL_GetPerformanceCounter());
             tak::render::ScopedPhase terrainPhase(renderStats_, RP::Terrain);
-            mapView_.draw(mvw, winH);
+            mapView_.draw(mvw, winH, mapViewH(winH));   // scroll limits: above the bar
             profTerrainMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
                               (double(SDL_GetPerformanceFrequency()) / 1000.0);
         }
         float zm0 = mapView_.zoom();
         // Tactical Dots: decided once per frame (with hysteresis), so every pass
         // below -- and picking until the next frame -- agrees on dots vs models.
-        // The floor is the map-fills-window clamp the wheel handler applies.
+        // The floor is the map-fills-view clamp the wheel handler applies.
         dotsFrame_ = dotsSwitch_.update(tacticalDotsOpt_, tacticalDotsZoom_, zm0,
-                                        mapView_.minZoom(winW, winH));
+                                        mapView_.minZoom(mvw, mapViewH(winH)));
 
         // Painter list: features and units together, sorted by map z. Lives in a
         // member so its capacity survives across frames (it was the last per-frame

@@ -46,7 +46,10 @@ public:
     void input(const SDL_Event& e);
 
     // The smallest zoom at which the map still fills the window in one dimension
-    // (zooming out past this would run the view off the map edges).
+    // (zooming out past this would run the view off the map edges). winW/winH are
+    // the area the map is SEEN in: a game passes its world view (GameView::mapViewW/
+    // mapViewH -- the window less the right panel and the bottom bar), the same size
+    // it gives clampOffset, so the floor and the scroll limits agree.
     float minZoom(int winW, int winH) const;
     // Apply just the min-zoom floor (no offset change).
     void clampZoom(int winW, int winH);
@@ -80,7 +83,9 @@ public:
 
     void invalidateRenderTargets();
 
-    void draw(int winW, int winH);
+    // Draws winW x winH; the scroll clamp uses viewH (default winH), the height the map
+    // is SEEN in -- a game draws on under its opaque bottom bar but scrolls above it.
+    void draw(int winW, int winH, int viewH = -1);
 
     // Linear terrain sampling (GameView's Texture Filtering = Everything while zoomed
     // in; the Cartographer always). Applies to already-built chunk and section textures

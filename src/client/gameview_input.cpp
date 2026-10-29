@@ -242,7 +242,7 @@
             float wx = mapView_.offX() + mouseX_ / mapView_.zoom();
             float wz = mapView_.offY() + mouseY_ / mapView_.zoom();
             mapView_.input(e);                  // applies the zoom step
-            mapView_.clampZoom(winW, winH);     // ...then the map-fills-window floor,
+            mapView_.clampZoom(mapViewW(winW), mapViewH(winH));   // ...then the map-fills-view floor,
             float nz = mapView_.zoom();         // so the recentre below uses the real zoom
             mapView_.setOffset(wx - mouseX_ / nz, wz - mouseY_ / nz);
         } else if (e.type == SDL_KEYDOWN) {

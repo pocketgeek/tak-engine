@@ -529,9 +529,10 @@
             // Slider at 50%: halfway (in wheel notches) from this window's floor to 1.0,
             // leaving room both below and above the threshold.
             tacticalDotsZoom_=50;
-            const float zT=td::thresholdZoom(50,mapView_.minZoom(W,H))*td::kSlack;
+            const float floorZ=mapView_.minZoom(mapViewW(W),mapViewH(H));
+            const float zT=td::thresholdZoom(50,floorZ)*td::kSlack;
             const float zIn=zT*0.95f,zBand=zT*1.08f,zOut=zT*td::kBuffer*1.05f;
-            check(zIn>=mapView_.minZoom(W,H),"fixture has room below the threshold");
+            check(zIn>=floorZ,"fixture has room below the threshold");
             tacticalDotsOpt_=false;frame(zIn);
             check(!dotsFrame_ && !visUnits_.empty(),"option off draws models even far out");
             tacticalDotsOpt_=true;frame(zOut);
@@ -620,7 +621,72 @@
             // Leave dots on with a selection so the --shot capture shows both.
             tacticalDotsOpt_=true;selection_={infantry,keep,flyer};mapView_.setZoom(zIn);
             std::fprintf(stderr,"PASS: tactical dots (threshold %.3f/%.3f zoom at 50%%, min zoom here %.3f)\n",
-                         zT,zT*td::kBuffer,mapView_.minZoom(W,H));
+                         zT,zT*td::kBuffer,floorZ);
+            return;
+        }
+        if (tak::devFlag("TAK_ZOOM_FLOOR_TEST")) {
+            // Full zoom-out through the real wheel handler and frame: the map fills the
+            // WORLD VIEW (left of the right panel, above the bottom bar) in one dimension,
+            // shows nothing past its edges, and every edge can be scrolled into that view;
+            // the frame's own clamp and Tactical Dots use the same floor. Runs at the launch's window
+            // size (--winsize), at UI SCALE 100% and 200%, then as a spectator (no bar).
+            // TAK_ZOOM_FLOOR_CAPTURE=<prefix> writes <prefix>-ui1.png/-ui2.png/-spec.png.
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("zoom floor: "+what);
+                std::fprintf(stderr,"PASS: zoom floor: %s\n",what.c_str());
+            };
+            int W=0,H=0;SDL_GetRendererOutputSize(ren_,&W,&H);
+            noFog_=true;edgeScrollOn_=false;tacticalDotsOpt_=false;
+            const float mapW=float(mapView_.map().blocksX)*32,mapH=float(mapView_.map().blocksY)*32;
+            const auto frame=[&](const std::string& capture) {
+                captureFrame();beginFrame();cosmeticStep(0);
+                prepare(W,H);draw(W,H);
+                if (!capture.empty()) {
+                    mapView_.finishChunks();prepare(W,H);draw(W,H);
+                    int ow=0,oh=0;SDL_GetRendererOutputSize(ren_,&ow,&oh);
+                    std::vector<uint8_t> px(size_t(ow)*size_t(oh)*4);
+                    if (SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px.data(),ow*4)==0)
+                        tak::png::write(capture,ow,oh,px);
+                }
+                endFrame();
+            };
+            const auto wheelOut=[&] {
+                mouseX_=float(mapViewW(W))*0.3f;mouseY_=float(mapViewH(H))*0.4f;
+                for (int i=0;i<120;++i) {
+                    SDL_Event e{};e.type=SDL_MOUSEWHEEL;e.wheel.y=-1;e.wheel.direction=SDL_MOUSEWHEEL_NORMAL;
+                    input(e,W,H);
+                }
+            };
+            const auto pass=[&](const std::string& tag) {
+                const std::string at=tag+" "+std::to_string(W)+"x"+std::to_string(H)+": ";
+                const float vw=float(mapViewW(W)),vh=float(mapViewH(H));
+                mapView_.setZoom(1.0f);mapView_.setOffset(mapW*0.5f,mapH*0.5f);
+                frame("");
+                wheelOut();
+                tacticalDotsOpt_=true;tacticalDotsZoom_=0;
+                const char* cap=tak::devEnv("TAK_ZOOM_FLOOR_CAPTURE");
+                frame(cap ? std::string(cap)+"-"+tag+".png" : "");
+                tacticalDotsOpt_=false;
+                const float z=mapView_.zoom(),ox=mapView_.offX(),oy=mapView_.offY();
+                std::fprintf(stderr,"zoom floor %s%.4f view %.0fx%.0f world %.1fx%.1f of map %.0fx%.0f at %.1f,%.1f\n",
+                             at.c_str(),z,vw,vh,vw/z,vh/z,mapW,mapH,ox,oy);
+                check(ox>=-0.5f && oy>=-0.5f && ox+vw/z<=mapW+0.5f && oy+vh/z<=mapH+0.5f,
+                      at+"fully zoomed out, nothing past the map edges shows");
+                check(std::fabs(vw/z-mapW)<1.0f || std::fabs(vh/z-mapH)<1.0f,
+                      at+"fully zoomed out, the map spans the whole view in one dimension");
+                check(dotsFrame_,at+"Tactical Dots at 0% are on at the reachable floor");
+                mapView_.setOffset(1e7f,1e7f);frame("");
+                check(std::fabs(mapView_.offX()+vw/z-mapW)<0.5f && std::fabs(mapView_.offY()+vh/z-mapH)<0.5f,
+                      at+"the bottom-right corner scrolls into the view (not under the panel or bar)");
+                mapView_.setZoom(0.05f);frame("");
+                check(std::fabs(mapView_.zoom()-z)<1e-4f,at+"the frame's own clamp holds the wheel's floor");
+                mapView_.setZoom(1.0f);mapView_.setOffset(mapW*0.5f,mapH*0.5f);
+            };
+            uiScale_=1.0f;pass("ui1");
+            uiScale_=2.0f;pass("ui2");
+            uiScale_=1.0f;
+            beginSpectating();pass("spec");
+            std::fprintf(stderr,"PASS: zoom floor fits the world view (%dx%d)\n",W,H);
             return;
         }
         if (tak::devFlag("TAK_HIDDEN_UNITS_TEST")) {

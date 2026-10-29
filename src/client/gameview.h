@@ -3149,6 +3149,11 @@ private:
     // 640-space); never narrower than the minimap.
     int cmdPanelW() const;
     int mapViewW(int winW) const { return std::max(64, winW - cmdPanelW()); }
+    // Height of the world view: the window above the bottom InfoPanel bar (a spectator
+    // has none). With mapViewW, the area the map is actually seen in -- the zoom-out
+    // floor and the scroll limits are measured against it, so full zoom-out fits the
+    // map to that area rather than running it under the right panel or the bar.
+    int mapViewH(int winH) const { return std::max(64, winH - (spectating_ ? 0 : barH())); }
 
     // Screen rect for a command-panel gadget (x >= 512 in 640-space): the whole
     // command panel is anchored to the bottom-right corner, so the ButtonPanel art

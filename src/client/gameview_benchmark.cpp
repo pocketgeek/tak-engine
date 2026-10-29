@@ -72,17 +72,18 @@
         float p = benchLegT_ / 7.5f;              // progress through the 7.5s leg
         if (p > 1.0f) p = 1.0f;
         // Zoom: all the way out at the leg start, zooming in over the leg.
-        float zOut = mapView_.minZoom(winW, winH);
+        const int vw = mapViewW(winW), vh = mapViewH(winH);
+        float zOut = mapView_.minZoom(vw, vh);
         float zIn = std::max(zOut * 2.5f, 1.6f);  // a clear close-up, comfortably above zOut
         float z = zOut + (zIn - zOut) * p;
         mapView_.setZoom(z);
         // Track this leg's AI monarch (player == leg) from the render snapshot.
         for (const UnitR* u : front().live)
             if (u && u->player == leg && isMonarchType(u->type)) {
-                mapView_.setOffset(u->x - winW * 0.5f / z, u->z - winH * 0.5f / z);
+                mapView_.setOffset(u->x - vw * 0.5f / z, u->z - vh * 0.5f / z);
                 break;
             }
-        mapView_.clampOffset(winW, winH);
+        mapView_.clampOffset(vw, vh);
     }
 
     void GameView::renderBenchmarkStats(int winW, int winH) {

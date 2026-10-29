@@ -16,9 +16,9 @@ namespace tak::tacticaldots {
 // WHEN dots show is the player's TACTICAL DOTS ZOOM slider, 0-100%. It is a
 // position along this window's zoom-out range, not an absolute zoom, because the
 // range differs per window and map: the view cannot zoom out past the point where
-// the map fills the window (MapView::minZoom -- 0.75 on Ulasem Arena at
-// 7680x2160, ~0.19 at 1920x1080), so a fixed "20% zoom" would never be reachable
-// on a wide display.
+// the map fills the world view (MapView::minZoom of the window less the right panel
+// and the bottom bar -- 0.73 on Ulasem Arena at 7680x2160, ~0.17 at 1920x1080),
+// so a fixed "20% zoom" would never be reachable on a wide display.
 //   0%   -> dots only when fully zoomed out (at that floor)
 //   100% -> dots from normal size (zoom 1.0) outwards
 //   p    -> floor * (1/floor)^(p/100), i.e. measured in WHEEL NOTCHES: each notch
