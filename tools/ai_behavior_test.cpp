@@ -700,6 +700,73 @@ static void fullStore() {
     check(!buildsMine(ai::Difficulty::Easy,4800),"Easy's builders rest beside a full store");
 }
 
+// The AI's lodestone search tests deposits nearest first and takes the first that passes.
+// It must pick what a scan of every deposit in index order, keeping the nearest usable
+// (the lower index on a tie), picked: so each deposit is judged alone, in a world with
+// only that deposit, and the nearest of the passing ones is the answer. The deposits sit
+// on a grid centred on the builder's anchor, so every distance ties four or eight ways,
+// listed in shuffled order; a factory shuts some in, and built-on ones fail canPlace.
+static void lodestoneChoice() {
+    auto files=std::make_shared<hpi::Vfs::Files>();
+    auto file=[&](const std::string& path,const std::string& text) {
+        std::string lines;
+        for (char ch : text) { lines += ch; if (ch == ';' || ch == '{' || ch == '}') lines += '\n'; }
+        (*files)[path]={lines.begin(),lines.end()};
+    };
+    auto type=[&](const char* id,const char* fields) {
+        file(std::string("units/")+id+".fbi",std::string("[UNITINFO]{unitname=")+id+
+            ";objectname="+id+";maxdamage=100;side=TAR;sightdistance=600;"+fields+"}");
+    };
+    type("tarhell","footprintx=4;footprintz=4;builder=1;workertime=30;buildcost=1000;buildtime=100;");
+    type("tarpries","footprintx=2;footprintz=2;builder=1;workertime=10;canmove=1;maxvelocity=1;"
+                    "buildcost=3000;buildtime=300;");
+    type("tarlode","footprintx=2;footprintz=2;yardmap=SSSS;mogriumincome=10;mogriumstorage=1000;"
+                   "buildcost=300;buildtime=85;");
+    file("canbuild/tarhell/tarpries.tdf","[CANBUILD]{sortbias=0;}");
+    file("canbuild/tarpries/tarlode.tdf","[CANBUILD]{sortbias=0;}");
+    hpi::Vfs vfs;vfs.setMapFiles(files);
+    sim::TypeRegistry reg;reg.loadDir(vfs,"units");reg.loadBuildTree(vfs,"canbuild");
+    std::vector<std::pair<float,float>> all;
+    for (int gz=0;gz<12;++gz) for (int gx=0;gx<12;++gx) all.emplace_back(300+float(gx)*100,300+float(gz)*100);
+    uint32_t seed=12345;
+    for (size_t i=all.size();i>1;--i) {seed=seed*1664525u+1013904223u;std::swap(all[i-1],all[(seed>>8)%i]);}
+    // The factory (800,800) is the home; a builder walks in from (800,1000).
+    auto build=[&](const std::vector<std::pair<float,float>>& deposits,const std::vector<std::pair<float,float>>& taken,
+                   sim::World& w,int& builder) {
+        terrain(w);w.buildNavClasses(reg);w.setManaSpots(deposits);
+        w.spawn(reg.find("tarhell"),800,800,0,0);
+        for (const auto& [x,z]:taken) w.spawn(reg.find("tarlode"),x,z,0,0);
+        builder=w.spawn(reg.find("tarpries"),800,1000,0,0);
+    };
+    ai::Profile profile;
+    std::vector<std::pair<float,float>> taken;
+    for (const auto& [ax,az]:{std::pair{850.f,850.f},std::pair{800.f,800.f},std::pair{1250.f,950.f}}) {
+        taken.clear();
+        int rounds=0,agreed=0;
+        for (int round=0;round<8;++round) {
+            sim::World w;int builder=0;build(all,taken,w,builder);
+            ai::Controller controller(0,reg,profile,1,ai::Difficulty::Absurd);
+            float x=0,z=0;
+            const bool found=ai::PlacementProbe::placeFrom(controller,w,reg.find("tarlode"),*w.unit(builder),ax,az,x,z);
+            // The scan in index order: the nearest deposit that passes alone, the first of equals.
+            bool expect=false;float ex=0,ez=0,best=1e18f;
+            for (const auto& d:all) {
+                sim::World alone;int b=0;build({d},taken,alone,b);
+                float ox=0,oz=0;
+                ai::Controller solo(0,reg,profile,1,ai::Difficulty::Absurd);
+                if (!ai::PlacementProbe::placeFrom(solo,alone,reg.find("tarlode"),*alone.unit(b),ax,az,ox,oz)) continue;
+                const float dist=(d.first-ax)*(d.first-ax)+(d.second-az)*(d.second-az);
+                if (dist<best) {best=dist;ex=d.first;ez=d.second;expect=true;}
+            }
+            ++rounds;
+            if (found==expect && (!found || (x==ex && z==ez))) ++agreed;
+            if (!found) break;
+            taken.emplace_back(x,z);
+        }
+        check(rounds>=6 && agreed==rounds,"the lodestone search picks the nearest usable deposit, the first of a tie, as a full scan did");
+    }
+}
+
 // Divine Lodestones: an upgrade of an own lodestone in a saturated base that pays
 // back within the level's horizon, never one on a free deposit; its priest
 // trained when there is none; and no Dragon started at an empty store. The ids
@@ -1181,6 +1248,7 @@ int main(int argc,char** argv) {
     builderTotals();
     fullStore();
     divineLodestones();
+    lodestoneChoice();
     defensiveResponses(empty,profile,soldier);
     defensiveShooters(empty,profile,soldier);
     defensiveMeleeTargets(empty,profile,soldier);
