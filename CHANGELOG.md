@@ -35,6 +35,13 @@ their validation reports; both live in [`docs/`](docs/).
 - **Fade Opacity** (Hidden Units) now defaults to 50% (was 65%); a value you
   saved is kept.
 
+- A factory that is destroyed, changes hands, or has the unit it is building
+  cancelled (the build button, Stop, repeat off) now loses that unfinished
+  unit at once, as in the original game: no wreck, no kill for anyone, no
+  mana back. Cancelling a unit still waiting in the queue only removes it. A
+  Zhon builder's unfinished unit and a builder's unfinished building still
+  stay behind, as before (the original keeps those).
+
 ## 0.9.10
 *2026-10-28 · protocol 303 · replay format 15 · plays with 0.9.9, and its replays*
 

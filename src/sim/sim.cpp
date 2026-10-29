@@ -4701,6 +4701,7 @@ void World::stop(int unitId) {
     cancelPath(*u);          // stop means stop: do not finish routing where it was going
     // Stop also halts a conjurer: cancel the infinite loop and drain the queue.
     u->repeatType = nullptr;
+    killProductionOutput(*u,true);   // a factory's cancelled output dies at once
     u->buildQueue.clear();
     u->buildProgress = 0; u->buildFraction = 0;
     u->productionSiteId = 0;
@@ -7071,6 +7072,9 @@ void World::scenarioDestroy(int unitId,uint8_t deathType) {
         }
         if (builder.repairId==unitId) cancelBuilds(builder.id);
     }
+    // A scripted kill is a death too: the factory's unfinished output goes
+    // with it (killProductionOutput), here at once like the factory itself.
+    killProductionOutput(*target,true);
     cancelBuilds(unitId);stop(unitId);
     auto& u=*unit(unitId);
     const int owner=u.player;
@@ -7184,6 +7188,9 @@ void World::captureUnit(Unit& t, int newPlayer) {
             players_[size_t(newPlayer)].unitCount++;
     }
     if (mission_) mission_->unitCaptured(*this,t.id);
+    // Retail's ownership change (514da0) kills the old object, so a factory's
+    // BuildingBuild aborts and its unfinished output dies (killProductionOutput).
+    killProductionOutput(t,true);
     transferEntitySlot(t,newPlayer);
     t.player = newPlayer;
     gPlayersValid_=false;
@@ -11251,7 +11258,10 @@ void World::dequeue(int builderId, const UnitType* type, int count) {
         for (int i = int(b->buildQueue.size()) - 1; i >= 0; --i)
             if (b->buildQueue[size_t(i)] == type) { idx = i; break; }
         if (idx < 0) break;
-        if (idx == 0) { b->buildProgress = 0; b->buildFraction = 0; b->productionSiteId = 0; }   // canceling the in-progress front
+        if (idx == 0) {   // canceling the in-progress front: a factory's output dies at once
+            killProductionOutput(*b,true);
+            b->buildProgress = 0; b->buildFraction = 0; b->productionSiteId = 0;
+        }
         retireProductionItem(*b,size_t(idx));
     }
     // If the queue no longer holds a type set to infinite-repeat, stop repeating it
@@ -11276,6 +11286,7 @@ void World::setRepeat(int builderId, const UnitType* type) {
     if (b->repeatType == type) {
         // ctrl+click the +++ icon again: stop now and clear what's pending.
         b->repeatType = nullptr;
+        killProductionOutput(*b,true);
         b->buildQueue.clear();
         if (b->type && !b->type->isStructure()) b->rally.clear();   // as in dequeue()
         for(auto& order:b->orders)order.transportProductionAhead=0;
@@ -13612,6 +13623,41 @@ bool World::workProduction(Unit& producer,Unit& site,const UnitType* t,uint32_t 
 // step / PARK and rally, exactly once. An output that already holds orders
 // keeps them instead: they can only be the player's (or a script's), given
 // while it was unfinished, and the release must not override them.
+// A factory that dies with an unfinished output kills the output too
+// (icd, emulated 2026-10-28). Death clears every mission of the unit
+// (0x512860 -> 0x4d6a50(unit, 1)); the mission destructor 0x4d6da0 calls a
+// started mission's handler with flag 2, and only BuildingBuild 0x401c20 -- the
+// mission 0x429810 queues for a producer WITHOUT a mover -- acts on it with a
+// target: 0x429990 (the completion call) and then 30000 damage of type 11 from
+// the factory to the output (0x51a140). Type 11 has severity 0: no Killed, no
+// corpse, no death weapon, and the factory is the attacker, so nobody gets the
+// kill. MobileBuild, VTOL_MobileBuild and HelpBuild only stop the build
+// animation on flag 2: a Zhon producer's output and a builder's site stay
+// unfinished and decay as before.
+//
+// Ours sets the lethal state and lets the death sweep take it: the output was
+// spawned after its factory, so it comes later in the same sweep (ids and
+// units_ order agree). The completion call is not replayed -- it would only
+// release the output an instant before it dies.
+void World::killProductionOutput(Unit& producer,bool now) {
+    const int siteId=producer.productionSiteId;
+    if (!siteId || !producer.type || !producer.type->isStructure()) return;
+    producer.productionSiteId=0;producer.buildProgress=0;producer.buildFraction=0;
+    Unit* site=unit(siteId);
+    if (!site || !site->alive() || !site->type || !site->underConstruction ||
+        site->productionOwner!=producer.id || site->player!=producer.player) return;
+    site->productionOwner=0;
+    site->retailSite.reset();site->beingBuilt=false;
+    site->hp=Fixed();
+    site->deathType=11;site->lastHitBy=producer.id;site->lastHitPlayer=producer.player;
+    if (!now) return;
+    // Before the economy walk could decay it away uncounted or a helper could
+    // put hit points back: the scripted-kill path, which counts the loss and
+    // credits the factory (nobody), then off the ground word as the sweep does.
+    scenarioDestroy(siteId,11);
+    if (Unit* gone=unit(siteId)) { cancelPath(*gone);groundRemove(*gone);retireAirOccupant(*gone);noteOrders(siteId); }
+}
+
 void World::finishProduction(int producerId,Unit& finished) {
     Unit* site=&finished;
     const UnitType* t=site->type;
@@ -15090,6 +15136,7 @@ void World::tick(float dt) {
         if (u.hp <= Fixed() && !(u.retailSite && u.underConstruction)) {
             cancelPath(u);
             refreshMovingSearchBody(u);
+            killProductionOutput(u);
             if (u.player >= 0 && u.player < int(players_.size()))
                 players_[size_t(u.player)].losses++;   // end-of-game "Losses" column
             // Native512c4c uses the player captured by the damaging shot.
