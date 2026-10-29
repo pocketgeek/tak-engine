@@ -94,7 +94,7 @@
             hooks.outNote = [this] { return tak::VoiceEngine::note(voice_->outState()); };
             hooks.monitor = [this](bool on) { voice_->setMonitoring(on); };
         }
-        // pumpVoice() applies every change on the next frame; only SAVE persists.
+        // pumpVoice() applies every change on the next frame; each is saved as made.
         voiceFromOptions_ = false;   // the GAME MENU's button; Options' row sets it after this
         options_ = std::make_unique<tak::OptionsScreen>(ren_, *settings_, [] {},
             [this] { tak::saveSettings(*settings_); }, std::move(hooks), [this] { openHotkeys(); });

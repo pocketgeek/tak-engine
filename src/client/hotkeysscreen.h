@@ -2,10 +2,11 @@
 
 // The hotkey-rebinding overlay, styled like OptionsScreen and hosted the same way
 // (main menu + in-game Esc menu). It edits Settings::hotkeys live -- click a row to
-// arm capture, then the next key press binds it; the DEFAULTS / SAVE / BACK footer
-// matches Options (BACK closes without persisting; SAVE writes; DEFAULTS clears all
-// overrides back to the factory chords). onChange() lets the host rebuild its live
-// Hotkeys so a rebind takes effect immediately.
+// arm capture, then the next key press binds it; the DEFAULTS / BACK footer matches
+// Options (DEFAULTS asks first, then clears all overrides back to the factory chords).
+// onChange() lets the host rebuild its live Hotkeys so a rebind takes effect
+// immediately, and onSave() writes the settings file after every change: there is no
+// SAVE button.
 
 #include <SDL.h>
 
@@ -14,6 +15,7 @@
 #include <vector>
 
 #include "client/hotkeys.h"
+#include "client/promptbox.h"
 #include "client/settings.h"
 
 namespace tak {
@@ -28,6 +30,16 @@ public:
     bool input(const SDL_Event& e, int winW, int winH);
     void render(int winW, int winH);
 
+    // For the in-process UI tests: an action's row as last laid out (empty if none), the
+    // footer's DEFAULTS button, and the DEFAULTS prompt's buttons (empty while closed).
+    SDL_FRect rowRect(Act a) const {
+        for (const auto& r : rows_) if (!r.section && r.act == a) return r.rect;
+        return {};
+    }
+    SDL_FRect defaultsRect() const { return defaultsRect_; }
+    SDL_FRect defaultsYesRect() const { return defaultsPrompt_.open ? defaultsPrompt_.first : SDL_FRect{}; }
+    SDL_FRect defaultsNoRect() const { return defaultsPrompt_.open ? defaultsPrompt_.second : SDL_FRect{}; }
+
 private:
     struct Row {
         bool section = false;
@@ -39,6 +51,7 @@ private:
     void build();
     void layout(int winW, int winH);
     bool atDefaults() const { return s_.hotkeys.empty(); }   // no overrides == all default
+    void changed() { if (onChange_) onChange_(); if (onSave_) onSave_(); }   // apply live, then save
 
     SDL_Renderer* ren_;
     Settings& s_;
@@ -47,12 +60,12 @@ private:
     std::vector<Row> rows_;
     int capture_ = -1;      // index of the row awaiting a key press, or -1
     std::string refused_;   // why the armed row refused the last key (shown in the hint line)
-    bool dirty_ = false;
+    PromptBox defaultsPrompt_;   // DEFAULTS asks first: RESET TO DEFAULTS? YES / NO
     float scroll_ = 0;
     float contentH_ = 0;
     float u_ = 1.0f;
     SDL_FRect panel_{};
-    SDL_FRect defaultsRect_{}, saveRect_{}, backRect_{};
+    SDL_FRect defaultsRect_{}, backRect_{};
 };
 
 }  // namespace tak

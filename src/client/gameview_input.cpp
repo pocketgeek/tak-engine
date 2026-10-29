@@ -87,15 +87,12 @@
             // below): the custom cursor renders from mouseX_/mouseY_, so swallowing
             // motion events here froze it for as long as Options was open.
             if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
-            if (options_->input(e, winW, winH)) {   // BACK / Esc (SAVE is explicit)
+            if (options_->input(e, winW, winH)) {   // BACK / Esc (all saved)
                 if (options_->voiceRequested()) {   // Options > VOICE CHAT
-                    const bool dirty = options_->dirty();
                     openVoiceOptions();
-                    voiceFromOptions_ = true; optionsDirtyCarry_ = dirty;
+                    voiceFromOptions_ = true;
                 } else if (voiceFromOptions_ && options_->page() == tak::OptionsPage::Voice) {
-                    const bool dirty = optionsDirtyCarry_ && !options_->saved();
                     openOptions();                  // BACK -> Options, where it came from
-                    if (dirty) options_->markDirty();
                 } else {
                     options_.reset();
                 }

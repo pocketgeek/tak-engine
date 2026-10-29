@@ -1181,7 +1181,8 @@ build menus unchanged.
 These are the default bindings. Command, selection, view, emote,
 push-to-talk and poster (**MAKE POSTER**) keys can be changed in **Settings → Controls** (or **Esc →
 Controls** in a game): click a row and press the new key;
-right-click a row to unbind it. Number-key squads, **Esc**, chat, pause and game
+right-click a row to unbind it. Each change is saved at once. **Defaults** asks
+first, then puts every key back. Number-key squads, **Esc**, chat, pause and game
 speed keys are fixed.
 
 ### Mouse
@@ -1702,9 +1703,11 @@ in a formation or Ctrl+number group with ground units keep station over them.
 ## Options
 
 Open **Options** from **Settings** on the main menu, or **Esc → Options** in a
-game. Changes apply immediately; **Save** keeps them. **Defaults** puts the
-options back to their defaults; it leaves your player name, data folder, key
-bindings and voice chat settings alone. It also sets UI Scale and Cursor Size
+game. Changes apply and are saved immediately; there is no Save button. A
+slider is saved when you let go of it, and your player name when you press
+Enter or click elsewhere. **Defaults** asks first (**Reset to defaults?**
+**Yes** / **No**), then puts the options back to their defaults; it leaves your
+player name, data folder, key bindings and voice chat settings alone. It also sets UI Scale and Cursor Size
 back to their defaults, undoing the one-time enlargement made by Ignore Windows
 Display Scaling, Native Retina Resolution or Native Wayland, so raise them again
 on a scaled or Retina display.
@@ -1729,8 +1732,7 @@ The row shows the folder in use; hover over it for the full path. The folder you
 choose is checked first: if it is not an install, the game says what is missing
 and keeps the current one. A good folder is saved at once, then the game offers
 **Restart now** (or **Later**) to load it, because everything the game has
-loaded comes from that folder. Restarting saves any Options changes you have
-not saved yet.
+loaded comes from that folder.
 
 You can change the folder only from **Options** on the main menu. During a game,
 in a lobby or while watching a replay the row is greyed out. It is also greyed
@@ -2264,10 +2266,9 @@ opened there to test the microphone).
    of **Options** (its **Back** then returns to Options).
 2. Turn **Voice chat** on.
 3. Speak, and check that the **Mic level** meter moves.
-4. Click **Save**.
 
-Changes apply at once, also in the middle of a game; **Save** keeps them for
-next time. Everyone who wants to talk or listen needs voice chat turned on: a
+Changes apply at once, also in the middle of a game, and are saved as you make
+them. Everyone who wants to talk or listen needs voice chat turned on: a
 player with it off cannot talk and is sent no voice at all.
 
 ### The Voice Chat page
@@ -2297,7 +2298,7 @@ beside a device row says when something is wrong:
 | **DEVICE LOST - USING DEFAULT** | The device went away while in use, so the system default took over. |
 | **UNAVAILABLE** | No device could be opened at all. The game tries again every few seconds. |
 
-**Defaults** resets only the voice chat settings: voice chat off, Push to Talk at
+**Defaults** asks first, then resets only the voice chat settings: voice chat off, Push to Talk at
 activation level 15, System Default microphone, Same as Game Output, and both volumes at 100. It does not change the
 push-to-talk key (reset that in **Controls**), and the **Defaults** button in
 **Options** does not change voice chat.

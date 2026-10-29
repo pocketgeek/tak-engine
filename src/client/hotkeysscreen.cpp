@@ -46,16 +46,23 @@ void HotkeysScreen::layout(int winW, int winH) {
         y += h;
     }
     float bw = 150 * u_, bh = 32 * u_, gap = 18 * u_;
-    float total = 3 * bw + 2 * gap;
+    float total = 2 * bw + gap;
     float x0 = panel_.x + (panel_.w - total) / 2;
     float by = panel_.y + panel_.h - footerH + (footerH - bh) / 2;
     defaultsRect_ = {x0, by, bw, bh};
-    saveRect_ = {x0 + bw + gap, by, bw, bh};
-    backRect_ = {x0 + 2 * (bw + gap), by, bw, bh};
+    backRect_ = {x0 + bw + gap, by, bw, bh};
 }
 
 bool HotkeysScreen::input(const SDL_Event& e, int winW, int winH) {
     layout(winW, winH);
+
+    if (defaultsPrompt_.open) {   // RESET TO DEFAULTS? takes every event while it is up
+        if (defaultsPrompt_.input(e) == 1) {
+            s_.hotkeys.clear();     // drop every override -> back to factory chords
+            changed();
+        }
+        return false;
+    }
 
     // While a row is armed, the NEXT key press binds it (Esc cancels capture, not the
     // screen). Bare modifier presses are ignored so the user can hold Ctrl/Shift/Alt
@@ -80,8 +87,7 @@ bool HotkeysScreen::input(const SDL_Event& e, int winW, int winH) {
                 setChordOverride(s_.hotkeys, d.act, KeyChord{});
         setChordOverride(s_.hotkeys, a, c);
         capture_ = -1;
-        dirty_ = true;
-        if (onChange_) onChange_();
+        changed();
         return false;
     }
 
@@ -94,12 +100,8 @@ bool HotkeysScreen::input(const SDL_Event& e, int winW, int winH) {
     if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
         float mx = float(e.button.x), my = float(e.button.y);
         if (in(backRect_, mx, my)) return true;
-        if (in(saveRect_, mx, my)) { if (dirty_ && onSave_) { onSave_(); dirty_ = false; } return false; }
-        if (in(defaultsRect_, mx, my)) {
-            if (atDefaults()) return false;
-            s_.hotkeys.clear();     // drop every override -> back to factory chords
-            dirty_ = true;
-            if (onChange_) onChange_();
+        if (in(defaultsRect_, mx, my)) {   // asks first (see the prompt above)
+            if (!atDefaults()) { capture_ = -1; refused_.clear(); defaultsPrompt_.open = true; }
             return false;
         }
         // Right-click on a binding row clears it (unbind); left-click arms capture.
@@ -118,8 +120,7 @@ bool HotkeysScreen::input(const SDL_Event& e, int winW, int winH) {
         for (auto& r : rows_) {
             if (r.section || !in(r.rect, mx, my)) continue;
             setChordOverride(s_.hotkeys, r.act, KeyChord{});
-            dirty_ = true;
-            if (onChange_) onChange_();
+            changed();
             return false;
         }
     }
@@ -209,8 +210,9 @@ void HotkeysScreen::render(int winW, int winH) {
                       on ? SDL_Color{228, 232, 242, 255} : SDL_Color{110, 115, 125, 255});
     };
     button(defaultsRect_, "DEFAULTS", !atDefaults());
-    button(saveRect_, "SAVE", dirty_);
     button(backRect_, "BACK", true);
+    defaultsPrompt_.render(ren_, panel_, u_, winW, winH, "RESET TO DEFAULTS?",
+                           {"EVERY KEY GOES BACK TO ITS DEFAULT."}, "YES", "NO");
 }
 
 }  // namespace tak

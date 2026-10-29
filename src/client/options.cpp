@@ -680,7 +680,7 @@ void OptionsScreen::build(int channels) {
     // (Hotkey rebinding moved OUT of Options: it's now a CONTROLS entry in the settings
     // menu -- the in-game Esc menu and the title screen's menu button. See mainmenu.cpp
     // and the in-game GAME MENU. onHotkeys_ is retained for compatibility but unused here.)
-    // SAVE / BACK are drawn as a fixed footer (see layout()/render()), not list rows.
+    // DEFAULTS / BACK are drawn as a fixed footer (see layout()/render()), not list rows.
 }
 
 void OptionsScreen::layout(int winW, int winH) {
@@ -690,7 +690,7 @@ void OptionsScreen::layout(int winW, int winH) {
     };
     float panelW = std::min(660 * u_, winW * 0.72f);
     float titleH = 3.4f * 7 * u_ + 26 * u_;
-    float footerH = 52 * u_;    // SAVE / BACK buttons, fixed at the panel bottom
+    float footerH = 52 * u_;    // DEFAULTS / BACK buttons, fixed at the panel bottom
     contentH_ = 0;
     for (auto& c : ctls_) contentH_ += rowH(c.kind);
     float viewH = std::min(contentH_, winH * 0.92f - titleH - footerH);
@@ -708,20 +708,35 @@ void OptionsScreen::layout(int winW, int winH) {
         y += h;
     }
     float bw = 150 * u_, bh = 32 * u_, gap = 18 * u_;
-    float total = 3 * bw + 2 * gap;
+    float total = 2 * bw + gap;
     float x0 = panel_.x + (panel_.w - total) / 2;
     float by = panel_.y + panel_.h - footerH + (footerH - bh) / 2;
     defaultsRect_ = {x0, by, bw, bh};
-    saveRect_ = {x0 + bw + gap, by, bw, bh};
-    backRect_ = {x0 + 2 * (bw + gap), by, bw, bh};
+    backRect_ = {x0 + bw + gap, by, bw, bh};
 }
 
 void OptionsScreen::commit(Control& c, float mx) {
     float frac = std::clamp((mx - c.row.x) / std::max(1.0f, c.row.w), 0.0f, 1.0f);
     float v = c.lo + frac * (c.hi - c.lo);
     if (c.set) c.set(v);
-    dirty_ = true;
     if (onChange_) onChange_();
+}
+
+void OptionsScreen::endNameEdit() {
+    if (nameEditing_) { nameEditing_ = false; SDL_StopTextInput(); }
+    if (nameChanged_) { nameChanged_ = false; persist(); }
+}
+
+void OptionsScreen::endDrag() {
+    if (drag_ < 0) return;
+    const size_t i = size_t(drag_);
+    drag_ = -1;
+    if (i < ctls_.size() && ctls_[i].get && ctls_[i].get() != dragFrom_) persist();
+}
+
+void OptionsScreen::flushPending() {
+    endNameEdit();
+    endDrag();
 }
 
 void OptionsScreen::refreshDevices() {
@@ -771,15 +786,22 @@ void OptionsScreen::appendPlayerName(const std::string& text) {
     for (unsigned char c : text) if (c >= 32 && c != 127) value += char(c);
     char name[33];
     SDL_utf8strlcpy(name, value.c_str(), sizeof(name));
-    if (s_.playerName != name) { s_.playerName = name; dirty_ = true; }
+    if (s_.playerName != name) { s_.playerName = name; nameChanged_ = true; }
     nameSelectAll_ = false;
 }
 
 bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
+    const bool leave = handle(e, winW, winH);
+    if (leave) flushPending();   // nothing is left unsaved behind a closed screen
+    return leave;
+}
+
+bool OptionsScreen::handle(const SDL_Event& e, int winW, int winH) {
     applyPendingRebuild();   // fold in a pending device-change rebuild before this event
     layout(winW, winH);
     pollFolder();
-    if (restartPrompt_) return restartPromptInput(e);
+    if (restartPrompt_.open) return restartPromptInput(e);
+    if (defaultsPrompt_.open) { defaultsPromptInput(e); return false; }
     // The folder dialog is up (in its own window): nothing here may change underneath it.
     if (folderPick_.busy() && (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN ||
                                e.type == SDL_MOUSEWHEEL || e.type == SDL_TEXTINPUT)) return false;
@@ -789,16 +811,16 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
             const auto key = e.key.keysym.sym;
             const bool shortcut = (e.key.keysym.mod & (KMOD_CTRL | KMOD_GUI)) != 0;
             if (key == SDLK_ESCAPE || key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_TAB) {
-                nameEditing_ = false; SDL_StopTextInput();
+                endNameEdit();
             } else if (shortcut && key == SDLK_a) nameSelectAll_ = true;
             else if (shortcut && key == SDLK_v) {
                 if (char* text = SDL_GetClipboardText()) { appendPlayerName(text); SDL_free(text); }
             } else if (key == SDLK_BACKSPACE || (key == SDLK_DELETE && nameSelectAll_)) {
-                if (nameSelectAll_) { s_.playerName.clear(); nameSelectAll_ = false; dirty_ = true; }
+                if (nameSelectAll_) { s_.playerName.clear(); nameSelectAll_ = false; nameChanged_ = true; }
                 else if (!s_.playerName.empty()) {
                     size_t pos = s_.playerName.size()-1;
                     while (pos && (static_cast<unsigned char>(s_.playerName[pos]) & 0xc0) == 0x80) --pos;
-                    s_.playerName.resize(pos); dirty_ = true;
+                    s_.playerName.resize(pos); nameChanged_ = true;
                 }
             }
             return false;
@@ -836,14 +858,14 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
             if (!in(c.row, mx, my) || c.kind != Control::Toggle) continue;
             if (c.enabled && !c.enabled()) break;   // greyed out: ignore
             c.set(c.get() > 0.5f ? 0.0f : 1.0f);
-            dirty_ = true;
             if (onChange_) onChange_();
+            persist();
             break;
         }
         return false;
     }
     if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
-        if (nameEditing_) { nameEditing_ = false; SDL_StopTextInput(); }
+        endNameEdit();   // a click anywhere takes the focus from the name (and saves it)
         float bmx = float(e.button.x), bmy = float(e.button.y);
         // An open dropdown grabs the click: an option selects + closes; the dropdown's
         // own chip toggles it shut; anywhere else just closes it (then falls through so
@@ -860,7 +882,8 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
                 int i = int((bmy - y0 + dropScroll_) / itemH);
                 if (i >= 0 && i < int(opts.size())) {
                     if (c.set) c.set(float(i));
-                    dirty_ = true; openDrop_ = -1;
+                    openDrop_ = -1;
+                    persist();
                     return false;
                 }
             }
@@ -868,17 +891,10 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
             if (in(c.row, bmx, bmy)) return false;   // clicked its own chip -> just close
         }
         float mx = float(e.button.x), my = float(e.button.y);
-        if (in(backRect_, mx, my)) return true;                     // close, no save
-        if (in(saveRect_, mx, my)) {                                // persist (if dirty)
-            if (dirty_ && onSave_) { onSave_(); dirty_ = false; saved_ = true; }
-            return false;
-        }
-        if (in(defaultsRect_, mx, my)) {                            // reset to defaults
+        if (in(backRect_, mx, my)) return true;                     // close (all saved)
+        if (in(defaultsRect_, mx, my)) {                            // reset to defaults, asked first
             if (atDefaults()) return false;         // already default -> disabled, ignore
-            // One definition per page, shared with atDefaults().
-            s_ = page_ == OptionsPage::Voice ? tak::voiceDefaults(s_) : tak::preferenceDefaults(s_);
-            dirty_ = true;
-            if (onChange_) onChange_();
+            defaultsPrompt_.open = true;
             return false;
         }
         float titleH = 3.4f * 7 * u_ + 26 * u_, footerH = 52 * u_;  // scrollable viewport
@@ -894,9 +910,14 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
                 return false;
             }
             if (c.kind == Control::Toggle) {
-                c.set(c.get() > 0.5f ? 0.0f : 1.0f); dirty_ = true; if (onChange_) onChange_(); return false;
+                c.set(c.get() > 0.5f ? 0.0f : 1.0f);
+                if (onChange_) onChange_();
+                persist();
+                return false;
             }
-            if (c.kind == Control::Slider) { drag_ = int(i); commit(c, mx); return false; }
+            if (c.kind == Control::Slider) {   // live while dragged, saved when let go
+                drag_ = int(i); dragFrom_ = c.get ? c.get() : 0.0f; commit(c, mx); return false;
+            }
             if (c.kind == Control::Button) {
                 if (c.action) c.action();
                 return voiceRequested_;   // VOICE CHAT: leave, so the host opens that page
@@ -913,7 +934,7 @@ bool OptionsScreen::input(const SDL_Event& e, int winW, int winH) {
             commit(ctls_[size_t(drag_)], float(e.motion.x));
         return false;
     }
-    if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) drag_ = -1;
+    if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) endDrag();
     return false;
 }
 
@@ -1145,9 +1166,9 @@ void OptionsScreen::render(int winW, int winH) {
         SDL_FRect bar{panel_.x + panel_.w - 5 * u_, ty, 3 * u_, th}; SDL_RenderFillRectF(ren_, &bar);
     }
 
-    // Footer buttons. BACK is always active; SAVE only when there are unsaved changes
-    // (dirty_), and DEFAULTS only when the settings aren't already at their defaults --
-    // so each button's enabled state shows whether it would do anything.
+    // Footer buttons. BACK is always active; DEFAULTS only when the settings aren't
+    // already at their defaults, so its enabled state shows whether it would do anything.
+    // There is no SAVE: every change is saved as it is made.
     auto button = [&](const SDL_FRect& r, const char* label, bool on) {
         SDL_SetRenderDrawColor(ren_, on ? 60 : 34, on ? 66 : 38, on ? 86 : 46, 255);
         SDL_RenderFillRectF(ren_, &r);
@@ -1159,7 +1180,6 @@ void OptionsScreen::render(int winW, int winH) {
                       on ? SDL_Color{228, 232, 242, 255} : SDL_Color{110, 115, 125, 255});
     };
     button(defaultsRect_, "DEFAULTS", !atDefaults());   // disabled when already default
-    button(saveRect_, "SAVE", dirty_);
     button(backRect_, "BACK", true);
 
     // Open dropdown pop-up: drawn LAST so it sits above every control and the footer.
@@ -1197,6 +1217,25 @@ void OptionsScreen::render(int winW, int winH) {
         SDL_RenderSetClipRect(ren_, nullptr);
     }
     drawRestartPrompt(winW, winH);   // over everything, the open dropdown included
+    drawDefaultsPrompt(winW, winH);
+}
+
+// ---- DEFAULTS --------------------------------------------------------------------------
+
+void OptionsScreen::drawDefaultsPrompt(int winW, int winH) {
+    const std::vector<std::string> lines = page_ == OptionsPage::Voice
+        ? std::vector<std::string>{"EVERY VOICE CHAT SETTING GOES BACK TO ITS DEFAULT."}
+        : std::vector<std::string>{"EVERY OPTION HERE GOES BACK TO ITS DEFAULT.",
+                                   "YOUR PLAYER NAME AND GAME DATA FOLDER ARE KEPT."};
+    defaultsPrompt_.render(ren_, panel_, u_, winW, winH, "RESET TO DEFAULTS?", lines, "YES", "NO");
+}
+
+void OptionsScreen::defaultsPromptInput(const SDL_Event& e) {
+    if (defaultsPrompt_.input(e) != 1) return;   // NO / Esc: nothing changes
+    // One definition per page, shared with atDefaults().
+    s_ = page_ == OptionsPage::Voice ? tak::voiceDefaults(s_) : tak::preferenceDefaults(s_);
+    if (onChange_) onChange_();
+    persist();
 }
 
 // ---- GAME DATA FOLDER ----------------------------------------------------------------
@@ -1214,15 +1253,15 @@ void OptionsScreen::pollFolder() {
     switch (r->outcome) {
         case DataFolderPick::Cancelled: break;
         case DataFolderPick::Unchanged:    // the saved folder again: re-offer a pending restart
-            restartPrompt_ = dataFolderNeedsRestart(s_.dataDir, folder_.inUse);
+            restartPrompt_.open = dataFolderNeedsRestart(s_.dataDir, folder_.inUse);
             break;
         case DataFolderPick::Invalid:      // the setting is untouched
             folderNote_ = FolderNote::Invalid;
             folderNoteText_ = r->reason;
             break;
         case DataFolderPick::Accepted:
-            // Written straight away, and ONLY these keys (not the rest of this screen's
-            // unsaved edits): the folder is configuration, and Cartographer reads it too.
+            // Written straight away, and ONLY these keys (the file as it is, with this
+            // folder): the folder is configuration, and Cartographer reads it too.
             if (!saveDataFolderSetting(r->folder, r->manifest)) {
                 folderNote_ = FolderNote::SaveFailed;
                 folderNoteText_ = r->folder;
@@ -1231,9 +1270,9 @@ void OptionsScreen::pollFolder() {
             s_.dataDir = r->folder;
             s_.dataManifest = r->manifest;
             folderNote_ = FolderNote::Saved;
-            restartPrompt_ = dataFolderNeedsRestart(s_.dataDir, folder_.inUse);
+            restartPrompt_.open = dataFolderNeedsRestart(s_.dataDir, folder_.inUse);
             std::fprintf(stderr, "options: data folder set to %s%s\n", s_.dataDir.c_str(),
-                         restartPrompt_ ? " (restart required)" : "");
+                         restartPrompt_.open ? " (restart required)" : "");
             break;
     }
 }
@@ -1291,53 +1330,18 @@ void OptionsScreen::drawFolderRow(const Control& c) {
 }
 
 void OptionsScreen::drawRestartPrompt(int winW, int winH) {
-    if (!restartPrompt_) return;
-    SDL_SetRenderDrawColor(ren_, 0, 0, 0, 150);
-    SDL_FRect dim{0, 0, float(winW), float(winH)}; SDL_RenderFillRectF(ren_, &dim);
-    const float w = std::min(panel_.w - 40 * u_, 560 * u_), lpx = 1.6f * u_, tpx = 2.4f * u_;
-    std::vector<std::string> lines = {"THE GAME WILL USE", "", "AFTER IT RESTARTS. CARTOGRAPHER USES IT TOO."};
-    lines[1] = fitPath(s_.dataDir, lpx, w - 40 * u_);
-    if (dirty_) lines.push_back("YOUR UNSAVED OPTIONS ARE SAVED FIRST.");
-    const float h = 40 * u_ + float(lines.size()) * 14 * u_ + 64 * u_;
-    SDL_FRect box{panel_.x + (panel_.w - w) / 2, panel_.y + (panel_.h - h) / 2, w, h};
-    SDL_SetRenderDrawColor(ren_, 30, 33, 44, 252); SDL_RenderFillRectF(ren_, &box);
-    SDL_SetRenderDrawColor(ren_, 170, 180, 210, 255); SDL_RenderDrawRectF(ren_, &box);
-    const char* title = "GAME DATA FOLDER CHANGED";
-    uiText(ren_, title, box.x + (box.w - uiTextWidth(title, tpx)) / 2, box.y + 14 * u_, tpx,
-                  {235, 225, 180, 255});
-    for (size_t i = 0; i < lines.size(); ++i)
-        uiText(ren_, lines[i], box.x + (box.w - uiTextWidth(lines[i], lpx)) / 2,
-                      box.y + 40 * u_ + float(i) * 14 * u_, lpx,
-                      i == 1 ? SDL_Color{150, 200, 235, 255} : SDL_Color{205, 210, 222, 255});
-    const float bw = 170 * u_, bh = 32 * u_, gap = 18 * u_, by = box.y + box.h - bh - 14 * u_;
-    restartNowRect_ = {box.x + (box.w - 2 * bw - gap) / 2, by, bw, bh};
-    restartLaterRect_ = {restartNowRect_.x + bw + gap, by, bw, bh};
-    for (int i = 0; i < 2; ++i) {
-        const SDL_FRect& r = i ? restartLaterRect_ : restartNowRect_;
-        SDL_SetRenderDrawColor(ren_, i ? 60 : 62, i ? 66 : 92, i ? 86 : 80, 255); SDL_RenderFillRectF(ren_, &r);
-        SDL_SetRenderDrawColor(ren_, 130, 140, 170, 255); SDL_RenderDrawRectF(ren_, &r);
-        const char* label = i ? "LATER" : "RESTART NOW";
-        const float bpx = 2.2f * u_;
-        uiText(ren_, label, r.x + (r.w - uiTextWidth(label, bpx)) / 2, r.y + (r.h - 7 * bpx) / 2, bpx,
-                      {228, 232, 242, 255});
-    }
+    if (!restartPrompt_.open) return;
+    const float w = std::min(panel_.w - 40 * u_, 560 * u_);
+    const std::vector<std::string> lines = {"THE GAME WILL USE", fitPath(s_.dataDir, 1.6f * u_, w - 40 * u_),
+                                            "AFTER IT RESTARTS. CARTOGRAPHER USES IT TOO."};
+    restartPrompt_.render(ren_, panel_, u_, winW, winH, "GAME DATA FOLDER CHANGED", lines,
+                          "RESTART NOW", "LATER", 1);
 }
 
 bool OptionsScreen::restartPromptInput(const SDL_Event& e) {
-    auto in = [](const SDL_FRect& r, float x, float y) { return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h; };
-    bool now = false, later = false;
-    if (e.type == SDL_KEYDOWN) {
-        now = e.key.keysym.sym == SDLK_RETURN || e.key.keysym.sym == SDLK_KP_ENTER;
-        later = e.key.keysym.sym == SDLK_ESCAPE;
-    } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
-        now = in(restartNowRect_, float(e.button.x), float(e.button.y));
-        later = in(restartLaterRect_, float(e.button.x), float(e.button.y));
-    }
-    if (later) restartPrompt_ = false;   // the row keeps saying RESTART TO USE
-    if (!now) return false;
-    restartPrompt_ = false;
-    if (dirty_ && onSave_) { onSave_(); dirty_ = false; saved_ = true; }   // as the prompt said
-    restartRequested_ = true;
+    // LATER: the row keeps saying RESTART TO USE.
+    if (restartPrompt_.input(e) != 1) return false;
+    restartRequested_ = true;   // every other change is already saved
     return true;
 }
 

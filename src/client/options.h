@@ -2,8 +2,10 @@
 
 // A self-contained Options overlay, hosted by BOTH the main menu (MainMenu) and the
 // in-game Esc menu (GameView). It edits a tak::Settings live and calls onChange()
-// after every change so the host can apply it (audio / window / camera). It owns no
-// game state; volumes/speeds/scale are all local display prefs (never hashed).
+// after every change so the host can apply it (audio / window / camera), and onSave()
+// once each change is finished so the host writes the settings file: there is no SAVE
+// button. It owns no game state; volumes/speeds/scale are all local display prefs
+// (never hashed).
 
 #include <SDL.h>
 
@@ -13,6 +15,7 @@
 #include <vector>
 
 #include "client/datafolderpick.h"
+#include "client/promptbox.h"
 #include "client/settings.h"
 #include "client/uitext.h"
 
@@ -70,8 +73,11 @@ struct VoicePageHooks {
 class OptionsScreen {
 public:
     // ren: the app renderer. s: the settings to edit (mutated in place). onChange:
-    // invoked after any value change so the host applies it live. onSave: invoked when
-    // the user clicks SAVE (persist to disk). audioChannels: number of output channels
+    // invoked after any value change so the host applies it live. onSave: persist to
+    // disk, invoked once per finished change -- at once for a toggle, a dropdown pick or
+    // a confirmed DEFAULTS; when a slider is let go (not per drag step); when the player
+    // name loses focus (Enter, Tab, Esc, a click elsewhere, or the screen closing).
+    // audioChannels: number of output channels
     // to expose per-channel sliders for (0 = auto-detect the default device).
     // onAudioDevice: invoked when the user picks a DIFFERENT output device, so the host can
     // re-open its audio streams (SoundBank / menu music) on it live -- no restart. The
@@ -91,7 +97,7 @@ public:
                   std::function<void()> onHotkeys = {});
 
     ~OptionsScreen() {
-        if (nameEditing_) SDL_StopTextInput();
+        flushPending();   // a name being typed, or a slider still held, when the host closes it
         if (voice_.monitor) voice_.monitor(false);
     }
 
@@ -105,8 +111,7 @@ public:
     }
 
     // Feed one SDL event. Returns true when the user leaves (Esc / BACK); the host
-    // should then stop showing the screen. Persisting is explicit (the SAVE button
-    // fires onSave); BACK does not save.
+    // should then stop showing the screen. Everything is saved by then (see onSave).
     bool input(const SDL_Event& e, int winW, int winH);
 
     // Draw the overlay (call after the host's own frame so it sits on top).
@@ -121,17 +126,10 @@ public:
     // host then closes this screen and opens the voice page in its place.
     void offerVoicePage() { showVoice_ = true; build(channels_); }
     bool voiceRequested() const { return voiceRequested_; }
-    // Unsaved changes, and whether SAVE wrote the settings file while this screen was up.
-    // A host leaving the general page for VOICE CHAT carries the first across, so the
-    // general page it reopens on the voice page's BACK still offers SAVE -- unless the
-    // voice page's own SAVE (which writes every setting) already did.
-    bool dirty() const { return dirty_; }
-    bool saved() const { return saved_; }
-    void markDirty() { dirty_ = true; }
 
     // For the in-process UI tests: a row's rectangle as last laid out (nullptr if no row
-    // has that label), the data-folder row's status line, and the restart prompt's
-    // buttons (empty rects while it is closed).
+    // has that label), the data-folder row's status line, the footer's DEFAULTS button,
+    // and the restart and DEFAULTS prompts' buttons (empty rects while they are closed).
     const SDL_FRect* rowRect(const std::string& label) const {
         for (auto& c : ctls_) if (c.label == label && c.kind != Control::Section) return &c.row;
         return nullptr;
@@ -148,8 +146,11 @@ public:
     }
     std::string folderStatus() const { return folderStatusText(); }
     bool folderPicking() const { return folderPick_.busy(); }
-    SDL_FRect restartNowRect() const { return restartPrompt_ ? restartNowRect_ : SDL_FRect{}; }
-    SDL_FRect restartLaterRect() const { return restartPrompt_ ? restartLaterRect_ : SDL_FRect{}; }
+    SDL_FRect restartNowRect() const { return restartPrompt_.open ? restartPrompt_.first : SDL_FRect{}; }
+    SDL_FRect restartLaterRect() const { return restartPrompt_.open ? restartPrompt_.second : SDL_FRect{}; }
+    SDL_FRect defaultsRect() const { return defaultsRect_; }
+    SDL_FRect defaultsYesRect() const { return defaultsPrompt_.open ? defaultsPrompt_.first : SDL_FRect{}; }
+    SDL_FRect defaultsNoRect() const { return defaultsPrompt_.open ? defaultsPrompt_.second : SDL_FRect{}; }
 
 private:
     struct Control {
@@ -169,10 +170,17 @@ private:
         SDL_FRect row{};                          // filled by layout()
     };
 
+    bool handle(const SDL_Event& e, int winW, int winH);   // input() less the flush on leaving
     void build(int audioChannels);
     void buildVoice();                            // the VOICE CHAT page's rows
     void layout(int winW, int winH);
     void commit(Control& c, float mx);            // set a slider from a mouse x
+    void persist() { if (onSave_) onSave_(); }    // write the settings file now
+    // Finish what is still in progress -- the player name being typed, a slider still
+    // held -- and save it if it changed. Called on leaving, and by the destructor.
+    void flushPending();
+    void endNameEdit();                           // the name field loses focus: save a change
+    void endDrag();                               // the held slider is let go: save a change
 
     // Rebuild the control list (called deferred, outside the input/render loops) after a
     // device change so the SPEAKER sliders match the new device's channel count.
@@ -223,12 +231,12 @@ private:
     bool pendingRebuild_ = false;       // a device change asked for a deferred control rebuild
     std::vector<Control> ctls_;
     bool nameEditing_ = false, nameSelectAll_ = false;
+    bool nameChanged_ = false;   // the name was edited since its field took focus (unsaved)
     void appendPlayerName(const std::string& text);
-    bool dirty_ = false;    // unsaved changes since the last save/open -> SAVE enabled
-    bool saved_ = false;    // SAVE has written the settings since this screen opened
     float scroll_ = 0;      // content scroll offset (px)
     float contentH_ = 0;    // total laid-out content height
     int drag_ = -1;         // index of the slider being dragged, or -1
+    float dragFrom_ = 0;    // its value when it was pressed (saved on release if it moved)
     float hoverX_ = -1, hoverY_ = -1;   // last pointer position (help text for the row under it)
     void drawHelp(const Control& c);    // the hovered row's help lines in a box beside it
 
@@ -238,14 +246,17 @@ private:
     DataFolderPicker folderPick_;
     enum class FolderNote { None, NoPicker, Invalid, Saved, SaveFailed } folderNote_ = FolderNote::None;
     std::string folderNoteText_;        // Invalid: the reason; SaveFailed: the folder
-    bool restartPrompt_ = false, restartRequested_ = false;
-    SDL_FRect restartNowRect_{}, restartLaterRect_{};
+    PromptBox restartPrompt_;           // RESTART NOW / LATER
+    bool restartRequested_ = false;
     void clickFolder();                 // the row was clicked: start the picker
     void pollFolder();                  // fold in a finished pick (input() and render())
     std::string folderStatusText() const;
     void drawFolderRow(const Control& c);
     void drawRestartPrompt(int winW, int winH);
     bool restartPromptInput(const SDL_Event& e);   // true = leave Options (RESTART NOW)
+    PromptBox defaultsPrompt_;          // DEFAULTS asks first: RESET TO DEFAULTS? YES / NO
+    void drawDefaultsPrompt(int winW, int winH);
+    void defaultsPromptInput(const SDL_Event& e);
     int openDrop_ = -1;     // index of the open Dropdown control (-1 = none)
     float dropScroll_ = 0;  // scroll offset (px) INSIDE the open dropdown's option list
     std::vector<std::string> devSnapshot_;   // output devices ([0]="" system default, rest A-Z)
@@ -257,7 +268,7 @@ private:
     float voiceLabelW_ = 0;   // widest chip/meter row label on the VOICE CHAT page, at 2.0 (per u)
     float u_ = 1.0f;        // layout unit (scaled to window)
     SDL_FRect panel_{};     // the panel rect (for scroll clamping)
-    SDL_FRect defaultsRect_{}, saveRect_{}, backRect_{};   // footer buttons (filled by layout())
+    SDL_FRect defaultsRect_{}, backRect_{};   // footer buttons (filled by layout())
 };
 
 }  // namespace tak
