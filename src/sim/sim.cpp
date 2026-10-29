@@ -2978,11 +2978,12 @@ void World::planLegionFlightStations() {
         if (!b->advancing) b->advancing=engaged ||
             (legion_ && legion_->unitState(u.id) ? legion_->advancing(u.id,LegionNavigator::kStationStall) : u.speed>Fixed());
         // Direction of travel: the sum of the busy members' unit vectors
-        // (16.16), the way a moving member steps (so a column turning round
-        // a wall turns its front with it) and toward its current leg for one
-        // standing still.
+        // (16.16), the way a moving member's route heads it (its course: its
+        // body faces its own steps, sideways round a body too; so a column
+        // turning round a wall turns its front with it) and toward its
+        // current leg for one standing still.
         if (u.speed>Fixed()) {
-            const auto step=retailGroundStep(u.heading,Fixed::fromInt(1));
+            const auto step=retailGroundStep(legion_ ? legion_->course(u) : u.heading,Fixed::fromInt(1));
             b->dx+=step.s.v;b->dz+=step.c.v;   // (x, z)
             continue;
         }
@@ -13143,8 +13144,11 @@ void World::updateLegionStill(Unit& u,Fixed beforeX,Fixed beforeZ) {
     if (size_t(u.id)>=legionWindow_.size()) legionWindow_.resize(size_t(u.id)+1);
     const int32_t rate=int32_t(std::max<int64_t>(1,int64_t(uint16_t(std::max(u.type->turnRate,u.type->turnInPlaceRate)))*
                                                     groundTerrainMultiplier(u).v/65536));
+    // A Legion member's turn is its course's (LegionNavigator::courseTurnCorrection): its body faces its
+    // steps, and turning to a sideways step is no headway.
+    const int32_t course=legion_?legion_->courseTurnCorrection(u.id):0;
     legionWindow_[size_t(u.id)].tick(u.legionWindow,u.legionStill,u.legionShuffle,beforeX.v,beforeZ.v,u.x.v,u.z.v,
-        std::bit_cast<int16_t>(uint16_t(uint16_t(u.heading.v)-u.tickStartHeadingBam)),u.baseSpeed.v,rate,
+        std::bit_cast<int16_t>(uint16_t(uint16_t(u.heading.v)-u.tickStartHeadingBam+course)),u.baseSpeed.v,rate,
         std::max(u.type->footX,u.type->footZ));
     // A standing body requests no turn either: the display VM's TurnDirection
     // (the zontroll/zongob MoveWatcher walks on its last argument) stays quiet.

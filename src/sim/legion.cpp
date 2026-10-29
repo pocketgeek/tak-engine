@@ -1021,9 +1021,21 @@ struct LegionNavigator::Impl {
         bool detourFace=true;             // side-step turns the body (keep-right) or not (shuffle)
         bool detourPass=false;            // side-step is a lane-discipline pass (moves at travel speed)
         // The side-step is a formation member's flow-around shuffle on a move-like or fight leg (drive's
-        // blocked branch): walked unturned at travel speed, not at the facing cap (see drive and the detour
-        // walk in move). Hashed while set.
+        // blocked branch): walked with its course unturned at travel speed, not at the facing cap (see drive
+        // and the detour walk in move). Hashed while set.
         bool detourFlow=false;
+        // Facing (2026-10-28): the body faces the way it actually goes, its slides round bodies and walls
+        // too (user: "make them face in the direction they are actually going"). faceX/faceZ: its last
+        // steps (16.16 px), averaged over about kFaceAverage updates; faceLen: their average length. course:
+        // the heading the facing cap measures (drive), turned by the route rule the body's heading used to
+        // follow, so pacing is unchanged; faced: the heading drive last left on the body (-1 none): anything
+        // else that turned the body since (an aiming weapon braking it, an escape, a new leg) hands the
+        // course that heading, as it did the body's. Hashed.
+        int32_t faceX=0,faceZ=0,faceLen=0,faced=-1;Bam course;
+        // The course's turn less the body's on this tick's drive (turnTick), which World::updateLegionStill
+        // adds back (courseTurnCorrection): headway is judged by the course, as before facing. Read on the
+        // tick it is written only, so not hashed.
+        uint32_t turnTick=kNoTick;int32_t turnDelta=0;
         uint32_t passUntil=0;             // tick until which a passing body keeps its new lane
         int8_t passRX=0,passRZ=0;         // the side it moved over to
         std::tuple<int,uint32_t,int32_t,int32_t> point{}; // player, command (convoy) tick, requested point
@@ -13135,11 +13147,16 @@ struct LegionNavigator::Impl {
         // Motion follows the legal direction exactly; speed is limited while
         // the body still faces away from it, so turning never sweeps the
         // footprint off the proved line (no orbiting, no wall pushing).
+        // Since the facing of 2026-10-28 that heading is the member's course
+        // (Member::course): `face` and every step this file calls unturned
+        // turn or keep the course, and the body faces its steps (faceMotion).
         const Fixed multiplier=w.groundTerrainMultiplier(u);
         const auto wanted=retailHeadingToPort(uint16_t(retailDirection(u.x-aimX,u.z-aimZ).v));
-        const int32_t diff=retailTurnRequest(wanted,u.heading);
+        if(m.faced!=int32_t(u.heading.v))m.course=u.heading;
+        const int32_t diff=retailTurnRequest(wanted,m.course);
         const int32_t turn=std::max(int32_t(1),int32_t(int64_t(uint16_t(std::max(u.type->turnRate,u.type->turnInPlaceRate)))*multiplier.v/65536));
         Fixed cap=retailGroundSpeedCap(maximum*multiplier,u.groundPitch,0);
+        const Fixed full=cap;
         const int32_t facing=std::abs(diff);
         // A lane-discipline pass slides one cell over without turning (turning
         // there read as spinning in a jam); it keeps travel speed, as do a
@@ -13180,7 +13197,7 @@ struct LegionNavigator::Impl {
                 if(!o||o==u.id)continue;
                 const Unit* other=w.unit(o);
                 if(other&&other->player==u.player&&other->speed>Fixed()&&other->speed<speed&&int64_t(other->speed.v)*2>=cap.v&&
-                   std::abs(retailTurnRequest(other->heading,u.heading))<8192)lead=other;
+                   std::abs(retailTurnRequest(courseOf(*other),m.course))<8192)lead=other;
             }
             if(lead)speed=fxMax(lead->speed,Fixed::raw(std::max(1,speed.v/2)));
         }
@@ -13293,8 +13310,8 @@ struct LegionNavigator::Impl {
                     nx=footprintOrigin(u.x+sx,fx);nz=footprintOrigin(u.z+sz,fz);
                     if(stepFree(u,ox,oz,nx,nz)) {
                         // Commit to finishing this step into the cell
-                        // (hysteresis): no re-deciding mid-cell, and the body
-                        // keeps facing its route while it shuffles.
+                        // (hysteresis): no re-deciding mid-cell, and the course
+                        // keeps to its route while it shuffles.
                         moved=true;++stats.slides;face=false;
                         m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;m.detourPass=false;
                         // A fight leg's shuffles too (round 4, 2026-10-20): the column
@@ -13377,16 +13394,63 @@ struct LegionNavigator::Impl {
             if(!rf)if(const auto g=groups.find(m.group);g!=groups.end()&&g->second.route().usable())rf=g->second.route();
             if(rf)updateClaim(u,m,p,rf,cx,cz);
         }
-        // A small dead band keeps the body from twitching left and right as
+        // A small dead band keeps the course from twitching left and right as
         // its string-pulled aim shifts by a cell in a crowd; motion is exact
         // regardless, and a real course change (> ~5.6 deg) still turns.
-        if(face&&std::abs(diff)>1024)u.heading=u.heading+Bam(std::clamp(diff,-turn,turn));
-        // A step that does not turn the body requests no turn of its
-        // scripts either (TurnDirection walks the zontroll/zongob gait).
-        u.turnReqBam=face?diff:0;
+        const Bam courseWas=m.course,headingWas=u.heading;
+        if(face&&std::abs(diff)>1024)m.course=m.course+Bam(std::clamp(diff,-turn,turn));
+        // The body itself faces the way it actually went (faceMotion).
+        u.turnReqBam=faceMotion(u,m,int64_t(u.x.v)-beforeX.v,int64_t(u.z.v)-beforeZ.v,wanted,face,turn,full);
+        m.faced=int32_t(u.heading.v);
+        if(m.turnTick!=w.tickCounter_) {m.turnTick=w.tickCounter_;m.turnDelta=0;}
+        m.turnDelta+=int32_t(int16_t(uint16_t((m.course-courseWas).v)))-int32_t(int16_t(uint16_t((u.heading-headingWas).v)));
         // A reach member leaving its ring spot, or a member leaving a jam (stage 7), is no soft obstacle any more.
         if(m.state==Holding)unstamp(u.id);
         m.state=Moving;m.heldSince=kNoTick;m.holdUpdates=0;
+    }
+    // Facing (2026-10-28, user: "when a unit is kinda sliding around something that's fine, but make them
+    // face in the direction they are actually going"). Until then the body turned only on a committed step
+    // toward its route: flow-around shuffles, passes in a dense block, detour routes, press walks and moves
+    // over at a merge walked unturned, sideways or backward against its facing. Retail's mover steps along
+    // its heading (4dba80, World::steerGround), so a Retail body always faces its motion. A committed step
+    // (face) still turns the body toward its route, as its course turns, and a body back within a turn of
+    // its course takes the course itself (so a new leg, a brake or a leader test reads the heading it read
+    // before facing, not a residue of the dead band). An unturned step at a quarter of
+    // travel speed or more (kFacePace: a travel-speed shuffle, pass, detour walk or move over) turns it, at
+    // its turn rate and with the route rule's 5.6 deg dead band, toward its actual motion averaged over about
+    // kFaceAverage updates (Member::faceX), when that average shows a way: at least kFaceFloor, and at least
+    // half the mean step length (a dodge one way and back nets nothing and turns nothing). A creep at the
+    // facing cap (a side-step in a jam) stays unturned: turning 90 deg to it and back is the spin the
+    // crowdheld acceptance forbids. It turns only on a step it made, so a held, stuck or trapped body never
+    // turns in place. A body aiming a weapon that needs its facing (Unit::faceRequest) and a member of a
+    // fight, attack, guard or patrol leg keep the route rule: their facing serves their weapons (its shots
+    // wait on it, and retail scores targets by the turn from it, 412a77); turned to its sideways steps a
+    // fight column fired later and planned more (battle-assault's contact window: field work +12%, ring
+    // slot searches +18%, past the AR-06 combat-lag tolerance). Returns the turn requested of its scripts.
+    // The heading a body's moves are judged by (a leader's way, opposing traffic): a member's course while
+    // its body still has the heading drive left on it, else the body's heading, as before facing.
+    Bam courseOf(const Unit& u) const {
+        const Member* m=member(u.id);
+        return m&&m->faced==int32_t(u.heading.v)?m->course:u.heading;
+    }
+    static constexpr int64_t kFaceAverage=4;
+    static constexpr int64_t kFaceFloor=Fixed::kOne/32,kFacePace=4;
+    int32_t faceMotion(Unit& u,Member& m,int64_t sx,int64_t sz,Bam wanted,bool face,int32_t turn,Fixed full) const {
+        const int64_t step=int64_t(isqrtFloor(uint64_t(sx*sx+sz*sz)));
+        m.faceX+=int32_t((sx-m.faceX)/kFaceAverage);m.faceZ+=int32_t((sz-m.faceZ)/kFaceAverage);
+        m.faceLen+=int32_t((step-m.faceLen)/kFaceAverage);
+        int32_t diff=0;
+        if(face) {
+            diff=retailTurnRequest(wanted,u.heading);
+            if(std::abs(retailTurnRequest(m.course,u.heading))<=std::max(turn,int32_t(2048))) {u.heading=m.course;return diff;}
+        }
+        else if(u.faceRequest<0&&!engagesEnemies(m.kind)&&kFacePace*step>=full.v) {
+            const int64_t fx=m.faceX,fz=m.faceZ,net=int64_t(isqrtFloor(uint64_t(fx*fx+fz*fz)));
+            if(net>=kFaceFloor&&2*net>=m.faceLen)
+                diff=retailTurnRequest(retailHeadingToPort(uint16_t(retailDirection(Fixed::raw(int32_t(-fx)),Fixed::raw(int32_t(-fz))).v)),u.heading);
+        }
+        if(std::abs(diff)>1024)u.heading=u.heading+Bam(std::clamp(diff,-turn,turn));
+        return diff;
     }
     // Room at a merge (Legion ~100 round 4, 2026-10-20). A formation descending its field into a convex corner
     // packs into the wedge between the corner and the shortest line past it: its outer files walk that line in
@@ -13631,7 +13695,7 @@ struct LegionNavigator::Impl {
         }
         const Unit* other=blocker?w.unit(blocker):nullptr;
         bool opposing=other&&!other->orders.empty()&&
-            std::abs(retailTurnRequest(other->heading,u.heading))>16384;
+            std::abs(retailTurnRequest(courseOf(*other),courseOf(u)))>16384;
         // Opposing by intent too: the blocker's way to its own goal points
         // back against this body's, and neither is inside its destination
         // area (there bodies head for their own slots in every direction;
@@ -14507,6 +14571,7 @@ struct LegionNavigator::Impl {
             if(m.pressX!=kNoPress) {h=mix(h,0x7072657373ull);h=mix(h,uint32_t(m.pressX));h=mix(h,uint32_t(m.pressZ));h=mix(h,m.pressTicks);}
             if(m.want>=0) {h=mix(h,0x77616e74ull);h=mix(h,uint64_t(uint32_t(m.want)));h=mix(h,m.wantTick);}
             h=mix(h,uint64_t(m.slot));h=mix(h,uint64_t(m.detour));h=mix(h,m.detourTicks);h=mix(h,m.detourFace);h=mix(h,m.detourPass);if(m.detourFlow)h=mix(h,0x666c6f77ull);h=mix(h,m.passUntil);h=mix(h,uint64_t(m.detourBest));h=mix(h,uint64_t(uint8_t(m.passRX))|uint64_t(uint8_t(m.passRZ))<<8);
+            if(m.faced>=0) {h=mix(h,0x66616365ull);h=mix(h,uint64_t(uint32_t(m.faceX))|uint64_t(uint32_t(m.faceZ))<<32);h=mix(h,uint64_t(uint32_t(m.faceLen))|uint64_t(uint32_t(m.faced))<<32);h=mix(h,uint32_t(m.course.v));}
             h=mix(h,m.trappedSince);h=mix(h,m.trappedEpoch);h=mix(h,m.windowTick);h=mix(h,uint64_t(m.windowDist));h=mix(h,m.stillSince);
             if(m.windowGoal>=0) {h=mix(h,0x77736c6f74ull);h=mix(h,uint64_t(m.windowSlotDist));h=mix(h,uint64_t(uint32_t(m.windowGoal)));}
             if(m.settleP||m.queued||m.rechoices) {h=mix(h,0x736574746c65ull);h=mix(h,m.settleP);h=mix(h,uint64_t(m.queued)|uint64_t(m.rechoices)<<8);}
@@ -14766,6 +14831,11 @@ uint32_t LegionNavigator::staleStall(int id) const {
     const auto& m=found->second;
     const uint32_t now=impl_->w.tickCount();
     return m.movedTick==now&&m.headTick==now&&m.stallTick!=now?now-m.stallTick:0;
+}
+Bam LegionNavigator::course(const Unit& u) const {return impl_->courseOf(u);}
+int32_t LegionNavigator::courseTurnCorrection(int id) const {
+    const auto* m=impl_->member(id);
+    return m&&m->turnTick==impl_->w.tickCount()?m->turnDelta:0;
 }
 int LegionNavigator::routeLength(int id) const {
     const auto found=impl_->members.find(id);

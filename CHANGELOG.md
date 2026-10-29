@@ -19,6 +19,14 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+*protocol 303 (Legion state changes: needs a protocol bump before release)*
+
+- **Legion pathfinding:** units sliding round other units and walls face
+  the way they actually move instead of their route's direction (units on
+  fight, attack, guard and patrol orders keep facing their way to fight);
+  sideways and backward walking falls by about two thirds.
+
 ## 0.9.10
 *2026-10-28 · protocol 303 · replay format 15 · plays with 0.9.9, and its replays*
 

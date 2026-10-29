@@ -2090,6 +2090,73 @@ void stillturn() {
     check(flatTurn==0,"a step that turned nothing requested a turn");
 }
 
+// Facing (2026-10-28, user: "when a unit is kinda sliding around something
+// that's fine, but make them face in the direction they are actually going").
+// A crowd rounds a wall end (the slideback world) and a group rounds a
+// standing block of another player's idle bodies (staticblock): the bodies
+// shuffle, side-step and walk detours round each other and the block. Every
+// step of over a quarter pixel is compared with the body's heading after it:
+// off by more than 45 degrees it is sideways, by more than 90 backward. On
+// 5b7a4f97 (shuffles, side-steps and detour routes walked unturned) the wall
+// end had 35 sideways and 4 backward steps per 1000 and the block 69 / 11;
+// facing its steps, 9 / 1 and 16 / 3, arriving on the same ticks. The body
+// still never turns in place (spins) and everyone arrives.
+struct FacingCount {int64_t steps=0,sideways=0,backward=0;int arrived=0,ticks=0;uint64_t spins=0;};
+FacingCount facingRun(Fixture& f,const std::vector<int>& ids,int limit) {
+    FacingCount c;Watch motion;
+    std::map<int,std::pair<int32_t,int32_t>> before;
+    for(;c.ticks<limit&&c.arrived<int(ids.size());++c.ticks) {
+        for(int id:ids) {const auto& u=*f.world.unit(id);before[id]={u.x.v,u.z.v};}
+        f.world.tick(1.f/30);motion.observe(f.world,ids);
+        c.arrived=0;
+        for(int id:ids) {
+            const auto& u=*f.world.unit(id);
+            c.arrived+=u.orders.empty();
+            if(u.orders.empty())continue;
+            const int64_t dx=int64_t(u.x.v)-before[id].first,dz=int64_t(u.z.v)-before[id].second;
+            if(dx*dx+dz*dz<=int64_t(16384)*16384)continue;
+            const auto way=retailHeadingToPort(uint16_t(retailDirection(Fixed::raw(int32_t(-dx)),Fixed::raw(int32_t(-dz))).v));
+            const int32_t off=std::abs(retailTurnRequest(way,u.heading));
+            ++c.steps;c.sideways+=off>8192;c.backward+=off>16384;
+        }
+    }
+    c.spins=motion.spins();
+    return c;
+}
+void facing() {
+    auto report=[](const char* name,const FacingCount& c,size_t n) {
+        std::printf("facing %s arrived=%d/%zu ticks=%d steps=%lld sideways=%lld backward=%lld permille=%lld/%lld spins=%llu\n",name,c.arrived,n,c.ticks,
+            (long long)c.steps,(long long)c.sideways,(long long)c.backward,(long long)(c.steps?c.sideways*1000/c.steps:0),
+            (long long)(c.steps?c.backward*1000/c.steps:0),(unsigned long long)c.spins);
+        check(c.arrived==int(n),"facing: the group did not arrive");
+        check(c.steps>1000,"facing: the group hardly moved (no test)");
+        check(c.spins==0,"facing: a body turned in place");
+        check(c.sideways*1000<=c.steps*25,"facing: bodies walked sideways against their facing");
+        check(c.backward*1000<=c.steps*5,"facing: bodies walked backward against their facing");
+    };
+    {
+        Fixture f(320,140);
+        f.rect(98,48,4,92);f.publish();
+        const auto type=mover(2);
+        std::vector<int> ids;
+        for(int i=0;i<64;++i)ids.push_back(f.spawn(type,40+(i%8)*3,96+(i/8)*3));
+        f.start();
+        for(int id:ids)f.world.order(id,220*16,60*16,false);
+        report("wallend",facingRun(f,ids,8000),ids.size());
+    }
+    {
+        Fixture f(200,100);f.publish();
+        const auto type=mover(2);
+        std::vector<int> ids;
+        for(int c=0;c<10;++c)for(int r=0;r<12;++r)f.spawn(type,92+c*3,32+r*3,1);
+        for(int i=0;i<40;++i)ids.push_back(f.spawn(type,20+(i%8)*3,44+(i/8)*3));
+        f.start();
+        for(int t=0;t<90;++t)f.world.tick(1.f/30);
+        for(int id:ids)f.world.order(id,160*16,50*16,false);
+        report("block",facingRun(f,ids,4000),ids.size());
+    }
+}
+
 // A member whose own goal lies inside a lattice of settled same-player
 // arrivals (2x2 bodies at a 3-cell stride: the 1-cell gaps fit no body). The
 // way in exists only if the settled bodies yield. It must ask them to, and
@@ -4313,7 +4380,7 @@ int main(int argc,char** argv) {
         {"pinwheel",pinwheel},{"lanegeom",lanegeom},{"landedflyers",landedflyers},{"mixedformation",mixedformation},{"flyerfront",flyerfront},{"liftflyers",liftflyers},{"aware",aware},
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
-        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"mixedrandom",mixedrandom},{"funnelmouth",funnelmouth},{"funneltie",funneltie},{"entryplanes",entryplanes},
+        {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"facing",facing},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"mixedrandom",mixedrandom},{"funnelmouth",funnelmouth},{"funneltie",funneltie},{"entryplanes",entryplanes},
         {"improvedefer",improvedefer},{"chainresolve",chainresolve},{"trafficlane",trafficlane}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}

@@ -313,8 +313,8 @@ stopped permille 288,524 to 288,538, Legion work flat.
   **flows around** the blockage by stepping to any free legal neighbour that
   strictly reduces its distance still to go. The step is committed until the
   new cell is entered. It moves only along the axis whose origin changes,
-  never back toward a cell centre, and it does not turn the body; this is a
-  shuffle. Speed follows the facing cap, except that a formation member on a
+  never back toward a cell centre, and it does not turn the body's course (at
+  travel speed the body faces its steps: "Facing follows motion" below); this is a shuffle. Speed follows the facing cap, except that a formation member on a
   move-like leg walks the shuffle at travel speed (`Member::detourFlow`, since
   2026-10-19: "Flow-around at travel speed" below). A flat half-speed shuffle was
   measured to gridlock opposing columns, and at travel speed two allied armies
@@ -330,14 +330,14 @@ stopped permille 288,524 to 288,538, Legion work flat.
   goal points back at this body by more than about 112° (judged by goal
   direction, not heading, so a body that has not turned yet is not
   oncoming), the body commits to a one-cell step to its right, forward-right
-  first, then straight right. The step does not turn the body and keeps
+  first, then straight right. The step does not turn the course and keeps
   travel speed. For the next 300 ticks (`kPassHold`) a direct-line body keeps
   walking straight in its new lane, and the flow-around shuffle may not step
   back across the lane it left. No pass happens within 12 cells of either
   body's goal, where bodies are packing into place.
 * **Opposing traffic, in contact**: after 6 held updates against a body with
   orders facing more than 90° away, the unit commits to one lateral step to
-  its own right. The step does not turn the body (turning 90° and back in a
+  its own right. The step does not turn the course (turning 90° and back in a
   jam read as spinning) and times out after 45 ticks. Same-direction queues
   never side-step.
 * **Walled in by still bodies** (settled arrivals, a held queue, trapped or
@@ -346,7 +346,7 @@ stopped permille 288,524 to 288,538, Legion work flat.
   footprint touches no still body. The target is its own goal if it is inside
   the window, otherwise the reachable cell that most reduces its distance to
   go, and only a gain of about two cells is committed. The route is walked
-  cell by cell without turning the body: at travel speed while 4 or more of
+  cell by cell without turning the course: at travel speed while 4 or more of
   its cells are left (`kBriskRoute`; a move-like order only, a reach kind's
   detour round its own ring keeps the shuffle), otherwise at the unturned
   facing cap (an eighth of travel speed). It is attempted only when the
@@ -4774,6 +4774,62 @@ Rejected on the way (gate medians on Linux unless said; each switched by a debug
 What is left: merge waits of 300-500 ticks (the ~200 aimed at is not met), the crowd's packing before the corner
 (standing 232 against Retail's 1; lanes formed before the corner, or a clearance cost on the field that keeps the inner
 files out of the rock comb, are the other directions), and the pinwheel's one-cell aim at (82,55).
+
+### Facing follows motion (2026-10-28, task-legion-facing)
+
+The user's report: "when a unit is kinda sliding around something that's fine, but make them face in the direction
+they are actually going." Until then a Legion body turned only on a committed step toward its route, at its turn rate;
+flow-around shuffles, passes inside a dense block, side-steps, detour routes, press walks and moves over at a merge
+walked unturned, sideways or backward against the facing (turning toward each such step was measured as spinning,
+rounds 2-4 above).
+
+**Retail first.** Retail's mover (4dba80, with the turn clamp at 4d91b0 and the step at 4dab0d / 4dab2b, ported
+as `World::steerGround` and `retailGroundStep`) turns the heading toward its steering point and steps along the
+heading, so a Retail body always faces where it goes; the only exception is the blocked step's per-axis clamp (a
+slide along a wall). High confidence: the port is checked against emulation (docs/pathfinding-port.md).
+
+**The change** (`drive` and `faceMotion` in legion.cpp). The heading the route rule used to turn is now the
+member's *course* (`Member::course`): it still sets the facing cap, the leader test and the opposing-traffic test, so
+pacing and every decision are as before. A committed step toward the route still turns the body toward it, as it
+turns the course, and a body back within a turn of its course takes the course itself: a new leg starts its course
+from the body's heading, and a residue inside the dead band moved a patrol's turn-round enough to stall a flyer
+window in `legion_mixedformation`. An unturned step at a quarter of travel speed or more (`kFacePace`: a
+travel-speed flow-around shuffle, a pass, a detour walk, a move over at a merge) turns the body, at its turn rate and with the same 5.6 deg dead
+band, toward its actual motion averaged over about 4 updates, when that average shows a way (at least 1/32 px, and
+at least half the mean step length: a dodge one way and back nets nothing and turns nothing). It turns only on a
+step it made, so a held, stuck or trapped body never turns in place. A body aiming a weapon that needs its facing
+(`Unit::faceRequest`) and a member of a fight, attack, guard or patrol leg keep the route rule: their facing serves
+their weapons (shots wait on it, and retail scores targets by the turn from it, 412a77). Two readers that judged
+the route by the body's heading read the course instead: `World::updateLegionStill`'s headway window (`courseTurnCorrection`: a turn toward a sideways step is no
+headway and no to-and-fro) and the formation flyers' direction of travel (`planLegionFlightStations`; reading the
+facing there stalled a patrol's flyer in `legion_mixedformation`).
+
+Three variants were measured and dropped. Averaged motion for every step, committed ones included: a body reversing
+its route crept backward at the facing cap for ~8 updates before its average flipped (`legion_ringroutespeed`:
+statue ticks 14 -> 590). Turning on creeps at the
+facing cap too: a side-step in a jam turned the body 90 deg and back (`legion_acceptance` crowdheld: 10 spin
+unit-ticks while crowd-held, must be 0). Facing motion on fight, attack, guard and patrol legs too: battle-assault's
+contact window planned more (field work +12%, ring slot searches +18%, past the AR-06 combat-lag tolerance) and
+fight-retarget parked more (parked_held 0 -> 38 at offset 0).
+So a creep sideways (a side-step, a shuffle at the cap), a yield step
+(`serviceYields`) and a body on an engaging leg still slide unturned.
+
+**Measured** (31 fixtures: tools/scenarios/legion100 plus motion-open/wall/cross, staticblock-other, densehead,
+corner-8x56, attackring-f1-64, battle-field-2x60 and uturn; offset 0; Retail / before / after):
+
+| Key | Retail | Before | After |
+|---|---|---|---|
+| sideways | 277,784 | 395,217 | 127,299 |
+| backward | 9,722 | 86,133 | 28,674 |
+| spins | 175,212 | 3,091 | 3,091 |
+| reversals | 10,452 | 2,541 | 2,541 |
+| stop_go | 155,668 | 64,470 | 64,470 |
+| statue_ticks | 14,446 | 158,537 | 158,708 |
+
+Arrivals, t90 and done are identical in all 31, and so are spins, reversals and stop-go. `legion_facing` (a crowd round a wall end and a
+group round a standing block): sideways steps 35 and 69 per 1,000 before, 9 and 16 after; backward 4 and 11, 1 and
+3; arrival ticks unchanged. Legion state hashes change where a body slides at speed (the scenario gate's `hash@`
+keys); Retail's do not, and the seven `--mpai` gates on Inner Circle keep their hashes.
 
 ### Legion 10,000: where the program left it
 
