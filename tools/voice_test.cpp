@@ -562,14 +562,15 @@ static void testPage() {
         click("OUTPUT VOLUME", 0.25f);
         click("PUSH TO TALK", 0.98f);
         click("OUTPUT DEVICE", 0.9f);
-        check(s.voiceMicVolume == 100 && s.voiceOutputVolume == 100 && hotkeys == 0 && changes == 0,
+        check(s.voiceMicVolume == 100 && s.voiceOutputVolume == 100 && hotkeys == 0 && changes == 0 && saves == 0,
               "greyed rows ignore clicks");
         // Switch on: every row comes alive.
         click("VOICE CHAT", 0.95f);
-        check(s.voiceEnabled && changes == 1, "the switch turns voice chat on");
+        check(s.voiceEnabled && changes == 1 && saves == 1, "the switch turns voice chat on, saved at once");
         for (const char* r : rows) check(page.rowEnabled(r), std::string(r) + " is live once on");
         click("MIC VOLUME", 0.25f);
         check(s.voiceMicVolume >= 23 && s.voiceMicVolume <= 27, "MIC VOLUME 0..100: " + std::to_string(s.voiceMicVolume));
+        check(saves == 2, "a slider click saves once, on release: " + std::to_string(saves));
         click("OUTPUT VOLUME", 0.75f);
         check(s.voiceOutputVolume >= 73 && s.voiceOutputVolume <= 77, "OUTPUT VOLUME 0..100");
         click("PUSH TO TALK", 0.98f);
@@ -588,6 +589,7 @@ static void testPage() {
         }
         check(s.voiceActivation && page.rowEnabled("ACTIVATION LEVEL") && !page.rowEnabled("PUSH TO TALK"),
               "Voice Activation: ACTIVATION LEVEL comes alive, the key row greys");
+        check(saves == 4, "a TALK MODE pick is saved at once: " + std::to_string(saves));
         click("ACTIVATION LEVEL", 0.4f);
         check(s.voiceActivationLevel >= 38 && s.voiceActivationLevel <= 42,
               "ACTIVATION LEVEL 0..100: " + std::to_string(s.voiceActivationLevel));
@@ -621,10 +623,6 @@ static void testPage() {
         opts.render(W, H);
         const SDL_FRect* r = opts.rowRect("VOICE CHAT");
         check(r != nullptr && opts.page() == OptionsPage::General, "Options has a VOICE CHAT row");
-        // What a host carries across the voice page so its BACK lands on Options as it was.
-        check(!opts.dirty() && !opts.saved(), "a fresh Options has nothing unsaved");
-        opts.markDirty();
-        check(opts.dirty() && !opts.saved(), "a carried unsaved change re-enables SAVE");
         if (r) {
             // It may sit below the fold of the long page: scroll it to the middle.
             for (int i = 0; i < 60 && r->y + r->h / 2 > H * 0.6f; ++i) {

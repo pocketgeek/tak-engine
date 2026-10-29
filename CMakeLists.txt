@@ -2133,6 +2133,15 @@ if(TAK_BUILD_CLIENT)
     target_link_libraries(voice_test PRIVATE tak-voice tak-uifont tak-formats ${_tak_sdl2})
     add_test(NAME voice COMMAND voice_test)
     set_tests_properties(voice PROPERTIES TIMEOUT 60 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    # Options, Voice Chat and Controls save every change as it is made (no SAVE button):
+    # a slider on release, the player name when it loses focus, DEFAULTS after YES.
+    add_executable(options_autosave_test tools/options_autosave_test.cpp src/client/options.cpp
+      src/client/settings.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp)
+    target_compile_definitions(options_autosave_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(options_autosave_test PRIVATE tak-uifont tak-formats ${_tak_sdl2})
+    add_test(NAME options_autosave COMMAND options_autosave_test)
+    set_tests_properties(options_autosave PROPERTIES TIMEOUT 60
+      ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
     # With SDL, settings_test also loads a settings file (an old campaignAi key is ignored).
     target_sources(settings_test PRIVATE src/client/settings.cpp)
     target_compile_definitions(settings_test PRIVATE TAK_SETTINGS_FILE_TEST)

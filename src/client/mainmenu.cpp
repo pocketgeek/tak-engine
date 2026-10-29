@@ -163,7 +163,7 @@ struct MainMenu::Impl {
             hooks.outNote = [v] { return VoiceEngine::note(v->outState()); };
             hooks.monitor = [v](bool on) { v->setMonitoring(on); };
         }
-        // The engine reads the settings every frame (run()); only SAVE persists.
+        // The engine reads the settings every frame (run()); each change is saved as made.
         options_ = std::make_unique<OptionsScreen>(ren, *settings, [] {},
             [settings] { saveSettings(*settings); }, std::move(hooks),
             [this, settings] {   // PUSH TO TALK -> CONTROLS, over this page
@@ -630,7 +630,7 @@ struct MainMenu::Impl {
         check(s.dataDir == good && fileDir() == good, "a valid pick is saved at once (file has '" + fileDir() + "')");
         check(loadSettings().dataManifest == hpi::rootManifest(fs::u8path(good)), "a valid pick saves its manifest");
         check(opts.restartNowRect().w > 0, "a valid pick offers RESTART NOW");
-        check(!saved, "picking a folder does not press SAVE for the rest of the screen");
+        check(!saved, "picking a folder writes only the folder, not the whole screen's settings");
         frame(opts, "options-datafolder-restart.png");
         check(!send(opts, SDL_MOUSEBUTTONDOWN, rx, ry) && !opts.folderPicking(), "the prompt takes every click");
         const SDL_FRect later = opts.restartLaterRect();
@@ -1351,7 +1351,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
 
     // The general OPTIONS screen (SETTINGS > OPTIONS, and the VOICE CHAT page's BACK when
     // that page was opened from Options' own VOICE CHAT row).
-    bool voiceFromOptions = false, optionsDirtyCarry = false;
+    bool voiceFromOptions = false;
     // A screen opened from SETTINGS (Options, Controls, Voice Chat, Benchmark, YouTube
     // Streaming) goes back to SETTINGS on BACK / Esc, as LOAD REPLAY does.
     bool fromSettings = false;
@@ -1512,16 +1512,13 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 continue;
             }
             if (d_->options_) {   // Options overlay is up: route everything to it
-                if (d_->options_->input(e, w, h)) {   // BACK / Esc (SAVE is explicit), or RESTART NOW
+                if (d_->options_->input(e, w, h)) {   // BACK / Esc (all saved), or RESTART NOW
                     if (d_->options_->restartRequested()) { d_->options_.reset(); return Choice::Restart; }
                     if (d_->options_->voiceRequested() && settings) {   // Options > VOICE CHAT
-                        const bool dirty = d_->options_->dirty();
                         d_->openVoicePage(settings);
-                        voiceFromOptions = true; optionsDirtyCarry = dirty;
+                        voiceFromOptions = true;
                     } else if (voiceFromOptions && settings && d_->options_->page() == OptionsPage::Voice) {
-                        const bool dirty = optionsDirtyCarry && !d_->options_->saved();
                         openGeneralOptions();       // BACK -> Options, where it came from
-                        if (dirty) d_->options_->markDirty();
                     } else {
                         d_->options_.reset();
                         if (fromSettings) { fromSettings = false; d_->settingsMenu_ = true; }

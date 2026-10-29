@@ -26,6 +26,9 @@ their validation reports; both live in [`docs/`](docs/).
   but never start the broadcast: the panel caps it there (a saved higher value is
   lowered, with a note), adds **Recommended**, and warns when the upload can't keep up.
 - **SETTINGS, BENCHMARK and LOAD REPLAY have a BACK button** beside "Esc - Back".
+- **Options, Voice Chat and Controls save every change as you make it**; the SAVE
+  button is gone. A slider saves when let go, and **DEFAULTS** asks first
+  (and puts the sound device back to the system default at once).
 - **Our AI levels attack only what they have seen** (not Retail AI): their own
   and their allies' sight and radar, units shooting at them, buildings remembered where
   they were seen; with nothing known they scout and explore the map instead.

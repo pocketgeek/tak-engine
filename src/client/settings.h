@@ -295,7 +295,7 @@ Settings loadSettings();
 // has not itself changed dataDir/dataManifest since it last read or wrote the file
 // keeps whatever the file holds for them NOW, instead of writing back its stale copy --
 // otherwise changing the folder in Cartographer while the game is open would be undone
-// by the game's next save of anything (an Options SAVE, a won campaign mission).
+// by the game's next save of anything (an Options change, a won campaign mission).
 bool saveSettings(const Settings&);
 // A launch-only game-mod selection (takclient --game-mod, Cartographer's TEST IN GAME):
 // this run's Settings::gameModPacks holds `packs`, the room's mods for the test. While a
@@ -305,8 +305,8 @@ bool saveSettings(const Settings&);
 // is already always enabled ticks nothing for the run); nullopt ends it.
 void setLaunchGameModPacks(std::optional<std::vector<std::string>> packs);
 // Change ONLY the data folder in the file (read, set dataDir + dataManifest, write):
-// what Options and Cartographer's Preferences call on a valid pick, so unsaved edits
-// on the open Options screen are not persisted along with it.
+// what Options and Cartographer's Preferences call on a valid pick, so nothing else
+// held in memory (this run's command-line overrides, say) is persisted along with it.
 bool saveDataFolderSetting(const std::string& folder, const std::string& manifest);
 // The exact text saveSettings writes (tests inspect it).
 std::string serializeSettings(const Settings&);
