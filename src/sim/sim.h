@@ -2054,6 +2054,15 @@ public:
     }
     const std::vector<uint16_t>& viewCounts() const { return viewCounts_; }
     const std::vector<uint16_t>& navigationExploration() const { return navigationExplored_; }
+    // `player`'s Mapping-plane bit at the 32 px cell under (x,z), as tickManaBuildArea
+    // reads it: true without a plane (no terrain), false off the map.
+    bool exploredAt(int player,float x,float z) const {
+        const int width=hW_/2,height=hH_/2;
+        if (navigationExplored_.empty() || navigationExplored_.size()!=size_t(width)*height) return true;
+        if (player<0 || player>=16 || !(x>=0) || !(z>=0)) return false;
+        const int cx=int(x)/32,cz=int(z)/32;
+        return cx<width && cz<height && (navigationExplored_[size_t(cz)*width+cx]>>player & 1)!=0;
+    }
     bool mobilePlacement(const Unit& subject,int x,int z,bool allowMoving) const {
         return mobilePlacement(*subject.type,uint16_t(subject.id),x,z,allowMoving);
     }
@@ -2366,9 +2375,15 @@ public:
     void setDoubleSight(bool enabled) { doubleSight_ = enabled; }
     // The room's (or campaign .ota's) starting vision, as retail's 4c6540 seeds it:
     // Map Revealed fills the Mapping plane (every cell explored), and FULL VISION
-    // also turns LosOn off. Only area clear reads these (its 509cc0 fog test);
+    // also turns LosOn off. Area clear reads these (its 509cc0 fog test), and our
+    // AI levels' fog rule (ai::Controller::knowsGround / sees);
     // the exploration plane itself still starts unexplored. Hashed when set.
     void setRoomVision(bool mapRevealed, bool losOff) { roomMapRevealed_ = mapRevealed; roomLosOff_ = losOff; }
+    bool roomMapRevealed() const { return roomMapRevealed_; }
+    bool roomLosOff() const { return roomLosOff_; }
+    // `player`'s whole map counts as explored: the room revealed it (no power codes
+    // then, which take the reveal over), or its +Mapping code -- area clear's rule.
+    bool mapRevealedFor(int player) const { return (roomMapRevealed_ && !powerCodes_) || powerMappingOff(player); }
     // Power codes (sim/powercodes.h; the room's POWER CODES option). setPowerCodes
     // also starts every code at its off state: no damage mode, line of sight on for
     // every player, and the shroud on unless the room starts with the map revealed
