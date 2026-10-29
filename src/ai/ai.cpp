@@ -2555,7 +2555,11 @@ void Controller::sendScouts(const tak::sim::World& world, uint32_t simTick, cons
     const bool scouting = level.maxScouts > 0 && (dp_.attack || board.ahead);
     for (auto it = scouts_.begin(); it != scouts_.end();) {
         const auto* u = world.unit(it->first);
-        if (!u || !u->alive() || u->player != player_ || defenders_.count(it->first)) { it = scouts_.erase(it); continue; }
+        if (!u || !u->alive() || u->player != player_ || defenders_.count(it->first)) {
+            if (!u || !u->alive()) ++scoutsLost_;
+            it = scouts_.erase(it);
+            continue;
+        }
         if (!idle(*u) && simTick - it->second <= kTripTicks) { ++it; continue; }
         if (scouting && level.keep && explore(world, {u->id}, sink)) {
             it->second = simTick; ++scoutsSent_; ++it;
@@ -2849,8 +2853,9 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
 
 // Debug builds, TAK_AI_EXPLORE: once a game minute, how much of the map this
 // AI's player has explored, how many enemies it has left, what it knows and how
-// many scouting parties and exploring groups it has sent; once, when no enemy is
-// left. A measuring hook only: it changes nothing the AI does.
+// many scouting parties and exploring groups it has sent and how many scouts it
+// has lost; once, when no enemy is left. A measuring hook only: it changes
+// nothing the AI does.
 void Controller::logExploration(const tak::sim::World& world, uint32_t simTick) {
     int left = 0;
     for (int p = 0; p < world.numPlayers(); ++p)
@@ -2867,9 +2872,10 @@ void Controller::logExploration(const tak::sim::World& world, uint32_t simTick) 
     for (const auto m : explored) n += (m >> player_) & 1;
     int units = 0;
     for (const auto& u : world.units()) if (u.alive() && u.player == player_) ++units;
-    std::fprintf(stderr, "AIEXPLORE t=%u p=%d lvl=%d explored=%.4f left=%d units=%d scouts=%d explorations=%d known=%zu\n",
+    std::fprintf(stderr, "AIEXPLORE t=%u p=%d lvl=%d explored=%.4f left=%d units=%d scouts=%d explorations=%d known=%zu "
+                 "scoutsLost=%d\n",
                  minute, player_, int(diff_), explored.empty() ? 0.0 : double(n) / double(explored.size()), left, units,
-                 scoutsSent_, explorations_, knowledge_.size());
+                 scoutsSent_, explorations_, knowledge_.size(), scoutsLost_);
 }
 
 void Controller::tick(const tak::sim::World& world, uint32_t simTick,
