@@ -2375,7 +2375,8 @@ public:
     void setDoubleSight(bool enabled) { doubleSight_ = enabled; }
     // The room's (or campaign .ota's) starting vision, as retail's 4c6540 seeds it:
     // Map Revealed fills the Mapping plane (every cell explored), and FULL VISION
-    // also turns LosOn off. Only area clear reads these (its 509cc0 fog test);
+    // also turns LosOn off. Area clear reads these (its 509cc0 fog test), and our
+    // AI levels' fog rule (ai::Controller::knowsGround / sees);
     // the exploration plane itself still starts unexplored. Hashed when set.
     void setRoomVision(bool mapRevealed, bool losOff) { roomMapRevealed_ = mapRevealed; roomLosOff_ = losOff; }
     bool roomMapRevealed() const { return roomMapRevealed_; }

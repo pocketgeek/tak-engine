@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <iterator>
 #include <map>
 #include <set>
 #include <tuple>
@@ -1297,8 +1298,9 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     std::vector<OwnStructure> ownStructures;
     bool ownGathered=false;
     // Sites are chosen on ground this side knows (knowsGround), then put to the real
-    // placement test, which also sees enemy buildings out of view: what refuses a
-    // site there is learned (learnSiteBlockers), as a player's refused order shows it.
+    // placement test, which also sees enemy buildings out of view -- the answer a
+    // player's refused order gets: an enemy lodestone that refuses a deposit is
+    // learned (learnSiteBlockers), any other refused site passed over.
     auto usable=[&](float x,float z) {
         const float dx=x-home.first,dz=z-home.second;
         if (dx*dx+dz*dz>radius*radius || !knowsGround(world,x,z)) return false;
@@ -1468,6 +1470,7 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
                     reservedSites.emplace_back(order.buildX.toFloat(),order.buildZ.toFloat());
         }
         const auto& deposits=world.manaSpots();
+        const bool upgrade=!tak::sim::World::lodestoneUpgradeBase(*t).empty();
         // Nearest first: the first deposit to pass is the nearest that can pass, so the
         // costly usable() test runs on a handful of them rather than on all (an Absurd
         // builder's radius is the whole map). Ties go to the lower index, as the strict
@@ -1500,7 +1503,8 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             // Only a deposit on ground this side knows, and not one it holds taken by
             // an enemy lodestone (seen, remembered or learned) -- whatever stands
             // there now out of view.
-            if ((i<depositTaken_.size() && depositTaken_[i]) || !knowsGround(world,sx,sz)) continue;
+            if ((i<depositTaken_.size() && depositTaken_[i]) || !knowsGround(world,sx,sz) ||
+                (!upgrade && i<depositAllied_.size() && depositAllied_[i])) continue;
             if (!usable(sx, sz)) continue;   // taken or blocked
             outX = sx; outZ = sz;
             return true;
@@ -2348,51 +2352,65 @@ static std::pair<int, int> viewCell(const tak::sim::Unit& u) {
 static int64_t gridKey(int cx, int cz) { return (int64_t(cx) << 32) ^ int64_t(uint32_t(cz)); }
 static int floorDiv(int64_t a, int b) { return int(a >= 0 ? a / b : -((-a + b - 1) / b)); }
 
-// The team's radar now: every 32 px cell whose centre lies within radardistance of
-// a finished unit of the team -- our client shows a player that whole disc, through
-// terrain (World::visGather) -- with units sharing a 16 px spot and a range stamped
-// once. radarSeen_ keeps every cell ever in radar: ground the display has shown.
+// The team's radar now: every kRadarCell cell whose centre lies within
+// radardistance of a finished unit of the team -- our client shows a player that
+// whole disc, through terrain (World::visGather) -- with units sharing a 32 px spot
+// and a range counted once. radarSeen_ keeps every cell ever in radar: ground the
+// display has shown. Radar is mostly on buildings, which do not move: only the
+// discs that came or went since the last think are counted off and on, on cells
+// coarse enough that a builder walking about recounts a few hundred.
+void Controller::stampRadar(int qx, int qz, int r, int delta) {
+    constexpr int c = kRadarCell, half0 = kRadarCell / 2;
+    const int w = radarW_, h = radarH_;
+    const int64_t x = int64_t(qx) * 32 + 16, z = int64_t(qz) * 32 + 16, r2 = int64_t(r) * r;
+    const int z0 = std::max(0, -floorDiv(-(z - r - half0), c)), z1 = std::min(h - 1, floorDiv(z + r - half0, c));
+    for (int cz = z0; cz <= z1; ++cz) {
+        const int64_t dz = int64_t(cz) * c + half0 - z;
+        if (dz * dz > r2) continue;
+        const int64_t half = int64_t(std::sqrt(double(r2 - dz * dz)));
+        const int x0 = std::max(0, -floorDiv(-(x - half - half0), c)), x1 = std::min(w - 1, floorDiv(x + half - half0, c));
+        const size_t row = size_t(cz) * size_t(w);
+        for (int cx = x0; cx <= x1; ++cx) radar_[row + size_t(cx)] = uint16_t(radar_[row + size_t(cx)] + delta);
+        if (delta > 0 && x0 <= x1) std::fill_n(radarSeen_.begin() + ptrdiff_t(row + size_t(x0)), x1 - x0 + 1, uint8_t(1));
+    }
+}
+
 void Controller::updateRadar(const tak::sim::World& world) {
-    const int w = (world.mapW() + 1) / 2, h = (world.mapH() + 1) / 2;
+    const int w = (world.mapW() * 16 + kRadarCell - 1) / kRadarCell, h = (world.mapH() * 16 + kRadarCell - 1) / kRadarCell;
     if (w != radarW_ || h != radarH_) {
         radarW_ = w; radarH_ = h;
         radarSeen_.assign(size_t(std::max(w, 0)) * size_t(std::max(h, 0)), 0);
+        radar_.assign(radarSeen_.size(), 0);
+        radarSources_.clear();
     }
-    radar_.assign(radarSeen_.size(), 0);
     if (radar_.empty()) return;
     std::vector<std::tuple<int, int, int>> sources;
     for (const auto& u : world.units()) {
         if (!u.alive() || !u.type || u.underConstruction ||
             std::find(team_.begin(), team_.end(), u.player) == team_.end()) continue;
         const int r = int(world.radarDistance(*u.type));
-        if (r > 0) sources.emplace_back(u.x.floorInt() >> 4, u.z.floorInt() >> 4, r);
+        if (r > 0) sources.emplace_back(u.x.floorInt() >> 5, u.z.floorInt() >> 5, r);
     }
     std::sort(sources.begin(), sources.end());
     sources.erase(std::unique(sources.begin(), sources.end()), sources.end());
-    for (const auto& [qx, qz, r] : sources) {
-        const int64_t x = int64_t(qx) * 16 + 8, z = int64_t(qz) * 16 + 8, r2 = int64_t(r) * r;
-        const int z0 = std::max(0, -floorDiv(-(z - r - 16), 32)), z1 = std::min(h - 1, floorDiv(z + r - 16, 32));
-        for (int cz = z0; cz <= z1; ++cz) {
-            const int64_t dz = int64_t(cz) * 32 + 16 - z;
-            if (dz * dz > r2) continue;
-            const int64_t half = int64_t(std::sqrt(double(r2 - dz * dz)));
-            const int x0 = std::max(0, -floorDiv(-(x - half - 16), 32)), x1 = std::min(w - 1, floorDiv(x + half - 16, 32));
-            if (x0 <= x1) std::fill_n(radar_.begin() + ptrdiff_t(size_t(cz) * size_t(w) + size_t(x0)), x1 - x0 + 1, uint8_t(1));
-        }
-    }
-    for (size_t i = 0; i < radar_.size(); ++i) radarSeen_[i] |= radar_[i];
+    std::vector<std::tuple<int, int, int>> gone, came;
+    std::set_difference(radarSources_.begin(), radarSources_.end(), sources.begin(), sources.end(), std::back_inserter(gone));
+    std::set_difference(sources.begin(), sources.end(), radarSources_.begin(), radarSources_.end(), std::back_inserter(came));
+    for (const auto& [qx, qz, r] : gone) stampRadar(qx, qz, r, -1);
+    for (const auto& [qx, qz, r] : came) stampRadar(qx, qz, r, +1);
+    radarSources_.swap(sources);
 }
 
 bool Controller::radarAt(float x, float z) const {
     if (!(x >= 0) || !(z >= 0)) return false;
-    const int cx = int(x) >> 5, cz = int(z) >> 5;
+    const int cx = int(x) / kRadarCell, cz = int(z) / kRadarCell;
     return cx < radarW_ && cz < radarH_ && radar_[size_t(cz) * size_t(radarW_) + size_t(cx)];
 }
 
 bool Controller::knowsGround(const tak::sim::World& world, float x, float z) const {
     if (world.mapRevealedFor(player_) || world.roomLosOff() || world.exploredAt(player_, x, z)) return true;
     if (!(x >= 0) || !(z >= 0)) return false;
-    const int cx = int(x) >> 5, cz = int(z) >> 5;
+    const int cx = int(x) / kRadarCell, cz = int(z) / kRadarCell;
     return cx < radarW_ && cz < radarH_ && radarSeen_[size_t(cz) * size_t(radarW_) + size_t(cx)];
 }
 
@@ -2408,8 +2426,9 @@ bool Controller::inView(const tak::sim::World& world, float x, float z) const {
 bool Controller::sees(const tak::sim::World& world, const tak::sim::Unit& u) const {
     if (!u.alive() || !u.type || u.cloaked || u.embarked()) return false;
     if (world.roomLosOff()) return true;
-    if (world.viewCounts().empty() && world.tickCount() == 0) return radarAt(u.x.toFloat(), u.z.toFloat());
-    return teamSees(world, u) || radarAt(u.x.toFloat(), u.z.toFloat());
+    if (const int x = u.x.floorInt(), z = u.z.floorInt(); x >= 0 && z >= 0 && x / kRadarCell < radarW_ && z / kRadarCell < radarH_ &&
+        radar_[size_t(z / kRadarCell) * size_t(radarW_) + size_t(x / kRadarCell)]) return true;
+    return !(world.viewCounts().empty() && world.tickCount() == 0) && teamSees(world, u);
 }
 
 template <class F>
@@ -2430,38 +2449,24 @@ void Controller::forDepositsNear(const tak::sim::World& world, float x, float z,
 }
 
 // A site the real placement test refused (World::canPlace: everything there, in
-// view or not -- the answer a player's build order gets). Every enemy structure out
-// of view this think that stands in the way -- its footprint on the site's, or for a
-// lodestone, a lodestone within the 44 px one deposit allows -- is learned: known at
-// the next think (heard, not sighted: an attack-move to it, never an attack by id),
-// and a deposit under a lodestone taken at once.
+// view or not -- the answer a player's build order gets). For a lodestone site,
+// an enemy lodestone out of view within the 44 px one deposit allows is learned:
+// known at the next think (heard, not sighted: an attack-move to it, never an
+// attack by id), and the deposit taken at once.
 void Controller::learnSiteBlockers(const tak::sim::World& world, const tak::sim::UnitType* t, float x, float z) const {
-    if (hidden_.empty() || !t) return;
-    const Rect site = footprintRect(t, x, z);
-    const float reach = 44 + 16 * 8;   // a lodestone's rule, or half a 16-cell footprint
-    const int x0 = int(std::floor((site.x0 - reach) / kHiddenCell)), x1 = int(std::floor((site.x1 + reach) / kHiddenCell));
-    const int z0 = int(std::floor((site.z0 - reach) / kHiddenCell)), z1 = int(std::floor((site.z1 + reach) / kHiddenCell));
-    for (int cz = z0; cz <= z1; ++cz)
-        for (int cx = x0; cx <= x1; ++cx) {
-            const int64_t key = gridKey(cx, cz);
-            auto it = std::lower_bound(hidden_.begin(), hidden_.end(), key,
-                                       [](const auto& e, int64_t k) { return e.first < k; });
-            for (; it != hidden_.end() && it->first == key; ++it) {
-                const Hidden& h = it->second;
-                const float dx = h.x - x, dz = h.z - z;
-                const bool lode = t->onMana && h.type->onMana && dx * dx + dz * dz < 44 * 44;
-                if (!lode && !footprintRect(h.type, h.x, h.z).overlaps(site)) continue;
-                if (std::find(learned_.begin(), learned_.end(), h.id) == learned_.end()) learned_.push_back(h.id);
-                if (h.type->onMana && h.type->isStructure())
-                    forDepositsNear(world, h.x, h.z, 44, [&](size_t i) { if (i < depositTaken_.size()) depositTaken_[i] = 1; });
-            }
-        }
+    if (!t || !t->onMana) return;
+    for (const HiddenLode& h : hiddenLodes_) {
+        const float dx = h.x - x, dz = h.z - z;
+        if (dx * dx + dz * dz >= 44 * 44) continue;
+        if (std::find(learned_.begin(), learned_.end(), h.id) == learned_.end()) learned_.push_back(h.id);
+        forDepositsNear(world, x, z, 24, [&](size_t i) { if (i < depositTaken_.size()) depositTaken_[i] = 1; });
+    }
 }
 
 // Once per think, before anything reads knowledge_: every enemy unit the team
 // sees now (sees: the fog rule's view), and every one that hit our units within
 // kHeardTicks from within its reach, is noted where it stands, and so is every
-// enemy structure a refused site was learned to stand on (learnSiteBlockers). A
+// enemy lodestone a refused site was learned to stand on (learnSiteBlockers). A
 // remembered unit not seen this think is forgotten when the spot it was last seen
 // on is in view again (it died, left or cloaked there), a mobile one also once
 // kMobileMemoryTicks have passed, and any that is now ours or an ally's, or whose
@@ -2479,23 +2484,37 @@ void Controller::updateKnowledge(const tak::sim::World& world) {
     for (int p = 0; p < players; ++p)
         if (p == player_ || (world.allied(player_, p) && !world.isNeutralPlayer(p))) team_.push_back(p);
     updateRadar(world);
-    auto enemy = [&](int p) {
-        return p >= 0 && p < players && p != player_ && !world.isNeutralPlayer(p) && !world.allied(player_, p);
-    };
+    std::vector<uint8_t> enemies(size_t(std::max(players, 0)), 0), allies(enemies.size(), 0);
+    for (int p = 0; p < players; ++p) {
+        enemies[size_t(p)] = p != player_ && !world.isNeutralPlayer(p) && !world.allied(player_, p);
+        allies[size_t(p)] = world.allied(player_, p);
+    }
+    auto enemy = [&](int p) { return p >= 0 && p < players && enemies[size_t(p)]; };
     auto note = [&](const tak::sim::Unit& u, bool sighted) {
         const auto [cx, cz] = viewCell(u);
         knowledge_[u.id] = {u.type, u.player, u.x.toFloat(), u.z.toFloat(), strength(u), cx, cz, now_, u.underConstruction,
                             sighted};
     };
-    hidden_.clear();
-    for (const auto& u : world.units()) {
-        if (!u.alive() || !u.type || u.embarked() || !enemy(u.player)) continue;
-        if (sees(world, u)) note(u, true);
-        else if (u.type->isStructure())
-            hidden_.push_back({gridKey(floorDiv(u.x.floorInt(), kHiddenCell), floorDiv(u.z.floorInt(), kHiddenCell)),
-                               Hidden{u.id, u.x.toFloat(), u.z.toFloat(), u.type}});
+    const auto& deposits = world.manaSpots();
+    if (depositGrid_.size() != deposits.size()) {
+        depositGrid_.clear();
+        for (size_t i = 0; i < deposits.size(); ++i)
+            depositGrid_.emplace_back(gridKey(int(std::floor(deposits[i].first / kDepositCell)),
+                                              int(std::floor(deposits[i].second / kDepositCell))), int(i));
+        std::sort(depositGrid_.begin(), depositGrid_.end());
     }
-    std::stable_sort(hidden_.begin(), hidden_.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    hiddenLodes_.clear();
+    depositAllied_.assign(deposits.size(), 0);
+    for (const auto& u : world.units()) {
+        if (!u.alive() || !u.type || u.embarked()) continue;
+        if (!enemy(u.player)) {
+            if (u.player >= 0 && u.player < players && allies[size_t(u.player)] && u.type->onMana && u.type->isStructure())
+                forDepositsNear(world, u.x.toFloat(), u.z.toFloat(), 44, [&](size_t i) { depositAllied_[i] = 1; });
+            continue;
+        }
+        if (sees(world, u)) note(u, true);
+        else if (u.type->onMana && u.type->isStructure()) hiddenLodes_.push_back({u.id, u.x.toFloat(), u.z.toFloat()});
+    }
     for (const auto& v : world.units()) {
         if (!v.alive() || v.player != player_ || !v.lastHitBy || !v.attackedTick ||
             world.tickCount() > v.attackedTick + kHeardTicks) continue;
@@ -2528,14 +2547,6 @@ void Controller::updateKnowledge(const tak::sim::World& world) {
     }
     // Deposits held taken: an enemy lodestone known within 44 px (World::canPlace's
     // one-lodestone-per-deposit rule).
-    const auto& deposits = world.manaSpots();
-    if (depositGrid_.size() != deposits.size()) {
-        depositGrid_.clear();
-        for (size_t i = 0; i < deposits.size(); ++i)
-            depositGrid_.emplace_back(gridKey(int(std::floor(deposits[i].first / kDepositCell)),
-                                              int(std::floor(deposits[i].second / kDepositCell))), int(i));
-        std::sort(depositGrid_.begin(), depositGrid_.end());
-    }
     depositTaken_.assign(deposits.size(), 0);
     for (const auto& [id, k] : knowledge_)
         if (k.type->onMana && k.type->isStructure())
@@ -2557,16 +2568,34 @@ void Controller::updateKnowledge(const tak::sim::World& world) {
     if (blind) return;
     for (size_t i = 0; i < enemyStarts_.size(); ++i)
         if (inSight(enemyStarts_[i].first, enemyStarts_[i].second)) startSeen_[i] = now_ + 1;
-    // A sector is in sight when its centre or a point halfway to a corner is.
-    for (int sz = 0; sz < sectorsZ_; ++sz)
-        for (int sx = 0; sx < sectorsX_; ++sx) {
+    // A sector is in sight when its centre or a point halfway to a corner is
+    // (inView at each, its cells worked out once).
+    if (sectorProbes_.size() != sectorSeen_.size() * 5) {
+        sectorProbes_.assign(sectorSeen_.size() * 5, Probe{-2, 0, 0});   // -2: no such sector
+        for (size_t s = 0; s < sectorSeen_.size(); ++s) {
             float x = 0, z = 0;
-            if (!sectorCentre(sx + sz * sectorsX_, mapX, mapZ, x, z)) continue;
+            if (!sectorCentre(int(s), mapX, mapZ, x, z)) continue;
             const float q = sectorSize_ / 4;
-            if (inSight(x, z) || inSight(x - q, z - q) || inSight(x + q, z - q) || inSight(x - q, z + q) ||
-                inSight(x + q, z + q))
-                sectorSeen_[size_t(sx + sz * sectorsX_)] = now_ + 1;
+            const std::pair<float, float> points[5] = {{x, z}, {x - q, z - q}, {x + q, z - q}, {x - q, z + q}, {x + q, z + q}};
+            for (int i = 0; i < 5; ++i) {
+                const auto [px, pz] = points[i];
+                const int rx = int(px) / kRadarCell, rz = int(pz) / kRadarCell;
+                sectorProbes_[s * 5 + size_t(i)] = {px >= 0 && pz >= 0 && rx < radarW_ && rz < radarH_ ? rz * radarW_ + rx : -1,
+                    int(std::clamp(px, 0.0f, std::max(mapX - 1, 0.0f))) >> 5, int(std::clamp(pz, 0.0f, std::max(mapZ - 1, 0.0f))) >> 5};
+            }
         }
+    }
+    const bool everything = world.roomLosOff();
+    for (size_t s = 0; s < sectorSeen_.size(); ++s) {
+        if (sectorProbes_[s * 5].radar == -2) continue;
+        for (int i = 0; i < 5; ++i) {
+            const Probe& p = sectorProbes_[s * 5 + size_t(i)];
+            if (everything || (p.radar >= 0 && radar_[size_t(p.radar)]) || teamViews(world, p.cx, p.cz)) {
+                sectorSeen_[s] = now_ + 1;
+                break;
+            }
+        }
+    }
 }
 
 // The middle of a sector's part of the map (sectors along the far edges are cut short).
@@ -3134,10 +3163,9 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         auto consider = [&](const tak::sim::Unit* e, bool heard) {
             if (!e || !e->alive() || !e->type || e->embarked() || e->underConstruction ||
                 world.isNeutralPlayer(e->player) || world.allied(player_, e->player)) return;
-            if (!heard && !sees(world, *e)) return;
             const float dx = e->x.toFloat() - u.x.toFloat(), dz = e->z.toFloat() - u.z.toFloat();
             const float d = dx * dx + dz * dz, limit = reach + 90;
-            if (d <= limit * limit && d < best) { best = d; target = e->id; }
+            if (d <= limit * limit && d < best && (heard || sees(world, *e))) { best = d; target = e->id; }
         };
         consider(world.unit(u.lastHitBy), true);   // whoever is hitting it, seen or not
         if (!target)
