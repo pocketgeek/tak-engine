@@ -163,6 +163,11 @@ Unsupported backends, fractional antialiasing scales, and exhausted budgets
 retain the existing geometry path. No shaders, terrain detail, fog opacity,
 visibility rules, simulation timing, or pathfinding were changed.
 
+(Superseded 2026-10-29: the fog overlay is now retail's flat, animated grid
+over a per-cell texture, rebuilt every frame; the mesh caches and the
+`TAK_FOG_MESH_CACHE_OFF` / `_RETAIN_OFF` / `_PAN_CACHE_OFF` switches below are
+gone. See `height-and-fog.md`.)
+
 Distant fog meshes include a 64-cell margin around the visible region. Panning
 inside that region translates the existing mesh; moving outside it, changing
 zoom, or resizing rebuilds it. OpenGL applies the translation as a matrix;

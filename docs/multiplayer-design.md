@@ -24,7 +24,8 @@ the headless test client is `TAK_HEADLESS=1 takclient game ... --mpai`
   forwarding on any player's side.
 - **Up to 8 players per game**, any mix of humans and AIs.
 - **Up to 8 teams.** Default: every player/AI on its own team (free-for-all).
-  Players on the same team share vision and radar (fog of war and minimap).
+  Players on the same team share vision (fog of war); radar marks the minimap
+  from a player's own units only, as in retail (`height-and-fog.md`).
 - **Own color per player** (the retail art ships exactly 10 color variants).
 - **AI players run on the server**, not on the host's machine. The host picks
   them in the lobby; the server simulates and commands them.
@@ -616,6 +617,10 @@ attackMove) all map onto existing `Train` / `Build` / `AttackMove` commands.
    !cellVisible` render/minimap gate to "not on my team" so allied units draw
    through fog. Radar is already merged into the reveal radius, so shared team
    radar is free. The referee runs with no vis player and skips the pass.
+   (Superseded 2026-10-29: the display fog is now retail's sight plane, which
+   every peer's sim keeps anyway, merged for the local team on the client;
+   radar only marks the minimap, from the local player's own units. See
+   `height-and-fog.md`.)
 4. **Win condition: last team standing — and defined defeat.** Replace the
    hardcoded 2-player check with per-team alive counts, computed **inside the
    sim** so every sim (and the referee) concludes it independently on the same

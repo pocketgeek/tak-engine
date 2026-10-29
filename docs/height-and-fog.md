@@ -58,31 +58,62 @@ apply the lift — a flat `offX + sx/zoom` map lands on the wrong cell:
 
 ## Fog of war
 
-Fog is a **local display** computation, **not** part of the deterministic sim:
-`World::updateVisibility` (`src/sim/sim.cpp`) runs every 0.25 s, does its
-expensive part (`visCompute`) on a worker thread so the result lands one pass
-late, and is skipped for the headless referee (`visPlayer_ < 0`); `vis_` is
-**not** folded into `stateHash`. So fog and line-of-sight math may use plain
-floats freely (no `detmath` requirement).
+The display shows retail's own fog (KINGDOMS.icd; addresses and the
+evidence in `docs/retail-engine.md`, "Fog of war display"). Retail keeps **one
+sight plane per player** and both its game logic and its screen read it; so
+do we. The simulation maintains it for every player (`World::viewCounts_`,
+the view counts that `0x4c6800` stamps, plus the persistent Mapping bits
+`navigationExplored_`), and those are hashed gameplay state. The client only
+reads them: nothing below runs in the simulation, and the headless referee
+draws nothing.
 
-This display fog is separate from the sim's own retail-style vision: per-player
-view counts on a 32px grid (`viewCounts_`, retail `0x4c6800`) plus persistent
-exploration bits, which `World::playerSees` and the AI read. Those are gameplay
-state and **are** hashed.
-
-- **Reveal + line of sight.** Each unit reveals cells within
-  `max(sight, radar) / 16`, but a cell is revealed only if `sightClear()` finds no
-  intervening terrain rising above the straight eye→target sight line — so walls,
-  cliffs, and hills cast fog shadows on their far side, while water (being low)
-  never blocks. Eye height = the unit's ground height + `TAK_FOG_EYE` (default
-  40); an obstacle must clear the sight line by `TAK_FOG_MARGIN` (default 16) to
-  block. Those defaults mean real walls (height 60–220 on athri cay) shadow but
-  small rock clutter (< ~56) does not. Radar range skips the LoS test (radar is
-  not line of sight). `World` keeps the raw heightmap (`heights_`) for this.
-- **Overlay.** `drawFog` renders the darkening as a per-cell **lifted mesh**
-  (`SDL_RenderGeometry`, `terrainLift` / `terrainLiftX` per grid corner, culled to
-  the viewport plus a max-lift margin) so the fog sits on the terrain relief and
-  follows a unit up a hill, rather than a flat sheet at ground level.
+- **The plane.** 32 px cells of the *projected* map, (x, z - y/2): row `r`
+  of the plane is row `r` of the tile art. A unit's footprint is centred on its
+  world cell (x>>5, z>>5) and admits a cell when it lies inside twice the
+  sight distance and below a cone from the eye (ground or flight height,
+  floored at the sea, plus `sightheight`) through a coarse projected height
+  plane: about 1x sight on flat ground, up to 2x from high ground over low
+  ground, less looking uphill. A dying human player's unit keeps its footprint
+  60 ticks. `retailSightFootprint` / `retailSightAdmits`
+  (`src/sim/retailexploration.h`).
+- **The local view** (`client/retailfog.h`, `GameView::captureFog`, every
+  captured frame on the sim thread): a cell is *unexplored* where the local
+  player's Mapping bit is clear (all explored under Map Revealed / +Mapping),
+  *in view* where the count of the local player or an ally is nonzero (every
+  explored cell under LOS off), otherwise *explored*. Only the 16 x 16-cell
+  squares the World marked since the last capture are rebuilt
+  (`World::viewDirty`, unhashed bookkeeping set where a footprint is added,
+  moved or removed): the largest maps have a million cells. Before the first tick
+  (the frame behind a campaign briefing) the client stamps the same footprints
+  itself, since the World's first pass runs inside tick 0.
+- **Units.** Another side's unit is drawn, picked, given a health bar, a
+  Tactical Dot or a hidden-unit dot only when **LosOn** (`0x4f7210`) passes
+  on that plane: any of its four projected bounding-box corners (x +/- 8
+  footx, z +/- 8 footz, the far pair at y + model top) on a cell in view, never
+  while cloaked or carried (`UnitR::losSeen`). Points (impacts, effects,
+  features) test the projected cell of the ground under them.
+- **Radar** never clears fog and never shows a unit in the main view. The
+  minimap (`0x4f9970`) dots an uncloaked unit within radar distance of one of
+  the local player's built, unlocked units (a circle on the 16.16 positions),
+  otherwise one whose projected centre cell is in view (`UnitR::mapSeen`).
+- **Overlay** (`GameView::drawFog`, retail's Glide path `0x498270`). Each cell
+  is a byte, alpha in the high nibble and intensity in the low one: unexplored
+  `0xf0`, explored `0x8f`, in view `0x0f`. Every cell becomes 2 x 2 ARGB4444
+  texels blending it with its neighbours 19/5/5/3 of 32 (`0x498b60`), the
+  texture is bilinear-filtered and alpha-blended, and it is modulated by the
+  vertex colour: unexplored ground is opaque black, explored ground the
+  side's `FogColor` (`gamedata/sidedata.tdf`; white for Aramon) at 8/15. It is
+  drawn flat (no per-corner lift: the plane is already projected), offset by
+  half the map's modal height like the unit lift, under a grid of quads
+  anchored to the map (160 px, coarser far out; retail cuts the screen 6 x 6).
+  **RollingFog** multiplies each vertex colour by
+  `(sin(P/32*0.31 + 0.17t) * sin(X/32*0.11 - 0.4t) * sin(0.5t) + 1) / 2` and
+  **WavyFog** moves the inner vertices by `10 * sin(..) * sin(..) * sin((t + 1.2) / 2)`
+  px, with `t` the real clock. The texture is uploaded only for the 32-cell
+  blocks a new plane changed (`client/fogupload.h`).
+- **Minimap** (`0x4f93a0`): the same plane one texel per cell, unblended:
+  unexplored black, explored darkened (retail remaps the pixel through a shade
+  table; we draw half-opaque black), in view clear.
 
 ## Tuning knobs (env)
 
@@ -92,6 +123,9 @@ All of these are read only by debug builds; a release build uses the defaults.
 | --- | --- | --- |
 | `TAK_HSCALE` | unit lift per height unit (screen-Y) | 0.5 |
 | `TAK_HSCALEX` | unit lift per height unit (screen-X) | 0 (off) |
-| `TAK_FOG_EYE` | fog eye height above the unit's ground cell | 40 |
-| `TAK_FOG_MARGIN` | how far terrain must clear the sight line to block | 16 |
+| `TAK_FOG_STILL` | hold RollingFog and WavyFog at t = 0 | off |
+| `TAK_FOG_TIME` | hold them at this many seconds (captures) | off |
+| `TAK_FOG_NO_ROLLING` / `TAK_FOG_NO_WAVY` | turn either effect off | off |
+| `TAK_FOG_DEBUG` | point-sample the overlay (retail's FogDebug) | off |
+| `TAK_FOG_FULL_UPLOAD` | upload the whole overlay texture on every change | off |
 | `TAK_HDEBUG` | enable the height debug overlay | off |

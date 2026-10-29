@@ -318,7 +318,7 @@ change in the room, until the game starts.
 | **Crusades** | **Off** uses the standard unit balance. **On** uses the alternative *Crusades* balance from the final retail patch. Unit costs and stats differ, and a few Iron Plague units (the Trapdoor Spider, Heligrin, Cult of Lokken Ship, Sea Serpent, Mummy and the second Lokken unit; the Taros monarch is unaffected) do not exist, as in the original game. Build menus are the standard ones, without those units. |
 | **Double Sight/Radar** | Doubles every unit's sight and radar range in skirmish and multiplayer. Weapon range is unchanged, and campaign missions are never affected. |
 | **Monarch Expendable** | **Off** (the original rule): losing your Monarch loses the game. **On**: the Monarch is an ordinary unit and you lose only when everything is gone. |
-| **Fog of war** | **Not Explored**: the map starts hidden. **Explored**: the map starts revealed but enemies are hidden outside your sight. **Full Vision**: no fog. Terrain you have seen stays visible after your units leave; enemy units outside your current sight cannot be targeted. |
+| **Fog of war** | **Not Explored**: the map starts hidden. **Explored**: the map starts revealed, under the mist, and enemies are hidden outside your sight. **Full Vision**: no fog. Terrain you have seen stays visible under the mist after your units leave; enemy units outside your current sight are not shown and cannot be targeted. See [Fog of war](#fog-of-war). |
 | **Start locations** | **Fixed** gives the occupied slots the map's start positions in order, top slot first. Empty slots are skipped, as in the original game: a player in slot 1 and an AI in slot 8 start at positions 1 and 2. **Random** shuffles them. **By slot** always starts slot N at the map's position N, empty slots or not: slots 1 and 8 start at positions 1 and 8. It is not in the original game. In the room, a player picks a slot, and so a start, with **Move here**. A room normally opens one slot per position; a slot without a position of its own takes the lowest position that no occupied slot has by number, or a spot near the map centre, and the room shows which under the player's name. |
 | **Unit cap** | The most units each player may have alive: 250, 500, 1,000 or 2,000 (the default and the most the game allows). Production pauses at the cap. |
 | **Allow speed change** | Lets the host change game speed during the match, from −9 (0.1×) to +10 (2×). |
@@ -576,6 +576,30 @@ claimed.*
    the bar is empty, the mana bar appears only for units that have mana, and the
    bar on the right appears only while the unit is building or conjuring something.
 8. **The selected unit**, here the Monarch.
+
+### Fog of war
+
+As in the original game, the map shows three kinds of ground:
+
+- **Black**: ground your side has never seen.
+- **Mist**: ground your side has seen but does not see now. It is tinted in your
+  side's colour (white for Aramon, brown for Taros, pale blue for Veruna and
+  Creon, warm white for Zhon) and rolls and drifts slowly. Other players' units
+  there are not shown.
+- **Clear**: ground your units or your allies' units see now. Only here are
+  other players' units and buildings shown, and only here can you click them.
+
+How far a unit sees depends on height. On flat ground it sees about its sight
+distance; from high ground it sees further over lower ground (up to twice as
+far), and looking uphill it sees less. Sight works on squares of 32 pixels, so
+its edge is not a smooth circle. A unit counts as seen when any corner of its
+body is on clear ground, so a large unit can be seen a little before its centre
+is.
+
+**Radar** only marks the minimap: an enemy within radar range of one of your
+units shows as a dot there, but radar does not clear the mist and does not show
+the unit in the main view. The minimap shows the same three kinds of ground,
+square by square: black, darkened and clear.
 
 ### The goal
 
@@ -1883,7 +1907,8 @@ stops where the map fills the window, which on a very wide screen is close to
 normal size. Once dots are showing, the models come back only after you zoom
 in a little more than one wheel notch past the setting, so the view never
 flickers between the two at the boundary. Dots follow the
-minimap's rules exactly: enemies show only where you can currently see them.
+main view's rules: enemies show only where you can currently see them (an
+enemy that only your radar finds is a dot on the minimap, not here).
 Buildings are bigger squares than soldiers, flyers sit at their flying height,
 and selected units get a white outline. Click and box selection work on the
 dots. Health bars and unit shadows are hidden while dots are

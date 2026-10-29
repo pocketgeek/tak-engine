@@ -2469,7 +2469,7 @@ They then run the neighbor scan and boat-specific corner pruning. The
 visibility test reads game +0x19ef4 using the player bit at +0x306f; that byte
 is initialized from the `Human Player` setting and is also reassigned by
 player-selection handlers. Its multiplayer semantics need further tracing;
-World's display-only `vis_` cannot be used as a deterministic substitute.
+World's display-only `vis_` (removed 2026-10-29) could not be used as a deterministic substitute.
 Shoreline routes and both-roster composed navigation remain unverified.
 
 Validation: all targets rebuilt in Debug/Release; CTest passes 33/33 and 27/27,

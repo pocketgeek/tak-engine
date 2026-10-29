@@ -22,6 +22,10 @@ their validation reports; both live in [`docs/`](docs/).
 ## Unreleased
 *protocol 305 · replay format 15*
 
+- **Fog of war looks and works as in the original game**: what your units see
+  is the same sight the game plays by (further from high ground, less uphill),
+  seen-before ground lies under your side's rolling mist, and radar marks
+  enemies on the minimap only, never in the main view.
 - **Streaming keeps to YouTube's bitrate**, above which YouTube could connect
   but never start the broadcast: the panel caps it there (a saved higher value is
   lowered, with a note), adds **Recommended**, and warns when the upload can't keep up.

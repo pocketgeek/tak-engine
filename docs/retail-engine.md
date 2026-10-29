@@ -186,7 +186,8 @@ weapon slots is **auto** or **manual**:
   hover-attack flyers and ground units with `turninplacerate > 0` must face
   the target to fire.
 - **Vision** for the sweep is a deterministic per-player view-count plane
-  rebuilt on a 7-tick stamp (hashed; separate from the local fog `vis_`).
+  rebuilt on a 7-tick stamp (hashed; the local display fog reads the same
+  plane, see "Fog of war display").
 - **Hit response** (`409a50`): (a) an idle unit runs a leashed retaliation
   attack and walks back; (b) otherwise the attacker goes to every auto slot that
   can reach it unless the current target is still good. AI owners also switch
@@ -2373,6 +2374,59 @@ exempt from our terrain lift, so a ground-derived anchor picks up a lift the
 body never had and the horizontal lean cancels to nothing.
 
 Cost: every casting unit walks its model a second time.
+
+## Fog of war display: one sight plane, LosOn, minimap-only radar (icd, 2026-10-29)
+
+Retail has **one sight plane per player** and both its logic and its screen
+read it. Found by static analysis and by emulating `0x4c6800`; ported in
+`client/retailfog.h` (the plane and stamp were already the simulation's:
+`World::viewCounts_`, `src/sim/retailexploration.h`).
+
+- **The plane.** `player+0x88` view counts (width `+0x8c`, height `+0x90`)
+  on 32 px cells of the projected map. A unit's sight object (`unit+0x84`) is
+  stamped by `0x4c6800` from `0x4c6a70`/`0x4c6c00`, which `0x4f6a40` calls for
+  a player of kind 1 or 2 or one sharing vision with the viewer (`+0xf7[]`):
+  the centre is the WORLD cell (`x>>5`, `z>>5`), the disc reaches twice the
+  sight distance, and each cell is admitted under a cone from the eye through
+  the coarse projected height plane (`0x50ea58`): about 1x on flat ground, up
+  to 2x from high ground, less uphill. `0x4f59c0` (shared vision with a
+  computer ally) re-points that ally's sight objects at the sharing player,
+  so its units stamp into his plane. The Mapping plane is `game+0x19ef4`, one
+  bit per player.
+- **LosOn** (`0x4f7210`): the owner always; otherwise a unit is seen when one
+  of its four projected bounding-box corners (`0x4c1410`) is on a cell whose
+  count is nonzero. The main view's unit draw list (`0x51f970`) holds other
+  players' units only when it passes.
+- **Minimap.** `0x4f9970` marks each frame, in `unit+0x130` bit `0x100`: own
+  units (all units for a viewer with `player+0x50`->`+0x9b` bit 1); every
+  uncloaked other unit within `type+0x228` radar distance of one of the local
+  player's units (built, `+0x108` clear) by the circle query `0x509ac0` with
+  callback `0x4f98e0`; otherwise a unit whose projected centre cell has a
+  count (LosOn on), or whose Mapping bit is set (LosOn off). `0x4f9520` draws
+  the marked dots (all units with LOS and Mapping both off). The minimap image
+  (`0x4f93a0`) shows each cell as it is (count nonzero), through a darkening
+  remap table (`game+0x19efc`, `+0xc`; explored, no count) or as palette 0
+  (Mapping bit clear). **Radar never clears the plane and never puts a unit
+  in the main view.**
+- **The overlay.** `0x4fbc73` calls `0x497a40`, which asks the 3D device for
+  capability 4; Glide's `0x5b7060` answers yes, so `0x498270` runs (else the
+  vertex-alpha twin `0x497ae0`: per-cell-centre corners at alpha 0xff / 0x78 /
+  0, Gouraud-blended). `0x498270` writes one byte per cell of a 64-cell window:
+  Mapping bit clear `0xf0`, count zero `0x8f` (`0x0f` when LosOn is off),
+  else `0x0f`; `0x498b60` expands each cell into 2 x 2 texels of a 128 x 128
+  ARGB4444 texture (`0x5b9719`: format 3 = `GR_TEXFMT_ARGB_4444`), each
+  nibble `(19 own + 5 + 5 edge neighbours + 3 diagonal) >> 5`. Render states:
+  `0x11` (mag filter) 2 = bilinear unless **FogDebug** (`+0x801c`, console
+  toggle `0x425ed0`) makes it 1; modulate, alpha blend SRCALPHA/INVSRCALPHA,
+  clamp. The window is drawn as 6 x 6 quads (`0x498c00` interpolates them).
+  **RollingFog** (`+0x801e`, `0x425f10`, on) colours each vertex FogColor x
+  `(sin((camY+y)/32*0.31 + 0.17t) * sin((camX+x)/32*0.11 - 0.4t) * sin(0.5t) + 1) / 2`
+  (`0x498c70`); **WavyFog** (`+0x801d`, `0x425ef0`, on) adds `10 * sin(..) *
+  sin(..) * sin((t+1.2)/2)` to x then y of the inner vertices (`0x498d40`,
+  `0x498db0`); `t` is QueryPerformanceCounter seconds (`0x5ba760`), constants
+  set by `0x497900`. FogColor (`+0x801f..21`, setter `0x497a90`) is the local
+  player's side's `FogColor` from `sidedata.tdf` (parsed at `0x4c2e0c`,
+  default 255 255 255).
 
 ## The projection is a SHEAR, not a tilt (2026-09-12)
 
