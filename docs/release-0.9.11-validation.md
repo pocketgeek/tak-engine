@@ -70,8 +70,9 @@ test install is `d6000f4fa9095a51`, as for 0.9.10 (server logs).
   dies, changes hands or has its unit in work cancelled; no gate game does.
   Legion facing adds tracked member fields to the Legion checksum (folded
   into the state hash in Legion games); on its own it left the seven gates
-  unchanged, and the scenario gate's Legion `hash@` keys moved. The AI's target choice changes every gate game that lasts long
-  enough for a strike: **four gate hashes changed** (below).
+  unchanged, and the scenario gate's Legion `hash@` keys moved. The AI's
+  target choice changes every gate game that lasts long enough for a strike:
+  **four gate hashes changed** (below).
 - **Maps, mods and settings.** No map, recipe, package or settings format
   changed; `hiddenFadeOpacity` absent now reads as 50 (was 65), and a saved
   value is kept.
@@ -86,8 +87,9 @@ takclient and takserver run used scratch `HOME`, `XDG_DATA_HOME` and
 - **Builds.** At `afaacb9a` the binaries print `0.9.10 (build ...)`, because
   the version number changes in the preparation commit; the prepared tree's
   own `takclient --version` and `takserver --version` print
-  `0.9.11 (build v0.9.10-16-gafaacb9a47b9-dirty)` from a Release build (the tree was dirty only with the
-  preparation edits), and the title picture's Debug `-O2` build reads
+  `0.9.11 (build v0.9.10-16-gafaacb9a47b9-dirty)` from a Release build (the
+  tree was dirty only with the preparation edits), and the title picture's
+  Debug `-O2` build reads
   VERSION 0.9.11.
 - **New tests.** `factory_death` (8 checks fail on `5b7a4f97`, 12 more on
   `a0585458`), the `blocked_shot` / `legion_blocked_shot` hover case (the
@@ -102,8 +104,23 @@ takclient and takserver run used scratch `HOME`, `XDG_DATA_HOME` and
   checkpoints were retaken (in `afaacb9a`) and passes now; `vashim_unavailable` is the known
   local failure (a render node without libva; it failed in 0.9.10's run too).
   `replay`, `factory_death`, `blocked_shot` and the facing cases pass.
-- TODO-LEAD: full suite (`ctest`, `build-0911-suite`) on the final code and
-  the gates on the final code (result of the run in progress).
+- **Full suite on `afaacb9a`** (the final code; Debug `-O2`, all targets
+  built, `ctest -j12`, scratch `HOME` and XDG folders, test data
+  `assets/game`, which has no mods): 785 of 787 passed, one skipped
+  (`vashim_system_loader`, which skips itself). One failed:
+  `vashim_unavailable`, the known local failure (a render node without libva;
+  CI builds FFmpeg with the shim and runs it there; it failed in 0.9.10's run
+  too). `disconnect_client` passes on the mod-free data; 0.9.10's failure came
+  from the always-enabled game mod in `~/tak_data` and is still a separate
+  follow-up. `navigation_determinism` (with the retaken Legion checkpoints),
+  `replay`, `factory_death`, `blocked_shot`, `legion_blocked_shot`,
+  `legion_facing`, `settings` and both `zoom_floor_*` cases pass. Wall time
+  1,315 s.
+- **Gates on the final code** (the same `--mpai` set-up as below, run from
+  the suite build on its own ports): all seven hashes equal the table below,
+  the third identical run after the two on `build-0911-o2`. All seven servers
+  loaded retail gameplay hash `d6000f4fa9095a51`, and no desync, mismatch or
+  referee-suspect line appeared.
 - **Detmath guard** (`tools/check-detmath.sh`, on the prepared tree): OK.
 - **Cross-compiler golden hash** (`tools/check-determinism.sh`): golden
   `dcef618cd2e4d558` from g++ and clang++ at -O0, -O2 and -O3, unchanged from
