@@ -3856,7 +3856,10 @@ struct LegionNavigator::Impl {
     };
     std::vector<uint32_t> activeOpenings;   // openings asked for in the last two ticks, ascending (derived; never hashed)
     std::vector<Opening> openings;
-    std::map<std::tuple<uint8_t,int,int,int>,uint32_t> openingIndex;
+    // The records by side and line, each line's ascending by (lo, hi): the (side, line, lo, hi) order. Flat, so
+    // passageOf's walk over the lines near a crossing reads only the spans that can overlap its own.
+    struct OpeningKey {int lo,hi;uint32_t idx;};
+    std::vector<std::vector<OpeningKey>> openingLines[2];
     static constexpr uint32_t kOpeningScan=30;          // ticks between recounts (phase kOpeningScan/3)
     static constexpr uint32_t kOpeningMinCharge=16;     // cells: a shorter queue is no charge
     static constexpr int kNarrowWidth=16;               // cells: an opening this narrow passes one way at a time (admission)
@@ -3894,16 +3897,19 @@ struct LegionNavigator::Impl {
             work+=2;
             if(last-first>=kOpeningSpan)continue;
             const int lo=first,hi=last+along-1;
-            const auto key=std::make_tuple(uint8_t(which),line,lo,hi);
-            auto at=openingIndex.find(key);
-            if(at==openingIndex.end()) {
+            auto& keys=openingLines[which];
+            if(keys.size()<=size_t(line))keys.resize(size_t(line)+1);
+            auto& v=keys[size_t(line)];
+            auto at=std::lower_bound(v.begin(),v.end(),std::make_pair(lo,hi),
+                [](const OpeningKey& k,const std::pair<int,int>& q) {return std::make_pair(k.lo,k.hi)<q;});
+            if(at==v.end()||at->lo!=lo||at->hi!=hi) {
                 if(openings.size()>=kMaxOpenings)continue;
                 Opening o;o.side=uint8_t(which);o.line=line;o.lo=lo;o.hi=hi;o.width=hi-lo+1;
                 if(o.width<=kNarrowWidth)++passageGen;
-                at=openingIndex.emplace(key,uint32_t(openings.size())).first;
+                at=v.insert(at,{lo,hi,uint32_t(openings.size())});
                 openings.push_back(o);++acct.openings;
             }
-            so.runs.push_back({q.start,q.len,int32_t(at->second)});
+            so.runs.push_back({q.start,q.len,int32_t(at->idx)});
         }
         return so.runs;
     }
@@ -4126,29 +4132,39 @@ struct LegionNavigator::Impl {
     // new narrow record (passageGen) re-reads the components; one that joins two passages already in use hands the
     // higher holder's to the lower, whose token is the passage's from then.
     uint32_t passageGen=0;   // narrow opening records so far (derived from the record table; never hashed)
+    std::vector<uint32_t> passageComp,passageSeen;   // passageOf's scratch: the component, and seen by stamp
+    uint32_t passageStamp=0;
     uint32_t passageOf(uint32_t idx,const Plane& p,int planeIndex) {
         Opening& o=openings[idx];
         ensureStrip(o,p,planeIndex);
         if(o.head!=~0u&&o.headEpoch==o.stripEpoch&&o.headPlane==o.stripPlane&&o.headGen==passageGen)return o.head;
-        const int lim=std::numeric_limits<int>::min();
-        std::vector<uint32_t> comp{idx};
-        std::set<uint32_t> seen{idx};
+        if(passageSeen.size()<openings.size())passageSeen.resize(openings.size(),0);
+        if(++passageStamp==0) {std::fill(passageSeen.begin(),passageSeen.end(),0);passageStamp=1;}
+        auto& comp=passageComp;
+        comp.assign(1,idx);passageSeen[idx]=passageStamp;
         for(size_t k=0;k<comp.size();++k) {
             const uint32_t ai=comp[k];
-            // A record whose strip holds this one's line has its own line within kStripMax + 1 of it.
-            const int side=openings[ai].side,line=openings[ai].line;
-            for(auto it=openingIndex.lower_bound({uint8_t(side),line-kStripMax-2,lim,lim});
-                it!=openingIndex.end()&&std::get<0>(it->first)==side&&std::get<1>(it->first)<=line+kStripMax+2;++it) {
-                const uint32_t bi=it->second;
-                if(seen.count(bi))continue;
-                const Opening& a=openings[ai];
-                Opening& b=openings[bi];
-                if(b.width>kNarrowWidth||b.hi<a.lo||b.lo>a.hi)continue;
-                bool linked=b.line>=a.stripLo-1&&b.line<=a.stripHi;
-                ensureStrip(b,p,planeIndex);
-                linked=linked||(a.line>=b.stripLo-1&&a.line<=b.stripHi);
-                if(!linked)continue;
-                seen.insert(bi);comp.push_back(bi);
+            // A record whose strip holds this one's line has its own line within kStripMax + 1 of it. Only a
+            // narrow record (at most kNarrowWidth cells) overlapping a's span can join, so each line is read from
+            // the first span starting within kNarrowWidth - 1 cells before a's to the last starting inside it.
+            const int side=openings[ai].side,line=openings[ai].line,alo=openings[ai].lo,ahi=openings[ai].hi;
+            const auto& keys=openingLines[side];
+            for(int l=std::max(line-kStripMax-2,0);l<=line+kStripMax+2&&size_t(l)<keys.size();++l) {
+                const auto& v=keys[size_t(l)];
+                auto it=std::lower_bound(v.begin(),v.end(),alo-kNarrowWidth+1,
+                    [](const OpeningKey& key,int lo) {return key.lo<lo;});
+                for(;it!=v.end()&&it->lo<=ahi;++it) {
+                    const uint32_t bi=it->idx;
+                    if(passageSeen[bi]==passageStamp)continue;
+                    const Opening& a=openings[ai];
+                    Opening& b=openings[bi];
+                    if(b.width>kNarrowWidth||b.hi<a.lo||b.lo>a.hi)continue;
+                    bool linked=b.line>=a.stripLo-1&&b.line<=a.stripHi;
+                    ensureStrip(b,p,planeIndex);
+                    linked=linked||(a.line>=b.stripLo-1&&a.line<=b.stripHi);
+                    if(!linked)continue;
+                    passageSeen[bi]=passageStamp;comp.push_back(bi);
+                }
             }
         }
         const uint32_t head=*std::min_element(comp.begin(),comp.end());
@@ -5079,7 +5095,7 @@ struct LegionNavigator::Impl {
                 if(!f.inside(x+d[0],z+d[1]))continue;
                 // A chain's own field covers its destination's tiles only (stage 6).
                 if(!f.dAllow.empty()&&!f.dAllow[f.tileOf(x+d[0],z+d[1])])continue;
-                const uint32_t slot=f.cellAt(x+d[0],z+d[1]);
+                const uint32_t slot=f.cellIn(x+d[0],z+d[1]);
                 if(g+base>=slot)continue;   // no charge can improve it
 #ifndef NDEBUG
                 // C1's soundness: a settled potential is final (a paused

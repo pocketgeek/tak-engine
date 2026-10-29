@@ -28,6 +28,8 @@ their validation reports; both live in [`docs/`](docs/).
   at every deposit on a large map each time a builder chose a site, which cost
   300-800 ms in a single tick and dropped the game speed below +0; they now take
   the nearest usable one (same choice, a fraction of the work).
+- **Faster late game on big maps**: a lodestone's mana bonus and Legion's narrow-passage
+  lookups no longer scan the whole map each tick (same games, same replays).
 
 ## 0.9.11
 *2026-10-29 · protocol 304 · replay format 15 · does not play with 0.9.10 or earlier, nor their replays*

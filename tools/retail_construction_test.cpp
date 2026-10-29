@@ -188,6 +188,35 @@ int main(int argc,char** argv) {
     world.unit(id)->x=Fixed::fromInt(192);
     world.tick(1.f/30);
     if (world.player(0).income!=0) return 1;
+    {
+        // The site buckets answer what a scan of every site from the list's end
+        // does: overlapping sites (the last listed wins a cell), zero and negative
+        // multipliers, empty footprints, and queries off every edge.
+        uint32_t seed=12345;
+        auto rnd=[&](int n) { seed=seed*1103515245u+12345u;return int((seed>>16)%uint32_t(n)); };
+        auto scan=[](const std::vector<SacredSite>& sites,int x,int z,int fx,int fz) {
+            const SacredSite* last=nullptr;int covered=0;
+            for (int dx=0;dx<fx;++dx) for (int dz=0;dz<fz;++dz)
+                for (auto it=sites.rbegin();it!=sites.rend();++it) {
+                    if (x+dx<it->x || x+dx>=it->x+it->fx || z+dz<it->z || z+dz>=it->z+it->fz) continue;
+                    if (it->multiplier>0) { ++covered;last=&*it; }
+                    break;
+                }
+            return last && covered>=last->fx*last->fz ? last->multiplier : 0.f;
+        };
+        for (int round=0;round<200;++round) {
+            std::vector<SacredSite> sites(size_t(rnd(40)));
+            for (auto& s:sites) {
+                s.x=rnd(60)-10;s.z=rnd(60)-10;s.fx=rnd(5);s.fz=rnd(5);
+                s.multiplier=float(rnd(4)-1)*0.5f;
+            }
+            World w;w.setSacredSites(sites);
+            for (int q=0;q<200;++q) {
+                const int x=rnd(70)-15,z=rnd(70)-15,fx=1+rnd(4),fz=1+rnd(4);
+                if (w.sacredIncomeMultiplier(x,z,fx,fz)!=scan(sites,x,z,fx,fz)) return 1;
+            }
+        }
+    }
     World construction;construction.setVisPlayer(-1);
     construction.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
     UnitType builderType;builderType.id="builder";builderType.maxHp=100;

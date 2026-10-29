@@ -135,8 +135,9 @@ struct RouteGrid {
         const int m = (1 << shift) - 1;
         return size_t(((z & m) << shift) | (x & m));
     }
-    uint32_t cellAt(int x, int z) const {
-        if (!inside(x, z)) return route::kNone;
+    uint32_t cellAt(int x, int z) const { return inside(x, z) ? cellIn(x, z) : route::kNone; }
+    // cellAt of a cell known to be inside() (the builder's relaxation has just tested it).
+    uint32_t cellIn(int x, int z) const {
         const size_t ti = tileOf(x, z);
         const uint32_t* t = tiles[ti];
         if (!t) return route::kNone;

@@ -2016,7 +2016,7 @@ public:
     }
     bool hasManaSpots() const { return !manaSpots_.empty(); }
     const std::vector<std::pair<float, float>>& manaSpots() const { return manaSpots_; }
-    void setSacredSites(std::vector<SacredSite> sites) { sacredSites_=std::move(sites); }
+    void setSacredSites(std::vector<SacredSite> sites);
     // The map's sacred-site features (each anchor, in map scan order); read-only,
     // for the server-side Classic AI's deposit search.
     const std::vector<SacredSite>& sacredSites() const { return sacredSites_; }
@@ -3409,6 +3409,12 @@ private:
     std::vector<int> justDied_;                // unit ids that died this tick (mission/scenario hook)
     std::vector<std::pair<float, float>> manaSpots_;
     std::vector<SacredSite> sacredSites_;
+    // sacredIncomeMultiplier's index, derived from sacredSites_ (never hashed): the
+    // sites overlapping each 8x8-cell bucket of their bounding box, ascending, as
+    // sacredBucketSites_[sacredBucketStart_[b] .. sacredBucketStart_[b+1]).
+    int sacredBx0_=0,sacredBz0_=0,sacredBw_=0,sacredBh_=0;
+    std::vector<uint32_t> sacredBucketStart_,sacredBucketSites_;
+    const SacredSite* sacredSiteAt(int x,int z) const;
     std::vector<Feature> features_;             // reclaimable map features
     std::vector<RetailMapFeatureCell> mapPlacementCells_;
     std::vector<uint16_t> installedMapFeatures_;   // load-time survivors (installedMapFeatures)
