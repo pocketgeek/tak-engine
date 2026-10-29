@@ -218,7 +218,7 @@ struct Streaming::Impl {
     std::string error;
     // Why the bitrate was lowered (YOUTUBE'S ... MAXIMUM), until the next choice.
     std::string notice;
-    uint64_t nextCapture=0, rateTime=0, rateBytes=0;
+    uint64_t nextCapture=0, rateTime=0, rateBytes=0, rateSend=0;
     uint64_t rateKbps=0;
     UploadWatch upload; // UPLOAD CAN'T KEEP UP (client/uploadwatch.h)
     // Stream::start() sends only to YouTube, so its bitrate cap always applies here.
@@ -317,7 +317,9 @@ struct Streaming::Impl {
         if(!s.active && !s.state.starts_with("FAILED"))return {};
         std::string text="STREAM " + s.state;
         if(s.active && uploadWarning)text+=std::string(" - ")+kUploadWarning;
-        if(s.active && !s.local.empty() && s.local!="LOCAL COPY SAVED")text+=" - "+s.local;
+        // A copy going well is left out beside the warning, to keep the banner short.
+        if(s.active && !s.local.empty() && s.local!="LOCAL COPY SAVED" &&
+           !(uploadWarning && s.local=="SAVING LOCAL COPY"))text+=" - "+s.local;
         return text+" - F9";
     }
     video::StreamStatus bannerStatus(video::StreamStatus s) const {
@@ -338,11 +340,13 @@ struct Streaming::Impl {
     void draw(int w,int h) {
         auto s=stream.status();
         uint64_t now=SDL_GetTicks64();
-        if(!s.active || s.bytes<rateBytes) {rateTime=now;rateBytes=s.bytes;rateKbps=0;upload.reset();}
-        else if(now-rateTime>=1000) {
-            rateKbps=(s.bytes-rateBytes)*8/(now-rateTime);rateTime=now;rateBytes=s.bytes;
-            if(s.state.starts_with("LIVE"))upload.sample(rateKbps,config.bitrateKbps,s.dropped);
+        if(!s.active || s.bytes<rateBytes || s.sendMicros<rateSend) {
+            rateTime=now;rateBytes=s.bytes;rateSend=s.sendMicros;rateKbps=0;upload.reset();
+        } else if(now-rateTime>=1000) {
+            rateKbps=(s.bytes-rateBytes)*8/(now-rateTime);
+            if(s.state.starts_with("LIVE"))upload.sample(s.dropped,s.sendMicros-rateSend,(now-rateTime)*1000);
             else upload.reset(); // connecting or reconnecting: nothing is being sent yet
+            rateTime=now;rateBytes=s.bytes;rateSend=s.sendMicros;
         }
         if(!visible) {
             if(const std::string text=bannerText(bannerStatus(s),upload.warning());!text.empty()) {

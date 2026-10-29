@@ -8,7 +8,8 @@ sends nothing while the first megabytes arrive. That caught 0.9.0's macOS Secure
 bug: RTMP's non-blocking check for server messages blocked, every upload stalled out the
 5 s timeout after a few frames and went RECONNECTING. The server certificate is issued by
 a throwaway root CA the client is given; a certificate for another host name and one from
-a root outside the system trust store must both be refused. Usage: python3 tools/check-stream-rtmps.py build/stream_network_test [encoder]
+a root outside the system trust store must both be refused. A working upload must
+barely hold the encoder up, and one slower than the bitrate must (UPLOAD CAN'T KEEP UP). Usage: python3 tools/check-stream-rtmps.py build/stream_network_test [encoder]
 Exits 77 (skipped) without openssl. Never contacts a real service.
 """
 import pathlib
@@ -110,9 +111,10 @@ def check_chain(cert, key, ca_file):
 
 
 class Proxy:
-    """TLS in, plain RTMP out to the sink; counts what the stream uploaded."""
-    def __init__(self, cert, key, backend):
-        self.backend, self.done, self.accepted, self.up = backend, False, 0, 0
+    """TLS in, plain RTMP out to the sink; counts what the stream uploaded. With `kbps`
+    it takes the upload no faster than that, like a slow home connection."""
+    def __init__(self, cert, key, backend, kbps=0):
+        self.backend, self.done, self.accepted, self.up, self.kbps = backend, False, 0, 0, kbps
         self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         self.context.load_cert_chain(cert, key)
         self.socket = socket.socket()
@@ -144,12 +146,14 @@ class Proxy:
                         if client.pending() and client not in ready:
                             ready.append(client)
                         for source in ready:
-                            data = source.recv(65536)
+                            data = source.recv(16384 if self.kbps else 65536)
                             if not data:
                                 return
                             (server if source is client else client).sendall(data)
                             if source is client:
                                 self.up += len(data)
+                                if self.kbps:
+                                    time.sleep(len(data) * 8 / (self.kbps * 1000))
         except (OSError, ssl.SSLError):
             raw.close()
 
@@ -157,6 +161,36 @@ class Proxy:
         self.done = True
         self.socket.close()
         self.thread.join(timeout=1)
+
+
+def slow_upload(exe, cert, key, ca_file):
+    """An upload slower than the bitrate: libx264's padded 6 Mbit/s into 1.5 Mbit/s. Once
+    the socket buffers fill, the encoder must be seen waiting to send (what the panel's
+    UPLOAD CAN'T KEEP UP watches) and skipping frames, without the stream failing."""
+    seconds = 12
+    backend = free_port()
+    sink = subprocess.Popen([exe, '--sink', str(backend), str(seconds + 10)],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    proxy = Proxy(cert, key, backend, kbps=1500)
+    try:
+        assert sink.stdout.readline().strip() == 'SINK LISTENING'
+        time.sleep(1)
+        client = subprocess.run([exe, f'rtmps://localhost:{proxy.port}/live/test-key', str(ca_file),
+                                 str(seconds), 'libx264'], capture_output=True, text=True,
+                                timeout=seconds + 30)
+        print(client.stdout + tls_errors(client), end='', flush=True)
+        done = [l for l in client.stdout.splitlines() if l.startswith('DONE ')]
+        assert client.returncode == 0 and done, f'client exit {client.returncode}'
+        frames, sent, dropped, waited = (int(field.split('=')[1]) for field in done[0].split()[1:5])
+        print(f'slow upload: {frames} frames, {dropped} dropped, waited {waited / 1e6:.1f}s of {seconds}s to send')
+        assert any(l.startswith('LIVE') for l in client.stdout.splitlines()), 'never went LIVE'
+        assert waited > seconds * 1e6 / 4, f'waited only {waited} us to send over a slow upload'
+        assert dropped > 0, 'a slow upload dropped no frames'
+    finally:
+        if sink.poll() is None:
+            sink.kill()
+            sink.wait()
+        proxy.close()
 
 
 def main():
@@ -186,7 +220,7 @@ def main():
             lines = client.stdout.splitlines()
             done = [l for l in lines if l.startswith('DONE ')]
             assert client.returncode == 0 and done, f'client exit {client.returncode}'
-            frames, sent = (int(field.split('=')[1]) for field in done[0].split()[1:3])
+            frames, sent, _, waited = (int(field.split('=')[1]) for field in done[0].split()[1:5])
             sink_out, _ = sink.communicate(timeout=15)
             print(sink_out, end='')
             received = [l for l in sink_out.splitlines() if l.startswith('SINK BYTES')]
@@ -205,11 +239,17 @@ def main():
             assert flv and sent > 0 and got >= sent * 9 // 10, f'sink received {got} of {sent} bytes (FLV header {flv})'
             assert encoder != 'libx264' or got >= 1000000, f'sink received only {got} bytes'
             assert 'test-key' not in client.stdout + client.stderr, 'stream key leaked into logs'
+            # An upload that keeps up never holds the encoder up for long (the panel's
+            # UPLOAD CAN'T KEEP UP counts over half a second in a second as behind).
+            print(f'{encoder}: waited {waited / 1e6:.2f}s of {wall:.1f}s to send')
+            assert waited < wall * 1e6 / 4, f'waited {waited} us to send over a working upload'
         finally:
             if sink.poll() is None:
                 sink.kill()
                 sink.wait()
             proxy.close()
+        if encoder == 'libx264':
+            slow_upload(exe, cert, key, ca[0])
         # A certificate from the trusted root, but for another host name.
         wrong_cert, wrong_key = certificate(root, ca, 'wrong.invalid')
         refused(exe, wrong_cert, wrong_key, ca[0], encoder, 'host name mismatch')

@@ -98,7 +98,8 @@ int main(int argc,char** argv){
         std::this_thread::sleep_for(std::chrono::milliseconds(33));
     }
     const auto last=stream.status();
-    std::printf("DONE frames=%llu bytes=%llu\n",(unsigned long long)last.frames,(unsigned long long)last.bytes);std::fflush(stdout);
+    std::printf("DONE frames=%llu bytes=%llu dropped=%llu send=%llu\n",(unsigned long long)last.frames,(unsigned long long)last.bytes,
+                (unsigned long long)last.dropped,(unsigned long long)last.sendMicros);std::fflush(stdout);
     stream.stop();
     while(stream.active())std::this_thread::sleep_for(std::chrono::milliseconds(10));
     const auto s=stream.status();

@@ -7,8 +7,9 @@
 //   * only a YouTube ingest is capped: other destinations keep the whole range;
 //   * a saved bitrate above the cap is lowered to it, with a note, and saved; BITRATE
 //     steps never pass it, and a lower frame rate lowers it;
-//   * the warning comes on when the rate stays under half the set bitrate or DROPPED
-//     keeps rising, never for a single hitch, and clears once the stream is healthy.
+//   * the warning comes on when the encoder keeps waiting for the connection (over half
+//     the time, or DROPPED rising while it waits), never for a single hitch, a busy
+//     computer or an encoder sending under its bitrate, and clears once that stops.
 // The panel runs against a store that is never available: no real stream key is read.
 
 #include "client/credstore.h"
@@ -97,44 +98,60 @@ static void table() {
 
 static void watch() {
     std::printf("stream_bitrate_test: UPLOAD CAN'T KEEP UP\n");
+    constexpr uint64_t S = 1000000; // one sample, in microseconds
     {
         UploadWatch w;
         bool any = false;
-        for (int i = 0; i < 20; ++i) any |= w.sample(6100, 6000, 0);
+        for (int i = 0; i < 20; ++i) any |= w.sample(0, S / 100, S);
         check(!any, "a healthy stream never warns");
     }
     {
         UploadWatch w;
         bool early = false;
-        for (int i = 0; i < 3; ++i) early |= w.sample(0, 6000, uint64_t(i) * 10);
+        for (int i = 0; i < 3; ++i) early |= w.sample(uint64_t(i) * 10, S, S);
         check(!early, "the first samples of a connection are ignored");
     }
     {
+        // A still scene: a VBR hardware encoder sends a fraction of its bitrate, and
+        // the connection takes it at once. That is not the upload falling behind.
         UploadWatch w;
-        for (int i = 0; i < 3; ++i) w.sample(6000, 6000, 0);
-        bool soon = false;
-        for (int i = 0; i < 4; ++i) soon |= w.sample(2500, 6000, 0);
-        check(!soon, "four seconds under half the bitrate: not yet");
-        check(w.sample(2500, 6000, 0), "five seconds under half the bitrate: warns");
-        bool held = true;
-        for (int i = 0; i < 4; ++i) held &= w.sample(6000, 6000, 0);
-        check(held, "...and holds while recovering");
-        check(!w.sample(6000, 6000, 0), "...then clears after five healthy seconds");
-        for (int i = 0; i < 5; ++i) w.sample(4000, 6000, 0);
-        check(!w.warning(), "two thirds of the bitrate is not 'well under'");
+        bool any = false;
+        for (int i = 0; i < 20; ++i) any |= w.sample(0, 0, S);
+        check(!any, "sending little, with nothing waiting: no warning");
+    }
+    {
+        // A busy computer: frames dropped, but the connection never makes it wait.
+        UploadWatch w;
+        uint64_t dropped = 0;
+        bool any = false;
+        for (int i = 0; i < 20; ++i) any |= w.sample(dropped += 12, S / 50, S);
+        check(!any, "DROPPED rising with no wait to send: no warning");
     }
     {
         UploadWatch w;
-        for (int i = 0; i < 3; ++i) w.sample(6000, 6000, 0);
+        for (int i = 0; i < 3; ++i) w.sample(0, 0, S);
+        check(!w.sample(0, S * 6 / 10, S) && !w.sample(0, S * 6 / 10, S), "waiting to send two seconds of five: not yet");
+        check(w.sample(0, S * 6 / 10, S), "waiting over half of three seconds: warns");
+        bool held = true;
+        for (int i = 0; i < 4; ++i) held &= w.sample(0, 0, S);
+        check(held, "...and holds while recovering");
+        check(!w.sample(0, 0, S), "...then clears after five clear seconds");
+        bool any = false;
+        for (int i = 0; i < 10; ++i) any |= w.sample(0, S * 4 / 10, S);
+        check(!any, "waiting under half the time, with no dropped frames: no warning");
+    }
+    {
+        UploadWatch w;
+        for (int i = 0; i < 3; ++i) w.sample(0, 0, S);
         uint64_t dropped = 0;
         bool once = false;
-        once |= w.sample(6000, 6000, dropped += 30);
-        for (int i = 0; i < 4; ++i) once |= w.sample(6000, 6000, dropped);
+        once |= w.sample(dropped += 30, S / 5, S);
+        for (int i = 0; i < 4; ++i) once |= w.sample(dropped, S / 5, S);
         check(!once, "a single hitch of dropped frames does not warn");
-        w.sample(6000, 6000, dropped += 5);
-        w.sample(6000, 6000, dropped);
-        check(!w.sample(6000, 6000, dropped += 5), "DROPPED rising in two of five: not yet");
-        check(w.sample(6000, 6000, dropped += 5), "DROPPED rising in three of five: warns");
+        w.sample(dropped += 5, S / 5, S);
+        w.sample(dropped, S / 5, S);
+        check(!w.sample(dropped += 5, S / 5, S), "DROPPED rising while waiting, two of five: not yet");
+        check(w.sample(dropped += 5, S / 5, S), "DROPPED rising while waiting, three of five: warns");
         w.reset();
         check(!w.warning(), "a new connection starts clear");
     }

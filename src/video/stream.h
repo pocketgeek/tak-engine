@@ -23,6 +23,9 @@ struct StreamStatus {
     bool active = false;
     std::string state = "OFF", encoder;
     uint64_t frames = 0, dropped = 0, replaced = 0, bytes = 0;
+    // Microseconds the worker has spent handing packets to the connection. It waits
+    // there only when the upload cannot take them as fast as they are encoded.
+    uint64_t sendMicros = 0;
     int width = 0, height = 0, fps = 30;
     // Local copy: "" when off, else "SAVING LOCAL COPY", "LOCAL COPY SAVED" or a
     // "LOCAL COPY STOPPED/FAILED - ..." reason; localFile is the newest file's path.

@@ -152,10 +152,12 @@ missed output frames (**DROPPED**), superseded or busy capture submissions
 (**REPLACED**), and the bitrate actually being sent (**RATE**).
 
 **UPLOAD CAN'T KEEP UP - LOWER THE BITRATE** appears on the bottom line, and in the
-corner badge while the panel is closed, when RATE stays under half the set bitrate
-for five seconds, or DROPPED rises in three of any five seconds. It clears after
-five seconds with neither. A busy computer can drop frames too, so if a lower
-bitrate does not help, try a lower resolution or frame rate. A replaced capture does not by
+corner badge while the panel is closed, when the encoder keeps waiting for your
+connection to take the video: in three of any five seconds it waited over half the
+second, or DROPPED rose while it waited. It clears after five seconds without that.
+RATE under the set bitrate is not a warning by itself: some hardware encoders send
+much less on a still picture. Frames DROPPED while the connection keeps up mean a
+busy computer instead; try a lower resolution or frame rate. A replaced capture does not by
 itself mean an output frame was missed. Rendering slowdowns skip late frames
 without forcing a reconnect, and with VSync on, a refresh-rate pacing fallback
 keeps streaming from uncapping presentation.

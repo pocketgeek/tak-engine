@@ -471,9 +471,11 @@ struct Stream::Impl {
             av_packet_rescale_ts(packet, codec->time_base, stream->time_base);
             packet->stream_index = stream->index;
             const int size = packet->size;
+            const int64_t sending = micros();
             timeout(); result = av_interleaved_write_frame(e.mux, packet); deadline = 0;
+            const int64_t waited = micros() - sending;
             if (result < 0) { writeFailure = true; break; }
-            { std::lock_guard lock(stateMutex); state.bytes += size; }
+            { std::lock_guard lock(stateMutex); state.bytes += size; state.sendMicros += uint64_t(std::max<int64_t>(waited, 0)); }
             av_packet_unref(packet);
         }
         av_packet_free(&packet);
