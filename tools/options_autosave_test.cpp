@@ -7,7 +7,12 @@
 //   - the player name writes when its field loses focus (Enter, or the screen closing),
 //     not per keystroke;
 //   - DEFAULTS asks first (RESET TO DEFAULTS? YES / NO): NO changes nothing, YES resets
-//     and saves -- in Options and in Controls.
+//     and saves -- in Options and in Controls;
+//   - the Options DEFAULTS puts the sound device back to the system default and re-opens
+//     audio on it at once, only when the device in use changes;
+//   - the Controls hint line has a band of its own: at every window size it lies below the
+//     rows' viewport (never over a row, scrolled or not) and above the footer buttons.
+//     TAK_LAYOUT_SHOT_DIR=<dir> also writes each case as a BMP.
 
 #include "client/hotkeys.h"
 #include "client/hotkeysscreen.h"
@@ -17,9 +22,13 @@
 #include <SDL.h>
 
 #include <cstdio>
+#include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <random>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace fs = std::filesystem;
 using namespace tak;
@@ -149,6 +158,42 @@ static void testOptions(SDL_Renderer* ren) {
         check(saves == 1 && loadSettings() == s, "YES saves the defaults");
         check(click(o, o.defaultsRect()) == false && o.defaultsYesRect().w == 0, "at defaults, DEFAULTS does nothing");
     }
+
+    // DEFAULTS puts the sound device back to the system default AND re-opens audio on it
+    // now, as picking it in the SOUND DEVICE list does -- only if the device really changes.
+    {
+        const auto devs = listAudioDevices(0);
+        check(!devs.empty(), "the dummy audio driver lists an output device");
+        if (!devs.empty()) {
+            int reopens = 0;
+            auto reset = [&](OptionsScreen& o) { click(o, o.defaultsRect()); click(o, o.defaultsYesRect()); };
+            s = preferenceDefaults(s);
+            s.audioDevice = devs[0];
+            setAudioDevice(s.audioDevice);
+            check(currentAudioDevice() == devs[0], "the chosen device is the one in use");
+            OptionsScreen o(ren, s, [&] { ++changes; }, save, 2, {}, [&] { ++reopens; });
+            o.render(W, H);
+            reset(o);
+            check(s.audioDevice.empty() && currentAudioDevice().empty(), "DEFAULTS puts the device in use back to the system default");
+            check(reopens == 1, "DEFAULTS re-opens audio on the new device, once");
+            // A saved device that is not plugged in is not in use: resetting it re-opens nothing.
+            s.audioDevice = "No Such Speakers";
+            setAudioDevice(s.audioDevice);
+            check(currentAudioDevice().empty(), "a missing device is not in use");
+            reset(o);
+            check(s.audioDevice.empty() && reopens == 1, "DEFAULTS does not re-open when the device in use is unchanged");
+            // The Voice Chat page's DEFAULTS never touches the game's device.
+            s.audioDevice = devs[0];
+            setAudioDevice(s.audioDevice);
+            OptionsScreen v(ren, s, [] {}, save, VoicePageHooks{});
+            v.render(W, H);
+            s.voiceEnabled = true;
+            reset(v);
+            check(!s.voiceEnabled && s.audioDevice == devs[0] && currentAudioDevice() == devs[0] && reopens == 1,
+                  "the Voice Chat DEFAULTS leaves the sound device alone");
+            setAudioDevice("");
+        }
+    }
 }
 
 static void testVoice(SDL_Renderer* ren) {
@@ -193,6 +238,78 @@ static void testControls(SDL_Renderer* ren) {
     check(s.hotkeys.empty() && saves == 2 && loadSettings().hotkeys.empty(), "YES resets the keys and saves");
 }
 
+// The Controls screen at one window size, on a software renderer of its own: the hint
+// line's band must lie below the rows' viewport and above the footer, inside the panel, and
+// the last row must be reachable. Rows are clipped to the viewport, so a hint outside it
+// can never lie on a row.
+// Renderers are kept to the end of the run: uiText caches its textures by renderer address,
+// and a destroyed renderer's address is reused by the next one.
+static std::vector<std::pair<SDL_Renderer*, SDL_Surface*>> g_kept;
+
+static void layoutCase(int w, int h) {
+    const std::string tag = std::to_string(w) + "x" + std::to_string(h);
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
+    SDL_Renderer* ren = surf ? SDL_CreateSoftwareRenderer(surf) : nullptr;
+    if (!ren) { check(false, "a software renderer at " + tag); if (surf) SDL_FreeSurface(surf); return; }
+    Settings s;
+    HotkeysScreen hk(ren, s, [] {}, [] {});
+    auto shot = [&](const char* what) {
+        const char* dir = std::getenv("TAK_LAYOUT_SHOT_DIR");
+        if (dir) SDL_SaveBMP(surf, (std::string(dir) + "/controls-" + tag + "-" + what + ".bmp").c_str());
+    };
+    auto verify = [&](const char* what) {
+        SDL_SetRenderDrawColor(ren, 12, 12, 16, 255); SDL_RenderClear(ren);   // the panel is translucent
+        hk.render(w, h);
+        const std::string at = tag + " " + what + ": ";
+        const SDL_FRect v = hk.viewRect(), hint = hk.hintRect(), p = hk.panelRect(), d = hk.defaultsRect();
+        check(hint.h > 0, at + "the hint line has a band of its own");
+        check(hint.y >= v.y + v.h - 0.01f, at + "the hint lies below the rows' viewport");
+        check(hint.y + hint.h <= d.y + 0.01f, at + "the hint lies above the footer buttons");
+        check(v.y >= p.y && hint.y + hint.h <= p.y + p.h + 0.01f, at + "the viewport and hint are inside the panel");
+        shot(what);
+    };
+    verify("top");
+    // To the end: the last row ends at the viewport's bottom, so it is not under the hint.
+    for (int i = 0; i < 200; ++i) {
+        SDL_Event e{}; e.type = SDL_MOUSEWHEEL; e.wheel.y = -1;
+        hk.input(e, w, h);
+    }
+    verify("end");
+    const SDL_FRect last = hk.rowRect(hotkeyDefs().back().act), v = hk.viewRect();
+    check(std::fabs((last.y + last.h) - (v.y + v.h)) < 1.5f, tag + ": scrolled to the end, the last row is the viewport's last");
+    g_kept.emplace_back(ren, surf);
+}
+
+// A click on the hint band is not a click on a row scrolled under it.
+static void testHintBandClicks() {
+    const int w = 1600, h = 1100;
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
+    SDL_Renderer* ren = surf ? SDL_CreateSoftwareRenderer(surf) : nullptr;
+    if (!ren) { check(false, "a software renderer for the hint band clicks"); return; }
+    Settings s;
+    HotkeysScreen hk(ren, s, [] {}, [] {});
+    hk.render(w, h);
+    bool tried = false;
+    for (int i = 0; i < 40 && !tried; ++i) {
+        const SDL_FRect hint = hk.hintRect();
+        for (const auto& d : hotkeyDefs()) {
+            const SDL_FRect r = hk.rowRect(d.act);
+            if (r.y < hint.y + hint.h / 2 && r.y + r.h > hint.y + hint.h / 2) {   // a row sits under the hint
+                SDL_Event e{}; e.type = SDL_MOUSEBUTTONDOWN; e.button.button = SDL_BUTTON_RIGHT;
+                e.button.x = int(r.x + r.w / 2); e.button.y = int(hint.y + hint.h / 2);
+                hk.input(e, w, h);
+                tried = true;
+                break;
+            }
+        }
+        SDL_Event wh{}; wh.type = SDL_MOUSEWHEEL; wh.wheel.y = -1;
+        hk.input(wh, w, h); hk.render(w, h);
+    }
+    check(tried, "a scroll position has a row under the hint band");
+    check(s.hotkeys.empty(), "a right-click on the hint band unbinds nothing");
+    g_kept.emplace_back(ren, surf);
+}
+
 int main() {
     SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO) != 0) { std::printf("SDL_Init: %s\n", SDL_GetError()); return 1; }
@@ -205,6 +322,10 @@ int main() {
     testOptions(ren);
     testVoice(ren);
     testControls(ren);
+    for (auto [w, h] : {std::pair{1280, 720}, {1600, 1100}, {1920, 1080}, {3840, 2160}, {800, 600}, {640, 360}, {400, 300}})
+        layoutCase(w, h);
+    testHintBandClicks();
+    for (auto& [r, sf] : g_kept) { SDL_DestroyRenderer(r); SDL_FreeSurface(sf); }
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     setSettingsPath("");

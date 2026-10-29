@@ -37,6 +37,10 @@ public:
         return {};
     }
     SDL_FRect defaultsRect() const { return defaultsRect_; }
+    SDL_FRect viewRect() const { return view_; }       // where the rows scroll
+    SDL_FRect hintRect() const { return hintRect_; }   // the hint line's band, below the rows
+    SDL_FRect panelRect() const { return panel_; }
+    SDL_FRect backRect() const { return backRect_; }
     SDL_FRect defaultsYesRect() const { return defaultsPrompt_.open ? defaultsPrompt_.first : SDL_FRect{}; }
     SDL_FRect defaultsNoRect() const { return defaultsPrompt_.open ? defaultsPrompt_.second : SDL_FRect{}; }
 
@@ -65,6 +69,7 @@ private:
     float contentH_ = 0;
     float u_ = 1.0f;
     SDL_FRect panel_{};
+    SDL_FRect view_{}, hintRect_{};   // the rows' viewport, and the hint line's band under it
     SDL_FRect defaultsRect_{}, backRect_{};
 };
 

@@ -30,11 +30,15 @@ void HotkeysScreen::layout(int winW, int winH) {
     float panelW = std::min(660 * u_, winW * 0.72f);
     float titleH = 3.4f * 7 * u_ + 26 * u_;
     float footerH = 52 * u_;
+    float hintH = 22 * u_;   // the hint line's own band, between the rows and the footer
     contentH_ = 0;
     for (auto& r : rows_) contentH_ += rowH(r.section);
-    float viewH = std::min(contentH_, winH * 0.92f - titleH - footerH);
-    float panelH = titleH + viewH + footerH;
+    // The rows scroll in a viewport that stops above the hint, so the hint never lies on one.
+    float viewH = std::max(0.0f, std::min(contentH_, winH * 0.92f - titleH - hintH - footerH));
+    float panelH = titleH + viewH + hintH + footerH;
     panel_ = {(winW - panelW) / 2, (winH - panelH) / 2, panelW, panelH};
+    view_ = {panel_.x, panel_.y + titleH, panelW, viewH};
+    hintRect_ = {panel_.x, view_.y + viewH, panelW, hintH};
 
     float maxScroll = std::max(0.0f, contentH_ - viewH);
     scroll_ = std::clamp(scroll_, 0.0f, maxScroll);
@@ -105,8 +109,7 @@ bool HotkeysScreen::input(const SDL_Event& e, int winW, int winH) {
             return false;
         }
         // Right-click on a binding row clears it (unbind); left-click arms capture.
-        float titleH = 3.4f * 7 * u_ + 26 * u_, footerH = 52 * u_;
-        if (my < panel_.y + titleH || my > panel_.y + panel_.h - footerH) return false;
+        if (!in(view_, mx, my)) return false;   // the title, the hint and the footer are not rows
         for (size_t i = 0; i < rows_.size(); ++i) {
             if (rows_[i].section || !in(rows_[i].rect, mx, my)) continue;
             capture_ = int(i); refused_.clear();
@@ -117,6 +120,7 @@ bool HotkeysScreen::input(const SDL_Event& e, int winW, int winH) {
     // Right-click a row: unbind it outright.
     if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT) {
         float mx = float(e.button.x), my = float(e.button.y);
+        if (!in(view_, mx, my)) return false;   // a row scrolled out of sight is not a target
         for (auto& r : rows_) {
             if (r.section || !in(r.rect, mx, my)) continue;
             setChordOverride(s_.hotkeys, r.act, KeyChord{});
@@ -141,9 +145,7 @@ void HotkeysScreen::render(int winW, int winH) {
     uiText(ren_, title, panel_.x + (panel_.w - uiTextWidth(title, tpx)) / 2,
                   panel_.y + 13 * u_, tpx, {235, 225, 180, 255});
 
-    float titleH = 3.4f * 7 * u_ + 26 * u_, footerH = 52 * u_;
-    SDL_Rect clip{int(panel_.x), int(panel_.y + titleH), int(panel_.w),
-                  int(panel_.h - titleH - footerH)};
+    SDL_Rect clip{int(view_.x), int(view_.y), int(view_.w), int(view_.h)};
     // No room (a tiny window): no rows -- on Metal they would draw unclipped.
     const bool rowsShow = tak::cliprect::set(ren_, clip);
 
@@ -182,20 +184,21 @@ void HotkeysScreen::render(int winW, int winH) {
     SDL_RenderSetClipRect(ren_, nullptr);
 
     // Scrollbar hint.
-    float viewH = panel_.h - titleH - footerH;
+    const float viewH = view_.h;
     if (contentH_ > viewH) {
         float th = viewH * viewH / contentH_;
-        float ty = panel_.y + titleH + (scroll_ / (contentH_ - viewH)) * (viewH - th);
+        float ty = view_.y + (scroll_ / (contentH_ - viewH)) * (viewH - th);
         SDL_SetRenderDrawColor(ren_, 110, 120, 150, 220);
         SDL_FRect bar{panel_.x + panel_.w - 5 * u_, ty, 3 * u_, th}; SDL_RenderFillRectF(ren_, &bar);
     }
 
-    // A hint line above the footer: how to unbind -- or why the last key was refused.
+    // A hint line in its own band between the rows and the footer: how to unbind -- or why
+    // the last key was refused.
     {
         const std::string hint = !refused_.empty() ? refused_ : "CLICK TO REBIND   RIGHT-CLICK TO CLEAR";
         float hpx = std::min(1.5f * u_, (panel_.w - 20 * u_) / std::max(1.0f, uiTextWidth(hint, 1)));
-        uiText(ren_, hint, panel_.x + (panel_.w - uiTextWidth(hint, hpx)) / 2,
-                      panel_.y + panel_.h - footerH - 16 * u_, hpx,
+        uiText(ren_, hint, hintRect_.x + (hintRect_.w - uiTextWidth(hint, hpx)) / 2,
+                      hintRect_.y + (hintRect_.h - 7 * hpx) / 2, hpx,
                       !refused_.empty() ? SDL_Color{235, 190, 110, 255} : SDL_Color{130, 140, 160, 255});
     }
 

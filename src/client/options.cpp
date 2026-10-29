@@ -1233,7 +1233,18 @@ void OptionsScreen::drawDefaultsPrompt(int winW, int winH) {
 void OptionsScreen::defaultsPromptInput(const SDL_Event& e) {
     if (defaultsPrompt_.input(e) != 1) return;   // NO / Esc: nothing changes
     // One definition per page, shared with atDefaults().
+    const std::string deviceWas = currentAudioDevice();
     s_ = page_ == OptionsPage::Voice ? tak::voiceDefaults(s_) : tak::preferenceDefaults(s_);
+    // The sound device goes back to the system default: switch to it now, as picking it in
+    // the SOUND DEVICE list does, and only if the device in use really changes. The voice
+    // devices need nothing here: the host applies them from the settings on every change.
+    if (page_ != OptionsPage::Voice) {
+        setAudioDevice(s_.audioDevice);              // resets the channel-count cache
+        if (currentAudioDevice() != deviceWas) {
+            pendingRebuild_ = true;                  // re-lay the SPEAKER sliders for the new count
+            if (onAudioDevice_) onAudioDevice_();    // host re-opens its streams on the new device
+        }
+    }
     if (onChange_) onChange_();
     persist();
 }
