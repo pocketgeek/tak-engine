@@ -39,20 +39,20 @@ DiffParams paramsFor(Difficulty d) {
         // no AI-imposed limits -- every idle producer may act each think and spending
         // is held to income by the affordability gate and the low-mana throttle alone.
         // 256 bounds one think's orders for the wire frame, not the pace.
-        case Difficulty::Passive: return {30, 5, 256, 100, false, false, 0, true};
+        case Difficulty::Passive: return {30, 5, 256, 100, false, 0, true};
         // Defensive's behaviour, plus Absurd's 2x income cheat (incomeMultFor).
-        case Difficulty::AbsurdlyDefensive: return {30, 5, 256, 100, false, false, 0, true};
+        case Difficulty::AbsurdlyDefensive: return {30, 5, 256, 100, false, 0, true};
         // Sluggish: reacts slowly, builds up slowly, and only commits once it has
         // gathered a sizeable group -- so it's passive and beatable. No raiding.
-        case Difficulty::Easy:   return {90, 4, 1, 50,  false, true,  0, false};
+        case Difficulty::Easy:   return {90, 4, 1, 50,  true,  0, false};
         // Fast, army-heavy, and aggressive: reacts often, musters a large army before
         // the big push, harasses with raids meanwhile, and pushes bigger unit limits.
-        case Difficulty::Hard:   return {20, 6, 8, 150, true,  true,  4, false};
+        case Difficulty::Hard:   return {20, 6, 8, 150, true,  4, false};
         // Hard's behaviour, plus a 2x income cheat applied to the sim (incomeMultFor).
-        case Difficulty::Absurd: return {20, 6, 8, 150, true,  true,  4, false};
+        case Difficulty::Absurd: return {20, 6, 8, 150, true,  4, false};
         // Classic takes Normal's (unused) knobs: its ClassicBrain has none.
         case Difficulty::Normal:
-        default:                 return {30, 5, 3, 100, true,  true,  3, false};
+        default:                 return {30, 5, 3, 100, true,  3, false};
     }
 }
 
@@ -1592,14 +1592,18 @@ bool Controller::canHurt(const tak::sim::UnitType* a, const tak::sim::UnitType* 
     return a->weapons.empty() ? hurts(a->weapon) : std::any_of(a->weapons.begin(), a->weapons.end(), hurts);
 }
 
-// Every enemy unit, scored where it stands. A unit's value is its cost, tripled
-// for a lodestone or mana building and doubled for production and builders (retail's
-// picker divides everything that is not a mana site by about five); a Monarch whose
-// loss defeats its owner is worth the game; each unit of a player with few left is
-// worth more, so a winning AI finishes a player off instead of leaving a lone
-// lodestone standing; an armed unit adds its strength as threat, up to three times
-// over near our home. Its armed strength is also the site's defence, summed with the
-// eight cells around it so a lodestone under a tower line is not taken for bare.
+// Every enemy unit this AI knows of (knowledge_), scored where it was last seen.
+// A unit's value is its cost, tripled for a lodestone or mana building and
+// doubled for production and builders (retail's picker divides everything that
+// is not a mana site by about five); a Monarch whose loss defeats its owner is
+// worth the game; each unit of a player with few left is worth more, so a winning
+// AI finishes a player off instead of leaving a lone lodestone standing; an armed
+// unit adds its strength as threat, up to three times over near our home. Its
+// armed strength is also the site's defence, summed with the eight cells around
+// it so a lodestone under a tower line is not taken for bare. How many units a
+// player has left, and the armed strength of every enemy against ours (ahead),
+// are counts a player reads off the score screen, not sightings: they are taken
+// from the whole world.
 Controller::StrikeBoard Controller::scanTargets(const tak::sim::World& world) const {
     StrikeBoard board;
     const int players = world.numPlayers();
@@ -1608,61 +1612,63 @@ Controller::StrikeBoard Controller::scanTargets(const tak::sim::World& world) co
     for (int p = 0; p < players; ++p)
         enemy[size_t(p)] = p != player_ && !world.isNeutralPlayer(p) && !world.allied(player_, p) &&
                            !world.player(p).defeated;
+    bool any = false;   // some enemy unit is still in the game
     for (const auto& u : world.units()) {
         if (!u.alive() || !u.type || u.embarked() || u.player < 0 || u.player >= players) continue;
-        if (enemy[size_t(u.player)]) ++left[size_t(u.player)];
-        else if (u.player == player_ && !u.type->isStructure() && !u.type->isBuilder && !u.underConstruction &&
+        if (enemy[size_t(u.player)]) {
+            ++left[size_t(u.player)];
+            any = true;
+            if (armed(u.type) && !u.underConstruction) board.theirs += strength(u);
+        } else if (u.player == player_ && !u.type->isStructure() && !u.type->isBuilder && !u.underConstruction &&
                  armed(u.type))
             board.ours += strength(u);
     }
     const auto [hx, hz] = homeOf(world);
     const bool expendable = world.monarchExpendable();
-    struct Cell { int cx, cz; float value = 0, defence = 0, anchorValue = -1; const tak::sim::Unit* anchor = nullptr; bool seen = false; };
+    struct Cell { int cx, cz; float value = 0, defence = 0, anchorValue = -1; int anchor = 0; const Known* known = nullptr; bool seen = false; };
     std::map<std::pair<int, int>, size_t> index;
     std::vector<Cell> cells;
-    for (const auto& u : world.units()) {
-        if (!u.alive() || !u.type || u.embarked() || u.player < 0 || u.player >= players || !enemy[size_t(u.player)]) continue;
-        const auto* t = u.type;
-        const float x = u.x.toFloat(), z = u.z.toFloat();
-        const float threat = armed(t) && !u.underConstruction ? strength(u) : 0.0f;
-        board.theirs += threat;
-        if (u.cloaked) continue;   // retail's picker skips them too; nothing could aim at one
+    for (const auto& [id, k] : knowledge_) {
+        if (k.player < 0 || k.player >= players || !enemy[size_t(k.player)]) continue;
+        const auto* t = k.type;
+        const float x = k.x, z = k.z;
+        const float threat = armed(t) && !k.unfinished ? k.strength : 0.0f;
         float v = std::max(t->buildCost, 20.0f);
         if (t->onMana) v *= 3;
         else if (t->isBuilder || categoryOf(t) == BuildCat::Factory) v *= 2;
         if (t->commander && !expendable) v = v * 4 + 4000;
-        v += 1500.0f / float(left[size_t(u.player)]);
+        v += 1500.0f / float(std::max(left[size_t(k.player)], 1));
         if (threat > 0) {
             const float dx = x - hx, dz = z - hz;
             v += threat * (1 + 2 * std::max(0.0f, 1 - std::sqrt(dx * dx + dz * dz) / 2500));
         }
-        if (u.underConstruction) v *= 0.5f;
+        if (k.unfinished) v *= 0.5f;
         const std::pair<int, int> key{int(std::floor(x / kSiteCell)), int(std::floor(z / kSiteCell))};
         auto [it, fresh] = index.try_emplace(key, cells.size());
         if (fresh) cells.push_back({key.first, key.second});
         Cell& c = cells[it->second];
         c.value += v;
         c.defence += threat;
-        c.seen = c.seen || world.playerSees(player_, u);
-        const auto pursuit = pursuits_.find(u.id);
+        c.seen = c.seen || k.seenAt == now_;
+        const auto pursuit = pursuits_.find(id);
         const bool passedOver = pursuit != pursuits_.end() && pursuit->second.until > now_;
-        if (!passedOver && v > c.anchorValue) { c.anchorValue = v; c.anchor = &u; }
+        if (!passedOver && v > c.anchorValue) { c.anchorValue = v; c.anchor = id; c.known = &k; }
     }
     for (const auto& c : cells) {
         if (!c.anchor) continue;
         StrikeSite site;
-        site.anchor = c.anchor->id; site.anchorType = c.anchor->type; site.anchorUnfinished = c.anchor->underConstruction;
-        site.x = c.anchor->x.toFloat(); site.z = c.anchor->z.toFloat();
-        site.value = c.value; site.seen = c.seen;
+        site.anchor = c.anchor; site.anchorType = c.known->type; site.anchorUnfinished = c.known->unfinished;
+        site.x = c.known->x; site.z = c.known->z;
+        site.value = c.value; site.seen = c.seen; site.visible = c.known->seenAt == now_;
         for (int i = -1; i <= 1; ++i)
             for (int j = -1; j <= 1; ++j)
                 if (const auto it = index.find({c.cx + i, c.cz + j}); it != index.end()) site.defence += cells[it->second].defence;
         board.sites.push_back(site);
     }
     // Clearly ahead: an attacking level then commits whatever is idle and a defensive
-    // level goes out to clean up; the defensive levels want a wider margin.
-    board.winning = !board.sites.empty() && board.ours > 0 &&
-                    board.ours >= board.theirs * (defensiveLevel(diff_) ? 5.0f : 3.0f);
+    // level goes out to scout and clean up; the defensive levels want a wider margin.
+    board.ahead = any && board.ours > 0 && board.ours >= board.theirs * (defensiveLevel(diff_) ? 5.0f : 3.0f);
+    board.winning = board.ahead && !board.sites.empty();
     return board;
 }
 
@@ -1722,22 +1728,28 @@ bool Controller::strikeOrder(const tak::sim::World& world, const tak::sim::Unit&
     const float ux = u.x.toFloat(), uz = u.z.toFloat();
     float tx = 0, tz = 0;
     if (!reachablePoint(world, u.type, ux, uz, site.x, site.z, tx, tz, sitePad(site, u.type))) return false;
-    const auto* e = site.anchor ? world.unit(site.anchor) : nullptr;
+    const float reach = std::max(float(u.type->weapon.range), u.type->maxRange()) + 250;
+    // Back at the anchor with nothing to do and the anchor no worse off since last
+    // time (out of sight, nothing is known to be worse off): after kTries thinks it
+    // is passed over for a while.
+    auto tried = [&](int id, float hp) {
+        auto& p = pursuits_[id];
+        if (p.last == simTick + 1) return;   // once per think, however many are sent
+        p.tries = p.tries && hp < p.hp ? 1 : p.tries + 1;
+        p.hp = hp; p.last = simTick + 1;
+        if (p.tries >= kTries) { p.until = simTick + kPassOverTicks; p.tries = 0; }
+    };
+    // Only an anchor in sight is ordered on by id; one remembered out of sight is
+    // gone for where it was last seen.
+    const auto* e = site.anchor && site.visible ? world.unit(site.anchor) : nullptr;
+    if (!e && site.anchor) {
+        const float dx = site.x - ux, dz = site.z - uz;
+        if (dx * dx + dz * dz <= reach * reach) tried(site.anchor, 0);
+    }
     if (e && e->alive() && e->type && canHurt(u.type, e->type)) {
-        const float reach = std::max(float(u.type->weapon.range), u.type->maxRange()) + 250;
         const float dx = e->x.toFloat() - ux, dz = e->z.toFloat() - uz;
         const bool close = dx * dx + dz * dz <= reach * reach;
-        if (close) {
-            // Back at the anchor with nothing to do and the anchor no worse off
-            // since last time: after kTries thinks it is passed over for a while.
-            auto& p = pursuits_[e->id];
-            if (p.last != simTick + 1) {   // once per think, however many are sent
-                const float hp = e->hp.toFloat();
-                p.tries = p.tries && hp < p.hp ? 1 : p.tries + 1;
-                p.hp = hp; p.last = simTick + 1;
-                if (p.tries >= kTries) { p.until = simTick + kPassOverTicks; p.tries = 0; }
-            }
-        }
+        if (close) tried(e->id, e->hp.toFloat());
         // Nothing auto-acquires a site still being built, and up close an order on
         // the anchor itself makes sure of it.
         if (close || e->underConstruction) {
@@ -1749,18 +1761,6 @@ bool Controller::strikeOrder(const tak::sim::World& world, const tak::sim::Unit&
     }
     emit(sink, tak::net::Cmd::AttackMove, u.id, "", tx, tz);
     return true;
-}
-
-// The nearest KNOWN enemy start position -- where the AI marches when fog hides the
-// enemy, so the army pushes into a base (and spots its defenders) instead of idling.
-bool Controller::nearestEnemyStart(float cx, float cz, float& tx, float& tz) const {
-    float best = 1e18f;
-    bool found = false;
-    for (const auto& [x, z] : enemyStarts_) {
-        float dx = x - cx, dz = z - cz, d = dx * dx + dz * dz;
-        if (d < best) { best = d; tx = x; tz = z; found = true; }
-    }
-    return found;
 }
 
 // A player's base anchor: the centroid of its buildings, else its Monarch, else
@@ -2310,33 +2310,276 @@ void Controller::stationArmy(const tak::sim::World& world, std::vector<int>& ass
     }
 }
 
+// What this AI sees: whatever its own and its allies' units see (the shared team
+// vision a player's screen shows), by the sim's per-player view counters
+// (World::playerSees, viewCount) -- never the display fog, which is local.
+bool Controller::teamSees(const tak::sim::World& world, const tak::sim::Unit& u) const {
+    return std::any_of(team_.begin(), team_.end(), [&](int p) { return world.playerSees(p, u); });
+}
+
+bool Controller::teamViews(const tak::sim::World& world, int cx, int cz) const {
+    if (world.viewCounts().empty()) return true;   // no view plane: everything is in sight, as playerSees
+    return std::any_of(team_.begin(), team_.end(), [&](int p) { return world.viewCount(p, cx, cz) > 0; });
+}
+
+// A unit's projected 32 px view cell (World::playerSees' corner rule, at its centre).
+static std::pair<int, int> viewCell(const tak::sim::Unit& u) {
+    const tak::sim::Fixed y = u.type->canFly ? u.flightY : u.groundY;
+    const int px = int16_t(uint32_t(u.x.v) >> 16), py = int16_t(uint32_t(y.v) >> 16), pz = int16_t(uint32_t(u.z.v) >> 16);
+    return {px >> 5, (pz - (py >> 1)) >> 5};
+}
+
+// Once per think, before anything reads knowledge_: every enemy unit the team
+// sees now, and every one that hit our units within kHeardTicks from within its
+// reach, is noted where it stands. A remembered unit not seen this think is
+// forgotten when the spot it was last seen on is in sight again (it died, left
+// or cloaked there), a mobile one also once kMobileMemoryTicks have passed, and
+// any that is now ours or an ally's, or whose owner is beaten or no longer an
+// enemy. Then the exploration state:
+// each enemy start and each sector in sight now is stamped with this think.
+void Controller::updateKnowledge(const tak::sim::World& world) {
+    constexpr uint32_t kHeardTicks = 5 * 30;
+    const int players = world.numPlayers();
+    team_.clear();
+    for (int p = 0; p < players; ++p)
+        if (p == player_ || (world.allied(player_, p) && !world.isNeutralPlayer(p))) team_.push_back(p);
+    auto enemy = [&](int p) {
+        return p >= 0 && p < players && p != player_ && !world.isNeutralPlayer(p) && !world.allied(player_, p);
+    };
+    auto note = [&](const tak::sim::Unit& u) {
+        const auto [cx, cz] = viewCell(u);
+        knowledge_[u.id] = {u.type, u.player, u.x.toFloat(), u.z.toFloat(), strength(u), cx, cz, now_, u.underConstruction};
+    };
+    for (const auto& u : world.units())
+        if (u.alive() && u.type && !u.embarked() && enemy(u.player) && teamSees(world, u)) note(u);
+    for (const auto& v : world.units()) {
+        if (!v.alive() || v.player != player_ || !v.lastHitBy || !v.attackedTick ||
+            world.tickCount() > v.attackedTick + kHeardTicks) continue;
+        const auto* e = world.unit(v.lastHitBy);
+        if (!e || !e->alive() || !e->type || e->embarked() || !enemy(e->player)) continue;
+        const float reach = std::max(float(e->type->weapon.range), e->type->maxRange()) + 64;
+        const float dx = e->x.toFloat() - v.x.toFloat(), dz = e->z.toFloat() - v.z.toFloat();
+        if (dx * dx + dz * dz <= reach * reach) note(*e);
+    }
+    for (auto it = knowledge_.begin(); it != knowledge_.end();) {
+        const auto& k = it->second;
+        bool forget = false;
+        if (k.seenAt != now_) {
+            const auto* u = world.unit(it->first);
+            forget = (u && u->alive() && u->player != k.player && !enemy(u->player)) || !enemy(k.player) ||
+                     world.player(k.player).defeated ||
+                     (!k.type->isStructure() && now_ - k.seenAt > kMobileMemoryTicks) ||
+                     teamViews(world, k.cx, k.cz);
+        }
+        it = forget ? knowledge_.erase(it) : std::next(it);
+    }
+    std::erase_if(unreachable_, [&](const auto& e) { return e.second <= now_; });
+    const float mapX = float(world.mapW()) * 16, mapZ = float(world.mapH()) * 16;
+    if (!sectorsX_ && mapX > 0 && mapZ > 0) {
+        sectorSize_ = std::max(1024.0f, std::max(mapX, mapZ) / 32);
+        sectorsX_ = std::max(1, int(std::ceil(mapX / sectorSize_)));
+        sectorsZ_ = std::max(1, int(std::ceil(mapZ / sectorSize_)));
+        sectorSeen_.assign(size_t(sectorsX_) * size_t(sectorsZ_), 0);
+        sectorClaim_.assign(sectorSeen_.size(), 0);
+    }
+    if (startSeen_.size() != enemyStarts_.size()) {
+        startSeen_.assign(enemyStarts_.size(), 0);
+        startClaim_.assign(enemyStarts_.size(), 0);
+    }
+    auto inSight = [&](float x, float z) {
+        return teamViews(world, int(std::clamp(x, 0.0f, std::max(mapX - 1, 0.0f))) >> 5,
+                         int(std::clamp(z, 0.0f, std::max(mapZ - 1, 0.0f))) >> 5);
+    };
+    for (size_t i = 0; i < enemyStarts_.size(); ++i)
+        if (inSight(enemyStarts_[i].first, enemyStarts_[i].second)) startSeen_[i] = now_ + 1;
+    // A sector is in sight when its centre or a point halfway to a corner is.
+    for (int sz = 0; sz < sectorsZ_; ++sz)
+        for (int sx = 0; sx < sectorsX_; ++sx) {
+            float x = 0, z = 0;
+            if (!sectorCentre(sx + sz * sectorsX_, mapX, mapZ, x, z)) continue;
+            const float q = sectorSize_ / 4;
+            if (inSight(x, z) || inSight(x - q, z - q) || inSight(x + q, z - q) || inSight(x - q, z + q) ||
+                inSight(x + q, z + q))
+                sectorSeen_[size_t(sx + sz * sectorsX_)] = now_ + 1;
+        }
+}
+
+// The middle of a sector's part of the map (sectors along the far edges are cut short).
+bool Controller::sectorCentre(int s, float mapX, float mapZ, float& x, float& z) const {
+    const int sx = s % sectorsX_, sz = s / sectorsX_;
+    const float x0 = float(sx) * sectorSize_, z0 = float(sz) * sectorSize_;
+    const float x1 = std::min(mapX, x0 + sectorSize_), z1 = std::min(mapZ, z0 + sectorSize_);
+    if (x1 <= x0 || z1 <= z0) return false;
+    x = (x0 + x1) / 2; z = (z0 + z1) / 2;
+    return true;
+}
+
+// Where a unit of `type` at (x,z) explores next. An enemy start never yet in
+// sight comes first, the nearest (one another party is bound for counts four
+// times as far); then the sector out of sight longest for its distance (never
+// seen counts as kNeverSeen more), skipping those in sight within kRecent, one
+// another party holds counting for a quarter. Reachability is tried in that
+// order for the first kProbes, and a spot this type cannot reach is passed over
+// for kUnreachableTicks.
+bool Controller::exploreTarget(const tak::sim::World& world, const tak::sim::UnitType* type, float x, float z,
+                               float& tx, float& tz, int& slot) {
+    constexpr uint32_t kNeverSeen = 3 * 60 * 30, kRecent = 60 * 30, kUnreachableTicks = 3 * 60 * 30;
+    constexpr int kProbes = 12;
+    const float mapX = float(world.mapW()) * 16, mapZ = float(world.mapH()) * 16;
+    auto reach = [&](int s, float px, float pz) {
+        if (unreachable_.count({s, type})) return false;
+        if (reachablePoint(world, type, x, z, px, pz, tx, tz)) { slot = s; return true; }
+        unreachable_[{s, type}] = now_ + kUnreachableTicks;
+        return false;
+    };
+    std::vector<std::pair<float, int>> ranked;
+    for (size_t i = 0; i < enemyStarts_.size(); ++i) {
+        if (i < startSeen_.size() && startSeen_[i]) continue;
+        const float dx = enemyStarts_[i].first - x, dz = enemyStarts_[i].second - z;
+        const float d = std::sqrt(dx * dx + dz * dz) * (startClaim_[i] > now_ ? 4.0f : 1.0f);
+        ranked.emplace_back(d, int(i));
+    }
+    std::sort(ranked.begin(), ranked.end());
+    int probes = 0;
+    for (const auto& [d, i] : ranked) {
+        if (++probes > kProbes) return false;
+        if (reach(-1 - i, enemyStarts_[size_t(i)].first, enemyStarts_[size_t(i)].second)) return true;
+    }
+    ranked.clear();
+    for (int s = 0; s < int(sectorSeen_.size()); ++s) {
+        const uint32_t seen = sectorSeen_[size_t(s)];
+        if (seen && now_ + 1 - seen < kRecent) continue;
+        float cx = 0, cz = 0;
+        if (!sectorCentre(s, mapX, mapZ, cx, cz)) continue;
+        const float age = float(seen ? now_ + 1 - seen : now_ + kNeverSeen);
+        const float dx = cx - x, dz = cz - z;
+        float score = age / (1 + std::sqrt(dx * dx + dz * dz) / 3000);
+        if (sectorClaim_[size_t(s)] > now_) score *= 0.25f;
+        ranked.emplace_back(-score, s);
+    }
+    std::sort(ranked.begin(), ranked.end());
+    for (const auto& [score, s] : ranked) {
+        if (++probes > kProbes) break;
+        float cx = 0, cz = 0;
+        sectorCentre(s, mapX, mapZ, cx, cz);
+        if (reach(s, cx, cz)) return true;
+    }
+    return false;
+}
+
+void Controller::claimSlot(int slot, uint32_t ticks) {
+    if (slot < 0) startClaim_[size_t(-1 - slot)] = now_ + ticks;
+    else sectorClaim_[size_t(slot)] = now_ + ticks;
+}
+
+int Controller::explore(const tak::sim::World& world, const std::vector<int>& ids, bool scouting,
+                        const CommandSink& sink) {
+    constexpr uint32_t kClaimTicks = 3 * 60 * 30;
+    // Each kind of mover (flyer or not, and domain) goes where its first unit can.
+    std::vector<const tak::sim::Unit*> units;
+    for (int id : ids)
+        if (const auto* u = world.unit(id); u && u->alive() && u->type) units.push_back(u);
+    std::stable_sort(units.begin(), units.end(), [](const auto* a, const auto* b) {
+        return !a->type->canFly && b->type->canFly;
+    });
+    std::vector<uint8_t> done(units.size(), 0);
+    int ordered = 0;
+    for (size_t first = 0; first < units.size(); ++first) {
+        if (done[first]) continue;
+        const auto* lead = units[first]->type;
+        auto sameKind = [&](const tak::sim::Unit* u) {
+            return u->type->canFly == lead->canFly && u->type->domain == lead->domain;
+        };
+        float ex = 0, ez = 0;
+        int slot = 0;
+        const bool found = exploreTarget(world, lead, units[first]->x.toFloat(), units[first]->z.toFloat(), ex, ez, slot);
+        for (size_t i = first; i < units.size(); ++i) {
+            if (done[i] || !sameKind(units[i])) continue;
+            done[i] = 1;
+            float tx = 0, tz = 0;
+            if (!found || !reachablePoint(world, units[i]->type, units[i]->x.toFloat(), units[i]->z.toFloat(), ex, ez, tx, tz))
+                continue;
+            emit(sink, scouting ? tak::net::Cmd::Move : tak::net::Cmd::AttackMove, units[i]->id, "", tx, tz);
+            ++ordered;
+        }
+        if (found) claimSlot(slot, kClaimTicks);
+    }
+    return ordered;
+}
+
+// Scouting parties: a lone fast fighter at a time sent to look, at the pace
+// exploreLevelFor sets. A scout that is idle again (there, or stopped on the
+// way) or out longer than kTripTicks goes on to the next spot at the levels that
+// keep scouting, else rejoins the army.
+void Controller::sendScouts(const tak::sim::World& world, uint32_t simTick, const CommandSink& sink,
+                            const StrikeBoard& board, std::vector<Fighter>& pool) {
+    constexpr uint32_t kTripTicks = 4 * 60 * 30, kRetryTicks = 10 * 30;
+    const ExploreLevel level = exploreLevelFor(diff_);
+    const bool scouting = level.maxScouts > 0 && (dp_.attack || board.ahead);
+    for (auto it = scouts_.begin(); it != scouts_.end();) {
+        const auto* u = world.unit(it->first);
+        if (!u || !u->alive() || u->player != player_ || defenders_.count(it->first)) { it = scouts_.erase(it); continue; }
+        if (!idle(*u) && simTick - it->second <= kTripTicks) { ++it; continue; }
+        if (scouting && level.keep && explore(world, {u->id}, true, sink)) {
+            it->second = simTick; ++scoutsSent_; ++it;
+        } else it = scouts_.erase(it);   // back to the army from the next think
+    }
+    if (!scouting || pool.empty() || simTick < uint32_t(level.firstMin) * 60 * 30 || simTick < nextScoutTick_ ||
+        int(scouts_.size()) >= level.maxScouts) return;
+    // A flyer (it sees over cliffs and crosses water), else the fastest fighter in
+    // the pool, the cheapest of those as fast. Never a ship: a fleet explores the
+    // sea as a wave, and a scout taken from it can keep it from sailing.
+    auto ship = [&](const Fighter& f) {
+        const auto* t = world.unit(f.id)->type;
+        return !t->canFly && t->domain == tak::sim::UnitType::Domain::Water;
+    };
+    auto faster = [&](const Fighter& a, const Fighter& b) {
+        if (ship(a) != ship(b)) return ship(b);
+        const auto* ta = world.unit(a.id)->type;
+        const auto* tb = world.unit(b.id)->type;
+        if (ta->canFly != tb->canFly) return ta->canFly;
+        if (ta->maxVel != tb->maxVel) return ta->maxVel > tb->maxVel;
+        if (ta->buildCost != tb->buildCost) return ta->buildCost < tb->buildCost;
+        return a.id < b.id;
+    };
+    const auto best = std::min_element(pool.begin(), pool.end(), faster);
+    if (ship(*best)) return;
+    if (!explore(world, {best->id}, true, sink)) { nextScoutTick_ = simTick + kRetryTicks; return; }
+    scouts_[best->id] = simTick;
+    ++scoutsSent_;
+    scouted_ = true;
+    nextScoutTick_ = simTick + uint32_t(level.everySec) * 30;
+    pool.erase(best);
+}
+
 // Pool idle (non-builder) fighters; once a strike force has gathered (waveSize, per
 // difficulty), send the whole group at the best site on the board (scanTargets,
-// pickSite) so the wave arrives together rather than trickling in; with no enemy
-// unit known, at the nearest enemy start (marching on the base). Fighters already
-// sent (strikers_) that are idle again go on to the next site at once. Also sends
-// one early scout so the AI reveals + commits rather than turtling forever.
+// pickSite) so the wave arrives together rather than trickling in; with nothing
+// known it can reach and hurt, to explore (exploreTarget): an unchecked enemy
+// start first, else the map sector longest out of sight. Fighters already sent
+// (strikers_) that are idle again go on to the next site at once, or explore on
+// from where they stand. Scouting parties go out besides (sendScouts).
 void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
                            const CommandSink& sink, const std::vector<int>& assigned) {
     std::erase_if(strikers_, [&](int id) { const auto* u = world.unit(id); return !u || !u->alive() || u->player != player_; });
     std::erase_if(pursuits_, [&](const auto& p) {
-        const auto* e = world.unit(p.first);
-        return !e || !e->alive() || (p.second.until <= simTick && simTick + 1 - p.second.last > 60 * 30);
+        return !knowledge_.count(p.first) || (p.second.until <= simTick && simTick + 1 - p.second.last > 60 * 30);
     });
-    struct Fighter { int id; float x, z, s; };
     std::vector<Fighter> pool, loose;   // loose: strikers free for their next site
     for (const auto& u : world.units()) {
         if (!u.alive() || u.player!=player_ || !u.type || u.underConstruction || u.embarked() ||
             u.type->isStructure() || u.type->isBuilder || u.type->weapon.damage<=0 || !waveFree(u) ||
-            defenders_.count(u.id) || std::find(assigned.begin(), assigned.end(), u.id) != assigned.end()) continue;
+            defenders_.count(u.id) || scouts_.count(u.id) ||
+            std::find(assigned.begin(), assigned.end(), u.id) != assigned.end()) continue;
         (strikers_.count(u.id) ? loose : pool).push_back({u.id, u.x.toFloat(), u.z.toFloat(), strength(u)});
     }
-    if (pool.empty() && loose.empty()) return;
+    if (pool.empty() && loose.empty() && scouts_.empty()) return;
     const StrikeBoard board = scanTargets(world);
     const auto home = homeOf(world);
-    // A defensive level goes out only to clean up; one that no longer clearly is
-    // ahead calls its strikers home.
-    if (!dp_.attack && !board.winning) {
+    sendScouts(world, simTick, sink, board, pool);
+    // A defensive level goes out only to scout and clean up; one that no longer
+    // clearly is ahead calls its strikers home.
+    if (!dp_.attack && !board.ahead) {
         for (const auto& f : loose) { emit(sink, tak::net::Cmd::Move, f.id, "", home.first, home.second); strikers_.erase(f.id); }
         return;
     }
@@ -2377,7 +2620,7 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
     // even a third of the best site's need, while not clearly ahead, comes home and
     // rejoins the pool; with `needMet` (the defensive levels' clean-up) a group that
     // does not match the best site's need stays home, or comes home. Returns the
-    // units ordered.
+    // units ordered, -1 when the group was outmatched (and, striking, sent home).
     auto launch = [&](const std::vector<Fighter>& group, bool raid, int limit, bool striking, bool needMet) {
         if (group.empty()) return 0;
         float force = 0;
@@ -2394,7 +2637,7 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
                 (striking && diff_ != Difficulty::Easy && !board.winning && siteNeed(site) > 3 * force));
             if (outmatched && striking)
                 for (const auto& f : group) { emit(sink, tak::net::Cmd::Move, f.id, "", home.first, home.second); strikers_.erase(f.id); }
-            if (outmatched) return 0;
+            if (outmatched) return -1;
             const float want = sites + 1 == maxSites ? 1e30f : std::max(siteNeed(site) * 1.5f - taken[size_t(i)], force / 4);
             float sent = 0;
             while (next < group.size() && ordered < limit && (sent == 0 || sent < want)) {
@@ -2410,62 +2653,78 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
         }
         return ordered;
     };
+    // Explore with `group` (at most `limit` of it); its units stay strikers, so
+    // each goes on from where it gets to.
+    auto exploreWith = [&](const std::vector<Fighter>& group, size_t limit) {
+        std::vector<int> ids;
+        for (size_t i = 0; i < group.size() && i < limit; ++i) ids.push_back(group[i].id);
+        const int ordered = explore(world, ids, false, sink);
+        if (ordered) {
+            ++explorations_;
+            for (int id : ids) strikers_.insert(id);
+        }
+        return ordered;
+    };
     // Strikers that are idle again go straight for the next site, a bunch at a time
     // (a kGroupCell grid), without waiting for the next push: the army keeps working
-    // down the board until every enemy is gone.
-    if (!loose.empty() && board.sites.empty())
-        for (const auto& f : loose) { strikers_.erase(f.id); pool.push_back(f); }
-    else if (!loose.empty()) {
+    // down the board until every enemy it knows of is gone, then explores on.
+    if (!loose.empty()) {
         constexpr float kGroupCell = 1024;
         std::map<std::pair<int, int>, std::vector<Fighter>> groups;
         for (const auto& f : loose) groups[{int(std::floor(f.x / kGroupCell)), int(std::floor(f.z / kGroupCell))}].push_back(f);
         int budget = 256;
         for (const auto& [cell, group] : groups) {
             if (budget <= 0) break;
-            const int ordered = launch(group, false, budget, true, !dp_.attack);
-            // Nothing it can reach or hurt: back to the pool for the next push.
+            int ordered = board.sites.empty() ? 0 : launch(group, false, budget, true, !dp_.attack);
+            // Nothing known it can reach or hurt: explore from here, else back to
+            // the pool for the next push.
+            if (!ordered) ordered = exploreWith(group, size_t(budget));
             if (!ordered) for (const auto& f : group) strikers_.erase(f.id);
-            budget -= ordered;
+            budget -= std::max(ordered, 0);
         }
     }
     if (pool.empty()) return;
-    // A defensive level cleaning up keeps at least half its fighters home.
+    // A defensive level cleaning up keeps at least half its fighters home; with
+    // nothing known that half explores.
     if (!dp_.attack) {
         const size_t half = (strikers_.size() + pool.size()) / 2;
         const size_t out = std::min(pool.size(), half > strikers_.size() ? half - strikers_.size() : 0);
-        launch(std::vector<Fighter>(pool.end() - std::ptrdiff_t(out), pool.end()), false, 256, false, true);
+        const std::vector<Fighter> party(pool.end() - std::ptrdiff_t(out), pool.end());
+        if (!party.empty() && !launch(party, false, 256, false, true)) exploreWith(party, 256);
         return;
     }
     if (diff_ == Difficulty::Easy &&
         (simTick < 4*60*30 || (scouted_ && simTick-lastRaidTick_ < 2*60*30 && !board.winning))) return;
-    // The pool's objective: the best site for it, or with no enemy unit known, the
-    // nearest enemy start (marching on the base).
+    // The pool's objective: the best site for it, or with nothing known it can
+    // reach and hurt, the spot to explore that its first ground unit (else its
+    // first) can reach.
     float poolForce = 0;
     for (const auto& f : pool) poolForce += f.s;
     StrikeSite objective;
-    if (!board.sites.empty()) {
-        const int i = pickFor(pool, poolForce, false);
-        if (i < 0) return;
-        objective = board.sites[size_t(i)];
-    } else if (!nearestEnemyStart(home.first, home.second, objective.x, objective.z)) return;
+    const int pick = board.sites.empty() ? -1 : pickFor(pool, poolForce, false);
+    const bool exploring = pick < 0;
+    int exploreSlot = 0;
+    if (!exploring) objective = board.sites[size_t(pick)];
+    else {
+        const auto lead = std::find_if(pool.begin(), pool.end(), [&](const Fighter& f) { return !world.unit(f.id)->type->canFly; });
+        const Fighter& f = lead != pool.end() ? *lead : pool.front();
+        if (!exploreTarget(world, world.unit(f.id)->type, f.x, f.z, objective.x, objective.z, exploreSlot)) return;
+    }
     struct Ready { Fighter f; float x, z; };
     std::vector<Ready> idle;
     for (const auto& f : pool) {
         const auto* u = world.unit(f.id);
         float tx=0,tz=0;
-        bool reached=reachablePoint(world,u->type,f.x,f.z,objective.x,objective.z,tx,tz,sitePad(objective,u->type));
-        if (!reached && !objective.anchor) for (const auto& [ex,ez] : enemyStarts_) {
-            if ((reached=reachablePoint(world,u->type,f.x,f.z,ex,ez,tx,tz))) break;
-        }
-        if (reached) idle.push_back({f,tx,tz});
+        if (reachablePoint(world,u->type,f.x,f.z,objective.x,objective.z,tx,tz,sitePad(objective,u->type)))
+            idle.push_back({f,tx,tz});
     }
     if (idle.empty()) return;
-    // Send idle[from, from+n): at sites from the board, or at the march point.
+    // Send idle[from, from+n): at sites from the board, or at the spot explored.
     auto send = [&](size_t from, size_t n, bool raid, bool seaborneOnly, auto&& seaborne) {
         std::vector<Fighter> group;
         for (size_t i = from; i < idle.size() && group.size() < n; ++i)
             if (!seaborneOnly || seaborne(world.unit(idle[i].f.id))) group.push_back(idle[i].f);
-        if (!board.sites.empty()) return launch(group, raid, int(n), false, false);
+        if (!exploring) return launch(group, raid, int(n), false, false);
         int sent = 0;
         for (size_t i = from; i < idle.size() && size_t(sent) < n; ++i) {
             if (seaborneOnly && !seaborne(world.unit(idle[i].f.id))) continue;
@@ -2473,6 +2732,7 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
             strikers_.insert(idle[i].f.id);
             ++sent;
         }
+        if (sent) { claimSlot(exploreSlot, 3 * 60 * 30); ++explorations_; }
         return sent;
     };
 
@@ -2487,7 +2747,7 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
     int bigPush = std::clamp(dp_.waveSize + int(income * 0.25f), dp_.waveSize, 60);
 
     if (diff_ == Difficulty::Easy) bigPush = std::min(bigPush, 8);
-    if (board.winning && !board.sites.empty()) {
+    if (board.winning && !exploring) {
         float force = 0;
         for (const auto& r : idle) force += r.f.s;
         if (force >= siteNeed(objective)) bigPush = 1;
@@ -2532,23 +2792,45 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
     // Still mustering the big army -- but keep HARASSING so the enemy is pressured and
     // revealed instead of the AI turtling behind a wall. Peel off a small raiding party
     // (leaving a home core to keep growing toward the big push), rate-limited so the
-    // army isn't bled away piecemeal. The very first raid doubles as the early scout.
-    // A raid picks its site for its own small force, so it goes for an exposed
-    // lodestone or builder rather than into the defences.
+    // army isn't bled away piecemeal. A raid picks its site for its own small force,
+    // so it goes for an exposed lodestone or builder rather than into the defences;
+    // with nothing known, it explores.
     constexpr uint32_t kRaidCooldown = 25 * 30;   // ~25s between raids
     int homeCore = std::max(dp_.waveSize, bigPush / 3);   // never raid below this reserve
-    bool firstProbe = dp_.scout && !scouted_ && int(idle.size()) >= 1;
     bool canRaid = dp_.raidSize > 0 &&
                    raidersSincePush_ + dp_.raidSize <= std::max(dp_.raidSize,bigPush/3) &&
                    int(idle.size()) >= homeCore + dp_.raidSize &&
                    simTick - lastRaidTick_ >= kRaidCooldown;
-    if (firstProbe || canRaid) {
-        int party = firstProbe && !canRaid ? 1 : dp_.raidSize;   // opening scout is a lone unit
-        send(0, size_t(party), true, false, seaborne);
-        scouted_ = true;
-        raidersSincePush_+=party;
+    if (canRaid) {
+        send(0, size_t(dp_.raidSize), true, false, seaborne);
+        raidersSincePush_+=dp_.raidSize;
         lastRaidTick_ = simTick;
     }
+}
+
+// Debug builds, TAK_AI_EXPLORE: once a game minute, how much of the map this
+// AI's player has explored, how many enemies it has left, what it knows and how
+// many scouting parties and exploring groups it has sent; once, when no enemy is
+// left. A measuring hook only: it changes nothing the AI does.
+void Controller::logExploration(const tak::sim::World& world, uint32_t simTick) {
+    int left = 0;
+    for (int p = 0; p < world.numPlayers(); ++p)
+        if (p != player_ && !world.isNeutralPlayer(p) && !world.allied(player_, p) && !world.player(p).defeated) ++left;
+    if (!left && !loggedWin_) {
+        loggedWin_ = true;
+        std::fprintf(stderr, "AIWIN p=%d lvl=%d t=%u\n", player_, int(diff_), simTick);
+    }
+    const uint32_t minute = simTick / 1800;
+    if (minute + 1 == loggedMinute_) return;
+    loggedMinute_ = minute + 1;
+    const auto& explored = world.navigationExploration();
+    size_t n = 0;
+    for (const auto m : explored) n += (m >> player_) & 1;
+    int units = 0;
+    for (const auto& u : world.units()) if (u.alive() && u.player == player_) ++units;
+    std::fprintf(stderr, "AIEXPLORE t=%u p=%d lvl=%d explored=%.4f left=%d units=%d scouts=%d explorations=%d known=%zu\n",
+                 minute, player_, int(diff_), explored.empty() ? 0.0 : double(n) / double(explored.size()), left, units,
+                 scoutsSent_, explorations_, knowledge_.size());
 }
 
 void Controller::tick(const tak::sim::World& world, uint32_t simTick,
@@ -2563,6 +2845,9 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     if (world.player(player_).defeated) return;
 
     now_ = simTick;
+    updateKnowledge(world);
+    static const bool kExploreLog = tak::devEnv("TAK_AI_EXPLORE") != nullptr;
+    if (kExploreLog) logExploration(world, simTick);
     // Door clearance reads the live obstacle overlay, which new buildings change:
     // keep it for one think only.
     navalDoorSteps_.clear();

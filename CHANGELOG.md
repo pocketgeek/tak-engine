@@ -24,6 +24,10 @@ their validation reports; both live in [`docs/`](docs/).
 - **Streaming keeps to YouTube's bitrate**, above which YouTube could connect
   but never start the broadcast: the panel caps it there (a saved higher value is
   lowered, with a note), adds **Recommended**, and warns when the upload can't keep up.
+- **Our AI levels attack only what they have seen** (not Retail AI): their own
+  and their allies' sight, units shooting at them, buildings remembered where
+  they were seen; with nothing known they scout and explore the map instead.
+  A game between AIs may now not end when a last unit stays hidden.
 
 ## 0.9.11
 *2026-10-29 · protocol 304 · replay format 15 · does not play with 0.9.10 or earlier, nor their replays*
