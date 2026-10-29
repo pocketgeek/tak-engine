@@ -106,6 +106,7 @@ int main(int argc,char** argv) {
         for (int faction=0;faction<5;++faction) {
             sim::World world;world.setVisPlayer(-1);
             sim::MatchConfig config;config.vfs=&vfs;config.mapPath=hpi::findMap(vfs,"Varro Passage");
+            config.roomMapRevealed=true;   // FOG OF WAR: EXPLORED, the room's default
             config.slots={{true,0,0,1.f},{true,faction,1,1.f,true,false}};
             const auto starts=sim::setupMatch(world,registry,config);
             ai::Controller controller(1,registry,retailProfile,0x1234,ai::Difficulty::Normal,{starts[0]});

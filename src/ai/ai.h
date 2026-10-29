@@ -409,6 +409,46 @@ private:
     std::vector<int> team_;
     bool teamSees(const tak::sim::World&, const tak::sim::Unit&) const;
     bool teamViews(const tak::sim::World&, int cx, int cz) const;
+    // What this side knows, as a human player of it is shown it under the room's
+    // FOG OF WAR rule. Our client draws the ground (terrain, features, mana
+    // deposits) on every explored cell, and enemy units only on cells in view now:
+    // its units' and allies' sight, and their radar out to radardistance through
+    // terrain. NOT EXPLORED starts with nothing explored, EXPLORED with the whole
+    // map's ground (no enemy unit shown), FULL VISION shows every unit. Mirrored
+    // from simulation state alone, never the display fog: sight is the sim's view
+    // counters (World::playerSees), explored its Mapping plane (World::exploredAt)
+    // or the room's reveal (World::mapRevealedFor), radar the team's radar discs.
+    // FULL VISION is World::roomLosOff; radar_ is refreshed once per think
+    // (updateKnowledge, updateRadar).
+    int radarW_ = 0, radarH_ = 0;
+    std::vector<uint8_t> radar_, radarSeen_;   // 32 px cells in the team's radar now, and ever
+    void updateRadar(const tak::sim::World&);
+    bool radarAt(float x, float z) const;
+    // The ground at (x,z) -- terrain, features, a mana deposit -- is known.
+    bool knowsGround(const tak::sim::World&, float x, float z) const;
+    // The ground point (x,z) is in view now.
+    bool inView(const tak::sim::World&, float x, float z) const;
+    // An enemy unit is in view now (never cloaked or carried).
+    bool sees(const tak::sim::World&, const tak::sim::Unit&) const;
+    // Mana deposits (World::manaSpots() index) this AI holds taken by an enemy: a
+    // lodestone of one seen there, or remembered there (knowledge_), or learned
+    // from a refused site (learnSiteBlockers). Refreshed per think; mutable so a
+    // search can add what it learns at once.
+    mutable std::vector<uint8_t> depositTaken_;
+    // Deposits bucketed on a kDepositCell grid (they never move), built once.
+    static constexpr int kDepositCell = 128;
+    std::vector<std::pair<int64_t, int>> depositGrid_;
+    template <class F> void forDepositsNear(const tak::sim::World&, float x, float z, float r, F&& fn) const;
+    // Enemy structures out of view this think, bucketed on a kHiddenCell grid: what
+    // a site's real placement test (World::canPlace) can be refused by unseen.
+    static constexpr int kHiddenCell = 256;
+    struct Hidden { int id; float x, z; const tak::sim::UnitType* type; };
+    std::vector<std::pair<int64_t, Hidden>> hidden_;
+    // A site refused by the real test: the order-time answer a player gets. Any
+    // enemy structure out of view under it is learned -- noted as known (heard,
+    // not sighted) at the next think, and a deposit under it taken from now.
+    mutable std::vector<int> learned_;
+    void learnSiteBlockers(const tak::sim::World&, const tak::sim::UnitType*, float x, float z) const;
     // Refresh knowledge_ and the exploration state from this think's sight.
     void updateKnowledge(const tak::sim::World&);
     // Exploration: the enemy starts' spots, then a coarse grid of map sectors,

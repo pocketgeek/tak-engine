@@ -64,6 +64,9 @@ static void terrain(sim::World& w,bool islands=false) {
     std::vector<uint8_t> h(256*256,100);
     if (islands) for (int z=0;z<256;++z) for (int x=96;x<160;++x) h[z*256+x]=0;
     w.setVisPlayer(-1);w.setTerrain(std::move(h),256,256,20);
+    // The room's default FOG OF WAR, EXPLORED: the whole map's ground is known
+    // (mana deposits included), enemy units only in sight (fogKnowledge).
+    w.setRoomVision(true,false);
 }
 // The sim's per-player sight (World::viewCount) for the units as they stand: our
 // levels target only what their side has seen, and explore what it has not.
@@ -76,6 +79,9 @@ static void pastStart(sim::World& w) {w.resumeClocks(1,w.gameRngState());}
 static std::vector<net::Command> think(ai::Controller& ai,sim::World& w,uint32_t tick=0) {
     std::vector<net::Command> out;ai.tick(w,tick,[&](const auto& c){out.push_back(c);});return out;
 }
+// A think with the sim's sight brought up to date first (World::viewCount):
+// what the units placed see, the way a game's sight is after every tick.
+static std::vector<net::Command> seen(ai::Controller& ai,sim::World& w,uint32_t tick=0) {sight(w);return think(ai,w,tick);}
 static int attacks(const std::vector<net::Command>& cs) {
     return int(std::count_if(cs.begin(),cs.end(),[](const auto& c){return c.kind==net::Cmd::AttackMove || c.kind==net::Cmd::Attack;}));
 }
@@ -98,18 +104,19 @@ static void defensiveShooters(const sim::TypeRegistry& registry,const ai::Profil
         const int defender=w.spawn(defenderType,1000,800,0,0);   // inside the 900 home radius
         const int shooter=w.spawn(&archer,1420,800,0,1);           // 1020 from home, unseen
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
-        check(attacks(think(defensive,w))==0,"an unseen archer outside the territory is no threat until it hits something");
+        check(attacks(seen(defensive,w))==0,"an unseen archer outside the territory is no threat until it hits something");
         w.unit(defender)->lastHitBy=shooter;
-        auto cs=think(defensive,w,30);
+        auto cs=seen(defensive,w,30);
+        // Heard, not seen: an attack-move to where it stands, melee or not. An
+        // attack on it by id would follow it wherever it went out of sight.
         check(attacks(cs)==1 && std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
-            return c.unitId==defender && (isMelee ? c.kind==net::Cmd::Attack && c.targetId==shooter
-                                                  : c.kind==net::Cmd::AttackMove);
-        }),isMelee ? "a melee defender attacks the archer hitting it directly (chases past the Defensive stance)"
+            return c.unitId==defender && c.kind==net::Cmd::AttackMove && std::abs(c.x-1420)<64 && std::abs(c.z-800)<64;
+        }),isMelee ? "a melee defender attack-moves on the unseen archer hitting it, never an attack by id"
                    : "a ranged defender attack-moves on the unseen archer hitting it");
         for (const auto& c:cs) sim::applyCommand(w,registry,c);
-        check(attacks(think(defensive,w,60))==0,"the response to an attacker is not re-issued every think");
+        check(attacks(seen(defensive,w,60))==0,"the response to an attacker is not re-issued every think");
         w.unit(shooter)->x=sim::Fixed::fromInt(2100);w.unit(defender)->x=sim::Fixed::fromInt(1800);
-        cs=think(defensive,w,90);
+        cs=seen(defensive,w,90);
         check(attacks(cs)==0 && std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
             return c.unitId==defender && c.kind==net::Cmd::Move && c.x==1000 && c.z==800;
         }),"defenders give up an attacker beyond the pursuit radius and return to their posts");
@@ -120,7 +127,7 @@ static void defensiveShooters(const sim::TypeRegistry& registry,const ai::Profil
         const int shooter=w.spawn(&archer,1700,800,0,1);   // out of its own reach of the victim
         w.unit(defender)->lastHitBy=shooter;
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
-        check(attacks(think(defensive,w))==0,"a stale attacker no longer within reach of its victim is ignored");
+        check(attacks(seen(defensive,w))==0,"a stale attacker no longer within reach of its victim is ignored");
     }
 }
 
@@ -144,24 +151,24 @@ static void defensiveMeleeTargets(const sim::TypeRegistry& registry,const ai::Pr
         const int shooter=w.spawn(&archer,1400,800,0,1);         // outside the radius, hitting it
         w.unit(defender)->lastHitBy=shooter;
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
-        auto cs=think(defensive,w);
+        auto cs=seen(defensive,w);
         check(attackOf(cs,defender)==shooter,"a melee defender attacks the archer hitting it, not the threat nearest home");
         for (const auto& c:cs) sim::applyCommand(w,registry,c);
         // Drawn past the 900 home radius after its attacker (no other victim near it).
         w.unit(intruder)->x=sim::Fixed::fromInt(450);
         w.unit(defender)->x=sim::Fixed::fromInt(1340);
-        cs=think(defensive,w,30);
+        cs=seen(defensive,w,30);
         check(std::none_of(cs.begin(),cs.end(),[&](const auto& c){return c.unitId==defender;}) &&
               !w.unit(defender)->orders.empty() && w.unit(defender)->orders.front().targetId==shooter,
               "a melee defender drawn past the territory keeps after the archer still hitting it");
         // A second archer hitting it does not pull it off the one it is closing on.
         const int other=w.spawn(&archer,1340,1200,0,1);
         w.unit(defender)->lastHitBy=other;
-        check(attackOf(think(defensive,w,60),defender)==0,"a melee defender chasing its attacker is not switched to another");
+        check(attackOf(seen(defensive,w,60),defender)==0,"a melee defender chasing its attacker is not switched to another");
         // Archers are listed through the last unit each one hit, which changes shot
         // by shot; the chase holds while the target stays within the pursuit radius.
         w.unit(defender)->lastHitBy=0;
-        cs=think(defensive,w,90);
+        cs=seen(defensive,w,90);
         check(std::none_of(cs.begin(),cs.end(),[&](const auto& c){return c.unitId==defender;}),
               "a melee defender keeps its chase when its target drops off the threat list inside the pursuit radius");
     }
@@ -170,12 +177,12 @@ static void defensiveMeleeTargets(const sim::TypeRegistry& registry,const ai::Pr
         const int intruder=w.spawn(&soldier,600,800,0,1);
         const int defender=w.spawn(&melee,1000,800,0,0);
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
-        auto cs=think(defensive,w);
+        auto cs=seen(defensive,w);
         check(attackOf(cs,defender)==intruder,"a melee defender with no attacker of its own answers a spotted intruder");
         for (const auto& c:cs) sim::applyCommand(w,registry,c);
         const int shooter=w.spawn(&archer,1400,800,0,1);
         w.unit(defender)->lastHitBy=shooter;
-        check(attackOf(think(defensive,w,30),defender)==shooter,"a melee defender sent at an intruder turns on the archer that starts hitting it");
+        check(attackOf(seen(defensive,w,30),defender)==shooter,"a melee defender sent at an intruder turns on the archer that starts hitting it");
     }
     {
         sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
@@ -184,7 +191,7 @@ static void defensiveMeleeTargets(const sim::TypeRegistry& registry,const ai::Pr
         const int first=w.spawn(&melee,700,500,0,0);
         const int second=w.spawn(&melee,950,1150,0,0);
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
-        auto cs=think(defensive,w);
+        auto cs=seen(defensive,w);
         check(attackOf(cs,first)==nearHome && attackOf(cs,second)==farther,
               "melee defenders spread over the threats nearest each of them");
     }
@@ -427,6 +434,181 @@ static void visionTargets(const sim::TypeRegistry& registry,const ai::Profile& p
     }
 }
 
+// What our levels know is what a player of their side is shown under the room's
+// FOG OF WAR (Controller::knowsGround / sees): NOT EXPLORED, only ground their
+// units have explored; EXPLORED, the whole map's ground (its mana deposits) but
+// enemy units only in view; FULL VISION, every unit; and in view counts radar out
+// to radardistance, as our client shows it. A deposit is taken by what the side
+// knows stands there -- an enemy lodestone seen, remembered, or learned from the
+// real placement test refusing it -- never by one it cannot know of. (User,
+// 2026-10-29: "If map is explored but not full vision the AI should be able to
+// make decisions on stuff it can see but hasn't explored yet just like a human
+// would.")
+static void fogKnowledge(const sim::TypeRegistry& registry,const ai::Profile& profile,
+                         const sim::UnitType& soldier) {
+    auto lode=soldier;lode.id="lode";lode.maxVel={};lode.canMove=false;lode.onMana=true;
+    lode.weapon.damage=0;lode.weapons.clear();lode.buildCost=300;lode.sight=50;
+    auto post=lode;post.id="post";post.onMana=false;post.sight=50;   // an unarmed lookout of ours
+    auto mason=soldier;mason.id="mason";mason.isBuilder=true;mason.sight=50;mason.weapon.damage=0;mason.weapons.clear();
+    auto aimsAt=[](const std::vector<net::Command>& cs,const sim::World& w,float x,float z) {
+        return int(std::count_if(cs.begin(),cs.end(),[&](const auto& c) {
+            float tx=c.x,tz=c.z;
+            if (c.kind==net::Cmd::Attack) {const auto* t=w.unit(c.targetId);tx=t->x.toFloat();tz=t->z.toFloat();}
+            else if (c.kind!=net::Cmd::AttackMove) return false;
+            return (tx-x)*(tx-x)+(tz-z)*(tz-z)<=200*200;
+        }));
+    };
+    auto army=[&](sim::World& w,int n) {
+        for (int i=0;i<n;++i) w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
+    };
+    auto moveTo=[](sim::World& w,int id,float x,float z) {
+        w.unit(id)->x=sim::Fixed::fromInt(int(x));w.unit(id)->z=sim::Fixed::fromInt(int(z));
+    };
+    // Where the lodestone search sends a builder at (800,1000), searching from (1400,800).
+    auto site=[&](const ai::Controller& c,const sim::World& w,int builder) {
+        float x=0,z=0;
+        if (!ai::PlacementProbe::placeFrom(c,w,&lode,*w.unit(builder),1400,800,x,z)) return std::pair{-1.0f,-1.0f};
+        return std::pair{x,z};
+    };
+    {
+        // NOT EXPLORED: the nearer deposit lies on ground nobody has explored.
+        sim::World w;terrain(w);w.setRoomVision(false,false);
+        w.setManaSpots({{1400,800},{800,1100}});
+        w.spawn(&post,800,800,0,0);
+        const int builder=w.spawn(&mason,800,1000,0,0);
+        const int scout=w.spawn(&post,800,1100,0,0);   // has explored the farther one, and gone
+        sight(w);moveTo(w,scout,400,400);sight(w);
+        ai::Controller c(0,registry,profile,1,ai::Difficulty::Normal,{{3400,3400}});
+        think(c,w);
+        check(site(c,w,builder)==std::pair{800.0f,1100.0f},
+              "NOT EXPLORED: the lodestone search passes over a deposit on ground never explored");
+        const int eye=w.spawn(&post,1380,800,0,0);
+        sight(w);moveTo(w,eye,400,400);sight(w);think(c,w,30);
+        check(site(c,w,builder)==std::pair{1400.0f,800.0f},"... and takes it once a unit has explored it");
+        // EXPLORED: the whole map's ground is known, nothing scouted.
+        sim::World e;terrain(e);e.setManaSpots({{1400,800},{800,1100}});
+        e.spawn(&post,800,800,0,0);
+        const int b2=e.spawn(&mason,800,1000,0,0);
+        sight(e);
+        ai::Controller c2(0,registry,profile,1,ai::Difficulty::Normal,{{3400,3400}});
+        think(c2,e);
+        check(site(c2,e,b2)==std::pair{1400.0f,800.0f},"EXPLORED: a deposit nobody has looked at is known");
+    }
+    {
+        // EXPLORED, an enemy lodestone out of view on the nearer deposit: the real
+        // placement test refuses it (a player's order there is refused too), the
+        // search goes on to the next, and the lodestone is learned -- the push goes
+        // for it, by an attack-move to where it stands.
+        sim::World w;terrain(w);w.player(0).income=100;
+        w.setManaSpots({{1400,800},{800,1100}});
+        w.spawn(&post,800,800,0,0);
+        const int builder=w.spawn(&mason,800,1000,0,0);
+        const int enemyLode=w.spawn(&lode,1400,800,0,1);
+        sight(w);
+        ai::Controller c(0,registry,profile,1,ai::Difficulty::Normal,{{3400,3400}});
+        think(c,w);
+        check(site(c,w,builder)==std::pair{800.0f,1100.0f},"a deposit the real test refuses is passed over");
+        army(w,35);sight(w);
+        const auto cs=think(c,w,30);
+        check(aimsAt(cs,w,1400,800)==34 && std::none_of(cs.begin(),cs.end(),[&](const auto& cmd) {
+                  return cmd.kind==net::Cmd::Attack && cmd.targetId==enemyLode; }),
+              "the enemy lodestone that refused it is learned: the push attack-moves on it");
+    }
+    {
+        // A lodestone seen on a deposit, then destroyed out of view: the deposit is
+        // still held taken -- the search goes past it -- until a unit sees it empty.
+        sim::World w;terrain(w);
+        w.setManaSpots({{1400,800},{800,1100}});
+        w.spawn(&post,800,800,0,0);
+        const int builder=w.spawn(&mason,800,1000,0,0);
+        const int eye=w.spawn(&post,1380,800,0,0);
+        const int gone=w.spawn(&lode,1400,800,0,1);
+        sight(w);
+        ai::Controller c(0,registry,profile,1,ai::Difficulty::Normal,{{3400,3400}});
+        think(c,w);
+        moveTo(w,eye,400,400);w.unit(gone)->deadFor=0;sight(w);think(c,w,30);
+        check(site(c,w,builder)==std::pair{800.0f,1100.0f},
+              "a deposit remembered under an enemy lodestone stays taken while out of view");
+        moveTo(w,eye,1380,800);sight(w);think(c,w,60);
+        check(site(c,w,builder)==std::pair{1400.0f,800.0f},"... and is free again once seen empty");
+    }
+    {
+        // A builder walking to a deposit that it sees an enemy lodestone go up on
+        // is stopped, to take another site.
+        sim::World w;terrain(w);
+        w.setManaSpots({{1400,800},{800,1100}});
+        w.spawn(&post,800,800,0,0);
+        const int builder=w.spawn(&mason,800,1000,0,0);
+        w.queueBuild(builder,&lode,1400,800,false);
+        const bool bound=!w.unit(builder)->orders.empty() && w.unit(builder)->orders.back().buildType;
+        ai::Controller c(0,registry,profile,1,ai::Difficulty::Normal,{{3400,3400}});
+        sight(w);
+        auto stops=[&](const std::vector<net::Command>& cs) {
+            return std::count_if(cs.begin(),cs.end(),[&](const auto& cmd){return cmd.kind==net::Cmd::Stop && cmd.unitId==builder;});
+        };
+        const bool walking=stops(think(c,w))==0;
+        w.spawn(&lode,1400,800,0,1);w.spawn(&post,1380,800,0,0);sight(w);
+        check(bound && walking && stops(think(c,w,30))==1,
+              "a builder bound for a deposit an enemy lodestone is seen on is stopped");
+    }
+    {
+        // FULL VISION: every enemy unit is in view, sight or none.
+        for (const bool full : {false,true}) {
+            sim::World w;terrain(w);w.setRoomVision(true,full);w.player(0).income=100;army(w,35);
+            w.spawn(&lode,3400,3400,0,1);
+            sight(w);
+            ai::Controller c(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+            const auto cs=think(c,w,30);
+            if (full) check(aimsAt(cs,w,3400,3400)>=34,"FULL VISION: an enemy lodestone no unit sees is a target");
+            else check(aimsAt(cs,w,3400,3400)==0,"EXPLORED: an enemy lodestone no unit sees is not");
+        }
+    }
+    {
+        // Radar shows a player what stands inside radardistance, through terrain.
+        sim::World w;terrain(w);w.player(0).income=100;army(w,35);
+        auto tower=post;tower.id="tower";tower.radar=1500;
+        w.spawn(&tower,2400,2400,0,0);
+        w.spawn(&lode,3400,3400,0,1);   // 1414 px off: in radar, far out of sight
+        sight(w);
+        ai::Controller c(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        const auto cs=think(c,w,30);
+        check(aimsAt(cs,w,3400,3400)>=34,"an enemy lodestone inside a tower's radar is a target");
+    }
+    {
+        // The Monarch hit by an attacker nobody sees attack-moves on it, never an
+        // attack by id; one in view it attacks.
+        auto monarch=soldier;monarch.id="monarch";monarch.commander=true;monarch.isBuilder=true;monarch.sight=20;
+        for (const bool inView : {false,true}) {
+            sim::World w;terrain(w);
+            const int m=w.spawn(&monarch,600,800,0,0);
+            const int shooter=w.spawn(&soldier,780,800,0,1);
+            if (inView) w.spawn(&post,780,760,0,0);
+            w.unit(m)->lastHitBy=shooter;
+            sight(w);
+            ai::Controller c(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+            const auto cs=think(c,w,30);
+            const bool byId=std::any_of(cs.begin(),cs.end(),[&](const auto& cmd){
+                return cmd.kind==net::Cmd::Attack && cmd.unitId==m && cmd.targetId==shooter; });
+            const bool moved=std::any_of(cs.begin(),cs.end(),[&](const auto& cmd){
+                return cmd.kind==net::Cmd::AttackMove && cmd.unitId==m && std::abs(cmd.x-780)<32 && std::abs(cmd.z-800)<32; });
+            if (inView) check(byId && !moved,"a Monarch attacks the attacker it can see by id");
+            else check(moved && !byId,"a Monarch hit from out of view attack-moves on its attacker, never by id");
+        }
+    }
+    {
+        // The defensive levels' threats are what their side sees (the sim's view),
+        // not a disc of sightdistance around each unit: the base's view reaches an
+        // intruder 450 px off though its sightdistance is 300.
+        auto base=post;base.id="base";base.sight=300;
+        sim::World w;terrain(w);w.player(0).defensiveAi=true;
+        w.spawn(&base,400,800,0,0);w.spawn(&soldier,400,1000,0,0);
+        w.spawn(&soldier,850,800,0,1);
+        sight(w);
+        ai::Controller c(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        check(attacks(think(c,w,30))==1,"Defensive answers an intruder its side's view shows");
+    }
+}
+
 static void monarchFightsBack(const sim::TypeRegistry& registry,const ai::Profile& profile,
                               const sim::UnitType& soldier) {
     auto base=soldier;base.id="base";base.maxVel={};base.sight=750;
@@ -439,12 +621,12 @@ static void monarchFightsBack(const sim::TypeRegistry& registry,const ai::Profil
         net::Command mv;mv.kind=net::Cmd::Move;mv.player=0;mv.unitId=m;mv.x=900;mv.z=800;
         sim::applyCommand(w,registry,mv);
         ai::Controller ai(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
-        auto cs=think(ai,w);
+        auto cs=seen(ai,w);
         check(std::any_of(cs.begin(),cs.end(),[&](const auto& c){
             return c.kind==net::Cmd::Attack && c.unitId==m && c.targetId==enemy;
         }),"a moving Monarch attacks an enemy within its reach");
         w.unit(enemy)->x=sim::Fixed::fromInt(2000);
-        cs=think(ai,w,30);
+        cs=seen(ai,w,30);
         check(std::none_of(cs.begin(),cs.end(),[&](const auto& c){return c.kind==net::Cmd::Attack && c.unitId==m;}),
               "a Monarch with no enemy near is left to its work");
         auto blindMonarch=monarch;blindMonarch.sight=60;
@@ -453,7 +635,7 @@ static void monarchFightsBack(const sim::TypeRegistry& registry,const ai::Profil
         const int shooter=w2.spawn(&soldier,780,800,0,1);
         w2.unit(m2)->lastHitBy=shooter;
         ai::Controller ai2(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
-        cs=think(ai2,w2);
+        cs=seen(ai2,w2);
         check(std::any_of(cs.begin(),cs.end(),[&](const auto& c){
             return c.kind==net::Cmd::Attack && c.unitId==m2 && c.targetId==shooter;
         }),"an idle Monarch hits back at an attacker it cannot see");
@@ -469,6 +651,7 @@ static void monarchFightsBack(const sim::TypeRegistry& registry,const ai::Profil
               "Defensive placement baseline finds a site");
         const float fx=x+40,fz=z;
         w.spawn(&soldier,fx,fz,0,1);
+        sight(w);think(defensive,w);   // what its side sees (World::viewCount), noted at a think
         float x2=0,z2=0;
         const bool found=ai::PlacementProbe::place(defensive,w,&building,*w.unit(builderId),x2,z2);
         check(!found || (x2-fx)*(x2-fx)+(z2-fz)*(z2-fz)>=400*400,
@@ -539,53 +722,53 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         const int cargo=w.spawn(&soldier,500,1240,0,0);w.unit(cargo)->inTransport=monarch;
         const int intruder=w.spawn(&soldier,1100,800,0,1);
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
-        auto cs=think(defensive,w);
+        auto cs=seen(defensive,w);
         check(attacks(cs)==6 && std::all_of(cs.begin(),cs.end(),[&](const auto& c) {
             return c.kind!=net::Cmd::AttackMove || (c.x==1100 && c.z==800 &&
                 std::find(army.begin(),army.end(),c.unitId)!=army.end());
         }),"Defensive mobilizes its whole ready army to meet a spotted intruder in both path modes");
         for (const auto& c:cs) sim::applyCommand(w,registry,c);
-        check(attacks(think(defensive,w,30))==0,"Defensive does not restart an unchanged interception every think");
+        check(attacks(seen(defensive,w,30))==0,"Defensive does not restart an unchanged interception every think");
         for (int tick=0;tick<90;++tick) w.tick(1.f/30.f);
         check(std::all_of(army.begin(),army.end(),[&](int id){return w.unit(id)->x.toFloat()>430;}),
               "Defensive interception commands actually move the army through normal navigation");
         // A converted enemy must cease being a threat, including while a
         // defender has an automatic combat order ahead of its movement goal.
         w.unit(intruder)->player=0; // observe the ownership change after conversion
-        cs=think(defensive,w,120);
+        cs=seen(defensive,w,120);
         check(attacks(cs)==0 && std::count_if(cs.begin(),cs.end(),[&](const auto& c) {
             return c.kind==net::Cmd::Move && c.x==400 &&
                 std::find(army.begin(),army.end(),c.unitId)!=army.end();
         })==6,"Defensive recalls responders to their posts when a threat is converted");
         for (const auto& c:cs) sim::applyCommand(w,registry,c);
-        check(think(defensive,w,150).empty(),"Defensive does not repeatedly reset the return march");
+        check(seen(defensive,w,150).empty(),"Defensive does not repeatedly reset the return march");
     }
     {
         sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
         const int defender=w.spawn(&soldier,400,1000,0,0);
         const int enemy=w.spawn(&soldier,1100,800,0,1);
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
-        auto cs=think(defensive,w);for(const auto& c:cs)sim::applyCommand(w,registry,c);
+        auto cs=seen(defensive,w);for(const auto& c:cs)sim::applyCommand(w,registry,c);
         w.unit(enemy)->x=sim::Fixed::fromInt(3000);
-        cs=think(defensive,w,30);
+        cs=seen(defensive,w,30);
         check(attacks(cs)==0 && std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
             return c.unitId==defender && c.kind==net::Cmd::Move && c.x==400 && c.z==1000;
         }),"Defensive recalls its army instead of following a retreating enemy to its base");
         for(const auto& c:cs)sim::applyCommand(w,registry,c);
         w.unit(defender)->orders.clear();w.unit(defender)->x=sim::Fixed::fromInt(500);
-        check(think(defensive,w,60).empty(),"Defensive respects return-order completion, including relaxed crowd arrival");
+        check(seen(defensive,w,60).empty(),"Defensive respects return-order completion, including relaxed crowd arrival");
     }
     {
         sim::World w;terrain(w);auto blindBase=base;blindBase.sight=80;
         w.spawn(&blindBase,400,800,0,0);w.spawn(&soldier,400,1000,0,0);
         const int enemy=w.spawn(&soldier,1000,800,0,1);
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
-        check(attacks(think(defensive,w))==0,"Defensive ignores nearby threats hidden by fog");
+        check(attacks(seen(defensive,w))==0,"Defensive ignores nearby threats hidden by fog");
         blindBase.radar=700;
-        auto cs=think(defensive,w,30);
+        auto cs=seen(defensive,w,30);
         check(attacks(cs)==1,"Defensive responds to threats spotted by radar");
         w.unit(enemy)->cloaked=true;
-        check(attacks(think(defensive,w,60))==0,"Defensive does not target a cloaked enemy");
+        check(attacks(seen(defensive,w,60))==0,"Defensive does not target a cloaked enemy");
     }
     {
         sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
@@ -593,12 +776,12 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         auto scout=soldier;scout.weapon.damage=0;scout.weapons.clear();scout.sight=500;
         w.spawn(&scout,2500,800,0,0);w.spawn(&soldier,2700,800,0,1);
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{2700,800}});
-        check(attacks(think(defensive,w))==0,"Defensive ignores distant visible enemies and known enemy starts");
+        check(attacks(seen(defensive,w))==0,"Defensive ignores distant visible enemies and known enemy starts");
         w.player(2).team=w.player(0).team;w.spawn(&soldier,1050,800,0,2);
         auto unarmed=scout;w.spawn(&unarmed,1000,800,0,1);
-        check(attacks(think(defensive,w,30))==0,"Allies and harmless scouts do not mobilize the defensive army");
+        check(attacks(seen(defensive,w,30))==0,"Allies and harmless scouts do not mobilize the defensive army");
         w.spawn(&base,2500,1200,0,0);w.spawn(&soldier,2700,1200,0,1);
-        check(attacks(think(defensive,w,60))==1,"Defensive also protects owned outlying buildings");
+        check(attacks(seen(defensive,w,60))==1,"Defensive also protects owned outlying buildings");
     }
     {
         sim::World w;terrain(w,true);w.spawn(&base,1300,800,0,0);
@@ -609,7 +792,7 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive);
         // An outlying building reveals the threat across disconnected land.
         w.spawn(&base,2624,1200,0,0);
-        const auto cs=think(defensive,w);
+        const auto cs=seen(defensive,w);
         check(attacks(cs)==1 && std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
             return c.kind==net::Cmd::AttackMove && c.unitId==air;
         }) && std::none_of(cs.begin(),cs.end(),[&](const auto& c) {
@@ -621,7 +804,7 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;boat.weapon.range=240;
         const int ship=w.spawn(&boat,1800,800,0,0);w.spawn(&soldier,1480,1000,0,1);
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive);
-        const auto cs=think(defensive,w);
+        const auto cs=seen(defensive,w);
         check(attacks(cs)==1 && std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
             return c.kind==net::Cmd::AttackMove && c.unitId==ship && c.x>=1536;
         }),"Defensive ships use a reachable water approach to a threat on shore");
@@ -633,10 +816,10 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         // A strong enemy army far off: not clearly winning, so this is interception alone.
         for(int i=0;i<70;++i)w.spawn(&soldier,3200+float(i%10)*32,3200+float(i/10)*32,0,1);
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive);
-        auto cs=think(defensive,w);
+        auto cs=seen(defensive,w);
         check(attacks(cs)==256,"Defensive limits interception commands per think for large armies");
         for(const auto& c:cs)sim::applyCommand(w,registry,c);
-        check(attacks(think(defensive,w,30))==44,"Defensive sends remaining troops without restarting the first wave");
+        check(attacks(seen(defensive,w,30))==44,"Defensive sends remaining troops without restarting the first wave");
     }
     {
         sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
@@ -644,7 +827,7 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         const int enemy=w.spawn(&soldier,1100,800,0,1);
         w.attack(defender,enemy,false);
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive);
-        check(attacks(think(defensive,w))==0,"Defensive preserves an existing explicit attack order");
+        check(attacks(seen(defensive,w))==0,"Defensive preserves an existing explicit attack order");
     }
 }
 // Zhon has no factory buildings: its mobile builders train the army and build
@@ -990,7 +1173,7 @@ static void divineLodestones() {
         p.weight["tardrag"]=25;p.limit["tardrag"]=1;p.weight["targob"]=10;p.limit["targob"]=40;
         if (s.troops) { p.weight["tarang"]=10;p.limit["tarang"]=40; }
         ai::Controller controller(0,reg,p,1,s.difficulty);
-        const auto cs=think(controller,w,s.tick);
+        const auto cs=seen(controller,w,s.tick);
         struct Out { bool upgrade=false,freeDivine=false,dragon=false,trains=false,troop=false; } out;
         for (const auto& c:cs) {
             const std::string t=c.type;
@@ -1409,6 +1592,7 @@ int main(int argc,char** argv) {
     monarchFightsBack(empty,profile,soldier);
     strikeTargets(empty,profile,soldier);
     visionTargets(empty,profile,soldier);
+    fogKnowledge(empty,profile,soldier);
     {
         sim::World w;terrain(w);w.player(0).income=100;
         for(int i=0;i<35;++i)w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
@@ -1759,6 +1943,7 @@ int main(int argc,char** argv) {
             std::vector<uint8_t> h(256*256,100);
             for (int z=0;z<256;++z) for (int x=96;x<160;++x) h[z*256+x]=0;
             w.setTerrain(std::move(h),256,256,60);w.buildNavClasses(reg);   // too deep to wade from x=1536 to 2560
+            w.setRoomVision(true,false);
             w.setManaSpots({{2640,800},{3600,2600}});   // the ally's home deposit, a free one
             w.spawn(reg.find("factory"),3800,3200,0,0);  // our base
             w.spawn(reg.find("factory"),2960,800,0,1);   // the ally's base
@@ -2321,7 +2506,7 @@ int main(int argc,char** argv) {
                 // the head of an inlet, its ships circling the yard to get out;
                 // yards 35 (9080,4424) and 476 (7880,5816) open onto the sea.
                 sim::World w;w.setVisPlayer(-1);
-                sim::MatchConfig config;config.vfs=&vfs;
+                sim::MatchConfig config;config.vfs=&vfs;config.roomMapRevealed=true;   // FOG OF WAR: EXPLORED, the room default
                 config.mapPath="~gen1~090001000000000000000300030003020000ffff000104496e74656c20393331302044656c6c";
                 config.slots={{true,4,0,2.0f},{true,0,1,2.0f}};
                 config.startMode=sim::StartMode::BySlot;config.startSeed=1853210448u;

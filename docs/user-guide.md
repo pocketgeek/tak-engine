@@ -349,8 +349,15 @@ At every difficulty except Retail, the AI's Monarch fights back when it is attac
 an armed enemy comes within its reach, instead of carrying on with a build.
 
 At every difficulty except Retail, the AI attacks only what it knows about, as
-you do: enemy units and buildings its own or its allies' units can see, units
-that are shooting at its units, and what it has seen before. It remembers a
+you do: enemy units and buildings its own or its allies' units can see (radar
+included), units that are shooting at its units, and what it has seen before.
+It plays by the room's **Fog of war** as you do: with **Not Explored** it knows
+only the ground its side has explored, with **Explored** the whole map's ground
+and mana deposits but no enemy outside its sight, and with **Full Vision**
+every unit. It builds lodestones only on deposits it knows, and counts one
+taken by what it has seen or remembers there; when a build there is refused, or
+its builder sees the deposit taken on the way, it learns what stands there and
+goes to another. It remembers a
 building where it saw it until it sees that spot again without it, and a unit on
 the move for about 25 seconds. Among those targets it goes for lodestones and
 mana buildings, builders and production first, then armies and defences, the
