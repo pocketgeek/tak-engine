@@ -653,6 +653,7 @@ private:
     std::map<int, Pursuit> pursuits_;
     int raidersSincePush_ = 0;
     bool scouted_ = false;        // one-shot early scout sent
+    bool firstThinkWaits_ = false;   // the tick-0 think waits a tick for the first view pass (tick)
     uint32_t lastRaidTick_ = 0;   // last tick a harassing raid was sent (raid cooldown)
 };
 

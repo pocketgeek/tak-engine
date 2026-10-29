@@ -3286,7 +3286,18 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
     // Think cadence (per difficulty), staggered by player so several AIs don't all
     // fire on the same tick. Sim-tick driven so a --mpai run is repeatable. Hard
     // reacts more often (thinkPeriod=20) than Easy (60).
-    if ((simTick % uint32_t(dp_.thinkPeriod)) != uint32_t(player_ % dp_.thinkPeriod)) return;
+    const bool due = (simTick % uint32_t(dp_.thinkPeriod)) == uint32_t(player_ % dp_.thinkPeriod);
+    if (!due && !firstThinkWaits_) return;
+    firstThinkWaits_ = false;
+    // Player 0's think at tick 0 comes before the sim's first view and exploration
+    // pass. Under NOT EXPLORED it would know no ground at all (knowsGround), while
+    // a player sees the ground round their start from the first frame: it waits
+    // for tick 1, as every other seat's first think comes after that pass.
+    if (due && simTick == 0 && world.viewCounts().empty() && world.tickCount() == 0 &&
+        !world.mapRevealedFor(player_) && !world.roomLosOff()) {
+        firstThinkWaits_ = true;
+        return;
+    }
     if (world.player(player_).defeated) return;
 
     now_ = simTick;

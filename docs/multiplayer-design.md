@@ -1119,7 +1119,8 @@ that spot is in sight again without it, a mobile unit for 25 s; only a target
 in sight is ordered on by id, a heard or remembered one gets an attack-move to
 where it was, and with nothing known the army and per-level scouts explore
 unseen enemy starts and then map sectors. The think at tick 0, before the first
-view pass, sees only radar. What a seat knows follows the room: team radar
+view pass, sees only radar; under NOT EXPLORED, where it would know no ground
+either, it waits for tick 1. What a seat knows follows the room: team radar
 counts as sight out to radardistance, FULL VISION sees every unit
 (`World::roomLosOff`); deposits count only on ground the team has explored
 unless the map is revealed (`mapRevealedFor`, `exploredAt`), taken only by an

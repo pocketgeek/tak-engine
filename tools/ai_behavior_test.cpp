@@ -812,6 +812,24 @@ static void lodestoneKnowledge() {
         w.unit(eye)->x=sim::Fixed::fromInt(400);w.unit(eye)->z=sim::Fixed::fromInt(3600);sight(w);think(controller,w,120);
         check(w.unit(enemy)->alive() && pick(controller,w,builder)==1008,"... nor while it is remembered taken");
     }
+    {
+        // NOT EXPLORED, player 0: its think at tick 0 comes before the sim's first
+        // view and exploration pass, when it would know no ground at all, while a
+        // player sees the ground round their start from the first frame. It waits
+        // for tick 1 and orders the lodestone on the deposit in sight there.
+        sim::World w;int builder=0;build(w,builder);w.setRoomVision(false,false);
+        w.player(0).storage=5000;w.player(0).mana=1000;
+        ai::Profile p;p.weight["tarlode"]=10;
+        ai::Controller controller(0,reg,p,1,ai::Difficulty::Absurd);
+        auto cs=think(controller,w,0);
+        const bool waited=cs.empty();
+        sight(w);
+        const auto next=think(controller,w,1);
+        cs.insert(cs.end(),next.begin(),next.end());
+        check(waited && std::any_of(cs.begin(),cs.end(),[](const auto& c) {
+                  return c.kind==net::Cmd::Build && std::string(c.type)=="tarlode" && c.x==1008; }),
+              "NOT EXPLORED: player 0's first think waits a tick for its sight, then takes the deposit in view");
+    }
 }
 
 static void monarchFightsBack(const sim::TypeRegistry& registry,const ai::Profile& profile,
@@ -2748,7 +2766,7 @@ int main(int argc,char** argv) {
                 // land-factory budget already filled. The AI must find a coast,
                 // construct the Sea Fort and complete a ship through normal orders.
                 sim::World naval;naval.setVisPlayer(-1);
-                sim::MatchConfig config;config.vfs=&vfs;
+                sim::MatchConfig config;config.vfs=&vfs;config.roomMapRevealed=true;   // FOG OF WAR: EXPLORED, the room default
                 config.mapPath=hpi::findMap(vfs,"Varro Passage");
                 config.slots={{true,2,0,1.0f},{true,0,1,1.0f}};
                 const auto starts=sim::setupMatch(naval,reg,config);
