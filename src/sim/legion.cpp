@@ -1033,8 +1033,8 @@ struct LegionNavigator::Impl {
         // course that heading, as it did the body's. Hashed.
         int32_t faceX=0,faceZ=0,faceLen=0,faced=-1;Bam course;
         // The course's turn less the body's on this tick's drive (turnTick), which World::updateLegionStill
-        // adds back (courseTurnCorrection): headway is judged by the course, as before facing. Read on the
-        // tick it is written only, so not hashed.
+        // adds back (courseTurnCorrection): the livelock's headway is judged by the course, as before facing
+        // (the body's stand in its scripts by the body). Read on the tick it is written only, so not hashed.
         uint32_t turnTick=kNoTick;int32_t turnDelta=0;
         uint32_t passUntil=0;             // tick until which a passing body keeps its new lane
         int8_t passRX=0,passRZ=0;         // the side it moved over to

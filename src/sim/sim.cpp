@@ -13202,6 +13202,7 @@ void World::updateLegionStill(Unit& u,Fixed beforeX,Fixed beforeZ) {
     if (!isLegionPathfinding(pathfindingMode_) || !u.type || u.type->canFly || u.type->isStructure() ||
         !u.alive()) {
         u.legionWindow=0;u.legionStill=u.legionShuffle=false;
+        if (size_t(u.id)<legionBodyWindow_.size()) legionBodyWindow_[size_t(u.id)].ticks=0;
         return;
     }
     // Measured from the start of the tick (Legion's yields step before the
@@ -13213,11 +13214,20 @@ void World::updateLegionStill(Unit& u,Fixed beforeX,Fixed beforeZ) {
     const int32_t rate=int32_t(std::max<int64_t>(1,int64_t(uint16_t(std::max(u.type->turnRate,u.type->turnInPlaceRate)))*
                                                     groundTerrainMultiplier(u).v/65536));
     // A Legion member's turn is its course's (LegionNavigator::courseTurnCorrection): its body faces its
-    // steps, and turning to a sideways step is no headway.
+    // steps, and turning to a sideways step is no headway, nor to and fro for the livelock.
     const int32_t course=legion_?legion_->courseTurnCorrection(u.id):0;
-    legionWindow_[size_t(u.id)].tick(u.legionWindow,u.legionStill,u.legionShuffle,beforeX.v,beforeZ.v,u.x.v,u.z.v,
-        std::bit_cast<int16_t>(uint16_t(uint16_t(u.heading.v)-u.tickStartHeadingBam+course)),u.baseSpeed.v,rate,
-        std::max(u.type->footX,u.type->footZ));
+    const int foot=std::max(u.type->footX,u.type->footZ);
+    const int16_t bodyTurn=std::bit_cast<int16_t>(uint16_t(uint16_t(u.heading.v)-u.tickStartHeadingBam));
+    bool courseStill=false;
+    legionWindow_[size_t(u.id)].tick(u.legionWindow,courseStill,u.legionShuffle,beforeX.v,beforeZ.v,u.x.v,u.z.v,
+        std::bit_cast<int16_t>(uint16_t(uint16_t(bodyTurn)+course)),u.baseSpeed.v,rate,foot);
+    // Whether the body stands in its scripts is judged by what it shows: its own steps and its body's turn
+    // (Unit::legionStill is display only). By the course's turn, a body facing its way while its course
+    // turned round behind it walked on the spot: a creep at the facing cap with no turn to show (slowturn
+    // walk_in_place 0 -> 78 at offset 0 with facing, 2026-10-28).
+    if (size_t(u.id)>=legionBodyWindow_.size()) legionBodyWindow_.resize(size_t(u.id)+1);
+    auto& body=legionBodyWindow_[size_t(u.id)];
+    body.w.tick(body.ticks,u.legionStill,body.shuffle,beforeX.v,beforeZ.v,u.x.v,u.z.v,bodyTurn,u.baseSpeed.v,rate,foot);
     // A standing body requests no turn either: the display VM's TurnDirection
     // (the zontroll/zongob MoveWatcher walks on its last argument) stays quiet.
     // turnReqBam is display only, never hashed.
@@ -16414,6 +16424,10 @@ uint64_t World::stateHash() const {
             const auto& w=legionWindow_[size_t(u.id)];
             if (u.legionWindow) {mix(uint32_t(w.x)); mix(uint32_t(w.z)); mix(uint32_t(w.turn)); mix(uint32_t(w.path)); mix(uint32_t(w.turned));}
             if (u.legionShuffle) {mix(uint32_t(w.lockX)); mix(uint32_t(w.lockZ)); mix(uint32_t(w.lockTicks));}
+        }
+        if (size_t(u.id)<legionBodyWindow_.size() && legionBodyWindow_[size_t(u.id)].ticks) {
+            const auto& b=legionBodyWindow_[size_t(u.id)];
+            mix(0x424f4459u); mix(b.ticks); mix(uint32_t(b.w.x)); mix(uint32_t(b.w.z)); mix(uint32_t(b.w.turn)); mix(uint32_t(b.w.path)); mix(uint32_t(b.w.turned));
         }
         mix(u.guardNoMoveAllowed); mix(u.guardNoMoveActive);
         if (u.guardNoMoveActive) {

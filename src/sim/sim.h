@@ -1075,7 +1075,8 @@ struct alignas(64) Unit {
     // window (0: the next tick starts one; its start and tallies live in
     // World::legionWindow_), and whether the body stands although it went on
     // stepping or turning (a livelock: its navigator then holds it). See
-    // World::updateLegionStill. Hashed in Legion.
+    // World::updateLegionStill (legionStill has a window of its own there,
+    // World::legionBodyWindow_). Hashed in Legion.
     uint8_t legionWindow = 0;
     bool legionShuffle = false;
     uint16_t variationPhase=0; // original per-unit random phase at +82
@@ -2230,6 +2231,7 @@ public:
         const int windMin = wind_.minimum, windMax = wind_.maximum;
         wind_ = {}; wind_.minimum = windMin; wind_.maximum = windMax;
         nextId_ = 1;
+        legionBodyWindow_.clear();   // its ticks live here, not in the Unit: ids start again at 1
         retailAllocation_=false;retailEntityPools_.reset();spawnGeneration_=0;
         entitySlots_.unitAt={};entitySlots_.slotOf.clear();
         nextMovementController_ = 0;
@@ -2833,6 +2835,12 @@ private:
     // Each Legion ground unit's headway window (see updateLegionStill), by
     // id. Hashed while valid.
     std::vector<LegionHeadway> legionWindow_;
+    // Each Legion ground unit's second window, judged by the turn its body
+    // shows (updateLegionStill): it alone sets Unit::legionStill. Its ticks
+    // (0: the next tick starts one) live here; its livelock flag is unused.
+    // Hashed while valid.
+    struct LegionBodyWindow {LegionHeadway w;uint8_t ticks=0;bool shuffle=false;};
+    std::vector<LegionBodyWindow> legionBodyWindow_;
     void notifyFlightOccupancy(Unit& u);
     bool prepareBuildApproach(Unit& u);
     Order makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fixed z) const;

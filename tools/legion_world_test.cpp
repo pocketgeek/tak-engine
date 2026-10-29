@@ -2100,13 +2100,21 @@ void stillturn() {
 // 5b7a4f97 (shuffles, side-steps and detour routes walked unturned) the wall
 // end had 35 sideways and 4 backward steps per 1000 and the block 69 / 11;
 // facing its steps, 9 / 1 and 16 / 3, arriving on the same ticks. The body
-// still never turns in place (spins) and everyone arrives.
-struct FacingCount {int64_t steps=0,sideways=0,backward=0;int arrived=0,ticks=0;uint64_t spins=0;};
+// still never turns in place (spins) and everyone arrives. A third group of
+// slow turners (turn 400, none in place) rounds a wall's top and turns back
+// (slowturn's W400 region, at the five start shifts): no body walks in place,
+// its gait on with no headway for 16 ticks or more (legion_observe's
+// walk_in_place: no step of a quarter of its speed and no turn). Facing its
+// slides, a body facing its way crept at the facing cap while its course
+// turned round behind it, and whether it stood was judged by that unseen turn
+// (on 761eac47: 0, 8, 18, 18 and 0 walk-in-place ticks; arrivals as now).
+struct FacingCount {int64_t steps=0,sideways=0,backward=0,walkInPlace=0;int arrived=0,ticks=0;uint64_t spins=0;};
 FacingCount facingRun(Fixture& f,const std::vector<int>& ids,int limit) {
     FacingCount c;Watch motion;
     std::map<int,std::pair<int32_t,int32_t>> before;
+    std::map<int,uint16_t> heading;std::map<int,int> noHead;
     for(;c.ticks<limit&&c.arrived<int(ids.size());++c.ticks) {
-        for(int id:ids) {const auto& u=*f.world.unit(id);before[id]={u.x.v,u.z.v};}
+        for(int id:ids) {const auto& u=*f.world.unit(id);before[id]={u.x.v,u.z.v};heading[id]=uint16_t(u.heading.v);}
         f.world.tick(1.f/30);motion.observe(f.world,ids);
         c.arrived=0;
         for(int id:ids) {
@@ -2114,6 +2122,9 @@ FacingCount facingRun(Fixture& f,const std::vector<int>& ids,int limit) {
             c.arrived+=u.orders.empty();
             if(u.orders.empty())continue;
             const int64_t dx=int64_t(u.x.v)-before[id].first,dz=int64_t(u.z.v)-before[id].second;
+            const int64_t pace=std::max<int64_t>(1,u.baseSpeed.v/4);
+            noHead[id]=dx*dx+dz*dz>=pace*pace||uint16_t(u.heading.v)!=heading[id]?0:noHead[id]+1;
+            c.walkInPlace+=noHead[id]>=2*LegionHeadway::kWindow&&u.speed.v>0&&!u.legionStill;
             if(dx*dx+dz*dz<=int64_t(16384)*16384)continue;
             const auto way=retailHeadingToPort(uint16_t(retailDirection(Fixed::raw(int32_t(-dx)),Fixed::raw(int32_t(-dz))).v));
             const int32_t off=std::abs(retailTurnRequest(way,u.heading));
@@ -2124,13 +2135,15 @@ FacingCount facingRun(Fixture& f,const std::vector<int>& ids,int limit) {
     return c;
 }
 void facing() {
-    auto report=[](const char* name,const FacingCount& c,size_t n) {
-        std::printf("facing %s arrived=%d/%zu ticks=%d steps=%lld sideways=%lld backward=%lld permille=%lld/%lld spins=%llu\n",name,c.arrived,n,c.ticks,
-            (long long)c.steps,(long long)c.sideways,(long long)c.backward,(long long)(c.steps?c.sideways*1000/c.steps:0),
-            (long long)(c.steps?c.backward*1000/c.steps:0),(unsigned long long)c.spins);
+    auto report=[](const char* name,const FacingCount& c,size_t n,bool slow=false) {
+        std::printf("facing %s arrived=%d/%zu ticks=%d steps=%lld sideways=%lld backward=%lld permille=%lld/%lld spins=%llu walk_in_place=%lld\n",
+            name,c.arrived,n,c.ticks,(long long)c.steps,(long long)c.sideways,(long long)c.backward,(long long)(c.steps?c.sideways*1000/c.steps:0),
+            (long long)(c.steps?c.backward*1000/c.steps:0),(unsigned long long)c.spins,(long long)c.walkInPlace);
         check(c.arrived==int(n),"facing: the group did not arrive");
         check(c.steps>1000,"facing: the group hardly moved (no test)");
         check(c.spins==0,"facing: a body turned in place");
+        check(c.walkInPlace==0,"facing: a body walked in place");
+        if(slow)return;   // a slow turner faces its slides late: its sideways steps are not this test's
         check(c.sideways*1000<=c.steps*25,"facing: bodies walked sideways against their facing");
         check(c.backward*1000<=c.steps*5,"facing: bodies walked backward against their facing");
     };
@@ -2155,6 +2168,19 @@ void facing() {
         for(int id:ids)f.world.order(id,160*16,50*16,false);
         report("block",facingRun(f,ids,4000),ids.size());
     }
+    for(const int shift:kShifts) {
+        g_shift=shift;
+        Fixture f(220,140);
+        f.rect(98,48,4,91);f.rect(0,139,220,1);f.publish();
+        auto type=mover(2);type.turnRate=400;type.turnInPlaceRate=0;
+        std::vector<int> ids;
+        for(int i=0;i<48;++i)ids.push_back(f.spawn(type,44+(i%9)*3,95+(i/9)*3));
+        f.start();
+        for(int id:ids)f.world.order(id,150*16,110*16,false);
+        const std::string name="slowturn"+std::to_string(shift);
+        report(name.c_str(),facingRun(f,ids,6000),ids.size(),true);
+    }
+    g_shift=0;
 }
 
 // A member whose own goal lies inside a lattice of settled same-player

@@ -289,8 +289,9 @@ public:
     // One movement update for a supported unit, replacing Retail steering.
     void move(Unit&,Fixed maximum);
     // Facing (2026-10-28): move() turns a member's body toward its actual motion while the heading its
-    // route turns (its course) paces it. World::updateLegionStill judges headway by the course, as before:
-    // it adds this, the course's turn less the body's on this tick's move() (0 if none).
+    // route turns (its course) paces it. World::updateLegionStill judges the livelock's headway by the course,
+    // as before: it adds this, the course's turn less the body's on this tick's move() (0 if none). The
+    // body's stand in its scripts (Unit::legionStill) is judged by the body.
     int32_t courseTurnCorrection(int id) const;
     // The heading a member's route turns it to (its course; the body's heading for a unit move() has not
     // driven since anything else turned it, or no member).

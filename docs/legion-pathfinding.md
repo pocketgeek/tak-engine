@@ -4801,9 +4801,25 @@ at least half the mean step length: a dodge one way and back nets nothing and tu
 step it made, so a held, stuck or trapped body never turns in place. A body aiming a weapon that needs its facing
 (`Unit::faceRequest`) and a member of a fight, attack, guard or patrol leg keep the route rule: their facing serves
 their weapons (shots wait on it, and retail scores targets by the turn from it, 412a77). Two readers that judged
-the route by the body's heading read the course instead: `World::updateLegionStill`'s headway window (`courseTurnCorrection`: a turn toward a sideways step is no
-headway and no to-and-fro) and the formation flyers' direction of travel (`planLegionFlightStations`; reading the
-facing there stalled a patrol's flyer in `legion_mixedformation`).
+the route by the body's heading read the course instead: `World::updateLegionStill`'s livelock window (`courseTurnCorrection`: a turn toward a sideways step is no
+headway and no to-and-fro, so `Unit::legionShuffle` and every hold it starts are as before) and the formation flyers' direction of travel (`planLegionFlightStations`; reading the
+facing there stalled a patrol's flyer in `legion_mixedformation`). Whether the body stands in its scripts
+(`Unit::legionStill`, display only: GET 29, MoveRate, the turn request) has a window of its own,
+`World::legionBodyWindow_`, judged by the steps and the turn the body shows.
+
+**Walking in place** (the 0.9.11 review). With both flags read from the course's window, `slowturn`'s safety key
+`walk_in_place` (must be 0) read 0..78 per gate offset, and 19 more fixtures showed 1..6. A body that had turned
+to face a slide's motion stepped on along its route, already facing it, while its course still pointed the way it
+had faced before the slide (a turn-400 body: 160 deg behind) and turned round at the turn rate: the facing cap held
+the body at an eighth of travel speed for up to 43 ticks, with no turn to show, and the course's unseen turn kept it
+counted as making headway, so its gait walked on the spot. Judging the stand by the body, it stands after a window
+without steps or turn, as before facing: `walk_in_place` is 0 in every fixture at every gate offset, and the
+movement is untouched (every key but `walk_in_place`, and `walk_net` by -16..+4 in three fixtures, identical in all
+145 fixtures at the gate offsets; `legion_facing` adds a turn-400 group round a wall's top at five start shifts,
+0, 8, 18, 18 and 0 walk-in-place ticks before). Not taken: starting the course from the body when the body faces its
+route more nearly (or only when it faces it within the dead band, or only then and at the eighth-speed cap): the body
+walks on at speed, a change of pacing that moved arrival keys in 24, 23 and 14 of the 31 facing fixtures at offset 0;
+the first failed 698 keys of the scenario gate.
 
 Three variants were measured and dropped. Averaged motion for every step, committed ones included: a body reversing
 its route crept backward at the facing cap for ~8 updates before its average flipped (`legion_ringroutespeed`:
@@ -4830,7 +4846,8 @@ corner-8x56, attackring-f1-64, battle-field-2x60 and uturn; offset 0; Retail / b
 Arrivals, t90 and done are identical in all 31, and so are spins, reversals and stop-go. `legion_facing` (a crowd round a wall end and a
 group round a standing block): sideways steps 35 and 69 per 1,000 before, 9 and 16 after; backward 4 and 11, 1 and
 3; arrival ticks unchanged. Legion state hashes change where a body slides at speed (the scenario gate's `hash@`
-keys); Retail's do not, and the seven `--mpai` gates on Inner Circle keep their hashes.
+keys); Retail's do not. The facing alone kept the seven `--mpai` gates on Inner Circle; the body's own stand window
+changes the three Legion ones (docs/release-0.9.11-validation.md).
 
 ### Legion 10,000: where the program left it
 
