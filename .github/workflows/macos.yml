@@ -112,7 +112,7 @@ jobs:
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_FIND_FRAMEWORK=LAST
-          cmake --build build --target acme_test server_address_test server_commands_test room_worker_test mod_packs_test tls_test replay_file_test spectator_client_test filelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test cartographer_placement_test datafolder_test detmath_test sim_driver_equiv_test stream_test stream_network_test menu_music_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
+          cmake --build build --target acme_test server_address_test server_commands_test room_worker_test state_hash_test mod_packs_test tls_test replay_file_test spectator_client_test filelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test cartographer_placement_test datafolder_test detmath_test sim_driver_equiv_test stream_test stream_network_test menu_music_test nvml_test windowsgpu_test distant_models_test retail_script_test pathsearch_test retail_visual_test mapgen_test map_transfer_test unit_gift_test
 
       - name: Server, network and replay checks
         run: |
@@ -122,6 +122,7 @@ jobs:
           ./build/server_address_test
           ./build/server_commands_test
           ./build/room_worker_test
+          ./build/state_hash_test
           ./build/mod_packs_test
           ./build/replay_file_test
           ./build/spectator_client_test

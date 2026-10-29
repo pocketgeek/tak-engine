@@ -51,7 +51,7 @@ open.)*
 ## 2. What exists today (and what survives)
 
 The engine already has the hard part: a **deterministic 30 Hz sim** where only
-commands cross the wire, verified in 2-player lockstep with periodic FNV-1a
+commands cross the wire, verified in 2-player lockstep with periodic 64-bit
 state hashes. The sim proper is RNG-free, the COB VM fixed-seeded, and
 `stateHash()` already iterates all players generically.
 
