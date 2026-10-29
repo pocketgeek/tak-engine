@@ -16,6 +16,7 @@
 #include "gaf/animationtiming.h"
 #include "sim/detmath.h"
 #include "sim/simprobe.h"
+#include "sim/statefold.h"
 #include "util/devenv.h"
 #include "sim/mission.h"
 #include "sim/scenario.h"
@@ -16514,8 +16515,9 @@ void World::hashTrace() const {
 #endif
 
 uint64_t World::stateHash() const {
-    // FNV-1a over the quantities that must agree between lockstep peers.
+    // A 64-bit fold of the quantities that must agree between lockstep peers.
     uint64_t h = 1469598103934665603ULL;
+    WordMix words(h);   // sim/statefold.h
     // Optional checkpoints include the newer script/navigation state omitted
     // from the older motion-oriented hashTrace diagnostic.
     auto checkpoint = [&](const char* section) {
@@ -16523,7 +16525,7 @@ uint64_t World::stateHash() const {
         static const char* limit = std::getenv("TAK_HASHDETAIL");
         if (limit && tickCounter_ <= std::strtoul(limit,nullptr,10)) {
             std::fprintf(stderr,"HASHDETAIL t=%u section=%s hash=%016llx\n",
-                         tickCounter_,section,static_cast<unsigned long long>(h));
+                         tickCounter_,section,static_cast<unsigned long long>(words.digest()));
             if (std::strcmp(section,"grades")==0) {
                 int index=0;
                 for (const auto& plane:searchGrades_) {
@@ -16538,21 +16540,7 @@ uint64_t World::stateHash() const {
         (void)section;
 #endif
     };
-    // Preserve all eight serialized bytes, but combine their multiplications
-    // when the whole word is zero. This also covers sparse piece/unit fields,
-    // not only unused VM stack words.
-    constexpr uint64_t zeroWordFactor=[] {
-        uint64_t factor=1;
-        for (int i=0;i<8;++i) factor*=1099511628211ULL;
-        return factor;
-    }();
-    auto mix = [&h](uint64_t v) {
-        if (v==0) { h*=zeroWordFactor;return; }
-        for (int i = 0; i < 8; ++i) {
-            h ^= (v >> (i * 8)) & 0xFF;
-            h *= 1099511628211ULL;
-        }
-    };
+    auto mix = [&words](uint64_t v) { words(v); };
     // Same guard as bits() above, and for the same reason -- see the note there.
     auto mixf = [&](auto f) {
         static_assert(!std::is_same_v<std::decay_t<decltype(f)>, Fixed>,
@@ -16593,16 +16581,20 @@ uint64_t World::stateHash() const {
     mix(nextMovementController_);
     mix(navigationExplored_.size());
     mix(uint32_t(restoredNavigationViewer_));
-    for (auto mask:navigationExplored_) mix(mask);
+    // The pool when this world runs one (a query never builds one).
+    SimPool* const pool=!serialThreads_ && pool_ && pool_->workers() ? pool_.get() : nullptr;
+    auto plane16=[&](const std::vector<uint16_t>& cells) {
+        return foldPlane(pool,cells.size(),[&](size_t begin,size_t end) {
+            return foldCells16(end-begin,[&](size_t i){return cells[begin+i];});
+        });
+    };
+    mix(plane16(navigationExplored_));
     checkpoint("exploration");
-    // Current-view counts, four cells per fold (derivable from the hashed
-    // footprints, folded anyway as a cheap consistency check).
+    // Current-view counts (derivable from the hashed footprints and the static
+    // exploration heights, folded anyway as a cheap consistency check: they
+    // decide what each player sees, and so its targets).
     mix(viewCounts_.size());
-    for (size_t i=0;i<viewCounts_.size();i+=4) {
-        uint64_t word=0;
-        std::memcpy(&word,viewCounts_.data()+i,std::min<size_t>(4,viewCounts_.size()-i)*2);
-        mix(word);
-    }
+    mix(plane16(viewCounts_));
     mix(deathSights_.size());
     for (const auto& d:deathSights_) {
         mix(uint16_t(d.sight.x));mix(uint16_t(d.sight.z));mix(uint32_t(d.sight.eyeHeight));
@@ -16610,28 +16602,53 @@ uint64_t World::stateHash() const {
         mix(uint8_t(d.player));mix(d.expiry);
     }
     checkpoint("vision");
-    for (const auto& [id,factory]:unitScripts_) {
-        mix(0x434f42564dull); mix(uint32_t(id));
-        mix(factory.activated); mix(factory.ready); mix(factory.yardOpen); mix(factory.buggerOff);
-        if (factory.dying) { mix(0x44454144u);mix(factory.deathStopValue); }
-        if (factory.movementRate) { mix(0x4d4f5645u);mix(factory.movementRate); }
-        // A skipped VM's unpaid debt is folded in: each sleeper hashes the count it
-        // would hold had the skipped ticks run (UnitScript::pay).
-        const auto& state=factory.peek();
-        const uint32_t debt=factory.debt();
-        mix(state.vm.active); mix(uint32_t(state.vm.ticksPerSecond));
-        for (auto value:state.vm.statics) mix(value);
-        for (const auto& thread:state.vm.threads) {
-            const bool owes=debt && (thread.words[0]&0xfff00000u)==0x2400000u;
-            for (size_t n=0;n<thread.words.size();++n) mix(owes && n==3 ? thread.words[n]-debt : thread.words[n]);
+    // Each script folds on its own and the digests in id order, so up to four
+    // threads read the scripts' megabytes.
+    std::vector<const decltype(unitScripts_)::value_type*> scripts;
+    scripts.reserve(unitScripts_.size());
+    for (const auto& entry:unitScripts_) scripts.push_back(&entry);
+    std::vector<uint64_t> scriptDigests(scripts.size());
+    auto foldScripts=[&](size_t begin,size_t end) {
+        for (size_t s=begin;s<end;++s) {
+            const auto& [id,factory]=*scripts[s];
+            WordMix script(0x434f42564dull);
+            script(uint32_t(id));
+            script(factory.activated); script(factory.ready); script(factory.yardOpen); script(factory.buggerOff);
+            if (factory.dying) { script(0x44454144u);script(factory.deathStopValue); }
+            if (factory.movementRate) { script(0x4d4f5645u);script(factory.movementRate); }
+            // A skipped VM's unpaid debt is folded in: each sleeper hashes the count it
+            // would hold had the skipped ticks run (UnitScript::pay).
+            const auto& state=factory.peek();
+            const uint32_t debt=factory.debt();
+            script(state.vm.active); script(uint32_t(state.vm.ticksPerSecond));
+            // The VM and piece words are 32-bit: two to a fold, the odd last one
+            // zero-padded.
+            const auto& statics=state.vm.statics;
+            for (size_t n=0;n<statics.size();n+=2)
+                script(statics[n]|(n+1<statics.size() ? uint64_t(statics[n+1])<<32 : 0));
+            for (const auto& thread:state.vm.threads) {
+                const bool owes=debt && (thread.words[0]&0xfff00000u)==0x2400000u;
+                auto word=[&](size_t n)->uint64_t {return owes && n==3 ? thread.words[n]-debt : thread.words[n];};
+                for (size_t n=0;n<thread.words.size();n+=2)
+                    script(word(n)|(n+1<thread.words.size() ? word(n+1)<<32 : 0));
+            }
+            for (const auto& piece:state.pieces) {
+                script(uint32_t(piece.active)|uint32_t(piece.visible)<<1|uint32_t(piece.cached)<<2|
+                       uint32_t(piece.shaded)<<3|uint32_t(piece.rendered)<<4);
+                std::array<uint32_t,24> values;
+                size_t k=0;
+                for (const auto* axes:{&piece.moveTarget,&piece.moveSpeed,&piece.turnTarget,&piece.turnSpeed,
+                                      &piece.spinTarget,&piece.spinAcceleration,&piece.move,&piece.turn})
+                    for (auto value:*axes) values[k++]=uint32_t(value);
+                for (k=0;k<values.size();k+=2) script(values[k]|uint64_t(values[k+1])<<32);
+            }
+            scriptDigests[s]=script.digest();
         }
-        for (const auto& piece:state.pieces) {
-            mix(piece.active); mix(piece.visible); mix(piece.cached); mix(piece.shaded); mix(piece.rendered);
-            for (const auto* values:{&piece.moveTarget,&piece.moveSpeed,&piece.turnTarget,&piece.turnSpeed,
-                                    &piece.spinTarget,&piece.spinAcceleration,&piece.move,&piece.turn})
-                for (auto value:*values) mix(uint32_t(value));
-        }
-    }
+    };
+    if (pool) pool->forChunks(scripts.size(),64,128,[&](size_t,size_t begin,size_t end,unsigned) {foldScripts(begin,end);});
+    else foldScripts(0,scripts.size());
+    mix(scripts.size());
+    for (uint64_t digest:scriptDigests) mix(digest);
     checkpoint("scripts");
     mix(searchGrades_.size()); mix(uint32_t(activeSearchGrade_));
     for (const auto& plane:searchGrades_) {
@@ -17137,23 +17154,26 @@ uint64_t World::stateHash() const {
         mix(uint32_t(corpse.corpseStatue));mix(corpse.corpseFading);mix(corpse.corpseBlocks);
         mix(uint32_t(corpse.deathAnimationTicks));mix(corpse.deathHasCorpse);
     }
-    // Features are 16-bit values serialized as eight bytes by mix(). On large
-    // maps this is millions of cells per lockstep check. Combine the final
-    // multiplication and six zero-byte multiplications without changing a byte
-    // of the hash stream (or omitting empty terrain from desync detection).
-    constexpr uint64_t featureTailFactor=[] {
-        uint64_t factor=1;
-        for (int i=0;i<7;++i) factor*=1099511628211ULL;
-        return factor;
-    }();
-    for (const auto& cell:mapPlacementCells_) {
-        h ^= uint8_t(cell.feature);
-        h *= 1099511628211ULL;
-        h ^= uint8_t(cell.feature >> 8);
-        h *= featureTailFactor;
-        if (cell.feature==0xfffe) { mix(cell.backX);mix(cell.backZ); }
-        if (cell.owner!=kRetailWorldFeatureOwner) { mix(0x4f574e52u);mix(cell.owner); }
-    }
+    // Every map cell's feature (millions of cells on a big map), empty terrain
+    // included, in the same pass as the few footprint-tail and non-world-owned
+    // cells' extras. A chunk sums those as scrambled (index, extras) words, so
+    // the order foldCells16 reads its cells in does not matter.
+    mix(foldPlane(pool,mapPlacementCells_.size(),[&](size_t begin,size_t end) {
+        uint64_t extras=0;
+        const uint64_t cells=foldCells16(end-begin,[&](size_t j) {
+            const size_t i=begin+j;
+            const auto& cell=mapPlacementCells_[i];
+            const bool tail=cell.feature==0xfffe;
+            if (tail || cell.owner!=kRetailWorldFeatureOwner) {
+                uint64_t x=uint64_t(i)<<25|uint64_t(tail)<<24|uint64_t(cell.owner);
+                if (tail) x|=uint64_t(cell.backX)<<16|uint64_t(cell.backZ)<<8;
+                x^=x>>30;x*=0xbf58476d1ce4e5b9ull;x^=x>>27;x*=0x94d049bb133111ebull;
+                extras+=x^(x>>31);
+            }
+            return cell.feature;
+        });
+        return cells*0x9e3779b97f4a7c15ull^extras;
+    }));
     mix(uint64_t(gameRng_));   // shared RNG stream position must agree
     // Retail's CRT seed is per-process and not a lockstep input. World uses its
     // match-seeded CRT stream for damage spread; once combat consumes it, include
@@ -17184,8 +17204,9 @@ uint64_t World::stateHash() const {
         for(const auto& p:players_) mix(uint32_t(p.score));
         TAK_PASS();
         for(const auto& u:units_) mix(uint32_t(u.lastHitPlayer));
-        mission_->foldHash(h);
     }
+    h=words.digest();
+    if (mission_) mission_->foldHash(h);
     if (scenario_) scenario_->foldHash(h); // scenario flags/timers/outcome are lockstep state
     for (uint8_t d : forcedDefeat_) { h ^= (d + 1u); h *= 1099511628211ULL; }
     return h;

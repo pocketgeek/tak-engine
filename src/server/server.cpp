@@ -2548,6 +2548,14 @@ void Server::closeTick(Room& r, bool multipleGames) {
     r.orderRotor = (r.orderRotor + 1) % kMaxSlots;
     tak::srv::TickInput input;
     input.tick=r.tick;input.roomId=r.id;input.multipleGames=multipleGames;
+    // The referee's hash is read only by checkHashes, against the reports of
+    // HUMAN slots (a spectator's is a progress ack), and by the replay trail. A
+    // slot becomes human only before the start (joins, seat moves and slot edits
+    // are refused while running; a leave or takeover makes it closed or AI), so
+    // with no human slot left -- an all-AI game watched by spectators -- nobody
+    // can ever report a hash to compare and only the trail's ticks need one.
+    input.clientHashes=std::any_of(std::begin(r.slots),std::end(r.slots),[](const auto& s){return s.type==1;});
+    input.replayTrail=!replayDir_.empty();
     input.commands=std::exchange(r.pending,{});input.events=std::exchange(r.pendingEvents,{});
     input.replayBudget=limits_.replayMemory-std::min<uint64_t>(limits_.replayMemory,r.logBytes);
     if (auto it=r.pendingAt.find(r.tick);it!=r.pendingAt.end()) {

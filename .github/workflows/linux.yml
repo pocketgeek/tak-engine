@@ -229,7 +229,7 @@ jobs:
           # Every target the Linux install() rules reference, or cpack fails at
           # package time with "file INSTALL cannot find build/<target>" -- which is
           # exactly how 0.6.0 broke when cartographer joined those rules.
-          cmake --build build --target acme_test server_address_test server_commands_test room_worker_test mod_packs_test tls_test replay_file_test spectator_client_test filelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test cartographer_placement_test datafolder_test stream_test vashim_test menu_music_test nvml_test windowsgpu_test distant_models_test
+          cmake --build build --target acme_test server_address_test server_commands_test room_worker_test state_hash_test mod_packs_test tls_test replay_file_test spectator_client_test filelease_test takclient takserver cartographer cartographer_document_test cartographer_validation_test cartographer_placement_test datafolder_test stream_test vashim_test menu_music_test nvml_test windowsgpu_test distant_models_test
 
       - name: Server, network and replay checks
         run: |
@@ -239,6 +239,7 @@ jobs:
           ./build/server_address_test
           ./build/server_commands_test
           ./build/room_worker_test
+          ./build/state_hash_test
           ./build/mod_packs_test
           ./build/replay_file_test
           ./build/spectator_client_test

@@ -12,6 +12,10 @@ struct TickInput {
     std::vector<net::Event> events;
     uint64_t replayBudget=0;
     bool multipleGames=false;
+    // Who reads the referee's hash: seated humans' desync reports (every
+    // kHashPeriod ticks) and the recorded replay's checkpoint trail (every 10th
+    // of those, with posDigest). Neither: the hash and posDigest are skipped.
+    bool clientHashes=true,replayTrail=true;
 };
 struct TickResult {
     std::vector<uint8_t> bundle;

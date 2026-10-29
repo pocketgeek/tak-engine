@@ -33,6 +33,9 @@ their validation reports; both live in [`docs/`](docs/).
 - **Fewer late-game hitches on big maps**: a building that might cut off part of the
   map is now checked around itself instead of re-mapping the whole map (~90 ms each,
   up to 24 times a minute on a 64x64 map).
+- **Smoother late game on big maps**: the lockstep state check costs about 5 ms
+  instead of 33 with 2,500 units on a 64x64 map, and a game with no human player
+  (AIs you watch) skips it on the server.
 
 ## 0.9.11
 *2026-10-29 · protocol 304 · replay format 15 · does not play with 0.9.10 or earlier, nor their replays*

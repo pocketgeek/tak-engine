@@ -39,8 +39,9 @@ TickResult simulateRoomTick(sim::World& world,const sim::TypeRegistry& registry,
     rosterDump(input.roomId,world,controllers);
 #endif
     if(input.tick%uint32_t(kHashPeriod)==0) {
-        result.hash=world.stateHash();
-        if((input.tick/uint32_t(kHashPeriod))%10==0)result.posDigest=world.posDigest();
+        const bool trail=input.replayTrail && (input.tick/uint32_t(kHashPeriod))%10==0;
+        if(input.clientHashes || trail)result.hash=world.stateHash();
+        if(trail)result.posDigest=world.posDigest();
     }
     result.missionOutcome=world.missionOutcome();
     for(int i=0;i<std::min(kMaxSlots,world.numPlayers());++i)result.defeated[size_t(i)]=world.player(i).defeated;
