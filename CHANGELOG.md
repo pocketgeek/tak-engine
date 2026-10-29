@@ -30,6 +30,9 @@ their validation reports; both live in [`docs/`](docs/).
   the nearest usable one (same choice, a fraction of the work).
 - **Faster late game on big maps**: a lodestone's mana bonus and Legion's narrow-passage
   lookups no longer scan the whole map each tick (same games, same replays).
+- **Fewer late-game hitches on big maps**: a building that might cut off part of the
+  map is now checked around itself instead of re-mapping the whole map (~90 ms each,
+  up to 24 times a minute on a 64x64 map).
 
 ## 0.9.11
 *2026-10-29 · protocol 304 · replay format 15 · does not play with 0.9.10 or earlier, nor their replays*
