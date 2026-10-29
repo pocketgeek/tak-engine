@@ -19,6 +19,14 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+*protocol 303 · replay format 15*
+
+- **AI attacks go for everything** (beyond the original game; Retail unchanged):
+  our AI levels choose attack and raid targets from every enemy unit and
+  building by value, threat and defences, and move on from one to the next, so
+  a winning AI finishes off a player's last lodestone or unit and the game ends.
+
 ## 0.9.10
 *2026-10-28 · protocol 303 · replay format 15 · plays with 0.9.9, and its replays*
 

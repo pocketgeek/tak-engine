@@ -2392,6 +2392,7 @@ public:
     // Monarch-expendable rule (net GameOptions): when FALSE, losing your Monarch
     // (a commander unit) loses you the game even if other units survive.
     void setMonarchExpendable(bool e) { monarchExpendable_ = e; }
+    bool monarchExpendable() const { return monarchExpendable_; }
     // Keep this World's intra-tick work on the calling thread (no worker pool). The
     // server sets it on a referee World when it ticks several games IN PARALLEL: the
     // parallelism is already at the game level, so a per-game nested pool would just

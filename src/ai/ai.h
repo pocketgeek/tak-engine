@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -328,19 +329,60 @@ private:
     // `limit` > 0 narrows the radius from home a site may lie within.
     bool placeSite(const tak::sim::World&, const tak::sim::UnitType*, const tak::sim::Unit& builder, float nx, float nz,
                    float& outX, float& outZ, float limit = 0) const;
-    // Fog of war for the AI: an enemy is targeted only when one of the AI's own units
-    // is within its sight/radar. For direction (before anything is spotted) the AI
-    // falls back to the known enemy start positions.
-    bool nearestVisibleEnemy(const tak::sim::World&, float cx, float cz,
-                             const tak::sim::UnitType* atype, float& tx, float& tz) const;
+    // Offensive targets. Like retail's strike picker (icd 0x40a200) the board holds
+    // every unit of every enemy still in the game, seen or not -- unseen ones only
+    // count for less -- so a winning AI finds the last lodestone in a corner. Units
+    // are gathered on a kSiteCell grid into sites; a strike goes for a site's most
+    // valuable unit (its anchor) and fights whatever stands around it.
+    struct StrikeSite {
+        int anchor = 0;               // 0: an enemy start (no unit known)
+        const tak::sim::UnitType* anchorType = nullptr;
+        bool anchorUnfinished = false;
+        float x = 0, z = 0;           // the anchor's position
+        float value = 0;              // what destroying the site's units is worth
+        float defence = 0;            // armed strength there and in the cells around it
+        bool seen = false;            // this AI sees some unit of it
+    };
+    struct StrikeBoard {
+        std::vector<StrikeSite> sites;
+        float ours = 0;               // this AI's fighters (strength())
+        float theirs = 0;             // every enemy's armed units and defences
+        bool winning = false;         // clearly ahead: clean up even at the defensive levels
+    };
+    static constexpr float kSiteCell = 400;
+    StrikeBoard scanTargets(const tak::sim::World&) const;
+    // A unit's fighting strength: its cost, scaled by the health it has left.
+    static float strength(const tak::sim::Unit&);
+    static bool armed(const tak::sim::UnitType*);
+    // Some weapon of `a` can hurt `t` (flyers need a weapon that is not noair).
+    static bool canHurt(const tak::sim::UnitType* a, const tak::sim::UnitType* t);
+    // The best site for a force of `force` strength at (x,z) whose units move as
+    // `type`, by value (economy, production, the Monarch, finishing a player off),
+    // threat (armed units, nearer our base) and practicality (distance, whether the
+    // force outweighs the defence there, whether it can get there at all). `taken`
+    // is the strength already sent to each site this think. -1 when nothing is.
+    int pickSite(const tak::sim::World&, const StrikeBoard&, float x, float z, float force,
+                 const tak::sim::UnitType* type, bool raid, const std::vector<float>& taken) const;
+    // The strength a site needs sent at it (its defence, with this level's margin).
+    float siteNeed(const StrikeSite&) const;
+    // Where unit `u` goes for `site`: an Attack on the anchor once it is close (or
+    // the anchor is a site still building, which nothing auto-acquires), else an
+    // attack-move to the nearest point it can reach. False when it cannot get there.
+    bool strikeOrder(const tak::sim::World&, const tak::sim::Unit& u, const StrikeSite& site,
+                     uint32_t simTick, const CommandSink&);
     bool nearestEnemyStart(float cx, float cz, float& tx, float& tz) const;
     // (x,z) lies nearer some enemy start than home (hx,hz): the enemy's side of the map.
     bool enemySide(float x, float z, float hx, float hz) const;
+    // `pad` pushes the approach rings out, so a unit stands clear of a body at
+    // (tx,tz) rather than in it (sitePad).
     bool reachablePoint(const tak::sim::World&, const tak::sim::UnitType*,
-                        float fx, float fz, float tx, float tz, float& x, float& z) const;
+                        float fx, float fz, float tx, float tz, float& x, float& z, float pad = 0) const;
+    // That pad for a unit of `type` going for `site`'s anchor.
+    static float sitePad(const StrikeSite& site, const tak::sim::UnitType* type);
     int terrainWeight(const tak::sim::World&, const tak::sim::Unit&,
                       const tak::sim::UnitType*, int weight) const;
-    void sendWaves(const tak::sim::World&, uint32_t simTick, const CommandSink&);
+    void sendWaves(const tak::sim::World&, uint32_t simTick, const CommandSink&,
+                   const std::vector<int>& assigned);
     void sendDefenders(const tak::sim::World&, const CommandSink&);
     // Unbounded levels: walk idle fighters out of the base to a ring around it.
     void stationArmy(const tak::sim::World&, std::vector<int>& assigned, const CommandSink&);
@@ -426,6 +468,14 @@ private:
     // of everything above (which then stays idle).
     std::unique_ptr<ClassicBrain> classic_;
     uint32_t now_ = 0;
+    // Fighters sent on a wave or raid (sendWaves). Once one is idle again it goes
+    // straight for the next site rather than back into the pool for the next push.
+    std::set<int> strikers_;
+    // A site's anchor that strikers standing at it have been sent at again and
+    // again without hurting it (out of reach on a cliff, say): passed over until
+    // `until` so the army does not stand there re-ordered for ever.
+    struct Pursuit { int tries = 0; float hp = 0; uint32_t last = 0, until = 0; };   // last: think tick + 1
+    std::map<int, Pursuit> pursuits_;
     int raidersSincePush_ = 0;
     bool scouted_ = false;        // one-shot early scout sent
     uint32_t lastRaidTick_ = 0;   // last tick a harassing raid was sent (raid cooldown)

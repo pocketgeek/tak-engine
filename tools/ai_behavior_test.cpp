@@ -181,6 +181,103 @@ static void defensiveMeleeTargets(const sim::TypeRegistry& registry,const ai::Pr
 
 // The Monarch fights back instead of standing on a build/move order under fire,
 // and the Defensive AI does not site buildings inside a spotted fight.
+// Our levels' strikes weigh every enemy unit, seen or not (as retail's picker
+// 0x40a200 does), so a winning AI finds the last lodestone in a corner rather than
+// marching on a razed start, keeps going once a site is cleared, and finishes the
+// player off. The user's 0.9.10 replay: an Absurd AI with 400 units spent the last
+// 22 minutes ordering its army back and forth to a dead player's start while the
+// last player's two lodestones and four units stood untouched in a far corner.
+static void strikeTargets(const sim::TypeRegistry& registry,const ai::Profile& profile,
+                          const sim::UnitType& soldier) {
+    auto lode=soldier;lode.id="lode";lode.maxVel={};lode.canMove=false;lode.onMana=true;
+    lode.weapon.damage=0;lode.weapons.clear();lode.buildCost=300;
+    auto heavy=soldier;heavy.id="heavy";heavy.buildCost=100;
+    // Commands aimed at `target`: an Attack on it or an attack-move ending near it.
+    auto aimsAt=[](const std::vector<net::Command>& cs,const sim::World& w,int target) {
+        const auto* t=w.unit(target);
+        return int(std::count_if(cs.begin(),cs.end(),[&](const auto& c) {
+            if (c.kind==net::Cmd::Attack) return c.targetId==target;
+            const float dx=c.x-t->x.toFloat(),dz=c.z-t->z.toFloat();
+            return c.kind==net::Cmd::AttackMove && dx*dx+dz*dz<=200*200;
+        }));
+    };
+    auto army=[&](sim::World& w,int n) {
+        std::vector<int> ids;
+        for (int i=0;i<n;++i) ids.push_back(w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0));
+        return ids;
+    };
+    {
+        // The enemy's start lies razed; its last lodestone stands unseen in a far corner.
+        sim::World w;terrain(w);w.player(0).income=100;army(w,35);
+        const int last=w.spawn(&lode,3400,3400,0,1);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        const auto cs=think(controller,w);
+        check(attacks(cs)==35 && aimsAt(cs,w,last)==35,
+              "a winning AI goes for an enemy's last lodestone, unseen, not for its razed start");
+    }
+    {
+        // A strike that clears one site goes straight on to the next, even when what
+        // is left of it is far short of a new push (and not clearly ahead).
+        sim::World w;terrain(w);w.player(0).income=100;const auto ids=army(w,35);
+        const int near=w.spawn(&lode,1600,800,0,1),far=w.spawn(&lode,3400,3400,0,1);
+        for (int i=0;i<3;++i) w.spawn(&heavy,3800,200+float(i)*40,0,1);   // enough that we are not clearly ahead
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        auto cs=think(controller,w);
+        check(attacks(cs)==35 && aimsAt(cs,w,near)==35,"the push goes for the nearer lodestone first");
+        for (const auto& c:cs) sim::applyCommand(w,registry,c);
+        w.unit(near)->deadFor=0;
+        for (size_t i=0;i<ids.size();++i) {w.stop(ids[i]);if (i>=10) w.unit(ids[i])->deadFor=0;}
+        cs=think(controller,w,30);
+        check(attacks(cs)==10 && aimsAt(cs,w,far)==10,"the strike's survivors go on to the next lodestone without waiting for a push");
+    }
+    {
+        // Two bare lodestones: Normal sends the whole push at one; Hard splits it.
+        for (auto difficulty:{ai::Difficulty::Normal,ai::Difficulty::Hard}) {
+            sim::World w;terrain(w);w.player(0).income=100;army(w,35);
+            const int a=w.spawn(&lode,3400,800,0,1),b=w.spawn(&lode,3400,3400,0,1);
+            ai::Controller controller(0,registry,profile,1,difficulty,{{3400,800}});
+            const auto cs=think(controller,w);
+            const int toA=aimsAt(cs,w,a),toB=aimsAt(cs,w,b);
+            check(attacks(cs)==35 && toA+toB==35 && (difficulty==ai::Difficulty::Hard ? toA>0 && toB>0 : toA==35 || toB==35),
+                  difficulty==ai::Difficulty::Hard ? "Hard splits a force that outweighs the sites over several"
+                                                   : "Normal sends its push at one site");
+        }
+    }
+    {
+        // Melee strikers go for a building's edge: its centre is solid ground to them.
+        sim::World w;terrain(w);w.player(0).income=100;
+        auto sword=soldier;sword.weapon.range=20;sword.weapons={sword.weapon};
+        for (int i=0;i<35;++i) w.spawn(&sword,400+float(i%7)*40,800+float(i/7)*40,0,0);
+        auto tower=soldier;tower.id="tower";tower.maxVel={};tower.canMove=false;tower.footX=tower.footZ=3;tower.buildCost=500;
+        const int last=w.spawn(&tower,3400,3400,0,1);w.blockFoot(tower,3400,3400,true);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        const auto cs=think(controller,w);
+        check(attacks(cs)==35 && aimsAt(cs,w,last)==35,"melee strikers find their way to the edge of an enemy's last building");
+    }
+    {
+        // With the Monarch not expendable, killing it wins: it outweighs a nearer lodestone.
+        sim::World w;terrain(w);w.player(0).income=100;w.setMonarchExpendable(false);army(w,35);
+        auto king=soldier;king.id="king";king.commander=true;king.isBuilder=true;king.buildCost=1000;
+        w.spawn(&lode,1600,800,0,1);const int monarch=w.spawn(&king,3400,3400,0,1);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        const auto cs=think(controller,w);
+        check(attacks(cs)==35 && aimsAt(cs,w,monarch)==35,"a Monarch whose loss defeats its owner draws the strike");
+    }
+    {
+        // Defensive levels mostly defend, but clearly ahead they send half their idle
+        // fighters out to clean up.
+        for (auto difficulty:{ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive}) {
+            sim::World w;terrain(w);w.player(0).income=100;army(w,30);
+            const int last=w.spawn(&lode,3400,3400,0,1);
+            ai::Controller defensive(0,registry,profile,1,difficulty,{{3400,800}});
+            // The first think walks the army out of the base (stationArmy).
+            for (const auto& c:think(defensive,w)) sim::applyCommand(w,registry,c);
+            const auto cs=think(defensive,w,30);
+            check(attacks(cs)==15 && aimsAt(cs,w,last)==15,"a defensive level clearly ahead cleans up with half its army");
+        }
+    }
+}
+
 static void monarchFightsBack(const sim::TypeRegistry& registry,const ai::Profile& profile,
                               const sim::UnitType& soldier) {
     auto base=soldier;base.id="base";base.maxVel={};base.sight=750;
@@ -384,6 +481,8 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
         for(int i=0;i<300;++i)w.spawn(&soldier,400+float(i%10)*32,1000+float(i/10)*32,0,0);
         w.spawn(&soldier,1100,800,0,1);
+        // A strong enemy army far off: not clearly winning, so this is interception alone.
+        for(int i=0;i<70;++i)w.spawn(&soldier,3200+float(i%10)*32,3200+float(i/10)*32,0,1);
         ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive);
         auto cs=think(defensive,w);
         check(attacks(cs)==256,"Defensive limits interception commands per think for large armies");
@@ -1086,6 +1185,7 @@ int main(int argc,char** argv) {
     defensiveShooters(empty,profile,soldier);
     defensiveMeleeTargets(empty,profile,soldier);
     monarchFightsBack(empty,profile,soldier);
+    strikeTargets(empty,profile,soldier);
     {
         sim::World w;terrain(w);w.player(0).income=100;
         for(int i=0;i<35;++i)w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
