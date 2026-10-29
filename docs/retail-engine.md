@@ -268,7 +268,7 @@ wandering storms are not aimed shots, so none of them can stop on scenery:
   never move, and neither does Hold Position with nothing queued behind its
   attack (it fires on, as retail). The state (`Unit::blockedTarget` and its
   counters) is hashed, with a tag, only once a blocked impact has been seen.
-- A `hoverattack` flyer (after 0.9.10) moves round its hover ring instead
+- A `hoverattack` flyer (since 0.9.11) moves round its hover ring instead
   (`World::hoverForShot`). Retail's hover mission keeps the flyer's bearing
   from the target at every wake (`41de5d`: only a 1-in-100 draw turns it, by
   up to 2048), so a Thirsha whose Lightning stops on a standing stone between

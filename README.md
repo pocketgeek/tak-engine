@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.10-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.11-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,14 +26,14 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.10
+## What's new in 0.9.11
 
-- Hidden Units (Options → Graphics): a tree, rock or building in front of a unit fades out (the default), or the unit shows its tactical dot.
-- Flat scenery (stumps, crops, mana deposits) is drawn under units, as in the original game.
-- macOS: Auto now picks OpenGL, which is faster; Metal no longer draws stray clipped pieces.
+- Our AI levels hunt down every enemy unit and building, so a won game ends; the Retail AI is unchanged.
+- A factory's unfinished unit dies with the factory, as in the original game; a hovering flyer moves round scenery that stops its shots.
+- Full zoom-out shows the whole map; Legion units face the way they slide; Fade Opacity defaults to 50%.
 
-Plays with 0.9.9 and its replays (protocol 303); servers need no update.
-Details in the [CHANGELOG](CHANGELOG.md#0910).
+Does not play with 0.9.10 or its replays (protocol 304); servers must update.
+Details in the [CHANGELOG](CHANGELOG.md#0911).
 
 ## Features
 

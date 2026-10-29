@@ -19,8 +19,8 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
-## Unreleased
-*protocol 304 · replay format 15*
+## 0.9.11
+*2026-10-29 · protocol 304 · replay format 15 · does not play with 0.9.10 or earlier, nor their replays*
 
 - **Hovering flyers no longer fire into scenery for ever** (not in the
   original game). A Thirsha or other hover attacker whose shots keep
@@ -30,30 +30,39 @@ their validation reports; both live in [`docs/`](docs/).
   out the right-hand panel and the bottom bar, so the map's right edge no
   longer stays hidden under the panel, and the bottom edge scrolls into view
   above the bar.
-- **Fade Opacity** (Hidden Units) now defaults to 50% (was 65%); a value you
-  saved is kept.
-- A factory that is destroyed, changes hands, or has the unit it is building
-  cancelled (the build button, Stop, repeat off) now loses that unfinished
-  unit at once, as in the original game: no wreck, no kill for anyone, no
-  mana back. Cancelling a unit still waiting in the queue only removes it. A
-  Zhon builder's unfinished unit and a builder's unfinished building still
-  stay behind, as before (the original keeps those).
+- **Fade Opacity** (Hidden Units) now defaults to 50% (was 65%). A value in
+  your settings file is kept, and 0.9.10 saved 65% there, so set the slider
+  to 50% yourself for the new look.
+- **A factory's unfinished unit dies with it**, as in the original game: when
+  a factory is destroyed or changes hands, the unit it is building dies at
+  once (no wreck, no kill for anyone, the owner's loss, no mana back);
+  before, it stood unprotected and slowly faded away. Cancelling the unit in
+  work does the same: from the build menu when it is the last queued unit of
+  its type, by turning repeat off, or by **Stop** (beyond the original, whose
+  Stop keeps production running), and a leaving or forfeiting player's
+  factories lose theirs too. Cancelling a unit still waiting in the queue
+  only removes it. A Zhon builder's unfinished unit and a builder's
+  unfinished building still stay behind (the original keeps those).
 - **Legion pathfinding:** units sliding round other units and walls face
   the way they actually move instead of their route's direction (units on
   fight, attack, guard and patrol orders keep facing their way to fight);
   sideways and backward walking falls by about two thirds.
 - **AI attacks go for everything** (beyond the original game; Retail unchanged):
   our AI levels choose attack and raid targets from every enemy unit and
-  building by value, threat and defences, and move on from one to the next, so
-  a winning AI finishes off a player's last lodestone or unit and the game ends.
+  building by value, threat and defences (unseen ones count for less, as the
+  original AI's do), and move on from one to the next, so a winning AI
+  finishes off a player's last lodestone or unit and the game ends.
 - **Protocol 304:** the hover-for-shot move, the factory's unfinished unit
   dying, Legion facing and the AI's target choice change the game state the
   players compare, so this release does not play with 0.9.10 or earlier, nor
   their replays. A 0.9.10 client or server is turned away with a *protocol
-  version mismatch* message.
+  version mismatch* message, and a 0.9.10 replay is refused with the version
+  message.
 
 **Upgrading (server operators):** update `takserver` together with your
 players.
+
+[Release notes](docs/release-0.9.11-notes.md) · [Validation report](docs/release-0.9.11-validation.md) · [Source at v0.9.11](https://github.com/pocketgeek/tak-engine/tree/v0.9.11)
 
 ## 0.9.10
 *2026-10-28 · protocol 303 · replay format 15 · plays with 0.9.9, and its replays*

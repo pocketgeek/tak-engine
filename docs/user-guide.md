@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.9.10**. Which versions it plays with, and whose
+This guide covers **TAK Engine 0.9.11**. Which versions it plays with, and whose
 replays it plays: see [Versions](#versions). What changed in each release: see
 the [CHANGELOG](../CHANGELOG.md). It is written for three kinds of reader:
 
@@ -2180,18 +2180,17 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 0.9.10 uses network protocol **303** and replay format **15**, the
-same as 0.9.9. No earlier release uses protocol 303, so:
+TAK Engine 0.9.11 uses network protocol **304** and replay format **15**. No
+earlier release uses protocol 304, so:
 
-- **Multiplayer:** 0.9.10 plays with 0.9.10 and 0.9.9: a server and its players
-  may run either. A server turns away a client whose protocol differs from its
-  own, so a 0.9.8 or older player cannot join a 0.9.10 server, nor a 0.9.10
-  player an older one; the connection fails with a *protocol version mismatch*
-  message. When a release changes the protocol, a server and all of its
-  players update together.
-- **Replays:** 0.9.10 plays replays recorded by 0.9.10 and 0.9.9. A replay
-  recorded by 0.9.8 or earlier needs a version with that replay's protocol;
-  keep an old copy of the engine (built from its tag, see the
+- **Multiplayer:** 0.9.11 plays only with 0.9.11. A server turns away a client
+  whose protocol differs from its own, so a 0.9.10 or older player cannot join a
+  0.9.11 server, nor a 0.9.11 player an older one; the connection fails with a
+  *protocol version mismatch* message. When a release changes the protocol, a
+  server and all of its players update together.
+- **Replays:** 0.9.11 plays only replays recorded by 0.9.11. A replay recorded by
+  0.9.10 or earlier needs a version with that replay's protocol; keep an old
+  copy of the engine (built from its tag, see the
   [development guide](development.md)) if you want to keep watching old
   replays.
 
