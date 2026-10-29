@@ -1115,9 +1115,11 @@ Protocol 305 changes two things. Our AI levels (not Retail AI) choose strike
 targets only from enemy units their side has seen: their own and their allies'
 sight through `World::playerSees`, plus a unit that hit theirs within the last
 5 s from within reach. A building is remembered where it was last seen until
-that spot is in sight again without it, a mobile unit for 25 s; a remembered
-target gets an attack-move to where it was seen, and with nothing known the
-army and per-level scouts explore unseen enemy starts and then map sectors.
+that spot is in sight again without it, a mobile unit for 25 s; only a target
+in sight is ordered on by id, a heard or remembered one gets an attack-move to
+where it was, and with nothing known the army and per-level scouts explore
+enemy starts not yet checked (in sight, or a known enemy building within 600 px)
+and then map sectors. The think at tick 0, before the first view pass, sees nothing.
 This lives in the server's AI state and only its commands reach the game.
 `World::stateHash` now mixes one 64-bit word per multiply round over four
 rotating lanes (`src/sim/statefold.h`) and folds the exploration and view-count
