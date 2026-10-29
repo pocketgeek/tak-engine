@@ -500,6 +500,58 @@ static void scoutingMemory(const sim::TypeRegistry& registry,const ai::Profile& 
               "a beaten player's start is not explored");
     }
     {
+        // A beaten enemy's base is not checked for good: its free deposits may draw
+        // someone in, so once out of sight a while it ranks like a deposit-rich
+        // sector and a scout looks in again. Scouts killed on the way back it off.
+        sim::World w;terrain(w);w.player(0).income=100;
+        const int eye=w.spawn(&post,1200,2300,0,0);
+        const int base=w.spawn(&lode,1200,2550,0,2);
+        w.spawn(&soldier,3800,3800,0,1);
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Hard,{{1200,3000}});
+        think(controller,w,0);
+        w.unit(base)->deadFor=0;w.unit(eye)->deadFor=0;w.player(2).defeated=true;
+        sight(w);think(controller,w,20);
+        for (int i=0;i<6;++i) w.spawn(&soldier,400+float(i)*40,800,0,0);
+        sight(w);
+        auto cs=think(controller,w,36000);
+        check(attacks(cs)==1 && aimsAt(cs,w,1200,3000)==1,"a beaten enemy's base out of sight a while is scouted again");
+        // Scouts die away from the route, so only the back-off (and the dead
+        // scout's claim, three minutes) keeps the next one from going there.
+        auto killOne=[&](uint32_t sent) {   // of the party sent
+            apply(w,cs);
+            for (const auto& c:cs) moveTo(w,c.unitId,2600,800);
+            sight(w);think(controller,w,sent+600);
+            if (!cs.empty()) w.unit(cs.front().unitId)->deadFor=0;
+            sight(w);think(controller,w,sent+620);   // the loss noted
+        };
+        killOne(36000);
+        cs=think(controller,w,41600);
+        check(attacks(cs)==2 && aimsAt(cs,w,1200,3000)==2,
+              "past the back-off a party of two looks at the beaten base again");
+        killOne(41600);
+        cs=think(controller,w,47200);
+        check(attacks(cs)>0 && aimsAt(cs,w,1200,3000)==0,"a beaten base that keeps killing scouts backs off longer");
+    }
+    {
+        // Scouts the beaten player killed going to its start no longer back it off.
+        sim::World w;terrain(w);w.player(0).income=100;
+        for (int i=0;i<6;++i) w.spawn(&soldier,400+float(i)*40,800,0,0);
+        const int last=w.spawn(&soldier,3800,3800,0,2);
+        w.spawn(&soldier,3800,200,0,1);
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Hard);
+        controller.setStartSpots({{1200,3000,2}});
+        auto cs=think(controller,w,0);
+        check(attacks(cs)==1 && aimsAt(cs,w,1200,3000)==1,"the first scout goes for the enemy start the room showed");
+        apply(w,cs);
+        const int first=cs.empty() ? 0 : cs.front().unitId;
+        if (first) {moveTo(w,first,2600,800);sight(w);think(controller,w,600);w.unit(first)->deadFor=0;sight(w);}
+        w.unit(last)->deadFor=0;w.player(2).defeated=true;sight(w);
+        cs=think(controller,w,6000);   // past the dead scout's claim
+        check(attacks(cs)==1 && aimsAt(cs,w,1200,3000)==1,"once its owner is beaten, scouts it killed no longer back its start off");
+    }
+    {
         // Start spots of unknown owner (RANDOM start locations): with the only enemy
         // found at one, the others hold nobody, and the army goes to look at the one
         // it was found at rather than the nearer empty ones.

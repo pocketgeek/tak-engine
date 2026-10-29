@@ -453,14 +453,19 @@ private:
     // judgements of where the enemy is. `startBase_`: an enemy building is known
     // near the start (scouts look elsewhere; armies still go and see it).
     // exploreTarget picks, for a unit of `type` at (x,z), an unchecked start
-    // nearest first, else the sector longest out of sight for its distance,
-    // weighed by what may stand there (deposits, starts), and the point of it
+    // nearest first, else the sector (or a beaten enemy's start) longest out of
+    // sight for its distance, weighed by what may stand there (deposits, starts,
+    // the free deposits of a beaten enemy's base), and the point of it
     // that unit can reach; `-1 - start` or the sector's index comes back in
     // `slot`. With `scout` it is a scouting party's pick: past starts whose base
     // is found, targets backed off after scouts died going there (losses_), and
     // routes past the spots they died at.
     std::vector<StartSpot> starts_;
     std::vector<uint8_t> startGone_, startBase_;
+    // Per start, the think tick + 1 its owner was found beaten (0 never): a base
+    // left empty, which exploreTarget keeps looking in on like a deposit-rich
+    // sector, since someone else may move in.
+    std::vector<uint32_t> startVacated_;
     std::vector<uint32_t> startSeen_, sectorSeen_, sectorClaim_, startClaim_;
     std::vector<float> sectorLure_;   // per sector, 1 + what may draw an enemy there (deposits)
     int sectorsX_ = 0, sectorsZ_ = 0;

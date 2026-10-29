@@ -2558,6 +2558,7 @@ void Controller::updateKnowledge(const tak::sim::World& world) {
         startClaim_.assign(starts_.size(), 0);
         startGone_.assign(starts_.size(), 0);
         startBase_.assign(starts_.size(), 0);
+        startVacated_.assign(starts_.size(), 0);
     }
     auto inSight = [&](float x, float z) {
         return teamViews(world, int(std::clamp(x, 0.0f, std::max(mapX - 1, 0.0f))) >> 5,
@@ -2601,9 +2602,16 @@ void Controller::updateKnowledge(const tak::sim::World& world) {
         }
         startBase_[i] = nearest >= 0;
         if (spot.owner < 0 && nearest >= 0) spot.owner = nearest;
-        if (spot.owner >= 0)
-            startGone_[i] = !enemy(spot.owner) || world.player(spot.owner).defeated || !present[size_t(spot.owner)];
-        else
+        if (spot.owner >= 0) {
+            const bool beaten = world.player(spot.owner).defeated || !present[size_t(spot.owner)];
+            startGone_[i] = !enemy(spot.owner) || beaten;
+            if (enemy(spot.owner) && beaten) {
+                // Scouts its owner killed there no longer keep it backed off
+                // (nor do those still on their way: sendScouts).
+                startVacated_[i] = now_ + 1;
+                slotLosses_.erase(-1 - int(i));
+            }
+        } else
             startGone_[i] = startSeen_[i] == now_ + 1;
         if (!startGone_[i] && spot.owner >= 0) located[size_t(spot.owner)] = 1;
     }
@@ -2653,6 +2661,8 @@ bool Controller::sectorCentre(int s, float mapX, float mapZ, float& x, float& z)
 // distance (never seen counts as kNeverSeen more), times its lure, skipping
 // those in sight within kRecent; one another party holds counts for a quarter
 // and one beside such a sector for half, so parties spread over the map.
+// A beaten enemy's start (startVacated_) ranks with the sectors as one with
+// kVacatedLure: its free deposits may draw someone else in.
 // A scouting party (`scout`) passes over a start whose base is already found
 // (the strikes take it from there, and armies still go to see the spot) and a
 // slot backed off after scouts died going there, and counts a start as farther,
@@ -2663,6 +2673,7 @@ bool Controller::exploreTarget(const tak::sim::World& world, const tak::sim::Uni
                                float& tx, float& tz, int& slot, bool scout) {
     constexpr uint32_t kNeverSeen = 3 * 60 * 30, kRecent = 60 * 30, kUnreachableTicks = 3 * 60 * 30;
     constexpr int kProbes = 12;
+    constexpr float kVacatedLure = 3;   // as a sector of four deposits or more
     const float mapX = float(world.mapW()) * 16, mapZ = float(world.mapH()) * 16;
     auto reach = [&](int s, float px, float pz) {
         if (unreachable_.count({s, type})) return false;
@@ -2705,11 +2716,23 @@ bool Controller::exploreTarget(const tak::sim::World& world, const tak::sim::Uni
         if (scout) score /= 1 + float(lossesOnRoute(x, z, cx, cz));
         ranked.emplace_back(-score, s);
     }
+    for (size_t i = 0; i < starts_.size() && i < startVacated_.size(); ++i) {
+        const uint32_t seen = startSeen_[i];
+        if (!startVacated_[i] || (seen && now_ + 1 - seen < kRecent)) continue;
+        if (scout && backedOff(-1 - int(i))) continue;
+        const float age = float(seen ? now_ + 1 - seen : now_ + kNeverSeen);
+        const float dx = starts_[i].x - x, dz = starts_[i].z - z;
+        float score = age / (1 + std::sqrt(dx * dx + dz * dz) / 3000) * kVacatedLure;
+        if (startClaim_[i] > now_) score *= 0.25f;
+        if (scout) score /= 1 + float(lossesOnRoute(x, z, starts_[i].x, starts_[i].z));
+        ranked.emplace_back(-score, -1 - int(i));
+    }
     std::sort(ranked.begin(), ranked.end());
     for (const auto& [score, s] : ranked) {
         if (++probes > kProbes) break;
         float cx = 0, cz = 0;
-        sectorCentre(s, mapX, mapZ, cx, cz);
+        if (s < 0) { cx = starts_[size_t(-1 - s)].x; cz = starts_[size_t(-1 - s)].z; }
+        else sectorCentre(s, mapX, mapZ, cx, cz);
         if (reach(s, cx, cz)) return true;
     }
     return false;
@@ -2781,8 +2804,13 @@ void Controller::sendScouts(const tak::sim::World& world, uint32_t simTick, cons
         if (!u || !u->alive() || u->player != player_) {
             if (!u || !u->alive()) ++scoutsLost_;
             losses_.push_back({trip.x, trip.z, simTick});
-            auto& l = slotLosses_[trip.slot];
-            ++l.count; l.last = simTick;
+            // One sent to a start before its owner was beaten counts against
+            // that owner, not the empty base.
+            const size_t start = size_t(-1 - trip.slot);
+            if (trip.slot >= 0 || start >= startVacated_.size() || trip.since + 1 >= startVacated_[start]) {
+                auto& l = slotLosses_[trip.slot];
+                ++l.count; l.last = simTick;
+            }
             it = scouts_.erase(it);
             continue;
         }
@@ -3136,7 +3164,8 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
 // Debug builds, TAK_AI_EXPLORE: once a game minute, how much of the map this
 // AI's player has explored, how many enemies it has left, what it knows and how
 // many scouting parties and exploring groups it has sent and how many scouts it
-// has lost; once, when no enemy is left. A measuring hook only: it changes
+// has lost, and when each beaten enemy's start was last in sight; once, when no
+// enemy is left. A measuring hook only: it changes
 // nothing the AI does.
 void Controller::logExploration(const tak::sim::World& world, uint32_t simTick) {
     int left = 0;
@@ -3154,10 +3183,16 @@ void Controller::logExploration(const tak::sim::World& world, uint32_t simTick) 
     for (const auto m : explored) n += (m >> player_) & 1;
     int units = 0;
     for (const auto& u : world.units()) if (u.alive() && u.player == player_) ++units;
+    // Each beaten enemy's start: start index:minute found beaten:minute last in sight.
+    std::string vacated;
+    for (size_t i = 0; i < startVacated_.size(); ++i)
+        if (startVacated_[i])
+            vacated += (vacated.empty() ? "" : ",") + std::to_string(i) + ":" + std::to_string((startVacated_[i] - 1) / 1800) +
+                       ":" + (startSeen_[i] ? std::to_string((startSeen_[i] - 1) / 1800) : std::string("-"));
     std::fprintf(stderr, "AIEXPLORE t=%u p=%d lvl=%d explored=%.4f left=%d units=%d scouts=%d explorations=%d known=%zu "
-                 "scoutsLost=%d\n",
+                 "scoutsLost=%d vacated=%s\n",
                  minute, player_, int(diff_), explored.empty() ? 0.0 : double(n) / double(explored.size()), left, units,
-                 scoutsSent_, explorations_, knowledge_.size(), scoutsLost_);
+                 scoutsSent_, explorations_, knowledge_.size(), scoutsLost_, vacated.empty() ? "-" : vacated.c_str());
 }
 
 void Controller::tick(const tak::sim::World& world, uint32_t simTick,
