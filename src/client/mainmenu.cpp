@@ -151,6 +151,7 @@ struct MainMenu::Impl {
     // instead of jumping straight into Options, mirroring the in-game Esc GAME MENU.
     bool settingsMenu_ = false;
     SDL_FRect setBtnRect_[6]{};        // OPTIONS / CONTROLS / VOICE CHAT / BENCHMARK / LOAD REPLAY / STREAMING
+    SDL_FRect menuBackRect_{};         // the BACK button of SETTINGS, BENCHMARK and LOAD REPLAY (set each render)
     VoiceEngine* voice_ = nullptr;     // main()'s voice engine (MainMenu::setVoice)
 
     // The VOICE CHAT page (SETTINGS > VOICE CHAT, or Options > VOICE CHAT), in options_.
@@ -999,6 +1000,22 @@ struct MainMenu::Impl {
         button(x0 + 196, "BACK", serverBackRect, false);
     }
 
+    // A panel's BACK button, right-aligned on its footer line (Esc does the same).
+    // Records menuBackRect_ for run(); only one of these panels is up at a time.
+    void menuBackButton(float px0, float pw, float pad, float by) {
+        int mx = 0, my = 0; SDL_GetMouseState(&mx, &my);
+        { float lx, ly; SDL_RenderWindowToLogical(ren, mx, my, &lx, &ly); mx = int(lx); my = int(ly); }
+        SDL_FRect r{px0 + pw - pad - 120, by - 6, 120, 32};
+        menuBackRect_ = r;
+        bool hot = mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
+        SDL_SetRenderDrawColor(ren, hot ? 90 : 60, hot ? 110 : 66, hot ? 150 : 86, 255);
+        SDL_RenderFillRectF(ren, &r);
+        SDL_SetRenderDrawColor(ren, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
+        SDL_RenderDrawRectF(ren, &r);
+        const float lw = uiTextWidth("BACK", 2.2f);
+        blockText("BACK", r.x + (r.w - lw) / 2, r.y + (r.h - 7 * 2.2f) / 2, 2.2f, {228, 232, 242, 255});
+    }
+
     // The SETTINGS menu overlay, styled like the in-game GAME MENU.
     // Records the button hit-rects in setBtnRect_ for the click handler in run().
     void renderSettingsMenu(int winW, int winH) {
@@ -1010,9 +1027,9 @@ struct MainMenu::Impl {
         const float bw = 320, gap = 16, pad = 34, titlePx = 3.2f;
         const float titleH = 7 * titlePx + 22;
         // Buttons shrink on a short window rather than run off it.
-        const float bh = std::clamp((float(winH) - 2 * pad - titleH - 28 - 24 - (nBtn - 1) * gap) / float(nBtn), 30.0f, 54.0f);
+        const float bh = std::clamp((float(winH) - 2 * pad - titleH - 44 - 24 - (nBtn - 1) * gap) / float(nBtn), 30.0f, 54.0f);
         const float pw = bw + pad * 2;
-        const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap + 28;
+        const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap + 44;
         const float px0 = (winW - pw) / 2, py0 = (winH - ph) / 2;
         SDL_FRect panel{px0, py0, pw, ph};
         SDL_SetRenderDrawColor(ren, 26, 28, 36, 240); SDL_RenderFillRectF(ren, &panel);
@@ -1035,7 +1052,8 @@ struct MainMenu::Impl {
             blockText(labels[i], r.x + (bw - lw) / 2, r.y + (bh - 7 * lpx) / 2, lpx, {228, 232, 242, 255});
             by += bh + gap;
         }
-        shadowText("ESC - BACK", px0 + pad, by + 2, 1.8f, {150, 155, 175, 255});
+        shadowText("ESC - BACK", px0 + pad, by + 8, 1.8f, {150, 155, 175, 255});
+        menuBackButton(px0, pw, pad, by + 8);
     }
 
     // Benchmark intensity submenu: 5 spawn-rate levels. Records benchBtnRect_ for run().
@@ -1081,7 +1099,7 @@ struct MainMenu::Impl {
         const float bw = 620, bh = 44, gap = 10, pad = 34, titlePx = 3.2f;
         const float titleH = 7 * titlePx + 22;
         const float pw = bw + pad * 2;
-        const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap + 28;
+        const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap + 44;
         const float px0 = (winW - pw) / 2, py0 = (winH - ph) / 2;
         SDL_FRect panel{px0, py0, pw, ph};
         SDL_SetRenderDrawColor(ren, 26, 28, 36, 240); SDL_RenderFillRectF(ren, &panel);
@@ -1099,6 +1117,7 @@ struct MainMenu::Impl {
             const std::string m2 = "EVERY GAME YOU PLAY OR WATCH IS SAVED AUTOMATICALLY";
             blockText(m1, px0 + (pw - tw(m1, 2.2f)) / 2, by + 6, 2.2f, {225, 215, 175, 255});
             blockText(m2, px0 + (pw - tw(m2, 1.5f)) / 2, by + 34, 1.5f, {150, 155, 175, 255});
+            by += bh + gap;   // the message fills the one row the panel keeps for it
         }
         for (int i = 0; i < shown; ++i) {
             const std::string& full = replayFiles_[size_t(replayScroll_ + i)];
@@ -1126,7 +1145,8 @@ struct MainMenu::Impl {
             foot += "     WHEEL - SCROLL  (" + std::to_string(replayScroll_ + 1) + "-" +
                     std::to_string(replayScroll_ + shown) + " OF " +
                     std::to_string(replayFiles_.size()) + ")";
-        shadowText(foot, px0 + pad, by + 2, 1.8f, {150, 155, 175, 255});
+        shadowText(foot, px0 + pad, by + 8, 1.8f, {150, 155, 175, 255});
+        menuBackButton(px0, pw, pad, by + 8);
     }
 
     void renderBenchMenu(int winW, int winH) {
@@ -1138,7 +1158,7 @@ struct MainMenu::Impl {
         const float bw = 560, bh = 50, gap = 13, pad = 34, titlePx = 3.2f;
         const float titleH = 7 * titlePx + 22;
         const float pw = bw + pad * 2;
-        const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap + 28;
+        const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap + 44;
         const float px0 = (winW - pw) / 2, py0 = (winH - ph) / 2;
         SDL_FRect panel{px0, py0, pw, ph};
         SDL_SetRenderDrawColor(ren, 26, 28, 36, 240); SDL_RenderFillRectF(ren, &panel);
@@ -1164,7 +1184,8 @@ struct MainMenu::Impl {
             blockText(labels[i], r.x + (bw - lw) / 2, r.y + (bh - 7 * lpx) / 2, lpx, {228, 232, 242, 255});
             by += bh + gap;
         }
-        shadowText("ESC - BACK", px0 + pad, by + 2, 1.8f, {150, 155, 175, 255});
+        shadowText("ESC - BACK", px0 + pad, by + 8, 1.8f, {150, 155, 175, 255});
+        menuBackButton(px0, pw, pad, by + 8);
     }
 
     void screenshot(int winW, int winH, const std::string& path) {
@@ -1291,6 +1312,13 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         if (settings && tak::devFlag("TAK_SHOT_OPTIONS")) {
             OptionsScreen o(d_->ren, *settings, [] {}, [] {}, 2, {}, {}, d_->dataFolder_);
             o.render(w, h);
+        }
+        // Debug: TAK_SHOT_MENU=settings|benchmark|replay captures that panel.
+        if (const char* m = tak::devEnv("TAK_SHOT_MENU")) {
+            const std::string which = m;
+            if (which == "settings") d_->renderSettingsMenu(w, h);
+            else if (which == "benchmark") d_->renderBenchMenu(w, h);
+            else if (which == "replay") { d_->scanReplays(); d_->renderReplayMenu(w, h); }
         }
         d_->screenshot(w, h, shotPath);
         // Debug: TAK_SHOT_RESULT captures the victory result screen (saves to its path).
@@ -1507,7 +1535,9 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     float fx = float(e.button.x), fy = float(e.button.y);
                     auto hit = [&](const SDL_FRect& r) { return fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h; };
                     SDL_Renderer* ren = d_->ren;
-                    if (hit(d_->setBtnRect_[0])) {          // OPTIONS -> the audio/display screen
+                    if (hit(d_->menuBackRect_)) {          // BACK -> the title screen, as Esc
+                        d_->settingsMenu_ = false;
+                    } else if (hit(d_->setBtnRect_[0])) {          // OPTIONS -> the audio/display screen
                         d_->settingsMenu_ = false;
                         fromSettings = true;
                         // Cartographer may have changed the shared data folder since this
@@ -1555,6 +1585,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     auto hit = [&](const SDL_FRect& r) {
                         return r.w > 0 && fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h;
                     };
+                    if (hit(d_->menuBackRect_)) {   // BACK -> SETTINGS, as Esc
+                        d_->replayMenu_ = false;
+                        d_->settingsMenu_ = true;
+                        continue;
+                    }
                     for (int i = 0; i < 10; ++i)
                         if (hit(d_->replayBtnRect_[i])) {
                             const size_t k = size_t(d_->replayScroll_ + i);
@@ -1577,6 +1612,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                     float fx = float(e.button.x), fy = float(e.button.y);
                     auto hit = [&](const SDL_FRect& r) { return fx >= r.x && fx <= r.x + r.w && fy >= r.y && fy <= r.y + r.h; };
+                    if (hit(d_->menuBackRect_)) {   // BACK -> SETTINGS, as Esc
+                        d_->benchMenu_ = false;
+                        d_->settingsMenu_ = true;
+                        continue;
+                    }
                     for (int i = 0; i < 6; ++i)
                         if (hit(d_->benchBtnRect_[i])) {
                             d_->chosenBenchmark_ = i + 1;   // 1=Low .. 6=Extra Absurd
