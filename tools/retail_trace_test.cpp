@@ -573,7 +573,7 @@ struct RetailReplayProbe {
     // controller with 0x100|0x400 and cancels the submission through 4e54e0(0),
     // so the search never charges work. The order then retires on dispatch.
     static bool sameCellOrder(PathfindingMode mode,uint32_t& retired) {
-        World world;world.setVisPlayer(-1);world.setPathfindingMode(mode);
+        World world;world.setPathfindingMode(mode);
         world.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);world.setPathService(true);
         UnitType type;type.id=type.name="same-cell";type.maxVel=Fixed::fromFloat(70.f/30);
         type.turnRate=10000;type.maxHp=100;type.canMove=true;type.footX=type.footZ=2;

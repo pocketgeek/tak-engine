@@ -91,7 +91,7 @@ static int constructionFlightTrace(int argc,char** argv) {
     sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,false);
     const auto* monarch=registry.find("zonhunt");
     if(!monarch || !monarch->canFly) return 2;
-    sim::World world;world.setVisPlayer(-1);
+    sim::World world;
     world.setTerrain(std::vector<uint8_t>(128*128,uint8_t(terrain)),128,128,20);
     world.setPathService(false);
     const int id=world.spawn(monarch,float(startX)/65536.0f,float(startZ)/65536.0f,0,0);
@@ -156,7 +156,7 @@ static int persistentConstructionFlightTrace(int argc,char** argv) {
     sim::UnitType siteType=*output;
     siteType.buildTime=10000;
     siteType.simulationScript.reset();siteType.productionScript.reset();
-    sim::World world;world.setVisPlayer(-1);
+    sim::World world;
     world.setTerrain(std::vector<uint8_t>(128*128,uint8_t(terrain)),128,128,20);
     world.setPathService(false);
     const int builderId=world.spawn(&builderType,float(startX)/65536.0f,
@@ -255,7 +255,7 @@ int main(int argc, char** argv) {
     for (bool crusades : {false,true}) {
         sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,crusades);
         {
-            sim::World placement;placement.setVisPlayer(-1);
+            sim::World placement;
             placement.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
             const auto* barracks=registry.find("arakeep");
             placement.spawn(registry.find("araking"),720,800,0,0);
@@ -269,7 +269,7 @@ int main(int argc, char** argv) {
         // a short side. A circular exclusion based on its long side rejects him.
         for (const auto [dx,dz]:{std::pair{-160,0},std::pair{160,0},
                                 std::pair{0,-192},std::pair{0,192}}) {
-            sim::World placement;placement.setVisPlayer(-1);
+            sim::World placement;
             placement.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
             const auto* barracks=registry.find("arakeep");
             auto builderType=*registry.find("araking");
@@ -339,7 +339,7 @@ int main(int argc, char** argv) {
             if (type.isStructure() || menu.empty()) continue;
             const auto* output=registry.find(menu.front());
             if (!output) continue;
-            sim::World world;world.setVisPlayer(-1);
+            sim::World world;
             world.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
             const int id=world.spawn(&type,800,800,0,0);
             const int enemy=world.spawn(registry.find("zonter"),1200,1200,0,1);
@@ -402,7 +402,7 @@ int main(int argc, char** argv) {
             check(!world.unit(id)->orders.empty() && !world.unit(id)->repeatType,
                   "finite production does not lock mobile orders");
         }
-        sim::World world;world.setVisPlayer(-1);
+        sim::World world;
         const int id=world.spawn(registry.find("arakeep"),800,800,0,0);
         world.setRepeat(id,registry.find("arasword"));
         net::Command c{};c.unitId=id;c.kind=net::Cmd::Move;c.x=1200;c.z=1200;
@@ -416,7 +416,7 @@ int main(int argc, char** argv) {
         if (!monarch || !hunter) return 2;
         sim::UnitType output=*hunter;output.buildTime=10000;
         for (int heading : {0,16384,32768,49152}) {
-            sim::World world;world.setVisPlayer(-1);
+            sim::World world;
             world.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
             world.buildNavClasses(registry);
             const int id=world.spawn(monarch,1000,1000,sim::radiansFromBam(sim::Bam(heading)),0);
@@ -456,7 +456,7 @@ int main(int argc, char** argv) {
             const auto* flyer=registry.find(flyerName);
             check(flyer && flyer->canFly && flyer->isBuilder,"shipped flying builder is registered");
             if(!flyer)continue;
-            sim::World approachWorld;approachWorld.setVisPlayer(-1);
+            sim::World approachWorld;
             approachWorld.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
             approachWorld.buildNavClasses(registry);
             const int worker=approachWorld.spawn(flyer,1000,1000,0,0);
@@ -472,7 +472,7 @@ int main(int argc, char** argv) {
                       goal.flightGoal->point.x==goal.buildX.v && goal.flightGoal->point.z==goal.buildZ.v,
                       "each flying builder approaches the site with its authored doubled radius");
             } else check(false,"flying builder retains its distant approach");
-            sim::World remote;remote.setVisPlayer(-1);
+            sim::World remote;
             remote.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
             remote.buildNavClasses(registry);
             const int remoteWorker=remote.spawn(flyer,1000,1000,0,0);
@@ -485,7 +485,7 @@ int main(int argc, char** argv) {
         for (const auto [dx,dz] : {std::pair{128,0},std::pair{0,128},std::pair{-128,0},std::pair{0,-128},
                                   std::pair{128,128},std::pair{-128,128},std::pair{-128,-128},std::pair{128,-128},
                                   std::pair{64,0},std::pair{0,64}}) {
-            sim::World world;world.setVisPlayer(-1);
+            sim::World world;
             world.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
             world.buildNavClasses(registry);
             const int id=world.spawn(monarch,1000,1000,0,0);

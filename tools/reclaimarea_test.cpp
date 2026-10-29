@@ -82,7 +82,7 @@ int main(int argc,char** argv) {
     auto untilIdle=[](sim::World& w,int id,int limit=600) {
         for(int t=0;t<limit && !w.unit(id)->orders.empty();++t) w.tick(1.0f/30);
     };
-    sim::World world;world.setVisPlayer(-1);
+    sim::World world;
     std::vector<uint8_t> heights(32*32,100);
     world.setTerrain(heights,32,32,20);
     world.setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
@@ -120,7 +120,7 @@ int main(int argc,char** argv) {
     check(world.unit(id)->orders.back().groundMission && !world.unit(id)->orders.back().reclaimArea,
           "replacement move cancels the persistent area");
 
-    sim::World hidden;hidden.setVisPlayer(-1);hidden.setTerrain(heights,32,32,20);
+    sim::World hidden;hidden.setTerrain(heights,32,32,20);
     builder.sight=1;
     const int hb=hidden.spawn(&builder,152,160,0,0);
     hidden.addFeature(20,408,408,1,1,1,false);
@@ -139,7 +139,7 @@ int main(int argc,char** argv) {
     for(int t=0;t<900 && !hidden.unit(hb)->orders.empty();++t)hidden.tick(1.0f/30);
     check(gone(hidden,20) && hidden.unit(hb)->orders.empty(),
           "a target removed while a child is active lets the area complete");
-    sim::World footprint;footprint.setVisPlayer(-1);footprint.setTerrain(heights,32,32,20);
+    sim::World footprint;footprint.setTerrain(heights,32,32,20);
     footprint.setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
     sim::UnitType sighted=builder;sighted.id="area-sighted";sighted.sight=500;
     const int fb=footprint.spawn(&sighted,120,184,0,0);
@@ -151,7 +151,7 @@ int main(int argc,char** argv) {
         // 4066e3: the first pick is compared with the builder's own cell
         // (stage 0's last target), so a builder standing in the only target
         // cell retires the order at once (a retail quirk).
-        sim::World own;own.setVisPlayer(-1);own.setTerrain(heights,32,32,20);
+        sim::World own;own.setTerrain(heights,32,32,20);
         own.setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
         const int ob=own.spawn(&sighted,184,184,0,0);
         own.addFeature(30,176,176,1,2,2,false);
@@ -167,7 +167,7 @@ int main(int argc,char** argv) {
     walker.turnRate=walker.turnInPlaceRate=10000;
     const std::vector<uint8_t> wide(64*64,100);
     auto field=[&](sim::World& w) {
-        w.setVisPlayer(-1);w.setTerrain(wide,64,64,20);
+        w.setTerrain(wide,64,64,20);
         w.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
         w.addFeature(1,200,200,1,1,1,false);w.addFeature(2,600,200,1,1,1,false);
         w.addFeature(3,200,700,1,1,1,false);w.addFeature(4,900,700,1,1,1,false);
@@ -203,7 +203,7 @@ int main(int argc,char** argv) {
     }
     {
         // Equal sampled distance keeps the first sample in Z-then-X scan order.
-        sim::World w;w.setVisPlayer(-1);w.setTerrain(wide,64,64,20);
+        sim::World w;w.setTerrain(wide,64,64,20);
         w.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
         w.addFeature(22,200,200,1,1,1,false);w.addFeature(21,600,200,1,1,1,false);
         const int b=w.spawn(&walker,392,192,0,0);
@@ -244,7 +244,7 @@ int main(int argc,char** argv) {
         check(got(10,10)==0xffff && got(11,11)==0xffff && got(12,10)==2,
               "a removal before a refusal stays done");
         check(got(16,16)==0xfffc,"blocker markers are kept");
-        sim::World w;w.setVisPlayer(-1);w.setTerrain(std::vector<uint8_t>(W*H,100),W,H,20);
+        sim::World w;w.setTerrain(std::vector<uint8_t>(W*H,100),W,H,20);
         w.setMapPlacementFeatures(raw,types);
         check(w.installedMapFeatures()==installed,"the World snapshot is the shared helper's plane");
         // Cell +7: the anchor takes the installer's owner, tails stay 0xa, and
@@ -288,7 +288,7 @@ int main(int argc,char** argv) {
         sim::UnitType blind=builder;blind.id="area-blind";blind.sight=1;
         sim::UnitType scout=builder;scout.id="area-scout";scout.isBuilder=scout.canReclaim=false;scout.sight=200;
         auto fogged=[&](sim::World& w,bool explore) {
-            w.setVisPlayer(-1);w.setTerrain(wide,64,64,20);
+            w.setTerrain(wide,64,64,20);
             w.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
             const int b=w.spawn(&blind,152,160,0,0);
             w.addFeature(20*64+25,408,328,1,1,1,false);
@@ -321,7 +321,7 @@ int main(int argc,char** argv) {
         struct Placed{int cx,cz,type;};
         auto fixture=[&](sim::World& w,const std::vector<Placed>& placed,sim::PathfindingMode mode) {
             const int W=192,H=192;
-            w.setVisPlayer(-1);w.setPathService(true);w.setPathfindingMode(mode);
+            w.setPathService(true);w.setPathfindingMode(mode);
             w.setTerrain(std::vector<uint8_t>(W*H,100),W,H,20);
             std::vector<uint16_t> raw(W*H,0xffff);
             for(const auto& p:placed)raw[size_t(p.cz)*W+p.cx]=uint16_t(p.type);

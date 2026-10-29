@@ -24,7 +24,7 @@ UnitType soldier() {
     t.sight=4096;t.buildTime=1;return t;
 }
 void setup(World& w,PathfindingMode mode,bool serial=true) {
-    w.setVisPlayer(-1);w.setSerialThreads(serial);w.setPathfindingMode(mode);
+    w.setSerialThreads(serial);w.setPathfindingMode(mode);
     w.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);w.setPathService(true);
 }
 void ticks(World& w,int count) {for(int n=0;n<count;++n)w.tick(1.f/30);}
@@ -525,7 +525,7 @@ void mazeProduction(const char* data) {
     auto generated=tak::mapgen::generate(tak::mapgen::decodeMapId(recipe),vfs);
     auto files=std::make_shared<tak::hpi::Vfs::Files>();(*files)["maps/orders-maze.tnt"]=generated.map.save();vfs.setMapFiles(files);
     for(bool mobile:{false,true})for(bool rally:{false,true}) {
-        World w;w.setSerialThreads(true);w.setVisPlayer(-1);
+        World w;w.setSerialThreads(true);
         MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath="maps/orders-maze.tnt";cfg.loadCrt=false;
         cfg.pathfindingMode=selectedMode;cfg.slots.resize(1);setupMatch(w,registry,cfg);
         auto hunter=*registry.find("zonter");hunter.weapons.clear();hunter.weapon.damage=0;
@@ -553,7 +553,7 @@ void mazeProduction(const char* data) {
     }
 }
 uint64_t trollRally(const TypeRegistry& registry,bool serial,const tak::hpi::Vfs* maze=nullptr,int count=100) {
-    World w;w.setSerialThreads(serial);w.setVisPlayer(-1);
+    World w;w.setSerialThreads(serial);
     if(maze) {
         MatchConfig cfg;cfg.vfs=maze;cfg.mapPath="maps/orders-troll-maze.tnt";cfg.loadCrt=false;
         cfg.pathfindingMode=selectedMode;cfg.slots.resize(1);setupMatch(w,registry,cfg);

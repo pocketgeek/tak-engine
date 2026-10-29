@@ -431,7 +431,7 @@ inline int run(const Options& o) {
     const int middle=width/2,left=32,right=width-32-columns*stride;
     const int movingPerPlayer=o.units*o.movingPercent/100,totalMoving=movingPerPlayer*o.players;
     LatencyObserver latency;
-    World world;world.setGameSeed(o.seed);world.setVisPlayer(-1);world.setSerialThreads(!o.workers);world.setPathService(true);
+    World world;world.setGameSeed(o.seed);world.setSerialThreads(!o.workers);world.setPathService(true);
     // Numeric identities (Retail 0, Legion 4) so the frozen baseline, which
     // predates the Legion enumerator, builds this harness unchanged.
     world.setPathfindingMode(PathfindingMode(o.mode=="legion"?4:0));

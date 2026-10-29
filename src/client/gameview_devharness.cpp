@@ -311,7 +311,6 @@
                 writableWorld().patrol(u.id, float(writableWorld().nav().width() * 16) - u.x.toFloat(),
                               u.z.toFloat());
         noFog_ = true;
-        writableWorld().setVisPlayer(-1);
         edgeScrollOn_ = false;
         patrolPerfAccum_ = 0.0f;
         float zoom = 0.9f;

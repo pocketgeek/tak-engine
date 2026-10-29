@@ -75,7 +75,7 @@ struct Fixture {
     std::vector<uint16_t> cells;
     TypeRegistry registry;
     Fixture(int w,int h,bool serial=true):width(w),height(h),cells(size_t(w)*h,0xffff) {
-        world.setGameSeed(7);world.setVisPlayer(-1);world.setSerialThreads(serial);world.setPathService(true);
+        world.setGameSeed(7);world.setSerialThreads(serial);world.setPathService(true);
         world.setPathfindingMode(PathfindingMode::Legion);
         world.setPlayerCount(2);world.setTeam(0,0);world.setTeam(1,1);
         world.setTerrain(std::vector<uint8_t>(size_t(w)*h,100),w,h,64);

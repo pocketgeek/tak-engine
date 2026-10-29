@@ -21,7 +21,7 @@ int main(int argc,char** argv) {
             check(builder!=nullptr,"real builder exists");if (!builder) continue;
             sim::UnitType site;site.id="test_site";site.maxVel=sim::Fixed();site.footX=4;site.footZ=4;
             site.maxHp=100;site.buildTime=20;site.buildCost=10;
-            sim::World w;w.setVisPlayer(-1);w.setPathService(paths);
+            sim::World w;w.setPathService(paths);
             if(pathMode==3)w.setPathfindingMode(sim::PathfindingMode::Legion);
             bool legionBuild=false,legionReclaim=false;
             w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);

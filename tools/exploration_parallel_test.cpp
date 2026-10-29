@@ -94,7 +94,7 @@ int main() {
     for (int z=0;z<128;++z) for (int x=0;x<128;++x)
         terrain[size_t(z)*128+x]=uint8_t((x*7+z*3)%180);
     for (auto* world:{&serial,&parallel}) {
-        world->setVisPlayer(-1);world->setTerrain(terrain,128,128,30);
+        world->setTerrain(terrain,128,128,30);
         for (int i=0;i<4096;++i) world->spawn(&type,float((i%64)*16),float((i/64)*16),0,i%4);
     }
     for (int step=0;step<16;++step) {

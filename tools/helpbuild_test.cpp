@@ -124,7 +124,6 @@ struct Types {
 
 static std::unique_ptr<World> makeWorld() {
     auto w = std::make_unique<World>();
-    w->setVisPlayer(-1);
     w->setTerrain(std::vector<uint8_t>(size_t(128) * 128, 100), 128, 128, 20);
     w->setPathService(true);
     w->player(0).mana = 100000;
@@ -715,7 +714,6 @@ static void flyingGuardHelps() {
     {   // a repair target below the sea is not taken on by a flyer
         auto ownedWorld = std::make_unique<World>();
         World& w = *ownedWorld;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(size_t(128) * 128, 0), 128, 128, 60);   // all deep water
         w.setPathService(true);
         w.player(0).mana = 100000;

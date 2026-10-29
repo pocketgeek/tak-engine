@@ -55,7 +55,7 @@ struct Fixture {
     int width,height;
     std::vector<uint16_t> cells;
     Fixture(int w,int h,bool serial=true,std::vector<uint8_t> heights={}):width(w),height(h),cells(size_t(w)*h,0xffff) {
-        world.setGameSeed(7);world.setVisPlayer(-1);world.setSerialThreads(serial);world.setPathService(true);
+        world.setGameSeed(7);world.setSerialThreads(serial);world.setPathService(true);
         world.setPathfindingMode(PathfindingMode::Legion);
         world.setPlayerCount(2);world.setTeam(0,0);world.setTeam(1,1);
         if(heights.empty())heights.assign(size_t(w)*h,100);

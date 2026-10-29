@@ -78,7 +78,6 @@ Outcome run(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, Obstacle obstacle
         for (int z = 20; z <= 44; ++z) map.features[size_t(z) * 64 + 19] = 0;
     }
     sim::World w;
-    w.setVisPlayer(-1);
     w.setPathfindingMode(mode);
     w.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
     sim::registerMapFeatures(w, map, vfs, &reg);
@@ -138,7 +137,6 @@ std::pair<int, int> runSticky(const hpi::Vfs& vfs, const sim::TypeRegistry& reg)
     for (int z = 0; z < 64; ++z) map.features[size_t(z) * 64 + 34] = 0;
     for (int z = 20; z <= 44; ++z) map.features[size_t(z) * 64 + 19] = 0;
     sim::World w;
-    w.setVisPlayer(-1);
     w.setPathfindingMode(mode);
     w.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
     sim::registerMapFeatures(w, map, vfs, &reg);
@@ -204,7 +202,6 @@ WagonOutcome runWagon(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, Wagon v
     map.featureNames = {"ZonHenge04"};
     map.features[size_t(23) * 64 + 20] = 0;
     sim::World w;
-    w.setVisPlayer(-1);
     w.setPathfindingMode(mode);
     w.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
     sim::registerMapFeatures(w, map, vfs, &reg);
@@ -280,7 +277,6 @@ HoverOutcome runHover(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int tic
     map.featureNames = {"ZonHenge11"};
     map.features[size_t(20) * 64 + 20] = 0;   // anchor: cells 20..24 x 20..23
     sim::World w;
-    w.setVisPlayer(-1);
     w.setPathfindingMode(mode);
     w.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
     sim::registerMapFeatures(w, map, vfs, &reg);

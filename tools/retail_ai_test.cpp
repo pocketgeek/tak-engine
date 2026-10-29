@@ -264,7 +264,7 @@ int main(int argc,char** argv) {
         [&](unsigned i,auto&){events.push_back(int(i));});
     if (!events.empty()) return 1;
     std::puts("PASS: AI scheduling orders refresh, assignment and due groups; skips slot 99");
-    World world; world.setVisPlayer(-1);
+    World world;
     auto& ai=world.player(0).retailAi.emplace();
     ai.schedule.groups[1]={true,1};ai.squads[1].kind=RetailAiSquadKind::Base;
     std::vector<World::RngObservation> draws;
@@ -282,7 +282,7 @@ int main(int argc,char** argv) {
     if (!stopped) return 1;
     std::puts("PASS: restored AI clocks run and hash in World; unsupported occupied planning stops explicitly");
     {
-        World assigned;assigned.setVisPlayer(-1);
+        World assigned;
         UnitType baseType;baseType.id="base";baseType.maxHp=100;baseType.maxVel=Fixed();
         UnitType mobile;mobile.id="mobile";mobile.maxHp=100;mobile.maxVel=Fixed::fromInt(1);mobile.canMove=true;
         const int base1=assigned.spawn(&baseType,1000,1000,0,0);
@@ -325,7 +325,7 @@ int main(int argc,char** argv) {
         if (state.squads[1].members!=std::vector<int>{base1,newcomer,next}) return 1;
         std::puts("PASS: unanchored base centre includes mobile squad members");
     }
-    World cached; cached.setVisPlayer(-1);
+    World cached;
     UnitType structure; structure.id="cache-test";structure.maxHp=100;structure.maxVel=Fixed();structure.buildTime=1000;
     const int completedId=cached.spawn(&structure,256,256);
     const int constructionId=cached.spawn(&structure,512,512);

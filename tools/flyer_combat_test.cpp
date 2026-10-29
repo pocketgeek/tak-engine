@@ -42,7 +42,7 @@ int main(int argc,char** argv) {
             const auto* harpy=registry.find("zonharp");
             auto victim=*registry.find("arasword");victim.maxHp=25000;
             victim.maxVel={};victim.weapon.damage=0;victim.weapons.clear();
-            tak::sim::World world;world.setVisPlayer(-1);world.setPlayerCount(3);world.setTeam(2,0);
+            tak::sim::World world;world.setPlayerCount(3);world.setTeam(2,0);
             world.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
             const int from=world.spawn(harpy,1000,1000,0,0),target=world.spawn(&victim,1180,1000,0,1);
             world.attack(from,target,false);world.unit(from)->orders.front().autoTarget=automatic;
@@ -80,7 +80,7 @@ int main(int argc,char** argv) {
             const auto* rat=registry.find("tarkam");
             auto victim=*registry.find("tarzom");victim.maxHp=25000;victim.healTime=0;
             victim.maxVel={};victim.weapon.damage=0;victim.weapons.clear();
-            tak::sim::World world;world.setVisPlayer(-1);
+            tak::sim::World world;
             world.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);world.buildNavClasses(registry);
             const int from=world.spawn(rat,1000,1000,0,0),target=world.spawn(&victim,1040,1000,0,1);
             world.attack(from,target,false);
@@ -103,7 +103,7 @@ int main(int argc,char** argv) {
             auto type=definition;
             auto victim=*registry.find("tarzom");victim.maxHp=25000;victim.healTime=0;
             victim.maxVel={};victim.weapon.damage=0;victim.weapons.clear();
-            tak::sim::World world;world.setVisPlayer(-1);
+            tak::sim::World world;
             world.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
             world.buildNavClasses(registry);
             const int from=world.spawn(&type,1000,1000,0,0),
@@ -126,7 +126,7 @@ int main(int argc,char** argv) {
         check(tak::hpi::affectsGameplay("gamedata/effects/effects.tdf"),
               "named effect definitions are protected multiplayer data");
         {
-            tak::sim::World world;world.setVisPlayer(-1);
+            tak::sim::World world;
             world.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
             world.buildNavClasses(registry);
             const auto* type=registry.find("zonhunt");
@@ -149,7 +149,7 @@ int main(int argc,char** argv) {
             check(!type.weapons.empty() && type.weapons[0].flameKind>=0,"flame subclass loads independently of hit-effect art");
             auto victim=*registry.find("tarzom");victim.maxHp=25000;victim.healTime=0;
             victim.maxVel={};victim.weapon.damage=0;victim.weapons.clear();
-            tak::sim::World world;world.setVisPlayer(-1);
+            tak::sim::World world;
             world.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
             world.buildNavClasses(registry);
             const int from=world.spawn(&type,1000,1000,0,0),target=world.spawn(&victim,1180,1000,0,1);
@@ -176,7 +176,7 @@ int main(int argc,char** argv) {
             const bool naval=type.minWaterDepth>0;
             auto victim=*registry.find(naval ? "verharp" : "tarzom");victim.maxHp=25000;victim.healTime=0;
             victim.maxVel={};victim.weapon.damage=0;victim.weapons.clear();
-            tak::sim::World world;world.setVisPlayer(-1);
+            tak::sim::World world;
             world.setTerrain(std::vector<uint8_t>(128*128,naval ? 20 : 100),128,128,naval ? 100 : 20);
             world.buildNavClasses(registry);
             const int from=world.spawn(&type,1000,1000,0,0),target=world.spawn(&victim,1180,1000,0,1);
@@ -199,7 +199,7 @@ int main(int argc,char** argv) {
             if (type.canFly && !type.onOffable && type.weapon.damage>0) flyers.push_back(id);
         std::sort(flyers.begin(),flyers.end());
         for (const auto& name:flyers) for (int order=0;order<3;++order) {
-            tak::sim::World world;world.setVisPlayer(-1);
+            tak::sim::World world;
             world.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
             world.buildNavClasses(registry);
             const auto* type=registry.find(name);
@@ -242,7 +242,7 @@ int main(int argc,char** argv) {
             auto type=*registry.find(name);
             if (!type.hoverAttack && !type.weapon.hoverAttack) continue;
             for (bool close:{false,true}) {
-                tak::sim::World w;w.setVisPlayer(-1);
+                tak::sim::World w;
                 const bool overrides=name=="zondrake" && close;
                 const int ground=overrides?240:100;
                 w.setTerrain(std::vector<uint8_t>(256*256,overrides?230:100),256,256,overrides?240:20);
@@ -296,7 +296,7 @@ int main(int argc,char** argv) {
             auto dummy=*registry.find("tarzom");dummy.maxHp=30000;dummy.healTime=0;
             dummy.maxVel={};dummy.weapon.damage=0;dummy.weapons.clear();
             const auto& shooter=*registry.find("tarnecro");
-            tak::sim::World w;w.setVisPlayer(-1);
+            tak::sim::World w;
             w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
             w.buildNavClasses(registry);
             const int ground=w.spawn(&dummy,2300,2000,0,0),flyer=w.spawn(&type,2300,2600,0,1);
@@ -361,7 +361,7 @@ int main(int argc,char** argv) {
             gryphon.weapons.clear();gryphon.weapon={};
             const auto& lokken=*registry.find("tarnecro");
             const auto& fireBall=lokken.weapons.front();
-            tak::sim::World w;w.setVisPlayer(-1);
+            tak::sim::World w;
             w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
             w.buildNavClasses(registry);
             const int shooter=w.spawn(&lokken,2000,2000,0,0),flyer=w.spawn(&gryphon,2300,1500,0,1);
@@ -400,7 +400,7 @@ int main(int argc,char** argv) {
             wisp.weapon=wisp.weapons.front();
             auto barracks=*registry.find("arakeep");barracks.maxHp=30000;barracks.healTime=0;
             barracks.weapons.clear();barracks.weapon={};
-            tak::sim::World w;w.setVisPlayer(-1);
+            tak::sim::World w;
             w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
             w.buildNavClasses(registry);
             const int target=w.spawn(&barracks,2000,2000,0,0),flyer=w.spawn(&wisp,2000,2600,0,1);
@@ -456,7 +456,7 @@ int main(int argc,char** argv) {
         };
         for (const char* name:{"zongryp","creaeri"}) for (int hold=0;hold<4;++hold) {
             static const char* const holds[]={"wait","ambush","queued wait","stop"};
-            tak::sim::World w;w.setVisPlayer(-1);
+            tak::sim::World w;
             w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
             w.buildNavClasses(registry);
             const int flyer=w.spawn(registry.find(name),1000,1000,0,0);
@@ -483,7 +483,7 @@ int main(int argc,char** argv) {
         // VTOL_Follow (0x418860) never holds: it circles the guarded unit at
         // its weapon range + 160 (320 px unarmed), so the flyer keeps flying.
         for (const char* name:{"zongryp","creaeri"}) {
-            tak::sim::World w;w.setVisPlayer(-1);
+            tak::sim::World w;
             w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
             w.buildNavClasses(registry);
             const int charge=w.spawn(registry.find("tarzom"),1600,1000,0,0);
@@ -507,7 +507,7 @@ int main(int argc,char** argv) {
         }
         for (int hold=0;hold<3;++hold) {
             static const char* const holds[]={"repair","reclaim","placement retry"};
-            tak::sim::World w;w.setVisPlayer(-1);w.setPlayerCount(2);
+            tak::sim::World w;w.setPlayerCount(2);
             w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
             w.buildNavClasses(registry);
             tak::sim::FeatType rock;rock.reclaimable=true;w.setFeatureTypes({rock});
@@ -557,7 +557,7 @@ int main(int argc,char** argv) {
                 auto dummy=*registry.find("tarzom");dummy.maxHp=30000;dummy.healTime=0;
                 dummy.maxVel={};dummy.weapon.damage=0;dummy.weapons.clear();
                 auto gryphon=*registry.find("zongryp");gryphon.maxHp=30000;gryphon.healTime=0;
-                tak::sim::World w;w.setVisPlayer(-1);w.setPlayerCount(2);
+                tak::sim::World w;w.setPlayerCount(2);
                 w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
                 w.buildNavClasses(registry);
                 tak::sim::FeatType tree;tree.name="tree";tree.hp=100000;w.setFeatureTypes({tree});
@@ -618,7 +618,7 @@ int main(int argc,char** argv) {
         // Preserve the intentional off switch for units that actually support it.
         auto turret=*registry.find("zondrake");turret.onOffable=true;
         auto victim=*registry.find("tarzom");victim.maxHp=30000;victim.healTime=0;victim.weapon.damage=0;victim.weapons.clear();
-        tak::sim::World world;world.setVisPlayer(-1);
+        tak::sim::World world;
         world.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
         int a=world.spawn(&turret,800,800,1.570796327f,0),b=world.spawn(&victim,950,800,0,1);
         world.setActive(a,false);world.attack(a,b,false);

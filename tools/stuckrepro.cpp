@@ -50,7 +50,6 @@ int main(int argc, char** argv) {
     {
         const int W = 200, H = 200;
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(size_t(W) * size_t(H), 100), W, H, 20);
         w.setPathService(true);
         // A solid 14x14-cell rock blob (like the crater rocks) at cells (90..103).
@@ -87,7 +86,6 @@ int main(int argc, char** argv) {
     {
         const int W = 120, H = 120;
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(size_t(W) * size_t(H), 100), W, H, 20);
         w.setPathService(true);
         UnitType m = monarch(), b = beast();
@@ -116,7 +114,6 @@ int main(int argc, char** argv) {
     {
         const int W = 120, H = 120;
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(size_t(W) * size_t(H), 100), W, H, 20);
         w.setPathService(true);
         UnitType m = monarch(), b = beast();

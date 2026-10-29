@@ -36,7 +36,7 @@ bool groundOutput(const UnitType* t) {
 enum class Mode {Guard,Assist};
 bool doorCase(const TypeRegistry& registry,const UnitType& factory,const UnitType* output,const UnitType& helper,Mode mode,bool legion,bool crusades,int side) {
     auto producer=factory;producer.storage=1000000;
-    World world;world.setVisPlayer(-1);
+    World world;
     if(legion)world.setPathfindingMode(PathfindingMode::Legion);
     world.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
     world.setMapPlacementFeatures(std::vector<uint16_t>(256*256,0xffff),{});
@@ -91,7 +91,7 @@ bool doorCase(const TypeRegistry& registry,const UnitType& factory,const UnitTyp
 bool ringRest(const TypeRegistry& registry,const char* wardId,const char* guardId,bool water,bool legion) {
     const UnitType* wardType=registry.find(wardId);const UnitType* guardType=registry.find(guardId);
     if(!wardType || !guardType) {std::printf("FAIL: no %s or %s\n",wardId,guardId);return false;}
-    World world;world.setVisPlayer(-1);
+    World world;
     if(legion)world.setPathfindingMode(PathfindingMode::Legion);
     world.setTerrain(std::vector<uint8_t>(256*256,water?0:100),256,256,20);
     world.setMapPlacementFeatures(std::vector<uint16_t>(256*256,0xffff),{});
@@ -122,7 +122,7 @@ bool ringRest(const TypeRegistry& registry,const char* wardId,const char* guardI
 bool navalDoor(const TypeRegistry& registry,bool legion,int side) {
     auto yardType=*registry.find("crenavy");yardType.storage=1000000;
     const UnitType* sub=registry.find("cresubm");const UnitType* flag=registry.find("verflag");
-    World world;world.setVisPlayer(-1);
+    World world;
     if(legion)world.setPathfindingMode(PathfindingMode::Legion);
     world.setTerrain(std::vector<uint8_t>(256*256,0),256,256,20);
     world.setMapPlacementFeatures(std::vector<uint16_t>(256*256,0xffff),{});

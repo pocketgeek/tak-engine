@@ -37,7 +37,7 @@ struct Scene {
     World world;
     int W,H;
     explicit Scene(int w=96,int h=96):W(w),H(h) {
-        world.setGameSeed(7);world.setVisPlayer(-1);world.setSerialThreads(true);
+        world.setGameSeed(7);world.setSerialThreads(true);
         world.setPathfindingMode(PathfindingMode::Retail);
         world.setPlayerCount(2);world.setTeam(0,0);world.setTeam(1,1);
         world.setTerrain(std::vector<uint8_t>(size_t(w)*h,100),w,h,64);

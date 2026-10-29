@@ -30,7 +30,7 @@ sim::Weapon blow(float damage) {
     sim::Weapon w;w.name="blow";w.damage=damage;w.range=100;return w;
 }
 void setup(sim::World& w) {
-    w.setVisPlayer(-1);w.setSerialThreads(true);
+    w.setSerialThreads(true);
     w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);w.setPlayerCount(2);
 }
 }

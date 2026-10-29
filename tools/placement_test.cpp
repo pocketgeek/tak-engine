@@ -80,7 +80,6 @@ bool standsLegally(const sim::World& w, const sim::Unit& u) {
 
 void runCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const Case& c) {
     sim::World world;
-    world.setVisPlayer(-1);
     sim::MatchConfig cfg;
     cfg.vfs = &vfs;
     cfg.mapPath = std::string("maps/") + c.map + ".tnt";
@@ -149,7 +148,6 @@ std::vector<Body> bodies(const sim::World& w) {
 
 void stagedStressCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int benchmark) {
     auto setup = [&](sim::World& w, bool immediate, int bench) {
-        w.setVisPlayer(-1);
         sim::MatchConfig cfg;
         cfg.vfs = &vfs;
         cfg.mapPath = "maps/Ulasem Arena.tnt";
@@ -215,7 +213,6 @@ void seafortPlacementCase(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, boo
     if (!seafort || !builder) { ++failures; return; }
 
     sim::World world;
-    world.setVisPlayer(-1);
     sim::MatchConfig cfg; cfg.vfs=&vfs; cfg.mapPath=mapPath;
     cfg.slots={{true,2,0,1.0f,false,false}};
     sim::setupMatch(world,reg,cfg);
@@ -299,7 +296,7 @@ void shipyardProductionCases(const hpi::Vfs& vfs,const sim::TypeRegistry& reg) {
     for (const auto& name:reg.buildable(factory)) for (int angle:{-1,0,1}) {
         const auto* ship=reg.find(name);
         if (!ship) { ++failures;continue; }
-        sim::World world;world.setVisPlayer(-1);
+        sim::World world;
         sim::MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath=hpi::findMap(vfs,"Varro Passage");
         cfg.slots={{true,faction,0,1.f,false,false}};
         sim::setupMatch(world,reg,cfg);
@@ -340,7 +337,7 @@ int main(int argc, char** argv) {
         for (const char* id:{"aralode","tarlode","verlode","zonlode","crelode"}) {
             const auto* type=reg.find(id);
             if (!type) { ++failures;continue; }
-            sim::World world;world.setVisPlayer(-1);
+            sim::World world;
             sim::MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath=hpi::findMap(vfs,"ulasem arena");
             cfg.slots={{true,0,0,1}};
             sim::setupMatch(world,reg,cfg);

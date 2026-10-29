@@ -45,7 +45,6 @@ int main(int argc, char** argv) {
 
     // 2-player 1v1: slot 0 = idle human (Aramon), slot 1 = the AI under test (Taros).
     sim::World w;
-    w.setVisPlayer(-1);
     sim::MatchConfig cfg;
     cfg.vfs = &vfs;
     cfg.mapPath = hpi::findMap(vfs, map);

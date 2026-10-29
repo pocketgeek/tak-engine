@@ -39,7 +39,6 @@ int main(int argc, char** argv) {
         tak::sim::TypeRegistry registry;
         tak::sim::setupRegistry(registry, vfs, crusades);
         auto world = [&](tak::sim::World& w) {
-            w.setVisPlayer(-1);
             w.setTerrain(heights, W, H, 64);
             w.buildNavClasses(registry);
             w.setPathService(true);   // the async path service, as in a game

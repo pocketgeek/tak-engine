@@ -66,7 +66,6 @@ static UnitType soldierType(float buildTime, float buildCost) {
 
 static std::unique_ptr<World> makeWorld() {
     auto w = std::make_unique<World>();
-    w->setVisPlayer(-1);
     w->setTerrain(std::vector<uint8_t>(128 * 128, 100), 128, 128, /*seaLevel=*/20);
     return w;
 }

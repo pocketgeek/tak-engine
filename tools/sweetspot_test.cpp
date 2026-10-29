@@ -43,7 +43,6 @@ void check(bool ok, const char* what, const std::string& detail = "") {
 }
 
 void flatGround(sim::World& w) {
-    w.setVisPlayer(-1);
     w.setTerrain(std::vector<uint8_t>(64 * 64, 62), 64, 64, 0);
 }
 }  // namespace
@@ -134,7 +133,6 @@ int main(int argc, char** argv) {
                 {"lightning misses sub 106 at heading 4616, as retail", 400.1f, 2032.28f, 4616, 516.42f, 2063.27f, false}};
             for (const auto& s : setups) {
                 sim::World w;
-                w.setVisPlayer(-1);
                 w.setTerrain(std::vector<uint8_t>(64 * 192, 0), 64, 192, 58);
                 w.buildNavClasses(reg);
                 const int target = w.spawn(&sub, s.sx, s.sz, 0, 1);

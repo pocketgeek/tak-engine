@@ -980,7 +980,6 @@ inline std::unique_ptr<Built> build(const Scenario& s, const BuildOptions& opt) 
         // walls as 1x1 blocking map features on the placement plane.
         const int W = s.map.width, H = s.map.height;
         w.setGameSeed(s.seed);
-        w.setVisPlayer(-1);
         w.setSerialThreads(opt.serial);
         w.setPathService(true);
         w.setPathfindingMode(opt.mode);
@@ -1043,7 +1042,6 @@ inline std::unique_ptr<Built> build(const Scenario& s, const BuildOptions& opt) 
             }
         }
         setupMatch(w, b->registry, cfg);
-        w.setVisPlayer(-1);
         w.setSerialThreads(opt.serial);
         b->width = w.mapW();
         b->height = w.mapH();

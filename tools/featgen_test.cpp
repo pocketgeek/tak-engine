@@ -61,7 +61,6 @@ int main() {
     for (int reset=0;reset<3;++reset) {
         using namespace tak::sim;
         World reused,fresh;
-        reused.setVisPlayer(-1);fresh.setVisPlayer(-1);
         UnitType type;type.id="old-building";type.maxHp=100;
         FeatType corpse;corpse.name="old-corpse";corpse.decomposeTicks=0;
         reused.setFeatureTypes({corpse});
@@ -91,7 +90,7 @@ int main() {
 
     {
         using namespace tak::sim;
-        World fire;fire.setVisPlayer(-1);
+        World fire;
         FeatType tree;tree.name="tree";tree.flamable=true;tree.hasBurnAnim=true;tree.burnTicks=30;
         fire.setFeatureTypes({tree});
         fire.addFeature(77,100,100,10,1,1,false,0);
@@ -119,7 +118,7 @@ int main() {
 
     for (uint32_t lifetime : {1u,2u}) {
         using namespace tak::sim;
-        World fire;fire.setVisPlayer(-1);
+        World fire;
         fire.setTerrain(std::vector<uint8_t>(16*16,0),16,16,0);
         FeatType tree;tree.name="spark-tree";tree.flamable=true;tree.hasBurnAnim=true;
         tree.burnTicks=lifetime;tree.spreadChance=100;tree.sparkTicks=0;
@@ -139,7 +138,6 @@ int main() {
 
     World w;
     // Headless: no fog work, no renderer. Matches how the referee runs.
-    w.setVisPlayer(-1);
 
     const uint32_t atStart = w.featGeneration();
 
@@ -171,7 +169,7 @@ int main() {
     // Occupancy must follow runtime features, including replacement geometry.
     {
         using namespace tak::sim;
-        World map;map.setVisPlayer(-1);
+        World map;
         std::vector<uint8_t> heights(32*32,0);
         std::vector<uint16_t> cells(32*32,0xffff);
         map.setTerrain(heights,32,32,0);
@@ -224,7 +222,7 @@ int main() {
 
     {
         using namespace tak::sim;
-        World map;map.setVisPlayer(-1);
+        World map;
         map.setTerrain(std::vector<uint8_t>(32*32,100),32,32,0);
         map.setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
         UnitType building;building.footX=building.footZ=2;building.maxHp=100;
@@ -250,7 +248,7 @@ int main() {
     }
     {
         using namespace tak::sim;
-        World map;map.setVisPlayer(-1);
+        World map;
         map.setTerrain(std::vector<uint8_t>(32*32,100),32,32,0);
         map.setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
         UnitType mover;mover.footX=mover.footZ=1;mover.maxHp=100;
@@ -285,7 +283,7 @@ int main() {
 
     {
         using namespace tak::sim;
-        World map;map.setVisPlayer(-1);
+        World map;
         map.setTerrain(std::vector<uint8_t>(32*32,100),32,32,0);
         map.setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
         UnitType mover;mover.footX=mover.footZ=1;mover.maxHp=100;

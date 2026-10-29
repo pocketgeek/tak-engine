@@ -65,7 +65,7 @@ static sim::UnitType fighter() {
 static void terrain(sim::World& w,bool islands=false) {
     std::vector<uint8_t> h(256*256,100);
     if (islands) for (int z=0;z<256;++z) for (int x=96;x<160;++x) h[z*256+x]=0;
-    w.setVisPlayer(-1);w.setTerrain(std::move(h),256,256,20);
+    w.setTerrain(std::move(h),256,256,20);
     // The room's default FOG OF WAR, EXPLORED: the whole map's ground is known
     // (mana deposits included), enemy units only in sight (fogKnowledge).
     w.setRoomVision(true,false);
@@ -742,7 +742,7 @@ static void scoutingMemory(const sim::TypeRegistry& registry,const ai::Profile& 
         // again. Not before the five minutes are up.
         auto big=[](sim::World& w) {
             std::vector<uint8_t> h(1024*1024,100);
-            w.setVisPlayer(-1);w.setTerrain(std::move(h),1024,1024,20);w.setRoomVision(true,false);
+            w.setTerrain(std::move(h),1024,1024,20);w.setRoomVision(true,false);
         };
         for (const uint32_t at:{uint32_t(8000),uint32_t(20+5*60*30+20)}) {
             sim::World w;big(w);w.player(0).income=100;
@@ -2035,7 +2035,7 @@ int main(int argc,char** argv) {
         sim::World w;std::vector<uint8_t> heights(256*256,100);
         for(int z=0;z<256;++z)for(int x=0;x<256;++x)
             if((x>=48 && x<80) || (x>=144 && x<176))heights[z*256+x]=0;
-        w.setTerrain(std::move(heights),256,256,20);w.setVisPlayer(-1);
+        w.setTerrain(std::move(heights),256,256,20);
         auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;
         w.spawn(&boat,1000,800,0,0);
         pastStart(w);
@@ -2049,7 +2049,7 @@ int main(int argc,char** argv) {
         sim::World w;std::vector<uint8_t> heights(256*256,100);
         for(int z=0;z<256;++z)for(int x=0;x<256;++x)
             if((x>=48 && x<80) || (x>=112 && x<128))heights[z*256+x]=0;
-        w.setTerrain(std::move(heights),256,256,20);w.setVisPlayer(-1);
+        w.setTerrain(std::move(heights),256,256,20);
         auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;
         w.spawn(&boat,1000,800,0,0);
         pastStart(w);
@@ -2310,7 +2310,7 @@ int main(int argc,char** argv) {
             }
         // Only a builder that can reach the deposit holds it for the ally.
         for (bool reaches : {true,false}) {
-            sim::World w;w.setVisPlayer(-1);
+            sim::World w;
             std::vector<uint8_t> h(256*256,100);
             for (int z=0;z<256;++z) for (int x=96;x<160;++x) h[z*256+x]=0;
             w.setTerrain(std::move(h),256,256,60);w.buildNavClasses(reg);   // too deep to wade from x=1536 to 2560
@@ -2654,7 +2654,7 @@ int main(int argc,char** argv) {
                 // Absurd starts with enough income to pick a Keep before a
                 // lodestone. Its first short-side approach used to walk the
                 // Monarch into the placement exclusion and retry forever.
-                sim::World w;w.setVisPlayer(-1);
+                sim::World w;
                 sim::MatchConfig config;config.vfs=&vfs;
                 config.mapPath=hpi::findMap(vfs,"ulasem arena");
                 config.slots={{true,0,0,1.0f},{true,0,1,2.0f,true,false}};
@@ -2876,7 +2876,7 @@ int main(int argc,char** argv) {
                 // Creon's yard 33 at (9016,2392) opens onto a 3-4 row shore pocket at
                 // the head of an inlet, its ships circling the yard to get out;
                 // yards 35 (9080,4424) and 476 (7880,5816) open onto the sea.
-                sim::World w;w.setVisPlayer(-1);
+                sim::World w;
                 sim::MatchConfig config;config.vfs=&vfs;config.roomMapRevealed=true;   // FOG OF WAR: EXPLORED, the room default
                 config.mapPath="~gen1~090001000000000000000300030003020000ffff000104496e74656c20393331302044656c6c";
                 config.slots={{true,4,0,2.0f},{true,0,1,2.0f}};
@@ -2910,7 +2910,7 @@ int main(int argc,char** argv) {
                 // Start from the actual inland Veruna spawn, with the ordinary
                 // land-factory budget already filled. The AI must find a coast,
                 // construct the Sea Fort and complete a ship through normal orders.
-                sim::World naval;naval.setVisPlayer(-1);
+                sim::World naval;
                 sim::MatchConfig config;config.vfs=&vfs;config.roomMapRevealed=true;   // FOG OF WAR: EXPLORED, the room default
                 config.mapPath=hpi::findMap(vfs,"Varro Passage");
                 config.slots={{true,2,0,1.0f},{true,0,1,1.0f}};
@@ -2938,7 +2938,7 @@ int main(int argc,char** argv) {
                 check(ship,"AI completes a Sea Fort and launches a Scout on Varro Passage");
             }
             {
-                sim::World naval;naval.setVisPlayer(-1);
+                sim::World naval;
                 sim::MatchConfig config;config.vfs=&vfs;
                 config.mapPath=hpi::findMap(vfs,"Varro Passage");
                 config.slots={{true,2,0,1.0f},{true,0,1,1.0f}};config.startSeed=1;

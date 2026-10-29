@@ -27,7 +27,7 @@ int main(int argc,char** argv) {
     for (bool crusades:{false,true}) {
         sim::TypeRegistry registry;sim::setupRegistry(registry,vfs,crusades);
         {
-            sim::World world;world.setVisPlayer(-1);
+            sim::World world;
             world.setTerrain(std::vector<uint8_t>(256*256,0),256,256,32);
             world.buildNavClasses(registry);world.setPathService(true);
             const auto* ship=registry.find("cresubm");
@@ -57,7 +57,7 @@ int main(int argc,char** argv) {
                     weight==retailProfile.weight.end() || weight->second<=0 ||
                     (limit!=retailProfile.limit.end() && limit->second==0)) continue;
               for (bool defensive:{false,true}) {
-                sim::World world;world.setVisPlayer(-1);
+                sim::World world;
                 std::vector<uint8_t> heights(256*256,40);
                 for (int z=0;z<256;++z) for (int x=96;x<192;++x) heights[size_t(z)*256+x]=0;
                 for (int z=0;z<256;++z) for (int x=0;x<4;++x) {
@@ -104,7 +104,7 @@ int main(int argc,char** argv) {
         // Natural opening: no free builders, factories, income, mana or altered
         // profile. All factions use the same inland Varro Passage starting seat.
         for (int faction=0;faction<5;++faction) {
-            sim::World world;world.setVisPlayer(-1);
+            sim::World world;
             sim::MatchConfig config;config.vfs=&vfs;config.mapPath=hpi::findMap(vfs,"Varro Passage");
             config.roomMapRevealed=true;   // FOG OF WAR: EXPLORED, the room's default
             config.slots={{true,0,0,1.f},{true,faction,1,1.f,true,false}};

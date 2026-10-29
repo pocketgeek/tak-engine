@@ -56,7 +56,7 @@ int main() {
     for (int z=0;z<kSize;++z) for (int x=0;x<kSize;++x)
         terrain[size_t(z)*kSize+x]=uint8_t((x*7+z*3)%180);
     for (auto* world:{&serial,&parallel}) {
-        world->setVisPlayer(-1);world->setTerrain(terrain,kSize,kSize,30);
+        world->setTerrain(terrain,kSize,kSize,30);
         for (int i=0;i<4096;++i) world->spawn(&type,float((i%64)*256),float((i/64)*256),0,i%4);
     }
     uint64_t first=0;

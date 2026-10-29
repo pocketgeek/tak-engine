@@ -64,7 +64,6 @@ void build(Scene& s, const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int wall
     s.map.featureNames = {"CAVStalag01"};
     if (wallX >= 0)
         for (int z = z0; z < z1; ++z) s.map.features[size_t(z) * 128 + size_t(wallX)] = 0;
-    s.w.setVisPlayer(-1);
     s.w.setPathfindingMode(mode);
     s.w.setTerrain(s.map.heights, s.map.width, s.map.height, s.map.seaLevel, &s.map.features);
     sim::registerMapFeatures(s.w, s.map, vfs, &reg);

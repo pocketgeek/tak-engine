@@ -26,7 +26,7 @@ int main(int argc,char** argv) {
             check(base && advanced && builder,"faction has base, advanced and an authorized mobile builder");
             if (!builder) continue;
             auto world=std::make_unique<sim::World>();auto& w=*world;
-            w.setVisPlayer(-1);w.setPlayerCount(2);
+            w.setPlayerCount(2);
             w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             w.setManaSpots({{512,512}});
             w.setSacredSites({{31,31,2,2,1.0f}});
@@ -87,7 +87,7 @@ int main(int argc,char** argv) {
             check(w.player(0).income>bank.income+builder->income,"completed upgrade produces mana");
             std::printf("%s balance=%d builder=%s ticks=%d expected=%d hash=%016llx\n",race,crusades,builder->id.c_str(),ticks,expected,(unsigned long long)w.stateHash());
             if (std::string(race)=="ara") for (bool destroy:{false,true}) {
-                sim::World canceled;canceled.setVisPlayer(-1);
+                sim::World canceled;
                 canceled.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
                 canceled.setManaSpots({{512,512}});
                 const int worker=canceled.spawn(builder,512,608,std::nullopt,0);

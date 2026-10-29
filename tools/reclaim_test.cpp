@@ -26,7 +26,6 @@ static void check(bool ok,const std::string& what) {
 }
 static constexpr int kW=64;
 static void flat(sim::World& w) {
-    w.setVisPlayer(-1);
     w.setTerrain(std::vector<uint8_t>(kW*kW,100),kW,kW,20);
 }
 static sim::UnitType builderType(int foot=1,float workerTime=10,int buildDist=0) {

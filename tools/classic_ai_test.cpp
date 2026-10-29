@@ -255,7 +255,7 @@ static void typeInfoAndPriorities() {
     // stay <= 500 except the castle, so most values are fixed numbers.
     sim::World w;
     {
-        std::vector<uint8_t> h(64*64,100);w.setVisPlayer(-1);w.setTerrain(std::move(h),64,64,20);
+        std::vector<uint8_t> h(64*64,100);w.setTerrain(std::move(h),64,64,20);
     }
     w.spawn(reg.find("tower"),200,200,0,0);
     const int unfinished=w.spawn(reg.find("worker"),300,300,0,0);
@@ -328,7 +328,7 @@ static void classicLodestoneSites() {
     // deposit at 512,512) holds the player's own finished Lodestone, site B
     // (cell 31,45) is free and farther.
     auto pick=[&](bool second,bool& upgradable) {
-        sim::World w;w.setVisPlayer(-1);w.setPlayerCount(2);
+        sim::World w;w.setPlayerCount(2);
         w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         std::vector<sim::SacredSite> sites{{31,31,2,2,1.0f}};
         std::vector<std::pair<float,float>> spots{{512,512}};
@@ -521,7 +521,7 @@ static void squadAssignment() {
 static void abnarSquads(const char* root) {
     auto vfs=hpi::mountRetailRoot(root);
     sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
-    sim::World w;w.setVisPlayer(-1);
+    sim::World w;
     sim::MatchConfig config;config.vfs=&vfs;
     const auto map=hpi::findMap(vfs,"Abnar's Terrace");
     config.mapPath=map;
@@ -639,7 +639,7 @@ static void classicFactories(const char* root) {
     for (const Seat seat:{Seat{0,"arakeep","Aramon keep",nullptr},Seat{2,"verkeep","Veruna keep",nullptr},
                           Seat{1,"tardung","Taros dungeon",nullptr},
                           Seat{0,"arakeep","Aramon keep, limits 2 Swordsmen / 0 others","limit arasword 2\nlimit ALL 0\n"}}) {
-        sim::World w;w.setVisPlayer(-1);
+        sim::World w;
         sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
         config.slots={{true,0,0,1.0f},{true,seat.faction,1,1.0f,true,false}};
         const auto starts=sim::setupMatch(w,reg,config);
@@ -745,7 +745,7 @@ static void classicBases(const char* root) {
         const int faction=game<5 ? game : 3;
         const uint32_t seed=game<5 ? 0xb450u+uint32_t(faction) : 36u;
         const std::string name=game<5 ? kNames[faction] : std::string(kNames[faction])+" (seed 36)";
-        sim::World w;w.setVisPlayer(-1);
+        sim::World w;
         sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
         config.slots={{true,0,0,1.0f},{true,faction,1,1.0f,true,false}};
         const auto starts=sim::setupMatch(w,reg,config);
@@ -877,7 +877,7 @@ static void classicExpansion(const char* root) {
     const uint32_t minutes=std::getenv("TAK_EXPAND_MINUTES") ? uint32_t(std::atoi(std::getenv("TAK_EXPAND_MINUTES"))) : 20u;
     std::printf("  P7 games (%s, Classic seat vs an idle seat, %u min):\n",mapName,minutes);
     for (int faction=0;faction<5;++faction) {
-        sim::World w;w.setVisPlayer(-1);
+        sim::World w;
         sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
         config.slots={{true,0,0,1.0f},{true,faction,1,1.0f,true,false}};
         const auto starts=sim::setupMatch(w,reg,config);
@@ -981,7 +981,7 @@ static void classicRaid(const char* root) {
     auto vfs=hpi::mountRetailRoot(root);
     sim::TypeRegistry reg;sim::setupRegistry(reg,vfs,false);
     const auto map=hpi::findMap(vfs,"Abnar's Terrace");
-    sim::World w;w.setVisPlayer(-1);
+    sim::World w;
     sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
     config.slots={{true,2,0,1.0f},{true,0,1,1.0f,true,false}};
     const auto starts=sim::setupMatch(w,reg,config);
@@ -1112,7 +1112,7 @@ static void classicMoveVsAttackMove(const char* root) {
     if (!mine || !theirs) { check(false,"ranged Aramon and Veruna soldiers exist");return; }
     std::printf("  U13 (Abnar's Terrace, 10 %s through 10 %s):\n",mine->id.c_str(),theirs->id.c_str());
     for (int mode=0;mode<2;++mode) {
-        sim::World w;w.setVisPlayer(-1);
+        sim::World w;
         sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
         config.slots={{true,2,0,1.0f},{true,0,1,1.0f}};
         const auto starts=sim::setupMatch(w,reg,config);
@@ -1188,7 +1188,7 @@ static void classicWaves(const char* root) {
     const auto map=hpi::findMap(vfs,"Abnar's Terrace");
     const auto* soldier=rangedType(reg,"ARA");
     if (!soldier) { check(false,"a ranged Aramon soldier exists");return; }
-    sim::World w;w.setVisPlayer(-1);
+    sim::World w;
     sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;
     config.slots={{true,2,0,1.0f},{true,0,1,1.0f,true,false}};
     const auto starts=sim::setupMatch(w,reg,config);
@@ -1311,7 +1311,7 @@ static void classicDuels(const char* root) {
         std::printf("  Classic vs Classic (%s, the Monarch not expendable, cap %u min):\n",mapName,minutes);
     else std::printf("  Classic vs level %d (%s, the Monarch not expendable, cap %u min):\n",int(levelB),mapName,minutes);
     for (const auto& pair:pairs) {
-        sim::World w;w.setVisPlayer(-1);
+        sim::World w;
         sim::MatchConfig config;config.vfs=&vfs;config.mapPath=map;config.monarchExpendable=false;
         config.slots={{true,pair.a,0,1.0f,true,false},{true,pair.b,1,1.0f,true,false}};
         const auto starts=sim::setupMatch(w,reg,config);

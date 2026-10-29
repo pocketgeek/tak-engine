@@ -167,7 +167,7 @@ int main(int argc,char** argv) {
     emitter.advance();emitter.emit(1,0,false,random);
     if (calls!=4 || emitter.particles.size()!=1) return 1;
     if (emitter.particles[0].displayAge!=0) return 1;
-    World world;world.setVisPlayer(-1);
+    World world;
     world.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
     world.setSacredSites({{10,10,2,2,1.5f}});
     UnitType lodestone;lodestone.id="lodestone";lodestone.maxHp=100;
@@ -217,7 +217,7 @@ int main(int argc,char** argv) {
             }
         }
     }
-    World construction;construction.setVisPlayer(-1);
+    World construction;
     construction.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
     UnitType builderType;builderType.id="builder";builderType.maxHp=100;
     builderType.income=31;builderType.storage=6100;
@@ -243,7 +243,7 @@ int main(int argc,char** argv) {
     if (construction.unit(siteId)->retailSite->progress.remaining!=0.31995004415512085f || crtCalls!=4) return 1;
     // A factory site with no affordable work stays alive at zero HP. Once
     // income arrives, it receives the same fractional allocation as builders.
-    World factory;factory.setVisPlayer(-1);
+    World factory;
     factory.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
     UnitType producerType;producerType.id="factory";producerType.maxHp=100;
     producerType.maxVel=Fixed();

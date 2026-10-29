@@ -105,7 +105,6 @@ static bool runSeed(uint32_t seed, int foot, bool verbose) {
 
     auto build = [&](bool warm) {
         auto w = std::make_unique<World>();
-        w->setVisPlayer(-1);
         w->setTerrain(std::vector<uint8_t>(size_t(W) * size_t(H), 100), W, H, /*seaLevel=*/20);
         for (const auto& e : edits) {
             w->blockCells(e.x, e.z, e.w, e.h, e.blocked);
@@ -172,7 +171,6 @@ int main() {
         const int W = 128, H = 128;
         const UnitType t = mover(2);
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(size_t(W) * size_t(H), 100), W, H, 20);
         const bool before = w.pathExists(&t, 32.0f, 32.0f, float(W * 16 - 32), float(H * 16 - 32));
         for (int x = 0; x < W; ++x) w.blockCells(x, H / 2, 1, 3, true);
@@ -222,7 +220,6 @@ int main() {
                 // [20,200], the corridor between them; `closed` seals x=20; `tee` opens
                 // a vertical corridor x in [107,113] from z=10 down into it.
                 auto walls = [&](World& w) {
-                    w.setVisPlayer(-1);
                     w.setTerrain(std::vector<uint8_t>(size_t(W) * size_t(H), 100), W, H, 20);
                     w.blockCells(20, 60, 181, 1, true);
                     w.blockCells(20, 68, 181, 1, true);

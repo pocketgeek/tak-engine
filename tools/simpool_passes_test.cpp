@@ -43,7 +43,7 @@ int main() {
     for (int w = 0; w < 4; ++w) {
         auto& world = worlds[w];
         world = std::make_unique<World>();
-        world->setVisPlayer(-1); world->setPlayerCount(4); world->setTerrain(terrain, 160, 160, 30);
+        world->setPlayerCount(4); world->setTerrain(terrain, 160, 160, 30);
         world->setTeam(1, 0);
         if (widths[w] < 0) world->setSerialThreads(true); else world->setSimWorkers(widths[w]);
         for (int i = 0; i < 2600; ++i) {

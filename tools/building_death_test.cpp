@@ -30,7 +30,7 @@ int main(int argc,char** argv) {
             const int ct=definitions.corpseTypeOf(&type);
             check(ct>=0,"restored corpse definition exists");if (ct<0) continue;
             for (bool water:{false,true}) {
-                sim::World w;w.setVisPlayer(-1);
+                sim::World w;
                 w.setTerrain(std::vector<uint8_t>(64*64,water?0:100),64,64,20);
                 w.setFeatureTypes(definitions.featureTypes());w.mapCorpse(&type,ct);
                 const int id=w.spawn(&type,512,512,std::nullopt,0);
@@ -56,7 +56,7 @@ int main(int argc,char** argv) {
         check(!registry.find("arasword")->explosionCorpse,"ordinary soldier explosion still gibs");
         check(!registry.find("arafly")->explosionCorpse,"handler that refuses a corpse stays excluded");
         for(bool unfinished:{false,true}) {
-            sim::World w;w.setVisPlayer(-1);
+            sim::World w;
             w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const auto* type=registry.find("araat");
             w.setFeatureTypes(definitions.featureTypes());w.mapCorpse(type,definitions.corpseTypeOf(type));
@@ -80,7 +80,7 @@ int main(int argc,char** argv) {
             check(ct>=0,"instant wreck has feature definition");if (ct<0) continue;
             if (!balance) std::printf("INSTANT %s\n",name.c_str());
             for (int death:{1,3}) {
-                sim::World w;w.setVisPlayer(-1);
+                sim::World w;
                 w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
                 w.setFeatureTypes(definitions.featureTypes());w.mapCorpse(&type,ct);
                 const int id=w.spawn(&type,512,512,std::nullopt,0);

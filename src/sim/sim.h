@@ -2367,9 +2367,6 @@ public:
     // result (all participants finished, victory if any won). Not a campaign.
     int scenarioOutcome(int player) const;
 
-    // Kept for the callers that still name a viewer; the World has no display fog
-    // any more (the client builds it from viewCounts_), so this does nothing.
-    void setVisPlayer(int) {}
     void setDoubleSight(bool enabled) { doubleSight_ = enabled; }
     // The room's (or campaign .ota's) starting vision, as retail's 4c6540 seeds it:
     // Map Revealed fills the Mapping plane (every cell explored), and FULL VISION

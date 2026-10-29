@@ -349,7 +349,6 @@ int main(int argc, char** argv) {
         type.sight=128;type.sightHeight=32;
         for (World* world:{&headless,&viewed}) {
             world->setPlayerCount(3);world->setTeam(2,0);
-            world->setVisPlayer(world==&headless?-1:1);
             world->setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);
             world->spawn(&type,256,256,{},0);world->tick(1.0f/30.0f);
         }
@@ -366,7 +365,7 @@ int main(int argc, char** argv) {
         check(headless.navigationExploration().empty(),"replay reset removes old exploration");
     }
     for (bool shore:{false,true}) {
-        World world;world.setPlayerCount(2);world.setVisPlayer(0);
+        World world;world.setPlayerCount(2);
         std::vector<uint8_t> terrain(64*64,0);
         if (shore) for (int z=36;z<64;++z) for (int x=0;x<64;++x) terrain[size_t(z)*64+x]=100;
         world.setTerrain(terrain,64,64,32);
@@ -392,7 +391,7 @@ int main(int argc, char** argv) {
         }
     }
     {
-        World world;world.setVisPlayer(-1);
+        World world;
         std::vector<uint16_t> roads(64*64,0xfffb);
         world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,0,&roads);
         UnitType type;type.id="road-turn";type.canMove=true;type.upright=true;
@@ -421,7 +420,7 @@ int main(int argc, char** argv) {
         check(portHeadingToRetail(u.heading)==32767,"stopped half-turn uses the native negative direction");
     }
     for (bool boat:{false,true}) {
-        World world;world.setVisPlayer(-1);
+        World world;
         world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,boat?32:0);
         UnitType type;type.id=boat?"braking-boat":"braking-land";type.canMove=true;
         type.floater=boat;type.upright=!boat;type.maxVel=Fixed::fromInt(4);
@@ -438,7 +437,7 @@ int main(int argc, char** argv) {
         check(world.unit(id)->groundY==Fixed::fromInt(boat?30:0),"braking retains surface height");
     }
     for (bool boat:{false,true}) {
-        World world;world.setVisPlayer(-1);
+        World world;
         world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,boat?32:0);
         UnitType type;type.id=boat?"attacking-boat":"attacking-land";type.canMove=true;
         type.floater=boat;type.upright=!boat;type.maxVel=Fixed::fromInt(4);
@@ -470,7 +469,7 @@ int main(int argc, char** argv) {
               "coasting out of attack range does not run movement twice in one tick");
     }
     {
-        World world;world.setVisPlayer(-1);
+        World world;
         std::vector<uint8_t> heights(64*64);
         for (int z=0;z<64;++z) for (int x=0;x<64;++x) heights[size_t(z)*64+x]=uint8_t(z*4);
         world.setTerrain(heights,64,64,0);
@@ -490,7 +489,7 @@ int main(int argc, char** argv) {
               "live ramp movement applies the prior support pitch to speed and displacement");
     }
     {
-        World world;world.setVisPlayer(-1);
+        World world;
         world.setTerrain(std::vector<uint8_t>(16*16,0),16,16,0);
         std::vector<uint16_t> features(16*16,0xffff);features[5*16+8]=0;
         RetailMapFeatureType rock;rock.name="rock";rock.blocking=true;
@@ -514,7 +513,7 @@ int main(int argc, char** argv) {
               "movement inside the current cell preserves the prior refusal state");
     }
     {
-        World world; world.setVisPlayer(-1);
+        World world;
         world.setTerrain(std::vector<uint8_t>(32*32,64),32,32,100);
         UnitType walker;walker.id="height-walker";walker.canMove=true;walker.upright=true;
         walker.maxVel=Fixed::fromInt(2);walker.maxWaterDepth=255;
@@ -528,7 +527,7 @@ int main(int argc, char** argv) {
               (world.unit(c)->groundTerrainFlags&0x1000),"water flags follow stored body height rather than submerged terrain");
     }
     {
-        World world;world.setVisPlayer(-1);
+        World world;
         std::vector<uint8_t> heights(32*32);
         for (int z=0;z<32;++z) for (int x=0;x<32;++x) heights[size_t(z)*32+x]=uint8_t(x*4);
         world.setTerrain(heights,32,32,16);
@@ -550,7 +549,6 @@ int main(int argc, char** argv) {
     }
     {
         World world;
-        world.setVisPlayer(-1);
         world.setGameSeed(123);
         world.setWindRange(25,5000);
         std::vector<World::RngObservation> draws;
@@ -569,7 +567,7 @@ int main(int argc, char** argv) {
         check(world.wind().speed==first.speed && world.wind().heading==first.heading &&
               world.wind().nextTick==first.nextTick, "replay reset restores both wind random streams");
         World calm;
-        calm.setVisPlayer(-1); calm.setWindRange(0,0);
+        calm.setWindRange(0,0);
         std::vector<World::RngObservation> calmDraws;
         calm.setRngObserver([&](const auto& draw){calmDraws.push_back(draw);});
         calm.tick(1.0f/30.0f);
@@ -577,7 +575,7 @@ int main(int argc, char** argv) {
               "zero-speed wind does not draw a new bearing");
     }
     {
-        World world; world.setVisPlayer(-1); world.setPlayerCount(2);
+        World world; world.setPlayerCount(2);
         for (int i=0;i<2;++i) world.player(i).cacheClock.enabled=true;
         std::vector<World::RngObservation> draws;
         world.setRngObserver([&](const auto& draw){draws.push_back(draw);});
@@ -608,7 +606,7 @@ int main(int argc, char** argv) {
               "disabled stationary guard retires without a scan");
     }
     {
-        World world;world.setVisPlayer(-1);
+        World world;
         world.setTerrain(std::vector<uint8_t>(64*64,10),64,64,0);
         UnitType flyer;flyer.canFly=flyer.canMove=true;flyer.footX=flyer.footZ=2;
         flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);
@@ -639,7 +637,7 @@ int main(int argc, char** argv) {
               "flight move arrival activates the patrol and its return anchor");
     }
     {
-        World world;world.setVisPlayer(-1);
+        World world;
         std::vector<uint8_t> heights(64*64,10);
         heights[16*64+16]=90; // far tile corner of the footprint's sector neighborhood
         heights[8*64+23]=200; // belongs only to the next sector's neighborhood
@@ -676,7 +674,7 @@ int main(int argc, char** argv) {
         check(blocked.terrainGrade(0,0)==0,"roads cannot override a hard slope limit");
     }
     {
-        World world; world.setVisPlayer(-1);
+        World world;
         world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType flyer; flyer.canFly=flyer.canMove=flyer.vtolStandby=true;
         flyer.maxVel=Fixed::fromInt(4); flyer.accel=flyer.brake=Fixed::fromInt(1);
@@ -704,7 +702,7 @@ int main(int argc, char** argv) {
         // Exercise the real standby/controller path: settled flyers and an
         // earlier descent must both exclude a second landing on the same cells.
         for (bool simultaneous : {false,true}) {
-            World world;world.setVisPlayer(-1);
+            World world;
             world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             UnitType flyer;flyer.canFly=flyer.canMove=flyer.vtolStandby=true;
             flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);
@@ -741,7 +739,7 @@ int main(int argc, char** argv) {
         // explored cells below it, so a landing there is refused and the
         // landing search relocates. Retail does not recheck a site once descent
         // has begun (the engine's earlier recheck was removed by user decision).
-        World world;world.setVisPlayer(-1);
+        World world;
         world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType flyer;flyer.canFly=flyer.canMove=flyer.vtolStandby=true;
         flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);
@@ -790,7 +788,7 @@ int main(int argc, char** argv) {
         // landed and descending flyers' footprints.
         struct Stack { int overlaps=0,landed=0,count=0; };
         auto stack=[](PathfindingMode mode,int airborne,int grounded,int lateSight) {
-            World world;world.setVisPlayer(-1);world.setPathfindingMode(mode);
+            World world;world.setPathfindingMode(mode);
             world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             UnitType flyer;flyer.canFly=flyer.canMove=flyer.vtolStandby=true;
             flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);
@@ -851,7 +849,7 @@ int main(int argc, char** argv) {
         // (tools/re/check_landing_moving_ground.py), but skips every test at a
         // site the lander has not explored, so retail touches down on top.
         auto onGround=[](PathfindingMode mode,bool walking) {
-            World world;world.setVisPlayer(-1);world.setPathfindingMode(mode);
+            World world;world.setPathfindingMode(mode);
             world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             UnitType flyer;flyer.canFly=flyer.canMove=flyer.vtolStandby=true;
             flyer.maxVel=Fixed::fromInt(4);flyer.accel=flyer.brake=Fixed::fromInt(1);
@@ -900,7 +898,7 @@ int main(int argc, char** argv) {
         check(walkLegion.second==4,"Legion flyers all land while a ground unit walks across the spot");
     }
     {
-        World world; world.setVisPlayer(-1);
+        World world;
         world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType fighter; fighter.canMove=true; fighter.maxHp=10000;
         fighter.maxVel=Fixed::fromInt(3); fighter.accel=fighter.brake=Fixed::fromFloat(0.1f);
@@ -942,7 +940,6 @@ int main(int argc, char** argv) {
         check(goal.accepts({32768,65536,0}) && !goal.accepts({32769,0,0}) &&
               !goal.accepts({0,65537,0}), "flight point arrival checks horizontal and vertical tolerances");
         World world;
-        world.setVisPlayer(-1);
         world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType flyer;
         flyer.canFly = flyer.canMove = true;
@@ -1001,7 +998,6 @@ int main(int argc, char** argv) {
     }
     {
         World world;
-        world.setVisPlayer(-1);
         std::vector<uint8_t> heights(32 * 32, 64);
         for (int z = 16; z < 32; ++z)
             for (int x = 0; x < 32; ++x) heights[size_t(z) * 32 + x] = 192;
@@ -1023,7 +1019,6 @@ int main(int argc, char** argv) {
           "retail heading conversion is confined to the import/export boundary");
     {
         World world;
-        world.setVisPlayer(-1);
         world.setTerrain(std::vector<uint8_t>(128 * 64, 100), 128, 64, 20);
         UnitType mover;
         mover.canMove = true;
@@ -1049,7 +1044,6 @@ int main(int argc, char** argv) {
     }
     for (int blocked=0; blocked<2; ++blocked) {
         World world;
-        world.setVisPlayer(-1);
         std::vector<uint8_t> terrain(64*64,100);
         if (blocked) terrain[15*64+16]=240;
         world.setTerrain(terrain,64,64,20);
@@ -1079,7 +1073,6 @@ int main(int argc, char** argv) {
           "first captured Hunter displacement includes retail angle quantization and rounding");
     {
         World world;
-        world.setVisPlayer(-1);
         world.setTerrain(std::vector<uint8_t>(128 * 64, 100), 128, 64, 20);
         UnitType mover;
         mover.canMove = true;
@@ -1105,7 +1098,6 @@ int main(int argc, char** argv) {
     }
     {
         World world;
-        world.setVisPlayer(-1);
         world.setTerrain(std::vector<uint8_t>(128 * 64, 100), 128, 64, 20);
         UnitType mover;
         mover.canMove = true;
@@ -1143,7 +1135,6 @@ int main(int argc, char** argv) {
     World a, b;
     std::vector<World::RngObservation> draws;
     a.setRngObserver([&](const World::RngObservation& draw) { draws.push_back(draw); });
-    a.setVisPlayer(-1); b.setVisPlayer(-1);
     const int first = a.spawn(&type, 100, 100);
     b.spawn(&type, 100, 100);
     const int second = a.spawn(&type, 200, 100);
@@ -1170,7 +1161,6 @@ int main(int argc, char** argv) {
         std::vector<World::RngObservation> movementDraws;
         traced.setRngObserver([&](const World::RngObservation& draw) { movementDraws.push_back(draw); });
         for (World* world : {&traced, &plain}) {
-            world->setVisPlayer(-1);
             world->setTerrain(std::vector<uint8_t>(256 * 64, 100), 256, 64, 20);
             world->setPathService(true);
             int id = world->spawn(&mover, 128, 256);

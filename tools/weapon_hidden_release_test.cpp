@@ -20,7 +20,6 @@ int main() {
 
     World world;
     world.setPlayerCount(3);
-    world.setVisPlayer(1);
     world.setSerialThreads(true);
     world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     UnitType shooter,targetType;
@@ -61,7 +60,6 @@ int main() {
     // View from an uninvolved third player while the release is held out of
     // range: that player has no sight of the target (World::playerSees, the
     // plane the client's display fog is built from) before it is back in range.
-    world.setVisPlayer(2);
     for(int tick=0;tick<10;++tick) {
         auto* target=world.unit(targetId);
         const auto* archer=world.unit(shooterId);

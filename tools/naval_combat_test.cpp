@@ -43,7 +43,7 @@ int main(int argc,char**argv) {
             const float distance=std::max(200.f,float(type->weapon.minRange)+80.f);
             if (distance>float(type->weapon.range)*0.85f ||
                 (order==0 && type->leash>0 && distance>type->leash)) continue;
-            tak::sim::World w;w.setVisPlayer(-1);
+            tak::sim::World w;
             std::vector<uint8_t> heights(512*256,10);
             if (shore) for (int z=0;z<256;++z) for (int x=256;x<512;++x)
                 heights[size_t(z)*512+x]=70;
@@ -74,7 +74,7 @@ int main(int argc,char**argv) {
             if (type.domain!=tak::sim::UnitType::Domain::Water || type.isStructure() ||
                 type.weapon.damage<=0 || !type.weapon.melee) continue;
             for (int order=0;order<3;++order) {
-                tak::sim::World w;w.setVisPlayer(-1);
+                tak::sim::World w;
                 w.setTerrain(std::vector<uint8_t>(128*128,10),128,128,64);w.buildNavClasses(registry);legionMode(w,128,128);
                 auto victim=*registry.find("aratrans");victim.maxHp=30000;victim.healTime=0;
                 victim.weapon.damage=0;victim.weapons.clear();victim.maxVel={};
@@ -92,7 +92,7 @@ int main(int argc,char**argv) {
         // Shore defenders must also be able to see and fire at ships. Face the
         // fixture toward its target: this check isolates the reverse sight ray.
         {
-            tak::sim::World w;w.setVisPlayer(-1);
+            tak::sim::World w;
             std::vector<uint8_t> heights(128*128,10);
             for (int z=0;z<128;++z) for (int x=64;x<128;++x) heights[size_t(z)*128+x]=70;
             w.setTerrain(heights,128,128,64);w.buildNavClasses(registry);
@@ -111,7 +111,7 @@ int main(int argc,char**argv) {
         // exercises acquisition and explicit fire gates, with default ground
         // combat and ground navigation checked separately below.
         for (bool cliff:{false,true}) for (bool attack:{false,true}) {
-            tak::sim::World w;w.setVisPlayer(-1);
+            tak::sim::World w;
             std::vector<uint8_t> heights(128*128,10);
             std::vector<uint16_t> features(128*128,0xFFFF);
             for (int z=0;z<128;++z) for (int x=53;x<59;++x)
@@ -155,7 +155,7 @@ int main(int argc,char**argv) {
             // island: cells [isl0,isl1) square, land 66 over sea level 64.
             struct Shot { int fired=0,hits=0,bowSplashes=0,acquired=0; bool holding=false; float closest=1e9f,moved=0,lastMoves=0; };
             auto run=[&](float distance,int moveState,int islandHalf,int ticks,uint8_t land=66) {
-                tak::sim::World w;w.setVisPlayer(-1);
+                tak::sim::World w;
                 const int size=256;
                 std::vector<uint8_t> heights(size_t(size)*size,10);
                 const int c=size/2;

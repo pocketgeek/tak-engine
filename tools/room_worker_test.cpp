@@ -16,7 +16,7 @@ int main() {
     sim::TypeRegistry registry;
     sim::World serial,async,client;
     for(auto* w:{&serial,&async,&client}) {
-        w->setVisPlayer(-1);w->setSerialThreads(true);w->setPlayerCount(2);
+        w->setSerialThreads(true);w->setPlayerCount(2);
         w->setTeam(0,0);w->setTeam(1,1);
         w->setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         w->spawn(&type,100,100,0,0);w->spawn(&type,600,600,0,1);

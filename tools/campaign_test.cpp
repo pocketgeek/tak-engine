@@ -48,7 +48,7 @@ int main(int argc,char** argv) {
             tak::sim::TypeRegistry registry;
             tak::sim::setupRegistry(registry,vfs,false);
             auto seatCheck=[&](const tak::hpi::Vfs& from,const std::string& stem,int aiSlot,const char* what) {
-                tak::sim::World world;world.setVisPlayer(-1);world.setSerialThreads(true);
+                tak::sim::World world;world.setSerialThreads(true);
                 int human=-1;
                 tak::sim::MissionSetup ms;
                 const bool loaded=tak::sim::setupMission(world,registry,from,stem,human,&ms);
@@ -85,7 +85,7 @@ int main(int argc,char** argv) {
                 tak::hpi::Vfs overlay(&vfs);
                 overlay.setModFiles(files);
                 seatCheck(overlay,"seattest",2,"synthetic seat mission loads");
-                tak::sim::World world;world.setVisPlayer(-1);world.setSerialThreads(true);
+                tak::sim::World world;world.setSerialThreads(true);
                 int human=-1;
                 if(tak::sim::setupMission(world,registry,overlay,"seattest",human)) {
                     int owner[3]={-1,-1,-1};
@@ -108,7 +108,7 @@ int main(int argc,char** argv) {
                     for(const auto& m:c.missions)stems.push_back(m.stem);
                     if(!c.altFinal.empty())stems.push_back(c.altFinal);
                     for(const auto& stem:stems) {
-                        tak::sim::World world;world.setVisPlayer(-1);world.setSerialThreads(true);
+                        tak::sim::World world;world.setSerialThreads(true);
                         world.setDoubleSight(true); // prior skirmish setting must not leak into a mission
                         int human=0;
                         const bool loaded=tak::sim::setupMission(world,registry,vfs,stem,human);

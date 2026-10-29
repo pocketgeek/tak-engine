@@ -53,7 +53,6 @@ static UnitType soldier() {
 static float runWall(int thick) {
     const int W = 160, H = 160;
     World w;
-    w.setVisPlayer(-1);
     w.setTerrain(std::vector<uint8_t>(size_t(W) * size_t(H), 100), W, H, /*seaLevel=*/20);
     w.setPathService(true);
     UnitType s = soldier();
@@ -92,7 +91,6 @@ static BlockerRun runBlockerWall(bool legion,bool gap) {
     cart::applyBlockers(map,40,0,41,gap?47:H-1,cart::BlockOp::Paint);
     const auto saved=tak::tnt::Map::load(map.save(),"blocker wall");
     World w;
-    w.setVisPlayer(-1);
     w.setTerrain(saved.heights,saved.width,saved.height,saved.seaLevel,&saved.features);
     w.setPathService(true);
     if (legion) w.setPathfindingMode(PathfindingMode::Legion);
@@ -121,7 +119,6 @@ static BlockerRun runBlockerWall(bool legion,bool gap) {
 // the build order retired, or -1 if it never did within `limit`.
 static int runBlockedApproach(bool legion,float blockerX,float blockerZ,int limit,bool verbose=false) {
     World w;
-    w.setVisPlayer(-1);
     w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     w.setPathService(true);
     if (legion) w.setPathfindingMode(PathfindingMode::Legion);
@@ -152,7 +149,6 @@ struct PlacementRun {int firstFailure=-1,dropped=-1,built=-1,maxFailures=0;bool 
 static PlacementRun runSitePlacement(bool legion,int what,bool fly=false) {
     PlacementRun r;
     World w;
-    w.setVisPlayer(-1);
     w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     w.setPathService(true);
     if (legion) w.setPathfindingMode(PathfindingMode::Legion);
@@ -204,7 +200,6 @@ struct ClearRun {int built=-1,dropped=-1,maxFailures=0;bool guarding=false,guard
 static ClearRun runSiteClear(bool legion,int who,int extraGuards=0) {
     ClearRun r;
     World w;
-    w.setVisPlayer(-1);
     w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     w.setPathService(true);
     if (legion) w.setPathfindingMode(PathfindingMode::Legion);
@@ -271,7 +266,6 @@ int main() {
 
     {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
         w.setPathService(true);
         auto s=soldier();
@@ -291,7 +285,7 @@ int main() {
     // The first blocking body by ID wins, even when spatial cell order is
     // reversed. A mobile blocker returns 2 while a structure returns 0.
     for (bool structureFirst : {false,true}) {
-        World w;w.setVisPlayer(-1);
+        World w;
         w.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
         UnitType mover=soldier(),mobile=soldier(),structure=soldier();
         mobile.footX=mobile.footZ=structure.footX=structure.footZ=1;
@@ -308,7 +302,6 @@ int main() {
     // 1 then 2, retail's 507d10 lets 1 step east and refuses 2.
     {
         auto flat=[](World& w) {
-            w.setVisPlayer(-1);
             w.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
             w.setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
         };
@@ -360,7 +353,7 @@ int main() {
     // cells and checksum exactly: slopes, water, features, edges, structures,
     // gates and mobile bodies, for square and long footprints.
     for (auto [fx,fz] : {std::pair{1,1},{2,2},{3,3},{2,6},{6,2},{4,4}}) {
-        World w;w.setVisPlayer(-1);w.setPathService(true);
+        World w;w.setPathService(true);
         std::vector<uint8_t> heights(size_t(64)*64,100);
         for (int z=0;z<64;++z) for (int x=0;x<64;++x) {
             if (x>=40 && x<46) heights[size_t(z)*64+x]=uint8_t(x%2 ? 120 : 100);   // rough: graded 4
@@ -411,7 +404,7 @@ int main() {
     // its clipped footprint read unrelated heap bytes into the cached checksum.
     for (auto [bx,bz] : {std::pair{-5,32},{69,32},{32,-5},{32,69},
                         {-1,32},{64,32},{32,-1},{32,64}}) {
-        World w;w.setVisPlayer(-1);w.setPathService(true);
+        World w;w.setPathService(true);
         w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType body=soldier(),mover=soldier();mover.footX=mover.footZ=4;
         w.spawn(&body,float(bx*16+16),float(bz*16+16),0,0);
@@ -451,7 +444,6 @@ int main() {
     }
     {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         w.setPathService(true);
         UnitType builder=soldier(), site=soldier();
@@ -489,7 +481,6 @@ int main() {
     }
     {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         w.setPathService(true);
         UnitType builder=soldier(),site=soldier();
@@ -510,7 +501,6 @@ int main() {
     // delivery rewrites the replacement command as a route to the old goal.
     for (bool ambush : {false, true}) {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(64 * 64, 100), 64, 64, 20);
         w.setPathService(true);
         UnitType s = soldier();
@@ -539,7 +529,6 @@ int main() {
     }
     {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(64 * 64, 100), 64, 64, 20);
         w.setPathService(true);
         w.setPathBudget(1); // A blocked goal must survive an unfinished search.
@@ -569,7 +558,6 @@ int main() {
     // reanchoring the direct navigator segment and retaining the queued goal.
     {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(64 * 64, 100), 64, 64, 20);
         w.setPathService(true);
         UnitType s = soldier();
@@ -601,7 +589,6 @@ int main() {
     }
     {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(64 * 64, 100), 64, 64, 20);
         w.setPathService(true);
         UnitType s = soldier();
@@ -622,7 +609,6 @@ int main() {
     }
     {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(20 * 20, 100), 20, 20, 20);
         w.setPathService(true);
         // The smallest budget that still runs: every Retail player is in the
@@ -665,7 +651,6 @@ int main() {
         World searched, direct;
         UnitType s = soldier();
         for (World* w : {&searched, &direct}) {
-            w->setVisPlayer(-1);
             w->setTerrain(std::vector<uint8_t>(64 * 64, 100), 64, 64, 20);
             w->blockCells(20, 0, 2, 32, true);
             for (int tick=0;tick<14;++tick) w->tick(1.0f/30.0f);
@@ -694,7 +679,6 @@ int main() {
     // committed footprint, including moments when an in-flight route is replaced.
     {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(80 * 80, 100), 80, 80, 20);
         w.setPathService(true);
         UnitType s = soldier();
@@ -750,7 +734,6 @@ int main() {
     // The old <3-cell request shortcut cancelled every retry, forever.
     for (bool body : {false, true}) {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(64 * 64, 100), 64, 64, 20);
         w.setPathService(true);
         UnitType s = soldier();
@@ -773,7 +756,6 @@ int main() {
     // Exercise the actual mover as well as the route scorer.
     {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(64 * 64, 100), 64, 64, 20);
         UnitType s = soldier();
         s.footX = s.footZ = 1;
@@ -804,7 +786,6 @@ int main() {
     // snapshot-only occupancy grid lets both succeed even with hard collision.
     {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(64 * 64, 100), 64, 64, 20);
         UnitType s = soldier();
         s.footX = s.footZ = 1;
@@ -825,7 +806,6 @@ int main() {
     // itself is clear. The route scorer must see that same blocked footprint.
     {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(64 * 64, 100), 64, 64, 20);
         UnitType s = soldier();
         s.maxVel = Fixed::fromInt(2);
@@ -847,7 +827,6 @@ int main() {
 
     for (bool guard : {false, true}) {
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(64 * 64, 100), 64, 64, 20);
         w.setPathService(true);
         UnitType s = soldier();
@@ -909,7 +888,6 @@ int main() {
     {
         const int W = 120, H = 120;
         World w;
-        w.setVisPlayer(-1);
         w.setTerrain(std::vector<uint8_t>(size_t(W) * size_t(H), 100), W, H, 20);
         w.setPathService(true);
         UnitType s = soldier();

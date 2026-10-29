@@ -20,7 +20,7 @@ void check(bool ok,const char* label) {
 }
 constexpr int kMap=128;
 void setup(sim::World& w,int players) {
-    w.setVisPlayer(-1);w.setSerialThreads(true);w.setPathfindingMode(sim::PathfindingMode::Retail);
+    w.setSerialThreads(true);w.setPathfindingMode(sim::PathfindingMode::Retail);
     w.setTerrain(std::vector<uint8_t>(kMap*kMap,100),kMap,kMap,20);
     w.setPathService(true);w.setPlayerCount(players);
 }

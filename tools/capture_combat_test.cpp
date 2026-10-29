@@ -22,7 +22,7 @@ tak::sim::UnitType casterType(bool contact) {
     t.weapon=w;t.weapons={w};return t;
 }
 void setup(tak::sim::World& w) {
-    w.setVisPlayer(-1);w.setPlayerCount(3);w.setTeam(2,0);
+    w.setPlayerCount(3);w.setTeam(2,0);
     w.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
 }
 bool targets(const tak::sim::Unit& unit,int id) {

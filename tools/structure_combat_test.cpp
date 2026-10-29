@@ -20,7 +20,7 @@ namespace {
 long reachCase(const tak::sim::TypeRegistry& registry,const char* id,bool hold,int slot,
                float reach,bool decoy,int ticks) {
     const auto& type=*registry.find(id);
-    tak::sim::World w;w.setVisPlayer(-1);
+    tak::sim::World w;
     w.setTerrain(std::vector<uint8_t>(512*512,70),512,512,64);
     w.buildNavClasses(registry);
     auto mobile=*registry.find("araarch");
@@ -103,7 +103,7 @@ int main(int argc,char** argv) {
         for(const auto& [id,type]:registry.types()) {
             if(!type.isStructure() || type.weapon.damage<=0 || type.weapon.melee)continue;
             for(float fraction:{0.6f,0.98f,1.1f}) for(int direction=0;direction<4;++direction) {
-                tak::sim::World w;w.setVisPlayer(-1);
+                tak::sim::World w;
                 const bool water=type.domain==tak::sim::UnitType::Domain::Water;
                 w.setTerrain(std::vector<uint8_t>(512*512,water?10:70),512,512,64);
                 w.buildNavClasses(registry);

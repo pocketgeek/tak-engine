@@ -267,7 +267,7 @@ int main(int argc,char** argv) {
                     const auto generated=generate(p,vfs);
                     for(const auto& name:registry.buildable("verasy")) {
                         const auto* ship=registry.find(name);check(ship,"ship definition");
-                        tak::sim::World simulation;simulation.setVisPlayer(-1);
+                        tak::sim::World simulation;
                         tak::sim::MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath=encodeMapId(p);
                         cfg.slots={{true,2,0,1.f,false,false}};
                         tak::sim::setupMatch(simulation,registry,cfg);

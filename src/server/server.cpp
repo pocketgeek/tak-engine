@@ -1919,7 +1919,6 @@ void Server::tryStart(Client& c) {
     {
         r->reg = r->opts.crusades && dataSet.haveCb ? &dataSet.regCb : &dataSet.reg;
         r->ref = std::make_unique<tak::sim::World>();
-        r->ref->setVisPlayer(-1);   // headless referee: no fog pass
         if (isMission) {
             // The client builds the SAME world (setupMission is deterministic), so the
             // referee and every peer stay in lockstep.

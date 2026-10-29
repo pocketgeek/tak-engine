@@ -204,7 +204,6 @@ int main(int argc, char** argv) {
     isolated.featureNames = {"ZonTree201"};
     isolated.features[10 * 32 + 12] = 0;
     sim::World treeWorld;
-    treeWorld.setVisPlayer(-1);
     treeWorld.setTerrain(isolated.heights, 32, 32, 20, &isolated.features);
     sim::registerMapFeatures(treeWorld, isolated, vfs, &reg);
     const auto* tree = treeWorld.feature(10 * 32 + 12);
@@ -222,7 +221,6 @@ int main(int argc, char** argv) {
         tnt::Map ghost = isolated;
         ghost.features[11 * 32 + 13] = 0;
         sim::World ghostWorld;
-        ghostWorld.setVisPlayer(-1);
         ghostWorld.setTerrain(ghost.heights, 32, 32, 20, &ghost.features);
         sim::registerMapFeatures(ghostWorld, ghost, vfs, &reg);
         const auto& installed = ghostWorld.installedMapFeatures();

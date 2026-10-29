@@ -70,7 +70,7 @@ public:
 
     void reset(int w,int h,const std::vector<Wall>& walls,const std::vector<int>& foots) {
         width=w;height=h;
-        shadow=std::make_unique<World>();shadow->setVisPlayer(-1);
+        shadow=std::make_unique<World>();
         shadow->setTerrain(std::vector<uint8_t>(size_t(w)*h,100),w,h,64);
         std::vector<uint16_t> cells(size_t(w)*h,0xffff);
         for(const auto& r:walls)for(int z=r.z;z<r.z+r.h;++z)for(int x=r.x;x<r.x+r.w;++x)

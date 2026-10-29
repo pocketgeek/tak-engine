@@ -250,7 +250,7 @@ static bool legionSaw(World& w,tak::sim::LegionMission kind) {
 static void legionLogistics() {
     if(g_pathfinding!=tak::sim::PathfindingMode::Legion)return;
     std::printf("legion routes boarding, unload approach and parking:\n");
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setPathService(true);
+    World w;setTestPathfinding(w);w.setPathService(true);
     w.setTerrain(std::vector<uint8_t>(size_t(128)*128,100),128,128,20);
     UnitType carrier=boatType(),passenger=footType();
     const int tid=w.spawn(&carrier,300,600),cid=w.spawn(&passenger,1100,600);
@@ -280,7 +280,6 @@ static void openGround() {
     std::printf("open ground -- the order queue unloadAt builds:\n");
     const int W = 64, H = 64;
     World w;setTestPathfinding(w);
-    w.setVisPlayer(-1);                       // headless, like the referee
     w.setTerrain(std::vector<uint8_t>(size_t(W) * H, 100), W, H, /*seaLevel=*/20);
 
     UnitType boat = boatType(), foot = footType();
@@ -336,7 +335,6 @@ static void alreadyInRange() {
     std::printf("already within unloading range:\n");
     const int W = 64, H = 64;
     World w;setTestPathfinding(w);
-    w.setVisPlayer(-1);
     w.setTerrain(std::vector<uint8_t>(size_t(W) * H, 100), W, H, /*seaLevel=*/20);
 
     UnitType boat = boatType(), foot = footType();
@@ -390,7 +388,6 @@ static void coastline() {
     const int W = 96, H = 96;
     const int shoreCell = 25;                 // cells [0,25) water, [25,..) land
     World w;setTestPathfinding(w);
-    w.setVisPlayer(-1);
     w.setTerrain(coastHeights(W, H, shoreCell), W, H, /*seaLevel=*/40);
     w.setPathService(true);                   // the async boundary tracer, as in a game
 
@@ -445,7 +442,7 @@ static void crowdedCoastlineUnloadRetry() {
         std::printf("crowded coastline unload retry (%s):\n", air ? "air" : "sea");
         constexpr int W=96,H=96,shoreCell=25;
         auto heights=coastHeights(W,H,shoreCell);
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setPathService(true);
+        World w;setTestPathfinding(w);w.setPathService(true);
         w.setTerrain(heights,W,H,40);
         w.setMapPlacementFeatures(std::vector<uint16_t>(size_t(W)*H,0xffff),{});
 
@@ -541,7 +538,6 @@ static void farInland() {
     const int W = 96, H = 96;
     const int shoreCell = 25;
     World w;setTestPathfinding(w);
-    w.setVisPlayer(-1);
     w.setTerrain(coastHeights(W, H, shoreCell), W, H, /*seaLevel=*/40);
     w.setPathService(true);
 
@@ -568,7 +564,7 @@ static void unloadApproachFailure() {
     auto heights=coastHeights(96,96,50);
     for(int z=5;z<=9;++z)for(int x=5;x<=9;++x)
         if(x!=7 || z!=7)heights[size_t(z)*96+x]=100;
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setTerrain(heights,96,96,40);w.setPathService(true);
+    World w;setTestPathfinding(w);w.setTerrain(heights,96,96,40);w.setPathService(true);
     UnitType boat=boatType(),foot=footType();boat.domain=UnitType::Domain::Water;
     const int tid=w.spawn(&boat,120,120),cid=w.spawn(&foot,120,120);
     board(w,tid,cid);w.unloadAt(tid,1300,300);w.order(tid,140,120,true);
@@ -612,7 +608,6 @@ static void retargetWithPendingRoute() {
     std::printf("unload issued while a route is still in flight:\n");
     const int W = 96, H = 96, shoreCell = 25;
     World w;setTestPathfinding(w);
-    w.setVisPlayer(-1);
     w.setTerrain(coastHeights(W, H, shoreCell), W, H, /*seaLevel=*/40);
     w.setPathService(true);
 
@@ -659,7 +654,6 @@ static void isolatedPond() {
         for (int x = 27; x <= 29; ++x) hts[size_t(z) * W + x] = 10;
 
     World w;setTestPathfinding(w);
-    w.setVisPlayer(-1);
     w.setTerrain(hts, W, H, /*seaLevel=*/40);
     w.setPathService(true);
 
@@ -695,7 +689,6 @@ static void isolatedPond() {
 static void boardingLimits() {
     std::printf("boarding eligibility and competing orders:\n");
     World w;setTestPathfinding(w);
-    w.setVisPlayer(-1);
     w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     UnitType carrier=boatType(), passenger=footType();
     carrier.transportCap=3;
@@ -706,7 +699,7 @@ static void boardingLimits() {
     for(int i=0;i<3;++i) ids.push_back(w.spawn(&passenger,420,400+i*16));
     check(w.canLoadInto(ids[0],tid),"eligible passenger can board");
     for(bool air:{false,true}) {
-        World gated;setTestPathfinding(gated);gated.setVisPlayer(-1);
+        World gated;setTestPathfinding(gated);
         gated.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         auto transport=boatType();transport.canFly=air;transport.cruiseAlt=100;
         const int t=gated.spawn(&transport,400,400),p=gated.spawn(&passenger,420,400);
@@ -773,7 +766,7 @@ static void boardingLimits() {
 }
 
 static void transferLifecycle() {
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);
+    World w;setTestPathfinding(w);
     w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     UnitType carrier=boatType(),passenger=footType();
     const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,430,400);
@@ -811,7 +804,7 @@ static void ordinaryFlightMoves() {
         air.isBuilder=role==1;
         if(role==2) air.weapons.emplace_back();
         for(bool queued:{false,true}) {
-            World w;setTestPathfinding(w);w.setVisPlayer(-1);
+            World w;setTestPathfinding(w);
             w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int id=w.spawn(&air,160,160);
             w.unit(id)->baseSpeed=air.maxVel;
@@ -850,7 +843,7 @@ static void ordinaryFlightMoves() {
 }
 
 static void loadOrderQueueing() {
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);
+    World w;setTestPathfinding(w);
     w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     UnitType carrier=boatType(),passenger=footType();
     const int tid=w.spawn(&carrier,200,440),cid=w.spawn(&passenger,430,400);
@@ -885,7 +878,7 @@ static void loadOrderQueueing() {
     }
     check(boarded,"queued passenger and carrier routes advance into boarding");
 
-    World replace;setTestPathfinding(replace);replace.setVisPlayer(-1);
+    World replace;setTestPathfinding(replace);
     replace.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     const int replaceCarrier=replace.spawn(&carrier,200,440);
     const int replacePassenger=replace.spawn(&passenger,430,400);
@@ -898,7 +891,7 @@ static void loadOrderQueueing() {
           replace.unit(replaceCarrier)->orders.front().transportPickup,
           "ordinary load still replaces prior passenger and carrier orders");
 
-    World unloading;setTestPathfinding(unloading);unloading.setVisPlayer(-1);
+    World unloading;setTestPathfinding(unloading);
     unloading.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     const int unloadCarrier=unloading.spawn(&carrier,200,440);
     const int unloadPassenger=unloading.spawn(&passenger,200,440);
@@ -924,7 +917,7 @@ static void loadOrderQueueing() {
     check(released && !unloading.unit(unloadPassenger)->embarked(),
           "queued carrier route completes before passengers disembark");
 
-    World returning;setTestPathfinding(returning);returning.setVisPlayer(-1);returning.setPathService(true);
+    World returning;setTestPathfinding(returning);returning.setPathService(true);
     returning.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     const int returningCarrier=returning.spawn(&carrier,200,440);
     const int returningPassenger=returning.spawn(&passenger,200,440);
@@ -956,7 +949,7 @@ static void loadOrderQueueing() {
 
 static void queueUnloadDuringPickup() {
     for(bool air:{false,true}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setPathService(true);
+        World w;setTestPathfinding(w);w.setPathService(true);
         w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType carrier=boatType(),passenger=footType();
         carrier.canFly=air;carrier.cruiseAlt=100;
@@ -979,7 +972,7 @@ static void queueUnloadDuringPickup() {
 
 static void transportEffectEvents() {
     for(bool air:{false,true}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;
         const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,430,400);
@@ -1018,7 +1011,7 @@ static void transportEffectEvents() {
 
 static void unloadDestinationRetention() {
     for(bool air:{false,true})for(int32_t height:{-65537,0,20*65536+32768}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         w.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
         UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;
         const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,430,400);
@@ -1055,7 +1048,7 @@ static void unloadDestinationRetention() {
 
 static void unloadTransferInterruption() {
     for(bool air:{false,true})for(int elapsed:{1,7,14}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;
         const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,430,400);
@@ -1080,7 +1073,7 @@ static void unloadTransferInterruption() {
 
 static void pickupTransferInterruption() {
     for(bool air:{false,true})for(bool death:{false,true}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;
         const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,450,400);
@@ -1107,7 +1100,7 @@ static void pickupTransferInterruption() {
 
 static void pickupRangeBoundary() {
     for(bool air:{false,true}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;
         const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,550,400.5f);
@@ -1121,7 +1114,7 @@ static void pickupRangeBoundary() {
 }
 
 static void pickupBraking() {
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);
+    World w;setTestPathfinding(w);
     w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     UnitType carrier=boatType(),passenger=footType();
     passenger.brake=tak::sim::Fixed::fromFloat(0.1f);
@@ -1151,7 +1144,7 @@ static void cargoSight() {
     UnitType carrier=boatType(),passenger=footType();
     carrier.canFly=true;carrier.cruiseAlt=100;carrier.sight=40;passenger.sight=400;
     auto run=[&](bool withCargo,int& cargoId,int& carrierId) {
-        auto w=std::make_unique<World>();setTestPathfinding(*w);w->setVisPlayer(-1);
+        auto w=std::make_unique<World>();setTestPathfinding(*w);
         w->setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
         carrierId=w->spawn(&carrier,1000,1000);
         cargoId=withCargo ? w->spawn(&passenger,1000,1000) : 0;
@@ -1190,7 +1183,7 @@ static void cargoSight() {
 }
 
 static void airPickupTransfer() {
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);
+    World w;setTestPathfinding(w);
     w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
     UnitType carrier=boatType(),passenger=footType();carrier.canFly=true;carrier.cruiseAlt=100;
     const int tid=w.spawn(&carrier,400,400),first=w.spawn(&passenger,430,400),second=w.spawn(&passenger,430,430);
@@ -1221,7 +1214,7 @@ static void airPickupTransfer() {
 }
 
 static void surfacePickupQueue(bool water) {
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);
+    World w;setTestPathfinding(w);
     w.setTerrain(water ? coastHeights(96,96,25) : std::vector<uint8_t>(96*96,100),96,96,40);
     w.setPathService(true);
     UnitType carrier=boatType(),passenger=footType();
@@ -1248,7 +1241,7 @@ static void surfacePickupQueue(bool water) {
 
 static void pickupMissionOwnership() {
     for(bool air:{false,true})for(bool passengerFirst:{false,true}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
         UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;carrier.cruiseAlt=100;
         int tid,cid;
@@ -1269,7 +1262,7 @@ static void pickupMissionOwnership() {
               "carrier attaches passenger and removes its completed pickup mission");
     }
     for(bool air:{false,true}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
         UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;carrier.cruiseAlt=100;
         passenger.brake=tak::sim::Fixed();
@@ -1288,7 +1281,7 @@ static void pickupMissionOwnership() {
 
 static void pickupApproachPolling() {
     for(bool air:{false,true})for(bool wakeEarly:{false,true}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setGameSeed(71);
+        World w;setTestPathfinding(w);w.setGameSeed(71);
         w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
         UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;carrier.cruiseAlt=100;
         const int tid=w.spawn(&carrier,400,400),far=w.spawn(&passenger,1000,400),
@@ -1323,7 +1316,7 @@ static void pickupApproachPolling() {
 
 static void surfacePickupNavigation() {
     {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         std::vector<uint8_t> heights(96*96,100);
         for(int z=0;z<45;++z)for(int x=35;x<45;++x)heights[size_t(z)*96+x]=0;
         w.setTerrain(heights,96,96,40);w.setPathService(true);
@@ -1358,7 +1351,7 @@ static void surfacePickupNavigation() {
         check(w.unit(cid)->inTransport==tid,"routed passenger reaches stationary carrier and boards");
     }
     {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         auto heights=coastHeights(96,96,50);
         // A peninsula blocks the straight line from the ship to the passengers.
         for(int z=28;z<35;++z)for(int x=25;x<50;++x)heights[size_t(z)*96+x]=100;
@@ -1389,7 +1382,7 @@ static void surfacePickupNavigation() {
               "ship routes around a peninsula and boards both queued passengers");
     }
     {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);w.setPathService(true);
         UnitType carrier=boatType(),passenger=footType();
         const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,1000,400);
@@ -1404,7 +1397,7 @@ static void surfacePickupNavigation() {
               "surface pickup consumes navigator arrival before the polling deadline");
     }
     {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         auto heights=coastHeights(96,96,50);
         for(int z=5;z<=9;++z)for(int x=5;x<=9;++x)
             if(x!=7 || z!=7)heights[size_t(z)*96+x]=100;
@@ -1431,7 +1424,7 @@ static void surfacePickupNavigation() {
 
 static void pickupApproachFailure() {
     for(bool air:{false,true})for(bool moving:{false,true})for(bool inRange:{false,true}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
         UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;carrier.cruiseAlt=100;
         const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,1000,400);
@@ -1456,7 +1449,7 @@ static void pickupApproachFailure() {
 }
 
 static void airPickupArrivalEvent() {
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setGameSeed(71);
+    World w;setTestPathfinding(w);w.setGameSeed(71);
     w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
     UnitType carrier=boatType(),passenger=footType();carrier.canFly=true;carrier.cruiseAlt=100;
     const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,1000,400);
@@ -1484,7 +1477,7 @@ static void airPickupArrivalEvent() {
 }
 
 static void pickupNearbySelection(bool air,bool slowBrake=false) {
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setGameSeed(173);w.setPathService(true);
+    World w;setTestPathfinding(w);w.setGameSeed(173);w.setPathService(true);
     w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
     UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;carrier.cruiseAlt=100;
     if(!slowBrake)passenger.brake=tak::sim::Fixed::fromFloat(0.125f);
@@ -1541,7 +1534,7 @@ static void retailRoster(const char* root) {
     for(bool crusades:{false,true}) {
         tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,crusades);
         for(bool air:{false,true}) {
-            World w;setTestPathfinding(w);w.setVisPlayer(-1);
+            World w;setTestPathfinding(w);
             w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
             auto carrier=boatType(),target=footType();carrier.canFly=air;carrier.cruiseAlt=100;
             target.maxHp=10000;
@@ -1584,7 +1577,7 @@ static void retailRoster(const char* root) {
             const auto* output=registry.find("zonter");
             check(builder && output,"transported conjurer assets are available");
             if(!builder || !output)continue;
-            World w;setTestPathfinding(w);w.setVisPlayer(-1);
+            World w;setTestPathfinding(w);
             w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
             auto carrier=boatType();carrier.canFly=air;carrier.cruiseAlt=100;
             carrier.maxTransportSize=64;carrier.transportSizeCap=64;
@@ -1614,7 +1607,7 @@ static void retailRoster(const char* root) {
                   "unloaded conjurer can start the new deferred production job");
         }
         for(bool air:{false,true}) {
-            World w;setTestPathfinding(w);w.setVisPlayer(-1);
+            World w;setTestPathfinding(w);
             w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
             auto carrier=boatType();carrier.canFly=air;carrier.cruiseAlt=100;
             carrier.maxTransportSize=64;carrier.transportSizeCap=64;
@@ -1657,7 +1650,7 @@ static void retailRoster(const char* root) {
                 name.c_str(),crusades,type.transportCap,type.transportSizeCap,type.maxTransportSize,type.transportDist);
             check(type.transportCap>0 && type.transportSizeCap>=type.transportCap &&
                 type.maxTransportSize>0,"retail carrier has separate nonzero capacity limits");
-            World w;setTestPathfinding(w);w.setVisPlayer(-1);
+            World w;setTestPathfinding(w);
             w.setTerrain(coastHeights(128,128,50),128,128,40);
             w.buildNavClasses(registry);w.setPathService(true);
             const auto* foot=registry.find("araarch");
@@ -1726,7 +1719,7 @@ static void postUnloadRoster(const char* root) {
                 const int count=pass ? fits : 1;   // one passenger, then a full load
                 if(pass && fits==1)continue;
                 for(bool near:{true,false}) {
-                    World w;w.setVisPlayer(-1);
+                    World w;
                     // Ships need the coast; flyers and siege towers drop on open land,
                     // where the landing mission need not search past the water.
                     w.setTerrain(landCarrier ? std::vector<uint8_t>(128*128,100) : coastHeights(128,128,50),128,128,40);
@@ -1813,7 +1806,7 @@ static void postUnloadQueued(const char* root) {
             if(!type)continue;
             for(PathfindingMode mode:{PathfindingMode::Retail,PathfindingMode::Legion})
             for(int kind=0;kind<2;++kind) {
-                World w;w.setVisPlayer(-1);
+                World w;
                 w.setTerrain(std::vector<uint8_t>(128*128,100),128,128,40);
                 w.buildNavClasses(registry);w.setPathService(true);w.setPathfindingMode(mode);
                 const int tid=w.spawn(type,900,700);
@@ -1842,7 +1835,7 @@ static void postUnloadQueued(const char* root) {
 }
 
 static void airAcrossWater() {
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);
+    World w;setTestPathfinding(w);
     auto heights=coastHeights(96,96,60);
     // Small launch island, disconnected from the destination land.
     for(int z=5;z<15;++z) for(int x=5;x<15;++x) heights[z*96+x]=100;
@@ -1919,7 +1912,7 @@ static void exactLandingSites() {
         carrier.canFly=flying;carrier.cruiseAlt=100;
         passenger.accel={}; // observe the exact release point before PARK moves it
         auto terrain=[](World& w) {
-            w.setVisPlayer(-1);w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+            w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             w.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
         };
         {
@@ -1998,7 +1991,7 @@ static void exactLandingSites() {
         }
     }
     {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+        World w;setTestPathfinding(w);w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         w.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
         auto carrier=boatType(),passenger=footType();carrier.canFly=true;carrier.cruiseAlt=100;
         const int tid=w.spawn(&carrier,512.25f,520.5f),cid=w.spawn(&passenger,430,520);
@@ -2011,7 +2004,7 @@ static void exactLandingSites() {
 
 static void passengerCancellationWait() {
     for(bool air:{false,true})for(bool wake:{false,true}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
         UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;
         const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,1000,400);
@@ -2034,7 +2027,7 @@ static void passengerCancellationWait() {
     // The reciprocal carrier has the same dispatcher gate: changing the
     // passenger's orders does not bypass a sleeping pickup mission.
     for(bool air:{false,true})for(bool wake:{false,true}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setGameSeed(71);
+        World w;setTestPathfinding(w);w.setGameSeed(71);
         w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
         UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;carrier.cruiseAlt=100;
         const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,1000,400);
@@ -2054,7 +2047,7 @@ static void passengerCancellationWait() {
         }
     }
     for(bool air:{false,true}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
         UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;carrier.cruiseAlt=100;
         const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,1000,400);
@@ -2065,7 +2058,7 @@ static void passengerCancellationWait() {
 
     // Reference invalidation on death posts event 8, unlike changing orders.
     for(bool air:{false,true})for(bool passengerDies:{false,true}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
         UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;carrier.cruiseAlt=100;
         const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,1000,400);
@@ -2126,7 +2119,7 @@ static void passengerMissionSchedule() {
 }
 
 static void airUnloadArrivalEvent() {
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setGameSeed(71);
+    World w;setTestPathfinding(w);w.setGameSeed(71);
     w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
     UnitType carrier=boatType(),passenger=footType();carrier.canFly=true;carrier.cruiseAlt=100;
     const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,430,400);
@@ -2162,7 +2155,7 @@ static void airUnloadArrivalEvent() {
 }
 
 static void airUnloadControllerPendingEvents() {
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setGameSeed(71);
+    World w;setTestPathfinding(w);w.setGameSeed(71);
     w.setTerrain(std::vector<uint8_t>(96*96,100),96,96,20);
     UnitType carrier=boatType(),passenger=footType();carrier.canFly=true;carrier.cruiseAlt=100;
     const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,430,400);
@@ -2188,7 +2181,7 @@ static void airUnloadControllerPendingEvents() {
 
 static void airUnloadWorldTimeline() {
     using tak::sim::Fixed;
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setGameSeed(71);
+    World w;setTestPathfinding(w);w.setGameSeed(71);
     w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
     UnitType carrier=boatType(),passenger=footType();
     carrier.canFly=true;carrier.cruiseAlt=100;carrier.transportDist=150;
@@ -2230,7 +2223,7 @@ static void airUnloadWorldTimeline() {
 
 static void surfaceUnloadWorldTimeline() {
     using tak::sim::Fixed;
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setPathService(false);w.setGameSeed(71);
+    World w;setTestPathfinding(w);w.setPathService(false);w.setGameSeed(71);
     w.setTerrain(coastHeights(64,64,25),64,64,40);
     UnitType carrier=boatType(),passenger=footType();
     carrier.domain=UnitType::Domain::Water;carrier.floater=true;
@@ -2271,7 +2264,7 @@ static void surfaceUnloadWorldTimeline() {
 
 static void pickupControllerPendingEvents() {
     for(bool air:{false,true}) {
-        World w;setTestPathfinding(w);w.setVisPlayer(-1);
+        World w;setTestPathfinding(w);
         w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType carrier=boatType(),passenger=footType();
         carrier.canFly=air;carrier.cruiseAlt=100;
@@ -2348,7 +2341,7 @@ static void surfaceUnloadRouteFixture(int variant) {
         heights[size_t(tz)*W+tx]=source[size_t(z)*W+x];
     }
 
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);w.setTerrain(heights,W,H,sea);w.setPathService(true);
+    World w;setTestPathfinding(w);w.setTerrain(heights,W,H,sea);w.setPathService(true);
     tak::sim::RetailReplayProbe::dumpSurfaceSearchGrades(w);
     UnitType carrier=boatType(),passenger=footType();
     carrier.domain=UnitType::Domain::Water;carrier.floater=true;
@@ -2513,7 +2506,7 @@ static void surfaceUnloadMapRouteFixture(const char* retailRoot,const char* mapN
         carrierType=&syntheticCarrier;passengerType=&syntheticPassenger;
     }
 
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);
+    World w;setTestPathfinding(w);
     w.setTerrain(map.heights,map.width,map.height,map.seaLevel,&map.features);
     tak::sim::registerMapFeatures(w,map,vfs);
     if(registry) w.buildNavClasses(*registry);
@@ -2791,7 +2784,7 @@ static bool surfaceUnloadMapTravelFixture(const char* retailRoot,const char* map
         carrierType=&syntheticCarrier;passengerType=&syntheticPassenger;
     }
 
-    World world;setTestPathfinding(world);world.setVisPlayer(-1);
+    World world;setTestPathfinding(world);
     world.setTerrain(map.heights,map.width,map.height,map.seaLevel,&map.features);
     tak::sim::registerMapFeatures(world,map,vfs);
     if(registry) world.buildNavClasses(*registry);
@@ -2919,7 +2912,7 @@ static bool surfaceUnloadMapTravelFixture(const char* retailRoot,const char* map
 // dispatcher has installed a destination, so the comparison can distinguish
 // flight integration from pickup/unload timing.
 static void airFlightTraceFixture(unsigned steps) {
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);
+    World w;setTestPathfinding(w);
     w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,40);w.setPathService(false);
     UnitType air=boatType();
     air.name="flight trace";air.canFly=true;air.cruiseAlt=100;
@@ -2967,7 +2960,7 @@ struct AirUnloadFlightTraceProfile {
 
 static void airUnloadFlightTraceFixture(unsigned steps,bool heightStep=false,
         const AirUnloadFlightTraceProfile* profile=nullptr) {
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);
+    World w;setTestPathfinding(w);
     std::vector<uint8_t> terrain(256*256,100);
     // The bounded height-step trace puts a tall ridge across the direct flight
     // goal so sector-height refresh is exercised without a long flat replay.
@@ -3058,7 +3051,7 @@ static void airUnloadMapFlightTraceFixture(const char* retailRoot,const char* ma
        passengerType->canFly)
         throw std::runtime_error("retail unit profiles are not an aerial carrier and ground passenger");
 
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);
+    World w;setTestPathfinding(w);
     w.setTerrain(map.heights,map.width,map.height,map.seaLevel,&map.features);
     tak::sim::registerMapFeatures(w,map,vfs);
     w.buildNavClasses(registry);
@@ -3257,7 +3250,7 @@ int main(int argc,char** argv) {
     }
     if(argc==2 && !std::strcmp(argv[1],"--pickup-timeline")) {
         for(bool air:{false,true}) {
-            World w;setTestPathfinding(w);w.setVisPlayer(-1);
+            World w;setTestPathfinding(w);
             w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             UnitType carrier=boatType(),passenger=footType();carrier.canFly=air;carrier.cruiseAlt=100;
             const int tid=w.spawn(&carrier,400,400),cid=w.spawn(&passenger,430,400);

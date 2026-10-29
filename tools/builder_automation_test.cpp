@@ -23,7 +23,7 @@ sim::UnitType lodestone() {
     t.footX=t.footZ=4;t.onMana=true;t.buildTime=100;t.buildCost=10;return t;
 }
 void setup(sim::World& w,sim::PathfindingMode mode,bool serial=true) {
-    w.setVisPlayer(-1);w.setSerialThreads(serial);w.setPathfindingMode(mode);
+    w.setSerialThreads(serial);w.setPathfindingMode(mode);
     w.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
     w.setPathService(true);w.player(0).mana=10000;
 }

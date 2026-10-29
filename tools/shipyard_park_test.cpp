@@ -59,7 +59,7 @@ const std::vector<std::pair<float,float>> kStarts{{4352,1792},{5376,3328},{4352,
     {1792,4352},{768,3328},{1792,1792},{3328,768}};
 
 void setupPondMap(sim::World& w,const sim::TypeRegistry& registry,hpi::Vfs& vfs,sim::PathfindingMode mode) {
-    w.setSerialThreads(true);w.setVisPlayer(-1);
+    w.setSerialThreads(true);
     sim::MatchConfig cfg;cfg.vfs=&vfs;cfg.mapPath="maps/shipyard-pond.tnt";cfg.loadCrt=false;
     cfg.pathfindingMode=mode;cfg.slots.resize(1);sim::setupMatch(w,registry,cfg);
 }
@@ -125,7 +125,7 @@ void pondSiting(const sim::TypeRegistry& registry,hpi::Vfs& vfs) {
 // A land factory parks its output in front of it, inside PARK's ring; a rally
 // point still wins over PARK.
 void landFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,bool rally,int count=4) {
-    sim::World w;w.setSerialThreads(true);w.setVisPlayer(-1);w.setPathfindingMode(mode);
+    sim::World w;w.setSerialThreads(true);w.setPathfindingMode(mode);
     w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
     w.setMapPlacementFeatures(std::vector<uint16_t>(256*256,0xffff),{});
     w.buildNavClasses(registry);w.setPathService(true);
@@ -198,7 +198,7 @@ void landFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,boo
 // A rally whose only entry is an attack on a unit that has since died hands the
 // output nothing; it must still park rather than stand on the pad.
 void deadRally(const sim::TypeRegistry& registry,sim::PathfindingMode mode) {
-    sim::World w;w.setSerialThreads(true);w.setVisPlayer(-1);w.setPathfindingMode(mode);
+    sim::World w;w.setSerialThreads(true);w.setPathfindingMode(mode);
     w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
     w.setMapPlacementFeatures(std::vector<uint16_t>(256*256,0xffff),{});
     w.buildNavClasses(registry);w.setPathService(true);
@@ -231,7 +231,7 @@ void deadRally(const sim::TypeRegistry& registry,sim::PathfindingMode mode) {
 // from the factory, at a random angle; padding is (rand(6)+rand(3)+6)*16. A
 // flyer used to get a 60 px step south instead, with the rally behind it.
 void flatWorld(sim::World& w,const sim::TypeRegistry& registry,sim::PathfindingMode mode) {
-    w.setSerialThreads(true);w.setVisPlayer(-1);w.setPathfindingMode(mode);
+    w.setSerialThreads(true);w.setPathfindingMode(mode);
     w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
     w.setMapPlacementFeatures(std::vector<uint16_t>(256*256,0xffff),{});
     w.buildNavClasses(registry);w.setPathService(true);

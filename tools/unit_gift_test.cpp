@@ -12,7 +12,7 @@ int main() {
     sim::TypeRegistry reg;
     auto world=std::make_unique<sim::World>();auto& w=*world;
     w.setPlayerCount(3);w.setTeam(0,0);w.setTeam(1,0);w.setTeam(2,1);
-    w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);w.setVisPlayer(-1);
+    w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     int id=w.spawn(&type,128,128,std::nullopt,0);
     auto& u=*w.unit(id);
     check(w.canGiveUnit(id,0,1),"ordinary allied gift eligible");
@@ -51,7 +51,7 @@ int main() {
     check(w.giveUnit(empty,0,1),"empty landed carrier eligible");
     // Overflow sharing prioritizes lowest percentage full, independent of slot.
     auto economy=std::make_unique<sim::World>();auto& e=*economy;
-    e.setPlayerCount(3);e.setVisPlayer(-1);
+    e.setPlayerCount(3);
     sim::UnitType bank;bank.id="bank";bank.maxHp=100;bank.storage=1000;
     e.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     for(int p=0;p<3;++p) {e.setTeam(p,0);e.spawn(&bank,128+64*p,256,std::nullopt,p);}

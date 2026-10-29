@@ -10,7 +10,7 @@ static UnitType fighter() {
     t.weapon.reload=1;t.weapon.aimTol=65536;t.weapons={t.weapon};return t;
 }
 static void terrain(World& w) {
-    w.setPlayerCount(2);w.setVisPlayer(-1);
+    w.setPlayerCount(2);
     w.setTerrain(std::vector<uint8_t>(64*64,50),64,64,0);
 }
 static int oneHit(float attack,float armor) {

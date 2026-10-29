@@ -51,7 +51,7 @@ struct Result {
 
 Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,Layout layout,
            const char* factoryName,const char* outputName,int count,bool rally,int speed) {
-    sim::World w;w.setSerialThreads(true);w.setVisPlayer(-1);w.setPathfindingMode(mode);
+    sim::World w;w.setSerialThreads(true);w.setPathfindingMode(mode);
     const bool water=layout==Layout::Water;
     std::vector<uint8_t> heights(kCells*kCells,water?0:100);
     if(layout==Layout::Cliff)

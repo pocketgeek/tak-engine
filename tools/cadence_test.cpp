@@ -50,7 +50,6 @@ static UnitType walkerType() {
 
 static World* makeWorld(int W, int H) {
     World* w = new World();
-    w->setVisPlayer(-1);
     w->setTerrain(std::vector<uint8_t>(size_t(W) * size_t(H), 100), W, H, 20);
     w->setPathService(true);
     return w;
@@ -62,7 +61,7 @@ int main(int argc,char** argv) {
         int minimumDepth,maximumDepth,inactive,count;
         while (std::scanf("%u %u %u %u %u %u %u %u %u %d %d %d %d",&tick,&stamp,&seed,&outcome,
                           &mode,&speedMode,&streak,&boat,&scale,&minimumDepth,&maximumDepth,&inactive,&count)==13) {
-            World world;world.setVisPlayer(-1);world.setPathService(true);
+            World world;world.setPathService(true);
             world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);
             UnitType type=walkerType();type.floater=boat!=0;
             type.minWaterDepth=minimumDepth;type.maxWaterDepth=maximumDepth;
@@ -89,7 +88,7 @@ int main(int argc,char** argv) {
     std::printf("cadence_test\n");
 
     for (bool consumed : {false,true}) for (bool refused : {false,true}) {
-        World w;w.setVisPlayer(-1);w.setPathService(true);
+        World w;w.setPathService(true);
         w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType type=walkerType();const int id=w.spawn(&type,128,128);auto& u=*w.unit(id);
         Order goal;goal.goal=goal.groundMission=true;goal.controller=1;
@@ -109,7 +108,7 @@ int main(int argc,char** argv) {
 
     // A partial route ending at the mover is not a completed mission.
     {
-        World w;w.setVisPlayer(-1);w.setPathService(true);
+        World w;w.setPathService(true);
         w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType type=walkerType();type.brake=Fixed::fromFloat(.125f);
         const int id=w.spawn(&type,128,128);auto& u=*w.unit(id);

@@ -158,7 +158,7 @@ int main(int argc,char** argv) {
             const int x=16+int(i%columns)*spacing,z=16+int(i/columns)*spacing;
             ids.push_back(z*map.width+x);map.features[ids.back()]=uint16_t(i);
         }
-        World world;world.setVisPlayer(-1);world.setTerrain(map.heights,map.width,map.height,0);
+        World world;world.setTerrain(map.heights,map.width,map.height,0);
         registerMapFeatures(world,map,vfs);
         int destructible=0,protectedCount=0,damageOnly=0;
         for(size_t i=0;i<names.size();++i) {
@@ -197,7 +197,7 @@ int main(int argc,char** argv) {
         TypeRegistry registry;setupRegistry(registry,vfs,std::stoi(argv[4])!=0);
         const auto* type=registry.find(argv[3]);
         if (!type || !type->gate || !type->script()) return 2;
-        World world;world.setVisPlayer(-1);
+        World world;
         world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);
         world.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
         const int id=world.spawn(type,512,512);
@@ -222,7 +222,7 @@ int main(int argc,char** argv) {
                 if (!type.script() || !type.onOffable) {
                     std::cerr<<name<<": gate activation inputs absent\n";return 1;
                 }
-                World world;world.setVisPlayer(-1);
+                World world;
                 world.setTerrain(std::vector<uint8_t>(64*64,0),64,64,0);
                 world.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
                 const int id=world.spawn(&type,512,512);
@@ -485,7 +485,7 @@ int main(int argc,char** argv) {
             monarch.maxHp=soldier.maxHp=building.maxHp=100;
             monarch.maxVel=soldier.maxVel=Fixed::fromInt(1);
             building.maxVel={};building.canMove=true; // authored Keep flag does not make it mobile
-            World emotes;emotes.setVisPlayer(-1);TypeRegistry registry;
+            World emotes;TypeRegistry registry;
             const int king=emotes.spawn(&monarch,100,100,0,0);
             const int a=emotes.spawn(&soldier,200,100,0,0), b=emotes.spawn(&soldier,300,100,0,0);
             const int enemy=emotes.spawn(&soldier,400,100,0,1);
@@ -547,7 +547,7 @@ int main(int argc,char** argv) {
                     0x10021001,258,0x1000f000,1,0x10065000};
         UnitType type;type.simulationScript=file;type.maxHp=100;
         type.productionModel={{{0,0,0},-1,0},{{32*65536,6*65536,12*65536},0,1}};
-        World world;world.setVisPlayer(-1);
+        World world;
         const int id=world.spawn(&type,200,200);auto* unit=world.unit(id);
         unit->groundY=Fixed::fromInt(50);unit->heading=Bam(32768);
         RetailReplayProbe::emitScript(world,id);
@@ -597,7 +597,7 @@ int main(int argc,char** argv) {
                     0x10064000,0,                                       // loop
                     0x10021001,7,0x10023004,1,0x10065000};              // Poke: static1 = 7
         UnitType type;type.simulationScript=file;type.maxHp=100;
-        World skipping,running;skipping.setVisPlayer(-1);running.setVisPlayer(-1);
+        World skipping,running;
         std::vector<int> ids;
         for (int k=0;k<5;++k) {
             ids.push_back(skipping.spawn(&type,100.f+40*k,200));
@@ -638,7 +638,7 @@ int main(int argc,char** argv) {
             weapon.projVel=300;weapon.straight=!lightning;weapon.lightning=lightning;
             weapon.nimbus=flag;weapon.buildUp=0.25f;weapon.buildUpTicks=7;
             type.weapon=weapon;type.weapons={weapon};
-            tak::sim::World world;world.setVisPlayer(-1);
+            tak::sim::World world;
             world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=world.spawn(&type,200,200,0,0),target=world.spawn(&victim,350,200,0,1);
             RetailReplayProbe::shoot(world,from,target);
@@ -665,7 +665,7 @@ int main(int argc,char** argv) {
             weapon.wanderLoopTicks={2};
             if(endArt)weapon.wanderEndTicks={2,1};
             type.weapons={weapon};type.weapon=weapon;
-            World stormWorld;stormWorld.setVisPlayer(-1);
+            World stormWorld;
             stormWorld.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=stormWorld.spawn(&type,200,200,0,0),target=stormWorld.spawn(&victim,234,200,0,1);
             // A model-less mover has no support quad to stand on the terrain,
@@ -721,7 +721,7 @@ int main(int argc,char** argv) {
             Weapon weapon;weapon.kind=Weapon::Kind::Wandering;weapon.durationTicks=100;
             weapon.variationTicks=1;weapon.maxVariation=2;weapon.projVel=30;weapon.reload=100;
             weapon.wanderLoopTicks={2};type.weapons={weapon};type.weapon=weapon;
-            World storms;storms.setVisPlayer(-1);
+            World storms;
             storms.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=storms.spawn(&type,200,200,0,0),target=storms.spawn(&victim,400,300,0,1);
             storms.setStance(from,2);storms.setStance(target,2);
@@ -743,7 +743,7 @@ int main(int argc,char** argv) {
             UnitType type,victim;type.maxHp=victim.maxHp=1000;
             Weapon weapon;weapon.kind=Weapon::Kind::Wandering;weapon.durationTicks=100;
             weapon.variationTicks=99;weapon.projVel=960;weapon.reload=100;weapon.wanderLoopTicks={2};
-            type.weapons={weapon};World storms;storms.setVisPlayer(-1);
+            type.weapons={weapon};World storms;
             storms.setTerrain(std::vector<uint8_t>(8*8,100),8,8,20);
             const int from=storms.spawn(&type,96,64,0,0),target=storms.spawn(&victim,112,64,0,1);
             storms.setStance(from,2);storms.setStance(target,2);
@@ -796,7 +796,7 @@ int main(int argc,char** argv) {
         // Death-spawned wrecks retain unit-owned visuals, but weapon hits must
         // damage their feature footprint and leave the authored neutral rubble.
         for(bool splash:{false,true}) for(bool permanent:{false,true}) {
-            World wrecks;wrecks.setVisPlayer(-1);
+            World wrecks;
             wrecks.setTerrain(std::vector<uint8_t>(64*64,10),64,64,0);
             wrecks.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
             FeatType body;body.name="keep-wreck";body.fx=body.fz=5;body.hp=1000;
@@ -838,7 +838,7 @@ int main(int argc,char** argv) {
             require(wrecks.unit(second)->corpseUntil==0,"retired corpse anchor no longer receives damage");
         }
         {
-            World bodies;bodies.setVisPlayer(-1);
+            World bodies;
             bodies.setTerrain(std::vector<uint8_t>(64*64,10),64,64,0);
             bodies.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
             FeatType body;body.name="archer-corpse";body.fx=body.fz=2;body.hp=440;
@@ -855,7 +855,7 @@ int main(int argc,char** argv) {
         // A large Taros tree must take a direct hit anywhere in its footprint,
         // even when neither its anchor nor its center is inside the splash radius.
         for (int size : {2,5}) for (float aoe : {0.f,160.f}) {
-            World trees;trees.setVisPlayer(-1);
+            World trees;
             trees.setTerrain(std::vector<uint8_t>(64*64,10),64,64,0);
             trees.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
             FeatType tree;tree.name="tartree";tree.fx=tree.fz=size;tree.hp=1000;
@@ -925,7 +925,7 @@ int main(int argc,char** argv) {
             targetType.footX=targetType.footZ=4;targetType.modelTop=80*65536;
             targetType.projectileQuad=RetailCollisionQuad{{{-24*65536,-24*65536},{24*65536,-24*65536},
                 {24*65536,24*65536},{-24*65536,24*65536}}};
-            World world;world.setVisPlayer(-1);
+            World world;
             world.setTerrain(std::vector<uint8_t>(64*64,10),64,64,0);
             world.setMapPlacementFeatures(std::vector<uint16_t>(64*64,0xffff),{});
             FeatType tree;tree.name="tartree09";tree.fx=tree.fz=5;
@@ -1335,7 +1335,7 @@ int main(int argc,char** argv) {
             hitFile->code.insert(hitFile->code.end(),{0x10021002,i,0x10023004,i});
         hitFile->code.push_back(0x10065000);
         UnitType victimType;victimType.maxHp=1000;victimType.simulationScript=hitFile;
-        World impacts;impacts.setVisPlayer(-1);
+        World impacts;
         impacts.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         const int direct=impacts.spawn(&victimType,300,200,0.f,1);
         const int splash=impacts.spawn(&victimType,320,200,0.f,1);
@@ -1378,7 +1378,7 @@ int main(int argc,char** argv) {
         flyingBuilder.brake=Fixed::fromFloat(0.2f);flyingBuilder.cruiseAlt=150;
         flyingBuilder.buildDist=100;flyingBuilder.simulationScript=takeoffFile;
         UnitType placedOutput;placedOutput.maxHp=100;placedOutput.buildTime=10000;
-        World takeoffWorld;takeoffWorld.setVisPlayer(-1);
+        World takeoffWorld;
         takeoffWorld.setTerrain(std::vector<uint8_t>(128*128,100),128,128,20);
         const int flyingWorker=takeoffWorld.spawn(&flyingBuilder,1000,1000,0);
         takeoffWorld.queueBuild(flyingWorker,&placedOutput,1120,1056,false);
@@ -1402,7 +1402,7 @@ int main(int argc,char** argv) {
         UnitType repairer;repairer.maxHp=100;repairer.isBuilder=true;repairer.canMove=true;
         repairer.workerTime=1;repairer.simulationScript=repairFile;
         UnitType damaged;damaged.maxHp=100;damaged.buildTime=100;damaged.buildCost=100;
-        World repairWorld;repairWorld.setVisPlayer(-1);
+        World repairWorld;
         repairWorld.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
         const int worker=repairWorld.spawn(&repairer,200,200,0);
         const int repaired=repairWorld.spawn(&damaged,220,200,0);
@@ -1551,7 +1551,7 @@ int main(int argc,char** argv) {
                                0x10021004,0,0x10021001,10,0x10031000,0x10023004,0,0x10065000};
         UnitType fire;fire.maxHp=100;fire.onOffable=true;fire.activateWhenBuilt=false;
         fire.simulationScript=activationFile;
-        World activationWorld;activationWorld.setVisPlayer(-1);
+        World activationWorld;
         activationWorld.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
         const int fireId=activationWorld.spawn(&fire,200,200);
         activationWorld.setActive(fireId,true);
@@ -1572,7 +1572,7 @@ int main(int argc,char** argv) {
         UnitType cloaker;cloaker.maxHp=100;cloaker.canCloak=true;
         cloaker.cloakCost=100000;cloaker.minCloakDist=200;cloaker.simulationScript=cloakFile;
         UnitType enemy;enemy.maxHp=100;
-        World cloakWorld;cloakWorld.setVisPlayer(-1);
+        World cloakWorld;
         cloakWorld.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
         const int spy=cloakWorld.spawn(&cloaker,200,200,{},0);
         const int nearby=cloakWorld.spawn(&enemy,240,200,{},1);
@@ -1603,7 +1603,7 @@ int main(int argc,char** argv) {
         UnitType type;type.simulationScript=file;type.maxHp=100;type.maxVel=Fixed::fromInt(4);
         type.roadMult=Fixed::fromInt(2);type.waterMult=Fixed::fromFloat(0.5f);
         type.turnRate=3000;type.turnInPlaceRate=2000;
-        World world;world.setVisPlayer(-1);
+        World world;
         world.setTerrain(std::vector<uint8_t>(32*32,100),32,32,20);
         const int id=world.spawn(&type,200,200);auto* u=world.unit(id);
         u->baseSpeed=Fixed::fromInt(4);u->speed=Fixed::fromInt(2);u->heading=Bam(0);
@@ -1653,7 +1653,7 @@ int main(int argc,char** argv) {
         file->code={0x10021001,100,0x10013000,0x10021001,22,0x10021002,2,0x10082000,0x10065000,
                     0x10021001,100,0x10013000,0x10021001,23,0x10021002,0,0x10082000,0x10065000,
                     0x10022000,0x10021001,21,0x10021002,0,0x10082000,0x10065000};
-        World world;world.setVisPlayer(-1);world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
+        World world;world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         UnitType shooter,targetType;shooter.simulationScript=file;shooter.maxHp=targetType.maxHp=1000;
         shooter.maxMana=20;
         Weapon weapon;weapon.range=400;weapon.reload=10;weapon.damage=1;weapon.projVel=300;weapon.manaCost=3;
@@ -1689,7 +1689,7 @@ int main(int argc,char** argv) {
             UnitType mobileShooter=shooter;mobileShooter.canMove=true;
             mobileShooter.maxVel=Fixed::fromInt(1);mobileShooter.turnInPlaceRate=0;
             UnitType mobileTarget=targetType;mobileTarget.maxVel=Fixed::fromInt(1);
-            World rangeLoss;rangeLoss.setVisPlayer(-1);
+            World rangeLoss;
             rangeLoss.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=rangeLoss.spawn(&mobileShooter,200,200,{},0);
             const int victim=rangeLoss.spawn(&mobileTarget,300,200,{},1);
@@ -1728,7 +1728,7 @@ int main(int argc,char** argv) {
             std::cout<<"PASS: pending script release waits outside native weapon range and resumes at the range boundary\n";
         }
         {
-            World edge;edge.setVisPlayer(-1);
+            World edge;
             edge.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             UnitType stationary=shooter;stationary.canMove=false;
             UnitType mobileTarget=targetType;mobileTarget.maxVel=Fixed::fromInt(1);
@@ -1740,7 +1740,7 @@ int main(int argc,char** argv) {
                     inRangeEvents.events[0].kind==tak::RetailWeaponAnimation::Aim,
                 "scripted combat starts AimWeapon at the native inclusive maximum range");
 
-            World outside;outside.setVisPlayer(-1);
+            World outside;
             outside.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int outsideFrom=outside.spawn(&stationary,200,200,{},0);
             const int outsideTarget=outside.spawn(&mobileTarget,601,200,{},1);
@@ -1749,7 +1749,7 @@ int main(int argc,char** argv) {
                 "scripted combat does not start AimWeapon beyond the native maximum range");
         }
         {
-            World blocked;blocked.setVisPlayer(-1);
+            World blocked;
             blocked.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             blocked.blockCells(15,12,1,1,true);
             require(!blocked.nav().losBetween(200,200,300,200,0,0),
@@ -1794,7 +1794,7 @@ int main(int argc,char** argv) {
             if(missing[0])incomplete->scripts[0]={"AbsentAim",0};
             if(missing[1])incomplete->scripts[1]={"AbsentFire",9};
             UnitType type=shooter;type.simulationScript=incomplete;
-            World callbacksWorld;callbacksWorld.setVisPlayer(-1);
+            World callbacksWorld;
             callbacksWorld.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=callbacksWorld.spawn(&type,200,200,{},0),target=callbacksWorld.spawn(&targetType,300,200,{},1);
             callbacksWorld.attack(from,target,false);
@@ -1816,7 +1816,7 @@ int main(int argc,char** argv) {
                 auto absent=std::make_shared<tak::cob::File>(*file);
                 absent->scripts[2]={"AbsentTargetCleared",18};type.simulationScript=absent;
             }
-            World loss;loss.setVisPlayer(-1);
+            World loss;
             loss.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=loss.spawn(&type,200,200,{},0),target=loss.spawn(&targetType,300,200,{},1);
             loss.setStance(from,2);loss.attack(from,target,false);loss.tick(1.f/30);
@@ -1843,7 +1843,7 @@ int main(int argc,char** argv) {
         }
         {
             UnitType type=shooter;type.weaponSwitching=true;type.weapons.assign(3,weapon);
-            World switching;switching.setVisPlayer(-1);
+            World switching;
             switching.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=switching.spawn(&type,200,200,{},0);
             auto* unit=switching.unit(from);
@@ -1866,7 +1866,7 @@ int main(int argc,char** argv) {
         }
         for(int interruption=0;interruption<3;++interruption) {
             UnitType type=shooter;type.weaponSwitching=true;type.weapons.assign(2,weapon);
-            World delayed;delayed.setVisPlayer(-1);
+            World delayed;
             delayed.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=delayed.spawn(&type,200,200,{},0),target=delayed.spawn(&targetType,300,200,{},1);
             delayed.setStance(from,2);delayed.unit(from)->reloads[1]=1000;
@@ -1905,7 +1905,7 @@ int main(int argc,char** argv) {
         }
         for(bool switching:{false,true}) {
             UnitType type=shooter;type.weaponSwitching=switching;type.weapons.assign(3,weapon);
-            World clearing;clearing.setVisPlayer(-1);
+            World clearing;
             clearing.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=clearing.spawn(&type,200,200,{},0),first=clearing.spawn(&targetType,300,200,{},1),
                 next=clearing.spawn(&targetType,320,240,{},1);
@@ -1929,7 +1929,7 @@ int main(int argc,char** argv) {
             UnitType type;type.maxHp=100;type.weaponSwitching=switching;
             Weapon gun;gun.range=400;gun.damage=1;gun.switchReloadTicks=13;
             type.weapons.assign(3,gun);type.weapon=gun;
-            World timers;timers.setVisPlayer(-1);
+            World timers;
             timers.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int id=timers.spawn(&type,200,200);auto* unit=timers.unit(id);
             unit->reloads[0]=4;unit->reloads[1]=5;unit->reloads[2]=6;
@@ -1948,7 +1948,7 @@ int main(int argc,char** argv) {
     {
         using namespace tak::sim;
         auto require=[](bool ok,const char* message) {if(!ok)throw std::runtime_error(message);};
-        World world;world.setVisPlayer(-1);
+        World world;
         UnitType shooter,targetType;shooter.maxHp=targetType.maxHp=100;
         targetType.maxVel=Fixed::fromInt(1);targetType.canFly=true;
         Weapon weapon;weapon.beam=true;weapon.projVel=30;weapon.noLead=true;
@@ -1985,7 +1985,7 @@ int main(int argc,char** argv) {
         UnitType type;type.simulationScript=file;type.maxHp=100;
         type.productionModel={{{0,0,0},-1,0},{{32*65536,6*65536,12*65536},0,1}};
         type.scriptPieceVertices={{{10*65536,12*65536,14*65536}},{}};
-        World world;world.setVisPlayer(-1);
+        World world;
         const int id=world.spawn(&type,200,200);auto* unit=world.unit(id);
         unit->groundY=Fixed::fromInt(50);unit->heading=Bam(32768);
         require(world.queryUnitScriptPoint(id,false,1)==std::array<int32_t,3>{168*65536,56*65536,212*65536},
@@ -2028,7 +2028,7 @@ int main(int argc,char** argv) {
         type.turnRate=type.turnInPlaceRate=10000;
         type.animationMoveRate1=type.animationMoveRate2=Fixed::fromInt(100);
         type.productionModel={{{0,0,0},-1,0},{{0,0,0},0,1}};
-        World world;world.setVisPlayer(-1);
+        World world;
         world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
         const int id=world.spawn(&type,200,200);
         world.order(id,800,200,false);world.tick(1.f/30);
@@ -2054,7 +2054,7 @@ int main(int argc,char** argv) {
         file->code={0x10021001,21,0x10021001,0,0x10082000,
                     0x10021001,22,0x10021001,1,0x10082000,
                     0x10021001,23,0x10021001,2,0x10082000,0x10065000};
-        World world;world.setVisPlayer(-1);
+        World world;
         UnitType type;type.simulationScript=file;type.maxHp=100;
         const int id=world.spawn(&type,100,100);
         auto* unit=world.unit(id);
@@ -2078,7 +2078,7 @@ int main(int argc,char** argv) {
         script->code={0x10021001,18,0x10021001,1,0x10082000,0x10065000,
                       0x10021001,18,0x10021001,0,0x10082000,0x10065000};
         for (char cell:std::string(".oOfwcCSyY")) {
-            World world;world.setVisPlayer(-1);
+            World world;
             world.setTerrain(std::vector<uint8_t>(32*32,0),32,32,0);
             UnitType factory;factory.id="yard";factory.maxVel=Fixed();
             factory.footX=factory.footZ=1;factory.yardMap=std::string(1,cell);
@@ -2105,7 +2105,7 @@ int main(int argc,char** argv) {
         }
         std::cout<<"PASS: factory yard transitions wait for occupied blocking cells\n";
         {
-            World world;world.setVisPlayer(-1);
+            World world;
             world.setTerrain(std::vector<uint8_t>(32*32,0),32,32,0);
             UnitType factory;factory.id="yard-index";factory.maxHp=100;
             factory.footX=factory.footZ=1;factory.yardMap="c";factory.simulationScript=script;
@@ -2121,7 +2121,7 @@ int main(int argc,char** argv) {
             std::cout<<"PASS: indexed yard reads survive script retirement and replay ID reuse\n";
         }
         {
-            World world;world.setVisPlayer(-1);
+            World world;
             world.setTerrain(std::vector<uint8_t>(32*32,0),32,32,0);
             world.setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
             UnitType gate;gate.id="gate";gate.maxVel=Fixed();gate.gate=true;
@@ -2146,7 +2146,7 @@ int main(int argc,char** argv) {
             std::cout<<"PASS: gate yard changes refresh cached passages and clearance borders\n";
         }
         {
-            World world;world.setVisPlayer(-1);
+            World world;
             world.setTerrain(std::vector<uint8_t>(32*32,0),32,32,0);
             world.setMapPlacementFeatures(std::vector<uint16_t>(32*32,0xffff),{});
             auto gateScript=std::make_shared<tak::cob::File>(*script);

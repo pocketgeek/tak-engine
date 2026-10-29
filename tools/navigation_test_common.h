@@ -27,7 +27,7 @@ inline UnitType mover(int kind=0,bool boat=false) {
     return type;
 }
 inline void setup(World& world,PathfindingMode selected,bool serial=true,bool boat=false,int cells=256) {
-    world.setVisPlayer(-1);world.setSerialThreads(serial);world.setPathService(true);
+    world.setSerialThreads(serial);world.setPathService(true);
     world.setPathfindingMode(selected);
     world.setTerrain(std::vector<uint8_t>(size_t(cells)*cells,boat?20:100),cells,cells,64);
     world.setMapPlacementFeatures(std::vector<uint16_t>(size_t(cells)*cells,0xffff),{});

@@ -335,7 +335,7 @@ UnitType flyer() {
 struct Field {
     World world;
     Field(PathfindingMode mode) {
-        world.setGameSeed(7); world.setVisPlayer(-1); world.setSerialThreads(true); world.setPathService(true);
+        world.setGameSeed(7); world.setSerialThreads(true); world.setPathService(true);
         world.setPathfindingMode(mode);
         world.setPlayerCount(2); world.setTeam(0, 0); world.setTeam(1, 1);
         world.setTerrain(std::vector<uint8_t>(size_t(512) * 512, 100), 512, 512, 64);

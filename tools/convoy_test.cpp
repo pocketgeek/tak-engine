@@ -161,7 +161,7 @@ struct Field {
     World world;
     TypeRegistry reg;
     Field() {
-        world.setGameSeed(7); world.setVisPlayer(-1); world.setSerialThreads(true); world.setPathService(true);
+        world.setGameSeed(7); world.setSerialThreads(true); world.setPathService(true);
         world.setPathfindingMode(PathfindingMode::Legion);
         world.setPlayerCount(2); world.setTeam(0, 0); world.setTeam(1, 1);
         world.setTerrain(std::vector<uint8_t>(size_t(512) * 512, 100), 512, 512, 64);
@@ -404,7 +404,7 @@ void selections(bool perUnit) {
     // Retail stamps nothing and keeps no table.
     {
         World w;
-        w.setGameSeed(7); w.setVisPlayer(-1); w.setSerialThreads(true); w.setPathService(true);
+        w.setGameSeed(7); w.setSerialThreads(true); w.setPathService(true);
         w.setPlayerCount(2);
         w.setTerrain(std::vector<uint8_t>(size_t(128) * 128, 100), 128, 128, 64);
         const int id = w.spawn(&kGround, 320, 320, std::nullopt, 0);

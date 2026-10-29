@@ -228,7 +228,7 @@ const std::vector<std::pair<float,float>>& Controller::navalLaunchOffsets(const 
     // Cache both query phases and birth orientations once per shipyard type.
     const int samples=type->buildAngle ? 16 : 1;
     for (int angle=0; angle<samples; ++angle) {
-        tak::sim::World preview;preview.setVisPlayer(-1);
+        tak::sim::World preview;
         const auto heading=tak::sim::bamWrap(int(type->orientation)-int(type->buildAngle)/2+
             (samples>1 ? angle*(int(type->buildAngle)-1)/(samples-1) : 0));
         const int id=preview.spawn(type,2000,2000,tak::sim::radiansFromBam(heading),0);

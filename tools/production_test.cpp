@@ -73,7 +73,6 @@ static UnitType soldierType() {
 
 static std::unique_ptr<World> makeWorld(int W, int H) {
     auto w = std::make_unique<World>();setTestPathfinding(*w);
-    w->setVisPlayer(-1);                        // headless, like the referee
     w->setTerrain(std::vector<uint8_t>(size_t(W) * size_t(H), 100), W, H, /*seaLevel=*/20);
     w->setPathService(true);                    // the real router, as in a game
     return w;
@@ -1201,7 +1200,7 @@ static void mobileProducerFacesSite() {
 }
 
 static void repairParticles() {
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);
+    World w;setTestPathfinding(w);
     w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
     UnitType builder;builder.id="repair-worker";builder.maxHp=100;
     builder.isBuilder=builder.canMove=true;builder.buildDist=200;builder.workerTime=10;
@@ -1253,7 +1252,7 @@ static void constructionParticleSizing() {
           "a building with no bmcode line reads bmcode 0 (retail's default)");
     if (!reg.find("plainhall")) return;
     UnitType target=*reg.find("plainhall");target.modelTop=32*65536;
-    World w;setTestPathfinding(w);w.setVisPlayer(-1);
+    World w;setTestPathfinding(w);
     std::vector<uint8_t> heights(64*64);
     for (int z=0;z<64;++z) for (int x=0;x<64;++x) heights[size_t(z)*64+x]=uint8_t(40+x*3);
     w.setTerrain(heights,64,64,20);
@@ -1308,7 +1307,7 @@ int main(int argc,char** argv) {
     else if(argc!=1)return 2;
     std::printf("production_test\n");
     {
-        World world;setTestPathfinding(world);world.setVisPlayer(-1);world.setPlayerCount(2);
+        World world;setTestPathfinding(world);world.setPlayerCount(2);
         UnitType limited=soldierType();limited.totalAllowed=1;
         UnitType ordinary=soldierType();ordinary.id="ordinary";
         const int existing=world.spawn(&limited,100,100,0,0);

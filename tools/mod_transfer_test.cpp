@@ -71,7 +71,7 @@ int main(int argc,char** argv){try{
    check(!l.mod->files->count("sounds/host-always.wav") && !l.mod->files->count("sounds/host-art.wav"),"the game-mod package carried cosmetic files");}
   data.setMapFiles(l.map->files);sim::MatchConfig cfg;cfg.vfs=&data;cfg.mapPath=l.map->mapPath;cfg.startSeed=l.seed;cfg.slots={{true,0,0,1,false,false},{true,1,1,1,false,false}};cfg.unitCap=2000;
   cfg.roomMapRevealed=l.fog>=1;cfg.roomLosOff=l.fog==2;   // hashed room vision, as net::matchConfigFor sets it
-  world.setVisPlayer(-1);sim::setupMatch(world,registry,cfg);l.hash=hpi::gameplayHash(data) ^ (badLoaded && isHost ? 1 : 0);
+  sim::setupMatch(world,registry,cfg);l.hash=hpi::gameplayHash(data) ^ (badLoaded && isHost ? 1 : 0);
  };
  const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(90);
  while(std::chrono::steady_clock::now()<end){

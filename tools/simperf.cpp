@@ -56,7 +56,6 @@ int main(int argc,char** argv) try {
     ai::Profile profile;
     sim::World world;
     world.setSerialThreads(serial);
-    world.setVisPlayer(-1);
     std::vector<std::unique_ptr<ai::Controller>> controllers;
     std::vector<std::pair<float,float>> crowdGoals;
     const auto setupStart=std::chrono::steady_clock::now();

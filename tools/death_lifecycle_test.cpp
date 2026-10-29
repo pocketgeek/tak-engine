@@ -17,7 +17,7 @@ int main(int argc,char** argv) {
         sim::World definitions;sim::registerMapFeatures(definitions,tnt::Map{},vfs,&registry);
         auto run=[&](const sim::UnitType& type,int death,bool warm,bool unfinished,
                      int expectedHandoff=-1,bool checkQuery=true) {
-            sim::World w;w.setVisPlayer(-1);
+            sim::World w;
             w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int ct=definitions.corpseTypeOf(&type);
             w.setFeatureTypes(definitions.featureTypes());if(ct>=0)w.mapCorpse(&type,ct);

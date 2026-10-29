@@ -9,7 +9,7 @@ namespace tak::sim { struct RetailReplayProbe {
  static void shoot(World& w,int from,int target){w.fire(*w.unit(from),*w.unit(target),0);}
 }; }
 static void check(bool ok,const char* why){if(!ok)throw std::runtime_error(why);}
-static void setup(World& w){w.setPlayerCount(8);w.setTerrain(std::vector<uint8_t>(128*128,40),128,128,0);w.setVisPlayer(-1);}
+static void setup(World& w){w.setPlayerCount(8);w.setTerrain(std::vector<uint8_t>(128*128,40),128,128,0);}
 static UnitType type(){UnitType t;t.id="retirement";t.maxHp=100;t.footX=t.footZ=1;return t;}
 int main(int argc,char** argv)try {
  auto t=type();

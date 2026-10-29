@@ -43,7 +43,6 @@ static UnitType tower() {
 
 static World* makeWorld() {
     World* w = new World();
-    w->setVisPlayer(-1);
     w->setTerrain(std::vector<uint8_t>(size_t(128) * 128, 100), 128, 128, /*seaLevel=*/20);
     return w;
 }

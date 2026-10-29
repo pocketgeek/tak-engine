@@ -21,7 +21,7 @@ int main(){try {
     check(sim::isLegionPathfinding(sim::PathfindingMode::Legion)&&!sim::isLegionPathfinding(sim::PathfindingMode::Retail),
           "Legion pathfinder classification changed");
     {
-        sim::World world;world.setVisPlayer(-1);
+        sim::World world;
         sim::MatchConfig cfg;cfg.vfs=&vfs;cfg.loadCrt=false;cfg.mapPath="maps/small.tnt";
         cfg.pathfindingMode=sim::PathfindingMode::Legion;
         sim::setupMatch(world,registry,cfg);

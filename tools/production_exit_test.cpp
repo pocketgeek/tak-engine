@@ -35,7 +35,7 @@ bool largeOutputCase(const tak::sim::TypeRegistry& registry,const tak::sim::Unit
                      const tak::sim::UnitType* large,const tak::sim::UnitType* small,
                      bool crusades,int side,bool legion,bool largeFirst) {
     auto producer=factory;producer.storage=1000000;
-    tak::sim::World world;world.setVisPlayer(-1);
+    tak::sim::World world;
     if(legion)world.setPathfindingMode(tak::sim::PathfindingMode::Legion);
     // A loaded map's feature plane: movement and placement then take the
     // native rectangular footprint test, as in a real game.
@@ -110,7 +110,7 @@ int main(int argc,char** argv) {
             if(std::none_of(menu.begin(),menu.end(),[&](const auto& name){return registry.find(name)==output;})) {
                 std::printf("FAIL: %s cannot produce %s in this balance\n",c.producer,output->id.c_str());++failures;continue;
             }
-            tak::sim::World world;world.setVisPlayer(-1);
+            tak::sim::World world;
             const bool water=output->domain==tak::sim::UnitType::Domain::Water;
             world.setTerrain(std::vector<uint8_t>(256*256,water?0:100),256,256,water?100:20);
             world.buildNavClasses(registry);world.setPathService(true);

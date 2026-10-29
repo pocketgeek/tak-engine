@@ -19,7 +19,6 @@ crt::RuleGroup onStart(std::initializer_list<crt::Rule> actions) {
 std::unique_ptr<sim::World> makeWorld(int count) {
     auto world = std::make_unique<sim::World>();
     world->setPlayerCount(count);
-    world->setVisPlayer(-1);
     world->setTerrain(std::vector<uint8_t>(32*32,40),32,32,0);
     return world;
 }

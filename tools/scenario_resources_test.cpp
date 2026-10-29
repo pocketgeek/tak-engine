@@ -12,7 +12,7 @@ int main() try {
     sim::UnitType source;source.id="source";source.maxHp=100;source.footX=source.footZ=1;
     source.income=30;source.storage=200;
     auto make=[&] {
-        auto w=std::make_unique<sim::World>();w->setPlayerCount(1);w->setVisPlayer(-1);
+        auto w=std::make_unique<sim::World>();w->setPlayerCount(1);
         w->setTerrain(std::vector<uint8_t>(32*32,40),32,32,0);
         w->spawn(&source,128,128,0,0);return w;
     };

@@ -691,7 +691,7 @@ int main(int argc, char** argv) {
         auto vfs=hpi::mountRetailRoot(argv[1]);
         TypeRegistry registry;setupRegistry(registry,vfs,std::stoi(argv[4])!=0);
         MatchConfig config;config.vfs=&vfs;config.mapPath=hpi::findMap(vfs,argv[3]);config.slots.resize(1);
-        World world;setupMatch(world,registry,config);world.setVisPlayer(-1);
+        World world;setupMatch(world,registry,config);
         std::ifstream input(argv[5]);
         int count,rounds,budget,gx,gz;int32_t base;
         if (!(input>>count>>rounds>>budget>>gx>>gz>>base) || count<1 || count>1000 || rounds<1 || rounds>5000 || budget<1) return 2;
@@ -717,7 +717,7 @@ int main(int argc, char** argv) {
         TypeRegistry registry;setupRegistry(registry,vfs,std::stoi(argv[4])!=0);
         MatchConfig config;config.vfs=&vfs;config.mapPath=hpi::findMap(vfs,argv[3]);config.slots.resize(1);
         config.pathfindingMode=PathfindingMode::Retail;
-        World world;setupMatch(world,registry,config);world.setVisPlayer(-1);
+        World world;setupMatch(world,registry,config);
         std::ifstream input(argv[5]);
         int count,rounds,budget,unitCap;int32_t base;uint32_t crt;
         if (!(input>>count>>rounds>>budget>>base>>crt>>unitCap) || count<1 || count>1000 || rounds<1 || rounds>5000 ||
@@ -771,7 +771,7 @@ int main(int argc, char** argv) {
         if (!gateType || !gateType->gate || !moverType || rounds<1 || rounds>5000 || base<=0) return 2;
         UnitType reachableMover=*moverType;
         if (rectangleReachable) { reachableMover.buildDist=1024;moverType=&reachableMover; }
-        World world;world.setVisPlayer(-1);
+        World world;
         // Optional authored relief (64x64 height bytes, sea 0) for ramp routes;
         // the native harness writes the same heights into its cell records.
         std::vector<uint8_t> gateHeights(64*64,0);
@@ -860,7 +860,6 @@ int main(int argc, char** argv) {
             config.slots[size_t(player)].team = player; // Diagnostic default, not restored alliances.
         World world;
         setupMatch(world, registry, config);
-        world.setVisPlayer(-1);
         world.setPathService(true);
         RetailReplayProbe::restoreSearchDiagnostics(world);
         RetailReplayProbe::wind(world,input,version);
