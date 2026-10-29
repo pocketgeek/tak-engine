@@ -432,8 +432,10 @@ static void visionTargets(const sim::TypeRegistry& registry,const ai::Profile& p
 // Scouting with memory: a scout killed on its way backs that target off (the next
 // goes elsewhere), the level's scout losses in five minutes stop new parties, and
 // where scouts died a party one larger goes the next time. A start whose owner is
-// beaten is not explored, nor, once every enemy has been found at a start, are the
-// others (a RANDOM start spot may hold nobody).
+// beaten is not explored at once, nor, once every enemy has been found at a start,
+// are the others (a RANDOM start spot may hold nobody). A beaten player's base --
+// an enemy's or an ally's -- is a start again once out of sight five minutes,
+// unless an enemy building is known there (a target instead).
 static void scoutingMemory(const sim::TypeRegistry& registry,const ai::Profile& profile,
                            const sim::UnitType& soldier) {
     auto lode=soldier;lode.id="lode";lode.maxVel={};lode.canMove=false;lode.onMana=true;
@@ -501,8 +503,8 @@ static void scoutingMemory(const sim::TypeRegistry& registry,const ai::Profile& 
     }
     {
         // A beaten enemy's base is not checked for good: its free deposits may draw
-        // someone in, so once out of sight a while it ranks like a deposit-rich
-        // sector and a scout looks in again. Scouts killed on the way back it off.
+        // someone in, so once out of sight five minutes it is a start again and a
+        // scout looks in. Scouts killed on the way back it off.
         sim::World w;terrain(w);w.player(0).income=100;
         const int eye=w.spawn(&post,1200,2300,0,0);
         const int base=w.spawn(&lode,1200,2550,0,2);
@@ -548,8 +550,99 @@ static void scoutingMemory(const sim::TypeRegistry& registry,const ai::Profile& 
         const int first=cs.empty() ? 0 : cs.front().unitId;
         if (first) {moveTo(w,first,2600,800);sight(w);think(controller,w,600);w.unit(first)->deadFor=0;sight(w);}
         w.unit(last)->deadFor=0;w.player(2).defeated=true;sight(w);
-        cs=think(controller,w,6000);   // past the dead scout's claim
-        check(attacks(cs)==1 && aimsAt(cs,w,1200,3000)==1,"once its owner is beaten, scouts it killed no longer back its start off");
+        apply(w,think(controller,w,6000));   // its owner found beaten
+        cs=think(controller,w,6000+5*60*30);  // its base out of sight five minutes since
+        check(aimsAt(cs,w,1200,3000)==1,"once its owner is beaten, scouts it killed no longer back its start off");
+    }
+    {
+        // On a large map (256 sectors) a beaten enemy's far base out of sight five
+        // minutes comes before the many nearer sectors never seen: it is a start
+        // again. Not before the five minutes are up.
+        auto big=[](sim::World& w) {
+            std::vector<uint8_t> h(1024*1024,100);
+            w.setVisPlayer(-1);w.setTerrain(std::move(h),1024,1024,20);w.setRoomVision(true,false);
+        };
+        for (const uint32_t at:{uint32_t(8000),uint32_t(20+5*60*30+20)}) {
+            sim::World w;big(w);w.player(0).income=100;
+            const int last=w.spawn(&lode,12000,12000,0,2);
+            w.spawn(&soldier,16000,400,0,1);
+            sight(w);
+            ai::Controller controller(0,registry,profile,1,ai::Difficulty::Hard);
+            controller.setStartSpots({{12000,12000,2}});
+            think(controller,w,0);
+            w.unit(last)->deadFor=0;w.player(2).defeated=true;sight(w);
+            think(controller,w,20);
+            for (int i=0;i<6;++i) w.spawn(&soldier,400+float(i)*40,800,0,0);
+            sight(w);
+            const auto cs=think(controller,w,at);
+            if (at==8000) check(attacks(cs)==1 && aimsAt(cs,w,12000,12000)==0,
+                                "a beaten enemy's base out of sight under five minutes waits: a sector is scouted");
+            else check(attacks(cs)==1 && aimsAt(cs,w,12000,12000)==1,
+                       "on a large map a beaten enemy's far base out of sight five minutes is scouted before the sectors");
+        }
+    }
+    {
+        // A beaten enemy's base where an enemy building is known (someone moved
+        // in) is not scouted: the strikes take it. Once that is gone and the base
+        // out of sight five minutes again, it is scouted.
+        auto retaken=[&](sim::World& w,int& eye) {
+            terrain(w);w.player(0).income=100;
+            w.spawn(&lode,1200,3000,0,2);
+            w.spawn(&soldier,3800,3800,0,1);
+            eye=w.spawn(&post,1650,2700,0,0);
+            sight(w);
+        };
+        sim::World w;int eye=0;retaken(w,eye);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Hard);
+        controller.setStartSpots({{1200,3000,2}});
+        think(controller,w,0);
+        for (auto& u:w.units()) if (u.player==2) u.deadFor=0;
+        w.player(2).defeated=true;
+        int moved=w.spawn(&lode,1650,3000,0,1);   // player 1 builds at the empty base, in our sight
+        sight(w);think(controller,w,20);
+        moveTo(w,eye,400,400);
+        for (int i=0;i<6;++i) w.spawn(&soldier,400+float(i)*40,800,0,0);
+        sight(w);
+        auto cs=think(controller,w,36000);
+        check(attacks(cs)==1 && aimsAt(cs,w,1200,3000)==0 && aimsAt(cs,w,1650,3000)==0,
+              "a beaten enemy's base where an enemy building is known is not scouted");
+        w.unit(moved)->deadFor=0;moveTo(w,eye,1650,2700);sight(w);think(controller,w,36020);   // seen gone
+        moveTo(w,eye,400,400);sight(w);
+        cs=think(controller,w,36020+5*60*30);
+        check(aimsAt(cs,w,1200,3000)==1,"... and once that is gone and the base out of sight five minutes, it is");
+        sim::World v;retaken(v,eye);
+        ai::Controller army(0,registry,profile,1,ai::Difficulty::Normal);
+        army.setStartSpots({{1200,3000,2}});
+        think(army,v,0);
+        for (auto& u:v.units()) if (u.player==2) u.deadFor=0;
+        v.player(2).defeated=true;
+        moved=v.spawn(&lode,1650,3000,0,1);
+        sight(v);think(army,v,30);
+        moveTo(v,eye,400,400);
+        for (int i=0;i<35;++i) v.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
+        sight(v);
+        cs=think(army,v,36000);
+        check(aimsAt(cs,v,1650,3000)>0 && aimsAt(cs,v,1200,3000)==0,"... the army strikes the building known there");
+    }
+    {
+        // A fallen ally's base may be moved into too: out of sight five minutes,
+        // a scout looks in.
+        sim::World w;terrain(w);w.player(0).income=100;
+        const int ally=w.spawn(&lode,1200,3000,0,2);
+        w.spawn(&soldier,3800,3800,0,1);
+        w.setTeam(2,0);
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Hard);
+        think(controller,w,0);
+        // The clock past the 60 ticks a fallen unit's sight lingers (its
+        // death revealer) at the ally's base.
+        w.unit(ally)->deadFor=0;w.player(2).defeated=true;sight(w);
+        w.resumeClocks(100,w.gameRngState());sight(w);
+        think(controller,w,20);
+        for (int i=0;i<6;++i) w.spawn(&soldier,400+float(i)*40,800,0,0);
+        sight(w);
+        const auto cs=think(controller,w,20+5*60*30+20);
+        check(attacks(cs)==1 && aimsAt(cs,w,1200,3000)==1,"a fallen ally's base out of sight five minutes is scouted");
     }
     {
         // Start spots of unknown owner (RANDOM start locations): with the only enemy

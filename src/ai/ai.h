@@ -452,19 +452,25 @@ private:
     // known near it. enemyStarts_ holds the spots not gone, for the AI's other
     // judgements of where the enemy is. `startBase_`: an enemy building is known
     // near the start (scouts look elsewhere; armies still go and see it).
-    // exploreTarget picks, for a unit of `type` at (x,z), an unchecked start
-    // nearest first, else the sector (or a beaten enemy's start) longest out of
-    // sight for its distance, weighed by what may stand there (deposits, starts,
-    // the free deposits of a beaten enemy's base), and the point of it
+    // exploreTarget picks, for a unit of `type` at (x,z), an unchecked start (or
+    // a beaten player's base out of sight a while) nearest first, else the
+    // sector longest out of sight for its distance, weighed by what may stand
+    // there (deposits, starts), and the point of it
     // that unit can reach; `-1 - start` or the sector's index comes back in
     // `slot`. With `scout` it is a scouting party's pick: past starts whose base
     // is found, targets backed off after scouts died going there (losses_), and
     // routes past the spots they died at.
+    // starts_ from allyStartsFrom_ on are our allies' (updateKnowledge adds
+    // them, gone from the start): followed only once their owner is beaten.
     std::vector<StartSpot> starts_;
+    size_t allyStartsFrom_ = 0;
+    bool startsSized_ = false;   // the start state below is sized to starts_
     std::vector<uint8_t> startGone_, startBase_;
-    // Per start, the think tick + 1 its owner was found beaten (0 never): a base
-    // left empty, which exploreTarget keeps looking in on like a deposit-rich
-    // sector, since someone else may move in.
+    // Per start, the think tick + 1 its owner (an enemy or an ally) was found
+    // beaten (0 never): a base left empty, which exploreTarget takes as a start
+    // again once out of sight five minutes, since someone else may move in --
+    // unless an enemy building is known near it (startBase_), a target for the
+    // strikes instead.
     std::vector<uint32_t> startVacated_;
     std::vector<uint32_t> startSeen_, sectorSeen_, sectorClaim_, startClaim_;
     std::vector<float> sectorLure_;   // per sector, 1 + what may draw an enemy there (deposits)
@@ -501,6 +507,7 @@ private:
     uint32_t nextScoutTick_ = 0;
     int scoutsSent_ = 0, explorations_ = 0;   // dispatch counts, for the TAK_AI_EXPLORE log
     int scoutsLost_ = 0;                       // scouts killed on a trip, for the same log
+    int vacatedTrips_ = 0, vacatedLost_ = 0;   // of those, sent to / lost going to a beaten player's base
     uint32_t loggedMinute_ = 0;                // minute + 1 last logged
     bool loggedWin_ = false;
     void logExploration(const tak::sim::World&, uint32_t simTick);

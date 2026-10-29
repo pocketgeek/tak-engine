@@ -31,7 +31,8 @@ their validation reports; both live in [`docs/`](docs/).
   They know what a player in their seat would under the room's fog and start
   locations (Random hides whose start is whose), pick mana deposits only on
   ground they know, and steer scouts away from where scouts died. A beaten
-  player's base is looked in on again now and then, in case someone moves in.
+  player's base, an enemy's or an ally's, is looked in on again once out of
+  sight five minutes, in case someone moves in (and attacked if someone has).
   A game between AIs may now not end when a last unit stays hidden.
 - **Big late games no longer stall on the AI's lodestone search**: Absurd AIs
   tested every deposit on a large map for each site, 300-800 ms in one tick,

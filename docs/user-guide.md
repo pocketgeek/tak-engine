@@ -372,10 +372,11 @@ units the others have or how strong they are, only what it has seen.
 
 When it knows of nothing to attack, it explores: its army and its raiders head
 first for the start positions that may hold an enemy and that it has not looked
-at yet (never a beaten player's), then for the parts of the map it has gone
-longest without seeing, mana deposits first, each group to a different part.
-A beaten player's base counts among those like a part with many deposits: it
-looks in again now and then, in case someone has moved in.
+at yet, then for the parts of the map it has gone longest without seeing,
+mana deposits first, each group to a different part. A beaten player's base,
+an enemy's or an ally's, joins those start positions again once it has gone
+five minutes unseen, in case someone has moved in; where it knows someone has,
+it attacks instead.
 It also sends fast units (flyers if it has them) out to scout. A scout that is
 killed on the way makes it try somewhere else for a while, avoid the spot where
 it fell, and later send a small group there instead of one scout; when several
