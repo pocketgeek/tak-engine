@@ -1148,7 +1148,36 @@
             source.explored = fogPreviewExplored_;
             source.viewers = 1; source.player = 0;
         }
-        if (rf::buildPlane(source, fogPlane_)) ++fogPlaneGen_;
+        // Only the squares the World marked since the last capture can differ, unless
+        // the rules or the planes themselves changed (or there is no World pass yet).
+        const auto& dirty = world_.viewDirty();
+        const int dw = world_.viewDirtyW(), shift = tak::sim::World::kViewDirtyShift;
+        const FogKey key{source.viewCounts.data(), source.explored.data(), w, h, source.viewers,
+                         source.player, source.mapRevealed, source.losOff};
+        bool changed = false;
+        if (key != fogKey_ || fogPlane_.size() != size_t(w) * size_t(h) || dw <= 0 || debugFogOverride_ ||
+            world_.viewCounts().empty()) {
+            changed = rf::buildPlane(source, fogPlane_) || key != fogKey_;
+        } else {
+            for (size_t b = 0; b < dirty.size(); ++b)
+                if (dirty[b]) {
+                    const int bx = int(b % size_t(dw)), bz = int(b / size_t(dw));
+                    changed = rf::buildPlane(source, fogPlane_, bx << shift, bz << shift,
+                                             (bx + 1) << shift, (bz + 1) << shift) || changed;
+                }
+#ifndef NDEBUG
+            static const bool verify = tak::devFlag("TAK_FOG_VERIFY");
+            if (verify) {   // the squares must have caught every change
+                std::vector<uint8_t> whole;
+                rf::buildPlane(source, whole);
+                if (whole != fogPlane_)
+                    std::fprintf(stderr, "TAK_FOG_VERIFY tick %u: the incremental plane differs\n", world_.tickCount());
+            }
+#endif
+        }
+        fogKey_ = key;
+        if (!world_.viewCounts().empty()) writableWorld().clearViewDirty();
+        if (changed) ++fogPlaneGen_;
         if (debugFogOverride_) { debugFogOverride_(fogPlane_, w, h); ++fogPlaneGen_; }
         if (fb.fogGen != fogPlaneGen_ || fb.fog.size() != fogPlane_.size()) {
             fb.fog = fogPlane_;

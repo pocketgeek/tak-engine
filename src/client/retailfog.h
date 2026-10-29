@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <span>
 #include <vector>
 
@@ -37,30 +38,66 @@ struct PlaneSource {
 };
 
 // The display plane: unexplored where the Mapping bit is clear, in view where
-// any viewer's count is nonzero, otherwise explored. Returns whether `out`
-// changed (so the overlay texture is re-uploaded only then).
-inline bool buildPlane(const PlaneSource& s, std::vector<uint8_t>& out) {
-    const size_t cells = size_t(std::max(0, s.width)) * size_t(std::max(0, s.height));
-    std::vector<const uint16_t*> planes;
+// any viewer's count is nonzero, otherwise explored. With a rectangle (cells
+// [x0,x1) x [z0,z1)) only that part is rebuilt -- a plane of the wrong size is
+// always rebuilt whole. Returns whether `out` changed (so the overlay texture is
+// re-uploaded only then).
+inline bool buildPlane(const PlaneSource& s, std::vector<uint8_t>& out,
+                       int x0 = 0, int z0 = 0, int x1 = -1, int z1 = -1) {
+    const int width = std::max(0, s.width), height = std::max(0, s.height);
+    const size_t cells = size_t(width) * size_t(height);
+    std::array<const uint16_t*, 32> planes{};
+    size_t count = 0;
     for (int p = 0; p < 32; ++p)
         if ((s.viewers >> p & 1) && (size_t(p) + 1) * cells <= s.viewCounts.size())
-            planes.push_back(s.viewCounts.data() + size_t(p) * cells);
+            planes[count++] = s.viewCounts.data() + size_t(p) * cells;
     const bool haveExplored = s.explored.size() == cells && s.player >= 0 && s.player < 16;
     const uint16_t bit = haveExplored ? uint16_t(1u << s.player) : 0;
-    bool changed = out.size() != cells;
-    out.resize(cells);
+    bool changed = false;
+    if (out.size() != cells || x1 < 0) {
+        changed = out.size() != cells;
+        out.resize(cells);
+        x0 = z0 = 0; x1 = width; z1 = height;
+    }
+    x0 = std::clamp(x0, 0, width); x1 = std::clamp(x1, x0, width);
+    z0 = std::clamp(z0, 0, height); z1 = std::clamp(z1, z0, height);
+    uint8_t* o = out.data();
     // 0x498270 reads the Mapping bit first: a cell never explored is black
-    // whatever its view count says.
-    for (size_t i = 0; i < cells; ++i) {
-        uint8_t v = kUnexplored;
-        if (s.mapRevealed || (haveExplored && (s.explored[i] & bit))) {
-            v = s.losOff ? kInView : kExplored;
-            if (v != kInView)
-                for (const uint16_t* plane : planes)
-                    if (plane[i]) { v = kInView; break; }
+    // whatever its view count says. A large map has a million cells, so four
+    // cells at a time in 16-bit lanes.
+    constexpr uint64_t kLow = 0x7fff7fff7fff7fffull, kHigh = 0x8000800080008000ull;
+    const auto nonzero = [](uint64_t v) { return (((v & kLow) + kLow) | v) & kHigh; };   // lane != 0
+    const uint64_t lanes = uint64_t(bit) * 0x0001000100010001ull;
+    for (int z = z0; z < z1; ++z) {
+        size_t i = size_t(z) * size_t(width) + size_t(x0);
+        const size_t end = size_t(z) * size_t(width) + size_t(x1);
+        for (; i + 4 <= end; i += 4) {
+            uint64_t explored = 0;
+            if (s.mapRevealed) explored = kHigh;
+            else if (haveExplored) { uint64_t m; std::memcpy(&m, s.explored.data() + i, 8); explored = nonzero(m & lanes); }
+            const uint64_t e = explored >> 15;   // 1 in each explored lane
+            uint64_t v = e << 1;                 // LOS off: explored is in view
+            if (!s.losOff) {
+                uint64_t seen = 0;
+                for (size_t k = 0; k < count; ++k) { uint64_t c; std::memcpy(&c, planes[k] + i, 8); seen |= c; }
+                v = e + (e & (nonzero(seen) >> 15));
+            }
+            uint64_t x = (v | (v >> 8)) & 0x0000ffff0000ffffull;   // the four lanes' low bytes
+            const uint32_t packed = uint32_t((x | (x >> 16)) & 0xffffffffull);
+            uint32_t before; std::memcpy(&before, o + i, 4);
+            changed = changed || before != packed;
+            std::memcpy(o + i, &packed, 4);
         }
-        changed = changed || out[i] != v;
-        out[i] = v;
+        for (; i < end; ++i) {
+            uint8_t v = kUnexplored;
+            if (s.mapRevealed || (haveExplored && (s.explored[i] & bit))) {
+                v = s.losOff ? kInView : kExplored;
+                for (size_t k = 0; k < count && v != kInView; ++k)
+                    if (planes[k][i]) v = kInView;
+            }
+            changed = changed || o[i] != v;
+            o[i] = v;
+        }
     }
     return changed;
 }

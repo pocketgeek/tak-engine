@@ -3776,6 +3776,12 @@ private:
     void captureFog(Frame& fb);
     std::vector<uint8_t> fogPlane_;
     uint32_t fogPlaneGen_ = 0;
+    // What fogPlane_ was built from: a different source rebuilds it whole.
+    struct FogKey {
+        const void* counts = nullptr; const void* explored = nullptr;
+        int w = 0, h = 0; uint32_t viewers = 0; int player = -1; bool revealed = false, losOff = false;
+        bool operator==(const FogKey&) const = default;
+    } fogKey_;
     tak::retailfog::RadarCover fogRadar_;
     // Before the first tick the World has no view counts yet (its first pass runs
     // inside tick 0); the frame drawn behind a campaign briefing stamps the same

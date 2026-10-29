@@ -10,6 +10,31 @@ int main() try {
           rf::blendTexel(0x8f,0x8f,0x8f,0x8f)==0x8f,"a uniform neighbourhood keeps its byte");
     check(rf::blendTexel(0x0f,0xf0,0x0f,0x0f)==((5*15)>>5<<4 | (27*15)>>5),"one unexplored side neighbour");
     check(rf::blendTexel(0xf0,0x0f,0x0f,0x0f)==((19*15)>>5<<4 | (13*15)>>5),"own cell weighs 19/32");
+    {   // buildPlane's four-lane form against the rule cell by cell, odd sizes,
+        // several viewers, Map Revealed and LOS off.
+        uint32_t seed=12345;
+        auto next=[&]{seed=seed*1103515245u+12345u;return seed>>8;};
+        for(int round=0;round<40;++round) {
+            const int w=1+int(next()%37),h=1+int(next()%23);const size_t cells=size_t(w)*h;
+            std::vector<uint16_t> counts(cells*4),explored(cells);
+            for(auto& c:counts)c=uint16_t(next()%4==0 ? next()%70000 : 0);
+            for(auto& e:explored)e=uint16_t(next());
+            rf::PlaneSource src;src.viewCounts=counts;src.explored=explored;src.width=w;src.height=h;
+            src.viewers=next()%16;src.player=int(next()%4);src.mapRevealed=round%7==3;src.losOff=round%5==2;
+            std::vector<uint8_t> plane(cells,9);
+            check(rf::buildPlane(src,plane),"a new plane reports a change");
+            for(size_t i=0;i<cells;++i) {
+                uint8_t v=rf::kUnexplored;
+                if(src.mapRevealed || (explored[i]>>src.player&1)) {
+                    v=rf::kExplored;
+                    bool seen=false;for(int p=0;p<4;++p)seen=seen || ((src.viewers>>p&1) && counts[size_t(p)*cells+i]);
+                    if(src.losOff || seen)v=rf::kInView;
+                }
+                check(plane[i]==v,"buildPlane matches the rule cell by cell");
+            }
+            check(!rf::buildPlane(src,plane),"an unchanged plane reports no change");
+        }
+    }
     SDL_SetMainReady();check(SDL_Init(SDL_INIT_VIDEO)==0,SDL_GetError());
     constexpr int W=129,H=97;   // cells; the overlay is 2W x 2H texels
     auto* window=SDL_CreateWindow("fog uploads",0,0,2*W,2*H,SDL_WINDOW_HIDDEN);
@@ -58,5 +83,5 @@ int main() try {
     upload.clear();verify();check(upload.uploadedBytes()==size_t(4*W*H)*4,"reset restores whole image");
     SDL_SetRenderTarget(renderer,nullptr);SDL_DestroyTexture(target);SDL_DestroyTexture(texture);SDL_DestroyTexture(mini);
     SDL_DestroyRenderer(renderer);SDL_DestroyWindow(window);SDL_Quit();
-    std::puts("PASS: fog upload: retail texel blend, minimap cells, dirty blocks, edges and reset");return 0;
+    std::puts("PASS: fog upload: display plane, retail texel blend, minimap cells, dirty blocks, edges and reset");return 0;
 } catch(const std::exception& e) {std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}

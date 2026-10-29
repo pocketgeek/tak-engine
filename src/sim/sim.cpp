@@ -11951,9 +11951,25 @@ void World::tickAbilities(float) {
 }
 
 void World::updateNavigationExploration() {
+    const int squaresW=((hW_/2)+(1<<kViewDirtyShift)-1)>>kViewDirtyShift;
+    const int squaresH=((hH_/2)+(1<<kViewDirtyShift)-1)>>kViewDirtyShift;
+    if (viewDirtyW_!=squaresW || viewDirty_.size()!=size_t(squaresW)*squaresH) {
+        viewDirtyW_=squaresW;viewDirty_.assign(size_t(squaresW)*squaresH,1);
+    }
     updateExplorationPlane();
     updateViewCounts();
 }
+
+void World::markViewDirty(const RetailSightFootprint& sight) {
+    if (viewDirty_.empty()) return;
+    const int radius=retailSightRadius(sight),squaresH=int(viewDirty_.size())/viewDirtyW_;
+    const int x0=std::max(0,(int(sight.x)-radius)>>kViewDirtyShift),x1=std::min(viewDirtyW_-1,(int(sight.x)+radius)>>kViewDirtyShift);
+    const int z0=std::max(0,(int(sight.z)-radius)>>kViewDirtyShift),z1=std::min(squaresH-1,(int(sight.z)+radius)>>kViewDirtyShift);
+    for (int z=z0;z<=z1;++z)
+        for (int x=x0;x<=x1;++x) __atomic_store_n(&viewDirty_[size_t(z)*viewDirtyW_+x],uint8_t(1),__ATOMIC_RELAXED);
+}
+
+void World::markViewDirtyAll() { std::fill(viewDirty_.begin(),viewDirty_.end(),uint8_t(1)); }
 
 void World::updateExplorationPlane() {
     if (explorationHeights_.empty()) return;
@@ -12013,6 +12029,7 @@ void World::updateExplorationPlane() {
             }
             const uint16_t viewers=size_t(u.player)<playerViewers.size() ? playerViewers[size_t(u.player)] : 0;
             const Fixed y=u.type->canFly?u.flightY:u.groundY;
+            const RetailSightFootprint before=u.sightFootprint;
             // Exploration only adds bits. Already revealed blocks and cells
             // need no terrain calculation, and removal never changes this map.
             retailUpdateExploration(u.sightFootprint,u.x,y,u.z,uint8_t(seaLevel_),width,height,blockShift,
@@ -12024,6 +12041,8 @@ void World::updateExplorationPlane() {
                     if constexpr (kShared) __atomic_fetch_or(&cell,viewers,__ATOMIC_RELAXED); else cell|=viewers;
                 },
                 [&](int bx,int bz){summarizeBlock(bx,bz);});
+            if (u.sightFootprint.active && (before.x!=u.sightFootprint.x || before.z!=u.sightFootprint.z ||
+                before.eyeHeight!=u.sightFootprint.eyeHeight || !before.active)) markViewDirty(u.sightFootprint);
         }
     };
     // Below about 4k units the whole pass is ~0.1 ms: a fork-join (and the
@@ -12055,6 +12074,7 @@ void World::updateViewCounts() {
         // Fresh plane (first pass, or a player count change): every footprint
         // is re-added from scratch below.
         viewCounts_.assign(planes*cells,0);
+        markViewDirtyAll();
         deathSights_.clear();
         for (auto& u:units_) { u.viewSight={};u.viewPlayer=-1; }
     }
@@ -12062,6 +12082,7 @@ void World::updateViewCounts() {
     auto heightAt=[&](int x,int z){return explorationHeights_[size_t(z)*width+x];};
     auto change=[&](RetailSightFootprint& sight,int player,bool add,auto shared) {
         constexpr bool kShared=decltype(shared)::value;
+        if (sight.active!=add) markViewDirty(sight);
         uint16_t* plane=viewCounts_.data()+size_t(player)*cells;
         retailSightFootprint(sight,add,false,width,height,uint8_t(player),heightAt,
             [&](int x,int z,int delta,uint16_t) {
@@ -12107,12 +12128,18 @@ void World::updateViewCounts() {
             const Fixed y=u.type->canFly?u.flightY:u.groundY;
             uint16_t* plane=viewCounts_.data()+size_t(u.player)*cells;
             constexpr bool kShared=decltype(shared)::value;
+            const RetailSightFootprint before=u.viewSight;
             retailUpdateSight(u.viewSight,u.x,y,u.z,uint8_t(seaLevel_),false,width,height,uint8_t(u.player),heightAt,
                 [&](int x,int z,int delta,uint16_t) {
                     uint16_t& cell=plane[size_t(z)*width+x];
                     if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);
                     else cell=uint16_t(cell+delta);
                 });
+            if (before.x!=u.viewSight.x || before.z!=u.viewSight.z || before.eyeHeight!=u.viewSight.eyeHeight ||
+                before.active!=u.viewSight.active) {
+                if (before.active) markViewDirty(before);
+                if (u.viewSight.active) markViewDirty(u.viewSight);
+            }
             u.viewPlayer=u.viewSight.active ? int8_t(u.player) : int8_t(-1);
         }
     };
@@ -12213,12 +12240,14 @@ void World::applyPowerCode(int player,PowerCode code,PowerArg arg,int unitId) {
                 // MappingOn off: the whole map explored for this player.
                 powerMappingOff_|=bit;
                 for (auto& mask:navigationExplored_) mask|=bit;
+                markViewDirtyAll();
             } else {
                 // 425980 refills the explored grid with 0: past exploration is
                 // forgotten, and sight explores again from the next pass (every
                 // footprint that explores for this player starts afresh).
                 powerMappingOff_&=uint16_t(~bit);
                 for (auto& mask:navigationExplored_) mask&=uint16_t(~bit);
+                markViewDirtyAll();
                 for (auto& u:units_)
                     if (u.type && allied(u.player,player)) u.sightFootprint={};
             }

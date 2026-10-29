@@ -2056,6 +2056,16 @@ public:
     // The projected 32px grid both planes use (cells per row / rows).
     int viewPlaneW() const { return hW_/2; }
     int viewPlaneH() const { return hH_/2; }
+    // Display bookkeeping for the client, never hashed and never read by the
+    // simulation: one byte per (1<<kViewDirtyShift)-cell square of the two
+    // planes, set where a view or exploration footprint was added, moved or
+    // removed (every square when a plane is replaced or rewritten whole) since
+    // the client last cleared it. The client rebuilds only those squares of its
+    // display plane, which on the largest maps is a million cells.
+    static constexpr int kViewDirtyShift = 4;
+    const std::vector<uint8_t>& viewDirty() const { return viewDirty_; }
+    int viewDirtyW() const { return viewDirtyW_; }
+    void clearViewDirty() { std::fill(viewDirty_.begin(),viewDirty_.end(),uint8_t(0)); }
     const std::vector<uint16_t>& navigationExploration() const { return navigationExplored_; }
     // `player`'s Mapping-plane bit at the 32 px cell under (x,z), as tickManaBuildArea
     // reads it: true without a plane (no terrain), false off the map.
@@ -3363,6 +3373,10 @@ private:
     // 60 ticks (at most 20 per player). Hashed, in order.
     struct RetailDeathSight { RetailSightFootprint sight; int8_t player=-1; uint32_t expiry=0; };
     std::vector<RetailDeathSight> deathSights_;
+    std::vector<uint8_t> viewDirty_;   // viewDirty(); display bookkeeping, not hashed
+    int viewDirtyW_ = 0;
+    void markViewDirty(const RetailSightFootprint& sight);   // the squares it covers (relaxed stores)
+    void markViewDirtyAll();
     void rebuildVisibleLists(int player);
     int restoredNavigationViewer_=-1; // captured query context; live matches use the unit owner
 public:
