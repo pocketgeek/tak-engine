@@ -3643,8 +3643,9 @@ bool World::requestPath(Unit& u, float x, float z) {
 // whether cells that shared a label before still reach one another WITHOUT crossing the
 // edit. If they do, any route that ran through the edit can be rerouted locally, so
 // global connectivity is unchanged. If the local search cannot show it (the reroute may
-// exist but leave the window, or the corridor really was severed), we give up and let
-// the next query rebuild from scratch -- conservative, never wrong.
+// exist but leave the window, or the corridor really was severed), resolveSplit() settles
+// it over the whole grid at the cost of the smaller side; only if that runs over budget
+// does the next query rebuild from scratch -- conservative, never wrong.
 //
 // The window has to cover every cell whose fits() answer the edit can move. fits(cx,cz)
 // reads clearance at (cx-off, cz-off), and a blocked cell perturbs clearance up to
@@ -3739,8 +3740,8 @@ bool World::tryIncrementalBlock(const NavGrid& g, int foot, CompGrid& cg,
 
     // Cells that shared a component before the edit must still share a local one. If two
     // of them landed in different local components the edit may have split them -- or a
-    // reroute may exist outside the window where this search cannot see it. Either way
-    // we cannot prove safety, so give up and rebuild fully.
+    // reroute may exist outside the window where this search cannot see it. The window
+    // cannot tell which, so resolveSplit() below settles it.
     // Group by ROOT, not by raw label. After an unblock merge two cells can share a
     // component while still carrying the different ids they were first given; grouping
     // by raw label would see two unrelated ids, find each trivially self-consistent,
@@ -3750,18 +3751,205 @@ bool World::tryIncrementalBlock(const NavGrid& g, int foot, CompGrid& cg,
     // re-closing a gate in a full-width wall in ONE blockCells call each way. Closing it
     // in three calls hides the bug, because then cells sharing a raw label straddle the
     // split and the check trips for the wrong reason.)
-    std::map<int32_t, int32_t> firstLoc;   // pre-edit component root -> local component
+    // pre-edit component root -> the local components its boundary cells landed in, in
+    // first-seen (boundary) order, each with those boundary cells as flood seeds.
+    std::map<int32_t, std::vector<std::pair<int32_t, std::vector<int>>>> pieces;
+    bool possibleSplit = false;
     for (int idx : boundary) {
         const int bx = idx % w, bz = idx / w;
         const int32_t pre = cg.root(labelAt(bx, bz));
         if (pre < 0) continue;
         const int32_t lc = loc[size_t(bz - wz0) * size_t(ww) + size_t(bx - wx0)];
-        auto it = firstLoc.find(pre);
-        if (it == firstLoc.end()) firstLoc.emplace(pre, lc);
-        else if (it->second != lc) return false;   // possible split -- do it properly
+        auto& ps = pieces[pre];
+        auto it = std::find_if(ps.begin(), ps.end(), [&](const auto& p) { return p.first == lc; });
+        if (it == ps.end()) { ps.push_back({lc, {idx}}); possibleSplit |= ps.size() > 1; }
+        else it->second.push_back(idx);
+    }
+    if (!possibleSplit) {
+        for (int idx : removed) cg.raw_[size_t(idx)] = -1;
+        ++compStats_.blockCarried;
+        return true;
     }
 
+    // Some component's boundary cells landed in different local components: the edit
+    // may have split it, or they rejoin outside the window. Settle each such component
+    // over the whole grid. That used to be a whole-map relabel, ~90ms on a 2048x2048
+    // grid and 16-24 times a minute in a late 8-AI game -- and in a user's 23-minute
+    // replay 164 of its 200 were no split at all, while the 36 real ones cut off 195
+    // cells between them.
+    std::vector<std::vector<int>> cut;
+    for (const auto& [pre, ps] : pieces) {
+        if (ps.size() < 2) continue;
+        std::vector<std::vector<int>> seeds;
+        for (const auto& p : ps) seeds.push_back(p.second);
+        if (!resolveSplit(g, foot, seeds, wx0, wz0, wx1, wz1, okw, cut)) {
+            ++compStats_.splitFallback;
+            return false;
+        }
+    }
+    // Each cut-off piece takes a fresh id of its own; the piece left out of `cut` keeps
+    // the old root. Fresh ids are roots, so no alias can join a piece back to it.
+    for (const auto& cells : cut) {
+        const int32_t id = int32_t(cg.alias.size());
+        cg.alias.push_back(id);
+        for (int idx : cells) cg.raw_[size_t(idx)] = id;
+    }
     for (int idx : removed) cg.raw_[size_t(idx)] = -1;
+    ++(cut.empty() ? compStats_.splitJoined : compStats_.splitCut);
+    return true;
+}
+
+// Every still-fitting cell of the component that was cut reaches some boundary cell of
+// it without crossing the edit (walk its old route to the edit: the last step that is
+// still legal starts on a boundary cell), so the pieces the seeds grow into are ALL of
+// what is left of it. Flood each piece on the full connectivity rule, a batch each in
+// turn. Seeds are marked before any flood moves, so two pieces of one component always
+// meet: whichever reaches the other's ground first sees its mark, and they are united.
+// A piece whose flood runs dry without meeting another has been flooded to its last
+// cell and is a component of its own. Once at most one piece is still growing, every
+// other is settled -- and the growing one is the remainder, which keeps the old root
+// untouched (if all of them closed, the largest keeps it). So sealing off a pocket
+// costs about pieces x the pocket, not the map.
+//
+// Which cell a flood takes next cannot change what it ends up holding, only how soon
+// it meets another, so each takes the cell nearest the other pieces first. Two sides
+// that rejoin around a wall then follow the wall toward each other instead of filling
+// the open ground behind them, which is what made a plain breadth-first flood run out
+// of budget on the very case it exists for.
+bool World::resolveSplit(const NavGrid& g, int foot, const std::vector<std::vector<int>>& seeds,
+                         int wx0, int wz0, int wx1, int wz1, const std::vector<uint8_t>& okw,
+                         std::vector<std::vector<int>>& cut) const {
+    const int w = g.width(), h = g.height();
+    const size_t n = seeds.size(), cells = size_t(w) * size_t(h);
+    const int ww = wx1 - wx0 + 1;
+    auto fitsAt = [&](int x, int z) -> bool {
+        if (x < 0 || z < 0 || x >= w || z >= h) return false;
+        if (x >= wx0 && z >= wz0 && x <= wx1 && z <= wz1)
+            return okw[size_t(z - wz0) * size_t(ww) + size_t(x - wx0)] != 0;
+        return g.fits(x, z, foot);
+    };
+    // Marks are epochs: this call owns [base, base+n), anything else reads as unvisited,
+    // so the grid-sized array is never cleared between calls (only on wrap).
+    if (compMark_.size() != cells) { compMark_.assign(cells, 0); compMarkTop_ = 0; }
+    if (compMarkTop_ > UINT32_MAX - uint32_t(n) - 1) {
+        std::fill(compMark_.begin(), compMark_.end(), 0u);
+        compMarkTop_ = 0;
+    }
+    const uint32_t base = compMarkTop_ + 1;
+    compMarkTop_ += uint32_t(n);
+
+    std::vector<size_t> parent(n);
+    for (size_t i = 0; i < n; ++i) parent[i] = i;
+    auto find = [&](size_t i) {
+        while (parent[i] != i) i = parent[i] = parent[parent[i]];
+        return i;
+    };
+    // Where each piece is aimed: one seed of every piece still growing and not yet
+    // joined to it (a closed piece can never be met).
+    std::vector<std::pair<int, int>> rep(n);
+    for (size_t i = 0; i < n; ++i) rep[i] = {seeds[i].front() % w, seeds[i].front() / w};
+    std::vector<uint8_t> growing(n, 1);       // by group representative
+    std::vector<std::vector<std::pair<int, int>>> aims(n);   // by group representative
+    auto aim = [&] {
+        for (size_t i = 0; i < n; ++i) {
+            aims[i].clear();
+            if (find(i) != i) continue;
+            for (size_t j = 0; j < n; ++j)
+                if (find(j) != i && growing[find(j)]) aims[i].push_back(rep[j]);
+        }
+    };
+    aim();
+    auto nearness = [&](size_t i, int x, int z) {
+        uint32_t best = UINT32_MAX;
+        for (const auto& [ax, az] : aims[find(i)]) {
+            const uint32_t dx = uint32_t(std::abs(x - ax)), dz = uint32_t(std::abs(z - az));
+            best = std::min(best, std::max(dx, dz) * 2 + std::min(dx, dz));   // ~octile
+        }
+        return best;
+    };
+    struct Next { uint32_t d, seq; int idx; };
+    auto later = [](const Next& a, const Next& b) { return a.d != b.d ? a.d > b.d : a.seq > b.seq; };
+    std::vector<std::vector<Next>> open(n);   // per flood, a heap nearest-first
+    std::vector<std::vector<int>> held(n);    // every cell each flood has marked
+    uint32_t seq = 0;
+    auto take = [&](size_t i, int idx) {
+        compMark_[size_t(idx)] = base + uint32_t(i);
+        held[i].push_back(idx);
+        open[i].push_back({nearness(i, idx % w, idx / w), seq++, idx});
+        std::push_heap(open[i].begin(), open[i].end(), later);
+    };
+    for (size_t i = 0; i < n; ++i)
+        for (int idx : seeds[i]) {
+            const uint32_t m = compMark_[size_t(idx)];
+            if (m >= base && m < base + uint32_t(n)) continue;   // seeded twice
+            take(i, idx);
+        }
+
+    static const int dcx[8] = {1, -1, 0, 0, 1, 1, -1, -1};
+    static const int dcz[8] = {0, 0, 1, -1, 1, -1, 1, -1};
+    // A whole-map relabel is the fallback, so give up well before costing as much.
+    const size_t budget = cells / 8;
+    constexpr size_t kBatch = 64;
+    size_t work = 0, lastActive = n;
+    for (;;) {
+        std::fill(growing.begin(), growing.end(), uint8_t(0));
+        size_t active = 0;
+        for (size_t i = 0; i < n; ++i)
+            if (!open[i].empty() && !growing[find(i)]) { growing[find(i)] = 1; ++active; }
+        if (active <= 1) break;
+        if (active != lastActive) {           // pieces met or closed: re-aim the rest
+            aim();
+            for (size_t i = 0; i < n; ++i) {
+                for (Next& e : open[i]) e.d = nearness(i, e.idx % w, e.idx / w);
+                std::make_heap(open[i].begin(), open[i].end(), later);
+            }
+            lastActive = active;
+        }
+        for (size_t i = 0; i < n; ++i)
+            for (size_t b = 0; b < kBatch && !open[i].empty(); ++b) {
+                std::pop_heap(open[i].begin(), open[i].end(), later);
+                const int cur = open[i].back().idx;
+                open[i].pop_back();
+                const int cx = cur % w, cz = cur / w;
+                bool orth[4];
+                for (int k = 0; k < 4; ++k) orth[k] = fitsAt(cx + dcx[k], cz + dcz[k]);
+                for (int k = 0; k < 8; ++k) {
+                    if (k < 4 ? !orth[k]
+                              : (!orth[dcx[k] > 0 ? 0 : 1] || !orth[dcz[k] > 0 ? 2 : 3] ||
+                                 !fitsAt(cx + dcx[k], cz + dcz[k])))
+                        continue;                        // same rule as components()
+                    const int ni = (cz + dcz[k]) * w + (cx + dcx[k]);
+                    const uint32_t m = compMark_[size_t(ni)];
+                    if (m >= base && m < base + uint32_t(n)) {
+                        const size_t a = find(i), c = find(m - base);
+                        if (a != c) parent[std::max(a, c)] = std::min(a, c);   // they meet
+                        continue;
+                    }
+                    take(i, ni);
+                }
+                if (++work > budget) return false;
+            }
+    }
+
+    // Settled pieces, by representative flood. The still-growing one (if any) keeps the
+    // old root; otherwise the largest does, so the fewest cells are rewritten.
+    std::vector<size_t> size(n, 0);
+    int keep = -1;
+    for (size_t i = 0; i < n; ++i) {
+        size[find(i)] += held[i].size();
+        if (!open[i].empty()) keep = int(find(i));
+    }
+    if (keep < 0)
+        for (size_t i = 0; i < n; ++i)
+            if (find(i) == i && (keep < 0 || size[i] > size[size_t(keep)])) keep = int(i);
+    for (size_t r = 0; r < n; ++r) {
+        if (find(r) != r || int(r) == keep) continue;
+        std::vector<int> piece;
+        piece.reserve(size[r]);
+        for (size_t i = 0; i < n; ++i)
+            if (find(i) == r) piece.insert(piece.end(), held[i].begin(), held[i].end());
+        cut.push_back(std::move(piece));
+    }
     return true;
 }
 
@@ -3840,13 +4028,62 @@ bool World::tryIncrementalUnblock(const NavGrid& g, int foot, CompGrid& cg,
             if (nl >= 0) cg.unite(mine, nl);
         }
     }
+    ++compStats_.unblockCarried;
     return true;
 }
 
 const World::CompGrid* World::components(const NavGrid& g, int foot) const {
     if (g.empty()) return nullptr;
     auto& cg = compCache_[{&g, foot}];
-    if (cg.ver == g.version() && cg.w == g.width() && cg.h == g.height()) return &cg;
+    if (cg.ver == g.version() && cg.w == g.width() && cg.h == g.height()) {
+        // A current entry may have been carried across edits rather than built: check
+        // it once per version against a from-scratch labelling (debug only, slow).
+        static const bool kCheck = tak::devFlag("TAK_COMPCHECK");
+        if (kCheck && cg.checkedVer != cg.ver) {
+            verifyComponents(g, foot, cg);
+            cg.checkedVer = cg.ver;
+        }
+        return &cg;
+    }
+    ++compStats_.relabels;
+    labelComponents(g, foot, cg);
+    cg.checkedVer = cg.ver;   // built from scratch: nothing to check
+    return &cg;
+}
+
+void World::verifyComponents(const NavGrid& g, int foot, const CompGrid& cg) const {
+    CompGrid fresh;
+    labelComponents(g, foot, fresh);
+    // Same partition iff the fresh id <-> carried root correspondence is a bijection
+    // and both agree on where nothing fits.
+    std::vector<int32_t> toRoot(fresh.alias.size(), -1), toFresh(cg.alias.size(), -1);
+    for (int z = 0; z < cg.h; ++z)
+        for (int x = 0; x < cg.w; ++x) {
+            const int32_t a = fresh.componentAt(x, z), b = cg.componentAt(x, z);
+            bool ok = (a < 0) == (b < 0);
+            if (ok && a >= 0) {
+                if (toRoot[size_t(a)] < 0 && toFresh[size_t(b)] < 0) {
+                    toRoot[size_t(a)] = b; toFresh[size_t(b)] = a;
+                }
+                ok = toRoot[size_t(a)] == b && toFresh[size_t(b)] == a;
+            }
+            if (!ok) {
+                std::fprintf(stderr, "[compcheck] MISMATCH tick=%u foot=%d %dx%d cell=(%d,%d) "
+                             "fresh=%d carried=%d stats relabels=%llu block=%llu joined=%llu "
+                             "cut=%llu fallback=%llu unblock=%llu\n",
+                             tickCounter_, foot, cg.w, cg.h, x, z, a, b,
+                             (unsigned long long)compStats_.relabels,
+                             (unsigned long long)compStats_.blockCarried,
+                             (unsigned long long)compStats_.splitJoined,
+                             (unsigned long long)compStats_.splitCut,
+                             (unsigned long long)compStats_.splitFallback,
+                             (unsigned long long)compStats_.unblockCarried);
+                std::abort();
+            }
+        }
+}
+
+void World::labelComponents(const NavGrid& g, int foot, CompGrid& cg) {
     g.ensureClearance();
     const int w = g.width(), h = g.height();
     cg.ver = g.version(); cg.w = w; cg.h = h;
@@ -3917,7 +4154,6 @@ const World::CompGrid* World::components(const NavGrid& g, int foot) const {
                 }
             }
         }
-    return &cg;
 }
 
 
@@ -7240,10 +7476,11 @@ void World::blockCells(int cx, int cz, int w, int h, bool blocked) {
         plane.navVersion=plane.nav->version();
     }
 
-    // A pure block can only split components, and a split is provable locally -- so most
-    // building placements need not throw away a whole-map labelling that costs ~5.7ms to
-    // rebuild. Entries that cannot be proven safe keep their old (now stale) version and
-    // get rebuilt by the next query, exactly as before.
+    // A pure block can only split components, and a split is settled locally -- so
+    // building placements need not throw away a whole-map labelling that costs ~90ms to
+    // rebuild on a 2048x2048 grid (~5.7ms on the 512x512 maps this was first measured
+    // on). Entries that cannot be carried keep their old (now stale) version and get
+    // rebuilt by the next query, exactly as before.
     for (const auto& [key, oldVer] : fresh) {
         auto it = compCache_.find(key);
         if (it == compCache_.end() || it->second.ver != oldVer) continue;

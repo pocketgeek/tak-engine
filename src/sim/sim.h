@@ -2589,6 +2589,18 @@ public:
     // still admits such an order. Flyers, structures, missing or embarked builders
     // answer true (nothing to decide). Not hashed; same answers whatever was queried before.
     bool buildSiteReachable(int builderId, const UnitType* site, float x, float z) const;
+    // How the component labelling behind pathExists() kept up with walkability edits:
+    // full relabels versus edits carried across incrementally. Lets navincr_test tell a
+    // fast path that fires from one that silently never does. Not hashed.
+    struct CompStats {
+        uint64_t relabels = 0;         // whole-grid labellings built by components()
+        uint64_t blockCarried = 0;     // blocks proven harmless inside their window
+        uint64_t splitJoined = 0;      // blocks proven harmless by resolveSplit()
+        uint64_t splitCut = 0;         // blocks that really cut a component, relabelled locally
+        uint64_t splitFallback = 0;    // resolveSplit() over budget -> full relabel
+        uint64_t unblockCarried = 0;
+    };
+    const CompStats& compStats() const { return compStats_; }
     void patrol(int unitId, float x, float z);
     // Queue a patrol waypoint (SetMission "p X Y"): like a move but the completed
     // order re-queues at the back, so a chain of these loops the unit through them.
@@ -2880,6 +2892,7 @@ private:
     // asks. Never compare raw labels.
     struct CompGrid {
         uint64_t ver = 0; int w = 0, h = 0;
+        uint64_t checkedVer = ~uint64_t(0);   // TAK_COMPCHECK: last version verified
 
         // ASK THROUGH THESE. The stored ids are NOT comparable: an unblock merges two
         // components by uniting their ids rather than rewriting a map of cells, so two
@@ -2924,10 +2937,29 @@ private:
     // still-passable cell around the edit that shared a label still reaches the others
     // without crossing the edit, then any route that used those cells can be rerouted
     // around them, so every label stays correct and only the cells that stopped fitting
-    // need clearing to -1. Returns false when it cannot prove that (the edit may have
-    // severed a corridor), leaving the entry stale for a full relabel.
+    // need clearing to -1. When the window cannot show it, resolveSplit() settles it
+    // over the whole grid; false only when that runs over budget, leaving the entry
+    // stale for a full relabel.
     bool tryIncrementalBlock(const NavGrid& g, int foot, CompGrid& cg,
                              int x0, int z0, int x1, int z1) const;
+    // The pieces a block may have cut one component into, settled without a whole-map
+    // relabel: one breadth-first flood per piece, run in turns, so pieces that meet are
+    // proven joined and a piece that runs out of cells is proven cut off. Stops as soon
+    // as at most one piece is still growing, so the cost is the SMALLER side, not the
+    // map. fits() is read from `okw` inside the edit's window [wx0,wx1]x[wz0,wz1] and
+    // from the grid outside it. Appends the cells of every cut-off piece but one to
+    // `cut` (each needs a fresh id); false when the floods exceed their budget.
+    bool resolveSplit(const NavGrid& g, int foot, const std::vector<std::vector<int>>& seeds,
+                      int wx0, int wz0, int wx1, int wz1, const std::vector<uint8_t>& okw,
+                      std::vector<std::vector<int>>& cut) const;
+    // The whole-grid flood fill behind components(): `cg` relabelled from scratch.
+    static void labelComponents(const NavGrid& g, int foot, CompGrid& cg);
+    // TAK_COMPCHECK (debug): recompute the whole labelling from scratch and abort unless
+    // it partitions the cells exactly as `cg`'s roots do.
+    void verifyComponents(const NavGrid& g, int foot, const CompGrid& cg) const;
+    mutable std::vector<uint32_t> compMark_;   // resolveSplit's flood marks, by epoch
+    mutable uint32_t compMarkTop_ = 0;
+    mutable CompStats compStats_;
     // The mirror of the above for an edit that only CLEARS cells. Unblocking can only
     // merge components, never split one, so there is nothing to prove: give each newly
     // passable cell a label (an adjacent component's, or a fresh id if it stands alone)

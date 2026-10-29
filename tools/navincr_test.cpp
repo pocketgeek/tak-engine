@@ -24,6 +24,7 @@
 using namespace tak::sim;
 
 static int g_fail = 0;
+static World::CompStats g_warm;   // summed over every warm world, to prove the paths fire
 static void check(bool cond, const std::string& what, const std::string& detail = {}) {
     std::printf("  %-56s %s%s%s\n", what.c_str(), cond ? "ok" : "FAIL",
                 detail.empty() ? "" : " -- ", detail.c_str());
@@ -117,6 +118,10 @@ static bool runSeed(uint32_t seed, int foot, bool verbose) {
 
     auto warm = build(true);
     auto cold = build(false);
+    const auto& ws = warm->compStats();
+    g_warm.relabels += ws.relabels; g_warm.blockCarried += ws.blockCarried;
+    g_warm.splitJoined += ws.splitJoined; g_warm.splitCut += ws.splitCut;
+    g_warm.splitFallback += ws.splitFallback; g_warm.unblockCarried += ws.unblockCarried;
 
     // Probe a lattice of pairs: every combination of a fixed set of points, so the
     // comparison covers cells inside walled-off pockets as well as open ground.
@@ -149,6 +154,17 @@ int main() {
             if (!runSeed(seed, foot, false)) ++bad;
     check(bad == 0, "warm (incremental) == cold (full rebuild) over 40 seeds x 4 footprints",
           bad ? std::to_string(bad) + " seed/foot combinations disagree" : "");
+    // ...and that agreement must have been earned on every path, not by a full relabel
+    // after each edit: a fast path that never fires passes the comparison above too.
+    {
+        char d[160];
+        std::snprintf(d, sizeof d, "relabels=%llu carried=%llu joined=%llu cut=%llu fallback=%llu unblock=%llu",
+                      (unsigned long long)g_warm.relabels, (unsigned long long)g_warm.blockCarried,
+                      (unsigned long long)g_warm.splitJoined, (unsigned long long)g_warm.splitCut,
+                      (unsigned long long)g_warm.splitFallback, (unsigned long long)g_warm.unblockCarried);
+        check(g_warm.blockCarried > 0 && g_warm.splitJoined > 0 && g_warm.splitCut > 0 &&
+              g_warm.unblockCarried > 0, "random edits exercise carry, join, cut and unblock", d);
+    }
 
     // A wall that genuinely severs the map must be seen as severing it -- otherwise the
     // test above could pass simply by never proving anything.
@@ -183,6 +199,87 @@ int main() {
         w.blockCells(W / 2, H / 2, 4, 3, true);
         const bool resevered = w.pathExists(&t, 32.0f, 32.0f, float(W * 16 - 32), float(H * 16 - 32));
         check(!resevered, "gate closed again: NOT reachable (split check must resolve aliases)");
+    }
+
+    // A block whose two sides only meet OUTSIDE the proof window, and the same block
+    // where they never meet. The window cannot tell these apart; resolveSplit() must,
+    // and must do it without a whole-map relabel. A corridor between two long walls is
+    // plugged in the middle: open at both ends its halves still meet around the walls
+    // (joined); closed at the left end, the left half is a sealed pocket (cut). Then a
+    // T junction plugged where three corridors meet: one piece cut, two still joined.
+    // Reopened and re-plugged too, so the cut piece's fresh id is merged by the unblock
+    // and must be split off again through the alias table.
+    for (int foot : {1, 3}) {
+        const int W = 256, H = 128;
+        const UnitType t = mover(foot);
+        auto at = [](int c) { return float(c * 16 + 8); };
+        auto reach = [&](const World& w, int ax, int az, int bx, int bz) {
+            return w.pathExists(&t, at(bx), at(bz), at(ax), at(az));
+        };
+        for (int closed = 0; closed < 2; ++closed) {
+            for (int tee = 0; tee < 2; ++tee) {
+                // The geometry, before the plug: walls at z=60 and z=68 for x in
+                // [20,200], the corridor between them; `closed` seals x=20; `tee` opens
+                // a vertical corridor x in [107,113] from z=10 down into it.
+                auto walls = [&](World& w) {
+                    w.setVisPlayer(-1);
+                    w.setTerrain(std::vector<uint8_t>(size_t(W) * size_t(H), 100), W, H, 20);
+                    w.blockCells(20, 60, 181, 1, true);
+                    w.blockCells(20, 68, 181, 1, true);
+                    if (closed) w.blockCells(20, 60, 1, 9, true);
+                    if (tee) {
+                        w.blockCells(107, 60, 7, 1, false);
+                        w.blockCells(106, 10, 1, 51, true);
+                        w.blockCells(114, 10, 1, 51, true);
+                    }
+                };
+                const int px = tee ? 107 : 110, pw = tee ? 7 : 1;   // the plug
+                World warm, cold;
+                walls(warm); walls(cold);
+                (void)reach(warm, 5, 5, 250, 120);   // build the labelling before the plug
+                const auto before = warm.compStats();
+                for (int round = 0; round < 2; ++round) {
+                    warm.blockCells(px, 61, pw, 7, true);
+                    (void)reach(warm, 5, 5, 250, 120);
+                    if (round == 0) {                // reopen, query, close again
+                        warm.blockCells(px, 61, pw, 7, false);
+                        (void)reach(warm, 5, 5, 250, 120);
+                    }
+                }
+                cold.blockCells(px, 61, pw, 7, true);
+                // left half of the corridor, right half, the tee's stem, open ground
+                const int pts[4][2] = {{60, 64}, {160, 64}, {110, 30}, {5, 5}};
+                const bool expect[4][4] = {
+                    {true, !closed, !closed, !closed},
+                    {!closed, true, true, true},
+                    {!closed, true, true, true},
+                    {!closed, true, true, true}};
+                int wrong = 0;
+                for (int a = 0; a < 4; ++a)
+                    for (int b = 0; b < 4; ++b) {
+                        if (!tee && (a == 2 || b == 2)) continue;   // no stem without the tee
+                        const bool ww = reach(warm, pts[a][0], pts[a][1], pts[b][0], pts[b][1]);
+                        const bool cc = reach(cold, pts[a][0], pts[a][1], pts[b][0], pts[b][1]);
+                        if (ww != expect[a][b] || cc != expect[a][b]) ++wrong;
+                    }
+                const auto& after = warm.compStats();
+                char what[96], d[96];
+                std::snprintf(what, sizeof what, "plugged %s%s corridor, foot %d: %s",
+                              closed ? "sealed" : "open", tee ? " tee" : "", foot,
+                              closed ? "pocket cut off" : "halves still joined");
+                std::snprintf(d, sizeof d, "%d wrong answers, relabels +%llu joined +%llu cut +%llu",
+                              wrong, (unsigned long long)(after.relabels - before.relabels),
+                              (unsigned long long)(after.splitJoined - before.splitJoined),
+                              (unsigned long long)(after.splitCut - before.splitCut));
+                // Both plugs are settled by resolveSplit, never by a relabel: the
+                // sealed corridor is cut twice, the open one joined twice (the tee's
+                // open stem and right half join while the pocket is cut).
+                const bool path = after.relabels == before.relabels &&
+                    (closed ? after.splitCut - before.splitCut == 2
+                            : after.splitJoined - before.splitJoined == 2);
+                check(wrong == 0 && path, what, d);
+            }
+        }
     }
 
     std::printf(bad || g_fail ? "navincr_test: FAILURES\n" : "navincr_test: all passed\n");
