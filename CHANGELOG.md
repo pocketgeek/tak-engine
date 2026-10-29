@@ -32,6 +32,9 @@ their validation reports; both live in [`docs/`](docs/).
   longer stays hidden under the panel, and the bottom edge scrolls into view
   above the bar.
 
+- **Fade Opacity** (Hidden Units) now defaults to 50% (was 65%); a value you
+  saved is kept.
+
 ## 0.9.10
 *2026-10-28 · protocol 303 · replay format 15 · plays with 0.9.9, and its replays*
 

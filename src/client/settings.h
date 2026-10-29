@@ -81,8 +81,8 @@ struct Settings {
     // or "shadow" (modes since removed) or unknown = FADE.
     int   hiddenUnits = 2;
     // FADE OPACITY: how visible a faded cover stays, percent -- 100 = no fade, 0 = gone.
-    // Persisted as hiddenFadeOpacity = 0..100 (clamped); absent = 65.
-    int   hiddenFadeOpacity = 65;
+    // Persisted as hiddenFadeOpacity = 0..100 (clamped); absent = 50.
+    int   hiddenFadeOpacity = 50;
     bool  screenShake = false;     // camera shake on heavy impacts / mission quakes; default off
     bool  videoDeblock = true;     // deblock the Bink clips before upload. They are
                                    // 640x360 and get stretched ~12x on a wide display,

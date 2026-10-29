@@ -260,7 +260,7 @@ int main() {
         reset("textureFilter",    d.textureFilter == fresh.textureFilter && d.textureFilter == 2);
         reset("tacticalDots",     d.tacticalDots == fresh.tacticalDots && d.tacticalDots);
         reset("hiddenUnits",      d.hiddenUnits == fresh.hiddenUnits && d.hiddenUnits == 2);
-        reset("hiddenFadeOpacity", d.hiddenFadeOpacity == fresh.hiddenFadeOpacity && d.hiddenFadeOpacity == 65);
+        reset("hiddenFadeOpacity", d.hiddenFadeOpacity == fresh.hiddenFadeOpacity && d.hiddenFadeOpacity == 50);
         reset("screenShake",      d.screenShake == fresh.screenShake && !d.screenShake);
         reset("tacticalDotsZoom", d.tacticalDotsZoom == fresh.tacticalDotsZoom && d.tacticalDotsZoom == 0);
         reset("renderer",         d.renderer == fresh.renderer && d.renderer.empty());
@@ -706,9 +706,9 @@ int main() {
             check("hidden: round trip", loadFrom(tak::serializeSettings(hs)).hiddenUnits == mode);
         }
         check("hidden: saved as name", tak::serializeSettings(Settings{}).find("hiddenUnits = fade") != std::string::npos);
-        // FADE OPACITY: percent 0..100, clamped; absent = 65.
-        check("fade opacity: default 65", Settings{}.hiddenFadeOpacity == 65);
-        check("fade opacity: absent", loadFrom("masterVol = 7\n").hiddenFadeOpacity == 65);
+        // FADE OPACITY: percent 0..100, clamped; absent = 50.
+        check("fade opacity: default 50", Settings{}.hiddenFadeOpacity == 50);
+        check("fade opacity: absent", loadFrom("masterVol = 7\n").hiddenFadeOpacity == 50);
         check("fade opacity: read", loadFrom("hiddenFadeOpacity = 30\n").hiddenFadeOpacity == 30);
         check("fade opacity: clamped high", loadFrom("hiddenFadeOpacity = 250\n").hiddenFadeOpacity == 100);
         check("fade opacity: clamped low", loadFrom("hiddenFadeOpacity = -5\n").hiddenFadeOpacity == 0);
