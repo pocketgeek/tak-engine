@@ -19,6 +19,14 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+*protocol 303 · replay format 15*
+
+- **Full zoom-out shows the whole map width.** The zoom-out limit now leaves
+  out the right-hand panel and the bottom bar, so the map's right edge no
+  longer stays hidden under the panel, and the bottom edge scrolls into view
+  above the bar.
+
 ## 0.9.10
 *2026-10-28 · protocol 303 · replay format 15 · plays with 0.9.9, and its replays*
 

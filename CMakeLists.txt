@@ -2541,6 +2541,24 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/tactical-dots.png")
       set_tests_properties(tactical_dots PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: tactical dots \\(threshold")
+      # Full zoom-out fits the map to the world view (left of the right panel, above
+      # the bottom bar), at 1080p and on a 7680x2160 super-ultrawide.
+      # Windowed (a fresh profile is fullscreen, i.e. the dummy driver's 1024x768
+      # desktop), so --winsize is the size tested.
+      file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/zoom-floor-settings.ini" "fullscreen = 0\n")
+      foreach(_size "1920;1080" "7680;2160")
+        list(GET _size 0 _zw)
+        list(GET _size 1 _zh)
+        add_test(NAME zoom_floor_${_zw}x${_zh} COMMAND ${CMAKE_COMMAND} -E env
+            SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_ZOOM_FLOOR_TEST=1
+            TAK_SETTINGS_FILE=${CMAKE_CURRENT_BINARY_DIR}/zoom-floor-settings.ini
+            XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/zoom-floor-${_zw}-profile
+            XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/zoom-floor-${_zw}-profile
+            $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+            --testbuild --winsize ${_zw} ${_zh} --shot "${CMAKE_CURRENT_BINARY_DIR}/zoom-floor-${_zw}.png")
+        set_tests_properties(zoom_floor_${_zw}x${_zh} PROPERTIES TIMEOUT 120
+            PASS_REGULAR_EXPRESSION "PASS: zoom floor fits the world view")
+      endforeach()
       # HIDDEN UNITS (Options > Graphics): flat features under every unit, the cover
       # rules of DOTS (tree, building, open ground, in front, fog) and its click
       # target, and FADE (the covers over a unit fade, nothing else does; at 100% the

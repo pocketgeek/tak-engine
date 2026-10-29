@@ -197,11 +197,8 @@ void MapView::clampZoom(int winW, int winH) { zoom_ = std::max(zoom_, minZoom(wi
 void MapView::clampOffset(int winW, int winH) {
     int mapW = map_.blocksX * 32, mapH = map_.blocksY * 32;
     // Don't allow zooming out past the point where the map fills the
-    // window in one dimension — otherwise the view runs off the map edges.
-    if (mapW > 0 && mapH > 0) {
-        float mz = std::max(float(winW) / mapW, float(winH) / mapH);
-        if (zoom_ < mz) zoom_ = mz;
-    }
+    // view in one dimension — otherwise the view runs off the map edges.
+    if (mapW > 0 && mapH > 0) clampZoom(winW, winH);
     float maxX = mapW - winW / zoom_, maxY = mapH - winH / zoom_;
     offX_ = maxX <= 0 ? maxX / 2 : std::clamp(offX_, 0.0f, maxX);
     offY_ = maxY <= 0 ? maxY / 2 : std::clamp(offY_, 0.0f, maxY);
@@ -355,8 +352,8 @@ void MapView::rebuildTileBatch(int winW, int winH) {
 
 }
 
-void MapView::draw(int winW, int winH) {
-    clampOffset(winW, winH);
+void MapView::draw(int winW, int winH, int viewH) {
+    clampOffset(winW, viewH < 0 ? winH : viewH);
 
     // Underlay first: stretch the overview across the whole map's screen rect. Tiles
     // draw on top at full detail; not-yet-uploaded sections fall back to this.

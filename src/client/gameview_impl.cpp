@@ -1820,7 +1820,7 @@
             initialCamera_.reset();
         }
 
-        mapView_.ensureChunks(mapViewW(winW), winH);
+        mapView_.ensureChunks(mapViewW(winW), mapViewH(winH));
         updateWorldFilter();   // after the camera settles, before anything draws
         if (!miniTex_) buildMinimap();
         // Listener = the camera view (the map viewport), so positional sounds pan by
