@@ -1197,17 +1197,43 @@ So in retail a destroyed factory takes its unfinished unit with it, while an
 unfinished unit of a mobile producer and a builder's unfinished structure
 stay behind and decay (their GetBuilt lifecycle).
 
-Port: `World::killProductionOutput`, called from the death sweep and from
-`World::scenarioDestroy`, for a producer that `isStructure()`. It sets the
-output's hp to 0 with damage type 11 and the factory as `lastHitBy`, and the
-death sweep takes it later in the same pass (an output is spawned after its
-factory). The completion call is not replayed: it would only finish the unit
-an instant before it dies. Ours, before: the output stood unprotected and
-un-conjured at its build rate, vanishing without counting as a loss.
-Open, not traced: the same destructor runs whenever a started BuildingBuild
-is freed for any reason (`0x4d6ad0` removes one mission through it), which
-suggests that cancelling the unit a factory is building also kills it in
-retail; ours still leaves a cancelled output to decay. Probe:
+Cancelling (static, 2026-10-28). One BuildingBuild holds a count of one
+type (`+0x4e` type, `+0x52` count including the unit in work; 10,000,000 is
+repeat): the build menu's `addbuild`/`subbuild` reach `0x429810` with a
+positive or negative count, and `0x4d7ca0` adds to the type's last
+BuildingBuild or, for a negative count, takes it off. Only when the count
+does not cover the cancel (or the mission repeats, or the cancel is "all",
+-10,000,000) is the mission freed with `0x4d6ad0` -> `0x4d6da0` -> the flag-2
+abort above, which kills the output; a smaller cancel just lowers the count
+and the unit in work goes on. So retail kills the unfinished unit when its
+last queued copy is cancelled (high confidence for the mission side; the menu
+click itself not traced). Work is paid tick by tick (`0x429af0`) and the
+abort refunds nothing. Stop and fresh orders clear missions with
+`0x4d6a50(unit, 0)`, which keeps every mission with `+0x5a & 4`;
+BuildingBuild's descriptor flags are `0x8010c`, so a retail Stop leaves
+factory production running (medium confidence: the Stop command's route to
+`0x4d6a50(unit, 0)` is inferred from its callers, not traced end to end).
+Ownership changes (`0x514da0`, called from Diplomacy ShareUnits `0x4b6b33`
+and from `0x4cb0c4`, `0x4d3d40`, `0x4e9ebd`, `0x52db08`) make a new object and kill the old one with 30000 of
+type 6 (`0x514e93` / `0x514fc2`), so the old factory's death aborts its
+BuildingBuild and its output dies too (high confidence, static).
+
+Port: `World::killProductionOutput`, for a producer that `isStructure()`.
+The death sweep sets the output's hp to 0 with damage type 11 and the
+factory as `lastHitBy`, and takes it later in the same pass (an output is
+spawned after its factory). Every other caller retires it at once through
+`scenarioDestroy(output, 11)` (counted as the owner's loss, nobody's kill, no
+corpse, no refund): `scenarioDestroy` of the factory, `dequeue` of the unit in
+work (ours removes the type's newest copy, so that is the front only when it
+is the last copy, as retail's mission count), `setRepeat` toggled off,
+`stop` (user rule: ours clears a factory's queue on Stop, retail does not),
+and the ownership changes `giveUnit`, `scenarioTransfer` and `captureUnit`.
+Cancelling a queued entry that has not started only removes it. Also through
+`stop`: a player who leaves or forfeits has every unit stopped, so his
+factories' unfinished outputs go too, and CRT defeat removes them first. The
+completion call is not replayed: it would only finish the unit an instant
+before it dies. Ours, before: the output stood unprotected and un-conjured at
+its build rate, vanishing without counting as a loss. Probe:
 `~/tak-tmp/scratch/factory-death/probe_buildingbuild_abort.py` (outside the
 repo). Test: `tools/factory_death_test.cpp`.
 

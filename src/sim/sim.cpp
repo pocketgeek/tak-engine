@@ -4701,6 +4701,7 @@ void World::stop(int unitId) {
     cancelPath(*u);          // stop means stop: do not finish routing where it was going
     // Stop also halts a conjurer: cancel the infinite loop and drain the queue.
     u->repeatType = nullptr;
+    killProductionOutput(*u,true);   // a factory's cancelled output dies at once
     u->buildQueue.clear();
     u->buildProgress = 0; u->buildFraction = 0;
     u->productionSiteId = 0;
@@ -7019,8 +7020,7 @@ void World::scenarioDestroy(int unitId,uint8_t deathType) {
     }
     // A scripted kill is a death too: the factory's unfinished output goes
     // with it (killProductionOutput), here at once like the factory itself.
-    const int output=target->productionSiteId;
-    killProductionOutput(*target);
+    killProductionOutput(*target,true);
     cancelBuilds(unitId);stop(unitId);
     auto& u=*unit(unitId);
     const int owner=u.player;
@@ -7050,9 +7050,6 @@ void World::scenarioDestroy(int unitId,uint8_t deathType) {
     }
     if (scenario_) scenario_->unitDied(*this,unitId);
     if (mission_) mission_->unitDied(*this,unitId);
-    if (const Unit* o=output ? unit(output) : nullptr;
-        o && o->alive() && o->hp<=Fixed() && o->deathType==11 && o->lastHitBy==unitId)
-        scenarioDestroy(output,11);
 }
 
 void World::scenarioAdjustHealth(int unitId,uint16_t amount,bool heal) {
@@ -7137,6 +7134,9 @@ void World::captureUnit(Unit& t, int newPlayer) {
             players_[size_t(newPlayer)].unitCount++;
     }
     if (mission_) mission_->unitCaptured(*this,t.id);
+    // Retail's ownership change (514da0) kills the old object, so a factory's
+    // BuildingBuild aborts and its unfinished output dies (killProductionOutput).
+    killProductionOutput(t,true);
     transferEntitySlot(t,newPlayer);
     t.player = newPlayer;
     gPlayersValid_=false;
@@ -11201,7 +11201,10 @@ void World::dequeue(int builderId, const UnitType* type, int count) {
         for (int i = int(b->buildQueue.size()) - 1; i >= 0; --i)
             if (b->buildQueue[size_t(i)] == type) { idx = i; break; }
         if (idx < 0) break;
-        if (idx == 0) { b->buildProgress = 0; b->buildFraction = 0; b->productionSiteId = 0; }   // canceling the in-progress front
+        if (idx == 0) {   // canceling the in-progress front: a factory's output dies at once
+            killProductionOutput(*b,true);
+            b->buildProgress = 0; b->buildFraction = 0; b->productionSiteId = 0;
+        }
         retireProductionItem(*b,size_t(idx));
     }
     // If the queue no longer holds a type set to infinite-repeat, stop repeating it
@@ -11226,6 +11229,7 @@ void World::setRepeat(int builderId, const UnitType* type) {
     if (b->repeatType == type) {
         // ctrl+click the +++ icon again: stop now and clear what's pending.
         b->repeatType = nullptr;
+        killProductionOutput(*b,true);
         b->buildQueue.clear();
         if (b->type && !b->type->isStructure()) b->rally.clear();   // as in dequeue()
         for(auto& order:b->orders)order.transportProductionAhead=0;
@@ -13578,7 +13582,7 @@ bool World::workProduction(Unit& producer,Unit& site,const UnitType* t,uint32_t 
 // spawned after its factory, so it comes later in the same sweep (ids and
 // units_ order agree). The completion call is not replayed -- it would only
 // release the output an instant before it dies.
-void World::killProductionOutput(Unit& producer) {
+void World::killProductionOutput(Unit& producer,bool now) {
     const int siteId=producer.productionSiteId;
     if (!siteId || !producer.type || !producer.type->isStructure()) return;
     producer.productionSiteId=0;producer.buildProgress=0;producer.buildFraction=0;
@@ -13589,6 +13593,12 @@ void World::killProductionOutput(Unit& producer) {
     site->retailSite.reset();site->beingBuilt=false;
     site->hp=Fixed();
     site->deathType=11;site->lastHitBy=producer.id;site->lastHitPlayer=producer.player;
+    if (!now) return;
+    // Before the economy walk could decay it away uncounted or a helper could
+    // put hit points back: the scripted-kill path, which counts the loss and
+    // credits the factory (nobody), then off the ground word as the sweep does.
+    scenarioDestroy(siteId,11);
+    if (Unit* gone=unit(siteId)) { cancelPath(*gone);groundRemove(*gone);retireAirOccupant(*gone);noteOrders(siteId); }
 }
 
 void World::finishProduction(int producerId,Unit& finished) {

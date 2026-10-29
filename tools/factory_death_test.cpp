@@ -207,12 +207,81 @@ static void builderDies() {
           "the site outlives its builder", d);
 }
 
+// ---------------------------------------------------------------------------
+// Cancelling (user rule 2026-10-28; retail subbuild 0x4d7ca0 frees the type's
+// BuildingBuild once its whole count goes, and the abort above kills the
+// output). Every way ours drops the unit in the yard kills it at once; a
+// queued entry that has not started is only removed. No mana comes back.
+// ---------------------------------------------------------------------------
+enum class Cancel { Unqueue, UnqueueQueued, Stop, RepeatOff, Transfer, ConjurerUnqueue };
+
+static bool gone(const World& w, int id) { const Unit* u = w.unit(id); return !u || !u->alive(); }
+
+static void cancelCase(Cancel how, const char* label) {
+    std::printf("%s:\n", label);
+    Types ty;
+    auto owned = makeWorld();
+    World& w = *owned;
+    const bool conj = how == Cancel::ConjurerUnqueue;
+    if (conj) w.spawn(&ty.factory, 300, 300, 0.0f, 0);   // storage for the pool
+    const int producer = conj ? w.spawn(&ty.conjurer, 1000, 1000, 0.0f, 0) : w.spawn(&ty.factory, 1000, 1000, 0.0f, 0);
+    w.spawn(&ty.enemy, 1800, 1800, 0.0f, 1);
+    int first = 0;
+    if (!conj) {   // one finished output first
+        w.train(producer, &ty.sol, 1);
+        first = produceUntil(w, producer, 0);
+        for (int t = 0; t < 400 && w.unit(first)->underConstruction; ++t) w.tick(1.0f / 30.0f);
+    }
+    if (how == Cancel::RepeatOff) w.setRepeat(producer, &ty.sol);
+    else w.train(producer, &ty.sol, how == Cancel::UnqueueQueued ? 2 : 1);
+    const int site = produceUntil(w, producer, 60);
+    char d[200];
+    check(site && site != first && w.unit(site)->underConstruction, "setup: an output is unfinished in the yard");
+    if (!site) return;
+    const int losses = w.player(0).losses, kills = w.player(1).kills;
+    const double mana = w.player(0).mana;
+    const size_t queued = w.unit(producer)->buildQueue.size();
+    switch (how) {
+        case Cancel::Unqueue: case Cancel::UnqueueQueued: case Cancel::ConjurerUnqueue:
+            w.dequeue(producer, &ty.sol, 1); break;
+        case Cancel::Stop: w.stop(producer); break;
+        case Cancel::RepeatOff: w.setRepeat(producer, &ty.sol); break;
+        case Cancel::Transfer: w.scenarioTransfer(producer, 1); break;
+    }
+    const bool dies = how != Cancel::UnqueueQueued && how != Cancel::ConjurerUnqueue;
+    std::snprintf(d, sizeof d, "output %s, losses %d -> %d, enemy kills %d -> %d, mana %.2f -> %.2f, queue %zu -> %zu",
+                  gone(w, site) ? "gone" : "alive", losses, w.player(0).losses, kills, w.player(1).kills, mana,
+                  w.player(0).mana, queued, w.unit(producer)->buildQueue.size());
+    if (dies) {
+        check(gone(w, site), "the unfinished output dies at once (no tick)", d);
+        check(w.player(0).losses == losses + 1 && w.player(1).kills == kills, "...as the owner's loss, nobody's kill", d);
+        check(w.player(0).mana == mana, "...and no mana comes back", d);
+        tickN(w, 2);
+        check(gone(w, site) && !w.unit(producer)->productionSiteId, "...and stays gone; the producer holds no output", d);
+    } else {
+        check(!gone(w, site) && w.unit(site)->underConstruction, how == Cancel::UnqueueQueued
+              ? "cancelling a queued, unstarted entry leaves the output alone"
+              : "a conjurer's cancelled output stays (MobileBuild)", d);
+        if (how == Cancel::UnqueueQueued)
+            check(queued == 2 && w.unit(producer)->buildQueue.size() == 1 && w.unit(producer)->productionSiteId == site,
+                  "...the entry leaves the queue; production goes on", d);
+    }
+    if (first) check(!gone(w, first) && w.unit(first)->player == 0, "the finished output is untouched", d);
+    if (how == Cancel::Transfer) check(w.unit(producer)->player == 1, "the factory changed hands", d);
+}
+
 int main() {
     factoryDies(false);
     factoryDies(true);
     emptyYard();
     mobileProducerDies();
     builderDies();
+    cancelCase(Cancel::Unqueue, "cancel the unit in production");
+    cancelCase(Cancel::UnqueueQueued, "cancel a queued entry that has not started");
+    cancelCase(Cancel::Stop, "Stop a factory mid-production");
+    cancelCase(Cancel::RepeatOff, "toggle repeat production off mid-production");
+    cancelCase(Cancel::Transfer, "factory changes owner mid-production (retail 514da0)");
+    cancelCase(Cancel::ConjurerUnqueue, "cancel a conjurer's unit in production -- kept");
     std::printf(g_fail ? "factory_death_test: %d FAILED\n" : "factory_death_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

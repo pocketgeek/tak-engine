@@ -2758,8 +2758,10 @@ private:
     bool workProduction(Unit& producer, Unit& site, const UnitType* t, uint32_t step);
     void finishProduction(int producerId, Unit& site);
     // BuildingBuild's abort (0x401c20, flag 2): a dying factory takes its
-    // unfinished output with it. Mobile producers and builders do not.
-    void killProductionOutput(Unit& producer);
+    // unfinished output with it, and so does cancelling that output. Mobile
+    // producers and builders do not. `now` retires it at once (a cancel or a
+    // scripted kill); otherwise the death sweep takes it this pass.
+    void killProductionOutput(Unit& producer, bool now = false);
     void tickGuardHelp(Unit& u);
     void tickFlyingGuard(Unit& u);
     void guardHelpPick(Unit& u, const Unit& g, int& help, int& mend);
