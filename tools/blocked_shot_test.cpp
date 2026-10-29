@@ -16,7 +16,9 @@
 // Zhon campfire art (ZonFireD02: indestructible, nonblocking, 'height'
 // set), in Retail and Legion pathfinding. Measured: shots landing short,
 // damage to the target, and where the archer ends up; plus the limits
-// (Hold Position stays; an open field is untouched).
+// (Hold Position stays; an open field is untouched). A hovering Thirsha
+// whose Lightning stops on a standing stone moves round its hover ring
+// (World::hoverForShot).
 //
 // A dev harness; not shipped in a game.
 
@@ -253,6 +255,75 @@ WagonOutcome runWagon(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, Wagon v
     return out;
 }
 
+// The user's 0.9.10 game (~4:28): a Thirsha (zonhunt) hover-attacks a Zhon
+// Hunter that stands just past a Zhon standing stone (ZonHenge11: 5x4,
+// indestructible, height 94). From its hover point 150 px north of the
+// Hunter at attack altitude every Lightning bolt stops on the stone's top
+// (52a4d0), and retail's hover mission (41de5d) keeps that bearing at every
+// wake: in retail it fires into the stone for as long as the order lasts.
+// The engine moves it round the ring to a clear bearing. The geometry is the
+// game's, moved by whole cells (-2096,-768).
+struct HoverOutcome {
+    int stoneBolts = 0;      // impacts that are not on the Hunter
+    int hunterHits = 0;
+    float damage = 0;
+    int repositions = 0;
+    float moved = 0;
+};
+
+HoverOutcome runHover(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int ticks) {
+    tnt::Map map;
+    map.width = map.height = 64;
+    map.seaLevel = 0;
+    map.heights.assign(64 * 64, 62);
+    map.features.assign(64 * 64, 0xffff);
+    map.featureNames = {"ZonHenge11"};
+    map.features[size_t(20) * 64 + 20] = 0;   // anchor: cells 20..24 x 20..23
+    sim::World w;
+    w.setVisPlayer(-1);
+    w.setPathfindingMode(mode);
+    w.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
+    sim::registerMapFeatures(w, map, vfs, &reg);
+    w.setPathService(true);
+    const sim::UnitType* thirsha = reg.find("zonhunt");
+    const sim::UnitType* hunter = reg.find("zonter");
+    if (!thirsha || !hunter) { check(false, "shipped zonhunt and zonter load"); return {}; }
+    const float sx = 391, sz = 288;
+    const int target = w.spawn(hunter, 384, 432, 0, 1);
+    w.setStance(target, 2);
+    w.unit(target)->moveState = 0;
+    w.unit(target)->fireState = 0;
+    w.unit(target)->hp = sim::Fixed::fromInt(30000);
+    const int shooter = w.spawn(thirsha, sx, sz, 0, 0);
+    for (int i = 0; i < 30; ++i) w.tick(1.f / 30);
+    const float hp0 = w.unit(target)->hp.toFloat();
+    w.attack(shooter, target, false);
+    HoverOutcome out;
+    for (int i = 0; i < ticks; ++i) {
+        w.tick(1.f / 30);
+        const sim::Unit* a = w.unit(shooter);
+        if (!a || !a->alive()) break;
+        out.repositions = std::max(out.repositions, int(a->repositions));
+        for (const auto& h : w.hits()) {
+            if (h.fromPlayer != 0) continue;
+            if (h.victimId == target) ++out.hunterHits;
+            else ++out.stoneBolts;
+        }
+    }
+    const sim::Unit* a = w.unit(shooter);
+    const sim::Unit* t = w.unit(target);
+    out.damage = hp0 - (t && t->alive() ? t->hp.toFloat() : 0.f);
+    if (a) out.moved = std::hypot(a->x.toFloat() - sx, a->z.toFloat() - sz);
+    return out;
+}
+
+std::string describe(const HoverOutcome& o) {
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "bolts off target=%d hits=%d damage=%.0f repositions=%d moved=%.0fpx",
+                  o.stoneBolts, o.hunterHits, o.damage, o.repositions, o.moved);
+    return buf;
+}
+
 std::string describe(const WagonOutcome& o) {
     char buf[160];
     std::snprintf(buf, sizeof buf, "flames off target=%d hits=%d damage=%.0f blocked=%d moved=%.0fpx",
@@ -313,6 +384,13 @@ int main(int argc, char** argv) {
           "Hold Position on an attack-move leaves the blocked spot and burns the lodestone");
     check(maneuver.damage > 0 && maneuver.stoneFlames <= 6,
           "Maneuver on an attack-move walks to a clear shot and burns the lodestone");
+    // A Thirsha hovering behind a standing stone moves round its ring.
+    const HoverOutcome hover = runHover(vfs, reg, 1800);
+    std::printf("  thirsha hover, stone:        %s\n", describe(hover).c_str());
+    check(hover.stoneBolts >= 3 && hover.stoneBolts <= 6,
+          "the Thirsha's first bolts stop on the standing stone, then it stops firing into it");
+    check(hover.repositions >= 1 && hover.hunterHits > 0 && hover.damage > 0,
+          "the Thirsha moves round its hover ring to a clear bearing and hits the Hunter");
     const auto [walks, hits] = runSticky(vfs, reg);
     check(walks >= 1 && hits > 0, "a failed search does not give up on the target once a clear spot is in reach",
           "walks=" + std::to_string(walks) + " hits=" + std::to_string(hits));

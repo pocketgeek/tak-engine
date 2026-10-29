@@ -3155,7 +3155,7 @@ private:
     void tickFlightMovement(Unit& u, bool persistent = false);
     void tickRetainedFlightMovement(Unit& u);
     void tickFlightBody(Unit& u);
-    void tickHoverAttack(Unit& u, const Unit& target, const Weapon* weapon);
+    void tickHoverAttack(Unit& u, const Unit& target, const Weapon* weapon, int slot);
     void tickAirToGround(Unit& u, const Unit& target, const Weapon* weapon);
     void tickFlightPatrol(Unit& u);
     int flightGround(const Unit& u) const;
@@ -3204,7 +3204,10 @@ private:
     bool impactIndestructible(const Weapon& w,int cx,int cz) const;
     bool shotBlockedHere(const Unit& u,const Unit& t) const;
     bool shotChordClear(const Unit& u,Fixed fromX,Fixed fromZ,const Unit& t,int slot);
+    bool chordClear(const std::array<int64_t,3>& a,const std::array<int64_t,3>& b,const Weapon& w,
+                    int64_t skipFrom,int64_t skipTo) const;
     bool repositionForShot(Unit& u,const Unit& t,int slot);
+    bool hoverForShot(Unit& u,const Unit& t,int slot,const std::array<int32_t,3>& centre,int distance,int altitude);
     bool sweepKeepsTarget(const Unit& u,int slot,const Unit& t) const;
     void tickFireSweep(int player);
     void tickSlotWeapons(Unit& u);

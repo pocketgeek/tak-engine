@@ -6042,9 +6042,7 @@ bool World::shotBlockedHere(const Unit& u,const Unit& t) const {
 // shooter's and the target's own footprints are not sampled.
 bool World::shotChordClear(const Unit& u,Fixed fromX,Fixed fromZ,const Unit& t,int slot) {
     if (heights_.empty() || slot<0 || size_t(slot)>=u.type->weapons.size()) return true;
-    const Weapon& w=u.type->weapons[size_t(slot)];
-    const uint32_t flags=(w.unitsOnly?0x800u:0u)|(w.groundBounce?0x1000u:0u)|(w.waterWeapon?0x2000u:0u);
-    if (flags&0x800u) return true;
+    if (u.type->weapons[size_t(slot)].unitsOnly) return true;
     auto ground=[&](Fixed x,Fixed z) {
         return int64_t(retailTerrainHeight(x.v,z.v,terW_,terH_,
             [&](int cx,int cz) { return heights_[size_t(cz)*size_t(terW_)+size_t(cx)]; }))<<16;
@@ -6054,10 +6052,18 @@ bool World::shotChordClear(const Unit& u,Fixed fromX,Fixed fromZ,const Unit& t,i
     const int64_t lift=std::max<int64_t>(0,int64_t(muzzle[1])-int64_t(u.groundY.v));
     const std::array<int64_t,3> a{fromX.v,ground(fromX,fromZ)+lift,fromZ.v};
     const auto aim=queryUnitScriptPoint(t.id,true);
-    const std::array<int64_t,3> b{aim[0],aim[1],aim[2]};
+    return chordClear(a,{aim[0],aim[1],aim[2]},u.type->weapons[size_t(slot)],
+                      8*std::max(u.type->footX,u.type->footZ),8*std::max(t.type->footX,t.type->footZ)+8);
+}
+
+// The chord from a to b, sampled every 4 px through 52a4d0's map half,
+// skipping the first skipFrom and the last skipTo px (the two bodies).
+bool World::chordClear(const std::array<int64_t,3>& a,const std::array<int64_t,3>& b,const Weapon& w,
+                       int64_t skipFrom,int64_t skipTo) const {
+    const uint32_t flags=(w.unitsOnly?0x800u:0u)|(w.groundBounce?0x1000u:0u)|(w.waterWeapon?0x2000u:0u);
+    if (flags&0x800u) return true;
     const int64_t dx=(b[0]-a[0])>>16,dz=(b[2]-a[2])>>16;
     const int64_t steps=std::max(std::abs(dx),std::abs(dz))/4+1;
-    const int64_t skipFrom=8*std::max(u.type->footX,u.type->footZ),skipTo=8*std::max(t.type->footX,t.type->footZ)+8;
     for (int64_t i=1;i<steps;++i) {
         const std::array<int32_t,3> point{int32_t(a[0]+(b[0]-a[0])*i/steps),int32_t(a[1]+(b[1]-a[1])*i/steps),
                                           int32_t(a[2]+(b[2]-a[2])*i/steps)};
@@ -6173,6 +6179,54 @@ bool World::repositionForShot(Unit& u,const Unit& t,int slot) {
     // Nowhere better in reach: fire on from here, still written off (the
     // sweep keeps preferring a target it can hit), and look again after
     // kBlockedShots more.
+    u.searchFailed=1;
+    u.blockedShots=kBlockedShots;
+    return false;
+}
+
+// The hover attacker's response. Retail's hover mission (41de5d) keeps the
+// flyer's bearing from the target at every wake, so a Thirsha whose bolts
+// stop on a standing stone between it and the target hovers there and fires
+// into the stone for as long as the order lasts. Once its shots are written
+// off from here it moves round the ring instead: the nearest bearing, in
+// 1/32 turns either way, whose chord from the hover point's muzzle height to
+// the target's SweetSpot is clear. The flyer keeps that point until it can
+// have flown there (the wake redraw takes its bearing from where it is);
+// the walk budget and the failed-search rule are the ground mover's.
+bool World::hoverForShot(Unit& u,const Unit& t,int slot,const std::array<int32_t,3>& centre,
+                         int distance,int altitude) {
+    if (u.repositions>=kMaxRepositions || heights_.empty()) return false;
+    if (u.searchFailed && u.blockedShots<2*kBlockedShots) return false;
+    if (slot<0 || size_t(slot)>=u.type->weapons.size()) return false;
+    auto& order=u.orders.front();
+    const int64_t lift=int64_t(queryUnitScriptPoint(u.id,false,slot)[1])-int64_t(u.flightY.v);
+    const auto aim=queryUnitScriptPoint(t.id,true);
+    const uint16_t bearing=uint16_t(retailDirection(Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.x.v)-uint32_t(centre[0]))),
+                                                    Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.z.v)-uint32_t(centre[2])))).v);
+    const int radius=std::max(distance,16);
+    for (int k=1;k<=16;++k)
+        for (const int side:{1,-1}) {
+            if (k==16 && side<0) continue;   // the far side, once
+            const uint16_t angle=uint16_t(bearing+side*k*2048);
+            const int32_t x=centre[0]+retailScaledSine(angle,Fixed::fromInt(radius).v);
+            const int32_t z=centre[2]+retailScaledCosine(angle,Fixed::fromInt(radius).v);
+            if (x<0 || z<0 || (x>>20)>=hW_ || (z>>20)>=hH_) continue;
+            if (std::abs((x>>16)-u.blockedX)<=2*kBlockedSpot && std::abs((z>>16)-u.blockedZ)<=2*kBlockedSpot) continue;
+            const int ground=std::max(seaLevel_,retailTerrainHeight(x,z,terW_,terH_,
+                [&](int hx,int hz) { return heights_[size_t(hz)*terW_+hx]; }));
+            const int32_t y=Fixed::fromInt(std::min(511,ground+altitude)).v;
+            if (!chordClear({x,int64_t(y)+lift,z},{aim[0],aim[1],aim[2]},u.type->weapons[size_t(slot)],
+                            0,8*std::max(t.type->footX,t.type->footZ)+8)) continue;
+            ++u.repositions;
+            u.blockedShots=0;
+            u.searchFailed=0;
+            order.flightGoal=RetailFlightGoal{{x,y,z},0x68,angle,0};
+            const int64_t dx=(int64_t(x)-u.x.v)>>16,dz=(int64_t(z)-u.z.v)>>16;
+            const int64_t span=std::max(std::abs(dx),std::abs(dz))+std::min(std::abs(dx),std::abs(dz))/2;
+            const int64_t speed=std::max<int64_t>(u.type->maxVel.v,1<<14);
+            order.hoverAttackRefresh=tickCounter_+uint32_t(std::min<int64_t>((span<<16)/speed,600))+30;
+            return true;
+        }
     u.searchFailed=1;
     u.blockedShots=kBlockedShots;
     return false;
@@ -6808,7 +6862,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         return;
     }
     if (hovering) {
-        tickHoverAttack(u,*target,sel);
+        tickHoverAttack(u,*target,sel,slot);
         groundMovementHandled=true; // the flight controller already committed movement
         dx=(target->x-u.x).toFloat(); dz=(target->z-u.z).toFloat();
         dist=std::sqrt(dx*dx+dz*dz);
@@ -10587,7 +10641,7 @@ void World::tickRetailConstruction(Unit& builder) {
     noteOrders(builder.id);
 }
 
-void World::tickHoverAttack(Unit& u,const Unit& target,const Weapon* weapon) {
+void World::tickHoverAttack(Unit& u,const Unit& target,const Weapon* weapon,int slot) {
     auto& order=u.orders.front();
     const int distance=weapon && weapon->hoverAttackDistance ? weapon->hoverAttackDistance : u.type->hoverAttackDistance;
     const int altitude=weapon && weapon->hoverAttackAltitude ? weapon->hoverAttackAltitude : u.type->hoverAttackAltitude;
@@ -10598,6 +10652,9 @@ void World::tickHoverAttack(Unit& u,const Unit& target,const Weapon* weapon) {
         order.flightGoal=retailHoverAttackGoal({u.x.v,u.flightY.v,u.z.v},
             {centre[0],centre[1],centre[2]},distance,[&](int n) {return pathRand(uint32_t(n));});
         order.hoverAttackRefresh=tickCounter_+15+pathRand(15);
+        // Engine deviation: shots from here keep stopping on something the
+        // weapon cannot destroy (noteShotImpact): move round the ring.
+        if (shotBlockedHere(u,target)) hoverForShot(u,target,slot,centre,distance,altitude);
     } else {
         // The retail target controller follows its entity between mission wakes.
         order.flightGoal->point.x+=(target.x-order.hoverAttackTargetX).v;
