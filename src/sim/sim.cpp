@@ -9159,17 +9159,59 @@ void World::assist(int builderId, int siteId, bool queue) {
     b=unit(builderId); b->repeatType=repeat;
 }
 
+// Sites never change after setup and buildings never move, but every sacred-income
+// building asks each tick: a scan of every site per footprint cell was 5-10% of a
+// late 8-AI game's tick (2,863 sites). The buckets keep the scan's answer.
+static constexpr int kSacredBucketShift=3;
+
+void World::setSacredSites(std::vector<SacredSite> sites) {
+    sacredSites_=std::move(sites);
+    sacredBucketStart_.clear();sacredBucketSites_.clear();
+    sacredBx0_=sacredBz0_=sacredBw_=sacredBh_=0;
+    int bx0=INT32_MAX,bz0=INT32_MAX,bx1=INT32_MIN,bz1=INT32_MIN;
+    for (const auto& s:sacredSites_) {
+        if (s.fx<=0 || s.fz<=0) continue;   // covers no cell
+        bx0=std::min(bx0,s.x>>kSacredBucketShift);bx1=std::max(bx1,(s.x+s.fx-1)>>kSacredBucketShift);
+        bz0=std::min(bz0,s.z>>kSacredBucketShift);bz1=std::max(bz1,(s.z+s.fz-1)>>kSacredBucketShift);
+    }
+    if (bx0>bx1) return;
+    sacredBx0_=bx0;sacredBz0_=bz0;sacredBw_=bx1-bx0+1;sacredBh_=bz1-bz0+1;
+    sacredBucketStart_.assign(size_t(sacredBw_)*size_t(sacredBh_)+1,0);
+    auto each=[&](const SacredSite& s,auto&& f) {
+        if (s.fx<=0 || s.fz<=0) return;
+        for (int bz=(s.z>>kSacredBucketShift)-bz0;bz<=((s.z+s.fz-1)>>kSacredBucketShift)-bz0;++bz)
+            for (int bx=(s.x>>kSacredBucketShift)-bx0;bx<=((s.x+s.fx-1)>>kSacredBucketShift)-bx0;++bx)
+                f(size_t(bz)*size_t(sacredBw_)+size_t(bx));
+    };
+    for (const auto& s:sacredSites_) each(s,[&](size_t b) { ++sacredBucketStart_[b+1]; });
+    for (size_t b=1;b<sacredBucketStart_.size();++b) sacredBucketStart_[b]+=sacredBucketStart_[b-1];
+    sacredBucketSites_.resize(sacredBucketStart_.back());
+    std::vector<uint32_t> fill(sacredBucketStart_.begin(),sacredBucketStart_.end()-1);
+    for (size_t i=0;i<sacredSites_.size();++i)
+        each(sacredSites_[i],[&](size_t b) { sacredBucketSites_[fill[b]++]=uint32_t(i); });
+}
+
+// The last site in sacredSites_ order whose footprint holds cell (x, z), or none.
+const SacredSite* World::sacredSiteAt(int x,int z) const {
+    const int bx=(x>>kSacredBucketShift)-sacredBx0_,bz=(z>>kSacredBucketShift)-sacredBz0_;
+    if (bx<0 || bz<0 || bx>=sacredBw_ || bz>=sacredBh_) return nullptr;
+    const size_t b=size_t(bz)*size_t(sacredBw_)+size_t(bx);
+    for (uint32_t k=sacredBucketStart_[b+1];k>sacredBucketStart_[b];--k) {
+        const SacredSite& s=sacredSites_[sacredBucketSites_[k-1]];
+        if (x>=s.x && x<s.x+s.fx && z>=s.z && z<s.z+s.fz) return &s;
+    }
+    return nullptr;
+}
+
 float World::sacredIncomeMultiplier(int x,int z,int fx,int fz) const {
     // 51d68e..51d7b6 scans x then z. Count positive sacred-site cells and
-    // compare with the last encountered site's full footprint.
+    // compare with the last encountered site's full footprint. Each cell reads
+    // the last-listed site that holds it.
     const SacredSite* last=nullptr;
     int covered=0;
     for (int dx=0;dx<fx;++dx) for (int dz=0;dz<fz;++dz) {
-        for (auto it=sacredSites_.rbegin();it!=sacredSites_.rend();++it) {
-            if (x+dx<it->x || x+dx>=it->x+it->fx || z+dz<it->z || z+dz>=it->z+it->fz) continue;
-            if (it->multiplier>0) { ++covered;last=&*it; }
-            break;
-        }
+        const SacredSite* s=sacredSiteAt(x+dx,z+dz);
+        if (s && s->multiplier>0) { ++covered;last=s; }
     }
     return last && covered>=last->fx*last->fz ? last->multiplier : 0;
 }
