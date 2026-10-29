@@ -7017,6 +7017,10 @@ void World::scenarioDestroy(int unitId,uint8_t deathType) {
         }
         if (builder.repairId==unitId) cancelBuilds(builder.id);
     }
+    // A scripted kill is a death too: the factory's unfinished output goes
+    // with it (killProductionOutput), here at once like the factory itself.
+    const int output=target->productionSiteId;
+    killProductionOutput(*target);
     cancelBuilds(unitId);stop(unitId);
     auto& u=*unit(unitId);
     const int owner=u.player;
@@ -7046,6 +7050,9 @@ void World::scenarioDestroy(int unitId,uint8_t deathType) {
     }
     if (scenario_) scenario_->unitDied(*this,unitId);
     if (mission_) mission_->unitDied(*this,unitId);
+    if (const Unit* o=output ? unit(output) : nullptr;
+        o && o->alive() && o->hp<=Fixed() && o->deathType==11 && o->lastHitBy==unitId)
+        scenarioDestroy(output,11);
 }
 
 void World::scenarioAdjustHealth(int unitId,uint16_t amount,bool heal) {
@@ -13555,6 +13562,35 @@ bool World::workProduction(Unit& producer,Unit& site,const UnitType* t,uint32_t 
 // step / PARK and rally, exactly once. An output that already holds orders
 // keeps them instead: they can only be the player's (or a script's), given
 // while it was unfinished, and the release must not override them.
+// A factory that dies with an unfinished output kills the output too
+// (icd, emulated 2026-10-28). Death clears every mission of the unit
+// (0x512860 -> 0x4d6a50(unit, 1)); the mission destructor 0x4d6da0 calls a
+// started mission's handler with flag 2, and only BuildingBuild 0x401c20 -- the
+// mission 0x429810 queues for a producer WITHOUT a mover -- acts on it with a
+// target: 0x429990 (the completion call) and then 30000 damage of type 11 from
+// the factory to the output (0x51a140). Type 11 has severity 0: no Killed, no
+// corpse, no death weapon, and the factory is the attacker, so nobody gets the
+// kill. MobileBuild, VTOL_MobileBuild and HelpBuild only stop the build
+// animation on flag 2: a Zhon producer's output and a builder's site stay
+// unfinished and decay as before.
+//
+// Ours sets the lethal state and lets the death sweep take it: the output was
+// spawned after its factory, so it comes later in the same sweep (ids and
+// units_ order agree). The completion call is not replayed -- it would only
+// release the output an instant before it dies.
+void World::killProductionOutput(Unit& producer) {
+    const int siteId=producer.productionSiteId;
+    if (!siteId || !producer.type || !producer.type->isStructure()) return;
+    producer.productionSiteId=0;producer.buildProgress=0;producer.buildFraction=0;
+    Unit* site=unit(siteId);
+    if (!site || !site->alive() || !site->type || !site->underConstruction ||
+        site->productionOwner!=producer.id || site->player!=producer.player) return;
+    site->productionOwner=0;
+    site->retailSite.reset();site->beingBuilt=false;
+    site->hp=Fixed();
+    site->deathType=11;site->lastHitBy=producer.id;site->lastHitPlayer=producer.player;
+}
+
 void World::finishProduction(int producerId,Unit& finished) {
     Unit* site=&finished;
     const UnitType* t=site->type;
@@ -15033,6 +15069,7 @@ void World::tick(float dt) {
         if (u.hp <= Fixed() && !(u.retailSite && u.underConstruction)) {
             cancelPath(u);
             refreshMovingSearchBody(u);
+            killProductionOutput(u);
             if (u.player >= 0 && u.player < int(players_.size()))
                 players_[size_t(u.player)].losses++;   // end-of-game "Losses" column
             // Native512c4c uses the player captured by the damaging shot.

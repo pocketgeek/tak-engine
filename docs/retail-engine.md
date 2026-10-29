@@ -1167,6 +1167,50 @@ flies straight to the rally; the self-centred circle once the factory is gone;
 airborne vs landed flyer over a site; the park held until arrival), both
 pathfinding modes and both balances.
 
+## A dying factory kills its unfinished output (icd, emulated 2026-10-28)
+
+Death clears every mission of the unit: the death handler `0x512860` stores
+the killer (`+0xf8`, `+0xfc`) and calls `0x4d6a50(unit, 1)`, which frees the
+whole mission list (`+0x60`) through the mission destructor `0x4d6da0`. That
+destructor calls the mission's handler with flag 2 when the mission has
+started (`[mission+6] & 2`). Which handler that is depends on the producer:
+`0x429810` queues `BuildingBuild` (`0x401c20`) for a unit without a mover
+and `MobileBuild` (or `VTOL_MobileBuild` for canfly) for one with a mover;
+the mover exists only when the type's `bmcode` (`0x4c004d` -> type `+0x24a`,
+default 0) is 1 (`0x511fc5` -> `0x511f20`). Every shipped factory leaves
+`bmcode` out (all of them say `canmove=1`, which this does not read), so
+factories run BuildingBuild and Zhon's builders run MobileBuild.
+
+Emulated with flag 2 (callees hooked): `BuildingBuild` with an output
+(`[mission+0x16]`) calls `0x429990(factory, output, 0)` -- the completion
+call -- then `0x51a140(factory, output, 30000, 11, 0)`, 30000 damage of type
+11 from the factory, then `0x51e4d0(9, 0)` on the factory; with no output only
+the last. `MobileBuild` (`0x405560`), `VTOL_MobileBuild` (`0x41ef00`) and
+`HelpBuild` (`0x405cf0`) call only `0x51e4d0(8, 0)`, with or without a target.
+30000 is past every armour scale (`0x51a17a` skips scaling from 30000 on), and
+type 11 has severity 0, so the output runs no Killed, leaves no corpse and
+fires no death weapon; the factory is the attacker, so no one is credited.
+A finished output is no longer the mission's target (`0x402099` clears it),
+so it is untouched.
+
+So in retail a destroyed factory takes its unfinished unit with it, while an
+unfinished unit of a mobile producer and a builder's unfinished structure
+stay behind and decay (their GetBuilt lifecycle).
+
+Port: `World::killProductionOutput`, called from the death sweep and from
+`World::scenarioDestroy`, for a producer that `isStructure()`. It sets the
+output's hp to 0 with damage type 11 and the factory as `lastHitBy`, and the
+death sweep takes it later in the same pass (an output is spawned after its
+factory). The completion call is not replayed: it would only finish the unit
+an instant before it dies. Ours, before: the output stood unprotected and
+un-conjured at its build rate, vanishing without counting as a loss.
+Open, not traced: the same destructor runs whenever a started BuildingBuild
+is freed for any reason (`0x4d6ad0` removes one mission through it), which
+suggests that cancelling the unit a factory is building also kills it in
+retail; ours still leaves a cancelled output to decay. Probe:
+`~/tak-tmp/scratch/factory-death/probe_buildingbuild_abort.py` (outside the
+repo). Test: `tools/factory_death_test.cpp`.
+
 ## The Crusades balance swaps only the unit roster (icd, 2026-10-26)
 
 With the Crusades balance on, the unit lookup `0x518080` searches only the
