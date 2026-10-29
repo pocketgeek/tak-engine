@@ -50,7 +50,9 @@ bool gInstantBuild = false;
 // thread, so each thread accumulates (and prints) its own room's timing -- both
 // race-free and correctly attributed.
 static const bool g_phase = tak::devEnv("TAK_PHASE") != nullptr;
-static thread_local double g_visMs = 0, g_burnMs = 0, g_gridMs = 0;   // finer "other" split
+// finer "other" split. g_visMs timed the display fog pass, which the sim no longer runs
+// (the client reads viewCounts_); it stays 0 so SIMPHASE keeps its columns for the tools.
+static thread_local double g_visMs = 0, g_burnMs = 0, g_gridMs = 0;
 static thread_local double g_tcomb = 0, g_scriptMs = 0, g_moveMs = 0, g_navMs = 0;
 static thread_local double g_exploreMs = 0;   // navigation exploration; part of sep
 // Part of "other": the tick prologue (everything between the navigator's upkeep and the
@@ -1343,18 +1345,9 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
     ++placementEpoch_;
     paths_.clear();legion_.reset();
     searchGrades_.clear(); activeSearchGrade_=-1;
-    // The fog worker reads heights_; never let a reload pull the map out from under it.
-    if (visRunning_) { visWorker_.join(); visRunning_ = false; visDone_.store(false); }
-    // EVERY cached LoS mask is a function of the terrain we are about to replace, and
-    // its contents are flat cell indices computed against the OLD visW_/visH_. Keeping
-    // them across a map change is not merely stale fog: load a smaller map and those
-    // indices address past the end of visBack_. The cache key is (sight, radar, cx, cz)
-    // with no terrain identity in it, so nothing else would ever invalidate them.
-    visMaskCache_.clear();
-    visHavePass_ = false;   // the next pass is a first pass again (see updateVisibility)
     seaLevel_ = seaLevel;
     noSeaLevelTrigger_ = false;
-    heights_ = heights;   // keep raw heights for fog line-of-sight
+    heights_ = heights;
     hW_ = w; hH_ = h;
     airOccupancy_.reset(w,h);
     groundRebuild();
@@ -1457,20 +1450,6 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
             int d = seaLevel - int(heights[size_t(z) * w + x]);
             depth_[size_t(z) * w + x] = uint8_t(std::clamp(d, 0, 255));
         }
-    // Fog starts FULLY UNEXPLORED the moment terrain exists: before this, vis_ was
-    // allocated lazily by the first updateVisibility (0.25s into the sim), and an
-    // empty vis_ makes drawFog skip and cellVisible() report everything visible --
-    // so the first rendered frames flashed the whole bare map (masked historically
-    // by the synchronous load stall; exposed once terrain composited async). Local
-    // display only (never hashed); the headless referee (visPlayer_ < 0) skips fog
-    // entirely. Sized to THIS terrain, so loading a different map into the same
-    // world also re-fits the grid instead of keeping stale dimensions.
-    if (visPlayer_ >= 0) {
-        visW_ = w;
-        visH_ = h;
-        vis_.assign(size_t(w) * size_t(h), 0);
-        ++visGen_;   // the renderer re-uploads the (all-fogged) texture
-    }
 }
 
 void blockFootprint(NavGrid& nav, const UnitType& t, float x, float z, bool blocked) {
@@ -8564,7 +8543,7 @@ uint32_t World::rebuildSpatialParallel(bool grid, bool occupancy) {
         if (occ_.size() != cells) occ_.assign(cells, 0);
         else pool.forChunks(occTouched_.size(), 4096, 0, [&](size_t, size_t begin, size_t end, unsigned) {
             for (size_t i = begin; i < end; ++i)
-                __atomic_store_n(&occ_[occTouched_[i]], int32_t(0), __ATOMIC_RELAXED);   // not std::atomic_ref: Apple libc++ lacks it (see visCompute)
+                __atomic_store_n(&occ_[occTouched_[i]], int32_t(0), __ATOMIC_RELAXED);   // not std::atomic_ref: Apple libc++ lacks it
         });
         occTouched_.clear();
         auto stamp = [&](const SpatialRec& r) {
@@ -11971,49 +11950,6 @@ void World::tickAbilities(float) {
     }
 }
 
-bool World::sightClear(int ux, int uz, float eyeH, int tx, int tz) const {
-    if (heights_.empty()) return true;
-    auto H = [&](int x, int z) { return float(heights_[size_t(z) * hW_ + x]); };
-    float tH = H(tx, tz);
-    float dxf = float(tx - ux), dzf = float(tz - uz);
-    float D = std::sqrt(dxf * dxf + dzf * dzf);
-    if (D < 1.5f) return true;                    // adjacent cell: always visible
-    // Walk the cells between unit and target (integer DDA); a cell blocks the view
-    // if its ground rises above the straight eye->target sight line at that point.
-    // Terrain must rise this far ABOVE the sight line to block it. Tuned (with the
-    // eye height below) so walls/hills/cliffs cast shadows but small rock clutter
-    // does not -- on athri cay real walls are height 60-220, so an obstacle must
-    // clear ~eye+margin ~= 56 to block. Debug builds: live-tunable via TAK_FOG_MARGIN.
-    static float MARGIN = [] {
-        const char* e = tak::devEnv("TAK_FOG_MARGIN"); return e ? float(std::atof(e)) : 16.0f;
-    }();
-    int steps = int(D);
-    for (int i = 1; i < steps; ++i) {
-        float t = float(i) / D;
-        int x = int(std::lround(float(ux) + dxf * t));
-        int z = int(std::lround(float(uz) + dzf * t));
-        if (x < 0 || z < 0 || x >= hW_ || z >= hH_) continue;
-        float lineH = eyeH + (tH - eyeH) * t;
-        if (H(x, z) > lineH + MARGIN) return false;   // terrain pokes above the line
-    }
-    return true;
-}
-
-// Collect a finished fog pass and start the next one. Called every tick from the sim;
-// the cadence timer decides when a new pass is DUE, this decides when one can actually
-// start (never two at once -- visGather's placeholder dedup and the worker's cache
-// writes both assume exclusive ownership of visMaskCache_).
-void World::visPump() {
-    if (visRunning_ && visDone_.load(std::memory_order_acquire)) {
-        visWorker_.join();
-        visRunning_ = false;
-        visDone_.store(false, std::memory_order_relaxed);
-        vis_.swap(visBack_);
-        ++visGen_;   // renderer: fog content may have changed; re-upload once
-        visHavePass_ = true;
-    }
-}
-
 void World::updateNavigationExploration() {
     updateExplorationPlane();
     updateViewCounts();
@@ -12285,7 +12221,6 @@ void World::applyPowerCode(int player,PowerCode code,PowerArg arg,int unitId) {
                 for (auto& mask:navigationExplored_) mask&=uint16_t(~bit);
                 for (auto& u:units_)
                     if (u.type && allied(u.player,player)) u.sightFootprint={};
-                if (player==visPlayer_) visPowerForget_=true;
             }
             break;
         }
@@ -12316,210 +12251,6 @@ SimPool& World::simPool() {
     const unsigned want=serialThreads_ ? 0u : simWorkers_>=0 ? unsigned(simWorkers_) : SimPool::defaultWorkers();
     if (!pool_ || pool_->workers()!=want) pool_=std::make_unique<SimPool>(want);
     return *pool_;
-}
-
-void World::updateVisibility() {
-    if (nav_.empty()) return;
-    if (visPlayer_ < 0) return;   // headless referee: nothing renders, no fog needed
-    if (visRunning_) return;      // previous pass still going; skip this beat
-    // The FIRST pass runs inline. Async fog lands a beat late, which is invisible mid-game
-    // but would leave the opening frames (and a --shot capture) with an unpopulated fog
-    // buffer -- the whole map dark. At world start there are only the handful of starting
-    // units, so this one is cheap; it is the crowded steady state that needed the worker.
-    //
-    // The test is "have we ever PRODUCED a pass", not "is the buffer allocated": setTerrain
-    // pre-fills vis_ with zeros so the opening frames render fully fogged rather than fully
-    // bare, so vis_.empty() is already false by the time we first get here and the inline
-    // path never ran. The safeguard was dead code, and --shot only looked right because it
-    // waits seconds before capturing.
-    bool first = !visHavePass_;
-    if (vis_.empty()) {
-        visW_ = nav_.width();
-        visH_ = nav_.height();
-        vis_.assign(size_t(visW_) * visH_, 0);
-    }
-    visGather();
-    // The back buffer starts from the current fog so EXPLORED memory carries over; the
-    // demote and the stamping both happen on it, off-thread, leaving vis_ readable.
-    visBack_ = vis_;
-    if (first || serialThreads_) {   // first pass, and single-threaded callers: inline
-        visCompute();
-        vis_.swap(visBack_);
-        ++visGen_;
-        visHavePass_ = true;
-        return;
-    }
-    visRunning_ = true;
-    visDone_.store(false, std::memory_order_relaxed);
-    visWorker_ = std::thread([this] {
-        visCompute();
-        visDone_.store(true, std::memory_order_release);
-    });
-}
-
-void World::visGather() {
-    // PASS 1a (serial, cheap): gather every revealer's stamp parameters, and collect the
-    // set of NEW LoS masks that need computing (deduped via an empty cache placeholder --
-    // the ray-march that fills them runs in parallel in pass 1b). Bound the cache up front;
-    // clearing mid-pass would desync the placeholder dedup. Fog is client-only display (the
-    // referee returned above), so NONE of this is hashed.
-    if (visMaskCache_.size() >= 8192) visMaskCache_.clear();
-    // The local player's power codes, as this pass applies them (display only).
-    visPowerPass_ = {visPowerForget_, powerMappingOff(visPlayer_), powerLosOff(visPlayer_)};
-    visPowerForget_ = false;
-    std::vector<Reveal>& reveals = visReveals_;
-    std::vector<Miss>&   misses  = visMisses_;
-    reveals.clear();
-    misses.clear();
-    reveals.reserve(units_.size());
-    TAK_PASS();
-    for (const auto& u : units_) {
-        // Shared team vision: every allied, built, living unit reveals fog.
-        if (!u.alive() || !u.type || u.underConstruction || !allied(u.player, visPlayer_))
-            continue;
-        // Reveal to the greater of sight and radar range. Radar sees THROUGH terrain, so
-        // the LoS test applies only to the sight area not already covered by radar; a unit
-        // with radar >= sight does zero LoS work.
-        int rSight = int(sightDistance(*u.type)) / 16;
-        int rRadar = int(radarDistance(*u.type)) / 16;
-        int r = std::max(rSight, rRadar) + 1;
-        int rRadar2 = rRadar * rRadar;
-        int cx = u.x.floorInt() / 16, cz = u.z.floorInt() / 16;
-        bool losBlocks = !heights_.empty() && cx >= 0 && cz >= 0 && cx < hW_ && cz < hH_ &&
-                         rSight > rRadar;   // only worth testing where sight exceeds radar
-        uint64_t key = 0;
-        if (losBlocks) {
-            // LoS mask key: the visible-cell set for (sight, radar, cell) is a pure function
-            // of the immutable heightmap -- computed ONCE, then re-stamped while a unit of
-            // this class stands on the cell.
-            key = (uint64_t(uint32_t(rSight)) << 52) | (uint64_t(uint32_t(rRadar)) << 40) |
-                  (uint64_t(uint32_t(cx)) << 20) | uint32_t(cz);
-            // emplace an empty placeholder: .second==true means this key is new this pass,
-            // so it needs the ray-march (and dedups repeats of the same class+cell).
-            if (visMaskCache_.emplace(key, std::vector<uint32_t>{}).second)
-                misses.push_back({key, cx, cz, r, rRadar2});
-        }
-        reveals.push_back({cx, cz, r, rRadar2, losBlocks, key});
-    }
-}
-
-// Everything below runs on visWorker_: it reads the immutable heightmap and the gathered
-// reveal list, and writes only visMaskCache_ (exclusively owned while a pass is running)
-// and visBack_ (not the buffer the renderer is reading).
-void World::visCompute() {
-    std::vector<Reveal>& reveals = visReveals_;
-    std::vector<Miss>&   misses  = visMisses_;
-    // Eye above the unit's ground cell: sees over small bumps, not over real
-    // walls/hills. Paired with the sight-line MARGIN in sightClear so small rock
-    // clutter stops casting fog shadows. Debug builds: live-tunable via TAK_FOG_EYE.
-    static float EYE = [] {
-        const char* e = tak::devEnv("TAK_FOG_EYE"); return e ? float(std::atof(e)) : 40.0f;
-    }();
-    // Losing current sight never erases terrain exploration -- except when the
-    // shroud power code comes back (+Mapping), which forgets it; with the shroud
-    // off every cell is explored.
-    const VisPower power = visPowerPass_;
-    for (auto& v : visBack_)
-        v = power.forget ? 0 : v == 2 ? 1 : v == 0 && power.mapped ? 1 : v;
-    // PASS 1b (PARALLEL): the O(r^3) LoS ray-march for each new mask -- the expensive part
-    // a moving army keeps retriggering. Each computes independently, reading only the
-    // immutable heightmap into a local buffer (no shared-map writes); we install them
-    // serially afterwards. This is what makes fog cheap at scale for a seated player too.
-    if (!misses.empty()) {
-        std::vector<std::vector<uint32_t>> built(misses.size());
-        auto march = [&](size_t b, size_t e) {
-            for (size_t i = b; i < e; ++i) {
-                const Miss& m = misses[i];
-                std::vector<uint32_t>& mask = built[i];
-                float eyeH = float(heights_[size_t(m.cz) * hW_ + m.cx]) + EYE;
-                for (int dz = -m.r; dz <= m.r; ++dz)
-                    for (int dx = -m.r; dx <= m.r; ++dx) {
-                        int dd = dx * dx + dz * dz;
-                        if (dd > m.r * m.r) continue;
-                        int x = m.cx + dx, z = m.cz + dz;
-                        if (x < 0 || z < 0 || x >= visW_ || z >= visH_) continue;
-                        // Inside radar range: revealed unconditionally. Beyond it, LoS-gated.
-                        if (dd > m.rRadar2 && !sightClear(m.cx, m.cz, eyeH, x, z)) continue;
-                        mask.push_back(uint32_t(size_t(z) * visW_ + x));
-                    }
-            }
-        };
-        size_t mn = misses.size();
-        unsigned hw = serialThreads_ ? 1u : std::thread::hardware_concurrency();
-        unsigned nth = std::min<unsigned>(hw ? hw : 1u, unsigned((mn + 15) / 16));  // heavy: ~16/thread
-        if (nth <= 1) {
-            march(0, mn);
-        } else {
-            size_t chunk = (mn + nth - 1) / nth;
-            std::vector<std::thread> th;
-            th.reserve(nth - 1);
-            for (unsigned k = 1; k < nth; ++k) {
-                size_t bb = std::min(mn, size_t(k) * chunk), ee = std::min(mn, bb + chunk);
-                if (bb < ee) th.emplace_back(march, bb, ee);
-            }
-            march(0, std::min(mn, chunk));
-            for (auto& t : th) t.join();
-        }
-        for (size_t i = 0; i < mn; ++i) visMaskCache_[misses[i].key] = std::move(built[i]);
-    }
-    // PASS 2 (parallel): stamp visBack_[i]=2 for every revealer's cells (cached mask or
-    // circle fill). It only READS the now-warm cache and writes the constant 2, and two
-    // threads can land on the same cell where reveal circles overlap.
-    //
-    // This used to claim that was "a benign race, no locks needed" because both threads
-    // store the same value. That is not a thing C++ says: concurrent non-atomic writes to
-    // the same object are a data race and therefore UB, no matter how equal the values --
-    // and it would trip any race detector pointed at this. Do a relaxed atomic store
-    // instead: on every target we build for, a relaxed 1-byte store is the same
-    // instruction as the plain one, so this is free at runtime and merely makes the
-    // guarantee real. Relaxed is enough because nothing ORDERS off these writes; the
-    // worker's join in visPump() is what publishes the finished buffer.
-    //
-    // Not std::atomic_ref, which is the obvious spelling and does not exist in Apple's
-    // libc++ -- it broke the macOS release build and nothing local caught it, since
-    // libstdc++ has had it since GCC 10. __atomic_store_n is the same store and is
-    // available on both compilers we build with.
-    auto put = [&](size_t i) {
-        __atomic_store_n(&visBack_[i], uint8_t(2), __ATOMIC_RELAXED);
-    };
-    auto stamp = [&](size_t b, size_t e) {
-        for (size_t i = b; i < e; ++i) {
-            const Reveal& rv = reveals[i];
-            if (!rv.los) {
-                for (int dz = -rv.r; dz <= rv.r; ++dz)
-                    for (int dx = -rv.r; dx <= rv.r; ++dx) {
-                        if (dx * dx + dz * dz > rv.r * rv.r) continue;
-                        int x = rv.cx + dx, z = rv.cz + dz;
-                        if (x < 0 || z < 0 || x >= visW_ || z >= visH_) continue;
-                        put(size_t(z) * visW_ + x);
-                    }
-                continue;
-            }
-            auto mi = visMaskCache_.find(rv.key);   // guaranteed present after pass 1
-            if (mi != visMaskCache_.end())
-                for (uint32_t idx : mi->second) put(idx);
-        }
-    };
-    size_t n = reveals.size();
-    unsigned hw = serialThreads_ ? 1u : std::thread::hardware_concurrency();
-    unsigned nth = std::min<unsigned>(hw ? hw : 1u, unsigned((n + 255) / 256));  // >=256/thread
-    if (nth <= 1) {
-        stamp(0, n);
-    } else {
-        size_t chunk = (n + nth - 1) / nth;
-        std::vector<std::thread> th;
-        th.reserve(nth - 1);
-        for (unsigned k = 1; k < nth; ++k) {
-            size_t bb = std::min(n, size_t(k) * chunk), ee = std::min(n, bb + chunk);
-            if (bb < ee) th.emplace_back(stamp, bb, ee);
-        }
-        stamp(0, std::min(n, chunk));
-        for (auto& t : th) t.join();
-    }
-    // Line of sight off (+LOS Off, +NowISee): every explored cell is in view.
-    if (power.losOff)
-        for (auto& v : visBack_)
-            if (v == 1) v = 2;
 }
 
 void World::summonReadyGods() {
@@ -14942,22 +14673,6 @@ void World::tick(float dt) {
     for (uint32_t i : sitesIdx_) decay(units_[i]);
     for (size_t i = unitsAtEconomy; i < units_.size(); ++i) decay(units_[i]);
 
-    visPump();   // land a finished async fog pass (cheap; a swap or nothing at all)
-    visTimer_ -= dt;
-    if (visTimer_ <= 0) {
-        // Flat 0.25s. This used to widen to 0.5s with the crowd, to halve the RATE of the
-        // periodic fog spike -- and at 3800 units it sat pinned at the 0.5s ceiling, which
-        // is exactly the half-second hitch that showed up on hardware. The pass is async
-        // now, so there is no spike left to space out and no reason to make a big battle
-        // (the case that most wants current fog) reveal at half rate. A pass still in
-        // flight simply skips the beat. Fog is client-only display, never hashed.
-        visTimer_ = 0.25f;
-        {
-        std::optional<PhaseSpan> _vis;
-        if (g_phase) _vis.emplace(g_visMs, probe::kVis);
-        updateVisibility();
-    }
-    }
 
     // Native airborne occupancy (persistent) is rebuilt before projectile updates.
     const auto projectileAircraft=updateAirOccupancy();
@@ -17229,9 +16944,7 @@ void World::setPathfindingMode(PathfindingMode mode) {
     if(mode==pathfindingMode_)return;
     paths_.clear();legion_.reset();convoys_.clear();pathfindingMode_=mode;
 }
-World::~World() {
-    if (visRunning_) visWorker_.join();   // the fog worker outlives nothing
-}
+World::~World() = default;
 void World::setMission(std::unique_ptr<MissionScript> m) {
     mission_ = std::move(m);
     if (mission_) mission_->start(*this);   // queue the Start script (runs on the first tick)

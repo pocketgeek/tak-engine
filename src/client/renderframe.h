@@ -207,6 +207,11 @@ struct UnitR {
     int justBuilt = 0;                         // one-tick: unit id produced this tick, else 0
     bool disco = false, headbang = false;      // cached world_.disco/headbangTarget(player)
     bool alliedToLocal = false;                // cached alliedToLocal(player)
+    // The local display's sight of this unit (client/retailfog.h), for another
+    // side's unit: losSeen is the main view's LosOn (0x4f7210) on the local plane,
+    // mapSeen the minimap's dot rule (0x4f9970: radar or its centre cell in view).
+    // Spectators (noFog_) and allies ignore both.
+    bool losSeen = false, mapSeen = false;
     std::string scenarioName;
     const std::string& displayName() const { return scenarioName.empty() ? type->name : scenarioName; }
     bool alive() const { return deadFor < 0; }
@@ -278,9 +283,12 @@ struct Frame {
     std::vector<uint32_t> buildGhostUnits;
     std::array<PlayerR, 8> players{};
     int numPlayers = 0;
-    std::vector<uint8_t> vis;            // fog (empty for a noFog_ spectator)
-    int visW = 0, visH = 0;
-    uint32_t visGen = 0;
+    // The local display plane (client/retailfog.h): one byte per 32 px projected
+    // cell, kUnexplored/kExplored/kInView. Empty for a noFog_ view. fogGen bumps
+    // whenever the content changes, so the overlay re-uploads only then.
+    std::vector<uint8_t> fog;
+    int fogW = 0, fogH = 0;
+    uint32_t fogGen = 0;
     std::vector<uint8_t> effectVisibility;
     int effectVisW = 0, effectVisH = 0;
 

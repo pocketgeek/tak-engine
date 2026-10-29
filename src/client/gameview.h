@@ -86,6 +86,7 @@
 #include "client/retailaim.h"
 #include "client/retailflightanimation.h"
 #include "client/retaileffectvisibility.h"
+#include "client/retailfog.h"     // the local display fog (plane, overlay, radar)
 #include "client/replayfile.h"   // .takrep parser (extracted leaf)
 #include "client/monarchalert.h"
 #include "client/sound.h"     // WAV mixer + music + soundclasses (extracted leaf)
@@ -285,7 +286,7 @@ public:
         int unitId=0;
         uint64_t signature=0;
         uint64_t sceneSignature=0;
-        uint32_t featGen=0,visGen=0,tick=0;
+        uint32_t featGen=0,fogGen=0,tick=0;
         bool noFog=false;
         std::vector<RenderOrder> orders;
     };
@@ -640,12 +641,22 @@ public:
     // Player snapshot accessors (mirror world_.player()/numPlayers() for the HUD).
     const PlayerR& framePlayer(int p) const;
     int frameNumPlayers() const { return front().numPlayers; }
-    // Fog snapshot accessors (mirror world_.cellVisible/visibility/visW/visGeneration).
-    const std::vector<uint8_t>& frameVisibility() const { return front().vis; }
-    int frameVisW() const { return front().visW; }
-    int frameVisH() const { return front().visH; }
-    uint32_t frameVisGeneration() const { return front().visGen; }
-    bool cellVisibleR(float x, float z) const;
+    // The local display plane of the shown frame (Frame::fog, client/retailfog.h).
+    const std::vector<uint8_t>& frameFog() const { return front().fog; }
+    // A ground point is in view: its projected cell (z minus half the terrain
+    // height under it) on the display plane. projectedVisibleR takes an already
+    // projected position (x, z - y/2), for things that carry their own height.
+    bool cellVisibleR(float x, float z) const { return fogCellR(x, z) == tak::retailfog::kInView; }
+    bool projectedVisibleR(float x, float projectedZ) const {
+        return projectedFogCellR(x, projectedZ) == tak::retailfog::kInView;
+    }
+    uint8_t fogCellR(float x, float z) const;                     // kUnexplored/kExplored/kInView
+    float groundProjectedZ(float x, float z) const;   // z - h/2 of the terrain under (x, z)
+    uint8_t projectedFogCellR(float x, float projectedZ) const;
+    // The main view draws (and the cursor picks) another side's unit only when
+    // LosOn passes on the local plane (UnitR::losSeen); own, allied and spectated
+    // units always.
+    bool unitShownR(const UnitR& u) const { return noFog_ || u.alliedToLocal || u.losSeen; }
     bool effectVisibleR(const std::array<int32_t,3>& position) const;
     // The native unit sound host 50def0's sight test on the effect plane, which keeps
     // a dying local unit's sight for 60 ticks: display fog drops it at once, and
@@ -658,7 +669,7 @@ public:
 
     bool canPickPoint(float x, float z) const { return noFog_ || cellVisibleR(x, z); }
     bool canPickUnit(const UnitR& u) const {
-        return !u.embarked() && (alliedToLocal(u.player) || canPickPoint(u.x, u.z));
+        return !u.embarked() && (alliedToLocal(u.player) || unitShownR(u));
     }
     // Impacts are ONE-SHOT and the sim clears them every tick, while the render
     // only ever sees the newest published snapshot. Whenever the sim outruns the
@@ -1268,8 +1279,8 @@ private:
     tak::OpaqueShadowSubmit shadowOpaqueSubmit_;
     tak::GeometrySubmit bodySubmit_;
     tak::GeometrySubmit fogSubmit_;
-    tak::FogUpload fogUpload_;
-    uint64_t fogMeshRevision_=0;
+    tak::FogUpload fogUpload_{tak::FogUpload::Kind::Overlay};
+    tak::FogUpload miniFogUpload_{tak::FogUpload::Kind::Minimap};
     tak::DistantModels distantModelCache_;
     std::vector<tak::DistantModels::Item> distantModelItems_;
     std::vector<SDL_Vertex> shadowCompositeBatch_;
@@ -2628,13 +2639,16 @@ private:
     // advance in their own update passes, so zooming back in finds each effect
     // exactly where it would have been.
     bool worldFxFrame() const { return !dotsFrame_; }
-    // Exactly the minimap's rule for showing a unit: alive, not embarked, and
-    // either a spectator, an ally, or standing in a cell the local player sees.
-    // Shared by the minimap and the dots so the two can never disagree about
-    // what the fog hides.
+    // The minimap's rule for a unit's dot: alive, not embarked, and a spectator's,
+    // an ally's, or UnitR::mapSeen (radar, or its centre cell in view).
     bool radarVisible(const UnitR& u) const {
         if (!u.alive() || u.embarked() || !u.type) return false;
-        return noFog_ || alliedToLocal(u.player) || cellVisibleR(u.x, u.z);
+        return noFog_ || u.alliedToLocal || u.mapSeen;
+    }
+    // The main view's rule, which Tactical Dots and the hidden-unit dots follow:
+    // radar shows a unit on the minimap only, never in the main view.
+    bool mainViewVisible(const UnitR& u) const {
+        return u.alive() && !u.embarked() && u.type && unitShownR(u);
     }
     // Centre and edge of a unit's dot: its model origin on screen (unitScreen
     // minus the body bias, so terrain lift and flyer altitude are included).
@@ -3088,7 +3102,8 @@ private:
     // Fight-move ('f') reuses the Attack glyph tinted this red-orange, so it reads apart
     // from a real attack order -- for both the order-column button and the mouse cursor.
     static constexpr SDL_Color kFightMoveTint{255, 90, 80, 255};
-    SDL_Texture* fogTex_ = nullptr;
+    SDL_Texture* fogTex_ = nullptr;       // the overlay (2 texels per cell)
+    SDL_Texture* miniFogTex_ = nullptr;   // the minimap's fog (1 texel per cell)
     SDL_Texture* miniTex_ = nullptr;
     // Async minimap crunch (see buildMinimap): thread + handoff buffer.
     std::thread miniThread_;
@@ -3741,18 +3756,40 @@ private:
 
     void drawPanel(int winW, int winH);
 
+    // The fog overlay (retail's Glide path 0x498270): the display plane as a
+    // bilinear-filtered texture under a grid of quads that RollingFog colours and
+    // WavyFog displaces (client/retailfog.h). Rebuilt every frame: it moves.
     void drawFog();
+    bool syncFogTexture(SDL_Texture*& texture, tak::FogUpload& upload, uint32_t& generation);
     std::vector<SDL_Vertex> fogVerts_;
-    std::vector<float> fogLift_;      // per-corner heightAbove scratch (see drawFog)
-    uint32_t fogTexGen_ = ~0u;        // vis generation last uploaded to fogTex_
-    // Fog relief geometry depends on the camera and terrain, not on time.
-    // At distant zoom retain transparent cells too, so visibility only updates
-    // the texture instead of rebuilding millions of vertices four times/sec.
-    bool fogMeshValid_ = false;
-    int fogGridX0_=0,fogGridZ0_=0,fogGridX1_=0,fogGridZ1_=0;
-    uint32_t fogMeshGeneration_ = 0;
-    int fogMeshW_ = 0, fogMeshH_ = 0, fogMeshWinW_ = 0, fogMeshWinH_ = 0;
-    float fogMeshX_ = 0, fogMeshY_ = 0, fogMeshZoom_ = 0;
+    uint32_t fogTexGen_ = ~0u;        // Frame::fogGen last uploaded to fogTex_
+    uint32_t miniFogTexGen_ = ~0u;    // ... and to miniFogTex_
+    // The local side's FogColor (gamedata/sidedata.tdf; retail 0x4c2e0c, default
+    // white), loaded for side_ on first use.
+    SDL_Color fogColor_{255, 255, 255, 255};
+    std::string fogColorSide_;
+    uint64_t fogClock0_ = 0;          // performance counter at the first fog draw
+    double fogSeconds();              // RollingFog/WavyFog time (TAK_FOG_STILL freezes it)
+    bool fogStill_ = false;           // fixtures that compare frames hold it at t = 0 too
+    // Capture side (sim thread): the local plane, its generation, and the minimap
+    // radar. captureFog fills them for the frame being written.
+    void captureFog(Frame& fb);
+    std::vector<uint8_t> fogPlane_;
+    uint32_t fogPlaneGen_ = 0;
+    tak::retailfog::RadarCover fogRadar_;
+    // Before the first tick the World has no view counts yet (its first pass runs
+    // inside tick 0); the frame drawn behind a campaign briefing stamps the same
+    // footprints into these instead, so that view is not all black.
+    std::vector<uint16_t> fogPreviewCounts_, fogPreviewExplored_;
+    std::vector<tak::sim::RetailExplorationHeight> fogPreviewHeights_;
+    // Debug fixtures replace the plane before the units are tested against it.
+    std::function<void(std::vector<uint8_t>&, int, int)> debugFogOverride_;
+    // The usual fixture: every cell explored, a disc of `radius` px around the
+    // ground point (x, z) in view (projected like the plane).
+    void debugFogDisc(float x, float z, float radius);
+    // Is a live sim unit seen by the local side? World::playerSees for the local
+    // player and its allies (sim thread; for capture-time decisions).
+    bool localSeesLive(const tak::sim::Unit& u) const;
 
     // Positions along a build-drag line: cell-snapped footprints, buildLineGap_ apart
     // (client/buildline.h).

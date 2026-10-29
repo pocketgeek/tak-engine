@@ -150,7 +150,7 @@
                 for (const UnitR* _up : front().live) {
                     const UnitR& u = *_up;
                     if (u.player != p || !u.alive() || !dancing(u)) continue;
-                    if (!alliedToLocal(p) && !noFog_ && !cellVisibleR(u.x, u.z)) continue;
+                    if (!unitShownR(u)) continue;
                     cx += u.x; cz += u.z; ++n;
                 }
                 if (n) {
@@ -171,7 +171,7 @@
                 for (const UnitR* _up : front().live) {
                     const UnitR& u = *_up;
                     if (u.player != p || !u.alive() || !headbanging(u)) continue;
-                    if (!alliedToLocal(p) && !noFog_ && !cellVisibleR(u.x, u.z)) continue;
+                    if (!unitShownR(u)) continue;
                     cx += u.x; cz += u.z; ++n;
                 }
                 if (n) {
@@ -383,7 +383,6 @@
         replayMode_ = true;
         noFog_ = true;             // a spectator sees the whole map
         localPlayer_ = 0;
-        writableWorld().setVisPlayer(-1);   // no fog needed (noFog_) -> skip the O(units) fog pass
         side_ = "ara";
         loadPanel(side_);
         loadGui(side_);
@@ -686,8 +685,7 @@
             const bool transient=event.code==263 || event.code==264;
             if(owner && (transient || !tak::retailAttachedSfxOwnerRemoved(owner->alive(),
                     owner->deadFor,owner->corpseStatue,owner->corpseAnimationTicks())) &&
-               (noFog_ || alliedToLocal(owner->player) ||
-               world_.cellVisible(owner->x.toFloat(),owner->z.toFloat()))) {
+               localSeesLive(*owner)) {
                 smoke.emissions.push_back(event);
                 if(!transient)smokeOwners_.insert(event.unitId);
             }
@@ -840,6 +838,18 @@
         s.disco = u.alive() && world_.discoTarget(u.player, u.id);
         s.headbang = u.alive() && world_.headbangTarget(u.player, u.id);
         s.alliedToLocal = alliedToLocal(u.player);
+        // The local view's sight of another side's unit, on the plane captureFog
+        // just built (a dying or dead unit is tested where it lies).
+        s.losSeen = s.mapSeen = false;
+        if (!noFog_ && !s.alliedToLocal && !fb.fog.empty()) {
+            namespace rf = tak::retailfog;
+            const bool hidden = u.cloaked || u.embarked();
+            const int32_t y = (u.type->canFly ? u.flightY : u.groundY).v;
+            s.losSeen = rf::unitInView(fb.fog, fb.fogW, fb.fogH, hidden, u.x.v, y, u.z.v,
+                                       u.type->footX, u.type->footZ, u.type->modelTop);
+            s.mapSeen = !hidden && (fogRadar_.covers(u.x.v, u.z.v) ||
+                                    rf::pointInView(fb.fog, fb.fogW, fb.fogH, u.x.v, y, u.z.v));
+        }
         // Pose: prev comes from the previously-published frame's curr for this SAME unit
         // (id live last tick + matching type). Interpolate alive units between ticks;
         // a dead unit holds its death pose. A big jump (teleport / id reuse) seeds fresh.
@@ -902,6 +912,7 @@
         const Frame& pf = frameBuf_[published_]; // previously-published frame (last tick's poses)
         fb.gen = ++captureCounter_;     // records written this pass get gen==fb.gen (=> live this tick)
         fb.worldEpoch = worldEpoch_.load(std::memory_order_acquire);
+        captureFog(fb);   // the local display plane, before the units are tested against it
         fb.live.clear();
         const size_t count=world_.units().size();
         fb.units.resize(count);
@@ -1004,15 +1015,6 @@
         fb.gameTick = world_.tickCount();
         fb.scenarioClock = writableWorld().scenario() && writableWorld().scenario()->showClock();
         fb.wind = world_.wind();
-        // Fog snapshot: copy world_.vis_ into this buffer only when THIS buffer's fog is stale
-        // (fog recomputes ~4Hz, so at most ~2 copies per change -- one per buffer). A spectator
-        // (noFog_) stops the fog pass, so vis_ stops changing and the copy stops too; what is
-        // left in it is stale, and cellVisibleR answers from noFog_ instead.
-        if (fb.visGen != world_.visGeneration() || fb.vis.size() != world_.visibility().size()) {
-            fb.vis = world_.visibility();
-            fb.visW = world_.visW(); fb.visH = world_.visH();
-            fb.visGen = world_.visGeneration();
-        }
         if (effectVisibility_ && !noFog_) {
             const auto counts=effectVisibility_->counts();
             fb.effectVisibility.assign(counts.begin(),counts.end());
@@ -1064,17 +1066,102 @@
         else sounds_.playWorld(name,x,z,priority);
     }
 
-    bool GameView::cellVisibleR(float x, float z) const {
+    float GameView::groundProjectedZ(float x, float z) const {
+        const auto& m = mapView_.map();
+        int height = 0;
+        if (!m.heights.empty() && m.width > 0 && m.height > 0)
+            height = m.heights[size_t(std::clamp(int(z) / 16, 0, m.height - 1)) * size_t(m.width) +
+                               size_t(std::clamp(int(x) / 16, 0, m.width - 1))];
+        return std::floor(z) - float(height >> 1);
+    }
+
+    uint8_t GameView::fogCellR(float x, float z) const {
         // No fog (spectator, replay, FULL VISION, a lineofsight=0 mission) sees every
-        // cell. The world's fog buffer is not empty then: setTerrain pre-fills it and
-        // the seat's last pass stays behind when the fog pass stops, so answering
-        // from it hid every side but the seat's from the overlays (health bars).
-        if (noFog_) return true;
+        // cell, whatever plane a frame captured before the view stopped fogging.
+        if (noFog_) return tak::retailfog::kInView;
+        return projectedFogCellR(x, groundProjectedZ(x, z));
+    }
+
+    uint8_t GameView::projectedFogCellR(float x, float projectedZ) const {
+        if (noFog_) return tak::retailfog::kInView;
         const Frame& f = front();
-        if (f.vis.empty()) return true;
-        int cx = int(x) / 16, cz = int(z) / 16;
-        if (cx < 0 || cz < 0 || cx >= f.visW || cz >= f.visH) return false;
-        return f.vis[size_t(cz) * f.visW + cx] == 2;
+        if (f.fog.empty()) return tak::retailfog::kInView;   // no terrain: nothing to fog
+        const int cx = int(std::floor(x)) >> 5, cz = int(std::floor(projectedZ)) >> 5;
+        if (uint32_t(cx) >= uint32_t(f.fogW) || uint32_t(cz) >= uint32_t(f.fogH))
+            return tak::retailfog::kUnexplored;
+        return f.fog[size_t(cz) * size_t(f.fogW) + size_t(cx)];
+    }
+
+    bool GameView::localSeesLive(const tak::sim::Unit& u) const {
+        if (noFog_ || alliedToLocal(u.player)) return true;
+        for (int p = 0; p < world_.numPlayers(); ++p)
+            if (alliedToLocal(p) && world_.playerSees(p, u)) return true;
+        return false;
+    }
+
+    // The local display plane for the frame being captured (sim thread, after the
+    // tick): the World's view counts of the local player and its allies, its
+    // Mapping bits, the room's and the power codes' vision rules. Also collects
+    // the local player's radar for the minimap dots.
+    void GameView::captureFog(Frame& fb) {
+        namespace rf = tak::retailfog;
+        fogRadar_.clear();
+        if (noFog_ || world_.viewPlaneW() <= 0 || world_.viewPlaneH() <= 0) {
+            fb.fog.clear(); fb.fogW = fb.fogH = 0;
+            return;
+        }
+        const int w = world_.viewPlaneW(), h = world_.viewPlaneH();
+        rf::PlaneSource source;
+        source.width = w; source.height = h; source.player = localPlayer_;
+        source.mapRevealed = world_.mapRevealedFor(localPlayer_);
+        source.losOff = world_.roomLosOff() || world_.powerLosOff(localPlayer_);
+        for (int p = 0; p < world_.numPlayers() && p < 32; ++p)
+            if (alliedToLocal(p)) source.viewers |= 1u << p;
+        source.viewCounts = world_.viewCounts();
+        source.explored = world_.navigationExploration();
+        if (world_.viewCounts().empty()) {
+            // No pass yet (before tick 0): stamp the local side's footprints the way
+            // World::updateViewCounts will, into one plane of our own.
+            const size_t cells = size_t(w) * size_t(h);
+            const auto& map = mapView_.map();
+            if (fogPreviewHeights_.size() != cells && map.width == 2 * w && map.height == 2 * h)
+                fogPreviewHeights_ = tak::sim::retailExplorationHeights(map.width, map.height,
+                    uint8_t(world_.mapSea()), [&](int x, int z) { return map.heights[size_t(z) * map.width + x]; });
+            fogPreviewCounts_.assign(cells, 0);
+            fogPreviewExplored_.assign(cells, 0);
+            if (fogPreviewHeights_.size() == cells)
+                for (const auto& u : world_.units()) {
+                    if (!u.alive() || !u.type || u.underConstruction || !alliedToLocal(u.player) ||
+                        world_.isNeutralPlayer(u.player)) continue;
+                    tak::sim::RetailSightFootprint sight;
+                    sight.distance = int16_t(world_.sightDistance(*u.type));
+                    sight.sightHeight = u.type->sightHeight;
+                    tak::sim::retailUpdateSight(sight, u.x, u.type->canFly ? u.flightY : u.groundY, u.z,
+                        uint8_t(world_.mapSea()), false, w, h, 0,
+                        [&](int x, int z) { return fogPreviewHeights_[size_t(z) * w + x]; },
+                        [&](int x, int z, int delta, uint16_t) {
+                            fogPreviewCounts_[size_t(z) * w + x] = uint16_t(fogPreviewCounts_[size_t(z) * w + x] + delta);
+                            if (delta > 0) fogPreviewExplored_[size_t(z) * w + x] = 1;
+                        });
+                }
+            source.viewCounts = fogPreviewCounts_;
+            source.explored = fogPreviewExplored_;
+            source.viewers = 1; source.player = 0;
+        }
+        if (rf::buildPlane(source, fogPlane_)) ++fogPlaneGen_;
+        if (debugFogOverride_) { debugFogOverride_(fogPlane_, w, h); ++fogPlaneGen_; }
+        if (fb.fogGen != fogPlaneGen_ || fb.fog.size() != fogPlane_.size()) {
+            fb.fog = fogPlane_;
+            fb.fogGen = fogPlaneGen_;
+        }
+        fb.fogW = w; fb.fogH = h;
+        // 0x4f9970: the local player's own units with a radar distance, built and
+        // not status-locked (the same units 4f6a40 stamps sight for).
+        for (const auto& u : world_.units())
+            if (u.player == localPlayer_ && u.alive() && u.type && !u.underConstruction &&
+                u.stonedFor <= 0 && u.frozenFor <= 0)
+                fogRadar_.add(u.x.v, u.z.v, world_.radarDistance(*u.type));
+        fogRadar_.finish();
     }
 
     bool GameView::effectVisibleR(const std::array<int32_t,3>& position) const {
@@ -1751,7 +1838,7 @@
         for (auto& [id, a] : anims_) {
             if (a.pendingPoints.empty() && a.pendingSfx.empty() && a.pendingSnd.empty()) continue;
             const auto* u = frameUnitP(id);
-            if (u && u->type && (noFog_ || cellVisibleR(u->x, u->z))) {
+            if (u && u->type && unitShownR(*u)) {
                 for(auto& event:a.pendingPoints) {
                     event.unitId=u->id;event.player=u->player;event.position=u->worldPosition;
                     event.heading=uint16_t(u->headingWord+32768);event.pitch=u->bodyPitch;event.roll=u->bodyRoll;
@@ -2388,7 +2475,7 @@
             };
             st.vm->onExplode = [this,id, state=&st, vm=st.vm.get()](int piece, int32_t flags) {
                 const auto* unit=frameUnitP(id);
-                if(!unit || !unit->type || (!noFog_ && !cellVisibleR(unit->x,unit->z)))return false;
+                if(!unit || !unit->type || !unitShownR(*unit))return false;
                 std::vector<tak::cob::PieceState> pose;
                 const auto states=vm->retailPieces();
                 pose.resize(states.size());

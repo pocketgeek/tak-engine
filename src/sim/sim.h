@@ -2053,6 +2053,9 @@ public:
         return viewCounts_[size_t(player)*cells+size_t(cz)*width+cx];
     }
     const std::vector<uint16_t>& viewCounts() const { return viewCounts_; }
+    // The projected 32px grid both planes use (cells per row / rows).
+    int viewPlaneW() const { return hW_/2; }
+    int viewPlaneH() const { return hH_/2; }
     const std::vector<uint16_t>& navigationExploration() const { return navigationExplored_; }
     // `player`'s Mapping-plane bit at the 32 px cell under (x,z), as tickManaBuildArea
     // reads it: true without a plane (no terrain), false off the map.
@@ -2364,14 +2367,9 @@ public:
     // result (all participants finished, victory if any won). Not a campaign.
     int scenarioOutcome(int player) const;
 
-    // Which player the fog-of-war grid tracks (default 0 = local player).
-    void setVisPlayer(int t) { visPlayer_ = t; }
-    // Draw a loaded, paused campaign before its first simulation tick. This
-    // initializes only the local display fog, never authoritative exploration.
-    void prepareInitialVisibility() { if (!visHavePass_) updateVisibility(); }
-    // Start with terrain mapped; current enemy visibility is still line-of-sight gated.
-    // Call during setup, before visibility work starts. Display-only, never hashed.
-    void revealTerrain() { for (auto& v : vis_) if (v == 0) v = 1; ++visGen_; }
+    // Kept for the callers that still name a viewer; the World has no display fog
+    // any more (the client builds it from viewCounts_), so this does nothing.
+    void setVisPlayer(int) {}
     void setDoubleSight(bool enabled) { doubleSight_ = enabled; }
     // The room's (or campaign .ota's) starting vision, as retail's 4c6540 seeds it:
     // Map Revealed fills the Mapping plane (every cell explored), and FULL VISION
@@ -2394,13 +2392,12 @@ public:
     void setPowerCodes(bool enabled, bool mapRevealed = false) {
         powerCodes_ = enabled; damageMode_ = DamageMode::Normal; powerLosOff_ = 0;
         powerMappingOff_ = enabled && mapRevealed ? uint16_t(0xffff) : uint16_t(0);
-        visPowerForget_ = false;
     }
     bool powerCodes() const { return powerCodes_; }
     void applyPowerCode(int player, PowerCode code, PowerArg arg, int unitId);
     DamageMode damageMode() const { return damageMode_; }
     // +LOS Off / +NowISee: `player` sees every unit on a cell it has explored
-    // (playerSees), and its display fog shows explored cells as visible.
+    // (playerSees), and the client's display fog shows explored cells in view.
     bool powerLosOff(int player) const { return player >= 0 && player < 16 && (powerLosOff_ >> player & 1); }
     // +Mapping / +NowISee: `player`'s whole map is explored (sim and display).
     bool powerMappingOff(int player) const { return player >= 0 && player < 16 && (powerMappingOff_ >> player & 1); }
@@ -2416,8 +2413,8 @@ public:
     // oversubscribe. A lone game (SP, or the client's own sim) leaves it off.
     //
     // It was named serialFlow_ and gated the flow-field prefetch; the flow fields are
-    // gone. Today it gates the fog/visibility pass (see updateVisibility/visCompute)
-    // and the sim's SimPool: serial runs the pool's identical fixed chunks inline.
+    // gone. Today it gates the sim's SimPool: serial runs the pool's identical
+    // fixed chunks inline.
     // Never affects results -- purely scheduling.
     void setSerialThreads(bool s) { serialThreads_ = s; }
     // The SimPool's worker count, for tests (-1: SimPool::defaultWorkers()).
@@ -2514,17 +2511,6 @@ public:
     // deliberately NOT part of stateHash, and nothing in the sim reads it.
     uint32_t featGeneration() const { return featGen_.load(std::memory_order_acquire); }
 
-    // Fog of war for the local player over 16px cells: 0 hidden, 1 explored, 2 visible.
-    const std::vector<uint8_t>& visibility() const { return vis_; }
-    uint32_t visGeneration() const { return visGen_; }   // bumps on each fog recompute
-    int visW() const { return visW_; }
-    int visH() const { return visH_; }
-    bool cellVisible(float x, float z) const {
-        if (vis_.empty()) return true;
-        int cx = int(x) / 16, cz = int(z) / 16;
-        if (cx < 0 || cz < 0 || cx >= visW_ || cz >= visH_) return false;
-        return vis_[size_t(cz) * visW_ + cx] == 2;
-    }
     // Move order; queue appends. A unit steers STRAIGHT at the front order's point --
     // there is no local obstacle avoidance in the steering -- and the background path
     // search (retail's boundary tracer, sim/pathsearch.h, NOT an A*) routes around
@@ -2886,7 +2872,6 @@ private:
     void tickAbilities(float dt);   // reclaim / resurrect on nearby corpses
     void tickAuras(float dt);       // AdjustArmor/Attack stat auras
     void tickHealAuras();           // AdjustJoy passive repair aura (1 Hz)
-    void updateVisibility();
 
     // Connected-component labelling of a nav grid for one footprint, built on first
     // use and reused until the grid's walkability version moves.
@@ -3362,56 +3347,14 @@ private:
     std::atomic<uint32_t> featGen_{0};   // see featGeneration()
     void bumpFeatGen() { featGen_.fetch_add(1, std::memory_order_release); }
 
-    std::vector<uint8_t> vis_;
-    int visPlayer_ = 0;
     bool doubleSight_ = false;  // synchronized skirmish/MP rule; campaigns use authored sight
     bool roomMapRevealed_ = false, roomLosOff_ = false;   // setRoomVision
     // Power codes (setPowerCodes / applyPowerCode). Hashed while powerCodes_ is on.
     bool powerCodes_ = false;
     DamageMode damageMode_ = DamageMode::Normal;   // DoubleShot / HalfShot: every player's damage
     uint16_t powerLosOff_ = 0, powerMappingOff_ = 0;   // per-player bits
-    // Display only (never hashed): the shroud came back for visPlayer_, so the next
-    // fog pass forgets the display's explored cells too. Set on the sim thread,
-    // consumed by visGather; visPowerPass_ is what visCompute applies.
-    bool visPowerForget_ = false;
-    struct VisPower { bool forget = false, mapped = false, losOff = false; } visPowerPass_;
     bool patrolRepairs_ = true;
-    int visW_ = 0, visH_ = 0;
-    // Client-local fog acceleration: the LoS-tested cell set for a (sight, radar,
-    // cell) combination is a pure function of the IMMUTABLE heightmap, so it is
-    // computed once and re-stamped while a unit stands on that cell -- the O(r^3)
-    // ray-march that used to recompute every 0.25s made 300-600-unit armies cost
-    // 11-66ms per fog pass. Display-only: never hashed, and the headless referee
-    // (visPlayer_ < 0) skips the fog pass entirely.
-    std::unordered_map<uint64_t, std::vector<uint32_t>> visMaskCache_;
-    // The fog pass runs ASYNCHRONOUSLY on a worker. At 3800 units it costs ~86ms, and on
-    // the 0.5s cadence below that was a stall you could feel twice a second -- the whole
-    // of it, measured: "SIMPHASE tick=88.6ms ... vis=86.0". Parallelising inside the pass
-    // (which it already does) cannot help, because the tick still waits for it.
-    // Splitting it instead: visGather() is serial and cheap and reads units_ on the sim
-    // thread; visCompute() is the expensive part and touches only the immutable heightmap
-    // plus its own back buffer, so it runs off-thread while the game keeps rendering. The
-    // result lands one pass late -- imperceptible against fog that already only moves at
-    // 2-4Hz, and free of lockstep risk because NOTHING here is hashed (the referee at
-    // visPlayer_ < 0 skips the pass, and every consumer of vis_ is client display code).
-    struct Reveal { int cx, cz, r, rRadar2; bool los; uint64_t key; };
-    struct Miss   { uint64_t key; int cx, cz, r, rRadar2; };
-    std::vector<Reveal> visReveals_;
-    std::vector<Miss>   visMisses_;
-    std::vector<uint8_t> visBack_;      // worker's target; swapped into vis_ when it lands
-    std::thread visWorker_;
-    bool visRunning_ = false;           // sim thread only: is visWorker_ joinable?
-    bool visHavePass_ = false;          // has a fog pass ever actually LANDED? (not: is
-                                        // vis_ allocated -- setTerrain pre-fills it)
-    std::atomic<bool> visDone_{false};  // worker -> sim thread: result is ready
-    void visGather();                   // serial: reads units_, fills visReveals_/visMisses_
-    void visCompute();                  // worker: ray-march, demote, stamp into visBack_
-    void visPump();                     // sim thread: collect a finished pass, start the next
-    // Bumped after every fog recompute so the renderer can skip re-uploading an
-    // unchanged fog texture (vis_ changes at 4Hz; frames render far faster).
-    uint32_t visGen_ = 0;
-    float visTimer_ = 0;
-    std::vector<uint8_t> heights_;   // raw TNT heightmap, for fog line-of-sight
+    std::vector<uint8_t> heights_;   // raw TNT heightmap
     std::vector<RetailExplorationHeight> explorationHeights_;
     std::vector<uint16_t> navigationExplored_; // simulation-owned persistent owner bits
     // 4c6800's per-player current-view counts (player +0x88) on the same
@@ -3438,10 +3381,6 @@ public:
     int mapSea() const { return seaLevel_; }
 private:
     int hW_ = 0, hH_ = 0;
-    // True if the ground at cell (tx,tz) is visible from a unit at cell (ux,uz):
-    // no intervening terrain rises above the eye->target sight line. Local display
-    // only (fog is not in stateHash), so plain float math is fine.
-    bool sightClear(int ux, int uz, float eyeH, int tx, int tz) const;
     std::vector<Unit> units_;
     // IDs remain monotonic; storage slots may move after final corpse retirement.
     std::vector<int32_t> unitSlotById_;

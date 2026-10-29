@@ -848,7 +848,11 @@ namespace {
         SDL_SetRenderDrawColor(ren_, 30, 30, 40, 255);
         SDL_RenderFillRectF(ren_, &frame);
         if (miniTex_) SDL_RenderCopyF(ren_, miniTex_, nullptr, &r);
-        if (fogTex_) SDL_RenderCopyF(ren_, fogTex_, nullptr, &r);
+        // 0x4f93a0: the minimap shows the local plane cell by cell, unblended.
+        if (!noFog_ && !front().fog.empty() && syncFogTexture(miniFogTex_, miniFogUpload_, miniFogTexGen_)) {
+            SDL_SetTextureScaleMode(miniFogTex_, SDL_ScaleModeNearest);
+            SDL_RenderCopyF(ren_, miniFogTex_, nullptr, &r);
+        }
 
         float mapW = float(mapView_.map().blocksX) * 32;
         float mapH = float(mapView_.map().blocksY) * 32;
@@ -859,9 +863,9 @@ namespace {
         // set was thousands of state changes a frame at large unit counts).
         overlayBatch_.clear();
         for (const UnitR* _up : front().live) { const UnitR& u = *_up;
-            // A spectator (noFog_) sees every unit on the radar; a player sees only
-            // allied units and enemies currently in view. (Shared with Tactical Dots.)
-            // The +Radar power code shows them all here, on the minimap only (retail's
+            // A spectator (noFog_) sees every unit on the radar; a player sees allied
+            // units, and enemies in view or within its radar (radarVisible). The
+            // +Radar power code shows them all here, on the minimap only (retail's
             // one reader of the flag is the minimap dot pass, 0x4f9561).
             if (radarCode_ ? !u.alive() || u.embarked() || !u.type : !radarVisible(u)) continue;
             SDL_FPoint p = toMini(u.x, u.z);

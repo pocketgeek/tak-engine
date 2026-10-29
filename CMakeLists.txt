@@ -2594,6 +2594,17 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/hidden-units.png")
       set_tests_properties(hidden_units PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: hidden units \\(")
+      # The display fog is retail's sight plane through LosOn: an enemy at 0.9x
+      # sight on flat ground is drawn and at 1.1x is not, from a hill at 1.5x it is,
+      # and radar makes a minimap dot only (client/retailfog.h).
+      add_test(NAME retail_fog COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_RETAIL_FOG_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/retail-fog-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/retail-fog-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/retail-fog.png")
+      set_tests_properties(retail_fog PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: retail fog \\(")
       add_test(NAME spectator_health_bars COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_SPECTATOR_BARS_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/spectator-bars-profile
@@ -2654,7 +2665,7 @@ if(TAK_BUILD_CLIENT)
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
           render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail render_unit_index render_unit_index_jump
-          tactical_dots hidden_units spectator_health_bars
+          tactical_dots hidden_units retail_fog spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()

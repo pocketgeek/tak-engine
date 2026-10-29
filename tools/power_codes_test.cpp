@@ -1,5 +1,6 @@
 // Power codes (sim/powercodes.h): the chat parser, and each sim code's effect
 // through Cmd::PowerCode -- refused while the match has POWER CODES off.
+#include "client/retailfog.h"
 #include "net/matchconfig.h"
 #include "net/protocol.h"
 #include "server/commands.h"
@@ -154,9 +155,18 @@ static void simCodes() {
         check(w.playerSees(0, *w.unit(theirs)) == on && w.playerSees(0, *w.unit(far)) == on, "NowISee sees everything");
         applyCommand(w, reg, code(PowerCode::NowISee, 0));
         check(w.powerLosOff(0) == on && w.powerMappingOff(0) == on, "NowISee is not a toggle");
-        // Display fog of the local player (visPlayer 0) follows its codes.
+        // The local display plane (client/retailfog.h) of player 0 follows its codes.
         advance(w, 10);
-        check(w.cellVisible(1700, 1700) == on, "NowISee lifts the display fog");
+        {
+            namespace rf = tak::retailfog;
+            rf::PlaneSource s;
+            s.viewCounts = w.viewCounts(); s.explored = w.navigationExploration();
+            s.width = w.viewPlaneW(); s.height = w.viewPlaneH(); s.viewers = 1; s.player = 0;
+            s.mapRevealed = w.mapRevealedFor(0); s.losOff = w.powerLosOff(0);
+            std::vector<uint8_t> plane; rf::buildPlane(s, plane);
+            check((plane[size_t(1700 / 32) * size_t(s.width) + 1700 / 32] == rf::kInView) == on,
+                  "NowISee lifts the display fog");
+        }
         // Client-only codes never change the sim.
         const auto before = w.stateHash();
         applyCommand(w, reg, code(PowerCode::Radar, 0));

@@ -42,6 +42,17 @@
         return it != kits.end() ? it->second : kits.at("ara");
     }
 
+    void GameView::debugFogDisc(float x, float z, float radius) {
+        const float px=x,pz=groundProjectedZ(x,z);
+        debugFogOverride_=[px,pz,radius](std::vector<uint8_t>& plane,int w,int h) {
+            for (int cz=0;cz<h;++cz) for (int cx=0;cx<w;++cx) {
+                const float dx=float(cx)*32+16-px,dz=float(cz)*32+16-pz;
+                plane[size_t(cz)*size_t(w)+size_t(cx)]=dx*dx+dz*dz<radius*radius ?
+                    tak::retailfog::kInView : tak::retailfog::kExplored;
+            }
+        };
+    }
+
     void GameView::guiSmoothTest() {
         const auto hash = world_.stateHash();
         const auto initial = smoothArt_;
@@ -428,6 +439,143 @@
             std::fprintf(stderr,"selportraits: %zu units selected\n",selection_.size());
             return;
         }
+        if (tak::devFlag("TAK_RETAIL_FOG_TEST")) {
+            // The display fog is retail's single sight plane (World::viewCounts) seen
+            // through LosOn: on flat ground an enemy at 0.9x our unit's sight is drawn
+            // and at 1.1x is not; from a hill the cone reaches 1.5x; radar puts an
+            // enemy on the minimap but never in the main view. Fixtures are found on
+            // the loaded map. TAK_RETAIL_FOG_CAPTURE=<prefix> writes
+            // <prefix>-flat/-hill/-radar.png (the whole frame, minimap included).
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("retail fog: "+what);
+                std::fprintf(stderr,"PASS: retail fog: %s\n",what.c_str());
+            };
+            constexpr int W=1280,H=960;
+            noFog_=false;edgeScrollOn_=false;tacticalDotsOpt_=false;healthBars_=0;
+            fogStill_=true;
+            writableWorld().setPlayerCount(2);
+            // DOUBLE SIGHT (270 px for a swordsman): at the plain 135 the unit's
+            // bounding box and the 32 px cells keep an enemy in view out to ~1.2x.
+            writableWorld().setDoubleSight(true);
+            const auto* sword=registry_.find("arasword");
+            const auto* keep=registry_.find("arakeep");
+            check(sword && keep && keep->radar>0,"fixture types (a swordsman, a keep with radar)");
+            const auto& m=mapView_.map();
+            const int sea=world_.mapSea();
+            const auto h16=[&](int x,int z) {
+                return int(m.heights[size_t(std::clamp(z,0,m.height-1))*size_t(m.width)+size_t(std::clamp(x,0,m.width-1))]);
+            };
+            const float S=float(world_.sightDistance(*sword)),R=float(world_.radarDistance(*keep));
+            const auto heights=tak::sim::retailExplorationHeights(m.width,m.height,uint8_t(sea),h16);
+            const int pw=m.width/2,ph=m.height/2;
+            // Would retail's cone (4c6800) admit a target unit standing on (tx,tz)
+            // for a swordsman on (x,z)? Its LosOn corners, as World::playerSees.
+            const auto admits=[&](float x,float z,float tx,float tz) {
+                tak::sim::RetailSightFootprint f;
+                f.x=int16_t(int(x)/32);f.z=int16_t(int(z)/32);f.distance=int16_t(S);f.sightHeight=sword->sightHeight;
+                f.eyeHeight=std::max(h16(int(x)/16,int(z)/16),sea+1)+sword->sightHeight;
+                const int radius=tak::sim::retailSightRadius(f);
+                const float slope=tak::sim::retailSightSlope(f);
+                auto at=[&](int cx,int cz){return heights[size_t(cz)*size_t(pw)+size_t(cx)];};
+                const int y=h16(int(tx)/16,int(tz)/16),top=y+(sword->modelTop>>16);
+                for (const auto& [cx,cy,cz]:{std::array<float,3>{tx-8*sword->footX,float(top),tz-8*sword->footZ},
+                        {tx+8*sword->footX,float(top),tz-8*sword->footZ},{tx+8*sword->footX,float(y),tz+8*sword->footZ},
+                        {tx-8*sword->footX,float(y),tz+8*sword->footZ}}) {
+                    const int px=int(cx)>>5,pz=(int(cz)-(int(cy)>>1))>>5;
+                    if (px<0 || pz<0 || px>=pw || pz>=ph) continue;
+                    if (tak::sim::retailSightAdmits(f,px,pz,radius*radius,slope,at)) return true;
+                }
+                return false;
+            };
+            // Flat: one height over 1.4 sight distances either way along x.
+            float fx=-1,fz=-1,hx=-1,hz=-1,hdx=0;
+            const int reach=int(1.4f*S/16)+2;
+            for (int z=m.height/2,step=0;fx<0 && step<m.height;++step,z=m.height/2+((step&1)?1:-1)*(step/2)*2) {
+                if (z<8 || z>=m.height-8) continue;
+                for (int x=reach+4;x<m.width-reach-4 && fx<0;x+=3) {
+                    const int h0=h16(x,z);
+                    if (h0<=sea+2) continue;
+                    bool flat=true;
+                    for (int dz=-3;dz<=3 && flat;++dz) for (int dx=-reach;dx<=reach && flat;++dx) flat=h16(x+dx,z+dz)==h0;
+                    // Our unit on a cell centre, so the 32 px cells do not decide the result.
+                    if (flat) {fx=float((x/2)*32+16);fz=float((z/2)*32+16);}
+                }
+            }
+            check(fx>0,"found flat ground for 1.4 sight distances");
+            // A hill: our unit high, the target 1.5x away (east or west) on lower ground
+            // that retail's cone still reaches -- far from the flat fixture.
+            for (int z=8;z<m.height-8 && hx<0;z+=2)
+                for (int x=8;x<m.width-8 && hx<0;x+=2) {
+                    const float ox=float((x/2)*32+16),oz=float((z/2)*32+16);
+                    if (std::hypot(ox-fx,oz-fz)<4*S) continue;
+                    for (float dir:{1.0f,-1.0f}) {
+                        const float tx=ox+dir*1.5f*S;
+                        if (tx<64 || tx>float(m.width*16-64)) continue;
+                        if (h16(int(tx)/16,int(oz)/16)<=sea+2 || h16(x,z)<=sea+2) continue;
+                        if (admits(ox,oz,tx,oz)) {hx=ox;hz=oz;hdx=dir;break;}
+                    }
+                }
+            check(hx>0,"found a hill whose cone reaches 1.5 sight distances");
+            // Radar: a keep, and an enemy at 0.9x its radar distance -- beyond twice its
+            // sight (the footprint's cap) -- far from both other fixtures.
+            float kx=-1,kz=-1;
+            const float rd=0.9f*R;
+            check(rd>2.0f*float(world_.sightDistance(*keep))+64,"the radar fixture is beyond any sight");
+            for (int z=8;z<m.height-8 && kx<0;z+=4)
+                for (int x=8;x<m.width-8 && kx<0;x+=4) {
+                    const float ox=float(x*16),oz=float(z*16);
+                    if (ox+rd>float(m.width*16-64) || std::hypot(ox-fx,oz-fz)<rd+4*S || std::hypot(ox-hx,oz-hz)<rd+4*S ||
+                        std::hypot(ox+rd-fx,oz-fz)<4*S || std::hypot(ox+rd-hx,oz-hz)<4*S) continue;
+                    if (!world_.canPlace(keep,ox,oz) || h16(int(ox+rd)/16,z)<=sea+2) continue;
+                    kx=ox;kz=oz;
+                }
+            check(kx>0,"found room for the radar fixture");
+            std::fprintf(stderr,"retail fog: sight %.0f radar %.0f flat %.0f,%.0f hill %.0f,%.0f (h %d -> %d) keep %.0f,%.0f\n",
+                S,R,fx,fz,hx,hz,h16(int(hx)/16,int(hz)/16),h16(int(hx+hdx*1.5f*S)/16,int(hz)/16),kx,kz);
+            const int own=spawn("arasword",fx,fz,0,0);
+            const int near=spawn("arasword",fx+0.9f*S,fz,0,1);
+            const int far=spawn("arasword",fx-1.1f*S,fz,0,1);
+            const int high=spawn("arasword",hx,hz,0,0);
+            const int below=spawn("arasword",hx+hdx*1.5f*S,hz,0,1);
+            const int tower=spawn("arakeep",kx,kz,0,0);
+            const int blip=spawn("arasword",kx+rd,kz,0,1);
+            check(own>0 && near>0 && far>0 && high>0 && below>0 && tower>0 && blip>0,"fixture spawned");
+            for (int i=0;i<30;++i) writableWorld().tick(1.f/30);
+            const char* capture=tak::devEnv("TAK_RETAIL_FOG_CAPTURE");
+            const auto frame=[&](float cx,float cz,const char* tag,float zoom=1.0f) {
+                captureFrame();beginFrame();cosmeticStep(0);
+                mapView_.setZoom(zoom);
+                mapView_.setOffset(cx-float(W-300)*0.5f/zoom,cz-terrainLift(cx,cz)-float(H)*0.5f/zoom);
+                prepare(W,H);draw(W,H);
+                if (capture) {
+                    int ow=0,oh=0;SDL_GetRendererOutputSize(ren_,&ow,&oh);
+                    std::vector<uint8_t> px(size_t(ow)*size_t(oh)*4);
+                    if (SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px.data(),ow*4)==0)
+                        tak::png::write(std::string(capture)+"-"+tag+".png",ow,oh,px);
+                }
+                endFrame();
+            };
+            const auto drawn=[&](int id) {
+                return std::any_of(paintItems_.begin(),paintItems_.end(),[&](const auto& it){return it.u && it.u->id==id;});
+            };
+            frame(fx,fz,"flat");
+            check(drawn(own),"own unit drawn");
+            check(drawn(near),"flat ground: an enemy at 0.9x sight is drawn");
+            check(!drawn(far),"flat ground: an enemy at 1.1x sight is not");
+            frame(hx+hdx*0.75f*S,hz,"hill");
+            check(drawn(high) && drawn(below),"from a hill: an enemy at 1.5x sight is drawn");
+            frame(kx+rd*0.5f,kz,"radar",0.6f);   // both on screen: not drawn is the fog, not the cull
+            const auto* dot=frameUnitP(blip);
+            check(dot && radarVisible(*dot),"radar: the enemy is a minimap dot");
+            check(!drawn(blip),"radar: the enemy is not drawn in the main view");
+            if (capture) {   // and what was seen and is no longer: our unit walks west
+                if (auto* u=writableWorld().unit(own)) u->x=tak::sim::Fixed::fromFloat(fx-0.9f*S);
+                for (int i=0;i<10;++i) writableWorld().tick(1.f/30);
+                frame(fx-0.45f*S,fz,"explored",0.8f);
+            }
+            std::fprintf(stderr,"PASS: retail fog (sight %.0f, radar %.0f)\n",S,R);
+            return;
+        }
         if (tak::devFlag("TAK_SPECTATOR_BARS_TEST")) {
             // A spectator sees every side's health bars. Spectating stops the fog
             // pass, but the world keeps the last fog it built for the seat the client
@@ -444,7 +592,10 @@
             writableWorld().setPlayerCount(3);
             const float x0=float(mapView_.map().blocksX)*16.0f,z0=float(mapView_.map().blocksY)*16.0f;
             const int own=spawn("arasword",x0,z0,0,0);
-            const int foeSeen=spawn("arasword",x0+60,z0-80,0,1);
+            // In sight to the south: retail centres a sight footprint on the unit's
+            // world cell, but tests units by their projected corners (z - y/2), so on
+            // this raised ground the view reaches further south than north.
+            const int foeSeen=spawn("arasword",x0+60,z0+60,0,1);
             const int foeHidden=spawn("arasword",x0+700,z0+200,0,1);
             const int thirdHidden=spawn("arasword",x0-700,z0-200,0,2);
             check(own>=0 && foeSeen>=0 && foeHidden>=0 && thirdHidden>=0,"fixture spawned");
@@ -467,8 +618,10 @@
             check(bar(own) && bar(foeSeen),"player: own and in-sight enemy bars drawn");
             check(!bar(foeHidden) && !bar(thirdHidden),"player: enemy bars under fog stay hidden");
             beginSpectating();
-            frame();
-            check(!frameVisibility().empty(),"spectator: the seat's fog buffer is still there (stale)");
+            // Draw the seat's last frame again, the way the first frame after joining
+            // as a spectator does: its plane is stale, and noFog_ must answer.
+            beginFrame();cosmeticStep(0);prepare(W,H);draw(W,H);endFrame();
+            check(!front().fog.empty(),"spectator: the shown frame still holds the seat's fog plane (stale)");
             check(bar(own) && bar(foeSeen) && bar(foeHidden) && bar(thirdHidden),
                   "spectator: every side's bars drawn");
             std::fprintf(stderr,"PASS: spectator bars (%zu bars)\n",debugHealthBarIds_.size());
@@ -497,18 +650,12 @@
             check(infantry>=0 && keep>=0 && flyer>=0 && foeSeen>=0 && foeHidden>=0,"fixture spawned");
             check(!world_.allied(0,1),"fixture enemy is not allied");
             selection_={keep};
+            // Local fog for the fixture: everything explored, only a 400px disc
+            // around the fixture centre currently in sight -- the foe 950px away
+            // is in fog, exactly what the display plane reports in a real game.
+            debugFogDisc(x0,z0,400.0f);
             const auto frame=[&](float zoom,const char* capture=nullptr) {
                 captureFrame();beginFrame();cosmeticStep(0);
-                // Local fog for the fixture: everything explored, only a 400px disc
-                // around the fixture centre currently in sight -- the foe 950px away
-                // is in fog, exactly what cellVisibleR reports in a real game.
-                Frame& f=frameBuf_[renderReadIdx_];
-                f.visW=mapView_.map().blocksX*2;f.visH=mapView_.map().blocksY*2;
-                f.vis.assign(size_t(f.visW)*size_t(f.visH),1);
-                for (int cz=0;cz<f.visH;++cz) for (int cx=0;cx<f.visW;++cx) {
-                    const float dx=float(cx)*16+8-x0,dz=float(cz)*16+8-z0;
-                    if (dx*dx+dz*dz<400.0f*400.0f) f.vis[size_t(cz)*size_t(f.visW)+size_t(cx)]=2;
-                }
                 mapView_.setZoom(zoom);
                 // Keep the hidden foe on screen too, so "not drawn" means the fog
                 // rule and not the viewport cull.
@@ -543,9 +690,9 @@
             check(dotsFrame_ && visUnits_.empty() && debugDotCount_>0,"below the threshold dots replace every model");
             check(has(infantry) && has(keep) && has(flyer) && has(foeSeen),"own units, building, flyer and seen enemy get dots");
             check(!has(foeHidden),"enemy in fog gets no dot");
-            {   // The same unit is shown by the minimap rule, the cull only aside.
+            {   // Dots are the main view: a unit radar puts on the minimap gets none.
                 const auto* hidden=frameUnitP(foeHidden);
-                check(hidden && !radarVisible(*hidden),"dots and minimap share the fog rule");
+                check(hidden && !mainViewVisible(*hidden),"dots follow the main view's fog rule");
                 const auto c=dotCentre(*hidden);
                 check(c.x>0 && c.x<W-300 && c.y>0 && c.y<H,"hidden enemy is inside the view (fog, not cull)");
             }
@@ -704,6 +851,7 @@
             constexpr int W=1280,H=960;
             float zoom=1.0f;
             noFog_=false;edgeScrollOn_=false;tacticalDotsOpt_=false;healthBars_=0;
+            fogStill_=true;   // frames are compared pixel for pixel: hold the rolling fog
             const bool swayWas=settings_ && settings_->treeSway;
             if (settings_) settings_->treeSway=false;   // a still crown: exact cover points
             writableWorld().setPlayerCount(2);
@@ -738,17 +886,12 @@
             check(top>=0 && features_[treeA].yoff-(top+bottom)/2>12,"tree crown above its base");
             const float behindDz=float(features_[treeA].yoff-(top+bottom)/2);
             int particlesOn=-1;   // a unit given one construction particle (drawUnit path)
+            debugFogDisc(x0,z0,500.0f);
             const auto frame=[&](const char* capture=nullptr) {
                 captureFrame();beginFrame();cosmeticStep(0);
                 Frame& f=frameBuf_[renderReadIdx_];
                 for (auto& r:f.units)
                     if (r.id==particlesOn && r.type) r.constructionParticles.assign(1,{});
-                f.visW=mapView_.map().blocksX*2;f.visH=mapView_.map().blocksY*2;
-                f.vis.assign(size_t(f.visW)*size_t(f.visH),1);
-                for (int cz=0;cz<f.visH;++cz) for (int cx=0;cx<f.visW;++cx) {
-                    const float dx=float(cx)*16+8-x0,dz=float(cz)*16+8-z0;
-                    if (dx*dx+dz*dz<500.0f*500.0f) f.vis[size_t(cz)*size_t(f.visW)+size_t(cx)]=2;
-                }
                 mapView_.setZoom(zoom);
                 mapView_.setOffset(x0+300-float(W-300)*0.5f/zoom,z0+100-float(H)*0.5f/zoom);
                 prepare(W,H);draw(W,H);

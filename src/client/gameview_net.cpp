@@ -58,13 +58,12 @@
     }
 
     // Watch-only view of a live net game (spectator join or create-as-spectator):
-    // no fog, no control, the F4 scoreboard on. The fog pass stops here, but the
-    // world keeps the last fog it built for localPlayer_ -- noFog_, not an empty
-    // visibility buffer, is what tells the overlays the spectator sees everything.
+    // no fog, no control, the F4 scoreboard on. A frame captured before this may
+    // still hold the seat's plane -- noFog_, not an empty plane, is what tells the
+    // overlays the spectator sees everything (and stops captureFog's work).
     void GameView::beginSpectating() {
         spectating_ = true;
         noFog_ = true;
-        writableWorld().setVisPlayer(-1);   // sees everything -> skip the wasted O(units) fog pass
         showCounts_ = true;
         gameStartMs_ = SDL_GetTicks64();
     }
@@ -256,7 +255,6 @@
             // seats its host at slot 0 and refuses seat moves, so the server's
             // command stamping (the sender's seat) and this view name the same player.
             localPlayer_ = human;
-            writableWorld().setVisPlayer(localPlayer_);
             for (auto& u : world_.units())
                 if (u.player == localPlayer_ && u.type) { playerMonarchId_ = u.id; builderId_ = u.id; break; }
             if (!missionAllowed_.empty())
@@ -315,14 +313,13 @@
         warmCursors();   // cursor art + hardware reconstruction, off the frame path
         // client-only presentation
         localPlayer_ = room.mySlot < 0 ? 0 : room.mySlot;
-        writableWorld().setVisPlayer(localPlayer_);
-        if (room.opts.fogExplored == 1) writableWorld().revealTerrain();
-        // A mission overrides the room's fog rule with its own: lineofsight=0 plays
-        // revealed, mapping=1 starts the terrain explored. Display-only either way.
+        // FOG OF WAR: EXPLORED (and a mission's mapping=1) reach the display through the
+        // World's room vision (mapRevealedFor). A mission overrides the room's rule with
+        // its own: lineofsight=0 plays revealed.
         if (missionFullVision_) noFog_ = true;
         if (room.opts.fogExplored == 2) noFog_ = true;       // FULL VISION: no fog at all --
-                                                             // same spectator path, so the
-                                                             // wasted-visibility work is skipped too
+                                                             // the spectator path, so
+                                                             // captureFog does no work
         if (benchmarkMode_) benchmarkBaseline();             // t=0 baseline for the perf samples
         for (auto& u : world_.units())
             if (u.player == localPlayer_ && u.type) { playerMonarchId_ = u.id; builderId_ = u.id; break; }
@@ -399,7 +396,6 @@
         // its first tick. Poll only the connection while the player reads, so a
         // long briefing cannot trip keepalive or silently consume mission time.
         auto loading=std::move(loadScreen_);
-        writableWorld().prepareInitialVisibility();
         int width=0,height=0;
         SDL_GetRendererOutputSize(ren_,&width,&height);
         prepare(width,height);   // apply the new map's initial camera before capture

@@ -37,7 +37,7 @@ int main() {
     const int shooterId=world.spawn(&shooter,200,200,{},0);
     const int targetId=world.spawn(&targetType,300,200,{},1);
     world.tick(1.f/30.f);
-    require(world.cellVisible(300,200),"fixture begins with the target visible to its owner");
+    require(world.playerSees(1,*world.unit(targetId)),"fixture begins with the target visible to its owner");
     world.attack(shooterId,targetId,false);
 
     bool fireCallback=false,pendingRelease=false;
@@ -55,12 +55,12 @@ int main() {
     }
     require(fireCallback && pendingRelease,
             "FireWeapon SET 23 becomes pending while the target is outside weapon range");
-    require(world.cellVisible(world.unit(targetId)->x.toFloat(),world.unit(targetId)->z.toFloat()),
+    require(world.playerSees(1,*world.unit(targetId)),
             "the pending target is still visible to the current viewer before switching views");
 
     // View from an uninvolved third player while the release is held out of
-    // range. This makes the target disappear from the actual World fog buffer
-    // before we put it back in range.
+    // range: that player has no sight of the target (World::playerSees, the
+    // plane the client's display fog is built from) before it is back in range.
     world.setVisPlayer(2);
     for(int tick=0;tick<10;++tick) {
         auto* target=world.unit(targetId);
@@ -72,7 +72,7 @@ int main() {
                 world.projectiles().empty() && world.unit(shooterId)->mana==20,
                 "an out-of-range SET 23 remains pending while visibility changes");
     }
-    require(!world.cellVisible(world.unit(targetId)->x.toFloat(),world.unit(targetId)->z.toFloat()),
+    require(!world.playerSees(2,*world.unit(targetId)),
             "the pending target is hidden from the selected viewer before re-entering range");
 
     auto* target=world.unit(targetId);
@@ -80,7 +80,7 @@ int main() {
     target->x=archer->x+Fixed::fromInt(400);
     target->z=archer->z;
     world.tick(1.f/30.f);
-    require(!world.cellVisible(world.unit(targetId)->x.toFloat(),world.unit(targetId)->z.toFloat()),
+    require(!world.playerSees(2,*world.unit(targetId)),
             "the target remains hidden on the release tick");
     require(world.unit(shooterId)->justFired && world.projectiles().size()==1 &&
             world.unit(shooterId)->mana==17 &&

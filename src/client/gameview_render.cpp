@@ -183,8 +183,6 @@
         using Item = PaintItem;
         auto& items = paintItems_;
         items.clear();
-        const auto& vis = frameVisibility();
-        int vw = frameVisW();
         {
         tak::render::ScopedPhase candidatePhase(renderStats_, RP::Candidates);
         unitFullScan_ = tak::devFlag("TAK_UNIT_FULL_SCAN");
@@ -217,10 +215,7 @@
             const auto& f=features_[index];
             if (!f.tex) continue;   // burnt away to a stage with no art
             if (!f.aliveVis) continue;   // reclaimed away by a builder (snapshotted)
-            int cx = int(f.x) / 16, cz = int(f.z) / 16;
-            if (!noFog_ && !vis.empty() && (cx < 0 || cz < 0 || cx >= vw ||
-                                 vis[size_t(cz) * vw + cx] == 0))
-                continue;   // unexplored
+            if (fogCellR(f.x, f.z) == tak::retailfog::kUnexplored) continue;   // unexplored
             // Cull on the LIFTED position (features lift onto the relief like units).
             float sx = (f.x - mapView_.offX()) * zm0 - terrainLiftX(f.x, f.z) * zm0;
             float sy = (f.z - mapView_.offY()) * zm0 - terrainLift(f.x, f.z) * zm0;
@@ -256,7 +251,7 @@
             // and every render path does unitType_.at(u.id) -- skip it here so none
             // of them throw (a throw in the parallel projection aborts the process).
             if (!unitType_.registered(r.id)) return;
-            if (!noFog_ && !r.alliedToLocal && !cellVisibleR(r.x, r.z)) return;
+            if (!unitShownR(r)) return;   // another side's unit out of sight (LosOn)
             // Frustum cull: only units whose anchor falls in (or just outside) the
             // map viewport are projected and drawn. The margin is generous and
             // asymmetric -- models extend well above their anchor, so a unit above
@@ -2407,8 +2402,8 @@
                     const int x=whole(p.position[0]),y=whole(p.position[1]),z=whole(p.position[2]);
                     const bool lightning=p.wsrc->lightning;
                     const int mx=whole(p.muzzle[0]),my=whole(p.muzzle[1]),mz=whole(p.muzzle[2]);
-                    if(!noFog_ && !cellVisibleR(float(x),float(z)) &&
-                       !(lightning && cellVisibleR(float(mx),float(mz))))continue;
+                    if(!projectedVisibleR(float(x),float(z-(y>>1))) &&
+                       !(lightning && projectedVisibleR(float(mx),float(mz-(my>>1)))))continue;
                     (void)heightAbove(float(x),float(z));
                     const auto& w=*p.wsrc;
                     auto sprite=[&](const std::string& name,float projectedY,bool shadow) {
@@ -2471,7 +2466,10 @@
                 const bool native3d=p.ballistic3d || p.guided3d;
                 const float renderX=native3d ? tak::sim::Fixed::raw(p.position[0]).toFloat() : p.x.toFloat();
                 const float renderZ=native3d ? tak::sim::Fixed::raw(p.position[2]).toFloat() : p.z.toFloat();
-                if (!noFog_ && !cellVisibleR(renderX, renderZ)) continue;
+                // A native 3D shot carries its height: test its own projected cell.
+                if (native3d ? !projectedVisibleR(renderX, renderZ -
+                                   float(int(std::bit_cast<int16_t>(uint16_t(uint32_t(p.position[1]) >> 16))) >> 1))
+                             : !cellVisibleR(renderX, renderZ)) continue;
                 float t = std::clamp(float(p.age) / std::max(float(p.flight), 1.0f), 0.0f, 1.0f);
                 // Legacy 2D fixture shots have no vertical trajectory. Production
                 // weapons carry native XYZ; do not invent a height from live units.
@@ -2998,7 +2996,7 @@
             overlayPass(0, unitpass::healthBarBand(overlayView), [&](const UnitR& u, bool draw) {
             if (!u.alive() || u.embarked() || !u.type) return false;
             if (u.underConstruction && !u.buildBegun) return false;   // ghost: no bar
-            if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) return false;
+            if (!unitShownR(u)) return false;
             float frac = std::clamp(u.hp / u.type->maxHp, 0.0f, 1.0f);
             if (healthBars_ == 1 && frac >= 1.0f) return false;
             float bw = 26 * zm, bh = std::max(2.0f, 3 * zm);
@@ -3026,7 +3024,7 @@
         if (hudFont_.ok() && !posterFrame_)
             overlayPass(1, unitpass::selfDestructBand(overlayView), [&](const UnitR& u, bool draw) {
                 if (!u.alive() || u.embarked() || !u.type || u.selfDestructT < 0) return false;
-                if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z)) return false;
+                if (!unitShownR(u)) return false;
                 const auto [sx, sy] = unitpass::selfDestruct(u.x, u.z, uLiftX(u), uLiftY(u), overlayView);
                 if (!unitpass::selfDestructInView({sx, sy}, overlayView)) return false;
                 if (!draw) return true;
@@ -4578,7 +4576,7 @@
         rendererGeneration_.bump();   // every cached target placement is now stale
         mapView_.invalidateRenderTargets();
         fogSubmit_.clear();fogUpload_.clear();fogTexGen_=~0u;
-        fogMeshValid_ = false;
+        miniFogUpload_.clear();miniFogTexGen_=~0u;
         distantModelCache_.clear();
         geomEntries_.makeAllCold();   // owners stay; every entry rebuilds against the new targets
         for (SDL_Texture* t : atlasTex_) if (t) gpuvram::destroy(t);
@@ -4644,8 +4642,9 @@
             for (auto& f : ea.frames) if (f.tex) gpuvram::destroy(f.tex);
         effectAnims_.clear();
         explosionsLoaded_ = false;
-        fogSubmit_.clear();fogUpload_.clear();
+        fogSubmit_.clear();fogUpload_.clear();miniFogUpload_.clear();
         kill(fogTex_);
+        kill(miniFogTex_);
         kill(panelTex_);
         kill(botTex_);
         kill(mapPreviewTex_);
@@ -5860,7 +5859,7 @@
         for (int pass = 0; pass < 2; ++pass) {
             for (const UnitR* up : front().live) {
                 const UnitR& u = *up;
-                if (!radarVisible(u)) continue;
+                if (!mainViewVisible(u)) continue;   // a dot is the main view: no radar
                 bool aloft = false;
                 if (u.type->canFly) {
                     auto ait = anims_.find(u.id);
@@ -6360,7 +6359,6 @@
     }
 
     void GameView::loadFeatures() {
-        fogMeshValid_ = false;
         features_.clear();   // full rebuild -- safe to call again on a map change
         featureIndexDirty_=true;
         featInstIds_.clear();
@@ -6660,7 +6658,7 @@
         char buf[64];
         for (const UnitR* _up : front().live) { const UnitR& u = *_up;
             if (!u.alive() || !u.type) continue;
-            if (!alliedToLocal(u.player) && !cellVisibleR(u.x, u.z) && !noFog_) continue;
+            if (!unitShownR(u)) continue;
             float sx = (u.x - mapView_.offX()) * zm;
             float rawY = (u.z - mapView_.offY()) * zm;
             float lift = terrainLift(u.x, u.z);
@@ -6689,144 +6687,125 @@
         }
     }
 
+    double GameView::fogSeconds() {
+        // Retail times RollingFog and WavyFog with the real clock (0x5ba760), not the
+        // game's: the mist keeps moving while the game is paused. TAK_FOG_STILL holds
+        // it at t = 0 for captures that compare frames.
+        static const bool still = tak::devFlag("TAK_FOG_STILL");
+        static const char* fixed = tak::devEnv("TAK_FOG_TIME");   // captures: a chosen moment
+        if (fixed) return std::atof(fixed);
+        if (still || fogStill_) return 0.0;
+        const uint64_t now = SDL_GetPerformanceCounter();
+        if (!fogClock0_) fogClock0_ = now;
+        return double(now - fogClock0_) / double(SDL_GetPerformanceFrequency());
+    }
+
+    bool GameView::syncFogTexture(SDL_Texture*& texture, tak::FogUpload& upload, uint32_t& generation) {
+        const Frame& f = front();
+        const int tw = f.fogW * upload.scale(), th = f.fogH * upload.scale();
+        int qw = 0, qh = 0;
+        if (texture && (SDL_QueryTexture(texture, nullptr, nullptr, &qw, &qh) != 0 || qw != tw || qh != th)) {
+            gpuvram::destroy(texture); texture = nullptr;
+        }
+        if (!texture) {
+            upload.clear(); generation = ~0u;
+            texture = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, tw, th);
+            if (!texture) return false;
+            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+        }
+        // A changed plane need not change a texel; FogUpload sends only what did.
+        if (generation != f.fogGen &&
+            upload.update(texture, f.fog, f.fogW, f.fogH, tak::devFlag("TAK_FOG_FULL_UPLOAD")))
+            generation = f.fogGen;
+        return true;
+    }
+
+    // Retail's Glide fog (0x497a40 -> 0x498270; the device's capability 4, which
+    // Glide reports, selects it over the vertex-alpha twin 0x497ae0). The plane's
+    // cells become ARGB4444 texels two per cell each way (0x498b60), the texture
+    // is bilinear-filtered (render state 0x11 = 2; only the FogDebug toggle makes
+    // it point-sampled), alpha-blended and modulated by the vertex colour, and
+    // drawn as a grid of quads: RollingFog colours every vertex with the side's
+    // FogColor times a brightness that rolls in time and space, WavyFog moves the
+    // inner vertices by up to 10 px. Retail's grid is the screen cut 6 x 6; ours is
+    // anchored to the map so the waves do not slide when the camera pans.
+    //
+    // The plane is in PROJECTED coordinates (x, z - y/2): its rows already are
+    // the rows of the tile art units are drawn on, so the overlay is flat -- no
+    // per-corner terrain lift. Our renderer draws a unit at z - (h - heightRef)/2,
+    // i.e. at projected z + heightRef/2, so the overlay is offset by the same.
     void GameView::drawFog() {
         if (noFog_) return;
-        const auto& vis = frameVisibility();
-        if (vis.empty()) return;
-        int w = frameVisW(), h = frameVisH();
-        if (!fogTex_) {
-            fogUpload_.clear();fogTexGen_=~0u;
-            fogMeshValid_ = false;
-            fogTex_ = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32,
-                                        SDL_TEXTUREACCESS_STREAMING, w, h);
-            SDL_SetTextureBlendMode(fogTex_, SDL_BLENDMODE_BLEND);
-            SDL_SetTextureScaleMode(fogTex_, SDL_ScaleModeLinear);
-        }
-        if (!fogTex_) return;
-        // A recompute is not necessarily a visual change. Only upload dirty
-        // blocks, and retry failed uploads instead of acknowledging their generation.
-        if (fogTexGen_ != frameVisGeneration() &&
-            fogUpload_.update(fogTex_,vis,w,h,tak::devFlag("TAK_FOG_FULL_UPLOAD")))
-            fogTexGen_ = frameVisGeneration();
-        float zm = mapView_.zoom();
-        // Lift the fog to sit on the terrain relief, exactly like units do, so the
-        // cleared area follows a unit up a hill instead of staying at ground level.
-        // Draw it as a grid of quads lifted per-cell (the terrain art itself is a
-        // flat mosaic, but units are drawn lifted onto it -- the fog must match).
-        heightAbove(0.0f, 0.0f);   // ensure heightRef_/scales are initialised
-        float maxLy = float(255 - std::max(heightRef_, 0)) * kHeightScale_;
-        float maxLx = float(255 - std::max(heightRef_, 0)) * kHeightScaleX_;
-        float ox = mapView_.offX(), oy = mapView_.offY();
-        const bool cacheMesh = !tak::devFlag("TAK_FOG_MESH_CACHE_OFF");
-        const bool keepTransparent = cacheMesh && zm <= 0.25f;
-        const uint32_t meshGeneration = keepTransparent ? 0 : fogUpload_.generation();
-        auto submitFog = [&] {
-            fogSubmit_.draw(ren_, fogTex_, fogVerts_, !tak::devFlag("TAK_FOG_SDL_SUBMIT"),
-                tak::devFlag("TAK_FOG_RETAIN_OFF")?0:fogMeshRevision_,
-                {(fogMeshX_-ox)*zm,(fogMeshY_-oy)*zm});
-        };
-        // A SKIRT of quads past the map edge. The terrain is a FLAT mosaic -- relief
-        // is painted into the tile art -- while this mesh is deliberately lifted, so
-        // that the cleared area follows a unit up a hill. Over a plateau the lifted
-        // fog therefore rides UP off the ground it is supposed to cover, and at the
-        // map's own edge there is no next row of quads to cover the band it vacated:
-        // the result is fog that thins or disappears along the bottom, worst where
-        // the bottom of the map is high ground. Reported exactly that way.
-        //
-        // The skirt is as deep as the largest lift the map can produce, so whatever
-        // the relief displaces is still covered. Its quads sample the edge cell's
-        // visibility (clamped tex coords below), which is the right answer: they
-        // cover ground the player can see only because the edge cell is visible.
-        const int skirt = int(std::max(maxLy, maxLx) / 16.0f) + 2;
-        int gx0 = std::clamp(int(ox / 16) - 1, 0, w);
-        int gx1 = std::clamp(int((ox + winW_ / zm + maxLx) / 16) + 2, 0, w + skirt);
-        int gz0 = std::clamp(int(oy / 16) - 1, 0, h);
-        int gz1 = std::clamp(int((oy + winH_ / zm + maxLy) / 16) + 2, 0, h + skirt);
-        const bool retainRegion=keepTransparent && !tak::devFlag("TAK_FOG_PAN_CACHE_OFF");
-        const bool covered=retainRegion
-            ? gx0>=fogGridX0_ && gz0>=fogGridZ0_ && gx1<=fogGridX1_ && gz1<=fogGridZ1_
-            : fogMeshX_==ox && fogMeshY_==oy;
-        if (cacheMesh && fogMeshValid_ && covered && fogMeshGeneration_==meshGeneration &&
-            fogMeshW_==w && fogMeshH_==h && fogMeshWinW_==winW_ && fogMeshWinH_==winH_ && fogMeshZoom_==zm) {
-            submitFog();return;
-        }
-        // Retain a margin around a distant view so panning normally needs only
-        // a translation, not new height samples, triangles, or GPU uploads.
-        if(retainRegion) {
-            gx0=std::max(0,gx0-64);gz0=std::max(0,gz0-64);
-            gx1=std::min(w+skirt,gx1+64);gz1=std::min(h+skirt,gz1+64);
-        }
-        // One height sample per grid CORNER, shared by all four adjacent quads.
-        // vert() used to pay two independent bilinear samples per corner PER QUAD
-        // (terrainLift + terrainLiftX each re-sampling), 8 samples per cell -- at a
-        // 7680-wide window that alone measured ~2ms/frame; the shared corner grid
-        // is ~8x fewer samples, each yielding both lifts.
-        int cw = std::max(0, gx1 - gx0 + 1), ch = std::max(0, gz1 - gz0 + 1);
-        fogLift_.assign(size_t(cw) * size_t(ch), 0.0f);
-        for (int gz = gz0; gz <= gz1 && ch > 0; ++gz)
-            for (int gx = gx0; gx <= gx1; ++gx)
-                fogLift_[size_t(gz - gz0) * cw + size_t(gx - gx0)] =
-                    heightAbove(float(gx) * 16.0f, float(gz) * 16.0f);
-        auto vert = [&](int gx, int gz) {
-            float wx = float(gx) * 16.0f, wz = float(gz) * 16.0f;
-            float ha = fogLift_[size_t(gz - gz0) * cw + size_t(gx - gx0)];
-            SDL_Vertex v;
-            v.position = {(wx - ox) * zm - ha * kHeightScaleX_ * zm,
-                          (wz - oy) * zm - ha * kHeightScale_ * zm};
-            // POSITION runs past the edge (the skirt); the texture lookup does not --
-            // clamp it so a skirt quad repeats the edge cell's fog instead of sampling
-            // outside the texture.
-            v.tex_coord = {float(std::min(gx, w)) / float(w),
-                           float(std::min(gz, h)) / float(h)};
-            v.color = {255, 255, 255, 255};
-            return v;
-        };
-        // Skip cells whose whole 3x3 neighbourhood is fully visible: their quad is
-        // invisible (alpha 0) and, because the texture is linear-filtered, only a
-        // fogged NEIGHBOUR can bleed alpha across the edge. Late-game this culls
-        // most of the vertex stream.
-        auto fogged = [&](int x, int z) {
-            if (x < 0 || z < 0 || x >= w || z >= h) return true;   // map edge: keep
-            return vis[size_t(z) * w + x] != 2;
-        };
-        fogVerts_.clear();
-        for (int gz = gz0; gz < gz1; ++gz)
-            for (int gx = gx0; gx < gx1; ++gx) {
-                bool any = keepTransparent;
-                for (int dz = -1; dz <= 1 && !any; ++dz)
-                    for (int dx = -1; dx <= 1 && !any; ++dx)
-                        any = fogged(gx + dx, gz + dz);
-                if (!any) continue;
-                // On flat terrain adjacent fog cells share the same projection
-                // and linear UV mapping. One horizontal strip is exactly the
-                // same surface, without thousands of subpixel triangles. Stop
-                // at the map edge where clamped UVs change their slope.
-                int end = gx + 1;
-                if (keepTransparent) {
-                    const size_t row = size_t(gz-gz0)*cw;
-                    const float level = fogLift_[row+size_t(gx-gx0)];
-                    auto flatCorner = [&](int x) {
-                        const size_t i=row+size_t(x-gx0);
-                        return fogLift_[i]==level && fogLift_[i+cw]==level;
-                    };
-                    if (flatCorner(gx) && flatCorner(end)) {
-                        const int limit=gx<w ? std::min(gx1,w) : gx1;
-                        while (end<limit && flatCorner(end+1)) ++end;
-                    }
+        const Frame& f = front();
+        if (f.fog.empty() || f.fogW <= 0 || f.fogH <= 0) return;
+        if (!syncFogTexture(fogTex_, fogUpload_, fogTexGen_)) return;
+        SDL_SetTextureScaleMode(fogTex_, tak::devFlag("TAK_FOG_DEBUG") ? SDL_ScaleModeNearest : SDL_ScaleModeLinear);
+        if (fogColorSide_ != side_) {   // the local side's FogColor (sidedata.tdf, default white)
+            fogColorSide_ = side_;
+            fogColor_ = {255, 255, 255, 255};
+            if (const auto data = vfs_.tryRead("gamedata/sidedata.tdf")) try {
+                const auto sides = tak::tdf::parseText(std::string(data->begin(), data->end()), "gamedata/sidedata.tdf");
+                for (const auto& [key, node] : sides.children) {
+                    if (tak::hpi::MountSet::key(node.valueOr("nameprefix", "")) != tak::hpi::MountSet::key(side_)) continue;
+                    int r = 255, g = 255, b = 255;
+                    if (std::sscanf(node.valueOr("fogcolor", "255 255 255").c_str(), "%d %d %d", &r, &g, &b) == 3)
+                        fogColor_ = {Uint8(std::clamp(r, 0, 255)), Uint8(std::clamp(g, 0, 255)),
+                                     Uint8(std::clamp(b, 0, 255)), 255};
                 }
-                SDL_Vertex a = vert(gx, gz), b = vert(end, gz),
-                           c = vert(end, gz + 1), d = vert(gx, gz + 1);
-                fogVerts_.push_back(a); fogVerts_.push_back(b); fogVerts_.push_back(c);
-                fogVerts_.push_back(a); fogVerts_.push_back(c); fogVerts_.push_back(d);
-                gx=end-1;
+            } catch (const std::exception&) {}
+        }
+        const float zm = mapView_.zoom();
+        heightAbove(0.0f, 0.0f);   // resolve heightRef_
+        const float lift = float(std::max(heightRef_, 0)) * kHeightScale_;
+        const float ox = mapView_.offX(), oy = mapView_.offY();
+        const float mapW = float(f.fogW) * 32.0f, planeH = float(f.fogH) * 32.0f;
+        // The map's art rows [0, planeH] show the projected rows [-lift, planeH - lift];
+        // the band above row 0 repeats row 0 (clamped texture rows, as retail's edges).
+        const float pTop = -lift, pBottom = planeH - lift;
+        const float step = std::max(160.0f, 80.0f / std::max(zm, 1e-3f));
+        constexpr float kMargin = 24.0f;   // past the view: more than the 10 px wave
+        auto lines = [&](float lo, float hi, float view0, float view1, std::vector<float>& out) {
+            out.clear();
+            const float a = std::max(lo, view0 - kMargin - step), b = std::min(hi, view1 + kMargin + step);
+            if (a >= b) return;
+            out.push_back(a);
+            for (float v = (std::floor(a / step) + 1) * step; v < b; v += step)
+                if (v > a) out.push_back(v);
+            out.push_back(b);
+        };
+        static thread_local std::vector<float> xs, ps;
+        lines(0.0f, mapW, ox, ox + float(winW_) / zm, xs);
+        lines(pTop, pBottom, oy - lift, oy - lift + float(winH_) / zm, ps);
+        if (xs.size() < 2 || ps.size() < 2) return;
+        static const bool rolling = !tak::devFlag("TAK_FOG_NO_ROLLING"), wavy = !tak::devFlag("TAK_FOG_NO_WAVY");
+        const tak::retailfog::Wave wave(fogSeconds());
+        const size_t nx = xs.size(), np = ps.size();
+        static thread_local std::vector<SDL_Vertex> grid;
+        grid.resize(nx * np);
+        for (size_t j = 0; j < np; ++j)
+            for (size_t i = 0; i < nx; ++i) {
+                const float X = xs[i], P = ps[j];
+                float dx = 0, dy = 0;
+                if (wavy) {
+                    if (X > 0.0f && X < mapW) dx = wave.wave(X, P);
+                    if (P > pTop && P < pBottom) dy = wave.wave(X + dx, P);
+                }
+                const float b = rolling ? wave.brightness(X, P) : 1.0f;
+                SDL_Vertex& v = grid[j * nx + i];
+                v.position = {(X + dx - ox) * zm, (P + dy + lift - oy) * zm};
+                v.tex_coord = {X / mapW, std::clamp(P, 0.0f, planeH) / planeH};
+                v.color = {Uint8(float(fogColor_.r) * b), Uint8(float(fogColor_.g) * b),
+                           Uint8(float(fogColor_.b) * b), 255};
             }
-        fogGridX0_=gx0;fogGridZ0_=gz0;fogGridX1_=gx1;fogGridZ1_=gz1;
-        ++fogMeshRevision_;
-        fogMeshValid_ = true;
-        fogMeshGeneration_ = meshGeneration;
-        fogMeshW_ = w; fogMeshH_ = h; fogMeshWinW_ = winW_; fogMeshWinH_ = winH_;
-        fogMeshX_ = ox; fogMeshY_ = oy; fogMeshZoom_ = zm;
-        submitFog();
+        fogVerts_.clear();
+        fogVerts_.reserve((nx - 1) * (np - 1) * 6);
+        for (size_t j = 0; j + 1 < np; ++j)
+            for (size_t i = 0; i + 1 < nx; ++i) {
+                const SDL_Vertex &a = grid[j * nx + i], &b = grid[j * nx + i + 1],
+                                 &c = grid[(j + 1) * nx + i + 1], &d = grid[(j + 1) * nx + i];
+                fogVerts_.insert(fogVerts_.end(), {a, b, c, a, c, d});
+            }
+        fogSubmit_.draw(ren_, fogTex_, fogVerts_, !tak::devFlag("TAK_FOG_SDL_SUBMIT"));
     }
 
     void GameView::drawGhost() {
@@ -7192,7 +7171,7 @@
             }
             ++it;
             if (u->embarked()) continue;
-            if (!noFog_ && !cellVisibleR(u->x, u->z)) continue;
+            if (!unitShownR(*u)) continue;
             const auto whole = [](int32_t value) {
                 return int(std::bit_cast<int16_t>(uint16_t(uint32_t(value) >> 16)));
             };
@@ -7315,7 +7294,7 @@
             if (!fire && !smk) continue;
             const auto* u = frameUnitP(id);
             if (!u || !u->type || u->embarked()) continue;
-            if (!noFog_ && !cellVisibleR(u->x, u->z)) continue;
+            if (!unitShownR(*u)) continue;
             auto draw = [&](const EffectAnim* ea, int piece, float fps) {
                 float x, z, lift;
                 scriptEffectOrigin(*u, a, piece, x, z, lift);
@@ -7425,14 +7404,10 @@
         }
         const auto& frame=front();
         for(const auto& [x,z]:manaSpots_) {
-            bool known=noFog_ || frame.vis.empty();
-            const int cx=int(x)/16,cz=int(z)/16;
-            const int width=frame.visW,height=frame.visH;
-            if(!known && cx>=0 && cz>=0 && cx<width && cz<height)
-                known=frame.vis[size_t(cz)*width+cx]!=0;
+            const bool known=fogCellR(x,z)!=tak::retailfog::kUnexplored;
             tak::OrderTrailSite site{tak::sim::Fixed::fromFloat(x),tak::sim::Fixed::fromFloat(z),known};
             if(known)for(const auto* u:frame.live) {
-                if(!u->alive() || !u->type || !u->type->onMana || !canPickPoint(u->x,u->z))continue;
+                if(!u->alive() || !u->type || !u->type->onMana || !canPickUnit(*u))continue;
                 const float dx=u->x-x,dz=u->z-z;
                 if(dx*dx+dz*dz>=44.f*44.f)continue;
                 site.occupant=u->type;site.player=u->player;site.underConstruction=u->underConstruction;break;
@@ -7504,7 +7479,7 @@
                 auto signature=tak::orderTrailSignature(actual)^reinterpret_cast<uintptr_t>(up->type);
                 for(uint32_t i:up->areaVisited)signature=(signature^i)*1099511628211ull;
                 if(cache.unitId!=selId || cache.signature!=signature || cache.featGen!=lastFeatGen_ ||
-                   cache.visGen!=front().visGen || cache.noFog!=noFog_ || tick-cache.tick>=30u) {
+                   cache.fogGen!=front().fogGen || cache.noFog!=noFog_ || tick-cache.tick>=30u) {
                     if(!targetsRefreshed) {refreshOrderTrailTargets();targetsRefreshed=true;}
                     if(cache.unitId!=selId || cache.signature!=signature ||
                        cache.sceneSignature!=orderTrailSceneSignature_ || tick-cache.tick>=30u)
@@ -7512,7 +7487,7 @@
                             tak::sim::Fixed::fromFloat(up->x),tak::sim::Fixed::fromFloat(up->z),
                             orderTrailTargets_,orderTrailSites_,up->areaVisited,cache.orders);
                     cache.unitId=selId;cache.signature=signature;cache.featGen=lastFeatGen_;
-                    cache.visGen=front().visGen;cache.noFog=noFog_;cache.tick=tick;
+                    cache.fogGen=front().fogGen;cache.noFog=noFog_;cache.tick=tick;
                     cache.sceneSignature=orderTrailSceneSignature_;
                 }
                 trail=&cache.orders;
