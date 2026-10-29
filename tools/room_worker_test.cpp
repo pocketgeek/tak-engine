@@ -57,6 +57,21 @@ int main() {
         client.tick(1.0f/net::kServerHz);
         check(async.stateHash()==serial.stateHash() && async.stateHash()==client.stateHash(),"worker, baseline and wire client remain deterministic");
     }
+    // A hash nobody reads (no human slot, no replay trail) is skipped; the
+    // trail alone still gets its hash and posDigest every 10th period.
+    for(uint32_t tick=180;tick<=300;++tick) {
+        srv::TickInput none;none.tick=tick;none.multipleGames=true;
+        none.replayBudget=std::numeric_limits<uint64_t>::max();
+        srv::TickInput trail=none;trail.clientHashes=false;
+        none.clientHashes=none.replayTrail=false;
+        auto skipped=srv::simulateRoomTick(async,registry,workerAi,none);
+        auto trailed=srv::simulateRoomTick(serial,registry,baselineAi,trail);
+        const bool trailTick=tick%(10*uint32_t(net::kHashPeriod))==0;
+        check(!skipped.hash && !skipped.posDigest,"an unread hash is skipped");
+        check(trailed.hash.has_value()==trailTick && (trailed.posDigest!=0)==trailTick,"the replay trail keeps its checkpoints");
+        if(trailTick)check(*trailed.hash==serial.stateHash() && trailed.posDigest==serial.posDigest(),"trail checkpoint is the world's");
+        check(skipped.bundle==trailed.bundle && async.stateHash()==serial.stateHash(),"skipping the hash changes nothing else");
+    }
     auto before=async.stateHash();srv::TickInput exhausted;exhausted.multipleGames=true;
     auto limited=worker.submit([&]{return srv::simulateRoomTick(async,registry,workerAi,exhausted);}).get();
     check(limited.resourceLimited && before==async.stateHash(),"replay limit prevents simulation advancement");
