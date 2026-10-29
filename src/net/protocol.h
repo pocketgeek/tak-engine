@@ -19,7 +19,13 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 304;      // 304: a hovering attacker whose shots stop 3 times running on scenery it
+constexpr uint32_t kNetVersion = 305;      // 305: our AI levels (not Retail AI) target only enemies their side has seen
+                                           //      (own and allies' sight, recent attackers), remember buildings where
+                                           //      seen and mobiles for 25 s, and scout/explore when nothing is known;
+                                           //      World::stateHash mixes a 64-bit word per round over four lanes and
+                                           //      folds planes and scripts in fixed chunks (every hash value changes,
+                                           //      simulation unchanged). No new command; replay format unchanged.
+                                           // 304: a hovering attacker whose shots stop 3 times running on scenery it
                                            //      cannot destroy moves round its ring (nearest 1/32-turn bearing) to a
                                            //      clear line; a dying, captured or gifted factory (or a cancelled /
                                            //      Stopped / repeat-off build) kills its unfinished output at once

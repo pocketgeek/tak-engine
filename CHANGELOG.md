@@ -39,6 +39,8 @@ their validation reports; both live in [`docs/`](docs/).
   narrow-passage lookups no longer scan the whole map each tick.
 - **The lockstep state check costs about 5 ms instead of 33** with 2,500 units on
   a 64x64 map, and a game with no human player (AIs you watch) skips it on the server.
+- **Protocol 305:** the AI's sight-only targets and the new state check change
+  what players compare, so this release does not play with 0.9.11 or earlier, nor their replays.
 
 ## 0.9.11
 *2026-10-29 · protocol 304 · replay format 15 · does not play with 0.9.10 or earlier, nor their replays*
