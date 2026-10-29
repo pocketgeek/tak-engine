@@ -2794,7 +2794,6 @@ int Controller::explore(const tak::sim::World& world, const std::vector<int>& id
         if (found) {
             claimSlot(slot, kClaimTicks);
             if (slotOut) *slotOut = slot;
-            if (scout && slot < 0 && startVacated_[size_t(-1 - slot)]) ++vacatedTrips_;
         }
     }
     return ordered;
@@ -2840,6 +2839,7 @@ void Controller::sendScouts(const tak::sim::World& world, uint32_t simTick, cons
         int slot = trip.slot;
         if (scouting && level.keep && explore(world, {u->id}, sink, true, &slot)) {
             trip = {simTick, slot, trip.x, trip.z, u->id};
+            if (slot < 0 && startVacated_[size_t(-1 - slot)]) ++vacatedTrips_;
             parties.insert(u->id);
             ++scoutsSent_; ++it;
         } else it = scouts_.erase(it);   // back to the army from the next think
@@ -2906,6 +2906,7 @@ void Controller::sendScouts(const tak::sim::World& world, uint32_t simTick, cons
     if (sent.empty()) { nextScoutTick_ = simTick + kRetryTicks; return; }
     claimSlot(slot, kClaimTicks);
     scoutsSent_ += int(sent.size());
+    if (slot < 0 && startVacated_[size_t(-1 - slot)]) vacatedTrips_ += int(sent.size());
     scouted_ = true;
     nextScoutTick_ = simTick + uint32_t(level.everySec) * 30;
     std::erase_if(pool, [&](const Fighter& f) { return std::find(sent.begin(), sent.end(), f.id) != sent.end(); });
@@ -3205,7 +3206,7 @@ void Controller::logExploration(const tak::sim::World& world, uint32_t simTick) 
     for (const auto& u : world.units()) if (u.alive() && u.player == player_) ++units;
     // Each beaten player's base: start index ("a" an ally's):minute found
     // beaten:minute last in sight, "+" while an enemy building is known near it;
-    // then the scouts sent to such bases and those lost on the way.
+    // then the scouts sent to such bases (each of a party) and those lost on the way.
     std::string vacated;
     for (size_t i = 0; i < startVacated_.size(); ++i)
         if (startVacated_[i])

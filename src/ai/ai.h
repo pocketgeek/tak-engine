@@ -507,7 +507,7 @@ private:
     uint32_t nextScoutTick_ = 0;
     int scoutsSent_ = 0, explorations_ = 0;   // dispatch counts, for the TAK_AI_EXPLORE log
     int scoutsLost_ = 0;                       // scouts killed on a trip, for the same log
-    int vacatedTrips_ = 0, vacatedLost_ = 0;   // of those, sent to / lost going to a beaten player's base
+    int vacatedTrips_ = 0, vacatedLost_ = 0;   // scouts sent to / lost going to a beaten player's base
     uint32_t loggedMinute_ = 0;                // minute + 1 last logged
     bool loggedWin_ = false;
     void logExploration(const tak::sim::World&, uint32_t simTick);
