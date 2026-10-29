@@ -330,7 +330,7 @@ except passwords, Spectate and Map scenario.
 
 | Difficulty | What to expect |
 | --- | --- |
-| **Defensive** | Keeps building as fast as its mana income allows, with no limit of its own on how many factories, builders, towers or troops it makes; only the room's unit cap and the game's rules stop it. Builds at home; the base spreads outward as it grows, but stays on its own side of the map, and its builders claim mana deposits farther out. Sends its army to meet attackers near its base, then pulls it back, including attackers it cannot see that shoot its units from out of sight. Its melee troops go first for the unit hitting them, and keep chasing a target while it stays near, instead of all walking at one enemy. Does not build where enemy troops are about. Never raids. |
+| **Defensive** | Keeps building as fast as its mana income allows, with no limit of its own on how many factories, builders, towers or troops it makes; only the room's unit cap and the game's rules stop it. Builds at home; the base spreads outward as it grows, but stays on its own side of the map, and its builders claim mana deposits farther out. Sends its army to meet attackers near its base, then pulls it back, including attackers it cannot see that shoot its units from out of sight. Its melee troops go first for the unit hitting them, and keep chasing a target while it stays near, instead of all walking at one enemy. Does not build where enemy troops are about. Never raids; once it is far ahead (five times the armed strength of all its enemies together), it sends half its army out to finish them off. |
 | **Easy** | Builds slowly. First attack after about four minutes, then small waves of at most eight units, at least two minutes apart. |
 | **Normal** | Sends small raiding parties to probe and scout while it builds up a main army sized to its income. |
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
@@ -340,6 +340,18 @@ except passwords, Spectate and Map scenario.
 
 At every difficulty except Retail, the AI's Monarch fights back when it is attacked, or when
 an armed enemy comes within its reach, instead of carrying on with a build.
+
+At every difficulty except Retail, the AI's attacks and raids can go for any
+enemy unit or building, seen or not (the original game's AI knows where every
+enemy unit is, too): lodestones and mana buildings, builders and production
+first, then armies and defences, the Monarch above all when losing it loses the
+game, and the last units of a player who has few left. It weighs each against
+how far away it is and how well it is defended, so a raid picks off an exposed
+lodestone rather than walking into towers. Units that finish one target go on to
+the next instead of waiting for the next attack, so an AI that is winning hunts
+down every last unit and building, a lone lodestone in a far corner included,
+and the game ends. Easy simply goes for the nearest; Hard and Absurd split a
+large army over several targets.
 
 Defensive, Easy, Normal and Absurdly Defensive also build another lodestone
 whenever they run short of mana (less than 30% of their storage left while

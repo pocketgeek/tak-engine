@@ -42,6 +42,11 @@ their validation reports; both live in [`docs/`](docs/).
   Zhon builder's unfinished unit and a builder's unfinished building still
   stay behind, as before (the original keeps those).
 
+- **AI attacks go for everything** (beyond the original game; Retail unchanged):
+  our AI levels choose attack and raid targets from every enemy unit and
+  building by value, threat and defences, and move on from one to the next, so
+  a winning AI finishes off a player's last lodestone or unit and the game ends.
+
 ## 0.9.10
 *2026-10-28 · protocol 303 · replay format 15 · plays with 0.9.9, and its replays*
 
