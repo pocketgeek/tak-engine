@@ -11,7 +11,8 @@ object, publication time).
 0.9.11 follows 0.9.10 (protocol 303; tag `v0.9.10` -> `99ccf7e5`). Six
 branches, each from main `5b7a4f97` (0.9.10's validation commit) and each
 reviewed on its own, were merged on `task-0911`; the code tested below is
-`afaacb9a`:
+`afaacb9a` and, where a check says so, the walk-in-place repair `96841296`
+on top (the last item):
 
 - `7ec1e800` Sim: a hover attacker whose shots stop three times running on
   scenery it cannot destroy moves round its ring to a clear line
@@ -37,6 +38,13 @@ reviewed on its own, were merged on `task-0911`; the code tested below is
   `da5d26f4`.
 - `afaacb9a` Combine: `kNetVersion` 303 -> 304, `replay_test` pins 304,
   retaken gates, scenario baseline and navigation checkpoints.
+- `96841296` Sim (Legion only), from the release review: a Legion body's
+  stand in its scripts (`Unit::legionStill`, display only) is judged by the
+  steps and turn the body shows, in a window of its own
+  (`World::legionBodyWindow_`), not by its course's turn; the livelock and
+  every movement decision keep the course. Legion `hash@` keys, navigation
+  checkpoints and the three Legion gates retaken, six `mixed2` keys
+  licensed (Limits).
 
 `git diff --stat 5b7a4f97 afaacb9a`: 35 files changed, 2401 insertions(+),
 993 deletions(-); `-- src`: 18 files changed, 741 insertions(+), 145
@@ -70,9 +78,11 @@ test install is `d6000f4fa9095a51`, as for 0.9.10 (server logs).
   dies, changes hands or has its unit in work cancelled; no gate game does.
   Legion facing adds tracked member fields to the Legion checksum (folded
   into the state hash in Legion games); on its own it left the seven gates
-  unchanged, and the scenario gate's Legion `hash@` keys moved. The AI's
-  target choice changes every gate game that lasts long enough for a strike:
-  **four gate hashes changed** (below).
+  unchanged, and the scenario gate's Legion `hash@` keys moved. The
+  walk-in-place repair's stand window (hashed with the Legion unit state)
+  changes the three Legion gates. The AI's target choice changes every gate
+  game that lasts long enough for a strike: **five gate hashes changed** in
+  all (below).
 - **Maps, mods and settings.** No map, recipe, package or settings format
   changed; `hiddenFadeOpacity` absent now reads as 50 (was 65), and a saved
   value is kept.
@@ -96,15 +106,21 @@ takclient and takserver run used scratch `HOME`, `XDG_DATA_HOME` and
   reported Thirsha geometry: before 14 bolts on the stone and no damage, after
   4, one move and 10 hits), the `legion_world_test` facing cases (sideways /
   backward steps per 1,000 round a wall end 35/4 -> 9/1, round a block 69/11 ->
-  16/3, arrivals unchanged), the `ai_behavior_test` strike cases, the
+  16/3, arrivals unchanged; with `96841296` a turn-400 group round a wall's
+  top at five start shifts, 0, 8, 18, 18 and 0 walk-in-place ticks on
+  `afaacb9a`, 0 now), the `ai_behavior_test` strike cases, the
   `zoom_floor_*` harness cases (1920 x 1080 and 7680 x 2160, UI scale 100% and
   200%, spectating) and `settings_test` Fade Opacity 50.
 - **Quick suite** (`ctest -L quick`, `build-0911-o2`, during the combine): 517
   of 519 passed. `navigation_determinism` failed until the Legion navigation
   checkpoints were retaken (in `afaacb9a`) and passes now; `vashim_unavailable` is the known
   local failure (a render node without libva; it failed in 0.9.10's run too).
-  `replay`, `factory_death`, `blocked_shot` and the facing cases pass.
-- **Full suite on `afaacb9a`** (the final code; Debug `-O2`, all targets
+  `replay`, `factory_death`, `blocked_shot` and the facing cases pass. On
+  `96841296` (all targets rebuilt): 518 of 519 passed, `vashim_unavailable`
+  the one failure, `navigation_determinism`, `legion_facing` and
+  `legion_baseline_reasons` among the passes.
+- **Full suite on `afaacb9a`** (before the walk-in-place repair, which ran
+  the quick suite only; Debug `-O2`, all targets
   built, `ctest -j12`, scratch `HOME` and XDG folders, test data
   `assets/game`, which has no mods): 785 of 787 passed, one skipped
   (`vashim_system_loader`, which skips itself). One failed:
@@ -116,45 +132,55 @@ takclient and takserver run used scratch `HOME`, `XDG_DATA_HOME` and
   `replay`, `factory_death`, `blocked_shot`, `legion_blocked_shot`,
   `legion_facing`, `settings` and both `zoom_floor_*` cases pass. Wall time
   1,315 s.
-- **Gates on the final code** (the same `--mpai` set-up as below, run from
-  the suite build on its own ports): all seven hashes equal the table below,
-  the third identical run after the two on `build-0911-o2`. All seven servers
+- **Gates on the final code** (`96841296`, the same `--mpai` set-up as below,
+  `build-0911-o2` on ports 7981-7987): all seven hashes equal the table
+  below in three runs (the third after the last rebuild). All seven servers
   loaded retail gameplay hash `d6000f4fa9095a51`, and no desync, mismatch or
-  referee-suspect line appeared.
+  referee-suspect line appeared. On `afaacb9a` the suite build had matched
+  the two `build-0911-o2` runs of that code (the hashes before the repair,
+  below the table).
 - **Detmath guard** (`tools/check-detmath.sh`, on the prepared tree): OK.
 - **Cross-compiler golden hash** (`tools/check-determinism.sh`): golden
   `dcef618cd2e4d558` from g++ and clang++ at -O0, -O2 and -O3, unchanged from
-  0.9.10; the aarch64 leg was skipped (no toolchain here). The tag CI Determinism workflow
+  0.9.10, and again on `96841296` with `check-detmath.sh` OK; the aarch64 leg
+  was skipped (no toolchain here). The tag CI Determinism workflow
   checks it too.
 - **`--mpai` Inner Circle, seed 1** (`takserver --local --no-auth --seed 1`,
   `TAK_LEGION=1` for Legion, `TAK_AI_LEVEL=6` for the Retail AI, `--crusades`
   for the Crusades games, `TAK_SPEED=80`, `build-0911-o2`, all seven gates, run
-  twice with identical hashes):
+  three times on `96841296` with identical hashes):
 
 | Mode | 60 s | 300 s |
 |---|---|---|
 | Retail pathfinding (Normal AI) | `d0da4ccc71d2067c` (unchanged) | **`7a0be4440cd154b7`** (was `e820d37865085bd9`) |
-| Legion | `c3f6a3a13f0c167f` (unchanged) | **`51989ae7896320d8`** (was `0783cb05f7f128cf`) |
+| Legion | **`7a403f097f3506b3`** (was `c3f6a3a13f0c167f`) | **`dc2652648568ad54`** (was `0783cb05f7f128cf`) |
 | Retail AI (`TAK_AI_LEVEL=6`) | `4952493f51b9a568` (unchanged) | not run |
 | Crusades, Retail pathfinding | not run | **`3e8c0ad3b4f1b859`** (was `f2f51dc1703fc209`) |
-| Crusades, Legion | not run | **`0e2d8ac5fdbae8ca`** (was `c4189ae189dd68dc`) |
+| Crusades, Legion | not run | **`b0c9748d62aafeb6`** (was `c4189ae189dd68dc`) |
 
 **The four 300 s hashes changed, and exactly as `task-ai-targets` predicted
 on its own**: the AI's strikes now pick from every enemy unit. The 60 s gates
 end before any strike, and the Retail AI is unchanged. The other five
-branches leave all seven gates unchanged on their own.
+branches leave all seven gates unchanged on their own (on `afaacb9a`: Legion
+60 s `c3f6a3a13f0c167f`, Legion 300 s `51989ae7896320d8`, Crusades Legion
+300 s `0e2d8ac5fdbae8ca`). The walk-in-place repair then changes the three
+Legion gates (the body's stand window is hashed state); the four Retail
+gates keep their hashes.
 
 - **Scenario baseline** (`tools/scenarios/baseline.json`): all 145 scenarios
-  in both modes at the gate offsets; the values of 797 existing Legion
-  `hash@` keys in 76 scenarios retaken (no Retail hash moved), and six
-  offset-spread exceptions (median of 5) added with reasons for Legion facing:
-  `walk_in_place` in `staticblock-own`, `staticblock-other`,
-  `pocket-304-open`, `gap14` and `taperbridge-100`, and `sideways` in
-  `taperbridge-small`. `validate` and `legion_baseline_reasons` report no
-  problem.
+  in both modes at the gate offsets; the values of the existing Legion
+  `hash@` keys retaken, 797 in 76 scenarios at `afaacb9a` and 959 in 90
+  (against 0.9.10) at `96841296` (no Retail hash moved), and one
+  offset-spread exception (median of 5) added with its reason for Legion
+  facing: `sideways` in `taperbridge-small`. The combine's five
+  `walk_in_place` spread exceptions (`staticblock-own`, `staticblock-other`,
+  `pocket-304-open`, `gap14`, `taperbridge-100`) were dropped with the
+  repair: `walk_in_place` is 0 in every fixture at every offset. Six
+  `mixed2` keys are licensed (Limits). `legion_check` passes (36,566 keys,
+  0 failed); `validate` and `legion_baseline_reasons` report no problem.
 - **Navigation checkpoints** (`tools/navigation_checkpoints.json`): the 24
-  Legion lines retaken; Retail identical; serial equals workers, and a gcc
-  -O2 build matches a clang Release build.
+  Legion lines retaken (again with the repair); Retail identical; serial
+  equals workers, and a gcc -O2 build matches a clang Release build.
 - **AI time to a winner** (all-AI games, debug builds, game minutes): the
   reported generated map with 8 Absurd, seed 1 no winner in 120 -> 82, seed 2
   80.8 -> 36.2; Ulasem Arena with four levels, no winner -> 34.8 and 54.7;
@@ -162,7 +188,8 @@ branches leave all seven gates unchanged on their own.
   noisy).
 - **Legion facing** (31 scenario fixtures, offset 0): sideways steps 395,217 ->
   127,299, backward 86,133 -> 28,674 (Retail 277,784 / 9,722); arrivals, t90,
-  done, spins, reversals and stop-go identical in all 31.
+  done, spins, reversals and stop-go identical in all 31. With the repair
+  every one of these is unchanged, and `walk_in_place` falls from 6 to 0.
 
 ## Screenshots
 
@@ -209,15 +236,21 @@ TODO-LEAD: publication time, asset count, Latest flag.
   cover them.
 - No desync sweep and no multiplayer or remote run had a hover attacker
   re-aiming or a factory's output dying.
-- **Two scenario checks still fail** with the retaken baseline (7 of 36,566
-  keys), from `task-legion-facing` on its own (main passes them): `slowturn`
-  Legion `walk_in_place`, an exact-match safety key that must stay 0, reads 26
-  (0..78 per offset; arrivals and `walk_net` identical); `mixed2` Legion group
-  F `done` is "never" on the core-five median with `left_behind` 1, plus four
-  work keys (`contact_own_permille` 845, `work.slides.max` 8,
-  `work.trace_cells.p99` 1562, `work.legion_total.p99` 2199; main already
-  leaves 1 to 3 behind at several offsets). Neither was licensed or retaken.
-  TODO-LEAD: ruling on these two (fix, exception or accepted limit).
+- **The two scenario checks the review blocked on.** `slowturn`'s Legion
+  `walk_in_place` (an exact-match safety key, 0..78 per offset on
+  `afaacb9a`) is fixed in `96841296`: the stand in the scripts was judged by
+  the course's turn, so a body facing its way crept at the facing cap while
+  an unseen course turned round; it is now judged by the body (0 in every
+  fixture at every gate offset, movement identical). The `mixed2` group F
+  keys are not changed by the repair and are offset noise, now licensed with
+  reasons: over 25 start offsets (0, +-1..+-12) the facing code leaves group
+  F incomplete at 19 against main's 20, 1.0 bodies behind against 1.2,
+  `contact_own_permille` 821 against 822, `work.trace_cells.p99` 1597
+  against 1596 and `work.legion_total.p99` 2190 against 2185 (means); only
+  `work.slides.max` is up, 6.8 against 6.4. Licensed at the gate's
+  core-five medians: `g.F.done` never, `g.F.left_behind` 1,
+  `contact_own_permille` 845, `work.slides.max` 8, `work.trace_cells.p99`
+  1562, `work.legion_total.p99` 2199.
 - The Legion facing, AI, factory and hover limits are in the
   [release notes](release-0.9.11-notes.md#known-limits).
 - TODO-LEAD: tag CI limits (failures, reruns, stalls).

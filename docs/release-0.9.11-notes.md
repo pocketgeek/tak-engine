@@ -197,7 +197,10 @@ a hover attacker and its target now makes the flyer move round it.
   `giveUnit`, `scenarioTransfer` and `captureUnit`. Legion: `Member::course`
   (the route heading, which keeps the facing cap, leader and opposing tests),
   `faceMotion` in `legion.cpp`, `courseTurnCorrection` in
-  `World::updateLegionStill`, `LegionNavigator::course`; the new member fields
+  `World::updateLegionStill` (the livelock's window), `LegionNavigator::course`,
+  and `World::legionBodyWindow_`, the window that judges a body's stand in its
+  scripts by the steps and turn it shows (so a unit facing its way never walks
+  on the spot while its course turns); the new member fields and the window
   are folded into the Legion checksum. `docs/retail-engine.md` has the
   original's factory-abort and hover findings; `docs/legion-pathfinding.md`
   "Facing follows motion" the Legion design and the variants dropped.
@@ -214,18 +217,22 @@ a hover attacker and its target now makes the flyer move round it.
   the factory-death commit before the cancel rule), the `blocked_shot_test`
   hover case (the reported geometry), facing cases in `legion_world_test` (a
   wall end and a standing block, sideways and backward steps per 1,000 with
-  arrivals unchanged), `ai_behavior_test` strike cases (an unseen last
+  arrivals unchanged, and a slow-turning group with no walking in place),
+  `ai_behavior_test` strike cases (an unseen last
   lodestone, going on to the next site, Hard's split), `zoom_floor` harness cases (1920 x 1080 and 7680 x 2160, UI scale 100%
   and 200%, spectating), `settings_test` Fade Opacity 50.
 - Baselines retaken: the Legion `hash@` keys in
-  `tools/scenarios/baseline.json` (797 keys in 76 scenarios; no Retail hash
-  moved) with six offset-spread exceptions for Legion facing, and the 24
-  Legion lines of `tools/navigation_checkpoints.json` (Retail identical).
+  `tools/scenarios/baseline.json` (959 keys in 90 scenarios; no Retail hash
+  moved) with one offset-spread exception and six `mixed2` licences (offset
+  noise, reasons in the file) for Legion facing, and the 24 Legion lines of
+  `tools/navigation_checkpoints.json` (Retail identical).
 - `--mpai` Inner Circle seed 1, `TAK_SPEED=80`: Retail 60 s
-  `d0da4ccc71d2067c`, Legion 60 s `c3f6a3a13f0c167f` and Retail AI 60 s
-  `4952493f51b9a568` unchanged; **new** Retail 300 s `7a0be4440cd154b7`,
-  Legion 300 s `51989ae7896320d8`, Crusades Retail 300 s `3e8c0ad3b4f1b859`,
-  Crusades Legion 300 s `0e2d8ac5fdbae8ca` (the AI's target choice). The
+  `d0da4ccc71d2067c` and Retail AI 60 s `4952493f51b9a568` unchanged; **new**
+  Retail 300 s `7a0be4440cd154b7` and Crusades Retail 300 s
+  `3e8c0ad3b4f1b859` (the AI's target choice), Legion 60 s
+  `7a403f097f3506b3`, Legion 300 s `dc2652648568ad54` and Crusades Legion
+  300 s `b0c9748d62aafeb6` (the AI's target choice and Legion's stand
+  window). The
   cross-compiler golden (`check-determinism`) is unchanged,
   `dcef618cd2e4d558`. See the [validation report](release-0.9.11-validation.md).
 
