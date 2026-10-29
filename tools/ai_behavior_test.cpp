@@ -425,19 +425,6 @@ static void visionTargets(const sim::TypeRegistry& registry,const ai::Profile& p
         check(attacks(cs)==35 && aimsAt(cs,w,3400,800)==35 && aimsAt(cs,w,3400,3400)==0,
               "the think at tick 0, before any view pass, learns nothing: the army explores the enemy start");
     }
-    {
-        // A known enemy building within 600 px of an enemy start finds that base:
-        // the start counts as checked though the spot itself was never in sight,
-        // so the scout goes for the other start instead of into the defences.
-        sim::World w;terrain(w);w.player(0).income=100;army(w,35);
-        w.spawn(&post,3400,1500,0,0);
-        w.spawn(&lode,3400,1300,0,1);
-        sight(w);
-        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800},{3400,3400}});
-        const auto cs=think(controller,w,30);
-        check(attacks(cs)==35 && aimsAt(cs,w,3400,1300)==34 && aimsAt(cs,w,3400,3400)==1 && aimsAt(cs,w,3400,800)==0,
-              "an enemy start with a known building near it counts as found: the scout looks elsewhere");
-    }
 }
 
 static void monarchFightsBack(const sim::TypeRegistry& registry,const ai::Profile& profile,

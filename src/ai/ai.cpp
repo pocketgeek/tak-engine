@@ -2365,15 +2365,12 @@ static std::pair<int, int> viewCell(const tak::sim::Unit& u) {
 // or cloaked there), a mobile one also once kMobileMemoryTicks have passed, and
 // any that is now ours or an ally's, or whose owner is beaten or no longer an
 // enemy. Then the exploration state:
-// each enemy start and each sector in sight now is stamped with this think, and
-// an enemy start with a known enemy structure within kStartFound of it counts
-// as checked (its base is found: the strikes take it from there).
+// each enemy start and each sector in sight now is stamped with this think.
 // Before the first tick there is no view plane yet (World::updateViewCounts runs
 // after a tick), and World::playerSees then answers "in sight" for everything:
 // the think at tick 0 (player 0's) sees nothing instead.
 void Controller::updateKnowledge(const tak::sim::World& world) {
     constexpr uint32_t kHeardTicks = 5 * 30;
-    constexpr float kStartFound = 600;
     const bool blind = world.viewCounts().empty() && world.tickCount() == 0;
     const int players = world.numPlayers();
     team_.clear();
@@ -2430,18 +2427,9 @@ void Controller::updateKnowledge(const tak::sim::World& world) {
         return teamViews(world, int(std::clamp(x, 0.0f, std::max(mapX - 1, 0.0f))) >> 5,
                          int(std::clamp(z, 0.0f, std::max(mapZ - 1, 0.0f))) >> 5);
     };
-    for (size_t i = 0; i < enemyStarts_.size(); ++i) {
-        // Apple Clang 15 cannot capture structured bindings in a lambda.
-        const float stx = enemyStarts_[i].first, stz = enemyStarts_[i].second;
-        if (!blind && inSight(stx, stz)) startSeen_[i] = now_ + 1;
-        if (startSeen_[i]) continue;
-        if (std::any_of(knowledge_.begin(), knowledge_.end(), [&](const auto& e) {
-                const float dx = e.second.x - stx, dz = e.second.z - stz;
-                return e.second.type->isStructure() && dx * dx + dz * dz <= kStartFound * kStartFound;
-            }))
-            startSeen_[i] = now_ + 1;
-    }
     if (blind) return;
+    for (size_t i = 0; i < enemyStarts_.size(); ++i)
+        if (inSight(enemyStarts_[i].first, enemyStarts_[i].second)) startSeen_[i] = now_ + 1;
     // A sector is in sight when its centre or a point halfway to a corner is.
     for (int sz = 0; sz < sectorsZ_; ++sz)
         for (int sx = 0; sx < sectorsX_; ++sx) {
