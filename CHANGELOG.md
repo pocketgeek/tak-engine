@@ -37,6 +37,8 @@ their validation reports; both live in [`docs/`](docs/).
   hides whose start is whose), pick lodestone deposits only where they know the
   ground, judging one taken by what they have seen there, steer scouts away from
   where scouts died, and send their ships out when the army's target is inland.
+  A beaten player's base, an enemy's or an ally's, is looked in on again once
+  out of sight five minutes, in case someone moves in (and attacked if someone has).
   A game between AIs may now not end when a last unit stays hidden.
 - **Big late games no longer stall on the AI's lodestone search**: Absurd AIs
   tested every deposit on a large map for each site, 300-800 ms in one tick,
