@@ -65,11 +65,17 @@ static void terrain(sim::World& w,bool islands=false) {
     if (islands) for (int z=0;z<256;++z) for (int x=96;x<160;++x) h[z*256+x]=0;
     w.setVisPlayer(-1);w.setTerrain(std::move(h),256,256,20);
 }
+// The sim's per-player sight (World::viewCount) for the units as they stand: our
+// levels target only what their side has seen, and explore what it has not.
+static void sight(sim::World& w) {w.updateNavigationExploration();}
 static std::vector<net::Command> think(ai::Controller& ai,sim::World& w,uint32_t tick=0) {
     std::vector<net::Command> out;ai.tick(w,tick,[&](const auto& c){out.push_back(c);});return out;
 }
 static int attacks(const std::vector<net::Command>& cs) {
     return int(std::count_if(cs.begin(),cs.end(),[](const auto& c){return c.kind==net::Cmd::AttackMove || c.kind==net::Cmd::Attack;}));
+}
+static int moves(const std::vector<net::Command>& cs) {
+    return int(std::count_if(cs.begin(),cs.end(),[](const auto& c){return c.kind==net::Cmd::Move;}));
 }
 // Archers that outrange both our sight and the defended radius must still be
 // answered: whoever is hitting a unit inside the territory is a threat.
@@ -181,12 +187,14 @@ static void defensiveMeleeTargets(const sim::TypeRegistry& registry,const ai::Pr
 
 // The Monarch fights back instead of standing on a build/move order under fire,
 // and the Defensive AI does not site buildings inside a spotted fight.
-// Our levels' strikes weigh every enemy unit, seen or not (as retail's picker
-// 0x40a200 does), so a winning AI finds the last lodestone in a corner rather than
-// marching on a razed start, keeps going once a site is cleared, and finishes the
-// player off. The user's 0.9.10 replay: an Absurd AI with 400 units spent the last
-// 22 minutes ordering its army back and forth to a dead player's start while the
-// last player's two lodestones and four units stood untouched in a far corner.
+// Our levels' strikes weigh every enemy unit they know of, so a winning AI goes
+// for the last lodestone it has found in a corner rather than marching on a razed
+// start, keeps going once a site is cleared, and finishes the player off. The
+// user's 0.9.10 replay: an Absurd AI with 400 units spent the last 22 minutes
+// ordering its army back and forth to a dead player's start while the last
+// player's two lodestones and four units stood untouched in a far corner. These
+// worlds have no view plane, so every unit is in sight (World::playerSees);
+// visionTargets covers what sight hides.
 static void strikeTargets(const sim::TypeRegistry& registry,const ai::Profile& profile,
                           const sim::UnitType& soldier) {
     auto lode=soldier;lode.id="lode";lode.maxVel={};lode.canMove=false;lode.onMana=true;
@@ -207,13 +215,13 @@ static void strikeTargets(const sim::TypeRegistry& registry,const ai::Profile& p
         return ids;
     };
     {
-        // The enemy's start lies razed; its last lodestone stands unseen in a far corner.
+        // The enemy's start lies razed; its last lodestone stands in a far corner.
         sim::World w;terrain(w);w.player(0).income=100;army(w,35);
         const int last=w.spawn(&lode,3400,3400,0,1);
         ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
         const auto cs=think(controller,w);
         check(attacks(cs)==35 && aimsAt(cs,w,last)==35,
-              "a winning AI goes for an enemy's last lodestone, unseen, not for its razed start");
+              "a winning AI goes for an enemy's last lodestone in sight, not for its razed start");
     }
     {
         // A strike that clears one site goes straight on to the next, even when what
@@ -275,6 +283,116 @@ static void strikeTargets(const sim::TypeRegistry& registry,const ai::Profile& p
             const auto cs=think(defensive,w,30);
             check(attacks(cs)==15 && aimsAt(cs,w,last)==15,"a defensive level clearly ahead cleans up with half its army");
         }
+    }
+}
+
+// What our levels see is what their side's units see (World::playerSees over the
+// sim's view counters): an enemy never seen is not a target, a building once seen
+// is remembered where it stood until that spot is in sight again without it, a
+// mobile unit for a short while, and with nothing known the army explores -- an
+// enemy start not yet in sight first. (User, 2026-10-29: "it really should only
+// see what it can actually see... in the absence of things to attack that it can
+// see it should start exploring the map just like a human player would.")
+static void visionTargets(const sim::TypeRegistry& registry,const ai::Profile& profile,
+                          const sim::UnitType& soldier) {
+    auto lode=soldier;lode.id="lode";lode.maxVel={};lode.canMove=false;lode.onMana=true;
+    lode.weapon.damage=0;lode.weapons.clear();lode.buildCost=300;
+    // An unarmed lookout of ours: it sees, but is no fighter for the waves.
+    auto post=lode;post.id="post";post.onMana=false;post.sight=300;
+    // Commands aimed within 200 px of (x,z): an Attack on a unit there or an attack-move.
+    auto aimsAt=[](const std::vector<net::Command>& cs,const sim::World& w,float x,float z) {
+        return int(std::count_if(cs.begin(),cs.end(),[&](const auto& c) {
+            float tx=c.x,tz=c.z;
+            if (c.kind==net::Cmd::Attack) {const auto* t=w.unit(c.targetId);tx=t->x.toFloat();tz=t->z.toFloat();}
+            else if (c.kind!=net::Cmd::AttackMove) return false;
+            return (tx-x)*(tx-x)+(tz-z)*(tz-z)<=200*200;
+        }));
+    };
+    auto army=[&](sim::World& w,int n) {
+        std::vector<int> ids;
+        for (int i=0;i<n;++i) ids.push_back(w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0));
+        return ids;
+    };
+    auto moveTo=[](sim::World& w,int id,float x,float z) {
+        w.unit(id)->x=sim::Fixed::fromInt(int(x));w.unit(id)->z=sim::Fixed::fromInt(int(z));
+    };
+    {
+        sim::World w;terrain(w);w.player(0).income=100;army(w,35);
+        w.spawn(&lode,3400,3400,0,1);
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        const auto cs=think(controller,w);
+        check(aimsAt(cs,w,3400,3400)==0,"an enemy lodestone never seen is not a target");
+        check(attacks(cs)==35 && aimsAt(cs,w,3400,800)==35,"with nothing seen, the push and a scout explore the enemy start");
+    }
+    {
+        // Seen by a lookout, which then goes: the lodestone is remembered, and
+        // the push goes there rather than to a nearer one it has never seen (one
+        // fighter scouts the enemy start).
+        sim::World w;terrain(w);w.player(0).income=100;
+        const int eye=w.spawn(&post,3300,3300,0,0);
+        w.spawn(&lode,3400,3400,0,1);w.spawn(&lode,1600,1600,0,1);
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        think(controller,w);
+        moveTo(w,eye,400,400);army(w,35);sight(w);
+        const auto cs=think(controller,w,30);
+        check(attacks(cs)==35 && aimsAt(cs,w,3400,3400)==34 && aimsAt(cs,w,3400,800)==1 && aimsAt(cs,w,1600,1600)==0,
+              "a lodestone seen and then out of sight is remembered; one never seen is not");
+    }
+    {
+        // An enemy start already in sight, and empty, is not explored again: the
+        // push goes for the start nobody has looked at, though it is farther.
+        sim::World w;terrain(w);w.player(0).income=100;army(w,35);
+        w.spawn(&post,1600,800,0,0);
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{1600,800},{3400,3400}});
+        const auto cs=think(controller,w);
+        check(attacks(cs)==35 && aimsAt(cs,w,3400,3400)==35 && aimsAt(cs,w,1600,800)==0,
+              "with nothing known, the army explores toward the enemy start not yet in sight");
+    }
+    {
+        // A remembered lodestone destroyed out of sight is still believed there
+        // until a lookout sees the spot again; then the strikers explore on.
+        sim::World w;terrain(w);w.player(0).income=100;
+        const int eye=w.spawn(&post,3300,3300,0,0);
+        const int gone=w.spawn(&lode,3400,3400,0,1);w.spawn(&lode,200,3800,0,1);   // the other is never seen
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        think(controller,w);
+        moveTo(w,eye,400,400);w.unit(gone)->deadFor=0;army(w,35);sight(w);
+        auto cs=think(controller,w,30);
+        check(aimsAt(cs,w,3400,3400)==34,"a remembered lodestone destroyed out of sight is still gone for");
+        moveTo(w,eye,3300,3300);sight(w);
+        cs=think(controller,w,60);
+        check(attacks(cs)>0 && aimsAt(cs,w,3400,3400)==0 && aimsAt(cs,w,200,3800)==0,
+              "once its spot is in sight without it, the lodestone is forgotten and the strikers explore on");
+    }
+    {
+        // A mobile unit seen is remembered where it was for a short while only.
+        sim::World w;terrain(w);w.player(0).income=100;
+        const int eye=w.spawn(&post,3300,3300,0,0);
+        auto heavy=soldier;heavy.id="heavy";heavy.buildCost=100;
+        w.spawn(&heavy,3400,3400,0,1);
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        think(controller,w);
+        moveTo(w,eye,400,400);army(w,35);sight(w);
+        check(aimsAt(think(controller,w,10*30),w,3400,3400)>0,"a mobile enemy out of sight is remembered for a while");
+        ai::Controller later(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        moveTo(w,eye,3300,3300);sight(w);think(later,w);
+        moveTo(w,eye,400,400);sight(w);
+        check(aimsAt(think(later,w,40*30),w,3400,3400)==0,"... and forgotten once that while is up");
+    }
+    {
+        // Units hitting ours are known where they stand, seen or not.
+        sim::World w;terrain(w);w.player(0).income=100;const auto ids=army(w,35);
+        auto archer=soldier;archer.id="archer";archer.weapon.range=450;archer.weapons={archer.weapon};
+        const int shooter=w.spawn(&archer,1000,800,0,1);
+        sight(w);
+        w.unit(ids[6])->lastHitBy=shooter;w.unit(ids[6])->attackedTick=1;
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        check(aimsAt(think(controller,w),w,1000,800)>0,"an unseen archer hitting our units is a target");
     }
 }
 
@@ -1127,7 +1245,7 @@ static void levelWiring() {
     check(ai::incomeMultFor(ai::Difficulty::AbsurdlyDefensive)==2.0f && ai::incomeMultFor(ai::Difficulty::Absurd)==2.0f &&
           ai::incomeMultFor(ai::Difficulty::Passive)==1.0f,"Absurdly Defensive earns Absurd's double income");
     const auto a=ai::paramsFor(ai::Difficulty::AbsurdlyDefensive),d=ai::paramsFor(ai::Difficulty::Passive);
-    check(!a.attack && !a.scout && a.unbounded && a.thinkPeriod==d.thinkPeriod && a.producersPerThink==d.producersPerThink &&
+    check(!a.attack && a.unbounded && a.thinkPeriod==d.thinkPeriod && a.producersPerThink==d.producersPerThink &&
           a.limitScale==d.limitScale && a.raidSize==d.raidSize && a.waveSize==d.waveSize,
           "Absurdly Defensive plays exactly as Defensive");
     net::SlotInfo slots[net::kMaxSlots]{};
@@ -1223,6 +1341,7 @@ static void classicLevel() {
             else if (c.kind==net::Cmd::Patrol && c.queue) ++patrols;
             else if (c.kind!=net::Cmd::Move && c.kind!=net::Cmd::Patrol && c.kind!=net::Cmd::Stop) ++other;
         }
+    sight(w);
     ai::Controller normal(0,empty,profile,1,ai::Difficulty::Normal,{{3400,800}});
     check(stances==35 && patrols>=1 && other==0 && attacks(think(normal,w))==35,
           "the Classic brain gives each unit its standing orders, idle patrols and wave moves where Normal attacks");
@@ -1234,9 +1353,13 @@ int main(int argc,char** argv) {
                             ai::Difficulty::AbsurdlyDefensive}) {
         sim::World w;terrain(w);w.player(0).income=100;
         for (int i=0;i<35;++i) w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
+        sight(w);
         ai::Controller controller(0,empty,profile,1,difficulty,{{3400,800}});
         auto cs=think(controller,w);
-        check(attacks(cs)==(ai::defensiveLevel(difficulty) ? 0 : 35),"difficulty permits heavy attacks only for attacking AIs");
+        // Nothing seen: an attacking level's push explores (the enemy start first)
+        // and one fighter goes ahead as a scout.
+        check(ai::defensiveLevel(difficulty) ? attacks(cs)==0 : attacks(cs)==35 && moves(cs)==0,
+              "difficulty permits heavy attacks only for attacking AIs");
         if (ai::defensiveLevel(difficulty)) {
             check(std::count_if(cs.begin(),cs.end(),[](const auto& c){return c.kind==net::Cmd::Stance && c.targetId==1;})==35,
                   "Passive AI orders defensive rather than hold-fire stances");
@@ -1254,59 +1377,72 @@ int main(int argc,char** argv) {
     defensiveMeleeTargets(empty,profile,soldier);
     monarchFightsBack(empty,profile,soldier);
     strikeTargets(empty,profile,soldier);
+    visionTargets(empty,profile,soldier);
     {
         sim::World w;terrain(w);w.player(0).income=100;
         for(int i=0;i<35;++i)w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
+        sight(w);
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Easy,{{3400,800}});
-        check(attacks(think(controller,w,3*60*30))==0,"Easy leaves four minutes before its first attack");
-        check(attacks(think(controller,w,4*60*30))==8,"Easy attacks with at most eight units");
+        auto cs=think(controller,w,3*60*30);
+        check(attacks(cs)==0,"Easy leaves four minutes before its first attack or scout");
+        cs=think(controller,w,4*60*30);
+        check(attacks(cs)==9,"Easy attacks with at most eight units, and a scout goes ahead");
+        for (const auto& c:cs) sim::applyCommand(w,empty,c);
         check(attacks(think(controller,w,5*60*30))==0,"Easy waits between attack waves");
         check(attacks(think(controller,w,6*60*30))==8,"Easy resumes attacking after two minutes");
     }
     for (float income : {20.f,200.f}) {
         sim::World w;terrain(w);w.player(0).income=income;
         for (int i=0;i<25;++i) w.spawn(&soldier,400+float(i)*32,800,0,0);
+        sight(w);
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{3400,800}});
-        check(attacks(think(controller,w))==(income==20 ? 25 : 1),"actual income scales the force saved for a heavy attack");
+        const auto cs=think(controller,w);
+        check(attacks(cs)==(income==20 ? 25 : 1),"actual income scales the force saved for a heavy attack (one scouts)");
     }
     {
         sim::World w;terrain(w);w.player(0).income=100;
         for (int i=0;i<14;++i) w.spawn(&soldier,400+float(i)*32,800,0,0);
+        sight(w);
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{3400,800}});
-        int largest=0,probes=0;
+        // Normal raids three at a time; a lone attack-move beside them is a scout.
+        int largest=0,probes=0,scouts=0;
         for (int wave=0;wave<40 && largest<30;++wave) {
             auto cs=think(controller,w,uint32_t(wave*750));int n=attacks(cs);
-            largest=std::max(largest,n);if (n>0 && n<30) probes+=n;
+            largest=std::max(largest,n);if (n>0 && n<30) {probes+=n-n%3;scouts+=n%3;}
             for (const auto& c:cs) sim::applyCommand(w,empty,c);
             w.spawn(&soldier,400,800+float(wave)*32,0,0);
         }
-        check(probes>0 && probes<=10,"probing raids preserve the accumulating home force");
+        check(probes>0 && probes<=10 && scouts>0,"probing raids preserve the accumulating home force");
         check(largest>=30,"repeated probing still allows a heavy attack to form");
     }
     {
         sim::World w;terrain(w,true);auto air=soldier;air.canFly=true;air.id="air";
         int ground=w.spawn(&soldier,400,800,0,0);int flyer=w.spawn(&air,400,1000,0,0);
         int unfinished=w.spawn(&air,400,1200,0,0);w.unit(unfinished)->underConstruction=true;
+        sight(w);
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{3400,800}});
         auto cs=think(controller,w);
-        check(attacks(cs)==1 && cs[0].unitId==flyer,"island probe uses a reachable flyer, not stranded or unfinished units");
+        check(attacks(cs)==1 && cs[0].unitId==flyer && cs[0].x==3400,
+              "the scout is a flyer that reaches the enemy start, not a stranded or unfinished unit");
         check(w.unit(ground)->orders.empty(),"AI terrain assessment does not mutate navigation");
     }
     {
         sim::World w;terrain(w,true);auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;
         boat.weapon.range=240;
-        int ship=w.spawn(&boat,2000,800,0,0);
+        for (int i=0;i<3;++i) w.spawn(&boat,2000,800+float(i)*80,0,0);
+        sight(w);
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{2624,800}});
         const auto cs=think(controller,w);
-        check(attacks(cs)==1 && cs[0].unitId==ship && cs[0].x<2560,
+        check(attacks(cs)==3 && std::all_of(cs.begin(),cs.end(),[](const auto& c){return c.x<2560;}),
               "naval attacks choose reachable water within range of the enemy shore");
     }
     {
         sim::World w;terrain(w,true);auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;
-        const int ship=w.spawn(&boat,2000,800,0,0);
+        for (int i=0;i<3;++i) w.spawn(&boat,2000,800+float(i)*80,0,0);
+        sight(w);
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{3400,800}});
         const auto cs=think(controller,w);
-        check(attacks(cs)==1 && cs[0].unitId==ship && cs[0].x<2560,
+        check(attacks(cs)==3 && std::all_of(cs.begin(),cs.end(),[](const auto& c){return c.x<2560;}),
               "ships approach an enemy coast even when the starting position lies beyond weapon range");
     }
     {
@@ -1337,6 +1473,7 @@ int main(int argc,char** argv) {
         auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;
         const int count=difficulty==ai::Difficulty::Easy ? 2 : 3;
         for (int i=0;i<count;++i) w.spawn(&boat,2000,800+float(i)*80,0,0);
+        sight(w);
         ai::Controller controller(0,empty,profile,1,difficulty,{{3400,800}});
         const auto cs=think(controller,w,4*60*30);
         check(attacks(cs)==(difficulty==ai::Difficulty::Passive ? 0 : count),

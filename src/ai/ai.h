@@ -54,8 +54,8 @@ Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name = "default
 // does. See paramsFor().
 // The value is the wire aiLevel (SlotInfo.aiLevel); 0-4 run weakest -> strongest.
 // Passive (displayed as Defensive) builds a home force and intercepts nearby
-// threats, without scouting or attacking enemy bases, and keeps building in step
-// with its income with no AI-imposed limit on how much. Absurd = Hard with a
+// threats, scouting or attacking enemy bases only when far ahead, and keeps
+// building in step with its income with no AI-imposed limit on how much. Absurd = Hard with a
 // mana-income cheat (see incomeMultFor). AbsurdlyDefensive (5, added under protocol
 // 273) = Defensive with Absurd's cheat. Classic (6, added under protocol 290) is a
 // port of the retail game's own AI (docs/classic-ai-plan.md): a separate brain
@@ -105,6 +105,24 @@ inline constexpr UpgradeLevel upgradeLevelFor(Difficulty d) {
     }
 }
 
+// How a level scouts (Controller::sendScouts): its first scouting party not
+// before `firstMin` minutes of game time, then one every `everySec` seconds of
+// game time while fewer than `maxScouts` are out; with `keep` a scout goes on to
+// the next unexplored spot when it reaches one, else it rejoins the army. The
+// defensive levels scout only while far ahead (StrikeBoard::ahead).
+struct ExploreLevel { int firstMin, everySec, maxScouts; bool keep; };
+inline constexpr ExploreLevel exploreLevelFor(Difficulty d) {
+    switch (d) {
+        case Difficulty::Passive:           return {0, 60, 1, false};
+        case Difficulty::AbsurdlyDefensive: return {0, 60, 1, false};
+        case Difficulty::Easy:              return {4, 150, 1, false};
+        case Difficulty::Normal:            return {0, 60, 1, false};
+        case Difficulty::Hard:              return {0, 40, 2, true};
+        case Difficulty::Absurd:            return {0, 20, 3, true};
+        default:                            return {0, 0, 0, false};   // Classic: its own brain
+    }
+}
+
 // Behaviour knobs derived from Difficulty (paramsFor).
 struct DiffParams {
     int  thinkPeriod;      // sim ticks between decisions (30 = 1 Hz); lower = faster reactions
@@ -113,10 +131,9 @@ struct DiffParams {
                            // a larger army, a poor one strikes with what it has)
     int  producersPerThink;// how many idle producers act each think (economy/APM pace)
     int  limitScale;       // percent applied to the profile's unit limits (100 = as shipped)
-    bool scout;            // send an early lone scout toward an enemy start
     bool attack;           // commit offensive waves (Defensive only intercepts local threats)
     int  raidSize;         // fighters peeled off for a small harassing raid while the main
-                           // army musters (0 = no raiding; gated on `scout` difficulties)
+                           // army musters (0 = no raiding)
     bool unbounded;        // no AI-imposed caps: the planner's targets scale with income
                            // without ceilings, profile limits do not apply, and spending
                            // is paced by mana alone (the defensive levels)
@@ -329,25 +346,29 @@ private:
     // `limit` > 0 narrows the radius from home a site may lie within.
     bool placeSite(const tak::sim::World&, const tak::sim::UnitType*, const tak::sim::Unit& builder, float nx, float nz,
                    float& outX, float& outZ, float limit = 0) const;
-    // Offensive targets. Like retail's strike picker (icd 0x40a200) the board holds
-    // every unit of every enemy still in the game, seen or not -- unseen ones only
-    // count for less -- so a winning AI finds the last lodestone in a corner. Units
-    // are gathered on a kSiteCell grid into sites; a strike goes for a site's most
-    // valuable unit (its anchor) and fights whatever stands around it.
+    // Offensive targets, from what this AI knows (knowledge_): the enemy units
+    // its own and its allies' sight shows it now (World::playerSees), the units
+    // hitting its own, and what it saw before -- a structure where it last stood
+    // until that spot is in sight again without it, a mobile unit for
+    // kMobileMemoryTicks. Units are gathered on a kSiteCell grid into sites; a
+    // strike goes for a site's most valuable unit (its anchor) and fights
+    // whatever stands around it.
     struct StrikeSite {
-        int anchor = 0;               // 0: an enemy start (no unit known)
+        int anchor = 0;               // 0: an exploration point (no unit known)
         const tak::sim::UnitType* anchorType = nullptr;
         bool anchorUnfinished = false;
-        float x = 0, z = 0;           // the anchor's position
+        float x = 0, z = 0;           // the anchor's position, last seen
         float value = 0;              // what destroying the site's units is worth
         float defence = 0;            // armed strength there and in the cells around it
-        bool seen = false;            // this AI sees some unit of it
+        bool seen = false;            // this AI sees some unit of it now
+        bool visible = false;         // ... its anchor among them
     };
     struct StrikeBoard {
         std::vector<StrikeSite> sites;
         float ours = 0;               // this AI's fighters (strength())
         float theirs = 0;             // every enemy's armed units and defences
-        bool winning = false;         // clearly ahead: clean up even at the defensive levels
+        bool ahead = false;           // ours outweighs theirs by this level's margin
+        bool winning = false;         // ahead with a site known: clean up even at the defensive levels
     };
     static constexpr float kSiteCell = 400;
     StrikeBoard scanTargets(const tak::sim::World&) const;
@@ -370,7 +391,56 @@ private:
     // attack-move to the nearest point it can reach. False when it cannot get there.
     bool strikeOrder(const tak::sim::World&, const tak::sim::Unit& u, const StrikeSite& site,
                      uint32_t simTick, const CommandSink&);
-    bool nearestEnemyStart(float cx, float cz, float& tx, float& tz) const;
+    // What this AI knows of an enemy unit, by id: its type, owner and position
+    // when last seen (cx,cz: its projected 32 px view cell, World::viewCount),
+    // the think tick it was, and its strength then.
+    struct Known {
+        const tak::sim::UnitType* type = nullptr;
+        int player = -1;
+        float x = 0, z = 0, strength = 0;
+        int cx = 0, cz = 0;
+        uint32_t seenAt = 0;
+        bool unfinished = false;
+    };
+    std::map<int, Known> knowledge_;
+    static constexpr uint32_t kMobileMemoryTicks = 25 * 30;
+    // The players whose sight this AI shares: itself and its allies.
+    std::vector<int> team_;
+    bool teamSees(const tak::sim::World&, const tak::sim::Unit&) const;
+    bool teamViews(const tak::sim::World&, int cx, int cz) const;
+    // Refresh knowledge_ and the exploration state from this think's sight.
+    void updateKnowledge(const tak::sim::World&);
+    // Exploration: the enemy starts' spots, then a coarse grid of map sectors,
+    // each with the think tick + 1 it was last in sight (0 never) and the tick
+    // until which a party sent there holds it. exploreTarget picks, for a unit
+    // of `type` at (x,z), an unchecked enemy start nearest first, else the
+    // sector longest out of sight for its distance, and the point of it that
+    // unit can reach; `-1 - start` or the sector's index comes back in `slot`.
+    std::vector<uint32_t> startSeen_, sectorSeen_, sectorClaim_, startClaim_;
+    int sectorsX_ = 0, sectorsZ_ = 0;
+    float sectorSize_ = 0;
+    std::map<std::pair<int, const tak::sim::UnitType*>, uint32_t> unreachable_;   // slot, type -> until
+    bool exploreTarget(const tak::sim::World&, const tak::sim::UnitType* type, float x, float z,
+                       float& tx, float& tz, int& slot);
+    void claimSlot(int slot, uint32_t ticks);
+    bool sectorCentre(int sector, float mapX, float mapZ, float& x, float& z) const;
+    // Explore with `ids` from where the first of each kind of mover stands
+    // (ground first): every unit that can reach the point picked attack-moves
+    // there. Returns the units ordered.
+    int explore(const tak::sim::World&, const std::vector<int>& ids, const CommandSink&);
+    // Scouting parties (exploreLevelFor): the scouts out, by unit id, each with
+    // the tick its trip began; the tick the next one may go.
+    std::map<int, uint32_t> scouts_;
+    uint32_t nextScoutTick_ = 0;
+    int scoutsSent_ = 0, explorations_ = 0;   // dispatch counts, for the TAK_AI_EXPLORE log
+    uint32_t loggedMinute_ = 0;                // minute + 1 last logged
+    bool loggedWin_ = false;
+    void logExploration(const tak::sim::World&, uint32_t simTick);
+    struct Fighter { int id; float x, z, s; };   // a fighter free for sendWaves, its strength s
+    // Bring scouts home to the army, send the next one on, and, when one is due,
+    // take the pool's fastest fighter for a new scouting party.
+    void sendScouts(const tak::sim::World&, uint32_t simTick, const CommandSink&,
+                    const StrikeBoard&, std::vector<Fighter>& pool);
     // (x,z) lies nearer some enemy start than home (hx,hz): the enemy's side of the map.
     bool enemySide(float x, float z, float hx, float hz) const;
     // `pad` pushes the approach rings out, so a unit stands clear of a body at

@@ -20,22 +20,25 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
 ## Unreleased
+*protocol 305 · replay format 15*
 
 - **Streaming keeps to YouTube's bitrate**, above which YouTube could connect
   but never start the broadcast: the panel caps it there (a saved higher value is
   lowered, with a note), adds **Recommended**, and warns when the upload can't keep up.
-- **Big late games no longer stall on the AI's lodestone search.** Absurd AIs looked
-  at every deposit on a large map each time a builder chose a site, which cost
-  300-800 ms in a single tick and dropped the game speed below +0; they now take
-  the nearest usable one (same choice, a fraction of the work).
-- **Faster late game on big maps**: a lodestone's mana bonus and Legion's narrow-passage
-  lookups no longer scan the whole map each tick (same games, same replays).
-- **Fewer late-game hitches on big maps**: a building that might cut off part of the
-  map is now checked around itself instead of re-mapping the whole map (~90 ms each,
-  up to 24 times a minute on a 64x64 map).
-- **Smoother late game on big maps**: the lockstep state check costs about 5 ms
-  instead of 33 with 2,500 units on a 64x64 map, and a game with no human player
-  (AIs you watch) skips it on the server.
+- **Our AI levels attack only what they have seen** (not Retail AI): their own
+  and their allies' sight, units shooting at them, buildings remembered where
+  they were seen; with nothing known they scout and explore the map instead.
+  A game between AIs may now not end when a last unit stays hidden.
+- **Big late games no longer stall on the AI's lodestone search**: Absurd AIs
+  tested every deposit on a large map for each site, 300-800 ms in one tick,
+  which dropped the speed below +0; they now take the nearest usable one (same choice).
+- **Fewer late-game hitches on big maps**: a building that might cut off part of
+  the map is checked around itself instead of re-mapping the whole map (~90 ms
+  each, up to 24 times a minute on a 64x64 map).
+- **Faster late game on big maps**: a lodestone's mana bonus and Legion's
+  narrow-passage lookups no longer scan the whole map each tick.
+- **The lockstep state check costs about 5 ms instead of 33** with 2,500 units on
+  a 64x64 map, and a game with no human player (AIs you watch) skips it on the server.
 
 ## 0.9.11
 *2026-10-29 · protocol 304 · replay format 15 · does not play with 0.9.10 or earlier, nor their replays*
