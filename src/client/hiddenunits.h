@@ -229,7 +229,7 @@ private:
 // It fades out over kFadeOutMs when a unit comes under it and back in over kFadeInMs
 // after the last one has left (display time; smoothstep eased): the faded cover is
 // simply drawn translucent where it stands.
-inline constexpr int kDefaultFadePercent = 65;   // the cover stays 65% visible
+inline constexpr int kDefaultFadePercent = 50;   // the cover stays 50% visible
 inline constexpr float kFadeOutMs = 200.0f;
 inline constexpr float kFadeInMs = 350.0f;
 // The setting (percent the cover stays visible: 0 = gone, 100 = no fade) as an alpha.

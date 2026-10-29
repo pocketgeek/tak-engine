@@ -1743,7 +1743,7 @@ missed are silent while the game catches up.
 
 ### Display
 
-![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, Native Wayland set to Auto, then Renderer set to Auto (OpenGL), Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Hidden Units at Fade with Fade Opacity at 65%, Screen Shake off, Hardware Cursor on with the note OS CURSOR 16X25 beside it, Smooth Motion on, and GPU Memory Limit set to 1.25 GB (default)](img/guide/options-graphics.jpg)
+![The Options screen scrolled to the Display and Graphics settings: Fullscreen off, VSync on and Max FPS 60 greyed out, Native Wayland set to Auto, then Renderer set to Auto (OpenGL), Texture Filtering at Everything, Shadows, Smooth GUI Art, Smooth Movies and Trees Sway in Wind on, Tactical Dots on at a zoom of 0%, Hidden Units at Fade with Fade Opacity at 50%, Screen Shake off, Hardware Cursor on with the note OS CURSOR 16X25 beside it, Smooth Motion on, and GPU Memory Limit set to 1.25 GB (default)](img/guide/options-graphics.jpg)
 
 *Options, Display and Graphics sections, at the default settings. Max FPS is greyed out because VSync is on. Renderer reads Auto (OpenGL): Auto, and the backend it started with. The picture was taken in a window, so Fullscreen shows Off, and on Linux, so Native Wayland shows and Ignore Windows Display Scaling does not.*
 
@@ -1769,7 +1769,7 @@ missed are silent while the game catches up.
 | **Tactical Dots** | On | Zoomed far out, every unit is drawn as a dot in its player's colour, like the minimap, instead of its model. Not in the original game. See below. |
 | **Tactical Dots Zoom** | 0% | How far out you must zoom before dots replace models. Greyed out while Tactical Dots is off. See below. |
 | **Hidden Units** | Fade | Units behind trees, rocks and buildings. **Off**: hidden, as in the original game. **Dots**: a unit whose centre is hidden shows its tactical dot on top. **Fade**: a tree, rock or building over a unit fades out. Not in the original game. See below. |
-| **Fade Opacity** | 65% | How visible a faded tree, rock or building stays: 100% no fade, 0% gone. Greyed out unless Hidden Units is Fade. |
+| **Fade Opacity** | 50% | How visible a faded tree, rock or building stays: 100% no fade, 0% gone. Greyed out unless Hidden Units is Fade. |
 | **Screen Shake** | Off | Shakes the camera on heavy impacts (weapons that shake the screen in the original game) and on mission earthquakes. Applies at once. |
 | **Hardware Cursor** | On | The operating system draws the cursor, so it stays smooth even if the game stutters. It stays on while you stream; the stream draws the same cursor into the video. Beside the switch the game shows what it gave the system, for example `OS CURSOR 64X100`, or `UNAVAILABLE - SOFTWARE` if the system refused a cursor that size and the game is drawing it itself. |
 | **Smooth Motion** | On | Units glide between the game's 30 updates per second instead of stepping. Adds about 33 ms of visual delay. |
@@ -1855,7 +1855,7 @@ covered. **Dots** puts the unit's tactical dot (same size, colour and
 selection outline as Tactical Dots) on top when the unit's centre is hidden; a
 unit whose centre is in sight gets none, and clicking the dot selects the
 unit. **Fade**, the default, fades a whole tree, rock or building while one of
-those units stands behind it, to the **Fade Opacity** setting (65% by
+those units stands behind it, to the **Fade Opacity** setting (50% by
 default), so the unit, its shadow and the ground show through, and fades it
 back in shortly after the last one leaves. A faded building can show a few of
 its own back faces. Nothing is added while Tactical Dots is showing.

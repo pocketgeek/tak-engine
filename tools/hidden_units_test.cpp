@@ -135,7 +135,7 @@ int main() {
     }
 
     // ---- FADE ----
-    check("fade default 65%", hu::kDefaultFadePercent == 65 && hu::fadeOpacity(65) == 166);
+    check("fade default 50%", hu::kDefaultFadePercent == 50 && hu::fadeOpacity(50) == 128);
     check("fade opacity ends", hu::fadeOpacity(0) == 0 && hu::fadeOpacity(100) == 255 &&
                                hu::fadeOpacity(-3) == 0 && hu::fadeOpacity(140) == 255 && hu::fadeOpacity(50) == 128);
     check("alpha scaling", hu::scaleAlpha(255, 115) == 115 && hu::scaleAlpha(0, 200) == 0 &&

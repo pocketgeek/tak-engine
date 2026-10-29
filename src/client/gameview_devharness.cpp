@@ -824,7 +824,7 @@
                 };
                 hiddenFadeOpacity_=hu::fadeOpacity(hu::kDefaultFadePercent);
                 const uint8_t faded=hiddenFadeOpacity_;
-                check(faded==166,"FADE: 65% is alpha 166");
+                check(faded==128,"FADE: 50% is alpha 128");
                 const auto keepAlpha=[&] { return hiddenStructureAlpha(frameUnit(keep)); };
                 hiddenUnitsMode_=hu::kOff;
                 const auto [p0,w0]=fadeFrame(16,shot("fade-off"));
@@ -836,9 +836,9 @@
                 const auto [p1,w1]=fadeFrame(16,shot("fade"));
                 check(!p0.empty() && p1.size()==p0.size(),"FADE frames read back");
                 check(alphaOf(treeA)==faded && alphaOf(treeB)==faded && alphaOf(treeC)==faded,
-                      "FADE: trees over units faded to 65% after the fade-out time");
-                check(keepAlpha()==faded,"FADE: the keep over a unit faded to 65%");
-                check(hiddenStructureAlpha(frameUnit(lode))==faded,"FADE: the lodestone over a unit faded to 65%");
+                      "FADE: trees over units faded to 50% after the fade-out time");
+                check(keepAlpha()==faded,"FADE: the keep over a unit faded to 50%");
+                check(hiddenStructureAlpha(frameUnit(lode))==faded,"FADE: the lodestone over a unit faded to 50%");
                 size_t forestFaded=0;
                 for (size_t t:forest) forestFaded+=alphaOf(t)==faded;
                 std::fprintf(stderr,"  FADE: %zu of %zu forest trees faded, %zu fading covers\n",forestFaded,
