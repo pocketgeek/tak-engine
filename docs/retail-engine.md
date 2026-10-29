@@ -264,10 +264,23 @@ wandering storms are not aimed shots, so none of them can stop on scenery:
   blocked, so the sweep prefers another target) and searches again after
   three more blocked shots (`Unit::searchFailed`), so a target that moves
   behind a different obstacle, or a long-lived one attacked later from a new
-  approach, is searched again. Buildings, flyers and melee never move, and
-  neither does Hold Position with nothing queued behind its attack (it fires
-  on, as retail). The state (`Unit::blockedTarget` and its counters) is hashed, with a
-  tag, only once a blocked impact has been seen.
+  approach, is searched again. Buildings, melee and flyers on attack runs
+  never move, and neither does Hold Position with nothing queued behind its
+  attack (it fires on, as retail). The state (`Unit::blockedTarget` and its
+  counters) is hashed, with a tag, only once a blocked impact has been seen.
+- A `hoverattack` flyer (after 0.9.10) moves round its hover ring instead
+  (`World::hoverForShot`). Retail's hover mission keeps the flyer's bearing
+  from the target at every wake (`41de5d`: only a 1-in-100 draw turns it, by
+  up to 2048), so a Thirsha whose Lightning stops on a standing stone between
+  it and its target fires into the stone for as long as the order lasts. In
+  the user's 0.9.10 game two Thirshas did that for minutes: one at a Hunter
+  behind a `ZonHenge11` (height 94; every bolt stopped about 148 px up, on
+  the stone's top), one at a lodestone behind a `ZonHenge09` (height 140).
+  At the first wake with the shots written off, the flyer takes the nearest
+  bearing on the ring, in 1/32 turns either way, whose chord from the hover
+  point's muzzle height to the target's SweetSpot is clear, and keeps that
+  point until it can have flown there. The walk budget and the failed-search
+  rule are the ground mover's.
 
 `blocked_shot_test` (Retail and `--legion`) uses the shipped Aramon Archer and
 Swordsman: behind a passable ridge and behind a row of shipped `ZonFireD01`
