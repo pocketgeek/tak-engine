@@ -1684,7 +1684,8 @@ float Controller::siteNeed(const StrikeSite& site) const {
 // threat against distance, and a site whose defence outweighs the force sent at
 // it counts for the square of the shortfall (a raid wants twice the margin). A
 // site already given its share this think counts for a quarter. Reachability is
-// tried in score order, for the first twelve.
+// tried in score order, for the first 48: a fleet's sites out at sea can fill
+// the top of an army's list.
 int Controller::pickSite(const tak::sim::World& world, const StrikeBoard& board, float x, float z, float force,
                          const tak::sim::UnitType* type, bool raid, const std::vector<float>& taken) const {
     std::vector<std::pair<float, int>> ranked;
@@ -1706,7 +1707,7 @@ int Controller::pickSite(const tak::sim::World& world, const StrikeBoard& board,
     std::sort(ranked.begin(), ranked.end());
     int probes = 0;
     for (const auto& [score, i] : ranked) {
-        if (++probes > 12) break;
+        if (++probes > 48) break;
         const auto& site = board.sites[size_t(i)];
         float tx = 0, tz = 0;
         if (!type || type->canFly || reachablePoint(world, type, x, z, site.x, site.z, tx, tz, sitePad(site, type))) return i;
@@ -2341,6 +2342,34 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
     }
     const bool split = diff_ == Difficulty::Hard || diff_ == Difficulty::Absurd;
     std::vector<float> taken(board.sites.size(), 0.0f);
+    // The best site for `group`, tried for each kind of mover in it (ground first)
+    // from where the one of that kind nearest the kind's centre stands, until one
+    // has a site it can reach and hurt: a fleet or the flyers go on where the army
+    // cannot.
+    auto pickFor = [&](const std::vector<Fighter>& group, float force, bool raid) {
+        struct Kind { const tak::sim::UnitType* type; float x = 0, z = 0; int n = 0; const Fighter* at = nullptr; float d = 0; };
+        std::vector<Kind> kinds;
+        auto kindOf = [&](const tak::sim::UnitType* t) {
+            return std::find_if(kinds.begin(), kinds.end(), [&](const Kind& k) {
+                return k.type->canFly == t->canFly && k.type->domain == t->domain; });
+        };
+        for (const auto& f : group) {
+            const auto* t = world.unit(f.id)->type;
+            auto k = kindOf(t);
+            if (k == kinds.end()) { kinds.push_back({t}); k = kinds.end() - 1; }
+            k->x += f.x; k->z += f.z; ++k->n;
+        }
+        for (auto& k : kinds) { k.x /= float(k.n); k.z /= float(k.n); }
+        for (const auto& f : group) {
+            auto k = kindOf(world.unit(f.id)->type);
+            const float dx = f.x - k->x, dz = f.z - k->z, d = dx * dx + dz * dz;
+            if (!k->at || d < k->d) { k->at = &f; k->d = d; }
+        }
+        std::stable_sort(kinds.begin(), kinds.end(), [](const Kind& a, const Kind& b) { return !a.type->canFly && b.type->canFly; });
+        for (const auto& k : kinds)
+            if (const int i = pickSite(world, board, k.at->x, k.at->z, force, k.type, raid, taken); i >= 0) return i;
+        return -1;
+    };
     // Send `group` (from the front, at most `limit` units) at the best site from
     // where it stands. Hard and Absurd split a force that outweighs a site: each
     // site gets its need with half again (at least a quarter of the force) and the
@@ -2351,20 +2380,14 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
     // units ordered.
     auto launch = [&](const std::vector<Fighter>& group, bool raid, int limit, bool striking, bool needMet) {
         if (group.empty()) return 0;
-        float cx = 0, cz = 0, force = 0;
-        const tak::sim::UnitType* rep = nullptr;
-        for (const auto& f : group) {
-            cx += f.x; cz += f.z; force += f.s;
-            const auto* t = world.unit(f.id)->type;
-            if (!rep || (rep->canFly && !t->canFly)) rep = t;
-        }
-        cx /= float(group.size()); cz /= float(group.size());
+        float force = 0;
+        for (const auto& f : group) force += f.s;
         const int maxSites = split ? 4 : 1;
         int ordered = 0, sites = 0;
         size_t next = 0;
         float remaining = force;
         while (next < group.size() && ordered < limit && sites < maxSites) {
-            const int i = pickSite(world, board, cx, cz, remaining, rep, raid, taken);
+            const int i = pickFor(group, remaining, raid);
             if (i < 0) break;
             const auto& site = board.sites[size_t(i)];
             const bool outmatched = sites == 0 && ((needMet && siteNeed(site) > force) ||
@@ -2415,18 +2438,13 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
     }
     if (diff_ == Difficulty::Easy &&
         (simTick < 4*60*30 || (scouted_ && simTick-lastRaidTick_ < 2*60*30 && !board.winning))) return;
-    // The pool's objective: the best site from home, or with no enemy unit known,
-    // the nearest enemy start (marching on the base).
+    // The pool's objective: the best site for it, or with no enemy unit known, the
+    // nearest enemy start (marching on the base).
     float poolForce = 0;
-    const tak::sim::UnitType* rep = nullptr;
-    for (const auto& f : pool) {
-        poolForce += f.s;
-        const auto* t = world.unit(f.id)->type;
-        if (!rep || (rep->canFly && !t->canFly)) rep = t;
-    }
+    for (const auto& f : pool) poolForce += f.s;
     StrikeSite objective;
     if (!board.sites.empty()) {
-        const int i = pickSite(world, board, home.first, home.second, poolForce, rep, false, taken);
+        const int i = pickFor(pool, poolForce, false);
         if (i < 0) return;
         objective = board.sites[size_t(i)];
     } else if (!nearestEnemyStart(home.first, home.second, objective.x, objective.z)) return;
