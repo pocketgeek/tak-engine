@@ -19,8 +19,8 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
-## Unreleased
-*protocol 303 · replay format 15*
+## 0.9.10
+*2026-10-28 · protocol 303 · replay format 15 · plays with 0.9.9, and its replays*
 
 - **Hidden Units** (Options → Graphics; not in the original game): units
   behind trees, rocks and buildings stay visible. **Fade**, the default,
@@ -41,6 +41,13 @@ their validation reports; both live in [`docs/`](docs/).
   clipped away entirely (a unit behind a wall at the view's edge, a list in a
   window too small for it) no longer draws over the view on the Metal
   renderer.
+- **Protocol 303, unchanged:** every change in 0.9.10 is in the game's
+  display and options, and nothing the players compare changed (checked in
+  the source against 0.9.9), so 0.9.10 and 0.9.9 clients and servers play
+  together in either direction, and each plays the other's replays. Servers
+  need no update.
+
+[Release notes](docs/release-0.9.10-notes.md) · [Validation report](docs/release-0.9.10-validation.md) · [Source at v0.9.10](https://github.com/pocketgeek/tak-engine/tree/v0.9.10)
 
 ## 0.9.9
 *2026-10-28 · protocol 303 · replay format 15 · does not play with 0.9.8 or earlier, nor their replays*

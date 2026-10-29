@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.9-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.10-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,14 +26,14 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.9
+## What's new in 0.9.10
 
-- A guarding builder keeps out of a factory's doorway: guards wait on a ring round what they guard, as in the original game.
-- Your idle and guarding units step off a site you build on, and a walking builder refuses a site it can never reach.
-- The AI builds divine lodestones only where they pay; Max FPS can be Unlimited; MAKE POSTER is Shift+P; the Benchmark runs without mods.
+- Hidden Units (Options → Graphics): a tree, rock or building in front of a unit fades out (the default), or the unit shows its tactical dot.
+- Flat scenery (stumps, crops, mana deposits) is drawn under units, as in the original game.
+- macOS: Auto now picks OpenGL, which is faster; Metal no longer draws stray clipped pieces.
 
-Does not play with 0.9.8 or its replays (protocol 303). Details in the
-[CHANGELOG](CHANGELOG.md#099).
+Plays with 0.9.9 and its replays (protocol 303); servers need no update.
+Details in the [CHANGELOG](CHANGELOG.md#0910).
 
 ## Features
 
