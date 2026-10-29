@@ -393,14 +393,15 @@ private:
                      uint32_t simTick, const CommandSink&);
     // What this AI knows of an enemy unit, by id: its type, owner and position
     // when last seen (cx,cz: its projected 32 px view cell, World::viewCount),
-    // the think tick it was, and its strength then.
+    // the think tick it was, and its strength then; `sighted` when that was by
+    // sight, not only heard (a unit hitting ours from out of sight).
     struct Known {
         const tak::sim::UnitType* type = nullptr;
         int player = -1;
         float x = 0, z = 0, strength = 0;
         int cx = 0, cz = 0;
         uint32_t seenAt = 0;
-        bool unfinished = false;
+        bool unfinished = false, sighted = false;
     };
     std::map<int, Known> knowledge_;
     static constexpr uint32_t kMobileMemoryTicks = 25 * 30;

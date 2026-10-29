@@ -68,6 +68,11 @@ static void terrain(sim::World& w,bool islands=false) {
 // The sim's per-player sight (World::viewCount) for the units as they stand: our
 // levels target only what their side has seen, and explore what it has not.
 static void sight(sim::World& w) {w.updateNavigationExploration();}
+// A world past its first tick with no view plane has every unit in sight
+// (World::playerSees). Before the first tick our levels see nothing (there is no
+// view pass yet: Controller::updateKnowledge), so a test that wants all in sight without
+// placing lookouts moves the clock on.
+static void pastStart(sim::World& w) {w.resumeClocks(1,w.gameRngState());}
 static std::vector<net::Command> think(ai::Controller& ai,sim::World& w,uint32_t tick=0) {
     std::vector<net::Command> out;ai.tick(w,tick,[&](const auto& c){out.push_back(c);});return out;
 }
@@ -193,8 +198,8 @@ static void defensiveMeleeTargets(const sim::TypeRegistry& registry,const ai::Pr
 // user's 0.9.10 replay: an Absurd AI with 400 units spent the last 22 minutes
 // ordering its army back and forth to a dead player's start while the last
 // player's two lodestones and four units stood untouched in a far corner. These
-// worlds have no view plane, so every unit is in sight (World::playerSees);
-// visionTargets covers what sight hides.
+// worlds have no view plane and stand past their first tick (pastStart), so
+// every unit is in sight (World::playerSees); visionTargets covers what sight hides.
 static void strikeTargets(const sim::TypeRegistry& registry,const ai::Profile& profile,
                           const sim::UnitType& soldier) {
     auto lode=soldier;lode.id="lode";lode.maxVel={};lode.canMove=false;lode.onMana=true;
@@ -218,6 +223,7 @@ static void strikeTargets(const sim::TypeRegistry& registry,const ai::Profile& p
         // The enemy's start lies razed; its last lodestone stands in a far corner.
         sim::World w;terrain(w);w.player(0).income=100;army(w,35);
         const int last=w.spawn(&lode,3400,3400,0,1);
+        pastStart(w);
         ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
         const auto cs=think(controller,w);
         check(attacks(cs)==35 && aimsAt(cs,w,last)==35,
@@ -229,6 +235,7 @@ static void strikeTargets(const sim::TypeRegistry& registry,const ai::Profile& p
         sim::World w;terrain(w);w.player(0).income=100;const auto ids=army(w,35);
         const int near=w.spawn(&lode,1600,800,0,1),far=w.spawn(&lode,3400,3400,0,1);
         for (int i=0;i<3;++i) w.spawn(&heavy,3800,200+float(i)*40,0,1);   // enough that we are not clearly ahead
+        pastStart(w);
         ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
         auto cs=think(controller,w);
         check(attacks(cs)==35 && aimsAt(cs,w,near)==35,"the push goes for the nearer lodestone first");
@@ -243,6 +250,7 @@ static void strikeTargets(const sim::TypeRegistry& registry,const ai::Profile& p
         for (auto difficulty:{ai::Difficulty::Normal,ai::Difficulty::Hard}) {
             sim::World w;terrain(w);w.player(0).income=100;army(w,35);
             const int a=w.spawn(&lode,3400,800,0,1),b=w.spawn(&lode,3400,3400,0,1);
+            pastStart(w);
             ai::Controller controller(0,registry,profile,1,difficulty,{{3400,800}});
             const auto cs=think(controller,w);
             const int toA=aimsAt(cs,w,a),toB=aimsAt(cs,w,b);
@@ -258,6 +266,7 @@ static void strikeTargets(const sim::TypeRegistry& registry,const ai::Profile& p
         for (int i=0;i<35;++i) w.spawn(&sword,400+float(i%7)*40,800+float(i/7)*40,0,0);
         auto tower=soldier;tower.id="tower";tower.maxVel={};tower.canMove=false;tower.footX=tower.footZ=3;tower.buildCost=500;
         const int last=w.spawn(&tower,3400,3400,0,1);w.blockFoot(tower,3400,3400,true);
+        pastStart(w);
         ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
         const auto cs=think(controller,w);
         check(attacks(cs)==35 && aimsAt(cs,w,last)==35,"melee strikers find their way to the edge of an enemy's last building");
@@ -267,6 +276,7 @@ static void strikeTargets(const sim::TypeRegistry& registry,const ai::Profile& p
         sim::World w;terrain(w);w.player(0).income=100;w.setMonarchExpendable(false);army(w,35);
         auto king=soldier;king.id="king";king.commander=true;king.isBuilder=true;king.buildCost=1000;
         w.spawn(&lode,1600,800,0,1);const int monarch=w.spawn(&king,3400,3400,0,1);
+        pastStart(w);
         ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
         const auto cs=think(controller,w);
         check(attacks(cs)==35 && aimsAt(cs,w,monarch)==35,"a Monarch whose loss defeats its owner draws the strike");
@@ -277,6 +287,7 @@ static void strikeTargets(const sim::TypeRegistry& registry,const ai::Profile& p
         for (auto difficulty:{ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive}) {
             sim::World w;terrain(w);w.player(0).income=100;army(w,30);
             const int last=w.spawn(&lode,3400,3400,0,1);
+            pastStart(w);
             ai::Controller defensive(0,registry,profile,1,difficulty,{{3400,800}});
             // The first think walks the army out of the base (stationArmy).
             for (const auto& c:think(defensive,w)) sim::applyCommand(w,registry,c);
@@ -392,7 +403,40 @@ static void visionTargets(const sim::TypeRegistry& registry,const ai::Profile& p
         sight(w);
         w.unit(ids[6])->lastHitBy=shooter;w.unit(ids[6])->attackedTick=1;
         ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
-        check(aimsAt(think(controller,w),w,1000,800)>0,"an unseen archer hitting our units is a target");
+        const auto cs=think(controller,w);
+        check(aimsAt(cs,w,1000,800)>0,"an unseen archer hitting our units is a target");
+        // Only heard, not seen: the strikers attack-move to where it stands. An
+        // order on it by id would follow it wherever it went out of sight.
+        check(std::none_of(cs.begin(),cs.end(),[&](const auto& c){return c.kind==net::Cmd::Attack && c.targetId==shooter;}),
+              "... gone for where it stands, not ordered on by id");
+    }
+    {
+        // Player 0 thinks at tick 0, before the first view pass: no plane yet,
+        // and World::playerSees would have every unit in sight. It sees nothing
+        // then -- no lodestone across the map, no enemy start checked -- so its
+        // push and scout explore the start (an AI given the map at tick 0 knew
+        // every Monarch and never scouted a start).
+        sim::World w;terrain(w);w.player(0).income=100;
+        w.spawn(&lode,3400,3400,0,1);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        think(controller,w);
+        army(w,35);sight(w);
+        const auto cs=think(controller,w,30);
+        check(attacks(cs)==35 && aimsAt(cs,w,3400,800)==35 && aimsAt(cs,w,3400,3400)==0,
+              "the think at tick 0, before any view pass, learns nothing: the army explores the enemy start");
+    }
+    {
+        // A known enemy building within 600 px of an enemy start finds that base:
+        // the start counts as checked though the spot itself was never in sight,
+        // so the scout goes for the other start instead of into the defences.
+        sim::World w;terrain(w);w.player(0).income=100;army(w,35);
+        w.spawn(&post,3400,1500,0,0);
+        w.spawn(&lode,3400,1300,0,1);
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800},{3400,3400}});
+        const auto cs=think(controller,w,30);
+        check(attacks(cs)==35 && aimsAt(cs,w,3400,1300)==34 && aimsAt(cs,w,3400,3400)==1 && aimsAt(cs,w,3400,800)==0,
+              "an enemy start with a known building near it counts as found: the scout looks elsewhere");
     }
 }
 
@@ -1452,6 +1496,7 @@ int main(int argc,char** argv) {
         w.setTerrain(std::move(heights),256,256,20);w.setVisPlayer(-1);
         auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;
         w.spawn(&boat,1000,800,0,0);
+        pastStart(w);
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{3000,800}});
         check(attacks(think(controller,w))==0,"naval coastal projection rejects a disconnected body of water");
     }
@@ -1465,6 +1510,7 @@ int main(int argc,char** argv) {
         w.setTerrain(std::move(heights),256,256,20);w.setVisPlayer(-1);
         auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;
         w.spawn(&boat,1000,800,0,0);
+        pastStart(w);
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{2700,800}});
         check(attacks(think(controller,w))==0,"naval coastal projection takes the enemy's nearest coast, not a farther lake");
     }

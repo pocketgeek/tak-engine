@@ -1688,7 +1688,7 @@ Controller::StrikeBoard Controller::scanTargets(const tak::sim::World& world) co
         StrikeSite site;
         site.anchor = c.anchor; site.anchorType = c.known->type; site.anchorUnfinished = c.known->unfinished;
         site.x = c.known->x; site.z = c.known->z;
-        site.value = c.value; site.seen = c.seen; site.visible = c.known->seenAt == now_;
+        site.value = c.value; site.seen = c.seen; site.visible = c.known->seenAt == now_ && c.known->sighted;
         for (int i = -1; i <= 1; ++i)
             for (int j = -1; j <= 1; ++j)
                 if (const auto it = index.find({c.cx + i, c.cz + j}); it != index.end()) site.defence += cells[it->second].defence;
@@ -2365,9 +2365,16 @@ static std::pair<int, int> viewCell(const tak::sim::Unit& u) {
 // or cloaked there), a mobile one also once kMobileMemoryTicks have passed, and
 // any that is now ours or an ally's, or whose owner is beaten or no longer an
 // enemy. Then the exploration state:
-// each enemy start and each sector in sight now is stamped with this think.
+// each enemy start and each sector in sight now is stamped with this think, and
+// an enemy start with a known enemy structure within kStartFound of it counts
+// as checked (its base is found: the strikes take it from there).
+// Before the first tick there is no view plane yet (World::updateViewCounts runs
+// after a tick), and World::playerSees then answers "in sight" for everything:
+// the think at tick 0 (player 0's) sees nothing instead.
 void Controller::updateKnowledge(const tak::sim::World& world) {
     constexpr uint32_t kHeardTicks = 5 * 30;
+    constexpr float kStartFound = 600;
+    const bool blind = world.viewCounts().empty() && world.tickCount() == 0;
     const int players = world.numPlayers();
     team_.clear();
     for (int p = 0; p < players; ++p)
@@ -2375,20 +2382,24 @@ void Controller::updateKnowledge(const tak::sim::World& world) {
     auto enemy = [&](int p) {
         return p >= 0 && p < players && p != player_ && !world.isNeutralPlayer(p) && !world.allied(player_, p);
     };
-    auto note = [&](const tak::sim::Unit& u) {
+    auto note = [&](const tak::sim::Unit& u, bool sighted) {
         const auto [cx, cz] = viewCell(u);
-        knowledge_[u.id] = {u.type, u.player, u.x.toFloat(), u.z.toFloat(), strength(u), cx, cz, now_, u.underConstruction};
+        knowledge_[u.id] = {u.type, u.player, u.x.toFloat(), u.z.toFloat(), strength(u), cx, cz, now_, u.underConstruction,
+                            sighted};
     };
-    for (const auto& u : world.units())
-        if (u.alive() && u.type && !u.embarked() && enemy(u.player) && teamSees(world, u)) note(u);
+    if (!blind)
+        for (const auto& u : world.units())
+            if (u.alive() && u.type && !u.embarked() && enemy(u.player) && teamSees(world, u)) note(u, true);
     for (const auto& v : world.units()) {
         if (!v.alive() || v.player != player_ || !v.lastHitBy || !v.attackedTick ||
             world.tickCount() > v.attackedTick + kHeardTicks) continue;
         const auto* e = world.unit(v.lastHitBy);
         if (!e || !e->alive() || !e->type || e->embarked() || !enemy(e->player)) continue;
+        if (const auto k = knowledge_.find(e->id); k != knowledge_.end() && k->second.seenAt == now_ && k->second.sighted)
+            continue;   // in sight as well: noted as seen
         const float reach = std::max(float(e->type->weapon.range), e->type->maxRange()) + 64;
         const float dx = e->x.toFloat() - v.x.toFloat(), dz = e->z.toFloat() - v.z.toFloat();
-        if (dx * dx + dz * dz <= reach * reach) note(*e);
+        if (dx * dx + dz * dz <= reach * reach) note(*e, false);
     }
     for (auto it = knowledge_.begin(); it != knowledge_.end();) {
         const auto& k = it->second;
@@ -2419,8 +2430,18 @@ void Controller::updateKnowledge(const tak::sim::World& world) {
         return teamViews(world, int(std::clamp(x, 0.0f, std::max(mapX - 1, 0.0f))) >> 5,
                          int(std::clamp(z, 0.0f, std::max(mapZ - 1, 0.0f))) >> 5);
     };
-    for (size_t i = 0; i < enemyStarts_.size(); ++i)
-        if (inSight(enemyStarts_[i].first, enemyStarts_[i].second)) startSeen_[i] = now_ + 1;
+    for (size_t i = 0; i < enemyStarts_.size(); ++i) {
+        // Apple Clang 15 cannot capture structured bindings in a lambda.
+        const float stx = enemyStarts_[i].first, stz = enemyStarts_[i].second;
+        if (!blind && inSight(stx, stz)) startSeen_[i] = now_ + 1;
+        if (startSeen_[i]) continue;
+        if (std::any_of(knowledge_.begin(), knowledge_.end(), [&](const auto& e) {
+                const float dx = e.second.x - stx, dz = e.second.z - stz;
+                return e.second.type->isStructure() && dx * dx + dz * dz <= kStartFound * kStartFound;
+            }))
+            startSeen_[i] = now_ + 1;
+    }
+    if (blind) return;
     // A sector is in sight when its centre or a point halfway to a corner is.
     for (int sz = 0; sz < sectorsZ_; ++sz)
         for (int sx = 0; sx < sectorsX_; ++sx) {
