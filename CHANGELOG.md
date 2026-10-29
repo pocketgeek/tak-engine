@@ -24,6 +24,10 @@ their validation reports; both live in [`docs/`](docs/).
 - **Streaming keeps to YouTube's bitrate**, above which YouTube could connect
   but never start the broadcast: the panel caps it there (a saved higher value is
   lowered, with a note), adds **Recommended**, and warns when the upload can't keep up.
+- **Big late games no longer stall on the AI's lodestone search.** Absurd AIs looked
+  at every deposit on a large map each time a builder chose a site, which cost
+  300-800 ms in a single tick and dropped the game speed below +0; they now take
+  the nearest usable one (same choice, a fraction of the work).
 
 ## 0.9.11
 *2026-10-29 · protocol 304 · replay format 15 · does not play with 0.9.10 or earlier, nor their replays*

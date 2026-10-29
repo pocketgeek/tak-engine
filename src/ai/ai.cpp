@@ -1308,6 +1308,13 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     // build its way into an enemy's base (Frey River Plain, Absurdly Defensive: its
     // base and army reached 140 px from the idle enemy's within the hour).
     const float ownRadius=dp_.unbounded ? (t->onMana && !builder.type->commander ? 1600.0f : 600.0f) : radius;
+    // Our own structures, gathered on the first site that reaches the spacing test below
+    // rather than scanned (with two build-tree lookups apiece) for every candidate: a
+    // lodestone search may test thousands of deposits. A structure that can neither be a
+    // production building nor (lane 0) take a lane never rejects a site, so it is left out.
+    struct OwnStructure {float x,z;int footX,footZ;bool menu;};
+    std::vector<OwnStructure> ownStructures;
+    bool ownGathered=false;
     auto usable=[&](float x,float z) {
         const float dx=x-home.first,dz=z-home.second;
         if (dx*dx+dz*dz>radius*radius || !world.canPlace(t,x,z,player_)) return false;
@@ -1411,22 +1418,32 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             const float clearance=float(std::max(t->footX,t->footZ))*8+12;
             if (ax*ax+az*az<clearance*clearance) return false;
         }
-        for (const auto& u : world.units()) {
-            if (!u.alive() || u.player!=player_ || !u.type || !u.type->isStructure()) continue;
-            if (registry_.buildable(u.type->id).empty() && registry_.buildable(t->id).empty()) {
+        if (!ownGathered) {
+            ownGathered=true;
+            std::unordered_map<const tak::sim::UnitType*,bool> menus;
+            for (const auto& u : world.units()) {
+                if (!u.alive() || u.player!=player_ || !u.type || !u.type->isStructure()) continue;
+                auto m=menus.find(u.type);
+                if (m==menus.end()) m=menus.emplace(u.type,!registry_.buildable(u.type->id).empty()).first;
+                if (m->second || factory || lane>0)
+                    ownStructures.push_back({u.x.toFloat(),u.z.toFloat(),u.type->footX,u.type->footZ,m->second});
+            }
+        }
+        for (const auto& u : ownStructures) {
+            if (!u.menu && !factory) {
                 // The unbounded levels pack a growing base: keep a 48 px lane
                 // between any two of its buildings, or they wall their own builders
                 // and siege engines into pockets (Ulasem Arena, Absurdly Defensive:
                 // two arabuilds shut in by 46 minutes, every site unreachable, the
                 // store full). A deposit is where it is; a lodestone takes no lane.
-                if (lane>0 && std::abs(x-u.x.toFloat()) < float(t->footX+u.type->footX)*8+lane &&
-                    std::abs(z-u.z.toFloat()) < float(t->footZ+u.type->footZ)*8+lane) return false;
+                if (lane>0 && std::abs(x-u.x) < float(t->footX+u.footX)*8+lane &&
+                    std::abs(z-u.z) < float(t->footZ+u.footZ)*8+lane) return false;
                 continue;
             }
             // Leave working room around production buildings, including their
             // scripted output point. Placement validity alone allows blocked doors.
-            if (std::abs(x-u.x.toFloat()) < float(t->footX+u.type->footX)*8+48 &&
-                std::abs(z-u.z.toFloat()) < float(t->footZ+u.type->footZ)*8+48) return false;
+            if (std::abs(x-u.x) < float(t->footX+u.footX)*8+48 &&
+                std::abs(z-u.z) < float(t->footZ+u.footZ)*8+48) return false;
         }
         if (!builder.type->canFly && !world.pathExists(builder.type,approachX,approachZ,builder.x.toFloat(),builder.z.toFloat())) return false;
         if (waterUnit && !enemyStarts_.empty()) {
@@ -1446,8 +1463,6 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
         return true;
     }
     if (t->onMana && world.hasManaSpots()) {
-        float bestD = 1e18f;
-        bool found = false;
         // Every difficulty reserves: Normal allies, and two builders of one AI,
         // raced for the same free deposit as Hard and Absurd once did.
         std::vector<std::pair<float,float>> reservedSites=plannedManaSites_;
@@ -1468,7 +1483,21 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
                     reservedSites.emplace_back(order.buildX.toFloat(),order.buildZ.toFloat());
         }
         const auto& deposits=world.manaSpots();
+        // Nearest first: the first deposit to pass is the nearest that can pass, so the
+        // costly usable() test runs on a handful of them rather than on all (an Absurd
+        // builder's radius is the whole map). Ties go to the lower index, as the strict
+        // < of a scan in index order did.
+        std::vector<std::pair<float,size_t>> byDistance(deposits.size());
         for (size_t i=0;i<deposits.size();++i) {
+            const float dx=deposits[i].first-nx,dz=deposits[i].second-nz;
+            byDistance[i]={dx*dx+dz*dz,i};
+        }
+        const auto later=[](const auto& a,const auto& b) {return a.first>b.first || (a.first==b.first && a.second>b.second);};
+        std::make_heap(byDistance.begin(),byDistance.end(),later);
+        for (auto last=byDistance.end();last!=byDistance.begin();) {
+            std::pop_heap(byDistance.begin(),last,later);
+            --last;
+            const size_t i=last->second;
             // Apple Clang 15 cannot capture structured bindings in this lambda.
             const float sx=deposits[i].first,sz=deposits[i].second;
             if (std::any_of(reservedSites.begin(),reservedSites.end(),[sx,sz](const auto& spot) {
@@ -1484,10 +1513,10 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             if (i<allyHeldDeposits_.size() && allyHeldDeposits_[i] &&
                 !world.lodestoneUpgradeSource(t,sx,sz,player_)) continue;
             if (!usable(sx, sz)) continue;   // taken or blocked
-            float dx = sx - nx, dz = sz - nz, d = dx * dx + dz * dz;
-            if (d < bestD) { bestD = d; outX = sx; outZ = sz; found = true; }
+            outX = sx; outZ = sz;
+            return true;
         }
-        return found;
+        return false;
     }
     const float searchRadius = naval ? std::min(radius,2400.0f) : t->minWaterDepth>0 ? std::min(radius,1600.0f) : 340.0f;
     // A yard's door never turns (buildings do not rotate), so a yard on the
