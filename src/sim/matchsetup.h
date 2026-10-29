@@ -170,8 +170,13 @@ std::vector<int> startSpotsFor(const std::vector<MatchSlot>& slots, size_t autho
 void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs& vfs,
                          const TypeRegistry* reg = nullptr);
 
+// `startTable`, when given, receives every spot a seat could have opened at: the
+// map's starts (a generated map's, the benchmark ring), with any extra spots for
+// more seats than starts, in no particular order. A map scenario that places
+// units leaves it untouched.
 std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry& reg,
-                                                const MatchConfig& cfg);
+                                                const MatchConfig& cfg,
+                                                std::vector<std::pair<float, float>>* startTable = nullptr);
 
 // Build the world for a campaign mission: terrain + features (reusing setupMatch), the
 // placed units and player slots from the mission `.ota`, and the in-sim MissionScript

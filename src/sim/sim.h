@@ -2366,9 +2366,15 @@ public:
     void setDoubleSight(bool enabled) { doubleSight_ = enabled; }
     // The room's (or campaign .ota's) starting vision, as retail's 4c6540 seeds it:
     // Map Revealed fills the Mapping plane (every cell explored), and FULL VISION
-    // also turns LosOn off. Only area clear reads these (its 509cc0 fog test);
-    // the exploration plane itself still starts unexplored. Hashed when set.
+    // also turns LosOn off. In the sim only area clear reads these (its 509cc0
+    // fog test); the exploration plane itself still starts unexplored. Hashed
+    // when set.
     void setRoomVision(bool mapRevealed, bool losOff) { roomMapRevealed_ = mapRevealed; roomLosOff_ = losOff; }
+    // What the room's FOG OF WAR shows every seat: the whole map explored
+    // (EXPLORED, FULL VISION) and every unit in sight (FULL VISION). Our AI
+    // levels read these to know what a human in their seat would see.
+    bool roomMapRevealed() const { return roomMapRevealed_; }
+    bool roomLosOff() const { return roomLosOff_; }
     // Power codes (sim/powercodes.h; the room's POWER CODES option). setPowerCodes
     // also starts every code at its off state: no damage mode, line of sight on for
     // every player, and the shroud on unless the room starts with the map revealed

@@ -392,8 +392,11 @@ struct Room {
     // The token a seat had when an AI took it over, so a late reconnect is told why.
     uint64_t takenToken[kMaxSlots] = {};
     // Where each slot started (for an AI that takes a seat over mid-game: the enemy
-    // starts it marches on, as a seated AI is given at the start).
+    // starts it marches on, as a seated AI is given at the start), and, for a
+    // skirmish under RANDOM start locations, every spot a seat could have opened at
+    // (aiStartSpots).
     std::vector<std::pair<float, float>> slotPos;
+    std::vector<std::pair<float, float>> randomStartTable;
     bool paused = false;                        // the host paused the game (Msg::SetPause)
     std::shared_ptr<tak::net::mods::Package> modPackage;
     std::future<TickResult> tickJob;
@@ -415,6 +418,15 @@ struct Room {
         return n;
     }
 };
+
+// The start spots an AI in `slot` knows an enemy may have opened at (ai::enemyStartSpots).
+static std::vector<tak::ai::StartSpot> aiStartSpots(const Room& r, int slot) {
+    std::vector<uint8_t> seated(r.slotPos.size(), 0);
+    for (size_t j = 0; j < seated.size() && j < size_t(kMaxSlots); ++j)
+        seated[j] = r.slots[j].type == 1 || r.slots[j].type == 2;
+    return tak::ai::enemyStartSpots(slot, r.slotPos, seated, [&](int a, int b) { return r.ref->allied(a, b); },
+                                    r.randomStartTable);
+}
 
 class Server {
 public:
@@ -1973,8 +1985,8 @@ void Server::tryStart(Client& c) {
             cfg.vfs = r->mapVfs ? r->mapVfs.get() : &ds->vfs;
             cfg.mapPath = mapPath;
             const int maxSlot = int(cfg.slots.size()) - 1;
-            std::vector<std::pair<float,float>> spots;
-            try { spots = tak::sim::setupMatch(*r->ref, *r->reg, cfg); }
+            std::vector<std::pair<float,float>> spots, startTable;
+            try { spots = tak::sim::setupMatch(*r->ref, *r->reg, cfg, &startTable); }
             catch (const tak::sim::ScenarioTypeMissing& e) {
                 // Named for the player: under CRUSADES it is usually a standard unit the
                 // Crusades roster leaves out, and turning CRUSADES off is the way to play.
@@ -1997,6 +2009,9 @@ void Server::tryStart(Client& c) {
                     ++k;
                 }
             r->slotPos = slotPos;
+            r->randomStartTable.clear();
+            if (cfg.startMode == tak::sim::StartMode::Random && !cfg.benchmark && startTable.size() > 1)
+                r->randomStartTable = startTable;
             r->ai.reserve(size_t(maxSlot + 1));
             // The Classic level bakes retail's profile from the map's own aiprofile
             // file (every shipped skirmish map names DEFAULT); read once per game.
@@ -2015,6 +2030,7 @@ void Server::tryStart(Client& c) {
                     auto diff = tak::ai::difficultyFromLevel(r->slots[i].aiLevel);
                     r->ai.emplace_back(i, *r->reg, r->aiProfiles[size_t(diff)], r->seed,
                                        diff, std::move(enemyStarts));
+                    r->ai.back().setStartSpots(aiStartSpots(*r, i));
                     if (diff == tak::ai::Difficulty::Classic) {
                         if (!classicProfile)
                             classicProfile = classicProfileFor(*r, tak::ai::classicMapAiProfile(*cfg.vfs, mapPath),
@@ -2815,6 +2831,7 @@ void Server::takeOver(Room& r, int slot) {
         r.ai.emplace_back(slot, *r.reg, r.aiProfiles[size_t(tak::ai::Difficulty::Normal)],
                           r.seed + uint32_t(slot),
                           tak::ai::Difficulty::Normal, std::move(enemyStarts));
+        r.ai.back().setStartSpots(aiStartSpots(r, slot));
     }
     std::fprintf(stderr, "game %u: player %d stopped communicating -- AI (Normal) takes over\n", r.id, slot);
     // The host's in-game controls (pause, speed) pass to a player still connected.

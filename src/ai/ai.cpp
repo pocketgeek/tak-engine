@@ -69,6 +69,37 @@ Controller::Controller(int player, const tak::sim::TypeRegistry& registry,
       rng_(seed), diff_(difficulty), dp_(paramsFor(difficulty)),
       enemyStarts_(std::move(enemyStarts)) {
     if (diff_ == Difficulty::Classic) classic_ = std::make_unique<ClassicBrain>(player, seed, registry);
+    for (const auto& [x, z] : enemyStarts_) starts_.push_back({x, z, -1});
+}
+
+std::vector<StartSpot> enemyStartSpots(int slot, const std::vector<std::pair<float, float>>& slotPos,
+                                       const std::vector<uint8_t>& seated,
+                                       const std::function<bool(int, int)>& allied,
+                                       const std::vector<std::pair<float, float>>& randomTable) {
+    std::vector<StartSpot> out;
+    auto isSeated = [&](int j) { return size_t(j) < seated.size() && seated[size_t(j)]; };
+    if (randomTable.empty()) {
+        for (int j = 0; j < int(slotPos.size()); ++j) {
+            if (j == slot || !isSeated(j) || allied(slot, j)) continue;
+            if (slotPos[size_t(j)].first == 0.0f && slotPos[size_t(j)].second == 0.0f) continue;
+            out.push_back({slotPos[size_t(j)].first, slotPos[size_t(j)].second, j});
+        }
+        return out;
+    }
+    for (const auto& spot : randomTable) {
+        bool known = false;   // ours or an ally's
+        for (int j = 0; j < int(slotPos.size()) && !known; ++j)
+            known = isSeated(j) && (j == slot || allied(slot, j)) && slotPos[size_t(j)] == spot;
+        if (!known) out.push_back({spot.first, spot.second, -1});
+    }
+    return out;
+}
+
+void Controller::setStartSpots(std::vector<StartSpot> spots) {
+    starts_ = std::move(spots);
+    enemyStarts_.clear();
+    for (const auto& s : starts_) enemyStarts_.emplace_back(s.x, s.z);
+    startSeen_.clear();   // updateKnowledge sizes the start state afresh
 }
 
 void Controller::setClassicProfile(const ClassicProfileScript& script) {
@@ -1315,9 +1346,12 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
     struct OwnStructure {float x,z;int footX,footZ;bool menu;};
     std::vector<OwnStructure> ownStructures;
     bool ownGathered=false;
+    // A deposit held by an enemy building this AI has never seen looks free to
+    // it (the deposit search below): placement is then not asked.
+    bool looksFree=false;
     auto usable=[&](float x,float z) {
         const float dx=x-home.first,dz=z-home.second;
-        if (dx*dx+dz*dz>radius*radius || !world.canPlace(t,x,z,player_)) return false;
+        if (dx*dx+dz*dz>radius*radius || !(looksFree || world.canPlace(t,x,z,player_))) return false;
         if (dx*dx+dz*dz>ownRadius*ownRadius && enemySide(x,z,home.first,home.second)) return false;
         if (std::any_of(refusedSites_.begin(),refusedSites_.end(),[&](const RefusedSite& r) {
                 return std::abs(r.x-x)<float(t->footX)*8+16 && std::abs(r.z-z)<float(t->footZ)*8+16; }) ||
@@ -1483,6 +1517,33 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
                     reservedSites.emplace_back(order.buildX.toFloat(),order.buildZ.toFloat());
         }
         const auto& deposits=world.manaSpots();
+        // What this AI knows of the deposits is what a player in its seat sees: those
+        // on ground its side has explored (groundKnown: all of them on a map the room
+        // reveals), each taken by a lodestone it knows of (knowledge_) or can see --
+        // ours and our allies' always. One an unseen enemy building holds looks free,
+        // and the builder sent there finds it taken (a seen building then) and the
+        // next think picks another.
+        struct Unseen { float x,z,reach; };
+        std::optional<std::vector<Unseen>> unseen;   // gathered at the first taken deposit
+        auto unseenHolder=[&](float sx,float sz) {
+            if (!unseen) {
+                unseen.emplace();
+                for (const auto& u:world.units())
+                    if (u.alive() && u.type && u.type->isStructure() && !world.isNeutralPlayer(u.player) &&
+                        !world.allied(player_,u.player) && !knowledge_.count(u.id) && !teamSees(world,u))
+                        unseen->push_back({u.x.toFloat(),u.z.toFloat(),
+                                           float(std::max(u.type->footX,u.type->footZ)+std::max(t->footX,t->footZ))*8+44});
+            }
+            return std::any_of(unseen->begin(),unseen->end(),[&](const Unseen& e) {
+                const float dx=e.x-sx,dz=e.z-sz;return dx*dx+dz*dz<e.reach*e.reach;
+            });
+        };
+        auto knownTaken=[&](float sx,float sz) {
+            return std::any_of(knowledge_.begin(),knowledge_.end(),[&](const auto& e) {
+                const float dx=e.second.x-sx,dz=e.second.z-sz;
+                return e.second.type->onMana && e.second.type->isStructure() && dx*dx+dz*dz<44*44;
+            });
+        };
         // Nearest first: the first deposit to pass is the nearest that can pass, so the
         // costly usable() test runs on a handful of them rather than on all (an Absurd
         // builder's radius is the whole map). Ties go to the lower index, as the strict
@@ -1512,7 +1573,11 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
             // there is not a claim on it.
             if (i<allyHeldDeposits_.size() && allyHeldDeposits_[i] &&
                 !world.lodestoneUpgradeSource(t,sx,sz,player_)) continue;
-            if (!usable(sx, sz)) continue;   // taken or blocked
+            if (!groundKnown(world,sx,sz) || knownTaken(sx,sz)) continue;
+            looksFree=!world.canPlace(t,sx,sz,player_) && unseenHolder(sx,sz);
+            const bool ok=usable(sx, sz);
+            looksFree=false;
+            if (!ok) continue;   // taken or blocked
             outX = sx; outZ = sz;
             return true;
         }
@@ -1629,28 +1694,57 @@ bool Controller::canHurt(const tak::sim::UnitType* a, const tak::sim::UnitType* 
 // AI finishes a player off instead of leaving a lone lodestone standing; an armed
 // unit adds its strength as threat, up to three times over near our home. Its
 // armed strength is also the site's defence, summed with the eight cells around
-// it so a lodestone under a tower line is not taken for bare. How many units a
-// player has left, and the armed strength of every enemy against ours (ahead),
-// are counts a player reads off the score screen, not sightings: they are taken
-// from the whole world.
+// it so a lodestone under a tower line is not taken for bare. A seated player's
+// score table shows who is still in the game, not how many units each has or how
+// strong they are, so those are reckoned from what this AI knows. An enemy whose
+// home -- its start, as the room showed it or as its buildings found it -- this
+// AI has had in sight within kLookedTicks is as strong as the armed units it
+// knows of, and has the units it knows of left (for finishing it off); any other
+// is taken to be at least as strong as this AI's own fighters, with kUnseenUnits
+// more units: an AI that has not looked cannot believe itself far ahead. Being
+// ahead of what it knows alone (knownAhead) is reason enough to go and look.
 Controller::StrikeBoard Controller::scanTargets(const tak::sim::World& world) const {
+    constexpr float kUnseenUnits = 20;
+    constexpr uint32_t kLookedTicks = 5 * 60 * 30;
     StrikeBoard board;
     const int players = world.numPlayers();
-    std::vector<uint8_t> enemy(size_t(std::max(players, 0)), 0);
-    std::vector<int> left(enemy.size(), 0);
+    std::vector<uint8_t> enemy(size_t(std::max(players, 0)), 0), present(enemy.size(), 0);
+    std::vector<float> left(enemy.size(), 0), known(enemy.size(), 0);
     for (int p = 0; p < players; ++p)
         enemy[size_t(p)] = p != player_ && !world.isNeutralPlayer(p) && !world.allied(player_, p) &&
                            !world.player(p).defeated;
-    bool any = false;   // some enemy unit is still in the game
     for (const auto& u : world.units()) {
-        if (!u.alive() || !u.type || u.embarked() || u.player < 0 || u.player >= players) continue;
-        if (enemy[size_t(u.player)]) {
-            ++left[size_t(u.player)];
-            any = true;
-            if (armed(u.type) && !u.underConstruction) board.theirs += strength(u);
-        } else if (u.player == player_ && !u.type->isStructure() && !u.type->isBuilder && !u.underConstruction &&
-                 armed(u.type))
+        if (!u.alive() || !u.type || u.player < 0 || u.player >= players) continue;
+        present[size_t(u.player)] = 1;
+        if (u.player == player_ && !u.embarked() && !u.type->isStructure() && !u.type->isBuilder &&
+            !u.underConstruction && armed(u.type))
             board.ours += strength(u);
+    }
+    for (const auto& [id, k] : knowledge_) {
+        if (k.player < 0 || k.player >= players || !enemy[size_t(k.player)]) continue;
+        ++left[size_t(k.player)];
+        if (armed(k.type) && !k.unfinished) known[size_t(k.player)] += k.strength;
+    }
+    // With every unit in sight (FULL VISION, or past the first tick with no view
+    // plane: World::playerSees) every home is; before the first tick, none is.
+    std::vector<uint8_t> looked(enemy.size(),
+                                fullVision(world) || (world.viewCounts().empty() && world.tickCount() != 0));
+    for (size_t i = 0; i < starts_.size() && i < startSeen_.size(); ++i) {
+        const int owner = starts_[i].owner;
+        if (owner >= 0 && owner < players && startSeen_[i] && now_ + 1 - startSeen_[i] <= kLookedTicks)
+            looked[size_t(owner)] = 1;
+    }
+    bool any = false;   // some enemy is still in the game
+    float knownTheirs = 0;
+    for (int p = 0; p < players; ++p) {
+        if (!enemy[size_t(p)] || !present[size_t(p)]) continue;
+        any = true;
+        knownTheirs += known[size_t(p)];
+        if (looked[size_t(p)]) board.theirs += known[size_t(p)];
+        else {
+            board.theirs += std::max(known[size_t(p)], board.ours);
+            left[size_t(p)] += kUnseenUnits;
+        }
     }
     const auto [hx, hz] = homeOf(world);
     const bool expendable = world.monarchExpendable();
@@ -1666,7 +1760,7 @@ Controller::StrikeBoard Controller::scanTargets(const tak::sim::World& world) co
         if (t->onMana) v *= 3;
         else if (t->isBuilder || categoryOf(t) == BuildCat::Factory) v *= 2;
         if (t->commander && !expendable) v = v * 4 + 4000;
-        v += 1500.0f / float(std::max(left[size_t(k.player)], 1));
+        v += 1500.0f / std::max(left[size_t(k.player)], 1.0f);
         if (threat > 0) {
             const float dx = x - hx, dz = z - hz;
             v += threat * (1 + 2 * std::max(0.0f, 1 - std::sqrt(dx * dx + dz * dz) / 2500));
@@ -1696,7 +1790,9 @@ Controller::StrikeBoard Controller::scanTargets(const tak::sim::World& world) co
     }
     // Clearly ahead: an attacking level then commits whatever is idle and a defensive
     // level goes out to scout and clean up; the defensive levels want a wider margin.
-    board.ahead = any && board.ours > 0 && board.ours >= board.theirs * (defensiveLevel(diff_) ? 5.0f : 3.0f);
+    const float margin = defensiveLevel(diff_) ? 5.0f : 3.0f;
+    board.ahead = any && board.ours > 0 && board.ours >= board.theirs * margin;
+    board.knownAhead = any && board.ours > 0 && board.ours >= knownTheirs * margin;
     board.winning = board.ahead && !board.sites.empty();
     return board;
 }
@@ -2341,14 +2437,41 @@ void Controller::stationArmy(const tak::sim::World& world, std::vector<int>& ass
 
 // What this AI sees: whatever its own and its allies' units see (the shared team
 // vision a player's screen shows), by the sim's per-player view counters
-// (World::playerSees, viewCount) -- never the display fog, which is local.
+// (World::playerSees, viewCount) -- never the display fog, which is local. Under
+// FULL VISION a seat's screen shows every unit that is not cloaked or carried.
 bool Controller::teamSees(const tak::sim::World& world, const tak::sim::Unit& u) const {
+    if (fullVision(world)) return u.alive() && u.type && !u.cloaked && !u.embarked();
+    if (team_.empty()) return world.playerSees(player_, u);   // before the first think
     return std::any_of(team_.begin(), team_.end(), [&](int p) { return world.playerSees(p, u); });
 }
 
 bool Controller::teamViews(const tak::sim::World& world, int cx, int cz) const {
-    if (world.viewCounts().empty()) return true;   // no view plane: everything is in sight, as playerSees
+    // No view plane: everything is in sight, as playerSees.
+    if (world.viewCounts().empty() || fullVision(world)) return true;
     return std::any_of(team_.begin(), team_.end(), [&](int p) { return world.viewCount(p, cx, cz) > 0; });
+}
+
+bool Controller::fullVision(const tak::sim::World& world) const { return world.roomLosOff(); }
+
+// The exploration plane holds a bit per player for each 32 px cell its own or an
+// ally's sight has explored (World::updateNavigationExploration), so this seat's
+// own bit covers the team.
+bool Controller::groundKnown(const tak::sim::World& world, float x, float z) const {
+    if (world.roomMapRevealed() || world.roomLosOff() || world.powerMappingOff(player_) ||
+        std::any_of(team_.begin(), team_.end(), [&](int p) { return world.powerMappingOff(p); }))
+        return true;
+    const auto& plane = world.navigationExploration();
+    const int width = world.mapW() / 2, height = world.mapH() / 2;
+    if (width <= 0 || height <= 0 || plane.size() != size_t(width) * size_t(height) || player_ < 0 || player_ >= 16)
+        return true;
+    const int cx = std::clamp(int(x) >> 5, 0, width - 1), cz = std::clamp(int(z) >> 5, 0, height - 1);
+    return (plane[size_t(cz) * size_t(width) + size_t(cx)] >> player_ & 1) != 0;
+}
+
+int Controller::sectorOf(float x, float z) const {
+    if (!sectorsX_ || sectorSize_ <= 0) return -1;
+    const int sx = std::clamp(int(x / sectorSize_), 0, sectorsX_ - 1), sz = std::clamp(int(z / sectorSize_), 0, sectorsZ_ - 1);
+    return sx + sz * sectorsX_;
 }
 
 // A unit's projected 32 px view cell (World::playerSees' corner rule, at its centre).
@@ -2364,14 +2487,17 @@ static std::pair<int, int> viewCell(const tak::sim::Unit& u) {
 // forgotten when the spot it was last seen on is in sight again (it died, left
 // or cloaked there), a mobile one also once kMobileMemoryTicks have passed, and
 // any that is now ours or an ally's, or whose owner is beaten or no longer an
-// enemy. Then the exploration state:
-// each enemy start and each sector in sight now is stamped with this think.
+// enemy. Then the exploration state: each start and each sector in sight now is
+// stamped with this think (a sector's scout losses are then forgotten), and the
+// starts' owners and bases are worked out (starts_, startGone_).
 // Before the first tick there is no view plane yet (World::updateViewCounts runs
 // after a tick), and World::playerSees then answers "in sight" for everything:
-// the think at tick 0 (player 0's) sees nothing instead.
+// the think at tick 0 (player 0's) sees nothing instead -- unless the room plays
+// with FULL VISION, where every seat sees everything from the start.
 void Controller::updateKnowledge(const tak::sim::World& world) {
     constexpr uint32_t kHeardTicks = 5 * 30;
-    const bool blind = world.viewCounts().empty() && world.tickCount() == 0;
+    constexpr float kStartFound = 600;
+    const bool blind = world.viewCounts().empty() && world.tickCount() == 0 && !fullVision(world);
     const int players = world.numPlayers();
     team_.clear();
     for (int p = 0; p < players; ++p)
@@ -2418,28 +2544,97 @@ void Controller::updateKnowledge(const tak::sim::World& world) {
         sectorsZ_ = std::max(1, int(std::ceil(mapZ / sectorSize_)));
         sectorSeen_.assign(size_t(sectorsX_) * size_t(sectorsZ_), 0);
         sectorClaim_.assign(sectorSeen_.size(), 0);
+        // A deposit draws builders, and so an enemy: a sector holding some is
+        // worth more of a look than an empty corner. Every deposit on the map is
+        // ground a player sees once it is explored, and is never taken away.
+        sectorLure_.assign(sectorSeen_.size(), 1.0f);
+        std::vector<int> deposits(sectorSeen_.size(), 0);
+        for (const auto& [x, z] : world.manaSpots())
+            if (const int sec = sectorOf(x, z); sec >= 0) ++deposits[size_t(sec)];
+        for (size_t i = 0; i < deposits.size(); ++i) sectorLure_[i] += 0.5f * float(std::min(deposits[i], 4));
     }
-    if (startSeen_.size() != enemyStarts_.size()) {
-        startSeen_.assign(enemyStarts_.size(), 0);
-        startClaim_.assign(enemyStarts_.size(), 0);
+    if (startSeen_.size() != starts_.size()) {
+        startSeen_.assign(starts_.size(), 0);
+        startClaim_.assign(starts_.size(), 0);
+        startGone_.assign(starts_.size(), 0);
+        startBase_.assign(starts_.size(), 0);
     }
     auto inSight = [&](float x, float z) {
         return teamViews(world, int(std::clamp(x, 0.0f, std::max(mapX - 1, 0.0f))) >> 5,
                          int(std::clamp(z, 0.0f, std::max(mapZ - 1, 0.0f))) >> 5);
     };
-    if (blind) return;
-    for (size_t i = 0; i < enemyStarts_.size(); ++i)
-        if (inSight(enemyStarts_[i].first, enemyStarts_[i].second)) startSeen_[i] = now_ + 1;
-    // A sector is in sight when its centre or a point halfway to a corner is.
-    for (int sz = 0; sz < sectorsZ_; ++sz)
-        for (int sx = 0; sx < sectorsX_; ++sx) {
-            float x = 0, z = 0;
-            if (!sectorCentre(sx + sz * sectorsX_, mapX, mapZ, x, z)) continue;
-            const float q = sectorSize_ / 4;
-            if (inSight(x, z) || inSight(x - q, z - q) || inSight(x + q, z - q) || inSight(x - q, z + q) ||
-                inSight(x + q, z + q))
-                sectorSeen_[size_t(sx + sz * sectorsX_)] = now_ + 1;
+    if (!blind) {
+        for (size_t i = 0; i < starts_.size(); ++i)
+            if (inSight(starts_[i].x, starts_[i].z)) startSeen_[i] = now_ + 1;
+        // A sector is in sight when its centre or a point halfway to a corner is.
+        for (int sz = 0; sz < sectorsZ_; ++sz)
+            for (int sx = 0; sx < sectorsX_; ++sx) {
+                float x = 0, z = 0;
+                const int sec = sx + sz * sectorsX_;
+                if (!sectorCentre(sec, mapX, mapZ, x, z)) continue;
+                const float q = sectorSize_ / 4;
+                if (inSight(x, z) || inSight(x - q, z - q) || inSight(x + q, z - q) || inSight(x - q, z + q) ||
+                    inSight(x + q, z + q)) {
+                    sectorSeen_[size_t(sec)] = now_ + 1;
+                    slotLosses_.erase(sec);
+                }
+            }
+    }
+    // The starts. A known enemy building near one is that enemy's base: the start
+    // takes its owner when the room did not say whose it is. A start whose owner
+    // is beaten, or (owner unknown) that is in sight with no enemy building known
+    // near it, holds no enemy now; nor does one of unknown owner once every enemy
+    // still in the game has been found at another. Who is still in the game a
+    // player reads off the score table, which lists every player with a unit left.
+    std::vector<uint8_t> present(size_t(std::max(players, 0)), 0), located(present.size(), 0);
+    for (const auto& u : world.units())
+        if (u.alive() && u.player >= 0 && u.player < players) present[size_t(u.player)] = 1;
+    for (size_t i = 0; i < starts_.size(); ++i) {
+        if (startGone_[i]) continue;
+        auto& spot = starts_[i];
+        int nearest = -1;
+        float best = kStartFound * kStartFound;
+        for (const auto& [id, k] : knowledge_) {
+            if (!k.type->isStructure() || !enemy(k.player)) continue;
+            const float dx = k.x - spot.x, dz = k.z - spot.z, d = dx * dx + dz * dz;
+            if (d <= best) { best = d; nearest = k.player; }
         }
+        startBase_[i] = nearest >= 0;
+        if (spot.owner < 0 && nearest >= 0) spot.owner = nearest;
+        if (spot.owner >= 0)
+            startGone_[i] = !enemy(spot.owner) || world.player(spot.owner).defeated || !present[size_t(spot.owner)];
+        else
+            startGone_[i] = startSeen_[i] == now_ + 1;
+        if (!startGone_[i] && spot.owner >= 0) located[size_t(spot.owner)] = 1;
+    }
+    bool everyoneFound = false;
+    for (int p = 0; p < players; ++p)
+        if (enemy(p) && present[size_t(p)] && !world.player(p).defeated) {
+            everyoneFound = located[size_t(p)];
+            if (!everyoneFound) break;
+        }
+    enemyStarts_.clear();
+    for (size_t i = 0; i < starts_.size(); ++i) {
+        if (everyoneFound && starts_[i].owner < 0) startGone_[i] = 1;
+        if (!startGone_[i]) enemyStarts_.emplace_back(starts_[i].x, starts_[i].z);
+    }
+}
+
+bool Controller::backedOff(int slot) const {
+    constexpr uint32_t kBackoffTicks = 2 * 60 * 30;
+    const auto it = slotLosses_.find(slot);
+    return it != slotLosses_.end() && it->second.count > 0 &&
+           now_ < it->second.last + (kBackoffTicks << std::min(it->second.count - 1, 3));
+}
+
+int Controller::lossesOnRoute(float x, float z, float tx, float tz) const {
+    constexpr float kLossRouteRadius = 400;
+    const float dx = tx - x, dz = tz - z, len2 = dx * dx + dz * dz;
+    return int(std::count_if(losses_.begin(), losses_.end(), [&](const Loss& l) {
+        const float t = len2 > 0 ? std::clamp(((l.x - x) * dx + (l.z - z) * dz) / len2, 0.0f, 1.0f) : 0.0f;
+        const float ex = x + dx * t - l.x, ez = z + dz * t - l.z;
+        return ex * ex + ez * ez <= kLossRouteRadius * kLossRouteRadius;
+    }));
 }
 
 // The middle of a sector's part of the map (sectors along the far edges are cut short).
@@ -2452,15 +2647,20 @@ bool Controller::sectorCentre(int s, float mapX, float mapZ, float& x, float& z)
     return true;
 }
 
-// Where a unit of `type` at (x,z) explores next. An enemy start never yet in
-// sight comes first, the nearest (one another party is bound for counts four
-// times as far); then the sector out of sight longest for its distance (never
-// seen counts as kNeverSeen more), skipping those in sight within kRecent, one
-// another party holds counting for a quarter. Reachability is tried in that
-// order for the first kProbes, and a spot this type cannot reach is passed over
-// for kUnreachableTicks.
+// Where a unit of `type` at (x,z) explores next. A start never yet in sight that
+// may hold an enemy comes first, the nearest (one another party is bound for
+// counts four times as far); then the sector out of sight longest for its
+// distance (never seen counts as kNeverSeen more), times its lure, skipping
+// those in sight within kRecent; one another party holds counts for a quarter
+// and one beside such a sector for half, so parties spread over the map.
+// A scouting party (`scout`) passes over a start whose base is already found
+// (the strikes take it from there, and armies still go to see the spot) and a
+// slot backed off after scouts died going there, and counts a start as farther,
+// a sector as less worth it, for each loss along the way. Reachability is tried
+// in that order for the first kProbes, and a spot this type cannot reach is
+// passed over for kUnreachableTicks.
 bool Controller::exploreTarget(const tak::sim::World& world, const tak::sim::UnitType* type, float x, float z,
-                               float& tx, float& tz, int& slot) {
+                               float& tx, float& tz, int& slot, bool scout) {
     constexpr uint32_t kNeverSeen = 3 * 60 * 30, kRecent = 60 * 30, kUnreachableTicks = 3 * 60 * 30;
     constexpr int kProbes = 12;
     const float mapX = float(world.mapW()) * 16, mapZ = float(world.mapH()) * 16;
@@ -2471,28 +2671,38 @@ bool Controller::exploreTarget(const tak::sim::World& world, const tak::sim::Uni
         return false;
     };
     std::vector<std::pair<float, int>> ranked;
-    for (size_t i = 0; i < enemyStarts_.size(); ++i) {
-        if (i < startSeen_.size() && startSeen_[i]) continue;
-        const float dx = enemyStarts_[i].first - x, dz = enemyStarts_[i].second - z;
-        const float d = std::sqrt(dx * dx + dz * dz) * (startClaim_[i] > now_ ? 4.0f : 1.0f);
+    for (size_t i = 0; i < starts_.size() && i < startSeen_.size(); ++i) {
+        if (startSeen_[i] || startGone_[i]) continue;
+        if (scout && (startBase_[i] || backedOff(-1 - int(i)))) continue;
+        const float dx = starts_[i].x - x, dz = starts_[i].z - z;
+        float d = std::sqrt(dx * dx + dz * dz) * (startClaim_[i] > now_ ? 4.0f : 1.0f);
+        if (scout) d *= 1 + 2 * float(lossesOnRoute(x, z, starts_[i].x, starts_[i].z));
         ranked.emplace_back(d, int(i));
     }
     std::sort(ranked.begin(), ranked.end());
     int probes = 0;
     for (const auto& [d, i] : ranked) {
         if (++probes > kProbes) return false;
-        if (reach(-1 - i, enemyStarts_[size_t(i)].first, enemyStarts_[size_t(i)].second)) return true;
+        if (reach(-1 - i, starts_[size_t(i)].x, starts_[size_t(i)].z)) return true;
     }
     ranked.clear();
+    auto claimed = [&](int sx, int sz) {
+        return sx >= 0 && sz >= 0 && sx < sectorsX_ && sz < sectorsZ_ && sectorClaim_[size_t(sx + sz * sectorsX_)] > now_;
+    };
     for (int s = 0; s < int(sectorSeen_.size()); ++s) {
         const uint32_t seen = sectorSeen_[size_t(s)];
         if (seen && now_ + 1 - seen < kRecent) continue;
+        if (scout && backedOff(s)) continue;
         float cx = 0, cz = 0;
         if (!sectorCentre(s, mapX, mapZ, cx, cz)) continue;
         const float age = float(seen ? now_ + 1 - seen : now_ + kNeverSeen);
         const float dx = cx - x, dz = cz - z;
         float score = age / (1 + std::sqrt(dx * dx + dz * dz) / 3000);
-        if (sectorClaim_[size_t(s)] > now_) score *= 0.25f;
+        if (size_t(s) < sectorLure_.size()) score *= sectorLure_[size_t(s)];
+        const int sx = s % sectorsX_, sz = s / sectorsX_;
+        if (claimed(sx, sz)) score *= 0.25f;
+        else if (claimed(sx - 1, sz) || claimed(sx + 1, sz) || claimed(sx, sz - 1) || claimed(sx, sz + 1)) score *= 0.5f;
+        if (scout) score /= 1 + float(lossesOnRoute(x, z, cx, cz));
         ranked.emplace_back(-score, s);
     }
     std::sort(ranked.begin(), ranked.end());
@@ -2510,7 +2720,8 @@ void Controller::claimSlot(int slot, uint32_t ticks) {
     else sectorClaim_[size_t(slot)] = now_ + ticks;
 }
 
-int Controller::explore(const tak::sim::World& world, const std::vector<int>& ids, const CommandSink& sink) {
+int Controller::explore(const tak::sim::World& world, const std::vector<int>& ids, const CommandSink& sink,
+                        bool scout, int* slotOut) {
     constexpr uint32_t kClaimTicks = 3 * 60 * 30;
     // Each kind of mover (flyer or not, and domain) goes where its first unit can.
     std::vector<const tak::sim::Unit*> units;
@@ -2529,7 +2740,7 @@ int Controller::explore(const tak::sim::World& world, const std::vector<int>& id
         };
         float ex = 0, ez = 0;
         int slot = 0;
-        const bool found = exploreTarget(world, lead, units[first]->x.toFloat(), units[first]->z.toFloat(), ex, ez, slot);
+        const bool found = exploreTarget(world, lead, units[first]->x.toFloat(), units[first]->z.toFloat(), ex, ez, slot, scout);
         for (size_t i = first; i < units.size(); ++i) {
             if (done[i] || !sameKind(units[i])) continue;
             done[i] = 1;
@@ -2539,34 +2750,61 @@ int Controller::explore(const tak::sim::World& world, const std::vector<int>& id
             emit(sink, tak::net::Cmd::AttackMove, units[i]->id, "", tx, tz);
             ++ordered;
         }
-        if (found) claimSlot(slot, kClaimTicks);
+        if (found) {
+            claimSlot(slot, kClaimTicks);
+            if (slotOut) *slotOut = slot;
+        }
     }
     return ordered;
 }
 
 // Scouting parties: a lone fast fighter at a time sent to look, at the pace
-// exploreLevelFor sets. A scout that is idle again (there, or stopped on the
-// way) or out longer than kTripTicks goes on to the next spot at the levels that
-// keep scouting, else rejoins the army.
+// exploreLevelFor sets (more parties on a large map at the levels that keep
+// scouting) -- or, to a slot where scouts have died, a party a fighter larger for
+// each loss there (up to four). A scout that is idle again (there, or
+// stopped on the way) or out longer than kTripTicks goes on to the next spot at
+// the levels that keep scouting, else rejoins the army. A scout killed on its
+// trip is a loss (losses_, slotLosses_): later picks steer round it, and while
+// the level's maxLosses fell within kLossWindow no new party goes out.
 void Controller::sendScouts(const tak::sim::World& world, uint32_t simTick, const CommandSink& sink,
                             const StrikeBoard& board, std::vector<Fighter>& pool) {
-    constexpr uint32_t kTripTicks = 4 * 60 * 30, kRetryTicks = 10 * 30;
+    constexpr uint32_t kTripTicks = 4 * 60 * 30, kRetryTicks = 10 * 30, kClaimTicks = 3 * 60 * 30;
+    constexpr uint32_t kLossWindow = 5 * 60 * 30, kLossMemory = 10 * 60 * 30;
+    constexpr int kMaxParty = 4;
     const ExploreLevel level = exploreLevelFor(diff_);
-    const bool scouting = level.maxScouts > 0 && (dp_.attack || board.ahead);
+    const bool scouting = level.maxScouts > 0 && (dp_.attack || board.knownAhead);
+    std::erase_if(losses_, [&](const Loss& l) { return simTick - l.tick > kLossMemory; });
+    std::set<int> parties;
     for (auto it = scouts_.begin(); it != scouts_.end();) {
+        auto& trip = it->second;
         const auto* u = world.unit(it->first);
-        if (!u || !u->alive() || u->player != player_ || defenders_.count(it->first)) {
+        if (!u || !u->alive() || u->player != player_) {
             if (!u || !u->alive()) ++scoutsLost_;
+            losses_.push_back({trip.x, trip.z, simTick});
+            auto& l = slotLosses_[trip.slot];
+            ++l.count; l.last = simTick;
             it = scouts_.erase(it);
             continue;
         }
-        if (!idle(*u) && simTick - it->second <= kTripTicks) { ++it; continue; }
-        if (scouting && level.keep && explore(world, {u->id}, sink)) {
-            it->second = simTick; ++scoutsSent_; ++it;
+        if (defenders_.count(it->first)) { it = scouts_.erase(it); continue; }
+        trip.x = u->x.toFloat(); trip.z = u->z.toFloat();
+        if (!idle(*u) && simTick - trip.since <= kTripTicks) { parties.insert(trip.party); ++it; continue; }
+        int slot = trip.slot;
+        if (scouting && level.keep && explore(world, {u->id}, sink, true, &slot)) {
+            trip = {simTick, slot, trip.x, trip.z, u->id};
+            parties.insert(u->id);
+            ++scoutsSent_; ++it;
         } else it = scouts_.erase(it);   // back to the army from the next think
     }
+    const auto recent = std::count_if(losses_.begin(), losses_.end(), [&](const Loss& l) {
+        return simTick - l.tick < kLossWindow;
+    });
+    // The levels that keep scouting send more parties on a larger map: one more for
+    // each eight sectors across, up to three more.
+    const int maxParties = level.maxScouts +
+        (level.keep ? std::min(int(std::sqrt(float(sectorSeen_.size()))) / 8, 3) : 0);
     if (!scouting || pool.empty() || simTick < uint32_t(level.firstMin) * 60 * 30 || simTick < nextScoutTick_ ||
-        int(scouts_.size()) >= level.maxScouts) return;
+        int(parties.size()) >= maxParties || recent >= level.maxLosses) return;
     // A flyer (it sees over cliffs and crosses water), else the fastest fighter in
     // the pool, the cheapest of those as fast. A ship only when the pool holds
     // nothing else and too few ships to sail as a fleet (sendWaves): a fleet
@@ -2587,12 +2825,42 @@ void Controller::sendScouts(const tak::sim::World& world, uint32_t simTick, cons
     };
     const auto best = std::min_element(pool.begin(), pool.end(), faster);
     if (ship(*best) && ships >= (diff_ == Difficulty::Easy ? 2 : 3)) return;
-    if (!explore(world, {best->id}, sink)) { nextScoutTick_ = simTick + kRetryTicks; return; }
-    scouts_[best->id] = simTick;
-    ++scoutsSent_;
+    const Fighter lead = *best;
+    const auto* leadType = world.unit(lead.id)->type;
+    float ex = 0, ez = 0;
+    int slot = 0;
+    if (!exploreTarget(world, leadType, lead.x, lead.z, ex, ez, slot, true)) { nextScoutTick_ = simTick + kRetryTicks; return; }
+    // Where scouts have died, a party: the lead's kind nearest it, one more per loss.
+    std::vector<Fighter> party{lead};
+    const auto lost = slotLosses_.find(slot);
+    const int want = 1 + std::min(lost == slotLosses_.end() ? 0 : lost->second.count, kMaxParty - 1);
+    if (want > 1) {
+        std::vector<std::pair<float, Fighter>> near;
+        for (const auto& f : pool) {
+            const auto* t = world.unit(f.id)->type;
+            if (f.id == lead.id || t->canFly != leadType->canFly || t->domain != leadType->domain) continue;
+            const float dx = f.x - lead.x, dz = f.z - lead.z;
+            near.emplace_back(dx * dx + dz * dz, f);
+        }
+        std::sort(near.begin(), near.end(), [](const auto& a, const auto& b) {
+            return a.first < b.first || (a.first == b.first && a.second.id < b.second.id);
+        });
+        for (size_t i = 0; i < near.size() && int(party.size()) < want; ++i) party.push_back(near[i].second);
+    }
+    std::vector<int> sent;
+    for (const auto& f : party) {
+        float tx = 0, tz = 0;
+        if (!reachablePoint(world, world.unit(f.id)->type, f.x, f.z, ex, ez, tx, tz)) continue;
+        emit(sink, tak::net::Cmd::AttackMove, f.id, "", tx, tz);
+        scouts_[f.id] = {simTick, slot, f.x, f.z, lead.id};
+        sent.push_back(f.id);
+    }
+    if (sent.empty()) { nextScoutTick_ = simTick + kRetryTicks; return; }
+    claimSlot(slot, kClaimTicks);
+    scoutsSent_ += int(sent.size());
     scouted_ = true;
     nextScoutTick_ = simTick + uint32_t(level.everySec) * 30;
-    pool.erase(best);
+    std::erase_if(pool, [&](const Fighter& f) { return std::find(sent.begin(), sent.end(), f.id) != sent.end(); });
 }
 
 // Pool idle (non-builder) fighters; once a strike force has gathered (waveSize, per
@@ -2739,8 +3007,8 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
     if (diff_ == Difficulty::Easy &&
         (simTick < 4*60*30 || (scouted_ && simTick-lastRaidTick_ < 2*60*30 && !board.winning))) return;
     // The pool's objective: the best site for it, or with nothing known it can
-    // reach and hurt, the spot to explore that its first ground unit (else its
-    // first) can reach.
+    // reach and hurt, the spot to explore that its first non-flyer (else its
+    // first flyer) of some kind can reach.
     float poolForce = 0;
     for (const auto& f : pool) poolForce += f.s;
     StrikeSite objective;
@@ -2749,9 +3017,23 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
     int exploreSlot = 0;
     if (!exploring) objective = board.sites[size_t(pick)];
     else {
-        const auto lead = std::find_if(pool.begin(), pool.end(), [&](const Fighter& f) { return !world.unit(f.id)->type->canFly; });
-        const Fighter& f = lead != pool.end() ? *lead : pool.front();
-        if (!exploreTarget(world, world.unit(f.id)->type, f.x, f.z, objective.x, objective.z, exploreSlot)) return;
+        // The first unit of each kind of mover (non-flyers first) in turn, until one
+        // has somewhere to explore: a fleet or the flyers go on where the army cannot.
+        std::vector<const Fighter*> leads;
+        for (bool flyers : {false, true})
+            for (const auto& f : pool) {
+                const auto* t = world.unit(f.id)->type;
+                if (t->canFly != flyers) continue;
+                if (std::none_of(leads.begin(), leads.end(), [&](const Fighter* l) {
+                        const auto* lt = world.unit(l->id)->type;
+                        return lt->canFly == t->canFly && lt->domain == t->domain;
+                    }))
+                    leads.push_back(&f);
+            }
+        if (std::none_of(leads.begin(), leads.end(), [&](const Fighter* f) {
+                return exploreTarget(world, world.unit(f->id)->type, f->x, f->z, objective.x, objective.z, exploreSlot);
+            }))
+            return;
     }
     struct Ready { Fighter f; float x, z; };
     std::vector<Ready> idle;

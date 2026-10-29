@@ -1119,7 +1119,14 @@ that spot is in sight again without it, a mobile unit for 25 s; only a target
 in sight is ordered on by id, a heard or remembered one gets an attack-move to
 where it was, and with nothing known the army and per-level scouts explore
 unseen enemy starts and then map sectors. The think at tick 0, before the first
-view pass, sees nothing.
+view pass, sees nothing. What a seat knows follows the room: FULL VISION sees
+every unit (`World::roomLosOff`); deposits count only on ground the team has
+explored unless the map is revealed (`roomMapRevealed`, exploration plane);
+the server hands each AI seat its enemy start spots as the room shows them
+(`ai::enemyStartSpots`: with owners for FIXED and BY SLOT, every map spot but
+its own and its allies' for RANDOM, from `setupMatch`'s start table). Enemy
+strength and units left are reckoned from what the AI has seen, and scouts
+back off targets and routes where scouts died.
 This lives in the server's AI state and only its commands reach the game.
 `World::stateHash` now mixes one 64-bit word per multiply round over four
 rotating lanes (`src/sim/statefold.h`) and folds the exploration and view-count
