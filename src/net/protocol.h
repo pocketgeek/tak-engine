@@ -19,7 +19,17 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 303;      // 303: a build order is accepted on a site its player's own idle or guarding
+constexpr uint32_t kNetVersion = 304;      // 304: a hovering attacker whose shots stop 3 times running on scenery it
+                                           //      cannot destroy moves round its ring (nearest 1/32-turn bearing) to a
+                                           //      clear line; a dying, captured or gifted factory (or a cancelled /
+                                           //      Stopped / repeat-off build) kills its unfinished output at once
+                                           //      (30000 damage type 11, no corpse or kill credit; Zhon mobile builds
+                                           //      and building sites stay); Legion bodies sliding round units and walls
+                                           //      face their actual motion (new tracked facing members in the Legion
+                                           //      checksum); our AI levels pick strike targets from every enemy unit
+                                           //      and building by value, threat and defence (unseen weighted lower).
+                                           //      No new command; replay format unchanged.
+                                           // 303: a build order is accepted on a site its player's own idle or guarding
                                            //      units stand on, and they step off it for the builder (a guard keeps
                                            //      its guard); a ground guard keeps to Follow_Ground's ring round its
                                            //      ward ((max ward foot + guard footX + 2) x 16 px, 3 cells deep)

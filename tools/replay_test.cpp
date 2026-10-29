@@ -190,9 +190,12 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 303, "replay format 11 is kept under protocol 303");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 303");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 303");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 304, "replay format 11 is kept under protocol 304");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 304");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 304");
+    // 304 moves a hover attacker round its ring to a clear shot, kills a factory's unfinished output
+    // when the factory dies or the build is cancelled, tracks Legion facing and changes AI targets.
+    check(!supportedReplayProtocol(15, 303), "previous protocol (unfinished output left to decay) is refused");
     // 303 lets a builder's own idle and guarding units step off its site (and accepts such a build
     // order), and keeps a ground guard on Follow_Ground's ring round its ward (hashed movement).
     check(!supportedReplayProtocol(15, 302), "previous protocol (70 px guard stance, no stepping off a site) is refused");

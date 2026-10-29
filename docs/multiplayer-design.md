@@ -5,7 +5,7 @@ shipped). It superseded the 2-player peer-to-peer lockstep (`net::Session`,
 since removed; `src/net/lockstep.h` is now header-only); the deterministic-sim
 substrate underneath it is kept. Sections 1-12 are the original design, kept as
 written apart from short notes where it has since moved on; the later sections
-and the protocol history (to protocol 303, 0.9.9 and 0.9.10) describe the
+and the protocol history (to protocol 304) describe the
 current engine.
 Notable changes since the v1 design: single-player runs a private local
 `takserver` (`--local --no-auth`) instead of in-process AI
@@ -1096,6 +1096,20 @@ any earlier version, nor their replays. 0.9.10 changes only the client's
 display and options and keeps protocol 303, so it plays with 0.9.9 and its
 replays.
 
+Protocol 304 changes four pieces of hashed behaviour. A hovering attacker
+whose shots stop three times running on scenery it cannot destroy moves round
+its ring to the nearest 1/32-turn bearing with a clear line
+(`World::hoverForShot`); retail never re-aims. A factory that dies, changes
+hands or has the unit in production cancelled (the last queued copy, repeat
+off, Stop, a leaving player) kills that unfinished unit at once with retail's
+30000-point type-11 hit credited to the factory: no corpse, no kill credit, no
+refund; a Zhon mobile producer's unit and a building site stay. Legion bodies
+sliding round units and walls turn toward their actual motion (new tracked
+members in the Legion checksum). Our AI levels (not Retail AI) pick strike
+targets from every enemy unit and building by value, threat, distance and
+defence, unseen ones weighted lower. No command changes; replay format 15 is
+unchanged; 303 replays are refused, and 304 plays with no earlier release.
+
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
 in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each
@@ -1385,6 +1399,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Versions 0.9.10 and 0.9.9 (peers and server) require protocol 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. The next release after 0.9.10 (peers and server) requires protocol 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions remain fixed to Retail.
