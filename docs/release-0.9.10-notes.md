@@ -41,13 +41,13 @@ shows a unit behind a tree or a building in no way at all (`docs/retail-engine.m
   is added while Tactical Dots is showing.
 - **Fade.** A tree, rock or building whose drawn pixels reach one of those
   units is drawn whole at the **Fade Opacity** setting (0 to 100%, default
-  65%; 100% is no fade, 0% gone), so the unit, its shadow and the ground show
+  65%; 100% is no fade, 0% gone), so the unit and the ground behind it show
   through. It fades out over 200 ms and back in over 350 ms after the last
   unit leaves. A building being conjured or clipped by a terrain wall fades
   too; a placed site still waiting for its builder does not. The slider is
   greyed out unless Hidden Units is Fade, and both apply at once.
 - **Dots.** A unit whose centre is covered shows its tactical dot (same size,
-  colour and selection outline as Tactical Dots) on top of the cover; clicking
+  colour and selection rim as Tactical Dots) on top of the cover; clicking
   the dot selects the unit. A unit whose centre is in sight gets none.
 - **The same on every renderer.** Fade draws the cover translucent in the
   ordinary drawing pass; it needs no OpenGL-only path.
@@ -109,11 +109,12 @@ completely landed on screen instead. The game now skips such draws itself
 
 ## Smaller changes
 
-- **Debug builds:** `takclient game "<map>" --data <dir>` without `--server`
-  opens the single-player room and waits there; `TAK_SP_AIS=N` seats N AI
-  opponents and starts at once. The debug `--help` says so, and
-  [development.md](development.md) has an example. Release builds are
-  unchanged.
+- **Debug builds:** the debug `--help` now describes the single-player
+  launch as it already worked: `takclient game "<map>" --data <dir>` without
+  `--server` opens the single-player room and waits there, and
+  `TAK_SP_AIS=N` seats N AI opponents and starts at once;
+  [development.md](development.md) has an example. No behaviour changed, and
+  release builds are unchanged.
 - **Options picture** in the user guide retaken with the Hidden Units and Fade
   Opacity rows.
 
@@ -141,10 +142,10 @@ fade. Give a feature a real height if units should be able to stand behind it.
   every unit, Dots' cover rules and click target, Fade's covers and that 100%
   equals Off); `renderdriver_test` macOS Auto order and the Apple software
   renderer; `settings_test` Hidden Units and Fade Opacity.
-- `--mpai` Inner Circle seed 1, `TAK_SPEED=80`: unchanged, as no simulation
-  code changed (Retail AI 60 s `4952493f51b9a568`; the others as in 0.9.9).
-  The cross-compiler golden (`check-determinism`) is expected unchanged,
-  `dcef618cd2e4d558`. See the [validation report](release-0.9.10-validation.md).
+- `--mpai` Inner Circle seed 1, `TAK_SPEED=80`: all seven gates unchanged
+  from 0.9.9, as no simulation code changed (Retail AI 60 s
+  `4952493f51b9a568`). The cross-compiler golden (`check-determinism`) is
+  unchanged, `dcef618cd2e4d558`. See the [validation report](release-0.9.10-validation.md).
 
 ## Known limits
 

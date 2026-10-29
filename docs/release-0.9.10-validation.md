@@ -91,18 +91,28 @@ takclient and takserver run used scratch `HOME`, `XDG_DATA_HOME` and
   order, Apple's software renderer refused, Apple A18 Pro kept) and
   `settings_test` (Hidden Units and Fade Opacity: default, clamp, round trip,
   reset).
-- TODO-LEAD: full suite (`ctest`, `build-0910-suite`) on `4832e58d` and the
-  gates on the final code (result of the run in progress).
+- **Full suite on `4832e58d`** (the final code; Debug `-O2`, `ctest -j12`,
+  scratch `HOME` and XDG folders, test data `~/tak_data`): 776 of 779 passed,
+  one skipped (`vashim_system_loader`, which skips itself). Two failed.
+  `vashim_unavailable` is the known local failure (a render node without
+  libva); CI builds FFmpeg with the shim and runs it there.
+  `disconnect_client` failed because of the test data: `~/tak_data` has an
+  always-enabled game mod, and a replay recorded with it cannot be checked on
+  a fresh profile that lacks the cached mod package. The 0.9.9 suite ran on
+  `assets/game`, which has no mods; there the test passes all four cases on
+  `4832e58d`. The code involved is unchanged since 0.9.9, so this is a
+  follow-up, not a 0.9.10 regression.
 - **Detmath guard** (`tools/check-detmath.sh`, on the prepared tree): OK (no
   file under `src/sim` changed since 0.9.9).
-- **Cross-compiler golden hash** (`tools/check-determinism.sh`): golden
-  `dcef618cd2e4d558`, expected unchanged from 0.9.9 (no simulation code
-  changed); the tag CI Determinism workflow checks it.
+- **Cross-compiler golden hash** (`tools/check-determinism.sh`, the guard
+  OK): golden `dcef618cd2e4d558` from g++ and clang++ at -O0, -O2 and -O3 (6
+  of 6 agree), unchanged from 0.9.9; the aarch64 leg was skipped (no
+  toolchain here). The tag CI Determinism workflow checks it too.
 - **`--mpai` Inner Circle, seed 1** (`takserver --local --no-auth --seed 1`,
   `TAK_LEGION=1` for Legion, `TAK_AI_LEVEL=6` for the Retail AI, `--crusades`
-  for the Crusades games, `TAK_SPEED=80`). The Retail AI 60 s gate ran
-  repeatedly on the hidden-units branch and gave `4952493f51b9a568` each
-  time.
+  for the Crusades games, `TAK_SPEED=80`, Debug `-O2` build of `4832e58d`,
+  all seven gates): every hash is the expected one. The Retail AI 60 s gate
+  had also run repeatedly on the hidden-units branch with the same hash.
 
 | Mode | 60 s | 300 s |
 |---|---|---|
