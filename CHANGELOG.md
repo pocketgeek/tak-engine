@@ -29,10 +29,11 @@ their validation reports; both live in [`docs/`](docs/).
 - **Our AI levels attack only what they have seen** (not Retail AI): their own
   and their allies' sight and radar, units shooting at them, buildings remembered where
   they were seen; with nothing known they scout and explore the map instead.
-  They follow the room's fog of war as a player does (Explored: the map's ground
-  and deposits are known, enemies are not) and pick lodestone deposits only
-  where they know the ground, judging one taken by what they have seen there;
-  their ships sail on their own when the army's target is inland.
+  They follow the room's fog of war and start locations as a player does
+  (Explored: the map's ground and deposits are known, enemies are not; Random
+  hides whose start is whose), pick lodestone deposits only where they know the
+  ground, judging one taken by what they have seen there, steer scouts away from
+  where scouts died, and send their ships out when the army's target is inland.
   A game between AIs may now not end when a last unit stays hidden.
 - **Big late games no longer stall on the AI's lodestone search**: Absurd AIs
   tested every deposit on a large map for each site, 300-800 ms in one tick,

@@ -108,20 +108,39 @@ inline constexpr UpgradeLevel upgradeLevelFor(Difficulty d) {
 // How a level scouts (Controller::sendScouts): its first scouting party not
 // before `firstMin` minutes of game time, then one every `everySec` seconds of
 // game time while fewer than `maxScouts` are out; with `keep` a scout goes on to
-// the next unexplored spot when it reaches one, else it rejoins the army. The
-// defensive levels scout only while far ahead (StrikeBoard::ahead).
-struct ExploreLevel { int firstMin, everySec, maxScouts; bool keep; };
+// the next unexplored spot when it reaches one, else it rejoins the army. No new
+// party goes while `maxLosses` scouts have been killed in the last five minutes.
+// The defensive levels scout only while far ahead of the enemy units they know
+// of (StrikeBoard::knownAhead).
+struct ExploreLevel { int firstMin, everySec, maxScouts; bool keep; int maxLosses; };
 inline constexpr ExploreLevel exploreLevelFor(Difficulty d) {
     switch (d) {
-        case Difficulty::Passive:           return {0, 60, 1, false};
-        case Difficulty::AbsurdlyDefensive: return {0, 60, 1, false};
-        case Difficulty::Easy:              return {4, 150, 1, false};
-        case Difficulty::Normal:            return {0, 60, 1, false};
-        case Difficulty::Hard:              return {0, 40, 2, true};
-        case Difficulty::Absurd:            return {0, 20, 3, true};
-        default:                            return {0, 0, 0, false};   // Classic: its own brain
+        case Difficulty::Passive:           return {5, 60, 1, false, 1};
+        case Difficulty::AbsurdlyDefensive: return {5, 60, 1, false, 1};
+        case Difficulty::Easy:              return {4, 150, 1, false, 1};
+        case Difficulty::Normal:            return {0, 60, 1, false, 1};
+        case Difficulty::Hard:              return {0, 40, 2, true, 2};
+        case Difficulty::Absurd:            return {0, 20, 3, true, 3};
+        default:                            return {0, 0, 0, false, 0};   // Classic: its own brain
     }
 }
+
+// A start location an enemy may have opened at, as a player in that seat knows
+// it: with FIXED or BY SLOT start locations the room shows whose start each is
+// (`owner`, a player index); with RANDOM ones only the map's start spots, less
+// the seat's own and its allies' (`owner` -1: some enemy's, or nobody's).
+struct StartSpot { float x = 0, z = 0; int owner = -1; };
+
+// The start spots seat `slot`'s player knows an enemy may have opened at: under
+// FIXED or BY SLOT start locations each seated enemy's own (slotPos[j], (0,0) for
+// a seat that opened nowhere), under RANDOM ones (`randomTable`: every spot a seat
+// could have opened at, empty otherwise) each spot but the seat's own and its
+// allies', which its screen shows from the start. `seated[j]`: slot j holds a
+// player; `allied(i, j)`: the sim's alliance. The server's AI seats take these.
+std::vector<StartSpot> enemyStartSpots(int slot, const std::vector<std::pair<float, float>>& slotPos,
+                                       const std::vector<uint8_t>& seated,
+                                       const std::function<bool(int, int)>& allied,
+                                       const std::vector<std::pair<float, float>>& randomTable);
 
 // Behaviour knobs derived from Difficulty (paramsFor).
 struct DiffParams {
@@ -191,7 +210,8 @@ using CommandSink = std::function<void(const tak::net::Command&)>;
 class Controller {
 public:
     // enemyStarts: the start positions of the players this AI is NOT allied with, so
-    // it can march on a base under fog before it has actually spotted enemy units.
+    // it can march on a base under fog before it has actually spotted enemy units
+    // (owners unknown: setStartSpots gives them).
     Controller(int player, const tak::sim::TypeRegistry& registry,
                const Profile& profile, uint32_t seed,
                Difficulty difficulty = Difficulty::Normal,
@@ -223,6 +243,10 @@ public:
     // n x 30 ticks (classicMassAttackTicks).
     void setClassicCampaign(const std::string& otaPlayer);
     const ClassicBrain* classicBrain() const { return classic_.get(); }
+
+    // The start spots an enemy may have opened at (StartSpot), in place of the
+    // constructor's enemyStarts. Call before the first tick.
+    void setStartSpots(std::vector<StartSpot> spots);
 
     // Read-only identity, for the debug roster dump (server/rosterdump.h).
     int player() const { return player_; }
@@ -366,8 +390,9 @@ private:
     struct StrikeBoard {
         std::vector<StrikeSite> sites;
         float ours = 0;               // this AI's fighters (strength())
-        float theirs = 0;             // every enemy's armed units and defences
+        float theirs = 0;             // every enemy's armed units and defences, as this AI reckons them
         bool ahead = false;           // ours outweighs theirs by this level's margin
+        bool knownAhead = false;      // ours outweighs the enemy units known by that margin
         bool winning = false;         // ahead with a site known: clean up even at the defensive levels
     };
     static constexpr float kSiteCell = 400;
@@ -458,31 +483,61 @@ private:
     void learnSiteBlockers(const tak::sim::World&, const tak::sim::UnitType*, float x, float z) const;
     // Refresh knowledge_ and the exploration state from this think's sight.
     void updateKnowledge(const tak::sim::World&);
-    // Exploration: the enemy starts' spots, then a coarse grid of map sectors,
-    // each with the think tick + 1 it was last in sight (0 never) and the tick
-    // until which a party sent there holds it. exploreTarget picks, for a unit
-    // of `type` at (x,z), an unchecked enemy start nearest first, else the
-    // sector longest out of sight for its distance, and the point of it that
-    // unit can reach; `-1 - start` or the sector's index comes back in `slot`.
+    // Exploration: the start spots an enemy may hold (starts_), then a coarse
+    // grid of map sectors, each with the think tick + 1 it was last in sight (0
+    // never) and the tick until which a party sent there holds it. A start is
+    // `gone` once it can hold no living enemy's base: its owner beaten, or (owner
+    // unknown) seen with no enemy building near it, or every enemy found at
+    // another; one whose owner is unknown takes the owner of the enemy buildings
+    // known near it. enemyStarts_ holds the spots not gone, for the AI's other
+    // judgements of where the enemy is. `startBase_`: an enemy building is known
+    // near the start (scouts look elsewhere; armies still go and see it).
+    // exploreTarget picks, for a unit of `type` at (x,z), an unchecked start
+    // nearest first, else the sector longest out of sight for its distance,
+    // weighed by what may stand there (deposits, starts), and the point of it
+    // that unit can reach; `-1 - start` or the sector's index comes back in
+    // `slot`. With `scout` it is a scouting party's pick: past starts whose base
+    // is found, targets backed off after scouts died going there (losses_), and
+    // routes past the spots they died at.
+    std::vector<StartSpot> starts_;
+    std::vector<uint8_t> startGone_, startBase_;
     std::vector<uint32_t> startSeen_, sectorSeen_, sectorClaim_, startClaim_;
     struct Probe { int radar, cx, cz; };   // a sector's five points: radar_ index (-1 off it, -2 no sector), view cell
     std::vector<Probe> sectorProbes_;
+    std::vector<float> sectorLure_;   // per sector, 1 + what may draw an enemy there (deposits)
     int sectorsX_ = 0, sectorsZ_ = 0;
     float sectorSize_ = 0;
     std::map<std::pair<int, const tak::sim::UnitType*>, uint32_t> unreachable_;   // slot, type -> until
     bool exploreTarget(const tak::sim::World&, const tak::sim::UnitType* type, float x, float z,
-                       float& tx, float& tz, int& slot);
+                       float& tx, float& tz, int& slot, bool scout = false);
     void claimSlot(int slot, uint32_t ticks);
     bool sectorCentre(int sector, float mapX, float mapZ, float& x, float& z) const;
+    int sectorOf(float x, float z) const;
     // Explore with `ids` from where the first of each kind of mover stands
     // (ground first): every unit that can reach the point picked attack-moves
-    // there. Returns the units ordered.
-    int explore(const tak::sim::World&, const std::vector<int>& ids, const CommandSink&);
+    // there. Returns the units ordered; with `scout`, a scouting party's pick,
+    // whose slot comes back in `*slotOut`.
+    int explore(const tak::sim::World&, const std::vector<int>& ids, const CommandSink&,
+                bool scout = false, int* slotOut = nullptr);
     // Scouting parties (exploreLevelFor): the scouts out, by unit id, each with
-    // the tick its trip began; the tick the next one may go.
-    std::map<int, uint32_t> scouts_;
+    // the tick its trip began, the slot it was sent to, where it was last seen
+    // and its party (the id of the party's first scout); the tick the next one
+    // may go. A scout killed on its trip is a loss:
+    // where it fell, when, and per slot how many (slotLosses_), which backs that
+    // slot off for kBackoffTicks, doubling with each loss up to four times, and
+    // sends a party one fighter larger there the next time.
+    struct ScoutTrip { uint32_t since; int slot; float x, z; int party; };
+    std::map<int, ScoutTrip> scouts_;
+    struct Loss { float x, z; uint32_t tick; };
+    std::vector<Loss> losses_;
+    struct SlotLosses { int count = 0; uint32_t last = 0; };
+    std::map<int, SlotLosses> slotLosses_;
+    bool backedOff(int slot) const;
+    // Losses within kLossRouteRadius of the way from (x,z) to (tx,tz).
+    int lossesOnRoute(float x, float z, float tx, float tz) const;
     uint32_t nextScoutTick_ = 0;
     int scoutsSent_ = 0, explorations_ = 0;   // dispatch counts, for the TAK_AI_EXPLORE log
+    int scoutsLost_ = 0;                       // scouts killed on a trip, for the same log
     uint32_t loggedMinute_ = 0;                // minute + 1 last logged
     bool loggedWin_ = false;
     void logExploration(const tak::sim::World&, uint32_t simTick);
@@ -538,7 +593,7 @@ private:
     uint32_t rng_;
     Difficulty diff_;
     DiffParams dp_;
-    std::vector<std::pair<float, float>> enemyStarts_;
+    std::vector<std::pair<float, float>> enemyStarts_;   // starts_ not gone, refreshed each think
     std::optional<std::pair<float,float>> home_;
     // Allied players' home anchors, fixed at the first think like home_ (homeOf's
     // rule applied to each ally). Expansion leaves a living ally's home deposits

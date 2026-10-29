@@ -598,7 +598,8 @@ void registerMapFeatures(World& world, const tak::tnt::Map& map, const hpi::Vfs&
 }
 
 std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry& reg,
-                                                const MatchConfig& cfg) {
+                                                const MatchConfig& cfg,
+                                                std::vector<std::pair<float, float>>* startTable) {
     std::unique_ptr<ScenarioScript> pendingScenario;
     hpi::Vfs generatedData(cfg.vfs, true);
     const hpi::Vfs& vfs = tak::mapgen::isGeneratedMapId(cfg.mapPath) ? generatedData : *cfg.vfs;
@@ -899,6 +900,7 @@ std::vector<std::pair<float, float>> setupMatch(World& world, const TypeRegistry
         float a = float(spots.size()) / float(std::max(used, 1)) * 6.2831853f;
         spots.push_back({cx + detmath::cos(a) * 300, cz + detmath::sin(a) * 300});
     }
+    if (startTable) *startTable = spots;
     // Which spot each slot opens at. Every index is below max(starts, used), which
     // the ring above has filled. Fixed and Random index in seated order, exactly as
     // the running counter here did before BY SLOT.

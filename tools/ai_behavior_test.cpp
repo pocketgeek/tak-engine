@@ -60,6 +60,8 @@ static sim::UnitType fighter() {
     t.weapon.damage=10;t.weapon.range=120;t.weapons={t.weapon};
     t.defaultMove=1;t.defaultFire=2;t.buildTime=1;return t;
 }
+// The room's default FOG OF WAR, EXPLORED: the whole map's ground (its deposits
+// too) is known from the start, units only by sight.
 static void terrain(sim::World& w,bool islands=false) {
     std::vector<uint8_t> h(256*256,100);
     if (islands) for (int z=0;z<256;++z) for (int x=96;x<160;++x) h[z*256+x]=0;
@@ -606,6 +608,209 @@ static void fogKnowledge(const sim::TypeRegistry& registry,const ai::Profile& pr
         sight(w);
         ai::Controller c(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
         check(attacks(think(c,w,30))==1,"Defensive answers an intruder its side's view shows");
+    }
+}
+
+// Scouting with memory: a scout killed on its way backs that target off (the next
+// goes elsewhere), the level's scout losses in five minutes stop new parties, and
+// where scouts died a party one larger goes the next time. A start whose owner is
+// beaten is not explored, nor, once every enemy has been found at a start, are the
+// others (a RANDOM start spot may hold nobody).
+static void scoutingMemory(const sim::TypeRegistry& registry,const ai::Profile& profile,
+                           const sim::UnitType& soldier) {
+    auto lode=soldier;lode.id="lode";lode.maxVel={};lode.canMove=false;lode.onMana=true;
+    lode.weapon.damage=0;lode.weapons.clear();lode.buildCost=300;
+    auto post=lode;post.id="post";post.onMana=false;post.sight=300;
+    auto aimsAt=[](const std::vector<net::Command>& cs,const sim::World& w,float x,float z) {
+        return int(std::count_if(cs.begin(),cs.end(),[&](const auto& c) {
+            float tx=c.x,tz=c.z;
+            if (c.kind==net::Cmd::Attack) {const auto* t=w.unit(c.targetId);tx=t->x.toFloat();tz=t->z.toFloat();}
+            else if (c.kind!=net::Cmd::AttackMove) return false;
+            return (tx-x)*(tx-x)+(tz-z)*(tz-z)<=200*200;
+        }));
+    };
+    auto moveTo=[](sim::World& w,int id,float x,float z) {
+        w.unit(id)->x=sim::Fixed::fromInt(int(x));w.unit(id)->z=sim::Fixed::fromInt(int(z));
+    };
+    auto apply=[&](sim::World& w,const std::vector<net::Command>& cs) {for (const auto& c:cs) sim::applyCommand(w,registry,c);};
+    {
+        // Hard scouts every 40 s, two at most out, and stops after two losses in
+        // five minutes. Six fighters are too few for a raid: every attack-move is a scout.
+        sim::World w;terrain(w);w.player(0).income=100;
+        for (int i=0;i<6;++i) w.spawn(&soldier,400+float(i)*40,800,0,0);
+        w.spawn(&soldier,3800,3800,0,1);   // the enemy is in the game, out of sight
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Hard,{{3400,800}});
+        auto cs=think(controller,w,0);
+        check(attacks(cs)==1 && aimsAt(cs,w,3400,800)==1,"the first scout goes for the enemy start");
+        const int first=cs.empty() ? 0 : cs.front().unitId;
+        apply(w,cs);
+        moveTo(w,first,2000,800);sight(w);think(controller,w,600);
+        w.unit(first)->deadFor=0;sight(w);
+        cs=think(controller,w,1200);
+        check(attacks(cs)==1 && aimsAt(cs,w,3400,800)==0,
+              "a scout killed on its way backs the start off: the next scout looks elsewhere");
+        apply(w,cs);
+        const int second=cs.empty() ? 0 : cs.front().unitId;
+        if (second) {moveTo(w,second,2000,2400);sight(w);think(controller,w,1240);w.unit(second)->deadFor=0;sight(w);}
+        think(controller,w,1260);
+        cs=think(controller,w,2400);
+        check(attacks(cs)==0,"two scouts lost in five minutes: Hard sends no more for now");
+        apply(w,cs);
+        std::vector<int> out;
+        for (const auto& c:cs) out.push_back(c.unitId);
+        cs=think(controller,w,10800);
+        check(attacks(cs)==2 && aimsAt(cs,w,3400,800)==2 && std::none_of(cs.begin(),cs.end(),[&](const auto& c) {
+                  return std::find(out.begin(),out.end(),c.unitId)!=out.end();
+              }),"later a party of two goes where a scout died, not a lone scout");
+    }
+    {
+        // An enemy building seen near a start is that enemy's base; once the enemy
+        // is beaten, its start is not explored, though it is the nearest unseen one.
+        sim::World w;terrain(w);w.player(0).income=100;
+        const int eye=w.spawn(&post,1200,2300,0,0);
+        const int base=w.spawn(&lode,1200,2550,0,2);
+        w.spawn(&soldier,3800,3800,0,1);
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800},{1200,3000}});
+        think(controller,w,0);
+        w.unit(base)->deadFor=0;w.unit(eye)->deadFor=0;w.player(2).defeated=true;
+        for (int i=0;i<35;++i) w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
+        sight(w);
+        const auto cs=think(controller,w,30);
+        check(attacks(cs)==35 && aimsAt(cs,w,3400,800)==35 && aimsAt(cs,w,1200,3000)==0,
+              "a beaten player's start is not explored");
+    }
+    {
+        // Start spots of unknown owner (RANDOM start locations): with the only enemy
+        // found at one, the others hold nobody, and the army goes to look at the one
+        // it was found at rather than the nearer empty ones.
+        sim::World w;terrain(w);w.player(0).income=100;
+        const int eye=w.spawn(&post,3400,2400,0,0);
+        const int base=w.spawn(&lode,3400,2850,0,1);
+        w.spawn(&soldier,100,3900,0,1);
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{1600,800},{3400,800},{3400,3400}});
+        think(controller,w,0);
+        w.unit(base)->deadFor=0;sight(w);think(controller,w,30);   // seen gone: forgotten
+        moveTo(w,eye,400,400);
+        for (int i=0;i<35;++i) w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
+        sight(w);
+        const auto cs=think(controller,w,60);
+        check(attacks(cs)==35 && aimsAt(cs,w,3400,3400)==35,
+              "once every enemy is found at a start, the other start spots are not explored");
+    }
+    {
+        // The room says whose start each is (FIXED, BY SLOT): a beaten player's
+        // start is not explored though nothing of it was ever seen.
+        sim::World w;terrain(w);w.player(0).income=100;
+        w.spawn(&soldier,3800,3800,0,1);w.player(2).defeated=true;
+        for (int i=0;i<35;++i) w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal);
+        controller.setStartSpots({{3400,800,1},{1200,3000,2}});
+        const auto cs=think(controller,w,30);
+        check(attacks(cs)==35 && aimsAt(cs,w,3400,800)==35,"a beaten player's start the room showed is not explored");
+    }
+    {
+        // The start spots a seat is given: FIXED or BY SLOT, each seated enemy's own,
+        // with its owner; RANDOM, every spot of the map but its own and its allies'.
+        const std::vector<std::pair<float,float>> slotPos{{100,100},{200,200},{0,0},{400,400},{600,600}};
+        const std::vector<uint8_t> seated{1,1,0,1,1};
+        auto allied=[](int a,int b){return (a==0 && b==3) || (a==3 && b==0);};
+        const auto fixed=ai::enemyStartSpots(0,slotPos,seated,allied,{});
+        check(fixed.size()==2 && fixed[0].x==200 && fixed[0].owner==1 && fixed[1].x==600 && fixed[1].owner==4,
+              "FIXED starts: each seated enemy's own start, with its owner");
+        const auto random=ai::enemyStartSpots(0,slotPos,seated,allied,
+                                              {{100,100},{200,200},{300,300},{400,400},{500,500},{600,600}});
+        check(random.size()==4 && random[0].x==200 && random[1].x==300 && random[2].x==500 && random[3].x==600 &&
+              std::all_of(random.begin(),random.end(),[](const auto& s){return s.owner<0;}),
+              "RANDOM starts: every map spot but our own and our allies', owners unknown");
+    }
+}
+
+// A level that has seen little of the enemy does not take itself for far ahead
+// (StrikeBoard: an enemy home not looked at counts as at least our own army).
+static void fogScouting(const sim::TypeRegistry& registry,const ai::Profile& profile,
+                        const sim::UnitType& soldier) {
+    {
+        // Defensive with a large army and a lone enemy soldier it has never seen:
+        // it cannot know it is far ahead, so it does not go out to clean up (as it
+        // does clearly ahead); from its fifth minute a lone scout goes to look.
+        sim::World w;terrain(w);w.player(0).income=100;
+        for (int i=0;i<30;++i) w.spawn(&soldier,400+float(i%6)*40,800+float(i/6)*40,0,0);
+        w.spawn(&soldier,3600,3600,0,1);
+        sight(w);
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Passive,{{3400,3400}});
+        // The first think walks the army out of the base (stationArmy).
+        for (const auto& c:think(controller,w,5*60*30)) sim::applyCommand(w,registry,c);
+        sight(w);
+        const auto cs=think(controller,w,5*60*30+30);
+        check(attacks(cs)==1,"Defensive that has seen nothing of the enemy does not think itself far ahead, and scouts");
+    }
+}
+
+// Lodestone sites by what a player in the seat knows: NOT EXPLORED, a deposit on
+// ground its side has not explored is not picked; a deposit held by an enemy
+// lodestone it has never seen is refused by the real placement test (as a
+// player's order there is) and passed over; one it has seen taken, and still
+// remembers, is not picked.
+static void lodestoneKnowledge() {
+    auto files=std::make_shared<hpi::Vfs::Files>();
+    auto file=[&](const std::string& path,const std::string& text) {
+        std::string lines;
+        for (char ch : text) { lines += ch; if (ch == ';' || ch == '{' || ch == '}') lines += '\n'; }
+        (*files)[path]={lines.begin(),lines.end()};
+    };
+    auto type=[&](const char* id,const char* fields) {
+        file(std::string("units/")+id+".fbi",std::string("[UNITINFO]{unitname=")+id+
+            ";objectname="+id+";maxdamage=100;side=TAR;sightdistance=600;"+fields+"}");
+    };
+    type("tarhell","footprintx=4;footprintz=4;builder=1;workertime=30;buildcost=1000;buildtime=100;");
+    type("tarpries","footprintx=2;footprintz=2;builder=1;workertime=10;canmove=1;maxvelocity=1;"
+                    "buildcost=3000;buildtime=300;");
+    type("tarlode","footprintx=2;footprintz=2;yardmap=SSSS;mogriumincome=10;mogriumstorage=1000;"
+                   "buildcost=300;buildtime=85;");
+    file("canbuild/tarhell/tarpries.tdf","[CANBUILD]{sortbias=0;}");
+    file("canbuild/tarpries/tarlode.tdf","[CANBUILD]{sortbias=0;}");
+    hpi::Vfs vfs;vfs.setMapFiles(files);
+    sim::TypeRegistry reg;reg.loadDir(vfs,"units");reg.loadBuildTree(vfs,"canbuild");
+    ai::Profile profile;
+    // Home (800,800), the builder at (800,1000): the deposit at (1000,800) lies in
+    // their sight, the one at (2400,800) far beyond it.
+    auto build=[&](sim::World& w,int& builder) {
+        terrain(w);w.buildNavClasses(reg);w.setManaSpots({{1008,808},{2408,808}});
+        w.spawn(reg.find("tarhell"),800,800,0,0);
+        builder=w.spawn(reg.find("tarpries"),800,1000,0,0);
+    };
+    auto pick=[&](const ai::Controller& c,const sim::World& w,int builder) {
+        float x=0,z=0;
+        const bool ok=ai::PlacementProbe::placeFrom(c,w,reg.find("tarlode"),*w.unit(builder),2408,808,x,z);
+        return ok ? x : 0.0f;
+    };
+    {
+        sim::World w;int builder=0;build(w,builder);w.setRoomVision(false,false);sight(w);
+        ai::Controller controller(0,reg,profile,1,ai::Difficulty::Absurd);
+        think(controller,w,40);
+        check(pick(controller,w,builder)==1008,"NOT EXPLORED: a deposit on ground never explored is not picked");
+        sim::World v;build(v,builder);sight(v);
+        ai::Controller explored(0,reg,profile,1,ai::Difficulty::Absurd);
+        think(explored,v,40);
+        check(pick(explored,v,builder)==2408,"EXPLORED: every deposit on the map is known");
+    }
+    {
+        sim::World w;int builder=0;build(w,builder);
+        const int enemy=w.spawn(reg.find("tarlode"),2408,808,0,1);
+        sight(w);
+        ai::Controller controller(0,reg,profile,1,ai::Difficulty::Absurd);
+        think(controller,w,40);
+        check(pick(controller,w,builder)==1008,"a deposit an unseen enemy lodestone holds is refused, and passed over");
+        // Something of ours gets there and sees it; gone again, it is remembered.
+        const int eye=w.spawn(reg.find("tarhell"),2300,1100,0,0);
+        sight(w);think(controller,w,80);
+        check(pick(controller,w,builder)==1008,"a deposit seen taken is not picked");
+        w.unit(eye)->x=sim::Fixed::fromInt(400);w.unit(eye)->z=sim::Fixed::fromInt(3600);sight(w);think(controller,w,120);
+        check(w.unit(enemy)->alive() && pick(controller,w,builder)==1008,"... nor while it is remembered taken");
     }
 }
 
@@ -1593,6 +1798,9 @@ int main(int argc,char** argv) {
     strikeTargets(empty,profile,soldier);
     visionTargets(empty,profile,soldier);
     fogKnowledge(empty,profile,soldier);
+    scoutingMemory(empty,profile,soldier);
+    fogScouting(empty,profile,soldier);
+    lodestoneKnowledge();
     {
         sim::World w;terrain(w);w.player(0).income=100;
         for(int i=0;i<35;++i)w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
