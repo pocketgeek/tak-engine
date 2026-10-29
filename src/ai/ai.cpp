@@ -2472,8 +2472,7 @@ void Controller::claimSlot(int slot, uint32_t ticks) {
     else sectorClaim_[size_t(slot)] = now_ + ticks;
 }
 
-int Controller::explore(const tak::sim::World& world, const std::vector<int>& ids, bool scouting,
-                        const CommandSink& sink) {
+int Controller::explore(const tak::sim::World& world, const std::vector<int>& ids, const CommandSink& sink) {
     constexpr uint32_t kClaimTicks = 3 * 60 * 30;
     // Each kind of mover (flyer or not, and domain) goes where its first unit can.
     std::vector<const tak::sim::Unit*> units;
@@ -2499,7 +2498,7 @@ int Controller::explore(const tak::sim::World& world, const std::vector<int>& id
             float tx = 0, tz = 0;
             if (!found || !reachablePoint(world, units[i]->type, units[i]->x.toFloat(), units[i]->z.toFloat(), ex, ez, tx, tz))
                 continue;
-            emit(sink, scouting ? tak::net::Cmd::Move : tak::net::Cmd::AttackMove, units[i]->id, "", tx, tz);
+            emit(sink, tak::net::Cmd::AttackMove, units[i]->id, "", tx, tz);
             ++ordered;
         }
         if (found) claimSlot(slot, kClaimTicks);
@@ -2520,19 +2519,21 @@ void Controller::sendScouts(const tak::sim::World& world, uint32_t simTick, cons
         const auto* u = world.unit(it->first);
         if (!u || !u->alive() || u->player != player_ || defenders_.count(it->first)) { it = scouts_.erase(it); continue; }
         if (!idle(*u) && simTick - it->second <= kTripTicks) { ++it; continue; }
-        if (scouting && level.keep && explore(world, {u->id}, true, sink)) {
+        if (scouting && level.keep && explore(world, {u->id}, sink)) {
             it->second = simTick; ++scoutsSent_; ++it;
         } else it = scouts_.erase(it);   // back to the army from the next think
     }
     if (!scouting || pool.empty() || simTick < uint32_t(level.firstMin) * 60 * 30 || simTick < nextScoutTick_ ||
         int(scouts_.size()) >= level.maxScouts) return;
     // A flyer (it sees over cliffs and crosses water), else the fastest fighter in
-    // the pool, the cheapest of those as fast. Never a ship: a fleet explores the
-    // sea as a wave, and a scout taken from it can keep it from sailing.
+    // the pool, the cheapest of those as fast. A ship only when the pool holds
+    // nothing else and too few ships to sail as a fleet (sendWaves): a fleet
+    // explores the sea as a wave, and a scout taken from it could keep it home.
     auto ship = [&](const Fighter& f) {
         const auto* t = world.unit(f.id)->type;
         return !t->canFly && t->domain == tak::sim::UnitType::Domain::Water;
     };
+    const int ships = int(std::count_if(pool.begin(), pool.end(), ship));
     auto faster = [&](const Fighter& a, const Fighter& b) {
         if (ship(a) != ship(b)) return ship(b);
         const auto* ta = world.unit(a.id)->type;
@@ -2543,8 +2544,8 @@ void Controller::sendScouts(const tak::sim::World& world, uint32_t simTick, cons
         return a.id < b.id;
     };
     const auto best = std::min_element(pool.begin(), pool.end(), faster);
-    if (ship(*best)) return;
-    if (!explore(world, {best->id}, true, sink)) { nextScoutTick_ = simTick + kRetryTicks; return; }
+    if (ship(*best) && ships >= (diff_ == Difficulty::Easy ? 2 : 3)) return;
+    if (!explore(world, {best->id}, sink)) { nextScoutTick_ = simTick + kRetryTicks; return; }
     scouts_[best->id] = simTick;
     ++scoutsSent_;
     scouted_ = true;
@@ -2658,7 +2659,7 @@ void Controller::sendWaves(const tak::sim::World& world, uint32_t simTick,
     auto exploreWith = [&](const std::vector<Fighter>& group, size_t limit) {
         std::vector<int> ids;
         for (size_t i = 0; i < group.size() && i < limit; ++i) ids.push_back(group[i].id);
-        const int ordered = explore(world, ids, false, sink);
+        const int ordered = explore(world, ids, sink);
         if (ordered) {
             ++explorations_;
             for (int id : ids) strikers_.insert(id);

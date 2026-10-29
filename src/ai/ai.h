@@ -425,9 +425,9 @@ private:
     void claimSlot(int slot, uint32_t ticks);
     bool sectorCentre(int sector, float mapX, float mapZ, float& x, float& z) const;
     // Explore with `ids` from where the first of each kind of mover stands
-    // (ground first): every unit that can reach the point picked is ordered there
-    // (an attack-move, or with `scouting` a plain move). Returns the units ordered.
-    int explore(const tak::sim::World&, const std::vector<int>& ids, bool scouting, const CommandSink&);
+    // (ground first): every unit that can reach the point picked attack-moves
+    // there. Returns the units ordered.
+    int explore(const tak::sim::World&, const std::vector<int>& ids, const CommandSink&);
     // Scouting parties (exploreLevelFor): the scouts out, by unit id, each with
     // the tick its trip began; the tick the next one may go.
     std::map<int, uint32_t> scouts_;

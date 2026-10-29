@@ -323,7 +323,7 @@ static void visionTargets(const sim::TypeRegistry& registry,const ai::Profile& p
         ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
         const auto cs=think(controller,w);
         check(aimsAt(cs,w,3400,3400)==0,"an enemy lodestone never seen is not a target");
-        check(attacks(cs)==34 && aimsAt(cs,w,3400,800)==34,"with nothing seen, the push explores the enemy start");
+        check(attacks(cs)==35 && aimsAt(cs,w,3400,800)==35,"with nothing seen, the push and a scout explore the enemy start");
     }
     {
         // Seen by a lookout, which then goes: the lodestone is remembered, and
@@ -337,7 +337,7 @@ static void visionTargets(const sim::TypeRegistry& registry,const ai::Profile& p
         think(controller,w);
         moveTo(w,eye,400,400);army(w,35);sight(w);
         const auto cs=think(controller,w,30);
-        check(attacks(cs)==34 && aimsAt(cs,w,3400,3400)==34 && aimsAt(cs,w,1600,1600)==0 && moves(cs)==1,
+        check(attacks(cs)==35 && aimsAt(cs,w,3400,3400)==34 && aimsAt(cs,w,3400,800)==1 && aimsAt(cs,w,1600,1600)==0,
               "a lodestone seen and then out of sight is remembered; one never seen is not");
     }
     {
@@ -348,7 +348,7 @@ static void visionTargets(const sim::TypeRegistry& registry,const ai::Profile& p
         sight(w);
         ai::Controller controller(0,registry,profile,1,ai::Difficulty::Normal,{{1600,800},{3400,3400}});
         const auto cs=think(controller,w);
-        check(attacks(cs)==34 && aimsAt(cs,w,3400,3400)==34 && aimsAt(cs,w,1600,800)==0,
+        check(attacks(cs)==35 && aimsAt(cs,w,3400,3400)==35 && aimsAt(cs,w,1600,800)==0,
               "with nothing known, the army explores toward the enemy start not yet in sight");
     }
     {
@@ -362,7 +362,7 @@ static void visionTargets(const sim::TypeRegistry& registry,const ai::Profile& p
         think(controller,w);
         moveTo(w,eye,400,400);w.unit(gone)->deadFor=0;army(w,35);sight(w);
         auto cs=think(controller,w,30);
-        check(attacks(cs)==34 && aimsAt(cs,w,3400,3400)==34,"a remembered lodestone destroyed out of sight is still gone for");
+        check(aimsAt(cs,w,3400,3400)==34,"a remembered lodestone destroyed out of sight is still gone for");
         moveTo(w,eye,3300,3300);sight(w);
         cs=think(controller,w,60);
         check(attacks(cs)>0 && aimsAt(cs,w,3400,3400)==0 && aimsAt(cs,w,200,3800)==0,
@@ -1276,7 +1276,7 @@ static void classicLevel() {
         }
     sight(w);
     ai::Controller normal(0,empty,profile,1,ai::Difficulty::Normal,{{3400,800}});
-    check(stances==35 && patrols>=1 && other==0 && attacks(think(normal,w))==34,
+    check(stances==35 && patrols>=1 && other==0 && attacks(think(normal,w))==35,
           "the Classic brain gives each unit its standing orders, idle patrols and wave moves where Normal attacks");
 }
 
@@ -1291,7 +1291,7 @@ int main(int argc,char** argv) {
         auto cs=think(controller,w);
         // Nothing seen: an attacking level's push explores (the enemy start first)
         // and one fighter goes ahead as a scout.
-        check(ai::defensiveLevel(difficulty) ? attacks(cs)==0 : attacks(cs)==34 && moves(cs)==1,
+        check(ai::defensiveLevel(difficulty) ? attacks(cs)==0 : attacks(cs)==35 && moves(cs)==0,
               "difficulty permits heavy attacks only for attacking AIs");
         if (ai::defensiveLevel(difficulty)) {
             check(std::count_if(cs.begin(),cs.end(),[](const auto& c){return c.kind==net::Cmd::Stance && c.targetId==1;})==35,
@@ -1316,9 +1316,9 @@ int main(int argc,char** argv) {
         sight(w);
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Easy,{{3400,800}});
         auto cs=think(controller,w,3*60*30);
-        check(attacks(cs)==0 && moves(cs)==0,"Easy leaves four minutes before its first attack or scout");
+        check(attacks(cs)==0,"Easy leaves four minutes before its first attack or scout");
         cs=think(controller,w,4*60*30);
-        check(attacks(cs)==8 && moves(cs)==1,"Easy attacks with at most eight units");
+        check(attacks(cs)==9,"Easy attacks with at most eight units, and a scout goes ahead");
         for (const auto& c:cs) sim::applyCommand(w,empty,c);
         check(attacks(think(controller,w,5*60*30))==0,"Easy waits between attack waves");
         check(attacks(think(controller,w,6*60*30))==8,"Easy resumes attacking after two minutes");
@@ -1329,21 +1329,22 @@ int main(int argc,char** argv) {
         sight(w);
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{3400,800}});
         const auto cs=think(controller,w);
-        check(attacks(cs)==(income==20 ? 24 : 0) && moves(cs)==1,"actual income scales the force saved for a heavy attack");
+        check(attacks(cs)==(income==20 ? 25 : 1),"actual income scales the force saved for a heavy attack (one scouts)");
     }
     {
         sim::World w;terrain(w);w.player(0).income=100;
         for (int i=0;i<14;++i) w.spawn(&soldier,400+float(i)*32,800,0,0);
         sight(w);
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{3400,800}});
-        int largest=0,probes=0;
+        // Normal raids three at a time; a lone attack-move beside them is a scout.
+        int largest=0,probes=0,scouts=0;
         for (int wave=0;wave<40 && largest<30;++wave) {
             auto cs=think(controller,w,uint32_t(wave*750));int n=attacks(cs);
-            largest=std::max(largest,n);if (n>0 && n<30) probes+=n;
+            largest=std::max(largest,n);if (n>0 && n<30) {probes+=n-n%3;scouts+=n%3;}
             for (const auto& c:cs) sim::applyCommand(w,empty,c);
             w.spawn(&soldier,400,800+float(wave)*32,0,0);
         }
-        check(probes>0 && probes<=10,"probing raids preserve the accumulating home force");
+        check(probes>0 && probes<=10 && scouts>0,"probing raids preserve the accumulating home force");
         check(largest>=30,"repeated probing still allows a heavy attack to form");
     }
     {
@@ -1353,7 +1354,7 @@ int main(int argc,char** argv) {
         sight(w);
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{3400,800}});
         auto cs=think(controller,w);
-        check(attacks(cs)==0 && moves(cs)==1 && cs[0].unitId==flyer && cs[0].x==3400,
+        check(attacks(cs)==1 && cs[0].unitId==flyer && cs[0].x==3400,
               "the scout is a flyer that reaches the enemy start, not a stranded or unfinished unit");
         check(w.unit(ground)->orders.empty(),"AI terrain assessment does not mutate navigation");
     }
