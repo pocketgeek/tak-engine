@@ -2184,6 +2184,13 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(stream_key_test PRIVATE SDL_MAIN_HANDLED)
     add_test(NAME stream_key COMMAND stream_key_test)
     set_tests_properties(stream_key PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 30)
+    # The panel's bitrate against YouTube's table, and the UPLOAD CAN'T KEEP UP warning.
+    add_executable(stream_bitrate_test tools/stream_bitrate_test.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp
+                   src/client/settings.cpp)
+    target_link_libraries(stream_bitrate_test PRIVATE tak-uifont tak-formats tak-credstore tak_ffmpeg ${_tak_sdl2})
+    target_compile_definitions(stream_bitrate_test PRIVATE SDL_MAIN_HANDLED)
+    add_test(NAME stream_bitrate COMMAND stream_bitrate_test)
+    set_tests_properties(stream_bitrate PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 30)
     add_executable(cursor_test tools/cursor_test.cpp src/client/cursors.cpp)
     target_include_directories(cursor_test PRIVATE src)
     target_compile_definitions(cursor_test PRIVATE SDL_MAIN_HANDLED)

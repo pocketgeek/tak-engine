@@ -8,9 +8,12 @@
 #include "client/settings.h"
 #include "client/streamkey.h"
 #include "client/streamcapture_d3d.h"
+#include "client/uploadwatch.h"
+#include "video/youtubebitrate.h"
 #include <SDL_opengl.h>
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <cstring>
 #include <vector>
 #include <utility>
@@ -213,8 +216,13 @@ struct Streaming::Impl {
     bool testCursorSet=false;video::StreamCursor testCursor;
 #endif
     std::string error;
+    // Why the bitrate was lowered (YOUTUBE'S ... MAXIMUM), until the next choice.
+    std::string notice;
     uint64_t nextCapture=0, rateTime=0, rateBytes=0;
     uint64_t rateKbps=0;
+    UploadWatch upload; // UPLOAD CAN'T KEEP UP (client/uploadwatch.h)
+    // Stream::start() sends only to YouTube, so its bitrate cap always applies here.
+    const bool youtube=video::isYouTubeIngest(video::kYouTubeIngest);
     float x=0,y=0,u=1;
     // Row 0 is the key; the REMEMBER KEY row sits under it, then rows 1-4, the SAVE A
     // LOCAL COPY row, and row 5 (start/stop).
@@ -228,6 +236,34 @@ struct Streaming::Impl {
         return {width,height};
     }
     SDL_FRect pasteRect() const {auto r=row(0);r.x+=500*u;r.w=100*u;return r;}
+    SDL_FRect recommendedRect() const {auto r=row(3);r.x+=430*u;r.w=170*u;return r;}
+    std::pair<int,int> outputSize(int w,int h) const {
+        return resolution>=4&&!stream.active() ? windowResolution(w,h) : std::pair<int,int>{config.width,config.height};
+    }
+    // YouTube's bitrate for what Start Streaming would send now (video/youtubebitrate.h):
+    // the cap and the RECOMMENDED value. INT_MAX for a destination that is not YouTube.
+    int capKbps(int w,int h) const {
+        if(!youtube)return INT_MAX;
+        const auto [ow,oh]=outputSize(w,h);
+        return video::youtubeRecommendedKbps(ow,oh,config.fps,video::streamCodec(config.encoder,ow,oh));
+    }
+    // Lower the bitrate to the cap, saying why when the value asked for was above it (a
+    // resolution's floor raising it past the cap is not news). True when it changed.
+    bool capBitrate(int w,int h,int asked) {
+        const int cap=capKbps(w,h);
+        if(config.bitrateKbps<=cap)return false;
+        config.bitrateKbps=cap;
+        if(asked>cap)notice="BITRATE LOWERED TO YOUTUBE'S "+std::to_string(cap)+" KBPS MAXIMUM";
+        return true;
+    }
+    // The BITRATE row's steps: the panel's values up to the cap, then the cap itself.
+    std::vector<int> bitrateSteps(int w,int h) const {
+        const int cap=capKbps(w,h);
+        std::vector<int> steps;
+        for(int r:Settings::kStreamBitrates) if(r<cap)steps.push_back(r);
+        if(cap<=Settings::kStreamBitrates[std::size(Settings::kStreamBitrates)-1])steps.push_back(cap);
+        return steps;
+    }
     void pasteKey() {
         char* clipboard=SDL_GetClipboardText();
         if(!clipboard || !*clipboard) {error="CLIPBOARD IS EMPTY";SDL_free(clipboard);return;}
@@ -276,9 +312,11 @@ struct Streaming::Impl {
         }
     }
     // The status banner shown while the panel is closed: "" when there is none.
-    static std::string bannerText(const video::StreamStatus& s) {
+    static constexpr const char* kUploadWarning="UPLOAD CAN'T KEEP UP - LOWER THE BITRATE";
+    static std::string bannerText(const video::StreamStatus& s,bool uploadWarning) {
         if(!s.active && !s.state.starts_with("FAILED"))return {};
         std::string text="STREAM " + s.state;
+        if(s.active && uploadWarning)text+=std::string(" - ")+kUploadWarning;
         if(s.active && !s.local.empty() && s.local!="LOCAL COPY SAVED")text+=" - "+s.local;
         return text+" - F9";
     }
@@ -300,10 +338,14 @@ struct Streaming::Impl {
     void draw(int w,int h) {
         auto s=stream.status();
         uint64_t now=SDL_GetTicks64();
-        if(!s.active || s.bytes<rateBytes) {rateTime=now;rateBytes=s.bytes;rateKbps=0;}
-        else if(now-rateTime>=1000) {rateKbps=(s.bytes-rateBytes)*8/(now-rateTime);rateTime=now;rateBytes=s.bytes;}
+        if(!s.active || s.bytes<rateBytes) {rateTime=now;rateBytes=s.bytes;rateKbps=0;upload.reset();}
+        else if(now-rateTime>=1000) {
+            rateKbps=(s.bytes-rateBytes)*8/(now-rateTime);rateTime=now;rateBytes=s.bytes;
+            if(s.state.starts_with("LIVE"))upload.sample(rateKbps,config.bitrateKbps,s.dropped);
+            else upload.reset(); // connecting or reconnecting: nothing is being sent yet
+        }
         if(!visible) {
-            if(const std::string text=bannerText(bannerStatus(s));!text.empty()) {
+            if(const std::string text=bannerText(bannerStatus(s),upload.warning());!text.empty()) {
                 const auto box=hudcorner::streamBanner(uiTextWidth(text,1.5f),w); // GameView keeps its overlays below it
                 SDL_SetRenderDrawColor(ren,10,12,18,230);SDL_FRect r{box.x,box.y,box.w,box.h};SDL_RenderFillRectF(ren,&r);
                 uiText(ren,text,20,20,1.5f,{255,210,100,255});
@@ -312,6 +354,8 @@ struct Streaming::Impl {
         }
         layout(w,h);
         pollKeys();
+        // A saved value, or a window resized under FULL / MAX, can be above the cap.
+        if(!s.active && capBitrate(w,h,config.bitrateKbps))saveChoices();
         const bool storeOk=keys->state()==StreamKeyMemory::State::Available;
         SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
         SDL_SetRenderDrawColor(ren,12,17,26,248);SDL_FRect panel{x,y,640*u,580*u};SDL_RenderFillRectF(ren,&panel);
@@ -326,11 +370,12 @@ struct Streaming::Impl {
             "RESOLUTION: " + std::string(resolution==5?"MAX 3840 / ":resolution==4?"FULL ":"") +
                 std::to_string(outputW)+" X "+std::to_string(outputH),
             "FRAME RATE: " + std::to_string(config.fps),
-            "BITRATE: " + std::to_string(config.bitrateKbps)+" KBPS",
+            "BITRATE: " + std::to_string(config.bitrateKbps)+" KBPS"+
+                (youtube&&config.bitrateKbps==capKbps(w,h)?" - YOUTUBE MAX":""),
             "ENCODER: " + std::string(config.encoder.empty()?"AUTOMATIC":"CPU"),
             s.active?"STOP STREAMING":"START STREAMING"};
         for(int i=0;i<6;++i) {
-            auto r=row(i);if(i==0)r.w=490*u;
+            auto r=row(i);if(i==0)r.w=490*u;if(i==3&&youtube)r.w=420*u;
             SDL_SetRenderDrawColor(ren,i==0&&editing?55:35,45,60,255);SDL_RenderFillRectF(ren,&r);
             uiText(ren,labels[i],r.x+10*u,r.y+11*u,1.5f*u,{240,235,210,255});
         }
@@ -367,13 +412,24 @@ struct Streaming::Impl {
         SDL_RenderFillRectF(ren,&paste);
         uiText(ren,"PASTE",paste.x+27*u,paste.y+11*u,1.5f*u,
                       s.active?SDL_Color{110,115,120,255}:SDL_Color{240,235,210,255});
+        if(youtube) { // RECOMMENDED: YouTube's bitrate for these settings
+            const auto rec=recommendedRect();
+            SDL_SetRenderDrawColor(ren,s.active?35:50,s.active?40:65,s.active?45:85,255);
+            SDL_RenderFillRectF(ren,&rec);
+            const std::string label="RECOMMENDED";
+            uiText(ren,label,rec.x+(rec.w-uiTextWidth(label,1.5f*u))/2,rec.y+11*u,1.5f*u,
+                          s.active?SDL_Color{110,115,120,255}:SDL_Color{240,235,210,255});
+        }
         text(s.state,20,442,{255,210,100,255});
         text(s.encoder+"  FRAMES "+std::to_string(s.frames)+"  DROPPED "+std::to_string(s.dropped),20,465);
         text("REPLACED "+std::to_string(s.replaced)+"  RATE "+std::to_string(rateKbps)+" KBPS",20,488);
         if(const auto line=localLine(s,600*u);!line.empty())
             text(line,20,511,s.local.find("STOPPED")!=std::string::npos||s.local.find("FAILED")!=std::string::npos?
                  SDL_Color{255,150,110,255}:SDL_Color{170,215,170,255});
-        text(error.empty()?"ESC / F9: CLOSE - STREAM CONTINUES UNTIL STOP":error,20,547);
+        if(!error.empty())text(error,20,547);
+        else if(s.active&&upload.warning())text(kUploadWarning,20,547,{255,150,110,255});
+        else if(!notice.empty()&&!s.active)text(notice,20,547,{255,210,100,255});
+        else text("ESC / F9: CLOSE - STREAM CONTINUES UNTIL STOP",20,547);
     }
 };
 Streaming::Streaming(SDL_Renderer* ren,Settings* settings,std::function<void()> save,
@@ -405,6 +461,9 @@ Streaming::~Streaming(){
 }
 SDL_FRect Streaming::rememberRect(int w,int h){p_->layout(w,h);return p_->rememberRect();}
 SDL_FRect Streaming::localCopyRect(int w,int h){p_->layout(w,h);return p_->localCopyRect();}
+SDL_FRect Streaming::bitrateRect(int w,int h){p_->layout(w,h);auto r=p_->row(3);if(p_->youtube)r.w=420*p_->u;return r;}
+SDL_FRect Streaming::recommendedRect(int w,int h){p_->layout(w,h);return p_->recommendedRect();}
+const std::string& Streaming::notice() const{return p_->notice;}
 bool Streaming::waitKeyStore(int ms){const bool idle=p_->keys->waitIdle(ms);p_->pollKeys();return idle;}
 video::Stream& Streaming::stream(){return p_->stream;}
 #ifdef TAK_STREAM_TESTING
@@ -443,6 +502,13 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
         if(SDL_PointInFRect(&pt,&remember)) {if(direction>0)p_->toggleRemember();return true;} // left only: untick deletes
         const auto copyRow=p_->localCopyRect();
         if(SDL_PointInFRect(&pt,&copyRow)) {if(direction>0)p_->toggleLocalCopy();return true;}
+        const auto recommended=p_->recommendedRect();
+        if(p_->youtube && SDL_PointInFRect(&pt,&recommended)) {
+            if(direction>0 && !p_->stream.active()) {
+                p_->config.bitrateKbps=p_->capKbps(w,h);p_->notice.clear();p_->saveChoices();
+            }
+            return true;
+        }
         for(int i=0;i<6;++i) {auto r=p_->row(i);if(!SDL_PointInFRect(&pt,&r))continue;
             if(direction<0 && (i==0 || i==5))return true;
             if(i==5) {
@@ -452,15 +518,17 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
                         const auto size=p_->windowResolution(w,h);
                         p_->config.width=size.first;p_->config.height=size.second;
                     }
+                    if(p_->capBitrate(w,h,p_->config.bitrateKbps))p_->saveChoices();
                     p_->config.localCopyDir=p_->localCopy?videoDir():std::string();
                     if(w<2 || h<2 || p_->config.width>8192 || p_->config.height>8192)
                         p_->error="RESOLUTION MUST BE BETWEEN 2 AND 8192 PIXELS";
                     else if(p_->localCopy && p_->config.localCopyDir.empty())
                         p_->error="NO USER FOLDER FOR A LOCAL COPY - UNTICK SAVE A LOCAL COPY";
                     else if(!p_->stream.start(p_->config))p_->error="ENTER A VALID YOUTUBE STUDIO STREAM KEY";
-                    else {p_->error.clear();p_->editing=false;SDL_StopTextInput();p_->keys->sync(p_->config.key);}
+                    else {p_->error.clear();p_->notice.clear();p_->editing=false;SDL_StopTextInput();p_->keys->sync(p_->config.key);}
                 }
             } else if(!p_->stream.active()) {
+                if(i>0)p_->notice.clear();
                 p_->editing=i==0;if(p_->editing)SDL_StartTextInput();else SDL_StopTextInput();
                 if(i==1){
                     p_->resolution=(p_->resolution+direction+6)%6;
@@ -473,12 +541,14 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
                         p_->config.width=widths[p_->resolution];p_->config.height=heights[p_->resolution];
                     }
                     const int64_t pixels=int64_t(p_->config.width)*p_->config.height;
-                    p_->config.bitrateKbps=std::max(p_->config.bitrateKbps,pixels>2560*1440?30000:pixels>1920*1080?12000:6000);
+                    const int asked=p_->config.bitrateKbps;
+                    p_->config.bitrateKbps=std::max(asked,pixels>2560*1440?30000:pixels>1920*1080?12000:6000);
+                    p_->capBitrate(w,h,asked);
                     p_->saveChoices();
                 }
-                if(i==2){p_->config.fps=p_->config.fps==30?60:30;p_->saveChoices();}
+                if(i==2){p_->config.fps=p_->config.fps==30?60:30;p_->capBitrate(w,h,p_->config.bitrateKbps);p_->saveChoices();}
                 if(i==3){
-                    const auto& rates=Settings::kStreamBitrates;
+                    const auto rates=p_->bitrateSteps(w,h);
                     if(direction>0) {
                         const auto next=std::upper_bound(std::begin(rates),std::end(rates),p_->config.bitrateKbps);
                         p_->config.bitrateKbps=next==std::end(rates)?rates[0]:*next;
@@ -489,7 +559,10 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
                     }
                     p_->saveChoices();
                 }
-                if(i==4){p_->config.encoder=p_->config.encoder.empty()?"libx264":"";p_->saveChoices();}
+                if(i==4){
+                    p_->config.encoder=p_->config.encoder.empty()?"libx264":"";
+                    p_->capBitrate(w,h,p_->config.bitrateKbps);p_->saveChoices();
+                }
             }
         }
     }
@@ -499,7 +572,7 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
 void Streaming::draw(int w,int h) { p_->draw(w,h); }
 float Streaming::bannerBottom(int w) const {
     if(p_->visible)return 0;
-    const std::string text=Impl::bannerText(p_->bannerStatus(p_->stream.status()));
+    const std::string text=Impl::bannerText(p_->bannerStatus(p_->stream.status()),p_->upload.warning());
     if(text.empty())return 0;
     const auto box=hudcorner::streamBanner(uiTextWidth(text,1.5f),w);
     return box.y+box.h;

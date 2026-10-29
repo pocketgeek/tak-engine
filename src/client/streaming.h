@@ -3,6 +3,7 @@
 #include <SDL.h>
 #include <functional>
 #include <memory>
+#include <string>
 namespace tak {
 struct Settings;
 namespace credstore { class Store; }
@@ -30,6 +31,11 @@ public:
     // Tests and screenshots: the REMEMBER KEY row, and a wait for its credential-store work.
     SDL_FRect rememberRect(int w, int h);
     SDL_FRect localCopyRect(int w, int h); // the SAVE A LOCAL COPY row
+    // The BITRATE row, its RECOMMENDED button, and why the bitrate was last lowered
+    // (empty: it was not, or a choice since cleared it).
+    SDL_FRect bitrateRect(int w, int h);
+    SDL_FRect recommendedRect(int w, int h);
+    const std::string& notice() const;
     bool waitKeyStore(int ms);
 #ifdef TAK_STREAM_TESTING
     // Use this cursor for every capture instead of the OS pointer's (null: back to the

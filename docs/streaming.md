@@ -34,7 +34,7 @@ be changed while a stream runs.
 | --- | --- | --- |
 | Resolution | 720p, 1080p, 1440p, 4K (3840×2160), **FULL** (the whole window), **MAX 3840** | MAX 3840 |
 | Frame rate | 30 or 60 FPS | 60 |
-| Bitrate | 3,000, 6,000, 9,000, 12,000, 20,000, 30,000, 45,000, 60,000 or 80,000 Kbps | 6,000 |
+| Bitrate | 3,000, 6,000, 9,000, 12,000, 20,000, 30,000, 45,000, 60,000 or 80,000 Kbps, up to [YouTube's maximum](#youtubes-bitrate) | 6,000 |
 | Encoder | Automatic or CPU | Automatic |
 
 - **MAX 3840** scales down to at most 3840 pixels wide while keeping the window's
@@ -48,16 +48,46 @@ be changed while a stream runs.
   picture. The supported range is 2–8192 pixels per axis, subject to the encoder's
   limits.
 - Choosing a resolution raises a lower bitrate to at least 6,000 Kbps, 12,000 Kbps
-  for 1440p or 30,000 Kbps for 4K; you can still change it afterwards. Raise the
-  bitrate for higher-resolution video as far as your upload allows. The highest
-  value is not a YouTube recommendation.
+  for 1440p or 30,000 Kbps for 4K, but never past [YouTube's maximum](#youtubes-bitrate);
+  you can still change it afterwards.
 - The game remembers the panel's **resolution, frame rate, bitrate and encoder**
   (the `streamResolution`, `streamFps`, `streamBitrate` and `streamCpuEncoder` lines
   in the settings file) and saves them whenever you change one, so the panel opens
   with them next time. The bitrate saved is the one on screen, including a value
   that choosing a resolution raised. A value that is not one of the panel's choices
-  falls back to the default (MAX 3840, 60, 6,000 Kbps, AUTOMATIC). **Defaults** in
+  (or one of YouTube's figures below) falls back to the default (MAX 3840, 60, 6,000 Kbps, AUTOMATIC). **Defaults** in
   Options leaves all four alone, like Save a Local Copy.
+
+### YouTube's bitrate
+
+Above YouTube's bitrate for the stream's size, frame rate and codec, YouTube can
+accept the connection and then never start the broadcast, while the panel shows
+**LIVE**. So the panel never goes above YouTube's figure: **BITRATE** steps stop at
+it, and the row reads `- YOUTUBE MAX` there. A remembered bitrate above it, or one
+left above it by a change of resolution, frame rate or encoder (or by resizing the
+window under FULL or MAX 3840), is lowered to it, and the bottom line says so:
+`BITRATE LOWERED TO YOUTUBE'S 17000 KBPS MAXIMUM`. **Recommended**, beside the
+bitrate, fills that figure in.
+
+The figures are YouTube's recommended bitrates from its
+[live encoder settings](https://support.google.com/youtube/answer/2853702) page, in
+Kbps. YouTube gives each a minimum and a recommended value and no maximum, so the
+recommended value, the top of its range, is the limit:
+
+| Stream | H.264, 30 FPS | H.264, 60 FPS | HEVC, 30 FPS | HEVC, 60 FPS |
+| --- | --- | --- | --- | --- |
+| 2160p (4K) | 42,000 | 50,000 | 30,000 | 35,000 |
+| 1440p | 21,000 | 34,000 | 15,000 | 24,000 |
+| 1080p | 14,000 | 17,000 | 10,000 | 12,000 |
+| 720p | 8,000 | 8,000 | 6,000 | 6,000 |
+| 480p and 360p | 4,000 | 4,000 | 3,000 | 3,000 |
+
+- The row is the first one at or above the picture's **short side**, its height for
+  a landscape window; the 2160p row above that, the 360p row below. An ultrawide
+  stream goes by its height: MAX 3840 from a 7680×2160 window sends 3840×1080, a
+  1080p stream (17,000 Kbps at 60 FPS in H.264). A 1600×900 window is 1080p.
+- The codec is the one the encoder will use: **Automatic** encodes HEVC above 4096
+  pixels on either axis and H.264 otherwise; **CPU** is always H.264.
 
 ### Encoders
 
@@ -119,7 +149,13 @@ work as they do for `vainfo`.
 
 The panel shows the encoder actually opened, the connection state, encoded frames,
 missed output frames (**DROPPED**), superseded or busy capture submissions
-(**REPLACED**), and the estimated encoded bitrate. A replaced capture does not by
+(**REPLACED**), and the bitrate actually being sent (**RATE**).
+
+**UPLOAD CAN'T KEEP UP - LOWER THE BITRATE** appears on the bottom line, and in the
+corner badge while the panel is closed, when RATE stays under half the set bitrate
+for five seconds, or DROPPED rises in three of any five seconds. It clears after
+five seconds with neither. A busy computer can drop frames too, so if a lower
+bitrate does not help, try a lower resolution or frame rate. A replaced capture does not by
 itself mean an output frame was missed. Rendering slowdowns skip late frames
 without forcing a reconnect, and with VSync on, a refresh-rate pacing fallback
 keeps streaming from uncapping presentation.

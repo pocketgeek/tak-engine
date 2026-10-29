@@ -19,6 +19,12 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+
+- **Streaming keeps to YouTube's bitrate**, above which YouTube could connect
+  but never start the broadcast: the panel caps it there (a saved higher value is
+  lowered, with a note), adds **Recommended**, and warns when the upload can't keep up.
+
 ## 0.9.11
 *2026-10-29 · protocol 304 · replay format 15 · does not play with 0.9.10 or earlier, nor their replays*
 

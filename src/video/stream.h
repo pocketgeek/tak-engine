@@ -7,6 +7,8 @@
 #include "video/streamcursor.h"
 
 namespace tak::video {
+// Where Stream::start() sends the stream (the key follows it): YouTube's RTMPS ingest.
+inline constexpr const char* kYouTubeIngest = "rtmps://a.rtmps.youtube.com:443/live2/";
 struct StreamConfig {
     int width = 1280, height = 720, fps = 30, bitrateKbps = 6000;
     // Empty means automatic hardware selection with a CPU fallback.

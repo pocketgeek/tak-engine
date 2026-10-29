@@ -1,6 +1,7 @@
 #include "video/stream.h"
 #include "video/rgbascale.h"
 #include "video/streamcursor.h"
+#include "video/youtubebitrate.h"
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -215,6 +216,7 @@ struct Stream::Impl {
     size_t read = 0, count = 0;
     // How far the worker's current attempt got, for the failure reason. Worker only.
     enum class Stage { Setup, Connect, Live } stage = Stage::Setup;
+    bool youtube = false; // the destination is a YouTube ingest. Worker only.
 
 #ifdef TAK_STREAM_TESTING
     void testKeep(const uint8_t* picture, ptrdiff_t pitch, int w, int h) {
@@ -321,7 +323,11 @@ struct Stream::Impl {
         if (!e.v) return false;
         e.v->width = c.width; e.v->height = c.height;
         e.v->time_base = {1, c.fps}; e.v->framerate = {c.fps, 1};
-        e.v->bit_rate = int64_t(c.bitrateKbps) * 1000;
+        // Never more than YouTube takes for this codec (video/youtubebitrate.h): the panel
+        // already keeps to it, so this only guards a caller that does not.
+        const int kbps = youtube ? std::min(c.bitrateKbps,
+            youtubeRecommendedKbps(c.width, c.height, c.fps, streamCodec(name, c.width, c.height))) : c.bitrateKbps;
+        e.v->bit_rate = int64_t(kbps) * 1000;
         e.v->rc_max_rate = e.v->bit_rate; e.v->rc_buffer_size = int(e.v->bit_rate * 2);
         e.v->gop_size = c.fps * 2; e.v->max_b_frames = 0;
         e.v->thread_count = 4;
@@ -497,6 +503,7 @@ struct Stream::Impl {
     }
     void run(StreamConfig c, std::string dest, bool local) {
         privateStreamLog = true;
+        youtube = isYouTubeIngest(dest);
         int attempts = 0;
         int64_t start = 0;
         RgbaScaler resize; // outlives reconnects: its helper threads start once
@@ -692,7 +699,7 @@ Stream::Stream(): p_(std::make_unique<Impl>()) {
 Stream::~Stream() { stop(); if (p_->worker.joinable()) p_->worker.join(); }
 bool Stream::start(const StreamConfig& c) {
     if (c.key.empty() || c.key.size() > 256 || c.key.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") != std::string::npos) return false;
-    return p_->start(c, "rtmps://a.rtmps.youtube.com:443/live2/" + c.key, false);
+    return p_->start(c, kYouTubeIngest + c.key, false);
 }
 bool Stream::startRecording(const StreamConfig& c, const std::string& path) {
     if (path.empty() || path.find("://") != std::string::npos) return false;

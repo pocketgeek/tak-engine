@@ -253,6 +253,13 @@ while it is ticked, deletes the stored key. If your system has no password store
 the box is greyed out with **NO SYSTEM PASSWORD STORE**.
 [Remembering the key](streaming.md#remembering-the-key) has the details.
 
+The bitrate never goes above YouTube's figure for the stream's size, frame rate
+and codec (above it YouTube can take the connection and never start the
+broadcast); **Recommended** beside it fills that figure in, and a remembered
+higher value is lowered with a note. **UPLOAD CAN'T KEEP UP - LOWER THE BITRATE**
+means the stream is falling behind. [YouTube's bitrate](streaming.md#youtubes-bitrate)
+has the table.
+
 Tick **Save a Local Copy** (off by default; the game remembers your choice) to also
 keep the broadcast on disk: the same video YouTube receives, as an MP4 in the
 **videos** folder beside your replays ([Where files are kept](#where-files-are-kept)), named `TAK-YYYYMMDD-HHMMSS.mp4`. The panel

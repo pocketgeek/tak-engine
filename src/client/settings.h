@@ -152,8 +152,9 @@ struct Settings {
     bool streamRememberKey = false;
     // The streaming panel's SAVE A LOCAL COPY: also write the stream to videoDir().
     bool streamLocalCopy = false;
-    // The streaming panel's BITRATE (Kbps). Always one of kStreamBitrates; anything else
-    // read from the file snaps to the default.
+    // The streaming panel's BITRATE (Kbps). Always one of kStreamBitrates or one of
+    // YouTube's figures (video/youtubebitrate.h: the panel's cap and RECOMMENDED);
+    // anything else read from the file snaps to the default.
     static constexpr int kStreamBitrates[] = {3000, 6000, 9000, 12000, 20000, 30000, 45000, 60000, 80000};
     static constexpr int kStreamBitrateDefault = 6000;
     int streamBitrate = kStreamBitrateDefault;

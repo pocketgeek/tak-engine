@@ -652,6 +652,9 @@ int main() {
         check("bitrate: 0 snaps", bitrateFrom("streamBitrate = 0\n") == 6000);
         check("bitrate: junk snaps", bitrateFrom("streamBitrate = fast\n") == 6000);
         check("bitrate: 80000 ok", bitrateFrom("streamBitrate = 80000\n") == 80000);
+        // YouTube's figures (the panel's cap and RECOMMENDED) are kept too.
+        check("bitrate: 17000 ok", bitrateFrom("streamBitrate = 17000\n") == 17000);
+        check("bitrate: 35000 ok", bitrateFrom("streamBitrate = 35000\n") == 35000);
         // Resolution, frame rate and encoder: round trip, then invalid values snap to default.
         Settings w2{};
         w2.streamResolution = 1; w2.streamFps = 30; w2.streamCpuEncoder = true;

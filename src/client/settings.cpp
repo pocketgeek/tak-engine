@@ -5,6 +5,7 @@
 #include "client/renderdriver.h"
 #include "client/waylandchoice.h"
 #include "util/prefpath.h"
+#include "video/youtubebitrate.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -176,6 +177,7 @@ Settings loadSettings() {
             const int v = asInt(0, 1000000);
             s.streamBitrate = Settings::kStreamBitrateDefault;
             for (int r : Settings::kStreamBitrates) if (r == v) s.streamBitrate = v;
+            if (video::isYouTubeRecommendedKbps(v)) s.streamBitrate = v; // RECOMMENDED / the cap
         }
         else if (key == "streamResolution") {
             char* end = nullptr;
