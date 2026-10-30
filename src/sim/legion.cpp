@@ -1301,15 +1301,17 @@ struct LegionNavigator::Impl {
     void listBins(Group& g) {
         const uint64_t fs=g.field?g.field->serial:0,ns=g.next?g.next->serial:0;
         if(fs==g.binField&&ns==g.binNext)return;
-        sizeBins();
+        if(sizeBins())return;   // first use: every group (this one too) was just listed
         g.binField=fs;g.binNext=ns;
         routeBins.list(g.id,g.plane,g.field.get(),g.next.get());
     }
     void unlistBins(Group& g) {routeBins.unlist(g.id);g.binField=g.binNext=0;}
-    // The bins follow the map's size (fixed for a navigator's life; a change would list every group again).
-    void sizeBins() {
-        if(!routeBins.size(width(),height()))return;
+    // The bins follow the map's size (fixed for a navigator's life): sized on first use, and a new size lists every
+    // group again (true).
+    bool sizeBins() {
+        if(!routeBins.size(width(),height()))return false;
         for(auto& [id,g]:groups) {g.binField=g.binNext=0;listBins(g);}
+        return true;
     }
     static bool wantsBuilding(const Group& g) {return (g.field&&!g.field->done&&g.pausedSerial!=g.field->serial)||g.next;}
     static bool wantsNeedField(const Group& g) {return !g.field&&!g.next;}
@@ -6262,11 +6264,13 @@ struct LegionNavigator::Impl {
     }
 #ifndef NDEBUG
     // TAK_LEGION_VERIFY: every group a change reaches (the walk's test, without its effects) is a candidate of the index.
+    // Read-only (routebins::Index::collect): a verified run must count and choose exactly as an unverified one.
     void verifyReached(const std::vector<std::vector<StaticChange>>& changes) {
-        sizeBins();
         if(!routeBins.usable())return;
         std::vector<int> found;
-        gatherBins(changes,found);
+        for(size_t pi=0;pi<changes.size();++pi)
+            for(const auto& c:changes[pi])if(c.closes||c.opens)routeBins.collect(int(pi),c.box,found);
+        std::sort(found.begin(),found.end());
         for(const auto& [id,g]:groups) {
             if(g.plane<0||size_t(g.plane)>=changes.size())continue;
             bool reached=false;

@@ -193,8 +193,20 @@ public:
             }
     }
 
-    // Verification (TAK_LEGION_VERIFY, tests): the groups listed live in one bin, ascending; and whether the live
-    // and stale counts agree with the entries held.
+    // Verification (TAK_LEGION_VERIFY, tests): gather()'s candidates for a box, appended in no particular order and
+    // possibly repeated, without changing the index (no stale entry dropped, no stats): a check must not move what
+    // the index does next (staticChanged's choice between the index and the walk reads the bins' sizes).
+    void collect(int plane, const std::array<int, 4>& b, std::vector<int>& out) const {
+        if (!usable() || plane < 0 || size_t(plane) >= planes_.size() || planes_[size_t(plane)].empty() || b[2] < b[0] ||
+            b[3] < b[1])
+            return;
+        const auto& bins = planes_[size_t(plane)];
+        for (int bz = binZ(b[1]); bz <= binZ(b[3]); ++bz)
+            for (int bx = binX(b[0]); bx <= binX(b[2]); ++bx)
+                for (const Entry& e : bins[size_t(bz) * size_t(bw_) + size_t(bx)])
+                    if (gen_[size_t(e.id)] == e.gen) out.push_back(e.id);
+    }
+    // The groups listed live in one bin, ascending; and whether the live and stale counts agree with the entries held.
     std::vector<int> liveIds(int plane, int bin) const {
         std::vector<int> ids;
         if (plane < 0 || size_t(plane) >= planes_.size() || planes_[size_t(plane)].empty()) return ids;
