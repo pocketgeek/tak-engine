@@ -1483,6 +1483,44 @@ its build rate, vanishing without counting as a loss. Probe:
 `~/tak-tmp/scratch/factory-death/probe_buildingbuild_abort.py` (outside the
 repo). Test: `tools/factory_death_test.cpp`.
 
+## Capture is the mind-control weapon only (icd, static, 2026-10-30)
+
+`cancapture` (only `zonharp.fbi` sets it) is parsed into UnitDef `+0x264` bit
+`0x2000` (`0x4c07de..ed`). Nothing in the simulation reads that bit: the
+command-panel summary reads it (`0x4b049f`, selection `+0x24`) to show a
+`CAPTURE` control that no shipped `guis/*.gui` has, and that button's order
+mode 13 falls to the default entries of both mode tables (no command);
+`0x519cf0` tests it but has no caller. There is no capture by contact, timer
+or low-HP rule. A unit changes sides only through the mind-control impact
+`0x52d8d0` and its roll `0x52da10`, whose gates are, in order: not the
+caster's side, `[+8]` set, not a commander (`0x40000`), **construction
+remaining `+0x108` not above 0**, not in a transport, not `cantbecaptured`
+(`0x100000`); then `min(99,(level+16)*5)` scaled by the area falloff against
+`rand()%100`, and on success `0x514da0`.
+
+`0x514da0` creates a new object for the new owner (`0x512060`, same type and
+position) and copies onto it the HP raw (`0x514f8a/514f94`, no healing),
+construction remaining, `+0x7c` (6 bytes), `+0x12b`, the movement bits of
+`+0x130` from the UnitDef and the activation byte `+0x114` (`0x51e4d0`), then
+kills the old object with 30000 of type 6. Everything else starts fresh:
+`0x511990` zeroes `+0xf0` and `+0xf4` (the experience `getLevel 0x519310`
+reads) and the orders are new. If the object cannot be created, nothing
+changes.
+
+Ours before: a `canCapture` unit took its target after ~3 s in reach, or at
+once below 25% HP, free of mana, beside its weapon, and was kept out of the
+slot sweep and hit response; `captureUnit` raised HP to half and kept
+veterancy; nothing refused an unfinished target. Now the Harpy is an
+ordinary mind-control caster, `captureUnit` keeps HP and resets `xp` /
+`veteran` to a fresh unit's (the scenario's rank for the type, as `spawn`),
+and `canCaptureTarget` and the roll refuse `underConstruction`. Deviations
+kept: the unit keeps its id (and its mana, status timers and cloak) rather
+than becoming a new object; and a mind-control slot does not select an
+unfinished unit (`retailSelectTarget`, `sweepKeepsTarget`), where retail's
+selection would pick it and waste the charm on the roll. Probes:
+`~/tak-tmp/retail-checks/capture/` (outside the repo). Test:
+`tools/capture_combat_test.cpp`.
+
 ## The Crusades balance swaps only the unit roster (icd, 2026-10-26)
 
 With the Crusades balance on, the unit lookup `0x518080` searches only the

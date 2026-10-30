@@ -343,7 +343,9 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
             t.canPatrol = info->numberOr("canpatrol", 0) != 0;
             t.canReclaim = info->numberOr("canreclaim", 0) != 0;
             t.canResurrect = info->numberOr("canresurrect", 0) != 0;
-            t.canCapture = info->numberOr("cancapture", 0) != 0;
+            // cancapture is not read: retail parses it into a UnitDef bit (0x4c07de)
+            // that no simulation code reads -- only a "CAPTURE" button no shipped
+            // .gui has. A Harpy converts with its mind-control weapon alone.
             t.canCloak = info->numberOr("cancloak", 0) != 0;
             t.cloakCost = float(info->numberOr("cloakcost", 0));
             // Retail (0x4c01a1) reads cloakcost, scales it by 1/30 to a per-tick
@@ -5063,8 +5065,7 @@ void World::attack(int unitId, int targetId, bool queue) {
     }
     if (u->type->weapon.damage <= 0) return;
     const Unit* target=unit(targetId);
-    const bool converts=u->type->canCapture ||
-        std::any_of(u->type->weapons.begin(),u->type->weapons.end(),
+    const bool converts=std::any_of(u->type->weapons.begin(),u->type->weapons.end(),
                     [](const Weapon& weapon){return weapon.mindControl;});
     if (converts && (!target || !canAttackTarget(*u,*target))) return;
     if (!queue) {
@@ -5160,7 +5161,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         // encodes eligibility in the weapon's own [DAMAGE] table -- it zeroes
         // monarch/god/dragon/fort/factory/naval/lodestone -- so "damage > 0
         // against this category" is exactly "can be charmed", which damageVs()
-        // already computes. Conversion is permanent, like contact capture.
+        // already computes. Conversion is permanent.
         if (w.mindControl) {
             // A previously launched charm may arrive after another conversion.
             if (allied(fromPlayer,e.player)) return;
@@ -5171,6 +5172,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             // here, not by its zeroed damage row.
             if (e.embarked()) return;                 // safe inside a transport
             if (e.type->commander) return;            // Monarchs are never charmed
+            if (e.underConstruction) return;          // nor anything still being built (+0x108 > 0)
             if (e.type->cantBeCaptured) return;
             if (e.hp <= Fixed()) return;
             if (atUnitCap(fromPlayer)) return;        // no room on the new side
@@ -5452,7 +5454,7 @@ static void leadAim(const Unit& shooter, const Unit& tgt, const Weapon& w,
 
 void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
     const Weapon& w = u.type->weapons[size_t(slot)];
-    if ((w.mindControl || u.type->canCapture) && !canCaptureTarget(u.player,target)) return;
+    if (w.mindControl && !canCaptureTarget(u.player,target)) return;
     // manapershot: a caster spends personal mana to fire; if it can't pay, the
     // shot doesn't happen (reload not consumed, so it fires the moment it can).
     if (w.manaCost > 0 && u.type->maxMana > 0) {
@@ -5803,17 +5805,15 @@ bool World::combatLineOfSight(const Unit& from,const Unit& to) const {
 bool World::canCaptureTarget(int player,const Unit& target) const {
     // Match the charm impact gates before choosing or pursuing a target. The
     // weapon damage table is an additional targeting filter, not an immunity
-    // override for commanders, protected units, passengers or petrified units.
-    return target.type && target.alive() && target.hp>Fixed() &&
+    // override for commanders, unfinished units, protected units, passengers or
+    // petrified units.
+    return target.type && target.alive() && target.hp>Fixed() && !target.underConstruction &&
         !target.embarked() && !target.type->commander && !target.type->cantBeCaptured &&
         target.stonedFor<=0 && !allied(player,target.player) && !atUnitCap(player);
 }
 
 bool World::canAttackTarget(const Unit& from,const Unit& target) const {
     if (!from.type || !target.type) return false;
-    // Contact capture is independent of damage, but obeys the same immunity and
-    // capacity gates as mind-control impacts.
-    if (from.type->canCapture) return canCaptureTarget(from.player,target);
     const auto usable=[&](const Weapon& weapon) {
         return !(target.type->canFly && weapon.noAir) && weapon.damageVs(target.type)>0 &&
             (!weapon.mindControl || canCaptureTarget(from.player,target));
@@ -6502,6 +6502,7 @@ bool World::sweepKeepsTarget(const Unit& u,int slot,const Unit& t) const {
     if (w.melee && t.type->canFly) return false;
     if (slotBadTarget(u,slot,t)) return false;
     if (w.status==Weapon::Status::Paralyzed && t.paralyzedFor>0) return false;
+    if (w.mindControl && t.underConstruction) return false;   // see retailSelectTarget
     if (shotBlockedHere(u,t)) return false;   // engine deviation: see noteShotImpact
     return true;
 }
@@ -6552,6 +6553,11 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
         if (w.status==Weapon::Status::Stoned && (t.type->cantBeStoned || t.incapacitated())) continue;
         if (w.status==Weapon::Status::Frozen && (t.type->cantBeFrozen || t.incapacitated())) continue;
         if (w.mindControl && (t.type->cantBeCaptured || t.incapacitated())) continue;
+        // Engine deviation: retail picks an unfinished unit here too, then the
+        // charm roll (52da10) refuses it and the shot's mana is wasted. fire()
+        // refuses a target the charm cannot take, so keeping one would stall
+        // the slot on it until it is finished.
+        if (w.mindControl && t.underConstruction) continue;
         if (w.status==Weapon::Status::Paralyzed && t.paralyzedFor>0) continue;
         if (w.melee && t.type->canFly) continue;
         if (w.toAir && !t.type->canFly) continue;
@@ -6637,7 +6643,7 @@ void World::tickFireSweep(int player) {
             // fireState test, so the new slot is swept in this same visit.
             if (aiOwner && u->type->weaponSwitching) retailAiWeaponSwitch(*u);
             syncSlotMode(*u);
-            if (u->fireState==2 && u->slotAuto && !u->type->canCapture) {
+            if (u->fireState==2 && u->slotAuto) {
                 for (int s=0;s<int(std::min<size_t>(3,u->type->weapons.size()));++s) {
                     if (!(u->slotAuto>>s&1)) continue;
                     const Weapon& w=u->type->weapons[size_t(s)];
@@ -6664,7 +6670,7 @@ void World::tickFireSweep(int player) {
 // steering or stopping. Only a stopped mover pivots to its facing request.
 void World::tickSlotWeapons(Unit& u) {
     syncSlotMode(u);
-    if (!u.slotAuto || u.type->weapons.empty() || (u.type->onOffable && !u.active) || u.type->canCapture) {
+    if (!u.slotAuto || u.type->weapons.empty() || (u.type->onOffable && !u.active)) {
         u.faceRequest=-1;
         return;
     }
@@ -6707,8 +6713,7 @@ void World::tickSlotWeapons(Unit& u) {
 void World::slotHitResponse(Unit& victim,const Unit& attacker) {
     if (!victim.alive() || victim.hp<=Fixed() || !victim.type || victim.type->weapons.empty() ||
         victim.fireState==0 || victim.incapacitated() || isNeutralPlayer(victim.player) ||
-        !attacker.alive() || !attacker.type || allied(victim.player,attacker.player) ||
-        victim.type->canCapture) return;
+        !attacker.alive() || !attacker.type || allied(victim.player,attacker.player)) return;
     syncSlotMode(victim);
     if (!victim.slotAuto) return;
     for (int s=0;s<int(std::min<size_t>(3,victim.type->weapons.size()));++s) {
@@ -6936,7 +6941,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // Auto-acquisition and conversion attacks require a hostile target throughout
     // the order, not just when it starts. Another caster may have turned it since
     // then. Ordinary explicit attacks retain their intentional friendly-fire use.
-    const bool requiresEnemy=u.orders.front().autoTarget || u.type->canCapture ||
+    const bool requiresEnemy=u.orders.front().autoTarget ||
         std::any_of(u.type->weapons.begin(),u.type->weapons.end(),
                     [](const Weapon& w){return w.mindControl;});
     if (!target || !target->alive() || (requiresEnemy && allied(u.player,target->player)) ||
@@ -6944,7 +6949,6 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         // Clear both the order and script aim before a pending release can fire
         // at a dying target or an ally that has just been converted.
         if(u.scriptAimTarget)clearScriptWeaponTarget(u);
-        u.captureProg=0;
         dropLeg(u);
         cancelPath(u);
         u.routeStamp = -1;
@@ -6954,7 +6958,6 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // A queued target may have become protected, embarked or otherwise unusable.
     if (!canAttackTarget(u,*target)) {
         if(u.scriptAimTarget)clearScriptWeaponTarget(u);
-        u.captureProg=0;
         dropLeg(u);
         cancelPath(u);
         u.routeStamp = -1;
@@ -7155,7 +7158,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // approach's).
     auto slotAims = [&](int sl) {
         const Weapon& sw = u.type->weapons[size_t(sl)];
-        if ((sw.mindControl || u.type->canCapture) && !canCaptureTarget(u.player,*target)) return false;
+        if (sw.mindControl && !canCaptureTarget(u.player,*target)) return false;
         if (sw.noAir && target->type && target->type->canFly) return false;
         if (groundPair && sw.needsClearLine() && !los) return false;
         if (sw.melee ? !adj : sw.ballisticClass() ? !ballisticInRange(u,*target,sw) : dist > sw.range)
@@ -7262,19 +7265,6 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     if (aimHeld) return;
     // 52ae90 runs the weapons before the missions and the mover.
     forEachSlot(tryFire);
-    // cancapture: a charmer converts the target after sustained contact (~3s) or
-    // once it is worn down, rather than killing it.
-    if (u.type->canCapture && canCaptureTarget(u.player,*target) && (!(airRun || airToAir) || inReach)) {
-        ++u.captureProg;
-        if (u.captureProg > 3 * int32_t(kTick) ||
-            target->hp < Fixed::fromFloat(target->type->maxHp * 0.25f)) {
-            captureUnit(*target, u.player);
-            u.captureProg = 0;
-            dropLeg(u);
-            cancelPath(u);
-            u.routeStamp = -1;
-        }
-    }
     if (airRun && !u.orders.empty() && u.orders.front().targetId==target->id) {
         tickAirToGround(u,*target,sel);
         groundMovementHandled=true;
@@ -7320,7 +7310,6 @@ bool World::giveUnit(int unitId, int fromPlayer, int toPlayer) {
     u.squad = 0;
     u.lastHitBy = 0;
     u.lastHitPlayer = -1;
-    u.captureProg = 0;
     gPlayersValid_ = false;
     return true;
 }
@@ -7468,19 +7457,22 @@ bool World::scenarioTransfer(int unitId, int newPlayer) {
     u->squad = 0;
     u->lastHitBy = 0;
     u->lastHitPlayer = -1;
-    u->captureProg = 0;
     gPlayersValid_ = false;
     return true;
 }
 
-// Switch a unit's allegiance: contact charm (cancapture) and mind-control weapons
-// both land here, so a converted unit behaves identically either way -- it drops
-// its old orders, comes up at half health if it was nearly dead, and forgets who
-// last hit it (so the new owner isn't credited a kill on its own unit).
+// Switch a unit's allegiance after a mind-control charm. Retail's ownership change
+// (514da0) builds a NEW object for the new owner (512060) and copies only HP --
+// raw, with no healing (514f8a) --, construction progress, facing and activation
+// onto it before killing the old one. So the converted unit keeps its damage,
+// drops its old orders, starts with no experience (511990 zeroes +0xf4, which
+// getLevel 519310 reads, and 514da0 does not copy it), and forgets who last hit
+// it (so the new owner isn't credited a kill on its own unit). The engine keeps
+// the same unit id instead of allocating a new one.
 void World::captureUnit(Unit& t, int newPlayer) {
     if (!t.type || t.player == newPlayer) return;
     // Already dead, just not swept yet (alive() reads deadFor, which tick() sets):
-    // capturing would raise it back to half health and steal a corpse.
+    // capturing would steal a corpse.
     if (t.hp <= Fixed()) return;
     // Move the unit between the two owners' live counts NOW, the way spawn() does.
     // The counts only re-sync from a full walk at end of tick, so without this an
@@ -7502,7 +7494,12 @@ void World::captureUnit(Unit& t, int newPlayer) {
     t.player = newPlayer;
     gPlayersValid_=false;
     t.orders.clear();
-    t.hp = fxMax(t.hp, Fixed::fromFloat(t.type->maxHp * 0.5f));
+    // The new object's experience: zero, or the scenario's veteran rank for the
+    // type, exactly as spawn() starts a unit.
+    t.veteran = 0;
+    if (auto it = scenarioTypeStats_.find(t.type->id); it != scenarioTypeStats_.end())
+        t.veteran = t.type->noVeteran ? 0 : std::clamp(it->second[2], 0, 10);
+    t.xp = t.veteran;
     t.lastHitBy = 0; t.lastHitPlayer = -1;
     t.squad = 0;             // no longer in its old owner's control group
     t.buildQueue.clear();    // and not still producing for them
