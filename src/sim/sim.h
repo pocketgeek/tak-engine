@@ -798,6 +798,13 @@ struct alignas(64) Order {
     // `mission`): 1 once a run has brought the flyer within half its range
     // of the target; stage 7 counts wakes off the map on it.
     int32_t airRunCount = 0;
+    // A ground attack (Attack_Chase, 403bb0; tickCombat): whether the unit
+    // has walked toward its target under this order, and the tick its
+    // weapons first aim at it (kAttackUnaimed until it first stands in
+    // reach). Hashed with a tag when set.
+    static constexpr uint32_t kAttackUnaimed = UINT32_MAX;
+    bool attackChased = false;
+    uint32_t attackAimTick = kAttackUnaimed;
     int32_t stationRefX = 0, stationRefZ = 0;
     uint32_t stationRefTick = 0;
     // MobileBuild placement at the site (405824..405911): failures while only
