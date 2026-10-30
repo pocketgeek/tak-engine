@@ -3,12 +3,12 @@
 
   tools/clusterchurn_scn.py OUTDIR
 
-writes clusterchurn-{small,mid,big}.scn: a flat 512x512 map, movers of footprints 1, 2 and 3 (three Legion
+writes clusterchurn-{small,mid,edge,big}.scn: a flat 512x512 map, movers of footprints 1, 2 and 3 (three Legion
 planes) ordered across the map and back, and toggling 2x2 blocking features (`churn ... every=1 toggle`) in
 battle-like blobs. Every churn line changes the static map every tick (a place, then a lift that replaces it:
 one or two dirty rectangles), so a tick's static sync hands refreshPlane about LINES..2*LINES rectangles:
-small 4 lines in 4 far-apart blobs, mid 24 lines in 6 blobs (around the pairwise/bin threshold of 40),
-big 480 lines in 24 blobs (a battle's worth, below the 1024-rectangle dirty-list limit). Deterministic
+small 4 lines in 4 far-apart blobs, mid 24 lines in 6 blobs (below the pairwise/bin threshold of 64),
+edge 45 lines in 9 blobs (just above it), big 480 lines in 24 blobs (a battle's worth, below the 1024-rectangle dirty-list limit). Deterministic
 (fixed seed); the committed .scn files are this script's output.
 """
 import random, sys, os
@@ -56,4 +56,5 @@ def write(path, name, blobs, per, seed):
 out = sys.argv[1] if len(sys.argv) > 1 else "."
 write(os.path.join(out, "clusterchurn-small.scn"), "clusterchurn-small", 4, 1, 1)
 write(os.path.join(out, "clusterchurn-mid.scn"), "clusterchurn-mid", 6, 4, 2)
+write(os.path.join(out, "clusterchurn-edge.scn"), "clusterchurn-edge", 9, 5, 4)
 write(os.path.join(out, "clusterchurn-big.scn"), "clusterchurn-big", 24, 20, 3)
