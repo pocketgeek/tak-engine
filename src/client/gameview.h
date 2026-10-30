@@ -849,8 +849,9 @@ public:
     // Perf follow-up C (cursor picking): the render study's scripted pointer. Each
     // frame the pointer moves to a spot fixed by the frame number -- on even frames
     // the body of a live unit in the world view (the first of up to 64 picked by
-    // frame number), otherwise a Lissajous sweep over the world view -- so the
-    // cursor classifies units and bare ground the way a moving mouse does. Up to
+    // frame number among the unit grid's candidates for the view), otherwise a
+    // Lissajous sweep over the world view -- so the cursor classifies units and bare
+    // ground the way a moving mouse does. Up to
     // `select` own finished units are selected while the selection is empty, and
     // `cmd` (0: none; '*': every order in turn) is armed every frame. drawCursorOverlay times the frame's
     // cursor evaluation (renderStudyCursorStats; CURSORSTATS lines).

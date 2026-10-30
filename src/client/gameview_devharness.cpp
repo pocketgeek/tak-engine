@@ -4449,9 +4449,20 @@
         const float margin = 40.0f;   // clear of the edge-scroll band
         float x = w * (0.5f + 0.42f * std::sin(float(frame) * 0.037f));
         float y = h * (0.5f + 0.42f * std::sin(float(frame) * 0.051f + 1.0f));
-        if (frame % 2 == 0 && !f.live.empty())
+        // The units whose anchor can be in the world view (the snapshot's unit grid), so
+        // a large army seen through a small view still puts the pointer on bodies.
+        std::vector<uint32_t> inView;
+        if (f.unitGrid.size() == f.live.size()) {
+            std::vector<uint64_t> bits;
+            const auto rect = tak::render::anchorBandToWorld(-64.0f, -64.0f, w + 64.0f, h + 160.0f, mapView_.offX(),
+                                                             mapView_.offY(), mapView_.zoom(), unitLiftBounds());
+            f.unitGrid.query(rect.left, rect.top, rect.right, rect.bottom, bits, inView);
+        } else {
+            for (uint32_t i = 0; i < uint32_t(f.live.size()); ++i) inView.push_back(i);
+        }
+        if (frame % 2 == 0 && !inView.empty())
             for (uint32_t k = 0; k < 64; ++k) {
-                const UnitR& u = *f.live[(size_t(frame) * 2654435761u + size_t(k) * 40503u) % f.live.size()];
+                const UnitR& u = *f.live[inView[(size_t(frame) * 2654435761u + size_t(k) * 40503u) % inView.size()]];
                 if (!u.type || u.embarked() || !u.alive()) continue;
                 const SDL_FPoint p = dotsFrame_ ? dotCentre(u) : unitScreen(u);
                 if (p.x < margin || p.x > w - margin || p.y < margin || p.y > h - margin) continue;
