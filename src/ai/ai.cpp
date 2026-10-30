@@ -3359,30 +3359,43 @@ void Controller::reviveIdle(const tak::sim::World& world, std::vector<int>& assi
                             const CommandSink& sink) const {
     if (double(world.player(player_).allocation()) < 0.7 || world.atUnitCap(player_)) return;
     constexpr float kReach = 56.0f;
-    std::vector<int> claimed;
+    // The bodies a caster can take up, in world.units() order (the order every
+    // caster's search walks them, so an equal distance still goes to the
+    // earlier body). Gathered once, at the first idle caster, rather than
+    // every caster scanning every unit record: nothing this think changes
+    // them (a Resurrect only gives the caster its order). No body, no raise.
+    struct Body { float x, z; int id; const tak::sim::UnitType* type; bool claimed; };
+    std::vector<Body> bodies;
+    bool gathered = false;
     for (const auto& u : world.units()) {
         if (!u.alive() || u.player != player_ || !u.type || u.underConstruction || u.embarked() ||
             u.incapacitated() || u.buildSiteId || !idle(u) ||
             !(u.type->canResurrect || (u.type->canAnimate && u.type->animateType)) ||
             std::find(assigned.begin(), assigned.end(), u.id) != assigned.end()) continue;
-        int best = 0;
+        if (!gathered) {
+            gathered = true;
+            for (const auto& c : world.units())
+                if (!c.alive() && c.type && !c.corpseFading && c.deadFor >= c.corpseAnimationTicks() &&
+                    c.deadFor < c.corpseUntil)
+                    bodies.push_back({c.x.toFloat(), c.z.toFloat(), c.id, c.type, false});
+            if (bodies.empty()) return;
+        }
+        const float ux = u.x.toFloat(), uz = u.z.toFloat();
+        Body* best = nullptr;
         float bestD = kReach * kReach;
-        for (const auto& c : world.units()) {
-            if (c.alive() || !c.type || c.corpseFading || c.deadFor < c.corpseAnimationTicks() ||
-                c.deadFor >= c.corpseUntil) continue;
-            const float dx = c.x.toFloat() - u.x.toFloat(), dz = c.z.toFloat() - u.z.toFloat();
+        for (auto& c : bodies) {
+            const float dx = c.x - ux, dz = c.z - uz;
             const float d = dx * dx + dz * dz;
             if (d > bestD || (d == bestD && best)) continue;
             const uint8_t kind = world.reviveKind(u.id, c.id);
-            if (!kind || world.atTypeCap(player_, kind == 1 ? c.type : u.type->animateType) ||
-                std::find(claimed.begin(), claimed.end(), c.id) != claimed.end()) continue;
-            best = c.id; bestD = d;
+            if (!kind || world.atTypeCap(player_, kind == 1 ? c.type : u.type->animateType) || c.claimed) continue;
+            best = &c; bestD = d;
         }
         if (!best) continue;
         tak::net::Command c; c.kind = tak::net::Cmd::Resurrect; c.player = uint8_t(player_);
-        c.unitId = u.id; c.targetId = best;
+        c.unitId = u.id; c.targetId = best->id;
         sink(c);
-        claimed.push_back(best);
+        best->claimed = true;
         assigned.push_back(u.id);
     }
 }
