@@ -6174,6 +6174,20 @@ bool World::slotClearShot(const Unit& u,const Unit& t,int slot) const {
 static constexpr uint8_t kBlockedShots=3;    // in a row before the spot is written off
 static constexpr int kBlockedSpot=16;        // px the shooter may drift and keep its count
 
+// Is (dx,dz), in whole px from a body's centre, within `slack` of the body?
+// Retail's collision (52a4d0) reaches a unit through the map cells it owns,
+// its footprint, whatever its extent the other way
+// (tools/re/probe_long_footprint_blocked.py: a ridge one cell before a long
+// body's near face still stops the shot on terrain). A square footprint keeps
+// the circle of its half-extent plus slack; a longer one (a castle, a gate)
+// is also held to its footprint rectangle plus slack, so a crest in front of
+// its long face is short of it rather than inside a circle of its length.
+static bool nearBody(const UnitType& t,int64_t dx,int64_t dz,int64_t slack) {
+    const int64_t hx=8*int64_t(t.footX),hz=8*int64_t(t.footZ),r=std::max(hx,hz)+slack;
+    if (dx*dx+dz*dz>r*r) return false;
+    return t.footX==t.footZ || (std::abs(dx)<=hx+slack && std::abs(dz)<=hz+slack);
+}
+
 bool World::impactIndestructible(const Weapon& w,int cx,int cz) const {
     if (cx<0 || cz<0 || cx>=terW_ || cz>=terH_) return true;
     if (w.unitsOnly) return true;            // never touches scenery
@@ -6214,15 +6228,13 @@ void World::noteShotImpact(int fromId,int targetId,const Weapon& w,const std::ar
         return;
     }
     // Short of the target and clear of it, in whole px: in front of the
-    // target's projection on the line of fire and outside its body, a body
-    // of slack and the weapon's splash. A miss beside or beyond the target
-    // reached it.
+    // target's projection on the line of fire and outside its body (its
+    // footprint, nearBody), a body of slack and the weapon's splash. A miss
+    // beside or beyond the target reached it.
     const int64_t sx=u->x.floorInt(),sz=u->z.floorInt(),tx=t->x.floorInt(),tz=t->z.floorInt();
     const int64_t ix=impact[0]>>16,iz=impact[2]>>16;
     const int64_t along=(ix-sx)*(tx-sx)+(iz-sz)*(tz-sz),line=(tx-sx)*(tx-sx)+(tz-sz)*(tz-sz);
-    const int64_t margin=8+8*int64_t(std::max(t->type->footX,t->type->footZ))+24+int64_t(uint16_t(w.aoe))/2;
-    const int64_t mx=ix-tx,mz=iz-tz;
-    const bool shortOf=along<line && mx*mx+mz*mz>margin*margin;
+    const bool shortOf=along<line && !nearBody(*t->type,ix-tx,iz-tz,8+24+int64_t(uint16_t(w.aoe))/2);
     if (!shortOf || !impactIndestructible(w,int(impact[0]>>20),int(impact[2]>>20))) {
         if (u->blockedTarget==targetId) { u->blockedShots=0;u->searchFailed=0; }
         return;
@@ -6275,13 +6287,16 @@ bool World::shotChordClear(const Unit& u,Fixed fromX,Fixed fromZ,const Unit& t,i
     const std::array<int64_t,3> a{fromX.v,ground(fromX,fromZ)+lift,fromZ.v};
     const auto aim=queryUnitScriptPoint(t.id,true);
     return chordClear(a,{aim[0],aim[1],aim[2]},u.type->weapons[size_t(slot)],
-                      8*std::max(u.type->footX,u.type->footZ),8*std::max(t.type->footX,t.type->footZ)+8);
+                      8*std::max(u.type->footX,u.type->footZ),8*std::max(t.type->footX,t.type->footZ)+8,t);
 }
 
 // The chord from a to b, sampled every 4 px through 52a4d0's map half,
-// skipping the first skipFrom and the last skipTo px (the two bodies).
+// skipping the first skipFrom and the last skipTo px (the two bodies). Near
+// b a sample is skipped only near the body `to` too (nearBody, 8 px of
+// slack), so a longer body skips no crest in front of its long face; a
+// square one skips the circle alone.
 bool World::chordClear(const std::array<int64_t,3>& a,const std::array<int64_t,3>& b,const Weapon& w,
-                       int64_t skipFrom,int64_t skipTo) const {
+                       int64_t skipFrom,int64_t skipTo,const Unit& to) const {
     const uint32_t flags=(w.unitsOnly?0x800u:0u)|(w.groundBounce?0x1000u:0u)|(w.waterWeapon?0x2000u:0u);
     if (flags&0x800u) return true;
     const int64_t dx=(b[0]-a[0])>>16,dz=(b[2]-a[2])>>16;
@@ -6291,7 +6306,10 @@ bool World::chordClear(const std::array<int64_t,3>& a,const std::array<int64_t,3
                                           int32_t(a[2]+(b[2]-a[2])*i/steps)};
         const int64_t fx=(int64_t(point[0])-a[0])>>16,fz=(int64_t(point[2])-a[2])>>16;
         const int64_t tx=(int64_t(point[0])-b[0])>>16,tz=(int64_t(point[2])-b[2])>>16;
-        if (fx*fx+fz*fz<=skipFrom*skipFrom || tx*tx+tz*tz<=skipTo*skipTo) continue;
+        if (fx*fx+fz*fz<=skipFrom*skipFrom) continue;
+        if (tx*tx+tz*tz<=skipTo*skipTo && (to.type->footX==to.type->footZ ||
+                nearBody(*to.type,(int64_t(point[0])>>16)-to.x.floorInt(),(int64_t(point[2])>>16)-to.z.floorInt(),8)))
+            continue;
         int32_t vertical=-1;
         if (projectileEnvironment(point,vertical,flags)) return false;
     }
@@ -6439,7 +6457,7 @@ bool World::hoverForShot(Unit& u,const Unit& t,int slot,const std::array<int32_t
                 [&](int hx,int hz) { return heights_[size_t(hz)*terW_+hx]; }));
             const int32_t y=Fixed::fromInt(std::min(511,ground+altitude)).v;
             if (!chordClear({x,int64_t(y)+lift,z},{aim[0],aim[1],aim[2]},u.type->weapons[size_t(slot)],
-                            0,8*std::max(t.type->footX,t.type->footZ)+8)) continue;
+                            0,8*std::max(t.type->footX,t.type->footZ)+8,t)) continue;
             ++u.repositions;
             u.blockedShots=0;
             u.searchFailed=0;

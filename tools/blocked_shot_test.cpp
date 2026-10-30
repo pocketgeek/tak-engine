@@ -16,7 +16,8 @@
 // Zhon campfire art (ZonFireD02: indestructible, nonblocking, 'height'
 // set), in Retail and Legion pathfinding. Measured: shots landing short,
 // damage to the target, and where the archer ends up; plus the limits
-// (Hold Position stays; an open field is untouched). A hovering Thirsha
+// (Hold Position stays; an open field is untouched); the same archer
+// against a Taros Castle behind a crest in front of its long face. A hovering Thirsha
 // whose Lightning stops on a standing stone moves round its hover ring
 // (World::hoverForShot).
 //
@@ -313,6 +314,65 @@ HoverOutcome runHover(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int tic
     return out;
 }
 
+// A long building behind a crest. Retail's collision reaches a unit through
+// the cells it owns (tools/re/probe_long_footprint_blocked.py), so a shot
+// that lands on a ridge in front of a building's long face is short of it,
+// however long the building is the other way. The Taros Castle (tarcastl,
+// 8x20 cells) stands with its long face to the archer, and a short passable
+// ridge (columns 32..38, rows 30..33, a 90-high crest at x 568) lies 16..128
+// px in front of that face, the crest 136 px from the castle's centre: inside
+// a circle of its 160 px long half-extent, outside its footprint. Returns
+// the same Outcome as run().
+Outcome runCastle(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int moveState, int ticks) {
+    tnt::Map map;
+    map.width = map.height = 64;
+    map.seaLevel = 0;
+    map.heights.assign(64 * 64, 30);
+    map.features.assign(64 * 64, 0xffff);
+    const int profile[] = {45, 60, 75, 90, 75, 60, 45};
+    for (int z = 30; z <= 33; ++z)
+        for (int i = 0; i < 7; ++i) map.heights[size_t(z) * 64 + size_t(32 + i)] = uint8_t(profile[i]);
+    sim::World w;
+    w.setPathfindingMode(mode);
+    w.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
+    sim::registerMapFeatures(w, map, vfs, &reg);
+    w.setPathService(true);
+    const sim::UnitType* bow = reg.find("arabow");
+    const sim::UnitType* castle = reg.find("tarcastl");
+    if (!bow || !castle) { check(false, "shipped arabow and tarcastl load"); return {}; }
+    if (castle->footX != 8 || castle->footZ != 20) check(false, "tarcastl is 8x20");
+    // Footprint columns 40..47, rows 22..41: centre (704,512), long face x=640.
+    const float sx = 23 * 16 + 8, sz = 32 * 16, tx = 704, tz = 512;
+    const int archer = w.spawn(bow, sx, sz, 0, 0);
+    const int target = w.spawn(castle, tx, tz, 0, 1);
+    w.setStance(target, 2);
+    w.unit(target)->fireState = 0;
+    w.unit(target)->hp = sim::Fixed::fromInt(30000);
+    w.unit(archer)->moveState = moveState;
+    for (int i = 0; i < 30; ++i) w.tick(1.f / 30);
+    const float hp0 = w.unit(target)->hp.toFloat();
+    w.attack(archer, target, false);
+    Outcome out;
+    for (int i = 0; i < ticks; ++i) {
+        w.tick(1.f / 30);
+        const sim::Unit* a = w.unit(archer);
+        const sim::Unit* t = w.unit(target);
+        if (!a || !t || !t->alive()) break;
+        out.repositions = std::max(out.repositions, int(a->repositions));
+        for (const auto& h : w.hits()) {
+            if (h.fromPlayer != 0) continue;
+            if (h.victimId == target) { ++out.targetHits; continue; }
+            if (h.x < 640) ++out.shortShots;   // short of the long face
+        }
+    }
+    const sim::Unit* a = w.unit(archer);
+    const sim::Unit* t = w.unit(target);
+    out.damage = hp0 - (t && t->alive() ? t->hp.toFloat() : 0.f);
+    if (a) out.moved = std::hypot(a->x.toFloat() - sx, a->z.toFloat() - sz);
+    out.legionMoves = w.legionStats().moves;
+    return out;
+}
+
 std::string describe(const HoverOutcome& o) {
     char buf[160];
     std::snprintf(buf, sizeof buf, "bolts off target=%d hits=%d damage=%.0f repositions=%d moved=%.0fpx",
@@ -363,6 +423,19 @@ int main(int argc, char** argv) {
         check(free.repositions >= 1 && free.damage > 0 && free.shortShots <= 4,
               obstacle == Obstacle::Ridge ? "ridge: the archer walks to a clear shot and hurts the target"
                                           : "campfires: the archer walks to a clear shot and hurts the target");
+        if (mode == sim::PathfindingMode::Legion)
+            check(free.legionMoves > held.legionMoves, "the walk is Legion's", std::to_string(free.legionMoves));
+    }
+    // A long building: the crest in front of its long face blocks the shot.
+    {
+        const Outcome held = runCastle(vfs, reg, 0, kTicks);
+        const Outcome free = runCastle(vfs, reg, 1, kTicks);
+        std::printf("  castle     hold position: %s\n", describe(held).c_str());
+        std::printf("  castle     maneuver:      %s\n", describe(free).c_str());
+        check(held.shortShots >= 3 && held.damage == 0 && held.moved < 8,
+              "castle: a crest in front of its long face blocks the shot, and Hold Position stays and fires on");
+        check(free.repositions >= 1 && free.damage > 0 && free.shortShots <= 4,
+              "castle: the archer counts those shots blocked, walks to a clear shot and hurts the castle");
         if (mode == sim::PathfindingMode::Legion)
             check(free.legionMoves > held.legionMoves, "the walk is Legion's", std::to_string(free.legionMoves));
     }
