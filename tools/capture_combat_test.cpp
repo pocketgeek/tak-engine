@@ -28,7 +28,7 @@ tak::sim::UnitType casterType() {
     auto t=victimType();t.id="caster";
     tak::sim::Weapon w;w.damage=1;w.range=400;w.reload=0.1f;
     w.mindControl=true;w.kind=tak::sim::Weapon::Kind::Remote;
-    w.remote=tak::sim::Weapon::RemoteKind::MindCtl;w.unitsOnly=true;w.aoe=32;w.buildUpTicks=8;
+    w.remote=tak::sim::Weapon::RemoteKind::MindCtl;w.unitsOnly=true;w.aoe=32;w.buildUpTicks=8;w.decayTicks=8;
     t.weapon=w;t.weapons={w};return t;
 }
 void setup(tak::sim::World& w) {

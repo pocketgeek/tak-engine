@@ -3009,6 +3009,10 @@ is a live integration check, not a paired retail raster comparison.
 
 ### Conditional ordinary/lightning buildup delay
 
+(Corrected in 0.9.12: the delayed field, WeaponType+0x7c, is `nimbustime` x 30
+parsed at `0x53101d`, not `builduptime`; no shipped weapon sets it, so the
+delay is always 0. See "Remote Effect timing and aim" in `retail-engine.md`.)
+
 Ordinary and lightning projectile creation now delays activation only when the
 weapon requests nimbus and the faction has a resolvable named nimbus animation.
 The loader retains the native integer buildup count: seconds multiplied by 30

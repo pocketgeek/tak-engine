@@ -129,6 +129,18 @@ their validation reports; both live in [`docs/`](docs/).
   unit keeps its damage** (it used to come over at half health or more) and,
   as in the original, starts without its veteran stars. **A unit still being
   built cannot be charmed.**
+- **Spells land when and where they do in the original game.** Earthquakes,
+  hail, area charm and freeze and the other Remote Effect spells are cast
+  ahead of a moving target, where the original aims them; for the slow ones
+  (Mind Mage, Lich, Injured Thirsha) that is up to a second and a half of the
+  target's walk. An Earthquake no longer strikes once too often: the Avatar of
+  Anu's and the Ghost of Garacaius's hit twice, not three times, and the
+  Acolyte's five times, not six. Hail at eight stones a second (the Ghost's
+  Ice Storms, the Fallen Angel's Wrath) falls as often as in the original:
+  19 and 21 hits, not 14 and 16. Spells hit a tick or two later than before,
+  as in the original, and the storms of the Spawn of Belial, Angel of Lihr,
+  Wrath of Tammuz and Weather Witch no longer wait 1.2 to 2.25 seconds before
+  setting off.
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
   at +10, 0.9.11 fell to -2 at about 2,700 units, with 219 ticks over 250 ms;
   0.9.12 held +9 to +10 to 3,160 units with no tick over 100 ms:

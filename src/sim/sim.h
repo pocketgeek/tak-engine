@@ -175,6 +175,7 @@ struct Weapon {
     float buildUp = 0;       // builduptime: channel before the effect lands
     int32_t buildUpTicks = 0; // native truncation of seconds * 30
     float decay = 0;         // decaytime: fade after it lands
+    int32_t decayTicks = 0;  // native truncation of seconds * 30 (52e780)
     float duration = 0;      // wandering: seconds the storm roams
     int32_t durationTicks = 0, variationTicks = 0;
     int32_t maxVariation = 0;// maxvariation (readInt): wander half-width, px/tick
@@ -231,7 +232,12 @@ struct Weapon {
     bool usesVeteranShotModel(int sourceVeteran) const {
         return !veteranShotModel.empty() && sourceVeteran >= veteranLevel;
     }
-    bool  nimbus = false;     // nimbus: faction caster effect and conditional buildup delay
+    bool  nimbus = false;     // nimbus: faction caster effect and conditional launch delay
+    // nimbustime (WeaponType+0x7c, seconds * 30 truncated): the launch delay a
+    // nimbus caster with nimbus art adds to the shot's start tick. No shipped
+    // weapon defines it, so retail's delay is always 0 -- builduptime is a
+    // Remote Effect timer only (pushed once, by 52e780).
+    int32_t nimbusTicks = 0;
     bool  hasBoltColor = false;
     uint8_t inner[3] = {255, 255, 255};    // innercolor: lightning bolt core
     uint8_t middle[3] = {200, 230, 255};   // middlecolor
@@ -259,6 +265,7 @@ struct Weapon {
     int   spriteCount = 24;     // spritecount: sprites arranged around each ring
     int32_t shakeMag = 0;       // shakemagnitude (readInt): camera-shake intensity
     float shakeDur = 0;         // shakeduration: seconds the shake lasts
+    int32_t shakeTicks = 0;     // the same, ticks truncated (WeaponType+0x84): Earthquake pulse period
     bool  fireStarter = false;  // firestarter: leaves ground fire at the impact
     // Precomputed integer damage (default * multiplier, truncated at load),
     // keyed by lowercased category token (e.g. "monarch", "dragon", "fort").
