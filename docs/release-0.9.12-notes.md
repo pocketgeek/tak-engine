@@ -455,6 +455,10 @@ decided what the game counted as seen.
   touching reach, a 14 s hold, a bumped helper and repairer, failed
   approaches in and out of reach, a walking repair target, the patrol leash,
   a queued assist; Retail and Legion): 36 checks, 25 fail on the old code.
+  Two more from review: an assist queued on the builder's own build site
+  lets the build go on (it stalled for ever), and a repeating conjurer's
+  rally survives the yard step-out (World::order made the step-out its
+  rally).
   `builder_automation` (a departing ally now walks off; patrol eligibility
   gets time to walk up), `production` (repairers start touching their
   targets) and `retail_script` (the repair controller driven by a Repair

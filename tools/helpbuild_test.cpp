@@ -1505,6 +1505,66 @@ static void approachQueuedAssist() {
     const uint32_t before = w.unit(b)->constructionEmissions[0];
     for (int tick = 0; tick < 900 && w.unit(b)->constructionEmissions[0] == before; ++tick) w.tick(1.0f / 30.0f);
     check(w.unit(b)->constructionEmissions[0] != before && touching(*w.unit(b), *w.unit(site)), "...then it walks over and helps");
+
+    // An assist queued on the site the builder is building itself waits its
+    // turn: the build goes on (the latch is the MobileBuild's), and the help
+    // ends with the finished site.
+    auto ownWorld = makeWorld();
+    World& o = *ownWorld;
+    o.spawn(&ty.factory, 300, 300, 0.0f, 0);
+    UnitType own = hut; own.buildTime = 60;
+    const int ob = o.spawn(&ty.builder, 1008, 1200, 0.0f, 0);
+    o.queueBuild(ob, &own, 1008, 1008, false);
+    int ownSite = 0;
+    for (int tick = 0; tick < 600 && !ownSite; ++tick) { o.tick(1.0f / 30.0f); ownSite = o.unit(ob)->buildSiteId; }
+    for (int tick = 0; tick < 30; ++tick) o.tick(1.0f / 30.0f);
+    o.assist(ob, ownSite, true);
+    const float hp0 = ownSite ? o.unit(ownSite)->hp.toFloat() : 0;
+    for (int tick = 0; tick < 30; ++tick) o.tick(1.0f / 30.0f);
+    const float hp1 = ownSite ? o.unit(ownSite)->hp.toFloat() : 0;
+    bool finished = false;
+    for (int tick = 0; tick < 900 && ownSite && !finished; ++tick) {
+        o.tick(1.0f / 30.0f);
+        finished = !o.unit(ownSite)->underConstruction;
+    }
+    for (int tick = 0; tick < 5; ++tick) o.tick(1.0f / 30.0f);
+    std::snprintf(d, sizeof d, "site %d hp %.1f -> %.1f, finished %d, %zu orders left", ownSite, hp0, hp1,
+                  int(finished), o.unit(ob)->orders.size());
+    check(ownSite && hp1 > hp0 && finished && o.unit(ob)->orders.empty() && !o.unit(ob)->buildSiteId,
+          "an assist queued on its own build site lets the build go on", d);
+}
+
+// The step out of a factory's yard after a help is for a builder with
+// nothing else to do: a repeating conjurer's Move is its output's rally
+// (World::order), which the step-out must not overwrite.
+static void approachYardRepeat() {
+    std::printf("a repeating conjurer helping inside a factory's yard:\n");
+    Types ty;
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
+    w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+    w.spawn(&ty.factory, 1000, 1000, 0.0f, 0);
+    w.blockFoot(ty.factory, 1000, 1000, false);   // a walkable yard
+    UnitType small = ty.sol; small.name = small.id = "small"; small.buildTime = 6;
+    const int site = w.spawn(&small, 1000, 1000, 0.0f, 0);
+    w.unit(site)->underConstruction = true; w.unit(site)->buildBegun = true; w.unit(site)->hp = Fixed::fromInt(50);
+    const int conj = w.spawn(&ty.conjurer, 1000, 1032, 0.0f, 0);   // touching it, in the yard
+    w.setRepeat(conj, &ty.sol);
+    tak::net::Command mv; mv.kind = tak::net::Cmd::Move; mv.unitId = conj; mv.x = 200; mv.z = 1800;
+    applyCommand(w, emptyRegistry(), mv);
+    w.tick(1.0f / 30.0f);
+    w.assist(conj, site, false);
+    int ended = -1;
+    for (int tick = 0; tick < 600 && ended < 0; ++tick) {
+        w.tick(1.0f / 30.0f);
+        if (!w.unit(conj)->buildSiteId) ended = tick;
+    }
+    const Unit* c = w.unit(conj);
+    const bool kept = c->rally.size() == 1 && c->rally.back().x == Fixed::fromInt(200) && c->rally.back().z == Fixed::fromInt(1800);
+    char d[120];
+    std::snprintf(d, sizeof d, "help ended t=%d, rally (%.0f,%.0f)", ended,
+                  c->rally.empty() ? 0.0f : c->rally.back().x.toFloat(), c->rally.empty() ? 0.0f : c->rally.back().z.toFloat());
+    check(ended >= 0 && !w.unit(site)->underConstruction && kept, "its rally is kept when the help ends", d);
 }
 
 static uint64_t approachRun() {
@@ -1593,6 +1653,7 @@ int main() {
     approachFailed();
     approachPatrolLeash();
     approachQueuedAssist();
+    approachYardRepeat();
     determinism();
     std::printf(g_fail ? "\n%d FAILED\n" : "\nall passed\n", g_fail);
     return g_fail ? 1 : 0;

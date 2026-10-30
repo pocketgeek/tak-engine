@@ -10383,7 +10383,10 @@ bool World::pointOutside(const Unit& k,int left,int right,int top,int bottom,int
 // the point clearBuildSite would send it to.
 void World::leaveFactoryYard(int helperId) {
     Unit* k=unit(helperId);
-    if (!k || !k->alive() || !k->type || k->type->canFly || !k->orders.empty() || k->embarked()) return;
+    // Nothing else to do: a repeating or producing conjurer has (and World::order
+    // would turn the step-out into its output's rally).
+    if (!k || !k->alive() || !k->type || k->type->canFly || !k->orders.empty() || k->embarked() ||
+        k->repeatType || k->productionSiteId || !k->buildQueue.empty()) return;
     const int ux=footprintOrigin(k->x,k->type->footX),uz=footprintOrigin(k->z,k->type->footZ);
     const Unit* yard=nullptr;
     forEachNear(k->x.toFloat(),k->z.toFloat(),256.0f,[&](int index) {
@@ -11536,8 +11539,11 @@ static void endHelp(World& w, Unit& b, int siteId) {
 }
 
 // The leg of a ground builder's HelpBuild on `siteId` (its job), or -1.
+// While a build order is current the latch is that MobileBuild's own (a help
+// queued on the site it is building waits its turn and ends with the site).
 static int groundHelpLeg(const Unit& b, int siteId) {
-    if (!b.type || b.type->canFly || !siteId) return -1;
+    if (!b.type || b.type->canFly || !siteId || b.orders.empty()) return -1;
+    if (b.orders[World::currentLeg(b.orders)].buildType) return -1;
     for (size_t i=0;i<b.orders.size();++i)
         if (b.orders[i].helpSite==siteId) return int(i);
     return -1;

@@ -4011,7 +4011,10 @@ healed to full by someone else ends at once (retail walks on until it
 arrives). Engine deviation (the 0.9.8 doorway report): a helper whose help
 ends with nothing else to do, standing in a factory's rectangle (it walked
 in to touch the output), walks out past the nearest side
-(`World::leaveFactoryYard`, the point `clearBuildSite` would pick).
+(`World::leaveFactoryYard`, the point `clearBuildSite` would pick); a
+repeating or producing conjurer stays (its Move would be its output's
+rally). A help queued on the site the builder is building itself waits
+behind that MobileBuild (`groundHelpLeg` defers to a current build order).
 
 ## Attack_Chase: the stop comes before the aim (icd + emulation, 2026-10-30)
 
