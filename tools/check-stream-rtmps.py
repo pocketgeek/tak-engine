@@ -141,6 +141,7 @@ class Proxy:
             with self.context.wrap_socket(raw, server_side=True) as client:
                 self.accepted += 1
                 with socket.create_connection(('127.0.0.1', self.backend), timeout=3) as server:
+                    due = time.monotonic()
                     while not self.done:
                         ready, _, _ = select.select([client, server], [], [], .2)
                         if client.pending() and client not in ready:
@@ -153,7 +154,16 @@ class Proxy:
                             if source is client:
                                 self.up += len(data)
                                 if self.kbps:
-                                    time.sleep(len(data) * 8 / (self.kbps * 1000))
+                                    # Pace against the clock, not a sleep per read: each read is
+                                    # one TLS record, and FFmpeg sends every 128-byte RTMP chunk
+                                    # (the sink's chunk size) and its 1-byte header as records of
+                                    # their own. A 0.3 ms sleep per record overslept to ~2 ms on
+                                    # the macOS runners, a 0.27 Mbit/s link that held one packet
+                                    # past the 5 s write timeout. At most 0.1 s of idle credit.
+                                    now = time.monotonic()
+                                    due = max(due, now - .1) + len(data) * 8 / (self.kbps * 1000)
+                                    if due > now:
+                                        time.sleep(due - now)
         except (OSError, ssl.SSLError):
             raw.close()
 
