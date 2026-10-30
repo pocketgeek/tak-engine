@@ -2301,6 +2301,88 @@ void planeincremental() {
 }
 
 namespace {
+// Perf H: static refreshes read structures through a spatial index (buckets by footprint origin). A base-heavy
+// map whose structures straddle bucket edges, sit on the map's edges and are large and small, under feature and
+// structure churn while movers route over it and a new class's plane builds in the background (its pending
+// rectangles applied after): with the index the run must equal the reference walk of every structure -- state
+// hash, plane counters and every work class -- serial and with workers, and every plane must equal a whole
+// rebuild (planeMatchesRebuild rebuilds by the walk).
+struct StaticIndexRun {
+    uint64_t hash=0,refreshes=0,relabels=0,builds=0;std::array<uint64_t,size_t(NavWork::Count)> work{};
+    bool operator==(const StaticIndexRun&) const=default;
+};
+StaticIndexRun staticindexRun(bool index,bool serial) {
+    LegionNavigator::setStructureIndexForTest(index);
+    const int W=160,H=128;
+    std::vector<uint8_t> heights(size_t(W)*H);
+    for(int z=0;z<H;++z)for(int x=0;x<W;++x)heights[size_t(z)*W+x]=uint8_t(100+(x*5+z*3)%30);
+    Fixture f(W,H,serial,heights);
+    for(int i=0;i<30;++i)f.wall(60+i,64);
+    f.publish();
+    std::vector<UnitType> kinds;
+    for(const auto& [fx,fz]:std::vector<std::pair<int,int>>{{1,1},{2,2},{3,2},{4,4},{6,5},{2,5}}) {
+        UnitType t{};t.id=t.name="legion-struct-"+std::to_string(fx)+"x"+std::to_string(fz);
+        t.maxHp=500;t.footX=fx;t.footZ=fz;t.buildTime=1;t.sight=64;t.maxVel=Fixed();   // a structure (isStructure)
+        kinds.push_back(t);
+    }
+    kinds[3].yardMap="o..ooooo..oooooo";   // open cells inside a 4x4
+    std::vector<UnitType> movers;
+    for(int foot=1;foot<=3;++foot) {auto t=mover(foot);t.maxSlope=10+foot*5;movers.push_back(t);}
+    auto late=mover(2);late.footX=3;late.id=late.name="legion-late";   // its plane builds during the churn
+    uint32_t r=20261030u;
+    auto rnd=[&](int n) {r=r*1103515245u+12345u;return int((r>>8)%uint32_t(n));};
+    std::vector<int> structures;
+    auto build=[&](int cx,int cz) {
+        const UnitType& t=kinds[size_t(rnd(int(kinds.size())))];
+        const int id=f.world.spawn(&t,float(cx*16+t.footX*8),float(cz*16+t.footZ*8),std::nullopt,rnd(2));
+        if(id>0)structures.push_back(id);
+    };
+    // Bases straddling the 16-cell bucket edges, and a row along each map edge.
+    for(int b=0;b<4;++b)for(int j=0;j<6;++j)for(int i=0;i<6;++i)build(10+b*36+i*7-(i>2?4:0),12+j*7+(b%2)*40);
+    for(int i=0;i<12;++i) {build(i*13,0);build(0,i*10);build(W-6,i*10);build(i*13,H-5);}
+    std::vector<int> ids;
+    for(auto& t:movers)for(int k=0;k<6;++k)ids.push_back(f.spawn(t,20+k*4,110,0));
+    f.start();
+    auto* legion=f.world.legionNavigator();
+    check(legion!=nullptr,"legion navigator not created in Legion mode");
+    for(size_t k=0;k<ids.size();++k)f.world.order(ids[k],(20+int(k%6)*20)*16,(8+int(k%4)*30)*16,false);
+    int lateId=0;
+    for(int step=0;step<360;++step) {
+        for(int c=0,n=1+rnd(4);c<n;++c) {
+            const int fx=1+rnd(2),fz=1+rnd(2),x=2+rnd(W-6),z=2+rnd(H-6);
+            f.world.addFeature(500000+step*8+c,float(x*16+fx*8),float(z*16+fz*8),0,fx,fz,rnd(4)!=0,-1,true);
+        }
+        if(step%5==4&&!structures.empty()) {
+            const size_t i=size_t(rnd(int(structures.size())));
+            f.world.destroy(structures[i]);structures.erase(structures.begin()+long(i));
+            build(2+rnd(W-10),2+rnd(H-10));
+        }
+        if(step==20)lateId=f.spawn(late,140,110,0);
+        f.world.tick(1.f/30);
+        if(step%45==44)for(int id:ids)if(const Unit* u=f.world.unit(id))
+            check(legion->planeMatchesRebuild(*u),"plane differs from the reference rebuild at step "+std::to_string(step));
+    }
+    if(const Unit* u=f.world.unit(lateId))check(legion->planeMatchesRebuild(*u),"late plane differs from the reference rebuild");
+    StaticIndexRun out;
+    const auto s=f.world.legionStats();
+    out.hash=f.world.stateHash();out.refreshes=s.planeRefreshes;out.relabels=s.planeRelabels;out.builds=s.planeBuilds;
+    out.work=legion->accounting().total;
+    std::printf("staticindex index=%d %s hash=%016llx refreshes=%llu relabels=%llu builds=%llu connectivity=%llu\n",index?1:0,
+        serial?"serial":"workers",(unsigned long long)out.hash,(unsigned long long)out.refreshes,(unsigned long long)out.relabels,
+        (unsigned long long)out.builds,(unsigned long long)out.work[size_t(NavWork::Connectivity)]);
+    LegionNavigator::setStructureIndexForTest(true);
+    check(out.refreshes>50,"the churn never exercised the incremental refresh");
+    return out;
+}
+void staticindex() {
+    const auto ref=staticindexRun(false,true);
+    check(staticindexRun(true,true)==ref,"structure index run differs from the reference walk (serial)");
+    check(staticindexRun(true,false)==ref,"structure index run differs from the reference walk (workers)");
+    check(staticindexRun(false,false)==ref,"reference walk serial and workers differ");
+}
+}
+
+namespace {
 void planeprebuild() {
     // Planes of classes already on the map build in the background, a
     // bounded slice per tick, while features change under them; the result
@@ -4407,7 +4489,7 @@ int main(int argc,char** argv) {
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
         {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"facing",facing},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"mixedrandom",mixedrandom},{"funnelmouth",funnelmouth},{"funneltie",funneltie},{"entryplanes",entryplanes},
-        {"improvedefer",improvedefer},{"chainresolve",chainresolve},{"trafficlane",trafficlane}};
+        {"improvedefer",improvedefer},{"chainresolve",chainresolve},{"trafficlane",trafficlane},{"staticindex",staticindex}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {
