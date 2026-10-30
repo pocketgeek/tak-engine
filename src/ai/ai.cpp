@@ -12,6 +12,7 @@
 #include "sim/retailai.h"
 #include "util/devenv.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <iterator>
@@ -3344,6 +3345,37 @@ void Controller::logExploration(const tak::sim::World& world, uint32_t simTick) 
                  vacatedTrips_, vacatedLost_);
 }
 
+namespace {
+// Debug hook, TAK_AI_REVIVE_STATS: reviveIdle's work and time over the whole
+// process (every AI), printed at exit as one AIREVIVE line. A measuring hook
+// only: it changes nothing the AI does.
+struct ReviveStats {
+    bool on = tak::devEnv("TAK_AI_REVIVE_STATS") != nullptr;
+    uint64_t calls = 0, casters = 0, records = 0, bodies = 0, visits = 0, commands = 0;
+    std::vector<double> us;
+    ~ReviveStats() {
+        if (!on) return;
+        std::sort(us.begin(), us.end());
+        double total = 0;
+        for (double v : us) total += v;
+        auto q = [&](double f) { return us.empty() ? 0.0 : us[std::min(us.size() - 1, size_t(f * double(us.size())))]; };
+        std::fprintf(stderr, "AIREVIVE calls=%llu casters=%llu records=%llu bodies=%llu visits=%llu commands=%llu "
+                     "total_ms=%.3f mean_us=%.3f median_us=%.3f p95_us=%.3f p99_us=%.3f max_us=%.3f\n",
+                     (unsigned long long)calls, (unsigned long long)casters, (unsigned long long)records,
+                     (unsigned long long)bodies, (unsigned long long)visits, (unsigned long long)commands,
+                     total / 1000, us.empty() ? 0.0 : total / double(us.size()), q(0.5), q(0.95), q(0.99),
+                     us.empty() ? 0.0 : us.back());
+    }
+};
+ReviveStats reviveStats;
+struct ReviveTimer {
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    ~ReviveTimer() {
+        reviveStats.us.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count());
+    }
+};
+} // namespace
+
 // Until 0.9.12 the sim raised bodies by itself: an idle caster took up a body
 // within 56 px, and our levels' priests, Chief Engineers, Spirit Wolves and
 // kings raised the dead that way. Retail raises only by order, so the sim no
@@ -3357,6 +3389,8 @@ void Controller::logExploration(const tak::sim::World& world, uint32_t simTick) 
 // order 0x50b5d0 takes only modes 2 and 9.
 void Controller::reviveIdle(const tak::sim::World& world, std::vector<int>& assigned,
                             const CommandSink& sink) const {
+    std::optional<ReviveTimer> timer;
+    if (reviveStats.on) { timer.emplace(); ++reviveStats.calls; }
     if (double(world.player(player_).allocation()) < 0.7 || world.atUnitCap(player_)) return;
     constexpr float kReach = 56.0f;
     // The bodies a caster can take up, in world.units() order (the order every
@@ -3372,14 +3406,18 @@ void Controller::reviveIdle(const tak::sim::World& world, std::vector<int>& assi
             u.incapacitated() || u.buildSiteId || !idle(u) ||
             !(u.type->canResurrect || (u.type->canAnimate && u.type->animateType)) ||
             std::find(assigned.begin(), assigned.end(), u.id) != assigned.end()) continue;
+        if (reviveStats.on) ++reviveStats.casters;
         if (!gathered) {
             gathered = true;
+            if (reviveStats.on) reviveStats.records += world.units().size();
             for (const auto& c : world.units())
                 if (!c.alive() && c.type && !c.corpseFading && c.deadFor >= c.corpseAnimationTicks() &&
                     c.deadFor < c.corpseUntil)
                     bodies.push_back({c.x.toFloat(), c.z.toFloat(), c.id, c.type, false});
+            if (reviveStats.on) reviveStats.bodies += bodies.size();
             if (bodies.empty()) return;
         }
+        if (reviveStats.on) reviveStats.visits += bodies.size();
         const float ux = u.x.toFloat(), uz = u.z.toFloat();
         Body* best = nullptr;
         float bestD = kReach * kReach;
@@ -3395,6 +3433,7 @@ void Controller::reviveIdle(const tak::sim::World& world, std::vector<int>& assi
         tak::net::Command c; c.kind = tak::net::Cmd::Resurrect; c.player = uint8_t(player_);
         c.unitId = u.id; c.targetId = best->id;
         sink(c);
+        if (reviveStats.on) ++reviveStats.commands;
         best->claimed = true;
         assigned.push_back(u.id);
     }
