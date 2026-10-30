@@ -140,6 +140,24 @@ struct Weapon {
     // landing short. Decided per weapon -- the firing slot's, or the approach
     // slot's for the unit as a whole -- never by "any weapon of the unit".
     bool needsClearLine() const { return !melee && range > 64 && !ballisticClass(); }
+    // Does a shot from this weapon die at the weapon's range? A Line-of-Sight
+    // bolt or lightning strike and a Guided shot are given a lifetime of one
+    // range of travel at launch, and a flame front is scanned out to the range
+    // (World::fire, World::tickFlames). Retail's range test for all of them is
+    // the base one (530580: centre to centre, inclusive; the lightning, LOS,
+    // fire and Guided vtables all point at it), so the engine's footprint pad
+    // for a structure target is not theirs: with it a Crusades Death Totem
+    // (range 550) took a lodestone 584 px off and its bolts died ~540 px out.
+    // Melee, a Ballistic shell (its own arc test), a Dropped bomb, an instant
+    // Line-of-Sight shot and a Remote or Wandering effect are not shots of
+    // this kind.
+    bool shotEndsAtRange() const {
+        return !melee && projVel > 0 && (straight || lightning || flameKind >= 0 || kind == Kind::Guided);
+    }
+    // The engine's range allowance for a structure target of `foot` cells
+    // (its larger side): the half extent plus a margin for where navigation
+    // halts at its edge. None for a weapon whose shot ends at its range.
+    int32_t structurePad(int32_t foot) const { return shotEndsAtRange() ? 0 : 8*foot+24; }
     int32_t particlesPerSec = 0; // particlespersecond (readInt): hailstorm pulse rate
     float turnRate = 0;      // guided: steering rate, radians/sec (FBI deg/s)
     // Retail splits a projectile's per-tick travel into sub-steps so no sub-step is
