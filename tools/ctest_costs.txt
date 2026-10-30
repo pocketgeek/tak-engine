@@ -18,6 +18,7 @@ legion_scenario_corner-8x56 66
 legion_scale_neutral 66
 legion_gen1_route_65845_o1 61
 legion_gen1_route_65845_om1 56
+render_shadow_atlas_full 55
 render_unit_index 52
 legion_situation_r10-104540_retail 50
 mapgen_roster 50

@@ -806,9 +806,11 @@ public:
                  shrinks=0, validated=0, pageAllocs=0, failures=0;
         // Perf follow-up K: frames drawn with pages past the base pages, the most
         // pages held, extended pages given back under GPU pressure, frames that fell
-        // back to direct shadows for any reason (failures counts only packing), and
-        // frames from the last shed to the first frame on extended pages after it.
-        uint64_t extendedFrames=0, maxPages=0, sheds=0, fallbacks=0, lastShedFrame=0, regrowGap=0;
+        // back to direct shadows for any reason (failures counts only packing),
+        // frames from the last shed to the first frame on extended pages after it,
+        // and extended pages released after staying empty.
+        uint64_t extendedFrames=0, maxPages=0, sheds=0, fallbacks=0, lastShedFrame=0, regrowGap=0,
+                 extendedReleases=0;
     };
     const ShadowCacheVerifyTotals& shadowVerifyTotals() const { return shadowVerify_; }
     uint64_t ownershipChecks() const { return ownershipChecks_; }

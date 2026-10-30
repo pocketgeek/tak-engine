@@ -623,7 +623,7 @@
         const uint64_t atlasNowMs=tak::devFlag("TAK_RENDER_STUDY") ? uint64_t(animClock_*1000) : SDL_GetTicks64();
         struct AtlasFrameCounts {
             uint64_t allocs=0,kept=0,freed=0,expired=0,evicted=0,compactions=0,freeCompactions=0,migrated=0,
-                     releases=0,shrinks=0,pageAllocs=0,failures=0,sheds=0;
+                     releases=0,shrinks=0,pageAllocs=0,failures=0,sheds=0,extendedReleases=0;
         } atlasCounts;
         auto& atlas=shadowAtlas_;
         using tak::render::RenderHandle;
@@ -679,6 +679,7 @@
                     atlasNowMs-page.emptySinceMs>=(extended ? atlasTimes.extendedEmptyMs : atlasTimes.emptyMs)) {
                     destroyPage(p);
                     ++atlasCounts.releases;
+                    atlasCounts.extendedReleases+=extended;
                 }
             }
             if (!atlas.livePages() && shadowSilhouetteWidth_) resetShadowAtlas();
@@ -1543,7 +1544,7 @@
             // shadows (any reason).
             shadowVerify_.extendedFrames+=shadowSilhouetteAtlasActive_ && atlas.livePages()>basePages;
             shadowVerify_.maxPages=std::max<uint64_t>(shadowVerify_.maxPages,atlas.livePages());
-            shadowVerify_.sheds+=atlasCounts.sheds;
+            shadowVerify_.sheds+=atlasCounts.sheds;shadowVerify_.extendedReleases+=atlasCounts.extendedReleases;
             shadowVerify_.fallbacks+=!shadowSilhouetteAtlasActive_ && shadowDemandPx>0;
             if (atlasCounts.sheds) { shadowVerify_.lastShedFrame=shadowAtlasPolicy_.frame; shadowVerify_.regrowGap=0; }
             else if (shadowVerify_.lastShedFrame && !shadowVerify_.regrowGap && shadowSilhouetteAtlasActive_ &&
