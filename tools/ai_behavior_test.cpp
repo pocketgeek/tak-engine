@@ -1995,7 +1995,7 @@ static void aiRaisesTheDead(const sim::TypeRegistry& registry,const ai::Profile&
 // assigned list.
 static int referenceTies=0,referenceCapped=0,referenceClaimed=0;
 static void referenceReviveIdle(int player,const sim::World& world,std::vector<int>& assigned,
-                                std::vector<net::Command>& out) {
+                                const ai::CommandSink& sink) {
     if (double(world.player(player).allocation()) < 0.7 || world.atUnitCap(player)) return;
     constexpr float kReach = 56.0f;
     std::vector<int> claimed;
@@ -2023,7 +2023,7 @@ static void referenceReviveIdle(int player,const sim::World& world,std::vector<i
         if (!best) continue;
         net::Command c; c.kind = net::Cmd::Resurrect; c.player = uint8_t(player);
         c.unitId = u.id; c.targetId = best;
-        out.push_back(c);
+        sink(c);
         claimed.push_back(best);
         assigned.push_back(u.id);
     }
@@ -2053,10 +2053,12 @@ static void aiRaisesTheDeadLikeTheReference(const sim::TypeRegistry& registry,co
     const sim::UnitType* casters[]={&priest,&priest,&necro,&hybrid};
     uint32_t seed=12345;
     auto next=[&](uint32_t n) {seed=seed*1103515245u+12345u;return (seed>>16)%n;};
-    int scenes=0,mismatches=0,commands=0,emptyScenes=0;
+    int scenes=0,mismatches=0,commands=0,emptyScenes=0,applied=0,appliedMismatches=0;
     referenceTies=referenceCapped=referenceClaimed=0;
-    for (int scene=0;scene<400;++scene) {
-        sim::World w;terrain(w);w.setFeatureTypes({both,resOnly,none});
+    // One scene, built from the generator's current state; built again from a
+    // saved state it is the same scene.
+    auto build=[&](int scene,sim::World& w,std::vector<int>& assigned) {
+        w.setFeatureTypes({both,resOnly,none});
         w.mapCorpse(&victimA,0);w.mapCorpse(&victimB,1);w.mapCorpse(&victimC,2);
         w.mapCorpse(&capped,0);w.mapCorpse(&skel,0);w.mapCorpse(&priest,1);
         const int population=int(next(90))+1;
@@ -2093,23 +2095,55 @@ static void aiRaisesTheDeadLikeTheReference(const sim::TypeRegistry& registry,co
         if (scene%37==5) w.player(0).constructionAllocation=0.5;
         if (scene%41==7) w.setUnitCap(1);
         pastStart(w);
-        std::vector<int> assigned;
         for (int id:casterIds) if (next(6)==0) assigned.push_back(id);
+    };
+    auto sameStream=[](const std::vector<net::Command>& a,const std::vector<net::Command>& b) {
+        bool same=a.size()==b.size();
+        for (size_t i=0;same && i<a.size();++i)
+            same=a[i].kind==b[i].kind && a[i].player==b[i].player && a[i].unitId==b[i].unitId &&
+                 a[i].targetId==b[i].targetId && a[i].queue==b[i].queue;
+        return same;
+    };
+    for (int scene=0;scene<400;++scene) {
+        const uint32_t sceneSeed=seed;
+        sim::World w;terrain(w);
+        std::vector<int> assigned;
+        build(scene,w,assigned);
         std::vector<int> refAssigned=assigned;
         std::vector<net::Command> want,got;
-        referenceReviveIdle(0,w,refAssigned,want);
+        referenceReviveIdle(0,w,refAssigned,[&](const net::Command& cmd){want.push_back(cmd);});
         ai::Controller c(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
         ai::PlacementProbe::revive(c,w,assigned,[&](const net::Command& cmd){got.push_back(cmd);});
-        bool same=want.size()==got.size() && assigned==refAssigned;
-        for (size_t i=0;same && i<want.size();++i)
-            same=want[i].kind==got[i].kind && want[i].player==got[i].player && want[i].unitId==got[i].unitId &&
-                 want[i].targetId==got[i].targetId && want[i].queue==got[i].queue;
-        mismatches+=!same;++scenes;commands+=int(want.size());emptyScenes+=want.empty();
+        mismatches+=!(sameStream(want,got) && assigned==refAssigned);
+        ++scenes;commands+=int(want.size());emptyScenes+=want.empty();
+        // A sink that applies each command at once (simperf's): the bodies and
+        // the casters still to come must see the same world as the reference
+        // did, so the commands and the resulting state agree too.
+        if (scene%4==1) {
+            sim::World a,b;terrain(a);terrain(b);
+            std::vector<int> assignedA,assignedB;
+            std::vector<net::Command> wantA,gotB;
+            seed=sceneSeed;build(scene,a,assignedA);
+            seed=sceneSeed;build(scene,b,assignedB);
+            sim::TypeRegistry none;
+            const int ties=referenceTies,capped=referenceCapped,claimed=referenceClaimed;
+            referenceReviveIdle(0,a,assignedA,[&](const net::Command& cmd) {
+                wantA.push_back(cmd);sim::applyCommand(a,none,cmd);
+            });
+            referenceTies=ties;referenceCapped=capped;referenceClaimed=claimed;   // counted once per scene
+            ai::PlacementProbe::revive(c,b,assignedB,[&](const net::Command& cmd) {
+                gotB.push_back(cmd);sim::applyCommand(b,none,cmd);
+            });
+            appliedMismatches+=!(sameStream(wantA,gotB) && assignedA==assignedB && a.stateHash()==b.stateHash());
+            applied+=int(gotB.size());
+        }
     }
     std::printf("revive reference: %d scenes, %d commands, %d scenes with none, %d equal-distance ties, "
-                "%d bodies passed over for a type limit, %d for another caster's claim\n",
-                scenes,commands,emptyScenes,referenceTies,referenceCapped,referenceClaimed);
+                "%d bodies passed over for a type limit, %d for another caster's claim; %d applied at once\n",
+                scenes,commands,emptyScenes,referenceTies,referenceCapped,referenceClaimed,applied);
     check(mismatches==0,"reviveIdle gives the reference search's commands, in its order, and the same assigned list");
+    check(appliedMismatches==0 && applied>50,
+          "...also when each command is applied at once, with the same world state after");
     check(commands>300 && referenceTies>50 && emptyScenes>40 && referenceCapped>50 && referenceClaimed>50,
           "...over scenes with many raises, equal-distance ties, type limits, competing casters and nothing to raise");
 }
