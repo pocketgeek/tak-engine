@@ -280,7 +280,19 @@ wandering storms are not aimed shots, so none of them can stop on scenery:
   its body plus one body plus half the weapon's splash counts against the
   target. A hit on the target, or a miss beside or past it, clears the count;
   so does moving more than 16 px from where the count started. Lobbers are
-  included: an arc that clears never counts.
+  included: an arc that clears never counts. The body is a circle of its
+  footprint's half-extent; a building longer one way (a castle, a gate) is
+  also held to its footprint rectangle (`nearBody`, since 2026-10-30), since
+  retail reaches a unit through the cells it owns: `52a4d0` emulated on an
+  Arabow arrow at a 4x12-cell body 128 px off
+  (`probe_long_footprint_blocked.py`) hits it at its near face (497.1) on
+  open ground, stops on terrain with no unit at 453.0 and 488.3 with a ridge
+  two cells or one cell before that face (75 and 40 px short of the centre,
+  inside a circle of its 96 px long half-extent), and still hits the body
+  with the ridge under its own near column. With the circle alone, a crest in
+  front of a Taros Castle's long face (8x20) never counted, so the attacker
+  never walked; the clear-chord test below skips only the cells near the
+  footprint for the same reason.
 - After three in a row (`shotBlockedHere`), an auto weapon slot treats the
   target as having no clear shot from here (the sweep drops it and picks
   another), and auto-acquisition (`findTarget`) does not pick it again from
