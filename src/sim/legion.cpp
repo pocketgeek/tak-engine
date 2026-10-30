@@ -2864,7 +2864,10 @@ struct LegionNavigator::Impl {
                           std::vector<StaticChange>* out=nullptr) {
         const int grow=kRelabelMargin+std::max(p.footX,p.footZ)+1;
         auto& clusters=scratch.clusters;
+        using ProbeClock=std::chrono::steady_clock;
+        const auto probeC0=gProbe?ProbeClock::now():ProbeClock::time_point{};
         cluster::clusterRects(rects,grow,clusters);
+        const auto probeC1=gProbe?ProbeClock::now():ProbeClock::time_point{};
         uint64_t work=0;
         auto& part=scratch.part;
         for(size_t k=0;k<clusters.clusters();++k) {
@@ -2873,6 +2876,14 @@ struct LegionNavigator::Impl {
             StaticChange c;
             work+=refreshCluster(p,part,changedAny,scratch,&c);
             if(out&&c.box[2]>=0)out->push_back(c);
+        }
+        // TAK_LPROBE: one line per refresh (diagnostic only; the clustering's share of the refresh).
+        if(gProbe) {
+            const auto t=ProbeClock::now();
+            std::fprintf(stderr,"LCLUSTER tick=%u plane=%d n=%zu clusters=%zu cluster_us=%.3f refresh_us=%.3f work=%llu\n",
+                         w.tickCounter_,int(&p-planes.data()),rects.size(),clusters.clusters(),
+                         std::chrono::duration<double,std::micro>(probeC1-probeC0).count(),
+                         std::chrono::duration<double,std::micro>(t-probeC0).count(),(unsigned long long)work);
         }
         return work;
     }
