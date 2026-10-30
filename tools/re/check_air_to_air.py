@@ -18,7 +18,7 @@ returned buffer), installation 4d4d40 (clears the pending controller events
 as it does), and the mission push (4d4bf0 + 4d6c40 + 4d7750). The group check
 51d1e0 answers no group and the air-traffic counter (unit +0x12a) stays below
 the step-out threshold: neither is ported. A lost target's VTOL_SEEKATTACK
-push (41d654) is counted, not compared: World drops the order.
+push (41d654) is counted here; check_air_seek_attack.py compares it.
 
     python3 tools/re/check_air_to_air.py [build-o2/retail_motion_test]
 """
@@ -374,7 +374,7 @@ def main():
             'pursuit' if moving else 'off-map' if points else 'other'
         stats[kind_of] = stats.get(kind_of, 0) + 1
     compare('41ca50', fixtures, expected, run('--air-to-air', fixtures))
-    print('41ca50: %d handler calls match %s; %d lost-target VTOL_SEEKATTACK pushes not ported' %
+    print('41ca50: %d handler calls match %s; %d lost-target VTOL_SEEKATTACK pushes (check_air_seek_attack.py)' %
           (len(fixtures), stats, seeks))
 
     # --- VTOL_Evade 41e3d0 -----------------------------------------------

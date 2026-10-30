@@ -287,6 +287,29 @@ Over all 19 armed flyers against flyers (720 sweep cases), cases that fired
 four or more shots without damage fell from 51 to 38 and damage rose 3.6%;
 the Juggernaut's fell from 13 to 0.
 
+## An attack flyer circles where its target fell
+
+A flyer told to attack used to stop where its target died, and land there:
+an air raid stalled after every kill until it got a new order. In the
+original, AirToGround (`0x41bf80`, at `0x41c8f6`) and AirToAir (`0x41ca50`,
+at `0x41d654`) push **VTOL_SeekAttack** (`0x4192f0`) when they lose their
+target, as long as the attack was the unit's last mission and it is not on
+Hold Fire. The engine now does the same, checked against the original code
+on 6,000 emulated seek calls and 4,000 lost-target exits (all equal):
+
+- **It circles the target's last point** (where the attack last read it, the
+  led aim point against a flyer) at its selected weapon's range plus 160
+  pixels, hopping 120 to 165 degrees round each time it reaches a point and
+  looking again every 30 to 59 ticks. It keeps flying until told otherwise.
+- **On Fire At Will it attacks the next enemy it finds** at one of those
+  looks, and after that kill circles again. On Return Fire it circles
+  without looking for one; on Hold Position it circles but attacks nothing it finds
+  (the original refuses a Hold Position unit an attack it was not ordered).
+- **No seek follows** on Hold Fire, when orders are queued behind the attack
+  (the flyer goes on with them), or after an attack an idle flyer picked up
+  by itself: that one sits on its standing mission, so the flyer goes back
+  to standing by and lands, as before.
+
 ## A long building is hit through the ground it stands on
 
 A shot that ends on terrain or scenery near its target counts as **blocked**
@@ -744,9 +767,17 @@ New with 0.9.12:
   its eggs have no upward speed and fall past. It hits flyers below it.
 - **A dogfight's retargeting** uses the engine's own target scan, not the
   original's, so a flyer that finds its target again keeps its attack where
-  the original restarts it; the group check, the air-traffic step-out and
-  the lost-target search of the original's AirToAir are not ported (the
-  attack ends instead, as AirToGround's already does).
+  the original restarts it; the group check and the air-traffic step-out of
+  the original's AirToAir are not ported.
+- **A circling flyer looks with the engine's target scan** (its weapons'
+  longest range plus 90 pixels), not the original's. Hover attackers
+  (AirToGroundHover, `0x41d820`) still stop when their target dies; their own
+  seek is not ported. A flyer that loses a target still alive (now allied or
+  out of reach) circles at once; the original first offers that target an
+  attack, which fails for the same reason. The circling flyer's status still
+  reads MOVING (the original says Seeking to attack). Orders queued with
+  Shift behind a circling flyer wait, as in the original, whose seek never
+  ends by itself.
 - **Blocked shots against a long building** count short misses on open ground
   in front of its long face as blocked too, as they already did for a square
   building (a Taros Beak bombing a castle's side gives up after three eggs

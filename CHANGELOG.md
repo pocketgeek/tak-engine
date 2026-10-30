@@ -68,6 +68,14 @@ their validation reports; both live in [`docs/`](docs/).
   targets, as in the original. An Iron Beak drops an
   egg only once it faces its target, as in the original; the egg hits a flyer
   below the Beak and falls past one at its own height.
+- **An attack flyer that kills its target circles the spot**, as in the
+  original game, instead of stopping there and landing: when the attack you
+  gave it was its last order and it is not on Hold Fire, it flies round the
+  target's last position at its weapon's range plus 160 pixels and, on Fire
+  At Will, attacks the next enemy that comes near, so an air raid carries on
+  after each kill. On Return Fire it circles without looking; with orders
+  queued behind the attack, or after an attack it picked up by itself while
+  idle, it goes on as before. Give it a new order to call it off.
 - **A shot stopped in front of a castle counts as blocked.** A castle, keep,
   gate or other long building is hit through the ground it stands on, as in
   the original game, not anywhere within a circle of its length, so shots that
