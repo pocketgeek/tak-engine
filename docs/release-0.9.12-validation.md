@@ -122,8 +122,10 @@ reviewed on its own; the code tested below is main `95ca9163`:
   - **Help and repair approach** (`task-repair-approach` `414554f5`, merged
     as `dc5b2a64`): HelpBuild `0x405cf0` and RepairUnit `0x407190` on the
     rectangle controller; the factory-yard step-out is our own addition
-    (not in the original); the review fixed an own-site assist stall and a
-    repeating conjurer's rally.
+    (not in the original), **kept by the owner** as a deliberate non-retail
+    improvement: it stops helpers blocking the factory yard (without it 84
+    of the 232 door cases left a helper standing in the yard); the review
+    fixed an own-site assist stall and a repeating conjurer's rally.
   - **Raise by order** (`task-resurrect-order` `c795530f`, merged as
     `c745a465`): `Cmd::Resurrect` (29), the resolver's resurrect / animate /
     clear per unit, no idle raise or idle corpse clear; our AI levels order
@@ -424,9 +426,10 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
     shift comes from the help/repair approach alone (that branch: Aramon
     wins all 8, mean 35.4); the spell timing and small fixes move single
     seeds. The cap is now 120 minutes (`2246f550`), with the reason in the
-    test; both tests pass on a rerun. TODO-LEAD: confirm the cap change and
-    the Retail AI's Aramon-v-Veruna shift (the original's repair approach
-    makes the Retail AI's repairers effective).
+    test; both tests pass on a rerun. **Accepted by the owner:** the cap
+    stays at 120 minutes. The Retail AI's Aramon got stronger because its
+    builders now walk up to what they repair and keep trying, as the
+    original's do, so its repairs land.
   - **Branch tests on the merged code:** `mission_orders`,
     `mission_orders_shipped`, `ambush`, `revive_order`, `capture_combat*`,
     `air_seek_attack`, `helpbuild`, `remote_timing`, `sacred_yard`,
@@ -454,9 +457,8 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
     battles, a Retail offset spread in motion-open and a Retail-floor key in
     motion-cross), with results identical before and after these merges:
     the combat fixes' and air missions' changes, which `eb222a4f` retook only
-    for the fixtures with a ctest. TODO-LEAD: retake or license them before
-    the tag (the battle-assault and battle-field Legion counters need
-    reasons).
+    for the fixtures with a ctest. Retaken afterwards on `cc71d630` (see
+    **Scenario retake for the fixtures without a ctest** below).
   - **Campaign smoke** (takserver with the referee and Retail AI, headless
     client, `--mpmission`, `TAK_SPEED=80`): takx04_ph, takx07_ph and
     takmission23_ph 120 s, takx26_dh 60 s: no crash, no desync, mismatch or
@@ -502,6 +504,78 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
   passes unchanged (no checkpoint retaken). The Legion shuffling in
   attackring-struct-60 is licensed as the cost of the original's reach, not
   fixed; a later Legion round could settle the tighter ring.
+- **Scenario retake for the fixtures without a ctest** (main `cc71d630`,
+  Debug `-O2 -g`, `legion_scenario --mode both --json --offsets gate --data
+  assets/game`, scratch `HOME`, XDG folders and `TMPDIR`; data in
+  `~/tak-tmp/scnretake/`). The 22 fixtures the retail-check integration left
+  (above) fail the same 296 keys on `cc71d630` as on `8d671ee0`: 246
+  `hash@` keys and 50 measured keys. **Attribution:** the 22 run on
+  `259d26a5` (before the combat fixes) PASS against the old baseline (0
+  failed); on the three other combat branch heads (`task-range-classes`
+  `24eaf20f`, `task-impact-footprint` `337c4159`, `task-airtoair`
+  `1d9d7834`) they PASS unchanged; on `task-vermage-aim` alone (`a0cd32eb`)
+  the same 296 keys fail, with results byte-identical to `b8d4be5a`,
+  `8d671ee0` and `cc71d630` (so neither the other combat fixes nor the air
+  missions' slot modes nor the retail-check branches touch them). Within
+  that branch (`601e5e62`, before its TurnDirection commit):
+  - **The attack hold after a walk** (`8e4625fa`) moves
+    attackring-deadcorridor-30, -fight-diag-60, -gatehouse-40,
+    -gatehouse2-48, -gateyard-36, -wall-mixed-56, ringbend-pocket and the
+    four battles: a ground attacker that walked to its target now brakes
+    and stands two ticks before its weapons take the target and turns to
+    face only after that, as the original does, so every engagement after
+    a walk starts up to three ticks later and each fight takes another
+    course. The attackring fixtures and ringbend-pocket move only in
+    `hash@` (ring damage within a few points). In the battles (Legion,
+    means over all 11 gate offsets, `259d26a5` -> `cc71d630`; the gate
+    reads the median of the core five, which moved more):
+    **battle-assault** contact with other groups 417 -> 430 permille, held
+    rechecks 433k -> 445k, still units processed 16.6k -> 17.0k (the
+    braked bodies), blocked re-requests 0.098 -> 0.106 per unit, wall
+    touch 26.5 both, field refresh 29.9M -> 29.7M; **battle-field-2x60**
+    reversals 106 -> 109 (core five 103 -> 129: the offsets that reverse
+    more moved into the core), passage scans 1,815 -> 2,161 and their
+    cells 78.8k -> 91.7k (bodies braked at the front are scanned again),
+    reach slots 6.86 -> 6.59 per unit (core median 6.04 -> 6.83);
+    **battle-field-2x250** the even fight now tips toward side B (dead A
+    225 -> 238, B 238 -> 219 of 250; Retail likewise), and B's survivors
+    finish their fight move, which the arrival and completion counters
+    count (arrivals 24.5 -> 28.6, core median 25 -> 39; completion
+    distance sum 268 -> 397); **battle-field-2x500** fewer deaths inside
+    the run and more survivors at their goal (core median arrived A 41 ->
+    53, B 14 -> 30), still units processed 6,213 -> 6,956 (+12%, the held
+    bodies), reach slots 7.10 -> 8.00 per unit, ring and slot-search cells
+    and holds +4%.
+  - **TurnDirection to the unit's own script** (`1f83633d`) moves
+    attackring-melee-30 (a melee attacker is not held), the seven
+    gen1-route fixtures (`hash@` only, both modes) and motion-cross, -open
+    and -wall (Legion `hash@` only; Retail takes another course). The
+    turn call-in runs the unit's gameplay script at once, so a script's
+    RAND (crechie's ChiefDancer in the motion fixtures) draws the shared
+    game random a tick earlier or at another point in the tick; Retail's
+    mover and missions draw the same random, so their sleeps and routes
+    change (motion-cross offset 0: the draw order differs from tick 3, the
+    first unit's route at tick 387, with every position equal until then).
+    motion-cross's Retail `click.u00.arrived` median 16 -> 18 (Legion 16
+    unchanged) now fails the Retail floor, and motion-open's Retail
+    `click.u00.t50` offset spread 2,300..2,534 is just over the band
+    (median 2,470, the base).
+
+  Nothing looks like a bug: both changes are the original's behaviour
+  (emulated, reviewed on their branch), the battles' outcome keys move both
+  ways, and the work counters move 0-15% over all offsets. **Retake:**
+  the 246 `hash@` values (nothing else changed by the retake); 43
+  `accepted_regressions` for the battles' Legion band keys with the measured
+  values and the reasons above; five raised bounds (battle-assault
+  `wall_touch_near_permille` 108 -> 111, `wall_touch_permille` 26 -> 27,
+  `work.blocked_rerequests.total` 0.0937 -> 0.1046 per unit;
+  `work.reach_slots_built.total` battle-field-2x500 7.169 -> 7.718,
+  battle-field-2x60 6.6417 -> 6.8334 per unit); a Retail offset-spread
+  exception (motion-open `click.u00.t50`) and a Retail-floor exception
+  (motion-cross `click.u00.arrived`, Retail moved, Legion did not), cluster
+  MV-12; a history line. After: `check` and `check --cumulative` **PASS** on
+  the 22 (5,721 keys, 0 failed, 504 ratchets, 678 licensed, 33 floor
+  exceptions), `validate` **PASS** (0 problems).
 - **Scenario baseline and navigation checkpoints on `task-los-range`:** all
   67 `legion_check_*` tests (every key, `hash@` included, against
   `baseline.json`) and `navigation_determinism` pass unchanged; nothing was
@@ -580,6 +654,16 @@ A first 0.9.12 run of the same game (`f0912`) overlapped parallel compiles on
 the machine (the load average climbed from about 2 to 17-29 in its second
 half) and fell below +0 from minute 24 (-2 from minute 27); it is not
 counted, and the repeat on a quiet machine is the run above.
+
+**On the final code** (main `cc71d630`: the combat fixes, the air missions'
+slot modes and the retail-check fixes on top of `4b374c14`; the same game,
+hooks and machine, quiet; `cc71-ana.txt` against `f0912b-ana.txt`): the
+whole 30-minute game at +10 in 909 s wall, as before; 0 seconds below 1x
+(was 1, in the opening); simulation time per tick at equal unit counts
+equal or lower (for example 12.3 against 13.0 ms at about 2,500 to 3,000
+units); AI cost up about 0.3 ms a tick (0.5 to 0.7 ms against 0.2 to 0.35);
+the client's SIM readout never below +8, its lowest 1.80x near 3,100 units
+(1.91x before).
 
 Per-change costs from the commits: the lodestone search took 300-840 ms in
 one tick on that map; a full nav relabel 90-150 ms, 16 to 24 times a minute

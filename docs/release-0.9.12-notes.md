@@ -422,14 +422,22 @@ emulation, do it differently, and the engine now does the same:
 - **A helper that finishes a unit inside a factory walks out of the factory**
   (not in the original, which leaves it where it touched the unit, in the
   yard): the 0.9.8 report of builders standing in a factory's door, which the
-  guard ring already answers for guards. In the door test (every shipped
-  ground factory, both pathfinding modes and balances, 232 cases) all outputs
-  finish and no unit is left in a factory; without the step-out, 84 assist
-  cases left the helper standing in the yard.
+  guard ring already answers for guards. This is a deliberate change from the
+  original, kept because it stops helpers blocking the factory yard. In the
+  door test (every shipped ground factory, both pathfinding modes and
+  balances, 232 cases) all outputs finish and no unit is left in a factory;
+  without the step-out, 84 assist cases left the helper standing in the yard.
 
 Flying helpers and repairers keep 0.9.7's VTOL_HelpBuild and VTOL_RepairUnit.
 A building never repairs (the original's RepairUnit ends at once without a
 mover; the Keep's `canmove=1` let the engine accept the order).
+
+**The Retail AI's Aramon is stronger.** Its builders now walk up to the
+units they repair and keep trying, as the original's do, so its repairs land.
+In the Aramon-against-Veruna duel over eight seeds Aramon won 5 before; now
+it wins all 7 games that end within 90 minutes. On the test's default seed
+an even war ran past 90 minutes (Aramon won at 91.9), so the duel test now
+allows 120 minutes.
 
 ## The dead rise only when you raise them
 
@@ -861,6 +869,11 @@ New with 0.9.12:
   of the click's; every networked click is one explicit order and joins one
   area. The flyers of a Legion squad that rides with its ground keep station
   over the ground until it arrives, whatever their own points.
+- **Flyers moved together with ground units spread the original's way and
+  can land among the arriving ground units.** In a mixed group move each
+  flyer keeps its own place in the group, so some land where ground units
+  are still arriving; with Retail pathfinding a test group's ground units no
+  longer all arrive (46 of 48). Left as it is by choice.
 - **The minimap's explored shade** is half-opaque black; the original remaps
   each pixel through a shade table.
 - **Minimap dots** sit at a unit's ground position, not its projected height
