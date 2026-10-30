@@ -56,7 +56,9 @@ their validation reports; both live in [`docs/`](docs/).
   when threatened and now and then breaks off and turns before coming back.
   The Aerial Juggernaut now closes in so its anti-air arrows reach (it stopped
   at its cannons' range, and cannonballs miss flyers), and its cannons pick
-  their own targets meanwhile, bombing the ground. An Iron Beak drops an
+  their own targets meanwhile, bombing the ground. Attacking a ground unit,
+  the Juggernaut's and the Dirigible's other weapons likewise pick their own
+  targets, as in the original. An Iron Beak drops an
   egg only once it faces its target, as in the original; the egg hits a flyer
   below the Beak and falls past one at its own height.
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
