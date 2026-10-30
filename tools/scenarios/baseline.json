@@ -59595,6 +59595,13 @@
    "mode": "legion",
    "reason": "Protocol 305 combat fixes (0.9.12, task-0912-four, 2026-10-30): an attack after a walk aims two ticks after the stop (task-vermage-aim, Attack_Chase 0x403bb0 emulated end to end), so a fight column's retargets settle a little later: reach slots built 24 -> 28, follow chain mean 4.35 -> 5.35; outcome keys unchanged (measured on the vermage branch alone)",
    "scenario": "fight-retarget"
+  },
+  {
+   "key": "work.completion_dist_3.total",
+   "max": 55,
+   "mode": "legion",
+   "reason": "Flyer group spread (0.9.12, task-air-group-move, 2026-10-30): a flyer's move keeps its unclamped place in the group within sqrt(3000 n) px (retail 0x5214b0, emulated), and Legion squads riding with ground start the flyers' landing when the ground's centroid nears its busy members' goals' centroid (planLegionFlightStations): mixed2's 16 flyers take new goals, work.completion_dist_3.total 35 -> 55 (54 on main 8d671ee0 at offset 0); Legion outcome keys within a few ticks (g.G.done 6621 -> 6711)",
+   "scenario": "mixed2"
   }
  ],
  "entries": {
@@ -275081,35 +275088,35 @@
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -1",
      "rule": "eq",
      "since": "W0",
-     "value": "efb7b63c255fe9d1"
+     "value": "92e1961d7ff2413c"
     },
     "hash@-2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset -2",
      "rule": "eq",
      "since": "W0",
-     "value": "54602935c6e3d7b3"
+     "value": "38f938a0222ade82"
     },
     "hash@0": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 0",
      "rule": "eq",
      "since": "W0",
-     "value": "02a56eb3d4713e59"
+     "value": "9fc53a39d617f7b9"
     },
     "hash@1": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 1",
      "rule": "eq",
      "since": "W0",
-     "value": "ffdf6232265eff46"
+     "value": "4f9473408f92df44"
     },
     "hash@2": {
      "dir": "lower",
      "reason": "Retail hash byte-identical (PLAN 3.0 exact), offset 2",
      "rule": "eq",
      "since": "W0",
-     "value": "f656f98bb060ebd8"
+     "value": "f532998b602667c8"
     },
     "serial_eq_workers": {
      "dir": "lower",
@@ -411796,6 +411803,12 @@
    "ratchets": [],
    "reason": "0.9.12 combat fixes (task-0912-four): hash@ retaken for the 16 attack and chase fixtures the attack-timing fold and the centre-to-centre building reach moved (352 keys); new band entries for work.ring_swaps (attackring-struct-60) and work.field_work_refresh_moving (fight-retarget), which first move there; 39 licences for attackring-struct-60 and fight-retarget",
    "when": "2026-10-30T12:00:00Z"
+  },
+  {
+   "cleared_exceptions": [],
+   "ratchets": [],
+   "reason": "0.9.12 retail-check branches (task-integrate-0912b): mixed2's five Retail hash@ keys retaken (the flyer group spread moves its 16 flyers); one licence for mixed2/legion work.completion_dist_3.total. Every other scenario's keys unchanged by these branches.",
+   "when": "2026-10-30T18:00:00Z"
   }
  ],
  "references": {

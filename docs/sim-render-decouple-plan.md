@@ -40,7 +40,7 @@ Pose / identity (immutable-type carried by pointer so the record is self-contain
 - `float x, z, heading` — **latest-tick (curr) values**, for the RAW reads that bypass interp today: `wallOcclusionY` (`6074/6101/6144`), `uLiftX/uLiftY` (`6783-6784`, called at cull `4002-4003`), frustum cull (`4002-4003`), `flyerAltAt` (`6799`), minimap dots, all hit-test/proximity scans. **Interpolated pose still comes from `interp_`** (see 1e) — these curr x/z are only for occlusion/cull/hit-radius where one-tick staleness is invisible.
 
 Mutated-per-tick scalars/flags (all confirmed sim-written; **no interp**, latest-tick is correct):
-- `int player` — **changes on capture/charm** (`captureProg` completes in `tick`), a real race, not theoretical. Colour slot, disco/headbang gating, allied-cull all derive from this.
+- `int player` — **changes on capture/charm** (a mind-control charm lands in `tick`), a real race, not theoretical. Colour slot, disco/headbang gating, allied-cull all derive from this.
 - `float hp, mana; int veteran, xp`
 - `bool underConstruction, buildBegun, cloaked, cloakOn, active`
 - `int weaponSlot, stance`

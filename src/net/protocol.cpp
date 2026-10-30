@@ -113,7 +113,8 @@ uint64_t orderDigest(const std::vector<int32_t>& members) {
 
 bool validOrderTemplate(const Command& t, OrderShape shape) {
     return orderVerb(t.kind) && t.unitId == 0 && !t.order &&
-           (shape == OrderShape::Shared || (shape == OrderShape::Offsets && t.kind == Cmd::Move)) &&
+           (shape == OrderShape::Shared || (shape == OrderShape::Offsets && t.kind == Cmd::Move) ||
+            (shape == OrderShape::FlyerOffsets && (t.kind == Cmd::Move || t.kind == Cmd::Patrol))) &&
            commandCoordinate(t.x) && commandCoordinate(t.z) && commandCoordinate(t.x2) && commandCoordinate(t.z2);
 }
 
@@ -187,7 +188,8 @@ bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict, uint32_t pro
     // at least 35 bytes and an event 2, so a corrupt count cannot ask for gigabytes.
     const uint32_t nc = r.u32();
     if (uint64_t(nc) * 35 > uint64_t(r.end - r.p)) return false;
-    const auto maxKind = proto >= kPowerCodesProtocol ? Cmd::PowerCode : proto >= 267 ? Cmd::Order
+    const auto maxKind = proto >= kResurrectProtocol ? Cmd::Resurrect
+                       : proto >= kPowerCodesProtocol ? Cmd::PowerCode : proto >= 267 ? Cmd::Order
                        : proto >= 221 ? Cmd::BuildManaArea : Cmd::ShareMana;
     for (uint32_t i = 0; i < nc && r.ok; ++i) {
         auto c = r.cmd();

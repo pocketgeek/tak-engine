@@ -40,8 +40,9 @@ namespace tak::sim {
 // made the head's checks (the unit may attack, a live target, the leash at
 // mission +0x56). Not ported, as in AirToGround: the group check 51d1e0 and
 // the VTOL_Move_Formation it pushes (so flag 0x8000000 is never set here), the
-// air-traffic step-out (unit +0x12a >= 5 pushes VTOL_StepOut), and the
-// VTOL_SEEKATTACK a lost target pushes (41d654): every abort returns 5.
+// air-traffic step-out (unit +0x12a >= 5 pushes VTOL_StepOut). Every abort
+// returns 5; the VTOL_SEEKATTACK a lost target pushes first (41d654) is the
+// host's (retailAirLostTarget, retailairseek.h).
 
 // 41d780: whether `a` lies in the half plane ahead of `b` once b's facing is
 // turned by octant x 45 degrees. Both directions are 20 px vectors (5360bf /

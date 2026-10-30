@@ -24,6 +24,7 @@
 
 #include <cstdio>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <random>
@@ -272,41 +273,47 @@ void retailEquivalence() {
 void legionIdentity() {
     Field f(PathfindingMode::Legion);
     const auto foot = f.block(kGround, 200, 10, 10, 20, 3);
-    const auto air = f.block(kFlyer, 8, 100, 100, 4, 3);
+    const auto air = f.block(kFlyer, 8, 70, 30, 4, 3);   // 500-670 px from the centre: in reach, past 60
     std::vector<int> sel = foot;
     sel.insert(sel.end(), air.begin(), air.end());
     const float cx = 180 * 16, cz = 160 * 16;
-    // The client's float rule for the flyers' goals (gameview_hud.cpp right-click move).
-    float mx = 0, mz = 0;
-    for (int id : sel) { mx += f.world.unit(id)->x.toFloat(); mz += f.world.unit(id)->z.toFloat(); }
-    mx /= float(sel.size()); mz /= float(sel.size());
+    // Retail's flyer spread for the flyers' goals (gameview_hud.cpp right-click move,
+    // sim/retailflyerspread.h), by hand: the whole-pixel centre (truncated mean), the
+    // offset kept when floor(dx^2) + floor(dz^2) <= 3000 n, else the click.
+    long long sx = 0, sz = 0;
+    for (int id : sel) { sx += f.world.unit(id)->x.v >> 16; sz += f.world.unit(id)->z.v >> 16; }
+    const double mx = double(sx / (long long)sel.size()), mz = double(sz / (long long)sel.size());
+    const double reach2 = 3000.0 * double(sel.size());
     f.apply(orderCmd(0, 42, verb(Cmd::Move, cx, cz), sorted(sel), OrderShape::Offsets));
-    bool stamped = true, shared = true, offsets = true;
+    bool stamped = true, shared = true, offsets = true, wide = false;
     for (int id : sel) {
         const auto* u = f.world.unit(id);
         if (u->orders.empty()) { stamped = false; continue; }
         const auto& o = u->orders.back();
         stamped &= o.orderSerial == 42 && o.convoyTick == (kExplicitArea | 42u);
         if (u->type->canFly) {
-            const float gx = cx + std::clamp(u->x.toFloat() - mx, -60.f, 60.f), gz = cz + std::clamp(u->z.toFloat() - mz, -60.f, 60.f);
-            offsets &= std::abs(o.x.toFloat() - gx) < 0.01f && std::abs(o.z.toFloat() - gz) < 0.01f;
+            const double dx = u->x.v / 65536.0 - mx, dz = u->z.v / 65536.0 - mz;
+            const bool keep = std::floor(dx * dx) + std::floor(dz * dz) <= reach2;
+            const double gx = keep ? cx + dx : cx, gz = keep ? cz + dz : cz;
+            offsets &= std::abs(o.x.toFloat() - gx) < 0.01 && std::abs(o.z.toFloat() - gz) < 0.01;
+            wide |= keep && std::abs(dx) > 60;
         } else shared &= o.x == Fixed::fromFloat(cx) && o.z == Fixed::fromFloat(cz);
     }
     check(stamped, "Legion: every member's leg carries the order's serial and area");
     check(shared, "Legion: surface members take the click");
-    check(offsets, "Legion: flyers take the client's clamped offsets");
+    check(offsets && wide, "Legion: flyers take retail's flyer spread, as the client gives it");
     size_t open = 0;
     f.world.convoys().forEach([&](const ConvoyTable::Convoy& c) { open += c.player == 0; });
     check(open == 1, "Legion: the order joined the area table once");
     // The serial is hashed: the same order under another serial is another state.
     Field g(PathfindingMode::Legion);
     g.block(kGround, 200, 10, 10, 20, 3);
-    g.block(kFlyer, 8, 100, 100, 4, 3);
+    g.block(kFlyer, 8, 70, 30, 4, 3);
     g.apply(orderCmd(0, 43, verb(Cmd::Move, cx, cz), sorted(sel), OrderShape::Offsets));
     check(f.world.stateHash() != g.world.stateHash(), "Legion: the serial is part of the state hash");
     Field h(PathfindingMode::Legion);
     h.block(kGround, 200, 10, 10, 20, 3);
-    h.block(kFlyer, 8, 100, 100, 4, 3);
+    h.block(kFlyer, 8, 70, 30, 4, 3);
     h.apply(orderCmd(0, 42, verb(Cmd::Move, cx, cz), sorted(sel), OrderShape::Offsets));
     f.run(60); h.run(60);
     check(f.world.stateHash() == h.world.stateHash(), "Legion: the same order gives the same state");

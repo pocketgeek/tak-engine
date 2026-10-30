@@ -742,7 +742,12 @@ target underneath.
   unit a factory or a Zhon builder is still producing: the helpers advance that
   unit's one build, it finishes once, and its producer is free again at that
   moment. A builder on a repeat queue can be told to assist too; its own product
-  waits until it has finished helping.
+  waits until it has finished helping. A ground builder walks up until it
+  touches the unit, on the side it comes from, so several helpers spread round
+  it; once working it keeps working where it stands, even if it is pushed
+  aside. It gives up only if it cannot get within its build distance of the
+  unit. A helper that finishes a unit inside a factory walks out of the factory
+  afterwards, so it never stands in the door.
 - **Guarding with a builder**: a mobile builder told to **Guard** a unit
   (the **G** key, or a right-click on one of your finished, undamaged units)
   follows it and lends a hand. If the guarded unit is damaged, the builder
@@ -890,9 +895,16 @@ health. An idle priest starts on a body lying close by of its own accord.
 Press **H** (or use the heal button) and click a damaged friendly unit or
 building. Repair costs mana. Builders on **patrol** automatically repair damaged
 friendly units and buildings near their route, at their ordinary repair rate and
-cost, then carry on with the same patrol. They do not follow a unit that leaves
-the area, and they leave unfinished buildings to an explicit build or help
-order.
+cost, then carry on with the same patrol. They give up a repair once they are
+their sight distance from where they left their route, and they leave
+unfinished buildings to an explicit build or help order.
+
+A ground builder walks up until it touches the unit before it repairs it, and
+keeps repairing where it stands if it is pushed aside. As in the original
+game, a unit is never repaired while it walks or turns: the repair waits while
+it moves, follows it, and is given up after a few seconds of walking (sooner
+when the builder keeps up with it). A still unit is never given up on, even
+one the builder cannot reach.
 
 A mobile builder told to **Guard** one of your units also repairs it when it
 is damaged, and helps repair whatever that unit is repairing, an ally's unit

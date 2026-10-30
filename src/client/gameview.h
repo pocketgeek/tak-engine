@@ -302,8 +302,9 @@ public:
     // Right-drag "clear this area": order EVERY selected reclaimer to clear the box
     // (each its own ReclaimArea, retail 5214b0); non-reclaimers are left alone.
     void issueReclaimBox(float x0, float z0, float x1, float z1, bool queue);
-    // Single-feature reclaim (right-click / armed CLEAR): every reclaimer, same target.
-    void issueReclaimFeature(int targetId, bool queue);
+    // A right-click / armed CLEAR on a body or feature: each selected unit
+    // raises the body when it can, else reclaims the target (retail 4de530).
+    void issueRaiseOrReclaim(int bodyId, std::optional<int> reclaimId, bool queue);
 
     // Attach the multiplayer client. The game world is set up later, from the
     // server's GameStarting (startMpGame), not from the constructor.
@@ -371,7 +372,8 @@ public:
     // selection verb, applied to every member in one tick -- and everything else
     // (Retail, offline) gets them exactly as before, one command per unit. Scopes
     // nest; only the outermost flushes. setClickMove declares the right-click move
-    // (its Move run is sent as OrderShape::Offsets at click (wx, wz)).
+    // (its Move run is sent as OrderShape::Offsets at click (wx, wz)); setFlyerSpread
+    // an armed move / patrol whose flyers keep retail's spread (OrderShape::FlyerOffsets).
     struct ClickBuffer {
         std::vector<tak::net::Command> cmds;
         tak::net::ClickShape shape;
@@ -388,6 +390,9 @@ public:
     };
     void setClickMove(float wx, float wz) {
         if (click_) { click_->shape.moveOffsets = true; click_->shape.x = wx; click_->shape.z = wz; }
+    }
+    void setFlyerSpread(float wx, float wz) {
+        if (click_) { click_->shape.flyerOffsets = true; click_->shape.x = wx; click_->shape.z = wz; }
     }
     void flushClick();
 
@@ -636,6 +641,8 @@ public:
     // render/HUD reads (the null check keeps working).
     const UnitR* frameUnitP(int id) const;
     std::optional<int> reclaimTargetAt(float wx,float wz) const;   // feature id, or -corpse id
+    int raiseTargetAt(float wx,float wz) const;   // a body a selected unit can raise, or 0
+    uint8_t reviveKindOn(const UnitR& caster,const UnitR& body) const;
     bool canAssistSite(const UnitR& builder,const UnitR& site) const;
     bool canLoadPassenger(const UnitR& passenger, const UnitR& carrier) const;
     // Player snapshot accessors (mirror world_.player()/numPlayers() for the HUD).
@@ -1307,6 +1314,17 @@ private:
     // GROUND bodies and the AIR bodies -- see the shadow pass for why.
     std::vector<const UnitGeom*> airShadows_;
     size_t airShadowOp_ = SIZE_MAX;   // drawOps_ index to drain airShadows_ before
+    // drawOps_ index of the first AIRBORNE body (SIZE_MAX: none this frame). The
+    // replay stops here and draws the rest after the shots and effects: retail's
+    // world pass (0x4fc648) draws the airborne units after 52b210 (shots) and
+    // 492070 (debris, explosions), so a flyer is never under a ground fight's fx.
+    size_t airOp_ = SIZE_MAX;
+#ifndef NDEBUG
+    // Draw-order probe (TAK_AIR_OVER_FX_TEST): 'g' ground body replay, 'e' the
+    // effects pass, 'a' the airborne body replay, in the order this frame ran them.
+    std::string debugPaintOrder_;
+    size_t debugAirOps_ = 0;   // airborne draw ops replayed this frame
+#endif
 
     // Reused scratch vertices for order markers, progress bars and minimap dots.
     std::vector<SDL_Vertex> overlayBatch_;

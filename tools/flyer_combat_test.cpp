@@ -53,7 +53,7 @@ int main(int argc,char** argv) {
             const auto* unit=world.unit(from);
             check(std::none_of(unit->orders.begin(),unit->orders.end(),[&](const auto& o){return o.targetId==target;}),
                   "Harpy releases a target converted to its owner or ally");
-            check(!unit->scriptAimTarget && !unit->firedWeapons && !unit->captureProg,
+            check(!unit->scriptAimTarget && !unit->firedWeapons,
                   "conversion cancels Harpy aim and further weapon releases");
             check(!unit->orders.empty(),"conversion preserves the Harpy's queued move");
             const auto& charm=registry.find("tarmind")->weapons.front();
@@ -250,7 +250,6 @@ int main(int argc,char** argv) {
                 victim.healTime=0;
                 victim.weapon.damage=0;victim.weapons.clear();
                 for (auto& weapon:type.weapons) { weapon.mindControl=false;weapon.damage=1; }
-                type.canCapture=false;
                 if (overrides) {
                     type.weapons.front().hoverAttackDistance=88;
                     type.weapons.front().hoverAttackAltitude=300;
@@ -291,7 +290,7 @@ int main(int argc,char** argv) {
             auto type=*registry.find(name);
             if (type.hoverAttack || type.weapon.hoverAttack) continue;
             for (auto& weapon:type.weapons) { weapon.mindControl=false;weapon.damage=1;weapon.aoe=0; }
-            type.canCapture=false;type.weapon=type.weapons.front();
+            type.weapon=type.weapons.front();
             type.maxHp=30000;type.healTime=0;   // Fixed is 16.16: keep hp below 32768
             auto dummy=*registry.find("tarzom");dummy.maxHp=30000;dummy.healTime=0;
             dummy.maxVel={};dummy.weapon.damage=0;dummy.weapons.clear();

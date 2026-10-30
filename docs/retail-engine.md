@@ -229,7 +229,11 @@ weapon slots is **auto** or **manual**:
 - **Hit response** (`409a50`): (a) an idle unit runs a leashed retaliation
   attack and walks back; (b) otherwise the attacker goes to every auto slot that
   can reach it unless the current target is still good. AI owners also switch
-  weapons (`51a8b0`) and sweep `commandfire` weapons; human owners do not.
+  weapons (`51a8b0`) and sweep `commandfire` weapons; human owners do not. A
+  unit with construction left (`+0x108 != 0`, tested at `409b56..409b67`,
+  after the AI-Monarch threat roll, the attacker check and the armed check)
+  skips both parts; before 0.9.12 an unfinished site under fire took its
+  attacker as an attack order it could not carry out until finished.
 
 Deviations: auto slots of ranged ground weapons whose shot flies the line
 (not a plain Ballistic shell, `Weapon::needsClearLine`) keep our 2D clear-shot
@@ -588,9 +592,61 @@ Still deviating:
 - The feature half keeps World's radius floor of 8 px and runs before the units
   rather than cell by cell.
 - World detonates death weapons after the whole unit pass; retail does so
-  inside it, as each dying unit retires, before later units have moved. A
-  Remote Effect lands on its target's position at fire time; retail uses the
-  slot's aim point (+8), lead included.
+  inside it, as each dying unit retires, before later units have moved.
+  (A Remote Effect landed on its target's position at fire time until 0.9.12;
+  it now uses the slot's aim point, lead included -- see below.)
+
+### Remote Effect timing and aim (emulated, 0.9.12)
+
+`RemoteEffectWeapon`, `EarthquakeWeapon`, `AreaMindControl` and
+`AreaTurnToFrozen` share init `52e890` and update `52e940`, each with its own
+per-tick hook (`52ec90`, `52ecd0`, `52f000`, `52f360`); the Hailstorm has
+`52ed60` / `52ee80`. Release `530220` copies the slot's aim point into the shot
+before init, and the shot loop `52afd0` runs after the unit updates in the
+fire tick T. Emulated tick by tick for every shipped configuration (and a
+caster killed at T+0/1/2/10/40):
+
+- **Aim point.** For a unit target `52fd80` takes it from `51aa50` for all
+  five classes (vtable +0x14 = `42a6b0`, false): the SweetSpot plus 80%
+  (`0xcccc`) of the target's velocity times the 3D distance over
+  `weaponvelocity`. The Hailstorm is centred on it too (`52ee03`). The
+  engine's `World::fire` uses `retailLeadPoint`.
+- **Start.** `52e890` sets the start to T+1, later by WeaponType+0x7c
+  (`nimbustime` x 30, parsed at `0x53101d`) only when the weapon's nimbus bit
+  (+0xc8 & 0x40000) is set and the unit type has nimbus art (+0xdc).
+  `builduptime` is pushed once in the whole binary, by the RemoteEffect
+  constructor `52e780`, so it never delays a launch; no shipped weapon sets
+  `nimbustime`. Before the start tick a plain spell or Earthquake dies with
+  its caster (`52e95e`); the engine does not port that one-tick edge.
+- **Flight.** At the start tick a `shotart` spell computes its flight:
+  whole-pixel deltas from the caster's origin to the aim point (the 16.16
+  high words), `fsqrt` truncated, `<<16`, divided by the weapon's per-tick
+  speed (substeps x per-substep). It lands that many ticks later (L); without
+  shotart L is the start tick. A flight of 0 with shot art leaves the art
+  running and defers the effect a whole buildup+decay (not copied).
+- **Timers.** On landing: impact = L + `builduptime`, expiry = impact +
+  `decaytime` (both x 30 truncated by `52e780`). Each later tick the shot is
+  destroyed if expiry <= now, BEFORE the hook runs; the hook never runs on the
+  landing tick. Plain and area hooks hit when now == impact (so no hit for a
+  zero buildup or a zero decay); `52ecd0` pulses whenever (now - L) %
+  `shakeduration` ticks == 0 (WeaponType+0x84, truncated), so pulses fall at
+  L + kP strictly between landing and expiry. The area charm and freeze
+  hooks destroy the shot when the caster is dead or dying, at any tick.
+- **Hailstorm.** `52ed60` places the storm on the aim point; its countdown
+  starts at 20 in the fire tick, so the first stone lands at T+19, then one
+  every `30 / particlespersecond` ticks (`idiv` at `0x52efcd`) until the last
+  stone of `duration` (truncated) lands, which ends it: floor(D/p)+1 hits.
+  It never checks its caster.
+
+| Spell | Original (ticks after T) | Engine before 0.9.12 |
+|---|---|---|
+| Plain, 1 / 0.9 s | hit 31, expiry 58 | 29 |
+| Earthquake, Avatar of Anu (1.5 / 1.5 s, shake 1) | 31, 61 | 29, 59, 89 |
+| Earthquake, Acolyte (3 / 3 s, shotart, 200 px) | 61 .. 181, five | six |
+| Hail, 1.8 s at 8/s | 19 hits, every 3 ticks | 14, every 4 |
+
+`tools/remote_timing_test.cpp` checks each shipped timeline, the caster-death
+abort and the lead against these figures.
 
 ### A hit on an unfinished site rewrites its progress
 
@@ -849,9 +905,8 @@ hit 72-75 of 72-75.
 Still deviating:
 - AirStrike (`41b5e0`) is not ported; no shipped weapon reaches it. (AirToAir,
   for a flying target, is ported since protocol 305: next section.)
-- When the target is lost, AirToGround pushes `VTOL_SEEKATTACK` (`4192f0`), which
-  circles the target's last point at range + 160 px, scanning for targets.
-  World drops the order instead.
+- (When the target is lost, AirToGround pushes `VTOL_SEEKATTACK` (`4192f0`):
+  ported since protocol 305, see "VTOL_SeekAttack" below.)
 - The group check (`51d1e0`, VTOL_Move_Formation) is not ported. Neither is
   stage 4's air-traffic step-out: unit +0x12a, a counter `51dc4b..` keeps
   from the overlap list, pushes `VTOL_StepOut` at 5 or more, and World keeps no
@@ -1031,8 +1086,8 @@ Checked:
 Not ported or still deviating:
 - The group check (`51d1e0`, VTOL_Move_Formation) and the air-traffic step-out
   (unit +0x12a >= 5 pushes VTOL_StepOut), as for AirToGround.
-- A lost target (events 0x28, a dead or dying target) ends the order; retail
-  pushes VTOL_SEEKATTACK (`41d654`) when the unit is not on Hold Fire.
+- (A lost target pushes VTOL_SEEKATTACK (`41d654`): ported since protocol 305,
+  next section.)
 - The retarget scan is World's target scan (`findTarget`, as the ground
   response's) and its gates (`retailIssueAutoAttack`'s), the new attack put
   ahead after the dispatch.
@@ -1042,6 +1097,80 @@ Not ported or still deviating:
   a flyer too; retail gives it no attack mission (`4de6ed`).
 - A whole native engagement has not been run: the hit rates above are those
   of the ported parts flown together.
+
+### VTOL_SeekAttack: a lost target (icd + emulation, 2026-10-30, protocol 305)
+
+AirToGround and AirToAir end on a lost target and may first push
+VTOL_SEEKATTACK (registry row `5ebe7c`: class 19, flags `0x1000600`; handler
+`4192f0`). AirToGround's head sends events `0x2a`, a target pointer (+0x16)
+that is null, not alive (+0x130 `0x1000000`), dying (`0x1000`), carried
+(+0x114 bit 4), off the map (+0x130 & 3 == 0) or whose type can fly to
+`41c8f6`; AirToAir's sends events `0x28` and the same states to `41d654`.
+Both return 5 (the attack is removed), first pushing the seek when:
+
+- `41c8f6` only: the unit is alive and not dying (`41d654` does not look);
+- both: the attack is the last mission in the list (+0x66 is the list's next
+  link; `4d7640` walks it, `4d77b0` inserts at its end), and the unit is not
+  on Hold Fire (+0x130 & `0xc0000`).
+
+The seek is built (`4d6c40`) with the attack's point (mission +0x22: the
+target's position, which AirToGround refreshes at every wake, `41c13c`; the
+led SweetSpot at AirToAir's stage 2, `51aa50`) and, when the target is alive
+and not dying, the target itself; +0x4e/+0x52/+0x56 are 0. `4d77b0` puts it
+right behind the attack, which then goes, so it runs at once.
+
+`4192f0`: a unit without a weapon (+0x130 `0x8000000`) clears its list (7);
+event `0x200` (its controller failed) ends the seek (5); off the map it flies
+800 px toward the map, radius 128, waiting on `0x700` (as AirToGround's
+stage 7). The step-out (+0x12a >= 5) and the group check `51d1e0` come next
+(not ported), then the group flag's rand(25). Stage 0 (`41972e`): with a
+carried target, `4d7de0(unit, target, 0, 0, 0, 0)`; an attack put ahead
+clears the wait mask and returns 0, a refusal goes straight on to stage 1.
+Without one, a zero point becomes the unit's position, +0x4e = rand(0x10000)
+(+0x52 its low bit, never read), and `416c50` takes off. Stage 1 (`419620`):
+`519b10(3)`; `4d8370` (which scans only on Fire At Will) and `4d7de0(unit,
+found, 0, 0, 1, 0)`: an attack put ahead returns 5. Otherwise, on a controller
+event (`0x700`), +0x4e -= `0x5555` + rand(`0x2000`); a point controller
+(`4e40e0`, `4e4540(0x80)`) at the point less (sin, cos)(+0x4e) x (the
+selected weapon's +0x90 + 160) (`5360bf`/`5360f3` read the angle's low word),
+`4d6a10(30 + rand(30))`, wait mask |= `0x700`, return 2. Any other stage
+clears the list. The seek never ends by itself: a queued order waits.
+
+Ours (`retailairseek.h`: `retailAirLostTarget`, `retailVtolSeekAttack`;
+`World::seekLostTarget`, `World::tickSeekAttack`): tickCombat's lost-target
+branches (target gone, dead, dying, an ally after a conversion, or one
+`canAttackTarget` refuses) replace a flyer's AirToGround or AirToAir attack
+with a seek order (`Order::seekAttack`, the point in x/z, the angle in
+`guardOrbitAngle`) and run its first dispatch in the same tick. +0x66 == 0 is
+"the attack is the only order and not `aheadOfDefault`": an idle flyer's own
+auto attack (the standby's scan, the hit response, and AirToAir's retarget of
+one) goes in ahead of its default mission VTOL_Standby, which World does not
+queue, so it ends without a seek (the classic AI's first-mission flag
+`0x2000` follows the same bit). The classic AI reads a seek order as class
+19, flags `0x1000400`: the ctor (`4d6d66`) clears the target bit `0x200` for
+a seek without a live target, which World's always is. `tools/re/check_air_seek_attack.py` runs
+`4192f0` on 6,000 random states of the head and both stages and `41bf80` /
+`41ca50` on 4,000 lost targets against the port: every result, stage, wait
+mask, deadline, pending event, angle, point, controller, radius, call and
+random draw is equal. `air_seek_attack_test` (both balances, every armed
+flyer without hoverattack): the kill pushes the seek at the target's last
+point, the flyer hops round it at range + 160 without landing and attacks a
+new enemy at the point on Fire At Will; Return Fire circles without
+retargeting; Hold Fire, a queued order and an idle flyer's own attack get no
+seek; AirToAir kills circle the led point.
+
+Not ported or deviating:
+- The scan is World's (`findTarget`, as AirToAir's retarget), not `4d8370`.
+- World does not keep the carried target: the stage-0 offer runs in the tick
+  the attack let it go, for the reason tickCombat let it go, so it always
+  fails; a seek that starts off the map takes off and draws its angle when it
+  first wakes on the map, where retail would offer the target first.
+- The point's height is not kept (a point controller flies the cruise height).
+- Before the attack's first wake World takes the target's own position as
+  the point.
+- AirToGroundHover (`41d820`) pushes the seek too (`41e301`, `41e35f`); not
+  ported, a hover attacker's attack ends.
+- The step-out and the group check, as for AirToGround.
 
 ## SweetSpot is the drawn piece bounds (icd + live capture, 2026-10-24, protocol 295)
 
@@ -1208,8 +1337,7 @@ Port: `sim/retailreclaim.h` (rectangle, countdown, work wake) driven by
 Ours, not retail: a MobileBuild retry treats a fading feature on its site like
 a mobile unit (the engine's own placement-clearing queues reclaims ahead of a
 build); a fading feature or corpse takes no weapon damage and cannot catch
-fire (otherwise a hit could swap it into a stage that outlives the fade);
-the idle-reclaimer corpse clear in `tickAbilities` is unverified; the
+fire (otherwise a hit could swap it into a stage that outlives the fade); the
 fade is not drawn (the feature simply goes at its end). Not emulated: the turn
 child and the COB time to INBUILDSTANCE (both add to the table above), what
 else raises 0x400, and retail's per-wake lookup by cell (a new feature on the
@@ -1401,6 +1529,36 @@ because a mobile producer (a Zhon builder, Ctrl+click repeat production)
 builds its next unit on the same spot. (The Legion column behind the first
 ground output is gone: see "Legion: a spot of its own" above.)
 
+Placement over scenery (S yards, icd + emulation, 2026-10-30): the FBI parse
+(`4c0f59..4c101f`) advances the yardmap pointer only while a next character
+exists, so a one-character `yardmap=S` -- every Lodestone and Divine
+Lodestone -- fills the whole footprint, and `S` decodes to mask `0x8f`
+(`4c0fe3`, which also sets type `+0x264` bit 31). In `507400` that mask tests
+sacred-site coverage (bit `0x80`: the covered cells of a `sacredsite` feature
+must reach its fx x fz), the footprint's height range against `maxslope`
+(bit 8), water depth and unit occupancy (bits 2|4), but no feature bit
+(`0x20`/`0x40`), so features under the yard are never tested. Emulated: a 3x3
+`0x8f` yard over a 2x2 sacred feature passes at all four covering origins,
+one with a blocking feature on its corner; two of four sacred cells is
+refused, an `o` yard (`0x2f`) on the blocker is refused, and a live lodestone
+on the site refuses every origin. Ours (`World::placementCheck`, protocol 305,
+0.9.12): an S cell of a structure tests the terrain-only grid and leaves
+buildings and units to the occupancy test, ignoring the obstacle overlay, so
+on Inner Circle the Divine Lodestone is admitted at the three covering origins
+whose corner holds a ZonHenge05 Standing Stone (north site 127,36, west site
+23,76 and 24,76), which it refused before. Deviations: a blocker the
+simulation can remove later (a registered feature, a wreck) still refuses an S
+cell, so a build order reclaims it first, because the obstacle overlay keeps
+one bit per cell and its removal would clear the lodestone's own cells; the
+height-range rule is not ported for any yard (cells use the movement grid's
+per-cell test); the in-place upgrade over the player's own Lodestone is kept
+(retail refuses it); on a map without sacred sites, where the engine lets a
+lodestone stand on open ground (retail's coverage bit refuses it everywhere),
+nothing ties the footprint to a site, so its cells keep the overlay test and a
+lodestone never lands on a wall cell or a rock there. A lodestone built over
+fixed obstacles records them (`World::sacredUnderlay_`) and leaves them
+blocked when it is destroyed. Test: `sacred_yard`.
+
 Placement: retail's structure placement (`507400`) tests the ground word,
 which holds a mobile body only while landed (`5066f0`). Ours matches:
 `searchBodyRect` skips a flyer whose `flightGroundMode` is not 1, and
@@ -1482,6 +1640,45 @@ before it dies. Ours, before: the output stood unprotected and un-conjured at
 its build rate, vanishing without counting as a loss. Probe:
 `~/tak-tmp/scratch/factory-death/probe_buildingbuild_abort.py` (outside the
 repo). Test: `tools/factory_death_test.cpp`.
+
+## Capture is the mind-control weapon only (icd, static, 2026-10-30)
+
+`cancapture` (only `zonharp.fbi` sets it) is parsed into UnitDef `+0x264` bit
+`0x2000` (`0x4c07de..ed`). Nothing in the simulation reads that bit: the
+command-panel summary reads it (`0x4b049f`, selection `+0x24`) to show a
+`CAPTURE` control that no shipped `guis/*.gui` has, and that button's order
+mode 13 falls to the default entries of both mode tables (no command);
+`0x519cf0` tests it but has no caller. There is no capture by contact, timer
+or low-HP rule. A unit changes sides only through the mind-control impact
+`0x52d8d0` and its roll `0x52da10`, whose gates are, in order: not the
+caster's side, `[+8]` set, not a commander (`0x40000`), **construction
+remaining `+0x108` not above 0**, not in a transport, not `cantbecaptured`
+(`0x100000`); then `min(99,(level+16)*5)` scaled by the area falloff against
+`rand()%100`, and on success `0x514da0`.
+
+`0x514da0` creates a new object for the new owner (`0x512060`, same type and
+position) and copies onto it the HP raw (`0x514f8a/514f94`, no healing),
+construction remaining, `+0x7c` (6 bytes), `+0x12b`, the movement bits of
+`+0x130` from the UnitDef and the activation byte `+0x114` (`0x51e4d0`), then
+kills the old object with 30000 of type 6. Everything else starts fresh:
+`0x511990` zeroes `+0xf0` and `+0xf4` (the experience `getLevel 0x519310`
+reads) and the orders are new. If the object cannot be created, nothing
+changes.
+
+Ours before: a `canCapture` unit took its target after ~3 s in reach, or at
+once below 25% HP, free of mana, beside its weapon, and was kept out of the
+slot sweep and hit response; `captureUnit` raised HP to half and kept
+veterancy; nothing refused an unfinished target. Now the Harpy is an
+ordinary mind-control caster, `captureUnit` keeps HP and resets `xp` /
+`veteran` to a fresh unit's (the scenario's rank for the type, as `spawn`),
+and `canCaptureTarget` and the roll refuse `underConstruction`. Deviations
+kept: the unit keeps its id (and its mana, status timers and cloak) rather
+than becoming a new object; `scenarioTransfer`, which also goes through
+`0x514da0`, still keeps veterancy; and a mind-control slot does not select an
+unfinished unit (`retailSelectTarget`, `sweepKeepsTarget`), where retail's
+selection would pick it and waste the charm on the roll. Probes:
+`~/tak-tmp/retail-checks/capture/` (outside the repo). Test:
+`tools/capture_combat_test.cpp`.
 
 ## The Crusades balance swaps only the unit roster (icd, 2026-10-26)
 
@@ -2444,11 +2641,17 @@ key:
   3. **Rows, top to bottom** (`0x4fc9c1..0x4fcb2c`): that row's ground units
      (`+0x130 & 3 == 1`, drawn by `0x4ee700`), then that row's deferred tall
      features (`0x4fca83..0x4fcaf6`).
-  4. **Everything else last** (`0x4fcbab..0x4fcc27`): the units with
+  4. **Shots and effects** (2026-10-30): `421d00` (the transport effect),
+     `52b210` (the shot pool at `0x641208`, each weapon class's draw virtual),
+     then `492cb0` -> `492070`, the effect manager, whose first call (`492590`)
+     draws the debris and then the explosions.
+  5. **Everything else last** (`0x4fcbab..0x4fcc27`): the units with
      `+0x130 & 3 != 1`, inferred to be the airborne ones.
 
 So a stump, crop row, smudge or mana decal is never painted over a unit, a tree
-paints over every ground unit of its own row and the rows above it, and a flyer paints over everything.
+paints over every ground unit of its own row and the rows above it, debris and
+explosions paint over every ground unit and feature, and a flyer paints over
+everything, debris, explosions and shots included.
 
 There is no per-pixel depth test between sprites and models (medium-high
 confidence): see the Glide depth-buffer scan in "Retail does not sort 3DO
@@ -2469,7 +2672,15 @@ it by layer, then by map z:
     (map z), not by 16-pixel rows. Inside one row retail draws all the units
     before all the tall features; we interleave them by z, which differs only
     when a unit and a tall feature share a row.
-  * `kLayerAir` (1): airborne flyers, after everything -- retail's step 4.
+  * `kLayerAir` (1): airborne flyers, after everything -- retail's step 5.
+    The body replay stops at the first air item (`GameView::airOp_`) and draws
+    the air bodies after the shots and `drawParticles` / `drawEffects` /
+    `drawUnitFx`, before the fog. Before 0.9.12 they were drawn in the body
+    pass, so a ground fight's debris, explosions and shots painted over a
+    flyer passing above. The airborne flyers' shadows stay at the ground ->
+    air boundary of the body pass, under the shots and effects (retail draws a
+    unit's shadow inside its own draw, so a flyer's shadow comes after the
+    effects there). Test: `air_over_fx` (`TAK_AIR_OVER_FX_TEST`).
 
 HIDDEN UNITS (Options > Graphics, default FADE) is a non-retail extra on top
 of this order: a ground unit that a tall feature or a building paints over is
@@ -3625,6 +3836,51 @@ order code does not consult the selector; `World::attack` then rallies a
 factory's output at the target, keeps an out-of-range tower's order until the
 target comes in reach, and drops the order for a unit with no weapon.
 
+## Group move spread: flyers keep their place, ground converges (icd + emulation, 2026-10-30)
+
+The order code `0x5214b0` spreads one click over the selection itself; there is
+no formation shape and no per-axis clamp:
+
+1. **Centre** (`0x521510..0x5215ca`): the truncated integer mean (`idiv`) of the
+   selected units' whole-pixel positions (the high words of unit+0x68/+0x70),
+   leaving out a selected unit under the cursor, which gets no order.
+2. **Reach** (`0x5215cd..0x5215dc`): `3000 * n` squared pixels, n the units
+   counted: sqrt(3000 n) is 55 px for one unit, 122 for 5, 173 for 10, 274 for
+   25, 548 for 100.
+3. **Who keeps an offset** (`0x5217b1..0x521857`): only a unit whose resolved
+   mission descriptor has bit 0x2 at +0x11 -- the only reader of that bit. Set
+   on `VTOL_Move`, `VTOL_Move_Formation`, `VTOL_Move_FormationStandby` and
+   `VTOL_Patrol`; clear on `Move_Ground`, ground `Patrol` and
+   `Move_Ground_Formation`. Such a unit goes to the click plus (its position -
+   centre) -- the offset keeps the sub-pixel part -- when
+   `(ox*ox >> 32) + (oz*oz >> 32) <= 3000 n` (whole squared pixels per axis),
+   else to the click exactly. Every other unit goes to the click.
+
+An emulation of `0x5214b0` (probe `~/tak-tmp/retail-checks/group-move-friendly/
+probe_group_offsets.py`, outside the repo) confirms it: five units 40 px apart
+all reach (1000,1000) as `Move_Ground` and keep -80, -40, 0, +40, +80 as
+`VTOL_Move`; 80 px apart the two end flyers (160 px out) take the point; a 5x5
+ground block gets one destination; 300 random flyer groups match the formula
+with no mismatch.
+
+Ours (protocol 305): **flyers** take this rule exactly
+(`src/sim/retailflyerspread.h`, `FlyerGroupCentre`), on a right-click move and
+on the armed MOVE and PATROL buttons (a fight-move has no flyer mission with
+the bit: everyone takes the point). The client computes it from its frame in
+16.16 integers; a Legion net game sends the click as an explicit order --
+`OrderShape::Offsets` (right-click) or `OrderShape::FlyerOffsets` (armed
+move/patrol) -- and `applySelectionOrder` gives the flyers the same goals from
+the hashed positions. **Ground units keep our own rule** (a deliberate
+difference): a right-click gives each the click plus its offset from the
+selection centroid clamped to +-60 px per axis (Legion: the click itself for
+the surface movers it plans, `legionSharedClick`), and armed MOVE/PATROL give
+the point. Before, flyers were clamped to +-60 px like ground units and the
+armed buttons sent them all to the point. Not ported: the unit-under-cursor
+exclusion (our right-click on an own unit is the friendly-unit order below).
+Tests: `issue_selection_test` (`flyerSpread`: retail's probe groups, a
+sub-pixel centre, mixed groups on move/patrol/fight, both modes),
+`selection_order` and `convoy_test`.
+
 ## Right-click on a friendly unit: per-unit, Guard by `canguard` (icd, 2026-10-27)
 
 The default-order resolver `0x4de530` (action mode 1, jump table `0x4df87c`)
@@ -3811,17 +4067,11 @@ buildtime / workertime seconds -- the 0.3 on the wrong kind: an animate took
 keeps retail's 16.16 work counter (`Unit::reviveWork`, hashed while
 channelling) from `retailReviveWork`, takes `Player::allocation()` x 65536 a
 tick, pays nothing, and applies the computer-player rule through
-`computerOwned`. Ours is still an idle caster's automatic search, not an
-order. Retail's revive is only ever an order (a click, or a caster's area
-reclaim 0x406670 through 0x509cc0), so nothing takes an abandoned one up
-again; our search took the same corpse up on the next tick and abandoned it
-at every end while the economy stayed short. Since protocol 302 the search
-starts no revive the end would refuse: none for a computer caster while its
-allocation is under 0.7, none past the unit limits below. Ours also has no
-walk, turn or INBUILDSTANCE wait (stages 0-2) and takes its first allocation
-the tick after the corpse is found, where retail's stage 3 returns 1 and the
-dispatcher runs stage 4 in the same wake; the end (stage 5) follows the last
-subtraction in the same wake in both.
+`computerOwned`. Since 0.9.12 the revive is an order, as retail's: see the
+next section. Stage 3 sets the work counter in `World::tickReclaim` and the
+channel (stage 4) takes its first allocation in the same wake, as retail's
+stage 3 returns 1 and the dispatcher runs stage 4 at once; the end (stage 5)
+follows the last subtraction in the same wake in both.
 
 The end creates the unit with `0x512060(player, type, ..., +0x28 = 1)`
 (`0x406f0c`), which refuses a type at its totalallowed (`+0x136`, live units
@@ -3833,6 +4083,75 @@ was not the cause -- and the corpse stays (only the success path removes it).
 Ours spawned past both limits; since protocol 302 the end refuses at the unit
 limit and at totalallowed (the ai-profile limit is the server AI's, not the
 sim's, and is not checked).
+
+## Bodies are raised and cleared only by order (icd, 2026-10-30, 0.9.12)
+
+Every unit task is created by name through `0x4d4bf0` (a case-insensitive
+lookup in the sorted registry `0x62db84`, rows `0x19` bytes, filled from
+`0x5eb7f0` by `0x4d86a0`: class 20 `Resurrect` `0x4068b0`, 21 `Reclaim`
+`0x406250`, 22 `ReclaimArea` `0x406670`). The names the callers pass --
+`RESURRECT` `0x615cbc`, `VTOL_RESURRECT` `0x615cc8`, `RECLAIM` `0x613094`,
+`RECLAIMAREA` `0x615c8c` and the other `VTOL_*` -- are referenced only inside
+the order resolver `0x4de530` (and one GUI button-name lookup, `0x4b0cbc`).
+An exhaustive cross-reference search (probe scripts kept outside the repo):
+
+- **Mode 1** (a right-click, `0x4df1e2..`) tries, after attack, help-build,
+  repair, load and guard: RESURRECT when the type has canresurrect
+  (`+0x264 & 0x1000`) and `0x497100` holds, then RESURRECT when it has
+  cananimate (`+0x264 & 0x20000000`) and `0x496fd0` holds, then RECLAIM
+  (`0x800`, `0x496ea0`), then MOVE_GROUND. Each test resolves the feature
+  under the point (`0x50e660`) and, unless the call says otherwise, needs the
+  point's cell explored by the player. A flyer gets the VTOL_ name.
+- **Mode 12** (`0x4decc4..`, the CLEAR button, and the ReclaimArea children
+  `0x406727` ground / `0x420ca5` VTOL) is the same, gated on canreclaim, and
+  with no point falls back to RECLAIMAREA.
+- **The kinds.** `0x497100` is the feature type's `resurrectable` (flag word
+  `+0x13c` bit `0x800`, loader `0x4941fe`) and the object's `+0x5d` bit
+  `0x20`; `0x496fd0` is `animatable` (`0x1000`, loader `0x494223`) and bit
+  `0x40`. Neither looks at an owner: a caster raises any side's body, and
+  the unit rises as the caster's. Every shipped animatable corpse is also
+  resurrectable (73 against 256 sections in the extracted data), not the
+  other way round.
+- **Resurrect's stages 0-2** are RECLAIM's: stage 0 calls the script's
+  `MaybeBuilding` (`0x604ef8`) and installs the `0x4d4e80` rectangle with
+  wait mask `0x700`; stage 1 ends on a failed approach (`0x200`), stops and
+  turns through a `FacingNoFormation` child (`0x604b10`); stage 2 waits for
+  INBUILDSTANCE (`0x4d4b90`). Every wake through stage 5 re-resolves the
+  body (`0x4930d0`) and ends with `UNITCHATTER_RESURRECTFAILED` when it is
+  gone; stage 0 picks the kind (`+0x56`) and later wakes re-check it.
+  Stage 4 checks no distance.
+- **Who calls the resolver in modes 1 and 12:** the player's command path
+  `0x5214b0` (mouse `0x527d00`, the GUI buttons `0x4b11xx..0x4b19xx`, the
+  console order `0x424dc0`), the scripted-mission parser `0x513fb0` (from
+  `0x514b40` and `0x4d35c0`), and the ReclaimArea children. Nothing idle:
+  Standby (`0x407770`) runs only the fire-at-will scan `0x4d8370` and
+  `0x4d7de0` (modes 3 and 2), Standby_Wander mode 3, Guard and Patrol mode 8
+  (HELPBUILD or REPAIRUNIT only, `0x4debed`), and the AI's group order
+  `0x50b5d0` only modes 2 and 9 -- the AI never orders a reclaim or a revive.
+- **`autoreclaimable`** (feature flag `0x80`, loader `0x494151`) is tested
+  in one place, `0x509d91`, inside the ReclaimArea target picker
+  `0x509cc0`: it shapes area orders only.
+
+Ours through 0.9.11: an idle caster searched 56 px each tick and raised a
+body (its own side's for a resurrect, any for an animate, judged by
+`resurrectable` alone), an idle reclaimer cleared every body within 56 px in
+one tick, and there was no revive order -- a right-click on a body with a
+builder caster issued RECLAIM, and an area reclaim always reclaimed. Since
+0.9.12: `Cmd::Resurrect` (protocol 305) runs `World::resurrect`, a RECLAIM
+leg on the body with `Order::reviveKind` (1 resurrect, 2 animate; the kind is
+`reviveKindFor`, from the two types alone, so it is fixed at the order).
+`World::tickReclaim` runs stages 0-2 as RECLAIM's, then stage 3; the channel
+(`Unit::reviveTarget`) runs in `World::tickAbilities`, and its end sets the
+leg's stage to 5. The client resolves a click on a body per unit as mode 1
+does (`GameView::issueRaiseOrReclaim`), the CLEAR button as mode 12, and
+`World::tickReclaimArea` gives a caster's child RESURRECT where it can.
+`tickAbilities` searches for nothing. Our AI levels give their idle casters
+the order themselves (`Controller::reviveIdle`: a body within the old 56 px,
+none the end would refuse); the Retail AI gives none. Not ported: the
+explored-cell test at the point (the client offers only what it can pick),
+the object bits `0x20`/`0x40` (ours uses the fade alone), the AI-profile
+limit at stage 3, and VTOL_RESURRECT's own flight states (a flying caster
+uses VTOL_RECLAIM's stand-in, as its reclaim does).
 
 ## Helping to build and guarding (icd, 2026-10-27, protocol 301)
 
@@ -3853,7 +4172,8 @@ differences are in [the 0.9.7 notes](release-0.9.7-notes.md).
   that progress (`World::workProduction`); each helper's work is converted
   into it, the producer is freed the tick the unit completes, and the output's
   PARK, rally or exit step is given once. Its work stage sets the 300-tick
-  cloak block (`0x4060bb`, table above).
+  cloak block (`0x4060bb`, table above). How a ground helper gets there and
+  when it gives up: the next section but one.
 - **Follow_Ground (`0x407f90`), a mobile builder's guard.** Each look: the
   guarded unit damaged and repairable (`0x519d40`, allies included) ->
   RepairUnit on it; else its own unfinished body, if eligible -> HelpBuild;
@@ -3942,6 +4262,78 @@ guard, `tickFlyingGuard` as event `0x10` in the wait mask), and
 `retailIssueAutoAttack(..., forced)`, not an auto target, so it chases until
 the attacker dies, and the guard order under it resumes. The step-out and the
 attack scan (`0x51d1e0`) stay unported; the latter is our target acquisition.
+
+## Helping and repairing on the ground: the approach (icd, 2026-10-30, protocol 305)
+
+Ground HelpBuild (`0x405cf0`) and RepairUnit (`0x407190`), read and run stage
+by stage in emulation through the dispatcher's result codes
+(`sim/retailmission.h`), the routines they call stubbed. Probe:
+`~/tak-tmp/retail-checks/repair-approach/probe_repair_help.py` (outside the
+repo). Flying helpers and repairers (VTOL_HelpBuild `0x41f7f0`,
+VTOL_RepairUnit `0x420e60`) are unchanged since 0.9.7.
+
+- **Where they walk.** Both install `0x4d4e80`, the rectangle controller
+  RECLAIM and MobileBuild use (see "Reclaim" above): HelpBuild at stage 0
+  with the site's footprint-origin cell (+0x74) and its type's footprint
+  (+0x126/+0x128), RepairUnit at stage 1 with the target's cell and its own
+  footprint (+0x78), after saving where the target stands (mission +0x22).
+  The builder walks until its footprint touches the target's, on the
+  nearest side, never stopping at builddistance. Ours walked every helper
+  to one point south of the site and every repairer to where the target
+  stood at the order.
+- **Reach.** HelpBuild (wait mask 0x708, no timer) starts work on arrival
+  (0x100/0x400); on a failed approach (0x200) only when
+  distance - trunc(8 x |builder footprint|) - trunc(8 x |site footprint|) <=
+  builddistance (`retailBuildWithinReach`, MobileBuild's test), else it ends
+  with UNITCHATTER_CANNOTGETTHERE. There is no timer: ours gave up after
+  8 s without 20 px of progress. RepairUnit's look (stage 2, after a
+  7 + rand(15) tick sleep or an approach event) applies the same reach test
+  on every approach event: in reach the work starts, out of reach the
+  approach is installed again at once, so a still target it cannot reach is
+  never given up on (30 failed approaches emulated: no chatter, no count).
+- **No distance once working.** Neither work stage measures distance: a
+  helper moved 2,900 px away kept calling the construction step, a repairer
+  1,900 px away kept paying for the repair. Ours re-measured every tick and
+  stopped a bumped builder.
+- **A moving target** (+0x130 & 0xc, the MoveRate tier: walking or turning)
+  is never repaired. Each look while it moves adds 1 to mission +0x52, or 3
+  when it is in reach; past 10 the repair ends with REPAIRSUNSUCCESSFULL
+  (emulated: look 11 out of reach, look 5 in reach); otherwise the approach
+  is installed again after 1 tick (out of reach) or 7 + rand(15) (in reach).
+  A target that starts moving during the work stops it (`0x4d4b10`), adds 3
+  and re-aims next tick. The count starts at 0 and is never reset while the
+  job lasts. A still target's timer look re-aims only when its cell changed
+  since the install (`0x407588`). Ours healed a walking unit while in reach,
+  and only a patrol's or guard's repair re-aimed, once a second.
+- **The leash** (mission +0x56; only Patrol sets it, to sightdistance, with
+  its origin where the builder left the patrol, `0x403afc`) is tested on
+  every wake: the repair ends silently once the builder's own integer
+  distance from the origin is >= the leash (emulated: 199 continues, 200
+  ends). A guard's repair has none. Ours measured the target's distance from
+  the origin, with >.
+- **Ends.** RepairUnit: the target dead or changed (REPAIRSUNSUCCESSFULL),
+  not eligible at stage 0 (`0x519d40`, REPAIRMISSIONFAILED), full health at
+  the work stage (silently), no mover (stage 0 returns 7: a building never
+  repairs). HelpBuild: the site finished or gone (CONSTRUCTIONTERMINATED,
+  unless the count is a repeat's).
+
+Ours since protocol 305: a ground builder's help or repair leg is the job
+itself, run on the leg's `mission` with its `buildRectangle`
+(`World::prepareHelpApproach` / `tickGroundHelp`,
+`World::prepareRepairApproach` / `installRepairApproach` /
+`tickGroundRepair`; the give-up count is `Order::repairLooks`, the saved
+position `buildX`/`buildZ`). Not ported: the turn child and the
+INBUILDSTANCE wait before the first work tick (work starts on arrival, as
+before), the patrol scan's random pick (ours takes the nearest), and the
+unit chatter (no channel: every give-up is silent). A repair whose target is
+healed to full by someone else ends at once (retail walks on until it
+arrives). Engine deviation (the 0.9.8 doorway report): a helper whose help
+ends with nothing else to do, standing in a factory's rectangle (it walked
+in to touch the output), walks out past the nearest side
+(`World::leaveFactoryYard`, the point `clearBuildSite` would pick); a
+repeating or producing conjurer stays (its Move would be its output's
+rally). A help queued on the site the builder is building itself waits
+behind that MobileBuild (`groundHelpLeg` defers to a current build order).
 
 ## Attack_Chase: the stop comes before the aim (icd + emulation, 2026-10-30)
 
@@ -4063,3 +4455,125 @@ chases), the hold also follows the single step an order takes when the
 fire-at-will sweep switches her weapon on its first tick, and she stalls in 26
 attack-sweep cases that she fires in now (all of them that step, 14 against the
 castle or the lodestone); retail's automatic slot would aim during that walk.
+
+## Mission order strings (icd 0x513fb0, 2026-10-30)
+
+A campaign mission gives its units orders in a one-letter language: a placed
+unit's `.ota` `InitialMission=` and the god script's `SetMission <unit>`. Both
+go through the parser `0x513fb0(unit, string, unit table)`, read here by static
+analysis (the probes are in `~/tak-tmp/retail-checks/ai-mission-names/` and
+`mission-orders/`). Through 0.9.11 our parser read most of the letters wrong.
+
+**Clauses.** The string is cut with `strcspn(",")`: after leading blanks a
+clause runs to the next comma, one of 256 characters or more is skipped, and
+its first letter (in either case, a jump table at `0x514ac8` / `0x514b04`)
+picks the handler, which `sscanf`s the rest. Each form needs exactly the
+conversions it lists, else the clause does nothing, so a clause never reads
+into the next (ours skipped commas as blanks: `ma, a ARATRE` became a fight-move
+to cell 0,0, and `w 900 40 b ARAPRIES 1` a wait plus a reinforcement, where
+retail reads one wait and ignores its tail). Every mission is pushed with
+`0x4d78a0`'s queue flag set, so it goes behind what the unit has (after the
+script's own last mission, `0x4d77f0`'s 0x1000 mark; the default mission at the
+head goes, `0x4d79d3`); ours cleared the unit's orders at the first clause.
+
+**Names.** `0x513ec0(name, table, from)` walks the `.ota` `[units]` records in
+file order (record +0 `Unitname`, +4 `Ident`, +8 `InitialMission`, read at
+`0x4c8c13`..`0x4c8eb1`) and answers the first record whose `Ident`, else whose
+`Unitname`, matches case-insensitively and whose unit was made. `0x514b40`
+makes every placed unit first and only then parses each record's
+`InitialMission` with the table of those units; `SetMission` (`0x4d37f6`)
+passes an empty table (a match there would read a null pointer), so names
+resolve only in an `InitialMission`. Ours registered a unit under the name an
+`i` clause gave it and never consulted the records.
+
+**The letters** (handler addresses in the parser):
+
+- `o A` (`514086`): `0x5198a0(unit, A)`, the Standing_UnitOrder setter: 2
+  Offensive (move 1, fire 2), 1 Defensive (0, 2), 0 Passive (0, 0), for any
+  live unit (no `unitstandorders` test). `o A B` with both in 0..2 writes the
+  move field (unit +0x130 bits 16-17) and the fire field (18-19) themselves,
+  leaving the shown order (20-21). Ours passed A to our stance, whose 0 is
+  Offensive: the 987 `o 2` clauses made units Passive.
+- `b` (`51451d`): `bw…` pushes BuildWeapon (stockpiling; no shipped mission
+  uses it). A unit with no mover (+8) gets `" %[a-zA-Z0-9_.] %d"`, N preset to
+  1 and no menu test: BUILDINGBUILD with type and count (+0x4e, +0x52), which
+  builds N and ends (`401c20`, 0 ends at once, `401cf6`). A mobile unit needs
+  all of `" %[a-zA-Z0-9_.] %d %f %f"`, TYPE on its own build menu (`0x519850`)
+  and gets MOBILEBUILD (VTOL_MobileBuild for a flyer) at X*16,Y*16 with count 1:
+  N is read and unused. Ours conjured every `b` for free after N seconds (the
+  N was taken for a delay), which flooded some missions: takx26 went from 146
+  to 636 units in 30 seconds.
+- `i NAME` (`514893`): `0x51b4f0(unit, carrier, -1, 0, 1)`, an immediate
+  attach (`51b5a0`), then `0x4d49f0`: the queue cleared but for the missions
+  whose descriptor has flag 4, and BeCarried pushed in front, so the clauses
+  after `i` wait aboard. No owner, capacity or distance test.
+- `g NAME` (`514265`): `4de530` kind 7 (Follow_Ground / VTOL_Follow) on the
+  named unit, appended.
+- `w F [N]` (`514787`): `" %f %d"`, WAIT with +0x4e = F x 30 and +0x52 = N x 16.
+  Wait (`401480`) with +0x52 set looks with `0x411ae0` (the owner's visible
+  enemies, live and not dying, within +0x52 pixels; see
+  [classic-ai-plan.md](classic-ai-plan.md)) and ends if one is there, else
+  ends if its count is spent, else takes `rand(7)+7` off the count and sleeps
+  that long. Ours ignored N.
+- `wa [NAME]` (`514806`): `" %[a-zA-Z0-9.]"` (no underscore) names the unit to
+  watch, a name that resolves to nothing drops the clause, none watches the
+  unit itself. WAITFORATTACK (`4017a0`, descriptor flags 0x204) keeps a listener
+  on it from construction (`4d6c40` -> `519990`, owner +0x1e the mission, whose
+  `4d4d00` ORs an event into +0x6a), so a hit while the order still queues
+  counts; it waits on mask 0x18 and ends: 0x10 is the hit response's event
+  (`409a50`), 0x08 its unit's listeners let go (`519a60`). No watched unit:
+  done at once. Ours released when any enemy came within sight and ignored
+  NAME.
+- `a` (`5143b5`): `" %f %f"` is `4de530` kind 3 with a point (SUPPRESS for a
+  ranged ground unit, AIRSTRIKE / AIRTOGROUNDHOVER / AIRTOGROUND for a flyer;
+  a melee unit only with a feature there). Else `" %[a-zA-Z0-9_.]"`: a unit
+  type (`0x515ac0`) pushes ATTACKUTYPE, else the named unit gets kind 3.
+  AttackUType (`401580`): stage 0 fails without a first weapon (UnitDef +0x264
+  & 0x20, set from weapon slot 0 at `0x4c1672`), else sleeps `rand(90)+1`;
+  stage 1 walks the whole unit table for live, not dying units of the type
+  whose player record is not the unit's and that `4de530` kind 3 accepts,
+  scores each hi(dz^2) + hi(dx^2) - `rand(score / 2)` (a later tie wins), and
+  puts an attack on the least in front (`4d7750`; `4d7640` sets AttackUType
+  back to stage 0), or ends when there is none. No sight test. Ours attacked
+  the nearest enemy of the type once, and fight-moved to a point.
+- `v F` (`5148e1`): unit +0xf4 = F. While it is not 0, getMult (`5193c0`)
+  answers F, getLevel (`519310`) answers 10 and the level setter (`519370`)
+  does nothing; a `noveteran` type (+0x268 & 0x10) answers 1 and 0 first. Ours
+  ignored it ("movement scalar").
+- `s` (`514876`): MAKESELECTABLE (`401450`: unit +0x130 |= 0x20, &= ~0x2000).
+  The owner does not change; ours gave the unit to the player while parsing,
+  which handed 44 placed enemy units in 10 missions to the player at the start
+  (takx04's Aramon keep and castle among them).
+- `d` (`514858`): SELFDESTRUCTFG with +0x4e = 1, so `4017e0` deals the 30000
+  type-5 damage when the mission comes up. Ours killed the unit while parsing:
+  takmission23's three troopships (`wa leim, w 60, u ..., m 0 192, d`) died at
+  the start.
+- `m X Y` / `ma X Y` (`514120`), `p X Y [T]` (`514307`, +0x4e = T x 30),
+  `u X Y` (`5141d3`), `c` (`514a48`: the cloak bit when cloakcost > 0) and
+  `r` (`514910`, resurrect; no shipped uses).
+
+When the parser has pushed a mission it clears the unit's selectable bit 0x20,
+and unless the last of them was a patrol, an attack on the ground, `s` or `d`
+it appends MAKESELECTABLE (`514a7d`): a player's unit under a script cannot be
+selected until its script is done.
+
+**Ours (0.9.12).** `MissionScript::applyOrders` reads clauses as above, with
+the `.ota` records as its name table (`MissionScript::Placement`). The orders
+with state of their own are World orders with a `ScriptedOrder` entry
+(`Order::scripted`, hashed): AttackType (`tickScriptedOrder`, the scan and
+draws as retail's on the game stream), Train (a factory queues N in its build
+queue and holds the next order until they are built,
+`noteScriptedProduction`), WaitAttack (the watched unit's `attackedTick` from
+when the order was given), WaitNear and SelfDestruct. Behind such a hold, as
+behind a wait, the next leg does not start (`World::scriptHold`): a route
+installed for a build or a move behind it would replace every order up to it,
+the hold included. `Unit::vetOverride`
+holds `v`, and `World::embarkInto`, `scriptStandingOrder` and
+`scriptStandingFields` do `i` and `o`. The Retail AI reads such a head order
+as retail's (class 0x13, its descriptor flags, never 0x2000), so it counts the
+unit busy. `mission_orders_test` (fixtures, and `--data` on takx04 and takx07)
+and `ambush_test` cover it; a 30-second run of all 74 shipped missions loads and
+runs every one. Not ported: firing at the ground (`a X Y` walks the unit until
+the point is in its weapon's reach), the patrol's time, the selectable bit,
+BuildWeapon and resurrect; SetMission's owner test (`0x4d37be`: a player of
+kind 1 or 2 only) is not applied.

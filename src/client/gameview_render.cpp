@@ -1518,6 +1518,7 @@
         }
         airShadows_.clear();
         airShadowOp_ = SIZE_MAX;
+        airOp_ = SIZE_MAX;
         // Composite each unit's baked silhouette once. The direct fallback uses
         // compact worker buffers and ordered cutout runs, avoiding a second
         // full-scene copy. Ground and airborne layers retain their existing
@@ -1613,12 +1614,14 @@
             }
         };
         for (const auto& it : items) {
-            // The ground -> air boundary is where the held-back flyer shadows go. Close
-            // the running segment so it lands on a real op boundary rather than inside a
-            // batched run.
-            if (it.layer == 1 && airShadowOp_ == SIZE_MAX && !airShadows_.empty()) {
+            // The ground -> air boundary: the held-back flyer shadows go here, and the
+            // replay draws the air bodies only after the shots and effects (airOp_).
+            // Close the running segment so it lands on a real op boundary rather than
+            // inside a batched run.
+            if (it.layer == 1 && airOp_ == SIZE_MAX) {
                 closeSeg();
-                airShadowOp_ = drawOps_.size();
+                airOp_ = drawOps_.size();
+                if (!airShadows_.empty()) airShadowOp_ = airOp_;
             }
             if (it.f) {
                 closeSeg();
@@ -1971,8 +1974,13 @@
 #ifndef NDEBUG
         debugFeatureFlameDrawCount_ = 0;
         debugFeatureSmokeDrawCount_ = 0;
+        debugPaintOrder_.clear();
+        debugAirOps_ = 0;
 #endif
-        for (size_t opi = 0; opi < drawOps_.size(); ++opi) {
+        // Replays drawOps_[first, last). Called twice: the ground and feature bodies
+        // here, the airborne bodies after the shots and effects (airOp_).
+        const auto replayOps = [&](size_t first, size_t last) {
+        for (size_t opi = first; opi < last; ++opi) {
             if (opi == airShadowOp_) drainAirShadows();
             const DrawOp& op = drawOps_[opi];
             if (nativePassesOn_ && op.passEnd > int32_t(opi)) {
@@ -2163,14 +2171,20 @@
                 }
             }
         }
-        // Fallback drain: if the air layer produced no draw ops at all (every flyer
-        // special-cased or slotless), airShadowOp_ lands on drawOps_.size() and the replay
-        // loop never reaches it -- which would silently DROP those shadows rather than
-        // merely misorder them. drainAirShadows() clears as it goes, so this is a no-op
-        // when the boundary already fired. It sits BEFORE the submit timer closes so that
-        // every air-shadow draw falls inside the same phase as the rest of them.
+        };
+        const size_t airFirst = std::min(airOp_, drawOps_.size());
+        replayOps(0, airFirst);
+#ifndef NDEBUG
+        debugPaintOrder_ += 'g';
+#endif
+        // The held-back flyer shadows drain here, at the ground -> air boundary: over
+        // the ground bodies, under the shots, effects and air bodies. This also covers
+        // an air layer that produced no draw ops at all (every flyer special-cased or
+        // slotless), which would otherwise silently DROP those shadows rather than
+        // merely misorder them. drainAirShadows() clears as it goes. It sits BEFORE the
+        // submit timer closes so that every air-shadow draw falls inside the same phase
+        // as the rest of them.
         drainAirShadows();
-        spanTextures_.clear();   // GL names are valid for this replay only
 #ifndef NDEBUG
         if (nativePass_.verifyFailures())
             throw std::runtime_error("native pass verify: " + nativePass_.lastFailure());
@@ -2676,6 +2690,9 @@
                 drawUnitFx();
                 profFxMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
                              (double(SDL_GetPerformanceFrequency()) / 1000.0);
+#ifndef NDEBUG
+                debugPaintOrder_ += 'e';
+#endif
             }
         } else {
             // Nothing above draws, but the one lifetime rule drawEffects applies
@@ -2685,6 +2702,23 @@
             debugGlowDrawCount_=0;debugNimbusDrawCount_=0;
             debugSmokeDrawCount_=0;debugDamageFlameDrawCount_=0;debugPointDrawCount_=0;
 #endif
+        }
+        // The airborne bodies, over every shot and effect (retail 0x4fcbab..0x4fcc27
+        // after 52b210 and 492070) and under the fog, as retail's world pass draws them.
+        {
+            const double _air0 = double(SDL_GetPerformanceCounter());
+            tak::render::ScopedPhase airPhase(renderStats_, RP::BodySubmit);
+            replayOps(airFirst, drawOps_.size());
+#ifndef NDEBUG
+            debugPaintOrder_ += 'a';
+            debugAirOps_ = drawOps_.size() - airFirst;
+            if (nativePass_.verifyFailures())
+                throw std::runtime_error("native pass verify: " + nativePass_.lastFailure());
+#endif
+            spanTextures_.clear();   // GL names are valid for this frame's replays only
+            const double ms = (double(SDL_GetPerformanceCounter()) - _air0) / _ptFreq;
+            profSubmitMs_ += ms;
+            profBodyMs_ += ms;
         }
 
         {
@@ -4263,7 +4297,7 @@
         SDL_Texture* premultipliedPrime=nullptr;
         size_t end=first;
         for(;end<drawOps_.size();++end) {
-            if(end>first && end==airShadowOp_)break;
+            if(end>first && (end==airShadowOp_ || end==airOp_))break;
             DrawOp& op=drawOps_[end];
             if(op.f || op.u)break;
             if(op.count<=0 || !op.tex)continue;   // skipped by the replay anyway (null atlas page)
@@ -7557,6 +7591,7 @@
                     marker=tak::CursorId::FindSite;
                     haveMarker=o.trailPreview; // existing queued sites already have ghosts
                 }
+                else if (o.revive)          marker = tak::CursorId::Revive;
                 else if (o.reclaimFeat || o.reclaimArea) marker = tak::CursorId::Reclaim;
                 else if (o.repairTarget)    marker = tak::CursorId::Repair;
                 else if (o.load)            marker = tak::CursorId::Load;

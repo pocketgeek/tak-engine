@@ -619,7 +619,7 @@ bool Controller::armedEnemyNear(const tak::sim::World& world, float x, float z, 
     for (const auto& e:world.units()) {
         if (!e.alive() || !e.type || e.embarked() || e.underConstruction || e.cloaked ||
             world.isNeutralPlayer(e.player) || world.allied(player_,e.player)) continue;
-        if (!e.type->canCapture && e.type->weapon.damage<=0 &&
+        if (e.type->weapon.damage<=0 &&
             std::none_of(e.type->weapons.begin(),e.type->weapons.end(),[](const auto& w) {
                 return w.damage>0 || w.mindControl;
             })) continue;
@@ -1269,7 +1269,7 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
         for (const auto& e:world.units()) {
             if (!e.alive() || !e.type || e.embarked() || e.underConstruction || e.cloaked ||
                 world.isNeutralPlayer(e.player) || world.allied(player_,e.player)) continue;
-            if (!e.type->canCapture && e.type->weapon.damage<=0 &&
+            if (e.type->weapon.damage<=0 &&
                 std::none_of(e.type->weapons.begin(),e.type->weapons.end(),[](const auto& w) {
                     return w.damage>0 || w.mindControl;
                 })) continue;
@@ -1836,7 +1836,12 @@ bool Controller::strikeOrder(const tak::sim::World& world, const tak::sim::Unit&
         if (close) tried(e->id, e->hp.toFloat());
         // Nothing auto-acquires a site still being built, and up close an order on
         // the anchor itself makes sure of it.
-        if (close || e->underConstruction) {
+        // A charm cannot take a unit still being built (the sim refuses the
+        // order), so a caster attack-moves there instead of standing idle.
+        const bool charmRefused = e->underConstruction &&
+            std::any_of(u.type->weapons.begin(), u.type->weapons.end(),
+                        [](const auto& w) { return w.mindControl; });
+        if ((close || e->underConstruction) && !charmRefused) {
             tak::net::Command c; c.kind = tak::net::Cmd::Attack; c.player = uint8_t(player_);
             c.unitId = u.id; c.targetId = e->id;
             sink(c);
@@ -2065,7 +2070,7 @@ void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& 
     for (const auto& e:world.units()) {
         if (!e.alive() || !e.type || e.embarked() || e.underConstruction || e.cloaked ||
             world.isNeutralPlayer(e.player) || world.allied(player_,e.player)) continue;
-        if (!e.type->canCapture && e.type->weapon.damage<=0 && !e.type->weapon.mindControl &&
+        if (e.type->weapon.damage<=0 && !e.type->weapon.mindControl &&
             std::none_of(e.type->weapons.begin(),e.type->weapons.end(),[](const auto& weapon) {
                 return weapon.damage>0 || weapon.mindControl;
             })) continue;
@@ -3339,6 +3344,49 @@ void Controller::logExploration(const tak::sim::World& world, uint32_t simTick) 
                  vacatedTrips_, vacatedLost_);
 }
 
+// Until 0.9.12 the sim raised bodies by itself: an idle caster took up a body
+// within 56 px, and our levels' priests, Chief Engineers, Spirit Wolves and
+// kings raised the dead that way. Retail raises only by order, so the sim no
+// longer does; these levels give the order instead, in the same place: an idle
+// caster (not one given anything else this think) and a body within 56 px that
+// it can raise (World::reviveKind), the nearest, one caster per body. Like the
+// old search it starts none the end would refuse or abandon -- the player at
+// its unit limit, the output at its totalallowed, an allocation under 0.7 (a
+// computer player's revive then ends unraised, 0x406e79). The Retail AI never
+// gets here (Classic returns first): retail's AI orders no revive -- its group
+// order 0x50b5d0 takes only modes 2 and 9.
+void Controller::reviveIdle(const tak::sim::World& world, std::vector<int>& assigned,
+                            const CommandSink& sink) const {
+    if (double(world.player(player_).allocation()) < 0.7 || world.atUnitCap(player_)) return;
+    constexpr float kReach = 56.0f;
+    std::vector<int> claimed;
+    for (const auto& u : world.units()) {
+        if (!u.alive() || u.player != player_ || !u.type || u.underConstruction || u.embarked() ||
+            u.incapacitated() || u.buildSiteId || !idle(u) ||
+            !(u.type->canResurrect || (u.type->canAnimate && u.type->animateType)) ||
+            std::find(assigned.begin(), assigned.end(), u.id) != assigned.end()) continue;
+        int best = 0;
+        float bestD = kReach * kReach;
+        for (const auto& c : world.units()) {
+            if (c.alive() || !c.type || c.corpseFading || c.deadFor < c.corpseAnimationTicks() ||
+                c.deadFor >= c.corpseUntil) continue;
+            const float dx = c.x.toFloat() - u.x.toFloat(), dz = c.z.toFloat() - u.z.toFloat();
+            const float d = dx * dx + dz * dz;
+            if (d > bestD || (d == bestD && best)) continue;
+            const uint8_t kind = world.reviveKind(u.id, c.id);
+            if (!kind || world.atTypeCap(player_, kind == 1 ? c.type : u.type->animateType) ||
+                std::find(claimed.begin(), claimed.end(), c.id) != claimed.end()) continue;
+            best = c.id; bestD = d;
+        }
+        if (!best) continue;
+        tak::net::Command c; c.kind = tak::net::Cmd::Resurrect; c.player = uint8_t(player_);
+        c.unitId = u.id; c.targetId = best;
+        sink(c);
+        claimed.push_back(best);
+        assigned.push_back(u.id);
+    }
+}
+
 void Controller::tick(const tak::sim::World& world, uint32_t simTick,
                       const CommandSink& sink) {
     // Classic runs retail's own clocks and bookkeeping: hand it every tick before
@@ -3413,7 +3461,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         // building is mistaken for a mobile builder and issued Build orders it can't
         // honour. And never drive a producer that is itself still under construction.
         if (!u.type->isStructure() && u.type->isBuilder && !u.underConstruction &&
-            idle(u) && u.buildSiteId == 0)
+            (idle(u) || raising(u)) && u.buildSiteId == 0)
             producers.push_back(u.id);                        // idle mobile builder
         else if (u.type->isStructure() && !u.underConstruction && u.buildQueue.empty() &&
                  !registry_.buildable(u.type->id).empty())
@@ -3474,7 +3522,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         consider(world.unit(u.lastHitBy), true);   // whoever is hitting it, seen or not
         if (!target)
             for (const auto& e : world.units()) {
-                if (e.type && (e.type->weapon.damage > 0 || e.type->canCapture ||
+                if (e.type && (e.type->weapon.damage > 0 ||
                     std::any_of(e.type->weapons.begin(), e.type->weapons.end(),
                                 [](const auto& w) { return w.damage > 0 || w.mindControl; })))
                     consider(&e, false);
@@ -3547,6 +3595,8 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         }
     // The unbounded levels first walk idle fighters out of the base; door clearing
     // below then sees them assigned and handles the rest (ships, builders).
+    // A caster raising a body beside it is not stationed or cleared away.
+    reviveIdle(world, assigned, sink);
     if (dp_.unbounded) stationArmy(world, assigned, sink);
     // Most units are not factories. Build the ordered factory list once per
     // think, rather than scan the whole empire for every idle army member.

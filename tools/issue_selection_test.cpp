@@ -23,6 +23,7 @@
 #include "legion_scn.h"
 
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -89,8 +90,12 @@ struct ClientRef {
         const bool legion = isLegionPathfinding(world_.pathfindingMode());
         float cx = 0, cz = 0;
         int n = 0;
+        FlyerGroupCentre air;
         for (int id : selection_)
-            if (const auto* u = frameUnitP(id)) { cx += u->x.toFloat(); cz += u->z.toFloat(); ++n; }
+            if (const auto* u = frameUnitP(id)) {
+                cx += u->x.toFloat(); cz += u->z.toFloat(); ++n;
+                air.add(Fixed::fromFloat(u->x.toFloat()).v, Fixed::fromFloat(u->z.toFloat()).v);
+            }
         if (n) { cx /= float(n); cz /= float(n); }
         for (int id : selection_) {
             const auto* u = frameUnitP(id);
@@ -100,8 +105,11 @@ struct ClientRef {
             c.unitId = id;
             const bool shared = u->type && legion &&
                 legionSharedClick(u->type->canFly, u->type->footX, u->type->footZ);
-            c.x = shared ? wx : wx + std::clamp(u->x.toFloat() - cx, -60.0f, 60.0f);
-            c.z = shared ? wz : wz + std::clamp(u->z.toFloat() - cz, -60.0f, 60.0f);
+            if (u->type && u->type->canFly) tak::scn::flyerSpreadGoal(air, *u, wx, wz, c.x, c.z);
+            else {
+                c.x = shared ? wx : wx + std::clamp(u->x.toFloat() - cx, -60.0f, 60.0f);
+                c.z = shared ? wz : wz + std::clamp(u->z.toFloat() - cz, -60.0f, 60.0f);
+            }
             c.queue = queue;
             issue(c);
         }
@@ -117,7 +125,8 @@ struct ClientRef {
             issue(c);
         }
     }
-    // gameview_hud.cpp:994-1013 (armed G) and 1032-1048 (armed F / P, no enemy).
+    // gameview_hud.cpp:994-1013 (armed G) and 1062-1090 (armed F / P / M, no enemy;
+    // M and P give flyers retail's spread and declare it, setFlyerSpread).
     void armedOrder(char cmd, float wx, float wz, int buddy, bool queue) {
         if (cmd == 'g') {
             for (int id : selection_) {
@@ -131,11 +140,21 @@ struct ClientRef {
             }
             return;
         }
+        const bool spread = cmd == 'm' || cmd == 'p';
+        FlyerGroupCentre air;
+        if (spread) {
+            for (int id : selection_)
+                if (const auto* u = frameUnitP(id))
+                    air.add(Fixed::fromFloat(u->x.toFloat()).v, Fixed::fromFloat(u->z.toFloat()).v);
+            shape_.flyerOffsets = true; shape_.x = wx; shape_.z = wz;   // setFlyerSpread
+        }
         for (int id : selection_) {
             Command c;
             c.kind = (cmd == 'f' || cmd == 'a') ? Cmd::AttackMove : cmd == 'p' ? Cmd::Patrol : Cmd::Move;
             c.x = wx;
             c.z = wz;
+            const auto* u = spread ? frameUnitP(id) : nullptr;
+            if (u && u->type && u->type->canFly) tak::scn::flyerSpreadGoal(air, *u, wx, wz, c.x, c.z);
             c.unitId = id;
             c.queue = queue ? 1 : 0;
             issue(c);
@@ -417,6 +436,152 @@ void landAll(World& w, const std::vector<CmdBatch>& b) {
     }
 }
 
+// Retail's flyer spread (0x5214b0), written out by hand: the centre is the
+// truncated mean of the selection's whole-pixel positions; a flyer keeps its
+// (sub-pixel) offset from it when floor(dx^2) + floor(dz^2) <= 3000 n, else it
+// takes the click. Ground units are not given it.
+std::pair<double, double> retailFlyerGoal(const World& w, const std::vector<int>& sel, int id, double wx, double wz) {
+    long long sx = 0, sz = 0, n = 0;
+    for (int s : sel) {
+        const auto* u = w.unit(s);
+        sx += (long long)std::floor((u->x.v / 65536.0)); sz += (long long)std::floor((u->z.v / 65536.0)); ++n;
+    }
+    const auto* u = w.unit(id);
+    const double dx = (u->x.v / 65536.0) - double(sx / n), dz = (u->z.v / 65536.0) - double(sz / n);
+    if (std::floor(dx * dx) + std::floor(dz * dz) > 3000.0 * double(n)) return {wx, wz};
+    return {wx + dx, wz + dz};
+}
+
+// The goal each unit took: from the commands (Retail), or as the sim gave them
+// (Legion's explicit order). A Move's goal is its last leg, a Patrol's its first.
+std::map<int, std::pair<double, double>> goalsOf(World& w, const std::vector<CmdBatch>& b, bool legion, bool patrol) {
+    std::map<int, std::pair<double, double>> out;
+    if (!legion) {
+        for (const auto& x : b)
+            for (const auto& c : x.cmds) out[c.unitId] = {c.x, c.z};
+        return out;
+    }
+    landAll(w, b);
+    for (const auto& x : b)
+        for (const auto& c : x.cmds)
+            if (c.order)
+                for (const int id : c.order->members)
+                    if (const auto* u = w.unit(id); u && !u->orders.empty()) {
+                        const auto& o = patrol ? u->orders.front() : u->orders.back();
+                        out[id] = {o.x.v / 65536.0, o.z.v / 65536.0};
+                    }
+    return out;
+}
+
+void flyerSpread() {
+    static const auto a = flyer(), g = ground(2);   // the World keeps a pointer to the type
+    auto spawnAt = [](Field& f, const UnitType& t, const std::vector<std::pair<float, float>>& at) {
+        std::vector<int> ids;
+        for (const auto& [x, z] : at) {
+            const int id = f.world.spawn(&t, x, z, std::nullopt, 0);
+            if (id <= 0) throw std::runtime_error("spawn failed");
+            ids.push_back(id);
+        }
+        return ids;
+    };
+    auto near = [](double a, double b) { return std::abs(a - b) < 1e-3; };
+    for (PathfindingMode mode : {PathfindingMode::Legion, PathfindingMode::Retail}) {
+        const bool legion = mode == PathfindingMode::Legion;
+        const std::string m = legion ? "legion" : "retail";
+        // Retail's probe groups (emulated 0x5214b0): five flyers in a line 40 px
+        // apart keep -80..+80 (past our old +-60 clamp); 80 px apart, the two
+        // ends (160 px out, reach sqrt(15000) = 122) take the click; three at
+        // sub-pixel x keep their offsets from the WHOLE-pixel centre (150).
+        struct Case { const char* name; std::vector<std::pair<float, float>> at; std::vector<std::pair<double, double>> want; };
+        const std::vector<Case> cases = {
+            {"line 40", {{200, 300}, {240, 300}, {280, 300}, {320, 300}, {360, 300}},
+             {{920, 1000}, {960, 1000}, {1000, 1000}, {1040, 1000}, {1080, 1000}}},
+            {"line 80", {{200, 300}, {280, 300}, {360, 300}, {440, 300}, {520, 300}},
+             {{1000, 1000}, {920, 1000}, {1000, 1000}, {1080, 1000}, {1000, 1000}}},
+            {"sub-pixel", {{100.75f, 100}, {150.5f, 100}, {201.25f, 100}},
+             {{950.75, 1000}, {1000.5, 1000}, {1051.25, 1000}}},
+        };
+        for (const auto& k : cases) {
+            Field f(mode);
+            const auto ids = spawnAt(f, a, k.at);
+            SelectionOrder o;
+            o.verb = Verb::Move; o.x = 1000; o.z = 1000;
+            const std::string what = m + " flyer spread " + k.name;
+            std::vector<CmdBatch> b;
+            compare(f.world, ids, o, -1, [&](ClientRef& c) { c.rightClickMove(o.x, o.z, false); }, what, &b);
+            if (legion) oneOrder(b, ids, Cmd::Move, what);
+            bool spawned = true;
+            for (size_t i = 0; i < ids.size(); ++i)
+                spawned &= f.world.unit(ids[i])->x.toFloat() == k.at[i].first && f.world.unit(ids[i])->z.toFloat() == k.at[i].second;
+            check(spawned, what + ": the flyers stand where they were spawned");
+            const auto got = goalsOf(f.world, b, legion, false);
+            bool ok = got.size() == ids.size();
+            for (size_t i = 0; ok && i < ids.size(); ++i) {
+                const auto& [gx, gz] = got.at(ids[i]);
+                ok = near(gx, k.want[i].first) && near(gz, k.want[i].second);
+                if (!ok) std::fprintf(stderr, "  %s: unit %d goal %.3f,%.3f want %.3f,%.3f\n", what.c_str(), ids[i], gx, gz,
+                                      k.want[i].first, k.want[i].second);
+            }
+            check(ok, what + ": flyers keep retail's unclamped offset within sqrt(3000 n), else the click");
+        }
+
+        // A mixed group, right-click: the flyers' centre counts the ground units
+        // too; the ground keeps OUR rule (Retail: +-60 px per axis; Legion: the click).
+        // Armed PATROL: flyers the spread, ground the point (retail's ground Patrol
+        // has no offset flag). Armed FIGHT: no flyer mission with the flag, all at the point.
+        for (const Verb verb : {Verb::Move, Verb::Patrol, Verb::Fight}) {
+            Field f(mode);
+            auto sel = spawnAt(f, a, {{1600, 1600}, {1690, 1600}, {1600, 1690}, {1440, 1440}, {2400, 2400}});
+            const auto foot = f.block(g, 12, 100, 100, 4, 3);   // px 1600..1744 x 1600..1696
+            sel.insert(sel.end(), foot.begin(), foot.end());
+            SelectionOrder o;
+            o.verb = verb; o.x = 4000; o.z = 3000;
+            const char* v = verb == Verb::Move ? "move" : verb == Verb::Patrol ? "patrol" : "fight";
+            const std::string what = m + " mixed flyer spread " + v;
+            std::vector<CmdBatch> b;
+            if (verb == Verb::Move) compare(f.world, sel, o, -1, [&](ClientRef& c) { c.rightClickMove(o.x, o.z, false); }, what, &b);
+            else compare(f.world, sel, o, -1, [&](ClientRef& c) { c.armedOrder(verb == Verb::Patrol ? 'p' : 'f', o.x, o.z, -1, false); }, what, &b);
+            if (legion) {
+                if (const auto* order = oneOrder(b, sel, verb == Verb::Move ? Cmd::Move : verb == Verb::Patrol ? Cmd::Patrol : Cmd::AttackMove, what))
+                    check(order->shape == (verb == Verb::Move     ? tak::net::OrderShape::Offsets
+                                           : verb == Verb::Patrol ? tak::net::OrderShape::FlyerOffsets
+                                                                  : tak::net::OrderShape::Shared),
+                          what + ": the order's shape");
+            }
+            // The expected goals, from the positions the click saw (goalsOf lands a Legion order later).
+            std::map<int, std::pair<double, double>> want;
+            float cx = 0, cz = 0;
+            for (int id : sel) { cx += f.world.unit(id)->x.toFloat(); cz += f.world.unit(id)->z.toFloat(); }
+            cx /= float(sel.size()); cz /= float(sel.size());
+            for (int id : sel) {
+                const auto* u = f.world.unit(id);
+                if (u->type->canFly) want[id] = verb == Verb::Fight ? std::pair<double, double>{o.x, o.z} : retailFlyerGoal(f.world, sel, id, o.x, o.z);
+                else if (legion || verb != Verb::Move) want[id] = {o.x, o.z};
+                else want[id] = {o.x + std::clamp(u->x.toFloat() - cx, -60.0f, 60.0f), o.z + std::clamp(u->z.toFloat() - cz, -60.0f, 60.0f)};
+            }
+            const auto got = goalsOf(f.world, b, legion, verb != Verb::Move);
+            bool ok = got.size() == sel.size(), kept = false, far = false;
+            for (int id : sel) {
+                if (!got.count(id)) { ok = false; continue; }
+                const auto& [gx, gz] = got.at(id);
+                const auto& [wx, wz] = want.at(id);
+                // Legion packs its ground's shared click into arrival slots: not this rule's to check.
+                if (legion && !f.world.unit(id)->type->canFly) continue;
+                if (!near(gx, wx) || !near(gz, wz)) {
+                    ok = false;
+                    std::fprintf(stderr, "  %s: unit %d goal %.3f,%.3f want %.3f,%.3f\n", what.c_str(), id, gx, gz, wx, wz);
+                }
+                if (f.world.unit(id)->type->canFly) {
+                    kept |= std::abs(gx - o.x) > 60.5 || std::abs(gz - o.z) > 60.5;
+                    far |= gx == o.x && gz == o.z;
+                }
+            }
+            check(ok, what + ": flyers take retail's spread, ground our rule");
+            if (verb != Verb::Fight) check(kept && far, what + ": a flyer keeps an offset past 60 px and the straggler takes the click");
+        }
+    }
+}
+
 void selections() {
     // 1, 64, 65, 200, 450 ground bodies, right-click move, both modes.
     for (PathfindingMode mode : {PathfindingMode::Legion, PathfindingMode::Retail}) {
@@ -478,15 +643,17 @@ void selections() {
         std::vector<CmdBatch> b;
         compare(f.world, sel, o, -1, [&](ClientRef& c) { c.rightClickMove(o.x, o.z, false); }, what, &b);
         // The goals, from the commands (Retail) or as the sim gave them (Legion: OrderShape::Offsets).
-        bool clamped = true, sharedGround = true;
+        // The flyers are farther than sqrt(3000 * 132) = 629 px from the centre: retail's
+        // spread sends them to the click itself (they used to keep a +-60 px offset).
+        bool atClick = true, sharedGround = true;
         if (mode == PathfindingMode::Legion) {
             oneOrder(b, sel, Cmd::Move, what);
             landAll(f.world, b);
             for (int id : sel) {
                 const auto* u = f.world.unit(id);
-                if (u->orders.empty()) { clamped = sharedGround = false; continue; }
+                if (u->orders.empty()) { atClick = sharedGround = false; continue; }
                 const float gx = u->orders.back().x.toFloat(), gz = u->orders.back().z.toFloat();
-                if (u->type->canFly) clamped &= std::abs(std::abs(gx - o.x) - 60) < 0.01f && std::abs(std::abs(gz - o.z) - 60) < 0.01f;
+                if (u->type->canFly) atClick &= gx == o.x && gz == o.z;
                 else sharedGround &= gx == o.x && gz == o.z;
             }
         } else {
@@ -494,11 +661,11 @@ void selections() {
             for (const auto& x : b)
                 for (const auto& c : x.cmds) {
                     const bool isAir = f.world.unit(c.unitId)->type->canFly;
-                    if (isAir) clamped &= std::abs(c.x - o.x) == 60 && std::abs(c.z - o.z) == 60;
+                    if (isAir) atClick &= c.x == o.x && c.z == o.z;
                     else sharedGround &= c.x == o.x && c.z == o.z;
                 }
         }
-        check(clamped, what + ": far flyers keep a +-60 px offset on both axes");
+        check(atClick, what + ": flyers out of retail's reach take the click itself");
         if (mode == PathfindingMode::Legion) check(sharedGround, what + ": Legion ground shares the click");
     }
 
@@ -1031,6 +1198,7 @@ void scenarios(const char* data, const std::filesystem::path& scratch) {
 int main(int argc, char** argv) {
     try {
         selections();
+        flyerSpread();
         scenarios(argc > 1 ? argv[1] : nullptr,
                   std::filesystem::temp_directory_path() / "issue_selection_test-scn");
     } catch (const std::exception& e) {

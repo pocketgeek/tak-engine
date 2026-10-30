@@ -588,6 +588,19 @@ private:
         }) && (u.orders.empty() || std::any_of(u.orders.begin(),u.orders.end(),
             [](const tak::sim::Order& o){return bool(o.park);}));
     }
+    // Only raising a body (a RESURRECT leg, which reviveIdle gives): as free to
+    // produce as an idle builder, as it was while the sim's own idle raise did
+    // the raising (before 0.9.12) -- a build order simply replaces it.
+    static bool raising(const tak::sim::Unit& u) {
+        return !u.orders.empty() && u.orders.back().reviveKind &&
+               std::none_of(u.orders.begin(),u.orders.end(),[](const tak::sim::Order& o) {
+                   return o.goal && !o.reviveKind;
+               });
+    }
+    // Our levels raise the dead by order now that nothing in the sim raises a
+    // body on its own: each idle caster with a body it can raise within the
+    // old idle search's 56 px is sent to raise the nearest (Cmd::Resurrect).
+    void reviveIdle(const tak::sim::World&, std::vector<int>& assigned, const CommandSink&) const;
     // A fighter is free to be committed to a wave when it's idle or only doing a plain
     // move -- NOT while it's already fight-moving or attacking (so re-commanding it each
     // think doesn't reset its march and thrash it in place).

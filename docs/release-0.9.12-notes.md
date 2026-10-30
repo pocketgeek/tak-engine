@@ -9,16 +9,26 @@ on a 64x64 random map, 0.9.11 fell to -2 at about 2,700 units, and 0.9.12 held
 +9 to +10 to 3,160. Combat follows the original more closely: every weapon
 but melee aims only at buildings within its range, flyers dogfight flyers, an
 attack aims a moment after the attacker stops (so Kirenna fires after a walk
-far more often), and a shot stopped in front of a castle's long face counts as
-blocked. Streaming keeps to YouTube's bitrate, Options, Voice Chat and
-Controls save as you change them, and SETTINGS, BENCHMARK and LOAD REPLAY have
-a BACK button.
+far more often), a shot stopped in front of a castle's long face counts as
+blocked, an attack flyer circles where its target fell, spells land on the
+original's aim point and ticks, and the Harpy charms only with its spell,
+leaving a charmed unit its damage. A big air group keeps its shape when moved.
+Campaign units follow their mission orders as the original reads them:
+factories build their waves, troops start aboard their ships, ambushes spring
+when hit and Offensive means offensive. Builders help and repair as in the
+original: they walk up until they touch the unit, keep working when pushed,
+and never repair a unit that walks. The dead rise only when you order it, and
+a right-click on a body with a priest raises it. A Divine Lodestone may cover
+the Standing Stones, flyers draw over the explosions below them, and an
+unfinished building under fire no longer takes a target. Streaming keeps to
+YouTube's bitrate, Options, Voice Chat and Controls save as you change them,
+and SETTINGS, BENCHMARK and LOAD REPLAY have a BACK button.
 
-**Compatibility first.** The AI's sight-only targets, the combat fixes and the
-new lockstep state check change the game state the players compare, so 0.9.12
-uses network protocol **305** (replay format **15**, unchanged). **0.9.12 does
-not play with 0.9.11 or any earlier version, and does not play their
-replays.**
+**Compatibility first.** The AI's sight-only targets, the combat fixes, the
+raise order and the new lockstep state check change the game state the
+players compare, so 0.9.12 uses network protocol **305** (replay format
+**15**, unchanged). **0.9.12 does not play with 0.9.11 or any earlier
+version, and does not play their replays.**
 
 - **Everyone updates together.** A 0.9.12 player cannot join a 0.9.11 server,
   and a 0.9.11 player cannot join a 0.9.12 server: the connection is refused
@@ -281,6 +291,29 @@ Over all 19 armed flyers against flyers (720 sweep cases), cases that fired
 four or more shots without damage fell from 51 to 38 and damage rose 3.6%;
 the Juggernaut's fell from 13 to 0.
 
+## An attack flyer circles where its target fell
+
+A flyer told to attack used to stop where its target died, and land there:
+an air raid stalled after every kill until it got a new order. In the
+original, AirToGround (`0x41bf80`, at `0x41c8f6`) and AirToAir (`0x41ca50`,
+at `0x41d654`) push **VTOL_SeekAttack** (`0x4192f0`) when they lose their
+target, as long as the attack was the unit's last mission and it is not on
+Hold Fire. The engine now does the same, checked against the original code
+on 6,000 emulated seek calls and 4,000 lost-target exits (all equal):
+
+- **It circles the target's last point** (where the attack last read it, the
+  led aim point against a flyer) at its selected weapon's range plus 160
+  pixels, hopping 120 to 165 degrees round each time it reaches a point and
+  looking again every 30 to 59 ticks. It keeps flying until told otherwise.
+- **On Fire At Will it attacks the next enemy it finds** at one of those
+  looks, and after that kill circles again. On Return Fire it circles
+  without looking for one; on Hold Position it circles but attacks nothing it finds
+  (the original refuses a Hold Position unit an attack it was not ordered).
+- **No seek follows** on Hold Fire, when orders are queued behind the attack
+  (the flyer goes on with them), or after an attack an idle flyer picked up
+  by itself: that one sits on its standing mission, so the flyer goes back
+  to standing by and lands, as before.
+
 ## A long building is hit through the ground it stands on
 
 A shot that ends on terrain or scenery near its target counts as **blocked**
@@ -301,6 +334,250 @@ before.
 A Mage Archer on Manoeuvre facing a Taros Castle's long face behind a ridge
 now walks 41 pixels (48 with Legion) and hits it seven times; before, it
 fired eleven shots into the ridge and never moved.
+
+## Campaign units follow their mission orders
+
+A mission scripts its units with one-letter orders: each placed unit's
+`InitialMission=` in the mission's `.ota`, and the god script's `SetMission`.
+The engine misread most of them. The original's parser (`0x513fb0`) cuts the
+string at every comma and reads each clause on its own; ours read across
+commas, so one order could swallow the next, and several letters meant
+something else. Now each letter does what the original does with it:
+
+- **`o 2` is Offensive and `o 0` Passive** (the original's standing-order
+  setter `0x5198a0`); ours had them the wrong way round, so the 987 `o 2`
+  units across the campaign stood passive and the `o 0` ones attacked. `o A B`
+  sets the move and fire orders themselves.
+- **Factories build their waves; builders build their buildings.** `b TYPE N`
+  makes a factory build N of TYPE before its next order (BuildingBuild), and
+  `b TYPE N X Y` sends a builder, Zhon conjurers and the Aramon flying builder
+  included, to build TYPE at that spot (MobileBuild). Ours conjured every one
+  for free after N seconds: takx26 went from 146 units to 636 in its first
+  30 seconds, and takx04's flying builder had its shipyard standing at once.
+- **Troops start aboard their transports** (`i NAME`): 125 soldiers in takx07,
+  for example, sit in their transports until the transports unload them.
+- **Names are the placed units'**: `i`, `g`, `wa` and `a` name a unit by its
+  `Ident=` (else its unit name), as the original does; ours used names that
+  other units' `i` clauses had given themselves.
+- **An ambush springs when it is hit** (`wa`, WaitForAttack `0x4017a0`): the
+  unit, or the unit `wa NAME` watches, being hit (or dying) ends the hold;
+  an enemy merely coming into sight does not. takx04's flying builder now
+  waits for its lodestone JIM to be attacked before it sets out.
+- **A wait can end when the enemy comes near** (`w F N`: a visible enemy
+  within N squares ends it early). Factory waves that used to wait an hour
+  (`w 3600 12, b ...`) now start when the player approaches, as designed.
+- **`a TYPE` hunts every unit of that type**, nearest first and one after
+  another, until none is left (AttackUType); ours attacked one. `a NAME`
+  attacks the named unit.
+- **Veterancy bonuses apply** (`v F`): the unit's attack, armour and reload
+  multiplier is F (the bosses' 5 and 9 among them) and it shows full rank;
+  kills do not change it. Ours ignored it.
+- **Enemy units stay the enemy's**: `s` makes a unit selectable and nothing
+  more; ours handed it to the player at the start, which gave 44 placed enemy
+  units in 10 missions to the player (takx04's Aramon keep and castle among
+  them).
+- **`d` self-destructs when it comes up**, after the orders before it; ours
+  killed the unit at the start (takmission23's three Taros troopships, meant
+  to wait, unload their troops, fly off the map and only then go).
+- **Orders queue behind what a unit already has**, as the original queues
+  them; ours replaced a unit's orders at a `SetMission`.
+
+Many missions play differently, and most get harder: enemies attack instead of
+standing by, ambushers and guards hold as designed, waves come from factories
+the player can destroy, and bosses hit and take hits as the original intends.
+All 74 shipped missions load and run.
+
+## Builders help and repair as in the original game
+
+A builder told to help build or repair walked to one point south of the
+building (a repairer to where the unit stood when ordered) and worked from its
+build distance; it stopped working whenever it was pushed out of that
+distance, a helper gave up after 8 seconds without getting 20 pixels closer,
+and a repairer healed a unit while it walked past. The original's ground
+HelpBuild (`0x405cf0`) and RepairUnit (`0x407190`), run stage by stage in
+emulation, do it differently, and the engine now does the same:
+
+- **They walk up until they touch.** Both install the rectangle controller a
+  build site and a reclaim use: the builder walks to the nearest cell where
+  its footprint touches the unit's, on the side it comes from, so several
+  helpers spread round a building. The work starts on arrival; if no route
+  gets there, it starts anyway when the builder is within its build distance
+  of the unit, and otherwise a help ends ("can't get there"; no unit-chatter
+  voice here, as before). There is no timer: a helper held up in a crowd
+  keeps trying.
+- **Once working, distance no longer matters**: a builder pushed aside keeps
+  working where it stands.
+- **No repair is done to a unit that moves** (walks or turns). The repair
+  waits and re-aims at the unit each look; every look while it moves counts
+  1 (3 when the builder is within reach), and past 10 the repair is given up
+  ("repairs unsuccessful"): a few seconds of walking, less when the builder
+  keeps up. A still unit is never given up on, even one the builder cannot
+  reach; during the approach, one that has moved to another cell is re-aimed
+  at on the next look (every 7 to 21 ticks).
+- **A patrolling builder's leash** is its own distance from where it left its
+  route, its sight distance (the original's 199 pixels continue, 200 end); the
+  engine measured the target's distance instead.
+- **An assist queued behind other orders** starts when its turn comes; it
+  used to latch at once and could drop the orders before it.
+- **A helper that finishes a unit inside a factory walks out of the factory**
+  (not in the original, which leaves it where it touched the unit, in the
+  yard): the 0.9.8 report of builders standing in a factory's door, which the
+  guard ring already answers for guards. In the door test (every shipped
+  ground factory, both pathfinding modes and balances, 232 cases) all outputs
+  finish and no unit is left in a factory; without the step-out, 84 assist
+  cases left the helper standing in the yard.
+
+Flying helpers and repairers keep 0.9.7's VTOL_HelpBuild and VTOL_RepairUnit.
+A building never repairs (the original's RepairUnit ends at once without a
+mover; the Keep's `canmove=1` let the engine accept the order).
+
+## The dead rise only when you raise them
+
+Through 0.9.11 the engine raised and cleared bodies by itself. Any caster
+standing idle within 56 pixels of a body raised it: Elsin his own side's dead,
+the Dark and Darkest Priests, the Chief Engineer, the Dark Hand and the Spirit
+Wolf any side's, as ghouls, creautos, liches and wolves. Any idle builder
+cleared every body within 56 pixels in a single tick, friend's or foe's. And
+there was no way to order a raise: right-clicking a body with a priest or
+Elsin (the Revive cursor showing) cleared it instead.
+
+The original does neither. Every unit task is created from an order through
+its order resolver (`0x4de530`); a right-click on a body tries resurrect, then
+animate, then clear, per selected unit, and so does a caster's area clear for
+each body it reaches. Nothing a unit does while idle reaches those orders,
+and the original's AI never orders a raise or a clear (found by a search of
+every reference to them).
+
+0.9.12 does the same:
+
+- **Right-click a body** with a unit that can raise it and it walks over,
+  turns, raises it and goes back to standing. A Dark Priest, which flies,
+  flies there. A builder in the selection that cannot raise the body clears
+  it; other units do nothing. The cursor shows the raise when a selected unit
+  would raise the body, and a unit raising one shows *Raising Dead*. The CLEAR
+  button on a body works the same way.
+- **An area clear** by a caster raises each body in the area it can raise,
+  then clears the rest.
+- **Nothing raises or clears a body unordered.** A body lies until it decays,
+  is cleared by order, or is raised.
+- **Any side's body** can be resurrected or animated, as in the original: it
+  rises as the caster's unit. Animating needs a body the game marks as
+  animatable (`animatable=1`, its own flag in the original); every shipped one
+  can also be resurrected, but not every resurrectable body can be animated.
+- **Our AI levels** order their idle casters to raise a body within the old 56
+  pixels themselves, so they raise the dead about where they did before; a
+  build order still takes the caster away. The Retail AI never raises the
+  dead, as in the original.
+
+Raising still costs no mana and takes as long as before (0.3 x the body's
+build time for a resurrect, the creature's full build time for an animate,
+at the owner's allocation); the first tick of work now comes on the tick the
+caster starts, as in the original, one tick earlier than before.
+
+## The Harpy charms only with its spell; a charmed unit keeps its damage
+
+The engine let a Harpy take any enemy it stayed beside for three seconds, or
+at once when the enemy was below a quarter of its health, for no mana, on top
+of its Individual Mind Control. The original has no such capture. Its
+`cancapture` flag (only the Harpy sets it) is read by nothing in the game
+logic, only by a CAPTURE button that no shipped interface has; a unit changes
+sides only through a mind-control spell (`0x52d8d0`, roll `0x52da10`). The
+engine now does the same:
+
+- **The Harpy is an ordinary caster.** Each charm costs 300 mana, can fail
+  (80% for a green unit, more for a veteran) and reloads in 1.5 seconds, so a
+  full Harpy charms at most three times before it recharges. It now picks
+  and charms targets on its own, like the Mind Mage, and answers when it is
+  hit.
+- **A charmed unit keeps its damage.** Every conversion (Harpy, Mind Mage,
+  Area Mind Control) raised the unit to at least half its health. The
+  original copies its health as it is (`0x514f8a`), so a unit worn down and
+  then charmed can still be finished off.
+- **A charmed unit starts without its veteran stars.** The original gives the
+  new owner a new unit (`0x512060`) and copies only health, construction,
+  facing and activation onto it; experience starts at zero (`0x511990`).
+- **A unit still being built cannot be charmed**, as in the original's roll
+  (it checks the construction left before the chance). Casters no longer pick
+  one as a target.
+
+## Spells land when and where the original's do
+
+Remote Effect spells (the plain ones, Earthquake, Hailstorm, Area Mind
+Control and Area Freeze) were checked tick by tick against the original's own
+handlers run in the emulator (`0x52e890` / `0x52e940` and each class's
+per-tick hook, the Hailstorm's `0x52ed60` / `0x52ee80`), for every shipped
+configuration. Counting from the tick a spell is cast, the original starts it
+the next tick, lands a `shotart` spell after its flight, hits at
+`builduptime` after that and expires at `decaytime` after the hit, testing
+the expiry before anything else. The engine now does the same:
+
+- **Aim.** The spell is cast at the slot's aim point (`0x51aa50`): the
+  target's SweetSpot led by 80% of its motion over the weapon's flight time.
+  It used to land where the target stood. The lead matters for the slow
+  spells (`weaponvelocity` 100): the Mind Mage's area charm lands about a
+  second and a half of walking ahead of a target at its full range.
+- **Earthquake pulses** fall every `shakeduration` after the spell lands,
+  never on the landing tick and never on the expiry tick (`0x52ecd0`). The
+  engine pulsed on the expiry tick too: the Avatar of Anu's and the Ghost of
+  Garacaius's Earthquakes hit three times instead of two, and the Acolyte's
+  six instead of five.
+- **Hail** falls every `30 / particlespersecond` ticks in whole ticks
+  (`idiv` at `0x52efcd`), not rounded: at eight stones a second, every 3
+  ticks, not 4. The Ghost of Garacaius's Ice Storms hit 19 times (were 14),
+  the Fallen Angel's Wrath 21 times (were 16).
+- **Timing.** Every hit lands at the original's tick, one or two ticks later
+  than before; `builduptime`, `decaytime`, `shakeduration` and `duration`
+  are cut to whole ticks as the original does, not rounded. A delivered
+  spell's flight (the Acolyte's Earthquake) is the whole-pixel 3D distance
+  from the caster to the aim point over the shot's speed, in whole ticks.
+- **Storm launch.** A nimbus caster's launch delay is `nimbustime`
+  (`0x53101d`), which no shipped weapon sets, not `builduptime`: the Spawn
+  of Belial's, Angel of Lihr's, Wrath of Tammuz's and Weather Witch's storms
+  set off at once instead of 1.2 to 2.25 seconds late.
+
+Killing the caster still aborts an area charm or freeze at any point and
+leaves every other spell to finish, as in the original.
+
+## A big air group keeps its shape
+
+The original spreads a group move itself (`0x5214b0`, checked by emulating
+it): only a flyer's move or patrol mission keeps an offset. Each flyer goes to
+the clicked point plus its place relative to the group's centre, unclamped,
+when that place is within sqrt(3000 x the units selected) pixels of the
+centre (55 px for one unit, 173 for 10, 548 for 100); a straggler farther out
+flies to the point itself. 0.9.12 does the same for a right-click move and for
+the MOVE and PATROL buttons. Flyers used to be squeezed into a 120-pixel
+square round the point, and MOVE and PATROL sent them all to one spot.
+Fight-move still sends everyone to the point, as in the original.
+
+Ground units keep the engine's own spread (a design choice): a right-click
+keeps each one's place within 60 pixels per axis (Legion: the point itself,
+packed into arrival slots), and MOVE and PATROL send them to the point. The
+original sends every ground unit to the point.
+
+## Three small fixes from the retail checks
+
+- **A Divine Lodestone may cover the Standing Stones beside a sacred site.**
+  In the original game a lodestone's `yardmap=S` fills its footprint and
+  tests the sacred-site coverage, the ground and the units on it, but not the
+  scenery under it, so its footprint may overlap the Standing Stones around a
+  site (emulated in the original's placement code `0x507400`). The engine
+  refused every position where one of the 3x3 squares held a stone: on Inner
+  Circle, one covering position at the north site and two at the west site,
+  for every side, so a Divine Lodestone placed by hand there needed a nudge.
+  Those positions are accepted now, by players and the AI alike, and a
+  lodestone destroyed there leaves the stones blocking as before.
+- **Flyers draw over a ground fight's explosions, debris and shots.** The
+  original draws the airborne units after the shots and its effects (debris
+  first, then explosions); the engine drew the flyers first, so wreckage and
+  explosions from the fight below painted over a dragon passing overhead.
+  Flyers' shadows stay under the shots and effects, where they were.
+- **An unfinished building under fire no longer takes its attacker as a
+  target.** The original's hit response skips a unit that is still being
+  built. The engine handed the site an attack order it could not carry out,
+  so it showed a target while under construction (an unfinished Prismatic
+  Mirror "holding without firing" at a Trebuchet) and, once finished, started
+  on that order instead of choosing its own target.
 
 ## Streaming keeps to YouTube's bitrate
 
@@ -384,12 +661,132 @@ decided what the game counted as seen.
   weapons; a Dropped bomb's release in `tickScriptWeapon` waits for SET 22
   and, for a hover attacker, its facing. New `air_to_air_test`, AirToAir
   modes in `retail_motion_test`, `tools/re/check_air_to_air.py`.
+- Sim (VTOL_SeekAttack): `src/sim/retailairseek.h` (`retailAirLostTarget`,
+  `retailVtolSeekAttack`), `World::seekLostTarget` / `tickSeekAttack` /
+  `flyMissionGoal`; `Order::hoverAttackTargetX/Z` is renamed
+  `attackPointX/Z` (mission +0x22, now written by AirToGround and AirToAir
+  too), new `Order::seekAttack` and `aheadOfDefault` (hashed when set); the
+  Retail AI reads a seek as class 19, flags 0x1000400. New
+  `air_seek_attack_test`, `--air-seek` / `--air-lost` modes in
+  `retail_motion_test`, `tools/re/check_air_seek_attack.py`.
 - Sim (blocked shots): `nearBody` (the footprint rectangle within the old
   circle for a non-square body) in `World::noteShotImpact`, and
   `World::chordClear` now takes the target. New castle case in
   `blocked_shot_test`; `tools/re/probe_long_footprint_blocked.py`.
-- `Order` stays five cache lines (320 bytes): `attackChased` fills the pad
-  beside `chaseLeashed`.
+- Sim (capture): `UnitType::canCapture` and `Unit::captureProg` are gone
+  with the contact capture in `tickCombat` and the Harpy's exclusions from
+  the fire sweep, `tickSlotWeapons`, `slotHitResponse`, `attack` and the AI's
+  armed-enemy checks (which already count mind-control weapons);
+  `cancapture` is no longer parsed. `World::captureUnit` keeps HP and resets
+  `xp` / `veteran` to a fresh unit's; `canCaptureTarget` and the charm roll
+  refuse `underConstruction`, and `retailSelectTarget` / `sweepKeepsTarget`
+  skip an unfinished unit for a mind-control slot. `capture_combat_test`
+  covers each (the shipped Harpy in `capture_combat_roster`).
+- Sim (Remote Effect timing): `World::fire`'s Remote branch takes its point
+  from `retailLeadPoint` and builds the retail timeline (start, shotart
+  flight, buildup, decay) as countdowns; the channel loop tests expiry before
+  the pulse except for the Hailstorm. New `Weapon::decayTicks`, `shakeTicks`
+  and `nimbusTicks` (parsed from `nimbustime`), which replaces `buildUpTicks`
+  as the nimbus launch delay of Wandering, Guided and Line-of-Sight shots. New
+  `remote_timing_test` (each shipped timeline against the emulated original,
+  the caster-death abort, the lead); `retail_script_test`,
+  `capture_combat_test` and `unit_retirement_test` fixtures give their spells
+  the timers they now need.
+- Client/sim (flyer spread): `src/sim/retailflyerspread.h`
+  (`FlyerGroupCentre`, integer 16.16) is used by the right-click move and
+  `issueArmedOrder` (MOVE/PATROL; `GameView::setFlyerSpread`) and by
+  `applySelectionOrder`. New `net::OrderShape::FlyerOffsets` (2; Move and
+  Patrol only, `validOrderTemplate`) and `ClickShape::flyerOffsets` for the
+  armed buttons' explicit order; `OrderShape::Offsets` gives flyers the same
+  rule. No new command and no protocol bump beyond 305. New `flyerSpread`
+  cases in `issue_selection_test` (17 checks fail on the old code);
+  `selection_order` and `convoy_test` updated; the tools' client mirror
+  (`tools/legion_issue_selection.h`) follows. `World::planLegionFlightStations`
+  (Legion squads riding with ground) now starts the landing when the ground's
+  centroid nears its busy members' goals' centroid, not a station flyer's own
+  point (which no longer marks the click): `legion_flyerfront` measures the
+  same as before; `mixed2` changes its Retail `hash@` keys and Legion
+  `work.completion_dist_3.total` (35 -> 55).
+- Sim (retail checks): an `S` yard cell of a structure tests the
+  terrain-only grid in `World::placementCheck` (`removableBlockerAt` keeps
+  the reclaim-first rule for registered features and wrecks; only where the
+  sacred-site coverage test applies, so a map without sacred sites keeps the
+  overlay test), and
+  `World::blockFoot` records the fixed obstacles under it
+  (`sacredUnderlay_`, unhashed) to restore them on removal;
+  `retailHitResponse` returns for a unit under construction. New
+  `sacred_yard_test` (Inner Circle) and an unfinished-building case in
+  `fire_sweep_test retaliation`.
+- Client: the body replay stops at the first airborne item
+  (`GameView::airOp_`) and draws the air bodies after the shots and
+  effects. New `air_over_fx` harness test (`TAK_AIR_OVER_FX_TEST`,
+  `TAK_AIR_OVER_FX_CAPTURE` for the frames).
+- `Order` stays five cache lines (320 bytes) with every line assertion
+  unchanged: `attackChased` fills the pad beside `chaseLeashed`, `scripted`
+  the pad after `chaseOrigin`, `reviveKind` the byte beside `mixedSlots`,
+  `seekAttack` and `aheadOfDefault` the tail pad after `guardOrbitAngle`, and
+  `repairLooks` line 1's one-byte pad before `missionRadius` (the merged
+  branches' fields each fit alone and together made 384 bytes).
+- Sim (campaign orders): `MissionScript::applyOrders` reads clauses as the
+  original's `0x513fb0` (`MissionScript::Placement`, the `.ota` records, is its
+  name table; `setIdents`, the `i` naming and the timed spawns are gone). Orders
+  with state of their own carry `Order::scripted`, a 1-based index into
+  `World::scriptedOrders_` (`ScriptedOrder`: AttackType, Train, WaitAttack,
+  WaitNear, SelfDestruct; hashed with the order; a full table, which takx24
+  would reach in about four hours, drops the entries no order refers to and
+  renumbers the rest, `compactScriptedOrders`); `World::tickScriptedOrder`
+  runs AttackType, Train and SelfDestruct at the head, `scriptedWaitDone` the
+  waits, `noteScriptedProduction` counts a factory's builds; while
+  `World::scriptHold` (any of these, or a wait, at the head) the leg behind
+  it neither routes nor approaches its site (`groundMissionOrder`,
+  `prepareBuildApproach`, the reclaim start), since a route installed for it
+  would replace the hold. New
+  `orderAttackType`, `orderTrain`, `orderSelfDestruct`, `embarkInto`,
+  `scriptStandingOrder` / `scriptStandingFields`, `setVeterancyOverride`
+  (`Unit::vetOverride`, hashed when set; `vetMul` answers it); `orderWait`
+  takes a radius and `orderWaitAttack` a watched unit. The Retail AI reads such
+  a head order as the original's (class 0x13, never the default mission's
+  0x2000) in `firstMission`. Details in `docs/retail-engine.md` (Mission order
+  strings) and `docs/campaign-design.md`.
+- A ground help or repair leg hashes its stages (and `Order::repairLooks`,
+  RepairUnit's give-up count) with a tag once started.
+- Sim (help and repair): `World::prepareHelpApproach` / `tickGroundHelp`
+  (HelpBuild `0x405cf0`) and `prepareRepairApproach` /
+  `installRepairApproach` / `tickGroundRepair` (RepairUnit `0x407190`) run
+  on the leg's `mission` with its `buildRectangle`; a ground help leg is no
+  longer a Move (`assist` latches `buildSiteId` once the leg is current,
+  `cancelBuilds` drops it). `World::moveRateMoving`; `constructionWork` split
+  out of `tickConstruction` (MobileBuild's own site work and its watchdog are
+  unchanged); `leaveFactoryYard` and `pointOutside` (split out of
+  `clearBuildSite`, same point). `World::repair` refuses a building. Legion:
+  Repair is an exact rectangle kind like Build and Reclaim, a help leg is
+  Build, no member is keyed by its target any more. `docs/retail-engine.md`
+  "Helping and repairing on the ground"; probe
+  `~/tak-tmp/retail-checks/repair-approach/probe_repair_help.py` (outside
+  the repo).
+- Tests (help and repair): `helpbuild_test`'s approach cases (spread helpers,
+  touching reach, a 14 s hold, a bumped helper and repairer, failed
+  approaches in and out of reach, a walking repair target, the patrol leash,
+  a queued assist; Retail and Legion): 36 checks, 25 fail on the old code.
+  Two more from review: an assist queued on the builder's own build site
+  lets the build go on (it stalled for ever), and a repeating conjurer's
+  rally survives the yard step-out (World::order made the step-out its
+  rally).
+  `builder_automation` (a departing ally now walks off; patrol eligibility
+  gets time to walk up), `production` (repairers start touching their
+  targets) and `retail_script` (the repair controller driven by a Repair
+  order; work stops when the target moves) follow the new rules.
+- Sim (raising): `Cmd::Resurrect` -> `World::resurrect` / `World::reviveKind`
+  (`reviveKindFor`), a RECLAIM leg with `Order::reviveKind` (hashed on reclaim
+  legs when set); `World::tickReclaim` runs its stages 0-3 and
+  `World::tickAbilities` only the channel (`Unit::reviveTarget`), with the idle
+  raise and idle corpse clear removed; `FeatType::animatable`;
+  `World::tickReclaimArea` resolves its child as raise-or-clear. Client:
+  `GameView::raiseTargetAt` / `reviveKindOn` / `issueRaiseOrReclaim` (right-
+  click, CLEAR, cursor), `RenderOrder::revive`. AI (levels 0-5):
+  `Controller::reviveIdle` / `raising`. New `revive_order_test`; revive cases
+  in `production_test` now order the raise; body cases in the
+  `reclaim_fanout` harness and `ai_behavior_test`.
 - Sim: `src/sim/statefold.h` (`WordMix`, chunked xxHash64-style lanes) for
   `World::stateHash`; `resolveSplit` and `World::compStats` for local nav
   splits (`TAK_COMPCHECK` in debug builds checks every carried labelling);
@@ -399,8 +796,12 @@ decided what the game counted as seen.
 - Client UI: `client/promptbox.h` (shared YES / NO box), the options
   autosave, the Controls hint band, `client/uploadwatch.h`,
   `video/youtubebitrate.h`.
-- Net: `kNetVersion` 304 -> 305, no new command, replay format 15, generator
-  9. `tools/replay_test.cpp` pins 305 and refuses 304.
+- Net: `kNetVersion` 304 -> 305, `Cmd::Resurrect` = 29 (a strict replay read
+  takes it from 305, `kResurrectProtocol`; the server accepts it), replay
+  format 15, generator 9. `tools/replay_test.cpp` pins 305 and refuses 304.
+- Tests: new `mission_orders_test` (every letter on scratch types; `--data`
+  checks takx04's flying builder, keep and towers and takx07's troops aboard,
+  as `mission_orders_shipped`); `ambush_test` now checks the hit, not sight.
 - Tests: new `state_hash_test` (pinned fold values, serial equals pooled; in
   the three CI workflows), `options_autosave_test` (22 of 38 checks fail on
   the old code), `stream_bitrate_test`, the `retail_fog` harness test; AI
@@ -412,17 +813,29 @@ decided what the game counted as seen.
   `tools/navigation_checkpoints.json` lines; for the combat fixes, 352
   `hash@` keys of 16 attack and chase fixtures again, two new work-counter
   entries and 39 licensed keys in attackring-struct-60 (built around the old
-  structure allowance) and fight-retarget (details in the
+  structure allowance) and fight-retarget; for the flyer group spread,
+  mixed2's five Retail `hash@` keys and one licensed key (details in the
   [validation report](release-0.9.12-validation.md)).
 - `--mpai` Inner Circle seed 1, `TAK_SPEED=80`: every gate hash changes
   (the hash layout, the combat fixes, and for the Legion and both Crusades
-  300 s games also the AI's new targets and scouting); new values in the
+  300 s games also the AI's new targets and scouting; the raise order moves
+  the Crusades Retail 300 s game once more); new values in the
   [validation report](release-0.9.12-validation.md). The cross-compiler
   golden (`check-determinism`) is unchanged, `dcef618cd2e4d558`.
 
 ## Known limits
 
 New with 0.9.12:
+
+- **Raising follows the clear order's walk.** A raise walks to the body,
+  turns and waits for the build stance exactly as a clear does, and a flying
+  Dark Priest uses the engine's stand-in for the original's flying clear
+  (not its own flying raise). Not ported: the original's need for the body's
+  square to be explored (the engine offers only bodies you can pick), and a
+  computer player's AI-profile limit when the raise starts.
+- **Our AI levels raise only beside an idle caster**, within 56 pixels, as
+  the engine's own search did; they do not send casters to bodies further
+  off.
 
 - **An all-AI game may not end** when a last enemy unit stays hidden from
   every AI, since our levels no longer target what they have not seen.
@@ -438,6 +851,16 @@ New with 0.9.12:
 - **Human allies share main-view sight.** The original shares its main view
   only with computer allies; 0.9.12 shares it with every ally (a design
   choice).
+- **Ground units do not converge on a moved point** as in the original,
+  which sends every ground unit to the click; ours keep their place within 60
+  pixels per axis (a design choice). The original's rule that a selected unit
+  under the cursor gets no order is not ported (our right-click on your own
+  unit is the friendly-unit order).
+- **A Legion flyer command sent unit by unit** (a game with no server, and
+  test tools) with an offset over 76 pixels opens its own arrival area instead
+  of the click's; every networked click is one explicit order and joins one
+  area. The flyers of a Legion squad that rides with its ground keep station
+  over the ground until it arrives, whatever their own points.
 - **The minimap's explored shade** is half-opaque black; the original remaps
   each pixel through a shade table.
 - **Minimap dots** sit at a unit's ground position, not its projected height
@@ -488,15 +911,69 @@ New with 0.9.12:
   its eggs have no upward speed and fall past. It hits flyers below it.
 - **A dogfight's retargeting** uses the engine's own target scan, not the
   original's, so a flyer that finds its target again keeps its attack where
-  the original restarts it; the group check, the air-traffic step-out and
-  the lost-target search of the original's AirToAir are not ported (the
-  attack ends instead, as AirToGround's already does).
+  the original restarts it; the group check and the air-traffic step-out of
+  the original's AirToAir are not ported.
+- **A circling flyer looks with the engine's target scan** (its weapons'
+  longest range plus 90 pixels), not the original's. Hover attackers
+  (AirToGroundHover, `0x41d820`) still stop when their target dies; their own
+  seek is not ported. A flyer that loses a target still alive (now allied or
+  out of reach) circles at once; the original first offers that target an
+  attack, which fails for the same reason. The circling flyer's status still
+  reads MOVING (the original says Seeking to attack). Orders queued with
+  Shift behind a circling flyer wait, as in the original, whose seek never
+  ends by itself.
 - **Blocked shots against a long building** count short misses on open ground
   in front of its long face as blocked too, as they already did for a square
   building (a Taros Beak bombing a castle's side gives up after three eggs
   instead of four; it hit nothing either way). The reposition's minimum
   distance and the navigation grid's sight radius still use a building's
   longest side.
+- **Campaign orders not ported:** firing at bare ground (`a X Y`; the unit
+  goes until the point is in its weapon's reach and fights from there, and a
+  building does nothing), a patrol's time (`p X Y T`), BuildWeapon (`bw`) and
+  resurrect (`r`), which no shipped mission uses, and the original's
+  unselectable state: a player's unit under a script can be selected and given
+  orders, which replace its script. The original also ignores `SetMission`
+  for a unit whose owner is neither the player nor a computer player
+  (`0x4d37be`); the engine does not.
+- **A build order's site is checked when the order is given**, not when the
+  builder arrives as in the original: a site blocked at that moment is
+  dropped at once instead of after the walk.
+- **Helpers and repairers start working on arrival**: the original first
+  turns to face the unit and waits for the builder's stance, which the
+  engine does not port (as before).
+- **A repair whose unit is healed to full by someone else ends at once**; the
+  original's repairer walks on until it arrives.
+- **A helper whose site is walled off** can walk round the wall for a long
+  time before its approach fails (41 seconds behind a three-cell wall in a
+  test), as a builder going to a walled-off site does: the same search.
+- **Give-ups are silent**: the original's "can't get there" and "repairs
+  unsuccessful" voices have no channel in the engine.
+- **A patrolling builder repairs the nearest damaged unit** it sees; the
+  original picks one at random (unchanged).
+- **A charmed unit keeps its unit number** and its personal mana, status
+  effects and cloak; the original makes a new unit for the new owner and
+  kills the old one. Only its health, construction, facing and activation
+  carry over there. A unit a mission hands to another player still keeps its
+  veteran stars, though the original resets them there too.
+- **A caster ignores an unfinished enemy unit**, where the original's
+  automatic aim would pick it, spend the charm's mana and fail the roll.
+- **Remote Effect edges not copied:** a spell whose caster dies in the very
+  tick it is cast still lands (the original drops a plain spell or
+  Earthquake then), and a delivered spell thrown less than a flight tick
+  away (under about 7 pixels for the Acolyte) lands at once, where the
+  original's looping shot art holds it a whole buildup and decay longer.
+- **A lodestone's footprint still refuses scenery that can be cleared**
+  (a tree, a rock, a wreck): a build order clears it first. The original
+  builds over it, but the engine keeps one blocked mark per map square and
+  clearing it later would open the lodestone's own squares. The original's
+  limit on the height range under a building (15 for every lodestone) is not
+  ported for any building; the engine's own slope test per square still
+  applies.
+- **A flyer's shadow is drawn under the shots and effects**, before the
+  flyer: the original draws each unit's shadow with the unit, so an
+  explosion can now cover a flyer's shadow but not the flyer. Queued build
+  ghosts and the Hidden Units dots also lie under a flyer now.
 - **0.9.11's limits still apply:** see the
   [0.9.11 notes](release-0.9.11-notes.md#known-limits), and through them the
   earlier notes; 0.9.11's "AI goes after everything" is replaced by the

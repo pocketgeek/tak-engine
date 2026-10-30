@@ -22,6 +22,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 
 #ifndef NDEBUG
 
@@ -624,6 +625,86 @@
             check(bar(own) && bar(foeSeen) && bar(foeHidden) && bar(thirdHidden),
                   "spectator: every side's bars drawn");
             std::fprintf(stderr,"PASS: spectator bars (%zu bars)\n",debugHealthBarIds_.size());
+            return;
+        }
+        if (tak::devFlag("TAK_AIR_OVER_FX_TEST")) {
+            // Retail's world pass (0x4fc648) draws the airborne units after the
+            // shots (52b210) and the effect manager (492070: debris, explosions):
+            // a ground fight's explosion never paints over a flyer passing above.
+            // Through the real draw(): the replay order, and the flyer's own
+            // pixels with and without an explosion glow centred on it.
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("air over fx: "+what);
+                std::fprintf(stderr,"PASS: air over fx: %s\n",what.c_str());
+            };
+            constexpr int W=1024,H=768;
+            noFog_=true;edgeScrollOn_=false;
+            // A flyer's ground shadow is not its body: keep it out of the pixels.
+            const bool shadows=!settings_ || settings_->unitShadows;
+            if (settings_) settings_->unitShadows=false;
+            const float x0=float(mapView_.map().blocksX)*16.0f,z0=float(mapView_.map().blocksY)*16.0f;
+            const int flyer=spawn("aradrag",x0,z0,0,0);
+            check(flyer>=0,"fixture spawned");
+            writableWorld().order(flyer,x0+3000,z0,false);
+            float offX=0,offY=0;
+            std::vector<uint8_t> px;
+            int ow=0,oh=0;
+            const auto frame=[&](bool follow,const char* capture) {
+                captureFrame();beginFrame();cosmeticStep(0);
+                mapView_.setZoom(1.0f);
+                if (const auto* r=frameUnitP(flyer); r && follow) {
+                    offX=r->x-float(W-300)*0.5f;offY=r->z-float(H)*0.5f;
+                }
+                mapView_.setOffset(offX,offY);
+                prepare(W,H);draw(W,H);
+                SDL_GetRendererOutputSize(ren_,&ow,&oh);
+                px.assign(size_t(ow)*size_t(oh)*4,0);
+                SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px.data(),ow*4);
+                if (capture) tak::png::write(capture,ow,oh,px);
+                endFrame();
+            };
+            // Up and well clear of the ground.
+            float altitude=0;
+            for (int t=0;t<600 && altitude<40;++t) {
+                writableWorld().tick(1.f/30);
+                frame(true,nullptr);
+                if (const auto a=anims_.find(flyer);a!=anims_.end()) altitude=a->second.altitude;
+            }
+            check(altitude>=40,"the flyer is airborne");
+            const char* capture=tak::devEnv("TAK_AIR_OVER_FX_CAPTURE");
+            const std::string base=capture ? capture : "";
+            explosionGlows_.clear();
+            frame(true,capture ? (base+"-plain.png").c_str() : nullptr);
+            const std::vector<uint8_t> plain=px;
+            const auto* r=frameUnitP(flyer);
+            check(r!=nullptr,"the flyer is in the frame");
+            const SDL_FPoint p=unitScreen(*r);
+            check(p.x>32 && p.y>32 && p.x<float(W-332) && p.y<float(H-32),"the flyer is on screen");
+            // A large explosion glow centred on the flyer's body (unitScreen) and
+            // a control glow over bare ground 200 px to its left.
+            const float zm=mapView_.zoom();
+            const float alt=r->z-mapView_.offY()-terrainLift(r->x,r->z)-p.y/zm;
+            explosionGlows_.push_back({r->x,r->z,alt,front().gameTick,2,std::nullopt});
+            explosionGlows_.push_back({r->x-200,r->z,alt,front().gameTick,2,std::nullopt});
+            frame(false,capture ? (base+"-glow.png").c_str() : nullptr);
+            check(debugGlowDrawCount_==2,"both glows drew");
+            check(debugPaintOrder_=="gea" && debugAirOps_>0,
+                  "ground bodies, then effects, then the airborne bodies ("+debugPaintOrder_+")");
+            const auto changed=[&](float cx,float cy,int half) {
+                int n=0;
+                for (int y=int(cy)-half;y<=int(cy)+half;++y)
+                    for (int x=int(cx)-half;x<=int(cx)+half;++x) {
+                        const size_t i=(size_t(y)*size_t(ow)+size_t(x))*4;
+                        n+=std::memcmp(&plain[i],&px[i],3)!=0;
+                    }
+                return n;
+            };
+            const int control=changed(p.x-200*zm,p.y,3),body=changed(p.x,p.y,3);
+            check(control>=40,"the control glow changes the bare ground ("+std::to_string(control)+" of 49 px)");
+            check(body==0,"the glow under the flyer leaves its body untouched ("+std::to_string(body)+" of 49 px)");
+            explosionGlows_.clear();
+            if (settings_) settings_->unitShadows=shadows;
+            std::fprintf(stderr,"PASS: air over fx (altitude %.0f)\n",altitude);
             return;
         }
         if (tak::devFlag("TAK_TACTICAL_DOTS_TEST")) {
@@ -1411,6 +1492,56 @@
             check(fanned(cmds,tak::net::Cmd::Reclaim) && cmds[1].targetId==fid,
                   "an armed CLEAR click gives each reclaimer one Reclaim, the soldier none");
             check(soldierKept(),"armed CLEAR leaves the soldier's order alone");
+            // A body (0.9.12): retail's resolver runs per unit (4de530 mode 1
+            // for the click, 12 for armed CLEAR) -- a caster that can raise it
+            // gets RESURRECT, a reclaimer that cannot gets RECLAIM, the soldier
+            // nothing -- and the cursor is Revive, the order the click gives.
+            {
+                const auto* casterType=registry_.find("araking");
+                const auto* masonType=registry_.find("arabuild");
+                check(casterType && casterType->canResurrect && masonType && masonType->canReclaim &&
+                      !masonType->canResurrect,"fixture has a resurrecting caster and a plain reclaimer");
+                const int caster=spawn("araking",cx-60,cz+60,0,localPlayer_);
+                const int mason=spawn("arabuild",cx+60,cz+60,0,localPlayer_);
+                const float bx=cx,bz=cz+140;
+                const int dead=spawn("arasword",bx,bz,0,localPlayer_==0 ? 1 : 0);
+                check(caster>=0 && mason>=0 && dead>=0,"caster, mason and victim spawned");
+                {   // a settled body (the death sweep and anim already behind it)
+                    auto& d=*writableWorld().unit(dead);
+                    d.hp={};d.deadFor=std::max(200,d.corpseAnimationTicks());d.corpseUntil=100000;
+                }
+                mapView_.setOffset(bx-400,bz-300);
+                selection_={caster,mason,soldier};publish();
+                mouseX_=-1000;mouseY_=-1000;
+                check(raiseTargetAt(bx,bz)==dead,"the body picks as a raise target under its centre");
+                check(hoverCursor(bx,bz,false)==tak::CursorId::Revive,"the cursor over it is Revive");
+                const auto raised=[&](const std::vector<tak::net::Command>& cmds,const char* what) {
+                    int resurrect=0,reclaim=0,other=0;
+                    for (const auto& c:cmds) {
+                        if (c.kind==tak::net::Cmd::Resurrect && c.unitId==caster && c.targetId==dead) ++resurrect;
+                        else if (c.kind==tak::net::Cmd::Reclaim && c.unitId==mason && c.targetId==-dead) ++reclaim;
+                        else ++other;
+                    }
+                    check(resurrect==1 && reclaim==1 && other==0,what);
+                };
+                std::vector<tak::net::Command> bodyCmds;
+                {
+                    ClickScope outer(*this);
+                    rightClickOrder(bx,bz,false);
+                    bodyCmds=click_->cmds;
+                }
+                raised(bodyCmds,"a right-click on a body: the caster raises it, the mason reclaims it, the soldier nothing");
+                for (const auto& c:bodyCmds) apply(c);
+                check(!world_.unit(caster)->orders.empty() && world_.unit(caster)->orders.back().reviveKind==1,
+                      "the caster's order is a RESURRECT leg");
+                writableWorld().stop(caster);writableWorld().stop(mason);publish();
+                {
+                    ClickScope outer(*this);
+                    issueArmedOrder('c',bx,bz,false,false);
+                    bodyCmds=click_->cmds;
+                }
+                raised(bodyCmds,"an armed CLEAR on a body: the caster raises it, the mason reclaims it");
+            }
             SDL_SetModState(savedMod);
             std::fprintf(stderr,"PASS: reclaim fan-out to every selected reclaimer\n");
             return;
@@ -2392,8 +2523,11 @@
             const int flyer=spawn("zonhunt",1650,2100,0,0);
             selection_={builder,flyer};publish();
             rightClickOrder(2400,2400,false);
+            // The flyer keeps its unclamped place in the group (retail's
+            // 0x5214b0, sim/retailflyerspread.h): centre x 1725, offset -75,
+            // within sqrt(3000 x 2) px, so 2325 (the old +-60 clamp gave 2340).
             if(world_.unit(builder)->orders.back().x.toFloat()!=2400.f ||
-               world_.unit(flyer)->orders.back().x.toFloat()!=2340.f)
+               world_.unit(flyer)->orders.back().x.toFloat()!=2325.f)
                 throw std::runtime_error("shared group right-click changed independent flight destinations");
             writableWorld().stop(builder);writableWorld().stop(flyer);
             writableWorld().setPathfindingMode(savedPathfinding);

@@ -4,6 +4,7 @@
 #include "sim/detmath.h"
 #include "gaf/featureburntiming.h"
 #include "sim/footprint.h"
+#include "sim/retailflyerspread.h"
 #include "sim/retailpiecepose.h"
 #include <algorithm>
 #include <cctype>
@@ -50,11 +51,14 @@ static void applySelectionOrder(World& world, const TypeRegistry& reg, const tak
         const Unit* u = world.unit(id);
         return u && u->alive() && u->type && u->player == int(c.player) ? u : nullptr;
     };
-    // Offsets: the centroid of the live owned members (raw Fixed, truncated mean).
+    // Offsets: the centroid of the live owned members (raw Fixed, truncated mean),
+    // and (both offset shapes) retail's whole-pixel centre for the flyers' spread.
+    const bool spread = o.shape == OrderShape::Offsets || o.shape == OrderShape::FlyerOffsets;
     int64_t sx = 0, sz = 0, n = 0;
-    if (o.shape == OrderShape::Offsets)
+    FlyerGroupCentre air;
+    if (spread)
         for (const int32_t id : o.members)
-            if (const Unit* u = owned(id)) { sx += u->x.v; sz += u->z.v; ++n; }
+            if (const Unit* u = owned(id)) { sx += u->x.v; sz += u->z.v; ++n; air.add(u->x.v, u->z.v); }
     const bool legion = isLegionPathfinding(world.pathfindingMode());
     // The verbs whose template carries the click: their members share an area there.
     const bool point = o.tmpl.kind == tak::net::Cmd::Move || o.tmpl.kind == tak::net::Cmd::AttackMove ||
@@ -63,10 +67,17 @@ static void applySelectionOrder(World& world, const TypeRegistry& reg, const tak
     for (const int32_t id : o.members) {
         m.unitId = id;
         world.orderMember(id);
-        if (o.shape == OrderShape::Offsets && n) {
+        if (spread && n) {
             const Unit* u = owned(id);
             if (!u) continue;
-            if (!(legion && legionSharedClick(u->type->canFly, u->type->footX, u->type->footZ))) {
+            if (u->type->canFly) {
+                // Retail's flyer spread (sim/retailflyerspread.h), either shape.
+                int32_t gx = 0, gz = 0;
+                air.goal(u->x.v, u->z.v, cx0.v, cz0.v, gx, gz);
+                m.x = Fixed::raw(gx).toFloat();
+                m.z = Fixed::raw(gz).toFloat();
+            } else if (o.shape == OrderShape::Offsets &&
+                       !(legion && legionSharedClick(u->type->canFly, u->type->footX, u->type->footZ))) {
                 constexpr int64_t kReach = int64_t(60) << 16;
                 const int64_t ox = std::clamp<int64_t>(int64_t(u->x.v) - sx / n, -kReach, kReach);
                 const int64_t oz = std::clamp<int64_t>(int64_t(u->z.v) - sz / n, -kReach, kReach);
@@ -208,6 +219,14 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         case Cmd::ReclaimArea:
             if (owns(c.unitId)) { redirect(); world.reclaimArea(c.unitId, c.x, c.z, c.x2, c.z2, c.queue); }
             break;
+        case Cmd::Resurrect:
+            // Checked before anything is cancelled, so a caster that cannot
+            // raise that body keeps its work.
+            if (owns(c.unitId) && world.reviveKind(c.unitId, c.targetId)) {
+                redirect();
+                world.resurrect(c.unitId, c.targetId, c.queue);
+            }
+            break;
         case Cmd::Stance:
             if (owns(c.unitId)) world.setStance(c.unitId, c.targetId);
             break;
@@ -346,7 +365,7 @@ struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx
                  bool flamable = false; bool hasBurnAnim = false; uint32_t burnTicks = 0;
                  int spreadChance = 0; int sparkTicks = 0; std::string burnt;
                  // Corpse lifecycle (features/corpses).
-                 int decomposeTicks = 0; bool resurrectable = false;
+                 int decomposeTicks = 0; bool resurrectable = false; bool animatable = false;
                  bool isStone = false; bool isFrozen = false;
                  bool indestructible = false;
                  float hp = 0; std::string dead;
@@ -391,6 +410,7 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
                     std::transform(d.burnt.begin(), d.burnt.end(), d.burnt.begin(), ::tolower);
                     d.decomposeTicks = int(node.numberOr("decomposetime", 0) * 30);
                     d.resurrectable = node.numberOr("resurrectable", 0) != 0;
+                    d.animatable = node.numberOr("animatable", 0) != 0;
                     d.object = node.valueOr("object", "");
                     std::transform(d.object.begin(), d.object.end(), d.object.begin(), ::tolower);
                     d.isStone = node.numberOr("isstone", 0) != 0;
@@ -432,6 +452,7 @@ struct FeatTypeInterner {
         t.treeOrRock = di->second.treeOrRock;
         t.decomposeTicks = di->second.decomposeTicks;
         t.resurrectable = di->second.resurrectable;
+        t.animatable = di->second.animatable;
         t.reclaimable = di->second.reclaimable != 0;
         t.isStone = di->second.isStone;
         t.isFrozen = di->second.isFrozen;
@@ -1414,13 +1435,16 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     // Placed units from [Map Data][units].
     int spawned = 0;
     std::vector<std::pair<int, std::string>> initialOrders;   // (unit id, InitialMission)
-    std::unordered_map<std::string, int> idents;              // Ident= -> unit id
+    // Every [units] record in file order with the unit it made (0: none), for
+    // the order clauses that name a placed unit (Ident=, else Unitname).
+    std::vector<MissionScript::Placement> placements;
     if (const tdf::Node* md = gh->child("map data"))
         if (const tdf::Node* units = md->child("units"))
             for (const auto& key : units->childOrder) {
                 const tdf::Node& u = units->children.at(key);
                 std::string name = u.valueOr("unitname", "");
                 std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+                placements.push_back({u.valueOr("ident", ""), name, 0});
                 const UnitType* t = reg.find(name);
                 if (!t) continue;
                 float x = float(u.numberOr("xpos", 0)) * 16 + 8;
@@ -1430,6 +1454,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                 int id = world.spawn(t, x, z, ang, player);
                 if (id >= 0) {
                     ++spawned;
+                    placements.back().unitId = id;
                     if (auto* su = world.unit(id)) {
                         su->hp = Fixed::fromFloat(su->type->maxHp * float(u.numberOr("healthpercentage", 100)) / 100.0f);
                         // ManaPercentage: enemy casters open a mission with the mana
@@ -1441,20 +1466,13 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                     }
                     // InitialMission: the per-unit order queue in the SAME mini-language
                     // the god script's SetMission uses (move/patrol/attack/stance/wait/
-                    // ambush/reinforce). 4416 placed units across the shipped missions
+                    // ambush/build/board). 4416 placed units across the shipped missions
                     // carry one -- it IS the NPC choreography (patrol routes, ambush
-                    // holds, the mission-9 alchemist's scripted walk). Queued here and
-                    // applied by the script once the world is built.
+                    // holds, factory waves, troops aboard ships, the mission-9
+                    // alchemist's scripted walk). Queued here and applied by the
+                    // script once every placed unit exists, as retail's 0x514b40 does.
                     if (const std::string* im = u.value("initialmission"))
                         if (!im->empty()) initialOrders.push_back({id, *im});
-                    // Ident=<name>: 275 placed units are named, and a bodyguard's
-                    // `g <name>` clause resolves against these.
-                    if (const std::string* idn = u.value("ident"))
-                        if (!idn->empty()) {
-                            std::string k = *idn;
-                            std::transform(k.begin(), k.end(), k.begin(), ::tolower);
-                            idents[k] = id;
-                        }
                 }
             }
 
@@ -1513,7 +1531,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     }
     ms->setPlayerCommanders(std::move(commanders));
     ms->setInitialOrders(std::move(initialOrders));
-    ms->setIdents(std::move(idents));
+    ms->setPlacements(std::move(placements));
     world.setMission(std::move(ms));
     humanOut = human;
     std::fprintf(stderr, "setupMission: %s -- %d placed units, human=player%d\n",

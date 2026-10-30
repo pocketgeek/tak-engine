@@ -1284,8 +1284,10 @@ static void classicWaves(const char* root) {
 // Classic against Classic (P6): two Classic seats on Edmont's Field, the
 // Monarch not expendable (losing it loses the game), building and fighting
 // with nothing but the retail AI's own decisions, until one side wins or the
-// 90-minute cap (TAK_DUEL_MAP / TAK_DUEL_MINUTES pick another map or cap; on
-// Abnar's Terrace the same pairs take 59 to 227 minutes, its terraces leaving
+// 120-minute cap (90 until 0.9.12, whose retail help/repair approach left the
+// default Aramon v Veruna seed an even war that Aramon wins at 91.9 minutes;
+// over eight seeds 7 end within 90 minutes, mean 31.9) (TAK_DUEL_MAP /
+// TAK_DUEL_MINUTES pick another map or cap; on Abnar's Terrace the same pairs take 59 to 227 minutes, its terraces leaving
 // many members' reachability walks without a target). By hand: TAK_DUEL_PAIRS
 // ("0v2,1v3", factions 0-4) picks the pairs, TAK_DUEL_LEVEL gives the second
 // seat another level (2 = Normal), TAK_DUEL_TRACE prints both seats every
@@ -1314,7 +1316,7 @@ static void classicDuels(const char* root) {
     const ai::Difficulty levelB=std::getenv("TAK_DUEL_LEVEL") ? ai::Difficulty(std::clamp(std::atoi(std::getenv("TAK_DUEL_LEVEL")),0,6))
                                                               : ai::Difficulty::Classic;
     const ai::Profile& normalProfile=ai::builtinProfile(levelB);
-    const uint32_t minutes=std::getenv("TAK_DUEL_MINUTES") ? uint32_t(std::atoi(std::getenv("TAK_DUEL_MINUTES"))) : 90u;
+    const uint32_t minutes=std::getenv("TAK_DUEL_MINUTES") ? uint32_t(std::atoi(std::getenv("TAK_DUEL_MINUTES"))) : 120u;
     const uint32_t traceEvery=std::getenv("TAK_DUEL_TRACE") ? uint32_t(std::max(1,std::atoi(std::getenv("TAK_DUEL_TRACE"))))*1800u : 18000u;
     const uint32_t kCap=minutes*1800u;
     if (levelB==ai::Difficulty::Classic)

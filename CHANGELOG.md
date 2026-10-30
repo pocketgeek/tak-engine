@@ -68,12 +68,97 @@ their validation reports; both live in [`docs/`](docs/).
   targets, as in the original. An Iron Beak drops an
   egg only once it faces its target, as in the original; the egg hits a flyer
   below the Beak and falls past one at its own height.
+- **An attack flyer that kills its target circles the spot**, as in the
+  original game, instead of stopping there and landing: when the attack you
+  gave it was its last order and it is not on Hold Fire, it flies round the
+  target's last position at its weapon's range plus 160 pixels and, on Fire
+  At Will, attacks the next enemy that comes near, so an air raid carries on
+  after each kill. On Return Fire it circles without looking; with orders
+  queued behind the attack, or after an attack it picked up by itself while
+  idle, it goes on as before. Give it a new order to call it off.
+- **A big air group keeps its shape when moved**, as in the original game. A
+  right-click move, MOVE or PATROL gives each selected flyer the clicked point
+  plus its place in the group, as long as it is within about √(3000 × the
+  number selected) pixels of the group's centre (173 for 10 units, 548 for
+  100); a straggler farther out flies to the point itself. Flyers used to be
+  squeezed into a 120-pixel square, and MOVE and PATROL sent them all to one
+  spot. Ground units keep the engine's own spread (the original sends them
+  all to the point).
 - **A shot stopped in front of a castle counts as blocked.** A castle, keep,
   gate or other long building is hit through the ground it stands on, as in
   the original game, not anywhere within a circle of its length, so shots that
   land on a ridge or scenery in front of its long face count as blocked. An
   archer told to manoeuvre now walks to a clear line and hits it, where it
   used to fire into the crest for ever.
+- **Campaign units follow their mission orders as in the original game.**
+  The orders a mission gives its units were misread: units told to be
+  Offensive turned Passive and Passive ones Offensive; factories and builders
+  conjured their waves for free (one mission grew from 146 to 636 units in
+  30 seconds) instead of building them, and a builder's building appeared at
+  the start; troops meant to start aboard their ships stood on the shore;
+  guards and ambushers watched the wrong unit, and an ambush sprang when an
+  enemy came into sight instead of when it was hit; a unit told to attack
+  every unit of a type attacked one; a wait meant to end when the enemy comes
+  near never did; bosses lost their veterancy bonus (up to 9 times attack and
+  armour); enemy units with a "make selectable" order were handed to you at
+  the start (takx04's keep and castle among them); a unit told to
+  self-destruct after a delay did so at once; and one order could swallow the
+  next. Each is now read as the original reads it, so many missions play
+  differently, and most get harder.
+- **Builders help and repair as in the original game.** A builder told to
+  help build or repair (or doing it on guard or patrol) walks up until it
+  touches the unit, on the side it comes from, so helpers spread round a
+  building instead of all making for one spot south of it and working from
+  their build distance; once working, a builder that is pushed aside keeps
+  working. A helper no longer gives up after 8 seconds held up in a crowd,
+  only when no route gets it within its build distance, and an assist queued
+  behind other orders starts when its turn comes. A walking unit is no longer
+  repaired: the repair waits while it moves and is given up after a few
+  seconds of walking, and a patrolling builder gives a repair up once it is
+  its sight distance from its route (it used to measure the unit). A helper
+  that finishes a unit inside a factory walks out of it afterwards, so it
+  never blocks the door (not in the original).
+- **The dead rise only when you raise them**, as in the original game.
+  Right-click a body with Elsin, a Dark or Darkest Priest, a Chief Engineer,
+  a Dark Hand or a Spirit Wolf and it walks over and raises it (a right-click
+  used to make the priests and Elsin clear the body instead); the cursor
+  shows the raise, and a selected builder that cannot raise it clears it. A
+  caster clearing an area raises the bodies there that it can. Idle casters
+  no longer raise nearby bodies on their own, and idle builders no longer
+  clear every body around them: a body lies until it decays or is cleared or
+  raised by order. As in the original, a body of any side can be raised (it
+  rises as yours), and only a body that can be animated rises as a ghoul,
+  creauto, lich or wolf. Our AI levels order their idle casters to raise the
+  bodies beside them; the Retail AI never raises the dead, as in the original.
+- **The Harpy converts only with its mind-control spell**, as in the original
+  game: it no longer takes any enemy it stays beside for three seconds, or at
+  once below a quarter of its health, for free. Each charm costs 300 mana and
+  can fail, and the Harpy now casts on its own like the Mind Mage. **A charmed
+  unit keeps its damage** (it used to come over at half health or more) and,
+  as in the original, starts without its veteran stars. **A unit still being
+  built cannot be charmed.**
+- **Spells land when and where they do in the original game.** Earthquakes,
+  hail, area charm and freeze and the other Remote Effect spells are cast
+  ahead of a moving target, where the original aims them; for the slow ones
+  (Mind Mage, Lich, Injured Thirsha) that is up to a second and a half of the
+  target's walk. An Earthquake no longer strikes once too often: the Avatar of
+  Anu's and the Ghost of Garacaius's hit twice, not three times, and the
+  Acolyte's five times, not six. Hail at eight stones a second (the Ghost's
+  Ice Storms, the Fallen Angel's Wrath) falls as often as in the original:
+  19 and 21 hits, not 14 and 16. Spells hit a tick or two later than before,
+  as in the original, and the storms of the Spawn of Belial, Angel of Lihr,
+  Wrath of Tammuz and Weather Witch no longer wait 1.2 to 2.25 seconds before
+  setting off.
+- **A Divine Lodestone may cover the Standing Stones beside a sacred site**, as
+  in the original game: a lodestone's footprint ignores the stones and other
+  fixed scenery, so on Inner Circle it is no longer refused where it overlaps
+  them (at two of the four sites). Scenery that can be cleared, such as a tree,
+  is still cleared first.
+- **Flyers draw over the explosions, debris and shots of a fight below them**,
+  as in the original game, instead of under them; their shadows stay where
+  they were.
+- **An unfinished building under fire no longer takes its attacker as its
+  target**, as in the original game, so once finished it picks its own.
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
   at +10, 0.9.11 fell to -2 at about 2,700 units, with 219 ticks over 250 ms;
   0.9.12 held +9 to +10 to 3,160 units with no tick over 100 ms:
@@ -98,9 +183,9 @@ their validation reports; both live in [`docs/`](docs/).
   (and puts the sound device back to the system default at once). The
   Controls hint has a band of its own, so it no longer covers the last row (a
   right-click there used to unbind that key).
-- **Protocol 305:** the AI's sight-only targets, the combat fixes and the new
-  state check change what players compare, so this release does not play with
-  0.9.11 or earlier, nor their replays. A 0.9.11 client or server is turned away with a
+- **Protocol 305:** the AI's sight-only targets, the combat fixes, the raise
+  order and the new state check change what players compare, so this release
+  does not play with 0.9.11 or earlier, nor their replays. A 0.9.11 client or server is turned away with a
   *protocol version mismatch* message, and a 0.9.11 replay is refused with the
   version message.
 

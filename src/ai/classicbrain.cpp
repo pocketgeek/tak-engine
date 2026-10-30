@@ -64,6 +64,19 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
         return m;
     }
     if (u.orders.empty()) return m;
+    // A campaign script's order at the head (sim/mission.cpp): retail's Wait,
+    // WaitForAttack, AttackUType or SelfDestructFG mission, descriptor class
+    // 0x13 with its own flags (4; WaitForAttack 0x204, its watched unit the
+    // target; SelfDestructFG 0), no goal point and never the default
+    // mission's 0x2000: to the AI that unit is busy, as in retail.
+    if (tak::sim::World::scriptHold(u)) {
+        const auto& head = u.orders.front();
+        const auto* s = world.scriptedOrder(head);
+        m.any = true; m.cls = 19; m.kind = otherKind(19);
+        m.flags = head.waitAttack ? 0x204u : s && s->kind == tak::sim::ScriptedOrder::Kind::SelfDestruct ? 0u : 4u;
+        if (head.waitAttack && s) m.target = s->watched;
+        return m;
+    }
     // The current order is the first issued goal: path waypoints the sim splices
     // in ahead of it belong to it (retail's mission navigates on its own).
     size_t leg = u.orders.size() - 1;
@@ -79,6 +92,10 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     else if (o.unload) { m.cls = 13; m.flags = 0x1000400; }
     else if (o.guard) { m.cls = 5; m.flags = 0x3000200; m.target = o.targetId; }
     else if (o.targetId) { m.cls = 1; m.flags = 0x1000280; m.target = o.targetId; }
+    // VTOL_SEEKATTACK (row 0x5ebe7c: 0x1000600), a flyer's attack after its
+    // target is lost. World's seek never carries the target, so the mission
+    // ctor (0x4d6d66) has cleared the target bit 0x200, as for a dead one.
+    else if (o.seekAttack) { m.cls = 19; m.flags = 0x1000400; }
     else if (o.patrol) { m.cls = 7; m.flags = 0x3000410; }
     // A factory output's GetBuilt PARK: definition class 14, flags 0x200.
     else if (o.park) { m.cls = 14; m.flags = o.mission.flags; }
@@ -89,7 +106,9 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     bool automatic = true, leash = false;
     for (const auto& q : u.orders) {
         if (!q.goal) continue;
-        if (q.autoTarget) { leash = q.chaseLeashed; continue; }
+        // A flyer's auto attack has the flag only when it went in ahead of the
+        // default mission (aheadOfDefault), not ahead of VTOL_SeekAttack.
+        if (q.autoTarget && (q.aheadOfDefault || !u.type->canFly)) { leash = q.chaseLeashed; continue; }
         if (leash && !q.targetId && !q.patrol && !q.buildType && !q.guard && !q.load && !q.unload) { leash = false; continue; }
         automatic = false;
         break;

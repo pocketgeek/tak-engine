@@ -267,8 +267,8 @@ void selections(bool perUnit) {
     auto keyed = [&](const std::map<uint32_t, int>& c) {
         return c.size() == 1 && explicitArea(c.begin()->first) == !perUnit;
     };
-    // Flyers listed first, more than 60 px from the centroid on both axes:
-    // every flyer's point is the click + (60, 60).
+    // Flyers listed first, far from the centre on both axes (past retail's
+    // flyer reach, sqrt(3000 n) = 949 px): every flyer's point is the click.
     {
         Field f;
         f.perUnit = perUnit;
@@ -276,12 +276,13 @@ void selections(bool perUnit) {
         const auto sel = join(fly, f.block(kGround, 276, 20, 20, 23, 3));
         const auto b = f.click(sel, Verb::Move, kX, kZ);
         bool saturated = true;
-        for (int id : fly) saturated &= f.goalOf(id) == std::pair<float, float>{kX + 60, kZ + 60};
-        check(saturated && ticksSpanned(b) == (perUnit ? 5 : 1), "flyers first: saturated offsets, over 5 ticks (explicit: 1)");
+        for (int id : fly) saturated &= f.goalOf(id) == std::pair<float, float>{kX, kZ};
+        check(saturated && ticksSpanned(b) == (perUnit ? 5 : 1), "flyers first: out of reach at the click, over 5 ticks (explicit: 1)");
         check(oneConvoy(f.convoysOf(sel), sel.size(), "flyers first") && keyed(f.convoysOf(sel)),
               "flyers first (saturated): one convoy");
     }
-    // Half the flyers at +60/+60, half at -60/-60, listed first.
+    // Half the flyers far up and left, half far down and right, listed first:
+    // out of retail's reach, all at the click (they used to take +60/+60 and -60/-60).
     {
         Field f;
         f.perUnit = perUnit;
@@ -291,8 +292,8 @@ void selections(bool perUnit) {
         f.click(sel, Verb::Move, kX, kZ);
         std::set<std::pair<float, float>> offsets;
         for (int id : join(a, c)) offsets.insert({f.goalOf(id).first - kX, f.goalOf(id).second - kZ});
-        check(offsets == std::set<std::pair<float, float>>{{-60.f, -60.f}, {60.f, 60.f}},
-              "opposite corners: flyers at +60/+60 and -60/-60");
+        check(offsets == std::set<std::pair<float, float>>{{0.f, 0.f}},
+              "opposite corners: flyers out of reach at the click");
         check(oneConvoy(f.convoysOf(sel), sel.size(), "opposite corners"), "opposite corners: one convoy");
     }
     // An all-air selection over 64 (no anchor ever per unit; an explicit order anchors on its click).

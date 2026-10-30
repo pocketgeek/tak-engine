@@ -19,6 +19,7 @@
 #include "sim/retailexploration.h"
 #include "sim/retailweaponswitch.h"
 #include "sim/retailflight.h"
+#include "sim/retailairseek.h"
 #include "sim/retailairtoair.h"
 #include "sim/retailballistic.h"
 #include "sim/retailwind.h"
@@ -174,6 +175,7 @@ struct Weapon {
     float buildUp = 0;       // builduptime: channel before the effect lands
     int32_t buildUpTicks = 0; // native truncation of seconds * 30
     float decay = 0;         // decaytime: fade after it lands
+    int32_t decayTicks = 0;  // native truncation of seconds * 30 (52e780)
     float duration = 0;      // wandering: seconds the storm roams
     int32_t durationTicks = 0, variationTicks = 0;
     int32_t maxVariation = 0;// maxvariation (readInt): wander half-width, px/tick
@@ -230,7 +232,12 @@ struct Weapon {
     bool usesVeteranShotModel(int sourceVeteran) const {
         return !veteranShotModel.empty() && sourceVeteran >= veteranLevel;
     }
-    bool  nimbus = false;     // nimbus: faction caster effect and conditional buildup delay
+    bool  nimbus = false;     // nimbus: faction caster effect and conditional launch delay
+    // nimbustime (WeaponType+0x7c, seconds * 30 truncated): the launch delay a
+    // nimbus caster with nimbus art adds to the shot's start tick. No shipped
+    // weapon defines it, so retail's delay is always 0 -- builduptime is a
+    // Remote Effect timer only (pushed once, by 52e780).
+    int32_t nimbusTicks = 0;
     bool  hasBoltColor = false;
     uint8_t inner[3] = {255, 255, 255};    // innercolor: lightning bolt core
     uint8_t middle[3] = {200, 230, 255};   // middlecolor
@@ -258,6 +265,7 @@ struct Weapon {
     int   spriteCount = 24;     // spritecount: sprites arranged around each ring
     int32_t shakeMag = 0;       // shakemagnitude (readInt): camera-shake intensity
     float shakeDur = 0;         // shakeduration: seconds the shake lasts
+    int32_t shakeTicks = 0;     // the same, ticks truncated (WeaponType+0x84): Earthquake pulse period
     bool  fireStarter = false;  // firestarter: leaves ground fire at the impact
     // Precomputed integer damage (default * multiplier, truncated at load),
     // keyed by lowercased category token (e.g. "monarch", "dragon", "fort").
@@ -483,7 +491,6 @@ struct UnitType {
     float manaRegen = 0;      // manarechargerate: personal mana regained per second
     bool  canReclaim = false; // canreclaim: builder can reclaim corpses/features for mana
     bool  canResurrect = false;   // canresurrect: can revive nearby corpses
-    bool  canCapture = false;     // cancapture: can convert an enemy unit to its player
     bool  canCloak = false;       // cancloak
     float cloakCost = 0;          // cloakcost: the unit's OWN mana/sec while cloaked and idle
     float cloakCostMove = 0;      // cloakcostmoving: the same while moving (default cloakcost/30)
@@ -658,6 +665,33 @@ struct ManaBuildArea {
     std::vector<uint32_t> visited;
 };
 
+// A campaign mission's order (SetMission / InitialMission, sim/mission.cpp)
+// whose state does not fit in an Order: the World keeps it in a table and
+// the Order holds its 1-based index (Order::scripted). Retail runs these as
+// missions with their own parameters (icd 0x513fb0 builds them):
+//  - AttackType  `a TYPE`, AttackUType (401580): attack the nearest of a
+//    type, again and again, until none is left. `type`.
+//  - Train       `b TYPE N` on a factory, BuildingBuild (401c20): build
+//    `count` of `type`, then go on. `count` counts down as they finish.
+//  - WaitAttack  `wa [NAME]`, WaitForAttack (4017a0): hold until `watched`
+//    is hit (event 0x10) or gone (0x08). `heard` is its attackedTick when
+//    the order was given: retail's listener collects hits from then on.
+//  - WaitNear    `w F N`, Wait (401480) with a radius: hold `count` ticks,
+//    looking every rand(7)+7 ticks for a visible enemy within `radius` px.
+//  - SelfDestruct `d`, SelfDestructFG (4017e0, +0x4e 1): 30000 damage of
+//    type 5 to itself when the order comes up.
+// An index stays valid while an order refers to it (addScriptedOrder
+// compacts a full table and renumbers the orders that refer to it).
+struct ScriptedOrder {
+    enum class Kind : uint8_t { AttackType, Train, WaitAttack, WaitNear, SelfDestruct };
+    Kind kind = Kind::AttackType;
+    const UnitType* type = nullptr;
+    int32_t count = 0;
+    int32_t watched = 0;
+    uint32_t heard = 0;
+    int32_t radius = 0;
+};
+
 // Field placement is part of the design (WE D2), checked by the static_asserts
 // after the struct: a new field must say which cache line it belongs on.
 //  - Line 0 (bytes 0-63) holds everything the per-tick order predicates read:
@@ -780,6 +814,13 @@ struct alignas(64) Order {
     // lane in front of the arriving ground (3); sticky for the order.
     // stationRefTick 0: no reference yet. Hashed with a tag when set.
     uint8_t stationFree = 0;
+    // A ground RepairUnit's give-up count (0x407190, mission +0x52): 1 for
+    // each look at a moving target, 3 when it is in reach or starts moving
+    // while worked on; past 10 the repair ends. Never reset while the job
+    // lasts. Cold, but in line 1's one-byte pad before missionRadius (the
+    // cold tail's pads hold the mission, revive and seek fields); hashed on
+    // repair legs.
+    uint8_t repairLooks = 0;
     uint32_t missionRadius = 0;
 
     // ---- lines 2+: the rest ------------------------------------------------
@@ -803,9 +844,18 @@ struct alignas(64) Order {
     RetailMissionState transportMission{2};
     uint32_t transportApproachAttempts = 0;
     Fixed transportX, transportY, transportZ;
+    // A build leg's site centre. A ground HelpBuild leg (helpSite) keeps its
+    // site's centre for the failed approach's reach test; a ground RepairUnit
+    // leg keeps where its target stood when the approach was installed
+    // (mission +0x22), for the look that re-aims it once that cell changes.
     Fixed buildX, buildZ;
     uint32_t hoverAttackRefresh = 0;
-    Fixed hoverAttackTargetX, hoverAttackTargetZ;
+    // The attack mission's point (mission +0x22) on a flyer's attack order:
+    // the target's position as AirToGroundHover last read it (every tick),
+    // as AirToGround last read it (41c13c, each wake) or AirToAir's led
+    // SweetSpot (51aa50, each stage-2 wake). A lost target's VTOL_SEEKATTACK
+    // circles it (retailAirLostTarget). Zero until first read.
+    Fixed attackPointX, attackPointZ;
     // AirToGround's mission +0x4e (retailAirToGround, which runs on
     // `mission`): 1 once a run has brought the flyer within half its range
     // of the target; stage 7 counts wakes off the map on it.
@@ -850,6 +900,11 @@ struct alignas(64) Order {
     bool attackChased = false; // Attack_Chase: walked under this order (above)
     uint16_t chaseLeash = 0;
     RetailGroundPoint chaseOrigin{};
+    // A campaign mission's order with state of its own: the 1-based index of
+    // its World::scriptedOrders_ entry (ScriptedOrder), 0 for every other
+    // order. In the pad before reclaimCountdown, so the cold tail stays five
+    // lines. Hashed with its entry when set.
+    uint16_t scripted = 0;
     // RECLAIM's work countdown (406250 mission +0x4e): trunc(energy + 15) at
     // arrival, less 2 every two-tick wake (retailReclaimWork). Its stages run
     // on `mission`. Hashed on reclaim legs.
@@ -863,17 +918,40 @@ struct alignas(64) Order {
     // (in the pad beside reclaimHeading so the cold tail stays five lines).
     // Hashed when set.
     bool mixedSlots = false;
-    // The approach of a HelpBuild (World::assist, or one a guarding builder
-    // put ahead of its guard): the unfinished unit it walks to. The leg goes
-    // when that job ends, however it ends. Hashed with a tag when set.
+    // A RESURRECT leg (retail 0x4068b0, VTOL_Resurrect 0x41fe70): the leg's
+    // reclaimFeat is the corpse (negative id), and this is the kind the order
+    // was issued as -- 1 resurrect, 2 animate (retail mission +0x56 = 0 / 1);
+    // 0 = an ordinary RECLAIM. Its walk, turn and stance wait are RECLAIM's
+    // (tickReclaim), then the revive channel (tickAbilities). In the pad
+    // beside mixedSlots. Hashed on reclaim legs when set.
+    uint8_t reviveKind = 0;
+    // A HelpBuild (World::assist, or one a guarding builder put ahead of its
+    // guard): the unfinished unit it helps. A ground builder's leg is the job
+    // itself, run on `mission` with the rectangle controller (tickGroundHelp);
+    // a flyer's is only its approach. The leg goes when that job ends, however
+    // it ends. Hashed with a tag when set.
     int helpSite = 0;
     // A flyer's guard (VTOL_Follow 0x418860, World::tickFlyingGuard): its
     // orbit angle around the guarded unit (mission +0x4e, read as a word).
     // Drawn once (rand(0x10000)) when the guard starts, stepped back by
     // 0x4000 + rand(0x2000) each time the orbit point is reached. The guard
     // runs on `mission` (stage 2 once started; its deadline is the next look).
-    // Hashed with a tag once the mission runs.
+    // Hashed with a tag once the mission runs. VTOL_SeekAttack's orbit angle
+    // (seekAttack) lives here too: a seek is never a guard.
     uint16_t guardOrbitAngle = 0;
+    // VTOL_SeekAttack (4192f0, tickSeekAttack): what a flyer's attack order
+    // becomes when its target is lost (retailAirLostTarget). It circles x/z,
+    // the attack's last point, on `mission`, its orbit angle in
+    // guardOrbitAngle (mission +0x4e). targetId stays 0. In the
+    // tail pad after guardOrbitAngle. Hashed with a tag.
+    bool seekAttack = false;
+    // A flyer's auto attack put ahead of its default mission (VTOL_Standby,
+    // which World does not keep in the queue): acquired idle by the standby's
+    // scan or the hit response, or AirToAir's retarget of such an attack. In
+    // retail the attack takes that mission's run-time flag 0x2000 (4d7709)
+    // and is not the last mission (+0x66), so a lost target ends it without
+    // VTOL_SEEKATTACK. Hashed with a tag when set.
+    bool aheadOfDefault = false;
 };
 // Which line each field sits on (WE D2). Moving a field across a line, or
 // growing line 0/1 past 64 bytes, is a compile error here. (offsetof on a type
@@ -1158,7 +1236,6 @@ struct alignas(64) Unit {
                            // (hold fire: no auto-acquire, only fights when ordered)
     int lastHitPlayer = -1; // score attribution captured at impact; mission script input
     int   lastHitBy = 0;   // id of the unit that last damaged this one (for kill XP)
-    int32_t captureProg = 0; // canCapture units: ticks spent charming the current target
     // Blocked shots (engine deviation, see World::noteShotImpact): the target
     // whose last shots from here struck terrain or scenery this unit cannot
     // destroy, short of the target; how many in a row; the whole-pixel spot
@@ -1203,8 +1280,11 @@ struct alignas(64) Unit {
     // A reclaim finished this body: it fades out (corpseUntil is the end of the
     // fade) and can no longer be reclaimed or raised. Hashed.
     bool corpseFading = false;
-    int reviveTarget = 0;    // priest: dead unit id being channelled back (0 = none)
-    int8_t reviveMode = 0;   // 1 = resurrect (own corpse), 2 = animate (raise ghoul)
+    // The revive channel of the current RESURRECT leg (Order::reviveKind):
+    // the dead unit being raised (0 = none) and its kind, 1 resurrect (the
+    // body's own unit) or 2 animate (the caster's animatetype).
+    int reviveTarget = 0;
+    int8_t reviveMode = 0;
     // Retail mission +0x52: the channel's work left, 16.16. Each tick takes the
     // owner's allocation x 65536 (icd 0x406d3b); the revive completes at <= 0.
     // Hashed while channelling.
@@ -1344,6 +1424,12 @@ struct alignas(64) Unit {
     // World::productionOwnerOf, which checks the producer still holds it, so a
     // stale value is harmless and it is not hashed.
     int productionOwner = 0;
+    // A campaign mission's fixed veterancy multiplier (SetMission/InitialMission
+    // `v F`, unit +0xf4, set by icd 0x5148e1). Not 0: getMult (0x5193c0) answers
+    // it instead of 1 + level/10 and getLevel (0x519310) answers 10, so the unit
+    // shows full rank and kills no longer change either. A noveteran type
+    // ignores it, as both helpers test that bit first. Hashed when set.
+    float vetOverride = 0.0f;
     const std::string& displayName() const { return scenarioName.empty() ? type->name : scenarioName; }
     bool alive() const { return deadFor < 0; }
     int32_t maximumHp() const { return retailSite ? int32_t(retailSite->type.maxHp) : type->maxHp; }
@@ -1353,7 +1439,11 @@ struct alignas(64) Unit {
     // Veterancy stat multiplier (retail: base 1.0, +10% per level, level capped
     // at 10 => up to 2.0x). Scales attack up, armor up (less damage taken), and
     // reload down (faster). Verified against KINGDOMS.icd. See retail-engine-internals.
-    float vetMul() const { return 1.0f + 0.10f * float(veteran); }
+    // A mission's `v F` (vetOverride) replaces it, as getMult 0x5193c0 does.
+    float vetMul() const {
+        if (vetOverride != 0.0f && type && !type->noVeteran) return vetOverride;
+        return 1.0f + 0.10f * float(veteran);
+    }
     bool moving() const { return alive() && (speed > Fixed::fromFloat(1.0f / 30.0f) || !orders.empty()); }
     // Actually translating (for the walk animation), vs standing with an
     // attack/queued order.
@@ -1477,6 +1567,11 @@ struct FeatType {
     // and whether a priest can raise it (retail decomposetime / resurrectable).
     int  decomposeTicks = 0; // TDF decomposetime * 30 (0 = never rots)
     bool resurrectable = false;
+    // TDF animatable=1: a cananimate caster may raise it as its animatetype.
+    // Retail's feature flag 0x1000 (loader 0x494223; tested by 0x496fd0), apart
+    // from resurrectable's 0x800 (0x497100). Every shipped animatable corpse is
+    // also resurrectable, not the other way round.
+    bool animatable = false;
     bool reclaimable = false;
     bool isStone = false;    // TDF isstone=1 (statue: client tints it stone-gray)
     bool isFrozen = false;   // TDF isfrozen=1 (client tints it ice-blue)
@@ -1487,6 +1582,18 @@ struct FeatType {
     std::string object;      // TDF object= (3D corpse mesh; client visual)
     bool treeOrRock = false; // see RetailMapFeatureType::treeOrRock
 };
+
+// What a caster does with a body, retail's raise resolver (0x4de530 modes 1
+// and 12, and 0x4068b0 stage 0): resurrect when its type has canresurrect and
+// the body is resurrectable (0x497100), else animate when it has cananimate
+// (and an animatetype) and the body is animatable (0x496fd0). 0 = neither, and
+// a reclaimer reclaims it instead. There is no owner test: a caster raises a
+// body of any side, as its own unit.
+inline uint8_t reviveKindFor(const UnitType& caster, const FeatType& corpse) {
+    if (caster.canResurrect && corpse.resurrectable) return 1;
+    if (caster.canAnimate && caster.animateType && corpse.animatable) return 2;
+    return 0;
+}
 
 struct SacredSite {
     int x=0,z=0,fx=1,fz=1; // feature-plane origin and footprint, in cells
@@ -2181,6 +2288,15 @@ public:
     // queue = append to its orders, for an area drag). Retail Reclaim (406250).
     void reclaim(int builderId, int featureId, bool queue);
     void reclaimArea(int builderId, float x0, float z0, float x1, float z1, bool queue);
+    // Order `casterId` to raise the body of dead unit `corpseId` (retail
+    // RESURRECT 0x4068b0, or VTOL_RESURRECT 0x41fe70 for a flyer): walk to it,
+    // then channel a resurrect or an animate (reviveKind). A no-op when the
+    // caster cannot raise that body (reviveKind is 0).
+    void resurrect(int casterId, int corpseId, bool queue);
+    // The kind a resurrect order from `casterId` on dead unit `corpseId` would
+    // be (reviveKindFor): 0 when either is not one, the body is gone or fading,
+    // or the caster cannot move.
+    uint8_t reviveKind(int casterId, int corpseId) const;
     // Order a mobile builder to repair damaged friendly `targetId` (restores HP at
     // the builder's work rate, draining mana proportionally). tickRepair runs it.
     void repair(int builderId, int targetId, bool queue);
@@ -2284,7 +2400,7 @@ public:
         features_.clear();
         burnSequence_ = 0; fadingFeatures_ = 0;
         mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
-        installedMapFeatures_.clear();
+        installedMapFeatures_.clear();sacredUnderlay_.clear();
         explorationHeights_.clear();navigationExplored_.clear();viewCounts_.clear();deathSights_.clear();
         restoredNavigationViewer_=-1;
         featureIdx_.clear();
@@ -2608,6 +2724,15 @@ public:
     // and then clear the whole queue, silently deleting everything the player had
     // lined up behind it.
 
+    // A mission script's hold at the head (a wait, a WaitForAttack, or an
+    // order with a mission of its own, Order::scripted): no goal of its own,
+    // and the leg behind it must not start (route, approach) until it ends --
+    // a route installed for that leg would replace the hold with waypoints.
+    static bool scriptHold(const Unit& u) {
+        if (u.orders.empty()) return false;
+        const Order& o = u.orders.front();
+        return o.wait > 0 || o.waitAttack || o.scripted;
+    }
     // Index of the last waypoint of the leg being worked on right now. Falls back
     // to the whole queue for unmarked orders (mission scripts, older saves).
     static size_t currentLeg(const std::vector<Order>& o) {
@@ -2670,12 +2795,44 @@ public:
     // patrol mission adds the return point where the unit then stands (see
     // Order::patrolOpen); otherwise it joins the existing loop.
     void queuePatrol(int unitId, float x, float z);
-    // Queue a timed hold (SetMission "w N"): the unit stands still for `seconds`
-    // before the next queued order runs.
-    void orderWait(int unitId, float seconds, bool queue);
-    // Queue an ambush hold (SetMission "wa"): the unit stands still until a non-allied
-    // unit comes within its sight, then the next queued order runs.
-    void orderWaitAttack(int unitId, bool queue);
+    // Queue a timed hold (SetMission "w F"): the unit stands still for `seconds`
+    // before the next queued order runs. With a radius ("w F N", N cells times
+    // 16 px) it also ends once a visible enemy is that close (retail Wait 401480
+    // with +0x52 set: it looks every rand(7)+7 ticks, see ScriptedOrder).
+    void orderWait(int unitId, float seconds, bool queue, int32_t radius = 0);
+    // Queue a WaitForAttack hold (SetMission "wa [NAME]", retail 4017a0): the unit
+    // stands still until `watched` (0 = itself) is hit or gone, counting hits
+    // from the moment the order is given; then the next queued order runs.
+    void orderWaitAttack(int unitId, bool queue, int watched = 0);
+    // Queue an attack on every unit of `type` not owned by this unit's player,
+    // nearest (with retail's random spread) first, until none is left
+    // (SetMission "a TYPE", AttackUType 401580).
+    void orderAttackType(int unitId, const UnitType* type, bool queue);
+    // Queue production on a factory (SetMission "b TYPE N", BuildingBuild
+    // 401c20): when it comes up, `count` of `type` join the build queue, and the
+    // order holds the queue behind it until they are built. 0 builds nothing.
+    void orderTrain(int factoryId, const UnitType* type, int count, bool queue);
+    // Queue a self-destruct (SetMission "d", SelfDestructFG): when it comes up
+    // the unit dies as a Ctrl+D countdown ends, with no wreck and no credit.
+    void orderSelfDestruct(int unitId, bool queue);
+    // Put `passengerId` straight into `transportId`'s hold (InitialMission
+    // "i NAME", retail 51b4f0): no pickup, and its later orders wait aboard.
+    bool embarkInto(int passengerId, int transportId);
+    // Drop a unit's queued route search (orders given to a unit still aboard
+    // ask for their routes when they come up after the unload).
+    void cancelRoute(int unitId) { if (Unit* u = unit(unitId)) cancelPath(*u); }
+    // SetMission "o A" (Standing_UnitOrder 0x5198a0: 2 offensive, 1 defensive,
+    // 0 passive, both fields at once) and "o A B" (move field A and fire field
+    // B directly, the shown order unchanged). Retail checks only that the unit
+    // lives: no unitstandorders gate and no effect on its missions.
+    void scriptStandingOrder(int unitId, int order);
+    void scriptStandingFields(int unitId, int move, int fire);
+    // SetMission "v F": the fixed veterancy multiplier (Unit::vetOverride); 0 ends it.
+    void setVeterancyOverride(int unitId, float multiplier);
+    // The state of a mission order (Order::scripted), or nullptr.
+    const ScriptedOrder* scriptedOrder(const Order& o) const {
+        return o.scripted && o.scripted <= scriptedOrders_.size() ? &scriptedOrders_[o.scripted - 1u] : nullptr;
+    }
     void guard(int unitId, int targetId, bool queue);
     void stop(int unitId);
     // Self-destruct a living unit (Ctrl+D via the command path; no kill credit).
@@ -2810,6 +2967,10 @@ private:
     // able to move and idle or guarding (its guard resumes afterwards).
     bool yieldsToSite(const Unit& k, int player) const;
     void clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, Fixed z);
+    bool pointOutside(const Unit& k, int left, int right, int top, int bottom, int rx, int rz,
+                      const std::array<bool,4>& avoid, const std::vector<std::array<int,4>>& taken,
+                      int& x, int& z) const;
+    void leaveFactoryYard(int helperId);
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
     void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
     bool tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept=false,const WeaponAimSolution* given=nullptr);
@@ -2924,6 +3085,20 @@ private:
     void tickReclaim(Unit& b);
     // 406250 stage 0: install the reclaim leg's rectangle controller.
     void prepareReclaimApproach(Unit& u);
+    // Ground HelpBuild (405cf0) and RepairUnit (407190) on their legs: stage 0
+    // installs the rectangle controller round the target's footprint (the
+    // dispatch, like prepareReclaimApproach); tickGroundHelp/tickGroundRepair
+    // answer the approach events and do the work, measuring no distance once
+    // it has started. A leg that is not current waits from its start.
+    void prepareHelpApproach(Unit& u);
+    void prepareRepairApproach(Unit& u);
+    void installRepairApproach(Unit& u, Order& leg, const Unit& target);
+    void tickGroundHelp(Unit& b, Unit& site, size_t leg, float dt);
+    void tickGroundRepair(Unit& b, Unit& target, float dt);
+    bool constructionWork(Unit& b, Unit& site, float dt);
+    // The target's MoveRate tier (+0x130 & 0xc, 4db350) is not stopped: it
+    // walks, flies or turns. A unit without a script: its speed.
+    bool moveRateMoving(const Unit& t) const;
     void finishReclaim(Unit& b,int target);
     void tickFeatureFades();
     void tickReclaimArea(Unit& b);
@@ -3115,6 +3290,15 @@ private:
     // not hashed -- but it MUST be identical on every peer, which it is: the table
     // is built in a deterministic order from the same data.
     std::vector<uint8_t> obst_;   // shared obstacle overlay (see NavGrid::setObstacles)
+    // A sacred yard (S) may stand on fixed obstacles (placementCheck): footprint
+    // origin cell -> the overlay cells already blocked when it was stamped, so its
+    // removal (blockFoot) leaves those obstacles blocked. Not hashed: derived from
+    // the same placements on every peer, and only the overlay reads it.
+    std::map<int,std::vector<int>> sacredUnderlay_;
+    // A blocker the sim can remove later (a registered feature, or a wreck).
+    bool removableBlockerAt(int gx,int gz) const;
+    // The map placement cell still holds a blocking feature or a 0xFFFC cell.
+    bool fixedBlockerAt(int gx,int gz) const;
     std::vector<NavGrid> navClasses_;
     std::unordered_map<const UnitType*, int> navIdx_;
     struct SearchGradePlane {
@@ -3263,6 +3447,9 @@ private:
     void tickHoverAttack(Unit& u, const Unit& target, const Weapon* weapon, int slot);
     void tickAirToGround(Unit& u, const Unit& target, const Weapon* weapon);
     void tickAirToAir(Unit& u, const Unit& target, const Weapon* weapon);
+    bool seekLostTarget(Unit& u, const Unit* target, bool targetLive);
+    void tickSeekAttack(Unit& u, bool carriesTarget = false);
+    void flyMissionGoal(Unit& u, Order& order);
     void tickFlightPatrol(Unit& u);
     int flightGround(const Unit& u) const;
     bool flightLandingFree(const Unit& u, Fixed x, Fixed z) const;
@@ -3455,6 +3642,19 @@ private:
     int creditedOwner(int id) const;
     void compactRetiredUnits();
     std::unique_ptr<MissionScript> mission_;   // optional campaign mission runner
+    // Mission orders' state (ScriptedOrder), indexed by Order::scripted - 1.
+    // Appended in order-creation order on every peer; hashed through the
+    // orders that refer to it. Full (16-bit index), it is compacted: entries
+    // no order refers to go and the rest are renumbered in unit order.
+    std::vector<ScriptedOrder> scriptedOrders_;
+    uint16_t addScriptedOrder(const ScriptedOrder& s);
+    void compactScriptedOrders();
+    // The head order's mission when it is a scripted AttackType, Train or
+    // SelfDestruct (before the unit's combat), and the scripted waits' ends.
+    void tickScriptedOrder(Unit& u);
+    bool scriptedWaitDone(Unit& u);
+    // A factory finished a unit of `t`: a scripted Train at its head counts it.
+    void noteScriptedProduction(Unit& producer, const UnitType* t);
     std::unique_ptr<ScenarioScript> scenario_; // optional .crt trigger runner
     std::vector<uint8_t> forcedDefeat_;        // scenario Victory/Defeat: forced-defeated slots
     std::vector<int> justDied_;                // unit ids that died this tick (mission/scenario hook)
@@ -3538,8 +3738,10 @@ private:
     // Resolve a reclaim target to its installed plane anchor and footprint
     // (a corpse: its corpse feature). False when it is gone.
     bool reclaimTargetFootprint(int target,int& x,int& z,int& fx,int& fz,float& energy) const;
-    // Retail's per-wake re-lookup (4930d0 -> 496ea0): still reclaimable.
-    bool reclaimTargetValid(int target) const;
+    // Retail's per-wake re-lookup (4930d0 -> 496ea0): still reclaimable. For
+    // a RESURRECT leg (`revive`) the body need only still lie there: the kind
+    // it was ordered as depends on the two types alone, which do not change.
+    bool reclaimTargetValid(int target,bool revive=false) const;
     void swapFeature(Feature& f, int newType);   // chain stage swap (burnt/dead)
     void tickBurning();
     std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_
@@ -3796,13 +3998,10 @@ private:
     // under the refusal caps, and re-asks on the randomised deadlines -- the failed
     // shape (rand(8)+rand(8)+30 x halfCellTicks, icd 0x4e535d) probes gently for
     // ever, which is both the crowd-convergence loop and the cliff-wedge behaviour.
-    // Indices into units_ of the bodies eligible to be raised or reclaimed this tick,
-    // in ascending unit id. Rebuilt once per corpse pass; see the note there.
-    std::vector<uint32_t> corpseIdx_;
-    // ...and of the units the caster loop visits (alive, able to act, idle,
-    // a caster or a reclaimer), ascending.
+    // Indices into units_ of the units channelling a revive this tick
+    // (tickAbilities), ascending.
     std::vector<uint32_t> actorIdx_;
-    struct AbilityChunk { std::vector<uint32_t> corpses, actors; };
+    struct AbilityChunk { std::vector<uint32_t> actors; };
     std::vector<AbilityChunk> abilityChunks_;   // tickAbilities on the SimPool (WE E4.3)
     // The post-loop passes go to the SimPool from this many units.
     static constexpr size_t kPostMinParallel = 2048;

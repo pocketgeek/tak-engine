@@ -8,6 +8,7 @@
 #include "client/cursorpath.h"
 #include "client/cursorrange.h"
 #include "client/friendlyorder.h"
+#include "sim/retailflyerspread.h"
 #include "client/reclaimpick.h"
 #include "client/gpuvram.h"
 #include "client/renderdriver.h"
@@ -27,6 +28,21 @@
 // methods stay inline in the header. Grouping is by name heuristic.
 
 namespace {
+    // A frame position as the sim's raw 16.16 (the frame holds Fixed::toFloat).
+    int32_t flyerRaw(float v) { return tak::sim::Fixed::fromFloat(v).v; }
+
+    // Retail's flyer spread (sim/retailflyerspread.h): the goal of a flyer at its
+    // frame position for a click at (wx, wz), the same integer 16.16 arithmetic the
+    // sim gives an explicit order's flyers.
+    template<class Unit>
+    void flyerSpreadGoal(const tak::sim::FlyerGroupCentre& air, const Unit& u, float wx, float wz,
+                         float& gx, float& gz) {
+        int32_t x = 0, z = 0;
+        air.goal(flyerRaw(u.x), flyerRaw(u.z), flyerRaw(wx), flyerRaw(wz), x, z);
+        gx = tak::sim::Fixed::raw(x).toFloat();
+        gz = tak::sim::Fixed::raw(z).toFloat();
+    }
+
     int32_t unloadDestinationHeight(const tak::tnt::Map& map,float x,float z) {
         const int height=map.heights.empty() ? 0 : tak::sim::retailTerrainHeight(
             tak::sim::Fixed::fromFloat(x).v,tak::sim::Fixed::fromFloat(z).v,
@@ -216,11 +232,14 @@ namespace {
                 float d=0;
                 if (unitUnderCursor(u,mouseX_,mouseY_,&d) && d<best) {best=d;enemy=u.id;}
             }
-            // A reclaimer clicking directly on a reclaimable feature (with no enemy
-            // there) reclaims just that one -- retail's single Reclaim.
-            if (enemy < 0 && haveReclaimer()) {
-                if (const auto fid = reclaimTargetAt(wx, wz)) {
-                    issueReclaimFeature(*fid, queue);   // every selected reclaimer
+            // A click directly on a body or a reclaimable feature (with no enemy
+            // there): each caster raises the body if it can, each other
+            // reclaimer reclaims -- retail's RESURRECT / single RECLAIM.
+            if (enemy < 0) {
+                const int body = raiseTargetAt(wx, wz);
+                const auto fid = haveReclaimer() ? reclaimTargetAt(wx, wz) : std::nullopt;
+                if (body || fid) {
+                    issueRaiseOrReclaim(body, fid, queue);
                     return;
                 }
             }
@@ -251,8 +270,9 @@ namespace {
                 const bool legion=tak::sim::isLegionPathfinding(worldTables().pathfindingMode());
                 float cx = 0, cz = 0;
                 int n = 0;
+                tak::sim::FlyerGroupCentre air;
                 for (int id : selection_)
-                    if (const auto* u = frameUnitP(id)) { cx += u->x; cz += u->z; ++n; }
+                    if (const auto* u = frameUnitP(id)) { cx += u->x; cz += u->z; ++n; air.add(flyerRaw(u->x), flyerRaw(u->z)); }
                 if (n) { cx /= float(n); cz /= float(n); }
                 for (int id : selection_) {
                     const auto* u = frameUnitP(id);
@@ -260,18 +280,26 @@ namespace {
                     tak::net::Command c;
                     c.kind = tak::net::Cmd::Move;
                     c.unitId = id;
-                    // Legion owns footprint-aware group spreading. Per-unit click
-                    // offsets would split one selection into unrelated goals.
-                    // Flying units retain their independent flight controller.
-                    // Legion plans footprints up to 8 in every surface domain.
+                    // Flyers take retail's spread (0x5214b0, sim/retailflyerspread.h):
+                    // the click plus their unclamped offset from the selection's
+                    // centre within sqrt(3000 n) px, else the click -- a big air
+                    // group keeps its shape. Ground units keep OUR +-60 px per-axis
+                    // spread (retail sends them all to the click; a deliberate
+                    // difference), except that Legion owns footprint-aware group
+                    // spreading: per-unit click offsets would split one selection
+                    // into unrelated goals, so Legion plans footprints up to 8 in
+                    // every surface domain on the shared point.
                     // A Shift-queued leg shares the point too: once the legs
                     // ahead of it are done it is a plain Move, and the legs one
                     // click queued share its issue tick, so the selection plans
                     // and packs it as one group when it becomes current.
                     const bool shared=u->type && legion&&
                         tak::sim::legionSharedClick(u->type->canFly,u->type->footX,u->type->footZ);
-                    c.x = shared ? wx : wx + std::clamp(u->x - cx, -60.0f, 60.0f);
-                    c.z = shared ? wz : wz + std::clamp(u->z - cz, -60.0f, 60.0f);
+                    if (u->type && u->type->canFly) flyerSpreadGoal(air, *u, wx, wz, c.x, c.z);
+                    else {
+                        c.x = shared ? wx : wx + std::clamp(u->x - cx, -60.0f, 60.0f);
+                        c.z = shared ? wz : wz + std::clamp(u->z - cz, -60.0f, 60.0f);
+                    }
                     c.queue = queue;
                     issue(c);
                 }
@@ -414,6 +442,7 @@ namespace {
             if (!capable) return tak::CursorId::Normal;
             if (pendingCmd_=='c') {
                 float wx,wz;pickWorld(mouseX_,mouseY_,wx,wz);
+                if (raiseTargetAt(wx,wz)) return tak::CursorId::Revive;   // the order raises it
                 return reclaimTargetAt(wx,wz) ? tak::CursorId::Reclaim : tak::CursorId::Normal;
             }
             // Repair and guard are target-dependent in the native selector.
@@ -545,20 +574,9 @@ namespace {
                 return canAttack ? tak::CursorId::TooFar : tak::CursorId::Normal;
             }
 
-            for (const auto* corpse:front().live) {
-                if (corpse->alive() || !corpse->corpsePhase || corpse->corpseFeat<0 ||
-                    !canPickPoint(corpse->x,corpse->z)) continue;
-                if (!worldTables().featureTypes().at(size_t(corpse->corpseFeat)).resurrectable) continue;
-                tak::client::ReclaimPick pick{wx,wz};   // same corpse pick circle as reclaim
-                pick.offer(-corpse->id,corpse->x,corpse->z,corpse->corpseFootX,corpse->corpseFootZ);
-                if (!pick.id) continue;
-                for (int id:selection_) {
-                    const auto* caster=frameUnitP(id);
-                    if (!caster || !caster->alive() || caster->embarked() || caster->underConstruction || !caster->type) continue;
-                    if ((caster->type->canResurrect && caster->player==corpse->player) ||
-                        (caster->type->canAnimate && caster->type->animateType)) return tak::CursorId::Revive;
-                }
-            }
+            // The order the click issues (issueRaiseOrReclaim): Revive when a
+            // selected unit raises the body there, else Reclaim.
+            if (raiseTargetAt(wx,wz)) return tak::CursorId::Revive;
             if (haveReclaimer() && reclaimTargetAt(wx,wz)) return tak::CursorId::Reclaim;
 
             // Empty ground: plain arrow. The Move cursor shows ONLY when the move order
@@ -924,10 +942,12 @@ namespace {
         ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         if (selection_.empty()) return;
         if (cmd == 'c') {   // clear/reclaim: reclaim the feature under the cursor
-            if (!haveReclaimer()) return;
-            const auto fid = reclaimTargetAt(wx, wz);
-            if (!fid) return;
-            issueReclaimFeature(*fid, queue);   // every selected reclaimer
+            // 4de530 mode 12 at a point: a body a caster can raise is
+            // RESURRECT, anything else RECLAIM (issueRaiseOrReclaim).
+            const int body = raiseTargetAt(wx, wz);
+            const auto fid = haveReclaimer() ? reclaimTargetAt(wx, wz) : std::nullopt;
+            if (!body && !fid) return;
+            issueRaiseOrReclaim(body, fid, queue);
             return;
         }
         if (cmd == 'r') { // repair or resume construction, using the cursor's eligibility
@@ -1034,6 +1054,17 @@ namespace {
                 if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
             }
         }
+        // An armed MOVE or PATROL gives flyers retail's spread (VTOL_Move and
+        // VTOL_Patrol carry the offset flag; sim/retailflyerspread.h) and every
+        // other unit the point itself, as retail's Move_Ground / Patrol do. A
+        // fight-move has no flyer mission with the flag: everyone takes the point.
+        const bool spread = enemy < 0 && (cmd == 'm' || cmd == 'p');
+        tak::sim::FlyerGroupCentre air;
+        if (spread) {
+            for (int id : selection_)
+                if (const auto* u = frameUnitP(id)) air.add(flyerRaw(u->x), flyerRaw(u->z));
+            setFlyerSpread(wx, wz);
+        }
         for (int id : selection_) {
             tak::net::Command c;
             if (enemy >= 0) {
@@ -1045,6 +1076,8 @@ namespace {
                                                     : tak::net::Cmd::Move;
                 c.x = wx;
                 c.z = wz;
+                const auto* u = spread ? frameUnitP(id) : nullptr;
+                if (u && u->type && u->type->canFly) flyerSpreadGoal(air, *u, wx, wz, c.x, c.z);
             }
             c.unitId = id;
             c.queue = queue ? 1 : 0;

@@ -214,7 +214,7 @@ private:
             if (o.c.units.empty()) return;
             if (o.c.verb == V::Move || o.c.verb == V::Fight || o.c.verb == V::Patrol) {
                 // The shared point if most units share one (Legion surface movers), else the centroid
-                // of the offset targets (they are offsets from the click, clamped +-60 px).
+                // of the offset targets (offsets from the click: ground clamped +-60 px, flyers retail's spread).
                 std::map<uint64_t, int> count;
                 for (auto& p : o.pts) ++count[pointKey(p.first, p.second)];
                 uint64_t best = 0; int bestN = 0;
