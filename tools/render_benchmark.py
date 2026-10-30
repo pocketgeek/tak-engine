@@ -617,7 +617,9 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "arena_append", "arena_rebuild", "arena_stream", "arena_verts_retained",
                     "arena_verts_uploaded", "arena_verts_twice", "arena_fallbacks",
                     # HIDDEN UNITS option (client/hiddenunits.h)
-                    "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded"]
+                    "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded",
+                    # perf follow-up F: FADE cover tests (visits = the tests before the bookkeeping)
+                    "hidden_cover_visits", "hidden_cover_tests"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",
