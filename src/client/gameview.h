@@ -851,6 +851,13 @@ public:
     std::pair<int,int> renderStudyWorldView(int w, int h) const { return {mapViewW(w), std::max(1, h - barH())}; }
     // The zoom actually in force (the map-fills-window clamp can raise a request).
     float renderStudyZoomNow() const { return mapView_.zoom(); }
+#ifndef NDEBUG
+    // Interactive render cases (measurement B): the pointer at renderer-output pixel
+    // (x, y), as a mouse motion would leave it, so the frame's cursor classification
+    // runs; and FADE's display clock taken from the study frame instead of wall time.
+    void renderStudyMouse(float x, float y) { mouseX_ = x; mouseY_ = y; }
+    void renderStudyFadeClock(uint64_t ms) { debugHiddenFadeNowMs_ = ms; }
+#endif
     void renderWork(size_t& vertices,size_t& calls,size_t& images,size_t& bakes,size_t& bakeVertices,
                     size_t& bakeCalls,size_t& switches,size_t& imageBytes) const {
         vertices=bodyVertexTotal_;calls=0;
