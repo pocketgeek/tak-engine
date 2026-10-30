@@ -2,8 +2,9 @@
 // routes (windows, corridors and chains' tile lists, empty and map-edge windows, other tile sizes) listed, re-listed and
 // unlisted at random on several planes and map sizes, every group whose route a random change box reaches (touches(),
 // legion.cpp's fieldTouched) is among the index's candidates for that box; every candidate is a group listed on that
-// plane now; the bins hold exactly what a fresh listing would; and the live / stale counts agree through query-time
-// drops and whole-index compactions.
+// plane now; the read-only collect() (TAK_LEGION_VERIFY's query) finds the same groups and changes nothing; the bins
+// hold exactly what a fresh listing would; and the live / stale counts agree through query-time drops and whole-index
+// compactions.
 #include "sim/legion_routebins.h"
 #include <algorithm>
 #include <cstdio>
@@ -118,11 +119,21 @@ void run(uint64_t seed, int W, int H, int planes, int steps) {
             const int plane = r.below(planes);
             std::vector<std::array<int, 4>> boxes;
             for (int n = r.range(1, 4); n > 0; --n) boxes.push_back(randomBox(r, W, H));
-            std::vector<int> out;
+            std::vector<int> out, seen;
+            const uint64_t stale = index.staleEntries(), queries = index.stats().queries;
+            for (const auto& b : boxes) index.collect(plane, b, seen);   // the verification query: read-only
+            CHECK(index.staleEntries() == stale && index.stats().queries == queries);
+            std::sort(seen.begin(), seen.end());
+            seen.erase(std::unique(seen.begin(), seen.end()), seen.end());
             index.begin();
             size_t estimate = 0;
             for (const auto& b : boxes) estimate += index.estimate(plane, b);
             for (const auto& b : boxes) index.gather(plane, b, out);
+            {
+                std::vector<int> sorted = out;
+                std::sort(sorted.begin(), sorted.end());
+                CHECK(sorted == seen);   // collect() finds what gather() does
+            }
             CHECK(out.size() <= estimate);
             std::set<int> got(out.begin(), out.end());
             CHECK(got.size() == out.size());   // each group once per query
