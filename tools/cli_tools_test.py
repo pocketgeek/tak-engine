@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Command-line polish: the dev tools never end silently on a bad command line, the
-Cartographer answers --version/--help without opening the editor, and simperf's default
-generated map runs (its recipe version is the current one).
+Cartographer answers --version/--help without opening the editor, simperf's default
+generated map runs (its recipe version is the current one), and simperf's complete-tick
+timing includes the due stateHash.
 
 Usage text goes to stderr with exit 2 (a tool given too few arguments), --version and
 --help exit 0 with their text on stdout.
@@ -74,6 +75,38 @@ def main():
         r = run([a.cartographer, "--help"])
         check("cartographer --help lists --version", r.returncode == 0 and "--version" in r.stdout
               and "usage: cartographer" in r.stdout, f"rc={r.returncode} out={r.stdout!r}")
+
+    if a.simperf:
+        # Complete-tick timing: each complete sample is the core tick plus the stateHash due on
+        # that tick, so the complete totals and per-second samples must add up exactly.
+        r = run([a.simperf, "--mode", "movement", "--units", "200", "--ticks", "60"])
+        kv = {}
+        seconds = []
+        for line in r.stdout.splitlines():
+            fields = dict(f.split("=", 1) for f in line.split() if "=" in f)
+            if "tick" in fields:
+                seconds.append(fields)
+            else:
+                kv.update(fields)
+        try:
+            n = 60
+            core_ms = float(kv["core_mean_ms"]) * n
+            complete_ms = float(kv["complete_mean_ms"]) * n
+            hash_ms = float(kv["hash_total_ms"])
+            ok = (r.returncode == 0 and int(kv["hash_ticks"]) == 2 and len(seconds) == 2
+                  and kv["hash_total_ms"] == kv["hash_ms"]
+                  and hash_ms > 0 and abs(complete_ms - core_ms - hash_ms) <= 0.001 * n + 0.001
+                  and all(float(kv["complete_" + k]) >= float(kv[k]) for k in ("median_ms", "p95_ms", "p99_ms", "max_ms"))
+                  and abs(float(kv["service_seconds"]) * 1000 - complete_ms) <= 0.5 + 0.001 * n
+                  and float(kv["ai_total_ms"]) + float(kv["world_total_ms"]) <= core_ms + 0.001 * n
+                  and all(float(s["hash_tick_ms"]) > 0 and
+                          abs(float(s["complete_ms"]) - float(s["ms"]) - float(s["hash_tick_ms"])) <= 0.002
+                          for s in seconds))
+        except (KeyError, ValueError) as e:
+            ok = False
+            kv["error"] = repr(e)
+        check("simperf complete ticks add the due stateHash to the core tick", ok,
+              f"rc={r.returncode} out={r.stdout[-600:]!r} err={r.stderr[-300:]!r}")
 
     if a.simperf and a.data:
         r = run([a.simperf, "--mode", "match", "--units", "8", "--ticks", "5", "--data", a.data])
