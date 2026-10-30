@@ -2227,6 +2227,7 @@
             return any;
         };
         {
+            tak::render::ScopedPhase ghostPhase(renderStats_, RP::BuildGhosts);
             const Frame& frame = front();
 #ifndef NDEBUG
             if (unitIndexVerify_) {
@@ -7695,6 +7696,7 @@
 
     void GameView::drawGhostAt(const tak::sim::UnitType* type, float x, float z,
                      bool invalid) {
+        renderStats_.add(tak::render::Counter::GhostDraws);
         const tak::tdo::Model* model = ghostModel(type->id);
         if (!model) return;
         noteNeed(Retained::ModelTris, tris_);
@@ -7703,6 +7705,8 @@
         collect(tris_, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
         std::stable_sort(tris_.begin(), tris_.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+        renderStats_.add(tak::render::Counter::GhostCollects);
+        renderStats_.add(tak::render::Counter::GhostTris, tris_.size());
         float zm = mapView_.zoom();
         // The ghost lifts onto the relief exactly like the finished unit/building will.
         float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;

@@ -182,6 +182,7 @@ enum class Phase : uint8_t {
     Fog,             // fog-of-war overlay
     SchedulePlan,    // (nested) building the cost plans of the pool passes (workstream I)
     HiddenUnits,     // HIDDEN UNITS option: cover search, fade and dot tests
+    BuildGhosts,     // queued-build ghosts of the local player's builders (drawGhostAt loop)
     Count
 };
 
@@ -457,6 +458,17 @@ enum class Counter : uint8_t {
     HiddenCandidates,
     HiddenMarked,
     HiddenFaded,
+    // Build ghosts (GameView::drawGhostAt: queued builds, placed sites, the placement
+    // preview): ghosts requested; of which rejected before any geometry work because
+    // they lie wholly outside the clip; model collections + depth sorts run; ghosts
+    // drawn from retained model-local geometry; triangles submitted; gauge: bytes
+    // of the retained ghost geometry.
+    GhostDraws,
+    GhostCulled,
+    GhostCollects,
+    GhostCacheHits,
+    GhostTris,
+    GhostCacheBytes,
     Count
 };
 
@@ -475,7 +487,7 @@ inline constexpr const char* kPhaseNames[size_t(Phase::Count)] = {
     "candidates", "painter_sort", "atlas", "geometry", "distant", "shadow_pack",
     "shadow_composite", "body_assembly", "body_submit", "terrain", "terrain_upload",
     "shadow_alloc", "shadow_prep", "shadow_raster", "pool_dispatch", "pool_wait", "effects",
-    "fog", "schedule_plan", "hidden_units"};
+    "fog", "schedule_plan", "hidden_units", "build_ghosts"};
 inline constexpr const char* kWorkNames[size_t(Work::Count)] = {
     "geometry_key", "geometry_build", "pool_busy", "pool_wake", "terrain_compose",
     "terrain_upload", "section_decode", "terrain_wasted", "unit_grid_build"};
@@ -541,7 +553,8 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "palette_mode", "palette_pages", "palette_gpu_bytes", "palette_cpu_bytes", "palette_upload_bytes",
     "palette_indexed_draws", "palette_fallbacks", "palette_switches", "palette_spans",
     "palette_span_commands", "native_passes", "native_pass_commands", "native_pass_refused",
-    "native_primes", "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded"};
+    "native_primes", "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded",
+    "ghost_draws", "ghost_culled", "ghost_collects", "ghost_cache_hits", "ghost_tris", "ghost_cache_bytes"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};
