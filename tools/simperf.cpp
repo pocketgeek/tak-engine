@@ -28,7 +28,9 @@ int main(int argc,char** argv) try {
                       "crowd: allied mixed armies converging near their starting positions; includes scripts and destination congestion.\n"
                       "--map selects a retail map for match/patrol/crowd; the default remains the generated flat map.\n"
                       "--unit-cap sets each player's cap independently of the initial army size (8 initial units allow natural AI growth).\n"
-                      "Times include periodic lockstep hashes, exclude setup, and do not measure rendering.");
+                      "Times exclude setup and do not measure rendering. ms/median_ms/p95_ms/p99_ms/max_ms are core ticks\n"
+                      "(AI + world tick); complete_* ticks add the lockstep stateHash due every 30th tick; wall_seconds\n"
+                      "also counts the once-per-second diagnostic scan and output, service_seconds does not.");
             return 0;
         }
         if (i+1>=argc) throw std::invalid_argument("missing option value");
@@ -117,10 +119,11 @@ int main(int argc,char** argv) try {
     }
     std::printf("mode=%s requested=%d initial=%zu setup_seconds=%.3f\n",mode.c_str(),count,
         world.units().size(),std::chrono::duration<double>(std::chrono::steady_clock::now()-setupStart).count());
-    std::vector<double> durations;
-    durations.reserve(size_t(ticks));
+    // durations: core tick (AI + world tick). complete: core plus the stateHash due on that tick.
+    std::vector<double> durations,complete;
+    durations.reserve(size_t(ticks));complete.reserve(size_t(ticks));
     int minAlive=int(world.units().size());
-    double hashMs=0,aiMs=0,worldMs=0;uint64_t firedTicks=0,hitEvents=0;
+    double hashMs=0,aiMs=0,worldMs=0,aiTotalMs=0,worldTotalMs=0;uint64_t firedTicks=0,hitEvents=0;int hashTicks=0;
     std::vector<std::pair<int32_t,int32_t>> previousPositions;
     std::vector<int> previousIds;
     for (const auto& u:world.units()) {previousPositions.emplace_back(u.x.v,u.z.v);previousIds.push_back(u.id);}
@@ -130,12 +133,24 @@ int main(int argc,char** argv) try {
         for (auto& controller:controllers)
             controller->tick(world,uint32_t(tick),[&](const net::Command& c){sim::applyCommand(world,registry,c);});
         const auto worldStart=std::chrono::steady_clock::now();
-        aiMs+=std::chrono::duration<double,std::milli>(worldStart-tickStart).count();
+        const double tickAiMs=std::chrono::duration<double,std::milli>(worldStart-tickStart).count();
         world.tick(1.f/30);
-        worldMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-worldStart).count();
+        const double tickWorldMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-worldStart).count();
+        aiMs+=tickAiMs;worldMs+=tickWorldMs;aiTotalMs+=tickAiMs;worldTotalMs+=tickWorldMs;
         hitEvents+=world.hits().size();
         durations.push_back(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-tickStart).count());
-        if (tick%30==29) {
+        // The due lockstep hash is service work: time it before the diagnostic scan and output below,
+        // which stay outside every tick sample (stateHash is const, so the order changes no result).
+        const bool hashDue=tick%30==29;
+        uint64_t hash=0;double tickHashMs=0;
+        if (hashDue) {
+            const auto hashStart=std::chrono::steady_clock::now();
+            hash=world.stateHash();
+            tickHashMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-hashStart).count();
+            hashMs+=tickHashMs;++hashTicks;
+        }
+        complete.push_back(durations.back()+tickHashMs);
+        if (hashDue) {
             int living=0,moving=0,firing=0,stationary=0,nearGoal=0;
             std::vector<std::pair<int32_t,int32_t>> positions;
             std::vector<int> ids;
@@ -157,11 +172,10 @@ int main(int argc,char** argv) try {
             }
             previousPositions.swap(positions);previousIds.swap(ids);
             minAlive=std::min(minAlive,living);firedTicks+=firing;
-            const auto hashStart=std::chrono::steady_clock::now();
-            const auto hash=world.stateHash();
-            hashMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-hashStart).count();
-            std::printf("tick=%d hash=%016llx ms=%.3f alive=%d moving=%d firing=%d projectiles=%zu stationary_1s=%d near_goal_512=%d ai_ms=%.3f world_ms=%.3f\n",tick+1,
-                static_cast<unsigned long long>(hash),durations.back(),living,moving,firing,world.projectiles().size(),stationary,nearGoal,aiMs,worldMs);
+            std::printf("tick=%d hash=%016llx ms=%.3f alive=%d moving=%d firing=%d projectiles=%zu stationary_1s=%d near_goal_512=%d ai_ms=%.3f world_ms=%.3f"
+                        " hash_tick_ms=%.3f complete_ms=%.3f\n",tick+1,
+                static_cast<unsigned long long>(hash),durations.back(),living,moving,firing,world.projectiles().size(),stationary,nearGoal,aiMs,worldMs,
+                tickHashMs,complete.back());
             aiMs=worldMs=0;
             std::fflush(stdout);
         }
@@ -172,12 +186,25 @@ int main(int argc,char** argv) try {
         alive+=u.alive();moving+=u.alive() && u.speed.v>0;
         displaced+=u.alive() && (u.x!=u.homeX || u.z!=u.homeZ);
     }
+    double coreSum=0,completeSum=0;
+    for (double d:durations) coreSum+=d;
+    for (double d:complete) completeSum+=d;
+    // Ticks over the 30 Hz budget (1000/30 ms).
+    const auto overBudget=[](const std::vector<double>& v){return std::count_if(v.begin(),v.end(),[](double d){return d>1000.0/30;});};
+    const auto coreOver=overBudget(durations),completeOver=overBudget(complete);
     std::sort(durations.begin(),durations.end());
+    std::sort(complete.begin(),complete.end());
     std::printf("minimum_sampled_alive=%d sampled_firing=%llu hit_events=%llu hash_ms=%.3f p99_ms=%.3f\n",
         minAlive,static_cast<unsigned long long>(firedTicks),static_cast<unsigned long long>(hitEvents),hashMs,durations[durations.size()*99/100]);
     std::printf("alive=%d moving=%d displaced=%d allocated=%zu sim_seconds=%.3f wall_seconds=%.3f speed=%.3fx median_ms=%.3f p95_ms=%.3f max_ms=%.3f\n",
         alive,moving,displaced,world.units().size(),ticks/30.0,wall,(ticks/30.0)/wall,
         durations[durations.size()/2],durations[durations.size()*95/100],durations.back());
+    // Same percentile indexing as the core fields above.
+    std::printf("core_mean_ms=%.3f core_over_budget=%td complete_mean_ms=%.3f complete_median_ms=%.3f complete_p95_ms=%.3f complete_p99_ms=%.3f"
+                " complete_max_ms=%.3f complete_over_budget=%td hash_ticks=%d service_seconds=%.3f ai_total_ms=%.3f world_total_ms=%.3f hash_total_ms=%.3f\n",
+        coreSum/double(durations.size()),coreOver,completeSum/double(complete.size()),complete[complete.size()/2],
+        complete[complete.size()*95/100],complete[complete.size()*99/100],complete.back(),completeOver,hashTicks,
+        completeSum/1000,aiTotalMs,worldTotalMs,hashMs);
     return 0;
 } catch (const std::exception& e) {
     std::fprintf(stderr,"simperf: %s\n",e.what());return 1;
