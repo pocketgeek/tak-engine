@@ -106,8 +106,16 @@ MeleeWeapon vtable `0x5f3af8`, base WeaponType `0x5f3710`):
   → always true; else strictly **2D centre-to-centre** from the two units'
   position dwords (`unit+0x68` x, `+0x70` z, 16.16 fixed; y at `+0x6c` is
   skipped), 64-bit squared compare `(dx²+dz²)>>32 <= range²` (inclusive). Used
-  unchanged by Guided/LineOfSight/Wandering weapons. No footprint subtraction,
-  no weapon-piece origin.
+  unchanged by 14 of the 17 handler classes (vtable +0xc, named by their RTTI):
+  `WeaponType`, `LineOfSightWeapon` and its Lightning, Fire, MindControl,
+  TurnToStone and TurnToFrozen subclasses, `GuidedWeapon`,
+  `RemoteEffectWeapon`, `HailstormWeapon`, `EarthquakeWeapon`, both area
+  spells and `WanderingWeapon`; `DroppedBallisticWeapon`'s `532290` is a bare
+  call of it. No footprint subtraction, no weapon-piece origin.
+  `tools/re/check_inrange_classes.py` runs all 17 natively against a 7x12
+  building at 299-420 px for range 300 (and on the diagonal): every class but
+  melee is in range exactly at centre distance <= 300, none in our old
+  120 px footprint allowance.
 - **BallisticWeapon @0x52bc60**: solves the launch arc first (helper `0x52bd10`,
   the only user of dy; `0x8000` = no solution → out of range), then falls
   through to the base centre test. The arc runs origin to origin (target minus
@@ -125,22 +133,39 @@ MeleeWeapon vtable `0x5f3af8`, base WeaponType `0x5f3710`):
 **Engine use (0.9.2).** For a Ballistic weapon (not Dropped, flame or beam:
 `Weapon::ballisticClass`) the sweep and auto slots (`slotInRange`), the attack
 order's fire gate and its approach all use that predicate, with no footprint
-pad. Every other ranged weapon keeps our structure pad (`8*max(foot)+24` px,
-so short-range attackers do not grind a building's edge), except, since
-0.9.12, one whose shot dies at its range (`Weapon::shotEndsAtRange`: a
-Line-of-Sight bolt or lightning and a Guided shot are given one range of travel
-at launch, a flame front is scanned out to the range). Retail's lightning
-(`5f374c`), LOS (`5f39f4`), fire (`5f3780`) and Guided (`5f37e4`) vtables all
-use the base `530580`, centre to centre, so these get no pad in `slotInRange`,
-`combatReach` (approach, fire gate, findTarget's hold-post filter), the
-per-slot fire gate, `repositionForShot`'s band, the structure/flyer hold and
-Legion's mirrored reach ring. With the pad a Crusades Death Totem (lightning,
-range 550) took a Taros lodestone 584.5 px off (emulated `530580`: out at 550,
-first in at 585) and its bolts died ~540 px out without a hit (the user's
-0.9.12 replay at 21:00); a mobile Crossbowman, Shaman or Fire Demon ordered
-onto a building parked up to the pad past its range and never hit it. 38-40
-unit types carry such a weapon (`shot_range_test` lists them). Before, the pad let
-a Creon Submersible 822-848 px from an 800-range Divine Lodestone count as in
+pad. Since 0.9.12 every other ranged weapon has none either
+(`Weapon::centreReach`; our structure pad, `8*max(foot)+24` px so short-range
+attackers did not grind a building's edge, is kept only for a melee approach,
+where it stands in for the box contact below). 0.9.12 first dropped it for a
+shot that dies at its range (a Line-of-Sight bolt or lightning and a Guided
+shot get one range of travel at launch, a flame front is scanned out to the
+range): with the pad a Crusades Death Totem (lightning, range 550) took a
+Taros lodestone 584.5 px off (emulated `530580`: out at 550, first in at 585)
+and its bolts died ~540 px out without a hit (the user's 0.9.12 replay at
+21:00), and a mobile Crossbowman, Shaman or Fire Demon ordered onto a building
+parked up to the pad past its range and never hit it. A Dropped bomb, a Remote
+Effect, Hailstorm, Earthquake or area spell, a Wandering storm and the
+mind-control, stone and freeze Line-of-Sight shots kept the pad until the
+per-class check above showed retail measures them centre to centre too: they
+were cast at a building from up to the pad past their range (the attack sweep:
+its band cases fired and hit), where retail never casts. 38 shipped weapons
+(37 in Crusades) moved, all on mobile units; `shot_range_test` lists them by
+class. There is no pad in `slotInRange`, `combatReach` (approach, fire gate,
+findTarget's hold-post filter), the per-slot fire gate, `repositionForShot`'s
+band, the structure/flyer hold or Legion's mirrored reach ring. Retail's
+ground attack mission (`Attack_Chase`, `403bb0`; melee switches to
+`Attack_Melee`, `404690`) heads for the same reach: a ring of the weapon's
+range (`52aba0`: WeaponType `+0x90`; inner radius `+0x94`, `52abd0`) round the
+target's origin (`4d4da0` / `4d4e10`), stops when `52ad60` (vtable +0xc)
+passes, and after a failed approach retries with narrower rings and then a
+random point within range (its counter at mission `+0x52`, cases 0-5 of the
+table at `404608`; it cycles between 4 and 5, and no exit for a target that
+stays out of range was found, static reading). So a unit whose range is
+shorter than it can stand from a building's centre never fires at it in
+retail: a Lich (Death Aura, 60) or an Injured Thirsha (Wind Wave, 60) against
+most buildings. Ours (no pad) keep moving at the building with the order kept
+and never fire either (`shot_range_test`: a Lich against a 7x12 Barracks
+stood 88 px off, 0 damage). Before, the pad let a Creon Submersible 822-848 px from an 800-range Divine Lodestone count as in
 range; the arc had no solution, `queryWeaponAim` turned `0x8000` into pitch 0
 (what `52bdf0` stores) and the sub lobbed every shell flat into the water at
 its bow (44% of all sub shots in the user's 0.9.1 game). Now an ordered

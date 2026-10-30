@@ -6,8 +6,8 @@ under your side's rolling mist, and radar marks enemies on the minimap only.
 Our AI levels attack only what their side has seen and scout the map for the
 rest. Big late games keep their speed: in the reported game, eight Absurd AIs
 on a 64x64 random map, 0.9.11 fell to -2 at about 2,700 units, and 0.9.12 held
-+9 to +10 to 3,160. Bolts, lightning, flames and guided shots aim only at
-buildings within their range, as in the original. Streaming keeps to YouTube's
++9 to +10 to 3,160. Every weapon but melee aims only at buildings within its
+range, as in the original. Streaming keeps to YouTube's
 bitrate, Options, Voice Chat and Controls save as you change them, and
 SETTINGS, BENCHMARK and LOAD REPLAY have a BACK button.
 
@@ -174,30 +174,42 @@ The two games differ after the opening (the AI changed), so the unit counts
 differ. The 0.9.12 run is the code before the fog display change (client
 only) and the beaten-base rule.
 
-## Shots that die at their range aim only at buildings in range
+## Weapons aim only at buildings in range
 
-A line-of-sight bolt or lightning strike and a guided shot fly one weapon range
-and then vanish, and a flame reaches only its range. Until now the engine let
-every non-arcing weapon count a building as in range up to its footprint plus
-24 pixels further (so short-range attackers would not
-grind its edge). For these weapons that allowance was a dead band: in a
-reported Crusades game a Death Totem (lightning, range 550) took a Taros
-lodestone 584 pixels away as its target and fired all game long, and every
-bolt died about 540 pixels out without a hit. The original measures their
-range from centre to centre with no allowance (`KINGDOMS.icd` `0x530580`,
-used by the lightning, line-of-sight, fire and guided weapon classes; the
-totem first counts that lodestone in range at 585), and now so does the
-engine, for every unit with such a weapon, buildings and mobile units alike:
+Until now the engine let every non-arcing weapon count a building as in range
+up to its footprint plus 24 pixels further (so short-range attackers would not
+grind its edge). The original has no such allowance: its range test belongs
+to the weapon's class, and every class but melee measures from centre to
+centre (`KINGDOMS.icd` `0x530580`; the arcing class tests its arc first, the
+dropped-bomb class calls it directly; melee tests the two footprints). Run in
+the original code, all seventeen classes answer the same as that rule against
+a 7x12 building, and its attack order walks to a ring of the weapon's range
+round the target's centre. Now the engine does the same for every weapon:
 
-- **Towers and totems** no longer target a building past their range.
-- **Mobile units** ordered onto a building (Crossbowmen, Shamans, Wisps, Fire
-  Demons, Fire Wagons, mages, monarchs and dragons on such a weapon) walk to
-  their range itself and hit, where they used to stop up to the allowance
-  further out (on a 7x12 Barracks, 120 pixels) and, but for a flame's
-  splash, hit nothing.
+- **Shots that die at their range** (a line-of-sight bolt or lightning strike
+  and a guided shot fly one weapon range and then vanish; a flame reaches only
+  its range) had a dead band. In a reported Crusades game a Death Totem
+  (lightning, range 550) took a Taros lodestone 584 pixels away as its target
+  and fired all game long, and every bolt died about 540 pixels out without a
+  hit (the original first counts that lodestone in range at 585). Towers and
+  totems no longer target a building past their range, and mobile units
+  ordered onto a building (Crossbowmen, Shamans, Wisps, Fire Demons, Fire
+  Wagons, mages, monarchs and dragons on such a weapon) walk to their range
+  itself and hit, where they used to stop up to the allowance further out (on
+  a 7x12 Barracks, 120 pixels) and, but for a flame's splash, hit nothing.
+- **Everything else** that is not melee or arcing: bombs dropped from flyers,
+  remote spells (earthquakes, hail and ice storms, fire waves, rings of fire,
+  area mind control and freeze), wandering storms, and the freeze, stone and
+  individual mind-control beams. Their shots land at the target, so with the
+  allowance they hit a building from up to it past their range, which the
+  original never does. A Lokken's Fire Wave (range 120) was cast at a
+  Barracks 239 pixels off, a Weather Witch's Tornado (150) from 270, and a
+  Lich's Death Aura (60) from 179. They now walk to their range, and on Hold
+  Position they no longer target a building past it. These weapons are all
+  on mobile units: 38 of them in the standard roster, 37 with Crusades.
 
-Arcing shots (arrows, cannons, catapults: their own arc test since 0.9.2),
-melee and other weapons are unchanged. 40 unit types carry such a weapon in
+Arcing shots (arrows, cannons, catapults: their own arc test since 0.9.2) and
+melee are unchanged. 40 unit types carry a shot that dies at its range in
 the standard roster (34 mobile, 6 buildings), 38 with Crusades.
 
 ## Streaming keeps to YouTube's bitrate
@@ -262,12 +274,13 @@ decided what the game counted as seen.
   (`exploreLevelFor`, start and sector targets, loss back-off, vacated
   bases), `TAK_AI_EXPLORE` (debug) counters. The lodestone search's nearest-
   first order is in `placeSite`. `classicwaves.h` (Retail AI) is untouched.
-- Sim (range): `Weapon::shotEndsAtRange` / `Weapon::structurePad`; no
-  structure pad for those weapons in `slotInRange`, `combatReach`, the
-  per-slot fire gate, `repositionForShot`, the flyer/structure hold and
+- Sim (range): `Weapon::centreReach` / `Weapon::structurePad` (a pad only
+  for a melee approach); no structure pad in `slotInRange`, `combatReach`,
+  the per-slot fire gate, `repositionForShot`, the flyer/structure hold and
   Legion's `reachPx` / `reachFloat`. New `shot_range_test` (Retail and
-  Legion); `structure_combat_reach` places its target inside the range for a
-  weapon with no pad.
+  Legion, a case per weapon class); `structure_combat_reach` places its
+  target inside the range. `tools/re/check_inrange_classes.py` runs every
+  weapon class's range test in the original code.
 - Sim: `src/sim/statefold.h` (`WordMix`, chunked xxHash64-style lanes) for
   `World::stateHash`; `resolveSplit` and `World::compStats` for local nav
   splits (`TAK_COMPCHECK` in debug builds checks every carried labelling);
@@ -323,9 +336,13 @@ New with 0.9.12:
 - **A building just past a tower's range is no longer shot** even where a bolt
   launched from the muzzle could have clipped its edge (a Stronghold at a
   lodestone 620 pixels off did): the original does not target it either.
-- **Instant line-of-sight shots** (mind control and similar, which land at
-  once) and Remote or Wandering spells keep the allowance, although the
-  original measures them centre to centre too; their shots do not die short.
+- **A unit whose range is shorter than it can stand from a building's
+  centre never hits it**, as in the original: a Lich (Death Aura, 60) or an
+  Injured Thirsha (Wind Wave, 60) ordered onto most buildings keeps moving at
+  it and never casts (a Lich stood 88 pixels from a Barracks' centre). The
+  original's attack order keeps trying narrower rings and random spots within
+  range for as long as it lasts; before, the allowance let them hit from
+  there.
 - **A Fallen Angel's Death Sword** (range 140) now strikes a building only from
   140 pixels, as in the original. On its attack runs over a lodestone it
   missed every time in a test (before, it struck once or three times in
