@@ -262,12 +262,18 @@ void retaliation() {
         // building finished answers. The attacker stands outside the tower's
         // sight, so the sweep cannot pick it: only the hit response can.
         auto tower=gunner(160);tower.id="tower";tower.canMove=false;tower.maxVel=sim::Fixed();
+        tower.buildTime=1000;   // an unattended site decays slowly instead of vanishing
         for (const bool site:{true,false}) {
             sim::World w;setup(w,2);Hit h;
             h.victim=w.spawn(&tower,400,1000,0,0);h.attacker=w.spawn(&r1,650,1000,0,1);
             auto& v=*w.unit(h.victim);v.fireState=2;v.underConstruction=site;
             w.attack(h.attacker,h.victim,false);
-            firstHit(w,h,300);
+            // A site's HP moves without a hit (no builder): watch the hit itself.
+            for (int t=0;t<300 && !h.hit && w.unit(h.victim);++t) {
+                ticks(w,1);
+                h.hit=w.unit(h.victim) && w.unit(h.victim)->lastHitBy==h.attacker;
+            }
+            if (!w.unit(h.victim)) {check(false,"retaliation: the building survives its first hit");continue;}
             const auto& u=*w.unit(h.victim);
             const bool answered=(!u.orders.empty() && u.orders[0].targetId==h.attacker) ||
                 u.slotTarget[0]==h.attacker;
