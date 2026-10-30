@@ -7557,6 +7557,7 @@
                     marker=tak::CursorId::FindSite;
                     haveMarker=o.trailPreview; // existing queued sites already have ghosts
                 }
+                else if (o.revive)          marker = tak::CursorId::Revive;
                 else if (o.reclaimFeat || o.reclaimArea) marker = tak::CursorId::Reclaim;
                 else if (o.repairTarget)    marker = tak::CursorId::Repair;
                 else if (o.load)            marker = tak::CursorId::Load;

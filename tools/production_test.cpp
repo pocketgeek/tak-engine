@@ -275,14 +275,17 @@ static void cloakSpendsUnitMana() {
 // animate, takes allocation x 65536 a tick, and at the end a computer player
 // whose allocation is under 0.7 abandons it. A buildtime-100 corpse under a
 // workertime-10 priest is 90 ticks at full allocation and 180 at half; ours
-// took 300 and debited the corpse's buildcost across them.
+// took 300 and debited the corpse's buildcost across them. Counted from the
+// tick the channel starts, whose wake takes the first allocation (stage 3
+// returns 1 and stage 4 runs in the same wake).
 struct ReviveRun { int ticks = -1; double mana = 0; float request = 0; int hp = 0; bool raised = false; };
 // shortFrom: the allocation holds at 1 until the channel has run that many
 // ticks, then drops to `allocation` (-1: short from the start).
 static ReviveRun reviveRun(bool animate, double allocation, bool computer, int shortFrom = -1) {
     auto ownedWorld = makeWorld(64, 64);
     World& w = *ownedWorld;
-    FeatType body; body.name = "victim_dead"; body.resurrectable = true; body.decomposeTicks = 100000;
+    FeatType body; body.name = "victim_dead"; body.resurrectable = true; body.animatable = true;
+    body.decomposeTicks = 100000;
     w.setFeatureTypes({body});
     UnitType victim = soldierType(); victim.id = "victim"; victim.buildTime = 100; victim.buildCost = 400;
     UnitType ghoul = soldierType(); ghoul.id = "ghoul"; ghoul.buildTime = 30; ghoul.buildCost = 400;
@@ -291,9 +294,10 @@ static ReviveRun reviveRun(bool animate, double allocation, bool computer, int s
     else priest.canResurrect = true;
     w.mapCorpse(&victim, 0);
     w.player(0).automaticGates = computer;
-    w.spawn(&priest, 300, 300, 0, 0);
+    const int caster = w.spawn(&priest, 300, 300, 0, 0);
     const int dead = w.spawn(&victim, 330, 300, 0, animate ? 1 : 0);
     w.unit(dead)->hp = {}; w.unit(dead)->deathType = 9;
+    w.resurrect(caster, dead, false);   // a revive is only ever an order
     const UnitType* out = animate ? &ghoul : &victim;
     auto raised = [&]() -> const Unit* {
         for (const auto& u : w.units()) if (u.alive() && u.type == out && u.player == 0) return &u;
@@ -314,8 +318,8 @@ static ReviveRun reviveRun(bool animate, double allocation, bool computer, int s
         w.tick(1.0f / 30);
         r.request = std::max(r.request, w.player(0).displayResources.samples.back()[1]);
         if (started < 0 && channelling()) started = t;
-        if (const Unit* u = raised()) { r.raised = true; r.ticks = t - started; r.hp = int(u->hp.toFloat() + 0.5f); break; }
-        if (started >= 0 && !channelling()) { r.ticks = t - started; break; }   // abandoned
+        if (const Unit* u = raised()) { r.raised = true; r.ticks = t - started + 1; r.hp = int(u->hp.toFloat() + 0.5f); break; }
+        if (started >= 0 && !channelling()) { r.ticks = t - started + 1; break; }   // abandoned
     }
     r.mana = w.player(0).mana;
     return r;
@@ -337,22 +341,22 @@ static void reviveCostsNothing() {
     check(ghoul.raised && ghoul.ticks == 90 && ghoul.hp == 100 && ghoul.mana == 80.0,
           "an animate takes the full buildtime, free, and rises at full health", detail);
     // Short from the channel's 30th tick (the allocation follows the demand
-    // a tick later): 31 ticks of full work, the other 59 at half take 120.
+    // a tick later): 31 ticks of full work, the other 59 at half take 119.
     const ReviveRun aiShort = reviveRun(false, 0.5, true, 30), aiFull = reviveRun(false, 1.0, true);
     std::snprintf(detail, sizeof detail, "short: raised %d after %d ticks; full: raised %d",
                   aiShort.raised, aiShort.ticks, aiFull.raised);
-    check(!aiShort.raised && aiShort.ticks == 151 && aiFull.raised,
+    check(!aiShort.raised && aiShort.ticks == 150 && aiFull.raised,
           "a computer player under 0.7 allocation abandons it at the end", detail);
 }
 
-// AN ABANDONED REVIVE IS NOT TAKEN UP AGAIN WHILE SHORT. Retail's revive is
-// an order; after 0x406e79 abandons it nothing gives it again. Ours is an
-// idle caster's search, which took the same corpse up again on the next tick
-// and abandoned it at every end for as long as the economy stayed short. A
-// computer caster now starts no revive while its allocation is under 0.7,
-// and raises the corpse once the allocation recovers.
+// AN ABANDONED REVIVE IS NOT TAKEN UP AGAIN. Retail's revive is an order;
+// after 0x406e79 abandons it nothing gives it again. Ours was an idle caster's
+// search, which took the same corpse up again on the next tick and abandoned
+// it at every end for as long as the economy stayed short. Since 0.9.12 the
+// revive is an order here too: abandoned, the order is over, the caster
+// stands, and the body lies there even after the allocation recovers.
 static void abandonedReviveWaits() {
-    std::printf("an abandoned revive waits for the economy:\n");
+    std::printf("an abandoned revive is not taken up again:\n");
     auto ownedWorld = makeWorld(64, 64);
     World& w = *ownedWorld;
     FeatType body; body.name = "victim_dead"; body.resurrectable = true; body.decomposeTicks = 100000;
@@ -364,6 +368,7 @@ static void abandonedReviveWaits() {
     const int caster = w.spawn(&priest, 300, 300, 0, 0);
     const int dead = w.spawn(&victim, 330, 300, 0, 0);
     w.unit(dead)->hp = {}; w.unit(dead)->deathType = 9;
+    w.resurrect(caster, dead, false);
     w.player(0).mana = 80;
     auto raised = [&] {
         for (const auto& u : w.units()) if (u.alive() && u.type == &victim) return true;
@@ -387,18 +392,19 @@ static void abandonedReviveWaits() {
     std::snprintf(detail, sizeof detail, "started %d, abandoned %d, restarts while short %d, raised %d",
                   started, abandoned, restarts, raisedAt);
     check(started >= 0 && abandoned > started, "a computer caster that turns short abandons the revive", detail);
-    check(restarts == 0, "...and does not take the corpse up again while short", detail);
-    check(raisedAt > 900, "...but raises it once the allocation recovers", detail);
+    check(restarts == 0 && w.unit(caster)->orders.empty(), "...its order ends, and it does not take the corpse up again", detail);
+    check(raisedAt < 0 && w.unit(dead)->deadFor < w.unit(dead)->corpseUntil,
+          "...not even once the allocation recovers: the body stays", detail);
 }
 
 // REVIVES RESPECT THE UNIT LIMIT. Retail's revive end (0x406f0c) creates the
 // unit through 0x512060, which refuses it past the player's unit limit (and
 // the type's totalallowed): the revive ends unraised (NOMOREUNITS) and the
-// corpse stays. Ours spawned it regardless. The idle search (ours) takes up
-// no revive that end would refuse.
+// corpse stays. Ours spawned it regardless.
 static void reviveRespectsUnitLimit() {
     std::printf("revives respect the unit limit:\n");
-    FeatType body; body.name = "victim_dead"; body.resurrectable = true; body.decomposeTicks = 100000;
+    FeatType body; body.name = "victim_dead"; body.resurrectable = true; body.animatable = true;
+    body.decomposeTicks = 100000;
     UnitType victim = soldierType(); victim.id = "victim"; victim.buildTime = 100; victim.buildCost = 400;
     UnitType ghoul = soldierType(); ghoul.id = "ghoul"; ghoul.buildTime = 30; ghoul.buildCost = 400;
     UnitType filler = soldierType(); filler.id = "filler";
@@ -418,6 +424,7 @@ static void reviveRespectsUnitLimit() {
         const int dead = w.spawn(&victim, 330, 300, 0, 0);
         if (ghoulLimit > 0) w.spawn(&g, 900, 900, 0, 0);
         w.unit(dead)->hp = {}; w.unit(dead)->deathType = 9;
+        w.resurrect(caster, dead, false);
         const UnitType* out = animate ? static_cast<const UnitType*>(&g) : &victim;
         Run r;
         int started = -1;
@@ -471,12 +478,15 @@ static void reviveWorkWrapsLikeFtol() {
     const int id = w.spawn(&priest, 300, 300, 0, 0);
     const int dead = w.spawn(&victim, 330, 300, 0, 0);
     w.unit(dead)->hp = {}; w.unit(dead)->deathType = 9;
+    w.resurrect(id, dead, false);
     int32_t first = 0; int t = 0;
     for (; t < 600 && !first; ++t) { w.tick(1.0f / 30); if (w.unit(id)->reviveTarget) first = w.unit(id)->reviveWork; }
     for (int n = 0; n < 60; ++n) w.tick(1.0f / 30);
     char detail[160];
-    std::snprintf(detail, sizeof detail, "work %d at the start, still channelling %d", first, w.unit(id)->reviveTarget != 0);
-    check(first == 1603273293 && w.unit(id)->reviveTarget != 0,
+    // The channel's first wake has already taken one tick's allocation (65536).
+    std::snprintf(detail, sizeof detail, "work %d after the first wake, still channelling %d", first,
+                  w.unit(id)->reviveTarget != 0);
+    check(first == 1603273293 - 65536 && w.unit(id)->reviveTarget != 0,
           "a counter past 2^31 keeps ftol's low word and keeps channelling", detail);
 }
 
@@ -599,6 +609,7 @@ static void workAndShotsBlockCloak() {
         w.tick(1.0f / 30);
         const int dead = w.spawn(&victim, 330, 300, 0, 0);
         w.unit(dead)->hp = {}; w.unit(dead)->deathType = 9;
+        w.resurrect(id, dead, false);
         const BlockRun r = watchBlock(w, id, 200, [&] { return w.unit(id)->reviveTarget != 0; }, [] { return false; });
         std::snprintf(detail, sizeof detail, "block %u ahead, cloaked while channelling %d", r.ahead, r.cloakedWhileWorking);
         check(r.ahead == 300 && !r.cloakedWhileWorking, "a resurrect channel blocks cloaking for 300 ticks", detail);

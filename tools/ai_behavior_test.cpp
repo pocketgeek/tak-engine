@@ -1929,6 +1929,62 @@ static void classicLevel() {
           "the Classic brain gives each unit its standing orders, idle patrols and wave moves where Normal attacks");
 }
 
+// OUR LEVELS RAISE THE DEAD BY ORDER. Until 0.9.12 the sim raised bodies on its
+// own (an idle caster took up any body within 56 px), and our levels' casters
+// raised the dead that way. Retail raises only by order (0x4de530), so the sim no
+// longer does, and these levels give the order instead (Controller::reviveIdle):
+// an idle caster beside a body it can raise -- any side's -- is sent to raise the
+// nearest. One that is busy, a body past the old 56 px reach, or an allocation
+// under 0.7 (a computer player's revive would end unraised) gets none.
+static void aiRaisesTheDead(const sim::TypeRegistry& registry,const ai::Profile& profile,
+                            const sim::UnitType& soldier) {
+    sim::FeatType body;body.name="victim_dead";body.resurrectable=true;body.decomposeTicks=100000;
+    auto priest=soldier;priest.id="priest";priest.weapon.damage=0;priest.weapons.clear();
+    priest.canResurrect=true;priest.workerTime=10;
+    auto victim=soldier;victim.id="victim";
+    struct Scene { std::unique_ptr<sim::World> w; int caster,dead; };
+    auto scene=[&](float bodyX,int owner) {
+        Scene s{std::make_unique<sim::World>(),0,0};
+        sim::World& w=*s.w;terrain(w);w.setFeatureTypes({body});w.mapCorpse(&victim,0);
+        s.caster=w.spawn(&priest,400,800,0,0);
+        s.dead=w.spawn(&victim,bodyX,800,0,owner);
+        auto& d=*w.unit(s.dead);d.hp={};d.deadFor=200;d.corpseUntil=100000;   // a settled body
+        pastStart(w);
+        return s;
+    };
+    auto raises=[](const std::vector<net::Command>& cs,int caster,int dead) {
+        return std::count_if(cs.begin(),cs.end(),[&](const auto& c) {
+            return c.kind==net::Cmd::Resurrect && c.unitId==caster && c.targetId==dead;
+        })==1;
+    };
+    for (auto difficulty:{ai::Difficulty::Passive,ai::Difficulty::Normal}) {
+        for (int owner:{0,1}) {
+            auto s=scene(440,owner);
+            ai::Controller c(0,registry,profile,1,difficulty,{{3400,800}});
+            const auto cs=seen(c,*s.w);
+            check(raises(cs,s.caster,s.dead),owner ? "an idle caster of our levels is ordered to raise an enemy body beside it"
+                                                   : "an idle caster of our levels is ordered to raise its own body beside it");
+            for (const auto& cmd:cs) sim::applyCommand(*s.w,registry,cmd);
+            const auto& o=s.w->unit(s.caster)->orders;
+            check(!o.empty() && o.back().reviveKind==1 && o.back().reclaimFeat==-s.dead,
+                  "...and the order is a RESURRECT leg on that body");
+            check(!raises(seen(c,*s.w),s.caster,s.dead),
+                  "...given once, not again while it runs");
+        }
+    }
+    {
+        auto s=scene(400+60,1);   // past the old idle search's 56 px
+        ai::Controller c(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        check(!raises(seen(c,*s.w),s.caster,s.dead),"a body beyond 56 px is left alone");
+    }
+    {
+        auto s=scene(440,1);
+        s.w->player(0).constructionAllocation=0.5;
+        ai::Controller c(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        check(!raises(seen(c,*s.w),s.caster,s.dead),"no revive is ordered under 0.7 allocation (it would end unraised)");
+    }
+}
+
 int main(int argc,char** argv) {
     sim::TypeRegistry empty;ai::Profile profile;auto soldier=fighter();
     for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd,
@@ -1964,6 +2020,7 @@ int main(int argc,char** argv) {
     scoutingMemory(empty,profile,soldier);
     fogScouting(empty,profile,soldier);
     lodestoneKnowledge();
+    aiRaisesTheDead(empty,profile,soldier);
     {
         sim::World w;terrain(w);w.player(0).income=100;
         for(int i=0;i<35;++i)w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
@@ -2091,9 +2148,10 @@ int main(int argc,char** argv) {
                   "completed factory production and placed conjuring retain type standing orders");
         }
     }
-    // Absurd doubles recurring income. Reclaim (features, ordered and
-    // automatic corpses) pays nothing at all in retail (406250, 494fd0), so
-    // there is nothing for it to double; the targets still go.
+    // Absurd doubles recurring income. Reclaim (features, ordered corpses)
+    // pays nothing at all in retail (406250, 494fd0), so there is nothing for
+    // it to double; the targets still go. An idle builder beside a body (source
+    // 3) clears nothing: retail reclaims only by order (0.9.12).
     for (int source=0;source<4;++source) {
         double earned[2]{};bool cleared[2]{};
         for (int bonus=0;bonus<2;++bonus) {
@@ -2123,9 +2181,12 @@ int main(int argc,char** argv) {
         }
         if (source==0)
             check(earned[0]>0 && std::abs(earned[1]-earned[0]*2)<0.001,"Absurd doubles recurring income");
-        else
+        else if (source<3)
             check(earned[0]==0 && earned[1]==0 && cleared[0] && cleared[1],
-                  "feature, ordered-corpse and automatic-corpse reclaims clear their target for no mana");
+                  "feature and ordered-corpse reclaims clear their target for no mana");
+        else
+            check(earned[0]==0 && earned[1]==0 && !cleared[0] && !cleared[1],
+                  "an idle builder beside a body leaves it (no automatic reclaim)");
     }
     levelWiring();
     classicLevel();

@@ -1208,8 +1208,7 @@ Port: `sim/retailreclaim.h` (rectangle, countdown, work wake) driven by
 Ours, not retail: a MobileBuild retry treats a fading feature on its site like
 a mobile unit (the engine's own placement-clearing queues reclaims ahead of a
 build); a fading feature or corpse takes no weapon damage and cannot catch
-fire (otherwise a hit could swap it into a stage that outlives the fade);
-the idle-reclaimer corpse clear in `tickAbilities` is unverified; the
+fire (otherwise a hit could swap it into a stage that outlives the fade); the
 fade is not drawn (the feature simply goes at its end). Not emulated: the turn
 child and the COB time to INBUILDSTANCE (both add to the table above), what
 else raises 0x400, and retail's per-wake lookup by cell (a new feature on the
@@ -3811,17 +3810,11 @@ buildtime / workertime seconds -- the 0.3 on the wrong kind: an animate took
 keeps retail's 16.16 work counter (`Unit::reviveWork`, hashed while
 channelling) from `retailReviveWork`, takes `Player::allocation()` x 65536 a
 tick, pays nothing, and applies the computer-player rule through
-`computerOwned`. Ours is still an idle caster's automatic search, not an
-order. Retail's revive is only ever an order (a click, or a caster's area
-reclaim 0x406670 through 0x509cc0), so nothing takes an abandoned one up
-again; our search took the same corpse up on the next tick and abandoned it
-at every end while the economy stayed short. Since protocol 302 the search
-starts no revive the end would refuse: none for a computer caster while its
-allocation is under 0.7, none past the unit limits below. Ours also has no
-walk, turn or INBUILDSTANCE wait (stages 0-2) and takes its first allocation
-the tick after the corpse is found, where retail's stage 3 returns 1 and the
-dispatcher runs stage 4 in the same wake; the end (stage 5) follows the last
-subtraction in the same wake in both.
+`computerOwned`. Since 0.9.12 the revive is an order, as retail's: see the
+next section. Stage 3 sets the work counter in `World::tickReclaim` and the
+channel (stage 4) takes its first allocation in the same wake, as retail's
+stage 3 returns 1 and the dispatcher runs stage 4 at once; the end (stage 5)
+follows the last subtraction in the same wake in both.
 
 The end creates the unit with `0x512060(player, type, ..., +0x28 = 1)`
 (`0x406f0c`), which refuses a type at its totalallowed (`+0x136`, live units
@@ -3833,6 +3826,75 @@ was not the cause -- and the corpse stays (only the success path removes it).
 Ours spawned past both limits; since protocol 302 the end refuses at the unit
 limit and at totalallowed (the ai-profile limit is the server AI's, not the
 sim's, and is not checked).
+
+## Bodies are raised and cleared only by order (icd, 2026-10-30, 0.9.12)
+
+Every unit task is created by name through `0x4d4bf0` (a case-insensitive
+lookup in the sorted registry `0x62db84`, rows `0x19` bytes, filled from
+`0x5eb7f0` by `0x4d86a0`: class 20 `Resurrect` `0x4068b0`, 21 `Reclaim`
+`0x406250`, 22 `ReclaimArea` `0x406670`). The names the callers pass --
+`RESURRECT` `0x615cbc`, `VTOL_RESURRECT` `0x615cc8`, `RECLAIM` `0x613094`,
+`RECLAIMAREA` `0x615c8c` and the other `VTOL_*` -- are referenced only inside
+the order resolver `0x4de530` (and one GUI button-name lookup, `0x4b0cbc`).
+An exhaustive cross-reference search (probe scripts kept outside the repo):
+
+- **Mode 1** (a right-click, `0x4df1e2..`) tries, after attack, help-build,
+  repair, load and guard: RESURRECT when the type has canresurrect
+  (`+0x264 & 0x1000`) and `0x497100` holds, then RESURRECT when it has
+  cananimate (`+0x264 & 0x20000000`) and `0x496fd0` holds, then RECLAIM
+  (`0x800`, `0x496ea0`), then MOVE_GROUND. Each test resolves the feature
+  under the point (`0x50e660`) and, unless the call says otherwise, needs the
+  point's cell explored by the player. A flyer gets the VTOL_ name.
+- **Mode 12** (`0x4decc4..`, the CLEAR button, and the ReclaimArea children
+  `0x406727` ground / `0x420ca5` VTOL) is the same, gated on canreclaim, and
+  with no point falls back to RECLAIMAREA.
+- **The kinds.** `0x497100` is the feature type's `resurrectable` (flag word
+  `+0x13c` bit `0x800`, loader `0x4941fe`) and the object's `+0x5d` bit
+  `0x20`; `0x496fd0` is `animatable` (`0x1000`, loader `0x494223`) and bit
+  `0x40`. Neither looks at an owner: a caster raises any side's body, and
+  the unit rises as the caster's. Every shipped animatable corpse is also
+  resurrectable (73 against 256 sections in the extracted data), not the
+  other way round.
+- **Resurrect's stages 0-2** are RECLAIM's: stage 0 calls the script's
+  `MaybeBuilding` (`0x604ef8`) and installs the `0x4d4e80` rectangle with
+  wait mask `0x700`; stage 1 ends on a failed approach (`0x200`), stops and
+  turns through a `FacingNoFormation` child (`0x604b10`); stage 2 waits for
+  INBUILDSTANCE (`0x4d4b90`). Every wake through stage 5 re-resolves the
+  body (`0x4930d0`) and ends with `UNITCHATTER_RESURRECTFAILED` when it is
+  gone; stage 0 picks the kind (`+0x56`) and later wakes re-check it.
+  Stage 4 checks no distance.
+- **Who calls the resolver in modes 1 and 12:** the player's command path
+  `0x5214b0` (mouse `0x527d00`, the GUI buttons `0x4b11xx..0x4b19xx`, the
+  console order `0x424dc0`), the scripted-mission parser `0x513fb0` (from
+  `0x514b40` and `0x4d35c0`), and the ReclaimArea children. Nothing idle:
+  Standby (`0x407770`) runs only the fire-at-will scan `0x4d8370` and
+  `0x4d7de0` (modes 3 and 2), Standby_Wander mode 3, Guard and Patrol mode 8
+  (HELPBUILD or REPAIRUNIT only, `0x4debed`), and the AI's group order
+  `0x50b5d0` only modes 2 and 9 -- the AI never orders a reclaim or a revive.
+- **`autoreclaimable`** (feature flag `0x80`, loader `0x494151`) is tested
+  in one place, `0x509d91`, inside the ReclaimArea target picker
+  `0x509cc0`: it shapes area orders only.
+
+Ours through 0.9.11: an idle caster searched 56 px each tick and raised a
+body (its own side's for a resurrect, any for an animate, judged by
+`resurrectable` alone), an idle reclaimer cleared every body within 56 px in
+one tick, and there was no revive order -- a right-click on a body with a
+builder caster issued RECLAIM, and an area reclaim always reclaimed. Since
+0.9.12: `Cmd::Resurrect` (protocol 305) runs `World::resurrect`, a RECLAIM
+leg on the body with `Order::reviveKind` (1 resurrect, 2 animate; the kind is
+`reviveKindFor`, from the two types alone, so it is fixed at the order).
+`World::tickReclaim` runs stages 0-2 as RECLAIM's, then stage 3; the channel
+(`Unit::reviveTarget`) runs in `World::tickAbilities`, and its end sets the
+leg's stage to 5. The client resolves a click on a body per unit as mode 1
+does (`GameView::issueRaiseOrReclaim`), the CLEAR button as mode 12, and
+`World::tickReclaimArea` gives a caster's child RESURRECT where it can.
+`tickAbilities` searches for nothing. Our AI levels give their idle casters
+the order themselves (`Controller::reviveIdle`: a body within the old 56 px,
+none the end would refuse); the Retail AI gives none. Not ported: the
+explored-cell test at the point (the client offers only what it can pick),
+the object bits `0x20`/`0x40` (ours uses the fade alone), the AI-profile
+limit at stage 3, and VTOL_RESURRECT's own flight states (a flying caster
+uses VTOL_RECLAIM's stand-in, as its reclaim does).
 
 ## Helping to build and guarding (icd, 2026-10-27, protocol 301)
 

@@ -1134,7 +1134,7 @@ void World::compactRetiredUnits() {
     }
     if(write==units_.size())return;
     units_.resize(write);
-    corpseIdx_.clear();bodyIndexValid_=false;
+    actorIdx_.clear();bodyIndexValid_=false;
     rebuildGridAndOccupancy();
 }
 
@@ -1767,6 +1767,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
             // reclaim completion can consume the next queued obstacle instead.
             o.reclaimFeat = tmpl.reclaimFeat;
             o.reclaimCountdown = tmpl.reclaimCountdown; o.reclaimHeading = tmpl.reclaimHeading;
+            o.reviveKind = tmpl.reviveKind;
             o.repairTarget = tmpl.repairTarget;
             o.repairLooks = tmpl.repairLooks;
             o.helpSite = tmpl.helpSite;
@@ -10198,8 +10199,12 @@ void World::tickReclaimArea(Unit& b) {
     // Keep the area behind one ordinary reclaim child. When the child ends
     // (cleared, failed, or another builder removed the feature) stage 1
     // approaches again and picks from the NEW position.
+    // 4de530 mode 12 resolves the child as a right-click does: a body the
+    // builder can raise is RESURRECT (resurrect, else animate), anything
+    // else RECLAIM.
     const size_t oldSize=b.orders.size();
-    reclaim(b.id,target,true);
+    if (target<0 && reviveKind(b.id,-target)) resurrect(b.id,-target,true);
+    else reclaim(b.id,target,true);
     if (b.orders.size()>oldSize) std::rotate(b.orders.begin(),b.orders.end()-1,b.orders.end());
     else b.orders.erase(b.orders.begin());   // 4de530 found no mission: 8
 }
@@ -10248,6 +10253,49 @@ void World::reclaim(int builderId, int featureId, bool queue) {
     b->orders.push_back(o);
 }
 
+uint8_t World::reviveKind(int casterId, int corpseId) const {
+    const Unit* b = unit(casterId);
+    const Unit* c = unit(corpseId);
+    if (!b || !b->alive() || !b->type || !b->type->canMove || b->type->isStructure() ||
+        !c || c->id == casterId || !c->type || c->corpseFading || (c->alive() && c->hp > Fixed()) ||
+        (!c->alive() && c->deadFor >= c->corpseUntil))
+        return 0;
+    const int ct = c->corpseStatue >= 0 ? c->corpseStatue : corpseTypeOf(c->type);
+    if (ct < 0 || size_t(ct) >= featTypes_.size()) return 0;
+    return reviveKindFor(*b->type, featTypes_[size_t(ct)]);
+}
+
+// Retail RESURRECT (0x4068b0; VTOL_RESURRECT 0x41fe70 for a flyer), the task
+// a right-click on a body (0x4de530 mode 1) or a caster's area reclaim (mode
+// 12) creates: resurrect when the caster can, else animate, else nothing --
+// the reclaim fallback is the issuer's. It is RECLAIM's leg (reclaimFeat, the
+// body as a negative id) with its kind in reviveKind: stages 0-2 walk to the
+// body's footprint, turn and wait for the stance exactly as RECLAIM's do
+// (tickReclaim), then the revive channel runs (tickAbilities). Like retail's
+// resolver it accepts a body still dying; the walk waits for it to settle.
+void World::resurrect(int casterId, int corpseId, bool queue) {
+    OrdersNote note{*this,casterId};
+    const uint8_t kind = reviveKind(casterId, corpseId);
+    if (!kind) return;
+    Unit* b = unit(casterId);
+    const Unit* c = unit(corpseId);
+    static const bool kRvLog = tak::devEnv("TAK_BURNLOG") != nullptr;
+    if (kRvLog)
+        std::fprintf(stderr, "resurrect ORDER: u%d -> %s (%d) kind %d\n",
+                     casterId, c->type->id.c_str(), corpseId, int(kind));
+    if (!queue) {
+        cancelPath(*b);
+        b->orders.clear();
+    }
+    Order o;
+    o.x = c->x; o.z = c->z;
+    o.goal = true;
+    o.issuedTick = tickCounter_;
+    o.reclaimFeat = -corpseId;
+    o.reviveKind = kind;
+    b->orders.push_back(o);
+}
+
 // VTOL_RECLAIM (420xxx) is not ported, so a flying reclaimer keeps our old
 // acceptance: within 24 px plus half the target plus builddistance of its
 // centre. Ground reclaimers use retail's rectangle (prepareReclaimApproach).
@@ -10281,13 +10329,13 @@ bool World::reclaimTargetFootprint(int target,int& x,int& z,int& fx,int& fz,floa
 // reclaimable flag and the object's +0x5d bit 0x10). The bit is gone once
 // another builder's reclaim has started its fade, and while the feature burns
 // (4949c0 clears it).
-bool World::reclaimTargetValid(int target) const {
+bool World::reclaimTargetValid(int target,bool revive) const {
     if (target<0) {
         const Unit* c=unit(-target);
         if (!c || !c->type || c->alive() || c->corpseFading || c->deadFor>=c->corpseUntil ||
             !corpseFootprints_.contains(c->id)) return false;
         const int ct=corpseFootprints_.at(c->id).type;
-        return ct>=0 && size_t(ct)<featTypes_.size() && featTypes_[size_t(ct)].reclaimable;
+        return ct>=0 && size_t(ct)<featTypes_.size() && (revive || featTypes_[size_t(ct)].reclaimable);
     }
     const Feature* f=feature(target);
     return f && featureReclaimable(*f) && !f->burn;
@@ -10302,7 +10350,8 @@ void World::prepareReclaimApproach(Unit& u) {
     auto& goal=u.orders[currentLeg(u.orders)];
     if (!goal.reclaimFeat || goal.mission.stage!=0) return;
     int ax=0,az=0,fw=1,fh=1;float energy=0;
-    if (!reclaimTargetFootprint(goal.reclaimFeat,ax,az,fw,fh,energy) || !reclaimTargetValid(goal.reclaimFeat)) {
+    if (!reclaimTargetFootprint(goal.reclaimFeat,ax,az,fw,fh,energy) ||
+        !reclaimTargetValid(goal.reclaimFeat,goal.reviveKind!=0)) {
         // A body still dying has no corpse feature yet (ours accepts the
         // order early); wait for it to settle. Anything else is gone.
         if (goal.reclaimFeat<0) {
@@ -10370,11 +10419,30 @@ void World::tickFeatureFades() {
     }
 }
 
+// Retail's revive work counter (icd 0x406c2e, 0x4201e9): 65536 x buildtime /
+// (workertime x 0.03333333), times 0.3 for a resurrect, through _ftol (5d3d54),
+// which keeps the LOW word of a 64-bit fistp: past 2^31 it wraps (araking
+// resurrecting a buildtime-100000 vermage starts at 1603273293, not 5.9e9),
+// and a caster with no workertime (infinity: the indefinite, low word 0)
+// finishes on its first tick.
+static int32_t retailReviveWork(float buildTime, float workerTime, bool resurrect) {
+    double work = double(buildTime);
+    if (resurrect) work *= 0.3;
+    return int32_t(retailFtol(work / (double(workerTime) * 0.03333333) * 65536.0));
+}
+
 // Retail RECLAIM (406250) on the current leg. Stage 1 waits for the approach
 // (0x100/0x400 arrival, 0x200 failure); stage 2 is the turn child and the
 // INBUILDSTANCE wait; stages 3 and 4 are the two-tick work wakes (406529);
 // stage 5 removes the target. Once work has started nothing checks distance
 // again: a builder pushed away keeps working, as in retail.
+//
+// A RESURRECT leg (Order::reviveKind; 0x4068b0) runs the same stages 0-2 --
+// its stage 0 is RECLAIM's MaybeBuilding and 4d4e80 rectangle with wait mask
+// 0x700, stage 1 the 0x200 failure test and the FacingNoFormation turn, stage
+// 2 the 4d4b90 stance wait -- then stage 3 (0x406c2e) sets the work counter
+// and stage 4 is the channel, which tickAbilities runs on Unit::reviveTarget.
+// The channel's end sets the leg's stage to 5, and the leg goes here.
 void World::tickReclaim(Unit& b) {
     if (b.orders.empty() || b.orders[currentLeg(b.orders)].reclaimFeat!=b.reclaimId) {
         // Another order is current (a fresh one, or one pushed ahead): the
@@ -10389,14 +10457,16 @@ void World::tickReclaim(Unit& b) {
         stopWorkAnimation(b);
         dropLeg(b);
         b.reclaimId=0;
+        b.reviveTarget=0;
     };
     size_t leg=currentLeg(b.orders);
     if (b.orders[leg].mission.stage==0) return;   // prepareReclaimApproach
+    const bool revive=b.orders[leg].reviveKind!=0;
     int ax=0,az=0,fw=1,fh=1;float energy=0;
     if (b.orders[leg].mission.stage==1) {
         auto& goal=b.orders[leg];
         if (b.type->canFly) {
-            if (!reclaimTargetValid(target)) { quit(); return; }
+            if (!reclaimTargetValid(target,revive)) { quit(); return; }
             if (!flyerReclaimInReach(b,target)) return;
         } else {
             const uint32_t events=(b.missionEvents | goal.mission.pending) & goal.mission.waitMask;
@@ -10406,12 +10476,12 @@ void World::tickReclaim(Unit& b) {
             // fallback (MobileBuild has one; RECLAIM does not).
             if (events&0x200) { quit(); return; }
         }
-        if (!reclaimTargetValid(target) || !reclaimTargetFootprint(target,ax,az,fw,fh,energy)) { quit(); return; }
+        if (!reclaimTargetValid(target,revive) || !reclaimTargetFootprint(target,ax,az,fw,fh,energy)) { quit(); return; }
         // Work starts: the approach's waypoints go, the leg is the order.
         cancelPath(b);
         if (leg) { b.orders.erase(b.orders.begin(),b.orders.begin()+long(leg));leg=0; }
         auto& work=b.orders.front();
-        work.reclaimCountdown=retailReclaimCountdown(energy);
+        work.reclaimCountdown=revive ? 0 : retailReclaimCountdown(energy);
         const Fixed tx=Fixed::fromInt(ax*16+fw*8),tz=Fixed::fromInt(az*16+fh*8);
         work.reclaimHeading=uint16_t(retailDirection(b.x-tx,b.z-tz).v);
         work.mission.stage=2;
@@ -10435,6 +10505,27 @@ void World::tickReclaim(Unit& b) {
         work.mission.stage=3;
         work.mission.waitMask=0;
         work.mission.deadline=tickCounter_;
+    }
+    if (revive) {
+        // Each wake re-resolves the body (4930d0): gone, or the channel
+        // ended (stage 5: raised, refused or abandoned), the task ends.
+        if (work.mission.stage>=5 || !reclaimTargetValid(target,true)) { quit(); return; }
+        if (work.mission.stage==3) {
+            // 0x406c2e: the output -- the caster's animatetype for an
+            // animate, the body's own unit for a resurrect -- sets the work
+            // counter; stage 4 runs in the same wake (tickAbilities, later
+            // this tick).
+            const bool animate=work.reviveKind==2;
+            const UnitType* out=animate ? b.type->animateType : unit(-target)->type;
+            if (!out) { quit(); return; }
+            b.reviveMode=int8_t(work.reviveKind);
+            b.reviveWork=retailReviveWork(out->buildTime,b.type->workerTime,!animate);
+            work.mission.stage=4;
+        }
+        // Stage 4: the channel (re)attaches -- after a leg pushed ahead of
+        // this one, with the work it had left.
+        b.reviveTarget=-target;
+        return;
     }
     if (tickCounter_<work.mission.deadline) return;
     if (!reclaimTargetValid(target)) { quit(); return; }
@@ -12591,32 +12682,14 @@ void World::tickAuras(float dt) {
     }
 }
 
-// Retail's revive work counter (icd 0x406c2e, 0x4201e9): 65536 x buildtime /
-// (workertime x 0.03333333), times 0.3 for a resurrect, through _ftol (5d3d54),
-// which keeps the LOW word of a 64-bit fistp: past 2^31 it wraps (araking
-// resurrecting a buildtime-100000 vermage starts at 1603273293, not 5.9e9),
-// and a caster with no workertime (infinity: the indefinite, low word 0)
-// finishes on its first tick.
-static int32_t retailReviveWork(float buildTime, float workerTime, bool resurrect) {
-    double work = double(buildTime);
-    if (resurrect) work *= 0.3;
-    return int32_t(retailFtol(work / (double(workerTime) * 0.03333333) * 65536.0));
-}
-
 void World::tickAbilities(float) {
     // A corpse is a dead unit whose body still lies on the field: the death
-    // anim has finished (4s) and decomposetime hasn't expired. Whether it can
-    // be RAISED again is the corpse def's `resurrectable` (81 of the 150
-    // shipped corpse defs; reclaiming works on any corpse).
+    // anim has finished (4s) and decomposetime hasn't expired.
     auto isCorpse = [](const Unit& c) {
         // Statues stand from the instant of death (retail: severity 0, no Dying
         // anim); ordinary bodies appear after the 4s death animation.
         const int from = c.corpseAnimationTicks();
         return c.type && !c.alive() && !c.corpseFading && c.deadFor >= from && c.deadFor < c.corpseUntil;
-    };
-    auto corpseDef = [&](const Unit& c) -> const FeatType* {
-        int ct = c.corpseStatue >= 0 ? c.corpseStatue : corpseTypeOf(c.type);
-        return ct >= 0 ? &featTypes_[size_t(ct)] : nullptr;
     };
     auto retire = [&](Unit& c) { retireCorpse(c); };
     struct Revive { const UnitType* type; float x, z; int player; bool animate; };
@@ -12635,164 +12708,94 @@ void World::tickAbilities(float) {
             if (o.alive() && o.type == out && o.player == player) ++n;
         return n >= out->totalAllowed;
     };
-    const float kR = 56.0f;
 
-    // COLLECT THE CORPSES ONCE, not once per caster.
+    // Nothing raises or clears a body on its own any more. Retail creates a
+    // Resurrect, Reclaim or ReclaimArea task only from an order (the resolver
+    // 0x4de530, modes 1 and 12, reached from the player's command path, a
+    // scripted initial mission or a ReclaimArea's own child); its idle Standby
+    // never does. Ours used to: an idle caster searched 56 px for a body to
+    // raise, and an idle reclaimer cleared every body around it. Both are gone
+    // (0.9.12). What is left is the channel of a RESURRECT leg, which
+    // tickReclaim starts once the caster has walked, turned and taken its
+    // stance (Unit::reviveTarget).
     //
-    // The inner loop below used to walk all of units_ for EVERY idle caster -- and most
-    // builders can reclaim, so an idle base makes a lot of casters. Measured at 3,722
-    // units: a mean of 546,000 unit visits per tick and a peak of 1,296,823, against
-    // 245,000 for the whole of combat acquisition at its own peak. It is O(casters x N),
-    // so at 15k units it is roughly 20M visits a tick -- the same shape as the O(n^2)
-    // that dropped a stress client at tick 151.
-    //
-    // The spatial grid cannot answer this: it holds only ALIVE units, deliberately, and
-    // corpses are dead. One ordered pass collects them instead, so the inner loop walks
-    // corpses rather than the whole army.
-    //
-    // ASCENDING UNIT ID IS PRESERVED -- units_ is scanned in order, so candidates are
-    // considered in exactly the sequence the nested loop used, and "first eligible wins"
-    // still picks the same corpse. `retire()` mutates corpses as casters claim them, and
-    // the eligibility re-check inside the loop still runs, so a corpse taken by an
-    // earlier caster is skipped by a later one exactly as before.
-    // A unit that cannot act this tick drops its channel; one that can, and is a
-    // caster or a reclaimer, is visited by the caster loop below. No caster's
-    // work changes these tests for another unit (it debits or credits mana,
-    // retires corpses -- dead units, which stay dead -- and queues revives that
-    // spawn after the loop), so they can all be taken before the loop.
+    // A channelling unit whose RESURRECT leg is no longer its order (a new
+    // order replaced it, it died) drops the channel; one that cannot act this
+    // tick (stunned, frozen) keeps it and does no work. Nothing a channel does
+    // changes these tests for another unit (it retires corpses -- dead units,
+    // which stay dead -- and queues revives that spawn after the loop), so
+    // they can all be taken before the loop.
     auto actor = [](Unit& u) {
-        if (!u.alive() || !u.type || u.underConstruction || u.incapacitated() ||
-            !u.orders.empty()) {
-            if (u.reviveTarget) u.reviveTarget = 0;   // interrupted: channel drops
+        if (!u.reviveTarget) return false;
+        if (!u.alive() || !u.type || u.underConstruction || u.orders.empty() ||
+            !u.orders.front().reviveKind || u.orders.front().reclaimFeat != -u.reviveTarget) {
+            u.reviveTarget = 0;   // interrupted: channel drops
             return false;
         }
-        bool caster = u.type->canResurrect || (u.type->canAnimate && u.type->animateType);
-        return caster || u.type->canReclaim;
+        return !u.incapacitated();
     };
-    corpseIdx_.clear();
     actorIdx_.clear();
     if (units_.size() >= kPostMinParallel && simPool().workers()) {
-        // WE E4.3 (P6): both lists on the SimPool, each chunk listing its own
-        // units in order, concatenated in chunk order (= ascending index).
+        // WE E4.3 (P6): on the SimPool, each chunk listing its own units in
+        // order, concatenated in chunk order (= ascending index).
         const size_t chunks = (units_.size() + SimPool::kUnitChunk - 1) / SimPool::kUnitChunk;
         if (abilityChunks_.size() < chunks) abilityChunks_.resize(chunks);
         simPool().forChunks(units_.size(), SimPool::kUnitChunk, 0, [&](size_t k, size_t begin, size_t end, unsigned) {
             auto& c = abilityChunks_[k];
-            c.corpses.clear(); c.actors.clear();
-            for (size_t j = begin; j < end; ++j) {
-                if (isCorpse(units_[j])) c.corpses.push_back(uint32_t(j));
+            c.actors.clear();
+            for (size_t j = begin; j < end; ++j)
                 if (actor(units_[j])) c.actors.push_back(uint32_t(j));
-            }
         });
-        for (size_t k = 0; k < chunks; ++k) {
-            corpseIdx_.insert(corpseIdx_.end(), abilityChunks_[k].corpses.begin(), abilityChunks_[k].corpses.end());
+        for (size_t k = 0; k < chunks; ++k)
             actorIdx_.insert(actorIdx_.end(), abilityChunks_[k].actors.begin(), abilityChunks_[k].actors.end());
-        }
 #ifndef NDEBUG
         if (verifyPool()) {
-            std::vector<uint32_t> corpses, actors;
-            for (size_t j = 0; j < units_.size(); ++j) {
-                if (isCorpse(units_[j])) corpses.push_back(uint32_t(j));
-                if (actor(units_[j])) actors.push_back(uint32_t(j));
-            }
-            if (corpses != corpseIdx_ || actors != actorIdx_) poolMismatch("tickAbilities lists", tickCounter_);
+            std::vector<uint32_t> actors;
+            for (size_t j = 0; j < units_.size(); ++j)
+                if (units_[j].reviveTarget && !units_[j].incapacitated()) actors.push_back(uint32_t(j));
+            if (actors != actorIdx_) poolMismatch("tickAbilities lists", tickCounter_);
         }
 #endif
     } else {
         TAK_PASS();
-        for (size_t j = 0; j < units_.size(); ++j) {
-            if (isCorpse(units_[j])) corpseIdx_.push_back(uint32_t(j));
+        for (size_t j = 0; j < units_.size(); ++j)
             if (actor(units_[j])) actorIdx_.push_back(uint32_t(j));
-        }
     }
-    // No early return when the list is empty, deliberately. The per-caster loop below
-    // does more than search for corpses: it also DROPS a channel whose target has gone
-    // (interrupted, out of range, or decomposed). Returning here skipped that, so if the
-    // last corpse decomposed under a channeling caster its reviveTarget survived, and
-    // the caster then spent the tick the next corpse appeared clearing the stale target
-    // instead of acquiring. Only the SEARCH is guaranteed to have no work, and with an
-    // empty corpseIdx_ that inner loop is already a no-op -- so the walk stays O(n),
-    // which is the whole point of collecting the corpses once. (Found by review.)
 
     for (const uint32_t ai : actorIdx_) {
-        const size_t i = ai;
-        Unit& u = units_[i];
-
+        Unit& u = units_[size_t(ai)];
         // A revive is a CHANNEL, not an instant: retail's Resurrect task (icd
-        // 0x4068b0; VTOL_Resurrect 0x41fe70 is the same). It costs NOTHING and
-        // requests nothing -- the task never reaches 0x429af0/0x429d90 or the
-        // resource object -- but each tick's work is the owner's allocation
-        // (0x406d3b: work -= ftol(allocation x 65536)), so a starved economy
-        // slows it and an empty, contested store stops it. At the end
-        // (0x406e79) a computer player whose allocation is under 0.7 abandons
-        // it unraised.
-        if (u.reviveTarget) {
-            Unit* c = unit(u.reviveTarget);
-            if (!c || !isCorpse(*c)) { u.reviveTarget = 0; continue; }
-            float dx = (c->x - u.x).toFloat(), dz = (c->z - u.z).toFloat();
-            if (dx * dx + dz * dz > kR * kR * 4) { u.reviveTarget = 0; continue; }
-            const bool animate = u.reviveMode == 2;
-            const UnitType* out = animate ? u.type->animateType : c->type;
-            const float allocation = players_[size_t(u.player)].allocation();
-            // 32-bit sub, signed test, as retail: a counter ftol wrapped negative
-            // finishes at once, and nothing here is C++ signed overflow.
-            u.reviveWork = int32_t(uint32_t(u.reviveWork) - retailFtol(double(allocation) * 65536.0));
-            // Work left: the caster stays visible 300 ticks (0x406e45, 0x420477).
-            if (u.reviveWork > 0) { blockCloak(u, 300); continue; }
-            u.reviveTarget = 0;
-            if (computerOwned(u.player) && double(allocation) < 0.7) continue;
-            // 0x406f0c creates the unit through 0x512060, which refuses one
-            // past the type's totalallowed or the player's unit limit: the
-            // revive ends unraised (UNITCHATTER_NOMOREUNITS) and the corpse
-            // stays. Earlier revives this tick count as raised (`pending`).
-            if (reviveRefused(u.player, out)) continue;
-            ++pendingRevives[size_t(u.player)];
-            revives.push_back({out, c->x.toFloat(), c->z.toFloat(), u.player, animate});
-            retire(*c);
-            continue;
-        }
-        // Ours, not retail (whose revive is only ever an order): the idle
-        // search. It takes up no revive the end would refuse -- a computer
-        // caster while its allocation is under 0.7 (the 0x406e79 abandon), any
-        // caster at its unit limit -- or it would take the same corpse up
-        // again on its next tick, for as long as the shortage lasted.
-        const bool casterIdle = !(computerOwned(u.player) &&
-            double(players_[size_t(u.player)].allocation()) < 0.7);
-
-        // Corpses only -- collected once above, in ascending unit id.
-        for (uint32_t ci : corpseIdx_) {
-            const size_t j = size_t(ci);
-            Unit& c = units_[j];
-            if (j == i || !isCorpse(c)) continue;   // re-check: an earlier caster may have taken it
-            float dx = (c.x - u.x).toFloat(), dz = (c.z - u.z).toFloat();
-            if (dx * dx + dz * dz > kR * kR) continue;
-            const FeatType* cd = corpseDef(c);
-            if (!cd) continue;
-            if (casterIdle && u.type->canResurrect && c.player == u.player && cd->resurrectable &&
-                !reviveRefused(u.player, c.type)) {
-                // Resurrect: 0.3 x the corpse's buildtime (retail 0x406c2e,
-                // +0x56 clear); the unit returns at 10% HP.
-                u.reviveTarget = c.id;
-                u.reviveMode = 1;
-                u.reviveWork = retailReviveWork(c.type->buildTime, u.type->workerTime, true);
-                break;
-            } else if (casterIdle && u.type->canAnimate && u.type->animateType &&
-                       cd->resurrectable && !reviveRefused(u.player, u.type->animateType)) {
-                // Animate (tarpries animatetype=MONGHOUL): ANY resurrectable
-                // corpse -- friend or foe -- rises as the caster's creature,
-                // at the animatetype's FULL buildtime (no 0.3: +0x56 is set)
-                // and FULL HP (retail 0x406c2e/0x407038).
-                u.reviveTarget = c.id;
-                u.reviveMode = 2;
-                u.reviveWork = retailReviveWork(u.type->animateType->buildTime, u.type->workerTime, false);
-                break;
-            } else if (u.type->canReclaim && cd->reclaimable) {
-                // Ours, not retail RECLAIM (406250, which pays nothing either):
-                // an idle reclaimer clears a nearby body to deny resurrection.
-                // Whether retail does this at all is unverified.
-                retire(c);
-            }
-        }
+        // 0x4068b0; VTOL_Resurrect 0x41fe70 is the same), stages 4 and 5. It
+        // costs NOTHING and requests nothing -- the task never reaches
+        // 0x429af0/0x429d90 or the resource object -- but each tick's work is
+        // the owner's allocation (0x406d3b: work -= ftol(allocation x 65536)),
+        // so a starved economy slows it and an empty, contested store stops
+        // it. Nothing checks distance once it runs. At the end (0x406e79) a
+        // computer player whose allocation is under 0.7 abandons it unraised.
+        // However it ends, reviveTarget goes to 0, the leg's stage to 5, and
+        // tickReclaim retires the leg on its next wake.
+        Unit* c = unit(u.reviveTarget);
+        // actor() saw the leg at the front; the end is its stage 5.
+        auto ended = [&] { u.reviveTarget = 0; u.orders.front().mission.stage = 5; };
+        if (!c || !isCorpse(*c)) { ended(); continue; }
+        const bool animate = u.reviveMode == 2;
+        const UnitType* out = animate ? u.type->animateType : c->type;
+        const float allocation = players_[size_t(u.player)].allocation();
+        // 32-bit sub, signed test, as retail: a counter ftol wrapped negative
+        // finishes at once, and nothing here is C++ signed overflow.
+        u.reviveWork = int32_t(uint32_t(u.reviveWork) - retailFtol(double(allocation) * 65536.0));
+        // Work left: the caster stays visible 300 ticks (0x406e45, 0x420477).
+        if (u.reviveWork > 0) { blockCloak(u, 300); continue; }
+        ended();
+        if (computerOwned(u.player) && double(allocation) < 0.7) continue;
+        // 0x406f0c creates the unit through 0x512060, which refuses one
+        // past the type's totalallowed or the player's unit limit: the
+        // revive ends unraised (UNITCHATTER_NOMOREUNITS) and the corpse
+        // stays. Earlier revives this tick count as raised (`pending`).
+        if (reviveRefused(u.player, out)) continue;
+        ++pendingRevives[size_t(u.player)];
+        revives.push_back({out, c->x.toFloat(), c->z.toFloat(), u.player, animate});
+        retire(*c);
     }
     for (const auto& r : revives) {
         int id = spawn(r.type, r.x, r.z, 3.14159f, r.player);
@@ -17413,6 +17416,7 @@ uint64_t World::stateHash() const {
                 mix(0x52434c4d50454e44ull);mix(order.mission.pending);
                 mix(order.mission.stage);mix(order.mission.waitMask);mix(order.mission.deadline);
                 mix(uint32_t(order.reclaimCountdown));mix(order.reclaimHeading);mix(order.controller);
+                if (order.reviveKind) { mix(0x52455652u); mix(order.reviveKind); }
             }
             if (order.patrolOpen) mix(0x5041544f50454eull);
             if (order.patrolRepair) {

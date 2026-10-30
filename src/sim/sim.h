@@ -906,6 +906,13 @@ struct alignas(64) Order {
     // (in the pad beside reclaimHeading so the cold tail stays five lines).
     // Hashed when set.
     bool mixedSlots = false;
+    // A RESURRECT leg (retail 0x4068b0, VTOL_Resurrect 0x41fe70): the leg's
+    // reclaimFeat is the corpse (negative id), and this is the kind the order
+    // was issued as -- 1 resurrect, 2 animate (retail mission +0x56 = 0 / 1);
+    // 0 = an ordinary RECLAIM. Its walk, turn and stance wait are RECLAIM's
+    // (tickReclaim), then the revive channel (tickAbilities). In the pad
+    // beside mixedSlots. Hashed on reclaim legs when set.
+    uint8_t reviveKind = 0;
     // A HelpBuild (World::assist, or one a guarding builder put ahead of its
     // guard): the unfinished unit it helps. A ground builder's leg is the job
     // itself, run on `mission` with the rectangle controller (tickGroundHelp);
@@ -1248,8 +1255,11 @@ struct alignas(64) Unit {
     // A reclaim finished this body: it fades out (corpseUntil is the end of the
     // fade) and can no longer be reclaimed or raised. Hashed.
     bool corpseFading = false;
-    int reviveTarget = 0;    // priest: dead unit id being channelled back (0 = none)
-    int8_t reviveMode = 0;   // 1 = resurrect (own corpse), 2 = animate (raise ghoul)
+    // The revive channel of the current RESURRECT leg (Order::reviveKind):
+    // the dead unit being raised (0 = none) and its kind, 1 resurrect (the
+    // body's own unit) or 2 animate (the caster's animatetype).
+    int reviveTarget = 0;
+    int8_t reviveMode = 0;
     // Retail mission +0x52: the channel's work left, 16.16. Each tick takes the
     // owner's allocation x 65536 (icd 0x406d3b); the revive completes at <= 0.
     // Hashed while channelling.
@@ -1532,6 +1542,11 @@ struct FeatType {
     // and whether a priest can raise it (retail decomposetime / resurrectable).
     int  decomposeTicks = 0; // TDF decomposetime * 30 (0 = never rots)
     bool resurrectable = false;
+    // TDF animatable=1: a cananimate caster may raise it as its animatetype.
+    // Retail's feature flag 0x1000 (loader 0x494223; tested by 0x496fd0), apart
+    // from resurrectable's 0x800 (0x497100). Every shipped animatable corpse is
+    // also resurrectable, not the other way round.
+    bool animatable = false;
     bool reclaimable = false;
     bool isStone = false;    // TDF isstone=1 (statue: client tints it stone-gray)
     bool isFrozen = false;   // TDF isfrozen=1 (client tints it ice-blue)
@@ -1542,6 +1557,18 @@ struct FeatType {
     std::string object;      // TDF object= (3D corpse mesh; client visual)
     bool treeOrRock = false; // see RetailMapFeatureType::treeOrRock
 };
+
+// What a caster does with a body, retail's raise resolver (0x4de530 modes 1
+// and 12, and 0x4068b0 stage 0): resurrect when its type has canresurrect and
+// the body is resurrectable (0x497100), else animate when it has cananimate
+// (and an animatetype) and the body is animatable (0x496fd0). 0 = neither, and
+// a reclaimer reclaims it instead. There is no owner test: a caster raises a
+// body of any side, as its own unit.
+inline uint8_t reviveKindFor(const UnitType& caster, const FeatType& corpse) {
+    if (caster.canResurrect && corpse.resurrectable) return 1;
+    if (caster.canAnimate && caster.animateType && corpse.animatable) return 2;
+    return 0;
+}
 
 struct SacredSite {
     int x=0,z=0,fx=1,fz=1; // feature-plane origin and footprint, in cells
@@ -2236,6 +2263,15 @@ public:
     // queue = append to its orders, for an area drag). Retail Reclaim (406250).
     void reclaim(int builderId, int featureId, bool queue);
     void reclaimArea(int builderId, float x0, float z0, float x1, float z1, bool queue);
+    // Order `casterId` to raise the body of dead unit `corpseId` (retail
+    // RESURRECT 0x4068b0, or VTOL_RESURRECT 0x41fe70 for a flyer): walk to it,
+    // then channel a resurrect or an animate (reviveKind). A no-op when the
+    // caster cannot raise that body (reviveKind is 0).
+    void resurrect(int casterId, int corpseId, bool queue);
+    // The kind a resurrect order from `casterId` on dead unit `corpseId` would
+    // be (reviveKindFor): 0 when either is not one, the body is gone or fading,
+    // or the caster cannot move.
+    uint8_t reviveKind(int casterId, int corpseId) const;
     // Order a mobile builder to repair damaged friendly `targetId` (restores HP at
     // the builder's work rate, draining mana proportionally). tickRepair runs it.
     void repair(int builderId, int targetId, bool queue);
@@ -3665,8 +3701,10 @@ private:
     // Resolve a reclaim target to its installed plane anchor and footprint
     // (a corpse: its corpse feature). False when it is gone.
     bool reclaimTargetFootprint(int target,int& x,int& z,int& fx,int& fz,float& energy) const;
-    // Retail's per-wake re-lookup (4930d0 -> 496ea0): still reclaimable.
-    bool reclaimTargetValid(int target) const;
+    // Retail's per-wake re-lookup (4930d0 -> 496ea0): still reclaimable. For
+    // a RESURRECT leg (`revive`) the body need only still lie there: the kind
+    // it was ordered as depends on the two types alone, which do not change.
+    bool reclaimTargetValid(int target,bool revive=false) const;
     void swapFeature(Feature& f, int newType);   // chain stage swap (burnt/dead)
     void tickBurning();
     std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_
@@ -3923,13 +3961,10 @@ private:
     // under the refusal caps, and re-asks on the randomised deadlines -- the failed
     // shape (rand(8)+rand(8)+30 x halfCellTicks, icd 0x4e535d) probes gently for
     // ever, which is both the crowd-convergence loop and the cliff-wedge behaviour.
-    // Indices into units_ of the bodies eligible to be raised or reclaimed this tick,
-    // in ascending unit id. Rebuilt once per corpse pass; see the note there.
-    std::vector<uint32_t> corpseIdx_;
-    // ...and of the units the caster loop visits (alive, able to act, idle,
-    // a caster or a reclaimer), ascending.
+    // Indices into units_ of the units channelling a revive this tick
+    // (tickAbilities), ascending.
     std::vector<uint32_t> actorIdx_;
-    struct AbilityChunk { std::vector<uint32_t> corpses, actors; };
+    struct AbilityChunk { std::vector<uint32_t> actors; };
     std::vector<AbilityChunk> abilityChunks_;   // tickAbilities on the SimPool (WE E4.3)
     // The post-loop passes go to the SimPool from this many units.
     static constexpr size_t kPostMinParallel = 2048;

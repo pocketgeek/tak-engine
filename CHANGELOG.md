@@ -102,6 +102,18 @@ their validation reports; both live in [`docs/`](docs/).
   its sight distance from its route (it used to measure the unit). A helper
   that finishes a unit inside a factory walks out of it afterwards, so it
   never blocks the door (not in the original).
+- **The dead rise only when you raise them**, as in the original game.
+  Right-click a body with Elsin, a Dark or Darkest Priest, a Chief Engineer,
+  a Dark Hand or a Spirit Wolf and it walks over and raises it (a right-click
+  used to make the priests and Elsin clear the body instead); the cursor
+  shows the raise, and a selected builder that cannot raise it clears it. A
+  caster clearing an area raises the bodies there that it can. Idle casters
+  no longer raise nearby bodies on their own, and idle builders no longer
+  clear every body around them: a body lies until it decays or is cleared or
+  raised by order. As in the original, a body of any side can be raised (it
+  rises as yours), and only a body that can be animated rises as a ghoul,
+  creauto, lich or wolf. Our AI levels order their idle casters to raise the
+  bodies beside them; the Retail AI never raises the dead, as in the original.
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
   at +10, 0.9.11 fell to -2 at about 2,700 units, with 219 ticks over 250 ms;
   0.9.12 held +9 to +10 to 3,160 units with no tick over 100 ms:
@@ -126,9 +138,9 @@ their validation reports; both live in [`docs/`](docs/).
   (and puts the sound device back to the system default at once). The
   Controls hint has a band of its own, so it no longer covers the last row (a
   right-click there used to unbind that key).
-- **Protocol 305:** the AI's sight-only targets, the combat fixes and the new
-  state check change what players compare, so this release does not play with
-  0.9.11 or earlier, nor their replays. A 0.9.11 client or server is turned away with a
+- **Protocol 305:** the AI's sight-only targets, the combat fixes, the raise
+  order and the new state check change what players compare, so this release
+  does not play with 0.9.11 or earlier, nor their replays. A 0.9.11 client or server is turned away with a
   *protocol version mismatch* message, and a 0.9.11 replay is refused with the
   version message.
 

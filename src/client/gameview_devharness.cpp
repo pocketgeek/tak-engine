@@ -1411,6 +1411,56 @@
             check(fanned(cmds,tak::net::Cmd::Reclaim) && cmds[1].targetId==fid,
                   "an armed CLEAR click gives each reclaimer one Reclaim, the soldier none");
             check(soldierKept(),"armed CLEAR leaves the soldier's order alone");
+            // A body (0.9.12): retail's resolver runs per unit (4de530 mode 1
+            // for the click, 12 for armed CLEAR) -- a caster that can raise it
+            // gets RESURRECT, a reclaimer that cannot gets RECLAIM, the soldier
+            // nothing -- and the cursor is Revive, the order the click gives.
+            {
+                const auto* casterType=registry_.find("araking");
+                const auto* masonType=registry_.find("arabuild");
+                check(casterType && casterType->canResurrect && masonType && masonType->canReclaim &&
+                      !masonType->canResurrect,"fixture has a resurrecting caster and a plain reclaimer");
+                const int caster=spawn("araking",cx-60,cz+60,0,localPlayer_);
+                const int mason=spawn("arabuild",cx+60,cz+60,0,localPlayer_);
+                const float bx=cx,bz=cz+140;
+                const int dead=spawn("arasword",bx,bz,0,localPlayer_==0 ? 1 : 0);
+                check(caster>=0 && mason>=0 && dead>=0,"caster, mason and victim spawned");
+                {   // a settled body (the death sweep and anim already behind it)
+                    auto& d=*writableWorld().unit(dead);
+                    d.hp={};d.deadFor=std::max(200,d.corpseAnimationTicks());d.corpseUntil=100000;
+                }
+                mapView_.setOffset(bx-400,bz-300);
+                selection_={caster,mason,soldier};publish();
+                mouseX_=-1000;mouseY_=-1000;
+                check(raiseTargetAt(bx,bz)==dead,"the body picks as a raise target under its centre");
+                check(hoverCursor(bx,bz,false)==tak::CursorId::Revive,"the cursor over it is Revive");
+                const auto raised=[&](const std::vector<tak::net::Command>& cmds,const char* what) {
+                    int resurrect=0,reclaim=0,other=0;
+                    for (const auto& c:cmds) {
+                        if (c.kind==tak::net::Cmd::Resurrect && c.unitId==caster && c.targetId==dead) ++resurrect;
+                        else if (c.kind==tak::net::Cmd::Reclaim && c.unitId==mason && c.targetId==-dead) ++reclaim;
+                        else ++other;
+                    }
+                    check(resurrect==1 && reclaim==1 && other==0,what);
+                };
+                std::vector<tak::net::Command> bodyCmds;
+                {
+                    ClickScope outer(*this);
+                    rightClickOrder(bx,bz,false);
+                    bodyCmds=click_->cmds;
+                }
+                raised(bodyCmds,"a right-click on a body: the caster raises it, the mason reclaims it, the soldier nothing");
+                for (const auto& c:bodyCmds) apply(c);
+                check(!world_.unit(caster)->orders.empty() && world_.unit(caster)->orders.back().reviveKind==1,
+                      "the caster's order is a RESURRECT leg");
+                writableWorld().stop(caster);writableWorld().stop(mason);publish();
+                {
+                    ClickScope outer(*this);
+                    issueArmedOrder('c',bx,bz,false,false);
+                    bodyCmds=click_->cmds;
+                }
+                raised(bodyCmds,"an armed CLEAR on a body: the caster raises it, the mason reclaims it");
+            }
             SDL_SetModState(savedMod);
             std::fprintf(stderr,"PASS: reclaim fan-out to every selected reclaimer\n");
             return;

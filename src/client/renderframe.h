@@ -27,13 +27,16 @@ struct RenderOrder {
     uint32_t areaNextSpot=0;
     bool load=false,unload=false,attackMove=false,patrol=false,guard=false,goal=false;
     bool reclaimArea=false,buildRectangle=false,manaBuildArea=false;
-    bool areaExploring=false,areaApproached=false,trailPreview=false;
+    // Bit-fields, so the record stays within its 64 bytes. revive: a
+    // RESURRECT leg (Order::reviveKind; reclaimFeat is the body).
+    bool areaExploring:1=false,areaApproached:1=false,trailPreview:1=false,revive:1=false;
     RenderOrder()=default;
     RenderOrder(const tak::sim::Order& o)
         :x(o.x),z(o.z),clickX(o.clickX),clickZ(o.clickZ),buildX(o.buildX),buildZ(o.buildZ),
          buildType(o.buildType),targetId(o.targetId),reclaimFeat(o.reclaimFeat),repairTarget(o.repairTarget),
          issuedTick(o.issuedTick),load(o.load),unload(o.unload),attackMove(o.attackMove),patrol(o.patrol),
          guard(o.guard),goal(o.goal),reclaimArea(bool(o.reclaimArea)),buildRectangle(bool(o.buildRectangle)) {
+        revive=o.reviveKind!=0;
         if (o.reclaimArea) {
             x=tak::sim::Fixed::raw(o.reclaimArea->minX);z=tak::sim::Fixed::raw(o.reclaimArea->minZ);
             buildX=tak::sim::Fixed::raw(o.reclaimArea->maxX);buildZ=tak::sim::Fixed::raw(o.reclaimArea->maxZ);
@@ -201,6 +204,7 @@ struct UnitR {
     uint8_t severity = 0;                      // retail Killed severity (1..100)
     int corpseFeat = -1;                       // resolved corpse/statue FeatType index
     bool corpseReclaimable = false;
+    bool corpseFading = false;                 // a reclaim finished it: neither raised nor reclaimed
     int corpseCellX=0,corpseCellZ=0,corpseFootX=0,corpseFootZ=0;
     bool corpseStatue = false;                 // petrified/frozen: the body stays UPRIGHT,
                                                // unlike a normal corpse which lies flat

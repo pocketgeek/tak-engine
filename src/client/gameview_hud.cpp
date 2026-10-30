@@ -216,11 +216,14 @@ namespace {
                 float d=0;
                 if (unitUnderCursor(u,mouseX_,mouseY_,&d) && d<best) {best=d;enemy=u.id;}
             }
-            // A reclaimer clicking directly on a reclaimable feature (with no enemy
-            // there) reclaims just that one -- retail's single Reclaim.
-            if (enemy < 0 && haveReclaimer()) {
-                if (const auto fid = reclaimTargetAt(wx, wz)) {
-                    issueReclaimFeature(*fid, queue);   // every selected reclaimer
+            // A click directly on a body or a reclaimable feature (with no enemy
+            // there): each caster raises the body if it can, each other
+            // reclaimer reclaims -- retail's RESURRECT / single RECLAIM.
+            if (enemy < 0) {
+                const int body = raiseTargetAt(wx, wz);
+                const auto fid = haveReclaimer() ? reclaimTargetAt(wx, wz) : std::nullopt;
+                if (body || fid) {
+                    issueRaiseOrReclaim(body, fid, queue);
                     return;
                 }
             }
@@ -414,6 +417,7 @@ namespace {
             if (!capable) return tak::CursorId::Normal;
             if (pendingCmd_=='c') {
                 float wx,wz;pickWorld(mouseX_,mouseY_,wx,wz);
+                if (raiseTargetAt(wx,wz)) return tak::CursorId::Revive;   // the order raises it
                 return reclaimTargetAt(wx,wz) ? tak::CursorId::Reclaim : tak::CursorId::Normal;
             }
             // Repair and guard are target-dependent in the native selector.
@@ -545,20 +549,9 @@ namespace {
                 return canAttack ? tak::CursorId::TooFar : tak::CursorId::Normal;
             }
 
-            for (const auto* corpse:front().live) {
-                if (corpse->alive() || !corpse->corpsePhase || corpse->corpseFeat<0 ||
-                    !canPickPoint(corpse->x,corpse->z)) continue;
-                if (!worldTables().featureTypes().at(size_t(corpse->corpseFeat)).resurrectable) continue;
-                tak::client::ReclaimPick pick{wx,wz};   // same corpse pick circle as reclaim
-                pick.offer(-corpse->id,corpse->x,corpse->z,corpse->corpseFootX,corpse->corpseFootZ);
-                if (!pick.id) continue;
-                for (int id:selection_) {
-                    const auto* caster=frameUnitP(id);
-                    if (!caster || !caster->alive() || caster->embarked() || caster->underConstruction || !caster->type) continue;
-                    if ((caster->type->canResurrect && caster->player==corpse->player) ||
-                        (caster->type->canAnimate && caster->type->animateType)) return tak::CursorId::Revive;
-                }
-            }
+            // The order the click issues (issueRaiseOrReclaim): Revive when a
+            // selected unit raises the body there, else Reclaim.
+            if (raiseTargetAt(wx,wz)) return tak::CursorId::Revive;
             if (haveReclaimer() && reclaimTargetAt(wx,wz)) return tak::CursorId::Reclaim;
 
             // Empty ground: plain arrow. The Move cursor shows ONLY when the move order
@@ -924,10 +917,12 @@ namespace {
         ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         if (selection_.empty()) return;
         if (cmd == 'c') {   // clear/reclaim: reclaim the feature under the cursor
-            if (!haveReclaimer()) return;
-            const auto fid = reclaimTargetAt(wx, wz);
-            if (!fid) return;
-            issueReclaimFeature(*fid, queue);   // every selected reclaimer
+            // 4de530 mode 12 at a point: a body a caster can raise is
+            // RESURRECT, anything else RECLAIM (issueRaiseOrReclaim).
+            const int body = raiseTargetAt(wx, wz);
+            const auto fid = haveReclaimer() ? reclaimTargetAt(wx, wz) : std::nullopt;
+            if (!body && !fid) return;
+            issueRaiseOrReclaim(body, fid, queue);
             return;
         }
         if (cmd == 'r') { // repair or resume construction, using the cursor's eligibility

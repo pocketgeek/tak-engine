@@ -138,7 +138,7 @@ uint64_t orderTrailSignature(std::span<const RenderOrder> orders) {
         add(reinterpret_cast<uintptr_t>(o.buildType));add(o.issuedTick);add(o.areaNextSpot);
         add(o.load | o.unload<<1 | o.attackMove<<2 | o.patrol<<3 | o.guard<<4 |
             o.reclaimArea<<5 | o.buildRectangle<<6 | o.manaBuildArea<<7 |
-            o.areaExploring<<8 | o.areaApproached<<9);
+            o.areaExploring<<8 | o.areaApproached<<9 | o.revive<<10);
     }
     return h;
 }

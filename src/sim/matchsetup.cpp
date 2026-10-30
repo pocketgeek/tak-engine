@@ -208,6 +208,14 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         case Cmd::ReclaimArea:
             if (owns(c.unitId)) { redirect(); world.reclaimArea(c.unitId, c.x, c.z, c.x2, c.z2, c.queue); }
             break;
+        case Cmd::Resurrect:
+            // Checked before anything is cancelled, so a caster that cannot
+            // raise that body keeps its work.
+            if (owns(c.unitId) && world.reviveKind(c.unitId, c.targetId)) {
+                redirect();
+                world.resurrect(c.unitId, c.targetId, c.queue);
+            }
+            break;
         case Cmd::Stance:
             if (owns(c.unitId)) world.setStance(c.unitId, c.targetId);
             break;
@@ -346,7 +354,7 @@ struct FeatDef { bool mana = false; bool glowy = false; int blocking = 0; int fx
                  bool flamable = false; bool hasBurnAnim = false; uint32_t burnTicks = 0;
                  int spreadChance = 0; int sparkTicks = 0; std::string burnt;
                  // Corpse lifecycle (features/corpses).
-                 int decomposeTicks = 0; bool resurrectable = false;
+                 int decomposeTicks = 0; bool resurrectable = false; bool animatable = false;
                  bool isStone = false; bool isFrozen = false;
                  bool indestructible = false;
                  float hp = 0; std::string dead;
@@ -391,6 +399,7 @@ std::unordered_map<std::string, FeatDef> loadFeatureDefs(const hpi::Vfs& vfs) {
                     std::transform(d.burnt.begin(), d.burnt.end(), d.burnt.begin(), ::tolower);
                     d.decomposeTicks = int(node.numberOr("decomposetime", 0) * 30);
                     d.resurrectable = node.numberOr("resurrectable", 0) != 0;
+                    d.animatable = node.numberOr("animatable", 0) != 0;
                     d.object = node.valueOr("object", "");
                     std::transform(d.object.begin(), d.object.end(), d.object.begin(), ::tolower);
                     d.isStone = node.numberOr("isstone", 0) != 0;
@@ -432,6 +441,7 @@ struct FeatTypeInterner {
         t.treeOrRock = di->second.treeOrRock;
         t.decomposeTicks = di->second.decomposeTicks;
         t.resurrectable = di->second.resurrectable;
+        t.animatable = di->second.animatable;
         t.reclaimable = di->second.reclaimable != 0;
         t.isStone = di->second.isStone;
         t.isFrozen = di->second.isFrozen;
