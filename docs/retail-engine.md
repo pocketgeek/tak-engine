@@ -1090,7 +1090,9 @@ with a seek order (`Order::seekAttack`, the point in x/z, the angle in
 auto attack (the standby's scan, the hit response, and AirToAir's retarget of
 one) goes in ahead of its default mission VTOL_Standby, which World does not
 queue, so it ends without a seek (the classic AI's first-mission flag
-`0x2000` follows the same bit). `tools/re/check_air_seek_attack.py` runs
+`0x2000` follows the same bit). The classic AI reads a seek order as class
+19, flags `0x1000400`: the ctor (`4d6d66`) clears the target bit `0x200` for
+a seek without a live target, which World's always is. `tools/re/check_air_seek_attack.py` runs
 `4192f0` on 6,000 random states of the head and both stages and `41bf80` /
 `41ca50` on 4,000 lost targets against the port: every result, stage, wait
 mask, deadline, pending event, angle, point, controller, radius, call and
