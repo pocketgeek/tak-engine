@@ -2634,8 +2634,11 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
             return std::span<const uint32_t>(pickAll_.data(), n);
         };
         static const bool fullScan = tak::devFlag("TAK_PICK_FULL_SCAN");
+        // Every typed record registered, so its type's model is loaded (see pickRegistered_).
+        const bool registered = pickRegistered_.complete && f.gen >= pickRegistered_.gen &&
+                                f.unitSlots.size() <= pickRegistered_.idBound;
         std::span<const uint32_t> out;
-        if (fullScan || pickForceFull_ || unitFullScan_ || f.unitGrid.size() != n) {
+        if (fullScan || pickForceFull_ || unitFullScan_ || f.unitGrid.size() != n || !registered) {
             out = everything();
         } else {
             const PickBounds& b = pickBounds();
@@ -2683,6 +2686,12 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
             if (!std::is_sorted(out.begin(), out.end()) ||
                 std::adjacent_find(out.begin(), out.end()) != out.end() || (!out.empty() && out.back() >= n))
                 throw std::runtime_error("pick index verify: candidates are not ascending live indices");
+            // Before the exact tests below cache anything: a query that skipped units has
+            // no unit whose type's hit box the exact test could still cache as the fallback.
+            if (out.size() < n)
+                for (const UnitR* u : f.live)
+                    if (u->type && !hitBoxes_.count(u->type->id) && !visuals_.count(u->type->id))
+                        throw std::runtime_error("pick index verify: candidates skipped units while a type has no model");
             for (size_t i = 0; i < n; ++i)
                 if (unitUnderCursor(*f.live[i], mx, my)) {
                     ++pickVerify_.hits;

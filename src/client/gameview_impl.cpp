@@ -1500,15 +1500,22 @@
         // stragglers just pop in a few frames later. Purely cosmetic -- the sim already has
         // them (they move/fight); this only gates when the client starts drawing them.
         int regBudget = kRegistrationsPerFrame;
+        // Cursor picking (perf follow-up C) also learns here whether every typed record of
+        // this snapshot is registered (a budget break leaves that unknown).
+        bool unregistered = false;
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
             if (u.type && u.alive() && !unitType_.count(u.id)) {
                 if (u.replacementModel && !visuals_.count(u.replacementModel->id))
                     loadVisual(u.replacementModel->id);
                 registerUnit(u.id, u.type);
-                if (--regBudget <= 0) break;
+                if (!unitType_.registered(u.id)) unregistered = true;   // no model
+                if (--regBudget <= 0) { unregistered = true; break; }
+            } else if (u.type && !u.alive() && !unitType_.registered(u.id)) {
+                unregistered = true;   // died before it was registered
             }
         }
+        pickRegistered_ = {front().gen, front().unitSlots.size(), !unregistered};
         consumeSmokeTicks();
         for(auto it=pointParticles_.begin();it!=pointParticles_.end();) {
             const auto* owner=frameUnitP(it->first);
@@ -2896,7 +2903,7 @@
         // while the lobby still used the previous data set.
         destroyGpuTextures();anims_.clear();cobCache_.clear();visuals_.clear();
         atlasRect_.clear();atlasLaidOut_=false;modelTextureAnimations_.clear();animatedTex_.clear();
-        hitBoxes_.clear();ringBoxes_.clear();kingdomPals_.clear();pickBoundsValid_=false;
+        hitBoxes_.clear();ringBoxes_.clear();kingdomPals_.clear();pickBoundsValid_=false;pickRegistered_={};
         featureDefs_.clear();featurePals_.clear();cursorsInit_=false;
         loadTextures();loadOrderButtons();
         loadInterfaceFonts();

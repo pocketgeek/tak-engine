@@ -960,6 +960,16 @@ private:
     PickBoundsKey pickBoundsKey_;
     PickBounds pickBounds_;
     bool pickBoundsValid_ = false;     // cleared where the type registry or the model caches reset
+    // The exact test caches unitHitBox's FALLBACK box for a type whose model is not loaded
+    // yet, for good, and a scan over every unit reaches such a unit wherever the pointer
+    // is; candidates reach it only near the pointer. A registered unit's type has its
+    // model (registerUnit loads it first), so the grid is used only while every typed
+    // record is registered: cosmeticStep's registration pass records that for the
+    // snapshot it walked (generation, unitSlots size bounding its ids, complete). Unit ids
+    // are never reused, so a later snapshot whose ids stay under that bound holds no
+    // record the pass did not see; anything else takes the whole list, as before.
+    struct PickRegistered { uint32_t gen = 0; size_t idBound = 0; bool complete = false; };
+    PickRegistered pickRegistered_;
     std::vector<uint64_t> pickQueryBits_;
     std::vector<uint32_t> pickQuery_, pickFlyers_, pickMerged_, pickAll_;
     bool pickForceFull_ = false;       // the verify's full-scan reference evaluation
