@@ -58,6 +58,13 @@ their validation reports; both live in [`docs/`](docs/).
   after the attacker stops, and a unit's own scripts hear it turn. Like the
   original, she still stalls when she stops mid-stride (until she moves
   again).
+- **Flyers dogfight flyers**, as in the original game: a flyer attacking a
+  flyer no longer hangs still or hovers beside it but chases it, swings out
+  when threatened and now and then breaks off and turns before coming back.
+  The Aerial Juggernaut now closes in so its anti-air arrows reach (it stopped
+  at its cannons' range, and cannonballs miss flyers). An Iron Beak drops an
+  egg only once it faces its target, as in the original; the egg hits a flyer
+  below the Beak and falls past one at its own height.
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
   at +10, 0.9.11 fell to -2 at about 2,700 units, with 219 ticks over 250 ms;
   0.9.12 held +9 to +10 to 3,160 units with no tick over 100 ms:

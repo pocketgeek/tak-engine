@@ -1,6 +1,7 @@
 #include "sim/sim.h"
 #include "sim/retailflight.h"
 #include "sim/retailairattack.h"
+#include "sim/retailairtoair.h"
 #include "sim/retailrng.h"
 #include "sim/retailheight.h"
 #include "sim/retailexploration.h"
@@ -35,6 +36,94 @@ int main(int argc, char** argv) {
             std::printf("%d %u %u %u %u %u %d %u %d %d %d %d %u %u %u %u %u\n",result,unsigned(m.stage),m.waitMask,m.deadline,
                         m.pending,m.flags,count,host.installs,host.goal.point.x,host.goal.point.y,host.goal.point.z,
                         int(host.goal.radius),host.begin,host.autoSlots,host.aim,seed,host.calls);
+        }
+        return 0;
+    }
+    // tools/re/check_air_to_air.py: AirToAir (41ca50) and VTOL_Evade (41e3d0)
+    // handler calls, the facing test 41d780 and the moving controller's
+    // navigator calls (4e48d0, 4e4b70, 4e4be0), one per line.
+    if (argc==2 && std::strcmp(argv[1],"--air-to-air")==0) {
+        unsigned stage,events,tick,deadline,pending,flags,heading,targetHeading,distance,automatic,flies,onMap,seed,
+                 retarget,evade;
+        int count,speed,maxSpeed,width,height;
+        RetailAirDuel duel;RetailFlightVector lead;
+        while (std::scanf("%u %u %u %u %u %u %d %d %d %d %u %d %d %d %u %d %d %d %d %d %d %d %d %u %u %u %u %d %d %u %u %u",
+                          &stage,&events,&tick,&deadline,&pending,&flags,&count,&duel.position.x,&duel.position.y,
+                          &duel.position.z,&heading,&duel.target.x,&duel.target.y,&duel.target.z,&targetHeading,
+                          &duel.targetVelocity.x,&duel.targetVelocity.y,&duel.targetVelocity.z,&lead.x,&lead.y,
+                          &lead.z,&speed,&maxSpeed,&distance,&automatic,&flies,&onMap,&width,&height,&seed,
+                          &retarget,&evade)==32) {
+            duel.heading=uint16_t(heading);duel.targetHeading=uint16_t(targetHeading);duel.speed=speed;
+            duel.maxSpeed=maxSpeed;duel.distance=uint16_t(distance);duel.automatic=automatic!=0;duel.flies=flies!=0;
+            duel.onMap=onMap!=0;duel.width=width;duel.height=height;
+            RetailMissionState m;m.stage=uint8_t(stage);m.waitMask=0;m.deadline=deadline;m.pending=pending;m.flags=flags;
+            struct Host {
+                uint32_t& seed;RetailMissionState& m;RetailFlightVector led;bool retargets,evades;
+                unsigned calls=0,begin=0,aims=0,retargetCalls=0,releases=0,evadeCalls=0,points=0,intercepts=0;
+                RetailFlightGoal goal;RetailInterceptGoal intercept;
+                uint32_t random(int n) { ++calls;return retailRandom(seed,n); }
+                void beginFlight() { ++begin; }
+                void aim() { ++aims; }
+                RetailFlightVector lead() const { return led; }
+                bool retarget() { ++retargetCalls;return retargets; }
+                void release() { ++releases; }
+                bool evade() { ++evadeCalls;return evades; }
+                void install(const RetailFlightGoal& g) { ++points;goal=g;m.pending&=~0x3700u; }
+                void install(const RetailInterceptGoal& g) { ++intercepts;intercept=g;m.pending&=~0x3700u; }
+            } host{seed,m,lead,retarget!=0,evade!=0};
+            const int result=retailAirToAir(m,count,tick,events,duel,host);
+            std::printf("%d %u %u %u %u %u %d %u %u %d %d %d %d %d %d %d %d %d %d %u %u %u %u %u %u %u %u\n",result,
+                        unsigned(m.stage),m.waitMask,m.deadline,m.pending,m.flags,count,host.points,host.intercepts,
+                        host.goal.point.x,host.goal.point.y,host.goal.point.z,int(host.goal.radius),
+                        host.intercept.point.x,host.intercept.point.y,host.intercept.point.z,host.intercept.velocity.x,
+                        host.intercept.velocity.y,host.intercept.velocity.z,unsigned(host.intercept.heading),
+                        host.begin,host.aims,host.retargetCalls,host.releases,host.evadeCalls,seed,host.calls);
+        }
+        return 0;
+    }
+    if (argc==2 && std::strcmp(argv[1],"--air-evade")==0) {
+        unsigned stage,events,tick,deadline,pending,flags,heading,turnRate,targetTurnRate,distance,flies,onMap,seed;
+        int width,height;
+        RetailAirEvade e;RetailAirEscape in;
+        while (std::scanf("%u %u %u %u %u %u %d %d %d %d %d %u %d %d %d %d %d %d %u %u %u %u %u %d %d %u",
+                          &stage,&events,&tick,&deadline,&pending,&flags,&e.maneuver,&e.budget,&in.position.x,
+                          &in.position.y,&in.position.z,&heading,&in.target.x,&in.target.y,&in.target.z,&in.maxSpeed,
+                          &in.typeSpeed,&in.targetTypeSpeed,&turnRate,&targetTurnRate,&distance,&flies,&onMap,&width,
+                          &height,&seed)==26) {
+            in.heading=uint16_t(heading);in.turnRate=uint16_t(turnRate);in.targetTurnRate=uint16_t(targetTurnRate);
+            in.distance=uint16_t(distance);in.flies=flies!=0;in.onMap=onMap!=0;in.width=width;in.height=height;
+            auto& m=e.mission;m.stage=uint8_t(stage);m.waitMask=0;m.deadline=deadline;m.pending=pending;m.flags=flags;
+            struct Host {
+                uint32_t& seed;RetailMissionState& m;unsigned calls=0,points=0,intercepts=0;
+                RetailFlightGoal goal;RetailInterceptGoal intercept;
+                uint32_t random(int n) { ++calls;return retailRandom(seed,n); }
+                void install(const RetailFlightGoal& g) { ++points;goal=g;m.pending&=~0x3700u; }
+                void install(const RetailInterceptGoal& g) { ++intercepts;intercept=g;m.pending&=~0x3700u; }
+            } host{seed,m};
+            const int result=retailAirEvade(e,tick,events,in,host);
+            std::printf("%d %u %u %u %u %u %d %d %u %u %d %d %d %d %d %d %d %u %u %u\n",result,unsigned(m.stage),
+                        m.waitMask,m.deadline,m.pending,m.flags,e.maneuver,e.budget,host.points,host.intercepts,
+                        host.goal.point.x,host.goal.point.y,host.goal.point.z,int(host.goal.radius),
+                        host.intercept.point.x,host.intercept.point.y,host.intercept.point.z,
+                        unsigned(host.intercept.heading),seed,host.calls);
+        }
+        return 0;
+    }
+    if (argc==2 && std::strcmp(argv[1],"--air-ahead")==0) {
+        RetailFlightVector a,b;unsigned heading;int octant;
+        while (std::scanf("%d %d %d %d %u %d",&a.x,&a.z,&b.x,&b.z,&heading,&octant)==6)
+            std::printf("%d\n",int(retailAirAhead(a,b,uint16_t(heading),octant)));
+        return 0;
+    }
+    if (argc==2 && std::strcmp(argv[1],"--air-intercept")==0) {
+        RetailInterceptGoal g;RetailFlightVector owner;unsigned heading,turns,turnRate,body;
+        while (std::scanf("%d %d %d %d %d %d %u %u %u %d %d %u",&g.point.x,&g.point.y,&g.point.z,&g.velocity.x,
+                          &g.velocity.y,&g.velocity.z,&heading,&turns,&turnRate,&owner.x,&owner.z,&body)==12) {
+            g.heading=uint16_t(heading);g.turns=turns!=0;owner.y=0;
+            const auto answer=g.target(uint16_t(turnRate));
+            std::printf("%d %d %d %d %d %d %d %d %d %u\n",answer.x,answer.y,answer.z,g.point.x,g.point.z,
+                        g.velocity.x,g.velocity.y,g.velocity.z,int(g.accepts(owner)),
+                        unsigned(g.headingFor(owner,uint16_t(body))));
         }
         return 0;
     }
