@@ -36,7 +36,7 @@ with 0.9.11 or any earlier version, and does not play their replays.**
 
 ## Fog of war as in the original game
 
-Until 0.9.11 the fog you saw was the engine's own: a separate display pass
+Through 0.9.11 the fog you saw was the engine's own: a separate display pass
 that ray-marched sight lines on 16-pixel squares, let walls cast fog shadows,
 and cleared fog wherever radar reached. The game itself, and the AI, already
 played by the original's sight (one sight plane per player, on 32-pixel
@@ -255,7 +255,8 @@ decided what the game counted as seen.
   `tools/scenarios/baseline.json` (1,229 Retail, 964 Legion) and all 48
   `tools/navigation_checkpoints.json` lines.
 - `--mpai` Inner Circle seed 1, `TAK_SPEED=80`: every gate hash changes
-  (the hash layout, and from 300 s the AI's targets); new values in the
+  (the hash layout, and for the Legion and both Crusades 300 s games also
+  the AI's new targets and scouting); new values in the
   [validation report](release-0.9.12-validation.md). The cross-compiler
   golden (`check-determinism`) is unchanged, `dcef618cd2e4d558`.
 

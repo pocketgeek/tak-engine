@@ -28,7 +28,7 @@ interface art and sound straight from its installation folder.
 
 ## What's new in 0.9.12
 
-- Fog of war as in the original game: units see what the game plays by, seen ground lies under your side's rolling mist, and radar marks enemies on the minimap only.
+- Fog of war as in the original game: you see by the sight the game plays by, seen ground lies under your side's rolling mist, and radar marks enemies on the minimap only.
 - Our AI levels attack only what they have seen and scout for the rest; the Retail AI is unchanged.
 - Big late games keep their speed: 8 Absurd AIs on a 64x64 map held +9 to +10 past 3,000 units.
 - Streaming keeps to YouTube's bitrate; Options, Voice Chat and Controls save as you change them; BACK on Settings, Benchmark and Load Replay.

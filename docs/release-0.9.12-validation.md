@@ -125,10 +125,21 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
 - **Quick suite** (`ctest -L quick`, during the combine `3ce75ac7`): 520 of
   521 passed; `vashim_unavailable` is the known local failure (a render node
   without libva).
-- TODO-LEAD: full suite (`ctest`, `build-0912-suite`) on the final code, the
-  cross-compiler golden (`tools/check-determinism.sh`, expected
-  `dcef618cd2e4d558`, unchanged at the combine) and the gates on the final
-  code (result of the run in progress).
+- **Full suite on `95ca9163`** (Debug `-O2`, all targets built, `ctest -j12`,
+  scratch `HOME` and XDG folders, test data `assets/game`, which has no mods):
+  789 of 791 passed, one skipped (`vashim_system_loader`, which skips itself).
+  One failed: `vashim_unavailable` ("no display on a render node without
+  libva"), the known local failure; CI builds FFmpeg with the shim and runs it
+  there. Wall time 1,343 s.
+- **Cross-compiler golden hash** (`tools/check-determinism.sh`): golden
+  `dcef618cd2e4d558` from g++ and clang++ at -O0, -O2 and -O3, unchanged from
+  0.9.11. The aarch64 leg was skipped because no target libc or headers are
+  installed here.
+- **Gates on the final code** (`95ca9163`, the set-up below, ports
+  24301-24307): all seven hashes equal the table below in three runs. All
+  seven servers loaded retail gameplay hash `d6000f4fa9095a51` in every run,
+  and no desync, mismatch or referee-suspect line appeared in any client or
+  server log of the three runs.
 - **Detmath guard** (`tools/check-detmath.sh`, on the prepared tree): OK.
 - **Scenario baseline** (`tools/scenarios/baseline.json`, at the combine): all
   145 scenarios in both modes at the gate offsets; only the values of the
@@ -139,9 +150,9 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
   combine): all 48 retaken (both modes; serial equals workers).
 - **`--mpai` Inner Circle, seed 1** (`takserver --local --no-auth --seed 1`,
   `TAK_LEGION=1` for Legion, `TAK_AI_LEVEL=6` for the Retail AI, `--crusades`
-  for the Crusades games, `TAK_SPEED=80`), on main `95ca9163`; the retail fog
-  review's runs of the same seven
-  (`~/tak-tmp/scratch/retailfog-review/gates/`) give the same hashes:
+  for the Crusades games, `TAK_SPEED=80`), on main `95ca9163`, three runs
+  (`~/tak-tmp/gates-0912-suite/`); the retail fog review's runs of the same
+  seven (`~/tak-tmp/scratch/retailfog-review/gates/`) give the same hashes:
 
 | Mode | 60 s | 300 s |
 |---|---|---|
@@ -156,7 +167,8 @@ and the Retail AI changed by the hash layout alone (equal to
 `task-perf-hash`'s own runs at the combine). Legion 300 s and the two Crusades
 games changed with the AI as well: at the combine they read
 `4ceb517086c9aa75`, `56aae72cb72e8880` and `545ca39f878ff37a`, and moved
-again with the knowledge, scouting and vacated-base commits. The fog display
+again with the AI commits after the combine (`7c2e3fc8` left all seven
+unchanged; the tick-0 wait `eec342d6` too). The fog display
 changed none of them (it hashes nothing).
 
 ## The reported game: late-game speed
@@ -190,7 +202,8 @@ in 0.9.12 (no human slot); wall time for the 30 game minutes (900 s at +10)
 unit counts differ.
 
 A first 0.9.12 run of the same game (`f0912`) overlapped parallel compiles on
-the machine (load average 17 to 29) and fell to -2 from minute 24; it is not
+the machine (the load average climbed from about 2 to 17-29 in its second
+half) and fell below +0 from minute 24 (-2 from minute 27); it is not
 counted, and the repeat on a quiet machine is the run above.
 
 Per-change costs from the commits: the lodestone search took 300-840 ms in
