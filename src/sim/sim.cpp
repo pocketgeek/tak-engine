@@ -2895,14 +2895,18 @@ void World::planLegionFlightStations() {
         ConvoyClass cls=ConvoyClass::Move;
         uint32_t convoy=ConvoyTable::kNone;
         int64_t sx=0,sz=0,dx=0,dz=0,speed=0;
+        int64_t gx=0,gz=0;   // the sum of the busy bodies' goals
         int busy=0,area=0,slots=0,landings=0;
         // The flyers on station (stationFree 0 and 3, where each stands) and
         // with a landing point (0, and 3 at the point it is bound for), in
         // unit order; their stations over the front of the live ground and
         // landing points beyond the front of its goals (legionFrontSlots),
         // planned once per tick on the first use. arriving: the ground's
-        // centroid has come within the formation radius of a station flyer's
-        // point (every flyer of the bucket takes its landing point at once).
+        // centroid has come within the formation radius of its goals' centroid
+        // while a flyer is on station (every flyer of the bucket takes its
+        // landing point at once). Not the flyer's own point: since 0.9.12 a
+        // flyer keeps retail's spread (sim/retailflyerspread.h), up to
+        // sqrt(3000 n) px from the click, where it was within 60 px.
         std::vector<std::array<int64_t,2>> onStation,toLand;
         std::vector<std::array<Fixed,2>> front,landing;
         bool planned=false,landed=false,arriving=false;
@@ -2961,6 +2965,7 @@ void World::planLegionFlightStations() {
         int32_t gx,gz;
         if (legion_ && legion_->goalPoint(u.id,gx,gz)) { body.gx=gx; body.gz=gz; }
         else { body.gx=last.x.v; body.gz=last.z.v; }
+        b->gx+=body.gx;b->gz+=body.gz;
         b->sx+=u.x.v;b->sz+=u.z.v;
         ++b->busy;b->area+=u.type->footX*u.type->footZ;
         b->speed+=u.speed.v;
@@ -3011,7 +3016,8 @@ void World::planLegionFlightStations() {
         b->toLand.push_back({u.x.v,u.z.v});
         Fixed cx,cz;
         const int64_t radius=centre(g,*b,cx,cz);
-        b->arriving|=b->cls!=ConvoyClass::Patrol && near(cx,cz,last.x,last.z,radius);
+        b->arriving|=b->cls!=ConvoyClass::Patrol &&
+            near(cx,cz,Fixed::raw(int32_t(b->gx/b->busy)),Fixed::raw(int32_t(b->gz/b->busy)),radius);
     }
     TAK_PASS();
     for (size_t i=0;i<units_.size();++i) {

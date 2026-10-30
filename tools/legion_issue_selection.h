@@ -7,13 +7,16 @@
 //
 //  1. hudCommands -- the commands the HUD builds for one click, in selection
 //     order. Each verb copies one client path:
-//       Move    right-click on open ground   gameview_hud.cpp:240-270
-//               (Legion shares the point for surface movers with footprints
-//               1..8; flyers, oversize bodies and every unit outside Legion keep
-//               their offset from the selection centroid, clamped to +-60 px
-//               per axis)
+//       Move    right-click on open ground   gameview_hud.cpp:258-303
+//               (flyers take retail's spread, sim/retailflyerspread.h: their
+//               unclamped offset from the selection's centre within
+//               sqrt(3000 n) px, else the point; Legion shares the point for
+//               surface movers with footprints 1..8; oversize bodies and every
+//               ground unit outside Legion keep their offset from the
+//               selection centroid, clamped to +-60 px per axis)
 //       Attack  right-click on an enemy      gameview_hud.cpp:230-237
-//       Fight / Patrol  armed order (F / P)  gameview_hud.cpp:1032-1048
+//       Fight / Patrol  armed order (F / P)  gameview_hud.cpp:1062-1090
+//               (Patrol: flyers take retail's spread, everyone else the point)
 //       Guard   armed order (G)              gameview_hud.cpp:994-1013
 //       Stop    Act::Stop                    gameview_impl.cpp:4707-4714
 //       Squad   Ctrl/Alt+N (assignSquad)     gameview_impl.cpp:4748-4767
@@ -44,6 +47,7 @@
 #include "net/protocol.h"
 #include "net/orderpack.h"
 #include "sim/pathmode.h"
+#include "sim/retailflyerspread.h"
 #include "sim/sim.h"
 
 #include <algorithm>
@@ -66,6 +70,17 @@ struct SelectionOrder {
     int squad = 0;         // Squad: +N group N (Ctrl+N), -N formation N (Alt+N), 0 none
     bool append = false;   // Squad: Shift held (append instead of replace)
 };
+
+// gameview_hud.cpp flyerSpreadGoal: retail's flyer spread, from the frame's floats.
+inline void flyerSpreadGoal(const tak::sim::FlyerGroupCentre& air, const tak::sim::Unit& u, float wx, float wz,
+                            float& gx, float& gz) {
+    using tak::sim::Fixed;
+    int32_t x = 0, z = 0;
+    air.goal(Fixed::fromFloat(u.x.toFloat()).v, Fixed::fromFloat(u.z.toFloat()).v, Fixed::fromFloat(wx).v,
+             Fixed::fromFloat(wz).v, x, z);
+    gx = Fixed::raw(x).toFloat();
+    gz = Fixed::raw(z).toFloat();
+}
 
 // The commands one click builds, in the order the client issues them (before
 // GameView::flushClick packs them; hudItems below is what reaches the outbox).
@@ -91,8 +106,12 @@ inline std::vector<tak::net::Command> hudCommands(const tak::sim::World& world,
         const bool legion = tak::sim::isLegionPathfinding(world.pathfindingMode());
         float cx = 0, cz = 0;
         int n = 0;
+        tak::sim::FlyerGroupCentre air;
         for (int id : selection)
-            if (const auto* u = live(id)) { cx += u->x.toFloat(); cz += u->z.toFloat(); ++n; }
+            if (const auto* u = live(id)) {
+                cx += u->x.toFloat(); cz += u->z.toFloat(); ++n;
+                air.add(tak::sim::Fixed::fromFloat(u->x.toFloat()).v, tak::sim::Fixed::fromFloat(u->z.toFloat()).v);
+            }
         if (n) { cx /= float(n); cz /= float(n); }
         for (int id : selection) {
             const auto* u = live(id);
@@ -100,8 +119,11 @@ inline std::vector<tak::net::Command> hudCommands(const tak::sim::World& world,
             auto c = make(Cmd::Move, id);
             const auto* t = u->type;
             const bool shared = t && legion && tak::sim::legionSharedClick(t->canFly, t->footX, t->footZ);
-            c.x = shared ? order.x : order.x + std::clamp(u->x.toFloat() - cx, -60.0f, 60.0f);
-            c.z = shared ? order.z : order.z + std::clamp(u->z.toFloat() - cz, -60.0f, 60.0f);
+            if (t && t->canFly) flyerSpreadGoal(air, *u, order.x, order.z, c.x, c.z);
+            else {
+                c.x = shared ? order.x : order.x + std::clamp(u->x.toFloat() - cx, -60.0f, 60.0f);
+                c.z = shared ? order.z : order.z + std::clamp(u->z.toFloat() - cz, -60.0f, 60.0f);
+            }
             c.queue = order.queue;
             out.push_back(c);
         }
@@ -116,15 +138,24 @@ inline std::vector<tak::net::Command> hudCommands(const tak::sim::World& world,
         }
         break;
     case Verb::Fight:
-    case Verb::Patrol:
+    case Verb::Patrol: {
+        const bool spread = order.verb == Verb::Patrol;
+        tak::sim::FlyerGroupCentre air;
+        if (spread)
+            for (int id : selection)
+                if (const auto* u = live(id))
+                    air.add(tak::sim::Fixed::fromFloat(u->x.toFloat()).v, tak::sim::Fixed::fromFloat(u->z.toFloat()).v);
         for (int id : selection) {
             auto c = make(order.verb == Verb::Fight ? Cmd::AttackMove : Cmd::Patrol, id);
             c.x = order.x;
             c.z = order.z;
+            const auto* u = spread ? live(id) : nullptr;
+            if (u && u->type && u->type->canFly) flyerSpreadGoal(air, *u, order.x, order.z, c.x, c.z);
             c.queue = order.queue ? 1 : 0;
             out.push_back(c);
         }
         break;
+    }
     case Verb::Guard:
         for (int id : selection) {
             if (id == order.targetId) continue;
@@ -169,6 +200,7 @@ inline std::vector<tak::net::Command> hudItems(const tak::sim::World& world, con
     if (!tak::sim::isLegionPathfinding(world.pathfindingMode())) return cmds;
     tak::net::ClickShape shape;
     if (order.verb == Verb::Move) { shape.moveOffsets = true; shape.x = order.x; shape.z = order.z; }
+    if (order.verb == Verb::Patrol) { shape.flyerOffsets = true; shape.x = order.x; shape.z = order.z; }
     return tak::net::packClick(cmds, shape, serial);
 }
 

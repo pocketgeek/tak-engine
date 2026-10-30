@@ -622,7 +622,10 @@ paired with the ground of its own click: the busy ground members' last orders
 fall into up to 4 buckets per squad keyed by (order class, `convoyTick`), and
 a flyer whose last order carries the same key keeps station over that bucket
 (a 5th click counts `stationOverflow` and flies free). The convoy table puts
-a flyer's click, offset up to 60 px per axis, in its ground's convoy, so the
+a flyer's click in its ground's convoy (an explicit order joins once, at the
+click; per-unit, a flyer offset up to 60 px per axis -- since 0.9.12 flyers
+take retail's spread, `sim/retailflyerspread.h`, and one past 76 px opens its
+own), so the
 96 px point match and the "any patrol joins any patrol" capture are gone. Two
 clicks of one class applied in the same tick share a `convoyTick` and so a
 station: a known limit.
@@ -685,7 +688,9 @@ station: a known limit.
   While travelling, the leg never completes.
 - **Arrival (formation-air2; landing in front, 2026-10-12).** Once the
   ground's centroid is within the formation radius
-  (`max(256, 32 * sqrt(area))` px) of a station flyer's destination, every
+  (`max(256, 32 * sqrt(area))` px) of the centroid of its busy members' goals
+  (a station flyer's own destination until 0.9.12, when flyers took retail's
+  unclamped spread and their points stopped marking the click), every
   flyer of the bucket has its order's point moved, once, to a landing point
   in front of the ground's goals (`LegionNavigator::goalPoint`: each busy
   member's formation slot; a squad of one bucket adds its idle ground where
@@ -1681,7 +1686,8 @@ The table (`sim/convoy.h`) is anchored on the convoy's first shared point:
 `legionSharedClick` in `legion.h`, which the client's right-click also calls,
 says which units get the click itself (surface movers with footprints 1..8);
 the rest get the click plus their offset from the selection centroid, clamped
-to 60 px per axis. Shared orders join within one cell of the anchor, offset
+to 60 px per axis (flyers, since 0.9.12: retail's unclamped spread within
+sqrt(3000 n) px, `sim/retailflyerspread.h`). Shared orders join within one cell of the anchor, offset
 orders within 60 px + 1 cell; before an anchor exists, within 60 px + 1 cell
 (shared) or 120 px + 1 cell (offset) of every point taken, tested on the
 convoy's bounding box. All tests are per axis. A convoy stays open while the

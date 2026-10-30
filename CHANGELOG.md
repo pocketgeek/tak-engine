@@ -68,6 +68,14 @@ their validation reports; both live in [`docs/`](docs/).
   targets, as in the original. An Iron Beak drops an
   egg only once it faces its target, as in the original; the egg hits a flyer
   below the Beak and falls past one at its own height.
+- **A big air group keeps its shape when moved**, as in the original game. A
+  right-click move, MOVE or PATROL gives each selected flyer the clicked point
+  plus its place in the group, as long as it is within about √(3000 × the
+  number selected) pixels of the group's centre (173 for 10 units, 548 for
+  100); a straggler farther out flies to the point itself. Flyers used to be
+  squeezed into a 120-pixel square, and MOVE and PATROL sent them all to one
+  spot. Ground units keep the engine's own spread (the original sends them
+  all to the point).
 - **A shot stopped in front of a castle counts as blocked.** A castle, keep,
   gate or other long building is hit through the ground it stands on, as in
   the original game, not anywhere within a circle of its length, so shots that

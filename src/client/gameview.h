@@ -371,7 +371,8 @@ public:
     // selection verb, applied to every member in one tick -- and everything else
     // (Retail, offline) gets them exactly as before, one command per unit. Scopes
     // nest; only the outermost flushes. setClickMove declares the right-click move
-    // (its Move run is sent as OrderShape::Offsets at click (wx, wz)).
+    // (its Move run is sent as OrderShape::Offsets at click (wx, wz)); setFlyerSpread
+    // an armed move / patrol whose flyers keep retail's spread (OrderShape::FlyerOffsets).
     struct ClickBuffer {
         std::vector<tak::net::Command> cmds;
         tak::net::ClickShape shape;
@@ -388,6 +389,9 @@ public:
     };
     void setClickMove(float wx, float wz) {
         if (click_) { click_->shape.moveOffsets = true; click_->shape.x = wx; click_->shape.z = wz; }
+    }
+    void setFlyerSpread(float wx, float wz) {
+        if (click_) { click_->shape.flyerOffsets = true; click_->shape.x = wx; click_->shape.z = wz; }
     }
     void flushClick();
 

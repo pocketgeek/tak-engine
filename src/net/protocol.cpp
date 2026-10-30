@@ -113,7 +113,8 @@ uint64_t orderDigest(const std::vector<int32_t>& members) {
 
 bool validOrderTemplate(const Command& t, OrderShape shape) {
     return orderVerb(t.kind) && t.unitId == 0 && !t.order &&
-           (shape == OrderShape::Shared || (shape == OrderShape::Offsets && t.kind == Cmd::Move)) &&
+           (shape == OrderShape::Shared || (shape == OrderShape::Offsets && t.kind == Cmd::Move) ||
+            (shape == OrderShape::FlyerOffsets && (t.kind == Cmd::Move || t.kind == Cmd::Patrol))) &&
            commandCoordinate(t.x) && commandCoordinate(t.z) && commandCoordinate(t.x2) && commandCoordinate(t.z2);
 }
 

@@ -5,7 +5,10 @@
 //
 // The client gives every Legion-shared mover (legionSharedClick) the click
 // point itself and every other unit the click plus its offset from the
-// selection centroid, clamped to +-60 px per axis. The server cannot recover
+// selection centroid, clamped to +-60 px per axis (a flyer: retail's spread,
+// sim/retailflyerspread.h, up to sqrt(3000 n) px -- one sent per unit beyond
+// this table's reach opens a convoy of its own; an explicit order joins once,
+// at the click, whatever its members' points). The server cannot recover
 // the centroid, so a convoy is anchored on its first SHARED point (the click)
 // and every order is tested against it per axis, never as a Euclidean
 // distance:

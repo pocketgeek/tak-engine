@@ -4,6 +4,7 @@
 #include "sim/detmath.h"
 #include "gaf/featureburntiming.h"
 #include "sim/footprint.h"
+#include "sim/retailflyerspread.h"
 #include "sim/retailpiecepose.h"
 #include <algorithm>
 #include <cctype>
@@ -50,11 +51,14 @@ static void applySelectionOrder(World& world, const TypeRegistry& reg, const tak
         const Unit* u = world.unit(id);
         return u && u->alive() && u->type && u->player == int(c.player) ? u : nullptr;
     };
-    // Offsets: the centroid of the live owned members (raw Fixed, truncated mean).
+    // Offsets: the centroid of the live owned members (raw Fixed, truncated mean),
+    // and (both offset shapes) retail's whole-pixel centre for the flyers' spread.
+    const bool spread = o.shape == OrderShape::Offsets || o.shape == OrderShape::FlyerOffsets;
     int64_t sx = 0, sz = 0, n = 0;
-    if (o.shape == OrderShape::Offsets)
+    FlyerGroupCentre air;
+    if (spread)
         for (const int32_t id : o.members)
-            if (const Unit* u = owned(id)) { sx += u->x.v; sz += u->z.v; ++n; }
+            if (const Unit* u = owned(id)) { sx += u->x.v; sz += u->z.v; ++n; air.add(u->x.v, u->z.v); }
     const bool legion = isLegionPathfinding(world.pathfindingMode());
     // The verbs whose template carries the click: their members share an area there.
     const bool point = o.tmpl.kind == tak::net::Cmd::Move || o.tmpl.kind == tak::net::Cmd::AttackMove ||
@@ -63,10 +67,17 @@ static void applySelectionOrder(World& world, const TypeRegistry& reg, const tak
     for (const int32_t id : o.members) {
         m.unitId = id;
         world.orderMember(id);
-        if (o.shape == OrderShape::Offsets && n) {
+        if (spread && n) {
             const Unit* u = owned(id);
             if (!u) continue;
-            if (!(legion && legionSharedClick(u->type->canFly, u->type->footX, u->type->footZ))) {
+            if (u->type->canFly) {
+                // Retail's flyer spread (sim/retailflyerspread.h), either shape.
+                int32_t gx = 0, gz = 0;
+                air.goal(u->x.v, u->z.v, cx0.v, cz0.v, gx, gz);
+                m.x = Fixed::raw(gx).toFloat();
+                m.z = Fixed::raw(gz).toFloat();
+            } else if (o.shape == OrderShape::Offsets &&
+                       !(legion && legionSharedClick(u->type->canFly, u->type->footX, u->type->footZ))) {
                 constexpr int64_t kReach = int64_t(60) << 16;
                 const int64_t ox = std::clamp<int64_t>(int64_t(u->x.v) - sx / n, -kReach, kReach);
                 const int64_t oz = std::clamp<int64_t>(int64_t(u->z.v) - sz / n, -kReach, kReach);
