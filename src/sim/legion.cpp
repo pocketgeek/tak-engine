@@ -2766,7 +2766,10 @@ struct LegionNavigator::Impl {
             if(runs>1)std::sort(out.begin(),out.end());
         }
     };
-    static constexpr size_t kStructureIndexMinReads=4;   // rectangle reads (computeCells calls) that build an index
+    // An index is built for at least kStructureIndexMinReads rectangle reads (computeCells calls) of a list of at
+    // least kStructureIndexMinStructures: its build costs about two walks of the list, and a short list (an
+    // ordinary game's few dozen structures) walks in well under a microsecond.
+    static constexpr size_t kStructureIndexMinReads=4,kStructureIndexMinStructures=64;
     StructureIndex structureIdx;                       // storage, reused
     const StructureIndex* structureIndex=nullptr;      // set with structureList, or null (walk the list)
     // Sets structureList (gathered from the unit lists when no caller has) and its index for one operation, and
@@ -2780,7 +2783,8 @@ struct LegionNavigator::Impl {
                 for(const int id:I.lists.structures)if(const Unit* u=I.w.unit(id))own.push_back(u);
                 I.structureList=&own;
             }
-            if(index&&gStructureIndex&&(!I.structureIndex||I.structureIndex->list!=I.structureList)) {
+            if(index&&gStructureIndex&&I.structureList->size()>=kStructureIndexMinStructures&&
+               (!I.structureIndex||I.structureIndex->list!=I.structureList)) {
                 ownIndex.build(*I.structureList,I.width(),I.height());
                 I.structureIndex=&ownIndex;
             }
@@ -6143,8 +6147,9 @@ struct LegionNavigator::Impl {
                 refreshed.push_back(&p);
             }
             // Every refreshed plane recomputes every rectangle: index the structures once for all of them, unless
-            // there are too few rectangle reads to repay its build (about two walks of the list).
-            if(gStructureIndex&&rects.size()*refreshed.size()>=kStructureIndexMinReads) {
+            // too few rectangle reads or structures would repay its build.
+            if(gStructureIndex&&rects.size()*refreshed.size()>=kStructureIndexMinReads&&
+               structures.size()>=kStructureIndexMinStructures) {
                 structureIdx.build(structures,width(),height());structureIndex=&structureIdx;
             }
             // Each refresh reads the world and structureList and writes only
