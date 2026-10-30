@@ -152,6 +152,39 @@ SCENES = {
                                "TAK_RENDER_JUMP_AT": "4000,4000;28000,4000;28000,28000;4000,28000;16000,16000"},
                           notes="camera jumps between five far-apart views every 20 frames (faster "
                                 "than a view's terrain finishes composing)"),
+    # Perf follow-up K: silhouette atlas capacity, at 7680x2160 ("uhd"; the armies are
+    # sized for that view and stay far below the limit at 1280x960). Ulasem Arena's
+    # zoom-out floor there is 0.73, where TACTICAL DOTS (default on) replace the models,
+    # so these views sit at 0.82 -- one wheel notch in -- where a settled mixed-roster
+    # tile takes ~2700 px^2 and four 2048^2 pages hold ~6150 of them (the first frames
+    # after the spawn draw larger silhouettes, ~1.3x the area). Before K the atlas
+    # stopped at four pages: a view needing more drew every shadow directly, for the
+    # whole frame, and a view filling them repacked every tile each frame a tile did
+    # not fit. TAK_RENDER_OFFSET centres the army in the uhd view.
+    "shadow-cap-below": dict(count=5800, zoom=0.82, env={"TAK_RENDER_OFFSET": "442,3727"},
+                             notes="stationary mixed army whose settled shadow tiles fill ~95% of "
+                                   "four silhouette pages at 7680x2160 (zoom 0.82)"),
+    "shadow-cap-moving": dict(count=5400, zoom=0.82,
+                              env={"TAK_RENDER_MOTION": "1", "TAK_RENDER_OFFSET": "442,3727"},
+                              notes="moving mixed army around four silhouette pages at 7680x2160 "
+                                    "(zoom 0.82, orders reissued every 240 frames)"),
+    "shadow-cap-above": dict(count=6600, zoom=0.82, env={"TAK_RENDER_OFFSET": "442,3727"},
+                             notes="stationary mixed army needing ~108% of four silhouette pages "
+                                   "at 7680x2160 (zoom 0.82)"),
+    "shadow-cap-dense": dict(count=10000, zoom=0.82, env={"TAK_RENDER_OFFSET": "442,3727"},
+                             notes="10k mixed army, ~9800 in view at 7680x2160 (zoom 0.82): tiles "
+                                   "of ~6.4 pages"),
+    "shadow-cap-pan": dict(count=10000, zoom=0.82, env={"TAK_RENDER_CAMERA": "1"},
+                           notes="10k mixed army (~7900 in view) under the sinusoidal pan at 7680x2160: "
+                                 "every shadow tile is redrawn every frame (sub-pixel camera steps)"),
+    "shadow-cap-osc": dict(count=5000, zoom=0.82,
+                           env={"TAK_RENDER_OFFSET": "442,3727", "TAK_RENDER_ZOOM_OSC": "0.8,1.0,600"},
+                           notes="5000-unit army, zoom oscillating 0.8..1.0 every 600 frames at "
+                                 "7680x2160: its tiles cross four pages twice per period"),
+    "shadow-cap-constrained": dict(count=10000, zoom=0.82,
+                                   env={"TAK_RENDER_OFFSET": "442,3727", "TAK_GPU_CAP_MIB": "384"},
+                                   notes="shadow-cap-dense under a 384 MiB tracked-GPU cap (the policy "
+                                         "floor): no budget for pages past the first four"),
 }
 QUICK = ["small-battle", "stationary-mixed", "moving", "pan"]
 SIZES = {"normal": (1280, 960), "uhd": (7680, 2160)}
@@ -617,7 +650,10 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "arena_append", "arena_rebuild", "arena_stream", "arena_verts_retained",
                     "arena_verts_uploaded", "arena_verts_twice", "arena_fallbacks",
                     # HIDDEN UNITS option (client/hiddenunits.h)
-                    "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded"]
+                    "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded",
+                    # perf follow-up K: shadow atlas capacity
+                    "shadow_composite_runs", "shadow_demand_px", "shadow_page_limit",
+                    "shadow_direct_units"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",

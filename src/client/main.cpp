@@ -1948,6 +1948,17 @@ int main(int argc, char** argv) {
     const unsigned studySparseAfter=studyPeriod("TAK_RENDER_SPARSE_AFTER");
     float studySparseX=200,studySparseZ=200;
     if(const char* at=tak::devEnv("TAK_RENDER_SPARSE_OFFSET"))std::sscanf(at,"%f,%f",&studySparseX,&studySparseZ);
+    // TAK_RENDER_GPU_CAP_AT=<frame>,<MiB>[/<frame>,<MiB>...]: from each frame on, the
+    // tracked-GPU cap is <MiB>, or with 0 what is held at that frame (TAK_GPU_CAP_MIB
+    // mid-run: a limit lowered under a held working set, so the caches that obey the
+    // cap give back -- and raised again).
+    std::vector<std::pair<unsigned,unsigned>> studyCaps;
+    if(const char* list=tak::devEnv("TAK_RENDER_GPU_CAP_AT"))
+        for(const char* at=list;at && *at;) {
+            unsigned frame=0,mib=0;
+            if(std::sscanf(at,"%u,%u",&frame,&mib)==2)studyCaps.push_back({frame,mib});
+            at=std::strchr(at,'/');if(at)++at;
+        }
     // Workstream K (terrain under camera motion). TAK_RENDER_SWEEP=cx,cz,ax,az,period:
     // an elliptical sweep around (cx,cz) with amplitudes ax/az world px and the given
     // period in frames (fast pan with reversals in both axes). TAK_RENDER_ZOOM_OSC=
@@ -2219,6 +2230,13 @@ int main(int argc, char** argv) {
                     gameView->renderStudyShake(8.0f,float(studyShake)/90.0f);
                 if(renderStudy && studySparseAfter && studyFrame>=studySparseAfter)
                     gameView->renderStudyOffset(studySparseX,studySparseZ);
+                for(const auto& [capFrame,capMiB]:studyCaps)
+                    if(renderStudy && studyFrame==capFrame) {
+                        const size_t cap=capMiB ? size_t(capMiB)*gpuvram::kMiB : gpuvram::bytes();
+                        gpuvram::g_policy.limit=gpuvram::g_policy.cap=cap;
+                        std::printf("RENDER_GPU_CAP frame=%u cap=%zu KiB held=%zu KiB\n",studyFrame,cap>>10,
+                                    gpuvram::bytes()>>10);
+                    }
                 if(renderStudy && studyFilter && studyFrame && studyFrame%studyFilter==0)
                     gameView->renderStudyToggleFilter();
                 if(renderStudy && studyFullscreen && studyFrame && studyFrame%studyFullscreen==0) {

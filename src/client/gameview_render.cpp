@@ -556,6 +556,10 @@
         // targets fall back to the direct geometry path.
         shadowSilhouetteAtlasActive_ = false;
         size_t shadowAtlasPackedUnits=0,shadowAtlasPackedPages=0,shadowAtlasReusedUnits=0;
+        // Telemetry: the frame's tile area incl. padding (what the pages must hold;
+        // the units examined before an early failure) and the page limit applied.
+        uint64_t shadowDemandPx=0;
+        size_t shadowPageLimit=0;
         const char* shadowAtlasFallback="not requested";
 #ifndef NDEBUG
         const bool verifyShadowCache=tak::devFlag("TAK_SHADOW_CACHE_VERIFY");
@@ -669,6 +673,7 @@
             int pageH=info.max_texture_height>0 ? std::min(atlasTimes.pageMax,info.max_texture_height) : atlasTimes.pageMax;
             if (pageW < 16 || pageH < 16) return fail("renderer target size too small");
             constexpr size_t kMaxPages=4;
+            if (!force) shadowPageLimit=kMaxPages;
             size_t pageBytes=size_t(pageW)*size_t(pageH)*4;
             if (!pageBytes || pageBytes > SIZE_MAX/kMaxPages) return fail("invalid page allocation size");
 
@@ -718,6 +723,7 @@
                 const int height=std::max(1,int(bottomD)-pixelY);
                 if (width+2>pageW || height+2>pageH) return fail("one unit exceeds page size");
 
+                if (!force) shadowDemandPx+=uint64_t(width+2)*uint64_t(height+2);
                 work.push_back({&g,0,0,0,pixelX,pixelY,width,height});
             }
             if (work.empty()) return fail("no visible unit shadows");
@@ -1418,6 +1424,8 @@
             renderStats_.add(RS::ShadowTilesReused, shadowAtlasReusedUnits);
             renderStats_.add(RS::ShadowPages, shadowAtlasPackedPages);
             renderStats_.add(RS::ShadowFallback, shadowSilhouetteAtlasActive_ ? 0 : 1);
+            renderStats_.set(RS::ShadowDemandPx, shadowDemandPx);
+            renderStats_.set(RS::ShadowPageLimit, shadowPageLimit);
             if (renderStats_.enabled()) {
                 renderStats_.add(RS::ShadowCellAllocs, atlasCounts.allocs);
                 renderStats_.add(RS::ShadowCellKept, atlasCounts.kept);
@@ -4933,12 +4941,14 @@
                 bodySubmit_.draw(ren_,texture,shadowCompositeBatch_,!tak::devFlag("TAK_SHADOW_SDL_SUBMIT"));
                 noteNeed(Retained::ShadowComposite,shadowCompositeBatch_);
                 shadowCompositeBatch_.clear();
+                renderStats_.add(tak::render::Counter::ShadowCompositeRuns);
             }
         };
         for(const auto* g:shadows) {
             if(!shadowSilhouetteAtlasActive_ || !g->shadowAtlasPage || tak::devFlag("TAK_SHADOW_BATCH_OFF")) {
                 flush();texture=nullptr;drawUnitShadow(*g);
                 renderStats_.add(tak::render::Counter::ShadowDirectUnits);
+                renderStats_.add(tak::render::Counter::ShadowCompositeRuns);
                 continue;
             }
             if(texture!=g->shadowAtlasPage) {flush();texture=g->shadowAtlasPage;}

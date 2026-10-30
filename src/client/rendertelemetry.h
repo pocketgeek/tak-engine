@@ -457,6 +457,14 @@ enum class Counter : uint8_t {
     HiddenCandidates,
     HiddenMarked,
     HiddenFaded,
+    // Shadow atlas capacity (perf follow-up K): composite submissions (one per run
+    // of painter-order neighbours on one silhouette page, plus one per shadow drawn
+    // directly), the silhouette tile area the frame asked for incl. padding (also
+    // on frames that fell back, where shadow_atlas_tile_px is 0), and the page
+    // limit that applied (gauge).
+    ShadowCompositeRuns,
+    ShadowDemandPx,
+    ShadowPageLimit,
     Count
 };
 
@@ -541,7 +549,8 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "palette_mode", "palette_pages", "palette_gpu_bytes", "palette_cpu_bytes", "palette_upload_bytes",
     "palette_indexed_draws", "palette_fallbacks", "palette_switches", "palette_spans",
     "palette_span_commands", "native_passes", "native_pass_commands", "native_pass_refused",
-    "native_primes", "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded"};
+    "native_primes", "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded",
+    "shadow_composite_runs", "shadow_demand_px", "shadow_page_limit"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};
