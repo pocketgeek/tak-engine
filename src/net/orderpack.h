@@ -7,8 +7,10 @@
 //
 // A run of consecutive commands that differ only in their unit (same verb,
 // target, queue flag, type and area endpoint; the same point, or any point for
-// the right-click Move when the click declared it: OrderShape::Offsets, the sim
-// recomputes the offsets) becomes ONE order over those units. A unit appearing
+// the right-click Move when the click declared it -- OrderShape::Offsets -- and
+// for an armed Move or Patrol that declared its flyers' spread --
+// OrderShape::FlyerOffsets; the sim recomputes the offsets) becomes ONE order
+// over those units. A unit appearing
 // twice starts a new run (an order holds a unit once), as does a run reaching
 // kOrderMaxMembers. The Squad verb's two loops (evict, then assign) are two runs,
 // so two orders, in that order. Members are sent in increasing id order, which is
@@ -32,6 +34,7 @@ namespace tak::net {
 struct ClickShape {
     bool moveOffsets = false;   // the right-click move: Move runs carry the click, shape Offsets
     float x = 0, z = 0;         // the click (world px)
+    bool flyerOffsets = false;  // an armed move / patrol: Move and Patrol runs carry the click, shape FlyerOffsets
 };
 
 inline std::vector<Command> packClick(const std::vector<Command>& cmds, const ClickShape& click, uint32_t& nextSerial) {
@@ -49,12 +52,13 @@ inline std::vector<Command> packClick(const std::vector<Command>& cmds, const Cl
             continue;
         }
         const bool offsets = click.moveOffsets && c.kind == Cmd::Move;
+        const bool flyers = !offsets && click.flyerOffsets && (c.kind == Cmd::Move || c.kind == Cmd::Patrol);
         auto o = std::make_shared<SelectionOrder>();
         std::unordered_set<int32_t> seen;
         size_t j = i;
         for (; j < cmds.size() && o->members.size() < kOrderMaxMembers; ++j) {
             const Command& d = cmds[j];
-            if (d.order || d.unitId < 0 || !same(d, c, offsets) || !seen.insert(d.unitId).second) break;
+            if (d.order || d.unitId < 0 || !same(d, c, offsets || flyers) || !seen.insert(d.unitId).second) break;
             o->members.push_back(d.unitId);
         }
         std::sort(o->members.begin(), o->members.end());
@@ -62,8 +66,8 @@ inline std::vector<Command> packClick(const std::vector<Command>& cmds, const Cl
         o->tmpl = c;
         o->tmpl.unitId = 0;
         o->tmpl.player = 0;
-        o->shape = offsets ? OrderShape::Offsets : OrderShape::Shared;
-        if (offsets) { o->tmpl.x = click.x; o->tmpl.z = click.z; }
+        o->shape = offsets ? OrderShape::Offsets : flyers ? OrderShape::FlyerOffsets : OrderShape::Shared;
+        if (offsets || flyers) { o->tmpl.x = click.x; o->tmpl.z = click.z; }
         o->bytes = uint32_t(orderRecordBytes(*o));
         Command item;
         item.kind = Cmd::Order;

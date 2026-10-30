@@ -24,9 +24,10 @@ enum class LegionMission : uint8_t {None=0,Move,Fight,Patrol,Attack,Guard,
 
 // Is this mover "shared" under Legion: does a Move click give it the clicked
 // point itself? Legion plans surface movers with footprints 1..8 (ground units
-// and boats) and packs one shared destination into arrival slots; flyers and
-// oversize bodies keep their offset from the selection centroid (clamped to
-// +-60 px per axis). The client's right-click (gameview_hud.cpp) and
+// and boats) and packs one shared destination into arrival slots; oversize
+// bodies keep their offset from the selection centroid (clamped to +-60 px per
+// axis) and flyers retail's spread (sim/retailflyerspread.h). The client's
+// right-click (gameview_hud.cpp) and
 // World::order()'s convoy test (sim/convoy.h) both call this, so the two
 // cannot drift.
 constexpr bool legionSharedClick(bool canFly,int footX,int footZ) {

@@ -3788,6 +3788,51 @@ order code does not consult the selector; `World::attack` then rallies a
 factory's output at the target, keeps an out-of-range tower's order until the
 target comes in reach, and drops the order for a unit with no weapon.
 
+## Group move spread: flyers keep their place, ground converges (icd + emulation, 2026-10-30)
+
+The order code `0x5214b0` spreads one click over the selection itself; there is
+no formation shape and no per-axis clamp:
+
+1. **Centre** (`0x521510..0x5215ca`): the truncated integer mean (`idiv`) of the
+   selected units' whole-pixel positions (the high words of unit+0x68/+0x70),
+   leaving out a selected unit under the cursor, which gets no order.
+2. **Reach** (`0x5215cd..0x5215dc`): `3000 * n` squared pixels, n the units
+   counted: sqrt(3000 n) is 55 px for one unit, 122 for 5, 173 for 10, 274 for
+   25, 548 for 100.
+3. **Who keeps an offset** (`0x5217b1..0x521857`): only a unit whose resolved
+   mission descriptor has bit 0x2 at +0x11 -- the only reader of that bit. Set
+   on `VTOL_Move`, `VTOL_Move_Formation`, `VTOL_Move_FormationStandby` and
+   `VTOL_Patrol`; clear on `Move_Ground`, ground `Patrol` and
+   `Move_Ground_Formation`. Such a unit goes to the click plus (its position -
+   centre) -- the offset keeps the sub-pixel part -- when
+   `(ox*ox >> 32) + (oz*oz >> 32) <= 3000 n` (whole squared pixels per axis),
+   else to the click exactly. Every other unit goes to the click.
+
+An emulation of `0x5214b0` (probe `~/tak-tmp/retail-checks/group-move-friendly/
+probe_group_offsets.py`, outside the repo) confirms it: five units 40 px apart
+all reach (1000,1000) as `Move_Ground` and keep -80, -40, 0, +40, +80 as
+`VTOL_Move`; 80 px apart the two end flyers (160 px out) take the point; a 5x5
+ground block gets one destination; 300 random flyer groups match the formula
+with no mismatch.
+
+Ours (protocol 305): **flyers** take this rule exactly
+(`src/sim/retailflyerspread.h`, `FlyerGroupCentre`), on a right-click move and
+on the armed MOVE and PATROL buttons (a fight-move has no flyer mission with
+the bit: everyone takes the point). The client computes it from its frame in
+16.16 integers; a Legion net game sends the click as an explicit order --
+`OrderShape::Offsets` (right-click) or `OrderShape::FlyerOffsets` (armed
+move/patrol) -- and `applySelectionOrder` gives the flyers the same goals from
+the hashed positions. **Ground units keep our own rule** (a deliberate
+difference): a right-click gives each the click plus its offset from the
+selection centroid clamped to +-60 px per axis (Legion: the click itself for
+the surface movers it plans, `legionSharedClick`), and armed MOVE/PATROL give
+the point. Before, flyers were clamped to +-60 px like ground units and the
+armed buttons sent them all to the point. Not ported: the unit-under-cursor
+exclusion (our right-click on an own unit is the friendly-unit order below).
+Tests: `issue_selection_test` (`flyerSpread`: retail's probe groups, a
+sub-pixel centre, mixed groups on move/patrol/fight, both modes),
+`selection_order` and `convoy_test`.
+
 ## Right-click on a friendly unit: per-unit, Guard by `canguard` (icd, 2026-10-27)
 
 The default-order resolver `0x4de530` (action mode 1, jump table `0x4df87c`)

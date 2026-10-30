@@ -534,6 +534,23 @@ the expiry before anything else. The engine now does the same:
 Killing the caster still aborts an area charm or freeze at any point and
 leaves every other spell to finish, as in the original.
 
+## A big air group keeps its shape
+
+The original spreads a group move itself (`0x5214b0`, checked by emulating
+it): only a flyer's move or patrol mission keeps an offset. Each flyer goes to
+the clicked point plus its place relative to the group's centre, unclamped,
+when that place is within sqrt(3000 x the units selected) pixels of the
+centre (55 px for one unit, 173 for 10, 548 for 100); a straggler farther out
+flies to the point itself. 0.9.12 does the same for a right-click move and for
+the MOVE and PATROL buttons. Flyers used to be squeezed into a 120-pixel
+square round the point, and MOVE and PATROL sent them all to one spot.
+Fight-move still sends everyone to the point, as in the original.
+
+Ground units keep the engine's own spread (a design choice): a right-click
+keeps each one's place within 60 pixels per axis (Legion: the point itself,
+packed into arrival slots), and MOVE and PATROL send them to the point. The
+original sends every ground unit to the point.
+
 ## Streaming keeps to YouTube's bitrate
 
 Above YouTube's bitrate for a stream's size, frame rate and codec, YouTube can
@@ -639,6 +656,21 @@ decided what the game counted as seen.
   the caster-death abort, the lead); `retail_script_test`,
   `capture_combat_test` and `unit_retirement_test` fixtures give their spells
   the timers they now need.
+- Client/sim (flyer spread): `src/sim/retailflyerspread.h`
+  (`FlyerGroupCentre`, integer 16.16) is used by the right-click move and
+  `issueArmedOrder` (MOVE/PATROL; `GameView::setFlyerSpread`) and by
+  `applySelectionOrder`. New `net::OrderShape::FlyerOffsets` (2; Move and
+  Patrol only, `validOrderTemplate`) and `ClickShape::flyerOffsets` for the
+  armed buttons' explicit order; `OrderShape::Offsets` gives flyers the same
+  rule. No new command and no protocol bump beyond 305. New `flyerSpread`
+  cases in `issue_selection_test` (17 checks fail on the old code);
+  `selection_order` and `convoy_test` updated; the tools' client mirror
+  (`tools/legion_issue_selection.h`) follows. `World::planLegionFlightStations`
+  (Legion squads riding with ground) now starts the landing when the ground's
+  centroid nears its busy members' goals' centroid, not a station flyer's own
+  point (which no longer marks the click): `legion_flyerfront` measures the
+  same as before; `mixed2` changes its Retail `hash@` keys and Legion
+  `work.completion_dist_3.total` (35 -> 55).
 - `Order` stays five cache lines (320 bytes): `attackChased` fills the pad
   beside `chaseLeashed`, `scripted` the pad after `chaseOrigin`.
 - Sim (campaign orders): `MissionScript::applyOrders` reads clauses as the
@@ -765,6 +797,16 @@ New with 0.9.12:
 - **Human allies share main-view sight.** The original shares its main view
   only with computer allies; 0.9.12 shares it with every ally (a design
   choice).
+- **Ground units do not converge on a moved point** as in the original,
+  which sends every ground unit to the click; ours keep their place within 60
+  pixels per axis (a design choice). The original's rule that a selected unit
+  under the cursor gets no order is not ported (our right-click on your own
+  unit is the friendly-unit order).
+- **A Legion flyer command sent unit by unit** (a game with no server, and
+  test tools) with an offset over 76 pixels opens its own arrival area instead
+  of the click's; every networked click is one explicit order and joins one
+  area. The flyers of a Legion squad that rides with its ground keep station
+  over the ground until it arrives, whatever their own points.
 - **The minimap's explored shade** is half-opaque black; the original remaps
   each pixel through a shade table.
 - **Minimap dots** sit at a unit's ground position, not its projected height
