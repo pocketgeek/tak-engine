@@ -84,7 +84,7 @@ namespace hu = tak::hiddenunits;
         hiddenCoverRec_.clear();
         hiddenGrid_.reset(float(mvw), float(winH));
         hiddenMarks_.clear();
-        size_t eligible = 0, candidates = 0;
+        size_t eligible = 0, candidates = 0, coverVisits = 0, coverTests = 0;
         // Backwards through the painter list: when a unit is reached, every cover in
         // the grid paints after it. A unit is looked at closely only when its model's
         // box over all headings (unitHitBox, from its anchor, with room for animation
@@ -176,13 +176,17 @@ namespace hu = tak::hiddenunits;
                     return cov.kind == HiddenKind::Feature ? hu::featureCover(uint32_t(items[cov.item].f->simId))
                                                            : hu::structureCover(uint32_t(items[cov.item].u->id));
                 };
-                hit = hiddenMarks_.unit([&](auto&& visit) { hiddenGrid_.query(body, visit); }, reaches,
-                                        [&](uint32_t id) {
-                                            hiddenFades_.cover(key(id));
+                hit = hiddenMarks_.unit(
+                    [&](auto&& visit) {
+                        hiddenGrid_.query(body, [&](uint32_t id) { ++coverVisits; return visit(id); });
+                    },
+                    [&](uint32_t id) { ++coverTests; return reaches(id); },
+                    [&](uint32_t id) {
+                        hiddenFades_.cover(key(id));
 #ifndef NDEBUG
-                                            if (verify) debugHiddenFound_.push_back(key(id));
+                        if (verify) debugHiddenFound_.push_back(key(id));
 #endif
-                                        });
+                    });
 #ifndef NDEBUG
                 if (verify) {   // the reference: every cover tested
                     bool refHit = false;
@@ -223,6 +227,8 @@ namespace hu = tak::hiddenunits;
         renderStats_.add(RS::HiddenEligible, eligible);
         renderStats_.add(RS::HiddenCandidates, candidates);
         renderStats_.add(RS::HiddenFaded, hiddenFades_.size());
+        renderStats_.add(RS::HiddenCoverVisits, coverVisits);
+        renderStats_.add(RS::HiddenCoverTests, coverTests);
 #ifndef NDEBUG
         debugHiddenCandidates_ = candidates;
 #endif

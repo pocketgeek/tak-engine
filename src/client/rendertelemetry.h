@@ -457,6 +457,10 @@ enum class Counter : uint8_t {
     HiddenCandidates,
     HiddenMarked,
     HiddenFaded,
+    // FADE's cover tests: covers the unit queries handed out (each one an exact
+    // test before the per-frame bookkeeping) and exact tests actually run.
+    HiddenCoverVisits,
+    HiddenCoverTests,
     Count
 };
 
@@ -541,7 +545,8 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "palette_mode", "palette_pages", "palette_gpu_bytes", "palette_cpu_bytes", "palette_upload_bytes",
     "palette_indexed_draws", "palette_fallbacks", "palette_switches", "palette_spans",
     "palette_span_commands", "native_passes", "native_pass_commands", "native_pass_refused",
-    "native_primes", "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded"};
+    "native_primes", "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded",
+    "hidden_cover_visits", "hidden_cover_tests"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};
