@@ -302,8 +302,9 @@ public:
     // Right-drag "clear this area": order EVERY selected reclaimer to clear the box
     // (each its own ReclaimArea, retail 5214b0); non-reclaimers are left alone.
     void issueReclaimBox(float x0, float z0, float x1, float z1, bool queue);
-    // Single-feature reclaim (right-click / armed CLEAR): every reclaimer, same target.
-    void issueReclaimFeature(int targetId, bool queue);
+    // A right-click / armed CLEAR on a body or feature: each selected unit
+    // raises the body when it can, else reclaims the target (retail 4de530).
+    void issueRaiseOrReclaim(int bodyId, std::optional<int> reclaimId, bool queue);
 
     // Attach the multiplayer client. The game world is set up later, from the
     // server's GameStarting (startMpGame), not from the constructor.
@@ -636,6 +637,8 @@ public:
     // render/HUD reads (the null check keeps working).
     const UnitR* frameUnitP(int id) const;
     std::optional<int> reclaimTargetAt(float wx,float wz) const;   // feature id, or -corpse id
+    int raiseTargetAt(float wx,float wz) const;   // a body a selected unit can raise, or 0
+    uint8_t reviveKindOn(const UnitR& caster,const UnitR& body) const;
     bool canAssistSite(const UnitR& builder,const UnitR& site) const;
     bool canLoadPassenger(const UnitR& passenger, const UnitR& carrier) const;
     // Player snapshot accessors (mirror world_.player()/numPlayers() for the HUD).

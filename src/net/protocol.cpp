@@ -187,7 +187,8 @@ bool getBundle(Reader& r, uint32_t& tick, Bundle& out, bool strict, uint32_t pro
     // at least 35 bytes and an event 2, so a corrupt count cannot ask for gigabytes.
     const uint32_t nc = r.u32();
     if (uint64_t(nc) * 35 > uint64_t(r.end - r.p)) return false;
-    const auto maxKind = proto >= kPowerCodesProtocol ? Cmd::PowerCode : proto >= 267 ? Cmd::Order
+    const auto maxKind = proto >= kResurrectProtocol ? Cmd::Resurrect
+                       : proto >= kPowerCodesProtocol ? Cmd::PowerCode : proto >= 267 ? Cmd::Order
                        : proto >= 221 ? Cmd::BuildManaArea : Cmd::ShareMana;
     for (uint32_t i = 0; i < nc && r.ok; ++i) {
         auto c = r.cmd();

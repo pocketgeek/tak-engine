@@ -24,7 +24,9 @@ constexpr uint32_t kNetVersion = 305;      // 305: our AI levels (not Retail AI)
                                            //      seen and mobiles for 25 s, and scout/explore when nothing is known;
                                            //      World::stateHash mixes a 64-bit word per round over four lanes and
                                            //      folds planes and scripts in fixed chunks (every hash value changes,
-                                           //      simulation unchanged). No new command; replay format unchanged.
+                                           //      simulation unchanged). Replay format unchanged.
+                                           //      Also Cmd::Resurrect = 29 (a caster raises a body by order; nothing raises
+                                           //      or clears a body on its own any more).
                                            // 304: a hovering attacker whose shots stop 3 times running on scenery it
                                            //      cannot destroy moves round its ring (nearest 1/32-turn bearing) to a
                                            //      clear line; a dying, captured or gifted factory (or a cancelled /
@@ -588,6 +590,9 @@ constexpr uint32_t kPowerCodesProtocol = 288;
 // Event::Kind::AiTakeover: the first protocol that carries it (a strict replay read
 // refuses it before).
 constexpr uint32_t kAiTakeoverProtocol = 289;
+// Cmd::Resurrect: the first protocol that carries it (a strict replay read
+// refuses it before).
+constexpr uint32_t kResurrectProtocol = 305;
 constexpr int kMaxSlots = 8;               // players per game (= max map start positions)
 constexpr int kServerHz = 30;              // sim/tick rate
 constexpr int kHashPeriod = 30;            // ticks between StateHash reports; the

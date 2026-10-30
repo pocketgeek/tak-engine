@@ -50,6 +50,11 @@ enum class Cmd : uint8_t {
     // selected unit). The server drops it when the room's option is off, and the
     // sim ignores it there as well. An ordinary PlayerCommands item (base layout).
     PowerCode,
+    // Protocol 305: the caster unitId raises the body of dead unit targetId
+    // (retail RESURRECT: a resurrect, else an animate; World::resurrect). The
+    // client sends it where retail's right-click resolver (0x4de530 mode 1)
+    // would pick it over a reclaim. An ordinary PlayerCommands item (base layout).
+    Resurrect,
 };
 
 struct SelectionOrder;

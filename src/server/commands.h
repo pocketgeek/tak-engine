@@ -15,10 +15,11 @@ inline bool parsePlayerCommands(const std::vector<uint8_t>& payload, std::vector
     parsed.reserve(count);
     for (uint32_t i=0;i<count && reader.ok;++i) {
         const auto c=reader.cmd();
-        // Every ordinary verb, and the power codes (an unknown code or argument is
-        // forged: the client sends only the seven the sim applies).
+        // Every ordinary verb, Resurrect, and the power codes (an unknown code or
+        // argument is forged: the client sends only the seven the sim applies).
         const bool power=c.kind==tak::net::Cmd::PowerCode;
-        if ((uint8_t(c.kind)>uint8_t(tak::net::Cmd::BuildManaArea) && !power) ||
+        const bool resurrect=c.kind==tak::net::Cmd::Resurrect;
+        if ((uint8_t(c.kind)>uint8_t(tak::net::Cmd::BuildManaArea) && !power && !resurrect) ||
             !coordinate(c.x) || !coordinate(c.z) ||
             !coordinate(c.x2) || !coordinate(c.z2)) return false;
         if (power && (!tak::sim::simPowerCode(c.targetId) || c.queue>uint8_t(tak::sim::PowerArg::Invalid)))

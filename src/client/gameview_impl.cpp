@@ -3,6 +3,7 @@
 #include "gaf/nimbus.h"
 #include "client/gameview.h"
 #include "client/buildline.h"
+#include "client/reclaimpick.h"
 #include "client/gamespeed.h"
 #include "client/shadowmask.h"
 #include "client/retailfeatureclock.h"
@@ -260,13 +261,48 @@
         options_->offerVoicePage();
     }
 
+    namespace {
+    // World::reclaim's caster test, for one of the local player's units.
+    bool canReclaimAsLocal(const UnitR& u, int localPlayer) {
+        return u.alive() && u.type && u.type->isBuilder && u.type->canMove &&
+               u.type->canReclaim && u.player == localPlayer;
+    }
+    }
+
     bool GameView::haveReclaimer() {
         for (int id : selection_)
             if (const auto* u = frameUnitP(id))
-                if (u->alive() && u->type && u->type->isBuilder && u->type->canMove &&
-                    u->type->canReclaim && u->player == localPlayer_)
-                    return true;
+                if (canReclaimAsLocal(*u, localPlayer_)) return true;
         return false;
+    }
+
+    // World::reviveKind on the render snapshot: what a RESURRECT order from
+    // one of our units on that body would be (tak::sim::reviveKindFor), 0 for
+    // none. The sim checks it again when it applies the command.
+    uint8_t GameView::reviveKindOn(const UnitR& caster, const UnitR& body) const {
+        if (!caster.alive() || caster.embarked() || caster.underConstruction || !caster.type ||
+            caster.player != localPlayer_ || !caster.type->canMove || caster.type->isStructure())
+            return 0;
+        const auto& feats = worldTables().featureTypes();
+        if (body.alive() || !body.corpsePhase || body.corpseFading || body.corpseFeat < 0 ||
+            size_t(body.corpseFeat) >= feats.size())
+            return 0;
+        return tak::sim::reviveKindFor(*caster.type, feats[size_t(body.corpseFeat)]);
+    }
+
+    // The body under a world point that a selected unit can raise, with the
+    // reclaim pick circle (nearest wins); 0 = none.
+    int GameView::raiseTargetAt(float wx, float wz) const {
+        tak::client::ReclaimPick pick{wx, wz};
+        for (const auto* body : front().live) {
+            if (body->alive() || !body->corpsePhase || !canPickPoint(body->x, body->z)) continue;
+            for (int id : selection_)
+                if (const auto* caster = frameUnitP(id); caster && reviveKindOn(*caster, *body)) {
+                    pick.offer(body->id, body->x, body->z, body->corpseFootX, body->corpseFootZ);
+                    break;
+                }
+        }
+        return pick.id ? *pick.id : 0;
     }
 
     // Every selected unit that can reclaim, in selection order. Retail's order code
@@ -277,9 +313,7 @@
         std::vector<int> out;
         for (int id : selection_)
             if (const auto* u = frameUnitP(id))
-                if (u->alive() && u->type && u->type->isBuilder && u->type->canMove &&
-                    u->type->canReclaim && u->player == localPlayer_)
-                    out.push_back(id);
+                if (canReclaimAsLocal(*u, localPlayer_)) out.push_back(id);
         return out;
     }
 
@@ -300,19 +334,27 @@
         voice(ids.front(), "move");
     }
 
-    void GameView::issueReclaimFeature(int targetId, bool queue) {
-        ClickScope click(*this);   // one click, as the box (a no-op inside rightClickOrder's)
-        const auto ids = reclaimers();
-        if (ids.empty()) return;
-        for (int id : ids) {   // RECLAIM has no formation offset: all take the same feature
+    // Retail's resolver per selected unit (0x4de530, mode 1 for a right-click,
+    // 12 for the CLEAR button): RESURRECT on a body it can raise (a resurrect,
+    // else an animate), else RECLAIM of the reclaim target, else nothing for
+    // that unit. `bodyId` is raiseTargetAt's pick, `reclaimId` reclaimTargetAt's.
+    void GameView::issueRaiseOrReclaim(int bodyId, std::optional<int> reclaimId, bool queue) {
+        ClickScope click(*this);
+        const UnitR* body = bodyId ? frameUnitP(bodyId) : nullptr;
+        int first = 0;
+        for (int id : selection_) {
+            const auto* u = frameUnitP(id);
+            if (!u) continue;
             tak::net::Command c;
-            c.kind = tak::net::Cmd::Reclaim;
             c.unitId = id;
-            c.targetId = targetId;
             c.queue = uint8_t(queue);
+            if (body && reviveKindOn(*u, *body)) { c.kind = tak::net::Cmd::Resurrect; c.targetId = bodyId; }
+            else if (reclaimId && canReclaimAsLocal(*u, localPlayer_)) { c.kind = tak::net::Cmd::Reclaim; c.targetId = *reclaimId; }
+            else continue;
             issue(c);
+            if (!first) first = id;
         }
-        voice(ids.front(), "move");
+        if (first) voice(first, "move");
     }
 
     std::pair<int, size_t> GameView::keytestPickOwnUnit() const {
@@ -824,6 +866,7 @@
         s.corpseFeat = u.corpseStatue >= 0 ? u.corpseStatue
                                            : world_.corpseTypeOf(u.type);
         s.corpseReclaimable=false;
+        s.corpseFading=u.corpseFading;
         if (!u.alive() && s.corpseFeat>=0 && size_t(s.corpseFeat)<world_.featureTypes().size()) {
             const auto& corpse=world_.featureTypes()[size_t(s.corpseFeat)];
             s.corpseReclaimable=corpse.reclaimable && !u.corpseFading;
@@ -3408,6 +3451,8 @@
         if (u->underConstruction) return "INTANGIBLE MASS";
         if (!u->active) return "INACTIVE";
         if (u->repairId != 0) return "REPAIRING";
+        // UNITMISSIONCODE_RESURRECT: the walk to the body and the channel.
+        if (!u->orders.empty() && u->orders.front().revive) return "RAISING DEAD";
         if (u->reclaimId != 0) return "CLEARING";
         if (u->buildSiteId != 0 || !u->buildQueue.empty()) return "CONJURING";
         if (!u->orders.empty()) {
