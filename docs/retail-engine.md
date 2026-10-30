@@ -3813,25 +3813,34 @@ accepts in cells), and stage 1 sends her on a second, deeper walk.
 an Attack_Chase order's weapons, the aim start and the facing request, until
 its stage 1: the tick the order first stands in reach when it starts in reach,
 two ticks after the stop when it walked (`Order::attackChased`,
-`attackAimTick`); the body faces from the tick after. World runs the COB pass
-before the weapon update, so World's aim reaches the script at the next tick's
-pass, the same pass in which retail's runs. `World::notifyTurnDirection`
-reports the mover's turns to the unit's own VM before MoveRate, with the idle
-navigator's zero request ahead of a pivot from `brakeGround`. The same grid
-run on World (36 order delays x 4 distances, a scratch probe) gives the same
-answer as retail for every phase the two share, and she fires in 58 of 144
-(12 before: only when her controller looked in the very pass after the stop). `attack_stop_test` (Retail and `--legion`) checks the timing
-for Kirenna and an Archer, that Kirenna ordered from 664 px fires (before:
-none in a minute), and that her script hears a pivot through TurnDirection.
-In the attack sweep (19,501 cases, both rosters), 29 ordered cases fire that
-did not: 24 of Kirenna's (of her orders that walked more than 40 px, 9 of 52
-fired, now 26) and five of a Wolf, a Mind Mage and a Berserker against a
-circling flyer; one fire-at-will case lost its only shot (a Crusades Stone
-Giant at a flyer circling at its full range, which it hit once, late).
+`attackAimTick`, on the front order); the body faces from the tick after. World
+runs the COB pass before the weapon update, so World's aim reaches the script
+at the next tick's pass, the same pass in which retail's runs.
+`World::notifyTurnDirection` reports the mover's turns to the unit's own VM
+before MoveRate, with the idle navigator's zero request ahead of a pivot from
+`brakeGround`. The same grid run on World (36 order delays x 4 distances, a
+scratch probe) gives the same answer as retail for every phase the two share,
+and she fires in 58 of 144 (12 before: only when her controller looked in the
+very pass after the stop). `attack_stop_test` (Retail and `--legion`) checks
+the timing for Kirenna and an Archer, that Kirenna ordered from 664 px fires
+(before: none in a minute), and that her script hears a pivot through
+TurnDirection. In the attack sweep (19,501 cases, both rosters), 29 ordered
+cases fire that did not: 24 of Kirenna's (of her orders that walked more than
+40 px, 9 of 52 fired, now 26) and five of a Wolf, a Mind Mage and a Berserker
+against a circling flyer; one fire-at-will case lost its only shot (a Crusades
+Stone Giant at a flyer circling at its full range, which it hit once, late).
 
 Not ported: the approach. World stops at the 2D range, so it never makes
 retail's second, deeper walk, and its slots are manual for the whole order, so
-fire at will never aims during the walk. Both make retail fire in more of
-these approaches than World does. The idle auto-slot pivot
-(`tickSlotWeapons`) turns before the mover and `brakeGround`'s zero request
-follows it, so that pivot is not reported.
+fire at will never aims during the walk. Both make retail fire in more of these
+approaches than World does. The idle auto-slot pivot (`tickSlotWeapons`) turns
+before the mover and `brakeGround`'s zero request follows it, so that pivot is
+not reported. The state rides the front order, which `replaceLeg` does not
+carry to a new route's legs: a route that lands on a walk's last tick leaves
+that arrival unheld, and one that lands during a later chase of the same order
+arms the hold again (retail's slot keeps its target through it). Kept on the
+goal leg instead (tried: it changed no shot of Kirenna's in 36 walk-off
+chases), the hold also follows the single step an order takes when the
+fire-at-will sweep switches her weapon on its first tick, and she stalls in 26
+attack-sweep cases that she fires in now (all of them that step, 14 against the
+castle or the lodestone); retail's automatic slot would aim during that walk.

@@ -7156,6 +7156,12 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // on the tick it stops leaves the controller in restore_legs, and the
     // aim waits for ever. (Emulated end to end: docs/retail-engine.md,
     // "Attack_Chase: the stop comes before the aim".)
+    // Both ride the front order, so a route that lands on a walk's last tick
+    // (as one does after a single step) leaves the arrival unheld. Kept on
+    // the goal leg through replaceLeg instead, the hold also follows those
+    // steps, and Kirenna stalls in 26 attack-sweep cases she fires in now:
+    // retail's slots stay automatic until stage 1, so the fire-at-will sweep
+    // aims during such a walk, and World's are manual for the whole order.
     bool aimHeld = false, facingHeld = false;
     if (chaseMission) {
         Order& o = u.orders.front();
