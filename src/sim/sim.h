@@ -858,6 +858,11 @@ struct alignas(64) Order {
     // to before the stance wait: retail heading from the target to the builder,
     // as MobileBuild's turn. Hashed on reclaim legs.
     uint16_t reclaimHeading = 0;
+    // AirToGround's and AirToAir's stage 1 made the unselected slots
+    // automatic (Unit::slotAuto) for as long as this order's mission runs
+    // (in the pad beside reclaimHeading so the cold tail stays five lines).
+    // Hashed when set.
+    bool mixedSlots = false;
     // The approach of a HelpBuild (World::assist, or one a guarding builder
     // put ahead of its guard): the unfinished unit it walks to. The leg goes
     // when that job ends, however it ends. Hashed with a tag when set.
@@ -1240,14 +1245,17 @@ struct alignas(64) Unit {
     std::array<std::array<int32_t,3>,3> weaponAimPoints{}; // display-only captured aim geometry
     // Retail's per-slot weapon record layer under the missions (icd 52aae0,
     // 519b10/519b70, 40f330). slotTarget is record +0x10 (0 = none): the target
-    // the fire-at-will sweep or the hit response handed an AUTO slot. slotAuto
-    // is record +0x1a bit 4 per slot (set at spawn); a mission that owns the
+    // the fire-at-will sweep or the hit response handed an AUTO slot (and
+    // the air missions' 51a700 their manual selected slot). slotAuto is
+    // record +0x1a bit 4 per slot (set at spawn); a mission that owns the
     // weapons (attack, the work stage of build/repair/reclaim, a status) makes
     // the slots manual and slotManual records why, so the slots return to auto
-    // when that mission retires (the 4d6da0 destructor rule). faceRequest is
-    // the mover's facing request (+0x34 with +0x36 bit 0x10, -1 = none) that an
-    // auto slot posts when it starts aiming; only a stopped mover honours it.
-    // All hashed.
+    // when that mission retires (the 4d6da0 destructor rule). AirToGround and
+    // AirToAir alone leave an attack order's slots mixed (Order::mixedSlots):
+    // the selected one manual, the others auto. faceRequest is the mover's
+    // facing request (+0x34 with +0x36 bit 0x10, -1 = none) that an auto slot
+    // posts when it starts aiming; only a stopped mover honours it. All
+    // hashed.
     std::array<int32_t,3> slotTarget{};
     uint8_t slotAuto = 7;
     uint8_t slotManual = 0;
@@ -3275,6 +3283,7 @@ private:
     // --- retail weapon-slot layer (fire-at-will sweep, icd 40f330) ----------
     void setSlotsAuto(Unit& u);                    // 519b10(3)
     void setSlotsManual(Unit& u,uint8_t cause);    // 519b70(3)
+    void setSlotMode(Unit& u,int slot,bool automatic);   // 519b10/519b70 on one slot
     void dropSlotTarget(Unit& u,int slot);         // 51a7f0
     void setSlotTarget(Unit& u,int slot,int id);   // 51a700
     void syncSlotMode(Unit& u);
