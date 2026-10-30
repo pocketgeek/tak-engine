@@ -44,6 +44,13 @@ their validation reports; both live in [`docs/`](docs/).
   attacked if someone has). A game between AIs may now not end when a last
   unit stays hidden, and Not Explored games run longer (the AI no longer knows
   every deposit).
+- **Shots that die at their range no longer aim at buildings past it**, as in
+  the original game: line-of-sight bolts, lightning, flames and guided shots
+  measure a building's distance centre to centre, with no allowance for its
+  size. A Death Totem no longer empties its lightning into the air at a
+  lodestone just out of range, and a Crossbowman, Shaman, mage or dragon
+  ordered onto a building walks into range and hits it instead of stopping
+  short.
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
   at +10, 0.9.11 fell to -2 at about 2,700 units, with 219 ticks over 250 ms;
   0.9.12 held +9 to +10 to 3,160 units with no tick over 100 ms:

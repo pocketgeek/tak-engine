@@ -6,9 +6,10 @@ under your side's rolling mist, and radar marks enemies on the minimap only.
 Our AI levels attack only what their side has seen and scout the map for the
 rest. Big late games keep their speed: in the reported game, eight Absurd AIs
 on a 64x64 random map, 0.9.11 fell to -2 at about 2,700 units, and 0.9.12 held
-+9 to +10 to 3,160. Streaming keeps to YouTube's bitrate, Options, Voice Chat
-and Controls save as you change them, and SETTINGS, BENCHMARK and LOAD REPLAY
-have a BACK button.
++9 to +10 to 3,160. Bolts, lightning, flames and guided shots aim only at
+buildings within their range, as in the original. Streaming keeps to YouTube's
+bitrate, Options, Voice Chat and Controls save as you change them, and
+SETTINGS, BENCHMARK and LOAD REPLAY have a BACK button.
 
 **Compatibility first.** The AI's sight-only targets and the new lockstep
 state check change the game state the players compare, so 0.9.12 uses network
@@ -173,7 +174,32 @@ The two games differ after the opening (the AI changed), so the unit counts
 differ. The 0.9.12 run is the code before the fog display change (client
 only) and the beaten-base rule.
 
-## Streaming keeps to YouTube's bitrate
+## Shots that die at their range aim only at buildings in range
+
+A line-of-sight bolt or lightning strike and a guided shot fly one weapon range
+and then vanish, and a flame reaches only its range. Until now the engine let
+every non-arcing weapon count a building as in range up to its footprint plus
+24 pixels further (so short-range attackers would not
+grind its edge). For these weapons that allowance was a dead band: in a
+reported Crusades game a Death Totem (lightning, range 550) took a Taros
+lodestone 584 pixels away as its target and fired all game long, and every
+bolt died about 540 pixels out without a hit. The original measures their
+range from centre to centre with no allowance (`KINGDOMS.icd` `0x530580`,
+used by the lightning, line-of-sight, fire and guided weapon classes; the
+totem first counts that lodestone in range at 585), and now so does the
+engine, for every unit with such a weapon, buildings and mobile units alike:
+
+- **Towers and totems** no longer target a building past their range.
+- **Mobile units** ordered onto a building (Crossbowmen, Shamans, Wisps, Fire
+  Demons, Fire Wagons, mages, monarchs and dragons on such a weapon) walk to
+  their range itself and hit, where they used to stop up to the allowance
+  further out (on a 7x12 Barracks, 120 pixels) and, but for a flame's
+  splash, hit nothing.
+
+Arcing shots (arrows, cannons, catapults: their own arc test since 0.9.2),
+melee and other weapons are unchanged. 40 unit types carry such a weapon in
+the standard roster (34 mobile, 6 buildings), 38 with Crusades.
+
 
 Above YouTube's bitrate for a stream's size, frame rate and codec, YouTube can
 accept the connection and never start the broadcast while the panel shows
@@ -235,6 +261,12 @@ decided what the game counted as seen.
   (`exploreLevelFor`, start and sector targets, loss back-off, vacated
   bases), `TAK_AI_EXPLORE` (debug) counters. The lodestone search's nearest-
   first order is in `placeSite`. `classicwaves.h` (Retail AI) is untouched.
+- Sim (range): `Weapon::shotEndsAtRange` / `Weapon::structurePad`; no
+  structure pad for those weapons in `slotInRange`, `combatReach`, the
+  per-slot fire gate, `repositionForShot`, the flyer/structure hold and
+  Legion's `reachPx` / `reachFloat`. New `shot_range_test` (Retail and
+  Legion); `structure_combat_reach` places its target inside the range for a
+  weapon with no pad.
 - Sim: `src/sim/statefold.h` (`WordMix`, chunked xxHash64-style lanes) for
   `World::stateHash`; `resolveSplit` and `World::compStats` for local nav
   splits (`TAK_COMPCHECK` in debug builds checks every carried labelling);
@@ -287,6 +319,12 @@ New with 0.9.12:
   publishes no maximum; an ultrawide window picks its row by height.
 - **The speed measurements** were made on an Intel Core Ultra 9 275HX, not on
   the reporting player's Ryzen.
+- **A building just past a tower's range is no longer shot** even where a bolt
+  launched from the muzzle could have clipped its edge (a Stronghold at a
+  lodestone 620 pixels off did): the original does not target it either.
+- **Instant line-of-sight shots** (mind control and similar, which land at
+  once) and Remote or Wandering spells keep the allowance; their shots do not
+  die short.
 - **0.9.11's limits still apply:** see the
   [0.9.11 notes](release-0.9.11-notes.md#known-limits), and through them the
   earlier notes; 0.9.11's "AI goes after everything" is replaced by the

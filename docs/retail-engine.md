@@ -126,7 +126,20 @@ MeleeWeapon vtable `0x5f3af8`, base WeaponType `0x5f3710`):
 `Weapon::ballisticClass`) the sweep and auto slots (`slotInRange`), the attack
 order's fire gate and its approach all use that predicate, with no footprint
 pad. Every other ranged weapon keeps our structure pad (`8*max(foot)+24` px,
-so short-range attackers do not grind a building's edge). Before, the pad let
+so short-range attackers do not grind a building's edge), except, since
+0.9.12, one whose shot dies at its range (`Weapon::shotEndsAtRange`: a
+Line-of-Sight bolt or lightning and a Guided shot are given one range of travel
+at launch, a flame front is scanned out to the range). Retail's lightning
+(`5f374c`), LOS (`5f39f4`), fire (`5f3780`) and Guided (`5f37e4`) vtables all
+use the base `530580`, centre to centre, so these get no pad in `slotInRange`,
+`combatReach` (approach, fire gate, findTarget's hold-post filter), the
+per-slot fire gate, `repositionForShot`'s band, the structure/flyer hold and
+Legion's mirrored reach ring. With the pad a Crusades Death Totem (lightning,
+range 550) took a Taros lodestone 584.5 px off (emulated `530580`: out at 550,
+first in at 585) and its bolts died ~540 px out without a hit (the user's
+0.9.12 replay at 21:00); a mobile Crossbowman, Shaman or Fire Demon ordered
+onto a building parked up to the pad past its range and never hit it. 38-40
+unit types carry such a weapon (`shot_range_test` lists them). Before, the pad let
 a Creon Submersible 822-848 px from an 800-range Divine Lodestone count as in
 range; the arc had no solution, `queryWeaponAim` turned `0x8000` into pitch 0
 (what `52bdf0` stores) and the sub lobbed every shell flat into the water at
