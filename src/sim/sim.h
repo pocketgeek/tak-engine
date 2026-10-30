@@ -2284,7 +2284,7 @@ public:
         features_.clear();
         burnSequence_ = 0; fadingFeatures_ = 0;
         mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
-        installedMapFeatures_.clear();
+        installedMapFeatures_.clear();sacredUnderlay_.clear();
         explorationHeights_.clear();navigationExplored_.clear();viewCounts_.clear();deathSights_.clear();
         restoredNavigationViewer_=-1;
         featureIdx_.clear();
@@ -3115,6 +3115,15 @@ private:
     // not hashed -- but it MUST be identical on every peer, which it is: the table
     // is built in a deterministic order from the same data.
     std::vector<uint8_t> obst_;   // shared obstacle overlay (see NavGrid::setObstacles)
+    // A sacred yard (S) may stand on fixed obstacles (placementCheck): footprint
+    // origin cell -> the overlay cells already blocked when it was stamped, so its
+    // removal (blockFoot) leaves those obstacles blocked. Not hashed: derived from
+    // the same placements on every peer, and only the overlay reads it.
+    std::map<int,std::vector<int>> sacredUnderlay_;
+    // A blocker the sim can remove later (a registered feature, or a wreck).
+    bool removableBlockerAt(int gx,int gz) const;
+    // The map placement cell still holds a blocking feature or a 0xFFFC cell.
+    bool fixedBlockerAt(int gx,int gz) const;
     std::vector<NavGrid> navClasses_;
     std::unordered_map<const UnitType*, int> navIdx_;
     struct SearchGradePlane {

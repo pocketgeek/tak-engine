@@ -309,6 +309,8 @@ add_executable(clear_build_test tools/clear_build_test.cpp)
 target_link_libraries(clear_build_test PRIVATE tak-formats)
 add_executable(lodestone_upgrade_test tools/lodestone_upgrade_test.cpp)
 target_link_libraries(lodestone_upgrade_test PRIVATE tak-formats)
+add_executable(sacred_yard_test tools/sacred_yard_test.cpp)
+target_link_libraries(sacred_yard_test PRIVATE tak-formats)
 add_executable(builder_automation_test tools/builder_automation_test.cpp)
 target_link_libraries(builder_automation_test PRIVATE tak-formats)
 add_test(NAME builder_automation COMMAND builder_automation_test)
@@ -1640,6 +1642,7 @@ if(TAK_TEST_DATA)
     add_test(NAME building_death COMMAND building_death_test "${TAK_TEST_DATA}")
     add_test(NAME clear_build COMMAND clear_build_test "${TAK_TEST_DATA}")
     add_test(NAME lodestone_upgrade COMMAND lodestone_upgrade_test "${TAK_TEST_DATA}")
+    add_test(NAME sacred_yard COMMAND sacred_yard_test "${TAK_TEST_DATA}")
     add_test(NAME turn COMMAND turn_test "${TAK_TEST_DATA}")
     add_test(NAME navblock COMMAND navblock_test "${TAK_TEST_DATA}")
     add_test(NAME blocked_shot COMMAND blocked_shot_test "${TAK_TEST_DATA}")
@@ -2577,6 +2580,15 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/tactical-dots.png")
       set_tests_properties(tactical_dots PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: tactical dots \\(threshold")
+      # Airborne flyers draw over the shots, debris and explosions (retail 0x4fc648).
+      add_test(NAME air_over_fx COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_AIR_OVER_FX_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/air-over-fx-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/air-over-fx-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1024 768 --shot "${CMAKE_CURRENT_BINARY_DIR}/air-over-fx.png")
+      set_tests_properties(air_over_fx PROPERTIES TIMEOUT 120
+          PASS_REGULAR_EXPRESSION "PASS: air over fx \\(altitude")
       # Full zoom-out fits the map to the world view (left of the right panel, above
       # the bottom bar), at 1080p and on a 7680x2160 super-ultrawide.
       # Windowed (a fresh profile is fullscreen, i.e. the dummy driver's 1024x768

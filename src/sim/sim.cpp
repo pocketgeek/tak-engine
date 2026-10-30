@@ -1352,7 +1352,7 @@ void World::setMapPlacementFeatures(const std::vector<uint16_t>& raw,
 void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int seaLevel,
                        const std::vector<uint16_t>* features) {
     mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
-    installedMapFeatures_.clear();
+    installedMapFeatures_.clear();sacredUnderlay_.clear();
     ++placementEpoch_;
     paths_.clear();legion_.reset();
     searchGrades_.clear(); activeSearchGrade_=-1;
@@ -6856,6 +6856,11 @@ void World::retailHitResponse(Unit& e,const Unit* a,int dmgType) {
     if (!a || a==&e) return;
     if (isNeutralPlayer(e.player) || !validUnitOwner(e.player)) return;
     if (e.type->weapons.empty() && !e.type->kamikaze) return;
+    // 409b56..409b67: a unit with construction left (+0x108 != 0) skips both
+    // the retaliation mission and the slot handoff. An unfinished site under
+    // fire never takes the attacker as its target, so it starts from its own
+    // choice once finished.
+    if (e.underConstruction) return;
     if (e.incapacitated()) return;
     if (allied(e.player,a->player)) return;
     // (a) 409ba8..409e4b: the retaliation mission's gates.
@@ -7564,7 +7569,31 @@ void World::blockCells(int cx, int cz, int w, int h, bool blocked) {
 
 void World::blockFoot(const UnitType& t, float x, float z, bool blocked) {
     int cx = footprintOrigin(x, t.footX), cz = footprintOrigin(z, t.footZ);
-    if (t.yardMap.empty()) { blockCells(cx, cz, t.footX, t.footZ, blocked); return; }
+    // A one-character S yard (every lodestone) fills the whole footprint, and
+    // S cells may stand on fixed obstacles (placementCheck). The overlay has
+    // one bit per cell, so remember which cells were already blocked and leave
+    // them blocked when the building goes. Recorded once per placement: setup
+    // stamps scenario buildings twice, and the second stamp would otherwise
+    // record the building's own cells.
+    const bool sacred=t.yardMap.empty() && t.sacredIncome && t.isStructure() &&
+        !obst_.empty() && terW_>0;
+    const int key=cz*terW_+cx;
+    if (sacred && blocked && !sacredUnderlay_.contains(key)) {
+        std::vector<int> under;
+        for (int j=std::max(0,cz);j<std::min(terH_,cz+t.footZ);++j)
+            for (int i=std::max(0,cx);i<std::min(terW_,cx+t.footX);++i)
+                if (obst_[size_t(j)*size_t(terW_)+size_t(i)]) under.push_back(j*terW_+i);
+        sacredUnderlay_.emplace(key,std::move(under));
+    }
+    if (t.yardMap.empty()) blockCells(cx, cz, t.footX, t.footZ, blocked);
+    if (sacred && !blocked) {
+        if (const auto found=sacredUnderlay_.find(key); found!=sacredUnderlay_.end()) {
+            for (const int cell:found->second)
+                if (fixedBlockerAt(cell%terW_,cell/terW_)) blockCells(cell%terW_,cell/terW_,1,1,true);
+            sacredUnderlay_.erase(found);
+        }
+    }
+    if (t.yardMap.empty()) return;
     for (int j = 0; j < t.footZ; ++j)
         for (int i = 0; i < t.footX; ++i) {
             char c = t.yardMap[size_t(j) * t.footX + i];
@@ -8773,6 +8802,35 @@ const Unit* World::lodestoneUpgradeSource(const UnitType* type,float x,float z,i
     return nullptr;
 }
 
+bool World::removableBlockerAt(int gx,int gz) const {
+    for (const auto& f:features_) {
+        if (!f.alive || !f.blocks) continue;
+        const int ox=footprintOrigin(f.x,f.fx),oz=footprintOrigin(f.z,f.fz);
+        if (gx>=ox && gz>=oz && gx<ox+f.fx && gz<oz+f.fz) return true;
+    }
+    for (const auto& [id,footprint]:corpseFootprints_) {
+        const auto& type=featTypes_.at(size_t(footprint.type));
+        if (type.blocking && gx>=footprint.x && gz>=footprint.z &&
+            gx<footprint.x+type.fx && gz<footprint.z+type.fz) return true;
+    }
+    return false;
+}
+
+bool World::fixedBlockerAt(int gx,int gz) const {
+    // A world without the map's placement cells (synthetic fixtures) knows no
+    // better than the overlay it recorded.
+    if (hW_<=0 || mapPlacementCells_.size()!=size_t(hW_)*hH_) return true;
+    if (gx<0 || gz<0 || gx>=hW_ || gz>=hH_) return false;
+    const auto& cell=mapPlacementCells_[size_t(gz)*hW_+gx];
+    if (cell.feature==0xfffc) return true;
+    if (cell.feature>=0xfffa && cell.feature!=0xfffe) return false;
+    const int ox=gx-(cell.feature==0xfffe ? cell.backX : 0);
+    const int oz=gz-(cell.feature==0xfffe ? cell.backZ : 0);
+    if (ox<0 || oz<0) return false;
+    const auto index=mapPlacementCells_[size_t(oz)*hW_+ox].feature;
+    return index<mapPlacementTypes_.size() && mapPlacementTypes_[index].blocking;
+}
+
 bool World::canPlace(const UnitType* type, float x, float z, int player) const {
     return placementCheck(type,x,z,player,nullptr);
 }
@@ -8900,6 +8958,22 @@ bool World::placementCheck(const UnitType* type, float x, float z, int player,
         }
         return clearObstacle(gx,gz);
     };
+    // Retail decodes a yard S as mask 0x8f (4c0fe3; a one-character "S", every
+    // lodestone's yardmap, fills the footprint, 4c0f59..4c101f): sacred-site
+    // coverage, the footprint's height range, water depth and occupancy, but
+    // none of the feature bits (0x20/0x40). So 507400 admits a footprint over
+    // the Standing Stones beside a sacred site, which on Inner Circle refused
+    // two of the four sites' covering positions here. Ours tests terrain, not
+    // the overlay, and leaves occupancy to the body test below. A blocker the
+    // sim can still remove (a registered feature, a wreck) keeps the old rule
+    // -- a build order reclaims it first -- because its removal would clear the
+    // building's own overlay cells.
+    const bool sacredYard=type->yardMap.empty() && type->sacredIncome && type->isStructure();
+    const auto sacredCell=[&](int gx,int gz) {
+        if (!grid.terrainWalkable(gx,gz)) return false;
+        if (grid.walkable(gx,gz) || !removableBlockerAt(gx,gz)) return true;
+        return walkable(grid,gx,gz);
+    };
     int cx = footprintOrigin(x, type->footX), cz = footprintOrigin(z, type->footZ);
     // Retail 507400 checks the entire building rectangle before its yard masks.
     // Even ignored '.' rows need the one-cell map border: the yard transition
@@ -8956,12 +9030,13 @@ bool World::placementCheck(const UnitType* type, float x, float z, int player,
             for (int i = 0; i < type->footX; ++i) {
                 char c = type->yardMap[size_t(j) * type->footX + i];
                 if (c == '.' || c == ' ') continue;
-                if (!walkable(grid,cx + i, cz + j)) return false;
+                if (c == 'S' && type->isStructure() ? !sacredCell(cx + i, cz + j)
+                                                    : !walkable(grid,cx + i, cz + j)) return false;
             }
     } else {
         for (int j = 0; j < type->footZ; ++j)
             for (int i = 0; i < type->footX; ++i)
-                if (!walkable(grid,cx + i, cz + j)) return false;
+                if (sacredYard ? !sacredCell(cx + i, cz + j) : !walkable(grid,cx + i, cz + j)) return false;
     }
     if (type->isStructure()) {
         // Retail's building branch (507400) checks occupied footprint cells.

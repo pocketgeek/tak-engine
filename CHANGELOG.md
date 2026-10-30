@@ -74,6 +74,16 @@ their validation reports; both live in [`docs/`](docs/).
   land on a ridge or scenery in front of its long face count as blocked. An
   archer told to manoeuvre now walks to a clear line and hits it, where it
   used to fire into the crest for ever.
+- **A Divine Lodestone may cover the Standing Stones beside a sacred site**, as
+  in the original game: a lodestone's footprint ignores the stones and other
+  fixed scenery, so on Inner Circle it is no longer refused where it overlaps
+  them (at two of the four sites). Scenery that can be cleared, such as a tree,
+  is still cleared first.
+- **Flyers draw over the explosions, debris and shots of a fight below them**,
+  as in the original game, instead of under them; their shadows stay where
+  they were.
+- **An unfinished building under fire no longer takes its attacker as its
+  target**, as in the original game, so once finished it picks its own.
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
   at +10, 0.9.11 fell to -2 at about 2,700 units, with 219 ticks over 250 ms;
   0.9.12 held +9 to +10 to 3,160 units with no tick over 100 ms:

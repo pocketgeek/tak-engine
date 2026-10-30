@@ -302,6 +302,30 @@ A Mage Archer on Manoeuvre facing a Taros Castle's long face behind a ridge
 now walks 41 pixels (48 with Legion) and hits it seven times; before, it
 fired eleven shots into the ridge and never moved.
 
+## Three small fixes from the retail checks
+
+- **A Divine Lodestone may cover the Standing Stones beside a sacred site.**
+  In the original game a lodestone's `yardmap=S` fills its footprint and
+  tests the sacred-site coverage, the ground and the units on it, but not the
+  scenery under it, so its footprint may overlap the Standing Stones around a
+  site (emulated in the original's placement code `0x507400`). The engine
+  refused every position where one of the 3x3 squares held a stone: on Inner
+  Circle, one covering position at the north site and two at the west site,
+  for every side, so a Divine Lodestone placed by hand there needed a nudge.
+  Those positions are accepted now, by players and the AI alike, and a
+  lodestone destroyed there leaves the stones blocking as before.
+- **Flyers draw over a ground fight's explosions, debris and shots.** The
+  original draws the airborne units after the shots and its effects (debris
+  first, then explosions); the engine drew the flyers first, so wreckage and
+  explosions from the fight below painted over a dragon passing overhead.
+  Flyers' shadows stay under the shots and effects, where they were.
+- **An unfinished building under fire no longer takes its attacker as a
+  target.** The original's hit response skips a unit that is still being
+  built. The engine handed the site an attack order it could not carry out,
+  so it showed a target while under construction (an unfinished Prismatic
+  Mirror "holding without firing" at a Trebuchet) and, once finished, started
+  on that order instead of choosing its own target.
+
 ## Streaming keeps to YouTube's bitrate
 
 Above YouTube's bitrate for a stream's size, frame rate and codec, YouTube can
@@ -388,6 +412,18 @@ decided what the game counted as seen.
   circle for a non-square body) in `World::noteShotImpact`, and
   `World::chordClear` now takes the target. New castle case in
   `blocked_shot_test`; `tools/re/probe_long_footprint_blocked.py`.
+- Sim (retail checks): an `S` yard cell of a structure tests the
+  terrain-only grid in `World::placementCheck` (`removableBlockerAt` keeps
+  the reclaim-first rule for registered features and wrecks), and
+  `World::blockFoot` records the fixed obstacles under it
+  (`sacredUnderlay_`, unhashed) to restore them on removal;
+  `retailHitResponse` returns for a unit under construction. New
+  `sacred_yard_test` (Inner Circle) and an unfinished-building case in
+  `fire_sweep_test retaliation`.
+- Client: the body replay stops at the first airborne item
+  (`GameView::airOp_`) and draws the air bodies after the shots and
+  effects. New `air_over_fx` harness test (`TAK_AIR_OVER_FX_TEST`,
+  `TAK_AIR_OVER_FX_CAPTURE` for the frames).
 - `Order` stays five cache lines (320 bytes): `attackChased` fills the pad
   beside `chaseLeashed`.
 - Sim: `src/sim/statefold.h` (`WordMix`, chunked xxHash64-style lanes) for
@@ -497,6 +533,17 @@ New with 0.9.12:
   instead of four; it hit nothing either way). The reposition's minimum
   distance and the navigation grid's sight radius still use a building's
   longest side.
+- **A lodestone's footprint still refuses scenery that can be cleared**
+  (a tree, a rock, a wreck): a build order clears it first. The original
+  builds over it, but the engine keeps one blocked mark per map square and
+  clearing it later would open the lodestone's own squares. The original's
+  limit on the height range under a building (15 for every lodestone) is not
+  ported for any building; the engine's own slope test per square still
+  applies.
+- **A flyer's shadow is drawn under the shots and effects**, before the
+  flyer: the original draws each unit's shadow with the unit, so an
+  explosion can now cover a flyer's shadow but not the flyer. Queued build
+  ghosts and the Hidden Units dots also lie under a flyer now.
 - **0.9.11's limits still apply:** see the
   [0.9.11 notes](release-0.9.11-notes.md#known-limits), and through them the
   earlier notes; 0.9.11's "AI goes after everything" is replaced by the
