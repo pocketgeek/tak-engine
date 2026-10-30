@@ -2848,7 +2848,7 @@ static void legionFrontSlots(const std::vector<std::array<int64_t,2>>& at,int64_
 //
 // Pairing (W6, PLAN 3.5 / C4): one click is one convoy (Order::convoyTick,
 // sim/convoy.h), whatever the client's uplink split and whatever the flyer's
-// +-60 px click offset. Per squad (retailGroupIndex: Ctrl 1..10, Alt 11..20)
+// click offset (retail's spread, sim/retailflyerspread.h). Per squad (retailGroupIndex: Ctrl 1..10, Alt 11..20)
 // the busy ground members' last orders fall into up to kBuckets buckets keyed
 // by (order class, convoyTick); a flyer whose last order carries the same key
 // keeps station over that bucket's ground. A further distinct click gets no

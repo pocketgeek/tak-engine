@@ -704,8 +704,10 @@ Follow_Ground (`4080a0`), missions this World does not run as retail
 handlers. The formation goal's y terms are zero in the `402b00` comparison
 (the helper takes them; the host passes 0). Mission flags of orders the
 ground host does not model (attack/build) read as 0. Retail AI squads
-(`players_[].retailAi`) are not group members. The human UI's `+-60 px`
-click offsets (`gameview_hud.cpp`) remain untraced; Ctrl+N group assignment
+(`players_[].retailAi`) are not group members. The human UI's click offsets
+are retail's `0x5214b0` (traced 2026-10-30, `retail-engine.md` "Group move
+spread"): flyers keep theirs, ground units take the point; ours keeps a
+`+-60 px` ground offset by choice. Ctrl+N group assignment
 is `522170` (`50b4f0` at `5221ce`), and a plain selection is never grouped.
 
 **Flyers in a group (formation-air, 2026-10-07).** The mission registry
@@ -827,8 +829,9 @@ only the mover cap would drop our catch-up rule without retail's slowdown, the
 half-port trap. Squad semantics are also user-facing (`docs/user-guide.md`).
 The gap is therefore recorded rather than shipped. The same audit found that
 the AI's group order `50b5d0` gives every member the same point. The human UI's
-per-unit click offsets (`±60` px around the selection centroid in
-`gameview_hud.cpp`) have not been traced to a retail source.
+per-unit click offsets were traced later (2026-10-30) to `0x5214b0`: only
+flyers keep an offset there (`retail-engine.md` "Group move spread"); our
+`±60` px ground offset in `gameview_hud.cpp` is a design choice.
 
 ### Whole-World Retail scenarios against native retail (2026-10-06)
 
