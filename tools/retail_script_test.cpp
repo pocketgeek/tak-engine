@@ -1407,10 +1407,16 @@ int main(int argc,char** argv) {
         const int worker=repairWorld.spawn(&repairer,200,200,0);
         const int repaired=repairWorld.spawn(&damaged,220,200,0);
         repairWorld.unit(repaired)->hp=Fixed::fromInt(50);
-        repairWorld.unit(worker)->repairId=repaired;
         repairWorld.player(0).mana=0;
         const uint16_t repairHeading=uint16_t(retailDirection(Fixed::fromInt(-20),Fixed()).v-
             portHeadingToRetail(repairWorld.unit(worker)->heading));
+        // RepairUnit's approach (407190 stages 0-1): the worker already
+        // touches the target, so its rectangle reports arrival on the first
+        // update; the next RepairUnit wake starts the work.
+        repairWorld.repair(worker,repaired,false);
+        repairWorld.tick(1.f/30);
+        require(!repairWorld.unit(worker)->workScriptWorking && repairWorld.unit(worker)->repairId==repaired,
+            "repair approaches before requesting its pose");
         RetailReplayProbe::repairTick(repairWorld,worker);
         require(repairWorld.unit(worker)->workScriptWorking &&
             RetailReplayProbe::scriptStatics(repairWorld,worker)[2]==0,
@@ -1429,7 +1435,8 @@ int main(int argc,char** argv) {
             RetailReplayProbe::scriptStatics(repairWorld,worker)[3]==1,
             "completed repair stops its controller");
         repairWorld.unit(repaired)->hp=Fixed::fromInt(50);
-        repairWorld.unit(worker)->repairId=repaired;
+        repairWorld.repair(worker,repaired,false);
+        repairWorld.tick(1.f/30);
         RetailReplayProbe::repairTick(repairWorld,worker);
         RetailReplayProbe::scriptTick(repairWorld,worker);
         repairWorld.cancelBuilds(worker);repairWorld.cancelBuilds(worker);
@@ -1487,13 +1494,15 @@ int main(int argc,char** argv) {
         require(repairWorld.unit(worker)->repairId==replacement &&
             RetailReplayProbe::scriptStatics(repairWorld,worker)[2]==firstWorkCounts[2]+1,
             "replacement target starts its own repair controller once");
-        repairWorld.unit(replacement)->x=Fixed::fromInt(450);
+        // 40762d: work stops on a target that moves (its MoveRate tier; a
+        // unit without a script, its speed), never on distance.
+        repairWorld.unit(replacement)->speed=Fixed::fromInt(1);
         RetailReplayProbe::repairTick(repairWorld,worker);
         require(!repairWorld.unit(worker)->workScriptWorking,
-            "repair controller retires when its target moves out of reach");
-        repairWorld.unit(replacement)->x=Fixed::fromInt(220);
-        RetailReplayProbe::repairTick(repairWorld,worker);
-        RetailReplayProbe::scriptTick(repairWorld,worker);
+            "repair controller retires when its target starts moving");
+        repairWorld.unit(replacement)->speed=Fixed();
+        for(int tick=0;tick<30 && !repairWorld.unit(worker)->workScriptWorking;++tick)repairWorld.tick(1.f/30);
+        require(repairWorld.unit(worker)->workScriptWorking,"the repair resumes once its target stands still");
         repairWorld.addFeature(101,220,200,0,1,1,false,-1,false);
         workCommand.kind=tak::net::Cmd::Reclaim;workCommand.targetId=101;
         applyCommand(repairWorld,workRegistry,workCommand);

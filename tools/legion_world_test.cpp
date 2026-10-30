@@ -3951,8 +3951,8 @@ void factorysquad() {
 // `retail_searches` the Retail path requests queued during the run.
 // Target (3.5): retail_ticks 0, retail_searches 0, legion_ticks > 0, repaired and
 // patrol resumed. The `-moving` variant repairs a mobile ally that walks out of
-// reach (but stays inside the leash) once the repair has begun: tickRepair
-// refreshes the leg's point, and the builder must follow it.
+// reach (but stays inside the leash) once the repair has begun: RepairUnit's
+// look re-installs the leg's rectangle round it, and the builder must follow.
 ProbeRun patrolrepairRun(bool serial,bool moving) {
     Fixture f(128,96,serial);f.publish();
     UnitType builder{};builder.id=builder.name="legion-worker";builder.isBuilder=builder.canMove=builder.canReclaim=builder.canPatrol=true;

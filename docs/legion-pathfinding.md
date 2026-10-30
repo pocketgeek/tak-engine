@@ -908,8 +908,8 @@ The mission goals (`LegionMission`):
 | Patrol | patrol legs, single or group | the waypoint, shared area per command | as Fight; the body passes through (no anchor, cells released) |
 | Attack | explicit and auto-acquired attacks, chases | the target unit, re-seeded | combat: `tickCombat` stops the body in range; Legion never completes it |
 | Guard | guard/follow | the guard ring's point on the guard's bearing (`World::guardRing`), re-seeded | guard: stops in Follow_Ground's ring; Legion never completes it |
-| Build | MobileBuild approaches (`buildRectangle`): single, queued, mana build area | the rectangle's `navigationCell`, else its nearest legal reachable perimeter origin | the rectangle itself (`accepts`): `0x500`; anywhere else `0x200` |
-| Repair | repair legs, and a patrolling builder's automatic repair detour (W2 RB-04) | the target's point | work: `tickRepair` starts at reach; Legion never completes it |
+| Build | MobileBuild approaches (`buildRectangle`): single, queued, mana build area; a ground builder's HelpBuild leg (`helpSite`, since protocol 305) | the rectangle's `navigationCell`, else its nearest legal reachable perimeter origin | the rectangle itself (`accepts`): `0x500`; anywhere else `0x200` |
+| Repair | ground repair legs, and a patrolling builder's automatic repair detour (W2 RB-04); since protocol 305 on RepairUnit's rectangle round the target (`installRepairApproach`) | as Build | as Build; `tickGroundRepair` re-installs the rectangle (a new controller, so a new member) when the target moves or changes cell |
 | Reclaim | feature and corpse reclaims (also those an area reclaim queues) | the feature's point | work: `tickReclaim` starts at reach; Legion never completes it |
 | Load | passenger to its carrier, ground carrier to its passenger | the transport circle's centre | the native circle: `0x500` on `transportMission`; elsewhere `0x200` |
 | Unload | ground carrier's surface-unload approach | the drop point | as Load |
@@ -950,9 +950,10 @@ and steering for these legs; the native mover never runs for them.
   raises the native failed-approach event `0x200` instead, and the handler
   decides exactly as after a failed native search (build if within reach,
   re-roll the park ring, retry the pickup). Load/Unload events go to the
-  leg's `transportMission`, as in the native mover. Repair and reclaim legs
-  have no movement controller; the member is keyed by (kind, issue tick,
-  target). These kinds are *solo*: each body gets its own group and field
+  leg's `transportMission`, as in the native mover. Help, repair and reclaim
+  legs approach on the same rectangle controller as a build (protocol 305
+  for help and repair; their legs had no controller before). These kinds
+  are *solo*: each body gets its own group and field
   (a teammate's seed is not on this body's rectangle or within its reach).
   Embarked units are never members. A work/logistics body that cannot
   accelerate (accel 0) is not crept forward, so a released passenger stays on
@@ -972,9 +973,10 @@ Area reclaim and the mana build area need no kind of their own: their
 approach steps are plain Moves and the work they queue is Reclaim/Build.
 A patrolling builder's automatic repair detour (`patrolRepair`) is an
 ordinary Repair leg (W2 RB-04; it was delegated to Retail before). The leash
-stays in `tickPatrolRepair`/`tickRepair`; when a mobile ally moves,
-`tickRepair` refreshes the leg's point and its `cancelPath` re-registers the
-member, so Legion follows it (`legion_patrolrepair`, `-moving` variant).
+stays in `tickGroundRepair`; when a mobile ally moves, RepairUnit's look
+re-installs the leg's rectangle round where it now stands (a new controller,
+which re-registers the member), so Legion follows it (`legion_patrolrepair`,
+`-moving` variant).
 Boats and hovercraft are routed too (see above). Still delegated to Retail:
 transport legs of flying or water carriers, and boats/hovercraft on legacy
 terrain-only worlds. Flyers stay native: flight is not pathfinding. The

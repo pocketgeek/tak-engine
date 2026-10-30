@@ -74,6 +74,19 @@ their validation reports; both live in [`docs/`](docs/).
   land on a ridge or scenery in front of its long face count as blocked. An
   archer told to manoeuvre now walks to a clear line and hits it, where it
   used to fire into the crest for ever.
+- **Builders help and repair as in the original game.** A builder told to
+  help build or repair (or doing it on guard or patrol) walks up until it
+  touches the unit, on the side it comes from, so helpers spread round a
+  building instead of all making for one spot south of it and working from
+  their build distance; once working, a builder that is pushed aside keeps
+  working. A helper no longer gives up after 8 seconds held up in a crowd,
+  only when no route gets it within its build distance, and an assist queued
+  behind other orders starts when its turn comes. A walking unit is no longer
+  repaired: the repair waits while it moves and is given up after a few
+  seconds of walking, and a patrolling builder gives a repair up once it is
+  its sight distance from its route (it used to measure the unit). A helper
+  that finishes a unit inside a factory walks out of it afterwards, so it
+  never blocks the door (not in the original).
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
   at +10, 0.9.11 fell to -2 at about 2,700 units, with 219 ticks over 250 ms;
   0.9.12 held +9 to +10 to 3,160 units with no tick over 100 ms:

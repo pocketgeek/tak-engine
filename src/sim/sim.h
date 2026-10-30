@@ -803,6 +803,10 @@ struct alignas(64) Order {
     RetailMissionState transportMission{2};
     uint32_t transportApproachAttempts = 0;
     Fixed transportX, transportY, transportZ;
+    // A build leg's site centre. A ground HelpBuild leg (helpSite) keeps its
+    // site's centre for the failed approach's reach test; a ground RepairUnit
+    // leg keeps where its target stood when the approach was installed
+    // (mission +0x22), for the look that re-aims it once that cell changes.
     Fixed buildX, buildZ;
     uint32_t hoverAttackRefresh = 0;
     Fixed hoverAttackTargetX, hoverAttackTargetZ;
@@ -850,6 +854,11 @@ struct alignas(64) Order {
     bool attackChased = false; // Attack_Chase: walked under this order (above)
     uint16_t chaseLeash = 0;
     RetailGroundPoint chaseOrigin{};
+    // A ground RepairUnit's give-up count (0x407190, mission +0x52): 1 for
+    // each look at a moving target, 3 when it is in reach or starts moving
+    // while worked on; past 10 the repair ends. Never reset while the job
+    // lasts. In the pad after chaseOrigin; hashed on repair legs.
+    uint8_t repairLooks = 0;
     // RECLAIM's work countdown (406250 mission +0x4e): trunc(energy + 15) at
     // arrival, less 2 every two-tick wake (retailReclaimWork). Its stages run
     // on `mission`. Hashed on reclaim legs.
@@ -863,9 +872,11 @@ struct alignas(64) Order {
     // (in the pad beside reclaimHeading so the cold tail stays five lines).
     // Hashed when set.
     bool mixedSlots = false;
-    // The approach of a HelpBuild (World::assist, or one a guarding builder
-    // put ahead of its guard): the unfinished unit it walks to. The leg goes
-    // when that job ends, however it ends. Hashed with a tag when set.
+    // A HelpBuild (World::assist, or one a guarding builder put ahead of its
+    // guard): the unfinished unit it helps. A ground builder's leg is the job
+    // itself, run on `mission` with the rectangle controller (tickGroundHelp);
+    // a flyer's is only its approach. The leg goes when that job ends, however
+    // it ends. Hashed with a tag when set.
     int helpSite = 0;
     // A flyer's guard (VTOL_Follow 0x418860, World::tickFlyingGuard): its
     // orbit angle around the guarded unit (mission +0x4e, read as a word).
@@ -2810,6 +2821,10 @@ private:
     // able to move and idle or guarding (its guard resumes afterwards).
     bool yieldsToSite(const Unit& k, int player) const;
     void clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, Fixed z);
+    bool pointOutside(const Unit& k, int left, int right, int top, int bottom, int rx, int rz,
+                      const std::array<bool,4>& avoid, const std::vector<std::array<int,4>>& taken,
+                      int& x, int& z) const;
+    void leaveFactoryYard(int helperId);
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
     void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
     bool tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept=false,const WeaponAimSolution* given=nullptr);
@@ -2924,6 +2939,20 @@ private:
     void tickReclaim(Unit& b);
     // 406250 stage 0: install the reclaim leg's rectangle controller.
     void prepareReclaimApproach(Unit& u);
+    // Ground HelpBuild (405cf0) and RepairUnit (407190) on their legs: stage 0
+    // installs the rectangle controller round the target's footprint (the
+    // dispatch, like prepareReclaimApproach); tickGroundHelp/tickGroundRepair
+    // answer the approach events and do the work, measuring no distance once
+    // it has started. A leg that is not current waits from its start.
+    void prepareHelpApproach(Unit& u);
+    void prepareRepairApproach(Unit& u);
+    void installRepairApproach(Unit& u, Order& leg, const Unit& target);
+    void tickGroundHelp(Unit& b, Unit& site, size_t leg, float dt);
+    void tickGroundRepair(Unit& b, Unit& target, float dt);
+    bool constructionWork(Unit& b, Unit& site, float dt);
+    // The target's MoveRate tier (+0x130 & 0xc, 4db350) is not stopped: it
+    // walks, flies or turns. A unit without a script: its speed.
+    bool moveRateMoving(const Unit& t) const;
     void finishReclaim(Unit& b,int target);
     void tickFeatureFades();
     void tickReclaimArea(Unit& b);

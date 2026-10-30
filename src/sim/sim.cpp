@@ -1768,6 +1768,7 @@ void World::replaceLeg(Unit& u, const std::vector<Order>& path) {
             o.reclaimFeat = tmpl.reclaimFeat;
             o.reclaimCountdown = tmpl.reclaimCountdown; o.reclaimHeading = tmpl.reclaimHeading;
             o.repairTarget = tmpl.repairTarget;
+            o.repairLooks = tmpl.repairLooks;
             o.helpSite = tmpl.helpSite;
             o.patrolRepair = tmpl.patrolRepair;
             o.guardRepair = tmpl.guardRepair;
@@ -9363,11 +9364,13 @@ void World::cancelBuilds(int builderId) {
     }
     stopWorkAnimation(*b);
     // Drop every pending build from the order queue (see queueBuild): a fresh
-    // move/attack/stop cancels queued construction.
+    // move/attack/stop cancels queued construction. A ground builder's
+    // HelpBuild leg is such a job too (a flyer's is only its approach).
+    const bool groundHelp=b->type && !b->type->canFly;
     b->orders.erase(std::remove_if(b->orders.begin(), b->orders.end(),
-                                   [](const Order& o) {
+                                   [groundHelp](const Order& o) {
                                        return o.buildType != nullptr || o.reclaimFeat != 0 || o.reclaimArea || o.manaBuildArea ||
-                                              o.repairTarget != 0;
+                                              o.repairTarget != 0 || (groundHelp && o.helpSite != 0);
                                    }),
                     b->orders.end());
     b->reclaimId = 0;            // a fresh move/attack/stop drops any reclaim job
@@ -9425,17 +9428,24 @@ Unit* World::productionOwnerOf(const Unit& site) {
     return p;
 }
 
-// Where a HelpBuild walks to: just south of the unfinished unit, as Assist
-// always did. The approach leg carries helpSite, so it goes when the job ends.
-static float helpApproachZ(const Unit& site) { return site.z.toFloat()+float(site.type->footZ)*8+24; }
-
-// A ground helper walks there (a Move). A flyer's VTOL_HelpBuild stage 1
+// A ground helper's leg is the HelpBuild itself (0x405cf0, emulated
+// 2026-10-30): when it becomes current, stage 0 installs the rectangle
+// controller round the site's footprint (prepareHelpApproach), so each
+// helper walks to the nearest cell where its footprint touches the site's,
+// from wherever it comes. (Ours walked every helper to one point south of
+// the site and worked from builddistance.) A flyer's VTOL_HelpBuild stage 1
 // (0x41f7f0) installs one point goal at the site's centre that accepts within
 // 2 x builddistance (flags 0x30): no VTOL_Move, so none of its draws.
 void World::helpApproach(Unit& b, const Unit& site, bool queue) {
     const int builderId=b.id,siteId=site.id;
     if (!b.type->canFly) {
-        order(builderId,site.x.toFloat(),helpApproachZ(site),queue);
+        if (!queue) { cancelPath(b); b.orders.clear(); }
+        Order o;
+        o.x=site.x; o.z=site.z;   // until stage 0 installs the approach
+        o.goal=true;
+        o.issuedTick=tickCounter_;
+        b.orders.push_back(o);
+        noteOrders(builderId);
     } else {
         if (!queue) { cancelPath(b); b.orders.clear(); }
         Order o;
@@ -9457,13 +9467,18 @@ void World::assist(int builderId, int siteId, bool queue) {
     // Latch onto the existing site; tickConstruction walks there and works at
     // this builder's rate. A factory's or conjurer's output shares its
     // producer's progress (workProduction); any other site grows from its hp.
-    b->buildSiteId = siteId;
-    b->buildStuckT = 0; b->buildStuckD = INT32_MAX;   // fresh job: reset the reach watchdog
+    // A ground helper's leg is its job: queued behind other orders, it is
+    // latched when it becomes current (the dispatch, as a repair is).
+    if (b->type->canFly) {
+        b->buildSiteId = siteId;
+        b->buildStuckT = 0; b->buildStuckD = INT32_MAX;   // fresh job: reset the reach watchdog
+    }
     // A repeating conjurer's move is a rally for its output (World::order);
     // this approach is its own.
     const UnitType* repeat=b->repeatType; b->repeatType=nullptr;
     helpApproach(*b,*site,queue);
     b=unit(builderId); b->repeatType=repeat;
+    if (!b->type->canFly && currentLeg(b->orders)+1==b->orders.size()) b->buildSiteId=siteId;
 }
 
 // Sites never change after setup and buildings never move, but every sacred-income
@@ -10318,6 +10333,74 @@ bool World::yieldsToSite(const Unit& k, int player) const {
     return k.orders.empty() || k.orders[currentLeg(k.orders)].guard;
 }
 
+// A point just outside the rectangle [left,right) x [top,bottom) (world px)
+// for `k` to walk to: clear of it by the body's half size plus a final goal's
+// arrival circle (tickGroundMission: 16 px or the footprint) and 8. The side
+// nearest (rx,rz) first, level with the unit, then sliding along that side a
+// body at a time: a point another body stands on, or one in `taken` (points
+// already given out, footprint cells), is skipped, or a crowd would each walk
+// into the one ahead of it, give the move up and stay. A side marked in
+// `avoid` is the last choice. False if no side has a reachable point.
+bool World::pointOutside(const Unit& k,int left,int right,int top,int bottom,int rx,int rz,
+                         const std::array<bool,4>& avoid,const std::vector<std::array<int,4>>& taken,
+                         int& bestX,int& bestZ) const {
+    const int kx=k.x.floorInt(),kz=k.z.floorInt();
+    const int foot=std::max(k.type->footX,k.type->footZ)*8;
+    const int gapX=k.type->footX*8+std::max(16,foot)+8,gapZ=k.type->footZ*8+std::max(16,foot)+8;
+    const std::array<std::pair<int,int>,4> sides{{{left-gapX,kz},{right+gapX,kz},{kx,top-gapZ},{kx,bottom+gapZ}}};
+    int best=-1;int64_t bestScore=0;
+    for (int i=0;i<4;++i)
+        for (int slot=0;slot<9;++slot) {
+            const int along=(slot+1)/2*(slot%2 ? 1 : -1);
+            const int px=sides[size_t(i)].first+(i<2 ? 0 : along*k.type->footX*16);
+            const int pz=sides[size_t(i)].second+(i<2 ? along*k.type->footZ*16 : 0);
+            if (px<16 || pz<16 || px>=terW_*16-16 || pz>=terH_*16-16) continue;
+            const int64_t score=int64_t(px-rx)*(px-rx)+int64_t(pz-rz)*(pz-rz)+
+                (avoid[size_t(i)] ? int64_t(1)<<40 : 0);
+            if (best>=0 && score>=bestScore) continue;
+            const int ox=footprintOrigin(Fixed::fromInt(px),k.type->footX);
+            const int oz=footprintOrigin(Fixed::fromInt(pz),k.type->footZ);
+            bool clash=false;
+            for (const auto& t:taken)
+                clash|=ox<t[0]+t[2] && t[0]<ox+k.type->footX && oz<t[1]+t[3] && t[1]<oz+k.type->footZ;
+            if (clash) continue;
+            const auto bodies=searchBodyRect(ox,oz,k.type->footX,k.type->footZ,k.id);
+            if (std::any_of(bodies.cells.begin(),bodies.cells.end(),[](const Unit* b){return b!=nullptr;})) continue;
+            if (!k.type->canFly && (!passable(k.type,px/16,pz/16) ||
+                !pathExists(k.type,float(px),float(pz),float(kx),float(kz)))) continue;
+            best=i;bestX=px;bestZ=pz;bestScore=score;
+        }
+    return best>=0;
+}
+
+// Engine deviation (user-requested, the 0.9.8 doorway report): a ground
+// helper walks until its footprint touches the unit it helps (HelpBuild,
+// tickGroundHelp), which for a factory's output is inside the factory's
+// yard, and retail leaves it standing there when the help ends, where its
+// body can hold the door or the next output's pad (BUILD stage 2 never
+// shoves it off). A helper whose help has ended with nothing else to do,
+// standing in a factory's rectangle, walks out past the nearest side, to
+// the point clearBuildSite would send it to.
+void World::leaveFactoryYard(int helperId) {
+    Unit* k=unit(helperId);
+    if (!k || !k->alive() || !k->type || k->type->canFly || !k->orders.empty() || k->embarked()) return;
+    const int ux=footprintOrigin(k->x,k->type->footX),uz=footprintOrigin(k->z,k->type->footZ);
+    const Unit* yard=nullptr;
+    forEachNear(k->x.toFloat(),k->z.toFloat(),256.0f,[&](int index) {
+        const Unit& f=units_[size_t(index)];
+        if (yard || !f.alive() || !f.type || !f.type->isStructure() || !f.type->producesUnits() ||
+            f.underConstruction) return;
+        const int fx=footprintOrigin(f.x,f.type->footX),fz=footprintOrigin(f.z,f.type->footZ);
+        if (ux<fx+f.type->footX && fx<ux+k->type->footX && uz<fz+f.type->footZ && fz<uz+k->type->footZ) yard=&f;
+    });
+    if (!yard) return;
+    const int fx=footprintOrigin(yard->x,yard->type->footX),fz=footprintOrigin(yard->z,yard->type->footZ);
+    int px=0,pz=0;
+    if (!pointOutside(*k,fx*16,(fx+yard->type->footX)*16,fz*16,(fz+yard->type->footZ)*16,
+                      k->x.floorInt(),k->z.floorInt(),{},{},px,pz)) return;
+    order(helperId,float(px),float(pz),false);
+}
+
 // Engine deviation (user-requested): retail's MobileBuild/FlyingBuild only
 // wait out the mobile units on a site, 31 tries 10 ticks apart, and drop the
 // order (405824..405911, 41f301..41f3e5); nothing in retail ever moves a
@@ -10366,43 +10449,12 @@ void World::clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, F
     std::vector<std::array<int,4>> taken;
     for (int id:movers) {
         Unit& k=*unit(id);
-        const int kx=k.x.floorInt(),kz=k.z.floorInt();
-        // Clear of the rectangle by the body's half size plus a final goal's
-        // arrival circle (tickGroundMission: 16 px or the footprint) and 8.
-        const int foot=std::max(k.type->footX,k.type->footZ)*8;
-        const int gapX=k.type->footX*8+std::max(16,foot)+8,gapZ=k.type->footZ*8+std::max(16,foot)+8;
-        const std::array<std::pair<int,int>,4> sides{{{left-gapX,kz},{right+gapX,kz},{kx,top-gapZ},{kx,bottom+gapZ}}};
         const Unit* guarded=k.orders.empty() ? nullptr : unit(k.orders[currentLeg(k.orders)].targetId);
         const int bx=builder.x.floorInt(),bz=builder.z.floorInt();
         const std::array<bool,4> builderSide{bx<left,bx>=right,bz<top,bz>=bottom};
-        const int rx=guarded ? guarded->x.floorInt() : kx,rz=guarded ? guarded->z.floorInt() : kz;
-        // Level with the unit first, then sliding along that side a body at a
-        // time: a point another body stands on, or another mover was just
-        // sent to, is skipped, or a crowd of guards would each walk into the
-        // one ahead of it, give the move up and stay on the site.
-        int best=-1,bestX=0,bestZ=0;int64_t bestScore=0;
-        for (int i=0;i<4;++i)
-            for (int slot=0;slot<9;++slot) {
-                const int along=(slot+1)/2*(slot%2 ? 1 : -1);
-                const int px=sides[size_t(i)].first+(i<2 ? 0 : along*k.type->footX*16);
-                const int pz=sides[size_t(i)].second+(i<2 ? along*k.type->footZ*16 : 0);
-                if (px<16 || pz<16 || px>=terW_*16-16 || pz>=terH_*16-16) continue;
-                const int64_t score=int64_t(px-rx)*(px-rx)+int64_t(pz-rz)*(pz-rz)+
-                    (builderSide[size_t(i)] ? int64_t(1)<<40 : 0);
-                if (best>=0 && score>=bestScore) continue;
-                const int ox=footprintOrigin(Fixed::fromInt(px),k.type->footX);
-                const int oz=footprintOrigin(Fixed::fromInt(pz),k.type->footZ);
-                bool clash=false;
-                for (const auto& t:taken)
-                    clash|=ox<t[0]+t[2] && t[0]<ox+k.type->footX && oz<t[1]+t[3] && t[1]<oz+k.type->footZ;
-                if (clash) continue;
-                const auto bodies=searchBodyRect(ox,oz,k.type->footX,k.type->footZ,k.id);
-                if (std::any_of(bodies.cells.begin(),bodies.cells.end(),[](const Unit* b){return b!=nullptr;})) continue;
-                if (!k.type->canFly && (!passable(k.type,px/16,pz/16) ||
-                    !pathExists(k.type,float(px),float(pz),float(kx),float(kz)))) continue;
-                best=i;bestX=px;bestZ=pz;bestScore=score;
-            }
-        if (best<0) continue;
+        const int rx=guarded ? guarded->x.floorInt() : k.x.floorInt(),rz=guarded ? guarded->z.floorInt() : k.z.floorInt();
+        int bestX=0,bestZ=0;
+        if (!pointOutside(k,left,right,top,bottom,rx,rz,builderSide,taken,bestX,bestZ)) continue;
         taken.push_back({footprintOrigin(Fixed::fromInt(bestX),k.type->footX),
                          footprintOrigin(Fixed::fromInt(bestZ),k.type->footZ),k.type->footX,k.type->footZ});
         const float px=float(bestX),pz=float(bestZ);
@@ -10562,7 +10614,9 @@ void World::repair(int builderId, int targetId, bool queue) {
     OrdersNote note{*this,builderId};
     Unit* b = unit(builderId);
     Unit* t = unit(targetId);
-    if (!b || !b->alive() || !b->type || !b->type->isBuilder || !b->type->canMove) return;
+    // RepairUnit stage 0 ends at once for a unit with no mover (0x407289):
+    // a building never repairs, whatever its canmove says (the Keep's is 1).
+    if (!b || !b->alive() || !b->type || !b->type->isBuilder || !b->type->canMove || b->type->isStructure()) return;
     if (!t || !t->alive() || !t->type || t->id == b->id || t->underConstruction ||
         !allied(t->player, b->player) || t->hp >= Fixed::fromFloat(t->type->maxHp))
         return;
@@ -10601,11 +10655,17 @@ void World::tickRepair(Unit& b, float dt) {
     // without this a builder repairs a unit back off zero and it never dies.
     if (!t || !t->alive() || !t->type || t->hp <= Fixed() || t->underConstruction ||
         t->embarked() || !allied(t->player, b.player) || t->hp >= Fixed::fromFloat(t->type->maxHp)) {
+        if (!b.type->canFly) {
+            // A ground repair's leg is the job: it goes, whatever ended it.
+            stopWorkAnimation(b);
+            if (!b.orders.empty() && b.orders[currentLeg(b.orders)].repairTarget==b.repairId) dropLeg(b);
+            b.repairId = 0;
+            return;
+        }
         endRepair();
         return;
     }
-    float dx = (t->x - b.x).toFloat(), dz = (t->z - b.z).toFloat();
-    float half = 16.0f * float(std::max(t->type->footX, t->type->footZ)) / 2;
+    if (!b.type->canFly) { tickGroundRepair(b,*t,dt); return; }
     if (!b.orders.empty()) {
         const auto& job=b.orders[currentLeg(b.orders)];
         if (job.patrolRepair) {
@@ -10614,43 +10674,112 @@ void World::tickRepair(Unit& b, float dt) {
             if (lx*lx+lz*lz>leash*leash) {endRepair();return;}
         }
     }
-    if (b.type->canFly) { tickFlyingRepair(b,*t,dt); return; }
-    float reach = std::max(half + 40.0f,
-                           b.type->buildDist > 0 ? b.type->buildDist + half : 0.0f);
-    if (dx * dx + dz * dz > reach * reach) {
+    tickFlyingRepair(b,*t,dt);
+}
+
+// RepairUnit (0x407190) for a ground builder, on its leg (emulated 2026-10-30).
+// Stage 0 (0x407289) zeroes the give-up count and stage 1 (0x4072ec,
+// installRepairApproach) keeps where the target stands, installs the
+// rectangle controller round its footprint and sleeps 7 + rand(15) ticks or
+// until the approach reports (mask 0x708). Stage 2 (0x40733b) is the look:
+//  - the target moving (its MoveRate tier): 1 on the count, 3 when it is in
+//    builddistance reach (retailBuildWithinReach); past 10 the repair ends
+//    (REPAIRSUNSUCCESSFULL), else the approach is re-aimed after sleeping
+//    7 + rand(15) ticks in reach, 1 out of it;
+//  - an approach event (arrival, or failure): in reach the work starts, out
+//    of reach the approach is re-aimed at once -- a still target is never
+//    given up on;
+//  - the timer: re-aimed only if the target's cell changed since the install.
+// Stages 3 and 4 work every tick and measure no distance (a bumped repairer
+// keeps repairing). A target that starts moving stops the work and the
+// stance (0x4d4b10), adds 3 and re-aims next tick: no repair is ever done to
+// a moving target. A patrol's detour has a leash (mission +0x56: the
+// builder's sightdistance from where it left the patrol), checked on every
+// wake: the repair ends silently once the builder itself is that far from
+// there. Ours walked to where the target stood at the order, repaired from
+// builddistance while it walked, and re-aimed only a patrol's or guard's
+// repair, once a second; the leash measured the target, past it.
+// Unit chatter has no channel here: the give-ups are silent.
+void World::tickGroundRepair(Unit& b, Unit& t, float dt) {
+    if (b.orders.empty() || b.orders[currentLeg(b.orders)].repairTarget!=b.repairId) {
+        // Another order is current (one pushed ahead of the job, or a stale
+        // latch): the job starts again from its approach when its leg is.
         stopWorkAnimation(b);
-        if (!b.orders.empty()) {
-            const size_t end=currentLeg(b.orders);
-            Order job=b.orders[end];
-            // Automatic patrol detours and a guard's repair follow a moving
-            // ally (retail RepairUnit measures from the target's current
-            // position, 0x40733b). Refresh the approach at most once per
-            // second, keeping the saved patrol or guard tail. A guard's
-            // repair also re-aims when it has stopped short (the target
-            // drifted a few pixels off its approach after the work began).
-            const bool moved=fxAbs(job.x-t->x)>=Fixed::fromInt(16) || fxAbs(job.z-t->z)>=Fixed::fromInt(16);
-            const bool stalled=job.guardRepair && b.speed<=Fixed::fromFloat(0.1f) && (job.x!=t->x || job.z!=t->z);
-            if ((job.patrolRepair || job.guardRepair) && (uint32_t(b.id)+tickCounter_)%30==0 && (moved || stalled)) {
-                job.x=t->x;job.z=t->z;job.hasSegment=false;job.flightGoal.reset();
-                cancelPath(b);b.routeStamp=0;
-                b.orders.erase(b.orders.begin(),b.orders.begin()+long(end));b.orders.front()=job;
+        for (auto& o:b.orders)
+            if (o.repairTarget==b.repairId) {
+                o.buildRectangle.reset();o.controller=0;o.mission.stage=0;
+                o.mission.waitMask=0;o.mission.pending=0;o.mission.deadline=0xffffffffu;
+                o.navigationExhausted=o.navigationConsumed=false;o.hasSegment=false;
+                break;
             }
-        }
-        if (b.orders.empty()) order(b.id, t->x.toFloat(), t->z.toFloat(), false);   // (re)walk toward it
+        b.repairId=0;
         return;
     }
-    // Native RepairUnit requests the build stance once it reaches the target
-    // (40749b -> 4d4ab0), before facing and before any affordable repair work.
-    startWorkAnimation(b,t->x,t->z);
-    // ...but never the REPAIR order itself: that entry is the job.
-    if (!b.orders.empty() && (b.orders[currentLeg(b.orders)].patrolRepair ||
-                              b.orders[currentLeg(b.orders)].guardRepair)) {
+    size_t index=currentLeg(b.orders);
+    Order* leg=&b.orders[index];
+    if (leg->mission.stage==0) return;   // prepareRepairApproach, on this unit's dispatch
+    const auto end=[&] {
+        stopWorkAnimation(b);
+        dropLeg(b);
+        b.repairId=0;
+    };
+    // +0x56: only a patrol's detour has a leash (0 = none).
+    const auto leashed=[&] {
+        const int32_t leash=sightDistance(*b.type);
+        if (!leg->patrolRepair || leash<=0) return false;
+        const RetailGroundPoint here{int16_t(b.x.floorInt()),int16_t(b.z.floorInt())};
+        const RetailGroundPoint origin{int16_t(leg->clickX.floorInt()),int16_t(leg->clickZ.floorInt())};
+        return retailGroundDistance(here,origin)>=uint32_t(leash);
+    };
+    if (leg->mission.stage<4) {
+        auto& m=leg->mission;
+        if (tickCounter_>=m.deadline) { m.deadline=0xffffffffu;m.pending|=1; }
+        const uint32_t events=(b.missionEvents|m.pending)&m.waitMask;
+        if (!events) return;
+        b.missionEvents&=~events;m.pending&=~events;m.waitMask=0;
+        if (leashed()) { end(); return; }
+        if (m.stage==1) { installRepairApproach(b,*leg,t); return; }
+        const bool inReach=retailBuildWithinReach(b.x,b.z,t.x,t.z,int16_t(b.type->footX),int16_t(b.type->footZ),
+            int16_t(t.type->footX),int16_t(t.type->footZ),uint16_t(b.type->buildDist));
+        if (moveRateMoving(t)) {
+            if (++leg->repairLooks>10) { end(); return; }
+            if (inReach) { leg->repairLooks+=2;m.sleep(tickCounter_,7+pathRand(15)); }
+            else m.sleep(tickCounter_,1);
+            m.stage=1;
+            return;
+        }
+        if (!(events&0x700)) {
+            // The timer: a target still in the cell it was approached in
+            // keeps the approach (0x407588).
+            if (footprintOrigin(leg->buildX,t.type->footX)!=footprintOrigin(t.x,t.type->footX) ||
+                footprintOrigin(leg->buildZ,t.type->footZ)!=footprintOrigin(t.z,t.type->footZ))
+                installRepairApproach(b,*leg,t);
+            else { m.waitMask=0x700;m.sleep(tickCounter_,7+pathRand(15)); }
+            return;
+        }
+        if (!inReach) { installRepairApproach(b,*leg,t); return; }
+        // Arrived (or failed in reach): 4d4d40(0) drops the controller, and
+        // the route's corners with it; the leg is the job from here.
         cancelPath(b);
-        const size_t end=currentLeg(b.orders);
-        if (b.orders[end].repairTarget==b.repairId)
-            b.orders.erase(b.orders.begin(),b.orders.begin()+long(end));
-    } else if (b.orders.empty() || !b.orders.front().repairTarget) dropLeg(b);
+        if (index) { b.orders.erase(b.orders.begin(),b.orders.begin()+long(index));index=0;leg=&b.orders.front(); }
+        leg->controller=0;leg->navigationExhausted=true;
+        leg->mission.stage=4;
+        // Native RepairUnit requests the build stance once it reaches the
+        // target (40749b -> 4d4ab0), before facing and before any affordable
+        // repair work.
+        startWorkAnimation(b,t.x,t.z);
+    } else {
+        if (leashed()) { end(); return; }
+        if (moveRateMoving(t)) {
+            stopWorkAnimation(b);
+            leg->repairLooks=uint8_t(std::min(255,leg->repairLooks+3));
+            leg->mission.stage=1;leg->mission.sleep(tickCounter_,1);
+            return;
+        }
+        startWorkAnimation(b,t.x,t.z);
+    }
     b.speed = Fixed();
+    const float dx = (t.x - b.x).toFloat(), dz = (t.z - b.z).toFloat();
     const Bam want = fxAtan2(Fixed::fromFloat(dx), Fixed::fromFloat(dz));
     // Stopped: pivot at turninplacerate, not the moving turn rate.
     const int32_t bPivotMax = b.type->turnInPlaceRate;
@@ -10658,10 +10787,52 @@ void World::tickRepair(Unit& b, float dt) {
     b.heading = b.heading + Bam(std::clamp(diff, -bPivotMax, bPivotMax));
     b.turnReqBam = diff;   // builder pivot request -> TurnDirection anim (icd 0x4d9593)
     // RepairUnit's work stage keeps a ground repairer visible for 150 ticks on
-    // every work tick, before the repair is paid (icd 0x4076ae, then 0x429d90);
-    // VTOL_RepairUnit does not.
-    if (!b.type->canFly) blockCloak(b, 150);
-    if (payRepair(b,*t,dt)) endRepair();   // mended: on to the next order
+    // every work tick, before the repair is paid (icd 0x4076ae, then 0x429d90).
+    blockCloak(b, 150);
+    if (payRepair(b,t,dt)) end();   // mended: on to the next order
+}
+
+// RepairUnit stage 1 (0x4072ec): where the target stands now (+0x22), the
+// rectangle controller round its footprint (+0x74 cell, +0x78 footprint, the
+// one HelpBuild and MobileBuild use: the repairer walks until its footprint
+// touches the target's), and a sleep of 7 + rand(15) ticks under mask 0x708.
+void World::installRepairApproach(Unit& u, Order& goal, const Unit& t) {
+    goal.buildX=t.x;goal.buildZ=t.z;
+    goal.buildRectangle=retailReclaimRectangle(footprintOrigin(t.x,t.type->footX),footprintOrigin(t.z,t.type->footZ),
+                                               t.type->footX,t.type->footZ,u.type->footX,u.type->footZ);
+    const auto [x,z]=goal.buildRectangle->navigationCell(
+        footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
+    goal.x=Fixed::fromInt(x*16+u.type->footX*8);
+    goal.z=Fixed::fromInt(z*16+u.type->footZ*8);
+    goal.segmentX=Fixed::fromInt(u.x.floorInt());
+    goal.segmentZ=Fixed::fromInt(u.z.floorInt());
+    goal.hasSegment=true;
+    goal.mission.stage=2;
+    goal.mission.waitMask=0x700;
+    goal.mission.sleep(tickCounter_,7+pathRand(15));
+    goal.controller=++nextMovementController_;
+    goal.navigationExhausted=goal.navigationConsumed=false;
+    goal.mission.pending&=~0x3700u;
+    if (u.routeStamp<0 || uint32_t(u.routeStamp)<=tickCounter_-6u) u.routeStamp=0;
+    cancelPath(u);
+    requestPath(u,goal.x.toFloat(),goal.z.toFloat());
+}
+
+// RepairUnit stage 0 (0x407289) once the leg is current: the give-up count
+// starts at 0, and stage 1 installs the approach on the same dispatch.
+void World::prepareRepairApproach(Unit& u) {
+    if (u.orders.empty() || !u.type || u.type->canFly || !u.repairId) return;
+    Order& goal=u.orders[currentLeg(u.orders)];
+    if (goal.repairTarget!=u.repairId || goal.mission.stage!=0) return;
+    const Unit* t=unit(goal.repairTarget);
+    if (!t || !t->type) return;   // tickRepair ends the job
+    goal.repairLooks=0;
+    installRepairApproach(u,goal,*t);
+}
+
+bool World::moveRateMoving(const Unit& t) const {
+    const UnitScript* script=unitScript(t.id);
+    return script ? script->movementRate!=0 : t.speed.v!=0;
 }
 
 // One tick of repair work, paid from the owner's pool; true once the target
@@ -11358,20 +11529,34 @@ static Fixed addCapped(Fixed hp,Fixed grow,int maxHp) {
 
 // A HelpBuild ends with its target, however it ends: a builder still walking
 // there drops the approach instead of finishing the walk (a guard's order,
-// queued under it, then resumes).
+// queued under it, then resumes). A ground helper's leg is the job itself
+// and goes the same way.
 static void endHelp(World& w, Unit& b, int siteId) {
     if (!b.orders.empty() && b.orders[World::currentLeg(b.orders)].helpSite==siteId) w.dropLeg(b);
+}
+
+// The leg of a ground builder's HelpBuild on `siteId` (its job), or -1.
+static int groundHelpLeg(const Unit& b, int siteId) {
+    if (!b.type || b.type->canFly || !siteId) return -1;
+    for (size_t i=0;i<b.orders.size();++i)
+        if (b.orders[i].helpSite==siteId) return int(i);
+    return -1;
 }
 
 void World::tickConstruction(Unit& b, float dt) {
     Unit* site = unit(b.buildSiteId);
     if (!site || !site->alive() || !site->underConstruction) {
+        // A help job holds no build order of its own: the queued build after
+        // it (if any) is not this job's to retire.
+        const bool help=groundHelpLeg(b,b.buildSiteId)>=0;
         endHelp(*this,b,b.buildSiteId);
         b.buildSiteId = 0;
-        popBuildOrder(b);
+        if (!help) popBuildOrder(b);
+        else leaveFactoryYard(b.id);
         return;
     }
     site->beingBuilt = true;   // a builder is assigned (walking or working): no decay
+    if (const int leg=groundHelpLeg(b,site->id);leg>=0) { tickGroundHelp(b,*site,size_t(leg),dt); return; }
     float dx = (site->x - b.x).toFloat(), dz = (site->z - b.z).toFloat();
     float half = 16.0f * float(std::max(site->type->footX, site->type->footZ)) / 2;
     // Reach = the builder's FBI builddistance (to the site edge) when it has one,
@@ -11434,14 +11619,122 @@ void World::tickConstruction(Unit& b, float dt) {
     // Face what we're building/conjuring: turn toward the site at the unit's turn
     // rate (a building has turnRate 0, so it simply doesn't rotate).
     if (!b.type->canFly) turnBuilderToSite(b,*site);
-    float total = site->type->buildTime / std::max(b.type->workerTime, 0.01f);
+    const int builderId=b.id;
+    if (constructionWork(b,*site,dt)) {
+        Unit* builder=unit(builderId);   // finishing an output can reallocate units_
+        endHelp(*this,*builder,builder->buildSiteId);
+        builder->buildSiteId=0;
+        popBuildOrder(*builder);
+    }
+}
+
+// HelpBuild (0x405cf0) for a ground builder, on its leg (emulated 2026-10-30).
+// Stage 0 installs the rectangle controller round the site's footprint
+// (prepareHelpApproach). Stage 1 waits on the approach alone (mask 0x708, no
+// timer): arrival starts the work; a failed approach (0x200) starts it only
+// within MobileBuild's reach of the site (retailBuildWithinReach), else the
+// help ends (UNITCHATTER_CANNOTGETTHERE; no unit-chatter channel here, so
+// silently). Ours gave up after 8 s without 20 px of progress. The work
+// stage (stage 3; ours skips the stance wait of stage 2, as before) never
+// measures distance again: a helper pushed away keeps working. A leg that is
+// not current waits; one an order went ahead of starts again from stage 0.
+void World::tickGroundHelp(Unit& b, Unit& site, size_t index, float dt) {
+    if (index!=currentLeg(b.orders)) {
+        Order& leg=b.orders[index];
+        if (leg.mission.stage) {
+            leg.buildRectangle.reset();leg.controller=0;leg.mission.stage=0;
+            leg.mission.waitMask=0;leg.mission.pending=0;
+            leg.navigationExhausted=leg.navigationConsumed=false;leg.hasSegment=false;
+        }
+        return;
+    }
+    Order* leg=&b.orders[index];
+    if (leg->mission.stage==0) return;   // prepareHelpApproach, on this unit's dispatch
+    if (leg->mission.stage==1) {
+        auto& m=leg->mission;
+        const uint32_t events=(b.missionEvents|m.pending)&m.waitMask;
+        if (!events) return;
+        b.missionEvents&=~events;m.pending&=~events;m.waitMask=0;
+        if ((events&0x200) && !retailBuildWithinReach(b.x,b.z,leg->buildX,leg->buildZ,
+                int16_t(b.type->footX),int16_t(b.type->footZ),
+                int16_t(site.type->footX),int16_t(site.type->footZ),uint16_t(b.type->buildDist))) {
+            endHelp(*this,b,site.id);
+            b.buildSiteId=0;
+            return;
+        }
+        // 4d4d40(0): the controller goes, and the route's corners with it;
+        // the leg is the job from here.
+        cancelPath(b);
+        if (index) { b.orders.erase(b.orders.begin(),b.orders.begin()+long(index));leg=&b.orders.front(); }
+        leg->controller=0;leg->navigationExhausted=true;
+        leg->mission.stage=3;
+    }
+    // HelpBuild's work stage (0x4060bb) keeps a ground builder visible for
+    // 300 ticks on every work tick, paid or not, and owns the weapons.
+    blockCloak(b, 300);
+    setSlotsManual(b,kSlotsWork);
+    site.buildBegun = true;
+    b.constructionHolding = true;
+    b.speed = Fixed();
+    turnBuilderToSite(b,site);
+    const int builderId=b.id,siteId=site.id;
+    if (constructionWork(b,site,dt)) {
+        Unit* helper=unit(builderId);   // finishing an output can reallocate units_
+        endHelp(*this,*helper,siteId);
+        helper->buildSiteId=0;
+        leaveFactoryYard(builderId);
+    }
+}
+
+// HelpBuild stage 0 (0x405d70) when its leg is current: the helper may still
+// help the site (0x519e60; a site finished or gone ends the job), then
+// 4d4e80 installs the rectangle controller round the site's footprint (its
+// +0x74 cell, its type's footprint) with wait mask 0x708. The job latches
+// here when an assist was queued behind other orders.
+void World::prepareHelpApproach(Unit& u) {
+    if (u.orders.empty() || !u.type || u.type->canFly) return;
+    Order& goal=u.orders[currentLeg(u.orders)];
+    if (!goal.helpSite || goal.mission.stage!=0) return;
+    const Unit* site=unit(goal.helpSite);
+    if (!site || !canHelpBuild(u,*site)) {
+        if (u.buildSiteId==goal.helpSite) u.buildSiteId=0;
+        dropLeg(u);
+        return;
+    }
+    u.buildSiteId=goal.helpSite;
+    goal.buildX=site->x;goal.buildZ=site->z;
+    goal.buildRectangle=retailReclaimRectangle(footprintOrigin(site->x,site->type->footX),
+        footprintOrigin(site->z,site->type->footZ),site->type->footX,site->type->footZ,u.type->footX,u.type->footZ);
+    const auto [x,z]=goal.buildRectangle->navigationCell(
+        footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
+    goal.x=Fixed::fromInt(x*16+u.type->footX*8);
+    goal.z=Fixed::fromInt(z*16+u.type->footZ*8);
+    goal.segmentX=Fixed::fromInt(u.x.floorInt());
+    goal.segmentZ=Fixed::fromInt(u.z.floorInt());
+    goal.hasSegment=true;
+    goal.mission.stage=1;
+    goal.mission.waitMask=0x700;
+    goal.controller=++nextMovementController_;
+    goal.navigationExhausted=goal.navigationConsumed=false;
+    goal.mission.pending&=~0x3700u;
+    if (u.routeStamp<0 || uint32_t(u.routeStamp)<=tickCounter_-6u) u.routeStamp=0;
+    cancelPath(u);
+    requestPath(u,goal.x.toFloat(),goal.z.toFloat());
+}
+
+// One tick of a builder's construction work on `site` (a MobileBuild job or a
+// HelpBuild). True once the site is complete; the caller ends the job.
+// Finishing a production output can reallocate units_: `b` and `site` are
+// not valid after a true return.
+bool World::constructionWork(Unit& b, Unit& site, float dt) {
+    float total = site.type->buildTime / std::max(b.type->workerTime, 0.01f);
     // Record the current build rate so an interrupted conjure decays at this speed.
     // hp per TICK, in the same fixed-point hp is kept in (it is subtracted from hp
     // directly in decayConstruction).
-    site->conjureRate = Fixed::fromFloat(site->type->maxHp * 0.95f
+    site.conjureRate = Fixed::fromFloat(site.type->maxHp * 0.95f
                                          / (std::max(total, 0.01f) * kTick));
     Player& tm = players_[size_t(b.player)];
-    if (Unit* producer=productionOwnerOf(*site)) {
+    if (Unit* producer=productionOwnerOf(site)) {
         // A factory's or conjurer's output has ONE progress, its producer's
         // (retail 429af0: every worker takes its workertime-scaled share off
         // the site's remaining fraction +0x108 and pays for exactly that).
@@ -11449,34 +11742,29 @@ void World::tickConstruction(Unit& b, float dt) {
         // whole unit, is converted into the producer's 1/65536-tick units, so
         // the output finishes once, sooner, for its buildcost in total.
         bool done=false;
-        const int32_t ptotal=productionTotal(*producer,site->type);
+        const int32_t ptotal=productionTotal(*producer,site.type);
         if (gInstantBuild) {
             producer->buildProgress=ptotal;producer->buildFraction=0;
-            site->hp=Fixed::fromFloat(site->type->maxHp);
+            site.hp=Fixed::fromFloat(site.type->maxHp);
             done=true;
         } else {
             const double request=std::min({double(ptotal)*65536.0,double(UINT32_MAX),
                 double(ptotal)*65536.0*double(dt)/double(std::max(total,0.01f))});
-            const double cost=double(site->type->buildCost)/double(ptotal)*request/65536.0;
+            const double cost=double(site.type->buildCost)/double(ptotal)*request/65536.0;
             const double share=tm.constructionShare(cost);
-            if (share<=0) return;
-            done=workProduction(*producer,*site,site->type,uint32_t(request*std::min(share,1.0)));
+            if (share<=0) return false;
+            done=workProduction(*producer,site,site.type,uint32_t(request*std::min(share,1.0)));
         }
         emitConstruction(b,false);
-        if (done) {
-            finishProduction(producer->id,*site);
-            Unit* helper=unit(b.id);
-            endHelp(*this,*helper,helper->buildSiteId);
-            helper->buildSiteId=0;
-            popBuildOrder(*helper);
-        }
-        return;
+        if (!done) return false;
+        finishProduction(producer->id,site);
+        return true;
     }
     if (gInstantBuild) {
-        site->hp = Fixed::fromFloat(site->type->maxHp);   // finishes this tick, free
-        if (site->lodestoneReplacement) site->lodestoneReplacement->completedWork=1;
-    } else if (site->lodestoneReplacement) {
-        auto& progress=site->lodestoneReplacement->completedWork;
+        site.hp = Fixed::fromFloat(site.type->maxHp);   // finishes this tick, free
+        if (site.lodestoneReplacement) site.lodestoneReplacement->completedWork=1;
+    } else if (site.lodestoneReplacement) {
+        auto& progress=site.lodestoneReplacement->completedWork;
         // Scale one tick of work by the share FIRST, then clamp it to what is
         // left (retail 429af0 subtracts allocation * work and completes at
         // remaining <= 0). Clamping first and scaling after made the last tick
@@ -11485,38 +11773,38 @@ void World::tickConstruction(Unit& b, float dt) {
         // completedWork 1-2^-53 until the allocation rose above one half.
         // The request is the full tick (retail records it before scaling).
         double work=double(dt)/std::max(total,0.01f);
-        const double cost=site->type->buildCost*work;
+        const double cost=site.type->buildCost*work;
         const double share=tm.constructionShare(cost);
-        if (share<=0) return;
+        if (share<=0) return false;
         if (share<1) work*=share;
         const double gap=1.0-progress;
         if (work>=gap) {
             work=gap;
-            tm.payMana(std::min(tm.mana,site->type->buildCost*gap));
+            tm.payMana(std::min(tm.mana,site.type->buildCost*gap));
             progress=1.0;
         } else {
             tm.payMana(std::min(tm.mana,cost*share));
             progress=std::min(1.0,progress+work);
         }
-        site->hp=addCapped(site->hp,Fixed::fromFloat(float(site->type->maxHp*0.95*work)),site->type->maxHp);
+        site.hp=addCapped(site.hp,Fixed::fromFloat(float(site.type->maxHp*0.95*work)),site.type->maxHp);
     } else {
-        float cost = site->type->buildCost * dt / std::max(total, 0.01f);
+        float cost = site.type->buildCost * dt / std::max(total, 0.01f);
         const double share = tm.constructionShare(cost);
-        if (share <= 0) return;
+        if (share <= 0) return false;
         tm.payMana(std::min(tm.mana, double(cost) * share));
-        float grow = site->type->maxHp * 0.95f * dt / std::max(total, 0.01f);
+        float grow = site.type->maxHp * 0.95f * dt / std::max(total, 0.01f);
         if (share < 1) grow = float(double(grow) * share);
-        site->hp=addCapped(site->hp,Fixed::fromFloat(grow),site->type->maxHp);
+        site.hp=addCapped(site.hp,Fixed::fromFloat(grow),site.type->maxHp);
     }
     emitConstruction(b,false);
-    emitConstruction(*site,true);
-    if (site->lodestoneReplacement ? site->lodestoneReplacement->completedWork>=1 :
-        site->hp >= Fixed::fromFloat(site->type->maxHp)) {
-        site->hp = Fixed::fromFloat(site->type->maxHp);
-        site->underConstruction = false;
-        b.buildSiteId = 0;
-        popBuildOrder(b);
+    emitConstruction(site,true);
+    if (site.lodestoneReplacement ? site.lodestoneReplacement->completedWork>=1 :
+        site.hp >= Fixed::fromFloat(site.type->maxHp)) {
+        site.hp = Fixed::fromFloat(site.type->maxHp);
+        site.underConstruction = false;
+        return true;
     }
+    return false;
 }
 
 void World::decayConstruction(Unit& u, float dt) {
@@ -14387,9 +14675,10 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
             return;
         }
         Order* completed = nullptr;
-        // A reclaim leg keeps its rectangle while it works, its controller
-        // already detached: no second arrival.
-        if (rectangleReached && !(leg.mission.pending & 0x100) && (leg.controller || !leg.reclaimFeat))
+        // A reclaim, help or repair leg keeps its rectangle while it works,
+        // its controller already detached: no second arrival.
+        if (rectangleReached && !(leg.mission.pending & 0x100) &&
+            (leg.controller || (!leg.reclaimFeat && !leg.helpSite && !leg.repairTarget)))
             completed = &u.orders[currentLeg(u.orders)];
         else if (auto* goal = navigationMissionOrder(u);goal && !goal->buildRectangle) {
             if (goal->controller && groundMissionAccepts(u,*goal)) completed = goal;
@@ -14412,7 +14701,7 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         }
         const Fixed goalRadius = Fixed::fromInt(std::max(16, std::max(u.type->footX, u.type->footZ) * 8));
         if (!groundMissionOrder(u,true) && legGoal.goal && !legGoal.targetId && !legGoal.buildType &&
-            !legGoal.reclaimFeat && !legGoal.repairTarget && !legGoal.load && !legGoal.unload &&
+            !legGoal.reclaimFeat && !legGoal.repairTarget && !legGoal.helpSite && !legGoal.load && !legGoal.unload &&
             fxLen(legGoal.x - u.x, legGoal.z - u.z) < goalRadius) {
             // dropLeg erases the order `leg` refers to: copy the lap first.
             std::optional<Order> lap;
@@ -15869,8 +16158,13 @@ void World::tick(float dt) {
         }
         if (!u.orders.empty() && u.repairId == 0) {
             const auto& leg=u.orders[currentLeg(u.orders)];
-            u.repairId=leg.patrolRepair ? leg.repairTarget : u.orders.front().repairTarget;
+            // A ground repair's leg is the job, route corners ahead of it or not.
+            u.repairId=leg.patrolRepair || !u.type->canFly ? leg.repairTarget : u.orders.front().repairTarget;
         }
+        // HelpBuild's and RepairUnit's stage 0 run as soon as the leg is
+        // current, before the mover (405d70, 407289; 4d4e80 for both).
+        prepareHelpApproach(u);
+        prepareRepairApproach(u);
 
         // 52ae90's auto slots: fire at swept targets whatever the order.
         tickSlotWeapons(u);
@@ -16819,6 +17113,14 @@ uint64_t World::stateHash() const {
             if (order.reclaimAreaApproach) mix(0x52434c4d41505052ull);
             if (order.helpSite) { mix(0x48454c50u); mix(uint32_t(order.helpSite)); }
             if (order.guardRepair) { mix(0x47524550u); mix(uint32_t(order.repairTarget)); }
+            // A ground HelpBuild's or RepairUnit's own stages (tickGroundHelp,
+            // tickGroundRepair), once its leg has started.
+            if ((order.helpSite || order.repairTarget) && !(u.type && u.type->canFly) &&
+                (order.mission.stage || order.mission.pending || order.repairLooks)) {
+                mix(0x574f524b4c4547ull);
+                mix(order.mission.stage);mix(order.mission.waitMask);mix(order.mission.deadline);
+                mix(order.mission.pending);mix(order.repairLooks);mix(order.controller);
+            }
             if (order.reclaimFeat && (order.mission.stage || order.mission.pending)) {
                 mix(0x52434c4d50454e44ull);mix(order.mission.pending);
                 mix(order.mission.stage);mix(order.mission.waitMask);mix(order.mission.deadline);

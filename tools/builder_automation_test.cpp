@@ -4,6 +4,7 @@
 #include "client/buildghost.h"
 #include "hpi/hpi.h"
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <limits>
 using namespace tak;
@@ -209,9 +210,37 @@ void repairPolicy() {
     check(!w.unit(id)->repairId && std::none_of(w.unit(id)->orders.begin(),w.unit(id)->orders.end(),[](const auto& o){return o.repairTarget!=0;}),
           "automatic repair ends when a target becomes hostile");
     w.cancelBuilds(id);w.stop(id);check(!w.unit(id)->repairId && w.unit(id)->orders.empty(),"Stop cancels repair and patrol together");
-    w.setTeam(1,0);w.player(0).mana=10000;w.patrol(id,1024,512);ticks(w,35);
-    w.unit(ally)->x=sim::Fixed::fromInt(1800);ticks(w,3);
-    check(!w.unit(id)->repairId,"automatic repairs do not chase a departing ally across the map");
+    // A departing ally walks off (RepairUnit 0x407190): the repair pauses
+    // while it moves and gives up after its looks, or once the builder is
+    // its own sightdistance from where it left the patrol (mission +0x56);
+    // either way it never chases it across the map.
+    auto walker=worker();walker.isBuilder=false;walker.buildTime=1000;walker.buildCost=10;
+    const int mover=w.spawn(&walker,288,560,0,1);w.unit(mover)->hp=sim::Fixed::fromInt(50);
+    w.unit(ally)->hp=sim::Fixed::fromInt(100);
+    w.setTeam(1,0);w.player(0).mana=10000;w.patrol(id,1024,512);
+    for(int t=0;t<300 && w.unit(id)->repairId!=mover;++t)w.tick(1.f/30);
+    for(int t=0;t<300 && w.unit(mover)->hp==sim::Fixed::fromInt(50);++t)w.tick(1.f/30);
+    // The detour's leg and its leash origin (where the builder left the patrol).
+    const auto detour=[&]()->const sim::Order* {
+        for(const auto& o:w.unit(id)->orders)if(o.patrolRepair && o.repairTarget==mover)return &o;
+        return nullptr;
+    };
+    const bool started=detour()!=nullptr;
+    const uint32_t issued=started?detour()->issuedTick:0;
+    const float ox=started?detour()->clickX.toFloat():0,oz=started?detour()->clickZ.toFloat():0;
+    w.order(mover,1800,560,false);
+    auto moverHp=w.unit(mover)->hp;bool healedMoving=false,ended=false;
+    for(int t=0;t<900 && !ended;++t) {
+        const bool moving=w.unit(mover)->speed!=sim::Fixed();
+        w.tick(1.f/30);
+        healedMoving|=moving && w.unit(mover)->hp>moverHp;moverHp=w.unit(mover)->hp;
+        // The first detour ended (a later scan may start another).
+        ended=!detour() || detour()->issuedTick!=issued;
+    }
+    const float chased=std::hypot(w.unit(id)->x.toFloat()-ox,w.unit(id)->z.toFloat()-oz);
+    check(started && ended && !healedMoving && chased<280 && w.unit(mover)->x.toFloat()<1700,
+          "automatic repairs do not chase a departing ally across the map");
+    w.unit(mover)->hp=sim::Fixed::fromInt(100);
     w.cancelBuilds(id);w.stop(id);w.unit(ally)->hp={};w.unit(ally)->x=sim::Fixed::fromInt(352);
     w.patrol(id,1024,512);ticks(w,35);
     check(!w.unit(id)->repairId,"patrol repair does not resurrect a dying target");
@@ -229,7 +258,9 @@ void repairEligibility() {
         const int unreachable=w.spawn(&target,384,512,0,0);w.unit(unreachable)->hp=sim::Fixed::fromInt(20);
         w.blockCells(20,0,2,128,true);
         const int mobile=w.spawn(&builder,256,608,0,0);w.unit(mobile)->hp=sim::Fixed::fromInt(20);
-        w.patrol(id,288,736);ticks(w,50);
+        // RepairUnit works once the footprints touch (or a failed approach
+        // ends within builddistance): the builder first walks round the bodies.
+        w.patrol(id,288,736);ticks(w,300);
         check(w.unit(mobile)->hp>sim::Fixed::fromInt(20) && w.unit(enemy)->hp==sim::Fixed::fromInt(20) &&
               w.unit(unreachable)->hp==sim::Fixed::fromInt(20) && w.unit(cargo)->hp==sim::Fixed::fromInt(20),
               "patrol repairs mobile allies and skips enemies, construction, cargo and disconnected targets");
