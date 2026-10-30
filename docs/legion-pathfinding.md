@@ -21,8 +21,9 @@ and the ~100-body rounds (protocol 286), each naming its commit or protocol;
 per-commit history is in git. Since then Legion's own steering has changed only
 for factory PARK spots (see the mission table under "Scope") and, in protocol
 303, a guard's goal (the guard ring), and, in protocol 304, the body's facing
-while it slides (it faces its motion: "Facing follows motion" below); 0.9.11
-(protocol 304) still steers as described here. The historical five-mode
+while it slides (it faces its motion: "Facing follows motion" below); 0.9.12
+(protocol 305, whose flat passage lookups give the same answers faster) still
+steers as described here. The historical five-mode
 comparison (Retail, Retail+, Flowfield, Cooperative, Legion) and its tables are
 in `docs/navigation-comparison-2026-10-05.md`; they are not repeated here.
 

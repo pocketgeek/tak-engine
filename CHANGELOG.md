@@ -19,43 +19,64 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
-## Unreleased
-*protocol 305 · replay format 15*
+## 0.9.12
+*2026-10-29 · protocol 305 · replay format 15 · does not play with 0.9.11 or earlier, nor their replays*
 
 - **Fog of war looks and works as in the original game**: what your units see
-  is the same sight the game plays by (further from high ground, less uphill),
-  seen-before ground lies under your side's rolling mist, and radar marks
-  enemies on the minimap only, never in the main view.
+  is the same sight the game plays by (further from high ground, less uphill,
+  on 32-pixel squares), ground seen before lies under your side's rolling,
+  drifting mist in its own colour, unseen ground is black, and radar marks
+  enemies on the minimap only, never in the main view. Another player's unit
+  shows, and can be clicked, only when a corner of it is in sight. Drawing the
+  fog also costs less: about 1.22 ms a frame down to 0.37 at 3,000 units.
+- **Our AI levels attack only what they have seen** (not in the original game,
+  whose AI weighs unseen units too; the Retail AI is unchanged): their own and
+  their allies' sight and radar, units shooting at them, and buildings
+  remembered where they were seen; with nothing known they scout and explore
+  the map instead. They follow the room's fog of war and start locations as a
+  player does (Explored: the map's ground and deposits are known, enemies are
+  not; Random hides whose start is whose), pick lodestone deposits only where
+  they know the ground, judging one taken by what they have seen there, steer
+  scouts away from where scouts died, and send their ships out when the army's
+  target is inland. A beaten player's base, an enemy's or an ally's, is looked
+  in on again once out of sight five minutes, in case someone moves in (and
+  attacked if someone has). A game between AIs may now not end when a last
+  unit stays hidden, and Not Explored games run longer (the AI no longer knows
+  every deposit).
+- **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
+  at +10, 0.9.11 fell to -2 at about 2,700 units, with 219 ticks over 250 ms;
+  0.9.12 held +9 to +10 to 3,160 units with no tick over 100 ms:
+  - **The AI's lodestone search** no longer tests every deposit on a large map
+    for each site (300-840 ms in one tick for an Absurd AI, which dropped the
+    speed below +0); it takes the nearest usable one (the same choice).
+  - **A building that might cut off part of the map** is checked around itself
+    instead of re-mapping the whole map (~90 ms each, up to 24 times a minute
+    on a 64x64 map).
+  - **A lodestone's mana bonus and Legion's narrow-passage lookups** no longer
+    scan the whole map each tick.
+  - **The lockstep state check** costs about 5 ms instead of 33 with 2,500
+    units on a 64x64 map, and a game with no human player (AIs you watch)
+    skips it on the server.
 - **Streaming keeps to YouTube's bitrate**, above which YouTube could connect
-  but never start the broadcast: the panel caps it there (a saved higher value is
-  lowered, with a note), adds **Recommended**, and warns when the upload can't keep up.
+  but never start the broadcast: the panel caps it there (a saved higher value
+  is lowered, with a note), adds **Recommended**, and warns when the upload
+  can't keep up.
 - **SETTINGS, BENCHMARK and LOAD REPLAY have a BACK button** beside "Esc - Back".
-- **Options, Voice Chat and Controls save every change as you make it**; the SAVE
-  button is gone. A slider saves when let go, and **DEFAULTS** asks first
-  (and puts the sound device back to the system default at once).
-- **Our AI levels attack only what they have seen** (not Retail AI): their own
-  and their allies' sight and radar, units shooting at them, buildings remembered where
-  they were seen; with nothing known they scout and explore the map instead.
-  They follow the room's fog of war and start locations as a player does
-  (Explored: the map's ground and deposits are known, enemies are not; Random
-  hides whose start is whose), pick lodestone deposits only where they know the
-  ground, judging one taken by what they have seen there, steer scouts away from
-  where scouts died, and send their ships out when the army's target is inland.
-  A beaten player's base, an enemy's or an ally's, is looked in on again once
-  out of sight five minutes, in case someone moves in (and attacked if someone has).
-  A game between AIs may now not end when a last unit stays hidden.
-- **Big late games no longer stall on the AI's lodestone search**: Absurd AIs
-  tested every deposit on a large map for each site, 300-800 ms in one tick,
-  which dropped the speed below +0; they now take the nearest usable one (same choice).
-- **Fewer late-game hitches on big maps**: a building that might cut off part of
-  the map is checked around itself instead of re-mapping the whole map (~90 ms
-  each, up to 24 times a minute on a 64x64 map).
-- **Faster late game on big maps**: a lodestone's mana bonus and Legion's
-  narrow-passage lookups no longer scan the whole map each tick.
-- **The lockstep state check costs about 5 ms instead of 33** with 2,500 units on
-  a 64x64 map, and a game with no human player (AIs you watch) skips it on the server.
+- **Options, Voice Chat and Controls save every change as you make it**; the
+  SAVE button is gone. A slider saves when let go, and **DEFAULTS** asks first
+  (and puts the sound device back to the system default at once). The
+  Controls hint has a band of its own, so it no longer covers the last row (a
+  right-click there used to unbind that key).
 - **Protocol 305:** the AI's sight-only targets and the new state check change
-  what players compare, so this release does not play with 0.9.11 or earlier, nor their replays.
+  what players compare, so this release does not play with 0.9.11 or earlier,
+  nor their replays. A 0.9.11 client or server is turned away with a
+  *protocol version mismatch* message, and a 0.9.11 replay is refused with the
+  version message.
+
+**Upgrading (server operators):** update `takserver` together with your
+players.
+
+[Release notes](docs/release-0.9.12-notes.md) · [Validation report](docs/release-0.9.12-validation.md) · [Source at v0.9.12](https://github.com/pocketgeek/tak-engine/tree/v0.9.12)
 
 ## 0.9.11
 *2026-10-29 · protocol 304 · replay format 15 · does not play with 0.9.10 or earlier, nor their replays*

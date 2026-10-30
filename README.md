@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.11-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.12-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,14 +26,15 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.11
+## What's new in 0.9.12
 
-- Our AI levels hunt down every enemy unit and building, so a won game ends; the Retail AI is unchanged.
-- A factory's unfinished unit dies with the factory, as in the original game; a hovering flyer moves round scenery that stops its shots.
-- Full zoom-out shows the whole map; Legion units face the way they slide; Fade Opacity defaults to 50%.
+- Fog of war as in the original game: units see what the game plays by, seen ground lies under your side's rolling mist, and radar marks enemies on the minimap only.
+- Our AI levels attack only what they have seen and scout for the rest; the Retail AI is unchanged.
+- Big late games keep their speed: 8 Absurd AIs on a 64x64 map held +9 to +10 past 3,000 units.
+- Streaming keeps to YouTube's bitrate; Options, Voice Chat and Controls save as you change them; BACK on Settings, Benchmark and Load Replay.
 
-Does not play with 0.9.10 or its replays (protocol 304); servers must update.
-Details in the [CHANGELOG](CHANGELOG.md#0911).
+Does not play with 0.9.11 or its replays (protocol 305); servers must update.
+Details in the [CHANGELOG](CHANGELOG.md#0912).
 
 ## Features
 
