@@ -42,6 +42,10 @@ struct PlacementProbe {
     static std::vector<Controller::Rect> doors(const Controller& c,const sim::UnitType* t,float x,float z) {
         std::vector<Controller::Rect> out;c.addDoorStrips(t,x,z,out);return out;
     }
+    static void revive(const Controller& c,const sim::World& w,std::vector<int>& assigned,const CommandSink& sink) {
+        c.reviveIdle(w,assigned,sink);
+    }
+    static bool idle(const sim::Unit& u) {return Controller::idle(u);}
 };
 }
 namespace tak::sim {
@@ -1985,6 +1989,131 @@ static void aiRaisesTheDead(const sim::TypeRegistry& registry,const ai::Profile&
     }
 }
 
+// The 0.9.12 reviveIdle search, kept verbatim as the reference: every eligible
+// caster scans every unit record for the nearest raisable body within 56 px.
+// reviveIdle must give the same commands, in the same order, and leave the same
+// assigned list.
+static int referenceTies=0,referenceCapped=0,referenceClaimed=0;
+static void referenceReviveIdle(int player,const sim::World& world,std::vector<int>& assigned,
+                                std::vector<net::Command>& out) {
+    if (double(world.player(player).allocation()) < 0.7 || world.atUnitCap(player)) return;
+    constexpr float kReach = 56.0f;
+    std::vector<int> claimed;
+    for (const auto& u : world.units()) {
+        if (!u.alive() || u.player != player || !u.type || u.underConstruction || u.embarked() ||
+            u.incapacitated() || u.buildSiteId || !ai::PlacementProbe::idle(u) ||
+            !(u.type->canResurrect || (u.type->canAnimate && u.type->animateType)) ||
+            std::find(assigned.begin(), assigned.end(), u.id) != assigned.end()) continue;
+        int best = 0;
+        float bestD = kReach * kReach;
+        for (const auto& c : world.units()) {
+            if (c.alive() || !c.type || c.corpseFading || c.deadFor < c.corpseAnimationTicks() ||
+                c.deadFor >= c.corpseUntil) continue;
+            const float dx = c.x.toFloat() - u.x.toFloat(), dz = c.z.toFloat() - u.z.toFloat();
+            const float d = dx * dx + dz * dz;
+            if (d == bestD && best && world.reviveKind(u.id, c.id)) ++referenceTies;
+            if (d > bestD || (d == bestD && best)) continue;
+            const uint8_t kind = world.reviveKind(u.id, c.id);
+            if (kind && world.atTypeCap(player, kind == 1 ? c.type : u.type->animateType)) ++referenceCapped;
+            else if (kind && std::find(claimed.begin(), claimed.end(), c.id) != claimed.end()) ++referenceClaimed;
+            if (!kind || world.atTypeCap(player, kind == 1 ? c.type : u.type->animateType) ||
+                std::find(claimed.begin(), claimed.end(), c.id) != claimed.end()) continue;
+            best = c.id; bestD = d;
+        }
+        if (!best) continue;
+        net::Command c; c.kind = net::Cmd::Resurrect; c.player = uint8_t(player);
+        c.unitId = u.id; c.targetId = best;
+        out.push_back(c);
+        claimed.push_back(best);
+        assigned.push_back(u.id);
+    }
+}
+
+// reviveIdle against the reference over many crowded random scenes: competing
+// casters (one caster per body), bodies at equal distances (the earlier record
+// wins), bodies still dying, fading or past their time, unraisable bodies,
+// type limits (totalallowed on the body's type and on an animatetype), busy,
+// frozen, enemy and already-assigned casters, low allocation and the unit cap.
+// Positions on an 8 px lattice in a 200 px square make ties common.
+static void aiRaisesTheDeadLikeTheReference(const sim::TypeRegistry& registry,const ai::Profile& profile,
+                                            const sim::UnitType& soldier) {
+    sim::FeatType both;both.name="both_dead";both.resurrectable=true;both.animatable=true;
+    sim::FeatType resOnly=both;resOnly.name="res_dead";resOnly.animatable=false;
+    sim::FeatType none=both;none.name="none_dead";none.resurrectable=none.animatable=false;
+    auto unarmed=soldier;unarmed.weapon.damage=0;unarmed.weapons.clear();
+    auto victimA=unarmed;victimA.id="victimA";
+    auto victimB=unarmed;victimB.id="victimB";
+    auto victimC=unarmed;victimC.id="victimC";
+    auto capped=unarmed;capped.id="capped";capped.totalAllowed=2;
+    auto skel=unarmed;skel.id="skel";skel.totalAllowed=3;
+    auto priest=unarmed;priest.id="priest";priest.canResurrect=true;priest.workerTime=10;
+    auto necro=unarmed;necro.id="necro";necro.canAnimate=true;necro.animateType=&skel;
+    auto hybrid=priest;hybrid.id="hybrid";hybrid.canAnimate=true;hybrid.animateType=&skel;
+    const sim::UnitType* bodies[]={&victimA,&victimA,&victimB,&victimC,&capped,&skel,&priest};
+    const sim::UnitType* casters[]={&priest,&priest,&necro,&hybrid};
+    uint32_t seed=12345;
+    auto next=[&](uint32_t n) {seed=seed*1103515245u+12345u;return (seed>>16)%n;};
+    int scenes=0,mismatches=0,commands=0,emptyScenes=0;
+    referenceTies=referenceCapped=referenceClaimed=0;
+    for (int scene=0;scene<400;++scene) {
+        sim::World w;terrain(w);w.setFeatureTypes({both,resOnly,none});
+        w.mapCorpse(&victimA,0);w.mapCorpse(&victimB,1);w.mapCorpse(&victimC,2);
+        w.mapCorpse(&capped,0);w.mapCorpse(&skel,0);w.mapCorpse(&priest,1);
+        const int population=int(next(90))+1;
+        const bool noBodies=scene%10==0;   // many casters, nothing to raise
+        std::vector<int> casterIds;
+        for (int i=0;i<population;++i) {
+            const float x=400+float(next(26))*8+(next(8)==0 ? 0.5f : 0.0f);
+            const float z=400+float(next(26))*8+(next(8)==0 ? 0.25f : 0.0f);
+            const int role=int(next(10));
+            if (role<4) {
+                const int id=w.spawn(casters[next(4)],x,z,0,next(5)==0 ? 1 : 0);
+                auto& u=*w.unit(id);
+                switch (next(12)) {
+                    case 0: {sim::Order o;o.goal=true;o.x=u.x;o.z=u.z;u.orders.push_back(o);break;}   // busy
+                    case 1: u.frozenFor=30;break;
+                    default: break;
+                }
+                casterIds.push_back(id);
+            } else if (role<8 && !noBodies) {
+                const int id=w.spawn(bodies[next(7)],x,z,0,int(next(2)));
+                auto& d=*w.unit(id);d.hp={};d.deadFor=200;d.corpseUntil=100000;
+                switch (next(10)) {
+                    case 0: d.deathAnimationTicks=400;break;      // still dying
+                    case 1: d.corpseFading=true;break;
+                    case 2: d.corpseUntil=200;break;              // its time is up
+                    default: break;
+                }
+            } else {
+                // Live units: some of the capped types count toward their limits.
+                const sim::UnitType* t=next(3)==0 ? &capped : next(2) ? &skel : &victimA;
+                w.spawn(t,x,z,0,0);
+            }
+        }
+        if (scene%37==5) w.player(0).constructionAllocation=0.5;
+        if (scene%41==7) w.setUnitCap(1);
+        pastStart(w);
+        std::vector<int> assigned;
+        for (int id:casterIds) if (next(6)==0) assigned.push_back(id);
+        std::vector<int> refAssigned=assigned;
+        std::vector<net::Command> want,got;
+        referenceReviveIdle(0,w,refAssigned,want);
+        ai::Controller c(0,registry,profile,1,ai::Difficulty::Normal,{{3400,800}});
+        ai::PlacementProbe::revive(c,w,assigned,[&](const net::Command& cmd){got.push_back(cmd);});
+        bool same=want.size()==got.size() && assigned==refAssigned;
+        for (size_t i=0;same && i<want.size();++i)
+            same=want[i].kind==got[i].kind && want[i].player==got[i].player && want[i].unitId==got[i].unitId &&
+                 want[i].targetId==got[i].targetId && want[i].queue==got[i].queue;
+        mismatches+=!same;++scenes;commands+=int(want.size());emptyScenes+=want.empty();
+    }
+    std::printf("revive reference: %d scenes, %d commands, %d scenes with none, %d equal-distance ties, "
+                "%d bodies passed over for a type limit, %d for another caster's claim\n",
+                scenes,commands,emptyScenes,referenceTies,referenceCapped,referenceClaimed);
+    check(mismatches==0,"reviveIdle gives the reference search's commands, in its order, and the same assigned list");
+    check(commands>300 && referenceTies>50 && emptyScenes>40 && referenceCapped>50 && referenceClaimed>50,
+          "...over scenes with many raises, equal-distance ties, type limits, competing casters and nothing to raise");
+}
+
 int main(int argc,char** argv) {
     sim::TypeRegistry empty;ai::Profile profile;auto soldier=fighter();
     for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd,
@@ -2021,6 +2150,7 @@ int main(int argc,char** argv) {
     fogScouting(empty,profile,soldier);
     lodestoneKnowledge();
     aiRaisesTheDead(empty,profile,soldier);
+    aiRaisesTheDeadLikeTheReference(empty,profile,soldier);
     {
         sim::World w;terrain(w);w.player(0).income=100;
         for(int i=0;i<35;++i)w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
