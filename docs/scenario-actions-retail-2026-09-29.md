@@ -49,7 +49,8 @@ Run `python3 tools/re/check_scenario_actions.py` to repeat the 99 cases.
 * Ownership calls `514da0`, rather than assigning the owner field alone. The
   local native path creates a replacement and copies HP, construction progress,
   facing and activation state. In particular, the HP copy at `514f8a` **does
-  not heal the unit to half health**, unlike the engine's charm helper.
+  not heal the unit to half health** (since 0.9.12 the engine's charm helper
+  `captureUnit` does not either).
   The scenario transfer API preserves HP and construction state, clears old
   orders/production/group membership, updates live owner counts, and invalidates
   the spatial player cache. The engine retains stable unit IDs rather than

@@ -619,7 +619,7 @@ bool Controller::armedEnemyNear(const tak::sim::World& world, float x, float z, 
     for (const auto& e:world.units()) {
         if (!e.alive() || !e.type || e.embarked() || e.underConstruction || e.cloaked ||
             world.isNeutralPlayer(e.player) || world.allied(player_,e.player)) continue;
-        if (!e.type->canCapture && e.type->weapon.damage<=0 &&
+        if (e.type->weapon.damage<=0 &&
             std::none_of(e.type->weapons.begin(),e.type->weapons.end(),[](const auto& w) {
                 return w.damage>0 || w.mindControl;
             })) continue;
@@ -1269,7 +1269,7 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
         for (const auto& e:world.units()) {
             if (!e.alive() || !e.type || e.embarked() || e.underConstruction || e.cloaked ||
                 world.isNeutralPlayer(e.player) || world.allied(player_,e.player)) continue;
-            if (!e.type->canCapture && e.type->weapon.damage<=0 &&
+            if (e.type->weapon.damage<=0 &&
                 std::none_of(e.type->weapons.begin(),e.type->weapons.end(),[](const auto& w) {
                     return w.damage>0 || w.mindControl;
                 })) continue;
@@ -1836,7 +1836,12 @@ bool Controller::strikeOrder(const tak::sim::World& world, const tak::sim::Unit&
         if (close) tried(e->id, e->hp.toFloat());
         // Nothing auto-acquires a site still being built, and up close an order on
         // the anchor itself makes sure of it.
-        if (close || e->underConstruction) {
+        // A charm cannot take a unit still being built (the sim refuses the
+        // order), so a caster attack-moves there instead of standing idle.
+        const bool charmRefused = e->underConstruction &&
+            std::any_of(u.type->weapons.begin(), u.type->weapons.end(),
+                        [](const auto& w) { return w.mindControl; });
+        if ((close || e->underConstruction) && !charmRefused) {
             tak::net::Command c; c.kind = tak::net::Cmd::Attack; c.player = uint8_t(player_);
             c.unitId = u.id; c.targetId = e->id;
             sink(c);
@@ -2065,7 +2070,7 @@ void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& 
     for (const auto& e:world.units()) {
         if (!e.alive() || !e.type || e.embarked() || e.underConstruction || e.cloaked ||
             world.isNeutralPlayer(e.player) || world.allied(player_,e.player)) continue;
-        if (!e.type->canCapture && e.type->weapon.damage<=0 && !e.type->weapon.mindControl &&
+        if (e.type->weapon.damage<=0 && !e.type->weapon.mindControl &&
             std::none_of(e.type->weapons.begin(),e.type->weapons.end(),[](const auto& weapon) {
                 return weapon.damage>0 || weapon.mindControl;
             })) continue;
@@ -3517,7 +3522,7 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         consider(world.unit(u.lastHitBy), true);   // whoever is hitting it, seen or not
         if (!target)
             for (const auto& e : world.units()) {
-                if (e.type && (e.type->weapon.damage > 0 || e.type->canCapture ||
+                if (e.type && (e.type->weapon.damage > 0 ||
                     std::any_of(e.type->weapons.begin(), e.type->weapons.end(),
                                 [](const auto& w) { return w.damage > 0 || w.mindControl; })))
                     consider(&e, false);

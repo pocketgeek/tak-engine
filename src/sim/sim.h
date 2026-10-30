@@ -483,7 +483,6 @@ struct UnitType {
     float manaRegen = 0;      // manarechargerate: personal mana regained per second
     bool  canReclaim = false; // canreclaim: builder can reclaim corpses/features for mana
     bool  canResurrect = false;   // canresurrect: can revive nearby corpses
-    bool  canCapture = false;     // cancapture: can convert an enemy unit to its player
     bool  canCloak = false;       // cancloak
     float cloakCost = 0;          // cloakcost: the unit's OWN mana/sec while cloaked and idle
     float cloakCostMove = 0;      // cloakcostmoving: the same while moving (default cloakcost/30)
@@ -1210,7 +1209,6 @@ struct alignas(64) Unit {
                            // (hold fire: no auto-acquire, only fights when ordered)
     int lastHitPlayer = -1; // score attribution captured at impact; mission script input
     int   lastHitBy = 0;   // id of the unit that last damaged this one (for kill XP)
-    int32_t captureProg = 0; // canCapture units: ticks spent charming the current target
     // Blocked shots (engine deviation, see World::noteShotImpact): the target
     // whose last shots from here struck terrain or scenery this unit cannot
     // destroy, short of the target; how many in a row; the whole-pixel spot

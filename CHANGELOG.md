@@ -114,6 +114,13 @@ their validation reports; both live in [`docs/`](docs/).
   rises as yours), and only a body that can be animated rises as a ghoul,
   creauto, lich or wolf. Our AI levels order their idle casters to raise the
   bodies beside them; the Retail AI never raises the dead, as in the original.
+- **The Harpy converts only with its mind-control spell**, as in the original
+  game: it no longer takes any enemy it stays beside for three seconds, or at
+  once below a quarter of its health, for free. Each charm costs 300 mana and
+  can fail, and the Harpy now casts on its own like the Mind Mage. **A charmed
+  unit keeps its damage** (it used to come over at half health or more) and,
+  as in the original, starts without its veteran stars. **A unit still being
+  built cannot be charmed.**
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
   at +10, 0.9.11 fell to -2 at about 2,700 units, with 219 ticks over 250 ms;
   0.9.12 held +9 to +10 to 3,160 units with no tick over 100 ms:

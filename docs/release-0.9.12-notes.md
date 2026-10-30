@@ -15,7 +15,8 @@ them: factories build their waves, troops start aboard their ships, ambushes
 spring when hit and Offensive means offensive. Builders help and repair as in
 the original: they walk up until they touch the unit, keep working when
 pushed, and never repair a unit that walks. The dead rise only when you order
-it, and a right-click on a body with a priest raises it. Streaming keeps to YouTube's bitrate, Options, Voice Chat and Controls save as
+it, and a right-click on a body with a priest raises it. The Harpy charms only with its spell, leaving a
+charmed unit its damage. Streaming keeps to YouTube's bitrate, Options, Voice Chat and Controls save as
 you change them, and SETTINGS, BENCHMARK and LOAD REPLAY have a BACK button.
 
 **Compatibility first.** The AI's sight-only targets, the combat fixes, the
@@ -446,6 +447,32 @@ build time for a resurrect, the creature's full build time for an animate,
 at the owner's allocation); the first tick of work now comes on the tick the
 caster starts, as in the original, one tick earlier than before.
 
+## The Harpy charms only with its spell; a charmed unit keeps its damage
+
+The engine let a Harpy take any enemy it stayed beside for three seconds, or
+at once when the enemy was below a quarter of its health, for no mana, on top
+of its Individual Mind Control. The original has no such capture. Its
+`cancapture` flag (only the Harpy sets it) is read by nothing in the game
+logic, only by a CAPTURE button that no shipped interface has; a unit changes
+sides only through a mind-control spell (`0x52d8d0`, roll `0x52da10`). The
+engine now does the same:
+
+- **The Harpy is an ordinary caster.** Each charm costs 300 mana, can fail
+  (80% for a green unit, more for a veteran) and reloads in 1.5 seconds, so a
+  full Harpy charms at most three times before it recharges. It now picks
+  and charms targets on its own, like the Mind Mage, and answers when it is
+  hit.
+- **A charmed unit keeps its damage.** Every conversion (Harpy, Mind Mage,
+  Area Mind Control) raised the unit to at least half its health. The
+  original copies its health as it is (`0x514f8a`), so a unit worn down and
+  then charmed can still be finished off.
+- **A charmed unit starts without its veteran stars.** The original gives the
+  new owner a new unit (`0x512060`) and copies only health, construction,
+  facing and activation onto it; experience starts at zero (`0x511990`).
+- **A unit still being built cannot be charmed**, as in the original's roll
+  (it checks the construction left before the chance). Casters no longer pick
+  one as a target.
+
 ## Streaming keeps to YouTube's bitrate
 
 Above YouTube's bitrate for a stream's size, frame rate and codec, YouTube can
@@ -532,6 +559,15 @@ decided what the game counted as seen.
   circle for a non-square body) in `World::noteShotImpact`, and
   `World::chordClear` now takes the target. New castle case in
   `blocked_shot_test`; `tools/re/probe_long_footprint_blocked.py`.
+- Sim (capture): `UnitType::canCapture` and `Unit::captureProg` are gone
+  with the contact capture in `tickCombat` and the Harpy's exclusions from
+  the fire sweep, `tickSlotWeapons`, `slotHitResponse`, `attack` and the AI's
+  armed-enemy checks (which already count mind-control weapons);
+  `cancapture` is no longer parsed. `World::captureUnit` keeps HP and resets
+  `xp` / `veteran` to a fresh unit's; `canCaptureTarget` and the charm roll
+  refuse `underConstruction`, and `retailSelectTarget` / `sweepKeepsTarget`
+  skip an unfinished unit for a mind-control slot. `capture_combat_test`
+  covers each (the shipped Harpy in `capture_combat_roster`).
 - `Order` stays five cache lines (320 bytes): `attackChased` fills the pad
   beside `chaseLeashed`, `scripted` the pad after `chaseOrigin`.
 - Sim (campaign orders): `MissionScript::applyOrders` reads clauses as the
@@ -740,6 +776,13 @@ New with 0.9.12:
   unsuccessful" voices have no channel in the engine.
 - **A patrolling builder repairs the nearest damaged unit** it sees; the
   original picks one at random (unchanged).
+- **A charmed unit keeps its unit number** and its personal mana, status
+  effects and cloak; the original makes a new unit for the new owner and
+  kills the old one. Only its health, construction, facing and activation
+  carry over there. A unit a mission hands to another player still keeps its
+  veteran stars, though the original resets them there too.
+- **A caster ignores an unfinished enemy unit**, where the original's
+  automatic aim would pick it, spend the charm's mana and fail the roll.
 - **0.9.11's limits still apply:** see the
   [0.9.11 notes](release-0.9.11-notes.md#known-limits), and through them the
   earlier notes; 0.9.11's "AI goes after everything" is replaced by the
