@@ -2421,10 +2421,10 @@ static int64_t gridKey(int cx, int cz) { return (int64_t(cx) << 32) ^ int64_t(ui
 static int floorDiv(int64_t a, int b) { return int(a >= 0 ? a / b : -((-a + b - 1) / b)); }
 
 // The team's radar now: every kRadarCell cell whose centre lies within
-// radardistance of a finished unit of the team -- our client shows a player that
-// whole disc, through terrain (World::visGather) -- with units sharing a 32 px spot
-// and a range counted once. radarSeen_ keeps every cell ever in radar: ground the
-// display has shown. Radar is mostly on buildings, which do not move: only the
+// radardistance of a finished unit of the team (our client used to clear that
+// whole disc of fog, through terrain; since the retail fog display radar only puts
+// minimap dots, but this AI model is unchanged) -- with units sharing a 32 px spot
+// and a range counted once. radarSeen_ keeps every cell ever in radar. Radar is mostly on buildings, which do not move: only the
 // discs that came or went since the last think are counted off and on, on cells
 // coarse enough that a builder walking about recounts a few hundred.
 void Controller::stampRadar(int qx, int qz, int r, int delta) {
