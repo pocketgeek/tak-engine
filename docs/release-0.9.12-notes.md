@@ -267,6 +267,10 @@ emulated cases, all equal):
 - **The Aerial Juggernaut** closes in so its anti-air arrows (450) reach; it
   used to stop at its cannons' 500 and drop cannonballs that miss flyers.
   Its arrows now hit 27 to 31 times a minute, none before.
+- **The other weapons pick their own targets**, as in the original
+  (`0x41d5ae`, `0x41c308`): attacking a flyer or a ground unit, a Juggernaut
+  or Dirigible turns its unselected weapons automatic, so the Juggernaut's
+  cannons bomb the ground while its arrows chase the flyer.
 - **Dropped bombs wait for the script and the facing**, as in the original
   (`0x52fe30`, `0x52fff0`): an Iron Beak releases an egg only when its script
   is ready and its body faces the target, a Dirigible or Juggernaut when its
@@ -482,9 +486,6 @@ New with 0.9.12:
   every tick; only scripts that read their turn state while pivoting notice.
 - **An Iron Beak hardly hits a flyer at its own height**, as in the original:
   its eggs have no upward speed and fall past. It hits flyers below it.
-- **The Aerial Juggernaut's cannons** still drop at a flyer it attacks (and
-  miss); the original turns its unselected weapons to automatic in the
-  attack. Its anti-air arrows do the work.
 - **A dogfight's retargeting** uses the engine's own target scan, not the
   original's, so a flyer that finds its target again keeps its attack where
   the original restarts it; the group check, the air-traffic step-out and

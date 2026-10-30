@@ -193,6 +193,115 @@ int main(int argc,char** argv) {
                         balance,circle>0?"circling":"holding",b.shots,b.hits,b.damage,b.closest);
         }
 
+        // Stage 1 (41d5ae) makes every slot automatic and only the selected
+        // one manual: a Juggernaut dogfighting a Roc fights it with its arrows
+        // (slot 0) while its cannons pick their own targets and bomb a ground
+        // unit beneath the Roc, which used to be left alone while the cannons
+        // dropped only at the Roc.
+        {
+            const UnitType jugg=dummy(*juggernaut,true),holding=dummy(*registry.find("zonroc"));
+            auto ground=*registry.find("tarzom");ground.maxHp=30000;ground.healTime=0;ground.maxVel={};
+            ground.weapons.clear();ground.weapon={};
+            World w;w.setPlayerCount(2);
+            w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            w.buildNavClasses(registry);
+            const float cx=2000,cz=2000;
+            const int roc=w.spawn(&holding,cx+300,cz,0.f,1);
+            w.unit(roc)->standbyAllowed=false;
+            w.setStance(roc,2);w.unit(roc)->moveState=0;w.unit(roc)->fireState=0;
+            const int zombie=w.spawn(&ground,cx+300,cz,0.f,1);
+            int leg=0;
+            auto steer=[&] { w.order(roc,cx+300.f,cz+((leg++&1) ? 12.f : -12.f),false); };
+            steer();
+            for (int i=0;i<240;++i) { if (i%30==29) steer(); w.tick(kTick); }
+            const int me=w.spawn(&jugg,cx,cz,1.5707963f,0);
+            w.attack(me,roc,false);
+            int sweptGround=0,sweptRoc=0,ordered=0,mixed=0,arrowsAtRoc=0,cannonsAtGround=0,cannonsAtRoc=0,arrowsAtGround=0;
+            // (The cannons kill a 30000 hp zombie inside a minute: count hp
+            // lost while each is alive.)
+            float rocHp=w.unit(roc)->hp.toFloat(),groundHp=w.unit(zombie)->hp.toFloat();
+            float rocDamage=0,groundDamage=0;
+            auto lost=[&](int id,float& hp,float& damage) {
+                const Unit* t=w.unit(id);
+                const float now=t && t->alive() ? t->hp.toFloat() : 0.f;
+                if (now<hp) damage+=hp-now;
+                hp=now;
+            };
+            for (int tick=0;tick<1800;++tick) {
+                if (tick%30==0 && w.unit(roc) && w.unit(roc)->alive()) steer();
+                w.tick(kTick);
+                lost(roc,rocHp,rocDamage);lost(zombie,groundHp,groundDamage);
+                const Unit* a=w.unit(me);
+                if (!a || a->orders.empty() || a->orders.front().targetId!=roc) continue;
+                ++ordered;
+                mixed+=a->slotAuto==6 && a->slotManual==World::kSlotsAttack;
+                for (int s:{1,2}) { sweptGround+=a->slotTarget[size_t(s)]==zombie;sweptRoc+=a->slotTarget[size_t(s)]==roc; }
+                for (const auto& h:w.hits()) {
+                    if (h.fromPlayer!=0 || !h.weapon) continue;
+                    const bool arrow=h.weapon==&jugg.weapons[0];
+                    const bool cannon=h.weapon==&jugg.weapons[1] || h.weapon==&jugg.weapons[2];
+                    if (h.victimId==roc) { arrowsAtRoc+=arrow;cannonsAtRoc+=cannon; }
+                    if (h.victimId==zombie) { arrowsAtGround+=arrow;cannonsAtGround+=cannon; }
+                }
+            }
+            std::printf("cannons balance=%s ordered=%d mixed=%d arrows->roc=%d cannons->ground=%d cannons->roc=%d"
+                        " arrows->ground=%d roc-damage=%.0f ground-damage=%.0f swept-ground=%d swept-roc=%d\n",balance,ordered,mixed,arrowsAtRoc,
+                        cannonsAtGround,cannonsAtRoc,arrowsAtGround,rocDamage,groundDamage,sweptGround,sweptRoc);
+            check(ordered>0 && mixed>=ordered-2 && rocDamage>0,
+                  "AirToAir leaves the selected slot manual and the others automatic (stage 1)");
+            check(arrowsAtRoc>=3 && arrowsAtGround==0,"the Juggernaut's arrows fight the flyer it is ordered onto");
+            // (The sweep may hand a cannon the Roc too: a Dropped weapon's
+            // in-range test is the plain 2D one, so retail's 412620 offers it.)
+            check(sweptGround>0 && cannonsAtGround>=2 && groundDamage>0,
+                  "the Juggernaut's cannons engage a ground unit beneath the flyer on their own");
+            w.order(me,cx-400,cz,false);
+            for (int tick=0;tick<5;++tick) w.tick(kTick);
+            const Unit* a=w.unit(me);
+            check(a && a->slotAuto==7 && a->slotManual==World::kSlotsAuto,"the slots are all automatic once the attack ends");
+        }
+
+        // AirToGround (41bf80) does the same at its stages 1 and 2 (41c308,
+        // 41c31f): a Juggernaut attacking one ground unit shoots its arrows at
+        // it while its cannons pick their own targets, here also a second
+        // ground unit 250 px away; the cannons used to drop only at the
+        // ordered one.
+        {
+            const UnitType jugg=dummy(*juggernaut,true);
+            auto ground=*registry.find("tarzom");ground.maxHp=30000;ground.healTime=0;ground.maxVel={};
+            ground.weapons.clear();ground.weapon={};
+            World w;w.setPlayerCount(2);
+            w.setTerrain(std::vector<uint8_t>(256*256,100),256,256,20);
+            w.buildNavClasses(registry);
+            const float cx=2000,cz=2000;
+            const int ordered=w.spawn(&ground,cx+300,cz,0.f,1),other=w.spawn(&ground,cx+300,cz+250,0.f,1);
+            const int me=w.spawn(&jugg,cx,cz,1.5707963f,0);
+            w.attack(me,ordered,false);
+            int ticks=0,mixed=0,run=0,sweptOther=0,arrowsAtOrdered=0,arrowsAtOther=0,cannonsAtOther=0;
+            for (int tick=0;tick<1800;++tick) {
+                w.tick(kTick);
+                const Unit* a=w.unit(me);
+                if (!a || a->orders.empty() || a->orders.front().targetId!=ordered) continue;
+                ++ticks;
+                run+=a->orders.front().mission.stage>=3;
+                mixed+=a->slotAuto==6 && a->slotManual==World::kSlotsAttack;
+                for (int s:{1,2}) sweptOther+=a->slotTarget[size_t(s)]==other;
+                for (const auto& h:w.hits()) {
+                    if (h.fromPlayer!=0 || !h.weapon) continue;
+                    const bool arrow=h.weapon==&jugg.weapons[0];
+                    const bool cannon=h.weapon==&jugg.weapons[1] || h.weapon==&jugg.weapons[2];
+                    if (h.victimId==ordered) arrowsAtOrdered+=arrow;
+                    if (h.victimId==other) { arrowsAtOther+=arrow;cannonsAtOther+=cannon; }
+                }
+            }
+            std::printf("airtoground balance=%s ticks=%d run=%d mixed=%d swept-other=%d arrows->ordered=%d"
+                        " arrows->other=%d cannons->other=%d\n",balance,ticks,run,mixed,sweptOther,arrowsAtOrdered,
+                        arrowsAtOther,cannonsAtOther);
+            check(ticks>0 && run>0 && mixed>=run,
+                  "AirToGround leaves the selected slot manual and the others automatic (stages 1 and 2)");
+            check(arrowsAtOrdered>=2 && arrowsAtOther==0,"the Juggernaut's arrows attack the ordered ground unit");
+            check(sweptOther>0 && cannonsAtOther>0,"the Juggernaut's cannons pick their own ground targets meanwhile");
+        }
+
         // The Iron Beak's Egg Bomb (subtype Dropped, range 200) leaves with no
         // vertical speed and falls |dy| over its fall time toward the target's
         // SweetSpot (52c3b0), so it reaches a point below its muzzle only: a

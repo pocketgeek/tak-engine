@@ -6044,18 +6044,23 @@ void World::setSlotTarget(Unit& u,int slot,int id) {
     u.missionEvents&=0xfe08ffffu;
 }
 
+// 519b10/519b70 on one slot: a slot that changes mode drops its target
+// (51a7f0); one already in the mode keeps it.
+void World::setSlotMode(Unit& u,int slot,bool automatic) {
+    const uint8_t bit=uint8_t(1u<<slot);
+    if (((u.slotAuto&bit)!=0)==automatic) return;
+    u.slotAuto=automatic ? uint8_t(u.slotAuto|bit) : uint8_t(u.slotAuto&~bit);
+    dropSlotTarget(u,slot);
+}
+
 void World::setSlotsAuto(Unit& u) {
     u.slotManual=kSlotsAuto;
-    if (u.slotAuto==7) return;
-    u.slotAuto=7;
-    for (int s=0;s<3;++s) dropSlotTarget(u,s);
+    for (int s=0;s<3;++s) setSlotMode(u,s,true);
 }
 
 void World::setSlotsManual(Unit& u,uint8_t cause) {
     u.slotManual=cause;
-    if (!u.slotAuto) return;
-    u.slotAuto=0;
-    for (int s=0;s<3;++s) dropSlotTarget(u,s);
+    for (int s=0;s<3;++s) setSlotMode(u,s,false);
 }
 
 // Our orders are not retail missions, so the mission destructor's setAuto
@@ -6072,7 +6077,10 @@ void World::syncSlotMode(Unit& u) {
     // pass, which must not start scripts), so it is recognised here too.
     const uint8_t want=status ? kSlotsStatus : attack ? kSlotsAttack :
         (u.reviveTarget || (u.slotManual==kSlotsWork && work)) ? kSlotsWork : kSlotsAuto;
-    if (want==u.slotManual) return;
+    // AirToGround's and AirToAir's mixed slots last only while their order
+    // is at the front; any other attack's own stages make every slot manual.
+    const bool mixed=attack && want==kSlotsAttack && u.orders.front().mixedSlots;
+    if (want==u.slotManual && (mixed || want!=kSlotsAttack || !u.slotAuto)) return;
     if (want==kSlotsAuto) setSlotsAuto(u);
     else setSlotsManual(u,want);
 }
@@ -7237,6 +7245,9 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         }
     }
     auto tryFire = [&](int sl) {
+        // An auto slot (AirToGround's and AirToAir's unselected ones) fires
+        // at its own target (tickSlotWeapons), not the order's.
+        if (u.slotAuto>>sl&1) return;
         if (!slotAims(sl)) return;
         const Weapon& sw = u.type->weapons[size_t(sl)];
         if(tickScriptWeapon(u,*target,sl))return;
@@ -11049,9 +11060,6 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
         void clear() { w.cancelPath(u);u.orders.clear();u.routeStamp=-1; }
         void beginFlight() {
             // 416c50: Activate, BeginFlight, and take-off (the mover below).
-            // Its 519b70(3), like stage 1's 519b10(3) and stage 2's 519b70 on
-            // the selected slot, is World's slot mode (syncSlotMode): the
-            // attack order makes every slot manual and fires them at the target.
             if (auto script=w.unitScripts_.find(u.id);script!=w.unitScripts_.end() && !script->second.activated) {
                 script->second.activated=true;w.notifyUnitScript(u,"Activate");
             }
@@ -11061,9 +11069,25 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
             // a move posts them to the unit (tickRetainedFlightMovement); they
             // must not wake this mission's first controller.
             u.missionEvents&=~0x3700u;
+            // 416c57: 519b70(3), every slot manual.
+            for (int s=0;s<3;++s) w.setSlotMode(u,s,false);
         }
-        void slotsAuto() {}
-        void aimSlot() {}
+        // Stage 1 (41c308): 519b10(3), every slot automatic. Stage 2
+        // (41c31f, and again whenever stage 7 sends the run back to it):
+        // 519b70 makes the selected slot (519ac0) manual and 51a700 gives it
+        // the target (51a770, a ground point, has no World counterpart: an
+        // attack order here always has a unit). The other slots pick their
+        // own targets (the sweep, tickSlotWeapons) for the rest of the
+        // mission, until its destructor's 519b10(3) (4d6da0).
+        void slotsAuto() {
+            for (int s=0;s<3;++s) w.setSlotMode(u,s,true);
+            u.orders.front().mixedSlots=true;
+        }
+        void aimSlot() {
+            const int selected=u.type->weaponSwitching ? std::clamp(u.weaponSlot,0,2) : 0;
+            w.setSlotMode(u,selected,false);
+            w.setSlotTarget(u,selected,target.id);
+        }
         void install(const RetailFlightGoal& goal) {
             // 4d4d40 also clears the mission's pending controller events.
             auto& order=u.orders.front();
@@ -11145,6 +11169,9 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
                 // left at stage 0, takes off again and installs its own.
                 auto& a=*o->airToAir;
                 if (a.evadeController) { o->flightGoal.reset();a.intercept.reset();a.evadeController=false; }
+                // 4d6e26: and unless its +0x5a has 0x8000, 519b10(3) makes
+                // every slot automatic (the selected one drops its target).
+                if (!(m.flags&0x8000u)) for (int s=0;s<3;++s) w.setSlotMode(u,s,true);
                 a.evade.reset();
                 return;
             }
@@ -11160,10 +11187,21 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
             }
             w.notifyUnitScript(u,"BeginFlight");
             u.missionEvents&=~0x3700u;
+            // 416c57: 519b70(3), every slot manual.
+            for (int s=0;s<3;++s) w.setSlotMode(u,s,false);
         }
-        // Stage 1's 519b10(3), 519b70 and 51a700 are World's slot mode
-        // (syncSlotMode): the attack order fires its slots at the target.
-        void aim() {}
+        void aim() {
+            // Stage 1 (41d5ae): 519b10(3) makes every slot automatic, then
+            // 519b70 and 51a700 make the selected one (519ac0) manual and give
+            // it the target. The others pick their own targets (the sweep,
+            // tickSlotWeapons) for as long as the mission runs: an Aerial
+            // Juggernaut's cannons bomb the ground while its arrows fight.
+            const int selected=u.type->weaponSwitching ? std::clamp(u.weaponSlot,0,2) : 0;
+            for (int s=0;s<3;++s) w.setSlotMode(u,s,true);
+            w.setSlotMode(u,selected,false);
+            w.setSlotTarget(u,selected,target.id);
+            order()->mixedSlots=true;
+        }
         RetailFlightVector lead() {
             const auto led=w.retailLeadPoint(u,target,weapon);   // 51aa50
             return {led[0],led[1],led[2]};
@@ -13306,6 +13344,10 @@ void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
             // 51a7f0 retires all targets, but only the selected callback can
             // acknowledge/reset a switcher's weapon state.
             if(u.type->weaponSwitching && int(slot)!=u.weaponSlot)continue;
+            // AirToGround's and AirToAir's unselected slots are auto: the
+            // order's end (4d6da0's 519b10(3)) leaves them and their targets
+            // alone.
+            if(u.slotAuto!=7 && (u.slotAuto>>slot&1))continue;
             // This callback also retires the slot's swept target, so a later
             // dropSlotTarget (boarding's switch to manual) does not announce
             // TargetCleared a second time.
@@ -16844,6 +16886,7 @@ uint64_t World::stateHash() const {
                     mix(order.mission.stage); mix(order.mission.waitMask); mix(order.mission.deadline);
                     mix(order.mission.pending); mix(order.mission.flags); mix(uint32_t(order.airRunCount));
                 }
+                if (order.mixedSlots) mix(0x4d49584544ull);
                 if (order.airToAir) {
                     const auto& a=*order.airToAir;
                     mix(0x4149523241495200ull); mix(uint32_t(a.count)); mix(a.evadeController);

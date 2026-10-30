@@ -733,9 +733,13 @@ Dirigible, Fallen Angel, Aerial Juggernaut) attacks ground targets with
 AirToGround. It never stops to shoot:
 
 - **Stage 0** (`416c50`) Activate, BeginFlight, take-off.
-- **Stage 1** `519b10(3)`: every slot automatic.
-- **Stage 2** `519b70`/`51a700`: the selected slot (`519ac0`: a switcher's choice,
-  else the first slot) manual, aimed at the target.
+- **Stage 1** `519b10(3)` (`41c308`): every slot automatic.
+- **Stage 2** `519b70`/`51a700` (`41c31f`): the selected slot (`519ac0`: a
+  switcher's choice, else the first slot) manual, aimed at the target (`51a770`
+  at a ground point when the mission has no target unit). Stage 7 sends the
+  run back here, which re-aims the slot. A multi-weapon non-switcher's other
+  weapons (Dirigible, Juggernaut) pick their own targets for the rest of the
+  mission (ported 2026-10-30 with AirToAir's, below: `Order::mixedSlots`).
 - **Stage 3** a point controller (`4e40e0`, flags 0x20) at the target, radius
   (`4e4540`, flag 0x10) `attackrunlength`/2 (UnitType +0x234, a word read at
   `4c082e`), or half the selected weapon's range (+0x90) when that is 0. Wait
@@ -852,9 +856,6 @@ Still deviating:
   stage 4's air-traffic step-out: unit +0x12a, a counter `51dc4b..` keeps
   from the overlap list, pushes `VTOL_StepOut` at 5 or more, and World keeps no
   such counter.
-- Retail makes the other slots automatic and only the selected one manual.
-  A multi-weapon non-switcher's other weapons (Dirigible, Juggernaut) pick
-  their own targets. World fires them all at the order's target.
 - Off the map, World flies at the clamped sector's cruise height (retail: the
   off-map cell's height 0 plus cruisealt), and its velocity kernel keeps the
   vertical control that `4dab71` skips for an off-map unit.
@@ -873,6 +874,23 @@ and hover-ringed a Tarbeak or a dragon round it. The handler:
 - **Stage 0** `416c50` (Activate, BeginFlight, take-off), sleep 1, mission
   +0x4e = 0. **Stage 1** every slot automatic, the selected one manual and
   aimed at the target (`519b10(3)`, `519b70`, `51a700`), sleep 1.
+  `416c50`'s first call is `519b70(3)` (every slot manual); `519b10`/`519b70`
+  flip WeaponRecord +0x1a bit 4 per slot (a slot holding a weapon, +0xc) and
+  drop the target (`51a7f0`) only of a slot whose mode changes. `519ac0` is a
+  switcher's selected slot, else the first slot that has a weapon. So for the
+  rest of the mission the other slots are swept like any auto slot (`40f330`,
+  `412620`) and fire at their own targets (`52ae90`): an Aerial Juggernaut
+  (arrows slot 0, Dropped cannons 1 and 2, no switching) bombs the ground
+  while its arrows fight. Nothing in the mission undoes it; the destructor
+  `4d6da0` (`4d6e26`) makes every slot automatic unless mission +0x5a has
+  0x8000, which drops only the selected slot's target. VTOL_Evade's
+  destructor does the same, and AirToAir, back at stage 0, re-runs `416c50`
+  and stage 1. World keeps the mixed mode on the attack order, as for
+  AirToGround (`Order::mixedSlots`; `Unit::slotAuto` 6 for the Juggernaut,
+  `slotManual` attack): the order's
+  fire skips auto slots, the order's end clears only the manual slot, and
+  `syncSlotMode` makes every slot manual again for any other attack at the
+  front.
 - **Stage 2**, every 7 + rand(15) ticks (the draw comes before the stage
   switch): P = the selected slot's led SweetSpot (`51aa50`), R =
   `airtoairdistance`: the selected weapon's (+0xc6, `5310b7`) or else the
@@ -1022,9 +1040,6 @@ Not ported or still deviating:
   retail checks it after the off-map return.
 - A flyer whose selected weapon has the `dropped` key (none shipped) dogfights
   a flyer too; retail gives it no attack mission (`4de6ed`).
-- Retail makes the other slots automatic and only the selected one manual;
-  World fires them all at the order's target (the Juggernaut's cannons drop
-  at a flyer and miss).
 - A whole native engagement has not been run: the hit rates above are those
   of the ported parts flown together.
 
