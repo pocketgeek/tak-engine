@@ -1870,6 +1870,9 @@ if(TAK_TEST_DATA)
 endif()
 add_executable(simperf tools/simperf.cpp ${TAK_AI_SOURCES})
 target_link_libraries(simperf PRIVATE tak-formats)
+# Microbenchmark of Controller::reviveIdle (not a CTest).
+add_executable(ai_revive_bench tools/ai_revive_bench.cpp ${TAK_AI_SOURCES})
+target_link_libraries(ai_revive_bench PRIVATE tak-formats)
 
 # --- Client (needs SDL2; skipped with a warning if unavailable) ---------------
 
