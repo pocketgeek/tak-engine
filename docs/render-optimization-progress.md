@@ -3067,6 +3067,98 @@ Harness knobs (debug-only, `gameview_devharness.cpp` / `main.cpp`):
 `TAK_RENDER_SPARSE_OFFSET`, `TAK_GPU_CAP_MIB` (`runtimesettings.h`), `TAK_RENDER_CAMERA_SNAP=1|N` (whole-pixel pan; N = N moving / N still frames with every other cycle 0.375 px off the grid), `TAK_RENDER_VETERAN=N`, `TAK_RENDER_ROSTER=a,b,…` (E), plus the existing `TAK_SHADOW_BENCH[_TYPE]`,
 `TAK_RENDER_SPACING/MOTION/BATTLE/CAMERA/ZOOM`, `TAK_PROFILE_ZOOM`.
 
+### Interactive cases (perf follow-up 2026-10, measurement B)
+
+The matrix above never moves the pointer (`mouseX_` stays unset, so
+`desiredCursor` returns before classifying anything), selects nothing, has no
+long build queue and puts nothing behind a building; the in-game Benchmark hides
+the cursor altogether. `--scenes interactive` adds that work as separate scenes.
+The matrix scenes are unchanged, and `--scenes all` still means the 24 matrix
+scenes only, so earlier `all` runs and baselines stay comparable.
+
+| Scene | Map | Content | Item |
+|---|---|---|---|
+| hover-ground-10k | Ulasem Arena | total10k-subset view (10000 own units, a corner in view), pointer held on empty ground, nothing selected: every own unit tested, none hit | C |
+| hover-units-10k | Ulasem Arena | 10000 Archers, same view (at 7680x2160 a deeper corner, about 1600 units: offset 0,5000), one selected, pointer sweeping the visible corner of the army and the ground beside it | C |
+| hover-armed-10k | Ulasem Arena | hover-units-10k with 200 selected and Guard armed (the armed-target scan) | C |
+| select-large | Ulasem Arena | stationary-mixed (2000) all selected, pointer sweeping the view | C (and selection overlays) |
+| ghosts-queue | Ulasem Arena | 16 builders x 24 queued builds over three repeated structure types; half of each queue at the far map corner (off screen: the builders walk there all run, no site starts), the rest one per cell in a 16x12 block in view | E |
+| ghosts-queue-pan | Ulasem Arena | ghosts-queue under the sinusoidal pan | E |
+| fade-forest | Ulasem Arena | 1500 Archers 28 px apart in the densest scenery (TAK_RENDER_FOREST; not Sea Dragon Spine, whose 7680x2160 view clamps to a zoom where units are Tactical Dots); Hidden Units Fade | F |
+| fade-buildings | Ulasem Arena | 2000 Archers 32 px apart around a grid of towers (every 4th row/column of the grid); Fade | F |
+| dots-buildings | Ulasem Arena | fade-buildings with Hidden Units Dots | F |
+| shadow-cap-below | Ulasem Arena | 4500 of the 6-type roster 40 px apart, zoom 1: shadow tiles about 0.91 of the atlas (four 2048x2048 pages), atlas active; 7680x2160 only | K |
+| shadow-cap-above | Ulasem Arena | 5500 of them: about 1.06 of the atlas, every frame falls back to direct shadows; 7680x2160 only | K |
+| shadow-cap-cross | Ulasem Arena | 5000, zoom 0.92..1.08 every 240 frames: demand crosses capacity (0.85..1.14) twice a period; page allocations and releases; 7680x2160 only | K |
+| shadow-cap-below-pan / -above-pan | Ulasem Arena | below/above under the sinusoidal pan; 7680x2160 only | K |
+
+At 1280x960 the view cannot ask for that much shadow (the tile area per view
+area of the densest stationary army is far below the 16x it would need), so the
+shadow scenes are defined for `uhd` and skipped at `normal`.
+
+Harness knobs (debug, render study only; presentation and local-harness state):
+`TAK_RENDER_MOUSE=fx,fy | sweep:x0,y0,x1,y1` (pointer in fractions of the world
+view each frame; the sweep is a Lissajous path with periods 300 and 187 frames),
+`TAK_RENDER_SELECT=N|all` (first N own army units, in spawn order),
+`TAK_RENDER_ARM=<key>` (the armed order, `pendingCmd_`),
+`TAK_RENDER_GHOSTS=builders,queue[,offscreen%[,builder]]`,
+`TAK_RENDER_COVER=type[,every]`, `TAK_RENDER_FADE_CLOCK=1` (Fade's display clock
+from the study frame, so fades match run to run and in captures). Each scene
+lists what the run must confirm (`expect`): the client's `RENDER_INTERACTIVE`
+and `render interactive:` lines, the cursor classified once a frame, the pointer
+over a unit at least sometimes, the selection size, queued and off-screen ghosts,
+covers, a faded cover, and the shadow demand within its design band. A client
+without the knobs (anything before measurement B) is refused, not measured.
+
+Telemetry added for these cases (RENDERSTATS; also in the report tables):
+`t_cursor` (desiredCursor), `t_ghosts` (the queued-ghost loop),
+`cursor_evals`, `cursor_pick_tests` (unitUnderCursor calls this frame),
+`cursor_pick_hits`, `ghosts_queued` (ghosts the overlay asked for),
+`ghost_preps` (drawGhostAt geometry collected and sorted), `hidden_cover_tests`
+(Fade sprite/triangle coverage tests), `shadow_demand_px` (the frame's tile area
+as asked, also on a fallback frame, where `shadow_atlas_tile_px` is 0).
+
+Ctests: `render_interactive_cases` (game data, software renderer: every knob in
+one scene; some frame must show cursor, pick, ghost, cover-test and shadow-demand
+work) and the offline `render_benchmark_tool` (the historical matrix unchanged,
+refusals of a client without the knobs or a scene that missed its design).
+
+Captures (`--capture`, frames 360, 480-489, 720) of the same client are
+identical run to run (A/A, 2026-10-30) for hover-ground-10k, hover-units-10k,
+hover-armed-10k, ghosts-queue, ghosts-queue-pan, fade-forest, dots-buildings and
+shadow-cap-above. Not for select-large (zoom 0.5: distant images re-baked on wall
+time, as in the matrix scenes stationary-mixed, pan and effects, which differ A/A
+by up to 3000 px) nor fade-buildings (about 1600 px at 1280x960, 3100 at
+7680x2160, the same at every frame: seam pixels along the triangle edges of the
+faded towers, max channel error 86; Dots draws the same towers identically) nor
+shadow-cap-cross (4722 px at frame 480, 683 at 720, max error 19: the atlas's
+page timers run on wall time, so which frames fall back to direct shadows near
+the threshold varies), so judge an A/B capture of those three against an A/A pair. With `--cpus 0-3` every
+run is flagged contended (the client's own threads keep four pinned CPUs over the
+0.5 busy threshold): do not pass `--exclude-contended` there.
+
+The base for A/B runs of these scenes must have the knobs: branch `pf-mB` is
+`461e9c4b` plus the measurement-B commits only (no production change), so build
+it as the base; a candidate branch must contain them too (merged or rebased).
+Commands (timing cores 0-3 through the timing wrapper; ABBA groups):
+
+```sh
+T=/home/pocket_geek/tak-tmp/tools/timing.sh
+B="python3 tools/render_benchmark.py --data $HOME/tak_data --cpus 0-3 --repeats 2"
+# C cursor picking
+$T $B --a <base>/takclient --b <cand>/takclient --scenes hover-ground-10k hover-units-10k \
+   hover-armed-10k select-large --sizes normal uhd --output <dir>/c
+# E queued-build ghosts
+$T $B --a <base>/takclient --b <cand>/takclient --scenes ghosts-queue ghosts-queue-pan \
+   --sizes normal uhd --output <dir>/e
+# F Hidden Units Fade (captures: --capture adds one capture run per label)
+$T $B --a <base>/takclient --b <cand>/takclient --scenes fade-forest fade-buildings dots-buildings \
+   --sizes normal uhd --capture --output <dir>/f
+# K shadow atlas (uhd only; constrained VRAM: add --env TAK_GPU_CAP_MIB=<n>)
+$T $B --a <base>/takclient --b <cand>/takclient --scenes shadow-cap-below shadow-cap-above \
+   shadow-cap-cross shadow-cap-below-pan shadow-cap-above-pan --sizes uhd --capture --output <dir>/k
+```
+
 `tools/render_reuse_benchmark.py` (the 2026-10-04 study) still runs with
 current clients after a one-line fix: it required "AA ... requested 0x" lines,
 which clients have not printed since the AA options were removed. Its
