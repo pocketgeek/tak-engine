@@ -50,6 +50,7 @@ legion_situation_r9-65850_retail 32
 legion_sched_load 32
 cartographer_place_terrain_zhon 31
 naval_ai 30
+render_build_ghosts 30
 legion_gen1_route_45941_o0 29
 legion_deadend 28
 legion_scenario_battle-field-2x500 28
