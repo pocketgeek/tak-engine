@@ -27,8 +27,9 @@ their validation reports; both live in [`docs/`](docs/).
   on 32-pixel squares), ground seen before lies under your side's rolling,
   drifting mist in its own colour, unseen ground is black, and radar marks
   enemies on the minimap only, never in the main view. Another player's unit
-  shows, and can be clicked, only when a corner of it is in sight. Drawing the
-  fog also costs less: about 1.22 ms a frame down to 0.37 at 3,000 units.
+  shows, and can be clicked, only when a corner of it is in sight. The fog also
+  costs less: at 3,000 units its overlay and minimap draw in 0.05 ms a frame
+  instead of 0.17, and the separate fog pass and its thread are gone.
 - **Our AI levels attack only what they have seen** (not in the original game,
   whose AI weighs unseen units too; the Retail AI is unchanged): their own and
   their allies' sight and radar, units shooting at them, and buildings

@@ -66,8 +66,9 @@ original's code or data). 0.9.12 shows exactly that plane:
   units is a dot on the minimap; radar no longer clears the mist or shows the
   unit in the main view. The minimap shows the same plane, square by square.
 - **Less work.** The separate display pass and its worker thread are gone; the
-  overlay is rebuilt only where a unit's sight changed. The fog work measured
-  the fog's cost at about 1.22 ms a frame before and 0.37 after at 3,000 units.
+  overlay is rebuilt only where a unit's sight changed. At 3,000 units the
+  overlay and minimap draw in about 0.05 ms a frame instead of 0.17, and the
+  old pass's 0.15 ms a tick is gone (the review's measurement).
 
 The user guide has a new **Fog of war** section, and its briefing and
 disconnect pictures were retaken for the new fog.

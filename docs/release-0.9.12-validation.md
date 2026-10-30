@@ -252,10 +252,15 @@ and FULL VISION rooms and every gate unchanged).
 
 ## Fog display cost
 
-The retail fog work's summary: fog cost about **1.22 ms a frame before and
-0.37 after at 3,000 units** (the figure in the CHANGELOG and the notes).
-TODO-LEAD: confirm the source of the 1.22 -> 0.37 summary; it is not a sum
-of the profile medians below.
+The figure in the CHANGELOG and the notes is the fog review's own
+re-measurement (`~/tak-tmp/scratch/retailfog-review/old.log` and `new.log`:
+the 3,000-unit replay seated as player 0 at tick 48,640, offscreen OpenGL,
+cores 4-15, static camera): fog draw 0.048 -> 0.025 ms a frame, minimap
+0.117 -> 0.028 ms a frame, the old fog pass 0.065 ms a tick on the sim thread
+plus 0.085 ms on its worker -> none, the new plane build 0.17 ms a tick inside
+capture, whole capture 0.95 -> 0.77 ms a tick. An earlier summary of
+"1.22 -> 0.37 ms a frame" from the fog work's builder could not be
+reproduced from its logs and is not used.
 
 Its profile logs (`~/tak-tmp/scratch/retailfog/perf/`, `TAK_PROFILE_FOG`
 lines, every 10 s): the replay `game3k.takrep` seeked to tick 48,600, seated as
