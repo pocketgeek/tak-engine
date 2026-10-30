@@ -435,6 +435,10 @@ foreach(legion_case improvedefer chainresolve trafficlane)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
   set_tests_properties(legion_${legion_case} PROPERTIES LABELS "legion" ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()
+# Perf follow-up I: the route invalidation index (staticChanged through sim/legion_routebins.h) against the walk of every
+# group, under churn, structures, re-orders and deaths, on two planes; index on == off == workers, under TAK_LEGION_VERIFY.
+add_test(NAME legion_routeindex COMMAND legion_world_test routeindex)
+set_tests_properties(legion_routeindex PROPERTIES LABELS "legion" ENVIRONMENT TAK_LEGION_VERIFY=1)
 foreach(legion_probe pocket deadend tail)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
@@ -465,6 +469,12 @@ add_executable(legion_route_test tools/legion_route_test.cpp)
 target_include_directories(legion_route_test PRIVATE src)
 add_test(NAME legion_route_test COMMAND legion_route_test)
 set_tests_properties(legion_route_test PROPERTIES LABELS legion)
+# Perf follow-up I: the route invalidation index (src/sim/legion_routebins.h), header-only: every route a random
+# change box reaches is a candidate, through random listings, unlistings, query drops and compactions.
+add_executable(legion_routebins_test tools/legion_routebins_test.cpp)
+target_include_directories(legion_routebins_test PRIVATE src)
+add_test(NAME legion_routebins_test COMMAND legion_routebins_test)
+set_tests_properties(legion_routebins_test PROPERTIES LABELS legion)
 add_executable(convoy_test tools/convoy_test.cpp)
 target_link_libraries(convoy_test PRIVATE tak-formats)
 add_test(NAME convoy_test COMMAND convoy_test)
