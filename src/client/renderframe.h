@@ -285,6 +285,16 @@ struct Frame {
     // queued-build ghosts draw (buildType, not an area job), ascending: every other
     // unit draws no ghost, so the renderer need not walk the whole list for them.
     std::vector<uint32_t> buildGhostUnits;
+    // Indices into `live` of the units whose type flies, ascending. Cursor picking
+    // (GameView::pickCandidates) takes them from a query of their own, whose band also
+    // allows for a flyer's altitude lift.
+    std::vector<uint32_t> flyerUnits;
+    // The largest corpse footprint side (UnitR::corpseFootX/Z) of any live record: the
+    // body pick circle (reclaimPickRadius) of every record is within its radius.
+    int maxCorpseFoot = 0;
+    // The largest |x - px| or |z - pz| of any live record: interpPose (px + (x - px) a,
+    // a in [0, 1]) never puts a unit further than this from its snapshot position.
+    float maxInterpStep = 0;
     std::array<PlayerR, 8> players{};
     int numPlayers = 0;
     // The local display plane (client/retailfog.h): one byte per 32 px projected

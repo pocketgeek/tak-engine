@@ -222,6 +222,7 @@
             crusades_ = room.opts.crusades != 0;
             registry_ = tak::sim::TypeRegistry{};
             tak::sim::setupRegistry(registry_, vfs_, crusades_);
+            pickBoundsValid_ = false;   // cursor picking's per-type bounds
         }
         // Campaign mission: build the SAME world the referee did. setupMission is
         // deterministic (terrain + placed units + the in-sim god script), so our sim,

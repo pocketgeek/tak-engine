@@ -2496,6 +2496,18 @@ int main(int argc, char** argv) {
                     ull(t.overlays[0]),ull(t.overlays[1]),ull(t.overlays[2]),ull(t.ghosts));
                 if(!t.passes)throw std::runtime_error("unit index verify ran no checks");
             }
+            if(tak::devFlag("TAK_PICK_INDEX_VERIFY")) {
+                // Cursor picking (perf follow-up C): every unit the exact test accepted was
+                // a candidate, and every cursor decision equalled a full-scan one, or the
+                // cursor overlay threw.
+                const auto& t=gameView->pickVerifyTotals();
+                using ull=unsigned long long;
+                std::printf("PICK_INDEX_VERIFY queries=%llu live=%llu candidates=%llu hits=%llu decisions=%llu "
+                            "body_queries=%llu body_candidates=%llu body_hits=%llu\n",
+                    ull(t.queries),ull(t.live),ull(t.candidates),ull(t.hits),ull(t.decisions),
+                    ull(t.bodyQueries),ull(t.bodyCandidates),ull(t.bodyHits));
+                if(!t.queries || !t.decisions)throw std::runtime_error("pick index verify ran no checks");
+            }
             if(tak::devFlag("TAK_DISTANT_VERIFY")) {
                 // Distant-image lookup before body generation (workstream G): every
                 // deferred body was regenerated in a copy and matched, or draw() threw.
