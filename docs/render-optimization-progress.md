@@ -3081,7 +3081,7 @@ scenes only, so earlier `all` runs and baselines stay comparable.
 | hover-ground-10k | Ulasem Arena | total10k-subset view (10000 own units, a corner in view), pointer held on empty ground, nothing selected: every own unit tested, none hit | C |
 | hover-units-10k | Ulasem Arena | 10000 Archers, same view (at 7680x2160 a deeper corner, about 1600 units: offset 0,5000), one selected, pointer sweeping the visible corner of the army and the ground beside it | C |
 | hover-armed-10k | Ulasem Arena | hover-units-10k with 200 selected and Guard armed (the armed-target scan) | C |
-| select-large | Ulasem Arena | stationary-mixed (2000) all selected, pointer sweeping the view | C (and selection overlays) |
+| select-large | Ulasem Arena | stationary-mixed (2000) all selected, pointer sweeping the view (at 7680x2160 the view clamps to zoom 0.73, fully zoomed out: Tactical Dots, so the dot pick path) | C (and selection overlays) |
 | ghosts-queue | Ulasem Arena | 16 builders x 24 queued builds over three repeated structure types; half of each queue at the far map corner (off screen: the builders walk there all run, no site starts), the rest one per cell in a 16x12 block in view | E |
 | ghosts-queue-pan | Ulasem Arena | ghosts-queue under the sinusoidal pan | E |
 | fade-forest | Ulasem Arena | 1500 Archers 28 px apart in the densest scenery (TAK_RENDER_FOREST; not Sea Dragon Spine, whose 7680x2160 view clamps to a zoom where units are Tactical Dots); Hidden Units Fade | F |

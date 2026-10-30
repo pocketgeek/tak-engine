@@ -204,7 +204,8 @@ INTERACTIVE = {
     "select-large": dict(count=2000, zoom=0.5,
                          env={"TAK_RENDER_SELECT": "all", "TAK_RENDER_MOUSE": "sweep:0.05,0.05,0.95,0.95"},
                          expect={"mouse": "sweep", "cursor": True, "selected": 1500, "pick_hits": True},
-                         notes="the stationary mixed army (2000) all selected, pointer sweeping the view"),
+                         notes="the stationary mixed army (2000) all selected, pointer sweeping the view "
+                               "(7680x2160: zoom clamps to 0.73, fully out, so units are Tactical Dots)"),
     # E: queued-build ghosts (16 builders x 24 orders over three repeated types, half of
     # every queue at the far map corner).
     "ghosts-queue": dict(count=1, type="araarch", zoom=0.75, env={"TAK_RENDER_GHOSTS": "16,24,50"},
