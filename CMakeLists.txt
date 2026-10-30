@@ -460,6 +460,12 @@ add_executable(legion_hier_test tools/legion_hier_test.cpp)
 target_include_directories(legion_hier_test PRIVATE src)
 add_test(NAME legion_hier_test COMMAND legion_hier_test)
 set_tests_properties(legion_hier_test PROPERTIES LABELS legion)
+# refreshPlane's dirty-rectangle clusters (src/sim/legion_cluster.h), header-only: pairwise and binned paths
+# against the pairwise reference.
+add_executable(legion_cluster_test tools/legion_cluster_test.cpp)
+target_include_directories(legion_cluster_test PRIVATE src)
+add_test(NAME legion_cluster_test COMMAND legion_cluster_test)
+set_tests_properties(legion_cluster_test PROPERTIES LABELS legion)
 # Legion 10,000 stage 5: the route-query interface (src/sim/legion_route.h), header-only.
 add_executable(legion_route_test tools/legion_route_test.cpp)
 target_include_directories(legion_route_test PRIVATE src)
