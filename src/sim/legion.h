@@ -451,6 +451,9 @@ public:
     // order is shuffled with random delays (`perturbSeed`, 0 off; debug builds also read TAK_LEGION_PAR_PERTURB).
     // Never changes behaviour or hashes: the jobs decide nothing and are consumed in a fixed order.
     static void setParallelForTest(bool force,uint64_t perturbSeed);
+    // Perf H: static refreshes read structures through a spatial index (true, the default) or walk them all (the
+    // reference). Process-wide; the plane is identical either way.
+    static void setStructureIndexForTest(bool on);
     // Debug builds (NDEBUG undefined): check derived indexes and the Stats
     // after every tick() (aborts on a mismatch). A no-op in release. A debug
     // build starts with it on when TAK_LEGION_VERIFY is set (the only
