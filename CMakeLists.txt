@@ -1870,6 +1870,9 @@ if(TAK_TEST_DATA)
 endif()
 add_executable(simperf tools/simperf.cpp ${TAK_AI_SOURCES})
 target_link_libraries(simperf PRIVATE tak-formats)
+# The stat-aura pass alone (World::tickAuras), for screening its cost: tools/aura_bench.cpp.
+add_executable(aura_bench tools/aura_bench.cpp)
+target_link_libraries(aura_bench PRIVATE tak-formats)
 
 # --- Client (needs SDL2; skipped with a warning if unavailable) ---------------
 
