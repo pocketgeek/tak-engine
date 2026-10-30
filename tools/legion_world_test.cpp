@@ -2306,14 +2306,16 @@ namespace {
 // structure churn while movers route over it and a new class's plane builds in the background (its pending
 // rectangles applied after): with the index the run must equal the reference walk of every structure -- state
 // hash, plane counters and every work class -- serial and with workers, and every plane must equal a whole
-// rebuild (planeMatchesRebuild rebuilds by the walk).
+// rebuild (planeMatchesRebuild rebuilds by the walk). `odd`: a map that is no multiple of the bucket size, and
+// footprints wider and deeper than a bucket on its far edges (a query margin clipped to the small kinds passes the
+// plain run but not this one).
 struct StaticIndexRun {
     uint64_t hash=0,refreshes=0,relabels=0,builds=0;std::array<uint64_t,size_t(NavWork::Count)> work{};
     bool operator==(const StaticIndexRun&) const=default;
 };
-StaticIndexRun staticindexRun(bool index,bool serial) {
+StaticIndexRun staticindexRun(bool index,bool serial,bool odd) {
     LegionNavigator::setStructureIndexForTest(index);
-    const int W=160,H=128;
+    const int W=odd?157:160,H=odd?121:128;
     std::vector<uint8_t> heights(size_t(W)*H);
     for(int z=0;z<H;++z)for(int x=0;x<W;++x)heights[size_t(z)*W+x]=uint8_t(100+(x*5+z*3)%30);
     Fixture f(W,H,serial,heights);
@@ -2326,6 +2328,10 @@ StaticIndexRun staticindexRun(bool index,bool serial) {
         kinds.push_back(t);
     }
     kinds[3].yardMap="o..ooooo..oooooo";   // open cells inside a 4x4
+    if(odd)for(const auto& [fx,fz]:std::vector<std::pair<int,int>>{{20,3},{3,18},{17,17}}) {
+        UnitType t=kinds[0];t.footX=fx;t.footZ=fz;t.id=t.name="legion-struct-"+std::to_string(fx)+"x"+std::to_string(fz);
+        kinds.push_back(t);
+    }
     std::vector<UnitType> movers;
     for(int foot=1;foot<=3;++foot) {auto t=mover(foot);t.maxSlope=10+foot*5;movers.push_back(t);}
     auto late=mover(2);late.footX=3;late.id=late.name="legion-late";   // its plane builds during the churn
@@ -2340,6 +2346,7 @@ StaticIndexRun staticindexRun(bool index,bool serial) {
     // Bases straddling the 16-cell bucket edges, and a row along each map edge.
     for(int b=0;b<4;++b)for(int j=0;j<6;++j)for(int i=0;i<6;++i)build(10+b*36+i*7-(i>2?4:0),12+j*7+(b%2)*40);
     for(int i=0;i<12;++i) {build(i*13,0);build(0,i*10);build(W-6,i*10);build(i*13,H-5);}
+    if(odd)for(int i=0;i<8;++i) {build(W-1-i,H-1-2*i);build(i*19,H-1);build(W-1,i*15);}
     std::vector<int> ids;
     for(auto& t:movers)for(int k=0;k<6;++k)ids.push_back(f.spawn(t,20+k*4,110,0));
     f.start();
@@ -2375,10 +2382,12 @@ StaticIndexRun staticindexRun(bool index,bool serial) {
     return out;
 }
 void staticindex() {
-    const auto ref=staticindexRun(false,true);
-    check(staticindexRun(true,true)==ref,"structure index run differs from the reference walk (serial)");
-    check(staticindexRun(true,false)==ref,"structure index run differs from the reference walk (workers)");
-    check(staticindexRun(false,false)==ref,"reference walk serial and workers differ");
+    for(const bool odd:{false,true}) {
+        const auto ref=staticindexRun(false,true,odd);
+        check(staticindexRun(true,true,odd)==ref,"structure index run differs from the reference walk (serial)");
+        check(staticindexRun(true,false,odd)==ref,"structure index run differs from the reference walk (workers)");
+        check(staticindexRun(false,false,odd)==ref,"reference walk serial and workers differ");
+    }
 }
 }
 
