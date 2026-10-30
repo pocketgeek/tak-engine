@@ -1067,7 +1067,12 @@ static void classicRaid(const char* root) {
                 "(%d first points within reach of a raider, %d not), %u retreats; ring 0 %.0f px\n",idlePatrols,
                 idleOutside,int(reacted.size()),threatNear,threatFar,brain.retreats(),double(ring0));
     check(idlePatrols>=6 && idleOutside==0,"before the raid every idle soldier patrols inside the base ring");
-    check(reacted.size()>=4,"raiders inside the ring-0 radius send the soldiers at them");
+    // How many: a member whose target, goal or position is within max(sight,
+    // range) of a raider keeps what it is doing on 49 of 50 base thinks
+    // (classicPlanCombat), so past the first think, which sends the others (two
+    // here), the count is those draws and the fight's course: main 259d26a5
+    // sends 2-5 with the raiders shifted 0-24 px.
+    check(reacted.size()>=2,"raiders inside the ring-0 radius send the soldiers at them");
     check(threatNear>=threatFar,"most of the defenders' first points lie within reach of a raider");
     check(earlyRetreats==0,"the Monarch at full HP does not retreat with its ground army around it");
     check(retreat.tick>0 && retreat.tick<kWound+120,"below its HP threshold the Monarch retreats within 4 s");
