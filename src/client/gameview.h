@@ -1314,6 +1314,17 @@ private:
     // GROUND bodies and the AIR bodies -- see the shadow pass for why.
     std::vector<const UnitGeom*> airShadows_;
     size_t airShadowOp_ = SIZE_MAX;   // drawOps_ index to drain airShadows_ before
+    // drawOps_ index of the first AIRBORNE body (SIZE_MAX: none this frame). The
+    // replay stops here and draws the rest after the shots and effects: retail's
+    // world pass (0x4fc648) draws the airborne units after 52b210 (shots) and
+    // 492070 (debris, explosions), so a flyer is never under a ground fight's fx.
+    size_t airOp_ = SIZE_MAX;
+#ifndef NDEBUG
+    // Draw-order probe (TAK_AIR_OVER_FX_TEST): 'g' ground body replay, 'e' the
+    // effects pass, 'a' the airborne body replay, in the order this frame ran them.
+    std::string debugPaintOrder_;
+    size_t debugAirOps_ = 0;   // airborne draw ops replayed this frame
+#endif
 
     // Reused scratch vertices for order markers, progress bars and minimap dots.
     std::vector<SDL_Vertex> overlayBatch_;

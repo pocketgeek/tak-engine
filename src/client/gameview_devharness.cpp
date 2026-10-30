@@ -22,6 +22,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 
 #ifndef NDEBUG
 
@@ -624,6 +625,86 @@
             check(bar(own) && bar(foeSeen) && bar(foeHidden) && bar(thirdHidden),
                   "spectator: every side's bars drawn");
             std::fprintf(stderr,"PASS: spectator bars (%zu bars)\n",debugHealthBarIds_.size());
+            return;
+        }
+        if (tak::devFlag("TAK_AIR_OVER_FX_TEST")) {
+            // Retail's world pass (0x4fc648) draws the airborne units after the
+            // shots (52b210) and the effect manager (492070: debris, explosions):
+            // a ground fight's explosion never paints over a flyer passing above.
+            // Through the real draw(): the replay order, and the flyer's own
+            // pixels with and without an explosion glow centred on it.
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("air over fx: "+what);
+                std::fprintf(stderr,"PASS: air over fx: %s\n",what.c_str());
+            };
+            constexpr int W=1024,H=768;
+            noFog_=true;edgeScrollOn_=false;
+            // A flyer's ground shadow is not its body: keep it out of the pixels.
+            const bool shadows=!settings_ || settings_->unitShadows;
+            if (settings_) settings_->unitShadows=false;
+            const float x0=float(mapView_.map().blocksX)*16.0f,z0=float(mapView_.map().blocksY)*16.0f;
+            const int flyer=spawn("aradrag",x0,z0,0,0);
+            check(flyer>=0,"fixture spawned");
+            writableWorld().order(flyer,x0+3000,z0,false);
+            float offX=0,offY=0;
+            std::vector<uint8_t> px;
+            int ow=0,oh=0;
+            const auto frame=[&](bool follow,const char* capture) {
+                captureFrame();beginFrame();cosmeticStep(0);
+                mapView_.setZoom(1.0f);
+                if (const auto* r=frameUnitP(flyer); r && follow) {
+                    offX=r->x-float(W-300)*0.5f;offY=r->z-float(H)*0.5f;
+                }
+                mapView_.setOffset(offX,offY);
+                prepare(W,H);draw(W,H);
+                SDL_GetRendererOutputSize(ren_,&ow,&oh);
+                px.assign(size_t(ow)*size_t(oh)*4,0);
+                SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px.data(),ow*4);
+                if (capture) tak::png::write(capture,ow,oh,px);
+                endFrame();
+            };
+            // Up and well clear of the ground.
+            float altitude=0;
+            for (int t=0;t<600 && altitude<40;++t) {
+                writableWorld().tick(1.f/30);
+                frame(true,nullptr);
+                if (const auto a=anims_.find(flyer);a!=anims_.end()) altitude=a->second.altitude;
+            }
+            check(altitude>=40,"the flyer is airborne");
+            const char* capture=tak::devEnv("TAK_AIR_OVER_FX_CAPTURE");
+            const std::string base=capture ? capture : "";
+            explosionGlows_.clear();
+            frame(true,capture ? (base+"-plain.png").c_str() : nullptr);
+            const std::vector<uint8_t> plain=px;
+            const auto* r=frameUnitP(flyer);
+            check(r!=nullptr,"the flyer is in the frame");
+            const SDL_FPoint p=unitScreen(*r);
+            check(p.x>32 && p.y>32 && p.x<float(W-332) && p.y<float(H-32),"the flyer is on screen");
+            // A large explosion glow centred on the flyer's body (unitScreen) and
+            // a control glow over bare ground 200 px to its left.
+            const float zm=mapView_.zoom();
+            const float alt=r->z-mapView_.offY()-terrainLift(r->x,r->z)-p.y/zm;
+            explosionGlows_.push_back({r->x,r->z,alt,front().gameTick,2,std::nullopt});
+            explosionGlows_.push_back({r->x-200,r->z,alt,front().gameTick,2,std::nullopt});
+            frame(false,capture ? (base+"-glow.png").c_str() : nullptr);
+            check(debugGlowDrawCount_==2,"both glows drew");
+            check(debugPaintOrder_=="gea" && debugAirOps_>0,
+                  "ground bodies, then effects, then the airborne bodies ("+debugPaintOrder_+")");
+            const auto changed=[&](float cx,float cy,int half) {
+                int n=0;
+                for (int y=int(cy)-half;y<=int(cy)+half;++y)
+                    for (int x=int(cx)-half;x<=int(cx)+half;++x) {
+                        const size_t i=(size_t(y)*size_t(ow)+size_t(x))*4;
+                        n+=std::memcmp(&plain[i],&px[i],3)!=0;
+                    }
+                return n;
+            };
+            const int control=changed(p.x-200*zm,p.y,3),body=changed(p.x,p.y,3);
+            check(control>=40,"the control glow changes the bare ground ("+std::to_string(control)+" of 49 px)");
+            check(body==0,"the glow under the flyer leaves its body untouched ("+std::to_string(body)+" of 49 px)");
+            explosionGlows_.clear();
+            if (settings_) settings_->unitShadows=shadows;
+            std::fprintf(stderr,"PASS: air over fx (altitude %.0f)\n",altitude);
             return;
         }
         if (tak::devFlag("TAK_TACTICAL_DOTS_TEST")) {

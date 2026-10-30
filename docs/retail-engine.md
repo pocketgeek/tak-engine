@@ -229,7 +229,11 @@ weapon slots is **auto** or **manual**:
 - **Hit response** (`409a50`): (a) an idle unit runs a leashed retaliation
   attack and walks back; (b) otherwise the attacker goes to every auto slot that
   can reach it unless the current target is still good. AI owners also switch
-  weapons (`51a8b0`) and sweep `commandfire` weapons; human owners do not.
+  weapons (`51a8b0`) and sweep `commandfire` weapons; human owners do not. A
+  unit with construction left (`+0x108 != 0`, tested at `409b56..409b67`,
+  after the AI-Monarch threat roll, the attacker check and the armed check)
+  skips both parts; before 0.9.12 an unfinished site under fire took its
+  attacker as an attack order it could not carry out until finished.
 
 Deviations: auto slots of ranged ground weapons whose shot flies the line
 (not a plain Ballistic shell, `Weapon::needsClearLine`) keep our 2D clear-shot
@@ -1525,6 +1529,36 @@ because a mobile producer (a Zhon builder, Ctrl+click repeat production)
 builds its next unit on the same spot. (The Legion column behind the first
 ground output is gone: see "Legion: a spot of its own" above.)
 
+Placement over scenery (S yards, icd + emulation, 2026-10-30): the FBI parse
+(`4c0f59..4c101f`) advances the yardmap pointer only while a next character
+exists, so a one-character `yardmap=S` -- every Lodestone and Divine
+Lodestone -- fills the whole footprint, and `S` decodes to mask `0x8f`
+(`4c0fe3`, which also sets type `+0x264` bit 31). In `507400` that mask tests
+sacred-site coverage (bit `0x80`: the covered cells of a `sacredsite` feature
+must reach its fx x fz), the footprint's height range against `maxslope`
+(bit 8), water depth and unit occupancy (bits 2|4), but no feature bit
+(`0x20`/`0x40`), so features under the yard are never tested. Emulated: a 3x3
+`0x8f` yard over a 2x2 sacred feature passes at all four covering origins,
+one with a blocking feature on its corner; two of four sacred cells is
+refused, an `o` yard (`0x2f`) on the blocker is refused, and a live lodestone
+on the site refuses every origin. Ours (`World::placementCheck`, protocol 305,
+0.9.12): an S cell of a structure tests the terrain-only grid and leaves
+buildings and units to the occupancy test, ignoring the obstacle overlay, so
+on Inner Circle the Divine Lodestone is admitted at the three covering origins
+whose corner holds a ZonHenge05 Standing Stone (north site 127,36, west site
+23,76 and 24,76), which it refused before. Deviations: a blocker the
+simulation can remove later (a registered feature, a wreck) still refuses an S
+cell, so a build order reclaims it first, because the obstacle overlay keeps
+one bit per cell and its removal would clear the lodestone's own cells; the
+height-range rule is not ported for any yard (cells use the movement grid's
+per-cell test); the in-place upgrade over the player's own Lodestone is kept
+(retail refuses it); on a map without sacred sites, where the engine lets a
+lodestone stand on open ground (retail's coverage bit refuses it everywhere),
+nothing ties the footprint to a site, so its cells keep the overlay test and a
+lodestone never lands on a wall cell or a rock there. A lodestone built over
+fixed obstacles records them (`World::sacredUnderlay_`) and leaves them
+blocked when it is destroyed. Test: `sacred_yard`.
+
 Placement: retail's structure placement (`507400`) tests the ground word,
 which holds a mobile body only while landed (`5066f0`). Ours matches:
 `searchBodyRect` skips a flyer whose `flightGroundMode` is not 1, and
@@ -2607,11 +2641,17 @@ key:
   3. **Rows, top to bottom** (`0x4fc9c1..0x4fcb2c`): that row's ground units
      (`+0x130 & 3 == 1`, drawn by `0x4ee700`), then that row's deferred tall
      features (`0x4fca83..0x4fcaf6`).
-  4. **Everything else last** (`0x4fcbab..0x4fcc27`): the units with
+  4. **Shots and effects** (2026-10-30): `421d00` (the transport effect),
+     `52b210` (the shot pool at `0x641208`, each weapon class's draw virtual),
+     then `492cb0` -> `492070`, the effect manager, whose first call (`492590`)
+     draws the debris and then the explosions.
+  5. **Everything else last** (`0x4fcbab..0x4fcc27`): the units with
      `+0x130 & 3 != 1`, inferred to be the airborne ones.
 
 So a stump, crop row, smudge or mana decal is never painted over a unit, a tree
-paints over every ground unit of its own row and the rows above it, and a flyer paints over everything.
+paints over every ground unit of its own row and the rows above it, debris and
+explosions paint over every ground unit and feature, and a flyer paints over
+everything, debris, explosions and shots included.
 
 There is no per-pixel depth test between sprites and models (medium-high
 confidence): see the Glide depth-buffer scan in "Retail does not sort 3DO
@@ -2632,7 +2672,15 @@ it by layer, then by map z:
     (map z), not by 16-pixel rows. Inside one row retail draws all the units
     before all the tall features; we interleave them by z, which differs only
     when a unit and a tall feature share a row.
-  * `kLayerAir` (1): airborne flyers, after everything -- retail's step 4.
+  * `kLayerAir` (1): airborne flyers, after everything -- retail's step 5.
+    The body replay stops at the first air item (`GameView::airOp_`) and draws
+    the air bodies after the shots and `drawParticles` / `drawEffects` /
+    `drawUnitFx`, before the fog. Before 0.9.12 they were drawn in the body
+    pass, so a ground fight's debris, explosions and shots painted over a
+    flyer passing above. The airborne flyers' shadows stay at the ground ->
+    air boundary of the body pass, under the shots and effects (retail draws a
+    unit's shadow inside its own draw, so a flyer's shadow comes after the
+    effects there). Test: `air_over_fx` (`TAK_AIR_OVER_FX_TEST`).
 
 HIDDEN UNITS (Options > Graphics, default FADE) is a non-retail extra on top
 of this order: a ground unit that a tall feature or a building paints over is
