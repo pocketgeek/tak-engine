@@ -51,6 +51,12 @@ their validation reports; both live in [`docs/`](docs/).
   lodestone just out of range, and a Crossbowman, Shaman, mage or dragon
   ordered onto a building walks into range and hits it instead of stopping
   short.
+- **Kirenna no longer always stands without firing after walking up to a
+  target.** Her aim waits for her walk to settle, and the engine aimed the
+  instant she stopped. Now, as in the original game, an attack aims a moment
+  after the attacker stops, and a unit's own scripts hear it turn. Like the
+  original, she still stalls when she stops mid-stride (until she moves
+  again).
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
   at +10, 0.9.11 fell to -2 at about 2,700 units, with 219 ticks over 250 ms;
   0.9.12 held +9 to +10 to 3,160 units with no tick over 100 ms:
