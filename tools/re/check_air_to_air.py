@@ -1,0 +1,481 @@
+#!/usr/bin/env python3
+"""Compare AirToAir (41ca50), the attack mission of a flyer whose target can
+fly, and VTOL_Evade (41e3d0), the break-off it pushes, with retailAirToAir and
+retailAirEvade (src/sim/retailairtoair.h). Also the facing test both use
+(41d780) and the moving controller they install (vtable 5f29a8: 4e48d0,
+4e4b70, 4e4be0).
+
+The handlers run natively on random states of every stage: the pursuit and
+reposition points, the evade accumulator at mission +0x4e, the break-off, the
+retarget scan of an auto attack, the return from off the map, the 0x28/0x40
+events and every random draw (535cc0, native, state at 0x64186c). Native too:
+41d780, 51b340, 53612a, 5360bf/5360f3, 536143, 421ae0, 519ac0, 4d6a10 and the
+x87 helpers. Host stubs record their arguments: the led SweetSpot 51aa50
+(answers a controlled point), the slot calls, BeginFlight 416c50, the target
+scan 4d8370 and attack 4d7de0 (controlled answers), controller allocation and
+construction (4e40e0 + radius 4e4540, 4e4560; 4e4c60 runs natively on the
+returned buffer), installation 4d4d40 (clears the pending controller events
+as it does), and the mission push (4d4bf0 + 4d6c40 + 4d7750). The group check
+51d1e0 answers no group and the air-traffic counter (unit +0x12a) stays below
+the step-out threshold: neither is ported. A lost target's VTOL_SEEKATTACK
+push (41d654) is counted, not compared: World drops the order.
+
+    python3 tools/re/check_air_to_air.py [build-o2/retail_motion_test]
+"""
+import math
+import random
+import struct
+import subprocess
+import sys
+
+from emu import Icd, HEAP
+from unicorn import UC_HOOK_CODE
+from unicorn.x86_const import UC_X86_REG_ESP, UC_X86_REG_FPCW
+
+RNG = 0x64186c
+
+
+def s32(v):
+    return (v + 2**31) % 2**32 - 2**31
+
+
+def main():
+    binary = sys.argv[1] if len(sys.argv) > 1 else 'build-o2/retail_motion_test'
+    p = Icd()
+    p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
+    unit, kind, mover, weapon, target, target_kind, target_mover, mission, offmap, sector, point_goal, \
+        moving_goal, pushed, owner = [HEAP + i * 0x1000 for i in range(14)]
+    game = HEAP + 0x20000   # the game record reaches past +0x19f44
+
+    def put(address, fmt, *values):
+        p.uc.mem_write(address, struct.pack('<' + fmt, *values))
+
+    def get(address, fmt='I'):
+        return struct.unpack('<' + fmt, p.uc.mem_read(address, struct.calcsize(fmt)))[0]
+
+    put(0x62d55c, 'I', game)
+    put(game + 0x19f30, 'I', offmap)
+    log = {}
+    answers = {}
+
+    def record(name, value=None):
+        log.setdefault(name, []).append(value)
+
+    def allocate(uc, args):
+        size = get(args)
+        if size == 0x36:
+            return 0, point_goal
+        if size == 0x2c:
+            p.uc.mem_write(moving_goal, bytes(0x2c))
+            return 0, moving_goal
+        if size == 0x72:
+            return 0, pushed
+        raise AssertionError('unexpected allocation of %#x bytes' % size)
+
+    def point_ctor(uc, args):      # 4e40e0(mission, &point), thiscall
+        record('point', struct.unpack('<3i', uc.mem_read(get(args + 4), 12)))
+        put(point_goal + 0xa, 'h', 0)
+        return 2, point_goal
+
+    def radius(uc, args):          # 4e4540(radius), thiscall
+        record('radius', s32(get(args)) & 0xffff)
+        return 1, 0
+
+    def moving_ctor(uc, args):     # 4e4560(mission, &point, &velocity), thiscall
+        point = struct.unpack('<3i', uc.mem_read(get(args + 4), 12))
+        velocity = struct.unpack('<3i', uc.mem_read(get(args + 8), 12))
+        record('moving', (point, velocity))
+        return 3, moving_goal
+
+    def install(uc, args):         # 4d4d40(controller), thiscall on the mission
+        controller = get(args)
+        record('install', controller)
+        if controller:
+            put(mission + 0x6a, 'I', get(mission + 0x6a) & 0xffffc8ff)
+        return 1, 0
+
+    def descriptor(uc, args):      # 4d4bf0(name), thiscall
+        name = bytes(uc.mem_read(get(args), 32)).split(b'\0')[0].decode()
+        record('descriptor', name)
+        return 1, 0
+
+    def build(uc, args):           # 4d6c40, thiscall, 12 dwords
+        put(pushed + 4, 'B', answers['inserted'])
+        return 12, pushed
+
+    def scan(uc, args):            # 4d8370(unit)
+        record('scan')
+        return 1, answers['scan']
+
+    def attack(uc, args):          # 4d7de0(unit, target, 0, 0, 1, 0)
+        values = struct.unpack('<6I', uc.mem_read(args, 24))
+        if values != (unit, answers['scan'], 0, 0, 1, 0):
+            raise AssertionError(('attack', values))
+        record('attack')
+        return 6, answers['attack']
+
+    def lead(uc, args):            # 51aa50(unit, &out, slot)
+        if get(args) != unit or get(args + 8) & 0xff != 0:
+            raise AssertionError('lead for another unit or slot')
+        p.uc.mem_write(get(args + 4), struct.pack('<3i', *answers['lead']))
+        return 3, 1
+
+    def unexpected(name):
+        def hook(uc, args):
+            raise AssertionError('unexpected call to ' + name)
+        return hook
+
+    p.hooks[0x51d1e0] = lambda uc, a: (3, 0)                       # no group
+    p.hooks[0x4eb9e0] = allocate
+    p.hooks[0x4e40e0] = point_ctor
+    p.hooks[0x4e4540] = radius
+    p.hooks[0x4e4560] = moving_ctor
+    p.hooks[0x4d4d40] = install
+    p.hooks[0x4d4bf0] = descriptor
+    p.hooks[0x4d6c40] = build
+    p.hooks[0x4d7750] = lambda uc, a: (record('push', get(a + 4)), (2, 0))[1]
+    p.hooks[0x4d77b0] = lambda uc, a: (record('insert', get(a + 4)), (2, 0))[1]
+    p.hooks[0x4d6da0] = lambda uc, a: (record('destroy'), (0, 0))[1]
+    p.hooks[0x4eba00] = lambda uc, a: (0, 0)
+    p.hooks[0x4d8370] = scan
+    p.hooks[0x4d7de0] = attack
+    p.hooks[0x51aa50] = lead
+    p.hooks[0x416c50] = lambda uc, a: (record('begin', struct.unpack('<4I', uc.mem_read(a, 16))), (4, 0))[1]
+    p.hooks[0x519b10] = lambda uc, a: (record('auto', get(a) & 0xff), (1, 0))[1]
+    p.hooks[0x519b70] = lambda uc, a: (record('manual', get(a) & 0xff), (1, 0))[1]
+    p.hooks[0x51a700] = lambda uc, a: (record('aim', (get(a), get(a + 4), get(a + 8) & 0xff)), (3, 0))[1]
+    for address, name in [(0x50c480, 'group leave'), (0x51a770, 'ground aim')]:
+        p.hooks[address] = unexpected(name)
+    p.freeze_hooks()
+    draws = [0]
+    bounds = []
+
+    def draw(uc, address, size, data):
+        draws[0] += 1
+        bounds.append(get(uc.reg_read(UC_X86_REG_ESP) + 4))
+    p.uc.hook_add(UC_HOOK_CODE, draw, begin=0x535cc0, end=0x535cc0)
+
+    rng = random.Random(0x41ca50)
+
+    def run(port_mode, rows):
+        output = subprocess.run([binary, port_mode], input='\n'.join(rows) + '\n',
+                                text=True, capture_output=True, check=True)
+        return [tuple(map(int, line.split())) for line in output.stdout.splitlines()]
+
+    def compare(name, fixtures, expected, actual):
+        if len(actual) != len(expected):
+            raise AssertionError('%s: row count %d, expected %d' % (name, len(actual), len(expected)))
+        for i, (got, want) in enumerate(zip(actual, expected)):
+            if got != want:
+                raise AssertionError('%s fixture %d: %s\n  port   %s\n  native %s' % (name, i, fixtures[i], got, want))
+
+    # --- 41d780 ----------------------------------------------------------
+    fixtures, expected = [], []
+    a_unit, b_unit = unit, target
+    for i in range(20000):
+        ax, az = rng.randrange(-2**28, 2**28), rng.randrange(-2**28, 2**28)
+        spread = rng.choice((0, 1, 65536, 20 * 65536, 300 * 65536, 2**28))
+        bx, bz = ax + rng.randrange(-spread, spread + 1), az + rng.randrange(-spread, spread + 1)
+        heading, octant = rng.randrange(65536), rng.randrange(8)
+        put(a_unit + 0x68, 'iii', ax, 0, az)
+        put(b_unit + 0x68, 'iii', bx, 0, bz)
+        put(b_unit + 0x7e, 'H', heading)
+        result, error = p.call(0x41d780, (a_unit, b_unit, octant))
+        if error:
+            raise AssertionError((i, error))
+        expected.append((result & 0xff,))
+        fixtures.append('%d %d %d %d %d %d' % (ax, az, bx, bz, heading, octant))
+    compare('41d780', fixtures, expected, run('--air-ahead', fixtures))
+    print('41d780: %d facing tests match (%d ahead)' % (len(fixtures), sum(r[0] for r in expected)))
+
+    # --- the moving controller ------------------------------------------
+    fixtures, expected = [], []
+    controller = moving_goal
+    put(owner + 8, 'I', mover)
+    put(owner + 0xb4, 'I', kind)
+    put(mover + 0x36, 'H', 0)
+    for i in range(20000):
+        point = [rng.randrange(-2**27, 2**27) for _ in range(3)]
+        velocity = [rng.choice((0, rng.randrange(-8 * 65536, 8 * 65536), rng.randrange(-65536, 65536)))
+                    for _ in range(3)]
+        if i % 9 == 0:
+            velocity = [0, 0, 0]
+        heading, turns = rng.randrange(65536), rng.randrange(2)
+        turn_rate = rng.choice((0, 7, 8, 100, 115, 200, 500, 700, 1000, rng.randrange(65536)))
+        near = rng.choice((0, 30, 47, 48, 49, 200, 400))
+        ox = point[0] + velocity[0] + rng.randrange(-near, near + 1) * 65536 + rng.randrange(65536)
+        oz = point[2] + velocity[2] + rng.randrange(-near, near + 1) * 65536 + rng.randrange(65536)
+        if i % 13 == 0:   # exactly 48 px out along x, after the move
+            ox, oz = point[0] + velocity[0] + 48 * 65536 + rng.choice((-1, 0, 1)), point[2] + velocity[2]
+        body = rng.randrange(65536)
+        p.uc.mem_write(controller, bytes(0x2c))
+        put(controller, 'I', 0x5f29a8)
+        put(controller + 8, 'H', turns)
+        put(controller + 0xa, 'iii', *point)
+        put(controller + 0x16, 'iii', *velocity)
+        put(controller + 0x24, 'H', heading)
+        put(controller + 0x28, 'I', owner)
+        put(kind + 0x18e, 'H', turn_rate)
+        put(owner + 0x68, 'iii', ox, 0, oz)
+        put(owner + 0x7e, 'H', body)
+        out = HEAP + 0x30000
+        p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
+        result, error = p.call(0x4e48d0, (out,), ecx=controller)
+        if error or result != 1:
+            raise AssertionError((i, error, result))
+        answer = struct.unpack('<3i', p.uc.mem_read(out, 12))
+        moved = struct.unpack('<3i', p.uc.mem_read(controller + 0xa, 12))
+        turned = struct.unpack('<3i', p.uc.mem_read(controller + 0x16, 12))
+        accept, error = p.call(0x4e4be0, (owner,), ecx=controller)
+        if error:
+            raise AssertionError((i, error))
+        result, error = p.call(0x4e4b70, (out,), ecx=controller)
+        if error or result != 1:
+            raise AssertionError((i, error, result))
+        expected.append((*answer, moved[0], moved[2], *turned, accept & 0xff, get(out, 'H')))
+        fixtures.append(' '.join(map(str, (*point, *velocity, heading, turns, turn_rate, ox, oz, body))))
+    compare('5f29a8', fixtures, expected, run('--air-intercept', fixtures))
+    print('5f29a8: %d navigator calls match (%d within 48 px, %d turned)' %
+          (len(fixtures), sum(r[8] for r in expected),
+           sum(1 for f, r in zip(fixtures, expected) if tuple(map(int, f.split()))[3:6] != r[5:8])))
+
+    # --- AirToAir 41ca50 -------------------------------------------------
+    put(unit + 0x8, 'I', mover)
+    put(unit + 0xb4, 'I', kind)
+    put(unit + 0xc, 'I', weapon)
+    put(unit + 0x28, 'I', 0)
+    put(unit + 0x44, 'I', 0)
+    put(unit + 0x12a, 'B', 0)
+    put(target + 0x8, 'I', target_mover)
+    put(target + 0x114, 'B', 0)
+    put(target + 0xb4, 'I', target_kind)
+    put(target_kind + 0x260, 'I', 0x800)
+    fixtures, expected = [], []
+    seeks = 0
+    stats = {}
+    for i in range(12000):
+        stage = rng.choice((0, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3))
+        events = rng.choice((0, 0, 0, 1, 1, 1, 0x100, 0x400, 0x8, 0x20, 0x40, 0x41, 0x28, 0x700))
+        tick = rng.randrange(1000000)
+        deadline = rng.choice((0xffffffff, rng.randrange(2**32)))
+        pending = rng.choice((0, 0x100, 0x500, 0x3700, 0xffff, rng.randrange(2**32)))
+        flags = rng.choice((0, 0, 0x1000200, 0x8000000, 0x9000200))
+        count = rng.choice((0, 0, 7, 21, 40, 60, 90, 118, 119, 200, rng.randrange(-50, 300)))
+        width = rng.choice((4096 - 32, 8192 - 32, rng.randrange(256, 12000)))
+        height = rng.choice((4096 - 128, 8192 - 128, rng.randrange(256, 12000)))
+        x = rng.randrange(0, width) * 65536 + rng.randrange(65536)
+        z = rng.randrange(0, height) * 65536 + rng.randrange(65536)
+        y = rng.randrange(0, 512) * 65536
+        weapon_reach = rng.choice((0, 0, 0, 1, 50, 150, rng.randrange(65536)))
+        unit_reach = rng.choice((100, 100, 212, 0, 1, 2, 3, 7, 141, 250, rng.randrange(1000), rng.randrange(65536)))
+        reach = weapon_reach or unit_reach
+        spread = rng.choice((0, 16, reach // 4 + 1, reach // 2 + 1, reach + 1, 2 * reach + 1, 6 * reach + 40, 3000))
+        tx = x + rng.randrange(-spread, spread + 1) * 65536 + rng.randrange(65536)
+        tz = z + rng.randrange(-spread, spread + 1) * 65536 + rng.randrange(65536)
+        ty = rng.randrange(0, 512) * 65536
+        lead = (s32(tx + rng.randrange(-40, 41) * 65536), s32(ty + rng.randrange(0, 40) * 65536),
+                s32(tz + rng.randrange(-40, 41) * 65536))
+        if i % 17 == 0:
+            lead = (s32(x), s32(ty), s32(z))
+        heading, target_heading = rng.randrange(65536), rng.randrange(65536)
+        if i % 5 == 0:   # the target straight ahead of or behind the flyer
+            angle = rng.choice((heading, (heading + 0x8000) & 0xffff))
+            d = rng.randrange(1, 400)
+            tx = x - int(d * 65536 * math.sin(angle * math.pi / 32768))
+            tz = z - int(d * 65536 * math.cos(angle * math.pi / 32768))
+            target_heading = (rng.choice((heading, heading + 0x8000, heading + 0x4000)) + rng.randrange(-0x1000, 0x1000)) & 0xffff
+        velocity = tuple(rng.randrange(-6 * 65536, 6 * 65536) for _ in range(3))
+        max_speed = rng.choice((rng.randrange(65536, 6 * 65536), 3 * 65536, 0))
+        speed = rng.choice((0, max_speed // 2, max_speed // 2 + 1, max_speed, rng.randrange(0, 6 * 65536)))
+        automatic = rng.randrange(2)
+        flies = 0 if i % 41 == 0 else 1
+        on_map = rng.random() < 0.94
+        seed = rng.randrange(2**32)
+        found = rng.choice((0, target, unit + 0x800))
+        answers.update(scan=found, attack=rng.choice((0, 1)), inserted=rng.choice((0, 1, 1, 1)), lead=lead)
+        retarget = int(found not in (0, target) and answers['attack'] != 0)
+        fire_bits = rng.choice((0, 0, 0x40000, 0xc0000))
+
+        put(game + 0x19f44, 'I', tick)
+        put(game + 0x19e90, 'I', width)
+        put(game + 0x19e94, 'I', height)
+        put(unit + 0x130, 'I', 0x9000000 | fire_bits)
+        put(unit + 0x68, 'iii', s32(x), s32(y), s32(z))
+        put(unit + 0x7e, 'H', heading)
+        put(unit + 0xa4, 'I', sector if on_map else offmap)
+        p.uc.mem_write(unit + 0x12b, struct.pack('<i', max_speed))
+        put(mover + 0x20, 'i', speed)
+        put(mover + 0x36, 'H', 0)
+        put(kind + 0x260, 'I', 0x800 if flies else 0)
+        put(kind + 0x25a, 'H', unit_reach)
+        put(weapon + 0xc6, 'H', weapon_reach)
+        put(target + 0x130, 'I', rng.choice((0x1000001, 0x1000002)))
+        put(target + 0x68, 'iii', s32(tx), s32(ty), s32(tz))
+        put(target + 0x7e, 'H', target_heading)
+        put(target_mover + 8, 'iii', *velocity)
+        put(mission + 5, 'B', stage)
+        put(mission + 6, 'I', 0)
+        put(mission + 0xa, 'I', deadline)
+        put(mission + 0x16, 'I', target)
+        put(mission + 0x4e, 'i', count)
+        put(mission + 0x52, 'I', automatic)
+        put(mission + 0x56, 'I', 0)
+        put(mission + 0x5a, 'I', flags)
+        put(mission + 0x66, 'I', 0)
+        put(mission + 0x6a, 'I', pending)
+        put(point_goal + 0xa, 'h', 0)
+        put(RNG, 'I', seed)
+        log.clear()
+        draws[0] = 0
+        bounds.clear()
+        p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
+        result, error = p.call(0x41ca50, (unit, mission, events))
+        if error:
+            raise AssertionError((i, error))
+        names = log.get('descriptor', [])
+        seek = names.count('VTOL_SEEKATTACK')
+        seeks += seek
+        evades = names.count('VTOL_EVADE')
+        if set(names) - {'VTOL_SEEKATTACK', 'VTOL_EVADE'}:
+            raise AssertionError((i, 'pushed', names))
+        installs = [c for c in log.get('install', []) if c]
+        releases = log.get('install', []).count(0)
+        if log.get('begin') and log['begin'][0] != (unit, mission, 0, 0):
+            raise AssertionError((i, 'begin', log['begin']))
+        if any(s != 3 for s in log.get('auto', [])) or any(s != 0 for s in log.get('manual', [])) or \
+                any(a != (unit, target, 0) for a in log.get('aim', [])):
+            raise AssertionError((i, 'slot calls', log))
+        points, moving = log.get('point', []), log.get('moving', [])
+        if len(installs) != len(points) + len(moving):
+            raise AssertionError((i, 'installed a controller it did not build', log))
+        goal = points[-1] if points else (0, 0, 0)
+        goal_radius = log['radius'][-1] if points else 0
+        if moving:
+            (mx, my, mz), (vx, vy, vz) = moving[-1]
+            mh = get(moving_goal + 0x24, 'H')
+            if not get(moving_goal + 8, 'H') & 1:
+                raise AssertionError((i, 'moving controller without a heading'))
+        else:
+            mx = my = mz = vx = vy = vz = mh = 0
+        if log.get('push') and log['push'][-1] != pushed or log.get('insert') and log['insert'][-1] != pushed:
+            raise AssertionError((i, 'pushed another mission'))
+        expected.append((s32(result), get(mission + 5, 'B'), get(mission + 6), get(mission + 0xa),
+                         get(mission + 0x6a), get(mission + 0x5a), get(mission + 0x4e, 'i'), len(points),
+                         len(moving), *goal, goal_radius, mx, my, mz, vx, vy, vz, mh,
+                         len(log.get('begin', [])), len(log.get('auto', [])), len(log.get('scan', [])),
+                         releases, evades, get(RNG), draws[0]))
+        fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, count, s32(x), s32(y),
+                                           s32(z), heading, s32(tx), s32(ty), s32(tz), target_heading, *velocity,
+                                           *lead, speed, max_speed, reach, automatic, flies, int(on_map), width,
+                                           height, seed, retarget, answers['inserted']))))
+        # Which branch: a reposition draws rand(0x8000), a break-off pushes
+        # VTOL_Evade, a pursuit installs the controller with neither.
+        kind_of = 'evade' if evades else 'reposition' if moving and 0x8000 in bounds else \
+            'pursuit' if moving else 'off-map' if points else 'other'
+        stats[kind_of] = stats.get(kind_of, 0) + 1
+    compare('41ca50', fixtures, expected, run('--air-to-air', fixtures))
+    print('41ca50: %d handler calls match %s; %d lost-target VTOL_SEEKATTACK pushes not ported' %
+          (len(fixtures), stats, seeks))
+
+    # --- VTOL_Evade 41e3d0 -----------------------------------------------
+    fixtures, expected = [], []
+    stats = {}
+    put(target_mover + 0x36, 'H', 0)
+    for i in range(12000):
+        stage = rng.choice((0, 0, 0, 1, 1, 1, 1, 1, 1, 2))
+        events = rng.choice((0, 0, 0, 1, 1, 0x100, 0x8, 0x20, 0x40, 0x41, 0x700))
+        tick = rng.randrange(1000000)
+        deadline = rng.choice((0xffffffff, rng.randrange(2**32)))
+        pending = rng.choice((0, 0x100, 0x3700, rng.randrange(2**32)))
+        flags = rng.choice((0, 0x1000200, 0x8000000))
+        maneuver = rng.choice((0, 0, 1, 2, 3, 4, 4, 5, 6, 7, -1))
+        budget = rng.choice((0, -3, 1, 4, 5, 9, 10, 19, 20, 33, 34, 50, 88, rng.randrange(-20, 120)))
+        width = rng.choice((4096 - 32, rng.randrange(256, 12000)))
+        height = rng.choice((4096 - 128, rng.randrange(256, 12000)))
+        x = rng.randrange(0, width) * 65536 + rng.randrange(65536)
+        z = rng.randrange(0, height) * 65536 + rng.randrange(65536)
+        y = rng.randrange(0, 512) * 65536
+        weapon_reach = rng.choice((0, 0, 30, rng.randrange(65536)))
+        unit_reach = rng.choice((100, 212, 0, 2, rng.randrange(1000)))
+        reach = weapon_reach or unit_reach
+        spread = rng.choice((0, 1, 2, 30, reach + 1, 3 * reach + 1, 2000))
+        tx = x + rng.randrange(-spread, spread + 1) * 65536 + rng.randrange(65536)
+        tz = z + rng.randrange(-spread, spread + 1) * 65536 + rng.randrange(65536)
+        heading = rng.randrange(65536)
+        max_speed = rng.choice((rng.randrange(65536, 6 * 65536), 229376, 252314, 7 * 65536))
+        type_speed = rng.choice((rng.randrange(1, 8 * 65536), 3 * 65536, 229376))
+        target_type_speed = rng.choice((rng.randrange(1, 8 * 65536), type_speed * 4 // 5, type_speed // 2,
+                                        type_speed // 2 + 1, 255590))
+        turn_rate = rng.choice((115, 200, 500, 700, rng.randrange(65536)))
+        target_turn_rate = rng.choice((200, 500, turn_rate * 4 // 5, rng.randrange(65536)))
+        flies = 0 if i % 43 == 0 else 1
+        on_map = rng.random() < 0.95
+        seed = rng.randrange(2**32)
+
+        put(game + 0x19f44, 'I', tick)
+        put(game + 0x19e90, 'I', width)
+        put(game + 0x19e94, 'I', height)
+        put(unit + 0x130, 'I', 0x9000000)
+        put(unit + 0x68, 'iii', s32(x), s32(y), s32(z))
+        put(unit + 0x7e, 'H', heading)
+        put(unit + 0xa4, 'I', sector if on_map else offmap)
+        p.uc.mem_write(unit + 0x12b, struct.pack('<i', max_speed))
+        put(kind + 0x260, 'I', 0x800 if flies else 0)
+        put(kind + 0x162, 'i', type_speed)
+        put(kind + 0x18e, 'H', turn_rate)
+        put(kind + 0x25a, 'H', unit_reach)
+        put(weapon + 0xc6, 'H', weapon_reach)
+        put(target + 0x130, 'I', 0x1000002)
+        put(target + 0x68, 'iii', s32(tx), 0, s32(tz))
+        put(target_kind + 0x162, 'i', target_type_speed)
+        put(target_kind + 0x18e, 'H', target_turn_rate)
+        put(mission + 5, 'B', stage)
+        put(mission + 6, 'I', 0)
+        put(mission + 0xa, 'I', deadline)
+        put(mission + 0x16, 'I', target)
+        put(mission + 0x4e, 'i', maneuver)
+        put(mission + 0x52, 'i', budget)
+        put(mission + 0x56, 'I', 0)
+        put(mission + 0x5a, 'I', flags)
+        put(mission + 0x66, 'I', 0)
+        put(mission + 0x6a, 'I', pending)
+        put(RNG, 'I', seed)
+        log.clear()
+        draws[0] = 0
+        bounds.clear()
+        p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
+        result, error = p.call(0x41e3d0, (unit, mission, events))
+        if error:
+            raise AssertionError((i, error))
+        installs = [c for c in log.get('install', []) if c]
+        points, moving = log.get('point', []), log.get('moving', [])
+        if len(installs) != len(points) + len(moving) or log.get('descriptor'):
+            raise AssertionError((i, 'controllers', log))
+        goal = points[-1] if points else (0, 0, 0)
+        goal_radius = log['radius'][-1] if points else 0
+        if moving:
+            (mx, my, mz), velocity = moving[-1]
+            if velocity != (0, 0, 0) or not get(moving_goal + 8, 'H') & 1:
+                raise AssertionError((i, 'evade turn controller', moving))
+            mh = get(moving_goal + 0x24, 'H')
+        else:
+            mx = my = mz = mh = 0
+        expected.append((s32(result), get(mission + 5, 'B'), get(mission + 6), get(mission + 0xa),
+                         get(mission + 0x6a), get(mission + 0x5a), get(mission + 0x4e, 'i'),
+                         get(mission + 0x52, 'i'), len(points), len(moving), *goal, goal_radius, mx, my, mz, mh,
+                         get(RNG), draws[0]))
+        fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, maneuver, budget, s32(x),
+                                           s32(y), s32(z), heading, s32(tx), 0, s32(tz), max_speed, type_speed,
+                                           target_type_speed, turn_rate, target_turn_rate, reach, flies,
+                                           int(on_map), width, height, seed))))
+        key = ('stage%d' % stage, 'maneuver%d' % get(mission + 0x4e, 'i') if stage == 0 and result == 1
+               else 'turn' if moving else 'line' if points else 'r%d' % s32(result))
+        stats[key] = stats.get(key, 0) + 1
+    compare('41e3d0', fixtures, expected, run('--air-evade', fixtures))
+    print('41e3d0: %d handler calls match' % len(fixtures))
+    for key in sorted(stats):
+        print('   %s: %d' % (' '.join(key), stats[key]))
+
+
+if __name__ == '__main__':
+    main()

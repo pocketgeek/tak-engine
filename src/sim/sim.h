@@ -19,6 +19,7 @@
 #include "sim/retailexploration.h"
 #include "sim/retailweaponswitch.h"
 #include "sim/retailflight.h"
+#include "sim/retailairtoair.h"
 #include "sim/retailballistic.h"
 #include "sim/retailwind.h"
 #include "sim/retailweapon.h"
@@ -191,6 +192,9 @@ struct Weapon {
     bool commandFire = false;
     bool hoverAttack = false;
     int32_t hoverAttackDistance = 0, hoverAttackAltitude = 0;
+    // airtoairdistance (WeaponType +0xc6, a word, 0 when absent): AirToAir's
+    // reach for this weapon when it is the selected one; 0 takes the unit's.
+    uint16_t airToAirDistance = 0;
     // dontleadtargets: aim at the target's CURRENT position instead of extrapolating
     // where it will be. Retail leads a moving unit by default; this flag skips it.
     // Shipped dropped bombs use this to aim at the current point; their
@@ -370,6 +374,11 @@ struct UnitType {
     int32_t cruiseAlt = 0;    // world units above ground when flying (readInt)
     bool hoverAttack = false;
     int32_t hoverAttackDistance = 0, hoverAttackAltitude = 0;
+    // airtoairdistance (UnitType +0x25a, a word, 4c0548): how far from its
+    // target's led SweetSpot a flyer fights another flyer (AirToAir). Absent:
+    // sqrt(hoverattackdistance^2 + hoverattackaltitude^2) with a
+    // hoverattackdistance (212 for a Tarbeak), else 100.
+    uint16_t airToAirDistance = 100;
     // attackrunlength (UnitType +0x234, a word, 4c082e): how far past its
     // target a flyer without hoverattack carries an attack run (AirToGround).
     uint16_t attackRunLength = 0;
@@ -798,6 +807,10 @@ struct alignas(64) Order {
     // `mission`): 1 once a run has brought the flyer within half its range
     // of the target; stage 7 counts wakes off the map on it.
     int32_t airRunCount = 0;
+    // AirToAir (retailAirToAir, tickAirToAir), which runs on `mission` too:
+    // its mission +0x4e, the moving controller and a pushed VTOL_Evade.
+    // Engaged once a flyer attacks a flyer; hashed with a tag.
+    HeapOptional<RetailAirToAirState> airToAir;
     int32_t stationRefX = 0, stationRefZ = 0;
     uint32_t stationRefTick = 0;
     // MobileBuild placement at the site (405824..405911): failures while only
@@ -3228,6 +3241,7 @@ private:
     void tickFlightBody(Unit& u);
     void tickHoverAttack(Unit& u, const Unit& target, const Weapon* weapon, int slot);
     void tickAirToGround(Unit& u, const Unit& target, const Weapon* weapon);
+    void tickAirToAir(Unit& u, const Unit& target, const Weapon* weapon);
     void tickFlightPatrol(Unit& u);
     int flightGround(const Unit& u) const;
     bool flightLandingFree(const Unit& u, Fixed x, Fixed z) const;
