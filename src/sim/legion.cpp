@@ -2864,10 +2864,17 @@ struct LegionNavigator::Impl {
                           std::vector<StaticChange>* out=nullptr) {
         const int grow=kRelabelMargin+std::max(p.footX,p.footZ)+1;
         auto& clusters=scratch.clusters;
+        // TAK_LCLUSTER (debug builds): one line per refresh, the clustering's share of it. Its own switch, not
+        // TAK_LPROBE: a line per refresh would land inside the LPROBE line's refresh timings.
+#ifndef NDEBUG
+        static const bool clusterProbe=std::getenv("TAK_LCLUSTER")!=nullptr;
+#else
+        constexpr bool clusterProbe=false;
+#endif
         using ProbeClock=std::chrono::steady_clock;
-        const auto probeC0=gProbe?ProbeClock::now():ProbeClock::time_point{};
+        const auto probeC0=clusterProbe?ProbeClock::now():ProbeClock::time_point{};
         cluster::clusterRects(rects,grow,clusters);
-        const auto probeC1=gProbe?ProbeClock::now():ProbeClock::time_point{};
+        const auto probeC1=clusterProbe?ProbeClock::now():ProbeClock::time_point{};
         uint64_t work=0;
         auto& part=scratch.part;
         for(size_t k=0;k<clusters.clusters();++k) {
@@ -2877,8 +2884,7 @@ struct LegionNavigator::Impl {
             work+=refreshCluster(p,part,changedAny,scratch,&c);
             if(out&&c.box[2]>=0)out->push_back(c);
         }
-        // TAK_LPROBE: one line per refresh (diagnostic only; the clustering's share of the refresh).
-        if(gProbe) {
+        if(clusterProbe) {
             const auto t=ProbeClock::now();
             std::fprintf(stderr,"LCLUSTER tick=%u plane=%d n=%zu clusters=%zu cluster_us=%.3f refresh_us=%.3f work=%llu\n",
                          w.tickCounter_,int(&p-planes.data()),rects.size(),clusters.clusters(),
