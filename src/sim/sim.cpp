@@ -13284,12 +13284,19 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept,const Weap
     u.weaponAimPoints[size_t(slot)]=solution->target;
     u.weaponMuzzlePoints[size_t(slot)]=solution->source;
     auto& aim=u.weaponAim[size_t(slot)];const auto& weapon=u.type->weapons[size_t(slot)];
+    // DroppedBallisticWeapon's angle virtual (+0x28, 4d4450) is a bare ret,
+    // so 52fd80 leaves its record's angles as they were: AimWeapon starts with
+    // them and the gate's angle test always passes. 52ae90 still runs aim
+    // start (52fe30) and the gate (52fff0) for the class, so a bomb waits for
+    // the script's SET 22 and, on a hover attacker, for its facing request.
     const bool dropped=weapon.kind==Weapon::Kind::Dropped;
-    if(!dropped && aim.start(solution->heading,solution->pitch)) {
-        u.weaponAnimations.add(tak::RetailWeaponAnimation::Aim,slot,solution->heading,solution->pitch);
+    const uint16_t aimHeading=dropped ? aim.heading : solution->heading;
+    const uint16_t aimPitch=dropped ? aim.pitch : solution->pitch;
+    if(aim.start(aimHeading,aimPitch)) {
+        u.weaponAnimations.add(tak::RetailWeaponAnimation::Aim,slot,aimHeading,aimPitch);
         // Native 52fe30 starts AimWeapon with immediate=0. Starting the VM here
         // only queues its thread; the following unit-script phase runs its body.
-        it->state().startArguments(file,aimScript,{solution->heading,solution->pitch,uint32_t(slot),0},3);
+        it->state().startArguments(file,aimScript,{aimHeading,aimPitch,uint32_t(slot),0},3);
     }
     const bool available=u.reloads[slot]==0 &&
         (u.type->maxMana<=0 || u.mana>=weapon.manaCost);
@@ -13304,8 +13311,7 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept,const Weap
     // No arc to the aim point: hold the FireWeapon start until there is one.
     // The release (SET 23) launches on the angles accepted here (fire), so a
     // shell never leaves on the flat pitch an unreachable solve aims at.
-    const bool ready=dropped ? available :
-        aim.ready(solution->heading,solution->pitch,uint16_t(weapon.aimTol),available,aligned);
+    const bool ready=aim.ready(aimHeading,aimPitch,uint16_t(weapon.aimTol),available,aligned);
     if(ready && solution->unreachable) {
         // Aimed, loaded, and still no arc: a dud for the blocked-shot count
         // (noteNoArc), one per nominal reload.

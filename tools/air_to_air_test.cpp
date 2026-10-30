@@ -68,7 +68,19 @@ Fight fight(const TypeRegistry& registry,const UnitType& attacker,const UnitType
     w.attack(me,them,false);
     if (mutual) w.attack(them,me,false);
     float hp=w.unit(them)->hp.toFloat();
-    bool evading=false,resuming=false;
+    // VTOL_Evade on either attacker (`them` attacks only when `mutual`):
+    // pushed, then handed back once AirToAir has taken off again and
+    // installed its own moving controller.
+    bool evading[2]={false,false},resuming[2]={false,false};
+    auto watch=[&](const Unit& u,int target,int k) {
+        if (u.orders.empty() || u.orders.front().targetId!=target || !u.orders.front().airToAir) return;
+        const auto& a=*u.orders.front().airToAir;
+        const bool now=a.evade.has_value();
+        if (now && !evading[k]) ++f.evades;
+        resuming[k]=(resuming[k] || (evading[k] && !now)) && !now;
+        if (resuming[k] && a.intercept && !a.evadeController) { ++f.handedBack;resuming[k]=false; }
+        evading[k]=now;
+    };
     for (int tick=0;tick<ticks;++tick) {
         if (!mutual && tick%(circle>0 ? 45 : 30)==0) steer();
         const Unit* a=w.unit(me);
@@ -83,6 +95,8 @@ Fight fight(const TypeRegistry& registry,const UnitType& attacker,const UnitType
         if (t->hp.toFloat()<hp) f.damage+=hp-t->hp.toFloat();
         hp=t->hp.toFloat();
         f.closest=std::min(f.closest,std::hypot((a->x-t->x).toFloat(),(a->z-t->z).toFloat()));
+        watch(*a,them,0);
+        if (mutual) watch(*t,me,1);
         if (a->orders.empty() || a->orders.front().targetId!=them) continue;
         const Order& o=a->orders.front();
         ++f.ordered;
@@ -95,15 +109,6 @@ Fight fight(const TypeRegistry& registry,const UnitType& attacker,const UnitType
         }
         f.dogfight+=o.airToAir.has_value();
         f.hover+=o.hoverAttackRefresh!=0;
-        const bool now=o.airToAir && o.airToAir->evade.has_value();
-        if (now && !evading) ++f.evades;
-        // Handed back: once the evade is gone, AirToAir takes off again and
-        // installs its own moving controller.
-        resuming=(resuming || (evading && !now)) && !now;
-        if (resuming && o.airToAir && o.airToAir->intercept && !o.airToAir->evadeController) {
-            ++f.handedBack;resuming=false;
-        }
-        evading=now;
     }
     f.hash=w.stateHash();
     return f;
@@ -202,10 +207,11 @@ int main(int argc,char** argv) {
             else check(b.shots>0 && b.hits==0,"the Iron Beak's eggs pass under a holding flyer at its own height");
         }
 
-        // Two Iron Beaks attacking each other: each is soon in the other's
-        // sights, breaks off into VTOL_Evade, and goes back to the attack.
+        // A Gryphon and a Verdrag attacking each other: each is soon on the
+        // other's tail or in its sights, breaks off into VTOL_Evade, and goes
+        // back to the attack.
         {
-            const UnitType one=dummy(*beak,true),other=dummy(*beak,true);
+            const UnitType one=dummy(*registry.find("zongryp"),true),other=dummy(*registry.find("verdrag"),true);
             const Fight f=fight(registry,one,other,300,1800,true);
             const Fight again=fight(registry,one,other,300,1800,true);
             std::printf("evade balance=%s pushes=%d handed-back=%d hash=%016llx\n",balance,f.evades,f.handedBack,

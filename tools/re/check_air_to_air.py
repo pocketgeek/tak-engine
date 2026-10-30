@@ -477,5 +477,115 @@ def main():
         print('   %s: %d' % (' '.join(key), stats[key]))
 
 
+def dropped_gate(binary):
+    """52ae90 runs aim start (52fe30) and the readiness gate (52fff0) for every
+    weapon class. Through DroppedBallisticWeapon's own vtable (5f3ac4), with
+    the real geometry 52fd80: its angle virtual (+0x28, 4d4450) is a bare
+    ret, so the record keeps its angles, AimWeapon starts with them, the
+    gate's angle test passes, and the bomb waits for SET 22 and, on a hover
+    attacker, for its facing request. Hooked: the muzzle query 4dd420, the
+    target lookup 51a9a0, the led SweetSpot 51aa50, the range predicates and
+    the script callback 56c640; 4dc0b0, 51b340 and 5193c0 run natively."""
+    p = Icd()
+    unit, kind, mover, navigator, nav_vtable, weapon, handler, target = [HEAP + i * 0x1000 for i in range(8)]
+    notify_stub = HEAP + 0x9000
+    record = unit + 12
+    started = []
+
+    def put(address, fmt, *values):
+        p.uc.mem_write(address, struct.pack('<' + fmt, *values))
+
+    def get(address, fmt='I'):
+        return struct.unpack('<' + fmt, p.uc.mem_read(address, struct.calcsize(fmt)))[0]
+
+    led = [(0, 0, 0)]
+
+    def muzzle(uc, args):
+        put(get(args + 4), '3i', 0, 0, 0)
+        return 4, 0
+
+    def lead(uc, args):
+        put(get(args + 4), '3i', *led[0])
+        return 3, 1
+
+    def callback(uc, args):
+        values = struct.unpack('<8I', uc.mem_read(args, 32))
+        name = bytes(uc.mem_read(values[0], 32)).split(b'\0')[0].decode()
+        started.append((name, values[4], values[5]))
+        return 8, 0
+
+    p.hooks[0x4dd420] = muzzle
+    p.hooks[0x51aa50] = lead
+    p.hooks[0x51a9a0] = lambda uc, a: (2, target)
+    p.hooks[0x5306a0] = lambda uc, a: (3, 0)
+    p.hooks[0x532290] = lambda uc, a: (3, 1)
+    p.hooks[0x56c640] = callback
+    p.hooks[0x4ea4f0] = lambda uc, a: (4, 0)
+    p.hooks[notify_stub] = lambda uc, a: (0, 0)
+    p.freeze_hooks()
+    put(unit + 8, 'I', mover)
+    put(unit + 0xb4, 'I', kind)
+    put(unit + 0xd8, 'f', 10.0)
+    put(unit + 0xf4, 'f', 1.0)
+    put(record, 'I', weapon)
+    put(weapon + 0x40, 'I', handler)
+    put(weapon + 0xd4, 'f', 1.0)
+    put(handler, 'I', 0x5f3ac4)
+    put(mover, 'I', navigator)
+    put(navigator, 'I', nav_vtable)
+    put(nav_vtable + 0x38, 'I', notify_stub)
+    rng = random.Random(0x5f3ac4)
+    counts = {'started': 0, 'released': 0, 'held by SET 22': 0, 'held by facing': 0}
+    for i in range(6000):
+        hover = rng.randrange(2)
+        put(kind + 0x260, 'I', 0x800 | (0x8000000 if hover else 0))
+        put(kind + 0x190, 'H', 0)
+        x, z = rng.randrange(2**28), rng.randrange(2**28)
+        put(unit + 0x68, '3i', x, 0, z)
+        led[0] = (x + rng.randrange(-400, 401) * 65536, 0, z + rng.randrange(-400, 401) * 65536)
+        old = (rng.randrange(65536), rng.randrange(65536))
+        flags = rng.randrange(65536)
+        tolerance = rng.choice((0, 300, 512, 1024, rng.randrange(65536)))
+        put(weapon + 0xc0, 'H', tolerance)
+        put(record + 0x14, 'H', 0)
+        put(record + 0x16, '3H', *old, flags)
+        put(mover + 0x34, 'H', rng.randrange(65536))
+        put(mover + 0x36, 'H', rng.randrange(65536))
+        started.clear()
+        p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
+        result, error = p.call(0x52fe30, (unit, record), ecx=handler)
+        if error or result != 1:
+            raise AssertionError((i, error, result))
+        start = not (flags & 0xe0)
+        if start:
+            counts['started'] += 1
+            if started != [('AimWeapon', old[0], old[1])]:
+                raise AssertionError((i, 'AimWeapon', started, old))
+        elif started:
+            raise AssertionError((i, 'restarted', started))
+        if struct.unpack('<2H', p.uc.mem_read(record + 0x16, 4)) != old:
+            raise AssertionError((i, 'aim start moved the angles'))
+        request = get(mover + 0x34, 'H')
+        # The script acknowledges (SET 22) or not; the body faces anywhere.
+        ack = rng.randrange(2)
+        flags = get(record + 0x1a, 'H')
+        put(record + 0x1a, 'H', (flags | 8) if ack else (flags & ~8))
+        heading = (request + rng.choice((0, 511, 512, 513, -512, -513, rng.randrange(65536)))) & 0xffff
+        put(unit + 0x7e, 'H', heading)
+        p.uc.reg_write(UC_X86_REG_FPCW, 0x027f)
+        ready, error = p.call(0x52fff0, (unit, record), ecx=handler)
+        if error:
+            raise AssertionError((i, error))
+        off = abs(((heading - request + 32768) & 65535) - 32768)
+        aligned = not hover or off <= max(tolerance, 512)
+        if ready != int(ack and aligned):
+            raise AssertionError((i, 'gate', ready, ack, aligned, hover, off, tolerance))
+        if struct.unpack('<2H', p.uc.mem_read(record + 0x16, 4)) != old:
+            raise AssertionError((i, 'the gate moved the angles'))
+        counts['released' if ready else 'held by SET 22' if not ack else 'held by facing'] += 1
+    print('DroppedBallisticWeapon 52fe30 + 52fff0: %d aim starts and gates as World runs them %s' % (6000, counts))
+
+
 if __name__ == '__main__':
     main()
+    dropped_gate(sys.argv[1] if len(sys.argv) > 1 else 'build-o2/retail_motion_test')
