@@ -99,6 +99,16 @@ reviewed on its own; the code tested below is main `95ca9163`:
     moved into the pad beside `chaseLeashed`, every line assertion
     unchanged). The CHANGELOG, sim.h and sim.cpp merge conflicts were
     textual (adjacent edits), resolved keeping both sides.
+  - **Slot modes in the air missions** (`task-jugg-cannons` `777a5751`,
+    merged on main after `b8d4be5a`): `c2554047` AirToAir stage 1
+    (`0x41d5ae`) and `777a5751` AirToGround stages 1 and 2 (`0x41c308`,
+    `0x41c31f`) turn the unselected slots automatic, kept on the attack
+    order by a new hashed `Order::mixedSlots` (World::setSlotMode). The
+    Juggernaut's cannons bomb the ground while its arrows fight a flyer;
+    the Juggernaut's and Dirigible's other weapons pick their own targets
+    in a ground attack. `mixedSlots` sits in the pad beside
+    `reclaimHeading` so `Order` stays 320 bytes; the one sim.h conflict
+    (both sides added a field after `airRunCount`) was textual.
 
 `git diff --stat v0.9.11 95ca9163`: 142 files changed, 8196 insertions(+),
 3917 deletions(-); `-- src`: 38 files changed, 3306 insertions(+), 1137
@@ -333,8 +343,21 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
   all seven hashes are the table below and identical in both runs (wall 42
   and 43 s), every server loaded `d6000f4fa9095a51`, and no desync, mismatch
   or referee-suspect line appeared in any client or server log.
-- **Detmath guard** (`tools/check-detmath.sh`, on the prepared tree and on
-  `7c31c766`): OK.
+  With `task-jugg-cannons` merged (ports 24611-24617,
+  `~/tak-tmp/gates-0912-jugg/`), two runs: all seven hashes unchanged and
+  identical in both runs (wall 42 s each), every server loaded
+  `d6000f4fa9095a51`, no desync, mismatch or referee-suspect line
+  (`mixedSlots` is folded only when set, and no gate's game reaches it).
+- **Detmath guard** (`tools/check-detmath.sh`, on the prepared tree, on
+  `7c31c766` and with `task-jugg-cannons` merged): OK.
+- **With `task-jugg-cannons` merged** (Debug `-O2` and Release, all targets
+  built; scratch `HOME`, XDG folders and `TMPDIR`): golden
+  `dcef618cd2e4d558` unchanged (g++ and clang++, -O0/-O2/-O3); quick suite
+  526 of 528 passed (`cobanim` and `gaitpace_shipped` on a rerun once the
+  worktree had the extracted assets), `vashim_system_loader` skipped,
+  `vashim_unavailable` the known local failure; `air_to_air` and `flyer_combat` pass; all 67
+  `legion_check_*` scenario gates and `navigation_determinism` pass against
+  the unchanged `baseline.json` (nothing retaken).
 - **Scenario baseline on the integrated combat fixes** (`7c31c766`). The
   four branches ran the quick suite only, which leaves out the nightly
   `legion_check_*` gates; on the merged code 16 of the 67 failed: 352
@@ -377,8 +400,9 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
 - **`--mpai` Inner Circle, seed 1** (`takserver --local --no-auth --seed 1`,
   `TAK_LEGION=1` for Legion, `TAK_AI_LEVEL=6` for the Retail AI, `--crusades`
   for the Crusades games, `TAK_SPEED=80`), on the integrated combat fixes
-  `7c31c766`, two runs (`~/tak-tmp/gates-0912-four/`). "Before the combat
-  fixes" is main `95ca9163` (three runs, `~/tak-tmp/gates-0912-suite/`, and
+  `7c31c766`, two runs (`~/tak-tmp/gates-0912-four/`), and unchanged with
+  `task-jugg-cannons` merged (two runs, `~/tak-tmp/gates-0912-jugg/`).
+  "Before the combat fixes" is main `95ca9163` (three runs, `~/tak-tmp/gates-0912-suite/`, and
   the retail fog review's runs; unchanged by the shot-range fix); "0.9.11" is
   `v0.9.11`:
 
