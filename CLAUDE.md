@@ -27,9 +27,11 @@ outside the repo and nothing from the binary is copied into the engine.
     (`detmath::sin/cos/atan2/len/...`). `tools/check-detmath.sh` enforces this.
   - `World::stateHash()` is the lockstep checksum; everything it folds in must be
     deterministic. Unit headings use `detmath::atan2`.
-  - **Fog of war / visibility (`vis_`) is LOCAL display, not hashed** — the
-    headless referee skips `updateVisibility` (`visPlayer_ < 0`). LoS/fog math may
-    use plain floats.
+  - **Sight is sim state; the fog you see is display.** The per-player sight plane
+    (`viewCounts_`) and explored bits (`navigationExplored_`) are computed by every
+    peer and hashed — keep them deterministic. The client's fog overlay, minimap fog
+    and main-view LosOn flags (`src/client/retailfog.h`, `captureFog`) are built
+    from them locally and are not hashed.
   - Verify with `tools/check-determinism.sh` (cross-compiler golden hash) and the
     headless `--mpai` run below (its `hash=...` must be reproducible run-to-run;
     it only *changes* when you deliberately alter hashed sim state).
