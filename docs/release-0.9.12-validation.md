@@ -182,9 +182,9 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
   seven servers loaded retail gameplay hash `d6000f4fa9095a51` in every run,
   and no desync, mismatch or referee-suspect line appeared in any client or
   server log of the three runs. On `task-los-range` (ports 24311-24317,
-  `~/tak-tmp/gates-los/`), three runs (the third on the final, comment-only
-  tidied build): all seven hashes unchanged from the table below and
-  identical in every run; no desync, mismatch or referee-suspect line.
+  `~/tak-tmp/gates-los/`), four runs (the third on the final, comment-only
+  tidied build, the fourth by the review on the same build): all seven
+  hashes unchanged from the table below and identical in every run; no desync, mismatch or referee-suspect line.
 - **Detmath guard** (`tools/check-detmath.sh`, on the prepared tree): OK.
 - **Scenario baseline and navigation checkpoints on `task-los-range`:** all
   67 `legion_check_*` tests (every key, `hash@` included, against
