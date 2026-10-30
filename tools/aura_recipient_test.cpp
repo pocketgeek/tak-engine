@@ -16,6 +16,9 @@
 //   * random scenes: clustered bodies, emitters of every kind and state, bodies
 //     dying, boarding and moving between passes -- every unit's buffs against
 //     the serial walk written out here from its rules (RetailReplayProbe);
+//   * corners: a tile under 200 auras (a four-word source list), squares clamped
+//     on every grid edge or missing the grid, owners the 64-bit masks cannot hold,
+//     and an ownership change after the grid -- against the same written-out walk;
 //   * crowd: ~2700 bodies of four players in two alliances; two armies with
 //     emitters of every kind march into each other and fight (the buffs scale
 //     the damage, so they reach hp and the state hash), and two priests raise an
@@ -40,6 +43,13 @@ namespace tak::sim {
 struct RetailReplayProbe {
     static void grid(World& w) { w.rebuildGrid(); }
     static void auras(World& w) { w.tickAuras(1.0f / 30); }
+    // An ownership change after the grid turns the owner masks off (captureUnit).
+    static void masksOff(World& w) { w.gPlayersValid_ = false; }
+    static bool masksValid(const World& w) { return w.gPlayersValid_; }
+    static float gridX(const World& w, int gx) { return w.gOx_ + w.gCell_ * float(gx); }
+    static float gridZ(const World& w, int gz) { return w.gOz_ + w.gCell_ * float(gz); }
+    static int gridW(const World& w) { return w.gW_; }
+    static int gridH(const World& w) { return w.gH_; }
     // The serial pass's fold, written out here from its rules alone: every emitter in
     // unit order, each Armor/Attack aura in type order, the units of forEachNear's
     // square in the grid as rebuildGrid left it, max for a buff and min for a debuff,
@@ -310,6 +320,86 @@ void randomScenes(const Types& t) {
     check(bad == 0, "every unit's buffs equal the written-out fold, bit for bit", b + detail);
 }
 
+// The corners of the recipient pass, against the written-out fold at every width:
+//   * a stack of 200 emitters on one spot, so a tile's source list runs to four
+//     64-bit words, buffs and debuffs of one stat interleaved;
+//   * a wide aura whose square is clamped on all four grid edges;
+//   * emitters spawned after the grid outside its box on every side: some squares
+//     only graze the grid, some miss it, one sits within a cell left of the origin
+//     (int() truncates toward zero there, in forEachNear too);
+//   * owners the 64-bit masks cannot hold (70, -1) on emitters and recipients, so
+//     the grid's masks are off and the side test falls back to allied();
+//   * with representable owners, an ownership change after the grid (captureUnit
+//     turns the masks off; the side test reads the new owner).
+void corners(const Types& t) {
+    std::printf("corners: multi-word tile lists, edge clamps, off-grid emitters, odd owners:\n");
+    UnitType wide;
+    wide.name = wide.id = "wide"; wide.maxHp = 300; wide.maxVel = Fixed::fromInt(2); wide.canMove = true;
+    wide.turnRate = wide.turnInPlaceRate = 10000; wide.footX = wide.footZ = 1; wide.sight = 200; wide.upright = true;
+    wide.auras = {Aura{Aura::Kind::Attack, 0.9f, true, 3000, 0.3f}, Aura{Aura::Kind::Attack, 1.1f, false, 2500, 0.5f}};
+    const UnitType* stack[] = {&t.flatBuff, &t.flatDebuff, &t.hexer, &t.warlock, &t.smith, &t.shaman};
+    int bad = 0, compared = 0;
+    bool masksOffSeen[2] = {false, false};
+    std::string detail;
+    for (int variant = 0; variant < 2; ++variant) {
+        std::vector<uint64_t> digests;
+        for (int width : kWidths) {
+            auto w = makeWorld(width, 256);   // 4096 px square
+            uint32_t rng = 0x51ed27u + uint32_t(variant);
+            auto rnd = [&](int n) { rng = rng * 1664525u + 1013904223u; return int((rng >> 8) % uint32_t(n)); };
+            for (int i = 0; i < 2100; ++i)
+                w->spawn(&t.filler, float(1000 + rnd(2000)), float(1000 + rnd(2000)), 0.0f, rnd(4));
+            for (int i = 0; i < 200; ++i)
+                w->spawn(stack[size_t(i) % 6], float(1500 + rnd(40)), float(1500 + rnd(40)), 0.0f, rnd(4));
+            w->spawn(&wide, 2000.0f, 2000.0f, 0.0f, 2);
+            if (variant == 0) {
+                // Owners outside the masks, on recipients and on emitters.
+                for (size_t i = 0; i < w->units().size(); i += 7) w->units()[i].player = i % 14 ? 70 : -1;
+            }
+            RetailReplayProbe::grid(*w);
+            const int gW = RetailReplayProbe::gridW(*w), gH = RetailReplayProbe::gridH(*w);
+            const float left = RetailReplayProbe::gridX(*w, 0), right = RetailReplayProbe::gridX(*w, gW);
+            const float top = RetailReplayProbe::gridZ(*w, 0), bottom = RetailReplayProbe::gridZ(*w, gH);
+            // After the grid: emitters outside its box (grazing and missing), and one a
+            // fraction of a cell left of the origin.
+            const float mid = 0.5f * (top + bottom), midX = 0.5f * (left + right);
+            w->spawn(&t.flatBuff, left - 250.0f, mid, 0.0f, 0);
+            w->spawn(&t.flatDebuff, right + 250.0f, mid, 0.0f, 3);
+            w->spawn(&t.warlock, midX, top - 280.0f, 0.0f, 1);
+            w->spawn(&t.hexer, midX, bottom + 150.0f, 0.0f, 2);
+            w->spawn(&t.flatBuff, left - 2000.0f, top - 2000.0f, 0.0f, 0);
+            w->spawn(&t.flatDebuff, right + 2000.0f, bottom + 2000.0f, 0.0f, 1);
+            w->spawn(&t.shaman, left - 12.0f, mid + 40.0f, 0.0f, 1);
+            if (variant == 1) {
+                // A capture after the grid: new owners, masks off.
+                for (size_t i = 3; i < 2100; i += 11) w->units()[i].player = (w->units()[i].player + 1) % 4;
+                RetailReplayProbe::masksOff(*w);
+            }
+            masksOffSeen[variant] = !RetailReplayProbe::masksValid(*w);
+            const auto expect = RetailReplayProbe::reference(*w, 1.0f / 30);
+            RetailReplayProbe::auras(*w);
+            for (size_t i = 0; i < expect.size(); ++i) {
+                const Unit& u = w->units()[i];
+                ++compared;
+                if (!same(u.atkBuff, expect[i].first) || !same(u.armBuff, expect[i].second))
+                    if (!bad++) {
+                        char b[200];
+                        std::snprintf(b, sizeof b, "variant %d width %d unit %zu: atk %.7f/%.7f arm %.7f/%.7f", variant,
+                                      width, i, u.atkBuff, expect[i].first, u.armBuff, expect[i].second);
+                        detail = b;
+                    }
+            }
+            digests.push_back(buffDigest(*w));
+        }
+        for (uint64_t d : digests)
+            if (d != digests[0] && !bad++) detail = "digests differ between widths";
+    }
+    char b[120];
+    std::snprintf(b, sizeof b, "%d of %d buff pairs differ%s", bad, compared, detail.empty() ? "" : "; first: ");
+    check(bad == 0, "every unit's buffs equal the written-out fold, bit for bit", b + detail);
+    check(masksOffSeen[0] && masksOffSeen[1], "both variants ran with the owner masks off");
+}
+
 // A world big enough for the pooled pass: 2100 still bodies and eight beacons out of the way.
 std::unique_ptr<World> sceneWorld(const Types& t, int width) {
     auto w = makeWorld(width, 256);   // 4096 px square
@@ -427,6 +517,7 @@ int main() {
     order(t);
     eligibilityAndSpawn(t);
     randomScenes(t);
+    corners(t);
     crowd(t);
     if (g_fail) { std::printf("%d check(s) FAILED\n", g_fail); return 1; }
     std::printf("all checks passed\n");

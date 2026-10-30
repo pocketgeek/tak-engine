@@ -143,7 +143,7 @@ cartographer_starts_ui 7
 legion_chainresolve 7
 legion_trafficlane 7
 voice 18
-aura_recipient 6
+aura_recipient 7
 build_controls 6
 gui_smoothing_game 6
 legion_check_mazeapproach 6
