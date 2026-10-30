@@ -177,8 +177,12 @@ int main(int argc,char** argv) {
         // Dogfighting, it closes to its target and the arrows hit.
         const auto* juggernaut=registry.find("creaeri");
         const auto* beak=registry.find("tarbeak");
-        check(juggernaut->airToAirDistance==100 && beak->airToAirDistance==212,
-              "airtoairdistance defaults: 100, or the hover distance and altitude's hypotenuse");
+        // 4c0501..4c054d: no shipped file sets airtoairdistance.
+        check(juggernaut->airToAirDistance==100 && beak->airToAirDistance==212 &&
+              registry.find("zondrag")->airToAirDistance==282 && registry.find("tarknigh")->airToAirDistance==230 &&
+              registry.find("tarship")->airToAirDistance==70 &&
+              registry.find("zonflies")->airToAirDistance==(crusades ? 156 : 212),
+              "airtoairdistance defaults: the hover distance and altitude's hypotenuse, else 100");
         for (float circle:{0.f,500.f}) {
             const Fight j=fight(registry,*juggernaut,roc,circle,1800);
             std::printf("engagement balance=%s unit=creaeri target=%s shots=%d hits=%d damage=%.0f closest=%.0f\n",
@@ -207,7 +211,7 @@ int main(int argc,char** argv) {
             else check(b.shots>0 && b.hits==0,"the Iron Beak's eggs pass under a holding flyer at its own height");
         }
 
-        // A Gryphon and a Verdrag attacking each other: each is soon on the
+        // A Gryphon and a Sea Dragon attacking each other: each is soon on the
         // other's tail or in its sights, breaks off into VTOL_Evade, and goes
         // back to the attack.
         {

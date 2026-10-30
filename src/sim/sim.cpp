@@ -6951,10 +6951,12 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     const Weapon* sel = slot < int(u.type->weapons.size()) ? &u.type->weapons[slot] : nullptr;
     // 4de530 gives a flyer whose target's type can fly AirToAir (41ca50,
     // tickAirToAir) for any weapon without the `dropped` key, hoverattack or
-    // not (4de981..4de9b8); no shipped weapon has that key, and a Dropped bomb
-    // does not count. Against a target that cannot fly, a flyer without
-    // hoverattack gets AirToGround (41bf80): attack runs (tickAirToGround);
-    // one with it hovers (AirToGroundHover 41d820, tickHoverAttack).
+    // not (4de981..4de9b8). A Dropped bomb does not count, and no shipped
+    // weapon has the key (with it retail has no mission for the pair,
+    // 4de6ed; World dogfights anyway). Against a target that cannot fly, a
+    // flyer without hoverattack gets AirToGround (41bf80): attack runs
+    // (tickAirToGround); one with it hovers (AirToGroundHover 41d820,
+    // tickHoverAttack).
     const bool airToAir = u.type->canFly && !u.type->isStructure() && target->type && target->type->canFly;
     const bool hovering = !airToAir && u.type->canFly && (u.type->hoverAttack || (sel && sel->hoverAttack));
     const bool airRun = u.type->canFly && !hovering && !airToAir && !u.type->isStructure();
@@ -11112,6 +11114,10 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
         // Stage 1's 519b10(3), 519b70 and 51a700 are World's slot mode
         // (syncSlotMode): the attack order fires its slots at the target.
         void aim() {}
+        RetailFlightVector lead() {
+            const auto led=w.retailLeadPoint(u,target,weapon);   // 51aa50
+            return {led[0],led[1],led[2]};
+        }
         bool retarget() {
             // 4d8370 is World's target scan, as the ground response's; then
             // 4d7de0(unit, found, 0, 0, 1, 0), retailIssueAutoAttack's gates.
@@ -11172,8 +11178,6 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
             // The target mover's velocity: a landed flyer's kernel holds none.
             if (target.flightGroundMode==2)
                 duel.targetVelocity={target.flightVelocity.x,target.flightVelocity.y,target.flightVelocity.z};
-            const auto led=w.retailLeadPoint(u,target,weapon);   // 51aa50
-            duel.lead={led[0],led[1],led[2]};
             duel.speed=u.speed.v;duel.maxSpeed=u.baseSpeed.v;duel.distance=distance;
             duel.automatic=o.autoTarget;   // mission +0x52, 4d7de0's auto argument
             duel.onMap=onMap;duel.width=w.hW_*16-32;duel.height=w.hH_*16-128;

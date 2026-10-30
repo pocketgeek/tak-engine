@@ -46,30 +46,31 @@ int main(int argc, char** argv) {
         unsigned stage,events,tick,deadline,pending,flags,heading,targetHeading,distance,automatic,flies,onMap,seed,
                  retarget,evade;
         int count,speed,maxSpeed,width,height;
-        RetailAirDuel duel;
+        RetailAirDuel duel;RetailFlightVector lead;
         while (std::scanf("%u %u %u %u %u %u %d %d %d %d %u %d %d %d %u %d %d %d %d %d %d %d %d %u %u %u %u %d %d %u %u %u",
                           &stage,&events,&tick,&deadline,&pending,&flags,&count,&duel.position.x,&duel.position.y,
                           &duel.position.z,&heading,&duel.target.x,&duel.target.y,&duel.target.z,&targetHeading,
-                          &duel.targetVelocity.x,&duel.targetVelocity.y,&duel.targetVelocity.z,&duel.lead.x,&duel.lead.y,
-                          &duel.lead.z,&speed,&maxSpeed,&distance,&automatic,&flies,&onMap,&width,&height,&seed,
+                          &duel.targetVelocity.x,&duel.targetVelocity.y,&duel.targetVelocity.z,&lead.x,&lead.y,
+                          &lead.z,&speed,&maxSpeed,&distance,&automatic,&flies,&onMap,&width,&height,&seed,
                           &retarget,&evade)==32) {
             duel.heading=uint16_t(heading);duel.targetHeading=uint16_t(targetHeading);duel.speed=speed;
             duel.maxSpeed=maxSpeed;duel.distance=uint16_t(distance);duel.automatic=automatic!=0;duel.flies=flies!=0;
             duel.onMap=onMap!=0;duel.width=width;duel.height=height;
             RetailMissionState m;m.stage=uint8_t(stage);m.waitMask=0;m.deadline=deadline;m.pending=pending;m.flags=flags;
             struct Host {
-                uint32_t& seed;RetailMissionState& m;bool retargets,evades;
+                uint32_t& seed;RetailMissionState& m;RetailFlightVector led;bool retargets,evades;
                 unsigned calls=0,begin=0,aims=0,retargetCalls=0,releases=0,evadeCalls=0,points=0,intercepts=0;
                 RetailFlightGoal goal;RetailInterceptGoal intercept;
                 uint32_t random(int n) { ++calls;return retailRandom(seed,n); }
                 void beginFlight() { ++begin; }
                 void aim() { ++aims; }
+                RetailFlightVector lead() const { return led; }
                 bool retarget() { ++retargetCalls;return retargets; }
                 void release() { ++releases; }
                 bool evade() { ++evadeCalls;return evades; }
                 void install(const RetailFlightGoal& g) { ++points;goal=g;m.pending&=~0x3700u; }
                 void install(const RetailInterceptGoal& g) { ++intercepts;intercept=g;m.pending&=~0x3700u; }
-            } host{seed,m,retarget!=0,evade!=0};
+            } host{seed,m,lead,retarget!=0,evade!=0};
             const int result=retailAirToAir(m,count,tick,events,duel,host);
             std::printf("%d %u %u %u %u %u %d %u %u %d %d %d %d %d %d %d %d %d %d %u %u %u %u %u %u %u %u\n",result,
                         unsigned(m.stage),m.waitMask,m.deadline,m.pending,m.flags,count,host.points,host.intercepts,

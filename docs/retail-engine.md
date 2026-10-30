@@ -398,8 +398,9 @@ its cell between its altitude (type +0x13e is zeroed at `4c1419`) and its model
 top (+0x14a, `546f40`); a shot that runs out of range vanishes without splash.
 
 World held a non-`hoverattack` flyer still once its attack target was in range
-(retail flies it on attack runs instead; World does too since protocol 263, see
-"Attack runs" below, except against a flying target). That hold skipped the flight
+(retail flies it on attack runs instead, and dogfights a flying target; World
+does too since protocols 263 and 305, see "Attack runs" and "AirToAir" below).
+That hold skipped the flight
 body but kept `flightVelocity`, so every leading shooter aimed ahead of a flyer
 hanging still: a Lokken's Fire Ball missed a held Gryphon, Fallen Angel or Wrath
 of Tammuz every time (0/47, 0/50, 0/50). Since protocol 262 the hold zeroes the
@@ -675,14 +676,12 @@ Still deviating:
   wakes: flag 0x80 makes `4e41d0` return the stored point. World moves the
   point with the target. It also accepts at radius 4 where World's persistent
   controller never accepts.
-- A non-hover flyer held in range of a flying target turns to its centre.
-  Retail posts no request for it and would be flying AirToAir (`41ca50`, not
-  ported). Against a target that cannot fly it flies attack runs (protocol 263).
-- World releases a Dropped bomb without `52fff0` (no SET 22 acknowledgement and
-  no facing test). `52ae90` runs aim start and the gate for every class, and
-  `DroppedBallisticWeapon`'s angle virtual (+0x28, `4d4450`) is a bare `ret
-  0xc`, so its angle test always passes, but a Tarbeak's Egg Bomb would still
-  wait on its facing request (static reading).
+
+A flyer attacking a flyer is no longer held facing its centre: it flies
+AirToAir (protocol 305, "AirToAir" below). Against a target that cannot fly it
+flies attack runs (protocol 263). Since protocol 305 a Dropped bomb also goes
+through aim start and the gate (`52fe30`, `52fff0`), as every class does in
+`52ae90`; see "AirToAir".
 
 ### Attack runs (protocol 263)
 
@@ -807,9 +806,8 @@ flyers on their runs: Gryphon 3/21, Wrath 3/18 (Crusades 22/65), Dirigible
 hit 72-75 of 72-75.
 
 Still deviating:
-- AirToAir (`41ca50`) is not ported. A flyer attacking a flyer is still held in
-  range, facing its centre.
-- AirStrike (`41b5e0`) is not ported; no shipped weapon reaches it.
+- AirStrike (`41b5e0`) is not ported; no shipped weapon reaches it. (AirToAir,
+  for a flying target, is ported since protocol 305: next section.)
 - When the target is lost, AirToGround pushes `VTOL_SEEKATTACK` (`4192f0`), which
   circles the target's last point at range + 160 px, scanning for targets.
   World drops the order instead.
@@ -823,6 +821,175 @@ Still deviating:
 - Off the map, World flies at the clamped sector's cruise height (retail: the
   off-map cell's height 0 plus cruisealt), and its velocity kernel keeps the
   vertical control that `4dab71` skips for an off-map unit.
+
+### AirToAir: a flyer attacking a flyer (icd + emulation, 2026-10-30, protocol 305)
+
+`4de530` gives a flyer whose target's type can fly (UnitType +0x260 bit 0x800,
+the type, so a landed target too) AIRTOAIR (`41ca50`, registry row `5ebd82`)
+when its selected weapon (`519ac0`) lacks the `dropped` key (WeaponType +0xc8
+bit 0x20); with the key, a flyer gets no attack mission against a flyer
+(`4de6ed`). No shipped weapon has the key (`subtype=Dropped`, the
+`DroppedBallisticWeapon` class, is not it), so every armed flyer dogfights a
+flyer, `hoverattack` or not: World had held a non-hover flyer still in range
+and hover-ringed a Tarbeak or a dragon round it. The handler:
+
+- **Stage 0** `416c50` (Activate, BeginFlight, take-off), sleep 1, mission
+  +0x4e = 0. **Stage 1** every slot automatic, the selected one manual and
+  aimed at the target (`519b10(3)`, `519b70`, `51a700`), sleep 1.
+- **Stage 2**, every 7 + rand(15) ticks (the draw comes before the stage
+  switch): P = the selected slot's led SweetSpot (`51aa50`), R =
+  `airtoairdistance`: the selected weapon's (+0xc6, `5310b7`) or else the
+  type's (+0x25a, `4c0548`), whose default is the hypotenuse of
+  `hoverattackdistance` and `hoverattackaltitude` (+0x256, +0x258, the
+  altitude defaulting to `cruisealt` +0x23a) when the distance is set, else
+  100. No shipped file sets the key: the Iron Beak, the Gold, Neo, Black and
+  Sea Dragons, the Drake, the Thirsha and the Wisp get 212 (the Crusades Wisp
+  156), the Ancient Dragon and the Harpy 282, the Sky Knight 230, the Dark and
+  Darkest Priests 158, the Ghost Ship 70, and the five without a hover
+  distance (Aerial Juggernaut, Dirigible, Fallen Angel, Gryphon, Wrath of
+  Tammuz) 100. `41d780` tests whether A lies in the half plane ahead of B's
+  heading turned by n x 45 degrees: with n = 0 it gives *ahead* (the target in
+  front of the flyer) and *seen* (the flyer in front of the target), with n =
+  2 and 6 each side, and n = 7, 0 and 1 together the 45 degree *sights* cones.
+  The whole-pixel distance d to P (`_ftol`'s low word) is measured against R.
+- An auto attack (mission +0x52, `4d7de0`'s auto argument) more than 5R out
+  rescans on rand(2) == 0 (`4d8370`, then `4d7de0`) and ends if it put a new
+  attack ahead.
+- **Threatened** when the target is behind the flyer and the flyer in front
+  of it (the target on its tail); else, with the target in its sights, only
+  if the flyer is in the target's; else d < R/4, or seen and d < R/2, or,
+  unless d > 3R/2, each lies on the same side (n = 2, or n = 6) of the other.
+  Unthreatened, it pursues and resets mission +0x4e when the target is ahead
+  or both fly apart.
+- Threatened, it adds the wake to +0x4e (only on rand(5) == 0 when each has
+  the other in its sights) and, once that reaches rand(60) + rand(60),
+  repositions instead of pursuing. With the target behind it and the flyer
+  in its sights (rand(2) == 0), the target on its tail (rand(3) == 0), or on
+  rand(30) == 0 in any threatened case, the wake is added unconditionally and
+  the same count decides a break-off instead: it lets its controller go,
+  pushes VTOL_EVADE (`41e3d0`) on the target, sets +0x4e = 0, and starts
+  again at stage 0 when the evade ends.
+- **Pursuit**: the point R px short of P on the line from the flyer;
+  **reposition**: R - rand(R/2) + rand(R/2) px from P at a random angle within
+  90 degrees of the line back to the flyer. Either way P first moves 32 px
+  along the flyer's heading when its speed (mover +0x20) is over half its top
+  speed (`421ae0`). The point is installed in the moving controller below,
+  with the target mover's velocity and, as its heading, the line from the
+  flyer to P (`4e4c60`); wait mask 0x68 plus the sleep.
+- Off the map (unit +0xa4 the off-map cell) it flies 800 px toward 192 px
+  inside the playable edge, radius 128, on wait mask 0x700, at once
+  (AirToGround's stage 7 waits three wakes).
+
+**The moving controller** (vtable `5f29a8`, 0x2c bytes, built by `4e4560`)
+answers its point and then moves it by its velocity, x and z, every time the
+navigator asks (`4e48d0`, every tick in `524af0`); with a heading it turns the
+velocity toward it by at most turnrate / 8 (`536143`) and drops its vertical
+part. It is type 3, so the navigator flies it at cruise height at any
+distance. Within 48 px (`4e4be0`) its heading answer (`4e4b70`) is the stored
+heading, farther out the line to the point; it posts 0x100 there and is never
+let go (+0x2c answers 1). So a pursuer follows a point that runs on with the
+target and swings toward the line it attacked along.
+
+**VTOL_Evade** (`41e3d0`, registry row `5ebe63`) runs on the same target with
++0x4e (the maneuver) and +0x52 (its ticks) zero. Stage 0 picks a maneuver:
+from a previous turn maneuver, rand(4) != 0 picks a straight one (rand(3) + 1)
+and otherwise only maneuver 4 is redrawn (rand(6) + 1); a flyer whose 0.8 x
+maxvelocity (UnitType +0x162) beats the target's picks rand(6) + 1 on rand(5)
+== 0, else rand(3) + 1; one whose 0.8 x turnrate (+0x18e) beats the target's
+picks rand(6) + 1 and redraws a 1 or a 4 once; any other picks either on
+rand(2). Its ticks are rand(30) + rand(30) + rand(15) + rand(15) + 5, less
+rand(30) + rand(15) when half its maxvelocity beats the target's; below 10
+they become rand(10) + 3. Stage 1 ends the evade when rand(d) + rand(d) +
+rand(d) > 3R (d to the target), restarts it or ends it on rand(2) once the
+ticks run out, and otherwise flies up to 33 ticks (19 for 4..6) of: 1, a
+straight line within 45 degrees of its heading; 2 and 3, a line 45 to 165
+degrees to one side or the other (point controllers, budget x 100 px x top
+speed out, the 32-bit product wrapping as retail's does, radius 16); 4..6,
+the same arcs as the heading of a moving controller held still 32 px ahead:
+brake and turn hard. Wait mask 0x28 plus the sleep.
+
+The weapons are not the mission's. The weapon update (`52ae90`) fires the
+selected slot whenever its target is in range, and runs aim start (`52fe30`)
+and the readiness gate (`52fff0`) for every class. For a `subtype=Dropped`
+weapon (`DroppedBallisticWeapon`, vtable `5f3ac4`): its in-range virtual
+(`532290`) is the base 2D centre test `530580` (with `noairweapon` /
+`toairweapon`), so it fires at a flyer in range; its angle virtual (+0x28,
+`4d4450`) is a bare `ret 0xc`, so the record keeps its angles, AimWeapon
+starts with them and the gate's angle test passes, but the bomb waits for the
+script's SET 22 and, on a `hoverattack` flyer, for the body to face the led
+SweetSpot within max(`aimtolerance`, 512) (World released it on reload alone
+before protocol 305); and its launch (`52c3b0`) gives it no vertical speed and
+a fall time from |dy|, so it falls |dy| on its way to the target's SweetSpot
+and only reaches a point below its muzzle. An Iron Beak's egg therefore hits
+a flyer cruising below the Beak (a dragon at 150, a Fallen Angel at 50) and
+passes under a Roc at its own cruise height, whose SweetSpot sits about 45 px
+above the egg. Dogfighting 212 px out, the Beak still comes inside its 200 px
+range: the pursuit point is 32 px nearer while it flies above half speed,
+and a SweetSpot sits off its unit's centre.
+
+World runs it as `retailAirToAir` and `retailAirEvade`
+(`src/sim/retailairtoair.h`), on the attack order (`Order::mission`, and
+`Order::airToAir` for +0x4e, the moving controller and a pushed evade), from
+`World::tickAirToAir` after the order's weapons have fired; a point
+controller rides in `Order::flightGoal` as AirToGround's does.
+
+Checked:
+- `tools/re/check_air_to_air.py` runs, natively, `41d780` 20000 times, the
+  controller's `4e48d0` / `4e4be0` / `4e4b70` 20000 times (7999 turns, 12156
+  inside 48 px), `41ca50` 12000 times (3712 pursuits, 1033 repositions, 399
+  break-offs, 548 off-map returns and every early return: the events, the
+  retarget scan, stages 0, 1 and past 2) and `41e3d0` 12000 times over every
+  stage and maneuver, with native `535cc0`, `53612a`, `5360bf` / `5360f3`,
+  `536143`, `51b340`, `421ae0`, `519ac0`, `4d6a10` and `_ftol`. The port
+  matches every return, stage, wait mask, deadline, pending and flag word,
+  counter, controller point, velocity, heading and radius, draw count and
+  final generator state. Twelve mutated ports fail it (the half-range test
+  inclusive, the reposition arc off centre, pursuit at R/2, the wake 6..20,
+  *on its tail* as *in its sights*, the speed shift at exactly half, the
+  facing octant mirrored, a turnrate/4 turn, a 47 px accept, the evade's
+  redraw on 2 mod 3, its ticks + 4, its turn point 16 px out).
+- The same script runs `52fe30` and `52fff0` through `DroppedBallisticWeapon`'s
+  own vtable with the real geometry `52fd80` 6000 times: the angles never
+  move, AimWeapon starts with the old ones, and the bomb is released exactly
+  when acknowledged and, for a hover attacker, facing (2607 released, 2977
+  held by SET 22, 416 by facing).
+- `air_to_air_test`, both balances: all 19 armed flyers that may attack a flyer
+  run AirToAir against one and never hold still once flying (stages 0 and 1
+  leave no controller for a tick each), none hover-rings it, and attacks on a
+  ground unit do not run it. Against a holding Roc and one circling at 500 px
+  the Aerial Juggernaut's arrows hit 27-31 times a minute (it used to park at
+  its cannons' 500 px, outside its 450 px arrows). The Iron Beak's eggs hit a
+  holding Fallen Angel 14 of 14 (Crusades, cruising at 100: 3 of 5) and a
+  holding Gold Dragon 4 of 6, and pass under a holding Roc (0 of 2). A
+  Gryphon and a Sea Dragon attacking each other break off 11 times in a
+  minute and every evade is handed back.
+- `attack_sweep` (task-attack-sweep `50bb6fbb`), the sweep's G7 cases (Iron
+  Beak, Aerial Juggernaut, Dirigible against a hovering and a circling Roc,
+  both balances): cases with 4+ shots and no damage 33 -> 18 (Juggernaut 13
+  -> 0, Beak 20 -> 18), shots 924 -> 581, hits 198 -> 242, damage 50.8 k ->
+  70.2 k. All 19 armed flyers against those two flyers: 51 -> 38 futile, 143
+  -> 127 with no damage, damage +3.6%. The Beak, Dirigible and Juggernaut on
+  every target: the bomb gate takes shots 3409 -> 3345 and damage -2%; a Beak
+  on Hold Position no longer drops eggs it does not face at a castle or a sub
+  (no damage before either).
+
+Not ported or still deviating:
+- The group check (`51d1e0`, VTOL_Move_Formation) and the air-traffic step-out
+  (unit +0x12a >= 5 pushes VTOL_StepOut), as for AirToGround.
+- A lost target (events 0x28, a dead or dying target) ends the order; retail
+  pushes VTOL_SEEKATTACK (`41d654`) when the unit is not on Hold Fire.
+- The retarget scan is World's target scan (`findTarget`, as the ground
+  response's) and its gates (`retailIssueAutoAttack`'s), the new attack put
+  ahead after the dispatch.
+- The leash (+0x56) is checked by the attack handler before the mission;
+  retail checks it after the off-map return.
+- A flyer whose selected weapon has the `dropped` key (none shipped) dogfights
+  a flyer too; retail gives it no attack mission (`4de6ed`).
+- Retail makes the other slots automatic and only the selected one manual;
+  World fires them all at the order's target (the Juggernaut's cannons drop
+  at a flyer and miss).
+- A whole native engagement has not been run: the hit rates above are those
+  of the ported parts flown together.
 
 ## SweetSpot is the drawn piece bounds (icd + live capture, 2026-10-24, protocol 295)
 

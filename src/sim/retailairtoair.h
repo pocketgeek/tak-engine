@@ -112,7 +112,6 @@ struct RetailAirDuel {
     RetailFlightVector target;          // the target's +0x68
     uint16_t targetHeading=0;           // the target's +0x7e
     RetailFlightVector targetVelocity;  // the target mover's +8
-    RetailFlightVector lead;            // 51aa50: the selected slot's led SweetSpot (mission +0x22)
     int32_t speed=0;                    // mover +0x20
     int32_t maxSpeed=0;                 // unit +0x12b (421ae0)
     uint16_t distance=0;                // airtoairdistance
@@ -143,6 +142,7 @@ int retailAirReturnToMap(RetailMissionState& m,RetailFlightVector position,int32
 }
 
 // Host: random(bound); beginFlight() (416c50); aim() (stage 1's slot calls);
+// lead() (51aa50: the selected slot's led SweetSpot, mission +0x22);
 // retarget() (4d8370 then 4d7de0(unit, found, 0, 0, 1, 0): true when it put a
 // new attack ahead); install(point goal) and install(intercept goal) (4d4d40,
 // which also clears the mission's pending controller events 0x3700);
@@ -170,6 +170,7 @@ int retailAirToAir(RetailMissionState& m,int32_t& count,uint32_t tick,uint32_t e
     case 2: break;                                                   // 41ce31
     default: return 7;
     }
+    const RetailFlightVector lead=host.lead();                       // 41ce43
     const RetailFlightVector& me=duel.position;
     const RetailFlightVector& them=duel.target;
     // 41cf43..41cffe: who is in front of whom.
@@ -183,8 +184,8 @@ int retailAirToAir(RetailMissionState& m,int32_t& count,uint32_t tick,uint32_t e
     const bool sighted=seen && retailAirAhead(me,them,duel.targetHeading,7) && retailAirAhead(me,them,duel.targetHeading,1);
     const bool tailed=!ahead && seen, hunted=!ahead && sighted, apart=!ahead && !seen;
     // 41d042..41d0f8: the whole-pixel distance to P (_ftol's low word) against R.
-    const double dx=double(std::bit_cast<int32_t>(uint32_t(me.x)-uint32_t(duel.lead.x)));
-    const double dz=double(std::bit_cast<int32_t>(uint32_t(me.z)-uint32_t(duel.lead.z)));
+    const double dx=double(std::bit_cast<int32_t>(uint32_t(me.x)-uint32_t(lead.x)));
+    const double dz=double(std::bit_cast<int32_t>(uint32_t(me.z)-uint32_t(lead.z)));
     const int span=int16_t(retailFtol(std::sqrt(dz*dz+dx*dx))>>16);
     const int reach=duel.distance;
     const bool inHalf=span<reach/2, inQuarter=span<reach/4, beyond=span>3*reach/2;
@@ -221,7 +222,7 @@ int retailAirToAir(RetailMissionState& m,int32_t& count,uint32_t tick,uint32_t e
     }
     // 41d2c8 / 41d435: P, 32 px further along the flyer's heading when it is
     // above half its top speed.
-    RetailFlightVector point=duel.lead;
+    RetailFlightVector point=lead;
     if (int32_t(int64_t(duel.speed)*2)>duel.maxSpeed) {
         point.x=std::bit_cast<int32_t>(uint32_t(point.x)-uint32_t(retailScaledSine(duel.heading,32*65536)));
         point.z=std::bit_cast<int32_t>(uint32_t(point.z)-uint32_t(retailScaledCosine(duel.heading,32*65536)));
@@ -243,8 +244,8 @@ int retailAirToAir(RetailMissionState& m,int32_t& count,uint32_t tick,uint32_t e
     point.z=std::bit_cast<int32_t>(uint32_t(point.z)-uint32_t(retailScaledCosine(angle,magnitude)));
     // 41d570: the controller turns toward the line from the flyer to P.
     RetailInterceptGoal goal{point,duel.targetVelocity,uint16_t(retailDirection(
-        Fixed::raw(std::bit_cast<int32_t>(uint32_t(me.x)-uint32_t(duel.lead.x))),
-        Fixed::raw(std::bit_cast<int32_t>(uint32_t(me.z)-uint32_t(duel.lead.z)))).v),true};
+        Fixed::raw(std::bit_cast<int32_t>(uint32_t(me.x)-uint32_t(lead.x))),
+        Fixed::raw(std::bit_cast<int32_t>(uint32_t(me.z)-uint32_t(lead.z)))).v),true};
     host.install(goal);
     m.sleep(tick,wake);
     m.waitMask|=0x68;
