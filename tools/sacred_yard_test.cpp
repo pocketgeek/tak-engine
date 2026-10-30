@@ -96,6 +96,18 @@ int main(int argc,char** argv) {
         check(stonesKept,"the Standing Stone cells stay blocked after the lodestone is destroyed");
         check(opened,"the open cells are free again");
     }
+    {   // A map without sacred sites (a lodestone may stand on open ground
+        // there, an engine extension): nothing ties the footprint to a site, so
+        // a fixed blocker (a 0xFFFC wall cell) under it still refuses.
+        constexpr int kMap=64;
+        sim::World open;open.setPlayerCount(2);
+        std::vector<uint16_t> cells(size_t(kMap)*kMap,0xffff);
+        cells[size_t(20)*kMap+21]=0xfffc;
+        open.setTerrain(std::vector<uint8_t>(size_t(kMap)*kMap,100),kMap,kMap,20,&cells);
+        check(open.sacredSites().empty(),"no-site map: the fixture has no sacred site");
+        check(open.canPlace(mana,centre(40,3),centre(40,3),0),"no-site map: open ground is admitted");
+        check(!open.canPlace(mana,centre(20,3),centre(20,3),0),"no-site map: a wall cell under the yard refuses it");
+    }
     std::printf("%s\n",failures ? "FAILED" : "PASS: sacred yard");
     return failures ? 1 : 0;
 }

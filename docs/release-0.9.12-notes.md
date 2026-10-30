@@ -414,7 +414,9 @@ decided what the game counted as seen.
   `blocked_shot_test`; `tools/re/probe_long_footprint_blocked.py`.
 - Sim (retail checks): an `S` yard cell of a structure tests the
   terrain-only grid in `World::placementCheck` (`removableBlockerAt` keeps
-  the reclaim-first rule for registered features and wrecks), and
+  the reclaim-first rule for registered features and wrecks; only where the
+  sacred-site coverage test applies, so a map without sacred sites keeps the
+  overlay test), and
   `World::blockFoot` records the fixed obstacles under it
   (`sacredUnderlay_`, unhashed) to restore them on removal;
   `retailHitResponse` returns for a unit under construction. New

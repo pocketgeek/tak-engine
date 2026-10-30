@@ -8967,8 +8967,13 @@ bool World::placementCheck(const UnitType* type, float x, float z, int player,
     // the overlay, and leaves occupancy to the body test below. A blocker the
     // sim can still remove (a registered feature, a wreck) keeps the old rule
     // -- a build order reclaims it first -- because its removal would clear the
-    // building's own overlay cells.
-    const bool sacredYard=type->yardMap.empty() && type->sacredIncome && type->isStructure();
+    // building's own overlay cells. The rule rides on the coverage test above:
+    // on a map without sacred sites (where a lodestone may stand on open
+    // ground, an engine extension) nothing ties the footprint to a site, so its
+    // cells keep the overlay test and never land on a wall or a rock.
+    const bool sacredRule=type->sacredIncome && type->isStructure() && type->onMana &&
+        !manaSpots_.empty() && !sacredSites_.empty();
+    const bool sacredYard=sacredRule && type->yardMap.empty();
     const auto sacredCell=[&](int gx,int gz) {
         if (!grid.terrainWalkable(gx,gz)) return false;
         if (grid.walkable(gx,gz) || !removableBlockerAt(gx,gz)) return true;
@@ -9030,8 +9035,8 @@ bool World::placementCheck(const UnitType* type, float x, float z, int player,
             for (int i = 0; i < type->footX; ++i) {
                 char c = type->yardMap[size_t(j) * type->footX + i];
                 if (c == '.' || c == ' ') continue;
-                if (c == 'S' && type->isStructure() ? !sacredCell(cx + i, cz + j)
-                                                    : !walkable(grid,cx + i, cz + j)) return false;
+                if (c == 'S' && sacredRule ? !sacredCell(cx + i, cz + j)
+                                           : !walkable(grid,cx + i, cz + j)) return false;
             }
     } else {
         for (int j = 0; j < type->footZ; ++j)

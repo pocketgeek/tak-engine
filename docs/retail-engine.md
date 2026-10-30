@@ -1428,9 +1428,12 @@ cell, so a build order reclaims it first, because the obstacle overlay keeps
 one bit per cell and its removal would clear the lodestone's own cells; the
 height-range rule is not ported for any yard (cells use the movement grid's
 per-cell test); the in-place upgrade over the player's own Lodestone is kept
-(retail refuses it). A lodestone built over fixed obstacles records them
-(`World::sacredUnderlay_`) and leaves them blocked when it is destroyed. Test:
-`sacred_yard`.
+(retail refuses it); on a map without sacred sites, where the engine lets a
+lodestone stand on open ground (retail's coverage bit refuses it everywhere),
+nothing ties the footprint to a site, so its cells keep the overlay test and a
+lodestone never lands on a wall cell or a rock there. A lodestone built over
+fixed obstacles records them (`World::sacredUnderlay_`) and leaves them
+blocked when it is destroyed. Test: `sacred_yard`.
 
 Placement: retail's structure placement (`507400`) tests the ground word,
 which holds a mobile body only while landed (`5066f0`). Ours matches:
