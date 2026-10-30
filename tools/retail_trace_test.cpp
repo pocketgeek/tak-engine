@@ -76,7 +76,7 @@ struct RetailReplayProbe {
         tak::cob::File script;
         World world;world.setTerrain(std::vector<uint8_t>(32*32,0),32,32,0);
         world.setPlayerCount(2);world.player(0).automaticGates=capable;
-        world.navigationExplored_.assign(16*16,0xffff);
+        world.editNavigationExploration().assign(16*16,0xffff);
         UnitType mover;mover.footX=fx;mover.footZ=fz;
         UnitType gate;gate.maxVel=Fixed();gate.gate=true;gate.footX=gate.footZ=1;
         gate.yardMap=frame?"o":"c";
@@ -284,8 +284,9 @@ struct RetailReplayProbe {
             plane.cells.assign(grades.begin(),grades.end());world.searchGrades_.push_back(std::move(plane));
         }
         if (exploration>=0) {
+            auto& explored=world.editNavigationExploration();
             for (int z=0;z<16;++z) for (int x=0;x<16;++x)
-                world.navigationExplored_[size_t(z)*16+x]=exploration==0?65535:exploration==1?0:uint16_t(1<<((x/4+z/4)%2));
+                explored[size_t(z)*16+x]=exploration==0?65535:exploration==1?0:uint16_t(1<<((x/4+z/4)%2));
         }
         uint64_t queries=0;
         const bool trace=std::getenv("TAK_SEARCH_DIAG")!=nullptr;
@@ -633,7 +634,8 @@ struct RetailReplayProbe {
         world.setTerrain(std::vector<uint8_t>(32*32,0),32,32,0);
         UnitType type;type.footX=fx;type.footZ=fz;
         const int id=world.spawn(&type,128,128,{},player);
-        std::fill(world.navigationExplored_.begin(),world.navigationExplored_.end(),uint16_t(mask));
+        auto& explored=world.editNavigationExploration();
+        std::fill(explored.begin(),explored.end(),uint16_t(mask));
         World::SearchGradePlane plane;
         plane.nav=&world.nav_;plane.footX=fx;plane.footZ=fz;
         plane.cells.assign(32*32,uint8_t(cached));

@@ -2226,6 +2226,12 @@ public:
     int viewDirtyW() const { return viewDirtyW_; }
     void clearViewDirty() { std::fill(viewDirty_.begin(),viewDirty_.end(),uint8_t(0)); }
     const std::vector<uint16_t>& navigationExploration() const { return navigationExplored_; }
+    // Write access for the harnesses and tests that seed or restore the plane
+    // (situations, "everything explored" fixtures); nothing else may write it.
+    // The block summaries derived from the plane (explorationBlocks_) are kept by
+    // its own writers, so this drops them and the next exploration pass rebuilds
+    // them from what the caller wrote: finish writing before that pass.
+    std::vector<uint16_t>& editNavigationExploration() { explorationBlocks_.clear(); return navigationExplored_; }
     // `player`'s Mapping-plane bit at the 32 px cell under (x,z), as tickManaBuildArea
     // reads it: true without a plane (no terrain), false off the map.
     bool exploredAt(int player,float x,float z) const {

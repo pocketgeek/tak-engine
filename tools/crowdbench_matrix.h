@@ -204,7 +204,7 @@ inline uint64_t control(const Unit& u) {
 }
 inline void known(World& world) {
     world.updateNavigationExploration();
-    auto& cells=const_cast<std::vector<uint16_t>&>(world.navigationExploration());
+    auto& cells=world.editNavigationExploration();
     std::fill(cells.begin(),cells.end(),0xffff);
 }
 template<class W> void profiling(W& world,bool enabled) {
