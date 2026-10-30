@@ -65,6 +65,12 @@ their validation reports; both live in [`docs/`](docs/).
   at its cannons' range, and cannonballs miss flyers). An Iron Beak drops an
   egg only once it faces its target, as in the original; the egg hits a flyer
   below the Beak and falls past one at its own height.
+- **A shot stopped in front of a castle counts as blocked.** A castle, keep,
+  gate or other long building is hit through the ground it stands on, as in
+  the original game, not anywhere within a circle of its length, so shots that
+  land on a ridge or scenery in front of its long face count as blocked. An
+  archer told to manoeuvre now walks to a clear line and hits it, where it
+  used to fire into the crest for ever.
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
   at +10, 0.9.11 fell to -2 at about 2,700 units, with 219 ticks over 250 ms;
   0.9.12 held +9 to +10 to 3,160 units with no tick over 100 ms:
@@ -89,9 +95,9 @@ their validation reports; both live in [`docs/`](docs/).
   (and puts the sound device back to the system default at once). The
   Controls hint has a band of its own, so it no longer covers the last row (a
   right-click there used to unbind that key).
-- **Protocol 305:** the AI's sight-only targets and the new state check change
-  what players compare, so this release does not play with 0.9.11 or earlier,
-  nor their replays. A 0.9.11 client or server is turned away with a
+- **Protocol 305:** the AI's sight-only targets, the combat fixes and the new
+  state check change what players compare, so this release does not play with
+  0.9.11 or earlier, nor their replays. A 0.9.11 client or server is turned away with a
   *protocol version mismatch* message, and a 0.9.11 replay is refused with the
   version message.
 
