@@ -33,7 +33,7 @@ jobs:
           - arch: arm64
             machine: arm64
             runner_arch: ARM64
-            runner: macos-14
+            runner: macos-15
           - arch: x64
             machine: x86_64
             runner_arch: X64
