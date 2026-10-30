@@ -2682,7 +2682,10 @@
                 // Long queued-build lists (the build-ghost workload): builder k stands at the
                 // west end of row k and queues its Q builds eastwards along the row, 128 px
                 // apart (rows 192 px apart), types cycling through the first T small
-                // structures the monarch builds. Sites the map refuses are skipped.
+                // structures the monarch builds. Sites the map refuses are skipped. Each
+                // builder is first sent 4000 px west (or to the map edge), so no build
+                // starts during a study: the ghost count stays fixed and no conjuring
+                // sparkle (whose particles differ run to run) lands in the captures.
                 int builders=0,perQueue=0,typeCount=4;float dx=0,dz=0;
                 std::sscanf(queues,"%d,%d,%d,%f,%f",&builders,&perQueue,&typeCount,&dx,&dz);
                 builders=std::clamp(builders,0,64);perQueue=std::clamp(perQueue,0,256);
@@ -2698,6 +2701,7 @@
                     const int builder=spawn("araking",rowX-160,rowZ,0,localPlayer_);
                     if(builder<=0)continue;
                     ++ghostBuilders;
+                    writableWorld().order(builder,std::max(64.f,rowX-4160),rowZ,false);
                     for(int q=0;q<perQueue;++q) {
                         const size_t before=world_.unit(builder)->orders.size();
                         writableWorld().queueBuild(builder,sites[size_t(k+q)%sites.size()],
