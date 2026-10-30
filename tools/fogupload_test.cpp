@@ -35,6 +35,29 @@ int main() try {
             check(!rf::buildPlane(src,plane),"an unchanged plane reports no change");
         }
     }
+    {   // RadarCover against every source tested in turn (0x509ac0's circle).
+        uint32_t seed=777;
+        auto next=[&]{seed=seed*1103515245u+12345u;return seed>>8;};
+        for(int round=0;round<30;++round) {
+            rf::RadarCover cover;
+            struct S{int32_t x,z,r;};std::vector<S> sources;
+            const int n=1+int(next()%60);
+            for(int k=0;k<n;++k) {
+                S src{int32_t((next()%6000)<<16)+int32_t(next()%65536),int32_t((next()%6000)<<16),int32_t(30+next()%(round%3 ? 1500 : 200))};
+                sources.push_back(src);cover.add(src.x,src.z,src.r);
+            }
+            cover.finish();
+            for(int q=0;q<400;++q) {
+                const int32_t x=int32_t((next()%7000)<<16)-(500<<16)+int32_t(next()%65536),z=int32_t((next()%7000)<<16)-(500<<16);
+                bool any=false;
+                for(const auto& src:sources) {
+                    const int64_t dx=int64_t(x)-src.x,dz=int64_t(z)-src.z;
+                    any=any || ((dx*dx)>>32)+((dz*dz)>>32)<=int64_t(src.r)*src.r;
+                }
+                check(cover.covers(x,z)==any,"radar cover matches every source tested in turn");
+            }
+        }
+    }
     SDL_SetMainReady();check(SDL_Init(SDL_INIT_VIDEO)==0,SDL_GetError());
     constexpr int W=129,H=97;   // cells; the overlay is 2W x 2H texels
     auto* window=SDL_CreateWindow("fog uploads",0,0,2*W,2*H,SDL_WINDOW_HIDDEN);
@@ -83,5 +106,5 @@ int main() try {
     upload.clear();verify();check(upload.uploadedBytes()==size_t(4*W*H)*4,"reset restores whole image");
     SDL_SetRenderTarget(renderer,nullptr);SDL_DestroyTexture(target);SDL_DestroyTexture(texture);SDL_DestroyTexture(mini);
     SDL_DestroyRenderer(renderer);SDL_DestroyWindow(window);SDL_Quit();
-    std::puts("PASS: fog upload: display plane, retail texel blend, minimap cells, dirty blocks, edges and reset");return 0;
+    std::puts("PASS: fog upload: display plane, radar cover, retail texel blend, minimap cells, dirty blocks, edges and reset");return 0;
 } catch(const std::exception& e) {std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}

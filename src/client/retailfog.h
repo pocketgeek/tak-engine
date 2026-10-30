@@ -140,13 +140,16 @@ public:
     void add(int32_t x, int32_t z, int32_t radius) {
         if (radius > 0) sources_.push_back({x, z, int64_t(radius) * radius});
     }
-    // Buckets the sources by their largest radius; call after the last add.
+    // Buckets the sources; call after the last add. A bucket is small enough that
+    // a source in the query's own bucket always reaches it, so a unit inside the
+    // radar (the common case in a battle) is answered from its first bucket.
     void finish() {
         head_.clear(); next_.clear();
         if (sources_.empty()) return;
-        int64_t r2 = 0;
-        for (const auto& s : sources_) r2 = std::max(r2, s.r2);
-        cell_ = std::max<int>(64, int(std::ceil(std::sqrt(double(r2)))));
+        int64_t minR2 = INT64_MAX; maxR2_ = 0;
+        for (const auto& s : sources_) { minR2 = std::min(minR2, s.r2); maxR2_ = std::max(maxR2_, s.r2); }
+        cell_ = std::max(64, int(std::sqrt(double(minR2)) / 1.5));
+        range_ = int(std::ceil(std::sqrt(double(maxR2_)) / cell_));
         int minX = INT32_MAX, minZ = INT32_MAX, maxX = INT32_MIN, maxZ = INT32_MIN;
         for (const auto& s : sources_) {
             const int bx = floorDiv(s.x >> 16), bz = floorDiv(s.z >> 16);
@@ -165,17 +168,28 @@ public:
     bool empty() const { return sources_.empty(); }
     bool covers(int32_t x, int32_t z) const {
         if (head_.empty()) return false;
-        const int bx = floorDiv(x >> 16) - x0_, bz = floorDiv(z >> 16) - z0_;
-        for (int dz = -1; dz <= 1; ++dz)
-            for (int dx = -1; dx <= 1; ++dx) {
-                const int cx = bx + dx, cz = bz + dz;
-                if (cx < 0 || cz < 0 || cx >= bw_ || cz >= bh_) continue;
-                for (int i = head_[size_t(cz) * size_t(bw_) + size_t(cx)]; i >= 0; i = next_[size_t(i)]) {
-                    const auto& s = sources_[size_t(i)];
-                    const int64_t ddx = int64_t(x) - s.x, ddz = int64_t(z) - s.z;
-                    if (((ddx * ddx) >> 32) + ((ddz * ddz) >> 32) <= s.r2) return true;
-                }
+        const int px = x >> 16, pz = z >> 16;
+        const int bx = floorDiv(px) - x0_, bz = floorDiv(pz) - z0_;
+        const auto bucket = [&](int cx, int cz) {
+            if (cx < 0 || cz < 0 || cx >= bw_ || cz >= bh_) return false;
+            // Skip a bucket whose nearest point is beyond the largest radius.
+            const int64_t left = int64_t(cx + x0_) * cell_, top = int64_t(cz + z0_) * cell_;
+            const int64_t nx = std::clamp<int64_t>(px, left, left + cell_) - px;
+            const int64_t nz = std::clamp<int64_t>(pz, top, top + cell_) - pz;
+            if (nx * nx + nz * nz > maxR2_ + 2 * cell_) return false;
+            for (int i = head_[size_t(cz) * size_t(bw_) + size_t(cx)]; i >= 0; i = next_[size_t(i)]) {
+                const auto& s = sources_[size_t(i)];
+                const int64_t ddx = int64_t(x) - s.x, ddz = int64_t(z) - s.z;
+                if (((ddx * ddx) >> 32) + ((ddz * ddz) >> 32) <= s.r2) return true;
             }
+            return false;
+        };
+        if (bucket(bx, bz)) return true;
+        for (int k = 1; k <= range_; ++k)   // rings outward
+            for (int d = -k; d <= k; ++d)
+                if (bucket(bx + d, bz - k) || bucket(bx + d, bz + k) ||
+                    (d > -k && d < k && (bucket(bx - k, bz + d) || bucket(bx + k, bz + d))))
+                    return true;
         return false;
     }
 private:
@@ -183,7 +197,8 @@ private:
     struct Source { int32_t x, z; int64_t r2; };
     std::vector<Source> sources_;
     std::vector<int> head_, next_;
-    int cell_ = 64, x0_ = 0, z0_ = 0, bw_ = 0, bh_ = 0;
+    int64_t maxR2_ = 0;
+    int cell_ = 64, range_ = 1, x0_ = 0, z0_ = 0, bw_ = 0, bh_ = 0;
 };
 
 // ---- the overlay (Glide path, 0x498270) ------------------------------------

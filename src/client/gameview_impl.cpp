@@ -847,8 +847,8 @@
             const int32_t y = (u.type->canFly ? u.flightY : u.groundY).v;
             s.losSeen = rf::unitInView(fb.fog, fb.fogW, fb.fogH, hidden, u.x.v, y, u.z.v,
                                        u.type->footX, u.type->footZ, u.type->modelTop);
-            s.mapSeen = !hidden && (fogRadar_.covers(u.x.v, u.z.v) ||
-                                    rf::pointInView(fb.fog, fb.fogW, fb.fogH, u.x.v, y, u.z.v));
+            s.mapSeen = !hidden && (rf::pointInView(fb.fog, fb.fogW, fb.fogH, u.x.v, y, u.z.v) ||
+                                    fogRadar_.covers(u.x.v, u.z.v));
         }
         // Pose: prev comes from the previously-published frame's curr for this SAME unit
         // (id live last tick + matching type). Interpolate alive units between ticks;
