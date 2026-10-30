@@ -6155,6 +6155,36 @@ struct LegionNavigator::Impl {
         L.e.push_back({epoch,box});
         while(L.e.size()>kImproveLog) {L.floor=L.e.front().first;L.e.pop_front();}
     }
+    // staticChanged's visit of one group: which of its routes the changes reach (all without boxes), as a closure and/or
+    // an improvement, and what that does to the group. Inlined into both of staticChanged's loops (perf follow-up I:
+    // called out of line once per group, it cost more than the route index saved on maps with few groups).
+    [[gnu::always_inline]] void reachGroup(Group& g,const std::vector<std::vector<StaticChange>>* changes) {
+        bool closes=!changes,opens=false;
+        uint64_t flags=0;   // ridx.decisions only
+        for(Field* f:{g.field.get(),g.next.get()}) {
+            flags<<=2;
+            if(!f)continue;
+            bool fc=!changes,fo=false;
+            if(changes&&g.plane>=0&&size_t(g.plane)<changes->size())
+                for(const auto& c:(*changes)[size_t(g.plane)])
+                    if((c.closes&&!fc)||(c.opens&&!fo))
+                        if(fieldTouched(*f,c.box)) {fc|=c.closes;fo|=c.opens;}
+            if(!fc&&!fo)continue;
+            // Its routes' "unreached" no longer proves anything (RouteView::reach) until the refresh lands.
+            f->touched=true;f->closed|=fc;f->opened|=fo;
+            closes|=fc;opens|=fo;
+            flags|=uint64_t(fc)|uint64_t(fo)<<1;
+        }
+        if(flags) {++ridx.touched;ridx.decisions=mix(mix(ridx.decisions,uint64_t(uint32_t(g.id))),flags);}
+        if(closes&&g.field)++acct.routesClosed;
+        else if(opens&&g.field)++acct.routesOpened;
+        if(!g.field||(!closes&&!opens))return;
+        if(closes) {
+            g.stale=true;g.improveTick=kNoTick;   // the refresh is built on the new plane: it has the improvements too
+            restaleSlots(g);
+        } else if(g.improveTick==kNoTick&&!g.stale)g.improveTick=w.tickCounter_;
+        listGroup(g);
+    }
     void staticChanged(const std::vector<std::vector<StaticChange>>* changes=nullptr) {
         struct ProbeSpan {   // LPROBE only
             Impl& I;std::chrono::steady_clock::time_point t0;
@@ -6188,33 +6218,6 @@ struct LegionNavigator::Impl {
                 for(size_t pi=0;pi<changes->size();++pi)
                     for(const auto& c:(*changes)[pi])if(c.opens)logImprovement(pi,c.box);
             if(!changes)for(size_t pi=0;pi<planes.size();++pi)logImprovement(pi,{0,0,width()-1,height()-1});
-            auto reach=[&](Group& g) {
-                bool closes=!changes,opens=false;
-                uint64_t flags=0;   // ridx.decisions only
-                for(Field* f:{g.field.get(),g.next.get()}) {
-                    flags<<=2;
-                    if(!f)continue;
-                    bool fc=!changes,fo=false;
-                    if(changes&&g.plane>=0&&size_t(g.plane)<changes->size())
-                        for(const auto& c:(*changes)[size_t(g.plane)])
-                            if((c.closes&&!fc)||(c.opens&&!fo))
-                                if(fieldTouched(*f,c.box)) {fc|=c.closes;fo|=c.opens;}
-                    if(!fc&&!fo)continue;
-                    // Its routes' "unreached" no longer proves anything (RouteView::reach) until the refresh lands.
-                    f->touched=true;f->closed|=fc;f->opened|=fo;
-                    closes|=fc;opens|=fo;
-                    flags|=uint64_t(fc)|uint64_t(fo)<<1;
-                }
-                if(flags) {++ridx.touched;ridx.decisions=mix(mix(ridx.decisions,uint64_t(uint32_t(g.id))),flags);}
-                if(closes&&g.field)++acct.routesClosed;
-                else if(opens&&g.field)++acct.routesOpened;
-                if(!g.field||(!closes&&!opens))return;
-                if(closes) {
-                    g.stale=true;g.improveTick=kNoTick;   // the refresh is built on the new plane: it has the improvements too
-                    restaleSlots(g);
-                } else if(g.improveTick==kNoTick&&!g.stale)g.improveTick=w.tickCounter_;
-                listGroup(g);
-            };
             // Perf follow-up I: with per-plane boxes, only the groups the route index lists in a bin some box overlaps
             // are visited (gatherReached: every group a change can reach), in ascending id order as the walk of every
             // group visits them; fieldTouched still decides. A group no change reaches is left exactly as the walk left
@@ -6227,11 +6230,11 @@ struct LegionNavigator::Impl {
             if(changes&&gatherReached(*changes)) {
                 ++ridx.indexed;ridx.candidates+=binCands.size();
                 stats.groupLoopIters+=binCands.size();
-                for(const int id:binCands)if(Group* g=groups.get(id))reach(*g);   // listed groups are live (unlistGroup)
+                for(const int id:binCands)if(Group* g=groups.get(id))reachGroup(*g,changes);   // listed groups are live (unlistGroup)
             } else {
                 ridx.candidates+=groups.size();
                 stats.groupLoopIters+=groups.size();
-                for(auto& [id,g]:groups)reach(g);
+                for(auto& [id,g]:groups)reachGroup(g,changes);
             }
         }
     }
