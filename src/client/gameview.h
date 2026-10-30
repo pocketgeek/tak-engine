@@ -846,6 +846,20 @@ public:
     void renderStudyChurn(unsigned frame, unsigned period);
     std::optional<std::pair<float,float>> panSnapBase_;
     void renderStudyOffset(float x, float z) { mapView_.setOffset(x, z); }
+    // Perf follow-up C (cursor picking): the render study's scripted pointer. Each
+    // frame the pointer moves to a spot fixed by the frame number -- on even frames
+    // the body of a live unit in the world view (the first of up to 64 picked by
+    // frame number), otherwise a Lissajous sweep over the world view -- so the
+    // cursor classifies units and bare ground the way a moving mouse does. Up to
+    // `select` own finished units are selected while the selection is empty, and
+    // `cmd` (0: none) is armed every frame. drawCursorOverlay times the frame's
+    // cursor evaluation (renderStudyCursorStats; CURSORSTATS lines).
+    void renderStudyCursor(unsigned frame, int select, char cmd);
+    struct CursorStudyStats { uint64_t ns = 0, tests = 0; int cursor = -1; bool tint = false; float x = 0, y = 0; };
+    const CursorStudyStats& renderStudyCursorStats() const { return cursorStudy_; }
+    CursorStudyStats cursorStudy_;
+    bool cursorStudyOn_ = false;
+    uint64_t debugPickTests_ = 0;   // unitUnderCursor calls (debug builds)
     // The world view at this output size (left of the command panel, above the
     // bottom bar): the region a render capture comparison should cover.
     std::pair<int,int> renderStudyWorldView(int w, int h) const { return {mapViewW(w), std::max(1, h - barH())}; }

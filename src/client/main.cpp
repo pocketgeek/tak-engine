@@ -1946,6 +1946,14 @@ int main(int argc, char** argv) {
     const unsigned studyFilter=studyPeriod("TAK_RENDER_FILTER");     // Texture Filtering Off<->Units (workstream M)
     const unsigned studyPanSnap=studyPeriod("TAK_RENDER_CAMERA_SNAP");  // whole-pixel pan (1, or N moving/N still)
     const unsigned studySparseAfter=studyPeriod("TAK_RENDER_SPARSE_AFTER");
+    // Perf follow-up C: TAK_RENDER_CURSOR=1 drives the pointer over the world view
+    // (GameView::renderStudyCursor) and prints the frame's cursor evaluation
+    // (CURSORSTATS); TAK_RENDER_CURSOR_SELECT=<n> keeps up to n own units selected,
+    // TAK_RENDER_CURSOR_CMD=<c> arms order c ('a' attack, 'r' repair, 'g' guard,
+    // 'l' load, 'm' move...).
+    const bool studyCursor=renderStudy && tak::devFlag("TAK_RENDER_CURSOR");
+    const int studyCursorSelect=int(studyPeriod("TAK_RENDER_CURSOR_SELECT"));
+    const char studyCursorCmd=tak::devEnv("TAK_RENDER_CURSOR_CMD") ? tak::devEnv("TAK_RENDER_CURSOR_CMD")[0] : 0;
     float studySparseX=200,studySparseZ=200;
     if(const char* at=tak::devEnv("TAK_RENDER_SPARSE_OFFSET"))std::sscanf(at,"%f,%f",&studySparseX,&studySparseZ);
     // Workstream K (terrain under camera motion). TAK_RENDER_SWEEP=cx,cz,ax,az,period:
@@ -2213,6 +2221,7 @@ int main(int argc, char** argv) {
                     gameView->lookAt(p.first,p.second);
                 }
                 if(renderStudy && studyChurn)gameView->renderStudyChurn(studyFrame,studyChurn);
+                if(studyCursor)gameView->renderStudyCursor(studyFrame,studyCursorSelect,studyCursorCmd);
                 if(renderStudy && studyEpoch && studyFrame && studyFrame%studyEpoch==0)
                     gameView->renderStudyBumpWorldEpoch();
                 if(renderStudy && studyShake && studyFrame%studyShake==0)
@@ -2294,6 +2303,14 @@ int main(int argc, char** argv) {
                 streaming.frame(w,h);
                 if (panel) gameView->drawCursorOverlay(true);
             }
+#ifndef NDEBUG
+            if (studyCursor) {
+                const auto& c = gameView->renderStudyCursorStats();
+                std::printf("CURSORSTATS frame=%u ns=%llu tests=%llu cursor=%d tint=%d x=%.1f y=%.1f\n", studyFrame,
+                            static_cast<unsigned long long>(c.ns), static_cast<unsigned long long>(c.tests),
+                            c.cursor, c.tint ? 1 : 0, c.x, c.y);
+            }
+#endif
         }
         // Read both metrics from the pinned snapshot before releasing it.
         const uint32_t profTick = prof && gameView ? gameView->framedTick() : 0;

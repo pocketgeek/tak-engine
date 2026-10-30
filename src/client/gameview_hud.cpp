@@ -323,7 +323,17 @@ namespace {
             return;
         }
         bool fightTint = false;
+#ifndef NDEBUG
+        const auto cursorStart = std::chrono::steady_clock::now();
+        debugPickTests_ = 0;
+#endif
         tak::CursorId c = uiOverlay ? tak::CursorId::Normal : desiredCursor(fightTint);
+#ifndef NDEBUG
+        if (cursorStudyOn_ && !uiOverlay)
+            cursorStudy_ = {uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now() - cursorStart).count()),
+                            debugPickTests_, int(c), fightTint, mouseX_, mouseY_};
+#endif
         int sc = settings_ ? settings_->cursorScale : 1;
         SDL_Color tint = fightTint ? kFightMoveTint : SDL_Color{255, 255, 255, 255};
 
@@ -2561,6 +2571,9 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
 }
 
     bool GameView::unitUnderCursor(const UnitR& u, float mx, float my, float* d2) {
+#ifndef NDEBUG
+        ++debugPickTests_;
+#endif
         if (!canPickUnit(u)) return false;
         if (dotsFrame_) {
             // Tactical Dots on screen: the hit region is the dot, with the same

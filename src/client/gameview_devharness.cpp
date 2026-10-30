@@ -4429,6 +4429,33 @@
         }
     }
 
+    void GameView::renderStudyCursor(unsigned frame, int select, char cmd) {
+        cursorStudyOn_ = true;
+        const Frame& f = front();
+        if (select > 0 && selection_.empty())
+            for (const UnitR* u : f.live) {
+                if (int(selection_.size()) >= select) break;
+                if (u->player == localPlayer_ && u->alive() && !u->embarked() && !u->underConstruction && u->type)
+                    selection_.push_back(u->id);
+            }
+        if (cmd) pendingCmd_ = cmd;
+        const float w = float(mapViewW(winW_)), h = float(std::max(1, winH_ - barH()));
+        const float margin = 40.0f;   // clear of the edge-scroll band
+        float x = w * (0.5f + 0.42f * std::sin(float(frame) * 0.037f));
+        float y = h * (0.5f + 0.42f * std::sin(float(frame) * 0.051f + 1.0f));
+        if (frame % 2 == 0 && !f.live.empty())
+            for (uint32_t k = 0; k < 64; ++k) {
+                const UnitR& u = *f.live[(size_t(frame) * 2654435761u + size_t(k) * 40503u) % f.live.size()];
+                if (!u.type || u.embarked() || !u.alive()) continue;
+                const SDL_FPoint p = dotsFrame_ ? dotCentre(u) : unitScreen(u);
+                if (p.x < margin || p.x > w - margin || p.y < margin || p.y > h - margin) continue;
+                x = p.x; y = p.y;
+                break;
+            }
+        mouseX_ = std::clamp(x, margin, std::max(margin, w - margin));
+        mouseY_ = std::clamp(y, margin, std::max(margin, h - margin));
+    }
+
     // Material-only invalidation for the render matrix (workstream E): every
     // `period` frames every fifth living mobile unit moves to the next veteran
     // level in 4..9 (gold body tint; level 10 would swap the model).
