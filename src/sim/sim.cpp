@@ -8,6 +8,7 @@
 #include "sim/retailinstantcorpse.h"
 #include "sim/retailsplash.h"
 #include "sim/retailairattack.h"
+#include "sim/retailviewcounts.h"
 
 #include <type_traits>
 
@@ -13207,10 +13208,12 @@ void World::updateExplorationPlane() {
 
 // The per-player current-view counters (player +0x88). One pass per tick
 // after the tick, like exploration (retail runs it once per frame, 52654e ->
-// 4f6ae0). Every footprint change is a full removal then a full add over the
-// admitted cells, so the plane always equals the sum of the active footprints
-// plus the death revealers. Count deltas commute, so chunks add atomically
-// (relaxed) in any order to the same result.
+// 4f6ae0). Retail removes a changed footprint and adds it again; a footprint
+// that stays counted on the same plane instead changes only the cells whose
+// admission differs (retailSightMove), which leaves the same counts. The plane
+// always equals the sum of the active footprints plus the death revealers.
+// Count deltas commute, so chunks add atomically (relaxed) in any order to the
+// same result.
 void World::updateViewCounts() {
     if (explorationHeights_.empty()) return;
     const int width=hW_/2,height=hH_/2;
@@ -13275,7 +13278,7 @@ void World::updateViewCounts() {
             uint16_t* plane=viewCounts_.data()+size_t(u.player)*cells;
             constexpr bool kShared=decltype(shared)::value;
             const RetailSightFootprint before=u.viewSight;
-            retailUpdateSight(u.viewSight,u.x,y,u.z,uint8_t(seaLevel_),false,width,height,uint8_t(u.player),heightAt,
+            retailUpdateSightCounts(u.viewSight,u.x,y,u.z,uint8_t(seaLevel_),width,height,uint8_t(u.player),heightAt,
                 [&](int x,int z,int delta,uint16_t) {
                     uint16_t& cell=plane[size_t(z)*width+x];
                     if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);

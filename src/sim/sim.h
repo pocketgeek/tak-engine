@@ -1343,10 +1343,11 @@ struct alignas(64) Unit {
     // 4c6800's current-view footprint (the sight object at unit+0x84 as the
     // per-player view counters see it) and the plane it is counted in (-1 =
     // none). Kept beside sightFootprint, which feeds the persistent exploration
-    // plane and skips removals; this one is always removed before it moves, so
-    // World::viewCounts_ is exactly the sum of the active footprints. Recording
-    // the counted player makes deaths and ownership changes self-correcting.
-    // Hashed.
+    // plane and skips removals; this one always takes its old cells out of the
+    // counts when it moves (only those it no longer admits, see
+    // retailSightMove), so World::viewCounts_ is exactly the sum of the active
+    // footprints. Recording the counted player makes deaths and ownership
+    // changes self-correcting. Hashed.
     RetailSightFootprint viewSight;
     int8_t viewPlayer = -1;
     // An upgrade consumes its old building when the new site is admitted. Keep
