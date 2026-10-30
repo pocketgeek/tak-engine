@@ -811,11 +811,11 @@ struct alignas(64) Order {
     // of the target; stage 7 counts wakes off the map on it.
     int32_t airRunCount = 0;
     // A ground attack (Attack_Chase, 403bb0; tickCombat): whether the unit
-    // has walked toward its target under this order, and the tick its
-    // weapons first aim at it (kAttackUnaimed until it first stands in
+    // has walked toward its target under this order (`attackChased`, beside
+    // `chaseLeashed` below so the cold tail stays five lines), and the tick
+    // its weapons first aim at it (kAttackUnaimed until it first stands in
     // reach). Hashed with a tag when set.
     static constexpr uint32_t kAttackUnaimed = UINT32_MAX;
-    bool attackChased = false;
     uint32_t attackAimTick = kAttackUnaimed;
     // AirToAir (retailAirToAir, tickAirToAir), which runs on `mission` too:
     // its mission +0x4e, the moving controller and a pushed VTOL_Evade.
@@ -847,6 +847,7 @@ struct alignas(64) Order {
     // unlimited), and the return move queued behind it walks it back. Hashed
     // with a tag when set.
     bool chaseLeashed = false;
+    bool attackChased = false; // Attack_Chase: walked under this order (above)
     uint16_t chaseLeash = 0;
     RetailGroundPoint chaseOrigin{};
     // RECLAIM's work countdown (406250 mission +0x4e): trunc(energy + 15) at
