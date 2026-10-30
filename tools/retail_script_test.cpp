@@ -636,21 +636,21 @@ int main(int argc,char** argv) {
             type.maxHp=victim.maxHp=1000;type.hasNimbusArt=available;
             tak::sim::Weapon weapon;weapon.range=400;weapon.reload=10;weapon.damage=1;
             weapon.projVel=300;weapon.straight=!lightning;weapon.lightning=lightning;
-            weapon.nimbus=flag;weapon.buildUp=0.25f;weapon.buildUpTicks=7;
+            weapon.nimbus=flag;weapon.buildUp=0.25f;weapon.buildUpTicks=11;weapon.nimbusTicks=7;
             type.weapon=weapon;type.weapons={weapon};
             tak::sim::World world;
             world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=world.spawn(&type,200,200,0,0),target=world.spawn(&victim,350,200,0,1);
             RetailReplayProbe::shoot(world,from,target);
-            require(!world.projectiles().empty(),"buildup fixture creates a projectile");
+            require(!world.projectiles().empty(),"nimbus delay fixture creates a projectile");
             if(world.projectiles().empty())continue;
             const auto shot=world.projectiles().front();
             require(shot.start==world.tickCount()+1+uint32_t(flag && available ? 7 : 0),
-                  "launch delay requires both nimbus flag and faction art");
+                  "nimbustime (not builduptime) delays launch, given both nimbus flag and faction art");
             while(world.tickCount()<shot.start) {
                 RetailReplayProbe::straightTick(world,world.tickCount()+1);
                 require(!world.projectiles().empty() && world.projectiles().front().position==shot.position,
-                      "projectile remains at its muzzle through buildup and activation");
+                      "projectile remains at its muzzle through the nimbus delay and activation");
             }
             RetailReplayProbe::straightTick(world,world.tickCount()+1);
             require(!world.projectiles().empty() && world.projectiles().front().position!=shot.position,
@@ -658,7 +658,7 @@ int main(int argc,char** argv) {
         }
         for(bool startArt:{false,true}) for(bool endArt:{false,true}) {
             UnitType type,victim;type.maxHp=victim.maxHp=1000;type.hasNimbusArt=true;
-            Weapon weapon;weapon.kind=Weapon::Kind::Wandering;weapon.nimbus=true;weapon.buildUpTicks=2;
+            Weapon weapon;weapon.kind=Weapon::Kind::Wandering;weapon.nimbus=true;weapon.buildUpTicks=9;weapon.nimbusTicks=2;
             weapon.durationTicks=3;weapon.variationTicks=99;weapon.projVel=30;
             weapon.reload=100;weapon.damage=1;weapon.aoe=80;weapon.range=400;
             if(startArt)weapon.wanderStartTicks={2,1};
@@ -708,7 +708,7 @@ int main(int argc,char** argv) {
         }
         {
             UnitType type,victim;type.hasNimbusArt=true;
-            Weapon weapon;weapon.kind=Weapon::Kind::Wandering;weapon.nimbus=true;weapon.buildUpTicks=5;
+            Weapon weapon;weapon.kind=Weapon::Kind::Wandering;weapon.nimbus=true;weapon.nimbusTicks=5;
             type.weapons={weapon};World stormWorld;
             stormWorld.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
             const int from=stormWorld.spawn(&type,200,200,0,0),target=stormWorld.spawn(&victim,300,200,0,1);

@@ -302,6 +302,44 @@ A Mage Archer on Manoeuvre facing a Taros Castle's long face behind a ridge
 now walks 41 pixels (48 with Legion) and hits it seven times; before, it
 fired eleven shots into the ridge and never moved.
 
+## Spells land when and where the original's do
+
+Remote Effect spells (the plain ones, Earthquake, Hailstorm, Area Mind
+Control and Area Freeze) were checked tick by tick against the original's own
+handlers run in the emulator (`0x52e890` / `0x52e940` and each class's
+per-tick hook, the Hailstorm's `0x52ed60` / `0x52ee80`), for every shipped
+configuration. Counting from the tick a spell is cast, the original starts it
+the next tick, lands a `shotart` spell after its flight, hits at
+`builduptime` after that and expires at `decaytime` after the hit, testing
+the expiry before anything else. The engine now does the same:
+
+- **Aim.** The spell is cast at the slot's aim point (`0x51aa50`): the
+  target's SweetSpot led by 80% of its motion over the weapon's flight time.
+  It used to land where the target stood. The lead matters for the slow
+  spells (`weaponvelocity` 100): the Mind Mage's area charm lands about a
+  second and a half of walking ahead of a target at its full range.
+- **Earthquake pulses** fall every `shakeduration` after the spell lands,
+  never on the landing tick and never on the expiry tick (`0x52ecd0`). The
+  engine pulsed on the expiry tick too: the Avatar of Anu's and the Ghost of
+  Garacaius's Earthquakes hit three times instead of two, and the Acolyte's
+  six instead of five.
+- **Hail** falls every `30 / particlespersecond` ticks in whole ticks
+  (`idiv` at `0x52efcd`), not rounded: at eight stones a second, every 3
+  ticks, not 4. The Ghost of Garacaius's Ice Storms hit 19 times (were 14),
+  the Fallen Angel's Wrath 21 times (were 16).
+- **Timing.** Every hit lands at the original's tick, one or two ticks later
+  than before; `builduptime`, `decaytime`, `shakeduration` and `duration`
+  are cut to whole ticks as the original does, not rounded. A delivered
+  spell's flight (the Acolyte's Earthquake) is the whole-pixel 3D distance
+  from the caster to the aim point over the shot's speed, in whole ticks.
+- **Storm launch.** A nimbus caster's launch delay is `nimbustime`
+  (`0x53101d`), which no shipped weapon sets, not `builduptime`: the Spawn
+  of Belial's, Angel of Lihr's, Wrath of Tammuz's and Weather Witch's storms
+  set off at once instead of 1.2 to 2.25 seconds late.
+
+Killing the caster still aborts an area charm or freeze at any point and
+leaves every other spell to finish, as in the original.
+
 ## Streaming keeps to YouTube's bitrate
 
 Above YouTube's bitrate for a stream's size, frame rate and codec, YouTube can
@@ -388,6 +426,16 @@ decided what the game counted as seen.
   circle for a non-square body) in `World::noteShotImpact`, and
   `World::chordClear` now takes the target. New castle case in
   `blocked_shot_test`; `tools/re/probe_long_footprint_blocked.py`.
+- Sim (Remote Effect timing): `World::fire`'s Remote branch takes its point
+  from `retailLeadPoint` and builds the retail timeline (start, shotart
+  flight, buildup, decay) as countdowns; the channel loop tests expiry before
+  the pulse except for the Hailstorm. New `Weapon::decayTicks`, `shakeTicks`
+  and `nimbusTicks` (parsed from `nimbustime`), which replaces `buildUpTicks`
+  as the nimbus launch delay of Wandering, Guided and Line-of-Sight shots. New
+  `remote_timing_test` (each shipped timeline against the emulated original,
+  the caster-death abort, the lead); `retail_script_test`,
+  `capture_combat_test` and `unit_retirement_test` fixtures give their spells
+  the timers they now need.
 - `Order` stays five cache lines (320 bytes): `attackChased` fills the pad
   beside `chaseLeashed`.
 - Sim: `src/sim/statefold.h` (`WordMix`, chunked xxHash64-style lanes) for
@@ -497,6 +545,11 @@ New with 0.9.12:
   instead of four; it hit nothing either way). The reposition's minimum
   distance and the navigation grid's sight radius still use a building's
   longest side.
+- **Remote Effect edges not copied:** a spell whose caster dies in the very
+  tick it is cast still lands (the original drops a plain spell or
+  Earthquake then), and a delivered spell thrown less than a flight tick
+  away (under about 7 pixels for the Acolyte) lands at once, where the
+  original's looping shot art holds it a whole buildup and decay longer.
 - **0.9.11's limits still apply:** see the
   [0.9.11 notes](release-0.9.11-notes.md#known-limits), and through them the
   earlier notes; 0.9.11's "AI goes after everything" is replaced by the

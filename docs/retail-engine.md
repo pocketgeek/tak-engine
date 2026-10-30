@@ -588,9 +588,61 @@ Still deviating:
 - The feature half keeps World's radius floor of 8 px and runs before the units
   rather than cell by cell.
 - World detonates death weapons after the whole unit pass; retail does so
-  inside it, as each dying unit retires, before later units have moved. A
-  Remote Effect lands on its target's position at fire time; retail uses the
-  slot's aim point (+8), lead included.
+  inside it, as each dying unit retires, before later units have moved.
+  (A Remote Effect landed on its target's position at fire time until 0.9.12;
+  it now uses the slot's aim point, lead included -- see below.)
+
+### Remote Effect timing and aim (emulated, 0.9.12)
+
+`RemoteEffectWeapon`, `EarthquakeWeapon`, `AreaMindControl` and
+`AreaTurnToFrozen` share init `52e890` and update `52e940`, each with its own
+per-tick hook (`52ec90`, `52ecd0`, `52f000`, `52f360`); the Hailstorm has
+`52ed60` / `52ee80`. Release `530220` copies the slot's aim point into the shot
+before init, and the shot loop `52afd0` runs after the unit updates in the
+fire tick T. Emulated tick by tick for every shipped configuration (and a
+caster killed at T+0/1/2/10/40):
+
+- **Aim point.** For a unit target `52fd80` takes it from `51aa50` for all
+  five classes (vtable +0x14 = `42a6b0`, false): the SweetSpot plus 80%
+  (`0xcccc`) of the target's velocity times the 3D distance over
+  `weaponvelocity`. The Hailstorm is centred on it too (`52ee03`). The
+  engine's `World::fire` uses `retailLeadPoint`.
+- **Start.** `52e890` sets the start to T+1, later by WeaponType+0x7c
+  (`nimbustime` x 30, parsed at `0x53101d`) only when the weapon's nimbus bit
+  (+0xc8 & 0x40000) is set and the unit type has nimbus art (+0xdc).
+  `builduptime` is pushed once in the whole binary, by the RemoteEffect
+  constructor `52e780`, so it never delays a launch; no shipped weapon sets
+  `nimbustime`. Before the start tick a plain spell or Earthquake dies with
+  its caster (`52e95e`); the engine does not port that one-tick edge.
+- **Flight.** At the start tick a `shotart` spell computes its flight:
+  whole-pixel deltas from the caster's origin to the aim point (the 16.16
+  high words), `fsqrt` truncated, `<<16`, divided by the weapon's per-tick
+  speed (substeps x per-substep). It lands that many ticks later (L); without
+  shotart L is the start tick. A flight of 0 with shot art leaves the art
+  running and defers the effect a whole buildup+decay (not copied).
+- **Timers.** On landing: impact = L + `builduptime`, expiry = impact +
+  `decaytime` (both x 30 truncated by `52e780`). Each later tick the shot is
+  destroyed if expiry <= now, BEFORE the hook runs; the hook never runs on the
+  landing tick. Plain and area hooks hit when now == impact (so no hit for a
+  zero buildup or a zero decay); `52ecd0` pulses whenever (now - L) %
+  `shakeduration` ticks == 0 (WeaponType+0x84, truncated), so pulses fall at
+  L + kP strictly between landing and expiry. The area charm and freeze
+  hooks destroy the shot when the caster is dead or dying, at any tick.
+- **Hailstorm.** `52ed60` places the storm on the aim point; its countdown
+  starts at 20 in the fire tick, so the first stone lands at T+19, then one
+  every `30 / particlespersecond` ticks (`idiv` at `0x52efcd`) until the last
+  stone of `duration` (truncated) lands, which ends it: floor(D/p)+1 hits.
+  It never checks its caster.
+
+| Spell | Original (ticks after T) | Engine before 0.9.12 |
+|---|---|---|
+| Plain, 1 / 0.9 s | hit 31, expiry 58 | 29 |
+| Earthquake, Avatar of Anu (1.5 / 1.5 s, shake 1) | 31, 61 | 29, 59, 89 |
+| Earthquake, Acolyte (3 / 3 s, shotart, 200 px) | 61 .. 181, five | six |
+| Hail, 1.8 s at 8/s | 19 hits, every 3 ticks | 14, every 4 |
+
+`tools/remote_timing_test.cpp` checks each shipped timeline, the caster-death
+abort and the lead against these figures.
 
 ### A hit on an unfinished site rewrites its progress
 

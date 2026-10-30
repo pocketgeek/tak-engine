@@ -538,6 +538,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     wp.buildUp = float(w->numberOr("builduptime", 0));
                     wp.buildUpTicks = int32_t(w->numberOr("builduptime", 0) * 30.0);
                     wp.decay = float(w->numberOr("decaytime", 0));
+                    wp.decayTicks = int32_t(w->numberOr("decaytime", 0) * 30.0);
                     wp.duration = float(w->numberOr("duration", 0));
                     wp.durationTicks = int32_t(w->numberOr("duration", 0) * 30.0);
                     // maxvariation is NOT an angle: it is the wander jitter's
@@ -580,6 +581,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     wp.veteranShotModel.erase(dot);
                 wp.veteranLevel = int32_t(w->numberOr("veteranlevel", 0));
                 wp.nimbus = w->numberOr("nimbus", 0) != 0;
+                wp.nimbusTicks = int32_t(w->numberOr("nimbustime", 0) * 30.0);   // 0x53101d
                 {
                     // innercolor/middlecolor/outercolor are "R G B" triples that
                     // tint a lightning bolt's core, body and halo.
@@ -632,6 +634,7 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 wp.spriteCount = int(w->numberOr("spritecount", 24));
                 wp.shakeMag = int32_t(w->numberOr("shakemagnitude", 0));
                 wp.shakeDur = float(w->numberOr("shakeduration", 0));
+                wp.shakeTicks = int32_t(w->numberOr("shakeduration", 0) * 30.0);
                 wp.fireStarter = w->numberOr("firestarter", 0) != 0;
                 {
                     std::string dtp = lower(w->valueOr("damagetype", "normal"));
@@ -5467,78 +5470,112 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
     if(!scriptTriggered) {u.reloads[slot] = int32_t(rl * kTick + 0.5f);u.fireAnimations|=uint32_t(1)<<slot;u.weaponAnimations.add(tak::RetailWeaponAnimation::Fire,slot);}   // seconds -> ticks, as retail stores it
     u.justFired = true;
     if (slot < 32) u.firedWeapons |= uint32_t(1) << slot;
-    // Remote Effect: nothing travels. The spell materialises at the AIMED GROUND
+    // Remote Effect: nothing travels. The spell materialises at the slot's AIM
     // POINT and lands after builduptime -- so walking aside doesn't dodge an
     // Earthquake, you have to leave its (up to 500px) radius. decaytime is the
     // visual fade after the hit.
+    //
+    // Timeline, emulated against the retail handlers (init 52e890, per-tick
+    // 52e940; hail 52ed60/52ee80), in ticks after the fire tick T:
+    //   start  S = T+1 (+nimbustime for a nimbus caster with nimbus art)
+    //   landing L = S + shotart flight (0 without shotart)
+    //   impact  L + builduptime, expiry L + builduptime + decaytime
+    // The expiry test runs before the per-tick hook, so a hit due on the expiry
+    // tick never lands, and the hook does not run on the landing tick itself.
     if (w.kind == Weapon::Kind::Remote) {
         PendingEffect e;
         e.w = &w;
-        e.x = target.x; e.z = target.z;
-        e.y = target.type && target.type->canFly ? target.flightY : target.groundY;
+        // 530220 copies the slot's aim point into the shot; for a unit target
+        // 52fd80 takes it from 51aa50 for every Remote class: the SweetSpot plus
+        // 80% of the target's motion over the weapon's flight time. Hailstorm is
+        // centred on the same point (52ee03).
+        const std::array<int32_t,3> aim = retailLeadPoint(u, target, &w);
+        e.x = Fixed::raw(aim[0]); e.y = Fixed::raw(aim[1]); e.z = Fixed::raw(aim[2]);
         e.player = u.player; e.fromId = u.id;
+        const int32_t start = 1 + (w.nimbus && u.type->hasNimbusArt ? w.nimbusTicks : 0);
         // shotart: this spell is DELIVERED. A visible shot flies to the aim point
         // first and the channel only starts when it lands, so the Acolyte lobs its
         // Earthquake rather than conjuring it under your feet. The shot is purely
         // cosmetic -- targetId 0 means it collides with nothing and simply expires
         // on arrival; the PendingEffect below carries all the actual damage.
-        float deliver = 0.0f;
+        int32_t flight = 0;
         if (!w.shotArt.empty() && w.projVel > 0) {
-            float sdx = (target.x - u.x).toFloat(), sdz = (target.z - u.z).toFloat();
-            float sdist = std::max(detmath::len(sdx, sdz), 1e-3f);
-            const float svel = w.projVel;            // px/s from the FBI
-            deliver = sdist / svel;
-            Projectile s;
-            s.x = u.x; s.z = u.z;
-            s.vx = Fixed::fromFloat(sdx / sdist * svel / kTick);   // px per TICK
-            s.vz = Fixed::fromFloat(sdz / sdist * svel / kTick);
-            s.wsrc = &w;
-            s.targetId = 0;              // cosmetic: hits nothing, just flies
-            s.fromPlayer = u.player;
-            s.fromId = u.id;
-            s.fx = w.fx;
-            s.life = int32_t(deliver * kTick + 0.5f);
-            s.flight = int32_t(deliver * kTick + 0.5f);
-            projectiles_.push_back(s);
+            // 52e9a5..52e9f8: whole-pixel 3D distance from the caster's origin to
+            // the aim point, the square root truncated, then <<16 over the
+            // weapon's per-tick speed. (A flight of 0 -- under ~7 px for the
+            // Acolyte -- just lands at once here; retail's art then defers the
+            // effect by a whole buildup+decay cycle, a quirk not copied.)
+            const std::array<int32_t,3> origin{u.x.v, (u.type->canFly ? u.flightY : u.groundY).v, u.z.v};
+            int64_t squared = 0;
+            for (size_t axis = 0; axis < 3; ++axis) {
+                const int64_t d = int64_t(int16_t(uint32_t(aim[axis]) >> 16)) -
+                                  int64_t(int16_t(uint32_t(origin[axis]) >> 16));
+                squared += d * d;
+            }
+            const uint32_t speed = uint32_t(tak::retailAimSpeed(w.projVel));
+            if (speed) flight = int32_t(uint32_t(uint32_t(isqrt64(uint64_t(squared))) << 16) / speed);
+            if (flight > 0) {
+                // Flies straight at the aim point and arrives as it lands.
+                const float sdx = (e.x - u.x).toFloat(), sdz = (e.z - u.z).toFloat();
+                Projectile s;
+                s.x = u.x; s.z = u.z;
+                s.vx = Fixed::fromFloat(sdx / float(flight));   // px per TICK
+                s.vz = Fixed::fromFloat(sdz / float(flight));
+                s.wsrc = &w;
+                s.targetId = 0;              // cosmetic: hits nothing, just flies
+                s.fromPlayer = u.player;
+                s.fromId = u.id;
+                s.fx = w.fx;
+                s.life = flight;
+                s.flight = flight;
+                projectiles_.push_back(s);
+            }
         }
+        // The channel loop counts each timer down once in the fire tick (after
+        // this unit update), so an event due at T+X starts at X+1.
+        auto due = [](int32_t ticksAfterFire) { return ticksAfterFire + 1; };
+        const int32_t landing = start + flight;
+        const int32_t buildUp = std::max(w.buildUpTicks, 0), decay = std::max(w.decayTicks, 0);
         switch (w.remote) {
-            case Weapon::RemoteKind::Earthquake:
-                // Pulses every `shakeduration` from impact, right through buildup
-                // AND decay -- for the drake's Earthquake the single pulse actually
-                // lands inside the decay window.
-                e.period = int32_t(std::max(w.shakeDur, 0.1f) * kTick + 0.5f);
-                e.at = e.period;
-                e.endAt = int32_t((w.buildUp + w.decay) * kTick + 0.5f);
+            case Weapon::RemoteKind::Earthquake: {
+                // 52ecd0 pulses whenever (now - landing) % shakeduration == 0,
+                // right through buildup AND decay -- for the drake's Earthquake the
+                // single pulse lands inside the decay window. The landing tick
+                // itself never pulses and the expiry tick never does either, so
+                // the gods' 1.5+1.5 s Earthquake hits twice, not three times.
+                // (A zero period would divide by zero in retail; keep 0.1 s.)
+                e.period = w.shakeTicks > 0 ? w.shakeTicks : 3;
+                e.at = due(landing + e.period);
+                e.endAt = due(landing + buildUp + decay);
                 break;
+            }
             case Weapon::RemoteKind::Hailstorm: {
-                // The rain: buildup/decay don't apply. It starts falling shortly
-                // after the cast and pulses particlespersecond times a second for
-                // `duration` -- so the Acolyte's Hail Shower is ~12 small hits, not
-                // one 70-damage tap.
-                float pps = w.particlesPerSec > 0 ? float(w.particlesPerSec) : 5.0f;
-                e.period = int32_t(kTick / pps + 0.5f);
-                e.at = 20;                                // retail's ~20-tick lead-in, exactly
-                e.endAt = 20 + std::max(int32_t(w.duration * kTick + 0.5f), e.period);
+                // The rain: buildup/decay don't apply. 52ee80's countdown starts at
+                // 20 in the fire tick, so the first stone lands at T+19; then one
+                // every 30 / particlespersecond ticks (integer division, idiv at
+                // 0x52efcd) until the last stone of `duration` lands, which ends
+                // the storm: floor(duration/period)+1 hits.
+                const int32_t pps = w.particlesPerSec > 0 ? w.particlesPerSec : 5;
+                e.period = std::max(int32_t(kTick) / pps, int32_t(1));
+                e.at = 20 + flight;
+                e.endAt = e.at + std::max(w.durationTicks, int32_t(0)) / e.period * e.period;
                 break;
             }
             case Weapon::RemoteKind::MindCtl:
             case Weapon::RemoteKind::Freeze:
-                // One sweep when the channel completes -- and killing the caster
-                // mid-channel ABORTS it, which is real counterplay against a Mind
-                // Mage winding up an area charm.
-                e.at = int32_t(w.buildUp * kTick + 0.5f);
-                e.endAt = int32_t((w.buildUp + w.decay) * kTick + 0.5f);
+                // One sweep at the impact tick -- and killing the caster at any
+                // point ABORTS it (52f000/52f360), which is real counterplay
+                // against a Mind Mage winding up an area charm.
                 e.casterGated = true;
-                break;
+                [[fallthrough]];
             case Weapon::RemoteKind::Plain:
             default:
-                e.at = int32_t(w.buildUp * kTick + 0.5f);
-                e.endAt = int32_t((w.buildUp + w.decay) * kTick + 0.5f);
+                // A zero buildup would be due on the landing tick, where the hook
+                // does not run: retail never hits then.
+                e.at = buildUp > 0 ? due(landing + buildUp) : INT32_MAX;
+                e.endAt = due(landing + buildUp + decay);
                 break;
         }
-        // The channel clock starts when the shot LANDS, not when it is thrown.
-        e.at += int32_t(deliver * kTick + 0.5f);
-        e.endAt += int32_t(deliver * kTick + 0.5f);
         pendingEffects_.push_back(e);
         return;
     }
@@ -5566,7 +5603,7 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         s.player = u.player; s.fromId = u.id;
         s.id = ++stormSeq_;
         s.start = tickCounter_ + 1;
-        if(w.nimbus && u.type->hasNimbusArt)s.start += uint32_t(w.buildUpTicks);
+        if(w.nimbus && u.type->hasNimbusArt)s.start += uint32_t(w.nimbusTicks);
         uint16_t heading=u.weaponAim[size_t(slot)].heading,pitch=u.weaponAim[size_t(slot)].pitch;
         if(!scriptTriggered && aim) {
             heading=aim->heading;pitch=aim->pitch;
@@ -5623,7 +5660,7 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         const uint32_t perTick=p.substeps*uint32_t(speed);
         const uint32_t lifetime=((uint32_t(quotient)<<16)+perTick)/perTick;
         p.start=tickCounter_+1;
-        if(w.nimbus && u.type->hasNimbusArt)p.start+=uint32_t(w.buildUpTicks);
+        if(w.nimbus && u.type->hasNimbusArt)p.start+=uint32_t(w.nimbusTicks);
         p.end=p.start+lifetime;p.life=int32_t(lifetime);p.flight=int32_t(lifetime);
         p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
         projectiles_.push_back(p);
@@ -5653,7 +5690,7 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         const int64_t quotient=int64_t(product)/(horizontal ? horizontal : speed);
         const uint32_t perTick=p.substeps*uint32_t(speed);
         p.start=tickCounter_+1;
-        if(w.nimbus && u.type->hasNimbusArt)p.start+=uint32_t(w.buildUpTicks);
+        if(w.nimbus && u.type->hasNimbusArt)p.start+=uint32_t(w.nimbusTicks);
         p.end=p.start+((uint32_t(quotient)<<16)+perTick)/perTick;
         p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);p.life=1;
         projectiles_.push_back(p);
@@ -16189,12 +16226,16 @@ void World::tick(float dt) {
         }
         --e.at;
         --e.endAt;
-        bool pulse = e.at <= 0;
-        if (pulse) {
+        bool done = e.endAt <= 0;
+        // Retail destroys an expired shot before its per-tick hook runs, so a
+        // pulse due on the expiry tick is lost -- except the Hailstorm's, whose
+        // last stone landing is what ends it.
+        const bool hail = e.w && e.w->remote == Weapon::RemoteKind::Hailstorm;
+        bool pulse = e.at <= 0 && (!done || hail);
+        if (e.at <= 0) {
             if (e.period > 0) e.at += e.period;
             else e.at = INT32_MAX;     // single-pulse: never again
         }
-        bool done = e.endAt <= 0;
         const PendingEffect cur = e;   // applyHit walks/kills units_; copy first
         if (done) pendingEffects_.erase(pendingEffects_.begin() + std::ptrdiff_t(i));
         else ++i;

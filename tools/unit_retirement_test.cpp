@@ -44,7 +44,7 @@ int main(int argc,char** argv)try {
  check(a.player(0).kills==kills+1,"late kill lost retired attacker attribution");
  {
   World delayed,retained;setup(delayed);setup(retained);auto caster=t;
-  Weapon spell;spell.kind=Weapon::Kind::Remote;spell.buildUp=4;spell.damage=10;spell.aoe=32;spell.range=1000;
+  Weapon spell;spell.kind=Weapon::Kind::Remote;spell.buildUp=4;spell.buildUpTicks=120;spell.decayTicks=15;spell.damage=10;spell.aoe=32;spell.range=1000;
   caster.weapons.push_back(spell);
   const int from=delayed.spawn(&caster,128,128,0,0),target=delayed.spawn(&t,512,512,0,1);
   delayed.unit(from)->scenarioWeapon=2;
