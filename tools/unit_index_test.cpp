@@ -447,9 +447,8 @@ void testPick(std::mt19937& rng) {
             u.liftX = pick(lift.minX, lift.maxX);
             u.liftY = pick(lift.minY, lift.maxY);
             u.sink = pick(sinkLo, sinkHi);
-            u.dx = pick(-200.0f, 200.0f);   // interpPose: within kInterpMaxStep of the snapshot
+            u.dx = pick(-200.0f, 200.0f);   // interpPose: within interp (Frame::maxInterpStep + 1)
             u.dz = pick(-200.0f, 200.0f);
-            (void)i;
             return u;
         };
         const size_t n = 300 + rng() % 900;

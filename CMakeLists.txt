@@ -2256,6 +2256,17 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/gate-pick.png")
       set_tests_properties(gate_pick PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: every gate \\(4 types\\)")
+      # Cursor picking (perf follow-up C): a unit live before its type's model loads (the
+      # registration budget) gets the fallback hit box cached by the cursor pass, as a scan
+      # over every unit does, though the pointer is nowhere near it.
+      add_test(NAME pick_late_model COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_PICK_LATE_MODEL_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/pick-late-model-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/pick-late-model-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/pick-late-model.png")
+      set_tests_properties(pick_late_model PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: late model pick leaves the full scan's hit-box cache")
       # Clear orders fan out to every selected reclaimer (box, right-click, armed
       # CLEAR; Shift per unit, a soldier untouched), and Inner Circle's one
       # overlapped map feature (removed at load) is not drawn.

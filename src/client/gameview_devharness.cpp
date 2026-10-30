@@ -2235,6 +2235,57 @@
             std::fprintf(stderr,"PASS: every gate (%zu types) picks through its open doorway\n",gates.size());
             return;
         }
+        // Cursor picking (perf follow-up C) and a model that is not loaded yet. Registration
+        // is budgeted (kRegistrationsPerFrame), so after a large arrival a unit can be live
+        // before its type's model loads; a cursor pass that reaches unitUnderCursor for it
+        // caches the fallback hit box for the type, for the rest of the game. A scan over
+        // every unit always reaches it (nothing selected, the pointer on bare ground); the
+        // grid's candidates must leave the same cache, so the type picks the same later.
+        if (tak::devFlag("TAK_PICK_LATE_MODEL_TEST")) {
+            noFog_=true;edgeScrollOn_=false;
+            winW_=1000;winH_=700;
+            const auto publish=[&] {captureFrame();beginFrame();cosmeticStep(0);};
+            const auto fail=[](const std::string& m) {throw std::runtime_error("late model pick: "+m);};
+            const auto* filler=registry_.find("arasword");
+            const tak::sim::UnitType* late=nullptr;
+            const float lx=3000,lz=3000;
+            // The structure with the largest footprint whose model is not loaded (first wins a tie).
+            for (const auto& [id,type]:registry_.types())
+                if (type.isStructure() && !type.ghost && id.find("null")==std::string::npos && !visuals_.count(id) &&
+                    (!late || type.footX*type.footZ>late->footX*late->footZ) && world_.canPlace(&type,lx,lz))
+                    late=&type;
+            if (!filler || !late) fail("no fixture types");
+            // The fillers come first in the live list and use up the registration budget.
+            for (int i=0;i<kRegistrationsPerFrame+6;++i)
+                if (writableWorld().spawn(filler,6000+float(i%10)*40,6000+float(i/10)*40,0.0f,localPlayer_)<=0)
+                    fail("filler spawn failed");
+            const int lateId=writableWorld().spawn(late,lx,lz,0.0f,localPlayer_);
+            if (lateId<=0) fail("late spawn failed");
+            mapView_.setZoom(1);
+            mapView_.setOffset(5600,5800);   // the fillers, far from the late unit
+            selection_.clear();pendingCmd_=0;placing_=nullptr;
+            publish();
+            if (unitType_.count(lateId) || visuals_.count(late->id)) fail("the late unit registered in the first frame");
+            mouseX_=600;mouseY_=60;   // bare ground above the fillers
+            bool tint=false;
+            const tak::CursorId first=desiredCursor(tint);
+            const bool cached=hitBoxes_.count(late->id)!=0;
+            for (int i=0;i<16 && !unitType_.count(lateId);++i) publish();
+            if (!unitType_.count(lateId)) fail("the late unit never registered");
+            mapView_.setOffset(lx-500,lz-350);
+            publish();
+            const UnitR* u=frameUnitP(lateId);
+            if (!u) fail("late unit missing from the frame");
+            const SDL_FPoint p=unitScreen(*u);
+            const SDL_FRect& hb=unitHitBox(late);
+            mouseX_=p.x;mouseY_=p.y+12.0f-60.0f;   // 60 px above the anchor: past the fallback box
+            const tak::CursorId probe=desiredCursor(tint);
+            std::fprintf(stderr,"PICK_LATE_MODEL type=%s first=%d cached=%d box=%.1f,%.1f,%.1f,%.1f probe=%d\n",
+                         late->id.c_str(),int(first),cached ? 1 : 0,hb.x,hb.y,hb.w,hb.h,int(probe));
+            if (!cached) fail("the cursor pass left "+late->id+"'s hit box uncached, as a full scan does not");
+            std::fprintf(stderr,"PASS: late model pick leaves the full scan's hit-box cache\n");
+            return;
+        }
         if (tak::devFlag("TAK_CURSOR_TEST")) {
             noFog_=true;edgeScrollOn_=false;
             writableWorld().setPlayerCount(8);
