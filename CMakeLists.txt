@@ -360,6 +360,9 @@ add_executable(crowdbench tools/crowdbench.cpp)
 add_executable(navigation_telemetry_test tools/navigation_telemetry_test.cpp)
 target_link_libraries(navigation_telemetry_test PRIVATE tak-formats)
 add_test(NAME navigation_telemetry COMMAND navigation_telemetry_test)
+# Perf follow-up H: static-sync timing over a base-heavy world (not a test; prints BENCH lines).
+add_executable(legion_staticsync_bench tools/legion_staticsync_bench.cpp)
+target_link_libraries(legion_staticsync_bench PRIVATE tak-formats)
 add_executable(legion_world_test tools/legion_world_test.cpp)
 target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped longroute crowdhold replace unreachable quota pens determinism formation
