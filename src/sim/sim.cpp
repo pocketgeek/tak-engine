@@ -2003,7 +2003,7 @@ Order* World::groundMissionOrder(Unit& u, bool includeCombatMoves) {
         return !o.targetId && (includeCombatMoves || (!o.attackMove && !o.patrol)) && !o.guard && !o.load &&
                (!o.unload || o.transportUnloadApproach) &&
                !o.buildType && !o.reclaimFeat && !o.reclaimArea && !o.manaBuildArea &&
-               !o.repairTarget && !o.wait && !o.waitAttack;
+               !o.repairTarget && !o.wait && !o.waitAttack && !o.scripted;
     };
     if (!plain(u.orders.front())) return nullptr;
     Order& goal = u.orders[currentLeg(u.orders)];
@@ -9554,7 +9554,7 @@ Order World::makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fix
 }
 
 bool World::prepareBuildApproach(Unit& u) {
-    if (u.orders.empty()) return false;
+    if (u.orders.empty() || scriptHold(u)) return false;
     auto& goal=u.orders[currentLeg(u.orders)];
     // A reclaim leg's rectangle belongs to tickReclaim.
     if (!goal.buildType) return false;
@@ -14582,7 +14582,7 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
     if (u.orders.empty()) {
         if (u.type->canFly) holdFlight(u);
         else if (!u.type->isStructure()) brakeGround(u);
-    } else if (u.orders.front().wait > 0 || u.orders.front().waitAttack || u.orders.front().scripted) {
+    } else if (scriptHold(u)) {
         // SetMission "w F [N]" and "wa [NAME]": hold position until the wait
         // ends (scriptedWaitDone), then the next queued order runs. Retail's
         // Wait and WaitForAttack only sleep or wait on events; the weapons
@@ -16113,7 +16113,7 @@ void World::tick(float dt) {
         // Reclaim needs no deferral: consuming a feature spawns nothing, so
         // nothing can reallocate units_ underneath us. Its stage 0 runs as
         // soon as the leg is current, before the mover (406250, 4d4e80).
-        if (!u.orders.empty()) {
+        if (!u.orders.empty() && !scriptHold(u)) {
             const auto& leg=u.orders[currentLeg(u.orders)];
             if (leg.reclaimFeat && u.reclaimId == 0) u.reclaimId = leg.reclaimFeat;
             // (A body still dying waits here until its corpse feature exists.)

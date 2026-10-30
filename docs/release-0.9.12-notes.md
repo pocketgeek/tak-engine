@@ -346,7 +346,8 @@ something else. Now each letter does what the original does with it:
   units in 10 missions to the player (takx04's Aramon keep and castle among
   them).
 - **`d` self-destructs when it comes up**, after the orders before it; ours
-  killed the unit at the start (takmission23's troopship died with its cargo).
+  killed the unit at the start (takmission23's three Taros troopships, meant
+  to wait, unload their troops, fly off the map and only then go).
 - **Orders queue behind what a unit already has**, as the original queues
   them; ours replaced a unit's orders at a `SetMission`.
 
@@ -450,7 +451,11 @@ decided what the game counted as seen.
   `World::scriptedOrders_` (`ScriptedOrder`: AttackType, Train, WaitAttack,
   WaitNear, SelfDestruct; hashed with the order); `World::tickScriptedOrder`
   runs AttackType, Train and SelfDestruct at the head, `scriptedWaitDone` the
-  waits, `noteScriptedProduction` counts a factory's builds. New
+  waits, `noteScriptedProduction` counts a factory's builds; while
+  `World::scriptHold` (any of these, or a wait, at the head) the leg behind
+  it neither routes nor approaches its site (`groundMissionOrder`,
+  `prepareBuildApproach`, the reclaim start), since a route installed for it
+  would replace the hold. New
   `orderAttackType`, `orderTrain`, `orderSelfDestruct`, `embarkInto`,
   `scriptStandingOrder` / `scriptStandingFields`, `setVeterancyOverride`
   (`Unit::vetOverride`, hashed when set; `vetMul` answers it); `orderWait`

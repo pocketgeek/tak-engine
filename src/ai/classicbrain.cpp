@@ -69,7 +69,8 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     // 0x13 with its own flags (4; WaitForAttack 0x204, its watched unit the
     // target; SelfDestructFG 0), no goal point and never the default
     // mission's 0x2000: to the AI that unit is busy, as in retail.
-    if (const auto& head = u.orders.front(); head.scripted || head.wait > 0 || head.waitAttack) {
+    if (tak::sim::World::scriptHold(u)) {
+        const auto& head = u.orders.front();
         const auto* s = world.scriptedOrder(head);
         m.any = true; m.cls = 19; m.kind = otherKind(19);
         m.flags = head.waitAttack ? 0x204u : s && s->kind == tak::sim::ScriptedOrder::Kind::SelfDestruct ? 0u : 4u;

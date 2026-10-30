@@ -2649,6 +2649,15 @@ public:
     // and then clear the whole queue, silently deleting everything the player had
     // lined up behind it.
 
+    // A mission script's hold at the head (a wait, a WaitForAttack, or an
+    // order with a mission of its own, Order::scripted): no goal of its own,
+    // and the leg behind it must not start (route, approach) until it ends --
+    // a route installed for that leg would replace the hold with waypoints.
+    static bool scriptHold(const Unit& u) {
+        if (u.orders.empty()) return false;
+        const Order& o = u.orders.front();
+        return o.wait > 0 || o.waitAttack || o.scripted;
+    }
     // Index of the last waypoint of the leg being worked on right now. Falls back
     // to the whole queue for unmarked orders (mission scripts, older saves).
     static size_t currentLeg(const std::vector<Order>& o) {

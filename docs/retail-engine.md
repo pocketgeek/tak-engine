@@ -4154,8 +4154,8 @@ resolve only in an `InitialMission`. Ours registered a unit under the name an
   (takx04's Aramon keep and castle among them).
 - `d` (`514858`): SELFDESTRUCTFG with +0x4e = 1, so `4017e0` deals the 30000
   type-5 damage when the mission comes up. Ours killed the unit while parsing:
-  takmission23's transport `wa leim, w 60, u ..., m 0 192, d` died at the start
-  with its cargo.
+  takmission23's three troopships (`wa leim, w 60, u ..., m 0 192, d`) died at
+  the start.
 - `m X Y` / `ma X Y` (`514120`), `p X Y [T]` (`514307`, +0x4e = T x 30),
   `u X Y` (`5141d3`), `c` (`514a48`: the cloak bit when cloakcost > 0) and
   `r` (`514910`, resurrect; no shipped uses).
@@ -4172,7 +4172,10 @@ with state of their own are World orders with a `ScriptedOrder` entry
 draws as retail's on the game stream), Train (a factory queues N in its build
 queue and holds the next order until they are built,
 `noteScriptedProduction`), WaitAttack (the watched unit's `attackedTick` from
-when the order was given), WaitNear and SelfDestruct; `Unit::vetOverride`
+when the order was given), WaitNear and SelfDestruct. Behind such a hold, as
+behind a wait, the next leg does not start (`World::scriptHold`): a route
+installed for a build or a move behind it would replace every order up to it,
+the hold included. `Unit::vetOverride`
 holds `v`, and `World::embarkInto`, `scriptStandingOrder` and
 `scriptStandingFields` do `i` and `o`. The Retail AI reads such a head order
 as retail's (class 0x13, its descriptor flags, never 0x2000), so it counts the

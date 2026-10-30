@@ -434,7 +434,33 @@ static void selectAndDestruct(Fixture& f) {
     check(!d->alive() && d->deathType == Unit::kDeathSelfDestruct, "then self-destructs");
 }
 
-// ---- 10. SetMission ---------------------------------------------------------------------------
+// ---- 10. a hold keeps its place --------------------------------------------------------------
+// The leg behind a scripted hold must not start: a route installed for it replaces
+// every order up to it (replaceLeg), the hold included.
+
+static void holds(Fixture& f) {
+    std::printf("a hold stays in front of the orders behind it:\n");
+    auto w = makeWorld();
+    std::vector<Placed> p = {
+        {"builder", 20, 20, 0, "", "w 10, b hut 0 60 60"},
+        {"builder", 20, 40, 0, "", "wa, b hut 0 60 80"},
+        {"soldier", 20, 50, 0, "", "o 0, a target, m 90 50"},
+        {"target", 120, 120, 1, "", ""},
+    };
+    auto m = startMission(f, *w, p);
+    tickN(*w, 90);
+    auto front = [&](int i) -> const Order* { const Unit* u = w->unit(p[size_t(i)].id); return u->orders.empty() ? nullptr : &u->orders.front(); };
+    check(front(0) && front(0)->wait > 0 && w->unit(p[0].id)->orders.size() == 2,
+          "a builder's wait is not replaced by the route to its site");
+    check(front(1) && front(1)->waitAttack && w->unit(p[1].id)->orders.size() == 2,
+          "nor its wa");
+    const Unit* s = w->unit(p[2].id);
+    check(s->orders.size() == 3 && isKind(*w, s->orders[1], ScriptedOrder::Kind::AttackType) && s->orders[0].targetId == p[3].id,
+          "a target puts its attack in front and stays behind it, the move last",
+          std::to_string(s->orders.size()) + " order(s)");
+}
+
+// ---- 11. SetMission ---------------------------------------------------------------------------
 
 static void setMission(Fixture& f) {
     std::printf("SetMission:\n");
@@ -545,6 +571,7 @@ int main(int argc, char** argv) {
         veterancy(f);
         attacks(f);
         selectAndDestruct(f);
+        holds(f);
         setMission(f);
     }
     std::printf(g_fail ? "mission_orders_test: %d FAILED\n" : "mission_orders_test: all passed\n", g_fail);
