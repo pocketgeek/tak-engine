@@ -10,13 +10,15 @@ on a 64x64 random map, 0.9.11 fell to -2 at about 2,700 units, and 0.9.12 held
 but melee aims only at buildings within its range, flyers dogfight flyers, an
 attack aims a moment after the attacker stops (so Kirenna fires after a walk
 far more often), and a shot stopped in front of a castle's long face counts as
-blocked. Streaming keeps to YouTube's bitrate, Options, Voice Chat and
-Controls save as you change them, and SETTINGS, BENCHMARK and LOAD REPLAY have
-a BACK button.
+blocked. The dead rise only when you order it, and a right-click on a body
+with a priest raises it. Streaming keeps to YouTube's bitrate, Options, Voice
+Chat and Controls save as you change them, and SETTINGS, BENCHMARK and LOAD
+REPLAY have a BACK button.
 
-**Compatibility first.** The AI's sight-only targets, the combat fixes and the
-new lockstep state check change the game state the players compare, so 0.9.12
-uses network protocol **305** (replay format **15**, unchanged). **0.9.12 does
+**Compatibility first.** The AI's sight-only targets, the combat fixes, the
+raise order and the new lockstep state check change the game state the
+players compare, so 0.9.12 uses network protocol **305** (replay format
+**15**, unchanged). **0.9.12 does
 not play with 0.9.11 or any earlier version, and does not play their
 replays.**
 
@@ -302,6 +304,49 @@ A Mage Archer on Manoeuvre facing a Taros Castle's long face behind a ridge
 now walks 41 pixels (48 with Legion) and hits it seven times; before, it
 fired eleven shots into the ridge and never moved.
 
+## The dead rise only when you raise them
+
+Through 0.9.11 the engine raised and cleared bodies by itself. Any caster
+standing idle within 56 pixels of a body raised it: Elsin his own side's dead,
+the Dark and Darkest Priests, the Chief Engineer, the Dark Hand and the Spirit
+Wolf any side's, as ghouls, creautos, liches and wolves. Any idle builder
+cleared every body within 56 pixels in a single tick, friend's or foe's. And
+there was no way to order a raise: right-clicking a body with a priest or
+Elsin (the Revive cursor showing) cleared it instead.
+
+The original does neither. Every unit task is created from an order through
+its order resolver (`0x4de530`); a right-click on a body tries resurrect, then
+animate, then clear, per selected unit, and so does a caster's area clear for
+each body it reaches. Nothing a unit does while idle reaches those orders,
+and the original's AI never orders a raise or a clear (found by a search of
+every reference to them).
+
+0.9.12 does the same:
+
+- **Right-click a body** with a unit that can raise it and it walks over,
+  turns, raises it and goes back to standing. A Dark Priest, which flies,
+  flies there. A builder in the selection that cannot raise the body clears
+  it; other units do nothing. The cursor shows the raise when a selected unit
+  would raise the body, and a unit raising one shows *Raising Dead*. The CLEAR
+  button on a body works the same way.
+- **An area clear** by a caster raises each body in the area it can raise,
+  then clears the rest.
+- **Nothing raises or clears a body unordered.** A body lies until it decays,
+  is cleared by order, or is raised.
+- **Any side's body** can be resurrected or animated, as in the original: it
+  rises as the caster's unit. Animating needs a body the game marks as
+  animatable (`animatable=1`, its own flag in the original); every shipped one
+  can also be resurrected, but not every resurrectable body can be animated.
+- **Our AI levels** order their idle casters to raise a body within the old 56
+  pixels themselves, so they raise the dead about where they did before; a
+  build order still takes the caster away. The Retail AI never raises the
+  dead, as in the original.
+
+Raising still costs no mana and takes as long as before (0.3 x the body's
+build time for a resurrect, the creature's full build time for an animate,
+at the owner's allocation); the first tick of work now comes on the tick the
+caster starts, as in the original, one tick earlier than before.
+
 ## Streaming keeps to YouTube's bitrate
 
 Above YouTube's bitrate for a stream's size, frame rate and codec, YouTube can
@@ -389,7 +434,18 @@ decided what the game counted as seen.
   `World::chordClear` now takes the target. New castle case in
   `blocked_shot_test`; `tools/re/probe_long_footprint_blocked.py`.
 - `Order` stays five cache lines (320 bytes): `attackChased` fills the pad
-  beside `chaseLeashed`.
+  beside `chaseLeashed`, `reviveKind` the pad beside `mixedSlots`.
+- Sim (raising): `Cmd::Resurrect` -> `World::resurrect` / `World::reviveKind`
+  (`reviveKindFor`), a RECLAIM leg with `Order::reviveKind` (hashed on reclaim
+  legs when set); `World::tickReclaim` runs its stages 0-3 and
+  `World::tickAbilities` only the channel (`Unit::reviveTarget`), with the idle
+  raise and idle corpse clear removed; `FeatType::animatable`;
+  `World::tickReclaimArea` resolves its child as raise-or-clear. Client:
+  `GameView::raiseTargetAt` / `reviveKindOn` / `issueRaiseOrReclaim` (right-
+  click, CLEAR, cursor), `RenderOrder::revive`. AI (levels 0-5):
+  `Controller::reviveIdle` / `raising`. New `revive_order_test`; revive cases
+  in `production_test` now order the raise; body cases in the
+  `reclaim_fanout` harness and `ai_behavior_test`.
 - Sim: `src/sim/statefold.h` (`WordMix`, chunked xxHash64-style lanes) for
   `World::stateHash`; `resolveSplit` and `World::compStats` for local nav
   splits (`TAK_COMPCHECK` in debug builds checks every carried labelling);
@@ -399,8 +455,9 @@ decided what the game counted as seen.
 - Client UI: `client/promptbox.h` (shared YES / NO box), the options
   autosave, the Controls hint band, `client/uploadwatch.h`,
   `video/youtubebitrate.h`.
-- Net: `kNetVersion` 304 -> 305, no new command, replay format 15, generator
-  9. `tools/replay_test.cpp` pins 305 and refuses 304.
+- Net: `kNetVersion` 304 -> 305, `Cmd::Resurrect` = 29 (a strict replay read
+  takes it from 305, `kResurrectProtocol`; the server accepts it), replay
+  format 15, generator 9. `tools/replay_test.cpp` pins 305 and refuses 304.
 - Tests: new `state_hash_test` (pinned fold values, serial equals pooled; in
   the three CI workflows), `options_autosave_test` (22 of 38 checks fail on
   the old code), `stream_bitrate_test`, the `retail_fog` harness test; AI
@@ -423,6 +480,16 @@ decided what the game counted as seen.
 ## Known limits
 
 New with 0.9.12:
+
+- **Raising follows the clear order's walk.** A raise walks to the body,
+  turns and waits for the build stance exactly as a clear does, and a flying
+  Dark Priest uses the engine's stand-in for the original's flying clear
+  (not its own flying raise). Not ported: the original's need for the body's
+  square to be explored (the engine offers only bodies you can pick), and a
+  computer player's AI-profile limit when the raise starts.
+- **Our AI levels raise only beside an idle caster**, within 56 pixels, as
+  the engine's own search did; they do not send casters to bodies further
+  off.
 
 - **An all-AI game may not end** when a last enemy unit stays hidden from
   every AI, since our levels no longer target what they have not seen.

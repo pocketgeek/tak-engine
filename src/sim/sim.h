@@ -1488,7 +1488,7 @@ struct FeatType {
     int  decomposeTicks = 0; // TDF decomposetime * 30 (0 = never rots)
     bool resurrectable = false;
     // TDF animatable=1: a cananimate caster may raise it as its animatetype.
-    // Retail's feature flag 0x1000 (loader 0x494231; tested by 0x496fd0), apart
+    // Retail's feature flag 0x1000 (loader 0x494223; tested by 0x496fd0), apart
     // from resurrectable's 0x800 (0x497100). Every shipped animatable corpse is
     // also resurrectable, not the other way round.
     bool animatable = false;

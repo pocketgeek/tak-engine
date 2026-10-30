@@ -273,10 +273,12 @@ int main() {
               "an indestructible obstacle refuses statue placement without being cleared");
         const int reclaimable=map.spawn(&mover,248,168,0,0);
         map.unit(reclaimable)->frozenFor=100;map.unit(reclaimable)->hp=Fixed();map.tick(1.0f/30);
-        UnitType builder=mover;builder.canReclaim=true;
+        // A mobile builder (World::reclaim's caster test): the clear is its
+        // order, walk, work and fade, not the idle clear this used to ride on.
+        UnitType builder=mover;builder.canReclaim=true;builder.isBuilder=true;
         const int worker=map.spawn(&builder,216,168,0,0);
         map.reclaim(worker,-reclaimable,false);
-        for (int i=0;i<60 && map.unit(reclaimable)->corpseBlocks;++i) map.tick(1.0f/30);
+        for (int i=0;i<600 && map.unit(reclaimable)->corpseBlocks;++i) map.tick(1.0f/30);
         check(!map.unit(reclaimable)->corpseBlocks && RetailReplayProbe::grade(map,16,12)==7,
               "ordered corpse reclaim clears the actual statue footprint");
     }

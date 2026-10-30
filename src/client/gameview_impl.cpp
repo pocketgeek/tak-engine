@@ -3451,8 +3451,10 @@
         if (u->underConstruction) return "INTANGIBLE MASS";
         if (!u->active) return "INACTIVE";
         if (u->repairId != 0) return "REPAIRING";
-        // UNITMISSIONCODE_RESURRECT: the walk to the body and the channel.
-        if (!u->orders.empty() && u->orders.front().revive) return "RAISING DEAD";
+        // UNITMISSIONCODE_RESURRECT: the walk to the body (its route's
+        // waypoints lead the leg) and the channel.
+        for (const auto& o : u->orders)
+            if (o.goal) { if (o.revive) return "RAISING DEAD"; break; }
         if (u->reclaimId != 0) return "CLEARING";
         if (u->buildSiteId != 0 || !u->buildQueue.empty()) return "CONJURING";
         if (!u->orders.empty()) {
