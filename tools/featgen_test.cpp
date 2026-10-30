@@ -47,6 +47,11 @@ struct RetailReplayProbe {
     static void replaceIndex(World& world,size_t i,int type) { world.swapFeature(world.features_.at(i),type); }
     static void fade(World& world,int id) { Unit caster;world.finishReclaim(caster,id); }
     static uint32_t fading(const World& world) { return world.fadingFeatures_; }
+    // Set burning marks (0 on a base tree without them: the test builds there too).
+    template <class W> static uint32_t marked(const W& world) {
+        if constexpr (requires { world.burningMarked_; }) return world.burningMarked_;
+        else return 0;
+    }
     static void burning(World& world) { world.tickBurning(); }
     static void fades(World& world) { world.tickFeatureFades(); }
     // The full passes over features_ that tickBurning and tickFeatureFades made
@@ -438,6 +443,65 @@ int main() {
                     seed,count,drawsP.size(),maxBurning,burned,faded);
         check(same && drawsP.size()>100 && maxBurning>20 && burned>50 && faded>20,
               "marked burn/fade walks match the full passes step for step (fields, draws, hash)");
+    }
+
+    // The marks follow features_ as it grows mid-fire (addFeature across mark
+    // words, as rubble from a destroyed corpse does) and through world reuse
+    // (clearFeatures, resetForReplay), and every mark is dropped once the
+    // fires and fades are over, so the no-fire early exit comes back.
+    {
+        using namespace tak::sim;
+        constexpr int kSide=40;
+        auto setup=[&](World& w) {
+            w.setTerrain(std::vector<uint8_t>(kSide*kSide,100),kSide,kSide,0);
+            FeatType tree;tree.name="tree";tree.flamable=tree.hasBurnAnim=true;
+            tree.spreadChance=70;tree.sparkTicks=8;tree.burnTicks=30;tree.burntType=1;
+            FeatType burnt;burnt.name="burnt";
+            w.setFeatureTypes({tree,burnt});
+        };
+        auto plant=[&](World& w,int from,int to) {   // ids are cells, row-major
+            for (int c=from;c<to;++c) w.addFeature(c,float(c%kSide*16+8),float(c/kSide*16+8),0,1,1,false,0);
+        };
+        World production,reference;
+        bool same=true,reusedMidFire=true;
+        auto compare=[&] {
+            same=same && production.features().size()==reference.features().size() &&
+                 production.stateHash()==reference.stateHash() &&
+                 RetailReplayProbe::fading(production)==RetailReplayProbe::fading(reference);
+            for (size_t i=0;same && i<production.features().size();++i) {
+                const auto& a=production.features()[i];const auto& b=reference.features()[i];
+                same=a.alive==b.alive && a.burn==b.burn && a.burnLeft==b.burnLeft &&
+                     a.spreadIn==b.spreadIn && a.type==b.type && a.fadeLeft==b.fadeLeft;
+            }
+        };
+        for (int round=0;round<3;++round) {
+            if (round>0)   // reused while it still burns and fades
+                reusedMidFire=reusedMidFire && RetailReplayProbe::fading(production)>0 &&
+                              std::any_of(production.features().begin(),production.features().end(),
+                                          [](const Feature& f){ return f.alive && f.burn; });
+            for (World* w : {&production,&reference}) {
+                if (round==1) w->clearFeatures();
+                if (round==2) w->resetForReplay();
+                setup(*w);plant(*w,0,60);
+                const int rock=kSide*kSide-1;   // far from the fire: its fade outlives the round
+                w->addFeature(rock,float(rock%kSide*16+8),float(rock/kSide*16+8),0,1,1,false,1);
+            }
+            for (int step=0;step<(round<2 ? 12 : 300);++step) {
+                for (World* w : {&production,&reference}) {
+                    if (step==0) RetailReplayProbe::ignite(*w,round*7+5);
+                    if (step==3) plant(*w,60,200);   // grows features_ while it burns
+                    if (step==6) RetailReplayProbe::fade(*w,kSide*kSide-1);
+                }
+                RetailReplayProbe::burning(production);RetailReplayProbe::fades(production);
+                RetailReplayProbe::referenceBurning(reference);RetailReplayProbe::referenceFades(reference);
+                compare();
+            }
+        }
+        size_t burntOut=0;
+        for (const auto& f:production.features()) burntOut+=f.type==1;
+        check(same && reusedMidFire,"marks follow features_ growth mid-fire, clearFeatures and resetForReplay");
+        check(burntOut>20 && !RetailReplayProbe::marked(production) && !RetailReplayProbe::fading(production),
+              "every burning mark is dropped once the fires are out");
     }
 
     // Same-tick spread follows features_ order: a spark into a HIGHER index is

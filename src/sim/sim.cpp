@@ -10181,8 +10181,9 @@ void World::igniteFeature(Feature& f) {
         std::fprintf(stderr, "ignite %s at %.0f,%.0f (spark %d)\n",
                      ft.name.c_str(), f.x.toFloat(), f.z.toFloat(), ft.sparkTicks);
     f.burn = 1;
-    // Mark it for tickBurning (features_ never reallocates while one burns:
-    // only addFeature grows it, and no burn path adds features).
+    // Mark its index for tickBurning. Indices are stable: features_ is never
+    // reordered, only addFeature appends (rubble can arrive mid-fire, and it
+    // grows the marks with it), and no burn path adds features.
     const size_t index = size_t(&f - features_.data());
     uint64_t& word = burningMarks_[index / 64];
     const uint64_t bit = uint64_t(1) << (index % 64);
