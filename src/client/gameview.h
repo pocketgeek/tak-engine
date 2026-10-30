@@ -852,7 +852,7 @@ public:
     // frame number), otherwise a Lissajous sweep over the world view -- so the
     // cursor classifies units and bare ground the way a moving mouse does. Up to
     // `select` own finished units are selected while the selection is empty, and
-    // `cmd` (0: none) is armed every frame. drawCursorOverlay times the frame's
+    // `cmd` (0: none; '*': every order in turn) is armed every frame. drawCursorOverlay times the frame's
     // cursor evaluation (renderStudyCursorStats; CURSORSTATS lines).
     void renderStudyCursor(unsigned frame, int select, char cmd);
     struct CursorStudyStats { uint64_t ns = 0, tests = 0; int cursor = -1; bool tint = false; float x = 0, y = 0; };

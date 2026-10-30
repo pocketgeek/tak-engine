@@ -1950,7 +1950,7 @@ int main(int argc, char** argv) {
     // (GameView::renderStudyCursor) and prints the frame's cursor evaluation
     // (CURSORSTATS); TAK_RENDER_CURSOR_SELECT=<n> keeps up to n own units selected,
     // TAK_RENDER_CURSOR_CMD=<c> arms order c ('a' attack, 'r' repair, 'g' guard,
-    // 'l' load, 'm' move...).
+    // 'l' load, 'm' move..., '*' each in turn).
     const bool studyCursor=renderStudy && tak::devFlag("TAK_RENDER_CURSOR");
     const int studyCursorSelect=int(studyPeriod("TAK_RENDER_CURSOR_SELECT"));
     const char studyCursorCmd=tak::devEnv("TAK_RENDER_CURSOR_CMD") ? tak::devEnv("TAK_RENDER_CURSOR_CMD")[0] : 0;

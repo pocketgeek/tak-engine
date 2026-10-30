@@ -4438,7 +4438,13 @@
                 if (u->player == localPlayer_ && u->alive() && !u->embarked() && !u->underConstruction && u->type)
                     selection_.push_back(u->id);
             }
-        if (cmd) pendingCmd_ = cmd;
+        if (cmd == '*') {
+            // Every armed order in turn, seven frames each (and none).
+            static constexpr char kCycle[] = {0, 'a', 'r', 'g', 'l', 'm', 'p', 'c', 'f'};
+            pendingCmd_ = kCycle[(frame / 7) % std::size(kCycle)];
+        } else if (cmd) {
+            pendingCmd_ = cmd;
+        }
         const float w = float(mapViewW(winW_)), h = float(std::max(1, winH_ - barH()));
         const float margin = 40.0f;   // clear of the edge-scroll band
         float x = w * (0.5f + 0.42f * std::sin(float(frame) * 0.037f));
