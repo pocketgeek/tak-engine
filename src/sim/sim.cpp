@@ -5935,7 +5935,8 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
             // acquisition (setSlotsManual) wipes the fire-at-will sweep's slot
             // targets. The reach is tickCombat's own (combatReach): the arc for
             // a ballistic weapon, else the selected weapon's range (the longest
-            // when all fire) padded for a structure. Melee keeps the old reach.
+            // when all fire), centre to centre for a structure too. Melee keeps
+            // the old reach.
             // A ground mission's attack response (chases: not an auto target)
             // may chase, as tickCombat's mayChase says, so it is not held to it.
             if (!(u.type->canMove && (u.moveState != 0 || chases))) {
@@ -6111,11 +6112,11 @@ World::CombatReach World::combatReach(const Unit& u,const Unit& t,float dist) co
     // STRUCTURE target, pad the effective range by its footprint half-extent plus a
     // small margin for where nav actually halts at the edge (mirrors the builder reach
     // in tickConstruction). Mobile targets keep centre-distance, so unit-vs-unit combat
-    // is unchanged. A shot that dies at its range (Weapon::shotEndsAtRange: a
-    // Line-of-Sight bolt or lightning, a flame, a Guided shot) gets no pad: retail
-    // measures it centre to centre (530580), and from past its range it never
-    // arrives, so an attacker closes to the range itself.
-    r.pad=t.type->maxVel <= Fixed() && !(r.weapon && r.weapon->shotEndsAtRange())
+    // is unchanged. Only a melee approach weapon is padded: every other retail
+    // weapon class measures a building centre to centre (Weapon::centreReach),
+    // and so approaches to its range itself, as retail's Attack_Chase (403bb0)
+    // heads for a ring of the weapon's range round the target's centre.
+    r.pad=t.type->maxVel <= Fixed() && !(r.weapon && r.weapon->centreReach())
               ? 8.0f*float(std::max(t.type->footX,t.type->footZ))+24.0f
               : 0.0f;
     // A ballistic weapon reaches only where its arc does (52bc60, see
@@ -6136,12 +6137,9 @@ bool World::slotInRange(const Unit& u,const Unit& t,int slot) const {
     const Weapon& w=u.type->weapons[size_t(slot)];
     if (w.melee) return meleeInRange(u.type,t.type,(t.x-u.x).toFloat(),(t.z-u.z).toFloat());
     if (w.ballisticClass()) return ballisticInRange(u,t,w);
-    // The base test (530580) is centre to centre, inclusive. A structure is
-    // padded by its footprint like the order-driven fire test (tryFire); a
-    // ballistic shell is not (above), since its arc must actually reach, and
-    // nor is a shot that dies at its range (Weapon::shotEndsAtRange).
-    const int64_t pad=t.type->isStructure() ? w.structurePad(std::max(t.type->footX,t.type->footZ)) : 0;
-    const int64_t r=int64_t(w.range)+pad;
+    // The base test (530580) is centre to centre, inclusive, for a structure
+    // too (Weapon::centreReach): no footprint pad.
+    const int64_t r=w.range;
     return retailCentreDist2(u,t)<=r*r;
 }
 
@@ -6329,12 +6327,11 @@ bool World::repositionForShot(Unit& u,const Unit& t,int slot) {
     const Weapon& w=u.type->weapons[size_t(slot)];
     const int foot=footCells(u.type);
     const NavGrid& grid=navFor(u.type);
-    // A ballistic shell is held to its arc and the strict centre test (each
-    // spot is solved below), so its band has no footprint pad; nor has a shot
-    // that dies at its range (Weapon::shotEndsAtRange).
+    // The band is the strict centre test's (Weapon::centreReach: no footprint
+    // pad for a structure); a ballistic shell is also held to its arc (each
+    // spot is solved below).
     const bool arc=w.ballisticClass();
-    const int64_t pad=t.type->isStructure() && !arc ? w.structurePad(std::max(t.type->footX,t.type->footZ)) : 0;
-    const int64_t hi=int64_t(w.range)+pad-16,lo=std::max<int64_t>(int64_t(w.minRange)+16,
+    const int64_t hi=int64_t(w.range)-16,lo=std::max<int64_t>(int64_t(w.minRange)+16,
         8*(std::max(t.type->footX,t.type->footZ)+foot)+8);
     const int64_t ux=u.x.floorInt(),uz=u.z.floorInt(),tx=t.x.floorInt(),tz=t.z.floorInt();
     const int ucx=footprintCell(u.x,foot),ucz=footprintCell(u.z,foot);
@@ -6973,8 +6970,8 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // The reach it fights at (combatReach, which findTarget shares so a unit
     // that may not chase never acquires what is dropped below): the selected
     // weapon's range for a switcher, the longest when they all fire, padded for
-    // a structure target unless its shot dies at its range; the arc for a
-    // ballistic weapon.
+    // a structure target only for a melee weapon (Weapon::centreReach); the
+    // arc for a ballistic weapon.
     const bool allWeapons = !u.type->weaponSwitching && u.type->weapons.size() > 1;
     const CombatReach cr = combatReach(u,*target,dist);
     const int arcSlot = cr.slot;
@@ -7107,20 +7104,15 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // Fire a weapon when the target is in ITS [minrange, range] band, within its
     // aimtolerance, with a clear shot, and (unless noairweapon) legal against air.
     // Each weapon is gated on its own terms, because a non-switching unit runs all
-    // of them at once and they rarely share a range band. Each has its own
-    // structure pad too: none for a shot that dies at its range (combatReach's
-    // pad is the approach weapon's).
-    auto slotPad = [&](const Weapon& sw) {
-        return target->type->isStructure()
-            ? float(sw.structurePad(std::max(target->type->footX,target->type->footZ))) : 0.0f;
-    };
+    // of them at once and they rarely share a range band. A structure gets no
+    // footprint pad here (Weapon::centreReach; combatReach's pad is the melee
+    // approach's).
     auto slotAims = [&](int sl) {
         const Weapon& sw = u.type->weapons[size_t(sl)];
         if ((sw.mindControl || u.type->canCapture) && !canCaptureTarget(u.player,*target)) return false;
         if (sw.noAir && target->type && target->type->canFly) return false;
         if (groundPair && sw.needsClearLine() && !los) return false;
-        if (sw.melee ? !adj : sw.ballisticClass() ? !ballisticInRange(u,*target,sw) :
-            dist > sw.range + slotPad(sw))
+        if (sw.melee ? !adj : sw.ballisticClass() ? !ballisticInRange(u,*target,sw) : dist > sw.range)
             return false;
         return dist >= sw.minRange;
     };
@@ -15597,11 +15589,11 @@ void World::tick(float dt) {
                 // Pad by a structure target's footprint half-extent so "holding in
                 // range" agrees with tickCombat's fire gate (else a unit stopped at a
                 // building's edge gets dragged back into moving) -- and, as there,
-                // not when the reach weapon's shot dies at its range (combatReach).
+                // only when the reach weapon is melee (Weapon::centreReach).
                 const int reachSlot = approachSlot(u);
-                const bool endsAtRange =
-                    reachSlot >= 0 && u.type->weapons[size_t(reachSlot)].shotEndsAtRange();
-                float pad = t->type->maxVel <= Fixed() && !endsAtRange
+                const bool centreReach =
+                    reachSlot >= 0 && u.type->weapons[size_t(reachSlot)].centreReach();
+                float pad = t->type->maxVel <= Fixed() && !centreReach
                     ? 8.0f * float(std::max(t->type->footX, t->type->footZ)) + 24.0f : 0.0f;
                 // Weapon switchers approach using the selected weapon, just as
                 // tickCombat does. A longer secondary spell must not stop a
