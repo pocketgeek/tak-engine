@@ -17,6 +17,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace {
 namespace hu = tak::hiddenunits;
@@ -54,6 +56,10 @@ namespace hu = tak::hiddenunits;
         // Debug: TAK_HIDDEN_UNITS=off|dots|fade overrides the option (benchmarks).
         static const char* forced = tak::devEnv("TAK_HIDDEN_UNITS");
         if (forced) hiddenUnitsMode_ = hu::parse(forced);
+        static const bool verifyEnv = tak::devFlag("TAK_HIDDEN_VERIFY");
+        const bool verify = verifyEnv || debugHiddenVerify_;
+        debugHiddenFound_.clear();
+        debugHiddenRef_.clear();
 #endif
         using RS = tak::render::Counter;
         // FADE's display clock: whatever this frame finds, the fades advance at the end
@@ -171,13 +177,48 @@ namespace hu = tak::hiddenunits;
                                                            : hu::structureCover(uint32_t(items[cov.item].u->id));
                 };
                 hit = hiddenMarks_.unit([&](auto&& visit) { hiddenGrid_.query(body, visit); }, reaches,
-                                        [&](uint32_t id) { hiddenFades_.cover(key(id)); });
+                                        [&](uint32_t id) {
+                                            hiddenFades_.cover(key(id));
+#ifndef NDEBUG
+                                            if (verify) debugHiddenFound_.push_back(key(id));
+#endif
+                                        });
+#ifndef NDEBUG
+                if (verify) {   // the reference: every cover tested
+                    bool refHit = false;
+                    hiddenGrid_.query(body, [&](uint32_t id) {
+                        if (reaches(id)) { refHit = true; debugHiddenRef_.push_back(key(id)); }
+                        return true;
+                    });
+                    ++debugHiddenVerified_;
+                    if (refHit != hit) {
+                        std::fprintf(stderr, "HIDDEN_VERIFY: unit %d covered %d, reference %d\n", u.id, int(hit),
+                                     int(refHit));
+                        std::abort();
+                    }
+                }
+#endif
             }
             if (!hit) continue;
             ++candidates;
             if (!fade)   // DOTS: kept for the dot test after the body pass
                 hiddenRecs_.push_back({uint32_t(k), HiddenKind::Unit, slot, uint32_t(hiddenGrid_.size()), body});
         }
+#ifndef NDEBUG
+        if (verify) {   // the fades: the same covers, each reported once
+            std::sort(debugHiddenRef_.begin(), debugHiddenRef_.end());
+            debugHiddenRef_.erase(std::unique(debugHiddenRef_.begin(), debugHiddenRef_.end()), debugHiddenRef_.end());
+            const size_t reported = debugHiddenFound_.size();
+            std::sort(debugHiddenFound_.begin(), debugHiddenFound_.end());
+            const bool once = std::adjacent_find(debugHiddenFound_.begin(), debugHiddenFound_.end()) ==
+                              debugHiddenFound_.end();
+            if (!once || debugHiddenFound_ != debugHiddenRef_) {
+                std::fprintf(stderr, "HIDDEN_VERIFY: %zu covers reported (%s), reference %zu\n", reported,
+                             once ? "each once" : "repeated", debugHiddenRef_.size());
+                std::abort();
+            }
+        }
+#endif
         hiddenFades_.advance(fadeMs);
         renderStats_.add(RS::HiddenEligible, eligible);
         renderStats_.add(RS::HiddenCandidates, candidates);

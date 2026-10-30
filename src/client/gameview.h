@@ -2741,6 +2741,12 @@ private:
 #ifndef NDEBUG
     size_t debugHiddenCandidates_ = 0;
     uint64_t debugHiddenFadeNowMs_ = 0;         // nonzero: FADE's display clock (harness)
+    // FADE reference check (TAK_HIDDEN_VERIFY=1, or set by the harness): every unit's
+    // covers are also tested one by one, and the fades and the per-unit answers must be
+    // the bookkeeping's. A mismatch aborts.
+    bool debugHiddenVerify_ = false;
+    size_t debugHiddenVerified_ = 0;            // units checked (cumulative)
+    std::vector<uint64_t> debugHiddenFound_, debugHiddenRef_;
 #endif
     // The sprite a feature shows this frame (burn playback, animation frame, wind
     // sway), in screen space: what the body pass draws and the cover tests read.
