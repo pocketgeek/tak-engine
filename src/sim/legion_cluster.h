@@ -50,8 +50,10 @@ struct Clusters {
     std::size_t clusters() const {return start.empty() ? 0 : start.size() - 1;}
 };
 
-// Below this many rectangles the pairwise test is cheaper than setting up bins (legion_cluster_test --bench).
-inline constexpr std::size_t kPairwiseMax = 40;
+// Up to this many rectangles the pairwise test is used: a box costs about 16 bin visits (grow 10-12), and on lists
+// whose pair tests predict well (blobs listed together, clusterchurn-mid) the pairwise test stays cheaper up to
+// about this size (legion_cluster_test --bench, --bench-scn).
+inline constexpr std::size_t kPairwiseMax = 64;
 inline constexpr int kBinShift = 3;                // 8 x 8 cells per bin: a 64-bit mask
 inline constexpr long long kMaxBinsPerRect = 256;  // a larger box joins pairwise (exact, O(n) for that box)
 inline constexpr long long kMaxBins = 1ll << 22;   // a bin grid larger than this: pairwise for every rectangle
