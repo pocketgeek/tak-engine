@@ -528,11 +528,13 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
     course. The attackring fixtures and ringbend-pocket move only in
     `hash@` (ring damage within a few points). In the battles (Legion,
     means over all 11 gate offsets, `259d26a5` -> `cc71d630`; the gate
-    reads the median of the core five, which moved more):
+    reads the median of the core five, which moved more, and for the
+    small-count wall-touch keys the median of all 11):
     **battle-assault** contact with other groups 417 -> 430 permille, held
     rechecks 433k -> 445k, still units processed 16.6k -> 17.0k (the
     braked bodies), blocked re-requests 0.098 -> 0.106 per unit, wall
-    touch 26.5 both, field refresh 29.9M -> 29.7M; **battle-field-2x60**
+    touch 26.5 both (median of the 11: 26 -> 27, near the wall 107 ->
+    111), field refresh 29.9M -> 29.7M; **battle-field-2x60**
     reversals 106 -> 109 (core five 103 -> 129: the offsets that reverse
     more moved into the core), passage scans 1,815 -> 2,161 and their
     cells 78.8k -> 91.7k (bodies braked at the front are scanned again),
@@ -660,8 +662,9 @@ slot modes and the retail-check fixes on top of `4b374c14`; the same game,
 hooks and machine, quiet; `cc71-ana.txt` against `f0912b-ana.txt`): the
 whole 30-minute game at +10 in 909 s wall, as before; 0 seconds below 1x
 (was 1, in the opening); simulation time per tick at equal unit counts
-equal or lower (for example 12.3 against 13.0 ms at about 2,500 to 3,000
-units); AI cost up about 0.3 ms a tick (0.5 to 0.7 ms against 0.2 to 0.35);
+(500-unit bands) lower in five of the seven, for example 11.7 against 13.0
+ms at 2,500 to 3,000 units, equal below 500 and higher at 1,000 to 1,500
+(5.9 against 5.2 ms; one run each, so partly the game's course); AI cost up about 0.3 ms a tick (0.5 to 0.7 ms against 0.2 to 0.35);
 the client's SIM readout never below +8, its lowest 1.80x near 3,100 units
 (1.91x before).
 
