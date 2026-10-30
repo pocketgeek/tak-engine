@@ -2523,8 +2523,11 @@
             const int flyer=spawn("zonhunt",1650,2100,0,0);
             selection_={builder,flyer};publish();
             rightClickOrder(2400,2400,false);
+            // The flyer keeps its unclamped place in the group (retail's
+            // 0x5214b0, sim/retailflyerspread.h): centre x 1725, offset -75,
+            // within sqrt(3000 x 2) px, so 2325 (the old +-60 clamp gave 2340).
             if(world_.unit(builder)->orders.back().x.toFloat()!=2400.f ||
-               world_.unit(flyer)->orders.back().x.toFloat()!=2340.f)
+               world_.unit(flyer)->orders.back().x.toFloat()!=2325.f)
                 throw std::runtime_error("shared group right-click changed independent flight destinations");
             writableWorld().stop(builder);writableWorld().stop(flyer);
             writableWorld().setPathfindingMode(savedPathfinding);
