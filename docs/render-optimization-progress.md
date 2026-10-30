@@ -3127,13 +3127,16 @@ Captures (`--capture`, frames 360, 480-489, 720) of the same client are
 identical run to run (A/A, 2026-10-30) for hover-ground-10k, hover-units-10k,
 hover-armed-10k, ghosts-queue, ghosts-queue-pan, fade-forest, dots-buildings and
 shadow-cap-above. Not for select-large (zoom 0.5: distant images re-baked on wall
-time, as in the matrix scenes stationary-mixed, pan and effects, which differ A/A
-by up to 3000 px) nor fade-buildings (about 1600 px at 1280x960, 3100 at
-7680x2160, the same at every frame: seam pixels along the triangle edges of the
-faded towers, max channel error 86; Dots draws the same towers identically) nor
-shadow-cap-cross (4722 px at frame 480, 683 at 720, max error 19: the atlas's
-page timers run on wall time, so which frames fall back to direct shadows near
-the threshold varies), so judge an A/B capture of those three against an A/A pair. With `--cpus 0-3` every
+time, as in the matrix scenes stationary-mixed, pan, moving and effects, which
+differ A/A by up to 3000 px; moving at frames 484 and 486 only) nor
+fade-buildings (about 1600 px at 1280x960, 3100 at 7680x2160, the same at every
+frame: seam pixels along the faded towers' triangle edges, max channel error 86;
+it comes from the distant images, which bake on wall time: with
+`--env TAK_DISTANT_MODELS_OFF=1` the A/A captures are identical at 1280x960, so
+use that for F's exact capture check) nor shadow-cap-cross (4722 px at frame 480,
+683 at 720, max error 19: the atlas's page timers run on wall time, so which
+frames fall back to direct shadows near the threshold varies), so judge an A/B
+capture of those three against an A/A pair. With `--cpus 0-3` every
 run is flagged contended (the client's own threads keep four pinned CPUs over the
 0.5 busy threshold): do not pass `--exclude-contended` there.
 
