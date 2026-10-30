@@ -20,6 +20,8 @@
 //           units, ~230 Smiths).
 // Workers: --workers N (World::setSimWorkers) or --serial (no pool). Run it on the
 // timing cores through /home/pocket_geek/tak-tmp/tools/timing.sh.
+// --relax-only strips every aura from the world's types before the first pass, so
+// the pass is the relax walk alone: the fixed cost under the aura application.
 //
 // Output:
 //   AURABENCH layout=.. units=.. grid_units=.. emitters=.. entries=.. cells=.. pairs=.. hits=.. recipients=..
@@ -130,7 +132,7 @@ double pct(const std::vector<double>& sorted, double p) {
 
 int usage() {
     std::fputs("aura_bench [--layout sparse|dense|scn] [--units N] [--emitters M] [--debuff] [--scn FILE --data DIR]\n"
-               "           [--workers N | --serial] [--passes P] [--warm W] [--seed S]\n", stderr);
+               "           [--workers N | --serial] [--passes P] [--warm W] [--seed S] [--relax-only]\n", stderr);
     return 2;
 }
 }  // namespace
@@ -139,7 +141,7 @@ int main(int argc, char** argv) try {
     std::string layout = "sparse", scnPath, data;
     int units = 12000, emitters = 200, workers = -1, passes = 300, warm = 20;
     unsigned seed = 1;
-    bool serial = false, debuff = false;
+    bool serial = false, debuff = false, relaxOnly = false;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { if (i + 1 >= argc) throw std::invalid_argument("missing value for " + a); return argv[++i]; };
@@ -149,6 +151,7 @@ int main(int argc, char** argv) try {
         else if (a == "--workers") workers = std::stoi(next());
         else if (a == "--serial") serial = true;
         else if (a == "--debuff") debuff = true;
+        else if (a == "--relax-only") relaxOnly = true;
         else if (a == "--passes") passes = std::stoi(next());
         else if (a == "--warm") warm = std::stoi(next());
         else if (a == "--seed") seed = unsigned(std::stoul(next()));
@@ -208,6 +211,9 @@ int main(int argc, char** argv) try {
             world->spawn(t, x, z, 0.0f, i % 8);
         }
     } else return usage();
+    if (relaxOnly)   // types are shared and const in the registry: a bench may strip them
+        for (const Unit& u : world->units())
+            if (u.type) const_cast<UnitType*>(u.type)->auras.clear();
     if (serial) world->setSerialThreads(true);
     else if (workers >= 0) world->setSimWorkers(workers);
 
