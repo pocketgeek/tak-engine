@@ -1515,7 +1515,8 @@ ordinary mind-control caster, `captureUnit` keeps HP and resets `xp` /
 `veteran` to a fresh unit's (the scenario's rank for the type, as `spawn`),
 and `canCaptureTarget` and the roll refuse `underConstruction`. Deviations
 kept: the unit keeps its id (and its mana, status timers and cloak) rather
-than becoming a new object; and a mind-control slot does not select an
+than becoming a new object; `scenarioTransfer`, which also goes through
+`0x514da0`, still keeps veterancy; and a mind-control slot does not select an
 unfinished unit (`retailSelectTarget`, `sweepKeepsTarget`), where retail's
 selection would pick it and waste the charm on the roll. Probes:
 `~/tak-tmp/retail-checks/capture/` (outside the repo). Test:

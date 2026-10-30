@@ -536,7 +536,8 @@ New with 0.9.12:
 - **A charmed unit keeps its unit number** and its personal mana, status
   effects and cloak; the original makes a new unit for the new owner and
   kills the old one. Only its health, construction, facing and activation
-  carry over there.
+  carry over there. A unit a mission hands to another player still keeps its
+  veteran stars, though the original resets them there too.
 - **A caster ignores an unfinished enemy unit**, where the original's
   automatic aim would pick it, spend the charm's mana and fail the roll.
 - **0.9.11's limits still apply:** see the
