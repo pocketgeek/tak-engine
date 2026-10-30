@@ -1,5 +1,5 @@
 // attack_stop_test: an attack order aims only once the walk to the target has
-// stopped.
+// stopped, and the mover's TurnDirection reaches the unit's own script.
 //
 //   attack_stop_test <retail-install-dir> [--legion]
 //
@@ -10,12 +10,15 @@
 // (it runs before the missions), the unit's COB pass runs it, and only then
 // does the mover pivot the body to the facing request it posted. In World,
 // whose COB pass comes before the weapons, that is: aim on the stage 1 tick,
-// face from the tick after (tickCombat).
+// face from the tick after (tickCombat). The mover reports every requested
+// turn to the unit's script through TurnDirection (4d91b0 -> 4d9593), the
+// idle navigator as a zero request then the pivot's (notifyTurnDirection).
 //
 // Kirenna (VERMAGE) is why this matters: her AimWeapon waits for static 7,
 // which her Create-started walk controller sets only when it finds her
-// stopped (restore_x) and not yet aiming, or moving (walk_legs) while aiming.
-// World aimed on the tick she stopped,
+// stopped (restore_x) and not yet aiming, or moving (walk_legs) while aiming;
+// her MoveWatcher counts her as moving while GET 29 > 5 or her last
+// TurnDirection (static 5) is not zero. World aimed on the tick she stopped,
 // the controller then saw her aiming and still (restore_legs), and static 7
 // stayed 0: ordered onto a target 664 px off she parked 399 px from it and
 // never fired. Retail can stall the same way when its walk controller looks
@@ -26,7 +29,8 @@
 //     turns no earlier, and fires (before: 0 shots in a minute);
 //   - an Aramon Archer ordered from 600 px aims two ticks after it stops too;
 //   - Kirenna ordered in reach while facing away aims at once and pivots
-//     from the next tick, and fires.
+//     from the next tick; while she pivots her script's TurnDirection static
+//     holds the turn, it is 0 once she faces the target, and she fires.
 //
 // A dev harness; not shipped in a game.
 
@@ -37,8 +41,15 @@
 
 #include <cmath>
 #include <cstdio>
+#include <set>
 #include <string>
 #include <vector>
+
+namespace tak::sim {
+struct RetailReplayProbe {
+    static const auto& scriptStatics(const World& world, int id) { return world.unitScripts_.at(id).peek().vm.statics; }
+};
+}  // namespace tak::sim
 
 using namespace tak;
 
@@ -75,6 +86,9 @@ struct Run {
     int aim = -1;           // first tick its weapon started aiming
     int turned = -1;        // first tick its heading changed after the order
     int fired = -1;         // first tick it fired
+    int turnHeld = 0;       // ticks its script's TurnDirection static was not 0
+    int turnValues = 0;     // ... the distinct values it held
+    int turnAfter = 0;      // ... that static at the end
     float dist = 0;         // centre distance at the end
 };
 
@@ -88,9 +102,10 @@ std::string describe(const Run& r) {
 // A shooter of player 0 `dist` px from a passive Swordsman of player 1 along
 // +x, heading `heading` (radians; pi/2 faces the target), is ordered to attack
 // it and watched for `ticks`. `fireState` 2 is fire at will; 0 (hold fire)
-// keeps it from turning to a target in reach before the order.
+// keeps it from turning to a target in reach before the order. `turnStatic`
+// >= 0: the shooter's script static TurnDirection writes.
 Run attack(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const char* shooterId, float dist, float heading,
-           int ticks, int fireState = 2) {
+           int ticks, int fireState = 2, int turnStatic = -1) {
     Scene s;
     build(s, vfs, reg);
     Run r;
@@ -111,6 +126,7 @@ Run attack(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const char* shoote
     s.w.attack(shooter, target, false);
     const auto start = s.w.unit(shooter)->heading;
     bool walked = false;
+    std::set<uint32_t> turns;
     for (int i = 0; i < ticks; ++i) {
         const int now = int(s.w.tickCount());
         s.w.tick(kTick);
@@ -123,8 +139,14 @@ Run attack(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const char* shoote
         if (r.aim < 0 && (u->weaponAim[size_t(slot)].flags & 0xe0)) r.aim = now;
         if (r.turned < 0 && u->heading != start) r.turned = now;
         if (r.fired < 0 && u->firedWeapons) r.fired = now;
+        if (turnStatic >= 0) {
+            const auto& statics = sim::RetailReplayProbe::scriptStatics(s.w, shooter);
+            if (statics[size_t(turnStatic)]) { ++r.turnHeld; turns.insert(statics[size_t(turnStatic)]); }
+            r.turnAfter = int(statics[size_t(turnStatic)]);
+        }
         r.dist = std::hypot((t->x - u->x).toFloat(), (t->z - u->z).toFloat());
     }
+    r.turnValues = int(turns.size());
     return r;
 }
 }  // namespace
@@ -160,12 +182,18 @@ int main(int argc, char** argv) {
     }
 
     // In reach from the start, facing away: stage 1 runs at once, so she aims
-    // on the order's tick and pivots from the next.
+    // on the order's tick and pivots from the next. Her MoveWatcher reads her
+    // TurnDirection static (5): the mover reports the pivot's turn every tick
+    // it lasts (the idle navigator's zero request comes first, so each tick's
+    // smaller turn is reported again) and 0 once she faces the target.
     {
-        const Run r = attack(vfs, reg, "vermage", 300, -kFacing, 300, 0);
-        std::printf("  vermage in reach, facing away: %s\n", describe(r).c_str());
+        const Run r = attack(vfs, reg, "vermage", 300, -kFacing, 300, 0, 5);
+        std::printf("  vermage in reach, facing away: %s; TurnDirection static set %d ticks (%d values), %d at the end\n",
+                    describe(r).c_str(), r.turnHeld, r.turnValues, r.turnAfter);
         check(r.aim == r.order && r.turned == r.order + 1, "ordered in reach she aims at once and turns the tick after",
               describe(r));
+        check(r.turnHeld >= 8 && r.turnValues >= r.turnHeld - 1 && r.turnAfter == 0,
+              "her script hears the pivot through TurnDirection every tick it lasts, and its end", describe(r));
         check(r.fired > r.aim, "and she fires", describe(r));
     }
 

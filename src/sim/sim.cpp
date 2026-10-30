@@ -1178,6 +1178,8 @@ void World::brakeGround(Unit& u,std::optional<Bam> facing) {
         const int32_t rate=uint16_t(int64_t(uint16_t(u.type->turnInPlaceRate))*multiplier.v/65536);
         u.heading=u.heading+Bam(std::clamp(diff,-rate,rate));
         u.turnReqBam=diff;
+        // 4d9ad0 asked 4d91b0 for no turn before braking: TurnDirection hears both.
+        if (auto* script=unitScript(u.id)) script->turnInPlace=true;
     }
     const auto step=retailGroundStep(u.heading,u.speed);
     commitGroundStep(u,step.s,step.c);
@@ -13318,8 +13320,41 @@ void World::updateLegionStill(Unit& u,Fixed beforeX,Fixed beforeZ) {
     if (u.legionStill) u.turnReqBam=0;
 }
 
+// The mover's turn call-in (4d91b0's tail, 4d9593..4d95de). Every request to
+// turn reaches TurnDirection as whole degrees (a signed truncating /182)
+// whenever its sign differs from the last one reported, a turn starting or
+// ending included, as an immediate call (56c640 -> 56c5f0: a zero-elapsed VM
+// pass). The idle navigator (4d9ad0) asks for no turn first and then pivots
+// toward a posted facing request, so a pivot reports 0 and the pivot's turn
+// on every tick it lasts. These scripts are gameplay, not display: a walker's
+// Create-started controller reads its own TurnDirection static as "moving"
+// (VERMAGE's MoveWatcher: GET 29 > 5 or the last turn), and that controller
+// gates its AimWeapon. The display VM keeps its own copy of these call-ins.
+void World::notifyTurnDirection(Unit& u,UnitScript& script) {
+    const auto& file=*u.type->script();
+    auto report=[&](int32_t request) {
+        const int32_t degrees=int32_t(int16_t(request))/182;
+        const int32_t last=script.turnDirection;
+        if (last*degrees>0 || (last==0 && degrees==0)) return;   // one sign, or both none
+        script.turnDirection=int16_t(degrees);
+        // A script without the method is not touched (its sleep skip stands).
+        const int method=file.scriptIndex("TurnDirection");
+        if (method<0) return;
+        ScriptHost host{*this,u,script};
+        if (script.state().startArguments(file,method,{uint32_t(degrees),0,0,0},1))
+            script.state().tick(file,0,host);
+    };
+    if (script.turnInPlace) {
+        script.turnInPlace=false;
+        report(0);
+    }
+    report(u.turnReqBam);
+}
+
 void World::notifyMovementRate(Unit& u) {
     if (!u.type || u.type->isStructure() || !u.alive() || u.underConstruction) return;
+    // 4dc800 reports the turn from inside the mover, before MoveRate (4db350).
+    if (const auto it=unitScript(u.id)) notifyTurnDirection(u,*it);
     const auto multiplier=u.groundTerrainFlags&0x800 ? u.type->roadMult :
         u.groundTerrainFlags&0x1000 ? u.type->waterMult : Fixed::fromInt(1);
     const auto& v=u.flightVelocity;
@@ -16408,6 +16443,7 @@ uint64_t World::stateHash() const {
             script(factory.activated); script(factory.ready); script(factory.yardOpen); script(factory.buggerOff);
             if (factory.dying) { script(0x44454144u);script(factory.deathStopValue); }
             if (factory.movementRate) { script(0x4d4f5645u);script(factory.movementRate); }
+            if (factory.turnDirection) { script(0x5455524eu);script(uint32_t(int32_t(factory.turnDirection))); }
             // A skipped VM's unpaid debt is folded in: each sleeper hashes the count it
             // would hold had the skipped ticks run (UnitScript::pay).
             const auto& state=factory.peek();

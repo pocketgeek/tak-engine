@@ -3699,6 +3699,11 @@ private:
     public:
         bool activated=false,ready=false,yardOpen=false,buggerOff=false;
         uint32_t movementRate=0;
+        // TurnDirection's last reported turn, in whole degrees (mover +0x26,
+        // 4d9593), and whether this tick's turn was the idle navigator's
+        // pivot, which 4d9ad0 asks for after a zero request (notifyTurnDirection).
+        int16_t turnDirection=0;
+        bool turnInPlace=false;
         bool dying=false;
         int deathStopValue=0;
         // Last SweetSpot drawn centre (queryUnitScriptPoint): derived, not hashed.
@@ -3747,6 +3752,7 @@ private:
     }
     struct ScriptHost;
     void tickUnitScript(Unit& unit);
+    void notifyTurnDirection(Unit& u,UnitScript& script);
     void beginUnitDeath(Unit& unit);
     void updateCorpseWindow(Unit& unit);
     // Enabled by setupMatch; a bare test World leaves it off.
