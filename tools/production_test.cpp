@@ -1207,7 +1207,9 @@ static void repairParticles() {
     builder.modelTop=32*65536;
     UnitType target;target.id="repair-target";target.maxHp=1000;
     target.buildTime=100;target.buildCost=100;target.modelTop=32*65536;
-    const int bid=w.spawn(&builder,200,200),tid=w.spawn(&target,250,200);
+    // The worker touches the target: RepairUnit works only once the
+    // footprints touch (its rectangle approach arrives at once here).
+    const int bid=w.spawn(&builder,234,200),tid=w.spawn(&target,250,200);
     w.unit(tid)->hp=Fixed::fromInt(100);w.player(0).mana=0;
     w.repair(bid,tid,false);
     for(int i=0;i<10;++i)w.tick(1.f/30);
@@ -1259,7 +1261,7 @@ static void constructionParticleSizing() {
     UnitType builder;builder.id="sizing-worker";builder.maxHp=100;
     builder.isBuilder=builder.canMove=true;builder.buildDist=200;builder.workerTime=10;
     builder.modelTop=32*65536;
-    const int bid=w.spawn(&builder,200,200),tid=w.spawn(&target,268,200);
+    const int bid=w.spawn(&builder,232,200),tid=w.spawn(&target,268,200);   // touching its west side
     w.unit(tid)->hp=Fixed::fromInt(100);w.player(0).mana=1000;
     w.repair(bid,tid,false);
     for(int i=0;i<20;++i)w.tick(1.f/30);

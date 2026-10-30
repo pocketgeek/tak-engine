@@ -3853,7 +3853,8 @@ differences are in [the 0.9.7 notes](release-0.9.7-notes.md).
   that progress (`World::workProduction`); each helper's work is converted
   into it, the producer is freed the tick the unit completes, and the output's
   PARK, rally or exit step is given once. Its work stage sets the 300-tick
-  cloak block (`0x4060bb`, table above).
+  cloak block (`0x4060bb`, table above). How a ground helper gets there and
+  when it gives up: the next section but one.
 - **Follow_Ground (`0x407f90`), a mobile builder's guard.** Each look: the
   guarded unit damaged and repairable (`0x519d40`, allies included) ->
   RepairUnit on it; else its own unfinished body, if eligible -> HelpBuild;
@@ -3942,6 +3943,78 @@ guard, `tickFlyingGuard` as event `0x10` in the wait mask), and
 `retailIssueAutoAttack(..., forced)`, not an auto target, so it chases until
 the attacker dies, and the guard order under it resumes. The step-out and the
 attack scan (`0x51d1e0`) stay unported; the latter is our target acquisition.
+
+## Helping and repairing on the ground: the approach (icd, 2026-10-30, protocol 305)
+
+Ground HelpBuild (`0x405cf0`) and RepairUnit (`0x407190`), read and run stage
+by stage in emulation through the dispatcher's result codes
+(`sim/retailmission.h`), the routines they call stubbed. Probe:
+`~/tak-tmp/retail-checks/repair-approach/probe_repair_help.py` (outside the
+repo). Flying helpers and repairers (VTOL_HelpBuild `0x41f7f0`,
+VTOL_RepairUnit `0x420e60`) are unchanged since 0.9.7.
+
+- **Where they walk.** Both install `0x4d4e80`, the rectangle controller
+  RECLAIM and MobileBuild use (see "Reclaim" above): HelpBuild at stage 0
+  with the site's footprint-origin cell (+0x74) and its type's footprint
+  (+0x126/+0x128), RepairUnit at stage 1 with the target's cell and its own
+  footprint (+0x78), after saving where the target stands (mission +0x22).
+  The builder walks until its footprint touches the target's, on the
+  nearest side, never stopping at builddistance. Ours walked every helper
+  to one point south of the site and every repairer to where the target
+  stood at the order.
+- **Reach.** HelpBuild (wait mask 0x708, no timer) starts work on arrival
+  (0x100/0x400); on a failed approach (0x200) only when
+  distance - trunc(8 x |builder footprint|) - trunc(8 x |site footprint|) <=
+  builddistance (`retailBuildWithinReach`, MobileBuild's test), else it ends
+  with UNITCHATTER_CANNOTGETTHERE. There is no timer: ours gave up after
+  8 s without 20 px of progress. RepairUnit's look (stage 2, after a
+  7 + rand(15) tick sleep or an approach event) applies the same reach test
+  on every approach event: in reach the work starts, out of reach the
+  approach is installed again at once, so a still target it cannot reach is
+  never given up on (30 failed approaches emulated: no chatter, no count).
+- **No distance once working.** Neither work stage measures distance: a
+  helper moved 2,900 px away kept calling the construction step, a repairer
+  1,900 px away kept paying for the repair. Ours re-measured every tick and
+  stopped a bumped builder.
+- **A moving target** (+0x130 & 0xc, the MoveRate tier: walking or turning)
+  is never repaired. Each look while it moves adds 1 to mission +0x52, or 3
+  when it is in reach; past 10 the repair ends with REPAIRSUNSUCCESSFULL
+  (emulated: look 11 out of reach, look 5 in reach); otherwise the approach
+  is installed again after 1 tick (out of reach) or 7 + rand(15) (in reach).
+  A target that starts moving during the work stops it (`0x4d4b10`), adds 3
+  and re-aims next tick. The count starts at 0 and is never reset while the
+  job lasts. A still target's timer look re-aims only when its cell changed
+  since the install (`0x407588`). Ours healed a walking unit while in reach,
+  and only a patrol's or guard's repair re-aimed, once a second.
+- **The leash** (mission +0x56; only Patrol sets it, to sightdistance, with
+  its origin where the builder left the patrol, `0x403afc`) is tested on
+  every wake: the repair ends silently once the builder's own integer
+  distance from the origin is >= the leash (emulated: 199 continues, 200
+  ends). A guard's repair has none. Ours measured the target's distance from
+  the origin, with >.
+- **Ends.** RepairUnit: the target dead or changed (REPAIRSUNSUCCESSFULL),
+  not eligible at stage 0 (`0x519d40`, REPAIRMISSIONFAILED), full health at
+  the work stage (silently), no mover (stage 0 returns 7: a building never
+  repairs). HelpBuild: the site finished or gone (CONSTRUCTIONTERMINATED,
+  unless the count is a repeat's).
+
+Ours since protocol 305: a ground builder's help or repair leg is the job
+itself, run on the leg's `mission` with its `buildRectangle`
+(`World::prepareHelpApproach` / `tickGroundHelp`,
+`World::prepareRepairApproach` / `installRepairApproach` /
+`tickGroundRepair`; the give-up count is `Order::repairLooks`, the saved
+position `buildX`/`buildZ`). Not ported: the turn child and the
+INBUILDSTANCE wait before the first work tick (work starts on arrival, as
+before), the patrol scan's random pick (ours takes the nearest), and the
+unit chatter (no channel: every give-up is silent). A repair whose target is
+healed to full by someone else ends at once (retail walks on until it
+arrives). Engine deviation (the 0.9.8 doorway report): a helper whose help
+ends with nothing else to do, standing in a factory's rectangle (it walked
+in to touch the output), walks out past the nearest side
+(`World::leaveFactoryYard`, the point `clearBuildSite` would pick); a
+repeating or producing conjurer stays (its Move would be its output's
+rally). A help queued on the site the builder is building itself waits
+behind that MobileBuild (`groundHelpLeg` defers to a current build order).
 
 ## Attack_Chase: the stop comes before the aim (icd + emulation, 2026-10-30)
 

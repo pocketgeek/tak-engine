@@ -12,9 +12,11 @@ attack aims a moment after the attacker stops (so Kirenna fires after a walk
 far more often), and a shot stopped in front of a castle's long face counts as
 blocked. Campaign units follow their mission orders as the original reads
 them: factories build their waves, troops start aboard their ships, ambushes
-spring when hit and Offensive means offensive. Streaming keeps to YouTube's
-bitrate, Options, Voice Chat and Controls save as you change them, and
-SETTINGS, BENCHMARK and LOAD REPLAY have a BACK button.
+spring when hit and Offensive means offensive. Builders help and repair as in
+the original: they walk up until they touch the unit, keep working when
+pushed, and never repair a unit that walks.
+Streaming keeps to YouTube's bitrate, Options, Voice Chat and Controls save as
+you change them, and SETTINGS, BENCHMARK and LOAD REPLAY have a BACK button.
 
 **Compatibility first.** The AI's sight-only targets, the combat fixes and the
 new lockstep state check change the game state the players compare, so 0.9.12
@@ -355,6 +357,49 @@ Many missions play differently, and most get harder: enemies attack instead of
 standing by, ambushers and guards hold as designed, waves come from factories
 the player can destroy, and bosses hit and take hits as the original intends.
 All 74 shipped missions load and run.
+## Builders help and repair as in the original game
+
+A builder told to help build or repair walked to one point south of the
+building (a repairer to where the unit stood when ordered) and worked from its
+build distance; it stopped working whenever it was pushed out of that
+distance, a helper gave up after 8 seconds without getting 20 pixels closer,
+and a repairer healed a unit while it walked past. The original's ground
+HelpBuild (`0x405cf0`) and RepairUnit (`0x407190`), run stage by stage in
+emulation, do it differently, and the engine now does the same:
+
+- **They walk up until they touch.** Both install the rectangle controller a
+  build site and a reclaim use: the builder walks to the nearest cell where
+  its footprint touches the unit's, on the side it comes from, so several
+  helpers spread round a building. The work starts on arrival; if no route
+  gets there, it starts anyway when the builder is within its build distance
+  of the unit, and otherwise a help ends ("can't get there"; no unit-chatter
+  voice here, as before). There is no timer: a helper held up in a crowd
+  keeps trying.
+- **Once working, distance no longer matters**: a builder pushed aside keeps
+  working where it stands.
+- **No repair is done to a unit that moves** (walks or turns). The repair
+  waits and re-aims at the unit each look; every look while it moves counts
+  1 (3 when the builder is within reach), and past 10 the repair is given up
+  ("repairs unsuccessful"): a few seconds of walking, less when the builder
+  keeps up. A still unit is never given up on, even one the builder cannot
+  reach; during the approach, one that has moved to another cell is re-aimed
+  at on the next look (every 7 to 21 ticks).
+- **A patrolling builder's leash** is its own distance from where it left its
+  route, its sight distance (the original's 199 pixels continue, 200 end); the
+  engine measured the target's distance instead.
+- **An assist queued behind other orders** starts when its turn comes; it
+  used to latch at once and could drop the orders before it.
+- **A helper that finishes a unit inside a factory walks out of the factory**
+  (not in the original, which leaves it where it touched the unit, in the
+  yard): the 0.9.8 report of builders standing in a factory's door, which the
+  guard ring already answers for guards. In the door test (every shipped
+  ground factory, both pathfinding modes and balances, 232 cases) all outputs
+  finish and no unit is left in a factory; without the step-out, 84 assist
+  cases left the helper standing in the yard.
+
+Flying helpers and repairers keep 0.9.7's VTOL_HelpBuild and VTOL_RepairUnit.
+A building never repairs (the original's RepairUnit ends at once without a
+mover; the Keep's `canmove=1` let the engine accept the order).
 
 ## Streaming keeps to YouTube's bitrate
 
@@ -443,7 +488,7 @@ decided what the game counted as seen.
   `World::chordClear` now takes the target. New castle case in
   `blocked_shot_test`; `tools/re/probe_long_footprint_blocked.py`.
 - `Order` stays five cache lines (320 bytes): `attackChased` fills the pad
-  beside `chaseLeashed`, and `scripted` the pad after `chaseOrigin`.
+  beside `chaseLeashed`, `scripted` the pad after `chaseOrigin`.
 - Sim (campaign orders): `MissionScript::applyOrders` reads clauses as the
   original's `0x513fb0` (`MissionScript::Placement`, the `.ota` records, is its
   name table; `setIdents`, the `i` naming and the timed spawns are gone). Orders
@@ -465,6 +510,35 @@ decided what the game counted as seen.
   a head order as the original's (class 0x13, never the default mission's
   0x2000) in `firstMission`. Details in `docs/retail-engine.md` (Mission order
   strings) and `docs/campaign-design.md`.
+- `Order::repairLooks` (RepairUnit's give-up count) sits in line 1's
+  one-byte pad before `missionRadius`; a ground help or repair leg hashes its stages with a tag
+  once started.
+- Sim (help and repair): `World::prepareHelpApproach` / `tickGroundHelp`
+  (HelpBuild `0x405cf0`) and `prepareRepairApproach` /
+  `installRepairApproach` / `tickGroundRepair` (RepairUnit `0x407190`) run
+  on the leg's `mission` with its `buildRectangle`; a ground help leg is no
+  longer a Move (`assist` latches `buildSiteId` once the leg is current,
+  `cancelBuilds` drops it). `World::moveRateMoving`; `constructionWork` split
+  out of `tickConstruction` (MobileBuild's own site work and its watchdog are
+  unchanged); `leaveFactoryYard` and `pointOutside` (split out of
+  `clearBuildSite`, same point). `World::repair` refuses a building. Legion:
+  Repair is an exact rectangle kind like Build and Reclaim, a help leg is
+  Build, no member is keyed by its target any more. `docs/retail-engine.md`
+  "Helping and repairing on the ground"; probe
+  `~/tak-tmp/retail-checks/repair-approach/probe_repair_help.py` (outside
+  the repo).
+- Tests (help and repair): `helpbuild_test`'s approach cases (spread helpers,
+  touching reach, a 14 s hold, a bumped helper and repairer, failed
+  approaches in and out of reach, a walking repair target, the patrol leash,
+  a queued assist; Retail and Legion): 36 checks, 25 fail on the old code.
+  Two more from review: an assist queued on the builder's own build site
+  lets the build go on (it stalled for ever), and a repeating conjurer's
+  rally survives the yard step-out (World::order made the step-out its
+  rally).
+  `builder_automation` (a departing ally now walks off; patrol eligibility
+  gets time to walk up), `production` (repairers start touching their
+  targets) and `retail_script` (the repair controller driven by a Repair
+  order; work stops when the target moves) follow the new rules.
 - Sim: `src/sim/statefold.h` (`WordMix`, chunked xxHash64-style lanes) for
   `World::stateHash`; `resolveSplit` and `World::compStats` for local nav
   splits (`TAK_COMPCHECK` in debug builds checks every carried labelling);
@@ -586,6 +660,18 @@ New with 0.9.12:
 - **A build order's site is checked when the order is given**, not when the
   builder arrives as in the original: a site blocked at that moment is
   dropped at once instead of after the walk.
+- **Helpers and repairers start working on arrival**: the original first
+  turns to face the unit and waits for the builder's stance, which the
+  engine does not port (as before).
+- **A repair whose unit is healed to full by someone else ends at once**; the
+  original's repairer walks on until it arrives.
+- **A helper whose site is walled off** can walk round the wall for a long
+  time before its approach fails (41 seconds behind a three-cell wall in a
+  test), as a builder going to a walled-off site does: the same search.
+- **Give-ups are silent**: the original's "can't get there" and "repairs
+  unsuccessful" voices have no channel in the engine.
+- **A patrolling builder repairs the nearest damaged unit** it sees; the
+  original picks one at random (unchanged).
 - **0.9.11's limits still apply:** see the
   [0.9.11 notes](release-0.9.11-notes.md#known-limits), and through them the
   earlier notes; 0.9.11's "AI goes after everything" is replaced by the

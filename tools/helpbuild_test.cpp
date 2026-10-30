@@ -37,12 +37,27 @@
 // past Hold Fire / Hold Position, no leash). Ours ignored it, so an attacker
 // out of the guard's acquisition range shot what it guarded unanswered.
 //
+// The ground approach (HelpBuild 0x405cf0 and RepairUnit 0x407190, emulated
+// 2026-10-30): both install the rectangle controller round the target's
+// footprint, so a helper or repairer walks until its footprint touches the
+// target's, from the side it comes from; a failed approach still works from
+// within builddistance (retailBuildWithinReach), else a help ends; no
+// distance is measured once the work has started. HelpBuild has no timer:
+// ours gave up after 8 s without progress. A repair never works on a
+// moving target: each look while it moves counts 1 (3 within reach), work
+// interrupted by a move counts 3, and past 10 the repair ends; a patrol's
+// detour ends once the builder itself is its sightdistance from where it
+// left the patrol. Ours walked every helper to one point south of the site,
+// worked from builddistance, healed walking units and leashed the target.
+//
 // Every scenario uses synthetic types (no game data) on a flat map.
 
 #include "sim/sim.h"
 #include "sim/matchsetup.h"
+#include "sim/retailreclaim.h"
 #include "net/lockstep.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -1129,6 +1144,449 @@ static uint64_t flyingRun() {
     return w.stateHash();
 }
 
+
+// ---------------------------------------------------------------------------
+// The ground approach: HelpBuild (0x405cf0) and RepairUnit (0x407190).
+// ---------------------------------------------------------------------------
+static std::unique_ptr<World> makeModeWorld(PathfindingMode mode) {
+    auto w = std::make_unique<World>();
+    w->setPathfindingMode(mode);
+    w->setTerrain(std::vector<uint8_t>(size_t(128) * 128, 100), 128, 128, 20);
+    w->setPathService(true);
+    w->player(0).mana = 100000;
+    w->player(1).mana = 100000;
+    return w;
+}
+
+static const char* modeName(PathfindingMode mode) { return mode == PathfindingMode::Retail ? "Retail" : "Legion"; }
+
+// A 4x4 building left unfinished (no builder of its own): 1800 ticks of
+// work at workertime 10.
+static UnitType hutType() {
+    UnitType t;
+    t.name = t.id = "hut";
+    t.maxVel = Fixed(); t.maxHp = 1000; t.footX = t.footZ = 4;
+    t.buildTime = 600; t.buildCost = 100;
+    return t;
+}
+
+static int spawnSite(World& w, const UnitType& t, float x, float z) {
+    const int id = w.spawn(&t, x, z, 0.0f, 0);
+    Unit* s = w.unit(id);
+    s->underConstruction = true; s->buildBegun = true;
+    s->hp = Fixed::fromInt(t.maxHp / 20);
+    w.blockFoot(t, x, z, true);
+    return id;
+}
+
+// Footprints touching at an edge or a corner, no gap, no overlap (the
+// rectangle controller's own acceptance).
+static bool touching(const Unit& b, const Unit& t) {
+    return retailReclaimRectangle(footprintOrigin(t.x, t.type->footX), footprintOrigin(t.z, t.type->footZ),
+                                  t.type->footX, t.type->footZ, b.type->footX, b.type->footZ)
+        .accepts(footprintOrigin(b.x, b.type->footX), footprintOrigin(b.z, b.type->footZ));
+}
+
+// A closed wall `thick` cells deep whose outer edge is the cells
+// [x0, x1] x [z0, z1].
+static void wallRing(World& w, int x0, int z0, int x1, int z1, int thick) {
+    w.blockCells(x0, z0, x1 - x0 + 1, thick, true);
+    w.blockCells(x0, z1 - thick + 1, x1 - x0 + 1, thick, true);
+    w.blockCells(x0, z0, thick, z1 - z0 + 1, true);
+    w.blockCells(x1 - thick + 1, z0, thick, z1 - z0 + 1, true);
+}
+
+static bool hasHelpLeg(const Unit& b, int site) {
+    return std::any_of(b.orders.begin(), b.orders.end(), [&](const Order& o) { return o.helpSite == site; });
+}
+
+// Several helpers from four sides: each walks to the side it comes from and
+// starts work only with its footprint touching the site's.
+static void approachHelpersSpread(PathfindingMode mode) {
+    std::printf("helpers round a site (%s):\n", modeName(mode));
+    Types ty;
+    const UnitType hut = hutType();
+    auto ownedWorld = makeModeWorld(mode);
+    World& w = *ownedWorld;
+    w.spawn(&ty.factory, 300, 300, 0.0f, 0);       // storage for the pool
+    const int site = spawnSite(w, hut, 1008, 1008);
+    struct From { float x, z; const char* side; };
+    const From from[4] = {{1008, 704, "north"}, {1008, 1312, "south"}, {1312, 1008, "east"}, {704, 1008, "west"}};
+    int ids[4];
+    for (int i = 0; i < 4; ++i) ids[i] = w.spawn(&ty.builder, from[i].x, from[i].z, 0.0f, 0);
+    for (int id : ids) command(w, tak::net::Cmd::Assist, id, site);
+    uint32_t emitted[4];
+    int started[4] = {-1, -1, -1, -1};
+    bool touchAtStart[4] = {}, ownSide[4] = {};
+    float startDistance[4] = {};
+    for (int i = 0; i < 4; ++i) emitted[i] = w.unit(ids[i])->constructionEmissions[0];
+    for (int tick = 0; tick < 900; ++tick) {
+        w.tick(1.0f / 30.0f);
+        const Unit* s = w.unit(site);
+        for (int i = 0; i < 4; ++i) {
+            const Unit* b = w.unit(ids[i]);
+            if (started[i] >= 0 || b->constructionEmissions[0] == emitted[i]) continue;
+            started[i] = tick;
+            touchAtStart[i] = touching(*b, *s);
+            const float dx = (b->x - s->x).toFloat(), dz = (b->z - s->z).toFloat();
+            startDistance[i] = std::sqrt(dx * dx + dz * dz);
+            ownSide[i] = i == 0 ? dz < 0 && std::fabs(dz) >= std::fabs(dx) :
+                         i == 1 ? dz > 0 && std::fabs(dz) >= std::fabs(dx) :
+                         i == 2 ? dx > 0 && std::fabs(dx) >= std::fabs(dz) :
+                                  dx < 0 && std::fabs(dx) >= std::fabs(dz);
+        }
+    }
+    char d[200];
+    for (int i = 0; i < 4; ++i) {
+        std::snprintf(d, sizeof d, "first work t=%d at %.1f px from the centre, touching %d, own side %d",
+                      started[i], startDistance[i], int(touchAtStart[i]), int(ownSide[i]));
+        check(started[i] >= 0 && touchAtStart[i] && ownSide[i],
+              (std::string("the helper from the ") + from[i].side + " works touching the site on its own side").c_str(), d);
+    }
+    bool apart = true;
+    for (int i = 0; i < 4; ++i)
+        for (int j = i + 1; j < 4; ++j)
+            apart &= dist(w, ids[i], ids[j]) >= 32.0f;
+    check(apart, "...each where it arrived, none of them sharing a spot");
+}
+
+// A repairer starts repairing only with its footprint touching the target's.
+static void approachRepairTouching(PathfindingMode mode) {
+    std::printf("a repairer walks up to touch (%s):\n", modeName(mode));
+    Types ty;
+    auto ownedWorld = makeModeWorld(mode);
+    World& w = *ownedWorld;
+    w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+    const int hurt = w.spawn(&ty.sol, 1000, 1000, 0.0f, 0);
+    w.unit(hurt)->hp = Fixed::fromInt(100);
+    const int rep = w.spawn(&ty.builder, 1300, 1000, 0.0f, 0);
+    w.repair(rep, hurt, false);
+    int first = -1;
+    bool touch = false;
+    float at = 0;
+    for (int tick = 0; tick < 600 && first < 0; ++tick) {
+        const Fixed hp = w.unit(hurt)->hp;
+        w.tick(1.0f / 30.0f);
+        if (w.unit(hurt)->hp > hp) { first = tick; touch = touching(*w.unit(rep), *w.unit(hurt)); at = dist(w, rep, hurt); }
+    }
+    char d[160];
+    std::snprintf(d, sizeof d, "first repair t=%d at %.1f px (builddistance 60), touching %d", first, at, int(touch));
+    check(first >= 0 && touch, "the first repair is done with the footprints touching", d);
+    int mended = -1;
+    for (int tick = 0; tick < 600 && mended < 0; ++tick) {
+        w.tick(1.0f / 30.0f);
+        if (w.unit(hurt)->hp.toFloat() >= 299.9f) mended = tick;
+    }
+    check(mended >= 0 && !w.unit(rep)->repairId && w.unit(rep)->orders.empty(), "...to full health, then the job ends");
+}
+
+// A helper that makes no headway for longer than 8 s keeps its job.
+static void approachStuckHelper() {
+    std::printf("a held-up helper keeps trying:\n");
+    Types ty;
+    const UnitType hut = hutType();
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
+    w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+    const int site = spawnSite(w, hut, 1008, 1008);
+    const int helper = w.spawn(&ty.builder, 1008, 600, 0.0f, 0);
+    command(w, tak::net::Cmd::Assist, helper, site);
+    w.unit(helper)->paralyzedFor = 420;            // 14 s without a step
+    int lost = -1;
+    for (int tick = 0; tick < 420 && lost < 0; ++tick) {
+        w.tick(1.0f / 30.0f);
+        const Unit* b = w.unit(helper);
+        if (b->buildSiteId != site || !hasHelpLeg(*b, site)) lost = tick;
+    }
+    char d[120];
+    std::snprintf(d, sizeof d, "job lost at t=%d (-1: kept)", lost);
+    check(lost < 0, "a helper held still for 14 s keeps its help (no 8 s give-up)", d);
+    const uint32_t before = w.unit(helper)->constructionEmissions[0];
+    for (int tick = 0; tick < 600 && w.unit(helper)->constructionEmissions[0] == before; ++tick) w.tick(1.0f / 30.0f);
+    check(w.unit(helper)->constructionEmissions[0] != before && touching(*w.unit(helper), *w.unit(site)),
+          "...and helps once it can move again");
+}
+
+// Once working, a builder pushed away keeps working: the work stages never
+// measure distance.
+static void approachBumped() {
+    std::printf("a bumped builder keeps working:\n");
+    Types ty;
+    const UnitType hut = hutType();
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
+    w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+    const int site = spawnSite(w, hut, 1008, 1008);
+    const int helper = w.spawn(&ty.builder, 1008, 704, 0.0f, 0);
+    command(w, tak::net::Cmd::Assist, helper, site);
+    uint32_t emitted = w.unit(helper)->constructionEmissions[0];
+    for (int tick = 0; tick < 600 && w.unit(helper)->constructionEmissions[0] == emitted; ++tick) w.tick(1.0f / 30.0f);
+    check(w.unit(helper)->constructionEmissions[0] != emitted, "a helper starts working on the site");
+    w.unit(helper)->z = w.unit(helper)->z - Fixed::fromInt(200);   // shoved 200 px off
+    const Fixed bumpedZ = w.unit(helper)->z;
+    emitted = w.unit(helper)->constructionEmissions[0];
+    const Fixed hp = w.unit(site)->hp;
+    for (int tick = 0; tick < 30; ++tick) w.tick(1.0f / 30.0f);
+    char d[160];
+    std::snprintf(d, sizeof d, "%u work ticks in 30, site hp %.1f -> %.1f, moved %.1f px",
+                  w.unit(helper)->constructionEmissions[0] - emitted, hp.toFloat(), w.unit(site)->hp.toFloat(),
+                  std::fabs((w.unit(helper)->z - bumpedZ).toFloat()));
+    check(w.unit(helper)->constructionEmissions[0] - emitted == 30 && w.unit(site)->hp > hp && w.unit(helper)->z == bumpedZ,
+          "...and pushed 200 px away it keeps working where it stands", d);
+
+    const int hurt = w.spawn(&ty.sol, 1600, 1600, 0.0f, 0);
+    w.unit(hurt)->hp = Fixed::fromInt(30);
+    const int rep = w.spawn(&ty.builder, 1600, 1700, 0.0f, 0);
+    w.repair(rep, hurt, false);
+    for (int tick = 0; tick < 600 && w.unit(hurt)->hp == Fixed::fromInt(30); ++tick) w.tick(1.0f / 30.0f);
+    w.unit(rep)->x = w.unit(rep)->x + Fixed::fromInt(200);
+    const Fixed before = w.unit(hurt)->hp;
+    for (int tick = 0; tick < 30; ++tick) w.tick(1.0f / 30.0f);
+    std::snprintf(d, sizeof d, "target hp %.1f -> %.1f, repair job %d", before.toFloat(), w.unit(hurt)->hp.toFloat(),
+                  w.unit(rep)->repairId);
+    check(w.unit(hurt)->hp > before + Fixed::fromInt(30) && w.unit(rep)->repairId == hurt,
+          "a repairer pushed 200 px away keeps repairing", d);
+}
+
+// A failed approach (the site walled off): within builddistance the work
+// starts from where the route ended; out of it the help ends, unworked.
+static void approachFailed() {
+    std::printf("a helper whose approach fails:\n");
+    Types ty;
+    const UnitType hut = hutType();
+    char d[160];
+    for (const bool inReach : {true, false}) {
+        auto ownedWorld = makeWorld();
+        World& w = *ownedWorld;
+        w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+        const int site = spawnSite(w, hut, 1008, 1008);            // cells 61..64
+        // Outside a wall ending two cells out the builder stands 96 px from
+        // the centre (96 - 22 - 45 = 29 <= 60); seven cells out, 176 px
+        // (109 > 60).
+        if (inReach) wallRing(w, 58, 58, 67, 67, 2); else wallRing(w, 53, 53, 72, 72, 3);
+        const int helper = w.spawn(&ty.builder, 1400, 1008, 0.0f, 0);
+        command(w, tak::net::Cmd::Assist, helper, site);
+        const Fixed hp = w.unit(site)->hp;
+        int worked = -1, ended = -1;
+        for (int tick = 0; tick < 3000 && worked < 0 && ended < 0; ++tick) {
+            const uint32_t before = w.unit(helper)->constructionEmissions[0];
+            w.tick(1.0f / 30.0f);
+            if (w.unit(helper)->constructionEmissions[0] != before) worked = tick;
+            if (!w.unit(helper)->buildSiteId) ended = tick;
+        }
+        std::snprintf(d, sizeof d, "worked t=%d, ended t=%d, %.1f px from the centre", worked, ended, dist(w, helper, site));
+        if (inReach)
+            check(worked >= 0 && ended < 0, "within builddistance of the site it works from outside the wall", d);
+        else
+            check(ended >= 0 && worked < 0 && w.unit(site)->hp == hp && !hasHelpLeg(*w.unit(helper), site),
+                  "out of builddistance the help ends, the site untouched", d);
+    }
+    // A still repair target it cannot reach is never given up on.
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
+    w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+    const int hurt = w.spawn(&ty.sol, 1008, 1008, 0.0f, 0);       // cells 62..63
+    w.unit(hurt)->hp = Fixed::fromInt(50);
+    wallRing(w, 56, 56, 69, 69, 3);
+    const int rep = w.spawn(&ty.builder, 1400, 1008, 0.0f, 0);
+    w.repair(rep, hurt, false);
+    bool kept = true;
+    for (int tick = 0; tick < 900; ++tick) {
+        w.tick(1.0f / 30.0f);
+        kept &= w.unit(rep)->repairId == hurt || tick == 0;
+    }
+    check(kept && w.unit(hurt)->hp == Fixed::fromInt(50), "a still repair target it cannot reach is retried, never given up");
+}
+
+// RepairUnit and a moving target: no repair while it moves; a short walk
+// pauses the repair, a long one ends it after the looks.
+static void approachMovingRepair(PathfindingMode mode) {
+    std::printf("repairing a unit that walks (%s):\n", modeName(mode));
+    Types ty;
+    UnitType stepper = ty.sol;                     // starts and stops at once
+    stepper.name = stepper.id = "stepper";
+    stepper.accel = stepper.brake = Fixed::fromInt(2);
+    char d[200];
+    for (const bool far : {false, true}) {
+        auto ownedWorld = makeModeWorld(mode);
+        World& w = *ownedWorld;
+        w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+        const int hurt = w.spawn(&stepper, 1000, 600, 0.0f, 0);
+        w.unit(hurt)->hp = Fixed::fromInt(50);
+        const int rep = w.spawn(&ty.builder, 1000, 640, 0.0f, 0);
+        w.repair(rep, hurt, false);
+        for (int tick = 0; tick < 300 && w.unit(hurt)->hp == Fixed::fromInt(50); ++tick) w.tick(1.0f / 30.0f);
+        const bool began = w.unit(hurt)->hp > Fixed::fromInt(50);
+        w.order(hurt, 1000, far ? 2400.0f : 560.0f, false);
+        Fixed hp = w.unit(hurt)->hp;
+        bool healedMoving = false;
+        int ended = -1, mended = -1;
+        for (int tick = 0; tick < 900 && ended < 0; ++tick) {
+            const bool moving = w.unit(hurt)->speed != Fixed();
+            w.tick(1.0f / 30.0f);
+            healedMoving |= moving && w.unit(hurt)->hp > hp;
+            hp = w.unit(hurt)->hp;
+            if (mended < 0 && hp.toFloat() >= 299.9f) mended = tick;
+            if (!w.unit(rep)->repairId) ended = tick;
+        }
+        const Unit* t = w.unit(hurt);
+        const Unit* r = w.unit(rep);
+        std::snprintf(d, sizeof d, "began %d, ended t=%d, hp %.1f, target at z %.0f, %zu orders left",
+                      int(began), ended, t->hp.toFloat(), t->z.toFloat(), r->orders.size());
+        check(began && !healedMoving, far ? "no repair is done while the target walks away" :
+                                            "no repair is done while the target steps aside", d);
+        if (far)
+            check(ended >= 0 && ended < 300 && t->z.toFloat() < 2300.0f && r->orders.empty() && t->hp.toFloat() < 299.9f,
+                  "...and after a few looks at it walking the repair ends, unfinished", d);
+        else
+            check(mended >= 0 && ended >= mended, "...and once it stands still the repair resumes and finishes", d);
+    }
+}
+
+// A patrol's repair detour ends once the builder itself is its sightdistance
+// from where it left the patrol (mission +0x56 against +0x2e/+0x30, >=);
+// the work never measures how far the target is.
+static void approachPatrolLeash() {
+    std::printf("a patrol's repair leash:\n");
+    Types ty;
+    UnitType bt = ty.builder;
+    bt.name = bt.id = "patroller"; bt.sight = 200; bt.canPatrol = true;
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
+    w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+    const int b = w.spawn(&bt, 600, 1000, 0.0f, 0);
+    const int hurt = w.spawn(&ty.sol, 700, 1060, 0.0f, 0);
+    w.unit(hurt)->hp = Fixed::fromInt(30);
+    w.patrol(b, 1600, 1000);
+    for (int tick = 0; tick < 600 && w.unit(hurt)->hp == Fixed::fromInt(30); ++tick) w.tick(1.0f / 30.0f);
+    const Order* job = nullptr;
+    for (const auto& o : w.unit(b)->orders) if (o.patrolRepair) job = &o;
+    check(job && w.unit(b)->repairId == hurt && w.unit(hurt)->hp > Fixed::fromInt(30), "a patrolling builder repairs a damaged unit it passes");
+    if (!job) return;
+    const Fixed ox = job->clickX, oz = job->clickZ;
+    w.unit(b)->x = ox + Fixed::fromInt(199); w.unit(b)->z = oz;
+    Fixed hp = w.unit(hurt)->hp;
+    w.tick(1.0f / 30.0f);
+    char d[160];
+    std::snprintf(d, sizeof d, "target %.0f px from the leash origin", std::hypot((w.unit(hurt)->x - ox).toFloat(), (w.unit(hurt)->z - oz).toFloat()));
+    check(w.unit(b)->repairId == hurt && w.unit(hurt)->hp > hp, "199 px from where it left the patrol it keeps repairing", d);
+    w.unit(b)->x = ox + Fixed::fromInt(200);
+    hp = w.unit(hurt)->hp;
+    w.tick(1.0f / 30.0f);
+    const Unit* u = w.unit(b);
+    check(!u->repairId && w.unit(hurt)->hp == hp && !u->orders.empty() && u->orders.front().patrol,
+          "200 px away (its sightdistance) the repair ends and the patrol resumes", d);
+}
+
+// An Assist queued behind a move is the job only once its leg is current.
+static void approachQueuedAssist() {
+    std::printf("a queued assist:\n");
+    Types ty;
+    const UnitType hut = hutType();
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
+    w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+    const int site = spawnSite(w, hut, 1008, 1008);
+    const int b = w.spawn(&ty.builder, 1008, 1500, 0.0f, 0);
+    w.order(b, 1500, 1500, false);
+    tak::net::Command c;
+    c.kind = tak::net::Cmd::Assist; c.player = 0; c.unitId = b; c.targetId = site; c.queue = 1;
+    applyCommand(w, emptyRegistry(), c);
+    bool early = w.unit(b)->buildSiteId != 0;
+    int latched = -1;
+    for (int tick = 0; tick < 900 && latched < 0; ++tick) {
+        w.tick(1.0f / 30.0f);
+        if (w.unit(b)->buildSiteId == site) latched = tick;
+        else early |= w.unit(b)->buildSiteId != 0;
+    }
+    char d[120];
+    std::snprintf(d, sizeof d, "latched t=%d, builder at (%.0f,%.0f)", latched, w.unit(b)->x.toFloat(), w.unit(b)->z.toFloat());
+    check(!early && latched >= 0 && w.unit(b)->x.toFloat() > 1400, "the help starts only once the move before it is done", d);
+    const uint32_t before = w.unit(b)->constructionEmissions[0];
+    for (int tick = 0; tick < 900 && w.unit(b)->constructionEmissions[0] == before; ++tick) w.tick(1.0f / 30.0f);
+    check(w.unit(b)->constructionEmissions[0] != before && touching(*w.unit(b), *w.unit(site)), "...then it walks over and helps");
+
+    // An assist queued on the site the builder is building itself waits its
+    // turn: the build goes on (the latch is the MobileBuild's), and the help
+    // ends with the finished site.
+    auto ownWorld = makeWorld();
+    World& o = *ownWorld;
+    o.spawn(&ty.factory, 300, 300, 0.0f, 0);
+    UnitType own = hut; own.buildTime = 60;
+    const int ob = o.spawn(&ty.builder, 1008, 1200, 0.0f, 0);
+    o.queueBuild(ob, &own, 1008, 1008, false);
+    int ownSite = 0;
+    for (int tick = 0; tick < 600 && !ownSite; ++tick) { o.tick(1.0f / 30.0f); ownSite = o.unit(ob)->buildSiteId; }
+    for (int tick = 0; tick < 30; ++tick) o.tick(1.0f / 30.0f);
+    o.assist(ob, ownSite, true);
+    const float hp0 = ownSite ? o.unit(ownSite)->hp.toFloat() : 0;
+    for (int tick = 0; tick < 30; ++tick) o.tick(1.0f / 30.0f);
+    const float hp1 = ownSite ? o.unit(ownSite)->hp.toFloat() : 0;
+    bool finished = false;
+    for (int tick = 0; tick < 900 && ownSite && !finished; ++tick) {
+        o.tick(1.0f / 30.0f);
+        finished = !o.unit(ownSite)->underConstruction;
+    }
+    for (int tick = 0; tick < 5; ++tick) o.tick(1.0f / 30.0f);
+    std::snprintf(d, sizeof d, "site %d hp %.1f -> %.1f, finished %d, %zu orders left", ownSite, hp0, hp1,
+                  int(finished), o.unit(ob)->orders.size());
+    check(ownSite && hp1 > hp0 && finished && o.unit(ob)->orders.empty() && !o.unit(ob)->buildSiteId,
+          "an assist queued on its own build site lets the build go on", d);
+}
+
+// The step out of a factory's yard after a help is for a builder with
+// nothing else to do: a repeating conjurer's Move is its output's rally
+// (World::order), which the step-out must not overwrite.
+static void approachYardRepeat() {
+    std::printf("a repeating conjurer helping inside a factory's yard:\n");
+    Types ty;
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
+    w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+    w.spawn(&ty.factory, 1000, 1000, 0.0f, 0);
+    w.blockFoot(ty.factory, 1000, 1000, false);   // a walkable yard
+    UnitType small = ty.sol; small.name = small.id = "small"; small.buildTime = 6;
+    const int site = w.spawn(&small, 1000, 1000, 0.0f, 0);
+    w.unit(site)->underConstruction = true; w.unit(site)->buildBegun = true; w.unit(site)->hp = Fixed::fromInt(50);
+    const int conj = w.spawn(&ty.conjurer, 1000, 1032, 0.0f, 0);   // touching it, in the yard
+    w.setRepeat(conj, &ty.sol);
+    tak::net::Command mv; mv.kind = tak::net::Cmd::Move; mv.unitId = conj; mv.x = 200; mv.z = 1800;
+    applyCommand(w, emptyRegistry(), mv);
+    w.tick(1.0f / 30.0f);
+    w.assist(conj, site, false);
+    int ended = -1;
+    for (int tick = 0; tick < 600 && ended < 0; ++tick) {
+        w.tick(1.0f / 30.0f);
+        if (!w.unit(conj)->buildSiteId) ended = tick;
+    }
+    const Unit* c = w.unit(conj);
+    const bool kept = c->rally.size() == 1 && c->rally.back().x == Fixed::fromInt(200) && c->rally.back().z == Fixed::fromInt(1800);
+    char d[120];
+    std::snprintf(d, sizeof d, "help ended t=%d, rally (%.0f,%.0f)", ended,
+                  c->rally.empty() ? 0.0f : c->rally.back().x.toFloat(), c->rally.empty() ? 0.0f : c->rally.back().z.toFloat());
+    check(ended >= 0 && !w.unit(site)->underConstruction && kept, "its rally is kept when the help ends", d);
+}
+
+static uint64_t approachRun() {
+    Types ty;
+    const UnitType hut = hutType();
+    auto ownedWorld = makeWorld();
+    World& w = *ownedWorld;
+    w.spawn(&ty.factory, 300, 300, 0.0f, 0);
+    const int site = spawnSite(w, hut, 1008, 1008);
+    for (int i = 0; i < 6; ++i) command(w, tak::net::Cmd::Assist, w.spawn(&ty.builder, 700.0f + 120 * i, 700, 0.0f, 0), site);
+    const int hurt = w.spawn(&ty.sol, 1500, 1500, 0.0f, 0);
+    w.unit(hurt)->hp = Fixed::fromInt(40);
+    const int rep = w.spawn(&ty.builder, 1500, 1650, 0.0f, 0);
+    w.repair(rep, hurt, false);
+    for (int i = 0; i < 1200; ++i) {
+        w.tick(1.0f / 30.0f);
+        if (i == 120) w.order(hurt, 1700, 1500, false);
+        if (i == 500) w.repair(rep, hurt, false);
+    }
+    return w.stateHash();
+}
+
 // ---------------------------------------------------------------------------
 // Determinism: the same mixed scenario twice gives the same hash.
 // ---------------------------------------------------------------------------
@@ -1168,6 +1626,9 @@ static void determinism() {
     const uint64_t k = defendRunHash(), m = defendRunHash();
     std::snprintf(d, sizeof d, "%016llx / %016llx", (unsigned long long)k, (unsigned long long)m);
     check(k == m, "guards answering attackers hash the same twice", d);
+    const uint64_t n = approachRun(), p = approachRun();
+    std::snprintf(d, sizeof d, "%016llx / %016llx", (unsigned long long)n, (unsigned long long)p);
+    check(n == p, "ground help and repair approaches hash the same twice", d);
 }
 
 int main() {
@@ -1182,6 +1643,17 @@ int main() {
     flyingGuardOrbit();
     flyingGuardStarts();
     guardDefends();
+    for (const PathfindingMode mode : {PathfindingMode::Retail, PathfindingMode::Legion}) {
+        approachHelpersSpread(mode);
+        approachRepairTouching(mode);
+        approachMovingRepair(mode);
+    }
+    approachStuckHelper();
+    approachBumped();
+    approachFailed();
+    approachPatrolLeash();
+    approachQueuedAssist();
+    approachYardRepeat();
     determinism();
     std::printf(g_fail ? "\n%d FAILED\n" : "\nall passed\n", g_fail);
     return g_fail ? 1 : 0;
