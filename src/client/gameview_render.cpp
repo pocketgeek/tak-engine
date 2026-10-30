@@ -1609,7 +1609,15 @@
                 lastState=state;lastUnits=shadowAtlasPackedUnits;lastPages=shadowAtlasPackedPages;
                 lastReason=shadowAtlasFallback;
             }
+        } else if (atlas.livePages()>basePages) {
+            // Perf follow-up K: with the shadow pass off (Options SHADOWS) no frame
+            // maintains the atlas, so nothing would expire, release or shed its
+            // extended pages: give them back at once. (The base pages stay, as before.)
+            resetShadowAtlas();
         }
+#ifndef NDEBUG
+        shadowVerify_.heldPages=atlas.livePages();
+#endif
         if(tak::devFlag("TAK_CACHE_STATS") && ++geometryFrame_%120==0) {
             size_t reused=0;
             for(size_t i=0;i<visUnits_.size();++i)reused+=visGeom(i).reused;

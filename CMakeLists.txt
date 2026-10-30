@@ -2571,8 +2571,10 @@ if(TAK_BUILD_CLIENT)
       # 16 frames with these windows: at least 24 frames after the shed). _full is a
       # smaller army that the four base pages hold only just: the four-page atlas
       # repacks it when a tile outgrows its cell; with extended pages it adds one
-      # page instead and keeps its cells (no fallback, no page released).
-      foreach(_variant IN ITEMS "" "_zoom" "_band" "_extended" "_yield" "_full")
+      # page instead and keeps its cells (no fallback, no page released). _off is the
+      # _extended army with unit shadows switched off at frame 60 (Options SHADOWS):
+      # no frame maintains the atlas then, so its extended pages go at once.
+      foreach(_variant IN ITEMS "" "_zoom" "_band" "_extended" "_yield" "_full" "_off")
         if(_variant STREQUAL "")
           set(_scene TAK_RENDER_CAMERA_SNAP=20 TAK_PROFILE_ZOOM=1 TAK_RENDER_SPARSE_AFTER=100
               TAK_RENDER_SPARSE_OFFSET=5200,5000 TAK_RENDER_FRAMES=170)
@@ -2591,6 +2593,10 @@ if(TAK_BUILD_CLIENT)
         elseif(_variant STREQUAL "_full")
           set(_scene TAK_SHADOW_BENCH=52 TAK_RENDER_FRAMES=100 TAK_RENDER_RESET=0 TAK_SHADOW_PAGES_MAX=16)
           set(_expect "compactions=[0-1] .* page_releases=0 .* alloc_failures=0 extended_frames=[1-9][0-9]* max_pages=[5-6] sheds=0 fallbacks=0")
+        elseif(_variant STREQUAL "_off")
+          set(_scene TAK_RENDER_FRAMES=80 TAK_RENDER_RESET=0 TAK_SHADOW_PAGES_MAX=16
+              TAK_RENDER_SHADOWS_OFF_AT=60)
+          set(_expect "extended_frames=[1-9][0-9]* max_pages=([5-9]|1[0-6]) .* held_pages=0")
         else()
           set(_scene TAK_RENDER_FRAMES=80 TAK_RENDER_RESET=0 TAK_SHADOW_PAGES_MAX=16
               TAK_RENDER_GPU_CAP_AT=40,0/50,100000)
@@ -2727,7 +2733,7 @@ if(TAK_BUILD_CLIENT)
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
-          render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_shadow_atlas_extended render_shadow_atlas_yield render_shadow_atlas_full render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail render_unit_index render_unit_index_jump
+          render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_shadow_atlas_extended render_shadow_atlas_yield render_shadow_atlas_full render_shadow_atlas_off render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail render_unit_index render_unit_index_jump
           tactical_dots hidden_units retail_fog spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")

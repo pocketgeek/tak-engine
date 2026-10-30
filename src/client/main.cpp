@@ -1959,6 +1959,9 @@ int main(int argc, char** argv) {
             if(std::sscanf(at,"%u,%u",&frame,&mib)==2)studyCaps.push_back({frame,mib});
             at=std::strchr(at,'/');if(at)++at;
         }
+    // TAK_RENDER_SHADOWS_OFF_AT=<frame>: switch unit shadows off from that frame (the
+    // Options SHADOWS toggle; perf follow-up K: what the shadow atlas holds meanwhile).
+    const unsigned studyShadowsOffAt=studyPeriod("TAK_RENDER_SHADOWS_OFF_AT");
     // Workstream K (terrain under camera motion). TAK_RENDER_SWEEP=cx,cz,ax,az,period:
     // an elliptical sweep around (cx,cz) with amplitudes ax/az world px and the given
     // period in frames (fast pan with reversals in both axes). TAK_RENDER_ZOOM_OSC=
@@ -2237,6 +2240,8 @@ int main(int argc, char** argv) {
                         std::printf("RENDER_GPU_CAP frame=%u cap=%zu KiB held=%zu KiB\n",studyFrame,cap>>10,
                                     gpuvram::bytes()>>10);
                     }
+                if(renderStudy && studyShadowsOffAt && studyFrame==studyShadowsOffAt)
+                    gameView->renderStudyShadows(false);
                 if(renderStudy && studyFilter && studyFrame && studyFrame%studyFilter==0)
                     gameView->renderStudyToggleFilter();
                 if(renderStudy && studyFullscreen && studyFrame && studyFrame%studyFullscreen==0) {
@@ -2514,18 +2519,19 @@ int main(int argc, char** argv) {
                 // an earlier frame; validated = frames whose allocator passed validate()),
                 // perf follow-up K the page budget (frames on extended pages, most pages
                 // held, pressure sheds, frames that fell back for any reason, frames from
-                // the last shed to the next frame on extended pages: the cooldown).
+                // the last shed to the next frame on extended pages: the cooldown;
+                // the pages held after the last frame).
                 using ull=unsigned long long;
                 std::printf("SHADOW_CACHE_VERIFY frames=%llu tiles=%llu reused=%llu body=%llu translated=%llu "
                             "original_reused=%llu kept=%llu allocs=%llu compactions=%llu migrated=%llu "
                             "evicted=%llu page_releases=%llu shrinks=%llu validated=%llu page_allocs=%llu "
                             "alloc_failures=%llu extended_frames=%llu max_pages=%llu sheds=%llu fallbacks=%llu "
-                            "regrow_gap=%llu extended_releases=%llu\n",
+                            "regrow_gap=%llu extended_releases=%llu held_pages=%llu\n",
                     ull(t.frames),ull(t.tiles),ull(t.reused),ull(t.body),ull(t.translated),ull(t.original),
                     ull(t.kept),ull(t.allocs),ull(t.compactions),ull(t.migrated),ull(t.evicted),
                     ull(t.pageReleases),ull(t.shrinks),ull(t.validated),ull(t.pageAllocs),ull(t.failures),
                     ull(t.extendedFrames),ull(t.maxPages),ull(t.sheds),ull(t.fallbacks),ull(t.regrowGap),
-                    ull(t.extendedReleases));
+                    ull(t.extendedReleases),ull(t.heldPages));
                 if(!t.frames)throw std::runtime_error("shadow cache verify ran no checks");
             }
             if(tak::devFlag("TAK_GEOMETRY_OWNERSHIP_VERIFY")) {

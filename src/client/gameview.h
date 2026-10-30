@@ -809,8 +809,9 @@ public:
         // back to direct shadows for any reason (failures counts only packing),
         // frames from the last shed to the first frame on extended pages after it,
         // and extended pages released after staying empty.
+        // heldPages: live pages after the last drawn frame (also with the shadow pass off).
         uint64_t extendedFrames=0, maxPages=0, sheds=0, fallbacks=0, lastShedFrame=0, regrowGap=0,
-                 extendedReleases=0;
+                 extendedReleases=0, heldPages=0;
     };
     const ShadowCacheVerifyTotals& shadowVerifyTotals() const { return shadowVerify_; }
     uint64_t ownershipChecks() const { return ownershipChecks_; }
@@ -820,6 +821,8 @@ public:
     // Render study (workstream M): toggle Texture Filtering Off <-> Units (the palette
     // form follows: indexed for point-sampled units, baked for bilinear ones).
     void renderStudyToggleFilter() { setTextureFilter(textureFilter_ ? 0 : 1); }
+    // Render study (perf follow-up K): the Options SHADOWS toggle, as Options sets it.
+    void renderStudyShadows(bool on) { if (settings_) settings_->unitShadows = on; }
     // Render study (workstream L): a camera shake of the given magnitude (shakemagnitude
     // units) and duration, the path a weapon's shake request takes.
     void renderStudyShake(float magnitude, float seconds) { screenShake_ = true; triggerShake(magnitude, seconds); }
