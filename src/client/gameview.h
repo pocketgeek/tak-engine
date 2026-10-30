@@ -2728,6 +2728,7 @@ private:
     std::vector<HiddenRec> hiddenRecs_;    // in REVERSE painter order
     std::vector<uint32_t> hiddenCoverRec_; // CoverGrid id -> hiddenRecs_ index
     tak::hiddenunits::CoverGrid hiddenGrid_;      // the covers
+    tak::hiddenunits::CoverMarks hiddenMarks_;    // FADE: covers already found this frame
     std::vector<int> hiddenDotIds_;        // sorted: units given a hidden dot this frame (picking)
     // The exact screen bounds of a unit's body this frame: its distant image's quad,
     // or its triangles (cached per geometry revision in hiddenBounds_, by slot).

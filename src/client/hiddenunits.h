@@ -333,4 +333,43 @@ private:
     uint32_t frame_ = 0;
 };
 
+// FADE's per-frame cover bookkeeping, by CoverGrid id: which covers this frame has
+// already found over some unit. Such a cover fades whatever later units it reaches, so
+// for a later unit its exact (sprite texel / triangle) test can only matter to that
+// unit's own "covered" answer, never to the fades: it is skipped once the unit is
+// known to be covered, and otherwise tested only after the covers not yet found
+// (stopping at the first that reaches it). Each cover is reported to the fades once
+// per frame. Storage is kept between frames.
+class CoverMarks {
+public:
+    void clear() { found_.clear(); }
+    void add() { found_.push_back(0); }   // the next CoverGrid id
+    size_t size() const { return found_.size(); }
+    bool found(uint32_t id) const { return found_[id] != 0; }
+
+    // One unit. `query(visit)` hands its possible covers (CoverGrid ids, each once) to
+    // visit; `reaches(id)` is the exact test of that cover against the unit; `fade(id)`
+    // is called for a cover found over a unit for the first time this frame. Returns
+    // whether a cover reaches the unit: exactly what testing every cover would say.
+    template <class Query, class Reaches, class Fade>
+    bool unit(Query&& query, Reaches&& reaches, Fade&& fade) {
+        bool hit = false;
+        later_.clear();
+        query([&](uint32_t id) {
+            if (found_[id]) {
+                if (!hit) later_.push_back(id);   // only this unit's answer can depend on it
+                return true;
+            }
+            if (reaches(id)) { found_[id] = 1; fade(id); hit = true; }
+            return true;
+        });
+        for (size_t i = 0; !hit && i < later_.size(); ++i) hit = reaches(later_[i]);
+        return hit;
+    }
+
+private:
+    std::vector<uint8_t> found_;
+    std::vector<uint32_t> later_;
+};
+
 }  // namespace tak::hiddenunits

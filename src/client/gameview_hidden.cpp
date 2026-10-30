@@ -77,6 +77,7 @@ namespace hu = tak::hiddenunits;
         const auto& items = paintItems_;
         hiddenCoverRec_.clear();
         hiddenGrid_.reset(float(mvw), float(winH));
+        hiddenMarks_.clear();
         size_t eligible = 0, candidates = 0;
         // Backwards through the painter list: when a unit is reached, every cover in
         // the grid paints after it. A unit is looked at closely only when its model's
@@ -98,6 +99,7 @@ namespace hu = tak::hiddenunits;
                 if (fade && it.f->simId >= 0) hiddenFades_.inView(hu::featureCover(uint32_t(it.f->simId)));
                 hiddenCoverRec_.push_back(uint32_t(hiddenRecs_.size()));
                 hiddenGrid_.insert(r);
+                hiddenMarks_.add();
                 hiddenRecs_.push_back({uint32_t(k), HiddenKind::Feature, -1, 0, r});
                 continue;
             }
@@ -122,6 +124,7 @@ namespace hu = tak::hiddenunits;
                 if (fade) hiddenFades_.inView(hu::structureCover(uint32_t(u.id)));
                 hiddenCoverRec_.push_back(uint32_t(hiddenRecs_.size()));
                 hiddenGrid_.insert(r);
+                hiddenMarks_.add();
                 hiddenRecs_.push_back({uint32_t(k), HiddenKind::Structure, slot, 0, r});
                 continue;
             }
@@ -138,31 +141,38 @@ namespace hu = tak::hiddenunits;
             if (!nearCover) continue;
             const hu::Rect body = hiddenBodyBounds(slot).clipped(screen);
             bool hit = false;
-            hiddenGrid_.query(body, [&](uint32_t id) {
-                const HiddenRec& cov = hiddenRecs_[hiddenCoverRec_[id]];
-                if (!cov.rect.overlaps(body)) return true;
-                if (!fade) { hit = true; return false; }   // DOTS: the dot test decides
-                if (cov.kind == HiddenKind::Feature) {
-                    // A tree fades if its opaque texels reach the body.
-                    const FeatureInst& f = *items[cov.item].f;
-                    const FeatureSprite sp = featureSprite(f, zm);
-                    if (f.simId >= 0 && (!sp.mask || hu::spriteCoversRect(*sp.mask, sp.dst.x, sp.dst.y, sp.dst.w,
-                                                                          sp.dst.h, sp.shear, body))) {
-                        hiddenFades_.cover(hu::featureCover(uint32_t(f.simId)));
-                        hit = true;
+            if (!fade) {   // DOTS: a cover's rectangle over the body; the dot test decides
+                hiddenGrid_.query(body, [&](uint32_t id) {
+                    hit = hiddenRecs_[hiddenCoverRec_[id]].rect.overlaps(body);
+                    return !hit;
+                });
+            } else {
+                // A tree fades if its opaque texels reach the body; a building if one
+                // of its drawn triangles (or its distant image) does. A cover already
+                // found over a unit this frame is tested only for this unit's own
+                // answer (hu::CoverMarks).
+                const auto reaches = [&](uint32_t id) {
+                    const HiddenRec& cov = hiddenRecs_[hiddenCoverRec_[id]];
+                    if (!cov.rect.overlaps(body)) return false;
+                    if (cov.kind == HiddenKind::Feature) {
+                        const FeatureInst& f = *items[cov.item].f;
+                        const FeatureSprite sp = featureSprite(f, zm);
+                        return f.simId >= 0 && (!sp.mask || hu::spriteCoversRect(*sp.mask, sp.dst.x, sp.dst.y,
+                                                                                  sp.dst.w, sp.dst.h, sp.shear, body));
                     }
-                    return true;
-                }
-                // A building fades if one of its drawn triangles (or its distant
-                // image) reaches the body.
-                const auto& distant = distantModelItems_[size_t(cov.slot)];
-                const UnitGeom& cg = visGeom(size_t(cov.slot));
-                if (distant.texture || hu::trianglesCoverRect(std::span<const SDL_Vertex>(cg.verts), body)) {
-                    hiddenFades_.cover(hu::structureCover(uint32_t(items[cov.item].u->id)));
-                    hit = true;
-                }
-                return true;
-            });
+                    const auto& distant = distantModelItems_[size_t(cov.slot)];
+                    const UnitGeom& cg = visGeom(size_t(cov.slot));
+                    return distant.texture != nullptr ||
+                           hu::trianglesCoverRect(std::span<const SDL_Vertex>(cg.verts), body);
+                };
+                const auto key = [&](uint32_t id) {
+                    const HiddenRec& cov = hiddenRecs_[hiddenCoverRec_[id]];
+                    return cov.kind == HiddenKind::Feature ? hu::featureCover(uint32_t(items[cov.item].f->simId))
+                                                           : hu::structureCover(uint32_t(items[cov.item].u->id));
+                };
+                hit = hiddenMarks_.unit([&](auto&& visit) { hiddenGrid_.query(body, visit); }, reaches,
+                                        [&](uint32_t id) { hiddenFades_.cover(key(id)); });
+            }
             if (!hit) continue;
             ++candidates;
             if (!fade)   // DOTS: kept for the dot test after the body pass
