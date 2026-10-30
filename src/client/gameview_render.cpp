@@ -2245,6 +2245,26 @@
             } else
 #endif
             for (uint32_t i : frame.buildGhostUnits) buildGhosts(*frame.live[i], true);
+#ifndef NDEBUG
+            // TAK_GHOST_ALL_TYPES (render study, perf follow-up E): also a ghost of EVERY
+            // registry type each frame, on a grid over the view and 30% around it (on
+            // screen, straddling the edges, off screen), alternately red-washed. With
+            // TAK_GHOST_VERIFY this puts every model, including those textured from
+            // outside the colour atlas, through the reference check.
+            static const bool allTypes = tak::devFlag("TAK_GHOST_ALL_TYPES");
+            if (allTypes) {
+                const float zmA = mapView_.zoom();
+                const float x0 = mapView_.offX() - 0.3f * float(mvw) / zmA, x1 = mapView_.offX() + 1.3f * float(mvw) / zmA;
+                const float z0 = mapView_.offY() - 0.3f * float(winH) / zmA, z1 = mapView_.offY() + 1.3f * float(winH) / zmA;
+                const size_t cols = size_t(std::max(1.0, std::ceil(std::sqrt(double(registry_.types().size())))));
+                size_t k = 0;
+                for (const auto& [id, type] : registry_.types()) {
+                    drawGhostAt(&type, x0 + (x1 - x0) * (float(k % cols) + 0.37f) / float(cols),
+                                z0 + (z1 - z0) * (float(k / cols) + 0.61f) / float(cols), k % 2 == 1);
+                    ++k;
+                }
+            }
+#endif
         }
         renderStats_.set(tak::render::Counter::GhostCacheBytes, ghostGeometryBytes_);
 
