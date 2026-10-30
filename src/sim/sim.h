@@ -2203,6 +2203,9 @@ public:
     // 4f6a40/4c6a70/4c6800 for the per-player current-view counters: one pass
     // after each tick, beside updateNavigationExploration.
     void updateViewCounts();
+    // Test reference: move counted footprints by retail's full removal and
+    // re-add instead of retailSightMove (the counts and hashes must not differ).
+    void setViewCountsByRebuildForTest(bool on) { viewCountsByRebuild_=on; }
     void updateExplorationPlane();
     // Per-player current-view count of one projected 32px cell (0 = unseen).
     int viewCount(int player,int cx,int cz) const {
@@ -3615,6 +3618,7 @@ private:
     // 60 ticks (at most 20 per player). Hashed, in order.
     struct RetailDeathSight { RetailSightFootprint sight; int8_t player=-1; uint32_t expiry=0; };
     std::vector<RetailDeathSight> deathSights_;
+    bool viewCountsByRebuild_ = false;   // setViewCountsByRebuildForTest; not hashed
     std::vector<uint8_t> viewDirty_;   // viewDirty(); display bookkeeping, not hashed
     int viewDirtyW_ = 0;
     void markViewDirty(const RetailSightFootprint& sight);   // the squares it covers (relaxed stores)

@@ -13278,12 +13278,15 @@ void World::updateViewCounts() {
             uint16_t* plane=viewCounts_.data()+size_t(u.player)*cells;
             constexpr bool kShared=decltype(shared)::value;
             const RetailSightFootprint before=u.viewSight;
-            retailUpdateSightCounts(u.viewSight,u.x,y,u.z,uint8_t(seaLevel_),width,height,uint8_t(u.player),heightAt,
-                [&](int x,int z,int delta,uint16_t) {
-                    uint16_t& cell=plane[size_t(z)*width+x];
-                    if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);
-                    else cell=uint16_t(cell+delta);
-                });
+            auto count=[&](int x,int z,int delta,uint16_t) {
+                uint16_t& cell=plane[size_t(z)*width+x];
+                if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);
+                else cell=uint16_t(cell+delta);
+            };
+            if (viewCountsByRebuild_)
+                retailUpdateSight(u.viewSight,u.x,y,u.z,uint8_t(seaLevel_),false,width,height,uint8_t(u.player),heightAt,count);
+            else
+                retailUpdateSightCounts(u.viewSight,u.x,y,u.z,uint8_t(seaLevel_),width,height,uint8_t(u.player),heightAt,count);
             if (before.x!=u.viewSight.x || before.z!=u.viewSight.z || before.eyeHeight!=u.viewSight.eyeHeight ||
                 before.active!=u.viewSight.active) {
                 if (before.active) markViewDirty(before);
