@@ -18,6 +18,10 @@ the `L-` prefix selects Legion); for legion_scenario itself, zcat one to a .scn 
   L-routeinv-many-2500      100 groups (squads of 25), 4 x 4 churn spots      (few groups: must not regress)
   L-routeinv-local-5000     5000 groups patrolling 40 cells, 6 x 6 churn spots (local routes: a change reaches few)
   L-routeinv-local-10000    10000 groups patrolling 40 cells, 6 x 6 churn spots
+
+Measurement scripts beside it: routeinv_ab.sh / routeinv_ab.py (timing pairs on the reserved cores, SIMPHASE and the
+LPROBE syncStatic / staticChanged sums) and routeinv_pmu.sh / routeinv_pmu.py (instructions per phase, base vs
+candidate vs the candidate's walk of every group).
 """
 import gzip
 import math
