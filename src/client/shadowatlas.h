@@ -94,13 +94,11 @@ inline bool shadowCellKeeps(int cellW, int cellH, int tileW, int tileH, int limi
 //
 // Pages are counted live + pending (placed this frame, texture not yet created),
 // and so are their bytes: a frame's pages are budgeted before any is created.
-// kShadowMaxPages bounds them all. Equal to kShadowBasePages it means no extended
-// page, the pre-K atlas: the default until extended pages are turned on, a visible
-// change (a view the base pages cannot hold draws silhouettes instead of direct
-// shadows; one that fills them keeps its tiles in place instead of repacking).
-// Debug TAK_SHADOW_PAGES_MAX=N sets the limit (tests, same-binary comparisons).
+// kShadowMaxPages bounds them all (256 MiB of 2048^2 pages); equal to
+// kShadowBasePages it means no extended page, the pre-K atlas (debug
+// TAK_SHADOW_PAGES_MAX=4, for tests and same-binary comparisons).
 inline constexpr size_t kShadowBasePages = 4;    // the former fixed limit
-inline constexpr size_t kShadowMaxPages = kShadowBasePages;
+inline constexpr size_t kShadowMaxPages = 16;
 
 struct ShadowGpuBudget {
     size_t held = 0;            // tracked GPU bytes now (gpuvram::bytes())
