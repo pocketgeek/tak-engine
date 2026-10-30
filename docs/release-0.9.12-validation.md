@@ -153,6 +153,18 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
   37,800) the totem (id 190, complete) and the lodestone (id 158) stand
   584.493 px apart as recorded, and the totem has no order and fired no bolt
   from tick 35,000 to 38,500 (the recording: on target, bolts every reload).
+  Review (scratch harness, not in the suite): every mobile unit type whose
+  reach weapon's shot ends at its range, both rosters, ordered onto seven
+  buildings (a 2x2 lodestone up to the 8x20 Cabal and 10x14 Temple) from two
+  sides, 80 s each, on `94459ddb` and on the fix, Retail and Legion: none
+  stands past its range; 268 Retail cases hit only with the fix, and the
+  shortest such ranges (Fallen Angel 140, Fire Mage 200) still reach the
+  biggest buildings' centres. Lost: the Fallen Angel (a flyer) on a lodestone
+  (1-3 hits before, none now), and Kirenna on the Temple from one side (18
+  hits before; she fires after a walk only by her script's timing, and on
+  neither build does she fire after walking to any other target: see the
+  notes' known limits). The Fire Mage's flame missed a lodestone on both
+  builds. Naval units were not covered (dry map).
 - **Full suite on `95ca9163`** (Debug `-O2`, all targets built, `ctest -j12`,
   scratch `HOME` and XDG folders, test data `assets/game`, which has no mods):
   789 of 791 passed, one skipped (`vashim_system_loader`, which skips itself).

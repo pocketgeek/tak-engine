@@ -200,6 +200,7 @@ Arcing shots (arrows, cannons, catapults: their own arc test since 0.9.2),
 melee and other weapons are unchanged. 40 unit types carry such a weapon in
 the standard roster (34 mobile, 6 buildings), 38 with Crusades.
 
+## Streaming keeps to YouTube's bitrate
 
 Above YouTube's bitrate for a stream's size, frame rate and codec, YouTube can
 accept the connection and never start the broadcast while the panel shows
@@ -323,8 +324,17 @@ New with 0.9.12:
   launched from the muzzle could have clipped its edge (a Stronghold at a
   lodestone 620 pixels off did): the original does not target it either.
 - **Instant line-of-sight shots** (mind control and similar, which land at
-  once) and Remote or Wandering spells keep the allowance; their shots do not
-  die short.
+  once) and Remote or Wandering spells keep the allowance, although the
+  original measures them centre to centre too; their shots do not die short.
+- **A Fallen Angel's Death Sword** (range 140) now strikes a building only from
+  140 pixels, as in the original. On its attack runs over a lodestone it
+  missed every time in a test (before, it struck once or three times in
+  80 seconds from further out); bigger buildings are still hit.
+- **Kirenna does not fire at a target she has walked up to,** a building or a
+  unit, in our tests: her aim script keeps waiting on its walk state (not
+  yet diagnosed; the same without this fix). Placed in range she fires. She now
+  stands at her range from a building, not past it, but still does not shoot
+  it.
 - **0.9.11's limits still apply:** see the
   [0.9.11 notes](release-0.9.11-notes.md#known-limits), and through them the
   earlier notes; 0.9.11's "AI goes after everything" is replaced by the
