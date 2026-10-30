@@ -1414,13 +1414,16 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     // Placed units from [Map Data][units].
     int spawned = 0;
     std::vector<std::pair<int, std::string>> initialOrders;   // (unit id, InitialMission)
-    std::unordered_map<std::string, int> idents;              // Ident= -> unit id
+    // Every [units] record in file order with the unit it made (0: none), for
+    // the order clauses that name a placed unit (Ident=, else Unitname).
+    std::vector<MissionScript::Placement> placements;
     if (const tdf::Node* md = gh->child("map data"))
         if (const tdf::Node* units = md->child("units"))
             for (const auto& key : units->childOrder) {
                 const tdf::Node& u = units->children.at(key);
                 std::string name = u.valueOr("unitname", "");
                 std::transform(name.begin(), name.end(), name.begin(), ::tolower);
+                placements.push_back({u.valueOr("ident", ""), name, 0});
                 const UnitType* t = reg.find(name);
                 if (!t) continue;
                 float x = float(u.numberOr("xpos", 0)) * 16 + 8;
@@ -1430,6 +1433,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                 int id = world.spawn(t, x, z, ang, player);
                 if (id >= 0) {
                     ++spawned;
+                    placements.back().unitId = id;
                     if (auto* su = world.unit(id)) {
                         su->hp = Fixed::fromFloat(su->type->maxHp * float(u.numberOr("healthpercentage", 100)) / 100.0f);
                         // ManaPercentage: enemy casters open a mission with the mana
@@ -1441,20 +1445,13 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
                     }
                     // InitialMission: the per-unit order queue in the SAME mini-language
                     // the god script's SetMission uses (move/patrol/attack/stance/wait/
-                    // ambush/reinforce). 4416 placed units across the shipped missions
+                    // ambush/build/board). 4416 placed units across the shipped missions
                     // carry one -- it IS the NPC choreography (patrol routes, ambush
-                    // holds, the mission-9 alchemist's scripted walk). Queued here and
-                    // applied by the script once the world is built.
+                    // holds, factory waves, troops aboard ships, the mission-9
+                    // alchemist's scripted walk). Queued here and applied by the
+                    // script once every placed unit exists, as retail's 0x514b40 does.
                     if (const std::string* im = u.value("initialmission"))
                         if (!im->empty()) initialOrders.push_back({id, *im});
-                    // Ident=<name>: 275 placed units are named, and a bodyguard's
-                    // `g <name>` clause resolves against these.
-                    if (const std::string* idn = u.value("ident"))
-                        if (!idn->empty()) {
-                            std::string k = *idn;
-                            std::transform(k.begin(), k.end(), k.begin(), ::tolower);
-                            idents[k] = id;
-                        }
                 }
             }
 
@@ -1513,7 +1510,7 @@ bool setupMission(World& world, const TypeRegistry& reg, const hpi::Vfs& vfs,
     }
     ms->setPlayerCommanders(std::move(commanders));
     ms->setInitialOrders(std::move(initialOrders));
-    ms->setIdents(std::move(idents));
+    ms->setPlacements(std::move(placements));
     world.setMission(std::move(ms));
     humanOut = human;
     std::fprintf(stderr, "setupMission: %s -- %d placed units, human=player%d\n",

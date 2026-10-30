@@ -658,6 +658,32 @@ struct ManaBuildArea {
     std::vector<uint32_t> visited;
 };
 
+// A campaign mission's order (SetMission / InitialMission, sim/mission.cpp)
+// whose state does not fit in an Order: the World keeps it in a table and
+// the Order holds its 1-based index (Order::scripted). Retail runs these as
+// missions with their own parameters (icd 0x513fb0 builds them):
+//  - AttackType  `a TYPE`, AttackUType (401580): attack the nearest of a
+//    type, again and again, until none is left. `type`.
+//  - Train       `b TYPE N` on a factory, BuildingBuild (401c20): build
+//    `count` of `type`, then go on. `count` counts down as they finish.
+//  - WaitAttack  `wa [NAME]`, WaitForAttack (4017a0): hold until `watched`
+//    is hit (event 0x10) or gone (0x08). `heard` is its attackedTick when
+//    the order was given: retail's listener collects hits from then on.
+//  - WaitNear    `w F N`, Wait (401480) with a radius: hold `count` ticks,
+//    looking every rand(7)+7 ticks for a visible enemy within `radius` px.
+//  - SelfDestruct `d`, SelfDestructFG (4017e0, +0x4e 1): 30000 damage of
+//    type 5 to itself when the order comes up.
+// Entries are never reused, so an index stays valid for the whole game.
+struct ScriptedOrder {
+    enum class Kind : uint8_t { AttackType, Train, WaitAttack, WaitNear, SelfDestruct };
+    Kind kind = Kind::AttackType;
+    const UnitType* type = nullptr;
+    int32_t count = 0;
+    int32_t watched = 0;
+    uint32_t heard = 0;
+    int32_t radius = 0;
+};
+
 // Field placement is part of the design (WE D2), checked by the static_asserts
 // after the struct: a new field must say which cache line it belongs on.
 //  - Line 0 (bytes 0-63) holds everything the per-tick order predicates read:
@@ -850,6 +876,11 @@ struct alignas(64) Order {
     bool attackChased = false; // Attack_Chase: walked under this order (above)
     uint16_t chaseLeash = 0;
     RetailGroundPoint chaseOrigin{};
+    // A campaign mission's order with state of its own: the 1-based index of
+    // its World::scriptedOrders_ entry (ScriptedOrder), 0 for every other
+    // order. In the pad before reclaimCountdown, so the cold tail stays five
+    // lines. Hashed with its entry when set.
+    uint16_t scripted = 0;
     // RECLAIM's work countdown (406250 mission +0x4e): trunc(energy + 15) at
     // arrival, less 2 every two-tick wake (retailReclaimWork). Its stages run
     // on `mission`. Hashed on reclaim legs.
@@ -1344,6 +1375,12 @@ struct alignas(64) Unit {
     // World::productionOwnerOf, which checks the producer still holds it, so a
     // stale value is harmless and it is not hashed.
     int productionOwner = 0;
+    // A campaign mission's fixed veterancy multiplier (SetMission/InitialMission
+    // `v F`, unit +0xf4, set by icd 0x5148e1). Not 0: getMult (0x5193c0) answers
+    // it instead of 1 + level/10 and getLevel (0x519310) answers 10, so the unit
+    // shows full rank and kills no longer change either. A noveteran type
+    // ignores it, as both helpers test that bit first. Hashed when set.
+    float vetOverride = 0.0f;
     const std::string& displayName() const { return scenarioName.empty() ? type->name : scenarioName; }
     bool alive() const { return deadFor < 0; }
     int32_t maximumHp() const { return retailSite ? int32_t(retailSite->type.maxHp) : type->maxHp; }
@@ -1353,7 +1390,11 @@ struct alignas(64) Unit {
     // Veterancy stat multiplier (retail: base 1.0, +10% per level, level capped
     // at 10 => up to 2.0x). Scales attack up, armor up (less damage taken), and
     // reload down (faster). Verified against KINGDOMS.icd. See retail-engine-internals.
-    float vetMul() const { return 1.0f + 0.10f * float(veteran); }
+    // A mission's `v F` (vetOverride) replaces it, as getMult 0x5193c0 does.
+    float vetMul() const {
+        if (vetOverride != 0.0f && type && !type->noVeteran) return vetOverride;
+        return 1.0f + 0.10f * float(veteran);
+    }
     bool moving() const { return alive() && (speed > Fixed::fromFloat(1.0f / 30.0f) || !orders.empty()); }
     // Actually translating (for the walk animation), vs standing with an
     // attack/queued order.
@@ -2670,12 +2711,44 @@ public:
     // patrol mission adds the return point where the unit then stands (see
     // Order::patrolOpen); otherwise it joins the existing loop.
     void queuePatrol(int unitId, float x, float z);
-    // Queue a timed hold (SetMission "w N"): the unit stands still for `seconds`
-    // before the next queued order runs.
-    void orderWait(int unitId, float seconds, bool queue);
-    // Queue an ambush hold (SetMission "wa"): the unit stands still until a non-allied
-    // unit comes within its sight, then the next queued order runs.
-    void orderWaitAttack(int unitId, bool queue);
+    // Queue a timed hold (SetMission "w F"): the unit stands still for `seconds`
+    // before the next queued order runs. With a radius ("w F N", N cells times
+    // 16 px) it also ends once a visible enemy is that close (retail Wait 401480
+    // with +0x52 set: it looks every rand(7)+7 ticks, see ScriptedOrder).
+    void orderWait(int unitId, float seconds, bool queue, int32_t radius = 0);
+    // Queue a WaitForAttack hold (SetMission "wa [NAME]", retail 4017a0): the unit
+    // stands still until `watched` (0 = itself) is hit or gone, counting hits
+    // from the moment the order is given; then the next queued order runs.
+    void orderWaitAttack(int unitId, bool queue, int watched = 0);
+    // Queue an attack on every unit of `type` not owned by this unit's player,
+    // nearest (with retail's random spread) first, until none is left
+    // (SetMission "a TYPE", AttackUType 401580).
+    void orderAttackType(int unitId, const UnitType* type, bool queue);
+    // Queue production on a factory (SetMission "b TYPE N", BuildingBuild
+    // 401c20): when it comes up, `count` of `type` join the build queue, and the
+    // order holds the queue behind it until they are built. 0 builds nothing.
+    void orderTrain(int factoryId, const UnitType* type, int count, bool queue);
+    // Queue a self-destruct (SetMission "d", SelfDestructFG): when it comes up
+    // the unit dies as a Ctrl+D countdown ends, with no wreck and no credit.
+    void orderSelfDestruct(int unitId, bool queue);
+    // Put `passengerId` straight into `transportId`'s hold (InitialMission
+    // "i NAME", retail 51b4f0): no pickup, and its later orders wait aboard.
+    bool embarkInto(int passengerId, int transportId);
+    // Drop a unit's queued route search (orders given to a unit still aboard
+    // ask for their routes when they come up after the unload).
+    void cancelRoute(int unitId) { if (Unit* u = unit(unitId)) cancelPath(*u); }
+    // SetMission "o A" (Standing_UnitOrder 0x5198a0: 2 offensive, 1 defensive,
+    // 0 passive, both fields at once) and "o A B" (move field A and fire field
+    // B directly, the shown order unchanged). Retail checks only that the unit
+    // lives: no unitstandorders gate and no effect on its missions.
+    void scriptStandingOrder(int unitId, int order);
+    void scriptStandingFields(int unitId, int move, int fire);
+    // SetMission "v F": the fixed veterancy multiplier (Unit::vetOverride); 0 ends it.
+    void setVeterancyOverride(int unitId, float multiplier);
+    // The state of a mission order (Order::scripted), or nullptr.
+    const ScriptedOrder* scriptedOrder(const Order& o) const {
+        return o.scripted && o.scripted <= scriptedOrders_.size() ? &scriptedOrders_[o.scripted - 1u] : nullptr;
+    }
     void guard(int unitId, int targetId, bool queue);
     void stop(int unitId);
     // Self-destruct a living unit (Ctrl+D via the command path; no kill credit).
@@ -3455,6 +3528,17 @@ private:
     int creditedOwner(int id) const;
     void compactRetiredUnits();
     std::unique_ptr<MissionScript> mission_;   // optional campaign mission runner
+    // Mission orders' state (ScriptedOrder), indexed by Order::scripted - 1.
+    // Appended in order-creation order on every peer, never erased; hashed
+    // through the orders that refer to it.
+    std::vector<ScriptedOrder> scriptedOrders_;
+    uint16_t addScriptedOrder(const ScriptedOrder& s);
+    // The head order's mission when it is a scripted AttackType, Train or
+    // SelfDestruct (before the unit's combat), and the scripted waits' ends.
+    void tickScriptedOrder(Unit& u);
+    bool scriptedWaitDone(Unit& u);
+    // A factory finished a unit of `t`: a scripted Train at its head counts it.
+    void noteScriptedProduction(Unit& producer, const UnitType* t);
     std::unique_ptr<ScenarioScript> scenario_; // optional .crt trigger runner
     std::vector<uint8_t> forcedDefeat_;        // scenario Victory/Defeat: forced-defeated slots
     std::vector<int> justDied_;                // unit ids that died this tick (mission/scenario hook)
