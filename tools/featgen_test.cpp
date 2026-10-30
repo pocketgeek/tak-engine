@@ -18,7 +18,9 @@
 #include "sim/matchsetup.h"
 #include "hpi/hpi.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <vector>
 
 namespace tak::sim {
 struct RetailReplayProbe {
@@ -40,6 +42,57 @@ struct RetailReplayProbe {
     static void retire(World& world,int id) { world.retireCorpse(*world.unit(id)); }
     static void replace(World& world,int id,int type) {
         world.swapFeature(world.features_.at(world.featureIdx_.at(id)),type);
+    }
+    static void igniteIndex(World& world,size_t i) { world.igniteFeature(world.features_.at(i)); }
+    static void replaceIndex(World& world,size_t i,int type) { world.swapFeature(world.features_.at(i),type); }
+    static void fade(World& world,int id) { Unit caster;world.finishReclaim(caster,id); }
+    static uint32_t fading(const World& world) { return world.fadingFeatures_; }
+    static void burning(World& world) { world.tickBurning(); }
+    static void fades(World& world) { world.tickFeatureFades(); }
+    // The full passes over features_ that tickBurning and tickFeatureFades made
+    // before they walked marked indices (61f294ac), kept verbatim as the
+    // reference the production walks must match step for step.
+    static void referenceBurning(World& w) {
+        if (w.featTypes_.empty()) return;
+        for (size_t i = 0; i < w.features_.size(); ++i) {
+            Feature& f = w.features_[i];
+            if (!f.alive || !f.burn) continue;
+            if (f.burnLeft <= 1) {
+                f.burnLeft = 0;
+                w.swapFeature(f, w.featTypes_[size_t(f.type)].burntType);
+                continue;
+            }
+            --f.burnLeft;
+            if (f.spreadIn > 0 && --f.spreadIn == 0) {
+                int cx = f.x.floorInt() / 16 - f.fx / 2, cz = f.z.floorInt() / 16 - f.fz / 2;
+                for (int dz = -3; dz <= 3; ++dz)
+                    for (int dx = -3; dx <= 3; ++dx) {
+                        if (dx == 0 && dz == 0) continue;
+                        int nx = cx + dx, nz = cz + dz;
+                        if (nx < 0 || nz < 0 || nx >= w.terW_ || nz >= w.terH_) continue;
+                        auto it = w.featureIdx_.find(nz * w.terW_ + nx);
+                        if (it == w.featureIdx_.end()) continue;
+                        Feature& nf = w.features_[it->second];
+                        if (!nf.alive || nf.burn || nf.type < 0) continue;
+                        const FeatType& nft = w.featTypes_[size_t(nf.type)];
+                        if (!nft.flamable || !nft.hasBurnAnim) continue;
+                        if (w.burnRand(100) < nft.spreadChance) w.igniteFeature(nf);
+                    }
+            }
+        }
+    }
+    static void referenceFades(World& w) {
+        if (!w.fadingFeatures_) return;
+        for (auto& f:w.features_) {
+            if (!f.fadeLeft || --f.fadeLeft) continue;
+            --w.fadingFeatures_;
+            if (!f.alive) continue;
+            f.alive=false;
+            w.removeMapFeature(footprintOrigin(f.x,f.fx),footprintOrigin(f.z,f.fz));
+            w.bumpFeatGen();
+            if (f.blocks)
+                w.blockCells(footprintOrigin(f.x,f.fx),footprintOrigin(f.z,f.fz),f.fx,f.fz,false);
+        }
     }
 };
 }
@@ -302,6 +355,128 @@ int main() {
               RetailReplayProbe::cached(map,10,16)==1,
               "an offset statue clears the old cached body and blocks its new anchor");
     }
+
+    // Burning and fading walk marked feature indices instead of every feature.
+    // Differential: two identically built worlds take the same scripted
+    // ignitions, swaps (fires and fades put out early: stale marks) and fades
+    // (burning ones included), then one runs the production walks and the
+    // other the reference full passes. Every feature field, the RNG draws and
+    // the state hash must agree after every step.
+    for (uint32_t seed : {1u,2u,3u,4u}) {
+        using namespace tak::sim;
+        constexpr int kSide=48;
+        auto build=[&](World& w) {
+            w.setTerrain(std::vector<uint8_t>(kSide*kSide,100),kSide,kSide,0);
+            w.setMapPlacementFeatures(std::vector<uint16_t>(kSide*kSide,0xffff),{});
+            FeatType tree;tree.name="tree";tree.flamable=tree.hasBurnAnim=true;
+            tree.spreadChance=55;tree.sparkTicks=4;tree.burnTicks=12;tree.burntType=1;
+            FeatType burnt;burnt.name="burnt";
+            FeatType bush;bush.name="bush";bush.flamable=bush.hasBurnAnim=true;
+            bush.spreadChance=90;bush.sparkTicks=1;bush.burnTicks=3;bush.burntType=-1;
+            FeatType stump;stump.name="stump";stump.flamable=stump.hasBurnAnim=true;stump.fx=stump.fz=2;
+            stump.spreadChance=40;stump.sparkTicks=10;stump.burnTicks=25;stump.burntType=4;stump.blocking=true;
+            // Bigger than its source: installing it can replace burning neighbours.
+            FeatType ash;ash.name="ash";ash.fx=ash.fz=3;ash.blocking=true;
+            FeatType rock;rock.name="rock";rock.blocking=true;
+            w.setFeatureTypes({tree,burnt,bush,stump,ash,rock});
+            uint32_t lcg=seed*2654435761u;
+            auto next=[&](uint32_t n){ lcg=lcg*1664525u+1013904223u;return (lcg>>8)%n; };
+            for (int k=0;k<900;++k) {   // random cells in random order: index order != map order
+                const int type=int(next(10))<5 ? 0 : int(next(10))<5 ? 2 : int(next(10))<6 ? 3 : 5;
+                const int fx=type==3 ? 2 : 1,cx=int(next(kSide-2)),cz=int(next(kSide-2));
+                w.addFeature(cz*kSide+cx,float(cx*16+fx*8),float(cz*16+fx*8),0,fx,fx,
+                             type==3 || type==5,type);
+            }
+        };
+        World production,reference;
+        build(production);build(reference);
+        std::vector<World::RngObservation> drawsP,drawsR;
+        production.setRngObserver([&](const World::RngObservation& o){ drawsP.push_back(o); });
+        reference.setRngObserver([&](const World::RngObservation& o){ drawsR.push_back(o); });
+        const size_t count=production.features().size();
+        check(count==reference.features().size() && count>256,"differential worlds build alike");
+        uint32_t lcg=seed;
+        auto next=[&](uint32_t n){ lcg=lcg*22695477u+1u;return (lcg>>10)%n; };
+        bool same=true;
+        size_t burned=0,faded=0,maxBurning=0;
+        for (int step=0;step<500 && same;++step) {
+            const uint32_t eventSeed=lcg;
+            for (World* w : {&production,&reference}) {   // the same events on both
+                lcg=eventSeed;
+                for (int e=int(next(4));e-->0;) {
+                    const size_t i=next(uint32_t(count));
+                    switch (next(8)) {
+                    case 0: case 1: case 2: RetailReplayProbe::igniteIndex(*w,i);break;
+                    case 3: RetailReplayProbe::replaceIndex(*w,i,int(next(3))==0 ? -1 : 1);break;
+                    case 4: RetailReplayProbe::fade(*w,w->features()[i].id);break;
+                    default: break;
+                    }
+                }
+            }
+            RetailReplayProbe::burning(production);RetailReplayProbe::fades(production);
+            RetailReplayProbe::referenceBurning(reference);RetailReplayProbe::referenceFades(reference);
+            size_t nowBurning=0;
+            for (size_t i=0;i<count;++i) {
+                const auto& a=production.features()[i];const auto& b=reference.features()[i];
+                same=same && a.id==b.id && a.alive==b.alive && a.burn==b.burn && a.burnLeft==b.burnLeft &&
+                     a.spreadIn==b.spreadIn && a.type==b.type && a.fadeLeft==b.fadeLeft && a.dmg==b.dmg &&
+                     a.blocks==b.blocks && a.fx==b.fx && a.fz==b.fz && a.x==b.x && a.z==b.z &&
+                     a.burnSequence==b.burnSequence && a.burnStarted==b.burnStarted;
+                nowBurning+=a.alive && a.burn;
+                burned+=a.alive && a.burn && a.burnLeft==1;
+                faded+=a.fadeLeft==1;
+            }
+            maxBurning=std::max(maxBurning,nowBurning);
+            same=same && drawsP.size()==drawsR.size() &&
+                 RetailReplayProbe::fading(production)==RetailReplayProbe::fading(reference) &&
+                 production.stateHash()==reference.stateHash();
+            for (size_t d=0;same && d<drawsP.size();++d)
+                same=drawsP[d].bound==drawsR[d].bound && drawsP[d].seedBefore==drawsR[d].seedBefore &&
+                     drawsP[d].result==drawsR[d].result;
+        }
+        std::printf("  seed %u: %zu features, %zu draws, peak %zu burning, %zu burn-outs, %zu fade-outs\n",
+                    seed,count,drawsP.size(),maxBurning,burned,faded);
+        check(same && drawsP.size()>100 && maxBurning>20 && burned>50 && faded>20,
+              "marked burn/fade walks match the full passes step for step (fields, draws, hash)");
+    }
+
+    // Same-tick spread follows features_ order: a spark into a HIGHER index is
+    // burned later in the same tick, one into a LOWER index waits a tick --
+    // within one 64-bit mark word and across words. Hashes printed for the
+    // base-vs-candidate comparison (tools/featburn_bench.cpp workloads too).
+    for (const bool higher : {true,false})
+        for (const int gap : {1,70}) {
+            using namespace tak::sim;
+            World fire;
+            fire.setTerrain(std::vector<uint8_t>(96*96,100),96,96,0);
+            FeatType tree;tree.name="tree";tree.flamable=tree.hasBurnAnim=true;
+            tree.spreadChance=100;tree.sparkTicks=0;tree.burnTicks=10;tree.burntType=1;
+            FeatType rock;rock.name="rock";
+            fire.setFeatureTypes({tree,rock});
+            const int source=10*96+10,target=10*96+11;
+            int padded=0;   // non-burning rocks far away push the second tree's index out
+            auto pad=[&](int n){
+                for (int k=0;k<n;++k,++padded)
+                    fire.addFeature(60*96+padded,float(padded%96*16+8),float((60+padded/96)*16+8),0,1,1,false,1);
+            };
+            pad(3);
+            fire.addFeature(higher ? source : target,higher ? 168 : 184,168,0,1,1,false,0);
+            pad(gap);
+            fire.addFeature(higher ? target : source,higher ? 184 : 168,168,0,1,1,false,0);
+            RetailReplayProbe::ignite(fire,source);
+            fire.tick(1.0f/30);
+            const uint64_t first=fire.stateHash();
+            const auto* t=fire.feature(target);
+            check(t->burn && t->burnLeft==(higher ? 9u : 10u),
+                  higher ? (gap==1 ? "spread to a higher index burns the same tick (same mark word)"
+                                   : "spread to a higher index burns the same tick (later mark word)")
+                         : (gap==1 ? "spread to a lower index waits for the next tick (same mark word)"
+                                   : "spread to a lower index waits for the next tick (earlier mark word)"));
+            for (int i=0;i<40;++i) fire.tick(1.0f/30);
+            std::printf("  spread %s gap %d: hash after 1 tick %016llx, after 41 %016llx\n",
+                        higher ? "higher" : "lower",gap,static_cast<unsigned long long>(first),
+                        static_cast<unsigned long long>(fire.stateHash()));
+        }
 
     std::printf(g_fail ? "featgen_test: %d FAILURE(S)\n" : "featgen_test: all passed\n",
                 g_fail);

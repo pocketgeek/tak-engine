@@ -14,6 +14,9 @@ namespace tak::sim {
 struct RetailReplayProbe {
     static bool corpse(World& w,Unit& u,int type) {return w.placeCorpse(u,type);}
     static Feature& feature(World& w,int id) {return w.features_[w.featureIdx_.at(id)];}
+    // Through igniteFeature, so tickBurning's marks see it (a bare burn=1 is
+    // never visited).
+    static Feature& ignite(World& w,int id) {w.igniteFeature(feature(w,id));return feature(w,id);}
     static bool hasCorpseFootprint(const World& w,int id) {return w.corpseFootprints_.contains(id);}
 };
 }
@@ -254,7 +257,7 @@ int main(int argc,char**) {
         const int id=w.spawn(&type,at(19,1),at(20,1),0.0f,0);
         w.reclaim(id,tree1,false);
         for (int i=0;i<100 && !w.feature(tree1)->fadeLeft;++i) w.tick(1.f/30);
-        auto& fire=Probe::feature(w,tree2);fire.burn=1;fire.burnLeft=600;fire.spreadIn=1;
+        auto& fire=Probe::ignite(w,tree2);fire.burnLeft=600;fire.spreadIn=1;
         for (int i=0;i<60;++i) w.tick(1.f/30);
         check(!w.feature(tree1)->alive && w.feature(tree1)->type==0 && w.feature(tree2)->burn,
               "a fading feature does not catch fire");
