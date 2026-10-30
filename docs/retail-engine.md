@@ -849,9 +849,8 @@ hit 72-75 of 72-75.
 Still deviating:
 - AirStrike (`41b5e0`) is not ported; no shipped weapon reaches it. (AirToAir,
   for a flying target, is ported since protocol 305: next section.)
-- When the target is lost, AirToGround pushes `VTOL_SEEKATTACK` (`4192f0`), which
-  circles the target's last point at range + 160 px, scanning for targets.
-  World drops the order instead.
+- (When the target is lost, AirToGround pushes `VTOL_SEEKATTACK` (`4192f0`):
+  ported since protocol 305, see "VTOL_SeekAttack" below.)
 - The group check (`51d1e0`, VTOL_Move_Formation) is not ported. Neither is
   stage 4's air-traffic step-out: unit +0x12a, a counter `51dc4b..` keeps
   from the overlap list, pushes `VTOL_StepOut` at 5 or more, and World keeps no
@@ -1031,8 +1030,8 @@ Checked:
 Not ported or still deviating:
 - The group check (`51d1e0`, VTOL_Move_Formation) and the air-traffic step-out
   (unit +0x12a >= 5 pushes VTOL_StepOut), as for AirToGround.
-- A lost target (events 0x28, a dead or dying target) ends the order; retail
-  pushes VTOL_SEEKATTACK (`41d654`) when the unit is not on Hold Fire.
+- (A lost target pushes VTOL_SEEKATTACK (`41d654`): ported since protocol 305,
+  next section.)
 - The retarget scan is World's target scan (`findTarget`, as the ground
   response's) and its gates (`retailIssueAutoAttack`'s), the new attack put
   ahead after the dispatch.
@@ -1042,6 +1041,78 @@ Not ported or still deviating:
   a flyer too; retail gives it no attack mission (`4de6ed`).
 - A whole native engagement has not been run: the hit rates above are those
   of the ported parts flown together.
+
+### VTOL_SeekAttack: a lost target (icd + emulation, 2026-10-30, protocol 305)
+
+AirToGround and AirToAir end on a lost target and may first push
+VTOL_SEEKATTACK (registry row `5ebe7c`: class 19, flags `0x1000600`; handler
+`4192f0`). AirToGround's head sends events `0x2a`, a target pointer (+0x16)
+that is null, not alive (+0x130 `0x1000000`), dying (`0x1000`), carried
+(+0x114 bit 4), off the map (+0x130 & 3 == 0) or whose type can fly to
+`41c8f6`; AirToAir's sends events `0x28` and the same states to `41d654`.
+Both return 5 (the attack is removed), first pushing the seek when:
+
+- `41c8f6` only: the unit is alive and not dying (`41d654` does not look);
+- both: the attack is the last mission in the list (+0x66 is the list's next
+  link; `4d7640` walks it, `4d77b0` inserts at its end), and the unit is not
+  on Hold Fire (+0x130 & `0xc0000`).
+
+The seek is built (`4d6c40`) with the attack's point (mission +0x22: the
+target's position, which AirToGround refreshes at every wake, `41c13c`; the
+led SweetSpot at AirToAir's stage 2, `51aa50`) and, when the target is alive
+and not dying, the target itself; +0x4e/+0x52/+0x56 are 0. `4d77b0` puts it
+right behind the attack, which then goes, so it runs at once.
+
+`4192f0`: a unit without a weapon (+0x130 `0x8000000`) clears its list (7);
+event `0x200` (its controller failed) ends the seek (5); off the map it flies
+800 px toward the map, radius 128, waiting on `0x700` (as AirToGround's
+stage 7). The step-out (+0x12a >= 5) and the group check `51d1e0` come next
+(not ported), then the group flag's rand(25). Stage 0 (`41972e`): with a
+carried target, `4d7de0(unit, target, 0, 0, 0, 0)`; an attack put ahead
+clears the wait mask and returns 0, a refusal goes straight on to stage 1.
+Without one, a zero point becomes the unit's position, +0x4e = rand(0x10000)
+(+0x52 its low bit, never read), and `416c50` takes off. Stage 1 (`419620`):
+`519b10(3)`; `4d8370` (which scans only on Fire At Will) and `4d7de0(unit,
+found, 0, 0, 1, 0)`: an attack put ahead returns 5. Otherwise, on a controller
+event (`0x700`), +0x4e -= `0x5555` + rand(`0x2000`); a point controller
+(`4e40e0`, `4e4540(0x80)`) at the point less (sin, cos)(+0x4e) x (the
+selected weapon's +0x90 + 160) (`5360bf`/`5360f3` read the angle's low word),
+`4d6a10(30 + rand(30))`, wait mask |= `0x700`, return 2. Any other stage
+clears the list. The seek never ends by itself: a queued order waits.
+
+Ours (`retailairseek.h`: `retailAirLostTarget`, `retailVtolSeekAttack`;
+`World::seekLostTarget`, `World::tickSeekAttack`): tickCombat's lost-target
+branches (target gone, dead, dying, an ally after a conversion, or one
+`canAttackTarget` refuses) replace a flyer's AirToGround or AirToAir attack
+with a seek order (`Order::seekAttack`, the point in x/z, the angle in
+`guardOrbitAngle`) and run its first dispatch in the same tick. +0x66 == 0 is
+"the attack is the only order and not `aheadOfDefault`": an idle flyer's own
+auto attack (the standby's scan, the hit response, and AirToAir's retarget of
+one) goes in ahead of its default mission VTOL_Standby, which World does not
+queue, so it ends without a seek (the classic AI's first-mission flag
+`0x2000` follows the same bit). `tools/re/check_air_seek_attack.py` runs
+`4192f0` on 6,000 random states of the head and both stages and `41bf80` /
+`41ca50` on 4,000 lost targets against the port: every result, stage, wait
+mask, deadline, pending event, angle, point, controller, radius, call and
+random draw is equal. `air_seek_attack_test` (both balances, every armed
+flyer without hoverattack): the kill pushes the seek at the target's last
+point, the flyer hops round it at range + 160 without landing and attacks a
+new enemy at the point on Fire At Will; Return Fire circles without
+retargeting; Hold Fire, a queued order and an idle flyer's own attack get no
+seek; AirToAir kills circle the led point.
+
+Not ported or deviating:
+- The scan is World's (`findTarget`, as AirToAir's retarget), not `4d8370`.
+- World does not keep the carried target: the stage-0 offer runs in the tick
+  the attack let it go, for the reason tickCombat let it go, so it always
+  fails; a seek that starts off the map takes off and draws its angle when it
+  first wakes on the map, where retail would offer the target first.
+- The point's height is not kept (a point controller flies the cruise height).
+- Before the attack's first wake World takes the target's own position as
+  the point.
+- AirToGroundHover (`41d820`) pushes the seek too (`41e301`, `41e35f`); not
+  ported, a hover attacker's attack ends.
+- The step-out and the group check, as for AirToGround.
 
 ## SweetSpot is the drawn piece bounds (icd + live capture, 2026-10-24, protocol 295)
 

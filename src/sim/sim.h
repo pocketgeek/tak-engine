@@ -19,6 +19,7 @@
 #include "sim/retailexploration.h"
 #include "sim/retailweaponswitch.h"
 #include "sim/retailflight.h"
+#include "sim/retailairseek.h"
 #include "sim/retailairtoair.h"
 #include "sim/retailballistic.h"
 #include "sim/retailwind.h"
@@ -805,7 +806,12 @@ struct alignas(64) Order {
     Fixed transportX, transportY, transportZ;
     Fixed buildX, buildZ;
     uint32_t hoverAttackRefresh = 0;
-    Fixed hoverAttackTargetX, hoverAttackTargetZ;
+    // The attack mission's point (mission +0x22) on a flyer's attack order:
+    // the target's position as AirToGroundHover last read it (every tick),
+    // as AirToGround last read it (41c13c, each wake) or AirToAir's led
+    // SweetSpot (51aa50, each stage-2 wake). A lost target's VTOL_SEEKATTACK
+    // circles it (retailAirLostTarget). Zero until first read.
+    Fixed attackPointX, attackPointZ;
     // AirToGround's mission +0x4e (retailAirToGround, which runs on
     // `mission`): 1 once a run has brought the flyer within half its range
     // of the target; stage 7 counts wakes off the map on it.
@@ -863,6 +869,11 @@ struct alignas(64) Order {
     // (in the pad beside reclaimHeading so the cold tail stays five lines).
     // Hashed when set.
     bool mixedSlots = false;
+    // VTOL_SeekAttack (4192f0, tickSeekAttack): what a flyer's attack order
+    // becomes when its target is lost (retailAirLostTarget). It circles x/z,
+    // the attack's last point, on `mission`, its orbit angle in
+    // guardOrbitAngle (mission +0x4e). targetId stays 0. Hashed with a tag.
+    bool seekAttack = false;
     // The approach of a HelpBuild (World::assist, or one a guarding builder
     // put ahead of its guard): the unfinished unit it walks to. The leg goes
     // when that job ends, however it ends. Hashed with a tag when set.
@@ -872,8 +883,16 @@ struct alignas(64) Order {
     // Drawn once (rand(0x10000)) when the guard starts, stepped back by
     // 0x4000 + rand(0x2000) each time the orbit point is reached. The guard
     // runs on `mission` (stage 2 once started; its deadline is the next look).
-    // Hashed with a tag once the mission runs.
+    // Hashed with a tag once the mission runs. VTOL_SeekAttack's orbit angle
+    // (seekAttack) lives here too: a seek is never a guard.
     uint16_t guardOrbitAngle = 0;
+    // A flyer's auto attack put ahead of its default mission (VTOL_Standby,
+    // which World does not keep in the queue): acquired idle by the standby's
+    // scan or the hit response, or AirToAir's retarget of such an attack. In
+    // retail the attack takes that mission's run-time flag 0x2000 (4d7709)
+    // and is not the last mission (+0x66), so a lost target ends it without
+    // VTOL_SEEKATTACK. Hashed with a tag when set.
+    bool aheadOfDefault = false;
 };
 // Which line each field sits on (WE D2). Moving a field across a line, or
 // growing line 0/1 past 64 bytes, is a compile error here. (offsetof on a type
@@ -3263,6 +3282,9 @@ private:
     void tickHoverAttack(Unit& u, const Unit& target, const Weapon* weapon, int slot);
     void tickAirToGround(Unit& u, const Unit& target, const Weapon* weapon);
     void tickAirToAir(Unit& u, const Unit& target, const Weapon* weapon);
+    bool seekLostTarget(Unit& u, const Unit* target, bool targetLive);
+    void tickSeekAttack(Unit& u, bool carriesTarget = false);
+    void flyMissionGoal(Unit& u, Order& order);
     void tickFlightPatrol(Unit& u);
     int flightGround(const Unit& u) const;
     bool flightLandingFree(const Unit& u, Fixed x, Fixed z) const;

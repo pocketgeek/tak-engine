@@ -1,6 +1,7 @@
 #include "sim/sim.h"
 #include "sim/retailflight.h"
 #include "sim/retailairattack.h"
+#include "sim/retailairseek.h"
 #include "sim/retailairtoair.h"
 #include "sim/retailrng.h"
 #include "sim/retailheight.h"
@@ -36,6 +37,49 @@ int main(int argc, char** argv) {
             std::printf("%d %u %u %u %u %u %d %u %d %d %d %d %u %u %u %u %u\n",result,unsigned(m.stage),m.waitMask,m.deadline,
                         m.pending,m.flags,count,host.installs,host.goal.point.x,host.goal.point.y,host.goal.point.z,
                         int(host.goal.radius),host.begin,host.autoSlots,host.aim,seed,host.calls);
+        }
+        return 0;
+    }
+    // tools/re/check_air_seek_attack.py: one VTOL_SeekAttack (4192f0) handler
+    // call per line.
+    if (argc==2 && std::strcmp(argv[1],"--air-seek")==0) {
+        unsigned stage,events,tick,deadline,pending,flags,angle,armed,flies,target,onMap,seed,attacks,retargets;
+        int range,width,height;
+        RetailAirSeek in;RetailFlightVector point;
+        while (std::scanf("%u %u %u %u %u %u %u %d %d %d %d %d %d %d %u %u %u %u %d %d %u %u %u",&stage,&events,&tick,
+                          &deadline,&pending,&flags,&angle,&point.x,&point.y,&point.z,&in.position.x,&in.position.y,
+                          &in.position.z,&range,&armed,&flies,&target,&onMap,&width,&height,&seed,&attacks,
+                          &retargets)==23) {
+            in.range=range;in.armed=armed!=0;in.flies=flies!=0;in.target=target!=0;in.onMap=onMap!=0;
+            in.width=width;in.height=height;
+            RetailMissionState m;m.stage=uint8_t(stage);m.waitMask=0;m.deadline=deadline;m.pending=pending;m.flags=flags;
+            uint16_t heading=uint16_t(angle);
+            struct Host {
+                uint32_t& seed;RetailMissionState& m;bool attacks,retargets;
+                unsigned calls=0,attackCalls=0,begin=0,autoSlots=0,retargetCalls=0,installs=0;RetailFlightGoal goal;
+                uint32_t random(int n) { ++calls;return retailRandom(seed,n); }
+                bool attack() { ++attackCalls;return attacks; }
+                void beginFlight() { ++begin; }
+                void slotsAuto() { ++autoSlots; }
+                bool retarget() { ++retargetCalls;return retargets; }
+                void install(const RetailFlightGoal& g) { ++installs;goal=g;m.pending&=~0x3700u; }
+            } host{seed,m,attacks!=0,retargets!=0};
+            const int result=retailVtolSeekAttack(m,point,heading,tick,events,in,host);
+            std::printf("%d %u %u %u %u %u %u %d %d %d %u %d %d %d %d %u %u %u %u %u %u\n",result,unsigned(m.stage),
+                        m.waitMask,m.deadline,m.pending,m.flags,unsigned(heading),point.x,point.y,point.z,host.installs,
+                        host.goal.point.x,host.goal.point.y,host.goal.point.z,int(host.goal.radius),host.attackCalls,
+                        host.begin,host.autoSlots,host.retargetCalls,seed,host.calls);
+        }
+        return 0;
+    }
+    // tools/re/check_air_seek_attack.py: the lost-target exits of AirToGround
+    // (41c8f6) and AirToAir (41d654), one per line.
+    if (argc==2 && std::strcmp(argv[1],"--air-lost")==0) {
+        unsigned airToAir,alive,dying,last,holdFire,target,targetLive;
+        while (std::scanf("%u %u %u %u %u %u %u",&airToAir,&alive,&dying,&last,&holdFire,&target,&targetLive)==7) {
+            const auto push=retailAirLostTarget({airToAir!=0,alive!=0,dying!=0,last!=0,holdFire!=0,target!=0,
+                                                 targetLive!=0});
+            std::printf("%d %d\n",int(push.push),int(push.target));
         }
         return 0;
     }
