@@ -1002,11 +1002,13 @@ struct alignas(64) Unit {
     int32_t stonedFor = 0;   // >0 = petrified (can't act, immune to damage while stone)
     int32_t paralyzedFor = 0;// >0 = paralyzed (can't act, still takes damage)
     int32_t selfDestructT = -1;// >=0 = self-destruct countdown (ticks) armed; -1 = not
-    // The tick's REQUESTED turn (want - heading, unclamped BAM), display only --
-    // never hashed. Retail's TurnDirection callin (icd 0x4d9550) converts the
-    // requested arg, NOT the clamped rotation applied to heading, so the client
-    // animation needs this rather than a heading-delta (which would truncate to
-    // zero for slow turners). Reset each tick; set where the mover turns.
+    // The tick's REQUESTED turn (want - heading, unclamped BAM). Not hashed
+    // itself, but World::notifyTurnDirection reports it to the unit's own
+    // (hashed) script VM, so it must stay deterministic; the client animation
+    // reads it too. Retail's TurnDirection callin (icd 0x4d9593) converts the
+    // requested arg, NOT the clamped rotation applied to heading, so both need
+    // this rather than a heading-delta (which would truncate to zero for slow
+    // turners). Reset each tick; set where the mover turns.
     int32_t turnReqBam = 0;
     // GET 33 reads the mover's signed applied turn from its previous update.
     // COB runs before this tick's mover, so publish the completed turn at tick end.
