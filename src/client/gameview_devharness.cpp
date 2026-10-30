@@ -532,13 +532,13 @@
             std::fprintf(stderr,"retail fog: sight %.0f radar %.0f flat %.0f,%.0f hill %.0f,%.0f (h %d -> %d) keep %.0f,%.0f\n",
                 S,R,fx,fz,hx,hz,h16(int(hx)/16,int(hz)/16),h16(int(hx+hdx*1.5f*S)/16,int(hz)/16),kx,kz);
             const int own=spawn("arasword",fx,fz,0,0);
-            const int near=spawn("arasword",fx+0.9f*S,fz,0,1);
-            const int far=spawn("arasword",fx-1.1f*S,fz,0,1);
+            const int inside=spawn("arasword",fx+0.9f*S,fz,0,1);
+            const int outside=spawn("arasword",fx-1.1f*S,fz,0,1);
             const int high=spawn("arasword",hx,hz,0,0);
             const int below=spawn("arasword",hx+hdx*1.5f*S,hz,0,1);
             const int tower=spawn("arakeep",kx,kz,0,0);
             const int blip=spawn("arasword",kx+rd,kz,0,1);
-            check(own>0 && near>0 && far>0 && high>0 && below>0 && tower>0 && blip>0,"fixture spawned");
+            check(own>0 && inside>0 && outside>0 && high>0 && below>0 && tower>0 && blip>0,"fixture spawned");
             for (int i=0;i<30;++i) writableWorld().tick(1.f/30);
             const char* capture=tak::devEnv("TAK_RETAIL_FOG_CAPTURE");
             const auto frame=[&](float cx,float cz,const char* tag,float zoom=1.0f) {
@@ -559,8 +559,8 @@
             };
             frame(fx,fz,"flat");
             check(drawn(own),"own unit drawn");
-            check(drawn(near),"flat ground: an enemy at 0.9x sight is drawn");
-            check(!drawn(far),"flat ground: an enemy at 1.1x sight is not");
+            check(drawn(inside),"flat ground: an enemy at 0.9x sight is drawn");
+            check(!drawn(outside),"flat ground: an enemy at 1.1x sight is not");
             frame(hx+hdx*0.75f*S,hz,"hill");
             check(drawn(high) && drawn(below),"from a hill: an enemy at 1.5x sight is drawn");
             frame(kx+rd*0.5f,kz,"radar",0.6f);   // both on screen: not drawn is the fog, not the cull
