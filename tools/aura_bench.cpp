@@ -25,7 +25,8 @@
 //
 // Output:
 //   AURABENCH layout=.. units=.. grid_units=.. emitters=.. entries=.. cells=.. pairs=.. hits=.. recipients=..
-//   AURATIME passes=.. workers=.. mean_us=.. median_us=.. p95_us=.. p99_us=.. max_us=.. retained_bytes=..
+//   AURATIME passes=.. workers=.. mean_us=.. median_us=.. p95_us=.. p99_us=.. max_us=.. min_us=.. p10_us=.. retained_bytes=..
+//   (min and p10 are the least disturbed passes: read them on a busy host)
 //   AURAHASH buffs=..   (a digest of every unit's atkBuff/armBuff bits after the last pass)
 // The counters come from the tool's own walk over the grid (the scan forEachNear
 // makes), so they do not depend on how the pass is implemented: pairs are the
@@ -235,9 +236,10 @@ int main(int argc, char** argv) try {
     for (double v : us) sum += v;
     std::sort(us.begin(), us.end());
     const std::string width = serial ? "serial" : workers >= 0 ? std::to_string(workers) : "default";
-    std::printf("AURATIME passes=%d workers=%s mean_us=%.1f median_us=%.1f p95_us=%.1f p99_us=%.1f max_us=%.1f retained_bytes=%zu\n",
-                passes, width.c_str(), sum / double(passes), pct(us, 0.5), pct(us, 0.95), pct(us, 0.99), us.back(),
-                RetailReplayProbe::retained(*world));
+    std::printf("AURATIME passes=%d workers=%s mean_us=%.1f median_us=%.1f p95_us=%.1f p99_us=%.1f max_us=%.1f min_us=%.1f "
+                "p10_us=%.1f retained_bytes=%zu\n",
+                passes, width.c_str(), sum / double(passes), pct(us, 0.5), pct(us, 0.95), pct(us, 0.99), us.back(), us.front(),
+                pct(us, 0.10), RetailReplayProbe::retained(*world));
     std::printf("AURAHASH buffs=%016llx\n", (unsigned long long)buffDigest(*world));
     return 0;
 } catch (const std::exception& e) {
