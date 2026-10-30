@@ -155,6 +155,166 @@ SCENES = {
 }
 QUICK = ["small-battle", "stationary-mixed", "moving", "pan"]
 SIZES = {"normal": (1280, 960), "uhd": (7680, 2160)}
+# The matrix as it stood before the interactive cases: "--scenes all" keeps meaning
+# exactly these, so historical "all" runs and baselines stay comparable.
+HISTORICAL = list(SCENES)
+
+# Interactive cases (perf follow-up measurement B). The matrix above never moves the
+# pointer, so the in-game cursor is never classified (the pointer is unset), nothing is
+# selected, no build queue is long and nothing is behind a building. These scenes add
+# that work explicitly, without changing any scene above. They need a client with the
+# measurement-B harness knobs (TAK_RENDER_MOUSE / _SELECT / _ARM / _GHOSTS / _COVER /
+# _FADE_CLOCK); "expect" lists what every run must confirm (RENDER_INTERACTIVE and
+# "render interactive:" lines, per-frame counters), so a client without them is refused
+# instead of silently measuring the matrix scene. Run with --scenes interactive (or by
+# name). Mouse positions are fractions of the world view (TAK_RENDER_MOUSE).
+
+# The silhouette atlas the shadow scenes are sized against: four pages of 2048x2048
+# (gameview_render.cpp kMaxPages and the default page limit at 61f294ac).
+SHADOW_DESIGN_CAPACITY_PX = 4 * 2048 * 2048
+SUBSET_10K = {"TAK_RENDER_CENTER": "7600,7600", "TAK_RENDER_OFFSET": "4200,5400"}
+SUBSET_10K_UHD = {"TAK_RENDER_OFFSET": "0,3960"}
+# At 7680x2160 the total10k-subset view holds only the army's top edge (a strip a few
+# px deep): the pointer scenes look further down, at a corner of about 1600 units.
+HOVER_10K_UHD = {"TAK_RENDER_OFFSET": "0,5000", "TAK_RENDER_MOUSE": "sweep:0.62,0.42,1.0,1.0"}
+INTERACTIVE = {
+    # C: cursor classification. 10000 own units, a small corner of them in view.
+    "hover-ground-10k": dict(count=10000, zoom=1.0,
+                             env=dict(SUBSET_10K, TAK_RENDER_MOUSE="0.2,0.2"),
+                             size_env={"7680x2160": SUBSET_10K_UHD},
+                             expect={"mouse": "fixed", "cursor": True},
+                             notes="10k own units, a corner in view; pointer held on empty ground, nothing "
+                                   "selected: every frame tests every own unit and none is under it"),
+    "hover-units-10k": dict(count=10000, type="araarch", zoom=1.0,
+                            env=dict(SUBSET_10K, TAK_RENDER_MOUSE="sweep:0.70,0.62,1.0,1.0",
+                                     TAK_RENDER_SELECT="1"),
+                            size_env={"7680x2160": HOVER_10K_UHD},
+                            expect={"mouse": "sweep", "cursor": True, "selected": 1, "pick_hits": True},
+                            notes="10k own Archers, a corner in view; one selected (a non-builder: no build "
+                                  "strip over the map), pointer sweeping over the visible corner of the army "
+                                  "and the ground beside it"),
+    "hover-armed-10k": dict(count=10000, type="araarch", zoom=1.0,
+                            env=dict(SUBSET_10K, TAK_RENDER_MOUSE="sweep:0.70,0.62,1.0,1.0",
+                                     TAK_RENDER_SELECT="200", TAK_RENDER_ARM="g"),
+                            size_env={"7680x2160": HOVER_10K_UHD},
+                            expect={"mouse": "sweep", "cursor": True, "selected": 200, "armed": "g",
+                                    "pick_hits": True},
+                            notes="as hover-units-10k with 200 units selected and Guard armed (the armed "
+                                  "target scan: every unit under the pointer against the selection)"),
+    "select-large": dict(count=2000, zoom=0.5,
+                         env={"TAK_RENDER_SELECT": "all", "TAK_RENDER_MOUSE": "sweep:0.05,0.05,0.95,0.95"},
+                         expect={"mouse": "sweep", "cursor": True, "selected": 1500, "pick_hits": True},
+                         notes="the stationary mixed army (2000) all selected, pointer sweeping the view"),
+    # E: queued-build ghosts (16 builders x 24 orders over three repeated types, half of
+    # every queue at the far map corner).
+    "ghosts-queue": dict(count=1, type="araarch", zoom=0.75, env={"TAK_RENDER_GHOSTS": "16,24,50"},
+                         expect={"ghost_orders": 300, "ghost_offscreen": 120},
+                         notes="16 builders with 24 queued builds each (3 repeated types), half of each "
+                               "queue off screen at the far map corner"),
+    "ghosts-queue-pan": dict(count=1, type="araarch", zoom=0.75,
+                             env={"TAK_RENDER_GHOSTS": "16,24,50", "TAK_RENDER_CAMERA": "1"},
+                             expect={"ghost_orders": 300, "ghost_offscreen": 120},
+                             notes="ghosts-queue under the sinusoidal pan"),
+    # F: HIDDEN UNITS (Fade unless noted) with crowds under repeated trees and buildings;
+    # the fade clock follows the study frame so fades match run to run.
+    # (Ulasem Arena, not the forest scene's Sea Dragon Spine: at 7680x2160 that small map
+    # clamps the zoom so far out that units are Tactical Dots and nothing can fade.)
+    "fade-forest": dict(count=1500, type="araarch", zoom=1.0,
+                        env={"TAK_RENDER_FOREST": "1", "TAK_RENDER_SPACING": "28",
+                             "TAK_RENDER_FADE_CLOCK": "1"},
+                        settings={"hiddenUnits": "fade"},
+                        expect={"fade_clock": True, "hidden_faded": True},
+                        notes="1500 Archers (28 px apart) in the densest scenery of Ulasem Arena; Fade"),
+    "fade-buildings": dict(count=2000, type="araarch", zoom=1.0,
+                           env={"TAK_RENDER_COVER": "vertower,4", "TAK_RENDER_SPACING": "32",
+                                "TAK_RENDER_FADE_CLOCK": "1"},
+                           settings={"hiddenUnits": "fade"},
+                           expect={"fade_clock": True, "covers": 50, "hidden_faded": True},
+                           notes="2000 Archers (32 px) around a grid of towers (every 4th row/column); Fade"),
+    "dots-buildings": dict(count=2000, type="araarch", zoom=1.0,
+                           env={"TAK_RENDER_COVER": "vertower,4", "TAK_RENDER_SPACING": "32",
+                                "TAK_RENDER_FADE_CLOCK": "1"},
+                           settings={"hiddenUnits": "dots"},
+                           expect={"fade_clock": True, "covers": 50},
+                           notes="fade-buildings with HIDDEN UNITS Dots (the other display path)"),
+    # K: unit shadows near the silhouette atlas's capacity (four 2048x2048 pages). The
+    # 6-type roster at zoom 1, 40 px apart; at 1280x960 the view cannot hold that much
+    # shadow (demand / view area stays far below 16x), so these run at 7680x2160 only.
+    # shadow_demand_px is the frame's tile area as asked; "demand" bounds its mean.
+    "shadow-cap-below": dict(count=4500, zoom=1.0, env={"TAK_RENDER_SPACING": "40"}, sizes=("uhd",),
+                             expect={"demand": (0.85, 0.97)},
+                             notes="stationary mixed army whose shadow tiles take about 0.91 of the atlas"),
+    "shadow-cap-above": dict(count=5500, zoom=1.0, env={"TAK_RENDER_SPACING": "40"}, sizes=("uhd",),
+                             expect={"demand": (1.02, 1.12)},
+                             notes="stationary mixed army whose shadow tiles take about 1.06 of the atlas "
+                                   "(more than four pages hold)"),
+    "shadow-cap-cross": dict(count=5000, zoom=1.0,
+                             env={"TAK_RENDER_SPACING": "40", "TAK_RENDER_ZOOM_OSC": "0.92,1.08,240"},
+                             sizes=("uhd",), expect={"demand": (0.9, 1.1)},
+                             notes="zoom 0.92..1.08 every 240 frames: the demand crosses the atlas "
+                                   "capacity (about 0.85..1.14) twice a period"),
+    "shadow-cap-below-pan": dict(count=4500, zoom=1.0, env={"TAK_RENDER_SPACING": "40", "TAK_RENDER_CAMERA": "1"},
+                                 sizes=("uhd",), expect={"demand": (0.85, 0.97)},
+                                 notes="shadow-cap-below under the sinusoidal pan"),
+    "shadow-cap-above-pan": dict(count=5500, zoom=1.0, env={"TAK_RENDER_SPACING": "40", "TAK_RENDER_CAMERA": "1"},
+                                 sizes=("uhd",), expect={"demand": (1.02, 1.12)},
+                                 notes="shadow-cap-above under the sinusoidal pan"),
+}
+SCENES.update(INTERACTIVE)
+INTERACTIVE_RE = re.compile(r"^RENDER_INTERACTIVE mouse=(\w+) fade_clock=(\d)", re.M)
+INTERACTIVE_SETUP_RE = re.compile(
+    r"render interactive: selected=(\d+) armed=(\S) covers=(\d+) ghost_builders=(\d+) "
+    r"ghost_orders=(\d+) ghost_offscreen=(\d+)")
+
+
+def check_interactive(name, scene, text, measured):
+    """Confirms an interactive scene ran as designed; returns what the client reported.
+    Raises when the client lacks the measurement-B knobs or the scene missed its design."""
+    expect = SCENES[scene].get("expect")
+    if not expect:
+        return None
+    mouse = INTERACTIVE_RE.search(text)
+    setup = INTERACTIVE_SETUP_RE.search(text)
+    needs_setup = any(k in expect for k in ("selected", "armed", "covers", "ghost_orders", "ghost_offscreen"))
+    if ((("mouse" in expect or "fade_clock" in expect) and not mouse) or (needs_setup and not setup)):
+        raise RuntimeError(f"{name}: client lacks the interactive render cases (measurement B harness knobs)")
+    out = {}
+    if mouse:
+        out.update(mouse=mouse[1], fade_clock=int(mouse[2]))
+    if setup:
+        out.update(zip(("selected", "armed", "covers", "ghost_builders", "ghost_orders", "ghost_offscreen"),
+                       (int(setup[1]), setup[2], int(setup[3]), int(setup[4]), int(setup[5]), int(setup[6]))))
+    stats = measured.get("stats") or {}
+    mean = lambda k: (stats.get(k) or {}).get("mean")
+    for k in ("cursor_evals", "cursor_pick_tests", "cursor_pick_hits", "ghosts_queued", "ghost_preps",
+              "hidden_cover_tests", "hidden_faded", "shadow_demand_px", "shadow_fallback"):
+        if mean(k) is not None:
+            out[k] = mean(k)
+    problems = []
+    if "mouse" in expect and out.get("mouse") != expect["mouse"]:
+        problems.append(f"pointer {out.get('mouse')} (want {expect['mouse']})")
+    if expect.get("fade_clock") and out.get("fade_clock") != 1:
+        problems.append("fade clock off")
+    if expect.get("cursor") and out.get("cursor_evals") != 1:
+        problems.append(f"cursor classified {out.get('cursor_evals')} times a frame (want 1: cursor art missing?)")
+    if expect.get("pick_hits") and not out.get("cursor_pick_hits"):
+        problems.append("the pointer never was over a unit")
+    if "armed" in expect and out.get("armed") != expect["armed"]:
+        problems.append(f"armed {out.get('armed')} (want {expect['armed']})")
+    for k in ("selected", "covers", "ghost_orders", "ghost_offscreen"):
+        if k in expect and out.get(k, 0) < expect[k]:
+            problems.append(f"{k} {out.get(k, 0)} (want >= {expect[k]})")
+    if expect.get("hidden_faded") and not out.get("hidden_faded"):
+        problems.append("no cover faded")
+    if "demand" in expect:
+        lo, hi = expect["demand"]
+        ratio = (out.get("shadow_demand_px") or 0) / SHADOW_DESIGN_CAPACITY_PX
+        out["shadow_demand_ratio"] = ratio
+        if not lo <= ratio <= hi:
+            problems.append(f"shadow demand {ratio:.3f} of the 4x2048^2 atlas (want {lo}..{hi})")
+    if problems:
+        raise RuntimeError(f"{name}: interactive scene missed its design: " + "; ".join(problems))
+    return out
 
 GPU_RE = re.compile(r"^GPUTIMELINE frame=(\d+) ms=(-?[\d.]+)", re.M)
 FRAME_RE = re.compile(
@@ -437,8 +597,11 @@ def run_one(args, client, label, scene, size_key, leg, capture=False):
     if parsed["stats"]:
         stats_last = parsed["stats"][-1]
         result_zoom = stats_last.get("zoom")
+    interactive = check_interactive(name, scene, log.read_text() + "\n" + err.read_text(),
+                                    summarize(parsed, args.warmup, args.frames))
     if result_zoom is not None and abs(result_zoom - SCENES[scene]["zoom"]) > 1e-3 and not (
-            SCENES[scene].get("env", {}).get("TAK_RENDER_ZOOM")):
+            SCENES[scene].get("env", {}).get("TAK_RENDER_ZOOM") or
+            SCENES[scene].get("env", {}).get("TAK_RENDER_ZOOM_OSC")):
         print(f"{name}: note: requested zoom {SCENES[scene]['zoom']} ran at {result_zoom:.4f} "
               "(map-fills-window clamp)", flush=True)
     result = {
@@ -452,6 +615,8 @@ def run_one(args, client, label, scene, size_key, leg, capture=False):
         "final_rss_bytes": samples[-1][1] if samples else None,
         "measured": summarize(parsed, args.warmup, args.frames),
     }
+    if interactive is not None:
+        result["interactive"] = interactive
     segments = SCENES[scene].get("segments")
     if segments:
         result["segments"] = {k: summarize(parsed, b, e if e is not None else args.frames)
@@ -559,7 +724,7 @@ TELEMETRY_PHASES = ["t_candidates", "t_painter_sort", "t_atlas", "t_geometry", "
                     "t_shadow_pack", "t_shadow_alloc", "t_shadow_prep", "t_shadow_raster",
                     "t_shadow_composite", "t_body_assembly", "t_body_submit", "t_terrain",
                     "t_terrain_upload", "t_effects", "t_fog", "t_pool_dispatch", "t_pool_wait", "t_schedule_plan",
-                    "t_hidden_units",
+                    "t_hidden_units", "t_cursor", "t_ghosts",
                     "w_geometry_key", "w_geometry_build", "w_pool_busy", "w_pool_wake",
                     "w_terrain_compose", "w_section_decode", "w_terrain_upload", "w_terrain_wasted",
                     "w_unit_grid_build"]
@@ -617,7 +782,10 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "arena_append", "arena_rebuild", "arena_stream", "arena_verts_retained",
                     "arena_verts_uploaded", "arena_verts_twice", "arena_fallbacks",
                     # HIDDEN UNITS option (client/hiddenunits.h)
-                    "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded"]
+                    "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded",
+                    # measurement B: interactive cases (cursor, ghosts, cover tests, shadow demand)
+                    "cursor_evals", "cursor_pick_tests", "cursor_pick_hits", "ghosts_queued", "ghost_preps",
+                    "hidden_cover_tests", "shadow_direct_units", "shadow_demand_px"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",
@@ -788,7 +956,9 @@ def main(argv=None):
     p.add_argument("--b", type=Path, help="candidate takclient (omit for A/A)")
     p.add_argument("--data", type=Path, required=True, help="legally owned retail install")
     p.add_argument("--output", type=Path, required=True)
-    p.add_argument("--scenes", nargs="+", default=QUICK, help=f"scene names, 'all' or 'quick'; known: {', '.join(SCENES)}")
+    p.add_argument("--scenes", nargs="+", default=QUICK,
+                   help=f"scene names or groups: 'all' (the matrix before the interactive cases), 'quick', "
+                        f"'interactive'; known: {', '.join(SCENES)}")
     p.add_argument("--sizes", nargs="+", default=["normal"], choices=list(SIZES))
     p.add_argument("--repeats", type=int, default=2, help="A/B: ABBA groups; A/A: runs = 2*repeats")
     p.add_argument("--frames", type=int, default=900)
@@ -816,9 +986,11 @@ def main(argv=None):
     args = p.parse_args(argv)
     if args.list:
         for name, s in SCENES.items():
-            print(f"{name:18s} {s.get('map', DEFAULT_MAP):18s} {s['notes']}")
+            group = " [interactive]" if name in INTERACTIVE else ""
+            print(f"{name:18s} {s.get('map', DEFAULT_MAP):18s} {s['notes']}{group}")
         return 0
-    scenes = list(SCENES) if args.scenes == ["all"] else QUICK if args.scenes == ["quick"] else args.scenes
+    groups = {"all": HISTORICAL, "quick": QUICK, "interactive": list(INTERACTIVE)}
+    scenes = [s for name in args.scenes for s in groups.get(name, [name])]
     for s in scenes:
         if s not in SCENES:
             p.error(f"unknown scene {s}")
@@ -850,6 +1022,9 @@ def main(argv=None):
     resultfile = args.output / "results.json"
     for size in args.sizes:
         for scene in scenes:
+            if size not in SCENES[scene].get("sizes", SIZES):
+                print(f"{scene}: skipped at {size} (defined for {', '.join(SCENES[scene]['sizes'])} only)", flush=True)
+                continue
             hashes = set()
             if not args.capture_only:
                 for leg, label in enumerate(order):

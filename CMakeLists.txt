@@ -2490,6 +2490,24 @@ if(TAK_BUILD_CLIENT)
         set_tests_properties(render_unit_index${_variant} PROPERTIES TIMEOUT 300
             PASS_REGULAR_EXPRESSION "UNIT_INDEX_VERIFY frames=[1-9][0-9]* passes=[1-9][0-9]* live=[1-9][0-9]* candidates=[1-9][0-9]* accepted=[1-9][0-9]* .*${_expect}")
       endforeach()
+      # Interactive render cases (perf follow-up measurement B, tools/render_benchmark.py
+      # --scenes interactive): one scene with every knob -- the pointer sweeping the
+      # view (cursor classified every frame), the army selected, builders with queued
+      # ghosts (half at the far map corner), towers with Archers behind them under
+      # HIDDEN UNITS Fade on the study frame clock, the shadow atlas on the software
+      # renderer. Some frame must show all of that work in its telemetry.
+      add_test(NAME render_interactive_cases COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software
+          TAK_SHADOW_BENCH=400 TAK_SHADOW_BENCH_TYPE=araarch TAK_RENDER_SPACING=32 TAK_PROFILE_ZOOM=1
+          TAK_RENDER_COVER=vertower,4 TAK_RENDER_FADE_CLOCK=1 TAK_HIDDEN_UNITS=fade TAK_RENDER_SELECT=all
+          TAK_RENDER_MOUSE=sweep:0.1,0.1,0.9,0.9 TAK_RENDER_GHOSTS=4,6,50 TAK_SHADOW_ATLAS_SOFTWARE=1
+          TAK_RENDER_STUDY=1 TAK_RENDER_FRAMES=120 TAK_PROF=1 TAK_PROF_FRAMES=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/interactive-cases-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/interactive-cases-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1024 768 --novsync)
+      set_tests_properties(render_interactive_cases PROPERTIES TIMEOUT 300
+          PASS_REGULAR_EXPRESSION "hidden_faded=[1-9][0-9]* cursor_evals=1 cursor_pick_tests=[1-9][0-9]* cursor_pick_hits=[1-9][0-9]* ghosts_queued=[1-9][0-9]* ghost_preps=[1-9][0-9]* hidden_cover_tests=[1-9][0-9]* shadow_demand_px=[1-9]")
       # CPU budgets (workstream J) in a real scene: a battle, then a sustained empty
       # view, with short trim windows and tiny terrain budgets. Retained buffers must
       # be trimmed after the demand falls, keep their contents byte for byte, never be
@@ -2705,7 +2723,7 @@ if(TAK_BUILD_CLIENT)
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
           render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail render_unit_index render_unit_index_jump
-          tactical_dots hidden_units retail_fog spectator_health_bars
+          render_interactive_cases tactical_dots hidden_units retail_fog spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()

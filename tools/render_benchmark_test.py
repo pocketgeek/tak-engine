@@ -125,7 +125,45 @@ def main():
         env = rb.scene_env(name, "normal")
         check(env["TAK_SHADOW_BENCH"] == str(scene["count"]) and scene.get("notes"), f"scene {name}")
     check(rb.scene_env("total10k-subset", "uhd")["TAK_RENDER_OFFSET"] == "0,3960", "per-size scene override")
+    interactive_checks()
     print("PASS: render benchmark parser, windows, PNG compare and aggregation")
+
+
+def interactive_checks():
+    """Measurement B: the interactive scenes stay out of the historical matrix and a
+    run is refused unless the client confirms the scene as designed."""
+    check(not set(rb.INTERACTIVE) & set(rb.HISTORICAL), "interactive scenes are not in the historical 'all'")
+    check(len(rb.HISTORICAL) == 24 and set(rb.QUICK) <= set(rb.HISTORICAL) and rb.HISTORICAL[-1] == "terrain-jumps",
+          "historical matrix unchanged")
+    check(rb.scene_env("hover-units-10k", "uhd")["TAK_RENDER_OFFSET"] == "0,5000" and
+          rb.scene_env("hover-units-10k", "uhd")["TAK_RENDER_CENTER"] == "7600,7600", "interactive size override")
+    stats = "cursor_evals=1 cursor_pick_tests=200 cursor_pick_hits=3 hidden_faded=0"
+    good = (log(10).replace("RENDERSTATS frame=", "RENDERSTATS " + stats + " frame=")
+            + "RENDER_INTERACTIVE mouse=sweep fade_clock=0\n"
+            + "render interactive: selected=200 armed=g covers=0 ghost_builders=0 ghost_orders=0 ghost_offscreen=0\n")
+    parsed = rb.parse_log(good, 4, 10)
+    out = rb.check_interactive("x", "hover-armed-10k", good, rb.summarize(parsed, 4, 10))
+    check(out["selected"] == 200 and out["armed"] == "g" and out["cursor_evals"] == 1 and
+          out["cursor_pick_hits"] == 3, "interactive confirmation parsed")
+    check(rb.check_interactive("x", "small-battle", log(10), rb.summarize(parsed, 4, 10)) is None,
+          "matrix scenes need no confirmation")
+
+    def refused(scene, text, why):
+        p = rb.parse_log(text, 4, 10)
+        try:
+            rb.check_interactive("x", scene, text, rb.summarize(p, 4, 10))
+        except RuntimeError as e:
+            check(why in str(e), f"refusal names the cause ({why}): {e}")
+            return
+        raise SystemExit(f"FAIL: {scene} accepted ({why})")
+    refused("hover-armed-10k", log(10), "lacks the interactive render cases")
+    refused("hover-armed-10k", good.replace("cursor_evals=1", "cursor_evals=0"), "cursor classified")
+    refused("hover-armed-10k", good.replace("cursor_pick_hits=3", "cursor_pick_hits=0"), "never was over a unit")
+    refused("hover-armed-10k", good.replace("armed=g", "armed=-"), "armed")
+    refused("hover-armed-10k", good.replace("selected=200", "selected=12"), "selected 12")
+    refused("fade-buildings", good, "fade clock off")
+    ghosts = good.replace("ghost_orders=0 ghost_offscreen=0", "ghost_orders=384 ghost_offscreen=0")
+    refused("ghosts-queue", ghosts, "ghost_offscreen 0")
 
 
 if __name__ == "__main__":
