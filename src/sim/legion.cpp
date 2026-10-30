@@ -1261,6 +1261,8 @@ struct LegionNavigator::Impl {
     // LPROBE only: wall time (ms, summed over the ticks) of syncStatic,
     // stampGrounded and liftFlyers. Measured only while the probe is on.
     double probeSyncMs=0,probeStampMs=0,probeLiftMs=0;
+    // LPROBE only (perf follow-up I): wall time (ms, summed) and calls of staticChanged.
+    double probeChangedMs=0;uint64_t probeChangedCalls=0;
     // LPROBE only: the longest single syncStatic (ms) since the last LPROBE
     // line (the static-refresh spike, PF-05) and its breakdown: changed
     // rectangles, planes refreshed incrementally, ms gathering structures,
@@ -6154,6 +6156,15 @@ struct LegionNavigator::Impl {
         while(L.e.size()>kImproveLog) {L.floor=L.e.front().first;L.e.pop_front();}
     }
     void staticChanged(const std::vector<std::vector<StaticChange>>* changes=nullptr) {
+        struct ProbeSpan {   // LPROBE only
+            Impl& I;std::chrono::steady_clock::time_point t0;
+            explicit ProbeSpan(Impl& i):I(i),t0(gProbe?std::chrono::steady_clock::now():std::chrono::steady_clock::time_point{}) {}
+            ~ProbeSpan() {
+                if(!gProbe)return;
+                I.probeChangedMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-t0).count();
+                ++I.probeChangedCalls;
+            }
+        } probeSpan(*this);
         {
             ++epoch;
             // Terrain changed. A finished field keeps steering its group
@@ -6978,7 +6989,7 @@ struct LegionNavigator::Impl {
             " lifts=%llu lift_members_walked=%llu lift_members_skipped=%llu waiting_member_ticks=%llu demand_resumes=%llu refresh_suppressed=%llu fields_paused=%llu paused_resumes=%llu"
             " still_units_processed=%llu still_per_residue_max=%llu quota_peg_run_max=%llu anchor_walk_iters=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu sync_ms=%.3f stamp_ms=%.3f lift_ms=%.3f sync_max_ms=%.3f"
             " sync_max_rects=%zu sync_max_planes=%zu sync_max_gather_ms=%.3f sync_max_refresh_ms=%.3f sync_max_plane_ms=%.3f sync_max_changed_ms=%.3f"
-            " sync_max_work=%llu sync_max_relabels=%llu\n",
+            " sync_max_work=%llu sync_max_relabels=%llu changed_ms=%.3f changed_calls=%llu\n",
             w.tickCounter_,w.units_.size(),groups.size(),members.size(),(unsigned long long)s.schedGroupVisits,(unsigned long long)s.sharedfieldFullScans,
             (unsigned long long)s.softownerLookups,(unsigned long long)s.fieldWork,(unsigned long long)s.fieldWorkFirstSlot,
             (unsigned long long)s.fieldWorkFirstSolo,(unsigned long long)s.fieldWorkRefreshMoving,(unsigned long long)s.fieldWorkRefreshIdle,
@@ -6989,7 +7000,7 @@ struct LegionNavigator::Impl {
             (unsigned long long)s.shareScanIters,(unsigned long long)probeListSum,(unsigned long long)probeGroupSum,
             probeSyncMs,probeStampMs,probeLiftMs,probeSyncMaxMs,probeSyncMax.rects,probeSyncMax.planes,probeSyncMax.gatherMs,
             probeSyncMax.refreshMs,probeSyncMax.planeMs,probeSyncMax.changedMs,(unsigned long long)probeSyncMax.work,
-            (unsigned long long)probeSyncMax.relabels);
+            (unsigned long long)probeSyncMax.relabels,probeChangedMs,(unsigned long long)probeChangedCalls);
         probeSyncMaxMs=0;probeSyncMax={};
     }
 #ifndef NDEBUG
