@@ -64,6 +64,13 @@ reviewed on its own; the code tested below is main `95ca9163`:
   squares rebuilt; `8d30ca45` minimap radar bucket lookup; `f1dab5c0` docs;
   `b7df5925` the two guide pictures whose fog changed; `9b5ec0dc` an AI
   comment; `95ca9163` `CLAUDE.md`.
+- **Shot range** (`task-los-range`, after the preparation commits and
+  `94459ddb`, the Windows fog-test fix): no structure footprint pad for a
+  weapon whose shot dies at its range (`Weapon::shotEndsAtRange`: LOS bolt,
+  lightning, flame, Guided), as retail's `530580`; from the user's 0.9.12
+  Crusades replay, where a Death Totem (range 550) fired all game at a
+  lodestone 584.5 px off and never hit. Protocol unchanged (305 was never
+  released).
 
 `git diff --stat v0.9.11 95ca9163`: 142 files changed, 8196 insertions(+),
 3917 deletions(-); `-- src`: 38 files changed, 3306 insertions(+), 1137
@@ -125,22 +132,64 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
 - **Quick suite** (`ctest -L quick`, during the combine `3ce75ac7`): 520 of
   521 passed; `vashim_unavailable` is the known local failure (a render node
   without libva).
+- **Shot range (`task-los-range`).** New `shot_range` / `legion_shot_range`
+  (`tools/shot_range_test.cpp`): on `94459ddb` (with only the new
+  `Weapon` helpers added, so the test builds) 5 of 11 checks fail in each
+  mode: the Death Totem holds the lodestone 584.5 px off for all 900 ticks,
+  with bolts in the air on 266 ticks and no hit; a Crossbowman, Shaman and
+  Fire Demon ordered onto a 7x12 Barracks stop 119-120 px past their range
+  with no hit, and a Fire Wagon 113 px past it (its flame's splash still
+  reached). With the fix all pass: they stand at the range itself (407-431,
+  338 and 899 px) and hit. The Drake (a flyer, which closes in anyway), the
+  Archer and the Swordsman read the same distances and hits before and
+  after. `structure_combat_reach` now places
+  its target 20 px inside the range for a tower whose shot dies at its range
+  (Prismatic Mirror, Stronghold; it sat in the old pad). Related tests
+  (`fire_sweep*`, combat, `blocked_shot`, `ballistic_line`, `factory_death`,
+  `ai_behavior*`, `classic_ai*`, `retail_ai`, Crusades: 77) pass; quick suite
+  528 of 529 (`vashim_unavailable`, the known local failure).
+  User replay (`totem-0912.takrep`, the replay tracer on the fixed sim): it
+  departs from the recording at tick 27,390, as expected; at 21:00 (tick
+  37,800) the totem (id 190, complete) and the lodestone (id 158) stand
+  584.493 px apart as recorded, and the totem has no order and fired no bolt
+  from tick 35,000 to 38,500 (the recording: on target, bolts every reload).
+  Review (scratch harness, not in the suite): every mobile unit type whose
+  reach weapon's shot ends at its range, both rosters, ordered onto seven
+  buildings (a 2x2 lodestone up to the 8x20 Cabal and 10x14 Temple) from two
+  sides, 80 s each, on `94459ddb` and on the fix, Retail and Legion: none
+  stands past its range; 268 Retail cases hit only with the fix, and the
+  shortest such ranges (Fallen Angel 140, Fire Mage 200) still reach the
+  biggest buildings' centres. Lost: the Fallen Angel (a flyer) on a lodestone
+  (1-3 hits before, none now), and Kirenna on the Temple from one side (18
+  hits before; she fires after a walk only by her script's timing, and on
+  neither build does she fire after walking to any other target: see the
+  notes' known limits). The Fire Mage's flame missed a lodestone on both
+  builds. Naval units were not covered (dry map).
 - **Full suite on `95ca9163`** (Debug `-O2`, all targets built, `ctest -j12`,
   scratch `HOME` and XDG folders, test data `assets/game`, which has no mods):
   789 of 791 passed, one skipped (`vashim_system_loader`, which skips itself).
   One failed: `vashim_unavailable` ("no display on a render node without
   libva"), the known local failure; CI builds FFmpeg with the shim and runs it
   there. Wall time 1,343 s.
+  TODO-LEAD: rerun the full suite on the final code (the shot-range fix
+  changed `src/sim` after this run).
 - **Cross-compiler golden hash** (`tools/check-determinism.sh`): golden
   `dcef618cd2e4d558` from g++ and clang++ at -O0, -O2 and -O3, unchanged from
   0.9.11. The aarch64 leg was skipped because no target libc or headers are
-  installed here.
+  installed here. Rerun on `task-los-range`: the same golden.
 - **Gates on the final code** (`95ca9163`, the set-up below, ports
   24301-24307): all seven hashes equal the table below in three runs. All
   seven servers loaded retail gameplay hash `d6000f4fa9095a51` in every run,
   and no desync, mismatch or referee-suspect line appeared in any client or
-  server log of the three runs.
+  server log of the three runs. On `task-los-range` (ports 24311-24317,
+  `~/tak-tmp/gates-los/`), four runs (the third on the final, comment-only
+  tidied build, the fourth by the review on the same build): all seven
+  hashes unchanged from the table below and identical in every run; no desync, mismatch or referee-suspect line.
 - **Detmath guard** (`tools/check-detmath.sh`, on the prepared tree): OK.
+- **Scenario baseline and navigation checkpoints on `task-los-range`:** all
+  67 `legion_check_*` tests (every key, `hash@` included, against
+  `baseline.json`) and `navigation_determinism` pass unchanged; nothing was
+  retaken.
 - **Scenario baseline** (`tools/scenarios/baseline.json`, at the combine): all
   145 scenarios in both modes at the gate offsets; only the values of the
   2,193 existing `hash@` keys retaken (1,229 Retail, 964 Legion: every one

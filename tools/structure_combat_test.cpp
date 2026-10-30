@@ -11,7 +11,9 @@
 #include <algorithm>
 namespace {
 // One unit `id` at the centre of a flat field and an enemy structure just
-// past its weapon range, in reach only by tickCombat's footprint pad. With
+// past its weapon range, in reach only by tickCombat's footprint pad -- or,
+// for a weapon whose shot dies at its range (Weapon::shotEndsAtRange, no pad
+// since 0.9.12), 20 px inside it. With
 // `decoy`, a mobile enemy also stands nearer, but past the reach: before the
 // fix, findTarget took the nearer decoy on every acquisition turn,
 // tickCombat dropped it at once, and each acquisition wiped the sweep's slot
@@ -27,11 +29,18 @@ long reachCase(const tak::sim::TypeRegistry& registry,const char* id,bool hold,i
     mobile.maxHp=30000;mobile.healTime=0;mobile.weapons.clear();mobile.weapon.damage=0;
     auto building=*registry.find("aralode");
     building.maxHp=30000;building.healTime=0;building.weapons.clear();building.weapon.damage=0;
-    const float pad=8.0f*float(std::max(building.footX,building.footZ))+24.0f;
+    // The reach weapon (World::approachSlot): the selected one, the longest
+    // when every weapon fires.
+    int reachSlot=std::max(slot,0);
+    if(!type.weaponSwitching && type.weapons.size()>1)
+        for(int s=0;s<int(type.weapons.size());++s)
+            if(type.weapons[size_t(s)].range>type.weapons[size_t(reachSlot)].range)reachSlot=s;
+    const float pad=float(type.weapons[size_t(reachSlot)].structurePad(std::max(building.footX,building.footZ)));
     const int a=w.spawn(&type,4096,4096,0,0);
-    // Past the range, inside range+pad: a centre distance of reach+pad/2.
-    const int inner=w.spawn(&building,4096,4096-(reach+pad*0.5f),0,1);
-    const int outer=decoy ? w.spawn(&mobile,4096+reach+pad*0.25f,4096,0,1) : 0;
+    // Past the range, inside range+pad: a centre distance of reach+pad/2;
+    // with no pad, 20 px inside the range.
+    const int inner=w.spawn(&building,4096,4096-(pad>0.0f ? reach+pad*0.5f : reach-20.0f),0,1);
+    const int outer=decoy ? w.spawn(&mobile,4096+reach+std::max(pad*0.25f,10.0f),4096,0,1) : 0;
     w.player(0).mana=100000;
     if(hold)w.unit(a)->moveState=0;
     if(slot>=0)w.setWeapon(a,slot);
