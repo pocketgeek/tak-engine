@@ -10122,9 +10122,9 @@ struct LegionNavigator::Impl {
     // The centre distance (px) at which tickCombat brakes this attacker in
     // reach of `t` (its selected weapon, or the longest when every weapon
     // fires; a structure target padded by its half extent, as tickCombat
-    // pads it, unless the shot dies at its range; melee at footprint
-    // contact), or a guard's 70 px; and whether shooting from there needs a
-    // line of sight. 0: no reach (no weapon).
+    // pads it, only for a melee reach weapon; melee at footprint contact),
+    // or a guard's 70 px; and whether shooting from there needs a line of
+    // sight. 0: no reach (no weapon).
     // The same float expressions as the hashed combat path, read as int px.
     std::pair<int,bool> reachPx(const Unit& u,const Unit* t,bool guard) const {
         if(guard)return {70,false};
@@ -10134,15 +10134,15 @@ struct LegionNavigator::Impl {
         const Weapon& sel=u.type->weapons[size_t(slot)];
         if(sel.melee)return {8*(std::max(u.type->footX,u.type->footZ)+std::max(t->type->footX,t->type->footZ))+8,false};
         const float best=all?u.type->maxRange():sel.range;
-        const float pad=t->type->maxVel<=Fixed()&&!endsAtRange(u)?8.0f*float(std::max(t->type->footX,t->type->footZ))+24.0f:0.0f;
+        const float pad=t->type->maxVel<=Fixed()&&!centreReach(u)?8.0f*float(std::max(t->type->footX,t->type->footZ))+24.0f:0.0f;
         const bool los=w.approachNeedsClearLine(u,*t);   // tickCombat's own test
         return {int(best+pad),los};
     }
-    // Does the reach weapon's shot die at its range (combatReach: then a
-    // structure target gets no pad)?
-    bool endsAtRange(const Unit& u) const {
+    // Does the reach weapon measure a structure centre to centre (combatReach:
+    // then it gets no pad; every class but melee)?
+    bool centreReach(const Unit& u) const {
         const int slot=w.approachSlot(u);
-        return slot>=0&&u.type->weapons[size_t(slot)].shotEndsAtRange();
+        return slot>=0&&u.type->weapons[size_t(slot)].centreReach();
     }
     // tickCombat's own radial reach (float), as reachPx before its floor;
     // 0 for melee (not radial: see meleeInRange) or no weapon.
@@ -10153,7 +10153,7 @@ struct LegionNavigator::Impl {
         const Weapon& sel=u.type->weapons[size_t(slot)];
         if(sel.melee)return 0.0f;
         const float best=all?u.type->maxRange():sel.range;
-        const float pad=t->type->maxVel<=Fixed()&&!endsAtRange(u)?8.0f*float(std::max(t->type->footX,t->type->footZ))+24.0f:0.0f;
+        const float pad=t->type->maxVel<=Fixed()&&!centreReach(u)?8.0f*float(std::max(t->type->footX,t->type->footZ))+24.0f:0.0f;
         return best+pad;
     }
     static constexpr int64_t kQuarterTurn=65536;   // pseudoAngle's 90 degrees

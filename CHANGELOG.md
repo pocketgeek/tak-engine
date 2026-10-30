@@ -44,13 +44,14 @@ their validation reports; both live in [`docs/`](docs/).
   attacked if someone has). A game between AIs may now not end when a last
   unit stays hidden, and Not Explored games run longer (the AI no longer knows
   every deposit).
-- **Shots that die at their range no longer aim at buildings past it**, as in
-  the original game: line-of-sight bolts, lightning, flames and guided shots
-  measure a building's distance centre to centre, with no allowance for its
-  size. A Death Totem no longer empties its lightning into the air at a
-  lodestone just out of range, and a Crossbowman, Shaman, mage or dragon
-  ordered onto a building walks into range and hits it instead of stopping
-  short.
+- **Weapons no longer aim at buildings past their range**, as in the
+  original game: every weapon but melee measures a building's distance centre
+  to centre, with no allowance for its size. A Death Totem no longer empties
+  its lightning into the air at a lodestone just out of range, a Crossbowman,
+  Shaman, mage or dragon ordered onto a building walks into range and hits it
+  instead of stopping short, and bombers, earthquakes, storms, hail, freeze,
+  stone and mind-control spells are no longer cast at a building from past
+  their range.
 - **Kirenna no longer always stands without firing after walking up to a
   target.** Her aim waits for her walk to settle, and the engine aimed the
   instant she stopped. Now, as in the original game, an attack aims a moment

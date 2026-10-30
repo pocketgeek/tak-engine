@@ -140,24 +140,27 @@ struct Weapon {
     // landing short. Decided per weapon -- the firing slot's, or the approach
     // slot's for the unit as a whole -- never by "any weapon of the unit".
     bool needsClearLine() const { return !melee && range > 64 && !ballisticClass(); }
-    // Does a shot from this weapon die at the weapon's range? A Line-of-Sight
-    // bolt or lightning strike and a Guided shot are given a lifetime of one
-    // range of travel at launch, and a flame front is scanned out to the range
-    // (World::fire, World::tickFlames). Retail's range test for all of them is
-    // the base one (530580: centre to centre, inclusive; the lightning, LOS,
-    // fire and Guided vtables all point at it), so the engine's footprint pad
-    // for a structure target is not theirs: with it a Crusades Death Totem
-    // (range 550) took a lodestone 584 px off and its bolts died ~540 px out.
-    // Melee, a Ballistic shell (its own arc test), a Dropped bomb, an instant
-    // Line-of-Sight shot and a Remote or Wandering effect are not shots of
-    // this kind.
-    bool shotEndsAtRange() const {
-        return !melee && projVel > 0 && (straight || lightning || flameKind >= 0 || kind == Kind::Guided);
-    }
+    // Is this weapon's reach to a structure measured centre to centre, with no
+    // allowance for the structure's size? Retail's unit-target range test is a
+    // virtual of the weapon class (vtable +0xc), and 16 of its 17 classes
+    // answer centre to centre (530580, inclusive): WeaponType, every Line-of-
+    // Sight subclass (plain, lightning, fire, mind control, stone, freeze),
+    // Guided, every Remote Effect subclass (plain, hailstorm, earthquake, both
+    // area spells), Wandering, DroppedBallistic (532290, a bare call of
+    // 530580) and Ballistic (52bc60: its arc, then 530580). Only MeleeWeapon
+    // (52b980) does not, testing footprint boxes instead (meleeInRange).
+    // tools/re/check_inrange_classes.py runs all 17 natively against a 7x12
+    // building. With our old pad a Crusades Death Totem (range 550) took a
+    // lodestone 584 px off and its bolts died ~540 px out, and a Dropped
+    // bomb, a Remote or Wandering spell or a freeze, stone or mind-control
+    // beam was cast at a building up to 8*foot+24 px past its range, where
+    // retail's never is.
+    bool centreReach() const { return !melee; }
     // The engine's range allowance for a structure target of `foot` cells
     // (its larger side): the half extent plus a margin for where navigation
-    // halts at its edge. None for a weapon whose shot ends at its range.
-    int32_t structurePad(int32_t foot) const { return shotEndsAtRange() ? 0 : 8*foot+24; }
+    // halts at its edge. It stands in for melee's box contact when an attack
+    // approaches; every other class gets none (centreReach).
+    int32_t structurePad(int32_t foot) const { return centreReach() ? 0 : 8*foot+24; }
     int32_t particlesPerSec = 0; // particlespersecond (readInt): hailstorm pulse rate
     float turnRate = 0;      // guided: steering rate, radians/sec (FBI deg/s)
     // Retail splits a projectile's per-tick travel into sub-steps so no sub-step is

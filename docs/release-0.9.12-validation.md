@@ -71,6 +71,11 @@ reviewed on its own; the code tested below is main `95ca9163`:
   Crusades replay, where a Death Totem (range 550) fired all game at a
   lodestone 584.5 px off and never hit. Protocol unchanged (305 was never
   released).
+- **Range by weapon class** (`task-range-classes`): no structure pad for any
+  weapon but melee (`Weapon::centreReach`), after emulating every retail
+  weapon class's range test: the Dropped, Remote, Hailstorm, Earthquake, area,
+  Wandering and freeze/stone/mind-control Line-of-Sight weapons kept the pad
+  in the change above. Protocol unchanged.
 
 `git diff --stat v0.9.11 95ca9163`: 142 files changed, 8196 insertions(+),
 3917 deletions(-); `-- src`: 38 files changed, 3306 insertions(+), 1137
@@ -165,6 +170,37 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
   neither build does she fire after walking to any other target: see the
   notes' known limits). The Fire Mage's flame missed a lodestone on both
   builds. Naval units were not covered (dry map).
+- **Range by weapon class (`task-range-classes`).**
+  `tools/re/check_inrange_classes.py` calls each of the 17 handler vtables'
+  +0xc natively (238 answers, range 300, a 7x12 target at 299-420 px along x
+  and on the diagonal): 16 classes are in range exactly at centre distance
+  <= 300 (`530580`; Ballistic `52bc60` with an arc that reaches; Dropped
+  `532290`, a bare call of `530580`), none inside the old 120 px pad; melee
+  (`52b980`) answers by its boxes. `shot_range_test` now has a case per
+  class (31 checks): on `259d26a5` with only the new helper, 13 fail in each
+  mode (the class survey in both rosters; a Lokken's Fire Wave, Fire Mage's
+  Fire Storm, Acolyte's Earthquake and Weather Witch's Tornado on Hold
+  Position target and damage a Barracks half the old pad past their range;
+  ordered onto it, those four, a Mechanic's Freeze Beam and a Basilisk's
+  Turn To Stone stop 119-120 px past their range, and a Lich, range 60,
+  damages it from 179 px). With the fix all pass in both modes: they stand
+  at 119-446 px, within their range, and hit. An Iron Beak (a flyer) hits on
+  both builds. `structure_combat_reach` adds a Fire Mage (Fire Storm) and
+  an Acolyte (Earthquake) on Hold Position: pass. Quick suite 527 of 529:
+  `vashim_unavailable` (the known local failure) and `streaming_pacing`
+  (frames dropped encoding 7680x2160 at a load average of 20-25 from other
+  work on the machine; no video code changed). Attack sweep (`task-attack-sweep`
+  harness on the fix, the two building targets, both rosters, 5,354 cases,
+  against main `259d26a5`'s run): futile cases 50 -> 50; cases that fired
+  from beyond every one of the attacker's weapon ranges 98 -> 0 (90 on the
+  weapons this change moves, 8 on other weapons of the same units); every
+  ordered attack that damaged its building still does (1,208 orders from
+  100% and far: 1,141 -> 1,141). 226 cases changed: band cases on Hold
+  Position that fired 141 -> 125, Dirigibles and Juggernauts now drop their
+  bombs from within 200/500 px, and a Weather Witch or Sea Dragon on Hold
+  Position no longer engages a building past the range of the weapon that
+  set it off (the Tornado's 150, the Tsunami's 450), as it already did not
+  engage a unit there.
 - **Full suite on `95ca9163`** (Debug `-O2`, all targets built, `ctest -j12`,
   scratch `HOME` and XDG folders, test data `assets/game`, which has no mods):
   789 of 791 passed, one skipped (`vashim_system_loader`, which skips itself).
