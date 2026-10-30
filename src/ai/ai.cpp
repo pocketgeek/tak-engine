@@ -3402,9 +3402,11 @@ void Controller::reviveIdle(const tak::sim::World& world, std::vector<int>& assi
     std::vector<Body> bodies;
     bool gathered = false;
     for (const auto& u : world.units()) {
-        if (!u.alive() || u.player != player_ || !u.type || u.underConstruction || u.embarked() ||
-            u.incapacitated() || u.buildSiteId || !idle(u) ||
+        // The type's caster flags before idle(), which walks the unit's orders:
+        // most units are no caster (every test here is a pure read).
+        if (!u.alive() || u.player != player_ || !u.type ||
             !(u.type->canResurrect || (u.type->canAnimate && u.type->animateType)) ||
+            u.underConstruction || u.embarked() || u.incapacitated() || u.buildSiteId || !idle(u) ||
             std::find(assigned.begin(), assigned.end(), u.id) != assigned.end()) continue;
         if (reviveStats.on) ++reviveStats.casters;
         if (!gathered) {
