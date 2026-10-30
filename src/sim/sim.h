@@ -798,6 +798,13 @@ struct alignas(64) Order {
     // `mission`): 1 once a run has brought the flyer within half its range
     // of the target; stage 7 counts wakes off the map on it.
     int32_t airRunCount = 0;
+    // A ground attack (Attack_Chase, 403bb0; tickCombat): whether the unit
+    // has walked toward its target under this order, and the tick its
+    // weapons first aim at it (kAttackUnaimed until it first stands in
+    // reach). Hashed with a tag when set.
+    static constexpr uint32_t kAttackUnaimed = UINT32_MAX;
+    bool attackChased = false;
+    uint32_t attackAimTick = kAttackUnaimed;
     int32_t stationRefX = 0, stationRefZ = 0;
     uint32_t stationRefTick = 0;
     // MobileBuild placement at the site (405824..405911): failures while only
@@ -995,11 +1002,13 @@ struct alignas(64) Unit {
     int32_t stonedFor = 0;   // >0 = petrified (can't act, immune to damage while stone)
     int32_t paralyzedFor = 0;// >0 = paralyzed (can't act, still takes damage)
     int32_t selfDestructT = -1;// >=0 = self-destruct countdown (ticks) armed; -1 = not
-    // The tick's REQUESTED turn (want - heading, unclamped BAM), display only --
-    // never hashed. Retail's TurnDirection callin (icd 0x4d9550) converts the
-    // requested arg, NOT the clamped rotation applied to heading, so the client
-    // animation needs this rather than a heading-delta (which would truncate to
-    // zero for slow turners). Reset each tick; set where the mover turns.
+    // The tick's REQUESTED turn (want - heading, unclamped BAM). Not hashed
+    // itself, but World::notifyTurnDirection reports it to the unit's own
+    // (hashed) script VM, so it must stay deterministic; the client animation
+    // reads it too. Retail's TurnDirection callin (icd 0x4d9593) converts the
+    // requested arg, NOT the clamped rotation applied to heading, so both need
+    // this rather than a heading-delta (which would truncate to zero for slow
+    // turners). Reset each tick; set where the mover turns.
     int32_t turnReqBam = 0;
     // GET 33 reads the mover's signed applied turn from its previous update.
     // COB runs before this tick's mover, so publish the completed turn at tick end.
@@ -3692,6 +3701,11 @@ private:
     public:
         bool activated=false,ready=false,yardOpen=false,buggerOff=false;
         uint32_t movementRate=0;
+        // TurnDirection's last reported turn, in whole degrees (mover +0x26,
+        // 4d9593), and whether this tick's turn was the idle navigator's
+        // pivot, which 4d9ad0 asks for after a zero request (notifyTurnDirection).
+        int16_t turnDirection=0;
+        bool turnInPlace=false;
         bool dying=false;
         int deathStopValue=0;
         // Last SweetSpot drawn centre (queryUnitScriptPoint): derived, not hashed.
@@ -3740,6 +3754,7 @@ private:
     }
     struct ScriptHost;
     void tickUnitScript(Unit& unit);
+    void notifyTurnDirection(Unit& u,UnitScript& script);
     void beginUnitDeath(Unit& unit);
     void updateCorpseWindow(Unit& unit);
     // Enabled by setupMatch; a bare test World leaves it off.

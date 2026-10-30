@@ -349,7 +349,10 @@ int main(int argc,char** argv) {
         // World faced the target's centre. The Lokken (turninplacerate 2600)
         // reaches its request every tick, and it moves first in each tick, so
         // its heading after a tick is the request made from the positions and
-        // velocity read before it.
+        // velocity read before it. Not before its weapon aims, though: after
+        // a walk Attack_Chase gives the slot its target two ticks after the
+        // stop, and the body faces from the tick after (World::tickCombat).
+        // Those held ticks are not counted.
         auto nativeFrom=[](const std::array<int32_t,3>& origin,const std::array<int32_t,3>& point) {
             using tak::sim::Fixed;
             return uint16_t(tak::sim::retailDirection(
@@ -377,10 +380,12 @@ int main(int argc,char** argv) {
                     tak::retailAimSpeed(fireBall.projVel),fireBall.noLead);
                 const uint16_t toLead=nativeFrom(origin,lead),toCentre=nativeFrom(origin,middle);
                 const bool rest=s->speed==tak::sim::Fixed();
+                const uint32_t simulated=w.tickCount();
                 w.tick(1.f/30.f);
                 s=w.unit(shooter);
                 if (!rest || s->speed!=tak::sim::Fixed() ||
                     tak::sim::fxLen(f->x-s->x,f->z-s->z).toFloat()>fireBall.range) continue;
+                if (!s->orders.empty() && simulated<=s->orders.front().attackAimTick) continue;
                 ++aiming;
                 const uint16_t heading=tak::sim::portHeadingToRetail(s->heading);
                 led+=heading==toLead;centre+=heading==toCentre;

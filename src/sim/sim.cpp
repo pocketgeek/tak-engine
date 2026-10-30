@@ -1178,6 +1178,8 @@ void World::brakeGround(Unit& u,std::optional<Bam> facing) {
         const int32_t rate=uint16_t(int64_t(uint16_t(u.type->turnInPlaceRate))*multiplier.v/65536);
         u.heading=u.heading+Bam(std::clamp(diff,-rate,rate));
         u.turnReqBam=diff;
+        // 4d9ad0 asked 4d91b0 for no turn before braking: TurnDirection hears both.
+        if (auto* script=unitScript(u.id)) script->turnInPlace=true;
     }
     const auto step=retailGroundStep(u.heading,u.speed);
     commitGroundStep(u,step.s,step.c);
@@ -7090,11 +7092,16 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         dx=(target->x-u.x).toFloat(); dz=(target->z-u.z).toFloat();
         dist=std::sqrt(dx*dx+dz*dz);
     }
+    // Attack_Chase (403bb0): the attack mission of a body that walks, its
+    // selected weapon not melee (Attack_Melee, 404690, closes to contact).
+    const bool chaseMission = !u.type->canFly && !u.type->isStructure() && u.type->canMove &&
+                              !(sel && sel->melee);
     // An attack run flies in and out of range: its weapons fire (below) when
     // a slot has the target in range, and the mission flies on regardless.
     if (!airRun && ((sel && sel->melee) ? !adj
                             : (!inReach || (approachNeedsLine && !los && mayChase) || (mayChase && arcShort())))) {
         if (hovering) return;
+        if (chaseMission) u.orders.front().attackChased = true;
         // Advance toward the target, steering around impassable terrain.
         if (u.repathLeft > 0) --u.repathLeft;
         Order& o = u.orders[currentLeg(u.orders)];
@@ -7131,13 +7138,44 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         else if (sel)
             f(slot);
     };
+    // Attack_Chase gives the selected slot its target in stage 1 (404406:
+    // 4d4d40 stops the navigator, 51a700 sets the target). An order that
+    // starts in reach runs stage 1 at its first dispatch; after a walk, two
+    // ticks after the arrival stopped the body: the controller posts its
+    // events from the mover, stage 2 takes them at the next dispatch and
+    // sleeps a tick (403f2c..403f4f). The weapon update (52ae90) runs before
+    // the missions, so it starts AimWeapon the tick after stage 1, the unit's
+    // COB pass runs it straight away, and only then does the mover pivot to
+    // the facing request 52fe30 posted. World runs the COB pass first and
+    // the weapons after it, so the same order is: aim on the stage 1 tick
+    // (World's aim start reaches the script at the next tick's COB pass), and
+    // face from the tick after. Until the weapons aim the body stands still.
+    // The gap is what lets a walker whose AimWeapon waits on its walk
+    // controller fire: VERMAGE's waits for static 7, which restore_x sets
+    // when the controller finds the body stopped and not yet aiming; aiming
+    // on the tick it stops leaves the controller in restore_legs, and the
+    // aim waits for ever. (Emulated end to end: docs/retail-engine.md,
+    // "Attack_Chase: the stop comes before the aim".)
+    // Both ride the front order, so a route that lands on a walk's last tick
+    // (as one does after a single step) leaves the arrival unheld. Kept on
+    // the goal leg through replaceLeg instead, the hold also follows those
+    // steps, and Kirenna stalls in 26 attack-sweep cases she fires in now:
+    // retail's slots stay automatic until stage 1, so the fire-at-will sweep
+    // aims during such a walk, and World's are manual for the whole order.
+    bool aimHeld = false, facingHeld = false;
+    if (chaseMission) {
+        Order& o = u.orders.front();
+        if (o.attackAimTick == Order::kAttackUnaimed) o.attackAimTick = tickCounter_ + (o.attackChased ? 2u : 0u);
+        aimHeld = tickCounter_ < o.attackAimTick;
+        facingHeld = tickCounter_ <= o.attackAimTick;
+    }
     // The attack controller stops navigation and supplies a facing target.
     // Ground movement brakes and commits once; pivoting starts only at rest.
     // A pivoting ground unit turns toward the request its aiming slots post in
     // 52fe30 -- the led SweetSpot, or a melee target's origin -- and the last
     // slot to post wins (52ae90 walks them in order).
     std::optional<Bam> request;
-    if (!u.type->canFly && slotNeedsFacing(*u.type))
+    if (!facingHeld && !u.type->canFly && slotNeedsFacing(*u.type))
         forEachSlot([&](int sl) {
             if (!slotAims(sl)) return;
             if (const auto aim=queryWeaponAim(u.id,target->id,sl)) request=retailHeadingToPort(aim->facing);
@@ -7153,7 +7191,8 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         // movement walks the route on; the weapons below still fire if they aim
     } else if (!u.type->canFly && !u.type->isStructure()) {
         if (legion_ && isLegionPathfinding(pathfindingMode_)) legion_->noteEngaged(u);   // W5 step 0 counter
-        if (u.type->domain==UnitType::Domain::Water && !u.type->turnInPlaceRate) {
+        if (facingHeld) brakeGround(u);
+        else if (u.type->domain==UnitType::Domain::Water && !u.type->turnInPlaceRate) {
             // Ships commonly specify only turnrate. Once in firing range they
             // still need to face the target instead of waiting on a zero pivot rate.
             brakeGround(u);
@@ -7186,6 +7225,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
             std::abs(diff) >= std::max(sw.aimTol, int32_t(0.03f / kCobAngle))) return;
         fire(u, *target, sl);
     };
+    if (aimHeld) return;
     // 52ae90 runs the weapons before the missions and the mover.
     forEachSlot(tryFire);
     // cancapture: a charmer converts the target after sustained contact (~3s) or
@@ -13286,8 +13326,41 @@ void World::updateLegionStill(Unit& u,Fixed beforeX,Fixed beforeZ) {
     if (u.legionStill) u.turnReqBam=0;
 }
 
+// The mover's turn call-in (4d91b0's tail, 4d9593..4d95de). Every request to
+// turn reaches TurnDirection as whole degrees (a signed truncating /182)
+// whenever its sign differs from the last one reported, a turn starting or
+// ending included, as an immediate call (56c640 -> 56c5f0: a zero-elapsed VM
+// pass). The idle navigator (4d9ad0) asks for no turn first and then pivots
+// toward a posted facing request, so a pivot reports 0 and the pivot's turn
+// on every tick it lasts. These scripts are gameplay, not display: a walker's
+// Create-started controller reads its own TurnDirection static as "moving"
+// (VERMAGE's MoveWatcher: GET 29 > 5 or the last turn), and that controller
+// gates its AimWeapon. The display VM keeps its own copy of these call-ins.
+void World::notifyTurnDirection(Unit& u,UnitScript& script) {
+    const auto& file=*u.type->script();
+    auto report=[&](int32_t request) {
+        const int32_t degrees=int32_t(int16_t(request))/182;
+        const int32_t last=script.turnDirection;
+        if (last*degrees>0 || (last==0 && degrees==0)) return;   // one sign, or both none
+        script.turnDirection=int16_t(degrees);
+        // A script without the method is not touched (its sleep skip stands).
+        const int method=file.scriptIndex("TurnDirection");
+        if (method<0) return;
+        ScriptHost host{*this,u,script};
+        if (script.state().startArguments(file,method,{uint32_t(degrees),0,0,0},1))
+            script.state().tick(file,0,host);
+    };
+    if (script.turnInPlace) {
+        script.turnInPlace=false;
+        report(0);
+    }
+    report(u.turnReqBam);
+}
+
 void World::notifyMovementRate(Unit& u) {
     if (!u.type || u.type->isStructure() || !u.alive() || u.underConstruction) return;
+    // 4dc800 reports the turn from inside the mover, before MoveRate (4db350).
+    if (const auto it=unitScript(u.id)) notifyTurnDirection(u,*it);
     const auto multiplier=u.groundTerrainFlags&0x800 ? u.type->roadMult :
         u.groundTerrainFlags&0x1000 ? u.type->waterMult : Fixed::fromInt(1);
     const auto& v=u.flightVelocity;
@@ -16376,6 +16449,7 @@ uint64_t World::stateHash() const {
             script(factory.activated); script(factory.ready); script(factory.yardOpen); script(factory.buggerOff);
             if (factory.dying) { script(0x44454144u);script(factory.deathStopValue); }
             if (factory.movementRate) { script(0x4d4f5645u);script(factory.movementRate); }
+            if (factory.turnDirection) { script(0x5455524eu);script(uint32_t(int32_t(factory.turnDirection))); }
             // A skipped VM's unpaid debt is folded in: each sleeper hashes the count it
             // would hold had the skipped ticks run (UnitScript::pay).
             const auto& state=factory.peek();
@@ -16584,6 +16658,9 @@ uint64_t World::stateHash() const {
             if (order.convoyTick != ConvoyTable::kNone) {mix(0x434f4e5654494bull);mix(order.convoyTick);}
             if (order.orderSerial) {mix(0x4f52444552534e00ull);mix(order.orderSerial);}
             if (order.placementFailures) {mix(0x504c4143454dull);mix(order.placementFailures);mix(order.placementRetryTick);}
+            if (order.attackChased || order.attackAimTick != Order::kAttackUnaimed) {
+                mix(0x415454414b41494dull);mix(order.attackChased);mix(order.attackAimTick);
+            }
             if (order.chaseLeashed) {
                 mix(0x434841534555ull);mix(order.chaseLeash);
                 mix(uint16_t(order.chaseOrigin.x));mix(uint16_t(order.chaseOrigin.z));

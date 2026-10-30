@@ -3723,3 +3723,124 @@ guard, `tickFlyingGuard` as event `0x10` in the wait mask), and
 `retailIssueAutoAttack(..., forced)`, not an auto target, so it chases until
 the attacker dies, and the guard order under it resumes. The step-out and the
 attack scan (`0x51d1e0`) stay unported; the latter is our target acquisition.
+
+## Attack_Chase: the stop comes before the aim (icd + emulation, 2026-10-30)
+
+Kirenna (VERMAGE) ordered onto a target out of reach walked in, stopped about
+399 px off and never fired; ordered from in reach she fired. Her AimWeapon
+waits while `!static7 || static6` (100 ms sleeps). Static 7 belongs to her
+walk controller, MoveControl, a loop Create starts: it sets 7 after
+`walk_legs` (moving while aiming) and after `restore_x` (stopped and not
+aiming), and clears it after a plain `walk`, so a walk of a whole cycle leaves
+it 0. MoveControl decides only between walk frames (about 100 ms each; a frame
+loop quits early once its moving flag drops), and its moving flag is
+MoveWatcher's static 3 = GET 29 > 5 or static 5, sampled every 100 ms; static 5
+is the last TurnDirection argument. Once she stops, the controller plays
+`restore_x` (static 7 = 1) if AimWeapon has not raised static 2 yet, and
+`restore_legs` if it has; from `restore_legs`, stopped and aiming, it sleeps in
+a loop that never sets 7 again. Only TargetCleared or moving again does.
+Among the 129 shipped COBs whose AimWeapon has a wait loop, VERMAGE is the only
+one that waits on a static its walk controller writes (the others wait on
+their FireWeapon flag, or on activation, burrow or holster state).
+
+World started AimWeapon on the tick she stopped, so the controller nearly
+always looked after it (only when MoveWatcher and the walk frame both came due
+in the very next pass did it look first). Retail starts it three ticks later:
+
+- **Attack_Chase** (`0x403bb0`, registry row `0x5eb8d1`). Stage 2 chases: in
+  mode 0 (mission +0x52 % 100) it installs a circle controller on the target
+  (`0x4d4da0` -> `0x4e2500`, radius = the slot's range, accepted in cells) and
+  sleeps on 0x700 or `rand(6)+3`. The navigator stops the body when the circle
+  accepts and posts 0x100/0x400 to the mission. The next dispatch takes the
+  event, sets stage 1 and sleeps a tick (`0x403f2c..0x403f4f`). Stage 1
+  (`0x404406`): with the target in reach (`0x52ad60`) and not inside the
+  minimum range (`0x52adf0`) it stops the navigator (`0x4d4d40(m,0)`), makes
+  the selected slot manual if its target differs (`0x519b70`), sets the target
+  (`0x51a700`) and sleeps `rand(6)+3` on mask 0x1f40068; out of reach it bumps
+  +0x52 and returns to stage 2, which then walks it to a random point deeper in
+  (modes 2-4). An order that starts in reach runs stage 0 and stage 1 in its
+  first dispatch. Nothing else in the mission touches the slots: they stay
+  automatic through the chase (the previous mission's destructor, `0x4d6da0`,
+  set them so).
+- **The per-unit update** (`0x51d3e0`) runs the weapon update `0x52ae90`
+  before `0x51de30`, which runs the unit's COB pass (`0x56c870`), then the
+  missions (`0x4d8450`), then the mover (`0x4dc800`). `0x52fe30` starts
+  AimWeapon (not immediate) and posts the facing request (`0x4dc0b0`); the COB
+  pass right after runs it, after the threads already there; the mover then
+  pivots.
+- **The mover reports every turn** to the same VM: `0x4d91b0`'s tail
+  (`0x4d9593..0x4d95de`) sends TurnDirection(request / 182, truncated)
+  whenever its sign differs from the last one sent, a turn starting or ending
+  included, immediately (`0x56c640` -> `0x56c5f0` -> `0x56c870(0)`). The idle
+  navigator (`0x4d9ad0`) asks for no turn before braking, then pivots at
+  turninplacerate when a facing request is posted and the speed is 0, so a
+  pivot sends TurnDirection(0) and TurnDirection(d) on every tick it lasts.
+  World sent these to the display VM only (`retailmovementcallbacks.h`).
+
+So in retail she stops on tick A, stage 1 runs on A+2, and AimWeapon runs in
+A+3's COB pass, after MoveControl.
+
+**Emulated end to end** (`tools/re/probe_attack_chase_stop.py`): the native
+weapon update, VERMAGE's COB in retail's VM with the real GET/SET host, the
+mission dispatcher and Attack_Chase, and the mover with the ground navigator
+and the mission's own circle controller, run per tick in 51d3e0's order on a
+flat map; only the aim angles, the led point, the damage lookup, the group
+check, the retarget scan and the display sinks are controlled. Every
+engagement shows the same timeline (stop on A, stage 1's target on A+2,
+AimWeapon on A+3), and she fires exactly when her walk controller takes
+`restore_x`. It can only do that in a pass up to A+3 (in A+3's it runs before
+AimWeapon's new thread): the walk frame it sleeps in must end by then, with
+MoveWatcher already reporting the stop. Otherwise it takes `restore_legs`
+(A+5 to A+7) and she never fires. Over 36 order ticks x 4 distances, the
+arrival forced inside the range (`--grid`):
+
+    MoveWatcher sees the stop   restore_x      restore_legs   fires   of 144
+    A+1                         A+3 or A+4     -              yes     36
+    A+1                         -              A+5            no      12
+    A+2                         -              A+5 or A+6     no      48
+    A+3                         -              A+5 to A+7     no      48
+
+(from a start facing away, MoveWatcher on A+2 with `restore_x` on A+4 fires
+too). So retail stalls too: she fires in 36 of 144, and on the plain approach
+(620-760 px, no fire at will) in 34 of 141. With fire at will the slot is
+automatic during the chase and the sweep aims it while she walks, so the next
+walk cycle plays `walk_legs` and sets static 7: modelling the sweep's visit
+every 1, 4, 10 or 30 ticks she fires in 129, 130, 133 and 133 of 141. Most of
+those approaches first arrive just outside her 400 px reach (the circle
+accepts in cells), and stage 1 sends her on a second, deeper walk.
+
+**Ported** (protocol unchanged: 305 is unreleased). `World::tickCombat` holds
+an Attack_Chase order's weapons, the aim start and the facing request, until
+its stage 1: the tick the order first stands in reach when it starts in reach,
+two ticks after the stop when it walked (`Order::attackChased`,
+`attackAimTick`, on the front order); the body faces from the tick after. World
+runs the COB pass before the weapon update, so World's aim reaches the script
+at the next tick's pass, the same pass in which retail's runs.
+`World::notifyTurnDirection` reports the mover's turns to the unit's own VM
+before MoveRate, with the idle navigator's zero request ahead of a pivot from
+`brakeGround`. The same grid run on World (36 order delays x 4 distances, a
+scratch probe) gives the same answer as retail for every phase the two share,
+and she fires in 58 of 144 (12 before: only when her controller looked in the
+very pass after the stop). `attack_stop_test` (Retail and `--legion`) checks
+the timing for Kirenna and an Archer, that Kirenna ordered from 664 px fires
+(before: none in a minute), and that her script hears a pivot through
+TurnDirection. In the attack sweep (19,501 cases, both rosters), 29 ordered
+cases fire that did not: 24 of Kirenna's (of her orders that walked more than
+40 px, 9 of 52 fired, now 26) and five of a Wolf, a Mind Mage and a Berserker
+against a circling flyer; one fire-at-will case lost its only shot (a Crusades
+Stone Giant at a flyer circling at its full range, which it hit once, late).
+
+Not ported: the approach. World stops at the 2D range, so it never makes
+retail's second, deeper walk, and its slots are manual for the whole order, so
+fire at will never aims during the walk. Both make retail fire in more of these
+approaches than World does. The idle auto-slot pivot (`tickSlotWeapons`) turns
+before the mover and `brakeGround`'s zero request follows it, so that pivot is
+not reported. The state rides the front order, which `replaceLeg` does not
+carry to a new route's legs: a route that lands on a walk's last tick leaves
+that arrival unheld, and one that lands during a later chase of the same order
+arms the hold again (retail's slot keeps its target through it). Kept on the
+goal leg instead (tried: it changed no shot of Kirenna's in 36 walk-off
+chases), the hold also follows the single step an order takes when the
+fire-at-will sweep switches her weapon on its first tick, and she stalls in 26
+attack-sweep cases that she fires in now (all of them that step, 14 against the
+castle or the lodestone); retail's automatic slot would aim during that walk.
