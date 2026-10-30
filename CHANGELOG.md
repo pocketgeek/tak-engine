@@ -55,7 +55,8 @@ their validation reports; both live in [`docs/`](docs/).
   flyer no longer hangs still or hovers beside it but chases it, swings out
   when threatened and now and then breaks off and turns before coming back.
   The Aerial Juggernaut now closes in so its anti-air arrows reach (it stopped
-  at its cannons' range, and cannonballs miss flyers). An Iron Beak drops an
+  at its cannons' range, and cannonballs miss flyers), and its cannons pick
+  their own targets meanwhile, bombing the ground. An Iron Beak drops an
   egg only once it faces its target, as in the original; the egg hits a flyer
   below the Beak and falls past one at its own height.
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
