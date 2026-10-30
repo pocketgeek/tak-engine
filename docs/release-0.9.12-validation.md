@@ -109,6 +109,54 @@ reviewed on its own; the code tested below is main `95ca9163`:
     in a ground attack. `mixedSlots` sits in the pad beside
     `reclaimHeading` so `Order` stays 320 bytes; the one sim.h conflict
     (both sides added a field after `airRunCount`) was textual.
+- **Retail-check fixes** (eight branches, each fixed and reviewed on its own
+  from main `8d671ee0`, integrated on `task-integrate-0912b` with a merge
+  commit each, then merged to main; protocol unchanged, 305 was never
+  released):
+  - **Mission orders** (`task-mission-orders` `1870496b`, merged as
+    `27c36e80`): the `.ota` / `SetMission` order strings read clause by
+    clause as `0x513fb0`; `o`, `b`, `i`, `g`, `wa`, `w F N`, `v`, `a TYPE`,
+    `s`, `d` as the original (`ScriptedOrder`, `World::scriptHold`); the
+    Retail AI's `firstMission` reads a scripted head as class 0x13; the
+    review added the table compaction (`1870496b`).
+  - **Help and repair approach** (`task-repair-approach` `414554f5`, merged
+    as `dc5b2a64`): HelpBuild `0x405cf0` and RepairUnit `0x407190` on the
+    rectangle controller; the factory-yard step-out is our own addition
+    (not in the original); the review fixed an own-site assist stall and a
+    repeating conjurer's rally.
+  - **Raise by order** (`task-resurrect-order` `c795530f`, merged as
+    `c745a465`): `Cmd::Resurrect` (29), the resolver's resurrect / animate /
+    clear per unit, no idle raise or idle corpse clear; our AI levels order
+    their idle casters' raises.
+  - **Harpy capture** (`task-harpy-capture` `ed38a8f8`, merged as
+    `b443fdfb`): no contact capture, a charmed unit keeps its HP and loses
+    its veterancy, no charm on an unfinished unit.
+  - **VTOL_SeekAttack** (`task-air-seekattack` `c4480aee`, merged as
+    `1a94cd76`): an attack flyer whose last order's target is lost circles
+    its point (`0x4192f0`).
+  - **Remote Effect timing** (`task-spell-timing` `10ab21bf`, merged as
+    `db616d3d`): retail's aim point (SweetSpot plus lead) and tick timeline;
+    `nimbustime` as the storm launch delay.
+  - **Flyer group spread** (`task-air-group-move` `f5226ba8`, merged as
+    `ce387184`): retail's `0x5214b0` offsets for flyers on a right-click
+    move, MOVE and PATROL; ground units keep our spread (the user's ruling:
+    a deliberate deviation, keeping the shape of a big air group).
+  - **Three small fixes** (`task-small3` `bf4d7b1e`, merged as `130a954a`):
+    a Divine Lodestone over the Standing Stones (S yards test terrain only
+    where the sacred-site rule applies), flyers drawn after the shots and
+    effects, no hit response from a unit under construction.
+  - **Integration** (`2246f550`, `7638e3cb`): `Order` stays 320 bytes
+    (the branches' fields each fit alone and together made 384:
+    `repairLooks` moved to line 1's one-byte pad before `missionRadius`,
+    `seekAttack` to the tail pad beside `aheadOfDefault`, `reviveKind`
+    beside `mixedSlots`, `scripted` after `chaseOrigin`; every line
+    assertion unchanged). Two code conflicts: the hash folds in
+    `World::stateHash` (both kept) and `tickCombat`'s lost-target branches
+    (the seek kept, `captureProg` gone). Test fixes for the combination
+    (`air_seek_attack_test` lost `canCapture`, `build_controls`' flyer
+    expectation, the `classic_ai_duels` cap; below) and the mixed2 retake.
+    The rest of the conflicts were in `CHANGELOG.md` and the notes (adjacent
+    sections), resolved keeping both sides.
 
 `git diff --stat v0.9.11 95ca9163`: 142 files changed, 8196 insertions(+),
 3917 deletions(-); `-- src`: 38 files changed, 3306 insertions(+), 1137
@@ -348,6 +396,74 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
   identical in both runs (wall 42 s each), every server loaded
   `d6000f4fa9095a51`, no desync, mismatch or referee-suspect line
   (`mixedSlots` is folded only when set, and no gate's game reaches it).
+  With the retail-check branches merged (`7638e3cb`'s sim, ports
+  24711-24717, `~/tak-tmp/gates-0912-b/`), two runs: six hashes unchanged,
+  Crusades Retail 300 s `01c551c99113dbb9` -> `def92d0b7d4a798e`, identical
+  in both runs; every server loaded `d6000f4fa9095a51`; no
+  desync, mismatch or referee-suspect line. The Crusades Retail move comes
+  from the raise order alone (that branch's build gives `def92d0b7d4a798e`,
+  the other seven branches' builds `01c551c99113dbb9`): bodies are no
+  longer cleared by idle builders and our AI orders its casters' raises.
+- **On the merged retail-check branches** (`7638e3cb`; Debug `-O2` and
+  Release, all targets built; scratch `HOME`, XDG folders and `TMPDIR`; test
+  data `assets/game`):
+  - **Detmath and golden:** `check-detmath.sh` OK; `check-determinism.sh`
+    golden `dcef618cd2e4d558` unchanged (g++ and clang++, -O0/-O2/-O3;
+    aarch64 skipped, no target libc), `src/sim/detmath*` untouched.
+  - **Full suite** (`ctest -j12`, 803 tests, wall 1,297 s): 799 passed,
+    `vashim_system_loader` skipped, 3 failed. `vashim_unavailable` is the
+    known local failure. `build_controls` (not labelled quick, so no branch
+    ran it): its mixed builder-and-flyer right-click expected the old
+    +-60 clamp (2340); the flyer now keeps its unclamped place, offset -75
+    from the centre within sqrt(3000 x 2), 2325 (expectation updated).
+    `classic_ai_duels`: Aramon v Veruna on the default seed ended with no
+    winner within 90 game-minutes (an even war, both sides launching waves to
+    the end; Aramon wins at 91.9). Each branch alone passes it. Over eight
+    seeds (`TAK_DUEL_PAIRS`): main 8 of 8 end, mean 49.9 minutes, Aramon
+    5 / Veruna 3; merged 7 of 8 within 90, mean 31.9, Aramon all 7. The
+    shift comes from the help/repair approach alone (that branch: Aramon
+    wins all 8, mean 35.4); the spell timing and small fixes move single
+    seeds. The cap is now 120 minutes (`2246f550`), with the reason in the
+    test; both tests pass on a rerun. TODO-LEAD: confirm the cap change and
+    the Retail AI's Aramon-v-Veruna shift (the original's repair approach
+    makes the Retail AI's repairers effective).
+  - **Branch tests on the merged code:** `mission_orders`,
+    `mission_orders_shipped`, `ambush`, `revive_order`, `capture_combat*`,
+    `air_seek_attack`, `helpbuild`, `remote_timing`, `sacred_yard`,
+    `fire_sweep_retaliation`, `issue_selection*`, `selection_order`,
+    `convoy`, `production*`, `ai_behavior*`, `featgen`,
+    `builder_automation`, `retail_script`, `unit_retirement`,
+    `flyer_combat`, `air_to_air`, the campaign and transport tests,
+    `doorway`, `legion_patrolrepair`, `retailgap`: 46 of 46 pass.
+  - **Scenario baseline:** all 67 `legion_check_*` tests and
+    `navigation_determinism` pass unchanged. All 145 scenarios at the gate
+    offsets (both modes; `--data` for the 11 that need it): only **mixed2**
+    moved (the flyer group spread): its five Retail `hash@` keys retaken and
+    one licence, Legion `work.completion_dist_3.total` 35 -> 55 (54 on main
+    at offset 0); Legion outcome keys within a few ticks (ground group done
+    6,621 -> 6,711). In Retail mode its ground group no longer completes
+    (48 -> 46 arrived, done 8,342 -> never; Retail keys there are the floor
+    reference, not gated): the spread flyers land among the arriving ground.
+    `check` on mixed2 and `validate` PASS. **Not retaken:** 22 fixtures
+    with no `legion_check` ctest (`attackring-deadcorridor-30`,
+    `-fight-diag-60`, `-gatehouse-40`, `-gatehouse2-48`, `-gateyard-36`,
+    `-melee-30`, `-wall-mixed-56`, `battle-assault`, `battle-field-2x60`,
+    `-2x250`, `-2x500`, `gen1-route-*` x7, `motion-cross`, `-open`,
+    `-wall`, `ringbend-pocket`) fail 296 keys on main `8d671ee0` already
+    (`hash@` keys, and Legion work counters and contact keys in the four
+    battles, a Retail offset spread in motion-open and a Retail-floor key in
+    motion-cross), with results identical before and after these merges:
+    the combat fixes' and air missions' changes, which `eb222a4f` retook only
+    for the fixtures with a ctest. TODO-LEAD: retake or license them before
+    the tag (the battle-assault and battle-field Legion counters need
+    reasons).
+  - **Campaign smoke** (takserver with the referee and Retail AI, headless
+    client, `--mpmission`, `TAK_SPEED=80`): takx04_ph, takx07_ph and
+    takmission23_ph 120 s, takx26_dh 60 s: no crash, no desync, mismatch or
+    referee-suspect line; takx04_ph, takx07_ph and takmission23_ph give the
+    same hashes as the mission branch alone (`09c1a8465de44dd1`,
+    `d65dcd362c9a17f8`, `97302177f370ac1d`); takx04_ph ends in defeat at
+    75 s with nobody playing, as on the mission branch.
 - **Detmath guard** (`tools/check-detmath.sh`, on the prepared tree, on
   `7c31c766` and with `task-jugg-cannons` merged): OK.
 - **With `task-jugg-cannons` merged** (Debug `-O2` and Release, all targets
@@ -400,8 +516,10 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
 - **`--mpai` Inner Circle, seed 1** (`takserver --local --no-auth --seed 1`,
   `TAK_LEGION=1` for Legion, `TAK_AI_LEVEL=6` for the Retail AI, `--crusades`
   for the Crusades games, `TAK_SPEED=80`), on the integrated combat fixes
-  `7c31c766`, two runs (`~/tak-tmp/gates-0912-four/`), and unchanged with
-  `task-jugg-cannons` merged (two runs, `~/tak-tmp/gates-0912-jugg/`).
+  `7c31c766`, two runs (`~/tak-tmp/gates-0912-four/`), unchanged with
+  `task-jugg-cannons` merged (two runs, `~/tak-tmp/gates-0912-jugg/`), and
+  with the retail-check branches merged (two runs, `~/tak-tmp/gates-0912-b/`;
+  only Crusades Retail moved).
   "Before the combat fixes" is main `95ca9163` (three runs, `~/tak-tmp/gates-0912-suite/`, and
   the retail fog review's runs; unchanged by the shot-range fix); "0.9.11" is
   `v0.9.11`:
@@ -411,7 +529,7 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
 | Retail pathfinding (Normal AI) | **`8690eaee7b16b4e6`** (before the combat fixes `779b760554ee2b85`; 0.9.11 `d0da4ccc71d2067c`) | **`d028e465c7676e68`** (`83b33de237aaa0a7`; `7a0be4440cd154b7`) |
 | Legion | **`b558575535124afc`** (`95f426566c4440da`; `7a403f097f3506b3`) | **`eab501625cd4381a`** (`e1161d1937792d5b`; `dc2652648568ad54`) |
 | Retail AI (`TAK_AI_LEVEL=6`) | **`12003fba552b8696`** (`468f6d3dbbf68923`; `4952493f51b9a568`) | not run |
-| Crusades, Retail pathfinding | not run | **`01c551c99113dbb9`** (`eb3107aa3d2bbb93`; `3e8c0ad3b4f1b859`) |
+| Crusades, Retail pathfinding | not run | **`def92d0b7d4a798e`** (before the retail-check branches `01c551c99113dbb9`; before the combat fixes `eb3107aa3d2bbb93`; 0.9.11 `3e8c0ad3b4f1b859`) |
 | Crusades, Legion | not run | **`fb33fb2edffd997e`** (`c58249d598fd55af`; `b0c9748d62aafeb6`) |
 
 **All seven changed, as expected.** Against 0.9.11, Retail 60 s, Retail
@@ -423,7 +541,10 @@ again with the AI commits after the combine (`7c2e3fc8` left all seven
 unchanged; the tick-0 wait `eec342d6` too). The fog display and the shot-range
 fix changed none of them. The combat fixes then moved all seven: every gate
 has walkers that attack (the new attack-timing fold and TurnDirection in the
-hashed script VM) and flyers or buildings under fire.
+hashed script VM) and flyers or buildings under fire. Of the retail-check
+branches only the raise order moved a gate (Crusades Retail 300 s); the
+others leave these small Inner Circle games (4 units at 60 s, 18-19 at
+300 s) unchanged.
 
 ## The reported game: late-game speed
 

@@ -9,22 +9,26 @@ on a 64x64 random map, 0.9.11 fell to -2 at about 2,700 units, and 0.9.12 held
 +9 to +10 to 3,160. Combat follows the original more closely: every weapon
 but melee aims only at buildings within its range, flyers dogfight flyers, an
 attack aims a moment after the attacker stops (so Kirenna fires after a walk
-far more often), and a shot stopped in front of a castle's long face counts as
-blocked. Campaign units follow their mission orders as the original reads
-them: factories build their waves, troops start aboard their ships, ambushes
-spring when hit and Offensive means offensive. Builders help and repair as in
-the original: they walk up until they touch the unit, keep working when
-pushed, and never repair a unit that walks. The dead rise only when you order
-it, and a right-click on a body with a priest raises it. The Harpy charms only with its spell, leaving a
-charmed unit its damage. Streaming keeps to YouTube's bitrate, Options, Voice Chat and Controls save as
-you change them, and SETTINGS, BENCHMARK and LOAD REPLAY have a BACK button.
+far more often), a shot stopped in front of a castle's long face counts as
+blocked, an attack flyer circles where its target fell, spells land on the
+original's aim point and ticks, and the Harpy charms only with its spell,
+leaving a charmed unit its damage. A big air group keeps its shape when moved.
+Campaign units follow their mission orders as the original reads them:
+factories build their waves, troops start aboard their ships, ambushes spring
+when hit and Offensive means offensive. Builders help and repair as in the
+original: they walk up until they touch the unit, keep working when pushed,
+and never repair a unit that walks. The dead rise only when you order it, and
+a right-click on a body with a priest raises it. A Divine Lodestone may cover
+the Standing Stones, flyers draw over the explosions below them, and an
+unfinished building under fire no longer takes a target. Streaming keeps to
+YouTube's bitrate, Options, Voice Chat and Controls save as you change them,
+and SETTINGS, BENCHMARK and LOAD REPLAY have a BACK button.
 
 **Compatibility first.** The AI's sight-only targets, the combat fixes, the
 raise order and the new lockstep state check change the game state the
 players compare, so 0.9.12 uses network protocol **305** (replay format
-**15**, unchanged). **0.9.12 does
-not play with 0.9.11 or any earlier version, and does not play their
-replays.**
+**15**, unchanged). **0.9.12 does not play with 0.9.11 or any earlier
+version, and does not play their replays.**
 
 - **Everyone updates together.** A 0.9.12 player cannot join a 0.9.11 server,
   and a 0.9.11 player cannot join a 0.9.12 server: the connection is refused
@@ -657,6 +661,14 @@ decided what the game counted as seen.
   weapons; a Dropped bomb's release in `tickScriptWeapon` waits for SET 22
   and, for a hover attacker, its facing. New `air_to_air_test`, AirToAir
   modes in `retail_motion_test`, `tools/re/check_air_to_air.py`.
+- Sim (VTOL_SeekAttack): `src/sim/retailairseek.h` (`retailAirLostTarget`,
+  `retailVtolSeekAttack`), `World::seekLostTarget` / `tickSeekAttack` /
+  `flyMissionGoal`; `Order::hoverAttackTargetX/Z` is renamed
+  `attackPointX/Z` (mission +0x22, now written by AirToGround and AirToAir
+  too), new `Order::seekAttack` and `aheadOfDefault` (hashed when set); the
+  Retail AI reads a seek as class 19, flags 0x1000400. New
+  `air_seek_attack_test`, `--air-seek` / `--air-lost` modes in
+  `retail_motion_test`, `tools/re/check_air_seek_attack.py`.
 - Sim (blocked shots): `nearBody` (the footprint rectangle within the old
   circle for a non-square body) in `World::noteShotImpact`, and
   `World::chordClear` now takes the target. New castle case in
@@ -709,8 +721,12 @@ decided what the game counted as seen.
   (`GameView::airOp_`) and draws the air bodies after the shots and
   effects. New `air_over_fx` harness test (`TAK_AIR_OVER_FX_TEST`,
   `TAK_AIR_OVER_FX_CAPTURE` for the frames).
-- `Order` stays five cache lines (320 bytes): `attackChased` fills the pad
-  beside `chaseLeashed`, `scripted` the pad after `chaseOrigin`.
+- `Order` stays five cache lines (320 bytes) with every line assertion
+  unchanged: `attackChased` fills the pad beside `chaseLeashed`, `scripted`
+  the pad after `chaseOrigin`, `reviveKind` the byte beside `mixedSlots`,
+  `seekAttack` and `aheadOfDefault` the tail pad after `guardOrbitAngle`, and
+  `repairLooks` line 1's one-byte pad before `missionRadius` (the merged
+  branches' fields each fit alone and together made 384 bytes).
 - Sim (campaign orders): `MissionScript::applyOrders` reads clauses as the
   original's `0x513fb0` (`MissionScript::Placement`, the `.ota` records, is its
   name table; `setIdents`, the `i` naming and the timed spawns are gone). Orders
@@ -732,9 +748,8 @@ decided what the game counted as seen.
   a head order as the original's (class 0x13, never the default mission's
   0x2000) in `firstMission`. Details in `docs/retail-engine.md` (Mission order
   strings) and `docs/campaign-design.md`.
-- `Order::repairLooks` (RepairUnit's give-up count) sits in line 1's
-  one-byte pad before `missionRadius`; a ground help or repair leg hashes its stages with a tag
-  once started.
+- A ground help or repair leg hashes its stages (and `Order::repairLooks`,
+  RepairUnit's give-up count) with a tag once started.
 - Sim (help and repair): `World::prepareHelpApproach` / `tickGroundHelp`
   (HelpBuild `0x405cf0`) and `prepareRepairApproach` /
   `installRepairApproach` / `tickGroundRepair` (RepairUnit `0x407190`) run
@@ -761,7 +776,6 @@ decided what the game counted as seen.
   gets time to walk up), `production` (repairers start touching their
   targets) and `retail_script` (the repair controller driven by a Repair
   order; work stops when the target moves) follow the new rules.
-- `Order::reviveKind` sits in the pad beside `mixedSlots`.
 - Sim (raising): `Cmd::Resurrect` -> `World::resurrect` / `World::reviveKind`
   (`reviveKindFor`), a RECLAIM leg with `Order::reviveKind` (hashed on reclaim
   legs when set); `World::tickReclaim` runs its stages 0-3 and
@@ -799,11 +813,13 @@ decided what the game counted as seen.
   `tools/navigation_checkpoints.json` lines; for the combat fixes, 352
   `hash@` keys of 16 attack and chase fixtures again, two new work-counter
   entries and 39 licensed keys in attackring-struct-60 (built around the old
-  structure allowance) and fight-retarget (details in the
+  structure allowance) and fight-retarget; for the flyer group spread,
+  mixed2's five Retail `hash@` keys and one licensed key (details in the
   [validation report](release-0.9.12-validation.md)).
 - `--mpai` Inner Circle seed 1, `TAK_SPEED=80`: every gate hash changes
   (the hash layout, the combat fixes, and for the Legion and both Crusades
-  300 s games also the AI's new targets and scouting); new values in the
+  300 s games also the AI's new targets and scouting; the raise order moves
+  the Crusades Retail 300 s game once more); new values in the
   [validation report](release-0.9.12-validation.md). The cross-compiler
   golden (`check-determinism`) is unchanged, `dcef618cd2e4d558`.
 
