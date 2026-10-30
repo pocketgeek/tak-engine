@@ -71,6 +71,34 @@ reviewed on its own; the code tested below is main `95ca9163`:
   Crusades replay, where a Death Totem (range 550) fired all game at a
   lodestone 584.5 px off and never hit. Protocol unchanged (305 was never
   released).
+- **Range by weapon class** (`task-range-classes`): no structure pad for any
+  weapon but melee (`Weapon::centreReach`), after emulating every retail
+  weapon class's range test: the Dropped, Remote, Hailstorm, Earthquake, area,
+  Wandering and freeze/stone/mind-control Line-of-Sight weapons kept the pad
+  in the change above. Protocol unchanged.
+- **Combat fixes from the attack sweep** (a dev harness over every armed unit
+  type, branch `task-attack-sweep` `50bb6fbb`, not merged), integrated on
+  `task-0912-four` from main `6dbdf9d2` with a merge commit each, then merged
+  to main; protocol unchanged (305 was never released):
+  - **Attack timing** (`task-vermage-aim` `a0cd32eb`, merged as `a0168baf`):
+    `8e4625fa` an attack after a walk aims two ticks after the stop
+    (`Attack_Chase` `0x403bb0`), `1f83633d` TurnDirection reaches the unit's
+    own script, `a588bc72` / `d66d02ec` docs, `601e5e62` / `b7e274ba`
+    `classic_ai_test` U13 and raid checks, `a0cd32eb` a comment.
+  - **Range by weapon class** (`task-range-classes` `24eaf20f`, merged as
+    `3b05b25c`; above).
+  - **Blocked shots at long buildings** (`task-impact-footprint` `337c4159`,
+    merged as `d87bb0dd`): a non-square body is its footprint rectangle, for
+    the blocked-shot count and the clear-line test.
+  - **AirToAir** (`task-airtoair` `1d9d7834`, merged as `60489e21`):
+    `0a4ae3ad` flyers dogfight flyers (`0x41ca50`, `0x41e3d0`), `b7f8111e` a
+    Dropped bomb waits for SET 22 and a hover attacker's facing, `8f6f3737`
+    docs, `1d9d7834` CMake order.
+  - **Integration**: `7c31c766` keeps `Order` at 320 bytes (the vermage and
+    AirToAir fields each fit alone and together made 384; `attackChased`
+    moved into the pad beside `chaseLeashed`, every line assertion
+    unchanged). The CHANGELOG, sim.h and sim.cpp merge conflicts were
+    textual (adjacent edits), resolved keeping both sides.
 
 `git diff --stat v0.9.11 95ca9163`: 142 files changed, 8196 insertions(+),
 3917 deletions(-); `-- src`: 38 files changed, 3306 insertions(+), 1137
@@ -105,7 +133,9 @@ measurements below).
   Legion 300 s and both Crusades gates beyond the layout (below). The
   lodestone search, nav split, sacred-site and passage changes are
   hash-neutral. The fog display, the streaming cap, the autosave and the BACK
-  buttons are client-only and hash nothing.
+  buttons are client-only and hash nothing. The combat fixes change the
+  simulation (and add tagged hash folds for the new attack and AirToAir
+  state), which moved all seven gates again.
 - **Maps, mods and settings.** No map, recipe, package or settings format
   changed; a streaming bitrate above YouTube's figure for the stream is
   lowered and saved.
@@ -165,18 +195,131 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
   neither build does she fire after walking to any other target: see the
   notes' known limits). The Fire Mage's flame missed a lodestone on both
   builds. Naval units were not covered (dry map).
+- **Range by weapon class (`task-range-classes`).**
+  `tools/re/check_inrange_classes.py` calls each of the 17 handler vtables'
+  +0xc natively (238 answers, range 300, a 7x12 target at 299-420 px along x
+  and on the diagonal): 16 classes are in range exactly at centre distance
+  <= 300 (`530580`; Ballistic `52bc60` with an arc that reaches; Dropped
+  `532290`, a bare call of `530580`), none inside the old 120 px pad; melee
+  (`52b980`) answers by its boxes. `shot_range_test` now has a case per
+  class (31 checks): on `259d26a5` with only the new helper, 13 fail in each
+  mode (the class survey in both rosters; a Lokken's Fire Wave, Fire Mage's
+  Fire Storm, Acolyte's Earthquake and Weather Witch's Tornado on Hold
+  Position target and damage a Barracks half the old pad past their range;
+  ordered onto it, those four, a Mechanic's Freeze Beam and a Basilisk's
+  Turn To Stone stop 119-120 px past their range, and a Lich, range 60,
+  damages it from 179 px). With the fix all pass in both modes: they stand
+  at 119-446 px, within their range, and hit. An Iron Beak (a flyer) hits on
+  both builds. `structure_combat_reach` adds a Fire Mage (Fire Storm) and
+  an Acolyte (Earthquake) on Hold Position: pass. Quick suite 527 of 529:
+  `vashim_unavailable` (the known local failure) and `streaming_pacing`
+  (frames dropped encoding 7680x2160 at a load average of 20-25 from other
+  work on the machine; no video code changed). Attack sweep (`task-attack-sweep`
+  harness on the fix, the two building targets, both rosters, 5,354 cases,
+  against main `259d26a5`'s run): futile cases 50 -> 50; cases that fired
+  from beyond every one of the attacker's weapon ranges 98 -> 0 (90 on the
+  weapons this change moves, 8 on other weapons of the same units); every
+  ordered attack that damaged its building still does (1,208 orders from
+  100% and far: 1,141 -> 1,141). 226 cases changed: band cases on Hold
+  Position that fired 141 -> 125, Dirigibles and Juggernauts now drop their
+  bombs from within 200/500 px, and a Weather Witch or Sea Dragon on Hold
+  Position no longer engages a building past the range of the weapon that
+  set it off (the Tornado's 150, the Tsunami's 450), as it already did not
+  engage a unit there.
+- **Attack timing (`task-vermage-aim`).** `tools/re/probe_attack_chase_stop.py`
+  runs the original's weapon update, `vermage.cob` in its own script VM, the
+  mission dispatcher with `Attack_Chase` and the mover: every engagement
+  stops on tick A, gives the slot its target on A+2 and runs AimWeapon on
+  A+3 (also with the brake rate cut so she slides 44 ticks: A is the first
+  tick in reach), and Kirenna fires only when her walk script has taken
+  `restore_x` by then; the original fires in 36 of a 144-case grid with its
+  arrival forced in range. New `attack_stop` / `legion_attack_stop`: on
+  `259d26a5` 5 checks fail (Kirenna and the Archer aim on the stop tick,
+  Kirenna never fires, the in-reach pivot starts on the order tick, the
+  script never hears TurnDirection); with the fix all pass, and Kirenna
+  ordered from 664 px stops at tick 180, aims at 182 and fires at 221 from
+  399 px. Her own grid: fires in 58 of 144 (12 on `259d26a5`).
+  `flyer_combat_test` skips the held ticks in its facing check;
+  `classic_ai_test` U13 no longer fails when the whole column dies (main
+  loses it in 8 of 12 start shifts) and the raid check asks for 2 soldiers
+  sent, not 4 (an instrumented AI shows the original's 49-in-50 keep rule
+  holds 4 of 6 defenders; main sends 2-5 as the raiders shift 0-24 px);
+  `tools/legion_cost_baseline.json` battle-field-2x60 mopup
+  `pass_scan_cells.total` 2,616 -> 3,402 retaken (reason recorded). Review:
+  the addresses re-read, the probe rerun, the test shown to fail on
+  `259d26a5`; one stale comment fixed.
+- **Blocked shots at long buildings (`task-impact-footprint`).**
+  `tools/re/probe_long_footprint_blocked.py` runs the original's launch,
+  ballistic update, projectile collision and cell lookup (`0x52bdf0`,
+  `0x52be80`, `0x52bf90`, `0x52a4d0`, `0x50e660`, `0x51f340`) at a 4x12-cell
+  body 128 px away: open ground hits it at x=497.1; a ridge two or one cells
+  before its near face stops the shot on terrain with no unit 75 and 40 px
+  from its centre; a ridge under its own near column still hits. New castle
+  case in `blocked_shot` / `legion_blocked_shot` (a Mage Archer at a Taros
+  Castle's long face behind a ridge): Hold Position fires 11 short shots
+  without moving; Manoeuvre walks 41 px (Legion 48) and hits 7 times for
+  3,083. On `259d26a5` the Manoeuvre archer fires 11 shots into the crest and
+  never moves; with either half of the fix reverted the check fails too
+  (review). A Taros-gate variant of the sweep (narrow end on) changed 0 of
+  1,974 cases.
+- **AirToAir (`task-airtoair`).** `tools/re/check_air_to_air.py` compares the
+  port with the original code: the facing test `0x41d780` and the moving
+  controller (20,000 cases each), AirToAir `0x41ca50` and VTOL_Evade
+  `0x41e3d0` (12,000 each), the Dropped aim and gate `0x52fe30` / `0x52fff0`
+  (6,000): all equal, and twelve deliberately broken copies of the port all
+  fail. New `air_to_air` (quick, 24 checks in both balances): all 19 armed
+  flyers dogfight a flyer, Juggernaut arrows hit 27-31 times a minute (0
+  before), Beak eggs hit a holding flyer below (14 of 14 on a Fallen Angel)
+  and pass under a Roc at its own height. With AirToAir switched off in
+  `tickCombat` it reports 9 failures (review). `retailgap` passes.
+- **Attack sweep on the integrated code** (`task-attack-sweep` harness built
+  against `7c31c766`, `--data` the test install, both rosters, 19,501 cases,
+  `~/tak-tmp/attack-sweep/four-merged/`, against main `259d26a5`'s run;
+  rows matched one to one): futile cases (4+ shots, no damage) **1,110 ->
+  1,091**, the sum of the four branches' own changes (attack timing -4, AirToAir
+  -13, long buildings -2, range 0). 1,802 rows changed; damage up in 322,
+  down in 345.
+  - Kirenna's orders fire in 126 of 156 (102), from far 44 of 66 (27), after
+    walking more than 40 px (subs excluded) 26 of 52 (9).
+  - Buildings (castle and lodestone, 4,844 cases with a ranged weapon):
+    cases firing from past every one of the attacker's weapon ranges 98 -> 0;
+    Hold Position band cases that fired 141 -> 125; ordered attacks from 100%
+    and far that damaged their building 1,141 -> 1,141 of 1,208.
+  - Castle: futile 21 -> 19 (the Taros Beak's two Hold Position cases at
+    100%); the G5 cliff targets (square) unchanged in futile cases (72, 26).
+  - Flyers against flyers (720 cases): futile 51 -> 38, shots 3,129 -> 2,830,
+    hits 1,740 -> 1,798, damage +3.6%; Aerial Juggernaut futile 13 -> 0
+    (hits 81 -> 120), Iron Beak 20 -> 18, Dirigible unchanged at 0. The three
+    Dropped-bomb units on every target: futile 49 -> 32, shots 3,740 ->
+    3,321.
+  - 35 cases lost all their damage and 46 gained some. Lost: 32 Hold
+    Position cases at a building in the old pad band (Acolyte 16, Weather
+    Witch 11, Sea Dragon 5; the range change, as in the original) and three
+    single-shot cases at the circling flyer (a Stone Giant on fire at will,
+    a Centaur and a Weather Witch ordered from far). Gained: Kirenna 24,
+    Aerial Juggernaut 13, others 9.
 - **Full suite on `95ca9163`** (Debug `-O2`, all targets built, `ctest -j12`,
   scratch `HOME` and XDG folders, test data `assets/game`, which has no mods):
   789 of 791 passed, one skipped (`vashim_system_loader`, which skips itself).
   One failed: `vashim_unavailable` ("no display on a render node without
   libva"), the known local failure; CI builds FFmpeg with the shim and runs it
   there. Wall time 1,343 s.
-  TODO-LEAD: rerun the full suite on the final code (the shot-range fix
-  changed `src/sim` after this run).
+- **Full suite on the integrated combat fixes** (`7c31c766`, Debug `-O2`, all
+  targets built, `ctest -j12`, scratch `HOME`, XDG folders and `TMPDIR`, test
+  data `assets/game`): 778 of 796 passed, one skipped
+  (`vashim_system_loader`, which skips itself), 17 failed: `vashim_unavailable`
+  (the known local failure, as above) and 16 `legion_check_*` scenario gates
+  (below), which all pass after the baseline retake (rerun: 20 of 20, with
+  the reasons and baseline checks). Wall time 1,309 s. The four branches'
+  own tests (`attack_stop`, `legion_attack_stop`, `shot_range`,
+  `legion_shot_range`, `structure_combat`, `structure_combat_reach`,
+  `blocked_shot`, `legion_blocked_shot`, `air_to_air`, `flyer_combat`, the
+  `classic_ai_*` tests, `retailgap`) pass on the merged code.
 - **Cross-compiler golden hash** (`tools/check-determinism.sh`): golden
   `dcef618cd2e4d558` from g++ and clang++ at -O0, -O2 and -O3, unchanged from
   0.9.11. The aarch64 leg was skipped because no target libc or headers are
-  installed here. Rerun on `task-los-range`: the same golden.
+  installed here. Rerun on `task-los-range` and on the integrated combat
+  fixes (`7c31c766`; `src/sim/detmath*` untouched): the same golden.
 - **Gates on the final code** (`95ca9163`, the set-up below, ports
   24301-24307): all seven hashes equal the table below in three runs. All
   seven servers loaded retail gameplay hash `d6000f4fa9095a51` in every run,
@@ -184,8 +327,42 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
   server log of the three runs. On `task-los-range` (ports 24311-24317,
   `~/tak-tmp/gates-los/`), four runs (the third on the final, comment-only
   tidied build, the fourth by the review on the same build): all seven
-  hashes unchanged from the table below and identical in every run; no desync, mismatch or referee-suspect line.
-- **Detmath guard** (`tools/check-detmath.sh`, on the prepared tree): OK.
+  hashes unchanged from `95ca9163`'s and identical in every run; no desync,
+  mismatch or referee-suspect line. On the integrated combat fixes
+  (`7c31c766`, ports 24451-24457, `~/tak-tmp/gates-0912-four/`), two runs:
+  all seven hashes are the table below and identical in both runs (wall 42
+  and 43 s), every server loaded `d6000f4fa9095a51`, and no desync, mismatch
+  or referee-suspect line appeared in any client or server log.
+- **Detmath guard** (`tools/check-detmath.sh`, on the prepared tree and on
+  `7c31c766`): OK.
+- **Scenario baseline on the integrated combat fixes** (`7c31c766`). The
+  four branches ran the quick suite only, which leaves out the nightly
+  `legion_check_*` gates; on the merged code 16 of the 67 failed: 352
+  `hash@` keys of 16 attack and chase fixtures (`attackring-*`, `chase-1`,
+  `chase-50`, `chase-line`, `fight-retarget`, `ringcross`; the attack-timing
+  fold and the centre-to-centre building reach), and 39 band keys of two
+  fixtures. **attackring-struct-60** (60 gunners, range 96, at a 4x4 house)
+  was built around the old structure allowance (reach 152 px): with the
+  original's centre-to-centre reach (`task-range-classes`) Retail still gets
+  every attacker a shot but no longer kills the house by tick 3,000 (damage
+  30,000 -> 25,338, so the group never completes), and Legion gets 60 of 60
+  a shot (42 before) and more damage (23,846 -> 27,906) with more shuffling
+  in the tighter ring (sideways 36 -> 2,848, backward 0 -> 976, reversals
+  0 -> 79, churn, held rechecks); measured on `task-range-classes` alone,
+  the same 39 keys fail. **fight-retarget** (Legion): reach slots built
+  24 -> 28 and follow chain mean 4.35 -> 5.35 from the attack-timing hold
+  (the same on `task-vermage-aim` alone), outcome keys unchanged. Retake
+  (`legion_check.py baseline --hashes --keys 'hash@*'` over the 16 fixtures,
+  `--mode both --offsets gate`): only those 352 `hash@` values changed;
+  new band entries for `work.ring_swaps.max/total` (attackring-struct-60)
+  and `work.field_work_refresh_moving.max/p99/total` (fight-retarget), which
+  first move there; 39 `accepted_regressions` with the measured values and
+  the reasons above; a history line. After: `check` and `check --cumulative`
+  **PASS** on the 16 fixtures (4,894 keys, 0 failed, 541 ratchets, 720
+  licensed), `validate` **PASS** (0 problems). `navigation_determinism`
+  passes unchanged (no checkpoint retaken). The Legion shuffling in
+  attackring-struct-60 is licensed as the cost of the original's reach, not
+  fixed; a later Legion round could settle the tighter ring.
 - **Scenario baseline and navigation checkpoints on `task-los-range`:** all
   67 `legion_check_*` tests (every key, `hash@` included, against
   `baseline.json`) and `navigation_determinism` pass unchanged; nothing was
@@ -199,26 +376,30 @@ All ran on Linux. Every takclient and takserver run used scratch `HOME`,
   combine): all 48 retaken (both modes; serial equals workers).
 - **`--mpai` Inner Circle, seed 1** (`takserver --local --no-auth --seed 1`,
   `TAK_LEGION=1` for Legion, `TAK_AI_LEVEL=6` for the Retail AI, `--crusades`
-  for the Crusades games, `TAK_SPEED=80`), on main `95ca9163`, three runs
-  (`~/tak-tmp/gates-0912-suite/`); the retail fog review's runs of the same
-  seven (`~/tak-tmp/scratch/retailfog-review/gates/`) give the same hashes:
+  for the Crusades games, `TAK_SPEED=80`), on the integrated combat fixes
+  `7c31c766`, two runs (`~/tak-tmp/gates-0912-four/`). "Before the combat
+  fixes" is main `95ca9163` (three runs, `~/tak-tmp/gates-0912-suite/`, and
+  the retail fog review's runs; unchanged by the shot-range fix); "0.9.11" is
+  `v0.9.11`:
 
 | Mode | 60 s | 300 s |
 |---|---|---|
-| Retail pathfinding (Normal AI) | **`779b760554ee2b85`** (was `d0da4ccc71d2067c`) | **`83b33de237aaa0a7`** (was `7a0be4440cd154b7`) |
-| Legion | **`95f426566c4440da`** (was `7a403f097f3506b3`) | **`e1161d1937792d5b`** (was `dc2652648568ad54`) |
-| Retail AI (`TAK_AI_LEVEL=6`) | **`468f6d3dbbf68923`** (was `4952493f51b9a568`) | not run |
-| Crusades, Retail pathfinding | not run | **`eb3107aa3d2bbb93`** (was `3e8c0ad3b4f1b859`) |
-| Crusades, Legion | not run | **`c58249d598fd55af`** (was `b0c9748d62aafeb6`) |
+| Retail pathfinding (Normal AI) | **`8690eaee7b16b4e6`** (before the combat fixes `779b760554ee2b85`; 0.9.11 `d0da4ccc71d2067c`) | **`d028e465c7676e68`** (`83b33de237aaa0a7`; `7a0be4440cd154b7`) |
+| Legion | **`b558575535124afc`** (`95f426566c4440da`; `7a403f097f3506b3`) | **`eab501625cd4381a`** (`e1161d1937792d5b`; `dc2652648568ad54`) |
+| Retail AI (`TAK_AI_LEVEL=6`) | **`12003fba552b8696`** (`468f6d3dbbf68923`; `4952493f51b9a568`) | not run |
+| Crusades, Retail pathfinding | not run | **`01c551c99113dbb9`** (`eb3107aa3d2bbb93`; `3e8c0ad3b4f1b859`) |
+| Crusades, Legion | not run | **`fb33fb2edffd997e`** (`c58249d598fd55af`; `b0c9748d62aafeb6`) |
 
-**All seven changed, as expected.** Retail 60 s, Retail 300 s, Legion 60 s
-and the Retail AI changed by the hash layout alone (equal to
-`task-perf-hash`'s own runs at the combine). Legion 300 s and the two Crusades
-games changed with the AI as well: at the combine they read
+**All seven changed, as expected.** Against 0.9.11, Retail 60 s, Retail
+300 s, Legion 60 s and the Retail AI first changed by the hash layout alone
+(equal to `task-perf-hash`'s own runs at the combine). Legion 300 s and the
+two Crusades games changed with the AI as well: at the combine they read
 `4ceb517086c9aa75`, `56aae72cb72e8880` and `545ca39f878ff37a`, and moved
 again with the AI commits after the combine (`7c2e3fc8` left all seven
-unchanged; the tick-0 wait `eec342d6` too). The fog display
-changed none of them (it hashes nothing).
+unchanged; the tick-0 wait `eec342d6` too). The fog display and the shot-range
+fix changed none of them. The combat fixes then moved all seven: every gate
+has walkers that attack (the new attack-timing fold and TurnDirection in the
+hashed script VM) and flyers or buildings under fire.
 
 ## The reported game: late-game speed
 

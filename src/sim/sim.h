@@ -19,6 +19,7 @@
 #include "sim/retailexploration.h"
 #include "sim/retailweaponswitch.h"
 #include "sim/retailflight.h"
+#include "sim/retailairtoair.h"
 #include "sim/retailballistic.h"
 #include "sim/retailwind.h"
 #include "sim/retailweapon.h"
@@ -140,24 +141,27 @@ struct Weapon {
     // landing short. Decided per weapon -- the firing slot's, or the approach
     // slot's for the unit as a whole -- never by "any weapon of the unit".
     bool needsClearLine() const { return !melee && range > 64 && !ballisticClass(); }
-    // Does a shot from this weapon die at the weapon's range? A Line-of-Sight
-    // bolt or lightning strike and a Guided shot are given a lifetime of one
-    // range of travel at launch, and a flame front is scanned out to the range
-    // (World::fire, World::tickFlames). Retail's range test for all of them is
-    // the base one (530580: centre to centre, inclusive; the lightning, LOS,
-    // fire and Guided vtables all point at it), so the engine's footprint pad
-    // for a structure target is not theirs: with it a Crusades Death Totem
-    // (range 550) took a lodestone 584 px off and its bolts died ~540 px out.
-    // Melee, a Ballistic shell (its own arc test), a Dropped bomb, an instant
-    // Line-of-Sight shot and a Remote or Wandering effect are not shots of
-    // this kind.
-    bool shotEndsAtRange() const {
-        return !melee && projVel > 0 && (straight || lightning || flameKind >= 0 || kind == Kind::Guided);
-    }
+    // Is this weapon's reach to a structure measured centre to centre, with no
+    // allowance for the structure's size? Retail's unit-target range test is a
+    // virtual of the weapon class (vtable +0xc), and 16 of its 17 classes
+    // answer centre to centre (530580, inclusive): WeaponType, every Line-of-
+    // Sight subclass (plain, lightning, fire, mind control, stone, freeze),
+    // Guided, every Remote Effect subclass (plain, hailstorm, earthquake, both
+    // area spells), Wandering, DroppedBallistic (532290, a bare call of
+    // 530580) and Ballistic (52bc60: its arc, then 530580). Only MeleeWeapon
+    // (52b980) does not, testing footprint boxes instead (meleeInRange).
+    // tools/re/check_inrange_classes.py runs all 17 natively against a 7x12
+    // building. With our old pad a Crusades Death Totem (range 550) took a
+    // lodestone 584 px off and its bolts died ~540 px out, and a Dropped
+    // bomb, a Remote or Wandering spell or a freeze, stone or mind-control
+    // beam was cast at a building up to 8*foot+24 px past its range, where
+    // retail's never is.
+    bool centreReach() const { return !melee; }
     // The engine's range allowance for a structure target of `foot` cells
     // (its larger side): the half extent plus a margin for where navigation
-    // halts at its edge. None for a weapon whose shot ends at its range.
-    int32_t structurePad(int32_t foot) const { return shotEndsAtRange() ? 0 : 8*foot+24; }
+    // halts at its edge. It stands in for melee's box contact when an attack
+    // approaches; every other class gets none (centreReach).
+    int32_t structurePad(int32_t foot) const { return centreReach() ? 0 : 8*foot+24; }
     int32_t particlesPerSec = 0; // particlespersecond (readInt): hailstorm pulse rate
     float turnRate = 0;      // guided: steering rate, radians/sec (FBI deg/s)
     // Retail splits a projectile's per-tick travel into sub-steps so no sub-step is
@@ -191,6 +195,9 @@ struct Weapon {
     bool commandFire = false;
     bool hoverAttack = false;
     int32_t hoverAttackDistance = 0, hoverAttackAltitude = 0;
+    // airtoairdistance (WeaponType +0xc6, a word, 0 when absent): AirToAir's
+    // reach for this weapon when it is the selected one; 0 takes the unit's.
+    uint16_t airToAirDistance = 0;
     // dontleadtargets: aim at the target's CURRENT position instead of extrapolating
     // where it will be. Retail leads a moving unit by default; this flag skips it.
     // Shipped dropped bombs use this to aim at the current point; their
@@ -370,6 +377,11 @@ struct UnitType {
     int32_t cruiseAlt = 0;    // world units above ground when flying (readInt)
     bool hoverAttack = false;
     int32_t hoverAttackDistance = 0, hoverAttackAltitude = 0;
+    // airtoairdistance (UnitType +0x25a, a word, 4c0548): how far from its
+    // target's led SweetSpot a flyer fights another flyer (AirToAir). Absent:
+    // sqrt(hoverattackdistance^2 + hoverattackaltitude^2) with a
+    // hoverattackdistance (212 for a Tarbeak), else 100.
+    uint16_t airToAirDistance = 100;
     // attackrunlength (UnitType +0x234, a word, 4c082e): how far past its
     // target a flyer without hoverattack carries an attack run (AirToGround).
     uint16_t attackRunLength = 0;
@@ -798,6 +810,17 @@ struct alignas(64) Order {
     // `mission`): 1 once a run has brought the flyer within half its range
     // of the target; stage 7 counts wakes off the map on it.
     int32_t airRunCount = 0;
+    // A ground attack (Attack_Chase, 403bb0; tickCombat): whether the unit
+    // has walked toward its target under this order (`attackChased`, beside
+    // `chaseLeashed` below so the cold tail stays five lines), and the tick
+    // its weapons first aim at it (kAttackUnaimed until it first stands in
+    // reach). Hashed with a tag when set.
+    static constexpr uint32_t kAttackUnaimed = UINT32_MAX;
+    uint32_t attackAimTick = kAttackUnaimed;
+    // AirToAir (retailAirToAir, tickAirToAir), which runs on `mission` too:
+    // its mission +0x4e, the moving controller and a pushed VTOL_Evade.
+    // Engaged once a flyer attacks a flyer; hashed with a tag.
+    HeapOptional<RetailAirToAirState> airToAir;
     int32_t stationRefX = 0, stationRefZ = 0;
     uint32_t stationRefTick = 0;
     // MobileBuild placement at the site (405824..405911): failures while only
@@ -824,6 +847,7 @@ struct alignas(64) Order {
     // unlimited), and the return move queued behind it walks it back. Hashed
     // with a tag when set.
     bool chaseLeashed = false;
+    bool attackChased = false; // Attack_Chase: walked under this order (above)
     uint16_t chaseLeash = 0;
     RetailGroundPoint chaseOrigin{};
     // RECLAIM's work countdown (406250 mission +0x4e): trunc(energy + 15) at
@@ -995,11 +1019,13 @@ struct alignas(64) Unit {
     int32_t stonedFor = 0;   // >0 = petrified (can't act, immune to damage while stone)
     int32_t paralyzedFor = 0;// >0 = paralyzed (can't act, still takes damage)
     int32_t selfDestructT = -1;// >=0 = self-destruct countdown (ticks) armed; -1 = not
-    // The tick's REQUESTED turn (want - heading, unclamped BAM), display only --
-    // never hashed. Retail's TurnDirection callin (icd 0x4d9550) converts the
-    // requested arg, NOT the clamped rotation applied to heading, so the client
-    // animation needs this rather than a heading-delta (which would truncate to
-    // zero for slow turners). Reset each tick; set where the mover turns.
+    // The tick's REQUESTED turn (want - heading, unclamped BAM). Not hashed
+    // itself, but World::notifyTurnDirection reports it to the unit's own
+    // (hashed) script VM, so it must stay deterministic; the client animation
+    // reads it too. Retail's TurnDirection callin (icd 0x4d9593) converts the
+    // requested arg, NOT the clamped rotation applied to heading, so both need
+    // this rather than a heading-delta (which would truncate to zero for slow
+    // turners). Reset each tick; set where the mover turns.
     int32_t turnReqBam = 0;
     // GET 33 reads the mover's signed applied turn from its previous update.
     // COB runs before this tick's mover, so publish the completed turn at tick end.
@@ -3228,6 +3254,7 @@ private:
     void tickFlightBody(Unit& u);
     void tickHoverAttack(Unit& u, const Unit& target, const Weapon* weapon, int slot);
     void tickAirToGround(Unit& u, const Unit& target, const Weapon* weapon);
+    void tickAirToAir(Unit& u, const Unit& target, const Weapon* weapon);
     void tickFlightPatrol(Unit& u);
     int flightGround(const Unit& u) const;
     bool flightLandingFree(const Unit& u, Fixed x, Fixed z) const;
@@ -3276,7 +3303,7 @@ private:
     bool shotBlockedHere(const Unit& u,const Unit& t) const;
     bool shotChordClear(const Unit& u,Fixed fromX,Fixed fromZ,const Unit& t,int slot);
     bool chordClear(const std::array<int64_t,3>& a,const std::array<int64_t,3>& b,const Weapon& w,
-                    int64_t skipFrom,int64_t skipTo) const;
+                    int64_t skipFrom,int64_t skipTo,const Unit& to) const;
     bool repositionForShot(Unit& u,const Unit& t,int slot);
     bool hoverForShot(Unit& u,const Unit& t,int slot,const std::array<int32_t,3>& centre,int distance,int altitude);
     bool sweepKeepsTarget(const Unit& u,int slot,const Unit& t) const;
@@ -3692,6 +3719,11 @@ private:
     public:
         bool activated=false,ready=false,yardOpen=false,buggerOff=false;
         uint32_t movementRate=0;
+        // TurnDirection's last reported turn, in whole degrees (mover +0x26,
+        // 4d9593), and whether this tick's turn was the idle navigator's
+        // pivot, which 4d9ad0 asks for after a zero request (notifyTurnDirection).
+        int16_t turnDirection=0;
+        bool turnInPlace=false;
         bool dying=false;
         int deathStopValue=0;
         // Last SweetSpot drawn centre (queryUnitScriptPoint): derived, not hashed.
@@ -3740,6 +3772,7 @@ private:
     }
     struct ScriptHost;
     void tickUnitScript(Unit& unit);
+    void notifyTurnDirection(Unit& u,UnitScript& script);
     void beginUnitDeath(Unit& unit);
     void updateCorpseWindow(Unit& unit);
     // Enabled by setupMatch; a bare test World leaves it off.

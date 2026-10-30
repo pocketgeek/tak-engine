@@ -6,15 +6,19 @@ under your side's rolling mist, and radar marks enemies on the minimap only.
 Our AI levels attack only what their side has seen and scout the map for the
 rest. Big late games keep their speed: in the reported game, eight Absurd AIs
 on a 64x64 random map, 0.9.11 fell to -2 at about 2,700 units, and 0.9.12 held
-+9 to +10 to 3,160. Bolts, lightning, flames and guided shots aim only at
-buildings within their range, as in the original. Streaming keeps to YouTube's
-bitrate, Options, Voice Chat and Controls save as you change them, and
-SETTINGS, BENCHMARK and LOAD REPLAY have a BACK button.
++9 to +10 to 3,160. Combat follows the original more closely: every weapon
+but melee aims only at buildings within its range, flyers dogfight flyers, an
+attack aims a moment after the attacker stops (so Kirenna fires after a walk
+far more often), and a shot stopped in front of a castle's long face counts as
+blocked. Streaming keeps to YouTube's bitrate, Options, Voice Chat and
+Controls save as you change them, and SETTINGS, BENCHMARK and LOAD REPLAY have
+a BACK button.
 
-**Compatibility first.** The AI's sight-only targets and the new lockstep
-state check change the game state the players compare, so 0.9.12 uses network
-protocol **305** (replay format **15**, unchanged). **0.9.12 does not play
-with 0.9.11 or any earlier version, and does not play their replays.**
+**Compatibility first.** The AI's sight-only targets, the combat fixes and the
+new lockstep state check change the game state the players compare, so 0.9.12
+uses network protocol **305** (replay format **15**, unchanged). **0.9.12 does
+not play with 0.9.11 or any earlier version, and does not play their
+replays.**
 
 - **Everyone updates together.** A 0.9.12 player cannot join a 0.9.11 server,
   and a 0.9.11 player cannot join a 0.9.12 server: the connection is refused
@@ -174,31 +178,125 @@ The two games differ after the opening (the AI changed), so the unit counts
 differ. The 0.9.12 run is the code before the fog display change (client
 only) and the beaten-base rule.
 
-## Shots that die at their range aim only at buildings in range
+## Weapons aim only at buildings in range
 
-A line-of-sight bolt or lightning strike and a guided shot fly one weapon range
-and then vanish, and a flame reaches only its range. Until now the engine let
-every non-arcing weapon count a building as in range up to its footprint plus
-24 pixels further (so short-range attackers would not
-grind its edge). For these weapons that allowance was a dead band: in a
-reported Crusades game a Death Totem (lightning, range 550) took a Taros
-lodestone 584 pixels away as its target and fired all game long, and every
-bolt died about 540 pixels out without a hit. The original measures their
-range from centre to centre with no allowance (`KINGDOMS.icd` `0x530580`,
-used by the lightning, line-of-sight, fire and guided weapon classes; the
-totem first counts that lodestone in range at 585), and now so does the
-engine, for every unit with such a weapon, buildings and mobile units alike:
+Until now the engine let every non-arcing weapon count a building as in range
+up to its footprint plus 24 pixels further (so short-range attackers would not
+grind its edge). The original has no such allowance: its range test belongs
+to the weapon's class, and every class but melee measures from centre to
+centre (`KINGDOMS.icd` `0x530580`; the arcing class tests its arc first, the
+dropped-bomb class calls it directly; melee tests the two footprints). Run in
+the original code, all seventeen classes answer the same as that rule against
+a 7x12 building, and its attack order walks to a ring of the weapon's range
+round the target's centre. Now the engine does the same for every weapon:
 
-- **Towers and totems** no longer target a building past their range.
-- **Mobile units** ordered onto a building (Crossbowmen, Shamans, Wisps, Fire
-  Demons, Fire Wagons, mages, monarchs and dragons on such a weapon) walk to
-  their range itself and hit, where they used to stop up to the allowance
-  further out (on a 7x12 Barracks, 120 pixels) and, but for a flame's
-  splash, hit nothing.
+- **Shots that die at their range** (a line-of-sight bolt or lightning strike
+  and a guided shot fly one weapon range and then vanish; a flame reaches only
+  its range) had a dead band. In a reported Crusades game a Death Totem
+  (lightning, range 550) took a Taros lodestone 584 pixels away as its target
+  and fired all game long, and every bolt died about 540 pixels out without a
+  hit (the original first counts that lodestone in range at 585). Towers and
+  totems no longer target a building past their range, and mobile units
+  ordered onto a building (Crossbowmen, Shamans, Wisps, Fire Demons, Fire
+  Wagons, mages, monarchs and dragons on such a weapon) walk to their range
+  itself and hit, where they used to stop up to the allowance further out (on
+  a 7x12 Barracks, 120 pixels) and, but for a flame's splash, hit nothing.
+- **Everything else** that is not melee or arcing: bombs dropped from flyers,
+  remote spells (earthquakes, hail and ice storms, fire waves, rings of fire,
+  area mind control and freeze), wandering storms, and the freeze, stone and
+  individual mind-control beams. Their shots land at the target, so with the
+  allowance they hit a building from up to it past their range, which the
+  original never does. A Lokken's Fire Wave (range 120) was cast at a
+  Barracks 239 pixels off, a Weather Witch's Tornado (150) from 270, and a
+  Lich's Death Aura (60) from 179. They now walk to their range, and on Hold
+  Position they no longer target a building past it. These weapons are all
+  on mobile units: 38 of them in the standard roster, 37 with Crusades.
 
-Arcing shots (arrows, cannons, catapults: their own arc test since 0.9.2),
-melee and other weapons are unchanged. 40 unit types carry such a weapon in
+Arcing shots (arrows, cannons, catapults: their own arc test since 0.9.2) and
+melee are unchanged. 40 unit types carry a shot that dies at its range in
 the standard roster (34 mobile, 6 buildings), 38 with Crusades.
+
+**Hold Position.** A unit on Hold Position, whoever owns it (a player's or an
+AI's), no longer engages a building beyond its selected weapon's plain range,
+as in the original. Before, the allowance let it take and hit a building up
+to 120 pixels further out; a Weather Witch (Tornado, 150) or a Sea Dragon
+(Tsunami, 450) on Hold Position now leaves a building past that range alone,
+as it already left a unit there.
+
+## An attack aims a moment after the attacker stops (Kirenna fires after a walk)
+
+Kirenna (the Veruna Mage) walked up to a target and then stood without
+firing: her aim script waits until her walk script has settled, and the
+engine started her aim on the very tick she stopped, before her walk script
+had seen the stop. The original's attack order (`Attack_Chase`, `0x403bb0`)
+stops the walk when the attacker reaches range, waits one tick, then gives the
+weapon its target, so the aim starts three ticks after the stop; and the
+original tells a unit's own script which way it is turning
+(`TurnDirection`, from `0x4d9593`), where the engine told only the
+on-screen animation. Both now work as in the original (emulated end to end
+with Kirenna's own script, the original's weapon, mission and movement
+code):
+
+- **The aim waits for the stop.** A ground unit that walks to attack (not
+  melee) aims two ticks after its first tick in reach; one already in reach
+  aims at once. It turns to face the target from the tick after.
+- **Scripts hear their unit turn.** `TurnDirection` now reaches the unit's
+  own script, which plays by the game's state, for every unit whose script
+  has it, so other units' timing shifts slightly too.
+
+Kirenna ordered at a target from 664 pixels now stops, aims two ticks later
+and fires; over a grid of 144 order timings and distances she fires in 58
+(12 before), and in the attack sweep her orders that walked more than 40
+pixels fire in 26 of 52 (9 before). Like the original she still stalls in
+some cases: the original, emulated over a similar grid with its approach
+forced into range, fires in 36 of 144.
+
+## Flyers dogfight flyers
+
+A flyer attacking another flyer used to hang still beside it or hover round
+it. The original gives any flyer whose target can fly the **AirToAir**
+mission (`0x41ca50`, chosen at `0x4de530`), hover attacker or not: every
+7 to 21 ticks it chases a point short of the target's led aim point, swings
+out to its own side when threatened, now and then breaks off into straight
+lines and hard turns (`VTOL_Evade`, `0x41e3d0`) and comes back, and flies back
+onto the map if it has left it. Its weapons fire whenever the target is in
+range. The engine now runs the same mission, its moving steering point and
+its break-off (each checked against the original code on 12,000 to 20,000
+emulated cases, all equal):
+
+- **The Aerial Juggernaut** closes in so its anti-air arrows (450) reach; it
+  used to stop at its cannons' 500 and drop cannonballs that miss flyers.
+  Its arrows now hit 27 to 31 times a minute, none before.
+- **Dropped bombs wait for the script and the facing**, as in the original
+  (`0x52fe30`, `0x52fff0`): an Iron Beak releases an egg only when its script
+  is ready and its body faces the target, a Dirigible or Juggernaut when its
+  script is ready. A bomb has no upward speed, so an egg hits a flyer below
+  the Beak and falls past one at its own height, as in the original.
+
+Over all 19 armed flyers against flyers (720 sweep cases), cases that fired
+four or more shots without damage fell from 51 to 38 and damage rose 3.6%;
+the Juggernaut's fell from 13 to 0.
+
+## A long building is hit through the ground it stands on
+
+A shot that ends on terrain or scenery near its target counts as **blocked**
+when it falls short of the target's body; enough blocked shots make an
+attacker on Manoeuvre walk to a clearer line, and the fire sweep drop the
+target. The engine judged "at the body" by a circle the size of the
+building's longest side, so in front of a castle's long face (a Taros Castle
+is 8x20 squares) a ridge or a standing stone inside that circle swallowed
+every shot uncounted: an archer fired into the crest for ever. Emulated in
+the original's own projectile code (`0x52a4d0` and its cell lookup), a shot
+reaches a body only through the cells it stands on: a ridge one or two cells
+before the face stops the shot on the ground with no hit, 40 and 75 pixels
+from a 4x12 body's centre. The engine now uses the footprint rectangle (within
+the old circle) for a building that is not square, both for counting blocked
+shots and for testing a clear line. Every unit and square building behaves as
+before.
+
+A Mage Archer on Manoeuvre facing a Taros Castle's long face behind a ridge
+now walks 41 pixels (48 with Legion) and hits it seven times; before, it
+fired eleven shots into the ridge and never moved.
 
 ## Streaming keeps to YouTube's bitrate
 
@@ -262,12 +360,32 @@ decided what the game counted as seen.
   (`exploreLevelFor`, start and sector targets, loss back-off, vacated
   bases), `TAK_AI_EXPLORE` (debug) counters. The lodestone search's nearest-
   first order is in `placeSite`. `classicwaves.h` (Retail AI) is untouched.
-- Sim (range): `Weapon::shotEndsAtRange` / `Weapon::structurePad`; no
-  structure pad for those weapons in `slotInRange`, `combatReach`, the
-  per-slot fire gate, `repositionForShot`, the flyer/structure hold and
+- Sim (range): `Weapon::centreReach` / `Weapon::structurePad` (a pad only
+  for a melee approach); no structure pad in `slotInRange`, `combatReach`,
+  the per-slot fire gate, `repositionForShot`, the flyer/structure hold and
   Legion's `reachPx` / `reachFloat`. New `shot_range_test` (Retail and
-  Legion); `structure_combat_reach` places its target inside the range for a
-  weapon with no pad.
+  Legion, a case per weapon class); `structure_combat_reach` places its
+  target inside the range. `tools/re/check_inrange_classes.py` runs every
+  weapon class's range test in the original code.
+- Sim (attack timing): `Order::attackChased` / `attackAimTick` (hashed with
+  a tag) hold a walking, non-melee attacker's aim until two ticks after its
+  first tick in reach, and its facing pivot one tick longer (`tickCombat`);
+  `World::notifyTurnDirection` (called before MoveRate) runs `TurnDirection`
+  in the unit's hashed script VM; `brakeGround` reports the idle pivot's zero
+  first (`UnitScript::turnInPlace`). New `attack_stop_test` (Retail and
+  Legion); `tools/re/probe_attack_chase_stop.py`.
+- Sim (AirToAir): `src/sim/retailairtoair.h` (ports of `0x41ca50`,
+  `0x41e3d0`, `0x41d780` and the moving controller), `World::tickAirToAir`,
+  `Order::airToAir` (hashed with a tag), `airtoairdistance` for units and
+  weapons; a Dropped bomb's release in `tickScriptWeapon` waits for SET 22
+  and, for a hover attacker, its facing. New `air_to_air_test`, AirToAir
+  modes in `retail_motion_test`, `tools/re/check_air_to_air.py`.
+- Sim (blocked shots): `nearBody` (the footprint rectangle within the old
+  circle for a non-square body) in `World::noteShotImpact`, and
+  `World::chordClear` now takes the target. New castle case in
+  `blocked_shot_test`; `tools/re/probe_long_footprint_blocked.py`.
+- `Order` stays five cache lines (320 bytes): `attackChased` fills the pad
+  beside `chaseLeashed`.
 - Sim: `src/sim/statefold.h` (`WordMix`, chunked xxHash64-style lanes) for
   `World::stateHash`; `resolveSplit` and `World::compStats` for local nav
   splits (`TAK_COMPCHECK` in debug builds checks every carried labelling);
@@ -287,10 +405,14 @@ decided what the game counted as seen.
   many tests moved onto the sight plane.
 - Baselines retaken for the new hash layout: the 2,193 `hash@` keys of
   `tools/scenarios/baseline.json` (1,229 Retail, 964 Legion) and all 48
-  `tools/navigation_checkpoints.json` lines.
+  `tools/navigation_checkpoints.json` lines; for the combat fixes, 352
+  `hash@` keys of 16 attack and chase fixtures again, two new work-counter
+  entries and 39 licensed keys in attackring-struct-60 (built around the old
+  structure allowance) and fight-retarget (details in the
+  [validation report](release-0.9.12-validation.md)).
 - `--mpai` Inner Circle seed 1, `TAK_SPEED=80`: every gate hash changes
-  (the hash layout, and for the Legion and both Crusades 300 s games also
-  the AI's new targets and scouting); new values in the
+  (the hash layout, the combat fixes, and for the Legion and both Crusades
+  300 s games also the AI's new targets and scouting); new values in the
   [validation report](release-0.9.12-validation.md). The cross-compiler
   golden (`check-determinism`) is unchanged, `dcef618cd2e4d558`.
 
@@ -323,18 +445,57 @@ New with 0.9.12:
 - **A building just past a tower's range is no longer shot** even where a bolt
   launched from the muzzle could have clipped its edge (a Stronghold at a
   lodestone 620 pixels off did): the original does not target it either.
-- **Instant line-of-sight shots** (mind control and similar, which land at
-  once) and Remote or Wandering spells keep the allowance, although the
-  original measures them centre to centre too; their shots do not die short.
+- **A unit whose range is shorter than it can stand from a building's
+  centre never hits it**, as in the original: a Lich (Death Aura, 60) or an
+  Injured Thirsha (Wind Wave, 60) ordered onto most buildings keeps moving at
+  it and never casts (a Lich stood 88 pixels from a Barracks' centre). The
+  original's attack order keeps trying narrower rings and random spots within
+  range for as long as it lasts; before, the allowance let them hit from
+  there.
 - **A Fallen Angel's Death Sword** (range 140) now strikes a building only from
   140 pixels, as in the original. On its attack runs over a lodestone it
   missed every time in a test (before, it struck once or three times in
   80 seconds from further out); bigger buildings are still hit.
-- **Kirenna does not fire at a target she has walked up to,** a building or a
-  unit, in our tests: her aim script keeps waiting on its walk state (not
-  yet diagnosed; the same without this fix). Placed in range she fires. She now
-  stands at her range from a building, not past it, but still does not shoot
-  it.
+- **A crowd attacking a small building stands closer**, at its range from
+  the building's centre: 60 gunners (range 96) at a 4x4 house in a Legion
+  test all get a shot and do more damage, but shuffle more in the tighter
+  ring; with Retail pathfinding they all get a shot too, but kill the house
+  later than with the old allowance.
+- **Hold Position units no longer engage buildings beyond their selected
+  weapon's plain range**, whoever owns them, as in the original. A Sea Dragon
+  on Hold Position with its Fire Breath (525) selected is acquired by a
+  building 472 pixels off but never fires at it (it did not fire at a unit
+  there either; not yet diagnosed).
+- **Kirenna still stalls sometimes** after walking up to a target, as the
+  original does: when her walk script has not settled by the time she aims
+  (for example against a castle from 848 or 1,148 pixels, or a lodestone from
+  704 or 1,004), she stands until she moves again. The original's attacker
+  also keeps its weapons on automatic while it walks, so its fire-at-will aim
+  settles her walk early and she fires far more often there (129 to 133 of
+  141 emulated approaches); the engine does not port that part, which would
+  change what every unit shoots at on the way to an attack target.
+- **The attack timing rides the front order.** A route rebuilt in the middle
+  of an attack drops it, so an arrival right after such a rebuild aims at once
+  (or, in a later chase of the same order, waits its two ticks again).
+- **Builder, repair and idle automatic-weapon pivots** tell a unit's script
+  only when the turn changes direction, not the original's zero-then-turn
+  every tick; only scripts that read their turn state while pivoting notice.
+- **An Iron Beak hardly hits a flyer at its own height**, as in the original:
+  its eggs have no upward speed and fall past. It hits flyers below it.
+- **The Aerial Juggernaut's cannons** still drop at a flyer it attacks (and
+  miss); the original turns its unselected weapons to automatic in the
+  attack. Its anti-air arrows do the work.
+- **A dogfight's retargeting** uses the engine's own target scan, not the
+  original's, so a flyer that finds its target again keeps its attack where
+  the original restarts it; the group check, the air-traffic step-out and
+  the lost-target search of the original's AirToAir are not ported (the
+  attack ends instead, as AirToGround's already does).
+- **Blocked shots against a long building** count short misses on open ground
+  in front of its long face as blocked too, as they already did for a square
+  building (a Taros Beak bombing a castle's side gives up after three eggs
+  instead of four; it hit nothing either way). The reposition's minimum
+  distance and the navigation grid's sight radius still use a building's
+  longest side.
 - **0.9.11's limits still apply:** see the
   [0.9.11 notes](release-0.9.11-notes.md#known-limits), and through them the
   earlier notes; 0.9.11's "AI goes after everything" is replaced by the

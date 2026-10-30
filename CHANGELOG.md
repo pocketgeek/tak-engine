@@ -44,13 +44,33 @@ their validation reports; both live in [`docs/`](docs/).
   attacked if someone has). A game between AIs may now not end when a last
   unit stays hidden, and Not Explored games run longer (the AI no longer knows
   every deposit).
-- **Shots that die at their range no longer aim at buildings past it**, as in
-  the original game: line-of-sight bolts, lightning, flames and guided shots
-  measure a building's distance centre to centre, with no allowance for its
-  size. A Death Totem no longer empties its lightning into the air at a
-  lodestone just out of range, and a Crossbowman, Shaman, mage or dragon
-  ordered onto a building walks into range and hits it instead of stopping
-  short.
+- **Weapons no longer aim at buildings past their range**, as in the
+  original game: every weapon but melee measures a building's distance centre
+  to centre, with no allowance for its size. A Death Totem no longer empties
+  its lightning into the air at a lodestone just out of range, a Crossbowman,
+  Shaman, mage or dragon ordered onto a building walks into range and hits it
+  instead of stopping short, and bombers, earthquakes, storms, hail, freeze,
+  stone and mind-control spells are no longer cast at a building from past
+  their range.
+- **Kirenna no longer always stands without firing after walking up to a
+  target.** Her aim waits for her walk to settle, and the engine aimed the
+  instant she stopped. Now, as in the original game, an attack aims a moment
+  after the attacker stops, and a unit's own scripts hear it turn. Like the
+  original, she still stalls when she stops mid-stride (until she moves
+  again).
+- **Flyers dogfight flyers**, as in the original game: a flyer attacking a
+  flyer no longer hangs still or hovers beside it but chases it, swings out
+  when threatened and now and then breaks off and turns before coming back.
+  The Aerial Juggernaut now closes in so its anti-air arrows reach (it stopped
+  at its cannons' range, and cannonballs miss flyers). An Iron Beak drops an
+  egg only once it faces its target, as in the original; the egg hits a flyer
+  below the Beak and falls past one at its own height.
+- **A shot stopped in front of a castle counts as blocked.** A castle, keep,
+  gate or other long building is hit through the ground it stands on, as in
+  the original game, not anywhere within a circle of its length, so shots that
+  land on a ridge or scenery in front of its long face count as blocked. An
+  archer told to manoeuvre now walks to a clear line and hits it, where it
+  used to fire into the crest for ever.
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
   at +10, 0.9.11 fell to -2 at about 2,700 units, with 219 ticks over 250 ms;
   0.9.12 held +9 to +10 to 3,160 units with no tick over 100 ms:
@@ -75,9 +95,9 @@ their validation reports; both live in [`docs/`](docs/).
   (and puts the sound device back to the system default at once). The
   Controls hint has a band of its own, so it no longer covers the last row (a
   right-click there used to unbind that key).
-- **Protocol 305:** the AI's sight-only targets and the new state check change
-  what players compare, so this release does not play with 0.9.11 or earlier,
-  nor their replays. A 0.9.11 client or server is turned away with a
+- **Protocol 305:** the AI's sight-only targets, the combat fixes and the new
+  state check change what players compare, so this release does not play with
+  0.9.11 or earlier, nor their replays. A 0.9.11 client or server is turned away with a
   *protocol version mismatch* message, and a 0.9.11 replay is refused with the
   version message.
 

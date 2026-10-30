@@ -1,7 +1,8 @@
 // Buildings retain their placement heading while their weapon scripts aim.
 //   structure_combat_test <data>         heading cases
 //   structure_combat_test <data> reach   a unit that may not leave its post
-//     (a non-ballistic tower, a Hold Position Monarch on its selected weapon)
+//     (a non-ballistic tower, a Hold Position Monarch, Fire Mage or
+//     Acolyte on its selected weapon)
 //     never auto-acquires an enemy outside tickCombat's reach: it would drop
 //     it at once, and every acquisition wipes the fire-at-will sweep.
 #include "hpi/hpi.h"
@@ -10,10 +11,11 @@
 #include <cstring>
 #include <algorithm>
 namespace {
-// One unit `id` at the centre of a flat field and an enemy structure just
-// past its weapon range, in reach only by tickCombat's footprint pad -- or,
-// for a weapon whose shot dies at its range (Weapon::shotEndsAtRange, no pad
-// since 0.9.12), 20 px inside it. With
+// One unit `id` at the centre of a flat field and an enemy structure 20 px
+// inside its weapon range (a structure is measured centre to centre, as
+// retail's 530580, for every weapon but melee: Weapon::centreReach); for a
+// melee reach weapon, past the range, in reach only by tickCombat's
+// footprint pad. With
 // `decoy`, a mobile enemy also stands nearer, but past the reach: before the
 // fix, findTarget took the nearer decoy on every acquisition turn,
 // tickCombat dropped it at once, and each acquisition wiped the sweep's slot
@@ -75,7 +77,7 @@ int reachCases(const char* data) {
     auto vfs=tak::hpi::mountRetailRoot(data);
     tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,false);
     int failures=0;
-    for(const char* id:{"crepris","arassh","cresage","araarch","aralode"})
+    for(const char* id:{"crepris","arassh","cresage","tarmage","arapries","araarch","aralode"})
         if(!registry.find(id)){std::printf("FAIL missing type %s\n",id);return 1;}
     // The duel's churning towers: Prismatic Mirror and Stronghold.
     for(const char* id:{"crepris","arassh"}) {
@@ -97,6 +99,15 @@ int reachCases(const char* data) {
         std::printf("FAIL cresage: expected a weapon switcher with a short weapon\n");++failures;
     } else {
         failures+=reachPair(registry,"cresage",true,shortest,reachOf(t,shortest));
+    }
+    // Hold Position on a weapon of each other class 0.9.12 still padded: a
+    // Hailstorm, an Earthquake (cresage's shortest is a Remote Effect).
+    for(const auto& [id,slot]:{std::pair<const char*,int>{"tarmage",2},{"arapries",0}}) {
+        const auto* h=registry.find(id);
+        if(!h || int(h->weapons.size())<=slot || !h->weaponSwitching) {
+            std::printf("FAIL %s: expected a weapon switcher with slot %d\n",id,slot);++failures;continue;
+        }
+        failures+=reachPair(registry,id,true,slot,reachOf(*h,slot));
     }
     std::printf("structure_combat reach: %d failures\n",failures);
     return failures?1:0;
