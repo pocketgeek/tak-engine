@@ -60,9 +60,9 @@ struct RetailReplayProbe {
         if constexpr (requires { w.auraTileFirst_; }) n += w.auraTileFirst_.capacity() * sizeof(w.auraTileFirst_[0]);
         if constexpr (requires { w.auraTileList_; }) n += w.auraTileList_.capacity() * sizeof(w.auraTileList_[0]);
         if constexpr (requires { w.auraTiles_; }) n += w.auraTiles_.capacity() * sizeof(w.auraTiles_[0]);
-        if constexpr (requires { w.auraCellScratch_; }) {
-            n += w.auraCellScratch_.capacity() * sizeof(w.auraCellScratch_[0]);
-            for (const auto& c : w.auraCellScratch_) n += c.capacity() * sizeof(c[0]);
+        if constexpr (requires { w.auraTileMasks_; }) {
+            n += w.auraTileMasks_.capacity() * sizeof(w.auraTileMasks_[0]);
+            for (const auto& c : w.auraTileMasks_) n += c.capacity() * sizeof(c[0]);
         }
         return n;
     }
