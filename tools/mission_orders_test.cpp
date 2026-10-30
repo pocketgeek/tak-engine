@@ -477,6 +477,27 @@ static void setMission(Fixture& f) {
           std::to_string(u->orders.size()) + " order(s)");
 }
 
+// ---- 12. a long mission does not run out of order slots -----------------------------------------
+// Order::scripted is a 16-bit index; takx24's script hands out ~250 a minute, so
+// the table would fill in about four hours and every later order would be lost.
+
+static void tableCompacts(Fixture& f) {
+    std::printf("a long mission keeps getting its orders:\n");
+    auto w = makeWorld();
+    const int keeper = w->spawn(f.t("soldier"), cell(20), cell(20), 0.0f, 0);
+    const int busy = w->spawn(f.t("soldier"), cell(30), cell(20), 0.0f, 0);
+    const int watched = w->spawn(f.t("target"), cell(40), cell(20), 0.0f, 1);
+    w->orderWaitAttack(keeper, true, watched);
+    for (int i = 0; i < 70000; ++i) w->orderAttackType(busy, f.t("target"), false);
+    const Unit* k = w->unit(keeper);
+    const Unit* b = w->unit(busy);
+    const ScriptedOrder* hold = k->orders.size() == 1 ? scripted(*w, k->orders.front()) : nullptr;
+    check(hold && hold->kind == ScriptedOrder::Kind::WaitAttack && hold->watched == watched,
+          "an order given before the table filled keeps its state");
+    check(b->orders.size() == 1 && isKind(*w, b->orders.front(), ScriptedOrder::Kind::AttackType),
+          "and the 70000th order still arrives", std::to_string(b->orders.size()) + " order(s)");
+}
+
 // ---- shipped missions -----------------------------------------------------------------------------
 
 static void shipped(const char* data) {
@@ -573,6 +594,7 @@ int main(int argc, char** argv) {
         selectAndDestruct(f);
         holds(f);
         setMission(f);
+        tableCompacts(f);
     }
     std::printf(g_fail ? "mission_orders_test: %d FAILED\n" : "mission_orders_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;

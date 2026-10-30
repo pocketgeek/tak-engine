@@ -449,7 +449,9 @@ decided what the game counted as seen.
   name table; `setIdents`, the `i` naming and the timed spawns are gone). Orders
   with state of their own carry `Order::scripted`, a 1-based index into
   `World::scriptedOrders_` (`ScriptedOrder`: AttackType, Train, WaitAttack,
-  WaitNear, SelfDestruct; hashed with the order); `World::tickScriptedOrder`
+  WaitNear, SelfDestruct; hashed with the order; a full table, which takx24
+  would reach in about four hours, drops the entries no order refers to and
+  renumbers the rest, `compactScriptedOrders`); `World::tickScriptedOrder`
   runs AttackType, Train and SelfDestruct at the head, `scriptedWaitDone` the
   waits, `noteScriptedProduction` counts a factory's builds; while
   `World::scriptHold` (any of these, or a wait, at the head) the leg behind

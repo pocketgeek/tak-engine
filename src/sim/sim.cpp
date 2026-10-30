@@ -4869,11 +4869,30 @@ void World::queuePatrol(int unitId, float x, float z) {
 }
 
 uint16_t World::addScriptedOrder(const ScriptedOrder& s) {
-    // A 16-bit index (Order has no wider spare room): a game that gives more
-    // mission orders than that keeps the orders it has and drops the rest.
+    // A 16-bit index (Order has no wider spare room). A mission whose script
+    // keeps handing out orders fills it in hours (takx24 gives ~250 a
+    // minute), so a full table first drops the entries no order refers to
+    // any more and renumbers the rest, in unit order on every peer.
+    if (scriptedOrders_.size() >= 0xffffu) compactScriptedOrders();
     if (scriptedOrders_.size() >= 0xffffu) return 0;
     scriptedOrders_.push_back(s);
     return uint16_t(scriptedOrders_.size());
+}
+
+void World::compactScriptedOrders() {
+    std::vector<uint16_t> renumber(scriptedOrders_.size() + 1, 0);
+    std::vector<ScriptedOrder> kept;
+    auto visit = [&](std::vector<Order>& orders) {
+        for (Order& o : orders) {
+            if (!o.scripted) continue;
+            if (o.scripted > scriptedOrders_.size()) { o.scripted = 0; continue; }
+            uint16_t& to = renumber[o.scripted];
+            if (!to) { kept.push_back(scriptedOrders_[o.scripted - 1u]); to = uint16_t(kept.size()); }
+            o.scripted = to;
+        }
+    };
+    for (Unit& u : units_) { visit(u.orders); visit(u.rally); }
+    scriptedOrders_ = std::move(kept);
 }
 
 void World::orderWait(int unitId, float seconds, bool queue, int32_t radius) {

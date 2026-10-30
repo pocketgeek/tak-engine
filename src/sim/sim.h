@@ -673,7 +673,8 @@ struct ManaBuildArea {
 //    looking every rand(7)+7 ticks for a visible enemy within `radius` px.
 //  - SelfDestruct `d`, SelfDestructFG (4017e0, +0x4e 1): 30000 damage of
 //    type 5 to itself when the order comes up.
-// Entries are never reused, so an index stays valid for the whole game.
+// An index stays valid while an order refers to it (addScriptedOrder
+// compacts a full table and renumbers the orders that refer to it).
 struct ScriptedOrder {
     enum class Kind : uint8_t { AttackType, Train, WaitAttack, WaitNear, SelfDestruct };
     Kind kind = Kind::AttackType;
@@ -3538,10 +3539,12 @@ private:
     void compactRetiredUnits();
     std::unique_ptr<MissionScript> mission_;   // optional campaign mission runner
     // Mission orders' state (ScriptedOrder), indexed by Order::scripted - 1.
-    // Appended in order-creation order on every peer, never erased; hashed
-    // through the orders that refer to it.
+    // Appended in order-creation order on every peer; hashed through the
+    // orders that refer to it. Full (16-bit index), it is compacted: entries
+    // no order refers to go and the rest are renumbered in unit order.
     std::vector<ScriptedOrder> scriptedOrders_;
     uint16_t addScriptedOrder(const ScriptedOrder& s);
+    void compactScriptedOrders();
     // The head order's mission when it is a scripted AttackType, Train or
     // SelfDestruct (before the unit's combat), and the scripted waits' ends.
     void tickScriptedOrder(Unit& u);
