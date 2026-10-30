@@ -1167,7 +1167,12 @@ static void classicMoveVsAttackMove(const char* root) {
         if (mode==0) {
             check(engaged.empty(),"U13: a column on Move never stops to engage (retail MOVE_GROUND)");
             check(hp0-hpWhileWalking>0,"U13: a column on Move fires while it walks (the fire-at-will sweep)");
-            check(arrived.size()>=size_t(std::max(1,alive-1)),"U13: the surviving column on Move arrives");
+            // Who wins the firefight is not the point, and it turns on small
+            // timing changes: shifting the column's start 2-24 px makes it fall
+            // to the last man in most runs (main 259d26a5: 8 of 12 shifts).
+            // With nobody left there is no surviving column to arrive.
+            if (alive==0) std::printf("    (the whole column fell on the way: no arrival to check)\n");
+            check(alive==0 || arrived.size()>=size_t(std::max(1,alive-1)),"U13: the surviving column on Move arrives");
         } else {
             check(!engaged.empty(),"U13: a column on AttackMove stops to engage (not what a strike gives)");
         }
