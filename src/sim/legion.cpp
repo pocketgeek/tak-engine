@@ -1,6 +1,7 @@
 #include "legion.h"
 #include "legion_route.h"
 #include "legion_hier.h"
+#include "legion_routebins.h"
 #include "sim.h"
 #include "footprint.h"
 #include "idmap.h"
@@ -71,6 +72,10 @@ uint64_t gFieldBytes=0;         // LegionNavigator::setFieldBytesForTest (proces
 // 32 in the game, chosen by measurement: docs/legion-10000-progress.md 7.6).
 int gSectorShift=5;
 bool gHierRoutes=true;   // LegionNavigator::setHierarchicalRoutesForTest (process-wide; true in the game)
+// Perf follow-up I: staticChanged finds the routes a change reaches through the route index (routeBins) instead of
+// walking every group (LegionNavigator::setRouteIndexForTest; process-wide, true in the game; never changes behaviour or
+// hashes: both ways visit the same groups in the same order).
+bool gRouteIndex=true;
 // Stage 9 (LegionNavigator::setParallelForTest; process-wide, never hashed, never a decision): run the parallel planning
 // jobs even with no SimPool workers (inline), and shuffle their execution order with random delays (seed; 0 off). A debug
 // build also reads the seed from TAK_LEGION_PAR_PERTURB, so whole-game harnesses (--mpai) can perturb too.
@@ -788,6 +793,9 @@ struct LegionNavigator::Impl {
         uint64_t pausedSerial=0;
         uint32_t byBuiltKey=0;
         std::array<uint64_t,2> routeKeys{};uint8_t routeCount=0;   // its routeIndex entries
+        // Perf follow-up I: the serials of the field and next its routeBins listing was made for (0: none; see
+        // listBins). Derived, never hashed.
+        uint64_t binField=0,binNext=0;
         // Start requests (Legion 10,000 stage 4): the tick the group last became a request (it went on
         // needFieldIds or staleDoneIds, or a suppressed refresh became eligible again) -- its age orders
         // the admissions and promotes it -- and the tick its start was first refused for want of room
@@ -1214,6 +1222,13 @@ struct LegionNavigator::Impl {
     // so a walk of that entry in id order finds the same first field as a
     // walk of every group. Maintained by listGroup; never hashed.
     std::map<std::pair<int,uint64_t>,std::set<int>> routeIndex;
+    // Route invalidation index for staticChanged (perf follow-up I, legion_routebins.h): per plane, bins of the map
+    // listing every group whose field or next a change in the bin may reach; a superset, fieldTouched decides.
+    // Maintained by listGroup (listBins) and unlistGroup; never hashed (TAK_LEGION_VERIFY: against the groups'
+    // fields, and every staticChanged against a walk of every group). binCands: staticChanged's scratch.
+    routebins::Index routeBins;
+    std::vector<int> binCands;
+    RouteIndexStats ridx;   // observation only (LegionNavigator::routeIndexStats)
     // Join index for registerMove (Legion 10,000 stage 2): the groups by the
     // equality part of the join predicate, all fixed when a group is made --
     // (player, plane, kind, approach, and for a reach kind its target id and
@@ -1278,6 +1293,22 @@ struct LegionNavigator::Impl {
         }
         g.routeCount=0;
     }
+    // routeBins: list the group under the windows (corridor / chain tiles) of its field and next. A field's window
+    // and tile list are fixed when its build starts (startField), so a listing stays valid until the group holds
+    // another field or next (Field::serial is unique); listGroup follows every write of those.
+    void listBins(Group& g) {
+        const uint64_t fs=g.field?g.field->serial:0,ns=g.next?g.next->serial:0;
+        if(fs==g.binField&&ns==g.binNext)return;
+        sizeBins();
+        g.binField=fs;g.binNext=ns;
+        routeBins.list(g.id,g.plane,g.field.get(),g.next.get());
+    }
+    void unlistBins(Group& g) {routeBins.unlist(g.id);g.binField=g.binNext=0;}
+    // The bins follow the map's size (fixed for a navigator's life; a change would list every group again).
+    void sizeBins() {
+        if(!routeBins.size(width(),height()))return;
+        for(auto& [id,g]:groups) {g.binField=g.binNext=0;listBins(g);}
+    }
     static bool wantsBuilding(const Group& g) {return (g.field&&!g.field->done&&g.pausedSerial!=g.field->serial)||g.next;}
     static bool wantsNeedField(const Group& g) {return !g.field&&!g.next;}
     static bool wantsStaleDone(const Group& g) {return g.field&&g.stale&&!g.next;}
@@ -1313,9 +1344,11 @@ struct LegionNavigator::Impl {
         if(g.onByBuilt&&(!built||g.byBuiltKey!=g.built)) {byBuilt.erase({g.byBuiltKey,g.id});g.onByBuilt=false;}
         if(built&&!g.onByBuilt) {byBuilt.insert({g.built,g.id});g.byBuiltKey=g.built;g.onByBuilt=true;}
         listRoutes(g);
+        listBins(g);
     }
     void unlistGroup(Group& g) {
         unlistRoutes(g);
+        unlistBins(g);
         if(g.onBuilding)buildingIds.erase(g.id);
         if(g.onNeedField)needFieldIds.erase(g.id);
         if(g.onStaleDone)staleDoneIds.erase(g.id);
@@ -6101,19 +6134,11 @@ struct LegionNavigator::Impl {
     std::vector<RefreshResult> refreshResults;
     // Does a static change box (on the field's plane) reach the field? A field covers its seeds' component box; a
     // change farther than one cell from every cell of that box cannot alter any step inside it (a step reads its
-    // target and the two orthogonal cells), nor merge another region into it.
-    static bool fieldTouched(const Field& f,const std::array<int,4>& b) {
-        if(b[2]<0)return false;
-        if(!(b[0]<=f.x0+f.fw&&b[2]>=f.x0-1&&b[1]<=f.z0+f.fh&&b[3]>=f.z0-1))return false;
-        if(f.allow.empty())return true;
-        // Stage 6: a corridor or chain holds only its listed tiles; a change one cell or more from all of them
-        // reaches none of its steps (the same argument as the box), so only those tiles are tested.
-        const int x0=std::max(b[0]-1,f.x0),z0=std::max(b[1]-1,f.z0),x1=std::min(b[2]+1,f.x0+f.fw-1),z1=std::min(b[3]+1,f.z0+f.fh-1);
-        if(x0>x1||z0>z1)return false;
-        for(int sz=z0>>f.shift;sz<=z1>>f.shift;++sz)for(int sx=x0>>f.shift;sx<=x1>>f.shift;++sx)
-            if(f.allow[size_t(sz-f.sz0)*size_t(f.sw)+size_t(sx-f.sx0)])return true;
-        return false;
-    }
+    // target and the two orthogonal cells), nor merge another region into it. Stage 6: a corridor or chain holds
+    // only its listed tiles; a change one cell or more from all of them reaches none of its steps (the same argument
+    // as the box), so only those tiles are tested. The predicate lives beside the route index that must list every
+    // route it can accept (legion_routebins.h).
+    static bool fieldTouched(const Field& f,const std::array<int,4>& b) {return routebins::touches(f,b);}
     // Stage 7: per plane, the improvements of the recent epochs (the epoch after the change, its box; whole-map
     // changes as the whole map): a trapped member re-registers only when one of them could have joined its
     // component to another (move: trappedReopened), not on every change anywhere. Bounded: past kImproveLog entries
@@ -6152,10 +6177,11 @@ struct LegionNavigator::Impl {
                 for(size_t pi=0;pi<changes->size();++pi)
                     for(const auto& c:(*changes)[pi])if(c.opens)logImprovement(pi,c.box);
             if(!changes)for(size_t pi=0;pi<planes.size();++pi)logImprovement(pi,{0,0,width()-1,height()-1});
-            stats.groupLoopIters+=groups.size();
-            for(auto& [id,g]:groups) {
+            auto reach=[&](Group& g) {
                 bool closes=!changes,opens=false;
+                uint64_t flags=0;   // ridx.decisions only
                 for(Field* f:{g.field.get(),g.next.get()}) {
+                    flags<<=2;
                     if(!f)continue;
                     bool fc=!changes,fo=false;
                     if(changes&&g.plane>=0&&size_t(g.plane)<changes->size())
@@ -6166,18 +6192,76 @@ struct LegionNavigator::Impl {
                     // Its routes' "unreached" no longer proves anything (RouteView::reach) until the refresh lands.
                     f->touched=true;f->closed|=fc;f->opened|=fo;
                     closes|=fc;opens|=fo;
+                    flags|=uint64_t(fc)|uint64_t(fo)<<1;
                 }
+                if(flags) {++ridx.touched;ridx.decisions=mix(mix(ridx.decisions,uint64_t(uint32_t(g.id))),flags);}
                 if(closes&&g.field)++acct.routesClosed;
                 else if(opens&&g.field)++acct.routesOpened;
-                if(!g.field||(!closes&&!opens))continue;
+                if(!g.field||(!closes&&!opens))return;
                 if(closes) {
                     g.stale=true;g.improveTick=kNoTick;   // the refresh is built on the new plane: it has the improvements too
                     restaleSlots(g);
                 } else if(g.improveTick==kNoTick&&!g.stale)g.improveTick=w.tickCounter_;
                 listGroup(g);
+            };
+            // Perf follow-up I: with per-plane boxes, only the groups the route index lists in a bin some box overlaps
+            // are visited (gatherReached: every group a change can reach), in ascending id order as the walk of every
+            // group visits them; fieldTouched still decides. A group no change reaches is left exactly as the walk left
+            // it, so both ways do the same.
+            ++(changes?ridx.calls:ridx.wholeCalls);
+            ridx.walkGroups+=groups.size();
+#ifndef NDEBUG
+            if(gVerify&&changes)verifyReached(*changes);
+#endif
+            if(changes&&gatherReached(*changes)) {
+                ++ridx.indexed;ridx.candidates+=binCands.size();
+                stats.groupLoopIters+=binCands.size();
+                for(const int id:binCands)if(Group* g=groups.get(id))reach(*g);   // listed groups are live (unlistGroup)
+            } else {
+                ridx.candidates+=groups.size();
+                stats.groupLoopIters+=groups.size();
+                for(auto& [id,g]:groups)reach(g);
             }
         }
     }
+    // Perf follow-up I: walk the whole group list instead of the index when the change boxes' bins hold more than this
+    // many entries per live group (a change over most of the map, the first epoch's whole-map box).
+    static constexpr size_t kBinWalk=4;
+    // binCands := the groups listed (routeBins) in a bin some change box overlaps, ascending: a superset of the groups
+    // a change of `changes` reaches. False when the index is off or cannot answer, or a walk of every group is cheaper.
+    bool gatherReached(const std::vector<std::vector<StaticChange>>& changes) {
+        if(!gRouteIndex)return false;
+        sizeBins();
+        if(!routeBins.usable())return false;
+        size_t entries=0;
+        for(size_t pi=0;pi<changes.size();++pi)
+            for(const auto& c:changes[pi])if(c.closes||c.opens)entries+=routeBins.estimate(int(pi),c.box);
+        if(entries>kBinWalk*groups.size())return false;
+        gatherBins(changes,binCands);
+        return true;
+    }
+    void gatherBins(const std::vector<std::vector<StaticChange>>& changes,std::vector<int>& out) {
+        out.clear();routeBins.begin();
+        for(size_t pi=0;pi<changes.size();++pi)
+            for(const auto& c:changes[pi])if(c.closes||c.opens)routeBins.gather(int(pi),c.box,out);
+        std::sort(out.begin(),out.end());
+    }
+#ifndef NDEBUG
+    // TAK_LEGION_VERIFY: every group a change reaches (the walk's test, without its effects) is a candidate of the index.
+    void verifyReached(const std::vector<std::vector<StaticChange>>& changes) {
+        sizeBins();
+        if(!routeBins.usable())return;
+        std::vector<int> found;
+        gatherBins(changes,found);
+        for(const auto& [id,g]:groups) {
+            if(g.plane<0||size_t(g.plane)>=changes.size())continue;
+            bool reached=false;
+            for(const Field* f:{g.field.get(),g.next.get()})
+                if(f)for(const auto& c:changes[size_t(g.plane)])reached|=(c.closes||c.opens)&&fieldTouched(*f,c.box);
+            if(reached&&!std::binary_search(found.begin(),found.end(),id))verifyFail("the route index misses a group a static change reaches");
+        }
+    }
+#endif
     // Stage 7: deferred improvement refreshes whose time has come (improveIds, in id order) become stale refreshes.
     void serveImprovements() {
         const uint32_t now=w.tickCounter_;
@@ -7026,6 +7110,25 @@ struct LegionNavigator::Impl {
                 routes[{g.plane,f->seedKey}].insert(id);
             }
             if(routes!=routeIndex)fail("routeIndex differs from the groups' fields");
+            // routeBins (perf follow-up I) against the groups' fields: a group with a plane and a field or next is
+            // listed for exactly those (by serial), in exactly the bins their windows and tiles cover; nobody else is.
+            if(routeBins.usable()) {
+                std::map<std::pair<int,int>,std::vector<int>> want;   // (plane, bin) -> ascending ids
+                for(const auto& [id,g]:groups) {
+                    const uint64_t fs=g.field?g.field->serial:0,ns=g.next?g.next->serial:0;
+                    if(g.binField!=fs||g.binNext!=ns)fail("a group's route index listing is for other fields");
+                    const bool listed=g.plane>=0&&(fs||ns);
+                    if(routeBins.listed(id)!=listed)fail("a group's route index listing differs from its routes");
+                    if(listed)for(const int b:routeBins.binsOf(g.field.get(),g.next.get()))want[{g.plane,b}].push_back(id);
+                }
+                const int bins=routeBins.binsAcross()*routeBins.binsDown();
+                for(size_t pi=0;pi<planes.size();++pi)for(int b=0;b<bins;++b) {
+                    const auto at=want.find({int(pi),b});
+                    if(routeBins.liveIds(int(pi),b)!=(at==want.end()?std::vector<int>{}:at->second))
+                        fail("a route index bin differs from the groups' routes");
+                }
+                if(!routeBins.countsAgree())fail("the route index's entry counts differ from its bins");
+            }
             // joinIndex against the groups (registerMove's join walk).
             std::map<JoinKey,std::vector<int>> joins;
             for(const auto& [id,g]:groups)joins[joinKey(g)].push_back(id);
@@ -14656,6 +14759,14 @@ LegionNavigator::Stats LegionNavigator::stats() const {
     return s;
 }
 LegionNavigator::ParallelStats LegionNavigator::parallelStats() const {return impl_->par;}
+LegionNavigator::RouteIndexStats LegionNavigator::routeIndexStats() const {
+    auto r=impl_->ridx;
+    const auto& b=impl_->routeBins;const auto& s=b.stats();
+    r.lists=s.lists;r.unlists=s.unlists;r.entriesAdded=s.entriesAdded;r.queries=s.queries;r.binsScanned=s.binsScanned;
+    r.entriesScanned=s.entriesScanned;r.staleDropped=s.staleDropped;r.compactions=s.compactions;r.compacted=s.compacted;
+    r.entriesPeak=s.entriesPeak;r.liveEntries=b.liveEntries();r.bytes=b.bytes();
+    return r;
+}
 void LegionNavigator::setParallelForTest(bool force,uint64_t perturbSeed) {gParForce=force;gParPerturb=perturbSeed;}
 NavAccounting LegionNavigator::accounting() const {
     NavAccounting a=impl_->acct;
@@ -14884,6 +14995,7 @@ void LegionNavigator::setInstrumentProbes(bool on) {gInstrumentProbes=on;}
 void LegionNavigator::setBudgetDivisorForTest(int div) {gBudgetDiv=uint64_t(std::max(div,1));}
 void LegionNavigator::setFieldBytesForTest(uint64_t bytes) {gFieldBytes=bytes;}
 void LegionNavigator::setHierarchicalRoutesForTest(bool on) {gHierRoutes=on;}
+void LegionNavigator::setRouteIndexForTest(bool on) {gRouteIndex=on;}
 void LegionNavigator::setSectorSizeForTest(int k) {
     int shift=5;
     for(int s=2;s<=8;++s)if((1<<s)==k)shift=s;
