@@ -45,10 +45,15 @@ public:
 
     // Per-placed-unit `InitialMission=` order queues from the .ota, applied at start()
     // in the same mini-language SetMission uses. This is the shipped missions' NPC
-    // choreography (patrol routes, ambush holds, timed reinforcement waves).
+    // choreography (patrol routes, ambush holds, factory waves, troops aboard ships).
     void setInitialOrders(std::vector<std::pair<int, std::string>> o) {
         initialOrders_ = std::move(o);
     }
+    // The .ota's [units] records in file order: what an order clause's NAME is
+    // looked up in (retail 0x513ec0) -- a record's Ident=, then its Unitname, the
+    // first record that matches and whose unit was made. `unitId` 0: none made.
+    struct Placement { std::string ident, unitname; int unitId = 0; };
+    void setPlacements(std::vector<Placement> p) { placements_ = std::move(p); }
 
     void start(World& w);              // run the "Start" script once (initial spawns/triggers)
     void step(World& w, float dt);     // tick the VM, sweep triggers, evaluate conditions
@@ -82,7 +87,11 @@ private:
 
     // ---- verb + order handling ----
     int32_t doCreate(World& w, const std::string& rest, const std::vector<int32_t>& args);
-    void applyOrders(World& w, int unitId, const std::string& orders);
+    // One order string, clause by clause (retail 0x513fb0). `initial`: an
+    // InitialMission, whose clauses may name placed units; SetMission's may not
+    // (retail hands that call an empty unit table).
+    void applyOrders(World& w, int unitId, const std::string& orders, bool initial);
+    int resolvePlacement(const std::string& name) const;
     void doSetAttribute(World& w, const std::string& sub, int unitId, int pct);
 
     // ---- per-step evaluation ----
@@ -110,20 +119,8 @@ private:
 
     std::vector<Cond> conds_;
 
-    // A SetMission "b TYPE H X Y" timed reinforcement: spawn `type` for `player` at
-    // (x,z) once the mission clock reaches `at`.
-    // `at` is a TICK stamp, matching clock_; it was left float when the clock
-    // became integer.
-    struct PendingSpawn { const UnitType* type = nullptr; int player = 0;
-                          float x = 0, z = 0; int32_t at = 0; };
-    std::vector<PendingSpawn> pendingSpawns_;
     std::vector<std::pair<int, std::string>> initialOrders_;   // .ota InitialMission=, applied at start
-    // Named units: the .ota's per-unit Ident= field and the order language's `i`
-    // verb both register here, and a `g NAME` clause guards whatever they name.
-    std::unordered_map<std::string, int> idents_;
-public:
-    void setIdents(std::unordered_map<std::string, int> m) { idents_ = std::move(m); }
-private:
+    std::vector<Placement> placements_;                        // .ota [units], for InitialMission names
 
     int32_t clock_ = 0;       // mission time in TICKS, for timer conditions
     int outcome_ = 0;         // 0 / +1 / -1

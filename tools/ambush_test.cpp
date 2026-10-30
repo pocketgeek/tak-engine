@@ -1,11 +1,14 @@
-// ambush_test -- SetMission "wa": hold until a non-allied unit is within sight.
+// ambush_test -- SetMission "wa": WaitForAttack (icd 0x4017a0). The unit holds
+// until the unit it watches (itself, or the placed unit a `wa NAME` names) is HIT
+// -- event 0x10, which the hit response 0x409a50 sends to the victim's listeners
+// -- or is gone (0x08). Hits count from the moment the order is given.
 //
-// WHY THIS EXISTS. The threat check scanned every unit in the world, for every ambushing
-// unit, every tick -- O(n^2) in the number of ambushers, paid on the referee as well as
-// on every client. Routing it through the spatial grid is meant to be an EXACT
-// substitution: the grid holds all alive units, buildings included, and the precise
-// distance test is unchanged. Nothing covered this verb, so there was nothing to say
-// whether the substitution preserved it. This does.
+// WHY THIS EXISTS. Ours used to release the hold as soon as any non-allied unit
+// came within sight, and checked that with a scan of every unit in range each
+// tick. Retail's mission has no sight test at all: an enemy can walk right up to
+// an ambusher, and only the first blow springs it. (Its weapons still fire at
+// whatever comes into reach while it waits; that is the auto slots, not the
+// mission.) The cases below pin both halves.
 
 #include "sim/sim.h"
 
@@ -51,11 +54,14 @@ static void run(World& w, float seconds) {
     for (int i = 0; i < int(seconds * 30); ++i) w.tick(1.0f / 30.0f);
 }
 
+// What the hit response stamps on a struck unit (World::retailHitResponse).
+static void strike(World& w, int id) { w.unit(id)->attackedTick = w.tickCount() + 1; }
+
 int main() {
     std::printf("ambush_test\n");
     UnitType sol = soldier(), twr = tower();
 
-    // FAR ENEMY: the ambush holds. 200 sight, enemy at 1200px.
+    // FAR ENEMY: the ambush holds.
     {
         World& w = *makeWorld();
         const int amb = w.spawn(&sol, 1000, 1000, 0, 0);
@@ -68,7 +74,7 @@ int main() {
         delete &w;
     }
 
-    // NEAR ENEMY: it springs.
+    // NEAR ENEMY THAT NEVER STRIKES: it still holds (it used to spring on sight).
     {
         World& w = *makeWorld();
         const int amb = w.spawn(&sol, 1000, 1000, 0, 0);
@@ -76,48 +82,69 @@ int main() {
         w.orderWaitAttack(amb, false);
         run(w, 3.0f);
         const Unit* u = w.unit(amb);
-        check(u && u->orders.empty(), "an enemy within sight springs it",
+        check(u && !u->orders.empty(), "an enemy within sight does not spring it",
               u ? std::to_string(u->orders.size()) + " order(s) left" : "gone");
         delete &w;
     }
 
-    // AN ALLY DOES NOT SPRING IT, however close.
+    // AN ENEMY BUILDING within sight does not either.
     {
         World& w = *makeWorld();
         const int amb = w.spawn(&sol, 1000, 1000, 0, 0);
-        w.spawn(&sol, 1040, 1000, 0, 0);          // same player, 40px away
+        w.spawn(&twr, 1120, 1000, 0, 1);
         w.orderWaitAttack(amb, false);
         run(w, 3.0f);
         const Unit* u = w.unit(amb);
-        check(u && !u->orders.empty(), "an ally standing next to it does not");
+        check(u && !u->orders.empty(), "nor does an enemy building within sight");
         delete &w;
     }
 
-    // A BUILDING COUNTS. The grid holds structures too, and the original scan made no
-    // exception for them -- so substituting the grid must not quietly introduce one.
+    // THE FIRST BLOW springs it.
     {
         World& w = *makeWorld();
         const int amb = w.spawn(&sol, 1000, 1000, 0, 0);
-        w.spawn(&twr, 1120, 1000, 0, 1);          // enemy STRUCTURE inside sight
         w.orderWaitAttack(amb, false);
-        run(w, 3.0f);
+        run(w, 1.0f);
+        strike(w, amb);
+        run(w, 0.2f);
         const Unit* u = w.unit(amb);
-        check(u && u->orders.empty(), "an enemy BUILDING within sight springs it too",
+        check(u && u->orders.empty(), "a hit springs it",
               u ? std::to_string(u->orders.size()) + " order(s) left" : "gone");
         delete &w;
     }
 
-    // AT THE EDGE: just outside holds, just inside springs. The grid visits whole cells,
-    // so a sloppy substitution would spring early on someone a cell away but out of range.
+    // A HIT BEFORE ITS TURN counts: the listener is there from the order on.
     {
         World& w = *makeWorld();
         const int amb = w.spawn(&sol, 1000, 1000, 0, 0);
-        w.spawn(&sol, 1000 + 260, 1000, 0, 1);    // 260px: outside 200, inside the cells swept
-        w.orderWaitAttack(amb, false);
-        run(w, 3.0f);
+        w.orderWait(amb, 2.0f, false);
+        w.orderWaitAttack(amb, true);
+        run(w, 0.5f);
+        strike(w, amb);
+        run(w, 2.0f);
         const Unit* u = w.unit(amb);
-        check(u && !u->orders.empty(),
-              "someone in a swept cell but out of range does not spring it");
+        check(u && u->orders.empty(), "a hit during the wait before it springs it when it comes up",
+              u ? std::to_string(u->orders.size()) + " order(s) left" : "gone");
+        delete &w;
+    }
+
+    // WATCHING ANOTHER UNIT: its hit, not ours, springs it; and so does its death.
+    {
+        World& w = *makeWorld();
+        const int amb = w.spawn(&sol, 1000, 1000, 0, 0);
+        const int ward = w.spawn(&sol, 1300, 1000, 0, 0);
+        w.orderWaitAttack(amb, false, ward);
+        strike(w, amb);
+        run(w, 1.0f);
+        check(!w.unit(amb)->orders.empty(), "watching another unit, its own hit does not count");
+        strike(w, ward);
+        run(w, 0.2f);
+        check(w.unit(amb)->orders.empty(), "the watched unit's hit does");
+        w.orderWaitAttack(amb, false, ward);
+        run(w, 0.5f);
+        w.unit(ward)->hp = tak::sim::Fixed();
+        run(w, 0.2f);
+        check(w.unit(amb)->orders.empty(), "and so does the watched unit's death");
         delete &w;
     }
 

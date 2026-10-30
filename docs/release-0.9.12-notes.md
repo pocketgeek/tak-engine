@@ -10,9 +10,11 @@ on a 64x64 random map, 0.9.11 fell to -2 at about 2,700 units, and 0.9.12 held
 but melee aims only at buildings within its range, flyers dogfight flyers, an
 attack aims a moment after the attacker stops (so Kirenna fires after a walk
 far more often), and a shot stopped in front of a castle's long face counts as
-blocked. Streaming keeps to YouTube's bitrate, Options, Voice Chat and
-Controls save as you change them, and SETTINGS, BENCHMARK and LOAD REPLAY have
-a BACK button.
+blocked. Campaign units follow their mission orders as the original reads
+them: factories build their waves, troops start aboard their ships, ambushes
+spring when hit and Offensive means offensive. Streaming keeps to YouTube's
+bitrate, Options, Voice Chat and Controls save as you change them, and
+SETTINGS, BENCHMARK and LOAD REPLAY have a BACK button.
 
 **Compatibility first.** The AI's sight-only targets, the combat fixes and the
 new lockstep state check change the game state the players compare, so 0.9.12
@@ -302,6 +304,58 @@ A Mage Archer on Manoeuvre facing a Taros Castle's long face behind a ridge
 now walks 41 pixels (48 with Legion) and hits it seven times; before, it
 fired eleven shots into the ridge and never moved.
 
+## Campaign units follow their mission orders
+
+A mission scripts its units with one-letter orders: each placed unit's
+`InitialMission=` in the mission's `.ota`, and the god script's `SetMission`.
+The engine misread most of them. The original's parser (`0x513fb0`) cuts the
+string at every comma and reads each clause on its own; ours read across
+commas, so one order could swallow the next, and several letters meant
+something else. Now each letter does what the original does with it:
+
+- **`o 2` is Offensive and `o 0` Passive** (the original's standing-order
+  setter `0x5198a0`); ours had them the wrong way round, so the 987 `o 2`
+  units across the campaign stood passive and the `o 0` ones attacked. `o A B`
+  sets the move and fire orders themselves.
+- **Factories build their waves; builders build their buildings.** `b TYPE N`
+  makes a factory build N of TYPE before its next order (BuildingBuild), and
+  `b TYPE N X Y` sends a builder, Zhon conjurers and the Aramon flying builder
+  included, to build TYPE at that spot (MobileBuild). Ours conjured every one
+  for free after N seconds: takx26 went from 146 units to 636 in its first
+  30 seconds, and takx04's flying builder had its shipyard standing at once.
+- **Troops start aboard their transports** (`i NAME`): 125 soldiers in takx07,
+  for example, sit in their transports until the transports unload them.
+- **Names are the placed units'**: `i`, `g`, `wa` and `a` name a unit by its
+  `Ident=` (else its unit name), as the original does; ours used names that
+  other units' `i` clauses had given themselves.
+- **An ambush springs when it is hit** (`wa`, WaitForAttack `0x4017a0`): the
+  unit, or the unit `wa NAME` watches, being hit (or dying) ends the hold;
+  an enemy merely coming into sight does not. takx04's flying builder now
+  waits for its lodestone JIM to be attacked before it sets out.
+- **A wait can end when the enemy comes near** (`w F N`: a visible enemy
+  within N squares ends it early). Factory waves that used to wait an hour
+  (`w 3600 12, b ...`) now start when the player approaches, as designed.
+- **`a TYPE` hunts every unit of that type**, nearest first and one after
+  another, until none is left (AttackUType); ours attacked one. `a NAME`
+  attacks the named unit.
+- **Veterancy bonuses apply** (`v F`): the unit's attack, armour and reload
+  multiplier is F (the bosses' 5 and 9 among them) and it shows full rank;
+  kills do not change it. Ours ignored it.
+- **Enemy units stay the enemy's**: `s` makes a unit selectable and nothing
+  more; ours handed it to the player at the start, which gave 44 placed enemy
+  units in 10 missions to the player (takx04's Aramon keep and castle among
+  them).
+- **`d` self-destructs when it comes up**, after the orders before it; ours
+  killed the unit at the start (takmission23's three Taros troopships, meant
+  to wait, unload their troops, fly off the map and only then go).
+- **Orders queue behind what a unit already has**, as the original queues
+  them; ours replaced a unit's orders at a `SetMission`.
+
+Many missions play differently, and most get harder: enemies attack instead of
+standing by, ambushers and guards hold as designed, waves come from factories
+the player can destroy, and bosses hit and take hits as the original intends.
+All 74 shipped missions load and run.
+
 ## Streaming keeps to YouTube's bitrate
 
 Above YouTube's bitrate for a stream's size, frame rate and codec, YouTube can
@@ -389,7 +443,28 @@ decided what the game counted as seen.
   `World::chordClear` now takes the target. New castle case in
   `blocked_shot_test`; `tools/re/probe_long_footprint_blocked.py`.
 - `Order` stays five cache lines (320 bytes): `attackChased` fills the pad
-  beside `chaseLeashed`.
+  beside `chaseLeashed`, and `scripted` the pad after `chaseOrigin`.
+- Sim (campaign orders): `MissionScript::applyOrders` reads clauses as the
+  original's `0x513fb0` (`MissionScript::Placement`, the `.ota` records, is its
+  name table; `setIdents`, the `i` naming and the timed spawns are gone). Orders
+  with state of their own carry `Order::scripted`, a 1-based index into
+  `World::scriptedOrders_` (`ScriptedOrder`: AttackType, Train, WaitAttack,
+  WaitNear, SelfDestruct; hashed with the order; a full table, which takx24
+  would reach in about four hours, drops the entries no order refers to and
+  renumbers the rest, `compactScriptedOrders`); `World::tickScriptedOrder`
+  runs AttackType, Train and SelfDestruct at the head, `scriptedWaitDone` the
+  waits, `noteScriptedProduction` counts a factory's builds; while
+  `World::scriptHold` (any of these, or a wait, at the head) the leg behind
+  it neither routes nor approaches its site (`groundMissionOrder`,
+  `prepareBuildApproach`, the reclaim start), since a route installed for it
+  would replace the hold. New
+  `orderAttackType`, `orderTrain`, `orderSelfDestruct`, `embarkInto`,
+  `scriptStandingOrder` / `scriptStandingFields`, `setVeterancyOverride`
+  (`Unit::vetOverride`, hashed when set; `vetMul` answers it); `orderWait`
+  takes a radius and `orderWaitAttack` a watched unit. The Retail AI reads such
+  a head order as the original's (class 0x13, never the default mission's
+  0x2000) in `firstMission`. Details in `docs/retail-engine.md` (Mission order
+  strings) and `docs/campaign-design.md`.
 - Sim: `src/sim/statefold.h` (`WordMix`, chunked xxHash64-style lanes) for
   `World::stateHash`; `resolveSplit` and `World::compStats` for local nav
   splits (`TAK_COMPCHECK` in debug builds checks every carried labelling);
@@ -401,6 +476,9 @@ decided what the game counted as seen.
   `video/youtubebitrate.h`.
 - Net: `kNetVersion` 304 -> 305, no new command, replay format 15, generator
   9. `tools/replay_test.cpp` pins 305 and refuses 304.
+- Tests: new `mission_orders_test` (every letter on scratch types; `--data`
+  checks takx04's flying builder, keep and towers and takx07's troops aboard,
+  as `mission_orders_shipped`); `ambush_test` now checks the hit, not sight.
 - Tests: new `state_hash_test` (pinned fold values, serial equals pooled; in
   the three CI workflows), `options_autosave_test` (22 of 38 checks fail on
   the old code), `stream_bitrate_test`, the `retail_fog` harness test; AI
@@ -497,6 +575,17 @@ New with 0.9.12:
   instead of four; it hit nothing either way). The reposition's minimum
   distance and the navigation grid's sight radius still use a building's
   longest side.
+- **Campaign orders not ported:** firing at bare ground (`a X Y`; the unit
+  goes until the point is in its weapon's reach and fights from there, and a
+  building does nothing), a patrol's time (`p X Y T`), BuildWeapon (`bw`) and
+  resurrect (`r`), which no shipped mission uses, and the original's
+  unselectable state: a player's unit under a script can be selected and given
+  orders, which replace its script. The original also ignores `SetMission`
+  for a unit whose owner is neither the player nor a computer player
+  (`0x4d37be`); the engine does not.
+- **A build order's site is checked when the order is given**, not when the
+  builder arrives as in the original: a site blocked at that moment is
+  dropped at once instead of after the walk.
 - **0.9.11's limits still apply:** see the
   [0.9.11 notes](release-0.9.11-notes.md#known-limits), and through them the
   earlier notes; 0.9.11's "AI goes after everything" is replaced by the

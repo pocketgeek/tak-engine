@@ -74,6 +74,21 @@ their validation reports; both live in [`docs/`](docs/).
   land on a ridge or scenery in front of its long face count as blocked. An
   archer told to manoeuvre now walks to a clear line and hits it, where it
   used to fire into the crest for ever.
+- **Campaign units follow their mission orders as in the original game.**
+  The orders a mission gives its units were misread: units told to be
+  Offensive turned Passive and Passive ones Offensive; factories and builders
+  conjured their waves for free (one mission grew from 146 to 636 units in
+  30 seconds) instead of building them, and a builder's building appeared at
+  the start; troops meant to start aboard their ships stood on the shore;
+  guards and ambushers watched the wrong unit, and an ambush sprang when an
+  enemy came into sight instead of when it was hit; a unit told to attack
+  every unit of a type attacked one; a wait meant to end when the enemy comes
+  near never did; bosses lost their veterancy bonus (up to 9 times attack and
+  armour); enemy units with a "make selectable" order were handed to you at
+  the start (takx04's keep and castle among them); a unit told to
+  self-destruct after a delay did so at once; and one order could swallow the
+  next. Each is now read as the original reads it, so many missions play
+  differently, and most get harder.
 - **Big late games keep their speed.** With 8 Absurd AIs on a 64x64 random map
   at +10, 0.9.11 fell to -2 at about 2,700 units, with 219 ticks over 250 ms;
   0.9.12 held +9 to +10 to 3,160 units with no tick over 100 ms:

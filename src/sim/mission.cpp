@@ -91,25 +91,11 @@ void MissionScript::start(World& w) {
     // The placed units' own order queues run first, so the NPC choreography is in
     // place before the god script's Start fires. A data-only mission (no cob) has
     // no VM -- these queues and the .ota conditions ARE the whole mission.
-    // Two passes: register every name first, because a bodyguard's `g NAME` clause
-    // routinely refers to a unit whose own `i NAME` clause comes later in the file.
-    for (const auto& [id, orders] : initialOrders_) {
-        size_t p = 0;
-        while ((p = orders.find('i', p)) != std::string::npos) {
-            bool start = p == 0 || orders[p - 1] == ',' || orders[p - 1] == ' ';
-            if (start && p + 1 < orders.size() && orders[p + 1] == ' ') {
-                size_t a = orders.find_first_not_of(' ', p + 1);
-                size_t b = orders.find_first_of(", ", a);
-                if (a != std::string::npos) {
-                    std::string nm = orders.substr(a, b == std::string::npos ? b : b - a);
-                    if (!nm.empty()) idents_.emplace(lower(nm), id);
-                }
-            }
-            ++p;
-        }
-    }
-    for (const auto& [id, orders] : initialOrders_) applyOrders(w, id, orders);
+    // Retail (0x514b40) makes every placed unit first and then parses each
+    // record's InitialMission in file order, so a clause can name any of them.
+    for (const auto& [id, orders] : initialOrders_) applyOrders(w, id, orders, true);
     initialOrders_.clear();
+    placements_.clear();
     if (vm_) vm_->start("Start");
 }
 
@@ -117,16 +103,6 @@ void MissionScript::step(World& w, float dt) {
     world_ = &w;
     if (vm_) vm_->tick(dt);
     ++clock_;
-    // Timed reinforcements (SetMission "b TYPE H X Y") that have come due.
-    for (size_t k = 0; k < pendingSpawns_.size();) {
-        if (clock_ >= pendingSpawns_[k].at) {
-            const PendingSpawn& s = pendingSpawns_[k];
-            if (s.type) w.spawn(s.type, s.x, s.z, 0.0f, s.player);
-            pendingSpawns_.erase(pendingSpawns_.begin() + std::ptrdiff_t(k));
-        } else {
-            ++k;
-        }
-    }
     sweepTriggers(w);
     if (outcome_ == 0) evalConditions(w, dt);
 }
@@ -182,7 +158,7 @@ void MissionScript::unitDied(World& w, int id) {
 int32_t MissionScript::mapCommand(World& w, int nameIdx, const std::vector<int32_t>& a) {
     auto [verb, rest] = splitVerb(cob_.name(uint32_t(nameIdx)));
     if (ieq(verb, "create"))        return doCreate(w, rest, a);
-    if (ieq(verb, "setmission"))  { if (!a.empty()) applyOrders(w, a[0], rest); return 0; }
+    if (ieq(verb, "setmission"))  { if (!a.empty()) applyOrders(w, a[0], rest, false); return 0; }
     if (ieq(verb, "settrigger")) {
         if (!a.empty() && a[0] >= 0 && a[0] < 16) {
             Region& r = regions_[size_t(a[0])];
@@ -238,108 +214,238 @@ int32_t MissionScript::doCreate(World& w, const std::string& type, const std::ve
     return id >= 0 ? id : 0;
 }
 
-// SetMission order-queue mini-language (see docs/campaign-design.md). Implements
-// m/ma/a/p/s/d/w/o/v (move, move-attack, attack, patrol-loop, give, destroy, timed
-// wait, stance, scalar), plus the wait-for-attack hold (wa) and the timed
-// reinforcement drop (b).
-void MissionScript::applyOrders(World& w, int unitId, const std::string& orders) {
-    Unit* u = w.unit(unitId);
-    if (!u) return;
-    bool queue = false;
-    size_t i = 0;
-    auto skipsp = [&] { while (i < orders.size() && (orders[i] == ' ' || orders[i] == ',')) ++i; };
-    auto num = [&]() -> float {
-        skipsp(); size_t j = i;
-        while (i < orders.size() && orders[i] != ' ' && orders[i] != ',') ++i;
-        return orders.size() > j ? std::strtof(orders.substr(j, i - j).c_str(), nullptr) : 0.0f;
-    };
-    auto word = [&]() -> std::string {
-        skipsp(); size_t j = i;
-        while (i < orders.size() && orders[i] != ' ' && orders[i] != ',') ++i;
-        return orders.substr(j, i - j);
-    };
-    while (i < orders.size()) {
-        skipsp();
-        if (i >= orders.size()) break;
-        char c = char(std::tolower((unsigned char)orders[i]));
-        char c2 = i + 1 < orders.size() ? char(std::tolower((unsigned char)orders[i + 1])) : 0;
-        ++i;
-        if (c == 'm') {                                   // m X Y  (move) / ma X Y (move-attack)
-            bool atk = (c2 == 'a'); if (atk) ++i;
-            float x = num(), y = num();
-            if (atk) w.attackMove(unitId, cellToWorld(x), cellToWorld(y), queue);
-            else     w.order(unitId, cellToWorld(x), cellToWorld(y), queue);
-            queue = true;
-        } else if (c == 'a') {                            // a TYPE (attack type) / a X Y (attack ground)
-            skipsp();
-            if (i < orders.size() && (std::isalpha((unsigned char)orders[i]) || orders[i] == '_')) {
-                std::string ty = word();
-                if (const UnitType* t = findType(ty)) {   // nearest enemy of that type
-                    int best = -1; float bd = 1e18f;
-                    for (const auto& e : w.units())
-                        if (e.alive() && e.type == t && !w.allied(e.player, u->player)) {
-                            float dx = e.x.toFloat() - u->x.toFloat(), dz = e.z.toFloat() - u->z.toFloat(), d = dx * dx + dz * dz;
-                            if (d < bd) { bd = d; best = e.id; }
-                        }
-                    if (best >= 0) { w.attack(unitId, best, queue); queue = true; }
-                }
-            } else {
-                float x = num(), y = num();
-                w.attackMove(unitId, cellToWorld(x), cellToWorld(y), queue);
-                queue = true;
+// SetMission / InitialMission order strings (see docs/campaign-design.md), as
+// retail's parser 0x513fb0 reads them. The string is cut at every comma
+// (strcspn ","); a clause is its text up to the next comma after leading
+// blanks, and one of 256 characters or more is skipped. Its first letter, in
+// either case, picks the order, and the rest is read with sscanf: each form
+// needs exactly the conversions it lists, else the clause does nothing. So a
+// clause never reads into the next one, and "w 900 40 b ARAPRIES 1" is one
+// wait clause whose tail is ignored, as retail ignores it.
+//   m X Y / ma X Y   move / fight-move to cell X,Y
+//   a X Y            fire at the ground there (SUPPRESS; see below)
+//   a TYPE           AttackUType: every unit of TYPE, nearest first, until none
+//   a NAME           attack the placed unit NAME
+//   b TYPE [N]       a factory builds N (default 1) of TYPE, then goes on
+//   b TYPE N X Y     a mobile builder builds TYPE at X,Y (MobileBuild; N unused)
+//   bw...            BuildWeapon stockpiling: no shipped mission uses it
+//   p X Y [T]        patrol (the time T is not modelled)
+//   w F [N]          wait F s; with N, a visible enemy within N cells ends it
+//   wa [NAME]        WaitForAttack: hold until NAME (else this unit) is hit
+//   o A / o A B      standing orders: 2 offensive, 1 defensive, 0 passive /
+//                    the move and fire fields themselves
+//   v F              fixed veterancy multiplier F (rank shows 10)
+//   i NAME           start aboard the transport NAME
+//   g NAME           guard NAME
+//   u X Y            unload there
+//   s                MakeSelectable: no owner change (selectability is not modelled)
+//   d                self-destruct when the order comes up
+//   c                cloak, if the type can
+//   r ...            resurrect: no shipped mission uses it
+// Retail queues every order behind what the unit already has (4d78a0 with its
+// queue flag set). Names (i, g, wa, a) resolve against the placed units only
+// in an InitialMission: SetMission's call passes retail an empty unit table.
+namespace {
+// sscanf's view of a clause: every format starts with a blank, which skips any
+// whitespace before the conversion.
+struct ClauseScan {
+    const std::string& s;
+    size_t i;
+    void blank() { while (i < s.size() && std::isspace((unsigned char)s[i])) ++i; }
+    bool number(float& out) {             // " %f"
+        blank();
+        if (i >= s.size()) return false;
+        const char* begin = s.c_str() + i;
+        char* end = nullptr;
+        const float v = std::strtof(begin, &end);
+        if (end == begin) return false;
+        i += size_t(end - begin);
+        out = v;
+        return true;
+    }
+    bool integer(int& out) {              // " %d"
+        blank();
+        if (i >= s.size()) return false;
+        const char* begin = s.c_str() + i;
+        char* end = nullptr;
+        const long v = std::strtol(begin, &end, 10);
+        if (end == begin) return false;
+        i += size_t(end - begin);
+        out = int(std::clamp<long>(v, INT32_MIN, INT32_MAX));
+        return true;
+    }
+    bool name(std::string& out, bool underscore) {   // " %[a-zA-Z0-9_.]" / " %[a-zA-Z0-9.]"
+        blank();
+        const size_t j = i;
+        while (i < s.size() && (std::isalnum((unsigned char)s[i]) || s[i] == '.' || (underscore && s[i] == '_'))) ++i;
+        if (i == j) return false;
+        out = s.substr(j, i - j);
+        return true;
+    }
+};
+}  // namespace
+
+int MissionScript::resolvePlacement(const std::string& name) const {
+    // 0x513ec0: in record order, the record's Ident, then its Unitname
+    // (case-insensitive), the first that matches and has a unit.
+    for (const Placement& p : placements_) {
+        if (!p.unitId) continue;
+        if ((!p.ident.empty() && ieq(p.ident, name.c_str())) ||
+            (!p.unitname.empty() && ieq(p.unitname, name.c_str())))
+            return p.unitId;
+    }
+    return 0;
+}
+
+void MissionScript::applyOrders(World& w, int unitId, const std::string& orders, bool initial) {
+    if (!w.unit(unitId)) return;
+    const bool queue = true;   // retail appends; it never clears the unit's orders
+    size_t at = 0;
+    while (at < orders.size()) {
+        while (at < orders.size() && std::isspace((unsigned char)orders[at])) ++at;
+        const size_t comma = orders.find(',', at);
+        const size_t length = (comma == std::string::npos ? orders.size() : comma) - at;
+        const std::string clause = orders.substr(at, length);
+        at += length;
+        if (at < orders.size() && orders[at] == ',') ++at;
+        if (clause.empty() || length >= 256) continue;
+        Unit* u = w.unit(unitId);
+        if (!u || !u->type) return;
+        const char c = char(std::tolower((unsigned char)clause[0]));
+        const char c2 = clause.size() > 1 ? char(std::tolower((unsigned char)clause[1])) : 0;
+        ClauseScan scan{clause, 1};
+        float fx = 0, fz = 0;
+        int n = 0;
+        std::string nm;
+        switch (c) {
+        case 'm': {                                       // 514120: m X Y / ma X Y
+            const bool fight = c2 == 'a';
+            scan.i = fight ? 2 : 1;
+            if (!scan.number(fx) || !scan.number(fz)) break;
+            if (fight) w.attackMove(unitId, cellToWorld(fx), cellToWorld(fz), queue);
+            else       w.order(unitId, cellToWorld(fx), cellToWorld(fz), queue);
+            break;
+        }
+        case 'a': {                                       // 5143b5
+            ClauseScan point = scan;
+            if (point.number(fx) && point.number(fz)) {
+                // 4de530 kind 3 with a point: SUPPRESS for a ranged ground unit,
+                // AIRSTRIKE / AIRTOGROUND for a flyer. Firing at bare ground is
+                // not ported: a mobile unit goes until the point is in its
+                // weapon's reach and fights from there; a building stays put.
+                if (u->type->weapons.empty() || u->type->isStructure()) break;
+                const size_t before = u->orders.size();
+                w.order(unitId, cellToWorld(fx), cellToWorld(fz), queue);
+                u = w.unit(unitId);
+                const int32_t reach = int32_t(u->type->maxRange());
+                if (u->orders.size() > before && !u->type->canFly && reach > 8)
+                    u->orders.back().missionRadius = uint32_t(reach - 8);
+                break;
             }
-        } else if (c == 'p') {                            // p X Y (patrol waypoint: loops)
-            float x = num(), y = num();
-            w.patrolTo(unitId, cellToWorld(x), cellToWorld(y), queue); queue = true;
-        } else if (c == 's') {                            // hand the unit to the human player
-            if(u->player!=human_) { unitCaptured(w,unitId);w.transferEntitySlot(*u,human_);u->player=human_; }
-        } else if (c == 'd') {                            // self-destruct / remove
-            u->hp = Fixed();
-        } else if (c == 'w') {                            // w N (wait N s) / wa (wait-for-attack)
+            if (!scan.name(nm, true)) break;
+            if (const UnitType* t = findType(nm)) {      // 515ac0: a type -> ATTACKUTYPE
+                w.orderAttackType(unitId, t, queue);
+                break;
+            }
+            // 513ec0: a placed unit -> an attack on it (4de530 kind 3).
+            // A unit with no weapon gets no attack mission; the combat drops
+            // one it cannot hurt when it comes up, as 4de530 would refuse it.
+            const int target = initial ? resolvePlacement(nm) : 0;
+            if (target && target != unitId && !u->type->weapons.empty()) w.attack(unitId, target, queue);
+            break;
+        }
+        case 'b': {                                       // 51451d
+            if (c2 == 'w') break;                         // BuildWeapon: not used by any shipped mission
+            if (u->type->isStructure()) {
+                // 51461d: " %[a-zA-Z0-9_.] %d", N defaulting to 1, no build menu
+                // test. BuildingBuild builds N, then the next order runs.
+                n = 1;
+                if (!scan.name(nm, true)) break;
+                scan.integer(n);
+                if (const UnitType* t = findType(nm)) w.orderTrain(unitId, t, n, queue);
+                break;
+            }
+            // 514543: all four, the count read and unused (MobileBuild gets 1).
+            // The builder must have TYPE on its menu (519850). The point is the
+            // retail X*16 (no half cell): MobileBuild snaps it to the footprint
+            // as a player's click is snapped.
+            if (!scan.name(nm, true) || !scan.integer(n) || !scan.number(fx) || !scan.number(fz)) break;
+            const UnitType* t = findType(nm);
+            if (!t) break;
+            const auto& menu = u->type->buildMenu;
+            if (std::find(menu.begin(), menu.end(), t->id) == menu.end()) break;
+            w.queueBuild(unitId, t, fx * 16.0f, fz * 16.0f, queue);
+            break;
+        }
+        case 'p': {                                       // 514307: p X Y [T]
+            if (!scan.number(fx) || !scan.number(fz)) break;
+            w.patrolTo(unitId, cellToWorld(fx), cellToWorld(fz), queue);
+            break;
+        }
+        case 'w': {                                       // 514787
             if (c2 == 'a') {
-                ++i;
-                w.orderWaitAttack(unitId, queue); queue = true;   // ambush: hold until threatened
-            } else {
-                float n = num();
-                skipsp();
-                if (i < orders.size() && std::isdigit((unsigned char)orders[i])) num();  // optional 2nd arg
-                w.orderWait(unitId, n, queue); queue = true;
+                // 514806: wa [NAME]. A NAME that resolves to nothing drops the
+                // clause; no NAME waits on the unit itself.
+                scan.i = 2;
+                int watched = unitId;
+                if (scan.name(nm, false)) {
+                    watched = initial ? resolvePlacement(nm) : 0;
+                    if (!watched) break;
+                }
+                w.orderWaitAttack(unitId, queue, watched);
+                break;
             }
-        } else if (c == 'b') {                            // b TYPE H X Y: timed reinforcement drop
-            std::string ty = word();
-            float hh = num(), bx = num(), by = num();
-            if (const UnitType* t = findType(ty))
-                pendingSpawns_.push_back({t, u->player, cellToWorld(bx), cellToWorld(by),
-                                      clock_ + int32_t(hh * 30.0f)});
-        } else if (c == 'o') {                            // o A [B]: combat stance
-            float a = num();
-            skipsp();
-            if (i < orders.size() && std::isdigit((unsigned char)orders[i])) num();
-            w.setStance(unitId, int(a));
-        } else if (c == 'v') {                            // v F: movement scalar (not modelled)
-            num();
-        } else if (c == 'i') {                            // i NAME: name this unit
-            // The third most common verb (679 uses). It registers the unit under a
-            // name that other units' `g` clauses -- and the .ota's own Ident= field
-            // -- refer to, which is how a mission wires up bodyguards.
-            std::string nm = word();
-            if (!nm.empty()) idents_[lower(nm)] = unitId;
-        } else if (c == 'g') {                            // g NAME: guard that unit
-            std::string nm = word();
-            auto it = idents_.find(lower(nm));
-            if (it != idents_.end() && it->second != unitId) {
-                w.guard(unitId, it->second, queue);
-                queue = true;
+            // " %f %d": one number waits F s; with the second, a visible enemy
+            // within N cells (x16 px) ends it early.
+            if (!scan.number(fx)) break;
+            int cells = 0;
+            if (!scan.integer(cells)) cells = 0;
+            w.orderWait(unitId, fx, queue, cells * 16);
+            break;
+        }
+        case 'o': {                                       // 514086
+            // " %d %d": both in 0..2 set the move and fire fields themselves;
+            // else " %d" in 0..2 is the standing order (0x5198a0).
+            ClauseScan pair = scan;
+            int fire = 0;
+            if (pair.integer(n) && pair.integer(fire) && n >= 0 && n <= 2 && fire >= 0 && fire <= 2) {
+                w.scriptStandingFields(unitId, n, fire);
+                break;
             }
-        } else if (c == 'c') {                            // c: cloak (no operand)
+            if (scan.integer(n) && n >= 0 && n <= 2) w.scriptStandingOrder(unitId, n);
+            break;
+        }
+        case 'v':                                         // 5148e1: v F -> unit +0xf4
+            if (scan.number(fx)) w.setVeterancyOverride(unitId, fx);
+            break;
+        case 'i': {                                       // 514893: i NAME -> 51b4f0
+            const int carrier = initial && scan.name(nm, true) ? resolvePlacement(nm) : 0;
+            if (carrier) w.embarkInto(unitId, carrier);
+            break;
+        }
+        case 'g': {                                       // 514265: g NAME (4de530 kind 7)
+            const int ward = initial && scan.name(nm, true) ? resolvePlacement(nm) : 0;
+            if (ward && ward != unitId) w.guard(unitId, ward, queue);
+            break;
+        }
+        case 'u':                                         // 5141d3: u X Y
+            if (scan.number(fx) && scan.number(fz)) w.unloadAt(unitId, cellToWorld(fx), cellToWorld(fz), {}, queue);
+            break;
+        case 's':                                         // 514876: MakeSelectable
+            break;
+        case 'd':                                         // 514858: SelfDestructFG
+            w.orderSelfDestruct(unitId, queue);
+            break;
+        case 'c':                                         // 514a48: cloak if cloakcost > 0
             w.setCloak(unitId, true);
-        } else if (c == 'u') {                            // u X Y: unload cargo there
-            float x = num(), y = num();
-            w.unloadAt(unitId, cellToWorld(x), cellToWorld(y));
-        } else {
-            word();                                       // skip unrecognised token's operands
+            break;
+        default:                                          // 'r' and any other letter
+            break;
         }
     }
+    // Orders queued aboard a transport wait there (retail's BeCarried heads the
+    // queue): no search for a route from inside the hold.
+    if (const Unit* u = w.unit(unitId); u && u->embarked()) w.cancelRoute(unitId);
 }
 
 void MissionScript::doSetAttribute(World& w, const std::string& sub, int unitId, int pct) {
@@ -557,11 +663,6 @@ void MissionScript::foldHash(uint64_t& h) const {
     for (const Cond& c : conds_) {
         mix(c.met ? 1u : 0u);
         mix(uint32_t(c.remaining));
-    }
-    mix(uint64_t(pendingSpawns_.size()));   // timed reinforcements still pending
-    for (const auto& s : pendingSpawns_) {
-        uint32_t at; std::memcpy(&at, &s.at, 4); mix(at);
-        mix(uint64_t(uint32_t(s.player)));
     }
     if (vm_) for (size_t i = 0; i < cob_.numStatics; ++i) mix(uint64_t(uint32_t(vm_->getStatic(i))));
     std::vector<std::pair<std::string,int32_t>> variables(vars_.begin(),vars_.end());

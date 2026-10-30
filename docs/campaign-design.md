@@ -109,11 +109,26 @@ armed region; `ownerByte==0` = the human) · `UnitCreated(unitId, 0)` (build fin
 exist but shipped missions don't use them.) There is **no** message/movie map-command.
 
 ### `SetMission` order mini-language (parser `0x513fb0`)
-Comma-separated queue; dispatch on first letter:
-`m X Y` move · `ma X Y` move-attack · `a <TYPE>` attack-all-of-type · `a X Y`
-attack ground · `p X Y[ Z]` patrol · `w N[ M]` wait N s · `wa` wait-for-attack ·
-`s` **make selectable** (hand the unit to the player) · `d` self-destruct ·
-`b <TYPE> H X Y` timed reinforcement drop · `o A[ B]` stance · `v F` scalar · `c` flag.
+The same language fills a placed unit's `.ota` `InitialMission=`. The string is
+cut at every comma; each clause is read on its own (`sscanf`, a clause that does
+not match its form does nothing), its first letter in either case picks the
+order, and every order is queued behind what the unit already has:
+`m X Y` move · `ma X Y` fight-move · `a X Y` fire at the ground there (SUPPRESS;
+not ported, the unit goes until the point is in reach) · `a TYPE` AttackUType:
+every unit of TYPE not its owner's, nearest first, until none is left · `a NAME`
+attack the placed unit NAME · `b TYPE [N]` a factory builds N (default 1) of TYPE
+(BuildingBuild) · `b TYPE N X Y` a mobile builder builds TYPE at cell X,Y
+(MobileBuild; TYPE must be on its menu, N is unused) · `p X Y [T]` patrol ·
+`w F [N]` wait F s, ended early by a visible enemy within N cells · `wa [NAME]`
+WaitForAttack: hold until NAME (else the unit itself) is hit or gone · `o A`
+standing order (2 offensive, 1 defensive, 0 passive) · `o A B` the move and fire
+fields themselves · `v F` fixed veterancy multiplier (rank 10) · `i NAME` start
+aboard the transport NAME · `g NAME` guard NAME · `u X Y` unload · `s` make
+selectable (owner unchanged; not modelled) · `d` self-destruct when the order
+comes up · `c` cloak · `bw…` BuildWeapon and `r` resurrect (no shipped uses).
+A NAME is a placed unit's `Ident=`, else its `Unitname`, the first record that
+matches; it resolves only in an `InitialMission` (retail hands SetMission an
+empty unit table). Details and addresses: [retail-engine.md](retail-engine.md#mission-order-strings-icd-0x513fb0-2026-10-30).
 Example (`takmission01`): `SetMission s, w 4, m 133 68, m 129 68, w 3, m 133 68, a TARZOM`.
 
 ### GET / SET

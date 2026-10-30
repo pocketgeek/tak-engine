@@ -4063,3 +4063,125 @@ chases), the hold also follows the single step an order takes when the
 fire-at-will sweep switches her weapon on its first tick, and she stalls in 26
 attack-sweep cases that she fires in now (all of them that step, 14 against the
 castle or the lodestone); retail's automatic slot would aim during that walk.
+
+## Mission order strings (icd 0x513fb0, 2026-10-30)
+
+A campaign mission gives its units orders in a one-letter language: a placed
+unit's `.ota` `InitialMission=` and the god script's `SetMission <unit>`. Both
+go through the parser `0x513fb0(unit, string, unit table)`, read here by static
+analysis (the probes are in `~/tak-tmp/retail-checks/ai-mission-names/` and
+`mission-orders/`). Through 0.9.11 our parser read most of the letters wrong.
+
+**Clauses.** The string is cut with `strcspn(",")`: after leading blanks a
+clause runs to the next comma, one of 256 characters or more is skipped, and
+its first letter (in either case, a jump table at `0x514ac8` / `0x514b04`)
+picks the handler, which `sscanf`s the rest. Each form needs exactly the
+conversions it lists, else the clause does nothing, so a clause never reads
+into the next (ours skipped commas as blanks: `ma, a ARATRE` became a fight-move
+to cell 0,0, and `w 900 40 b ARAPRIES 1` a wait plus a reinforcement, where
+retail reads one wait and ignores its tail). Every mission is pushed with
+`0x4d78a0`'s queue flag set, so it goes behind what the unit has (after the
+script's own last mission, `0x4d77f0`'s 0x1000 mark; the default mission at the
+head goes, `0x4d79d3`); ours cleared the unit's orders at the first clause.
+
+**Names.** `0x513ec0(name, table, from)` walks the `.ota` `[units]` records in
+file order (record +0 `Unitname`, +4 `Ident`, +8 `InitialMission`, read at
+`0x4c8c13`..`0x4c8eb1`) and answers the first record whose `Ident`, else whose
+`Unitname`, matches case-insensitively and whose unit was made. `0x514b40`
+makes every placed unit first and only then parses each record's
+`InitialMission` with the table of those units; `SetMission` (`0x4d37f6`)
+passes an empty table (a match there would read a null pointer), so names
+resolve only in an `InitialMission`. Ours registered a unit under the name an
+`i` clause gave it and never consulted the records.
+
+**The letters** (handler addresses in the parser):
+
+- `o A` (`514086`): `0x5198a0(unit, A)`, the Standing_UnitOrder setter: 2
+  Offensive (move 1, fire 2), 1 Defensive (0, 2), 0 Passive (0, 0), for any
+  live unit (no `unitstandorders` test). `o A B` with both in 0..2 writes the
+  move field (unit +0x130 bits 16-17) and the fire field (18-19) themselves,
+  leaving the shown order (20-21). Ours passed A to our stance, whose 0 is
+  Offensive: the 987 `o 2` clauses made units Passive.
+- `b` (`51451d`): `bw…` pushes BuildWeapon (stockpiling; no shipped mission
+  uses it). A unit with no mover (+8) gets `" %[a-zA-Z0-9_.] %d"`, N preset to
+  1 and no menu test: BUILDINGBUILD with type and count (+0x4e, +0x52), which
+  builds N and ends (`401c20`, 0 ends at once, `401cf6`). A mobile unit needs
+  all of `" %[a-zA-Z0-9_.] %d %f %f"`, TYPE on its own build menu (`0x519850`)
+  and gets MOBILEBUILD (VTOL_MobileBuild for a flyer) at X*16,Y*16 with count 1:
+  N is read and unused. Ours conjured every `b` for free after N seconds (the
+  N was taken for a delay), which flooded some missions: takx26 went from 146
+  to 636 units in 30 seconds.
+- `i NAME` (`514893`): `0x51b4f0(unit, carrier, -1, 0, 1)`, an immediate
+  attach (`51b5a0`), then `0x4d49f0`: the queue cleared but for the missions
+  whose descriptor has flag 4, and BeCarried pushed in front, so the clauses
+  after `i` wait aboard. No owner, capacity or distance test.
+- `g NAME` (`514265`): `4de530` kind 7 (Follow_Ground / VTOL_Follow) on the
+  named unit, appended.
+- `w F [N]` (`514787`): `" %f %d"`, WAIT with +0x4e = F x 30 and +0x52 = N x 16.
+  Wait (`401480`) with +0x52 set looks with `0x411ae0` (the owner's visible
+  enemies, live and not dying, within +0x52 pixels; see
+  [classic-ai-plan.md](classic-ai-plan.md)) and ends if one is there, else
+  ends if its count is spent, else takes `rand(7)+7` off the count and sleeps
+  that long. Ours ignored N.
+- `wa [NAME]` (`514806`): `" %[a-zA-Z0-9.]"` (no underscore) names the unit to
+  watch, a name that resolves to nothing drops the clause, none watches the
+  unit itself. WAITFORATTACK (`4017a0`, descriptor flags 0x204) keeps a listener
+  on it from construction (`4d6c40` -> `519990`, owner +0x1e the mission, whose
+  `4d4d00` ORs an event into +0x6a), so a hit while the order still queues
+  counts; it waits on mask 0x18 and ends: 0x10 is the hit response's event
+  (`409a50`), 0x08 its unit's listeners let go (`519a60`). No watched unit:
+  done at once. Ours released when any enemy came within sight and ignored
+  NAME.
+- `a` (`5143b5`): `" %f %f"` is `4de530` kind 3 with a point (SUPPRESS for a
+  ranged ground unit, AIRSTRIKE / AIRTOGROUNDHOVER / AIRTOGROUND for a flyer;
+  a melee unit only with a feature there). Else `" %[a-zA-Z0-9_.]"`: a unit
+  type (`0x515ac0`) pushes ATTACKUTYPE, else the named unit gets kind 3.
+  AttackUType (`401580`): stage 0 fails without a first weapon (UnitDef +0x264
+  & 0x20, set from weapon slot 0 at `0x4c1672`), else sleeps `rand(90)+1`;
+  stage 1 walks the whole unit table for live, not dying units of the type
+  whose player record is not the unit's and that `4de530` kind 3 accepts,
+  scores each hi(dz^2) + hi(dx^2) - `rand(score / 2)` (a later tie wins), and
+  puts an attack on the least in front (`4d7750`; `4d7640` sets AttackUType
+  back to stage 0), or ends when there is none. No sight test. Ours attacked
+  the nearest enemy of the type once, and fight-moved to a point.
+- `v F` (`5148e1`): unit +0xf4 = F. While it is not 0, getMult (`5193c0`)
+  answers F, getLevel (`519310`) answers 10 and the level setter (`519370`)
+  does nothing; a `noveteran` type (+0x268 & 0x10) answers 1 and 0 first. Ours
+  ignored it ("movement scalar").
+- `s` (`514876`): MAKESELECTABLE (`401450`: unit +0x130 |= 0x20, &= ~0x2000).
+  The owner does not change; ours gave the unit to the player while parsing,
+  which handed 44 placed enemy units in 10 missions to the player at the start
+  (takx04's Aramon keep and castle among them).
+- `d` (`514858`): SELFDESTRUCTFG with +0x4e = 1, so `4017e0` deals the 30000
+  type-5 damage when the mission comes up. Ours killed the unit while parsing:
+  takmission23's three troopships (`wa leim, w 60, u ..., m 0 192, d`) died at
+  the start.
+- `m X Y` / `ma X Y` (`514120`), `p X Y [T]` (`514307`, +0x4e = T x 30),
+  `u X Y` (`5141d3`), `c` (`514a48`: the cloak bit when cloakcost > 0) and
+  `r` (`514910`, resurrect; no shipped uses).
+
+When the parser has pushed a mission it clears the unit's selectable bit 0x20,
+and unless the last of them was a patrol, an attack on the ground, `s` or `d`
+it appends MAKESELECTABLE (`514a7d`): a player's unit under a script cannot be
+selected until its script is done.
+
+**Ours (0.9.12).** `MissionScript::applyOrders` reads clauses as above, with
+the `.ota` records as its name table (`MissionScript::Placement`). The orders
+with state of their own are World orders with a `ScriptedOrder` entry
+(`Order::scripted`, hashed): AttackType (`tickScriptedOrder`, the scan and
+draws as retail's on the game stream), Train (a factory queues N in its build
+queue and holds the next order until they are built,
+`noteScriptedProduction`), WaitAttack (the watched unit's `attackedTick` from
+when the order was given), WaitNear and SelfDestruct. Behind such a hold, as
+behind a wait, the next leg does not start (`World::scriptHold`): a route
+installed for a build or a move behind it would replace every order up to it,
+the hold included. `Unit::vetOverride`
+holds `v`, and `World::embarkInto`, `scriptStandingOrder` and
+`scriptStandingFields` do `i` and `o`. The Retail AI reads such a head order
+as retail's (class 0x13, its descriptor flags, never 0x2000), so it counts the
+unit busy. `mission_orders_test` (fixtures, and `--data` on takx04 and takx07)
+and `ambush_test` cover it; a 30-second run of all 74 shipped missions loads and
+runs every one. Not ported: firing at the ground (`a X Y` walks the unit until
+the point is in its weapon's reach), the patrol's time, the selectable bit,
+BuildWeapon and resurrect; SetMission's owner test (`0x4d37be`: a player of
+kind 1 or 2 only) is not applied.

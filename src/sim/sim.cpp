@@ -2003,7 +2003,7 @@ Order* World::groundMissionOrder(Unit& u, bool includeCombatMoves) {
         return !o.targetId && (includeCombatMoves || (!o.attackMove && !o.patrol)) && !o.guard && !o.load &&
                (!o.unload || o.transportUnloadApproach) &&
                !o.buildType && !o.reclaimFeat && !o.reclaimArea && !o.manaBuildArea &&
-               !o.repairTarget && !o.wait && !o.waitAttack;
+               !o.repairTarget && !o.wait && !o.waitAttack && !o.scripted;
     };
     if (!plain(u.orders.front())) return nullptr;
     Order& goal = u.orders[currentLeg(u.orders)];
@@ -4868,7 +4868,34 @@ void World::queuePatrol(int unitId, float x, float z) {
     for (size_t i = before; i < u->orders.size(); ++i) u->orders[i].patrolOpen = true;
 }
 
-void World::orderWait(int unitId, float seconds, bool queue) {
+uint16_t World::addScriptedOrder(const ScriptedOrder& s) {
+    // A 16-bit index (Order has no wider spare room). A mission whose script
+    // keeps handing out orders fills it in hours (takx24 gives ~250 a
+    // minute), so a full table first drops the entries no order refers to
+    // any more and renumbers the rest, in unit order on every peer.
+    if (scriptedOrders_.size() >= 0xffffu) compactScriptedOrders();
+    if (scriptedOrders_.size() >= 0xffffu) return 0;
+    scriptedOrders_.push_back(s);
+    return uint16_t(scriptedOrders_.size());
+}
+
+void World::compactScriptedOrders() {
+    std::vector<uint16_t> renumber(scriptedOrders_.size() + 1, 0);
+    std::vector<ScriptedOrder> kept;
+    auto visit = [&](std::vector<Order>& orders) {
+        for (Order& o : orders) {
+            if (!o.scripted) continue;
+            if (o.scripted > scriptedOrders_.size()) { o.scripted = 0; continue; }
+            uint16_t& to = renumber[o.scripted];
+            if (!to) { kept.push_back(scriptedOrders_[o.scripted - 1u]); to = uint16_t(kept.size()); }
+            o.scripted = to;
+        }
+    };
+    for (Unit& u : units_) { visit(u.orders); visit(u.rally); }
+    scriptedOrders_ = std::move(kept);
+}
+
+void World::orderWait(int unitId, float seconds, bool queue, int32_t radius) {
     OrdersNote note{*this,unitId};
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type) return;
@@ -4876,14 +4903,29 @@ void World::orderWait(int unitId, float seconds, bool queue) {
         cancelPath(*u);
         u->orders.clear();
     }
+    const int32_t ticks = seconds > 0 ? int32_t(seconds * kTick + 0.5f) : 0;
     Order o;
     o.x = u->x;
     o.z = u->z;
-    o.wait = seconds > 0 ? int32_t(seconds * kTick + 0.5f) : 0;
+    if (radius > 0) {
+        // The Wait mission keeps its count in its own state (+0x4e), stepping it
+        // down at each look; the order stays a hold until a look ends it.
+        ScriptedOrder s;
+        s.kind = ScriptedOrder::Kind::WaitNear;
+        s.count = ticks; s.radius = radius;
+        o.scripted = addScriptedOrder(s);
+        if (!o.scripted) return;
+        o.wait = 1;
+        o.mission.deadline = 0;   // the first look is the moment it comes up
+    } else {
+        // A Wait of no time ends the moment it comes up (401480 stage 1).
+        if (ticks <= 0) return;
+        o.wait = ticks;
+    }
     u->orders.push_back(o);
 }
 
-void World::orderWaitAttack(int unitId, bool queue) {
+void World::orderWaitAttack(int unitId, bool queue, int watched) {
     OrdersNote note{*this,unitId};
     Unit* u = unit(unitId);
     if (!u || !u->alive() || !u->type) return;
@@ -4891,11 +4933,249 @@ void World::orderWaitAttack(int unitId, bool queue) {
         cancelPath(*u);
         u->orders.clear();
     }
+    // 4d6c40 listens to the watched unit from the moment the mission is made
+    // (519990): a hit while the order still waits its turn counts. A unit that
+    // is already gone gives no listener, and the mission ends when it comes up.
+    ScriptedOrder s;
+    s.kind = ScriptedOrder::Kind::WaitAttack;
+    const Unit* t = unit(watched ? watched : unitId);
+    if (t && t->alive()) { s.watched = t->id; s.heard = t->attackedTick; }
     Order o;
     o.x = u->x;
     o.z = u->z;
     o.waitAttack = true;
+    o.scripted = addScriptedOrder(s);
+    if (!o.scripted) return;
     u->orders.push_back(o);
+}
+
+void World::orderAttackType(int unitId, const UnitType* type, bool queue) {
+    OrdersNote note{*this,unitId};
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type || !type) return;
+    if (!queue) {
+        cancelPath(*u);
+        u->orders.clear();
+    }
+    ScriptedOrder s;
+    s.kind = ScriptedOrder::Kind::AttackType;
+    s.type = type;
+    Order o;
+    o.x = u->x;
+    o.z = u->z;
+    o.scripted = addScriptedOrder(s);
+    if (!o.scripted) return;
+    u->orders.push_back(o);
+}
+
+void World::orderTrain(int factoryId, const UnitType* type, int count, bool queue) {
+    OrdersNote note{*this,factoryId};
+    Unit* u = unit(factoryId);
+    if (!u || !u->alive() || !u->type || !type) return;
+    if (!queue) u->orders.clear();
+    ScriptedOrder s;
+    s.kind = ScriptedOrder::Kind::Train;
+    s.type = type;
+    s.count = count;
+    Order o;
+    o.x = u->x;
+    o.z = u->z;
+    o.scripted = addScriptedOrder(s);
+    if (!o.scripted) return;
+    u->orders.push_back(o);
+}
+
+void World::orderSelfDestruct(int unitId, bool queue) {
+    OrdersNote note{*this,unitId};
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type) return;
+    if (!queue) {
+        cancelPath(*u);
+        u->orders.clear();
+    }
+    ScriptedOrder s;
+    s.kind = ScriptedOrder::Kind::SelfDestruct;
+    Order o;
+    o.x = u->x;
+    o.z = u->z;
+    o.scripted = addScriptedOrder(s);
+    if (!o.scripted) return;
+    u->orders.push_back(o);
+}
+
+// 0x51b4f0(passenger, carrier, -1, 0, 1) -> 51b5a0: the attach itself, at once.
+// Retail checks only that both live, that they differ and that neither carries
+// or rides already; nothing about owners, capacity or distance. Ours also wants
+// a transport, since only a transport ever unloads what it holds.
+bool World::embarkInto(int passengerId, int transportId) {
+    Unit* p = unit(passengerId);
+    Unit* t = unit(transportId);
+    if (!p || !t || p == t || !p->alive() || !t->alive() || !p->type || !t->type) return false;
+    if (p->embarked() || t->embarked() || !p->cargo.empty() || p->type->isStructure() ||
+        !t->type->canTransport) return false;
+    OrdersNote note{*this,passengerId};
+    // 4d49f0: the passenger's queue is cleared but for the missions that keep
+    // through a clear (descriptor flag 4: the waits, AttackUType, BuildingBuild)
+    // and BeCarried goes in front; every clause after the `i` queues behind it.
+    std::erase_if(p->orders, [&](const Order& o) {
+        const ScriptedOrder* s = scriptedOrder(o);
+        return !(o.wait > 0 || o.waitAttack || (s && s->kind != ScriptedOrder::Kind::SelfDestruct));
+    });
+    cancelPath(*p);
+    if (p->scriptAimTarget) clearScriptWeaponTarget(*p);
+    groundRemove(*p);   // World keeps cargo off the ground word, as a pickup does
+    p->inTransport = t->id;
+    t->cargo.push_back(p->id);
+    p->speed = Fixed();
+    p->x = t->x; p->z = t->z;
+    updateBodyIndex(*p); refreshMovingSearchBody(*p);
+    return true;
+}
+
+void World::scriptStandingOrder(int unitId, int order) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || order < 0 || order > 2) return;
+    u->standingOrder = uint8_t(order);
+    u->stance = 2 - order;
+    switch (order) {
+        case 2: u->moveState = 1; u->fireState = 2; break;   // Offensive
+        case 1: u->moveState = 0; u->fireState = 2; break;   // Defensive
+        default: u->moveState = 0; u->fireState = 0; break;  // Passive
+    }
+}
+
+void World::scriptStandingFields(int unitId, int move, int fire) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || move < 0 || move > 2 || fire < 0 || fire > 2) return;
+    u->moveState = uint8_t(move);
+    u->fireState = uint8_t(fire);
+}
+
+void World::setVeterancyOverride(int unitId, float multiplier) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type) return;
+    u->vetOverride = multiplier;
+    // getLevel (0x519310) answers 10 while it is set, so the rank shown, the
+    // veteran model and every rank test read full rank; kills still count
+    // (xp) but cannot move it. Cleared, the rank comes from the kills again.
+    if (u->type->noVeteran) u->veteran = 0;
+    else u->veteran = multiplier != 0.0f ? 10 : std::min(10, u->xp);
+}
+
+void World::tickScriptedOrder(Unit& u) {
+    if (u.orders.empty() || !u.orders.front().scripted) return;
+    if (!u.alive() || !u.type || u.underConstruction || u.incapacitated() || u.embarked()) return;
+    const uint16_t index = u.orders.front().scripted;
+    if (index > scriptedOrders_.size()) return;
+    ScriptedOrder& s = scriptedOrders_[index - 1u];
+    OrdersNote note{*this,u.id};
+    auto done = [&] { u.orders.erase(u.orders.begin()); };
+    switch (s.kind) {
+    case ScriptedOrder::Kind::SelfDestruct:
+        // 40188a: 30000 damage of type 5 to itself, the end of a Ctrl+D
+        // countdown (see the countdown in tick): no wreck, no kill credit.
+        done();
+        u.hp = Fixed(); u.lastHitBy = 0; u.lastHitPlayer = -1; u.deathType = Unit::kDeathSelfDestruct;
+        return;
+    case ScriptedOrder::Kind::Train: {
+        Order& o = u.orders.front();
+        if (o.mission.stage == 0) {
+            // 401cf6: nothing to build ends it at once. Only a factory runs one.
+            if (s.count <= 0 || !u.type->producesUnits()) { done(); return; }
+            const size_t before = u.buildQueue.size();
+            train(u.id, s.type, s.count);
+            if (u.buildQueue.size() == before) { done(); return; }   // refused
+            o.mission.stage = 1;
+            return;
+        }
+        // Built (noteScriptedProduction counts them), or nothing of the type
+        // left to build at all: the next order comes up.
+        if (s.count <= 0 || std::find(u.buildQueue.begin(), u.buildQueue.end(), s.type) == u.buildQueue.end())
+            done();
+        return;
+    }
+    case ScriptedOrder::Kind::AttackType: {
+        Order& o = u.orders.front();
+        if (o.mission.stage == 0) {
+            // 401755: without a first weapon (UnitDef +0x264 & 0x20) it fails;
+            // else it sleeps 1..90 ticks before it looks.
+            if (u.type->weapons.empty()) { done(); return; }
+            o.mission.deadline = tickCounter_ + gameRand(90) + 1u;
+            o.mission.stage = 1;
+            return;
+        }
+        if (tickCounter_ < o.mission.deadline) return;
+        // 4015ab: over the whole unit table, every live, not dying unit of the
+        // type whose owner is not this unit's and that it has an attack mission
+        // for (4de530 kind 3); the least hi(dz^2) + hi(dx^2) less rand(half of
+        // it), a later tie winning. No sight test: the script knows.
+        int pick = 0;
+        int32_t best = INT32_MAX;
+        for (const Unit& e : units_) {
+            if (!e.alive() || e.hp <= Fixed() || e.type != s.type || e.player == u.player) continue;
+            if (e.embarked() || !canAttackTarget(u, e)) continue;
+            const int64_t dx = int32_t(uint32_t(e.x.v) - uint32_t(u.x.v));
+            const int64_t dz = int32_t(uint32_t(e.z.v) - uint32_t(u.z.v));
+            const int32_t d = int32_t(uint32_t(uint64_t(dz * dz) >> 32) + uint32_t(uint64_t(dx * dx) >> 32));
+            const int32_t score = int32_t(uint32_t(d) - gameRand(d / 2));
+            if (score <= best) { best = score; pick = e.id; }
+        }
+        // None left: the next order comes up (return 5).
+        if (!pick) { done(); return; }
+        // The attack goes in front (4d7750), and 4d7640 sets the mission it
+        // displaces back to stage 0: after each kill it sleeps and looks again.
+        if (retailIssueAutoAttack(u, pick, false, true) && u.orders.size() > 1) u.orders[1].mission.stage = 0;
+        else done();
+        return;
+    }
+    default:
+        return;   // the waits hold the unit in tickNavigationMovement
+    }
+}
+
+bool World::scriptedWaitDone(Unit& u) {
+    Order& o = u.orders.front();
+    ScriptedOrder* s = o.scripted && o.scripted <= scriptedOrders_.size() ? &scriptedOrders_[o.scripted - 1u] : nullptr;
+    if (s && s->kind == ScriptedOrder::Kind::WaitAttack) {
+        // 4017a0: wait mask 0x18. 0x10 comes when the watched unit is hit (the
+        // hit response 409a50 tells its listeners), 0x08 when it goes and its
+        // listeners are let go (519a60). No watched unit: done (return 5).
+        const Unit* t = s->watched ? unit(s->watched) : nullptr;
+        return !t || !t->alive() || t->attackedTick != s->heard;
+    }
+    if (s && s->kind == ScriptedOrder::Kind::WaitNear) {
+        // 401480 with a radius: each look asks 411ae0 for the owner's visible
+        // enemies (live, not dying) within it; one is enough. Else the count
+        // runs down by the sleep it takes, rand(7)+7 ticks at a time, and a
+        // look that finds it spent ends the wait.
+        if (tickCounter_ < o.mission.deadline) return false;
+        const int64_t r = s->radius;
+        for (int id : visibleEnemies(u.player)) {
+            const Unit* e = unit(id);
+            if (!e || !e->alive() || e->hp <= Fixed()) continue;
+            const int64_t dx = int32_t(uint32_t(e->x.v) - uint32_t(u.x.v));
+            const int64_t dz = int32_t(uint32_t(e->z.v) - uint32_t(u.z.v));
+            if (((dx * dx) >> 32) + ((dz * dz) >> 32) <= r * r) return true;
+        }
+        if (s->count <= 0) return true;
+        const uint32_t step = gameRand(7) + 7u;
+        s->count -= int32_t(step);
+        o.mission.deadline = tickCounter_ + step;
+        return false;
+    }
+    if (o.waitAttack) return true;   // a hold no mission state describes
+    // A plain Wait sleeps its whole count once (stage 0) and ends.
+    return --o.wait <= 0;
+}
+
+void World::noteScriptedProduction(Unit& producer, const UnitType* t) {
+    if (producer.orders.empty()) return;
+    const Order& o = producer.orders.front();
+    if (!o.scripted || o.scripted > scriptedOrders_.size() || o.mission.stage == 0) return;
+    ScriptedOrder& s = scriptedOrders_[o.scripted - 1u];
+    // 401c20 counts its own builds down (+0x52); a finished unit of its type
+    // while it heads the queue is one of them.
+    if (s.kind == ScriptedOrder::Kind::Train && s.type == t && s.count > 0) --s.count;
 }
 
 void World::guard(int unitId, int targetId, bool queue) {
@@ -7406,7 +7686,8 @@ void World::scenarioDestroy(int unitId,uint8_t deathType) {
     if(validUnitOwner(killOwner) && !allied(killOwner,owner))++players_[size_t(killOwner)].kills;
     if (auto* killer=unit(u.lastHitBy);killer && killer->type) {
         if (killer->alive() && killer->type->canMove && !killer->type->noVeteran) {
-            ++killer->xp;killer->veteran=std::min(10,killer->xp);
+            // A mission's fixed multiplier (`v F`) holds the rank at 10.
+            ++killer->xp;if (killer->vetOverride==0.0f) killer->veteran=std::min(10,killer->xp);
         }
     }
     if (scenario_) scenario_->unitDied(*this,unitId);
@@ -9292,7 +9573,7 @@ Order World::makeBuildOrder(const Unit& builder,const UnitType* type,Fixed x,Fix
 }
 
 bool World::prepareBuildApproach(Unit& u) {
-    if (u.orders.empty()) return false;
+    if (u.orders.empty() || scriptHold(u)) return false;
     auto& goal=u.orders[currentLeg(u.orders)];
     // A reclaim leg's rectangle belongs to tickReclaim.
     if (!goal.buildType) return false;
@@ -13931,6 +14212,7 @@ void World::tickProduction(Unit& u, float dt) {
         if (result==RetailConstructionResult::Completed) {
             notifyUnitScript(*producer,"StopBuilding");
             producer->productionSiteId=0;producer->buildProgress=0;producer->buildFraction=0;
+            noteScriptedProduction(*producer,site->type);
             retireProductionItem(*producer,0);
             if (producer->buildQueue.empty()) {
                 if (auto it=unitScripts_.find(producerId);it!=unitScripts_.end()) it->second.activated=false;
@@ -14049,6 +14331,7 @@ void World::finishProduction(int producerId,Unit& finished) {
     site->productionOwner=0;
     producer->productionSiteId=0;
     producer->buildProgress=0;producer->buildFraction=0;
+    noteScriptedProduction(*producer,t);
     retireProductionItem(*producer,0);
     if (auto it=unitScripts_.find(producerId);it!=unitScripts_.end()) {
         const auto& file=*producer->type->script();
@@ -14318,34 +14601,19 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
     if (u.orders.empty()) {
         if (u.type->canFly) holdFlight(u);
         else if (!u.type->isStructure()) brakeGround(u);
-    } else if (u.orders.front().wait > 0) {
-        // SetMission "w N": hold position while the scripted wait counts down.
+    } else if (scriptHold(u)) {
+        // SetMission "w F [N]" and "wa [NAME]": hold position until the wait
+        // ends (scriptedWaitDone), then the next queued order runs. Retail's
+        // Wait and WaitForAttack only sleep or wait on events; the weapons
+        // still fire at whatever comes into reach (52ae90's auto slots).
+        // "wa" used to end when any enemy came within sight; retail ends it
+        // when the watched unit is HIT (4017a0, wait mask 0x18). The other
+        // mission orders (AttackUType between its attacks, BuildingBuild)
+        // move nothing either: tickScriptedOrder runs them.
         if (u.type->canFly) holdFlight(u);
         else if (!u.type->isStructure()) brakeGround(u);
-        --u.orders.front().wait;
-        if (u.orders.front().wait <= 0.0f) u.orders.erase(u.orders.begin());
-    } else if (u.orders.front().waitAttack) {
-        // SetMission "wa": ambush -- hold until a non-allied unit is within sight,
-        // then release to the next order (usually an attack).
-        if (u.type->canFly) holdFlight(u);
-        else if (!u.type->isStructure()) brakeGround(u);
-        float sight = u.type->sight > 0 ? sightDistance(*u.type) : 200.0f;
-        // THROUGH THE SPATIAL GRID. This scanned every unit in the world, for every
-        // ambushing unit, every tick -- O(n^2) in the number of ambushers, and a
-        // mission that sets "wa" on a large force pays it on the referee as well as
-        // on every client. The grid holds ALL alive units, buildings included
-        // (rebuildGrid), so this is the same set, merely visited by locality; the
-        // exact distance test below is unchanged and the answer is a bool, so
-        // iteration order cannot affect it.
-        bool threat = false;
-        forEachNear(u.x.toFloat(), u.z.toFloat(), sight, [&](int idx) {
-            if (threat) return;
-            const Unit& e = units_[size_t(idx)];
-            if (!e.alive() || e.embarked() || !e.type || allied(e.player, u.player)) return;
-            const float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
-            if (dx * dx + dz * dz <= sight * sight) threat = true;
-        });
-        if (threat) u.orders.erase(u.orders.begin());
+        if ((u.orders.front().wait > 0 || u.orders.front().waitAttack) && scriptedWaitDone(u))
+            u.orders.erase(u.orders.begin());
     } else {
         // Buildings can retain attack orders outside the combat hold radius.
         // They have no movement controller: even a zero-speed navigator turns
@@ -15528,7 +15796,7 @@ void World::tick(float dt) {
                     // kills, not the victim's value — so a cheap unit that lands
                     // a single big kill doesn't jump straight to max veterancy).
                     k->xp += 1;
-                    k->veteran = std::min(10, k->xp);
+                    if (k->vetOverride == 0.0f) k->veteran = std::min(10, k->xp);   // `v F` holds 10
                 }
             }
             if (mission_ || scenario_) justDied_.push_back(u.id);
@@ -15766,6 +16034,10 @@ void World::tick(float dt) {
             }
         }
 
+        // A mission order with a mission of its own (AttackUType, BuildingBuild,
+        // SelfDestructFG) at the head runs here, ahead of the unit's combat.
+        if (!u.orders.empty() && u.orders.front().scripted) tickScriptedOrder(u);
+
         // Wildlife and villagers roam. Retail gives them Standby_wander and they
         // amble; ours stood like statues on every campaign and scenario map. An idle
         // wanderer strolls every ~8 seconds, staggered by id so a herd doesn't move
@@ -15860,7 +16132,7 @@ void World::tick(float dt) {
         // Reclaim needs no deferral: consuming a feature spawns nothing, so
         // nothing can reallocate units_ underneath us. Its stage 0 runs as
         // soon as the leg is current, before the mover (406250, 4d4e80).
-        if (!u.orders.empty()) {
+        if (!u.orders.empty() && !scriptHold(u)) {
             const auto& leg=u.orders[currentLeg(u.orders)];
             if (leg.reclaimFeat && u.reclaimId == 0) u.reclaimId = leg.reclaimFeat;
             // (A body still dying waits here until its corpse feature exists.)
@@ -16819,6 +17091,16 @@ uint64_t World::stateHash() const {
             if (order.reclaimAreaApproach) mix(0x52434c4d41505052ull);
             if (order.helpSite) { mix(0x48454c50u); mix(uint32_t(order.helpSite)); }
             if (order.guardRepair) { mix(0x47524550u); mix(uint32_t(order.repairTarget)); }
+            // A mission order's own state (ScriptedOrder) and its mission stage.
+            if (order.scripted) {
+                mix(0x5343525054454400ull); mix(order.scripted);
+                if (const ScriptedOrder* s = scriptedOrder(order)) {
+                    mix(uint8_t(s->kind)); mix(uint32_t(s->count)); mix(uint32_t(s->watched));
+                    mix(s->heard); mix(uint32_t(s->radius));
+                    if (s->type) { mix(s->type->id.size()); for (unsigned char c : s->type->id) mix(c); }
+                }
+                mix(order.mission.stage); mix(order.mission.deadline); mix(uint32_t(order.wait));
+            }
             if (order.reclaimFeat && (order.mission.stage || order.mission.pending)) {
                 mix(0x52434c4d50454e44ull);mix(order.mission.pending);
                 mix(order.mission.stage);mix(order.mission.waitMask);mix(order.mission.deadline);
@@ -16984,6 +17266,7 @@ uint64_t World::stateHash() const {
         mix(u.viewSight.sightHeight);mix(u.viewSight.active);mix(uint8_t(u.viewPlayer));
         mix(u.groundGradeTick);
         mix(uint64_t(u.veteran));
+        if (u.vetOverride != 0.0f) { mix(0x5645544f56524445ull); mixf(u.vetOverride); }
         if (u.scenarioArmor != 1.0f || u.scenarioWeapon != 1.0f) {
             mix(0x4352545354415453ull);
             mix(std::bit_cast<uint32_t>(u.scenarioArmor));
