@@ -21,6 +21,9 @@ outside the repo and nothing from the binary is copied into the engine.
   are gitignored — keep it that way. `KINGDOMS.icd` is for **reverse-engineering
   only** — static analysis, and emulating routines to compare behaviour against a
   port. Never copy its code/data into the engine, and never commit any of it.
+  The only archives tracked are the mods under `mods/`: our own `click.hpi`, and
+  two third-party community mods (`ManaPost`, `CUTbugfix`) kept by the owner's
+  explicit decision. None of them is ever packaged; add no others without asking.
 - **The simulation is deterministic lockstep** — every peer must compute
   byte-identical state:
   - No direct libm transcendentals in `src/sim/`. Use `src/sim/detmath.h`

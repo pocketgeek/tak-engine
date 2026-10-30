@@ -1,0 +1,36 @@
+Total Annihilation Kingdoms CUT Bugfix V.1
+------------------------------------------
+
+Installation: Simply place the "CUTBugfix" file into your TA:K directory, e.g 
+(c:\cavedog\takingdoms) and make sure you run the game with the modified shortcut.
+
+
+Fixes
+-----
+
+- Fixed the Aramon Mage Archer's Paraylse arrow in CUT, so it now works properly and 
+  consistantly.
+
+- Restored the Zhon Wisps targeting and firing in CUT. It now targets and shoots enemies 
+  properly in CUT.
+
+
+Other info:
+-----------
+
+- This patch is essential for those who play Skirmish games with the CUT unit balence.
+- This patch won't work on Boneyards.
+
+
+Thanks to:
+----------
+
+- Switeck   : Creator of TA-Bugfix and all those fine TA ai's.
+- Quitch(y) : Creator of the great Queller, webmaster of AI Central.
+
+
+Contacts:
+---------
+
+XCOMveteran (xcomveteran@hotmail.com)
+
