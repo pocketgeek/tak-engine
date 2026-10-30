@@ -7,7 +7,8 @@
 // negative-size rectangles, negative coordinates, boxes too large for the bins, grow from 1 to 40, and lists of
 // up to 4096 (a background build's pending limit) and 1024+ (the per-tick dirty list's limit).
 //
-// `legion_cluster_test --bench` times reference vs clusterRects on fixed workloads (screening numbers only).
+// `legion_cluster_test --bench` times reference vs clusterRects on fixed workloads, and `--bench-scn FILE...` on the
+// rectangles of a .scn's churn lines (tools/scenarios/clusterchurn-*.scn); screening numbers only.
 #include "sim/legion_cluster.h"
 #include <chrono>
 #include <cstdio>
@@ -191,10 +192,44 @@ void bench() {
         if (sink == 42) std::printf("\n");
     }
 }
+// --bench-scn FILE: the rectangles a .scn's `churn` lines hand refreshPlane in one tick (each line's W x H box twice:
+// the toggle's place and the lift that replaces it, as LCLUSTER counts them), per plane footprint 1..3 (grow 10..12).
+void benchScn(const char* path) {
+    std::FILE* f = std::fopen(path, "r");
+    if (!f) {std::fprintf(stderr, "cannot read %s\n", path); return;}
+    std::vector<Rect> rects;
+    char line[512];
+    while (std::fgets(line, sizeof line, f)) {
+        int x, z, w, h;
+        if (std::sscanf(line, "churn %d %d %d %d", &x, &z, &w, &h) == 4) rects.push_back({x, z, w, h});
+    }
+    std::fclose(f);
+    const size_t lines = rects.size();
+    for (size_t i = 0; i < lines; ++i) rects.push_back(rects[i]);
+    std::printf("%s: %zu rectangles\n", path, rects.size());
+    for (int foot = 1; foot <= 3; ++foot) {
+        const int grow = 8 + foot + 1;
+        const int reps = std::max(4, int(400000 / (rects.size() * rects.size() / 8 + rects.size())));
+        size_t sink = 0;
+        double ref = 1e30, cur = 1e30;
+        for (int round = 0; round < 5; ++round) {
+            const double t0 = nowMs();
+            for (int r = 0; r < reps; ++r) sink += reference(rects, grow).size();
+            const double t1 = nowMs();
+            for (int r = 0; r < reps; ++r) {cluster::clusterRects(rects, grow, scratch); sink += scratch.clusters();}
+            const double t2 = nowMs();
+            ref = std::min(ref, (t1 - t0) * 1000 / reps);
+            cur = std::min(cur, (t2 - t1) * 1000 / reps);
+        }
+        std::printf("  grow %d: clusters %zu  ref %.3f us  new %.3f us  ratio %.2f\n", grow, scratch.clusters(), ref, cur, ref / cur);
+        if (sink == 42) std::printf("\n");
+    }
+}
 }  // namespace
 
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "--bench") == 0) {bench(); return 0;}
+    if (argc > 2 && std::strcmp(argv[1], "--bench-scn") == 0) {for (int i = 2; i < argc; ++i) benchScn(argv[i]); return 0;}
     edgeCases();
     randomCases();
     if (failures) {std::fprintf(stderr, "legion_cluster_test: %d failures\n", failures); return 1;}
