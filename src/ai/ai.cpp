@@ -17,6 +17,8 @@
 #include <cstdio>
 #include <iterator>
 #include <map>
+#include <mutex>
+#include <optional>
 #include <set>
 #include <tuple>
 #include <unordered_map>
@@ -3348,9 +3350,11 @@ void Controller::logExploration(const tak::sim::World& world, uint32_t simTick) 
 namespace {
 // Debug hook, TAK_AI_REVIVE_STATS: reviveIdle's work and time over the whole
 // process (every AI), printed at exit as one AIREVIVE line. A measuring hook
-// only: it changes nothing the AI does.
+// only: it changes nothing the AI does. Each running room thinks on its own
+// worker thread, so a call counts locally and merges under the lock.
 struct ReviveStats {
     bool on = tak::devEnv("TAK_AI_REVIVE_STATS") != nullptr;
+    std::mutex m;
     uint64_t calls = 0, casters = 0, records = 0, bodies = 0, visits = 0, commands = 0;
     std::vector<double> us;
     ~ReviveStats() {
@@ -3368,10 +3372,15 @@ struct ReviveStats {
     }
 };
 ReviveStats reviveStats;
-struct ReviveTimer {
+struct ReviveCall {
+    uint64_t casters = 0, records = 0, bodies = 0, visits = 0, commands = 0;
     std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
-    ~ReviveTimer() {
-        reviveStats.us.push_back(std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count());
+    ~ReviveCall() {
+        const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+        std::lock_guard lock(reviveStats.m);
+        ++reviveStats.calls; reviveStats.casters += casters; reviveStats.records += records;
+        reviveStats.bodies += bodies; reviveStats.visits += visits; reviveStats.commands += commands;
+        reviveStats.us.push_back(us);
     }
 };
 } // namespace
@@ -3389,8 +3398,8 @@ struct ReviveTimer {
 // order 0x50b5d0 takes only modes 2 and 9.
 void Controller::reviveIdle(const tak::sim::World& world, std::vector<int>& assigned,
                             const CommandSink& sink) const {
-    std::optional<ReviveTimer> timer;
-    if (reviveStats.on) { timer.emplace(); ++reviveStats.calls; }
+    std::optional<ReviveCall> stats;
+    if (reviveStats.on) stats.emplace();
     if (double(world.player(player_).allocation()) < 0.7 || world.atUnitCap(player_)) return;
     constexpr float kReach = 56.0f;
     // The bodies a caster can take up, in world.units() order (the order every
@@ -3408,18 +3417,18 @@ void Controller::reviveIdle(const tak::sim::World& world, std::vector<int>& assi
             !(u.type->canResurrect || (u.type->canAnimate && u.type->animateType)) ||
             u.underConstruction || u.embarked() || u.incapacitated() || u.buildSiteId || !idle(u) ||
             std::find(assigned.begin(), assigned.end(), u.id) != assigned.end()) continue;
-        if (reviveStats.on) ++reviveStats.casters;
+        if (stats) ++stats->casters;
         if (!gathered) {
             gathered = true;
-            if (reviveStats.on) reviveStats.records += world.units().size();
+            if (stats) stats->records += world.units().size();
             for (const auto& c : world.units())
                 if (!c.alive() && c.type && !c.corpseFading && c.deadFor >= c.corpseAnimationTicks() &&
                     c.deadFor < c.corpseUntil)
                     bodies.push_back({c.x.toFloat(), c.z.toFloat(), c.id, c.type, false});
-            if (reviveStats.on) reviveStats.bodies += bodies.size();
+            if (stats) stats->bodies += bodies.size();
             if (bodies.empty()) return;
         }
-        if (reviveStats.on) reviveStats.visits += bodies.size();
+        if (stats) stats->visits += bodies.size();
         const float ux = u.x.toFloat(), uz = u.z.toFloat();
         Body* best = nullptr;
         float bestD = kReach * kReach;
@@ -3435,7 +3444,7 @@ void Controller::reviveIdle(const tak::sim::World& world, std::vector<int>& assi
         tak::net::Command c; c.kind = tak::net::Cmd::Resurrect; c.player = uint8_t(player_);
         c.unitId = u.id; c.targetId = best->id;
         sink(c);
-        if (reviveStats.on) ++reviveStats.commands;
+        if (stats) ++stats->commands;
         best->claimed = true;
         assigned.push_back(u.id);
     }
