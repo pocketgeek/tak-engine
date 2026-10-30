@@ -2523,6 +2523,15 @@ int main(int argc, char** argv) {
                 if(!gameView->atlasVerifyChecks())
                     throw std::runtime_error("atlas verify ran no checks");
             }
+            if(tak::devFlag("TAK_GHOST_VERIFY")) {
+                // Build ghosts (perf follow-up E): every ghost matched the reference
+                // collection, or drawGhostAt() threw.
+                const auto& t=gameView->ghostVerifyTotals();
+                using ull=unsigned long long;
+                std::printf("GHOST_VERIFY checked=%llu hits=%llu culled=%llu collected=%llu inexact=%llu\n",
+                    ull(t.checked),ull(t.hits),ull(t.culled),ull(t.collected),ull(t.inexact));
+                if(!t.checked)throw std::runtime_error("ghost verify ran no checks");
+            }
             running=false;quitApp=true;
             if(studyQuery){studyDeleteQuery(GLsizei(kStudyQueries),studyQueries);studyQuery=false;}
         }

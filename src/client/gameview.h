@@ -775,6 +775,13 @@ public:
     // ghosts (taken from Frame::buildGhostUnits).
     struct UnitIndexVerifyTotals { uint64_t frames=0, passes=0, live=0, candidates=0, accepted=0, overlays[3]{}, ghosts=0; };
     const UnitIndexVerifyTotals& unitIndexVerifyTotals() const { return unitIndexVerifyStats_; }
+    // TAK_GHOST_VERIFY (perf follow-up E): every build ghost was also collected and
+    // sorted afresh (the reference path). Ghosts drawn from retained geometry matched
+    // it triangle for triangle (hits), ghosts not drawn had reference bounds wholly
+    // outside the clip (culled), and every entry's bounds matched the reference
+    // (checked = all ghosts with a model), or drawGhostAt threw.
+    struct GhostVerifyTotals { uint64_t checked=0, hits=0, culled=0, collected=0, inexact=0; };
+    const GhostVerifyTotals& ghostVerifyTotals() const { return ghostVerify_; }
     // TAK_SCHEDULE_VERIFY (workstream I): every geometry pass built each visible
     // unit exactly once under a well-formed plan; the shadow point checks, shadow
     // tile transforms and body copies of the planned passes equal a serial re-run,
@@ -981,6 +988,10 @@ private:
         std::vector<std::pair<SDL_Texture*, int>> previousRuns;
         std::vector<ShadowCollectVertex> shadowVerts;
         std::vector<CollectVertex> collectVerts;
+        // collect(): textured primitives drawn from outside the colour atlas (the
+        // fallback texture lookup, whose answer depends on the animation frame and
+        // the player colour). Counted only; the caller resets it (drawGhostAt).
+        uint32_t unpackedTextures = 0;
         size_t peak = 0;                      // largest use since the last fold (bytes)
         size_t usedBytes() const;
         size_t capacityBytes() const;
@@ -2038,6 +2049,29 @@ private:
     ShadowMaskFrame addShadowMask(std::span<const uint8_t> rgba,int width,int height);
     std::vector<Tri> tris_;
     std::vector<SDL_Vertex> triBatch_;   // reused per-unit vertex batch
+    // Build ghosts (drawGhostAt; perf follow-up E). A ghost is its model collected
+    // with no pose, no heading, the local player's colour atlas and no palette
+    // lighting, then depth-sorted: the same triangles every time until the model,
+    // the atlas (texture, layout) or a renderer/asset generation changes, and only
+    // then placed (zoom + anchor) and tinted. One entry per model holds that sorted
+    // MODEL-LOCAL list and its bounds; a ghost whose placed bounds miss the clip is
+    // not drawn at all. `exact` is false when a primitive took a texture from outside
+    // the colour atlas (collect()'s fallback: animation frame and colour dependent):
+    // such an entry keeps only the bounds (geometry does not depend on the texture)
+    // and the triangles are collected afresh for every drawn ghost. Render thread only.
+    struct GhostGeometry {
+        SDL_Texture* atlas = nullptr;
+        int atlasW = 0, atlasH = 0;
+        bool exact = false;
+        bool empty = true;                       // no triangles: draws nothing
+        float minX = 0, minY = 0, maxX = 0, maxY = 0;   // model-local vertex bounds
+        std::vector<Tri> tris;                   // collect() + stable depth sort (exact only)
+    };
+    std::unordered_map<const tak::tdo::Model*, GhostGeometry> ghostGeometry_;
+    tak::render::Generation ghostRendererGen_ = tak::render::kNoGeneration;
+    tak::render::Generation ghostAssetGen_ = tak::render::kNoGeneration;
+    size_t ghostGeometryBytes_ = 0;
+    const GhostGeometry& ghostGeometry(const tak::tdo::Model* model, SDL_Texture* atlas);
     uint64_t geometryFrame_=0;
     // Per-unit geometry entries, owned by the UNIT (workstream C): a unit keeps
     // its entry across painter-order changes and short absences; destroyed units,
@@ -3321,6 +3355,8 @@ private:
 #ifndef NDEBUG
     bool unitIndexVerify_ = false;
     UnitIndexVerifyTotals unitIndexVerifyStats_;
+    GhostVerifyTotals ghostVerify_;
+    std::vector<Tri> ghostVerifyTris_;    // TAK_GHOST_VERIFY reference collection
 #endif
     std::unordered_set<int> featInstIds_;   // sim ids with a visual inst (dynamic adds)
     std::vector<std::pair<float, float>> manaSpots_;   // Sacred Stone deposits
