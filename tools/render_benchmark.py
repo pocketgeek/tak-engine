@@ -181,10 +181,12 @@ SCENES = {
                            env={"TAK_RENDER_OFFSET": "442,3727", "TAK_RENDER_ZOOM_OSC": "0.8,1.0,600"},
                            notes="5000-unit army, zoom oscillating 0.8..1.0 every 600 frames at "
                                  "7680x2160: its tiles cross four pages twice per period"),
+    # 448 MiB, not the 384 MiB floor: under 384 MiB this view crashes 461e9c4b in the body
+    # arena's native draw (GeometrySubmit::passDrawBuffer, a pre-existing defect).
     "shadow-cap-constrained": dict(count=10000, zoom=0.82,
-                                   env={"TAK_RENDER_OFFSET": "442,3727", "TAK_GPU_CAP_MIB": "384"},
-                                   notes="shadow-cap-dense under a 384 MiB tracked-GPU cap (the policy "
-                                         "floor): no budget for pages past the first four"),
+                                   env={"TAK_RENDER_OFFSET": "442,3727", "TAK_GPU_CAP_MIB": "448"},
+                                   notes="shadow-cap-dense under a 448 MiB tracked-GPU cap: pages past the "
+                                         "first four fit only while the terrain loads, then give way"),
 }
 QUICK = ["small-battle", "stationary-mixed", "moving", "pan"]
 SIZES = {"normal": (1280, 960), "uhd": (7680, 2160)}
