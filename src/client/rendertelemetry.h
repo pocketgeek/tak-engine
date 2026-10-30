@@ -465,6 +465,10 @@ enum class Counter : uint8_t {
     ShadowCompositeRuns,
     ShadowDemandPx,
     ShadowPageLimit,
+    // ... live pages past the base pages (gauge; client/shadowatlas.h), and the
+    // atlas resets that gave them back under GPU pressure (per frame).
+    ShadowExtendedPages,
+    ShadowPressureSheds,
     Count
 };
 
@@ -550,7 +554,8 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "palette_indexed_draws", "palette_fallbacks", "palette_switches", "palette_spans",
     "palette_span_commands", "native_passes", "native_pass_commands", "native_pass_refused",
     "native_primes", "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded",
-    "shadow_composite_runs", "shadow_demand_px", "shadow_page_limit"};
+    "shadow_composite_runs", "shadow_demand_px", "shadow_page_limit", "shadow_extended_pages",
+    "shadow_pressure_sheds"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

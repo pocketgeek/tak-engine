@@ -653,7 +653,7 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded",
                     # perf follow-up K: shadow atlas capacity
                     "shadow_composite_runs", "shadow_demand_px", "shadow_page_limit",
-                    "shadow_direct_units"]
+                    "shadow_direct_units", "shadow_extended_pages", "shadow_pressure_sheds"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",

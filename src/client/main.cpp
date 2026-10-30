@@ -2511,15 +2511,20 @@ int main(int argc, char** argv) {
                 // re-bake of the frame, or draw() threw at the first differing pixel.
                 const auto& t=gameView->shadowVerifyTotals();
                 // Workstream F appends the cell counts (kept = reused in a cell kept from
-                // an earlier frame; validated = frames whose allocator passed validate()).
+                // an earlier frame; validated = frames whose allocator passed validate()),
+                // perf follow-up K the page budget (frames on extended pages, most pages
+                // held, pressure sheds, frames that fell back for any reason, frames from
+                // the last shed to the next frame on extended pages: the cooldown).
                 using ull=unsigned long long;
                 std::printf("SHADOW_CACHE_VERIFY frames=%llu tiles=%llu reused=%llu body=%llu translated=%llu "
                             "original_reused=%llu kept=%llu allocs=%llu compactions=%llu migrated=%llu "
                             "evicted=%llu page_releases=%llu shrinks=%llu validated=%llu page_allocs=%llu "
-                            "alloc_failures=%llu\n",
+                            "alloc_failures=%llu extended_frames=%llu max_pages=%llu sheds=%llu fallbacks=%llu "
+                            "regrow_gap=%llu\n",
                     ull(t.frames),ull(t.tiles),ull(t.reused),ull(t.body),ull(t.translated),ull(t.original),
                     ull(t.kept),ull(t.allocs),ull(t.compactions),ull(t.migrated),ull(t.evicted),
-                    ull(t.pageReleases),ull(t.shrinks),ull(t.validated),ull(t.pageAllocs),ull(t.failures));
+                    ull(t.pageReleases),ull(t.shrinks),ull(t.validated),ull(t.pageAllocs),ull(t.failures),
+                    ull(t.extendedFrames),ull(t.maxPages),ull(t.sheds),ull(t.fallbacks),ull(t.regrowGap));
                 if(!t.frames)throw std::runtime_error("shadow cache verify ran no checks");
             }
             if(tak::devFlag("TAK_GEOMETRY_OWNERSHIP_VERIFY")) {
