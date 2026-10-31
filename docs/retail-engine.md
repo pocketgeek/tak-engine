@@ -253,8 +253,9 @@ splash within 300 px of the sub) and behind a shore (no shot, no churn).
   bites in every fixture, in both modes, and 16 of the 20 Swordsmen bite
   (about 150 hits); Retail and Legion take the same routes. Still deviating:
   Legion's melee ring round a MOBILE target has no corner places (at most
-  four attackers round a 2x2 unit), and an idle unit's target scan skips
-  construction sites (retail's list includes them).
+  four attackers round a 2x2 unit). (An idle unit's target scan skipped
+  construction sites through 307's first landing; since 307 it takes them
+  as retail does, see "Enemies with construction left" below.)
 - Weapon TDF parse @0x530780: `range` readInt → `[WeaponType+0x90]`, clamped
   min 2; `minrange` → `+0x94`. Unit-def weapon-type pointers at `+0x1aa`
   (3 dwords). Range-ring UI strings @0x4d6823; debug dump @0x4fbf6b.
