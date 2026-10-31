@@ -2852,16 +2852,19 @@ static void legionFrontSlots(const std::vector<std::array<int64_t,2>>& at,int64_
 }
 
 // Legion (a deliberate difference from retail, docs/legion-pathfinding.md):
-// a flyer in a squad -- an Alt+N formation (squad < 0) or a Ctrl+N group
-// (squad > 0) -- that also has ground members travels with the ground of its
-// own click. Retail flies it at its own speed toward the shared point and,
-// once it is far out of slot, pulls it back to the group centre (417e02,
-// ported for Retail mode); with neither, a Legion flyer raced ahead, landed
-// at the goal and waited there.
+// a flyer in an Alt+N formation (squad < 0) that also has ground members
+// travels with the ground of its own click. Retail flies it at its own speed
+// toward the shared point and, once it is far out of slot, pulls it back to
+// the group centre (417e02, ported for Retail mode); with neither, a Legion
+// flyer raced ahead, landed at the goal and waited there. A Ctrl+N group
+// (squad > 0) is not a formation: its flyers fly their own orders at their
+// own speed, as a selection's do (owner ruling 2026-10-30; W6 had given Ctrl
+// groups stations too, and in the user's replay wolves-0912 they held a
+// Ctrl+1 group's drakes to the ground's pace, often under 2 px/tick).
 //
 // Pairing (W6, PLAN 3.5 / C4): one click is one convoy (Order::convoyTick,
 // sim/convoy.h), whatever the client's uplink split and whatever the flyer's
-// click offset (retail's spread, sim/retailflyerspread.h). Per squad (retailGroupIndex: Ctrl 1..10, Alt 11..20)
+// click offset (retail's spread, sim/retailflyerspread.h). Per formation
 // the busy ground members' last orders fall into up to kBuckets buckets keyed
 // by (order class, convoyTick); a flyer whose last order carries the same key
 // keeps station over that bucket's ground. A further distinct click gets no
@@ -2884,7 +2887,10 @@ static void legionFrontSlots(const std::vector<std::array<int64_t,2>>& at,int64_
 // flyer's destination its order's point moves, once (stationFree 3), to its
 // lane just beyond the front of the ground's goals (their formation slots), and
 // it is released to that order, as in retail; it arrives, completes the order
-// and lands at once, in front of the ground rather than on its slots. A squad with one bucket
+// and lands at once, in front of the ground rather than on its slots. Where
+// those lanes do not all fit on the map with a lane's room to its edge (goals
+// near the edge, the way the ground travelled) the wing keeps its own points
+// instead. A formation with one bucket
 // keeps every ground member (idle ones too) in its centroid, radius and
 // spacing, as before W6; with several, each bucket counts its own busy
 // members only. Everything here is derived from hashed state each tick, in
@@ -2892,8 +2898,8 @@ static void legionFrontSlots(const std::vector<std::array<int64_t,2>>& at,int64_
 void World::planLegionFlightStations() {
     legionFlightStationsLive_=false;
     if (!isLegionPathfinding(pathfindingMode_)) return;
-    constexpr int kSquads=21;         // retailGroupIndex: 1..10 Ctrl, 11..20 Alt
-    constexpr int kBuckets=4;         // clicks per squad with a station (PLAN 3.5)
+    constexpr int kFormations=11;     // Alt+1..Alt+10: squad -1..-10
+    constexpr int kBuckets=4;         // clicks per formation with a station (PLAN 3.5)
     constexpr int32_t kLead=160;      // px ahead of the station the flyer steers at
     constexpr int64_t kCatchUp=192;   // px behind the station at which it flies at full speed
     constexpr int64_t kBrake=128;     // px ahead of the station at which it stops
@@ -2937,16 +2943,17 @@ void World::planLegionFlightStations() {
         std::array<Bucket,kBuckets> bucket{};
         std::vector<Body> bodies;
     };
-    std::array<std::array<Ground,kSquads>,kMaxPlayers> groups{};
+    std::array<std::array<Ground,kFormations>,kMaxPlayers> groups{};
+    // Formation members only: a Ctrl+N group's flyers fly free.
     const auto member=[](const Unit& u) {
-        return u.alive() && u.type && u.squad!=0 && u.squad>=-10 && u.squad<=10 && u.player>=0 && u.player<kMaxPlayers &&
+        return u.alive() && u.type && u.squad<0 && u.squad>=-10 && u.player>=0 && u.player<kMaxPlayers &&
                !u.type->isStructure() && !u.underConstruction && !u.embarked();
     };
     bool flyers=false;
     TAK_PASS();
     for (const auto& u:units_) {
         if (!member(u) || !u.type->canFly) continue;
-        auto& g=groups[size_t(u.player)][size_t(retailGroupIndex(u))];
+        auto& g=groups[size_t(u.player)][size_t(-u.squad)];
         g.flyers=flyers=true;
         g.foot=std::max({g.foot,int(u.type->footX),int(u.type->footZ)});
     }
@@ -2954,7 +2961,7 @@ void World::planLegionFlightStations() {
     TAK_PASS();
     for (const auto& u:units_) {
         if (!member(u) || u.type->canFly) continue;
-        auto& g=groups[size_t(u.player)][size_t(retailGroupIndex(u))];
+        auto& g=groups[size_t(u.player)][size_t(-u.squad)];
         if (!g.flyers) continue;
         g.sx+=u.x.v;g.sz+=u.z.v;
         ++g.n;g.area+=u.type->footX*u.type->footZ;
@@ -3008,7 +3015,7 @@ void World::planLegionFlightStations() {
             if (g.bucket[size_t(k)].cls==cls && g.bucket[size_t(k)].convoy==last.convoyTick) return &g.bucket[size_t(k)];
         return nullptr;
     };
-    // A bucket's ground centroid and formation radius (px): a squad with one
+    // A bucket's ground centroid and formation radius (px): a formation with one
     // bucket counts all its ground, idle members too.
     const auto centre=[&](const Ground& g,const Bucket& b,Fixed& cx,Fixed& cz) {
         const bool whole=g.buckets==1;
@@ -3019,7 +3026,7 @@ void World::planLegionFlightStations() {
     TAK_PASS();
     for (const auto& u:units_) {
         if (!member(u) || !u.type->canFly || !legionStationOrder(u)) continue;
-        auto& g=groups[size_t(u.player)][size_t(retailGroupIndex(u))];
+        auto& g=groups[size_t(u.player)][size_t(-u.squad)];
         const Order& last=u.orders.back();
         if (g.n==0 || last.convoyTick==ConvoyTable::kNone || last.stationFree==1 || last.stationFree==2) continue;
         Bucket* b=bucketOf(g,last);
@@ -3036,9 +3043,9 @@ void World::planLegionFlightStations() {
     for (size_t i=0;i<units_.size();++i) {
         Unit& u=units_[i];
         if (!member(u) || !u.type->canFly || !legionStationOrder(u)) continue;
-        auto& g=groups[size_t(u.player)][size_t(retailGroupIndex(u))];
+        auto& g=groups[size_t(u.player)][size_t(-u.squad)];
         if (g.overflow && legion_) {
-            // Observation only: once per squad and tick.
+            // Observation only: once per formation and tick.
             legion_->noteFlyerEvent(LegionNavigator::FlyerEvent::StationOverflow);
             g.overflow=false;
         }
@@ -3058,7 +3065,7 @@ void World::planLegionFlightStations() {
         }
         // The front: the bucket's busy bodies as they stand (one that has
         // arrived waits at its slot, and the flyers stay with those still
-        // under way), or at their goals with, for a squad of one bucket, its
+        // under way), or at their goals with, for a formation of one bucket, its
         // idle ground where it stands (the first arrivals among them).
         const auto bodies=[&](bool goals) {
             std::vector<std::array<int64_t,2>> at;
@@ -3078,11 +3085,26 @@ void World::planLegionFlightStations() {
                     if (const int64_t l=int64_t(isqrt64(uint64_t(ex*ex+ez*ez)));l>0) { ax=(ex<<16)/l; az=(ez<<16)/l; }
                 }
                 if (ax || az) legionFrontSlots(bodies(true),ax,az,spacing,8*(g.groundFoot+g.foot)+16,b->toLand,b->landing);
+                // The lanes must all lie on the map with a lane's room
+                // (spacing) between each flyer's footprint and the map's edge.
+                // The front is the farthest goal the way the ground travelled,
+                // so goals near the edge put the lanes against or past it, and
+                // the clamp that stood here landed the wing on the edge itself:
+                // in the user's replay wolves-0912 three of a group's slots lay
+                // 208 px beyond its click (x 288) toward the west edge, the
+                // lanes 64 px beyond those (x 12 to 271), and two drakes were
+                // pinned at x 24 with others at x 35 and 87. With no room in
+                // front of the ground the wing keeps its own points: where it
+                // was sent, as in retail.
+                const int32_t edge=8*g.foot+spacing;
+                for (const auto& p:b->landing) {
+                    const int32_t x=p[0].floorInt(),z=p[1].floorInt();
+                    if (x<edge || z<edge || x>terW_*16-edge || z>terH_*16-edge) { b->landing.clear(); break; }
+                }
             }
             if (size_t(landing)<b->landing.size()) {
-                const int32_t edge=8*g.foot;
-                last.x=Fixed::fromInt(std::clamp(b->landing[size_t(landing)][0].floorInt(),edge,std::max(edge,terW_*16-edge)));
-                last.z=Fixed::fromInt(std::clamp(b->landing[size_t(landing)][1].floorInt(),edge,std::max(edge,terH_*16-edge)));
+                last.x=Fixed::fromInt(b->landing[size_t(landing)][0].floorInt());
+                last.z=Fixed::fromInt(b->landing[size_t(landing)][1].floorInt());
             }
             last.stationFree=3;
         }
