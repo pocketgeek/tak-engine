@@ -6252,7 +6252,13 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
 // ((pos - foot*8 + 8) >> 4, footprintOrigin) and centres the box on it, so a
 // body on the rectangle Attack_Melee walks to (4d4e80) is always in range,
 // wherever in its origin cell it stands.
+// Before the boxes it reads the target's +0x130 low bits (52b98c..52b997): a
+// target in the air (2, our flightGroundMode) is never in range, so a melee
+// weapon never aims or swings at a flyer; one that has landed (1) is boxed
+// like any other unit. World tested the boxes alone, in 2D, so a Titan under
+// a hovering Gryphon hammered it.
 static bool meleeInRange(const Unit& a, const Unit& b) {
+    if (b.flightGroundMode==2) return false;
     auto axis=[](Fixed pa,int fa,Fixed pb,int fb) {
         const int64_t ca=int64_t(footprintOrigin(pa,fa))*16+fa*8,cb=int64_t(footprintOrigin(pb,fb))*16+fb*8;
         return std::abs(ca-cb)-8*int64_t(fa)-8*int64_t(fb)<8;
@@ -6350,8 +6356,17 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
             throw std::runtime_error("findTarget: reordered acquisition gates disagree with the original order");
     }
 #endif
+    // Retail's scan (4d8370) runs the picker (412620) for the slot 519ac0
+    // names, a switcher's selected one, else the first. For a melee slot the
+    // picker keeps grounded units only (+0x130 & 3 == 1, 412932..412945):
+    // a flyer in the air is never acquired, a landed one is.
+    const Weapon* scanWeapon = u.type->weapons.empty() ? nullptr :
+        &u.type->weapons[size_t(u.type->weaponSwitching ?
+            std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1) : 0)];
+    const bool groundOnly = scanWeapon && scanWeapon->melee;
     auto canTarget = [&](const Unit& e) {
         if (e.cloaked) return false;   // cloaked units are invisible to auto-acquire
+        if (groundOnly && e.flightGroundMode != 1) return false;
         return canAttackTarget(u,e);
     };
     if (acquiring) {
@@ -6398,9 +6413,6 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
         // switcher's selected weapon, else the first) is a stone, freeze or
         // charm class, which the picker never offers a site (4127eb..4128db).
         const bool guarding = !groundResponse && !u.orders.empty() && u.orders.front().guard;
-        const Weapon* scanWeapon = u.type->weapons.empty() ? nullptr :
-            &u.type->weapons[size_t(u.type->weaponSwitching ?
-                std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1) : 0)];
         const bool takesSites = !guarding && !(scanWeapon &&
             (scanWeapon->status==Weapon::Status::Stoned || scanWeapon->status==Weapon::Status::Frozen ||
              scanWeapon->mindControl));
@@ -6998,7 +7010,9 @@ bool World::slotBadTarget(const Unit& u,int slot,const Unit& t) const {
 bool World::sweepKeepsTarget(const Unit& u,int slot,const Unit& t) const {
     const Weapon& w=u.type->weapons[size_t(slot)];
     if (!t.alive() || t.hp<=Fixed() || !t.type || allied(u.player,t.player) || t.embarked()) return false;
-    if (w.melee && t.type->canFly) return false;
+    // 40fcb3..40fcc6: a melee slot keeps a grounded target only (+0x130 & 3
+    // == 1), so a flyer that takes off is let go; a landed one is kept.
+    if (w.melee && t.flightGroundMode!=1) return false;
     if (slotBadTarget(u,slot,t)) return false;
     if (w.status==Weapon::Status::Paralyzed && t.paralyzedFor>0) return false;
     if (w.mindControl && t.underConstruction) return false;   // see retailSelectTarget
@@ -7061,7 +7075,9 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
         if (w.mindControl && t.type->cantBeCaptured) continue;
         if (status && t.underConstruction) continue;
         if (w.status==Weapon::Status::Paralyzed && t.paralyzedFor>0) continue;
-        if (w.melee && t.type->canFly) continue;
+        // 412932..412945: a melee slot takes grounded units only (+0x130 & 3
+        // == 1): a flyer in the air never, a landed one like any other.
+        if (w.melee && t.flightGroundMode!=1) continue;
         if (w.toAir && !t.type->canFly) continue;
         if (w.noAir && t.type->canFly) continue;
         const bool insideMin=slotInsideMinRange(u,t,slot);
@@ -7399,7 +7415,9 @@ void World::retailHitResponse(Unit& e,const Unit* a,int dmgType) {
             const int32_t oct=retailOctDistance(a->x.floorInt()-e.x.floorInt(),a->z.floorInt()-e.z.floorInt());
             reach=oct<(leash*9)/10+(w.melee ? 0 : w.range);
         }
-        const bool usable=canAttackTarget(e,*a) && !(w.melee && a->type->canFly) &&
+        // 409db4..409dcc: a melee weapon answers only an attacker on the
+        // ground (+0x130 & 3 == 1); one in the air is left alone.
+        const bool usable=canAttackTarget(e,*a) && !(w.melee && a->flightGroundMode!=1) &&
             !(w.toAir && !a->type->canFly) && !(w.noAir && a->type->canFly) && eff>0;
         if (categoriesOk && reach && usable) {
             const bool flag=e.fireState==2 && mobile && patrolling;
@@ -7549,6 +7567,23 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     int slot = u.type->weapons.empty()
                    ? 0 : std::clamp(u.weaponSlot, 0, int(u.type->weapons.size()) - 1);
     const Weapon* sel = slot < int(u.type->weapons.size()) ? &u.type->weapons[slot] : nullptr;
+    // A walker whose weapon (519ac0: the selected slot, else the first) is
+    // melee attacks on Attack_Melee (404690). 4de530 gives it that mission
+    // against a flyer too, as it tests no air bit for melee, but its head ends
+    // it on every dispatch while the target is airborne (+0x130 & 3 == 2,
+    // 4047e6..4047ee) -- emulated: return 5 with no other call, so the order
+    // goes at once and a target that takes off ends the chase. World chased
+    // the flyer and hit it from under it (meleeInRange had no air test). The
+    // head ends it for a carried target too (+0x114 & 4 and layer 0,
+    // 404778..40478d): one that boards a transport, a Roc's included.
+    if (sel && sel->melee && u.type->canMove && !u.type->canFly && !u.type->isStructure() &&
+        (target->flightGroundMode==2 || target->embarked())) {
+        if(u.scriptAimTarget)clearScriptWeaponTarget(u);
+        dropLeg(u);
+        cancelPath(u);
+        u.routeStamp = -1;
+        return;
+    }
     // 4de530 gives a flyer whose target's type can fly AirToAir (41ca50,
     // tickAirToAir) for any weapon without the `dropped` key, hoverattack or
     // not (4de981..4de9b8). A Dropped bomb does not count, and no shipped

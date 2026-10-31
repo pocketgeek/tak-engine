@@ -1645,6 +1645,13 @@ bool Controller::canHurt(const tak::sim::UnitType* a, const tak::sim::UnitType* 
     return a->weapons.empty() ? hurts(a->weapon) : std::any_of(a->weapons.begin(), a->weapons.end(), hurts);
 }
 
+bool Controller::reachesNow(const tak::sim::Unit& u, const tak::sim::Unit& t) {
+    const auto& weapons = u.type->weapons;
+    const auto& weapon = weapons.empty() ? u.type->weapon
+                                         : weapons[size_t(std::clamp(u.weaponSlot, 0, int(weapons.size()) - 1))];
+    return !(weapon.melee && t.flightGroundMode == 2);
+}
+
 // Every enemy unit this AI knows of (knowledge_), scored where it was last seen.
 // A unit's value is its cost, tripled for a lodestone or mana building and
 // doubled for production and builders (retail's picker divides everything that
@@ -1842,7 +1849,8 @@ bool Controller::strikeOrder(const tak::sim::World& world, const tak::sim::Unit&
         const bool charmRefused = e->underConstruction &&
             std::any_of(u.type->weapons.begin(), u.type->weapons.end(),
                         [](const auto& w) { return w.mindControl; });
-        if ((close || e->underConstruction) && !charmRefused) {
+        // A melee unit cannot reach an anchor in the air: it goes for the site.
+        if ((close || e->underConstruction) && !charmRefused && reachesNow(u, *e)) {
             tak::net::Command c; c.kind = tak::net::Cmd::Attack; c.player = uint8_t(player_);
             c.unitId = u.id; c.targetId = e->id;
             sink(c);
@@ -2163,8 +2171,9 @@ void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& 
             continue; // preserve unrelated explicit attacks and working orders
         }
         float tx=0,tz=0;
+        // A melee defender leaves a flyer in the air alone (it cannot reach it).
         auto answer=[&](const tak::sim::Unit& e) {
-            return reachablePoint(world,u.type,u.x.toFloat(),u.z.toFloat(),
+            return reachesNow(u,e) && reachablePoint(world,u.type,u.x.toFloat(),u.z.toFloat(),
                 e.x.toFloat(),e.z.toFloat(),tx,tz) &&
                 (shooter(e.id) ? nearHome(tx,tz) : local(tx,tz));
         };
