@@ -12,6 +12,7 @@ retailgap 81
 legion_gen1_route_65845_o0 73
 mapgen_naval 72
 render_shadow_atlas_band 70
+render_shadow_atlas_extended 70
 legion_scenario_corner-1x448 67
 legion_scenario_corner-8x56 66
 legion_scale_neutral 66
@@ -19,6 +20,7 @@ legion_gen1_route_65845_o1 61
 legion_gen1_route_65845_om1 56
 render_pick_index 60
 render_pick_index_orders 57
+render_shadow_atlas_full 55
 render_unit_index 52
 legion_situation_r10-104540_retail 50
 mapgen_roster 50
@@ -31,6 +33,8 @@ legion_gen1_route_61923_o1 46
 legion_movement_orders_trolls_maze 46
 legion_chainplane 46
 render_geometry_ownership 45
+render_shadow_atlas_yield 45
+render_shadow_atlas_off 45
 legion_gen1_route_61923_o0 44
 air_over_fx 44
 placement 43

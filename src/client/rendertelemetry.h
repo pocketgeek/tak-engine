@@ -493,6 +493,17 @@ enum class Counter : uint8_t {
     // only the sprite/triangle tests those ran.
     HiddenCoverVisits,
     HiddenCoverReaches,
+    // Shadow atlas capacity (perf follow-up K): composite submissions (one per run
+    // of painter-order neighbours on one silhouette page, plus one per shadow drawn
+    // directly) and the page limit that applied (gauge). The tile area the frame
+    // asked for is ShadowDemandPx above (measurement B and K defined the same gauge;
+    // K's sum is kept, which also covers the units examined before an early failure).
+    ShadowCompositeRuns,
+    ShadowPageLimit,
+    // ... live pages past the base pages (gauge; client/shadowatlas.h), and the
+    // atlas resets that gave them back under GPU pressure (per frame).
+    ShadowExtendedPages,
+    ShadowPressureSheds,
     Count
 };
 
@@ -580,7 +591,8 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "native_primes", "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded",
     "cursor_evals", "cursor_pick_tests", "cursor_pick_hits", "ghosts_queued", "ghost_preps", "hidden_cover_tests",
     "shadow_demand_px", "ghost_draws", "ghost_culled", "ghost_collects", "ghost_cache_hits", "ghost_tris",
-    "ghost_cache_bytes", "hidden_cover_visits", "hidden_cover_reaches"};
+    "ghost_cache_bytes", "hidden_cover_visits", "hidden_cover_reaches", "shadow_composite_runs",
+    "shadow_page_limit", "shadow_extended_pages", "shadow_pressure_sheds"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

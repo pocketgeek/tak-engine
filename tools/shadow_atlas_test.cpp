@@ -277,6 +277,56 @@ void testPageLimitBestFit() {
     { const bool ok = a.validate(&why); check(ok, ("validate: " + why).c_str()); }
 }
 
+void testPageBudget() {
+    // Perf follow-up K: base pages need only fit the cap (the former check,
+    // gpuvram::wouldFit((pending + 1) * page)); extended pages must leave a quarter
+    // of the cap and none is added while the cap is tightened; extended pages yield
+    // when the cap is tightened or the total passes seven eighths of it.
+    constexpr size_t MiB = size_t(1) << 20, page = 16 * MiB;
+    const ShadowGpuBudget roomy{300 * MiB, 1280 * MiB, false};
+    check(shadowPageFits(0, 0, page, roomy) && shadowPageFits(3, 3 * page, page, roomy), "base pages fit a roomy cap");
+    check(shadowPageFits(4, 4 * page, page, roomy), "an extended page fits within 3/4 of the cap");
+    // 300 + 26 * 16 = 716 <= 960 (3/4 of 1280); 300 + 42 * 16 = 972 > 960.
+    check(shadowPageFits(25, 25 * page, page, roomy) && !shadowPageFits(41, 41 * page, page, roomy),
+          "extended pages stop at three quarters of the cap, pending bytes counted");
+    const ShadowGpuBudget tight{300 * MiB, 1280 * MiB, true};
+    check(shadowPageFits(3, 0, page, tight) && !shadowPageFits(4, 0, page, tight),
+          "a tightened cap admits base pages (as before) but no extended page");
+    // The base check is exactly the former one: held + (pending + 1) * page <= cap.
+    bool former = true;
+    std::mt19937 rng(9);
+    for (int i = 0; i < 20000; ++i) {
+        const size_t cap = (64 + rng() % 4096) * MiB, held = (rng() % 4096) * MiB;
+        const size_t pending = rng() % 8;
+        const ShadowGpuBudget b{held, cap, bool(rng() % 2)};
+        const size_t add = (pending + 1) * page;
+        const bool wouldFit = add <= cap && held <= cap - add;
+        former &= shadowPageFits(rng() % 4, pending * page, page, b) == wouldFit;
+    }
+    check(former, "base pages: the former budget check, bit for bit");
+    // Hysteresis: whatever an extended admission allows never puts the total over
+    // the yield line (the atlas does not grow into a pressure shed of its own).
+    bool hysteresis = true, unlimited = true;
+    for (int i = 0; i < 20000; ++i) {
+        const size_t cap = (64 + rng() % 4096) * MiB, held = (rng() % 4096) * MiB;
+        const size_t pending = (rng() % 16) * page;
+        const ShadowGpuBudget b{held, cap, false};
+        if (shadowPageFits(4 + rng() % 12, pending, page, b))
+            hysteresis &= !shadowExtendedPressure({held + pending + page, cap, false});
+        unlimited &= shadowPageFits(4 + rng() % 12, pending, page, {held, SIZE_MAX, false});
+    }
+    check(hysteresis, "an admitted extended page never reaches the yield line");
+    check(unlimited, "an unlimited cap admits extended pages");
+    check(!shadowPageFits(4, SIZE_MAX - page / 2, page, roomy) && !shadowPageFits(0, 0, SIZE_MAX, roomy),
+          "huge requests are refused, not wrapped");
+    check(shadowExtendedPressure(tight), "a tightened cap is pressure");
+    check(!shadowExtendedPressure({1120 * MiB, 1280 * MiB, false}) && shadowExtendedPressure({1121 * MiB, 1280 * MiB, false}),
+          "pressure above seven eighths of the cap");
+    check(!shadowExtendedPressure({4096 * MiB, SIZE_MAX, false}), "no pressure without a cap");
+    check(shadowPageFits(1, 0, page, roomy, 1) == shadowPageFits(4, 0, page, roomy) && !shadowPageFits(1, 0, page, tight, 1),
+          "the base page count is a parameter (TAK_SHADOW_PAGES_MAX below four)");
+}
+
 }  // namespace
 
 int main() {
@@ -286,6 +336,7 @@ int main() {
     testHandlesAndReset();
     testStableNeighbours();
     testPageLimitBestFit();
+    testPageBudget();
     if (failures) { std::fprintf(stderr, "shadow_atlas: %d failure(s)\n", failures); return 1; }
     std::printf("shadow_atlas: all checks passed\n");
     return 0;

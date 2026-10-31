@@ -20,7 +20,9 @@
 // window-sized AA targets are gone. What bounds VRAM now is each subsystem's own ceiling:
 //   terrain chunks 256 MiB LRU (terrainchunks.cpp)   map sections: those the view needs while
 //                                                    chunks bake, 64 MiB idle (mapview.cpp)
-//   palette pages 16 x 16 MiB                         shadow silhouettes 4 x 16 MiB
+//   palette pages 16 x 16 MiB                         shadow silhouettes 4 x 16 MiB (+12
+//                                                    extended pages, only within 3/4 of
+//                                                    the cap: shadowatlas.h)
 //   distant models 4 x 16 MiB                         shadow coverage 16 MiB
 //   GeometrySubmit 64 MiB per retained buffer         colour atlases ~10.7 MiB per slot
 // which add up to ~1 GiB in a pathological game; typical games account 0.4-0.7 GiB.
@@ -30,10 +32,13 @@
 // WHO OBEYS IT. Growable caches check wouldFit() (and blocked()) before allocating and
 // fall back when told no: terrain chunks and sections evict their own LRU first (and
 // shed proactively when the cap drops below what is held), palette/shadow/distant pages
-// stop growing and draw through their fallbacks. ESSENTIALS go past it: a colour atlas
-// (no atlas = that colour's units are not drawn) first asks the terrain caches to shed,
-// then allocates anyway. Content-bounded art (model/feature/effect frames, GUI, fonts,
-// icons, movies) is created unchecked. So the total can exceed a low cap a little.
+// stop growing and draw through their fallbacks. Optimizations that only replace a
+// slower path -- the body vertex arena, extended shadow pages -- stay below 3/4 of the
+// cap and give their memory back under pressure (above 7/8, or a tightened cap).
+// ESSENTIALS go past it: a colour atlas (no atlas = that colour's units are not
+// drawn) first asks the terrain caches to shed, then allocates anyway. Content-bounded
+// art (model/feature/effect frames, GUI, fonts, icons, movies) is created unchecked. So
+// the total can exceed a low cap a little.
 //
 // noteFail(): a create returned NULL. Pause every bake for 3 s, clamp the cap to 87.5%
 // of what is held (not below 384 MiB), and lift that tightening after 60 s without

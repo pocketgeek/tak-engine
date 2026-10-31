@@ -819,6 +819,14 @@ public:
         // frames whose tiles did not fit (whole-frame direct fallback).
         uint64_t kept=0, allocs=0, compactions=0, migrated=0, evicted=0, pageReleases=0,
                  shrinks=0, validated=0, pageAllocs=0, failures=0;
+        // Perf follow-up K: frames drawn with pages past the base pages, the most
+        // pages held, extended pages given back under GPU pressure, frames that fell
+        // back to direct shadows for any reason (failures counts only packing),
+        // frames from the last shed to the first frame on extended pages after it,
+        // and extended pages released after staying empty.
+        // heldPages: live pages after the last drawn frame (also with the shadow pass off).
+        uint64_t extendedFrames=0, maxPages=0, sheds=0, fallbacks=0, lastShedFrame=0, regrowGap=0,
+                 extendedReleases=0, heldPages=0;
     };
     const ShadowCacheVerifyTotals& shadowVerifyTotals() const { return shadowVerify_; }
     uint64_t ownershipChecks() const { return ownershipChecks_; }
@@ -828,6 +836,8 @@ public:
     // Render study (workstream M): toggle Texture Filtering Off <-> Units (the palette
     // form follows: indexed for point-sampled units, baked for bilinear ones).
     void renderStudyToggleFilter() { setTextureFilter(textureFilter_ ? 0 : 1); }
+    // Render study (perf follow-up K): the Options SHADOWS toggle, as Options sets it.
+    void renderStudyShadows(bool on) { if (settings_) settings_->unitShadows = on; }
     // Render study (workstream L): a camera shake of the given magnitude (shakemagnitude
     // units) and duration, the path a weapon's shake request takes.
     void renderStudyShake(float magnitude, float seconds) { screenShake_ = true; triggerShake(magnitude, seconds); }
@@ -2087,7 +2097,8 @@ private:
         SDL_Texture* coverage=nullptr; };
     std::vector<ShadowMaskPage> shadowMaskPages_;
     std::unordered_map<SDL_Texture*,SDL_Texture*> shadowCoverageTextures_;
-    // Bounded per-unit silhouette targets (<= 4 pages, <= 2048 square), discarded
+    // Bounded per-unit silhouette targets (<= tak::render::kShadowMaxPages pages,
+    // <= 2048 square; client/shadowatlas.h has the page budget), discarded
     // with other render targets on device loss. Since workstream F each unit's
     // tile keeps a persistent cell (client/shadowatlas.h); page slots follow the
     // allocator (a released page leaves a null texture until a new page reuses it).
@@ -2113,6 +2124,7 @@ private:
         uint64_t sparseSinceFrame=0, sparseSinceMs=0;    // cells fit without the last page since
         int migratePage=-1;                              // page being emptied (bounded migration)
         uint64_t failFrame=0;                            // last frame whose full repack did not fit
+        uint64_t extendedAfterFrame=0, extendedAfterMs=0; // no extended page before (pressure shed cooldown)
     } shadowAtlasPolicy_;
     void resetShadowAtlas();
     // Tile decision scratch (render thread): this frame's stamp per packed unit,

@@ -71,6 +71,55 @@ inline bool shadowCellKeeps(int cellW, int cellH, int tileW, int tileH, int limi
            2 * uint64_t(cellW) * uint64_t(cellH) <= 3 * uint64_t(tileW) * uint64_t(shadowCellHeight(tileH, limitH));
 }
 
+// ---- Page budget (perf follow-up K) ----
+//
+// Until K the atlas stopped at four pages: a view whose tiles needed more fell
+// back to direct shadows for the WHOLE frame -- every triangle darkening the
+// ground on its own (folds twice, the look the per-unit silhouettes avoid) on the
+// most expensive shadow path -- and a view that filled them repacked (relocated
+// and redrew) every tile each frame a tile outgrew its cell. Pages past the first
+// kShadowBasePages are EXTENDED: added only where the base pages cannot hold the
+// frame's tiles or are full (not merely fragmented) when a tile needs a cell, up to
+// kShadowMaxPages, and only while the GPU budget (gpuvram) has room to spare:
+//
+//   * a base page needs only to fit the cap (gpuvram::wouldFit), as before;
+//   * an extended page replaces a slower path -- drawing never depends on it --
+//     so, like the body arena's storage, it may take the tracked total to at most
+//     three quarters of the cap (the caches that obey the cap keep their room), and
+//     none is added while the cap is tightened after a failed allocation;
+//   * held extended pages yield under pressure (the cap tightened, or the total
+//     above seven eighths of it): GameView resets the atlas and builds it on base
+//     pages only (or falls back) for a cooldown. Admission at 3/4 and yield at 7/8
+//     are the hysteresis: the atlas never grows into a total that makes it yield.
+//
+// Pages are counted live + pending (placed this frame, texture not yet created),
+// and so are their bytes: a frame's pages are budgeted before any is created.
+// kShadowMaxPages bounds them all (256 MiB of 2048^2 pages); equal to
+// kShadowBasePages it means no extended page, the pre-K atlas (debug
+// TAK_SHADOW_PAGES_MAX=4, for tests and same-binary comparisons).
+inline constexpr size_t kShadowBasePages = 4;    // the former fixed limit
+inline constexpr size_t kShadowMaxPages = 16;
+
+struct ShadowGpuBudget {
+    size_t held = 0;            // tracked GPU bytes now (gpuvram::bytes())
+    size_t cap = SIZE_MAX;      // gpuvram::cap(); SIZE_MAX = unlimited
+    bool tightened = false;     // gpuvram::tightened()
+};
+// May the page with ordinal `index` (live + pending pages before it) be added,
+// `pending` bytes of earlier pages of this frame not created yet?
+inline bool shadowPageFits(size_t index, size_t pending, size_t pageBytes, const ShadowGpuBudget& b,
+                           size_t basePages = kShadowBasePages) {
+    const auto fits = [&](size_t limit) {    // held + pending + pageBytes <= limit, overflow-safe
+        return pending <= limit && pageBytes <= limit - pending && b.held <= limit - pending - pageBytes;
+    };
+    if (index < basePages) return fits(b.cap);
+    return !b.tightened && fits(b.cap / 4 * 3);
+}
+// Must the extended pages the atlas holds be given back now?
+inline bool shadowExtendedPressure(const ShadowGpuBudget& b) {
+    return b.tightened || b.held > b.cap / 8 * 7;
+}
+
 struct ShadowCell {
     int page = -1, x = 0, y = 0, w = 0, h = 0;
     friend bool operator==(const ShadowCell&, const ShadowCell&) = default;
