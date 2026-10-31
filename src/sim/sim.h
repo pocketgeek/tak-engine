@@ -867,6 +867,18 @@ struct alignas(64) Order {
     // x/z and its controller in flightGoal. 0 on every other order. Hashed
     // with a tag when set.
     uint8_t stepOut = 0;
+    // VTOL_SeekGuard (4197d0, tickSeekGuard): what a flyer's guard becomes when
+    // its guarded unit is lost and the guard was its last order (VTOL_Follow's
+    // 4191d7, seekLostWard). It circles x/z, the guarded unit's position at
+    // the guard's last look (mission +0x22, kept in attackPointX/Z on the
+    // guard), on `mission`, its orbit angle in guardOrbitAngle (+0x4e), and
+    // guards the first allied ground unit it finds. targetId stays 0. In the
+    // pad after stepOut. Hashed with a tag.
+    bool seekGuard = false;
+    // AirStrike's stage-4 controller (4e3f70, tickAirStrike) follows the
+    // attack's target: flightGoal's point is the target's, every tick. In the
+    // same pad. Hashed when set.
+    bool strikeFollow = false;
     // The attack mission's point (mission +0x22) on a flyer's attack order:
     // the target's position or the selected slot's led SweetSpot as
     // AirToGroundHover last read it (stages 0-3), as AirToGround last read it
@@ -3473,9 +3485,6 @@ private:
     void beginStandby(Unit& u);
     Order* navigationMissionOrder(Unit& u);
     void tickGuardNoMove(Unit& u);
-    // A Shift-queued patrol leg of an armed or builder flyer (Order::patrolOpen)
-    // closes its loop when it starts, as the ground patrol mission does.
-    void openFlightPatrol(Unit& u);
     void tickFlightMovement(Unit& u, bool persistent = false);
     void tickRetainedFlightMovement(Unit& u);
     void tickFlightBody(Unit& u);
@@ -3483,8 +3492,18 @@ private:
     void flyHoverGoal(Unit& u, Order& order, const Unit& target);
     void tickAirToGround(Unit& u, const Unit& target, const Weapon* weapon);
     void tickAirToAir(Unit& u, const Unit& target, const Weapon* weapon);
+    void tickAirStrike(Unit& u, const Unit& target);
     bool seekLostTarget(Unit& u, const Unit* target, bool targetLive);
     void tickSeekAttack(Unit& u, bool carriesTarget = false);
+    // VTOL_Follow's lost ward (4191d7) and VTOL_SeekGuard (4197d0).
+    bool seekLostWard(Unit& u);
+    void tickSeekGuard(Unit& u);
+    int seekGuardFind(const Unit& u) const;
+    // A flying builder's job at a wake of its mission (VTOL_MobileBuild,
+    // VTOL_HelpBuild, VTOL_RepairUnit): the air-traffic check at 8; the
+    // step-out's D when the job steps out of a stack.
+    std::optional<int32_t> flyingJobTraffic(Unit& b, RetailTrafficMission mission);
+    void restartFlyingHelp(Unit& b, const Unit& site);
     void flyMissionGoal(Unit& u, Order& order);
     // Retail's air traffic (retailairtraffic.h): a step-out order pushed ahead
     // of the unit's mission (4d7750), and its mission (4214b0) at the head.

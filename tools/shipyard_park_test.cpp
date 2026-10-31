@@ -298,7 +298,9 @@ void flyerFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,co
         minR=std::min(minR,r);maxR=std::max(maxR,r);
         inRadius+=r>=float(inner)-kSnap && r<=float(outer)+kSnap;
         quadrants|=1u<<((dx>=0?1:0)|(dz>=0?2:0));behind=behind || dz<0;
-        straight+=o.legs==1 && std::abs(o.x-kRx)<1 && std::abs(o.z-kRz)<1;
+        // A rally step is the output's VTOL_Move (GetBuilt resolves QMove for
+        // it), whose stage 1 snaps the point to its footprint grid.
+        straight+=o.legs==1 && std::abs(o.x-kRx)<=16 && std::abs(o.z-kRz)<=16;
     }
     std::printf("flyer mode=%s factory=%s flyer=%s rally=%d outputs=%zu resolved=%d r=[%.1f,%.1f] want=[%d,%d] "
                 "inRadius=%d quadrants=%x straight=%d onPad=%d ticks=%d hash=%016llx\n",

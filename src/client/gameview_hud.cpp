@@ -1054,11 +1054,11 @@ namespace {
                 if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
             }
         }
-        // An armed MOVE or PATROL gives flyers retail's spread (VTOL_Move and
-        // VTOL_Patrol carry the offset flag; sim/retailflyerspread.h) and every
-        // other unit the point itself, as retail's Move_Ground / Patrol do. A
-        // fight-move has no flyer mission with the flag: everyone takes the point.
-        const bool spread = enemy < 0 && (cmd == 'm' || cmd == 'p');
+        // An armed MOVE, PATROL or fight-move gives flyers retail's spread
+        // (their legs are VTOL_Move and VTOL_Patrol, which carry the offset
+        // flag; sim/retailflyerspread.h) and every other unit the point itself,
+        // as retail's Move_Ground / Patrol do.
+        const bool spread = enemy < 0;
         tak::sim::FlyerGroupCentre air;
         if (spread) {
             for (int id : selection_)

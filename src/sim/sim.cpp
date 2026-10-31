@@ -2071,15 +2071,18 @@ int World::flightGround(const Unit& u) const {
     return height;
 }
 
+// A flyer's move, fight-move or patrol leg: VTOL_Move (VTOL_Move_Formation
+// for a formation leg) or VTOL_Patrol, run by tickFlightPatrol. Retail has no
+// fight-move: a fight-move leg (attackMove) flies VTOL_Move as a move does,
+// and World's target acquisition puts its attacks ahead of it. Every flyer's
+// patrol is VTOL_Patrol, armed or a builder: its stage-2 scan and job search
+// are World's acquisition and tickPatrolRepair.
 static bool plainFlightPatrol(const Unit& u) {
     if (!u.type || !u.type->canFly || u.orders.empty()) return false;
     const auto& order=u.orders.front();
     if (order.targetId || order.buildType || order.buildRectangle || order.reclaimFeat ||
         order.repairTarget || u.retailBuild) return false;
-    // Ordinary VTOL_Move is shared by armed aircraft, flying builders and
-    // transports. The patrol handler below only covers plain patrols.
-    return order.flightMoveMission ||
-        (order.patrol && !u.type->isBuilder && u.type->weapons.empty());
+    return order.flightMoveMission || order.patrol;
 }
 
 void World::tickFlightPatrol(Unit& u) {
@@ -2101,6 +2104,8 @@ void World::tickFlightPatrol(Unit& u) {
             u.orders.erase(u.orders.begin()); u.orders.push_back(order);
         }
         void clear() { u.orders.clear(); }
+        bool stepOut(RetailStepOut kind,int32_t distance) { stepOutKind=kind;stepOutTo=distance;return true; }
+        void stopBuilding() {}
         int handle(RetailMissionState& m,uint32_t events) {
             // The air-traffic check past stage 0 (VTOL_Move 417d4e,
             // VTOL_Move_Formation 41787e, VTOL_Patrol 419ee0): a step-out
@@ -2110,17 +2115,12 @@ void World::tickFlightPatrol(Unit& u) {
             // a flyer its flight station holds over a mixed formation's
             // ground is placed by the station, in its lane, and is not
             // stepped out of it.
-            if (m.stage>0 && u.airTraffic>=5 && !w.legionFlightStation(u)) {
-                stepOutTo=retailStepOutDistance(int16_t(u.type->footX),[&](int n) { return random(n); });
-                m.sleep(w.tickCounter_,1);
-                if (u.orders.front().flightMoveMission) {
-                    stepOutKind=u.orders.front().formationLevel && (m.flags&0x4000000u)
-                        ? RetailStepOut::Standby : RetailStepOut::StepOut;
-                    return 0;
-                }
-                stepOutKind=RetailStepOut::StepOut;
-                m.stage=1;
-                return 2;
+            if (!w.legionFlightStation(u)) {
+                const auto& front=u.orders.front();
+                const RetailTrafficMission mission=!front.flightMoveMission ? RetailTrafficMission::Patrol
+                    : front.formationLevel ? RetailTrafficMission::MoveFormation : RetailTrafficMission::Move;
+                if (const int result=retailAirTrafficCheck(mission,m,w.tickCounter_,u.airTraffic,
+                        int16_t(u.type->footX),m.flags,*this);result>=0) return result;
             }
             const RetailGroupRecord* group=w.retailGroupOf(u);
             if (u.orders.front().flightMoveMission && u.orders.front().formationLevel) {
@@ -2249,18 +2249,6 @@ void World::tickFlightPatrol(Unit& u) {
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.stepOutTo) pushStepOut(u,host.stepOutKind,host.stepOutTo);
     noteOrders(u.id);
-}
-
-void World::openFlightPatrol(Unit& u) {
-    const size_t current=currentLeg(u.orders);
-    if (current>=u.orders.size() || !u.orders[current].patrol || !u.orders[current].patrolOpen) return;
-    // As the ground host's initializer: a patrol leg that starts with no
-    // closed patrol leg behind it adds the return point where the flyer stands.
-    u.orders[current].patrolOpen=false;
-    bool loop=false;
-    for (size_t i=current+1;i<u.orders.size();++i)
-        loop|=u.orders[i].goal && u.orders[i].patrol && !u.orders[i].patrolOpen;
-    if (!loop) patrolTo(u.id,u.x.toFloat(),u.z.toFloat(),true,u.orders[current].identity());
 }
 
 // World holds a flyer in place by skipping its flight body, so the flyer does
@@ -3267,28 +3255,24 @@ void World::tickGroundMission(Unit& u) {
             u.orders.push_back(goal);
         }
         void clear() { w.cancelPath(u); u.orders.clear(); u.routeStamp=-1; u.standbyActive=false; u.landing.reset(); }
+        bool stepOut(RetailStepOut kind,int32_t distance) { stepOutKind=kind;stepOutTo=distance;return true; }
+        void stopBuilding() {}
         int handle(RetailMissionState& m, uint32_t events) {
             if (u.landing && &m==&u.landing->mission) {
                 // VTOL_LandIfCan's air-traffic check (416e23), after its exits
                 // (+0x66, event 0x200): VTOL_StepOut ahead, then stage 0 a
                 // tick after it ends.
-                if (!u.landing->canceled && !(events&0x200) && u.airTraffic>=5) {
-                    stepOutKind=RetailStepOut::StepOut;
-                    stepOutTo=retailStepOutDistance(int16_t(u.type->footX),[&](int n) { return random(n); });
-                    m.sleep(w.tickCounter_,1);
-                    return 0;
-                }
+                if (!u.landing->canceled && !(events&0x200))
+                    if (const int result=retailAirTrafficCheck(RetailTrafficMission::LandIfCan,m,w.tickCounter_,
+                            u.airTraffic,int16_t(u.type->footX),m.flags,*this);result>=0) return result;
                 return retailLanding(*u.landing,events,{u.x.v,u.flightY.v,u.z.v},portHeadingToRetail(u.heading),
                     int16_t(u.type->footX),int16_t(u.type->footZ),true,u.type->canFly,*this);
             }
             // VTOL_Standby's air-traffic check (417472), at every wake:
             // VTOL_StepOutStandby ahead, then stage 0 a tick after it ends.
-            if (&m==&u.standbyState && u.type->canFly && u.airTraffic>=5) {
-                stepOutKind=RetailStepOut::Standby;
-                stepOutTo=retailStepOutDistance(int16_t(u.type->footX),[&](int n) { return random(n); });
-                m.sleep(w.tickCounter_,1);
-                return 0;
-            }
+            if (&m==&u.standbyState && u.type->canFly)
+                if (const int result=retailAirTrafficCheck(RetailTrafficMission::Standby,m,w.tickCounter_,
+                        u.airTraffic,int16_t(u.type->footX),m.flags,*this);result>=0) return result;
             if (&m==&u.standbyState && u.type->canFly)
                 return retailVtolStandby(m,w.tickCounter_,true,true,u.flightGroundMode==2,
                     [&](int n){return random(n);},[&]{ initialize(); },
@@ -4846,10 +4830,9 @@ void World::attackMove(int unitId, float x, float z, bool queue) {
     }
     size_t before = queue ? u->orders.size() : 0;
     order(unitId, x, z, queue, ConvoyClass::Fight);
-    for (size_t i = before; i < u->orders.size(); ++i) {
-        u->orders[i].attackMove = true;
-        u->orders[i].flightMoveMission = false;
-    }
+    // A flyer's leg keeps order()'s VTOL_Move (flightMoveMission): retail
+    // has no fight-move, so it flies the move's mission, check and all.
+    for (size_t i = before; i < u->orders.size(); ++i) u->orders[i].attackMove = true;
 }
 
 void World::patrol(int unitId, float x, float z) {
@@ -4888,11 +4871,16 @@ void World::patrol(int unitId, float x, float z) {
         return;
     }
     if (u->type->canFly) {
-        // Flying patrols keep their existing handler and definition flags.
+        // VTOL_Patrol (plainFlightPatrol, every flyer's). The return leg where
+        // the flyer stands is the anchor its stage 0 would append (0x1000412),
+        // and the outbound leg is marked anchored (0x4000), so a Shift-patrol
+        // queued behind joins the loop at its tail, as a ground patrol's does,
+        // instead of a second anchor going in behind it.
         u->orders.clear();cancelPath(*u);
         Order a{u->x,u->z,0},b{Fixed::fromFloat(x),Fixed::fromFloat(z),0};
         a.goal=a.patrol=a.attackMove=true;
         b.goal=b.patrol=b.attackMove=true;
+        a.mission.flags=0x1000412u;b.mission.flags=0x4000u;
         // The outbound leg joins the click's Patrol convoy; the return leg (the
         // flyer's own position) copies it rather than open a convoy of its own.
         if(isLegionPathfinding(pathfindingMode_)) {const auto id=stampIdentity(*u,ConvoyClass::Patrol,b.x,b.z);a.setIdentity(id);b.setIdentity(id);}
@@ -4935,11 +4923,9 @@ void World::queuePatrol(int unitId, float x, float z) {
     if (!u || !u->alive() || !u->type) return;
     const size_t before = u->orders.size();
     patrolTo(unitId, x, z, true);
-    // Producers keep rally lists and unarmed flyers the VTOL patrol handler
+    // Producers keep rally lists and flyers the VTOL patrol handler
     // (plainFlightPatrol), which appends its return point when the patrol
-    // starts. Armed and builder flyers fly patrols on the ordinary VTOL_Move
-    // path and close the loop in openFlightPatrol; without it a lone queued
-    // point was reached once and then hovered over for good.
+    // starts. Ground units close the loop in their patrol initializer.
     if (u->type->isStructure() || u->repeatType) {
         // A queued patrol rally step stays OPEN, as a unit's own queued patrol
         // does: each output closes the loop from where it starts that leg, so
@@ -4948,7 +4934,7 @@ void World::queuePatrol(int unitId, float x, float z) {
             u->rally.back().patrolOpen = true;
         return;
     }
-    if (u->type->canFly && !u->type->isBuilder && u->type->weapons.empty()) return;
+    if (u->type->canFly) return;
     for (size_t i = before; i < u->orders.size(); ++i) u->orders[i].patrolOpen = true;
 }
 
@@ -7403,12 +7389,19 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         groundMovementHandled=true;
         return;
     }
+    if (!u.orders.empty() && u.orders.front().seekGuard) {
+        tickSeekGuard(u);
+        groundMovementHandled=true;
+        return;
+    }
     if (u.orders.empty() || u.orders.front().targetId == 0) return;
 
     if (u.orders.front().guard) {
         Order& o = u.orders.front();
         Unit* t = unit(o.targetId);
         if (!t || !t->alive()) {
+            // A flyer's last order, VTOL_Follow, goes on as VTOL_SeekGuard.
+            if (seekLostWard(u)) { groundMovementHandled=true; return; }
             dropLeg(u);
             cancelPath(u);
             u.routeStamp = -1;
@@ -7500,15 +7493,19 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // (tickAirToGround); one with it hovers (AirToGroundHover 41d820,
     // tickAirToGroundHover).
     const bool airToAir = u.type->canFly && !u.type->isStructure() && target->type && target->type->canFly;
-    const bool hovering = !airToAir && u.type->canFly && (u.type->hoverAttack || (sel && sel->hoverAttack));
-    const bool airRun = u.type->canFly && !hovering && !airToAir && !u.type->isStructure();
+    // A selected weapon with the `dropped` key (mods only) strikes a target
+    // that cannot fly: AirStrike (41b5e0, tickAirStrike), before the hover
+    // and the attack runs (4de530's order).
+    const bool strike = !airToAir && u.type->canFly && !u.type->isStructure() && sel && sel->cursorAirstrike;
+    const bool hovering = !airToAir && !strike && u.type->canFly && (u.type->hoverAttack || (sel && sel->hoverAttack));
+    const bool airRun = u.type->canFly && !hovering && !airToAir && !strike && !u.type->isStructure();
     if (u.scriptAimTarget!=target->id) {
         u.scriptAimTarget=target->id;
         // An attack must wake the airborne script pose too. Movement alone
         // cannot do this when a landed flyer acquires a target already in range.
-        // AirToGround's, AirToAir's and AirToGroundHover's first stage does it
-        // (416c50).
-        if (u.type->canFly && !airRun && !airToAir && !hovering) notifyUnitScript(u,"BeginFlight");
+        // AirToGround's, AirToAir's, AirToGroundHover's and AirStrike's first
+        // stage does it (416c50).
+        if (u.type->canFly && !airRun && !airToAir && !hovering && !strike) notifyUnitScript(u,"BeginFlight");
     }
     float dx = (target->x - u.x).toFloat(), dz = (target->z - u.z).toFloat();
     float dist = std::sqrt(dx * dx + dz * dz);
@@ -7645,7 +7642,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // An attack run, a hover or a dogfight flies in and out of range: its
     // weapons fire (below) when a slot has the target in range, and the
     // mission flies on regardless.
-    if (!airRun && !airToAir && !hovering && ((sel && sel->melee) ? !adj
+    if (!airRun && !airToAir && !hovering && !strike && ((sel && sel->melee) ? !adj
                             : (!inReach || (approachNeedsLine && !los && mayChase) || (mayChase && arcShort())))) {
         if (chaseMission) u.orders.front().attackChased = true;
         // Attack_Melee (404690) stage 0: a melee weapon's target with no
@@ -7761,7 +7758,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
             }
         } else brakeGround(u,want);
         groundMovementHandled=true;
-    } else if (!hovering && !airRun && !airToAir && !u.type->isStructure()) {
+    } else if (!hovering && !airRun && !airToAir && !strike && !u.type->isStructure()) {
         u.speed=fxMax(Fixed(),u.speed-u.type->brake);
         if (u.speed==Fixed()) {
             // Flyers use their flight turn rate while aiming too. Many have no
@@ -7799,6 +7796,10 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     }
     if (airToAir && !u.orders.empty() && u.orders.front().targetId==target->id) {
         tickAirToAir(u,*target,sel);
+        groundMovementHandled=true;
+    }
+    if (strike && !u.orders.empty() && u.orders.front().targetId==target->id) {
+        tickAirStrike(u,*target);
         groundMovementHandled=true;
     }
 }
@@ -9898,6 +9899,13 @@ bool World::prepareBuildApproach(Unit& u) {
     // A reclaim leg's rectangle belongs to tickReclaim.
     if (!goal.buildType) return false;
     if (goal.buildRectangle && goal.mission.stage==0) {
+        // VTOL_MobileBuild's first wake (stage 0) runs its air-traffic check
+        // first (41f0a6): a flyer in a stack steps out before it sets off.
+        if (u.type->canFly)
+            if (const auto d=flyingJobTraffic(u,RetailTrafficMission::MobileBuild)) {
+                pushStepOut(u,RetailStepOut::NoFormation,*d);   // `goal` is not read past this point
+                return false;
+            }
         // A queued build computes its approach when it becomes active,
         // after earlier movement/build orders have changed our position.
         const auto [x,z]=goal.buildRectangle->navigationCell(
@@ -9934,7 +9942,19 @@ bool World::prepareBuildApproach(Unit& u) {
         requestPath(u,goal.x.toFloat(),goal.z.toFloat());
     }
     if (!goal.buildRectangle) return false;
-    if (u.type->canFly) return (goal.mission.pending & goal.mission.waitMask & 0x100)!=0;
+    if (u.type->canFly) {
+        if (!(goal.mission.pending & goal.mission.waitMask & 0x100)) return false;
+        // The arrival wakes the mission (stage 2), whose head runs the
+        // air-traffic check before the site goes down: a flyer in a stack
+        // steps out and starts again from stage 0, its approach.
+        if (const auto d=flyingJobTraffic(u,RetailTrafficMission::MobileBuild)) {
+            goal.mission.pending&=~0x100u;goal.mission.waitMask=0;goal.mission.stage=0;
+            stopWorkAnimation(u);
+            pushStepOut(u,RetailStepOut::NoFormation,*d);   // `goal` is not read past this point
+            return false;
+        }
+        return true;
+    }
     const uint32_t events=(u.missionEvents | goal.mission.pending) & goal.mission.waitMask;
     if (!events) return false;
     // 4d8450 consumes the approach events before MobileBuild enters placement.
@@ -11191,8 +11211,12 @@ void World::clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, F
 //    from look to look; reaching it wakes the look at once.
 //  - first in stage 2, a look woken by the guarded unit's event 0x10 answers
 //    its attacker (guardDefend), before the help and repair look;
-// Not ported: the landed step-out (unit +0x12a >= 5) and the stage-2 attack
-// scan (51d1e0), whose work World's target acquisition does for a guard.
+//  - past stage 0, before all of it, the air-traffic check (4189c7,
+//    retailAirTrafficCheck): VTOL_StepOut ahead, the guard again from stage 0;
+//  - a guarded unit lost (dead or dying; World posts no 0x208) while the
+//    guard is the last mission inserts VTOL_SeekGuard (4191d7, seekLostWard).
+// Not ported: the group check (51d1e0(unit, 1, 4)) with its VTOL_Move_Formation
+// push and its flag's rand(10), as in AirToGround.
 void World::tickFlyingGuard(Unit& u) {
     const size_t end=currentLeg(u.orders);
     if (!u.orders[end].guard) return;
@@ -11233,15 +11257,25 @@ void World::tickFlyingGuard(Unit& u) {
         o.mission.deadline=0xffffffffu;
         return;
     }
-    // The air-traffic check past stage 0 (4189bc): VTOL_StepOut ahead, and
+    // The air-traffic check past stage 0 (4189c7): VTOL_StepOut ahead, and
     // the guard starts again at stage 0 a tick after it ends.
-    if (o.mission.stage>0 && u.airTraffic>=5) {
-        const int32_t distance=retailStepOutDistance(int16_t(u.type->footX),[&](int n) { return pathRand(uint32_t(n)); });
-        o.mission.stage=0;
-        o.mission.sleep(tickCounter_,1);
-        pushStepOut(u,RetailStepOut::StepOut,distance);   // `o` is not read past this point
-        return;
+    {
+        struct Host {
+            World& w; RetailStepOut kind=RetailStepOut::None; int32_t distance=0;
+            uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+            bool stepOut(RetailStepOut k,int32_t d) { kind=k;distance=d;return true; }
+            void stopBuilding() {}
+        } host{*this};
+        if (const int result=retailAirTrafficCheck(RetailTrafficMission::Follow,o.mission,tickCounter_,u.airTraffic,
+                int16_t(u.type->footX),o.mission.flags,host);result>=0) {
+            if (result==0) o.mission.stage=0;   // the dispatcher's result 0
+            pushStepOut(u,host.kind,host.distance);   // `o` is not read past this point
+            return;
+        }
     }
+    // 418b72: each look past its head reads the guarded unit's position into
+    // mission +0x22, the point a lost ward's VTOL_SeekGuard circles.
+    o.attackPointX=g->x;o.attackPointZ=g->z;
     bool woken=(events&0x700u)!=0,attacked=(events&0x10u)!=0;
     if (o.mission.stage==0) {
         if (auto script=unitScripts_.find(u.id);script!=unitScripts_.end() && !script->second.activated) {
@@ -11341,6 +11375,9 @@ void World::repair(int builderId, int targetId, bool queue) {
 // the unit (buildTime / workerTime), draining the owner's mana proportional to the
 // HP restored -- pauses if the mana runs out.
 void World::tickRepair(Unit& b, float dt) {
+    // A flying repair waits behind a step-out pushed ahead of it (its
+    // air-traffic check): its mission is not the head meanwhile.
+    if (b.type && b.type->canFly && stepOutFront(b)) return;
     Unit* t = unit(b.repairId);
     auto endRepair = [&] {
         stopWorkAnimation(b);
@@ -11622,8 +11659,30 @@ void World::tickFlyingRepair(Unit& b, Unit& t, float dt) {
         const size_t end=currentLeg(b.orders);
         Order& job=b.orders[end];
         job.x=t.x;job.z=t.z;
-        if (!job.flightGoal || job.flightGoal->flags!=0x30 || job.flightGoal->radius!=reach)
-            job.flightGoal=RetailFlightGoal{{t.x.v,0,t.z.v},0x30,0,int16_t(reach)};
+        if (!job.flightGoal || job.flightGoal->flags!=0x30 || job.flightGoal->radius!=reach) {
+            // Its first tick (stage 0, then the approach's install) is a wake
+            // of the mission, and runs the air-traffic check; the approach
+            // waits on its controller alone after it.
+            if (const auto d=flyingJobTraffic(b,RetailTrafficMission::RepairUnit)) {
+                pushStepOut(b,RetailStepOut::NoFormation,*d);
+                return;
+            }
+            Order& leg=b.orders[currentLeg(b.orders)];
+            leg.flightGoal=RetailFlightGoal{{t.x.v,0,t.z.v},0x30,0,int16_t(reach)};
+        }
+        return;
+    }
+    // Every tick of the work is a wake (stage 5 sleeps one tick), the
+    // arrival's too: at 8 on the air-traffic counter the flyer steps out of
+    // the stack (StopBuilding) and the repair starts again from its approach.
+    if (const auto d=flyingJobTraffic(b,RetailTrafficMission::RepairUnit)) {
+        stopWorkAnimation(b);
+        b.conjureHoverTarget=0;b.conjureHoverGoal.reset();
+        if (!b.orders.empty()) {
+            Order& job=b.orders[currentLeg(b.orders)];
+            if (job.repairTarget==t.id) job.flightGoal.reset();
+        }
+        pushStepOut(b,RetailStepOut::NoFormation,*d);
         return;
     }
     // 421218: 519b70(3) drops every weapon target, then the work stance
@@ -12210,6 +12269,120 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
     tickFlightBody(u); notifyFlightOccupancy(u);
 }
 
+// AirStrike (41b5e0, retailAirStrike) on a flyer's attack order when its
+// selected weapon has the `dropped` key (mods only) and the target cannot
+// fly: approach passes round a release ring, the selected slot aimed and let
+// go over the target, the air-traffic check at stage 4. World's attack always
+// has a unit: the lost-target exits (a dead, dying, carried target) are
+// tickCombat's (seekLostTarget) before the dispatch, so the head's own seek is
+// never reached; 51a770's ground point is the target (setSlotTarget), and
+// 4e3f70's controller follows it (flyMissionGoal re-aims a following goal at
+// the target every tick). The release ring reads the navigator's +0x22, the
+// high word of its destination's z step (flightNavigation.velocity), as retail
+// does.
+void World::tickAirStrike(Unit& u,const Unit& target) {
+    struct Host {
+        World& w; Unit& u; const Unit& target;
+        int retargetTo=0;     // 4d7de0's new attack, put ahead once the dispatch is done
+        int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
+        bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
+        RetailMissionState* head() {
+            return !stepOutTo && !retargetTo && !u.orders.empty() && u.orders.front().targetId==target.id
+                ? &u.orders.front().mission : nullptr;
+        }
+        bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
+        void idle() {}
+        uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+        void remove(RetailMissionState&) {
+            if(u.scriptAimTarget)w.clearScriptWeaponTarget(u);
+            w.dropLeg(u);w.cancelPath(u);u.routeStamp=-1;
+        }
+        void rotate(RetailMissionState&) {}
+        void clear() { w.cancelPath(u);u.orders.clear();u.routeStamp=-1; }
+        int slot() const { return u.type->weaponSwitching ? std::clamp(u.weaponSlot,0,2) : 0; }
+        void beginFlight() {
+            // 416c50: Activate, BeginFlight, take-off, every slot manual
+            // (as AirToGround's stage 0, tickAirToGround).
+            if (auto script=w.unitScripts_.find(u.id);script!=w.unitScripts_.end() && !script->second.activated) {
+                script->second.activated=true;w.notifyUnitScript(u,"Activate");
+            }
+            w.notifyUnitScript(u,"BeginFlight");
+            u.missionEvents&=~0x3700u;
+            for (int s=0;s<3;++s) w.setSlotMode(u,s,false);
+        }
+        void slotsAuto() {
+            for (int s=0;s<3;++s) w.setSlotMode(u,s,true);
+            u.orders.front().mixedSlots=true;
+        }
+        void slotManual() { w.setSlotMode(u,slot(),false); }
+        void aimGround(RetailFlightVector) { w.setSlotTarget(u,slot(),target.id); }
+        void clearSlot() { w.dropSlotTarget(u,slot()); }
+        void install(const RetailFlightGoal& goal) {
+            // 4d4d40 also clears the mission's pending controller events.
+            auto& order=u.orders.front();
+            order.flightGoal=goal;order.mission.pending&=~0x3700u;
+            order.strikeFollow=false;
+        }
+        void follow(int32_t radius) {
+            // 4e3f70: the point controller's class with the target attached:
+            // its point is the target's (moved every tick below), its radius
+            // the release ring's.
+            install(RetailFlightGoal{{target.x.v,0,target.z.v},0x30,0,int16_t(radius)});
+            u.orders.front().strikeFollow=true;
+        }
+        bool retarget() {
+            // 4d8370 is World's target scan; then 4d7de0(unit, found, 0, 0, 1,
+            // 0), retailIssueAutoAttack's gates, as AirToGround's.
+            const int found=w.findTarget(u,true,true,false);
+            if (!found || found==target.id) return false;
+            const Unit* t=w.unit(found);
+            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            retargetTo=found;
+            return true;
+        }
+        bool stepOut(int32_t distance) { stepOutTo=distance;return true; }
+        void seek(bool,RetailFlightVector) {}
+        int handle(RetailMissionState& m,uint32_t events) {
+            auto& order=u.orders.front();
+            RetailAirStrike in;
+            in.position={u.x.v,u.flightY.v,u.z.v};
+            in.heading=portHeadingToRetail(u.heading);
+            in.flies=u.type->canFly && u.type->canMove;
+            in.target=true;
+            in.targetPoint={target.x.v,target.flightGroundMode==2 ? target.flightY.v : target.groundY.v,target.z.v};
+            in.automatic=order.autoTarget;
+            in.last=u.orders.size()==1 && !order.aheadOfDefault;
+            in.holdFire=u.fireState==0;
+            if (order.chaseLeashed) { in.leash=order.chaseLeash;in.origin=order.chaseOrigin; }
+            in.runLength=uint16_t(u.type->attackRunLength);
+            in.cruiseAlt=int16_t(u.type->cruiseAlt);
+            in.gravity=w.ballisticGravityRaw_;
+            in.speed=int16_t(uint32_t(u.flightNavigation.velocity.z)>>16);
+            in.traffic=u.airTraffic;in.footX=int16_t(u.type->footX);
+            RetailFlightVector point{order.attackPointX.v,0,order.attackPointZ.v};
+            const int result=retailAirStrike(m,point,w.tickCounter_,events,in,*this);
+            // Mission +0x22, the point a lost target's seek circles.
+            order.attackPointX=Fixed::raw(point.x);order.attackPointZ=Fixed::raw(point.z);
+            return result;
+        }
+    } host{*this,u,target};
+    const bool aheadOfDefault=u.orders.front().aheadOfDefault;
+    retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
+        u.orders.front().aheadOfDefault=aheadOfDefault;
+    if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
+    if (stepOutFront(u) || (!u.orders.empty() && u.orders.front().targetId==target.id)) {
+        Order& front=u.orders.front();
+        // 4e3f70's controller: its point is the target's, every tick.
+        if (front.strikeFollow && front.flightGoal) {
+            front.flightGoal->point.x=target.x.v;front.flightGoal->point.z=target.z.v;
+        }
+        flyMissionGoal(u,front);
+        return;
+    }
+    tickFlightBody(u); notifyFlightOccupancy(u);
+}
+
 // The mover under AirToGround and VTOL_SeekAttack: the mission's point
 // controller (Order::flightGoal) is the navigator's destination, let go on
 // arrival (524c10 posts 0x100, the navigator's release 0x400); the body flies
@@ -12631,6 +12804,187 @@ void World::tickSeekAttack(Unit& u,bool carriesTarget) {
     tickFlightBody(u);notifyFlightOccupancy(u);
 }
 
+// VTOL_Follow's lost ward (4191d7): a flyer's guard whose guarded unit is
+// gone, dead or dying while the guard is its last order (+0x66 is 0) becomes
+// VTOL_SeekGuard (4d77b0 puts it behind the guard, which then ends), carrying
+// the point the guard read at its last look (mission +0x22, the guarded
+// unit's position: attackPointX/Z on the guard order; zero before the first
+// look, which the seek's stage 0 turns into the flyer's own position). A
+// guard with orders behind it just ends. The seek's first dispatch runs at
+// once, as retail's dispatcher goes straight on to the new head. (World posts
+// no events 0x208, so a live guarded unit is never lost.)
+bool World::seekLostWard(Unit& u) {
+    if (!u.type || !u.type->canFly || u.type->isStructure() || u.orders.size()!=1 || !u.orders.front().guard)
+        return false;
+    const Order& guard=u.orders.front();
+    Order seek{guard.attackPointX,guard.attackPointZ,0};
+    seek.seekGuard=true;seek.goal=true;seek.issuedTick=tickCounter_;
+    seek.setIdentity(guard.identity());
+    u.orders.front()=std::move(seek);
+    cancelPath(u);u.routeStamp=-1;
+    noteOrders(u.id);
+    tickSeekGuard(u);
+    return true;
+}
+
+// 509ac0 with 421910, VTOL_SeekGuard's search: the units within the flyer's
+// sightdistance (whole-pixel squares per axis, 16.16 differences) that are
+// alive, allied to its owner, cannot fly and are not itself, in the order of
+// 509ac0's walk over 128 px sectors (rows, then columns); the first is the one
+// a seek guards. Retail walks each sector's own unit list, whose order World
+// does not keep: within a sector World takes the lowest unit id.
+int World::seekGuardFind(const Unit& u) const {
+    const int64_t reach=int64_t(std::max(0,sightDistance(*u.type)));
+    int best=0;
+    std::tuple<int32_t,int32_t,int> bestKey{INT32_MAX,INT32_MAX,INT_MAX};
+    forEachNear(u.x.toFloat(),u.z.toFloat(),float(reach)+32.0f,[&](int index) {
+        const Unit& t=units_[size_t(index)];
+        if (t.id==u.id || !t.alive() || !t.type || t.embarked() || t.type->canFly || t.hp<=Fixed() ||
+            !allied(u.player,t.player)) return;
+        const int64_t dx=int64_t(t.x.v)-u.x.v,dz=int64_t(t.z.v)-u.z.v;
+        if (((dx*dx)>>32)+((dz*dz)>>32)>reach*reach) return;
+        const std::tuple<int32_t,int32_t,int> key{t.z.v>>23,t.x.v>>23,t.id};
+        if (key<bestKey) { bestKey=key;best=t.id; }
+    });
+    return best;
+}
+
+// VTOL_SeekGuard (4197d0, retailVtolSeekGuard) on a seekGuard order: it
+// circles the lost ward's last point (the order's x/z) at the selected
+// weapon's range + 160 px (160 unarmed), hopping 90-135 degrees back at each
+// arrival and looking every 7-13 ticks for an allied ground unit within its
+// sightdistance; it guards the first it finds (a canguard type; VTOL_Follow
+// put ahead, the seek waiting behind it) and ends when it cannot guard one.
+void World::tickSeekGuard(Unit& u) {
+    struct Host {
+        World& w; Unit& u;
+        int guardTo=0;        // the unit to guard, put ahead once the dispatch is done
+        int candidate=0;      // the search's first find
+        RetailStepOut stepOutKind=RetailStepOut::None;
+        int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
+        bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
+        RetailMissionState* head() {
+            return !stepOutTo && !guardTo && !u.orders.empty() && u.orders.front().seekGuard
+                ? &u.orders.front().mission : nullptr;
+        }
+        bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
+        void idle() {}
+        uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+        void remove(RetailMissionState&) { w.dropLeg(u);w.cancelPath(u);u.routeStamp=-1; }
+        void rotate(RetailMissionState&) {}
+        void clear() { w.cancelPath(u);u.orders.clear();u.routeStamp=-1; }
+        bool stepOut(RetailStepOut kind,int32_t distance) { stepOutKind=kind;stepOutTo=distance;return true; }
+        void stopBuilding() {}
+        bool found() { candidate=w.seekGuardFind(u);return candidate!=0; }
+        void release() {
+            // 4d4d40(0): the controller goes and its pending events with it.
+            auto& order=u.orders.front();
+            order.flightGoal.reset();order.mission.pending&=~0x3700u;
+        }
+        // 4de530 action 7: VTOL_FOLLOW for a type with canguard, no mission
+        // otherwise (the seek then ends).
+        bool guard() { if (!u.type->canGuard) return false; guardTo=candidate;return true; }
+        void install(const RetailFlightGoal& goal) {
+            // 4d4d40 also clears the mission's pending controller events.
+            auto& order=u.orders.front();
+            order.flightGoal=goal;order.mission.pending&=~0x3700u;
+        }
+        int handle(RetailMissionState& m,uint32_t events) {
+            auto& order=u.orders.front();
+            RetailAirSeekGuard in;
+            in.traffic=u.airTraffic;in.footX=int16_t(u.type->footX);
+            in.position={u.x.v,u.flightY.v,u.z.v};
+            // 519ac0: a switcher's selected slot, otherwise the first slot.
+            const auto& weapons=u.type->weapons;
+            in.armed=!weapons.empty();
+            if (in.armed) {
+                const int slot=u.type->weaponSwitching
+                    ? std::clamp(u.weaponSlot,0,int(std::min<size_t>(3,weapons.size()))-1) : 0;
+                in.range=weapons[size_t(slot)].range;
+            }
+            in.flies=u.type->canFly && u.type->canMove;
+            // 5066f0: off the map when the footprint does not fit the cell grid.
+            const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
+            in.onMap=ox>=0 && oz>=0 && ox+u.type->footX<w.hW_ && oz+u.type->footZ<w.hH_;
+            // 50ef03: the playable map is 32 px narrower and 128 px shorter.
+            in.width=w.hW_*16-32;in.height=w.hH_*16-128;
+            // The point's height plays no part: a point controller without an
+            // altitude flies the cruise height (4e41d0).
+            RetailFlightVector point{order.x.v,0,order.z.v};
+            const int result=retailVtolSeekGuard(m,point,order.guardOrbitAngle,w.tickCounter_,events,in,*this);
+            order.x=Fixed::raw(point.x);order.z=Fixed::raw(point.z);
+            return result;
+        }
+    } host{*this,u};
+    retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    if (host.guardTo) {
+        // The guard goes ahead of the seek (4d7750), which sleeps behind it;
+        // its first look runs at once (tickFlyingGuard), as the dispatcher
+        // goes straight on to the new head.
+        const Unit* ward=unit(host.guardTo);
+        Order g;
+        g.targetId=host.guardTo;g.guard=true;g.goal=true;
+        g.x=ward->x;g.z=ward->z;g.issuedTick=tickCounter_;
+        u.orders.insert(u.orders.begin(),g);
+        u.guardHelpTick=0;u.guardHeard=ward->attackedTick;   // as World::guard's fresh guard
+        noteOrders(u.id);
+        tickFlyingGuard(u);
+    }
+    if (host.stepOutTo) pushStepOut(u,host.stepOutKind,host.stepOutTo);
+    if (!u.orders.empty() && (stepOutFront(u) || u.orders.front().seekGuard)) { flyMissionGoal(u,u.orders.front()); return; }
+    if (!u.orders.empty() && u.orders.front().guard) { tickFlightMovement(u);notifyFlightOccupancy(u);return; }
+    tickFlightBody(u);notifyFlightOccupancy(u);
+}
+
+
+// The air-traffic check of a flying builder's job (VTOL_MobileBuild 41f0a6,
+// VTOL_HelpBuild 41f981, VTOL_RepairUnit 421066; retailAirTrafficCheck): at
+// every wake of the mission, with the counter at 8 or more, it pushes
+// VTOL_StepOutNoFormation ahead, sleeps a tick, stops building (51e4d0(8, 0):
+// StopBuilding, stopWorkAnimation) and returns 0, so the job starts again
+// from its stage 0 -- its approach to 2 x builddistance -- once the step-out
+// ends. World keeps no retail stage for these jobs: their wakes are the first
+// tick of an approach and every tick of the work (each work stage sleeps one
+// tick), and the caller puts the approach back (restartFlyingHelp for a site)
+// before the step-out goes ahead (StopBuilding, then the push). Returns the
+// step-out's D, or nothing.
+std::optional<int32_t> World::flyingJobTraffic(Unit& b, RetailTrafficMission mission) {
+    if (!b.type || !b.type->canFly) return std::nullopt;
+    struct Host {
+        World& w; RetailStepOut kind=RetailStepOut::None; int32_t distance=0;
+        uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+        bool stepOut(RetailStepOut k,int32_t d) { kind=k;distance=d;return true; }
+        void stopBuilding() {}
+    } host{*this};
+    RetailMissionState m;   // the job's stage: the caller restarts the job itself
+    if (retailAirTrafficCheck(mission,m,tickCounter_,b.airTraffic,int16_t(b.type->footX),0u,host)<0)
+        return std::nullopt;
+    return host.distance;
+}
+
+// A flying builder working on a site (VTOL_HelpBuild, or VTOL_MobileBuild
+// whose site stands: its stage 2 turns it into VTOL_HelpBuild, 41f2d6) starts
+// again from its approach: the hover lets go and a help leg on the site goes
+// to the front (helpApproach's point goal, accepting inside 2 x
+// builddistance), unless the arrival's own leg is still there.
+void World::restartFlyingHelp(Unit& b, const Unit& site) {
+    b.conjureHoverTarget=0;b.conjureHoverGoal.reset();
+    b.buildStuckT=0;b.buildStuckD=INT32_MAX;   // the approach starts afresh
+    const RetailFlightGoal approach{{site.x.v,0,site.z.v},0x30,0,int16_t(2*std::max(0,int(b.type->buildDist)))};
+    if (!b.orders.empty() && b.orders.front().helpSite==site.id) {
+        Order& leg=b.orders.front();
+        leg.x=site.x;leg.z=site.z;leg.flightGoal=approach;
+        return;
+    }
+    Order o;
+    o.x=site.x;o.z=site.z;
+    o.goal=true;
+    o.issuedTick=tickCounter_;
+    o.flightGoal=approach;
+    o.helpSite=site.id;
+    b.orders.insert(b.orders.begin(),o);
+    noteOrders(b.id);
+}
 
 // Flying construction (retail 41ef00, stages 4--6) wanders near builddistance
 // while facing the site. Use the same flight controller as ordinary flight;
@@ -12709,6 +13063,9 @@ void World::tickConstruction(Unit& b, float dt) {
         return;
     }
     site->beingBuilt = true;   // a builder is assigned (walking or working): no decay
+    // A flying job waits behind a step-out pushed ahead of it (its air-traffic
+    // check, flyingJobTraffic): its mission is not the head meanwhile.
+    if (b.type->canFly && stepOutFront(b)) return;
     if (const int leg=groundHelpLeg(b,site->id);leg>=0) { tickGroundHelp(b,*site,size_t(leg),dt); return; }
     float dx = (site->x - b.x).toFloat(), dz = (site->z - b.z).toFloat();
     float half = 16.0f * float(std::max(site->type->footX, site->type->footZ)) / 2;
@@ -12727,6 +13084,15 @@ void World::tickConstruction(Unit& b, float dt) {
         ? b.conjureHoverTarget!=site->id && gd>=flyingReach*flyingReach
         : gd>reach*reach;
     if (outOfReach) {                                  // out of range: still walking there
+        // A flying job's approach (its stage 1) waits on its controller alone:
+        // only its first tick -- the job's start, or its start again -- is a
+        // wake of the mission, and runs its air-traffic check.
+        if (b.type->canFly && b.buildStuckD==INT32_MAX && !b.orders.empty() && b.orders.front().helpSite==site->id)
+            if (const auto d=flyingJobTraffic(b,RetailTrafficMission::HelpBuild)) {
+                stopWorkAnimation(b);
+                pushStepOut(b,RetailStepOut::NoFormation,*d);
+                return;
+            }
         // Give-up watchdog: if the builder gets no closer (~20px, squared 400) for ~8s,
         // it can't reach the site -- abandon it and pop the next queued build. Uses the
         // same fixed-dt / squared-distance idiom as the deleted movement watchdogs, so
@@ -12752,6 +13118,18 @@ void World::tickConstruction(Unit& b, float dt) {
         }
         return;
     }
+    // Every tick of a flying job's work is a wake (VTOL_HelpBuild's and
+    // VTOL_MobileBuild's work stages sleep one tick), the arrival's too: at 8
+    // on the air-traffic counter the flyer steps out of the stack and the job
+    // starts again from its approach.
+    if (b.type->canFly)
+        if (const auto d=flyingJobTraffic(b,!b.orders.empty() && b.orders.front().buildType
+                                                ? RetailTrafficMission::MobileBuild : RetailTrafficMission::HelpBuild)) {
+            restartFlyingHelp(b,*site);
+            stopWorkAnimation(b);
+            pushStepOut(b,RetailStepOut::NoFormation,*d);
+            return;
+        }
     b.buildStuckT = 0; b.buildStuckD = INT32_MAX;      // in range: reset the watchdog
     // MobileBuild's and HelpBuild's work stages (icd 0x405bc8, 0x4060bb) keep a
     // ground builder visible for 300 ticks on every work tick, paid or not;
@@ -15514,10 +15892,15 @@ void World::finishProduction(int producerId,Unit& finished) {
                 }
             } else {
                 nu->orders.push_back(ro);
-                nu->orders.back().issuedTick = tickCounter_;
-                // An unarmed, non-building flyer's patrol handler closes its own
-                // loop (plainFlightPatrol), as queuePatrol leaves it.
-                if (!t->isBuilder && t->weapons.empty()) nu->orders.back().patrolOpen=false;
+                Order& leg=nu->orders.back();
+                leg.issuedTick = tickCounter_;
+                // GetBuilt resolves each QMove / QPatrol for the output
+                // (4de530 actions 2 and 9, 0x4022ec / 0x402319): a flyer's
+                // VTOL_Move and VTOL_Patrol (plainFlightPatrol). The patrol
+                // closes its own loop, as queuePatrol leaves it; a move or
+                // fight-move step carries the move's flags.
+                leg.patrolOpen=false;
+                if (!leg.patrol) { leg.flightMoveMission=true;leg.mission.flags=0x3000400u; }
             }
         }
     // A rally whose every entry was dropped (its attack targets are dead) hands
@@ -15760,8 +16143,6 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
                 notifyFlightOccupancy(u);
                 return;
             }
-            // May grow the queue: `leg` is not read past this point.
-            openFlightPatrol(u);
             tickFlightMovement(u); notifyFlightOccupancy(u); return;
         }
         if(legion_&&isLegionPathfinding(pathfindingMode_)&&legion_->supports(u)) {
@@ -18319,7 +18700,14 @@ uint64_t World::stateHash() const {
                     mix(order.guardOrbitAngle); mix(order.mission.stage); mix(order.mission.waitMask);
                     mix(order.mission.deadline); mix(order.mission.pending); mix(order.mission.flags);
                 }
+                // VTOL_SeekGuard (tickSeekGuard) runs on a seek order's mission.
+                else if (order.seekGuard) {
+                    mix(0x5345454b47554152ull); mix(uint32_t(order.x.v)); mix(uint32_t(order.z.v));
+                    mix(order.guardOrbitAngle); mix(order.mission.stage); mix(order.mission.waitMask);
+                    mix(order.mission.deadline); mix(order.mission.pending); mix(order.mission.flags);
+                }
                 if (order.aheadOfDefault) mix(0x4445464155ull);
+                if (order.strikeFollow) mix(0x5354524b464full);
                 if (order.mixedSlots) mix(0x4d49584544ull);
                 if (order.airToAir) {
                     const auto& a=*order.airToAir;

@@ -96,6 +96,9 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     // target is lost. World's seek never carries the target, so the mission
     // ctor (0x4d6d66) has cleared the target bit 0x200, as for a dead one.
     else if (o.seekAttack) { m.cls = 19; m.flags = 0x1000400; }
+    // VTOL_SEEKGUARD (row 0x5ebe95: 0x1000600), a flyer's guard after its
+    // guarded unit is lost: World's seek carries none, so 0x200 is clear.
+    else if (o.seekGuard) { m.cls = 19; m.flags = 0x1000400; }
     else if (o.patrol) { m.cls = 7; m.flags = 0x3000410; }
     // A factory output's GetBuilt PARK: definition class 14, flags 0x200.
     else if (o.park) { m.cls = 14; m.flags = o.mission.flags; }

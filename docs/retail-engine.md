@@ -962,8 +962,10 @@ flyers on their runs: Gryphon 3/21, Wrath 3/18 (Crusades 22/65), Dirigible
 hit 72-75 of 72-75.
 
 Still deviating:
-- AirStrike (`41b5e0`) is not ported; no shipped weapon reaches it. (AirToAir,
-  for a flying target, is ported since protocol 305: next section.)
+- (AirStrike (`41b5e0`), for a selected weapon with the `dropped` key, is
+  ported since protocol 307: see "Air traffic" below. No shipped weapon
+  reaches it. AirToAir, for a flying target, is ported since protocol 305:
+  next section.)
 - (When the target is lost, AirToGround pushes `VTOL_SEEKATTACK` (`4192f0`):
   ported since protocol 305, see "VTOL_SeekAttack" below.)
 - The group check (`51d1e0`, VTOL_Move_Formation) is not ported. (Stage 4's
@@ -1251,15 +1253,17 @@ distance D in the step-out's +0x4e:
 | VTOL_Move `417c20` | past stage 0 | VTOL_StepOut | rand(15) + footX | sleep 1, stage 0 |
 | VTOL_Follow `418860` | past stage 0 | VTOL_StepOut | rand(15) + footX | sleep 1, stage 0 |
 | VTOL_SeekAttack `4192f0` | past stage 0 | VTOL_StepOut | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_SeekGuard `4197d0` | every wake | VTOL_StepOut | rand(15) + footX | sleep 1, stage 0 |
 | VTOL_Patrol `419db0` | past stage 0 | VTOL_StepOut | rand(15) + footX | stage 1, sleep 1 |
 | VTOL_Pickup `41a680`, VTOL_Unload `41ae20` | stage 1 | VTOL_StepOut | rand(15) + footX | stage 1, sleep 1 |
 | AirToGround `41bf80` | stage 4 | VTOL_StepOut | rand(10) x 3 + footX | auto rescan first; stage 1, sleep 1 |
 | AirToAir `41ca50` | stage 2 | VTOL_StepOut | rand(15) + both footX | auto rescan first; sleep 1, stage 0 |
 | AirToGroundHover `41d820` | stage 4 | VTOL_StepOut | rand(10) x 3 + footX | below |
+| AirStrike `41b5e0` | stage 4 | VTOL_StepOut | rand(10) x 3 + footX | auto rescan first; wait cleared, stage 1, sleep 1 |
 | VTOL_MobileBuild `41ef00`, VTOL_HelpBuild `41f7f0`, VTOL_RepairUnit `420e60` | every wake, at 8 | VTOL_StepOutNoFormation | rand(15) + footX | sleep 1, StopBuilding (`51e4d0(8, 0)`), stage 0 |
 
-VTOL_SeekGuard (`4197d0`) and AirStrike (`41b5e0`) check it too. "Auto rescan"
-is `4d8370` (the idle scan, `412620` on the selected slot) and `4d7de0(unit,
+These are all seventeen readers of +0x12a in the icd. "Auto rescan" is
+`4d8370` (the idle scan, `412620` on the selected slot) and `4d7de0(unit,
 found, 0, 0, 1, 0)` on rand(2) == 0 for an auto attack (+0x52): a new attack
 put ahead ends the mission. The three step-outs share handler `4214b0` and
 differ only in their registry flags (0x1000000, 0x5000000, 0). Off the map it
@@ -1315,9 +1319,14 @@ AirToGroundHover and the ground Attack_Chase (`403bb0`, mask 0x1f40068, not
 ported) wait on these.
 
 Ours: `retailairtraffic.h` (`retailAirTrafficStep`, `retailStepOutGoal`,
-`retailVtolStepOut`), `retailAirToGroundHover` in `retailairattack.h`, and
-the checks in `retailAirToGround`, `retailAirToAir` and
-`retailVtolSeekAttack`. `Unit::airTraffic` is stepped in
+`retailVtolStepOut`, and `retailAirTrafficCheck`: the plain check of the ten
+missions that share it, `RetailTrafficMission`), `retailAirToGroundHover` and
+`retailAirStrike` in `retailairattack.h`, `retailVtolSeekGuard` in
+`retailairseek.h`, and the checks in `retailAirToGround`, `retailAirToAir`
+and `retailVtolSeekAttack`. VTOL_Standby, VTOL_LandIfCan, VTOL_Move(_Formation),
+VTOL_Patrol, VTOL_Follow and the flying builders' jobs call
+`retailAirTrafficCheck`; VTOL_Pickup's and VTOL_Unload's keep theirs inline
+in their stage 1. `Unit::airTraffic` is stepped in
 `World::updateAirOccupancy` after the insert pass and hashed. A step-out is
 its own order at the front (`Order::stepOut`, D in `airRunCount`), pushed
 after the pushing mission's dispatch (`World::pushStepOut`) and run at once
@@ -1329,6 +1338,98 @@ fires whatever mission leads). The hover runs on the attack order
 `flyHoverGoal`. `applyHit` sums the damage per side and posts the outcome to
 the shot's slot for the shots World resolves from a slot (instant and melee
 shots, projectiles, flames, bombs).
+
+**Fight-move legs, patrols and rally steps (protocol 307).** Retail has
+no fight-move mission (none of the registry's 77 rows): a flyer's leg of one
+is VTOL_Move (`Order::flightMoveMission` kept beside `attackMove`), the
+move's mission with its air-traffic check, its coarse and refining
+controllers and, for a Ctrl group in Retail mode, its group checks;
+World's target acquisition still puts its attacks ahead of it. Every
+flyer's patrol is VTOL_Patrol, armed or a builder (`plainFlightPatrol`;
+until now only an unarmed flyer that builds nothing ran it): its stage-2
+target scan and job search are World's acquisition and `tickPatrolRepair`. A
+patrol from idle gives its return leg the anchor's flags (0x1000412) and the
+outbound leg 0x4000, so VTOL_Patrol does not append a second anchor and a
+Shift-patrol joins the loop at its tail, as a ground patrol's does (before,
+an unarmed flyer lapped start, B, start, C). A flyer output's rally steps are
+VTOL_Move and VTOL_Patrol too: GetBuilt resolves each QMove and QPatrol for
+the output (`4de530` actions 2 and 9, `0x4022ec` / `0x402319`); they used to
+fly with no mission. The group spread (`0x5214b0`, "Group move spread"
+below) reads the resolved mission's flag 0x2 at +0x11, which VTOL_Move
+carries, so a fight-move's flyers keep their offsets as on a move: the client
+(`gameview_hud.cpp`), `OrderShape::FlyerOffsets` (now valid for `AttackMove`)
+and the tools' mirror (`legion_issue_selection.h`). Before, every flyer of a
+fight-move flew to the clicked point and piled onto it. Legion's flight
+stations keep their lanes, as before.
+
+**VTOL_SeekGuard** (`4197d0`, `retailVtolSeekGuard`), ported since then.
+VTOL_Follow's lost-ward exit (`4191d7`): with its ward gone, dead or dying
+(or events 0x208), the guard, when it is the last mission (+0x66 is 0),
+inserts VTOL_SEEKGUARD (`4d77b0`) carrying its point (+0x22, the ward's
+position read at each look past the head, `418b72`) and the ward when alive
+and not dying, and ends. The seek: event 0x200 ends it; off the map, 800 px
+back; the air-traffic check at every wake, stage 0 included; the group check
+`51d1e0(unit, 1, 4)` and its flag's rand(10); stage 0 takes the flyer's own
+position for a zero point and draws the orbit angle rand(0x10000); stage 1
+looks for allied units that cannot fly within its sightdistance (`509ac0`
+with the filter `421910`: alive, not dying, allied to its owner, not a flyer,
+not itself; structures included) and offers the first a guard (`4de530`
+action 7: VTOL_FOLLOW for a type with `canguard`, nothing otherwise): a guard
+goes ahead (the seek sleeps 15 + rand(30) behind it), no guard ends the seek
+(8). Found nothing: woken by its controller the angle steps back 0x4000 +
+rand(0x2000); a point controller (radius 128) at the point less (sin,
+cos)(angle) x (the selected weapon's range + 160 when armed, else 160), a
+sleep of 7 + rand(7) and a wait on 0x718. World inserted nothing: the guard
+just ended and the flyer stood down. Ours: `World::seekLostWard` (from
+`tickCombat`'s guard), `tickSeekGuard`, `Order::seekGuard`; the guard keeps
+the ward's position in `attackPointX/Z` at each look (`tickFlyingGuard`).
+
+**The flying builders** (VTOL_MobileBuild `41ef00`, VTOL_HelpBuild `41f7f0`,
+VTOL_RepairUnit `420e60`) check at every wake, at 8, before their stages:
+VTOL_StepOutNoFormation goes ahead, a tick's sleep, StopBuilding
+(`51e4d0(8, 0)`: the StopBuilding script when the build bit was set) and
+stage 0, which takes off again and approaches to 2 x builddistance; a
+MobileBuild whose site already stands turns into VTOL_HelpBuild at its stage
+2 (`41f2d6`). Their wakes: the first dispatch, the approach's controller
+events (no timer), and every tick of the work (each work stage sleeps one).
+World runs these jobs as an approach and a work stage, not as stages, so ours
+(`World::flyingJobTraffic`) runs the check at the matching ticks:
+`prepareBuildApproach`'s stage 0 and its arrival (a MobileBuild before its
+site stands), `tickConstruction`'s first approach tick and every work tick
+(a flyer's help or build on a standing site), `tickFlyingRepair`'s approach
+install and every work tick. A help or build restarts from a help leg on the
+site (`restartFlyingHelp`: the approach goal at 2 x builddistance); a repair
+from its approach. A job waits while the step-out leads (its mission is not
+the head). The Zhon conjurers' production is BuildingBuild in retail, which
+has no check.
+
+**AirStrike** (`41b5e0`, `retailAirStrike`), ported since then: the attack of
+a flyer whose selected weapon has the `dropped` key (WeaponType +0xc8 bit
+0x20; mods only, no shipped weapon sets it) on a target that cannot fly,
+before the hover and the attack runs (`4de530`'s order); World flew
+AirToGround. Head: no weapon, 7; events 0x2a, a dead, dying, carried or
+off-map target, or a selected weapon without `dropped`: the lost-target exit
+(`41be1b`: VTOL_SEEKATTACK inserted at the point when the flyer is alive and
+not dying, the strike is last and not on Hold Fire, carrying the target when
+alive and not dying; 5); a strike without a target whose flags keep 0x200:
+the seek at the flyer's own position when last, 5; event 0x40: a tick's
+sleep, stage 0; the target's position becomes the point; a leash (+0x56)
+ends it once the flyer's whole-pixel distance from its origin reaches it;
+the group check (`51d1e0(unit, 1, 5)`) and its flag's rand(25). Stage 0
+takes off; stage 1 makes every slot automatic and the selected one manual
+and, within 480 px of the point (its 16.16 distance through the x87 and
+`_ftol`), installs a pass 2240 px from the flyer through the point (radius
+960, wait 0x742); stage 2 a point half the distance off at rand(0x4000) -
+0x2000 round the bearing (radius 480, wait 0x768); stage 3 goes on; stage 4 is the air-traffic check (table), else on a
+controller event stage 5, else the release ring: trunc(sqrt(2 cruisealt /
+(gravity x 2^-16)) x 30 x the navigator's +0x22) + attackrunlength + 1 px,
+round the target (`4e3f70`, the point controller following it) or the point,
+a tick's sleep and a wait on 0x768; stage 5 aims the selected slot at the
+point (`51a770`) and flies attackrunlength + 960 px through it (radius 960);
+stage 6 clears the slot (`51a7f0`) and flies 1440 px ahead on its heading
+(radius 128), then stage 3. The navigator's +0x22 is the high word of its
+destination's z step (+0x18 is the step, `524af0`): what the binary reads.
+Ours: `World::tickAirStrike` from `tickCombat`.
 
 Checked:
 - `tools/re/check_air_traffic.py` runs the counter step natively for all
@@ -1346,6 +1447,22 @@ Checked:
   (AirToGround: 90 step-outs in 6,000 calls; AirToAir: 2,188 in 12,000;
   VTOL_SeekAttack: 947 in 6,000), and the last also runs AirToGroundHover's
   lost-target exit (1,932 of its 6,000 exits).
+- The same script runs `retailAirTrafficCheck` against each of its ten
+  missions' own handlers (`--traffic-check`): 16,000 calls (1,600 each, the
+  counter at -4..13 and the byte's extremes, every stage, the push built or
+  not), each handler called past its head's exits and stopped where it goes
+  on without a step-out: every result, stage, wait mask, deadline, flag word,
+  step-out name, D, push, StopBuilding, draw and generator state agree
+  (VTOL_SeekGuard's check runs at every wake, stage 0 included, where
+  `retailairtraffic.h` had it past stage 0). `4197d0` on 8,000 random states (1,182 off the map,
+  1,968 / 3,851 at stages 0 / 1, 999 past them; 1,931 orbit points, 1,606
+  searches, 603 guards offered, 441 put ahead, 2,658 step-outs, 162 ended)
+  against `--air-seek-guard`, and `41b5e0` on 12,000 (every stage; 2,037 point
+  and 245 following controllers, 560 aims, 541 step-outs, 2,992 seeks)
+  against `--air-strike`, with the x87 release ring and `_ftol` native. Five
+  planted bugs fail them: the release ring's 30 as 31, the strike's check at
+  6, its half distance as a shift, the seek's check past stage 0 only, its
+  sleep one tick longer.
 - `air_traffic_test` (data, both modes, the air-stack-*.scn fixtures, the
   target topped up): the airborne Drake-ticks near the fight that share
   footprint cells with another flyer, per mille. On protocol 306: 992 (five
@@ -1354,6 +1471,18 @@ Checked:
   86 and 141, the same in both modes; the Drakes still hurt the target
   (36,811 -> 34,837 and 62,254 -> 57,146 hit points on the Barracks, 5,605 ->
   9,251 on the Spyhawk). The test fails on 306 (eight of its checks).
+- The rest of the port adds `air_traffic_test` cases (new fixtures, both
+  modes alike), 20 of whose checks fail on its parent: six Drakes
+  fight-moved to one point (436 -> 141 per mille, as the move), five
+  fight-moved from one cell with a click each (298 -> 44; no step-out -> 10),
+  five armed Drakes on one patrol (245 -> 49; none -> 19), three Flying
+  Builders repairing one Keep (361 -> 78; none -> 14; the Keep still mended)
+  and building one (99 -> 71; none -> 7; still built), three Drakes whose
+  guarded Goblin dies inside a ring of Goblins (all three stood down; each
+  now guards one of the ring) and the five Drakes on the Barracks given a
+  `dropped` weapon (no pass -> 11 passes turned). The duel's Spyhawk no
+  longer appends a second anchor to its patrol, so that fight moves: 86 ->
+  75 per mille, 7,461 hit points left.
 - `retail_motion_test`'s stacked landing (twelve flyers sent to land on one
   spot) now lands them apart in Retail too: each steps out of the stack from
   VTOL_Standby or VTOL_LandIfCan before it searches for a spot (the landing
@@ -1361,15 +1490,21 @@ Checked:
   at an unexplored site).
 
 Not ported or still deviating:
-- World flies a flyer's fight-move legs and an armed flyer's patrol without a
-  mission (`attackMove` orders skip the VTOL_Move port), so no check runs on
-  them; the standby's check runs once the leg ends.
-- The flying builders' checks (VTOL_MobileBuild, VTOL_HelpBuild,
-  VTOL_RepairUnit: threshold 8, StopBuilding, stage 0): World runs these
-  missions as an approach and a work stage that do not restart at stage 0.
-- VTOL_SeekGuard and AirStrike are not ported at all.
 - The group check (`51d1e0`) is ported for AirToGroundHover only (with
-  VTOL_Move's), not for AirToGround, AirToAir or VTOL_SeekAttack.
+  VTOL_Move's), not for AirToGround, AirToAir, VTOL_SeekAttack,
+  VTOL_SeekGuard or AirStrike: those fly as if in formation (only the flag's
+  clearing draw runs, rand(10) for the seek, rand(25) for the strike).
+- The flying builders' jobs keep World's approach and work stage: the check
+  runs at the ticks that are retail's wakes (above), and the job restarts
+  from World's approach (a help leg accepting inside 2 x builddistance, or
+  the repair's own approach) rather than from a retail stage 0.
+- VTOL_SeekGuard's search takes the lowest unit id within a 128-px sector:
+  retail walks each sector's own unit list, whose order World does not keep.
+- AirStrike: World's attack always has a unit, so its lost-target exits are
+  `tickCombat`'s (`seekLostTarget`) before the dispatch; stage 5 aims the slot
+  at the target unit where `51a770` aims at the point (the target's position
+  at that wake). AirToAir still takes a `dropped` weapon against a flyer
+  (above).
 - A step-out runs its first wake as soon as it is pushed, as retail's
   dispatcher runs a new head at once. One that ends hands over in the same
   tick to the missions World dispatches after it (VTOL_Move, VTOL_Patrol, the
@@ -4180,12 +4315,13 @@ with no mismatch.
 
 Ours (protocol 305): **flyers** take this rule exactly
 (`src/sim/retailflyerspread.h`, `FlyerGroupCentre`), on a right-click move and
-on the armed MOVE and PATROL buttons (a fight-move has no flyer mission with
-the bit: everyone takes the point). The client computes it from its frame in
-16.16 integers; a Legion net game sends the click as an explicit order --
-`OrderShape::Offsets` (right-click) or `OrderShape::FlyerOffsets` (armed
-move/patrol) -- and `applySelectionOrder` gives the flyers the same goals from
-the hashed positions. **Ground units keep our own rule** (a deliberate
+on the armed MOVE and PATROL buttons and, since protocol 307, on a
+fight-move (its flyer legs are VTOL_Move, which has the bit: see "Air
+traffic"; before, everyone took the point). The client computes it from its
+frame in 16.16 integers; a Legion net game sends the click as an explicit
+order -- `OrderShape::Offsets` (right-click) or `OrderShape::FlyerOffsets`
+(armed move/patrol, fight-move) -- and `applySelectionOrder` gives the flyers
+the same goals from the hashed positions. **Ground units keep our own rule** (a deliberate
 difference): a right-click gives each the click plus its offset from the
 selection centroid clamped to +-60 px per axis (Legion: the click itself for
 the surface movers it plans, `legionSharedClick`), and armed MOVE/PATROL give
@@ -4534,8 +4670,10 @@ differences are in [the 0.9.7 notes](release-0.9.7-notes.md).
   0x4000 + rand(0x2000) on each arrival, looking again after 15 ticks. Ours:
   `World::tickFlyingGuard`. The guarded unit's attacker check
   (event 0x10) is ported since protocol 302 (next section), its air-traffic
-  step-out since protocol 307 ("Air traffic"). Not ported: the stage-2 attack scan
-  (`0x51d1e0`, whose work our target acquisition does) and the optional leash.
+  step-out and its lost ward (`0x4191d7`: the last mission goes on as
+  VTOL_SeekGuard round the guarded unit's last position) since protocol 307
+  ("Air traffic"). Not ported: the group check (`0x51d1e0(unit, 1, 4)`, which
+  this note used to call an attack scan) and the optional leash.
   Our draws come from the sim's RNG over the same ranges, not retail's stream.
 
 ## A guard answers its guarded unit's attacker (icd, 2026-10-27)

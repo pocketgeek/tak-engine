@@ -37,6 +37,25 @@ their validation reports; both live in [`docs/`](docs/).
   enemy flyer used to sit on top of each other for the whole fight; groups
   sent to one point and flyers coming in to land now settle apart. With
   Legion pathfinding, flyers moving with a formation keep their own lanes.
+- **Flyers on a fight-move or a patrol step out of a crowd too, and a
+  fight-move keeps a flying group's shape**, as in the original game.
+  Drakes and other flyers sent on a fight-move flew the whole way stacked on
+  one another and piled onto the clicked point; armed flyers on patrol lapped
+  as one stack. They now fly a move's course, keep their places in the group
+  as on an ordinary move, and step aside when they crowd together. A
+  factory's flyers follow their rally the same way, and a Shift-patrol given
+  to a patrolling flyer joins its loop at the end, as on the ground.
+- **A flying guard whose charge dies looks for another**, as in the original
+  game: it circles where its charge last stood and guards the first friendly
+  unit on the ground (a building too) that comes within its sight. It used to
+  stand down at once.
+- **Flying builders at work step out of a crowd**: Flying Builders, Dark and
+  Darkest Priests and Thirsha building, helping or repairing on one job
+  hovered on top of each other; one crowded in now steps aside, stops working
+  for a moment and comes back to the job.
+- **Flyers with a `dropped` weapon make bombing passes** (mods only: no unit
+  of the game has one), as in the original game, instead of ordinary attack
+  runs.
 - **Hovering attackers move round their target as in the original game.** A
   Drake (and every flyer that hovers to attack) comes in to a point beside
   its target, takes a new point round a target that stands still after a
