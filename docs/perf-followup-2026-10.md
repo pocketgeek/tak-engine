@@ -156,29 +156,143 @@ Scripts and logs: `~/tak-tmp/pfint/` (`gates.sh`, `campaign.sh`, `scenarios.sh`,
 `gates-run{1,2}.txt`, `campaign-{base,cand}.txt`, `scen/`, `ctest-full.{log,xml}`,
 `identity/`, `determinism.txt`).
 
-## Disposition table (provisional)
+## Dispositions (final, 2026-10-31)
 
-Every item passed the identity gates on the combined branch (see Integration). The
-performance part of each disposition is provisional until the serial measurement
-phase; an item that does not show a repeatable gain there is "Measured and rejected"
-and its PROD commits are reverted, evidence kept here.
+Outcome: all fourteen changes stay on `perf-followup`. Each is exact, passed the identity gates, and showed a
+repeatable gain on its own workload in the serial phase. Nothing was reverted, so the identity results
+under "Integration" still describe the branch. Since the integration, the branch has gained only this
+document and one workload file (`tools/scenarios/perf/aurafight.scn`). K needs one owner decision, on the
+visual commit `98e01695` (see "Fidelity differences (K)"). A final full ctest on that head
+(`~/tak-tmp/build-pfint-o2` rebuilt, all targets, `-j 12` on cores 4-23) passed 819 of 821. The one
+failure is `vashim_unavailable`, the known local failure that also fails on base. `vashim_system_loader`
+was skipped. The log is in `~/tak-tmp/pfint/final/`.
 
-| Item | Disposition (provisional) | Evidence |
-|---|---|---|
-| Measurement A: complete-tick timing | Implemented and verified (instrumentation) | `cli_tools` sum check; core p99 ~0.9 ms vs complete ~10.7 ms on Ultima Online B1 (screening) |
-| Measurement B: interactive render cases | Implemented and verified (instrumentation) | 14 scenes refuse a client without the knobs; historical 24 unchanged; added cost ~0.001 ms (screening) |
-| A Feature burning/fading | Exact; gain pending serial phase | differential `featgen`/`reclaim` tests; ~1 us/tick (Ulasem), ~10 us at 11.6k features (screening) |
-| B AI resurrection corpses | Exact; gain pending serial phase | 400-scene reference test incl. apply-at-once; per call 0.014-0.39x of base (screening); no idle caster in gate games |
-| C Cursor picking | Exact (after review fix `f9967026`); gain pending serial phase | `render_pick_index*`, `pick_late_model`; cursor eval 1.11 -> 0.031 ms at 10k units (screening) |
-| D Exploration block summaries | Exact; gain pending serial phase | `exploration_parallel` kept-vs-rebuilt, `TAK_VERIFY_LISTS`; 4.7 instructions per plane cell per tick removed |
-| E Build-queue ghosts | Exact (pixel-identical to the reference path); gain pending serial phase | `render_build_ghosts` bit-exact verify over every model; ghost-queues 5-6 -> 0.8 ms frame (screening) |
-| F Hidden-unit Fade covers | Exact; gain pending serial phase | `hidden_units_policy`, in-game `TAK_HIDDEN_VERIFY`; pass -40..-50% (screening) |
-| G View-count deltas | Exact; gain pending serial phase | delta vs rebuild tests and 3M-case fuzz; per move 0.25-0.42x; whole tick only on the march workload (screening) |
-| H Legion static refresh | Exact; gain pending serial phase (base-heavy worlds only) | `legion_staticindex`; sync 0.35-0.54x at 2000-3000 structures; real games below the 64-structure gate |
-| I Legion route invalidation | Exact; **conditional**: keep only on a repeatable whole-tick gain on L-routeinv-local-10000/5000 with no regression on L-2h/L-bench, else Measured and rejected (revert `e342a202`, `63a2a0e0`, `9dcbe1f8`) | syncStatic -55..-75%, tick -0.6..-0.9% (below resolution) (screening) |
-| J Legion dirty-rect clustering | Exact; worst-case guard, gain pending serial phase | clustering 7x (960 rects) to 70-110x (4096); clusterchurn-big tick 0.954 (screening); recorded games <= 7 rects |
-| K Shadow atlas capacity | `c3c312eb`, `0397c088`, `192f7c4b`: no visual change at 4 pages. **`98e01695` (4 -> 16 pages) is a visual change awaiting the owner's acceptance**; gain pending serial phase | dense uhd views -39..-44% frame, near capacity -13..-23% (screening); captures documented under K |
-| L Auras | Exact; gain pending serial phase | `aura_recipient` serial/1/3/7 workers; pass -27..-69% (screening); whole tick below resolution |
+Combined branch vs base, whole tick, serial phase: R-2h replay -1.9% [-2.2..-0.4], L-2h -0.4%
+[-1.3..+0.1], R-bench -2.3%, L-bench -1.4%; late-game `simperf` with 8 AIs -3.1% at 4000 units and -3.0%
+at 2000 ([Results: simulation](#results-simulation-a-d-g-l-measurement-a-combined-workloads), "Combined
+workloads"). Ratios are candidate/base; ranges are median [min..max] over pairs.
+
+| Item | Disposition | Deciding evidence (serial phase unless marked) | Details |
+|---|---|---|---|
+| Measurement A: complete-tick timing | **Implemented and verified** (instrumentation) | The complete-tick p99 now includes the due hash: core 0.215 vs complete 5.40 ms (Ultima Online B1), 6.93 vs 10.40 ms (4000 units). Old fields unchanged; checkpoint hashes identical | [item](#measurement-a-complete-tick-timing-in-simperf), [results](#results-simulation-a-d-g-l-measurement-a-combined-workloads) |
+| Measurement B: interactive render cases | **Implemented and verified** (instrumentation) | All 14 scenes ran at both sizes, and the harness checked each scene's expectations on every run. The historical 24 scenes are unchanged. Overhead about 0.001 ms (screening only) | [item](#measurement-b-interactive-render-cases), [results](#results-client-c-e-f-k-measurement-b) |
+| A Feature burning/fading | **Implemented and verified** | The routine runs at 0.002-0.20x of base in every pair. Whole idle tick: Ulasem 0.961 [0.953..0.976], 11.6k features 0.817 [0.796..0.827]. Exact: `featgen` differential and same-tick spread hashes | [item](#a-feature-burning-and-fading), [results](#results-simulation-a-d-g-l-measurement-a-combined-workloads) |
+| B AI resurrection | **Implemented and verified** (per call; no whole-game gain) | `reviveIdle` per call: 0.013-0.17x of base with 64-256 casters, 0.41x with 4, every pair; worst case 2.86 -> 0.41 ms. Command streams identical. In every measured real game the raise path never fired, and the AI phase stayed inside noise (-0.9% [-3.7..+4.3]). Do not quote it as a tick gain | [item](#b-ai-resurrection-controllerreviveidle), [results](#results-ai-b-ai-resurrection) |
+| C Cursor picking | **Implemented and verified** | Cursor evaluation at 10k units is 0.033-0.050x of base (0.13-0.46 ms per frame). Same-binary whole frame 0.941-0.985, every pair. At 7680x2160 and 120 Hz, frames over budget fall 70 -> 54% and 78 -> 64%. Decisions and pixels identical | [item](#c-cursor-picking), [results](#results-client-c-e-f-k-measurement-b) |
+| D Exploration summaries | **Implemented and verified** | Removes the map-sized cost: 2.0 / 13.3 / 31.3 / 131 us per tick at 16K / 102K / 262K / 1M cells (n = 9). Unit-dependent work unchanged. Ultima Online B1 whole service -38% | [item](#d-exploration-block-summaries), [results](#results-simulation-a-d-g-l-measurement-a-combined-workloads) |
+| E Build-queue ghosts | **Implemented and verified** | Long-queue frames 0.066-0.336x; measurement B's ghosts-queue 0.22-0.29x, every pair. ghost-few is 0.830 at 1280x960 but not established at 7680x2160. Retains 25-46 KB. Pixel-identical | [item](#e-build-queue-ghosts), [results](#results-client-c-e-f-k-measurement-b) |
+| F Hidden-unit Fade covers | **Implemented and verified** | Hidden pass 0.58 / 0.41 / 0.64x and whole frame 0.960 / 0.888 / 0.934 (forest / forest1200 / keeps), all 8 pairs. Pixel-identical | [item](#f-hidden-unit-fade-covers), [results](#results-client-c-e-f-k-measurement-b) |
+| G View-count deltas | **Implemented and verified** | Probe: 2,514 -> 82 and 2,514 -> 0 counter updates. Per move 0.37-0.42x (serial) and 0.23-0.40x (atomic). March whole tick -7.8% (Retail), -5.0% (Legion). On the 10k recordings alone it is inside the layout effect | [item](#g-view-count-deltas), [results](#results-simulation-a-d-g-l-measurement-a-combined-workloads) |
+| H Legion static refresh | **Implemented and verified** (base-heavy worlds only) | Static sync 0.27x (2000 structures, 8 planes), 0.47x (3000), 0.72x (300). H alone, whole step 0.43 / 0.75 / 0.83, every pair. Below the 64-structure gate 1.00. Recorded games never build the index | [item](#h-legion-static-refresh), [results](#results-legion-h-i-j) |
+| I Legion route invalidation | **Implemented and verified** (small; the owner's keep condition is met) | Index on vs off in one binary. local-10000: faster in all 10 swapped rounds, median 0.4% (about 0.09 ms). local-5000: faster in 8 of 10, median 0.3%. L-2h / L-bench: no regression (+0.05% / +0.10%, nav instructions +0.01%). Costs 0.85-3.3 MB | [item](#i-legion-route-invalidation), [results](#results-legion-h-i-j) |
+| J Legion dirty-rect clustering | **Implemented and verified** (worst-case guard) | clusterchurn-big (960 rectangles): whole tick 0.938 [0.909..0.967], p99 12.15 -> 11.18 ms, clustering 6.5-7.9x. Ordinary sizes inside noise. Recorded games never reach the bin path | [item](#j-legion-dirty-rectangle-clustering), [results](#results-legion-h-i-j) |
+| K Shadow atlas capacity | **Implemented and verified, if the owner accepts the visual change in `98e01695`**. Otherwise all of K is **Measured and rejected**: `git revert -m 1 6916a850` | At 7680x2160, every pair: dense 0.536, above 0.502, below 0.698 (frames over 16.7 ms 52 -> 15%), moving 0.853. Costs: under a continuous sub-pixel pan, p99 +4.0% vs base; +32..+144 MiB GPU memory. Held to four pages it measures exactly like base | [item](#k-shadow-atlas-capacity), [results](#results-client-c-e-f-k-measurement-b), [fidelity](#fidelity-differences-k) |
+| L Auras | **Implemented and verified** | Aura pass -26..-69% in every round. Aura-heavy fight, whole tick -16.6% [-18.5..-16.0]. Worker scratch 129,840 -> 25,660 B. Serial mode now keeps 25-148 KB it did not keep before | [item](#l-auras), [results](#results-simulation-a-d-g-l-measurement-a-combined-workloads) |
+
+No item is "Already implemented" or "Blocked". No item was measured and rejected; K is the only one
+that could be, and only if the owner turns down `98e01695`.
+
+## Rejected experiments
+
+These are sub-experiments that were measured and not committed, or kept only as reference paths inside a
+bench. No production code for any of them is on the branch.
+
+- **A, counter-only zero-fire fast path as the whole change.** It is correct, but its gain disappears as
+  soon as anything burns: Ulasem sparse fire took 1580 ns per tick, against 97 ns with the ordered marks
+  (screening). The marks replaced it and still skip all work when nothing burns. See
+  [A](#a-feature-burning-and-fading).
+- **B, spatial buckets over the gathered body list.** They were exact but slower than the linear list at
+  realistic caster counts (screening), so they were not committed. See
+  [B](#b-ai-resurrection-controllerreviveidle).
+- **G, per-cell admission instead of per-eye-height limit tables.** This version keeps the same row spans
+  but calls `retailSightAdmits` per cell. It measured 0.68-0.71x of base serial and 0.35-0.62x with
+  workers; the limit tables are worth a further 30-40%. It survives only as `viewcount_bench`'s "direct"
+  path. See the G table in [Results: simulation](#results-simulation-a-d-g-l-measurement-a-combined-workloads).
+- **J, bins at 41-64 rectangles.** The pairwise test was 1.2-2x cheaper there (1.6 vs 2.6-3.3 us on
+  clusterchurn-mid, screening), so bins start above 64 (`e50c0b0c`). See
+  [J](#j-legion-dirty-rectangle-clustering).
+- **H, the index below 64 structures.** Building it costs about two walks of the structure list, and an
+  ordinary game's few dozen structures walk in under 1 us. The plain walk stays below the gate; the
+  50-structure workload measures 1.00 in the serial phase. See [H](#h-legion-static-refresh).
+- **K without the page cap raised.** Measured in the same binary with `TAK_SHADOW_PAGES_MAX=4`:
+  `c3c312eb`, `0397c088` and `192f7c4b` time like base (1.00) and render like base (0 px). They have no
+  gain of their own. They remain only because they are the budget, hysteresis and shedding policy that
+  the 16-page cap depends on; they come out with `98e01695` if it is rejected.
+
+## Fidelity differences (K)
+
+Only `98e01695` (`kShadowMaxPages` 4 -> 16) changes pixels. C, E and F are pixel-identical, and K held to
+four pages equals the base. The difference appears only in views whose unit shadows need more than four
+2048^2 silhouette pages. In this work that means 7680x2160 views of 5,000-10,000 units at zoom 0.82.
+- **What changes.** In such a view the base drops the whole frame to direct triangle shadows, and the
+  candidate keeps cached silhouettes. With `TAK_TERRAIN_SETTLE=1` at frame 480, 4.8-6.4% of the world view
+  differs, with a maximum channel error of 144. Scenes: shadow-pages-dense 6.39%, -above 5.15%, -dense in
+  the exact environment 4.79%; same-frame A/A 0-4,285 px. 99.9% of the differing pixels are lighter in the
+  candidate.
+- **Why.** The direct path darkens overlapping triangles inside one model twice, while a silhouette darkens
+  once. The silhouette look is what every view that fits the atlas already shows, both before and after K,
+  including every 1280x960 view measured.
+- **Control.** A base given 4096^2 pages (`TAK_SHADOW_PAGE_MAX=4096`) draws silhouettes in the same views.
+  Against it the candidate differs by 0.022-0.028% (4,332 / 3,356 px in dense / above, against A/A 4,285 / 1,992), plus a few hundred edge
+  pixels up to error 95 from atlas placement and filtering.
+- **Near the limit.** In shadow-pages-below the base holds 4 pages and the candidate 6; they differ by
+  907 px, against an A/A of 666. In shadow-pages-moving the base switches to direct shadows on 45% of
+  frames, so its look changes from frame to frame. The candidate stays on silhouettes, and the worst frame
+  differs by 9.8%.
+- **Reproduce.** The captures are listed under "Captures" in
+  [Results: client](#results-client-c-e-f-k-measurement-b), and the commands are in that section's
+  Commands block.
+- **Decision.** If the owner accepts the change, keep the branch as is. If not, run
+  `git revert -m 1 6916a850`. A trial revert at `68a0974e` applied cleanly to 10 files and keeps the
+  `shadow-pages-*` bench scenes, which use only knobs the base has. After it, rebuild all targets and run
+  `ctest -R 'shadow_atlas|render_shadow|render_benchmark_tool|render_interactive'`.
+
+## Limits and blockers, with next steps
+
+None of these blocks a disposition.
+
+- **B has no real-game evidence.** No measured game issued a Resurrect order: not the 7 gates, not the
+  8-AI Benchmark, not `simperf`. Next step: record a game in which an AI side raises bodies (priests or
+  necromancers with heavy casualties). Then compare `TAK_AI_REVIVE_STATS=1` counts and the `simperf`-style
+  AI phase, base vs candidate, as in the "Commands" block of
+  [Results: AI](#results-ai-b-ai-resurrection).
+- **H, I and J do not move recorded games.** Recorded games never reach H's 64-structure gate or J's
+  64-rectangle path, and I's gain is about 0.4% on its own workload, below a 1% bar. Next step: none
+  unless the owner wants I's bar above 1%. In that case, revert `e342a202`, `63a2a0e0` and `9dcbe1f8`, then
+  rerun the 7 `--mpai` gates and `tools/legion_identity.sh --quick` against base.
+- **K regresses under a continuous sub-pixel pan.** shadow-pages-pan p99 is +4.0% vs base and +5.0% in the
+  same binary; shadow-cap-above-pan p99 is +3.1%. Every tile is re-rasterized every frame there (7,160
+  relocated tiles per frame), so the cheaper composite does not pay for it. Next step, if wanted: in that
+  view, compare the atlas re-raster cost with the direct path per frame. Bounded batches of complete
+  silhouettes (the spec's fallback) were not attempted, because the capacity approach worked for every
+  other measured view.
+- **Pre-existing crash, not caused by this work.** Under a 384 MiB GPU cap at 7680x2160, base `461e9c4b`
+  crashes in `GeometrySubmit::passDrawBuffer`. Next step: run `render_benchmark --scenes shadow-pages-dense
+  --sizes uhd --env TAK_GPU_CAP_MIB=384` on base under a debugger, separately from this branch.
+- **Code-layout effects.** Some items, built alone, read +0.8-0.9% on the 10k recordings in phases they do
+  not touch; the instruction counts there are the same. The combined build reads COB scripts +5.0% on the
+  L-2h replay with unchanged script instructions, and peak memory on L-2h is +1.7 MB; neither was traced.
+  The whole tick still falls on all four recordings. Next step, if wanted: compare `perf stat` front-end
+  counters on the scripts phase between base and candidate.
+- **Not measured.**
+  - No harness has a full P-core (0-7) variant, so none was run.
+  - The aarch64 determinism legs were skipped for missing target headers; CI's dispatched determinism
+    covers them when the branch lands.
+  - Measurement B's own overhead was measured only in screening.
+  - E's ghost-few at 7680x2160 is not established: 0.984 [0.947..1.000].
+- **Known local test failure.** `vashim_unavailable` fails here on base and branch alike.
+
+## Next concrete action
+
+The owner decides on `98e01695`. If accepted, the branch content stays as it is. If rejected, run
+`git revert -m 1 6916a850` and the checks listed under "Decision" above. Landing was not done here.
+Main has moved 22 commits since the base, to `b4e83a49` (protocol 307). Those commits change `sim.cpp`
+(+1513/-248), `ai.cpp` and `gameview_hud.cpp`, so landing needs these steps:
+1. Merge main into `perf-followup` and resolve conflicts against items A, D, G and L in `sim.cpp`.
+2. Rebuild all targets.
+3. Rerun the 7 `--mpai` gates against main's own documented hashes, not the 0.9.12 values above.
+4. Run `tools/legion_identity.sh --quick` against main and a full ctest.
+5. Push and check CI once.
 
 ## Items (design, screening, identity)
 
@@ -1810,3 +1924,9 @@ python3 ~/tak-tmp/pf-final-client/summ.py rb $X/<series>; python3 ~/tak-tmp/pf-f
   0.41-0.64x, frame 0.89-0.96). K gains only through the visual commit `98e01695` (dense / above / below / moving
   at 7680x2160 0.50-0.85x) and costs +4-5% p99 under a continuous sub-pixel pan and +32..144 MiB GPU memory;
   held to four pages it equals the base, so without the owner's acceptance all of K is Measured and rejected.
+- 2026-10-31: final dispositions. Every item is kept as "Implemented and verified", and nothing was
+  reverted. B's gain is per call only. I meets the owner's keep condition. K depends on the owner's
+  acceptance of `98e01695`; if it is rejected, run `git revert -m 1 6916a850`, which applies cleanly.
+  Added the "Rejected experiments", "Fidelity differences (K)", "Limits and blockers" and "Next concrete
+  action" sections. Final full ctest: 819/821 passed, the one failure being the known `vashim_unavailable`.
+  Not pushed. Main has moved 22 commits (protocol 307), so landing needs a merge and new gates.
