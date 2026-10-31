@@ -2226,6 +2226,15 @@ public:
     int viewDirtyW() const { return viewDirtyW_; }
     void clearViewDirty() { std::fill(viewDirty_.begin(),viewDirty_.end(),uint8_t(0)); }
     const std::vector<uint16_t>& navigationExploration() const { return navigationExplored_; }
+    // Write access for the harnesses and tests that seed or restore the plane
+    // (situations, "everything explored" fixtures); nothing else may write it.
+    // The block summaries derived from the plane (explorationBlocks_) are kept by
+    // its own writers, so this drops them and the next exploration pass rebuilds
+    // them from what the caller wrote: finish writing before that pass.
+    std::vector<uint16_t>& editNavigationExploration() { explorationBlocks_.clear(); return navigationExplored_; }
+    // Tests and TAK_VERIFY_LISTS: the block summaries are present and equal a
+    // fresh rebuild from the plane.
+    bool explorationBlocksMatchPlane() const;
     // `player`'s Mapping-plane bit at the 32 px cell under (x,z), as tickManaBuildArea
     // reads it: true without a plane (no terrain), false off the map.
     bool exploredAt(int player,float x,float z) const {
@@ -2403,7 +2412,8 @@ public:
         clearFeatureMarks();
         mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
         installedMapFeatures_.clear();sacredUnderlay_.clear();
-        explorationHeights_.clear();navigationExplored_.clear();viewCounts_.clear();deathSights_.clear();
+        explorationHeights_.clear();navigationExplored_.clear();explorationBlocks_.clear();
+        viewCounts_.clear();deathSights_.clear();
         restoredNavigationViewer_=-1;
         featureIdx_.clear();
         clearFeatureTypes();
@@ -3798,10 +3808,18 @@ private:
     }();
     int winningTeam_ = -1;
     bool monarchExpendable_ = true;      // default: Monarch is just a unit (net option overrides)
-    // Derived, unhashed, rebuilt each exploration pass: per 8x8-cell block,
-    // the AND of navigationExplored_, so fully explored blocks are skipped.
+    // Derived, unhashed: per 8x8-cell block, the AND of navigationExplored_,
+    // so fully explored blocks are skipped. Every writer of the plane keeps it
+    // equal to that AND (the exploration pass per block it changes,
+    // applyPowerCode per bit) or empties it (setTerrain, resetForReplay,
+    // editNavigationExploration); the next pass rebuilds an emptied one whole.
     static constexpr int kExplorationBlockShift=3;
     std::vector<uint16_t> explorationBlocks_;
+    // Scratch per SimPool slot: the blocks a worker summarized during a pooled
+    // exploration pass, summarized again exactly after the join. A block is
+    // listed once per pass (its flag, per block, is set while it is listed).
+    std::vector<std::vector<uint32_t>> explorationTouched_;
+    std::vector<uint8_t> explorationTouchedFlags_;
     bool serialThreads_ = false;
     int simWorkers_ = -1;
     // The intra-tick worker pool (0 workers when serialThreads_), created on

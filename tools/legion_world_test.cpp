@@ -78,7 +78,7 @@ struct Fixture {
     void start() {
         world.tick(1.f/30);
         world.updateNavigationExploration();
-        auto& explored=const_cast<std::vector<uint16_t>&>(world.navigationExploration());
+        auto& explored=world.editNavigationExploration();
         std::fill(explored.begin(),explored.end(),0xffff);
     }
     bool legal(int id) {

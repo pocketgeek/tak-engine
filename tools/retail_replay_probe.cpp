@@ -15,7 +15,7 @@ struct RetailReplayProbe {
     static void gateComposedStart(World& world,Unit& u,int32_t base,bool missions=false) {
         world.setPathService(true);
         world.gameRng_=1;world.tickCounter_=0;
-        world.navigationExplored_.assign(32*32,0xffff);
+        world.editNavigationExploration().assign(32*32,0xffff);
         world.player(0).automaticGates=true;
         world.unitScripts_.erase(u.id);
         gateMoverStart(u,base);
@@ -53,7 +53,7 @@ struct RetailReplayProbe {
     }
     static void crowdStart(World& world,const std::vector<int>& ids,int32_t base,int budget,int gx,int gz) {
         world.setPathService(true);world.gameRng_=1;world.tickCounter_=0;
-        world.navigationExplored_.assign(size_t(world.hW_/2)*(world.hH_/2),0xffff);
+        world.editNavigationExploration().assign(size_t(world.hW_/2)*(world.hH_/2),0xffff);
         world.unitScripts_.clear();
         for (int id:ids) {
             auto& u=*world.unit(id);gateMoverStart(u,base);
@@ -73,7 +73,7 @@ struct RetailReplayProbe {
     static void crowdWorldStart(World& world,const std::vector<int>& ids,const std::vector<std::vector<std::pair<int,int>>>& goals,
                                 int32_t base,int budget) {
         world.setPathService(true);world.gameRng_=1;world.tickCounter_=0;
-        world.navigationExplored_.assign(size_t(world.hW_/2)*(world.hH_/2),0xffff);
+        world.editNavigationExploration().assign(size_t(world.hW_/2)*(world.hH_/2),0xffff);
         // World::tick reaches scripts through the id index; drop both.
         world.unitScripts_.clear();world.unitScriptById_.clear();world.scriptYardById_.clear();
         // The native harness runs neither the wind update nor player
@@ -218,7 +218,7 @@ struct RetailReplayProbe {
         int width,height,viewer;size_t count;
         if (!(input>>width>>height>>viewer) || width!=world.hW_/2 || height!=world.hH_/2 || viewer< -1 || viewer>31)
             throw std::runtime_error("invalid exploration geometry/context");
-        for (auto& cell:world.navigationExplored_) {
+        for (auto& cell:world.editNavigationExploration()) {
             unsigned mask;if (!(input>>mask) || mask>65535) throw std::runtime_error("invalid exploration mask");
             cell=uint16_t(mask);
         }

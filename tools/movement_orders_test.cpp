@@ -537,7 +537,7 @@ void mazeProduction(const char* data) {
         if(mobile){producer.maxVel=hunter.maxVel;producer.canMove=true;}
         const int id=w.spawn(&producer,8448,24320,0,0);w.setRepeat(id,&hunter);
         if(rally)w.order(id,4864,16640,false);
-        w.updateNavigationExploration();auto& known=const_cast<std::vector<uint16_t>&>(w.navigationExploration());
+        w.updateNavigationExploration();auto& known=w.editNavigationExploration();
         std::fill(known.begin(),known.end(),0xffff);
         bool stopped=false;int built=0,idle=0;
         for(int tick=0;tick<120000;++tick) {
@@ -570,7 +570,7 @@ uint64_t trollRally(const TypeRegistry& registry,bool serial,const tak::hpi::Vfs
     const int id=w.spawn(&producer,maze?8448:600,maze?24320:600,0,0);
     w.player(0).mana=10000000;w.setRepeat(id,&troll);
     w.order(id,maze?4864:1600,maze?16640:640,false);
-    w.updateNavigationExploration();auto& known=const_cast<std::vector<uint16_t>&>(w.navigationExploration());
+    w.updateNavigationExploration();auto& known=w.editNavigationExploration();
     std::fill(known.begin(),known.end(),0xffff);
     bool stopped=false,legionExit=false;int built=0,idle=0;
     for(int tick=0;tick<90000;++tick) {

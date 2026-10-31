@@ -62,7 +62,8 @@ static thread_local double g_exploreMs = 0;   // navigation exploration; part of
 static thread_local double g_prologueMs = 0, g_compactMs = 0;
 #ifndef NDEBUG
 // TAK_VERIFY_LISTS (debug): every tick, each id list and reused count that
-// stands in for a full walk over units_ (WE E2.5) is checked against that walk.
+// stands in for a full walk over units_ (WE E2.5) is checked against that walk,
+// and the exploration block summaries against a rebuild from the plane.
 static bool verifyLists() {
     static const bool on = std::getenv("TAK_VERIFY_LISTS") != nullptr;
     return on;
@@ -1372,6 +1373,7 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
     explorationHeights_=retailExplorationHeights(w,h,uint8_t(seaLevel),
         [&](int x,int z){return heights_[size_t(z)*w+x];});
     navigationExplored_.assign(explorationHeights_.size(),0);
+    explorationBlocks_.clear();   // rebuilt for the new plane by the next exploration pass
     restoredNavigationViewer_=-1;
     for (auto& u:units_) { u.sightFootprint={};u.viewSight={};u.viewPlayer=-1; }
     viewCounts_.clear();deathSights_.clear();
@@ -13158,6 +13160,30 @@ void World::markViewDirty(const RetailSightFootprint& sight) {
 
 void World::markViewDirtyAll() { std::fill(viewDirty_.begin(),viewDirty_.end(),uint8_t(1)); }
 
+// The AND of the exploration plane's owner masks over one block of
+// (1<<blockShift)^2 cells: one entry of explorationBlocks_.
+static uint16_t exploredBlockAnd(const std::vector<uint16_t>& plane,int width,int height,int blockShift,int bx,int bz) {
+    uint16_t all=0xffff;
+    const int zh=std::min(height,(bz+1)<<blockShift),xh=std::min(width,(bx+1)<<blockShift);
+    for (int z=bz<<blockShift;z<zh;++z)
+        for (int x=bx<<blockShift;x<xh;++x) all&=plane[size_t(z)*width+x];
+    return all;
+}
+
+bool World::explorationBlocksMatchPlane() const {
+    const int width=hW_/2,height=hH_/2;
+    constexpr int blockShift=kExplorationBlockShift;
+    const int blocksW=(width+(1<<blockShift)-1)>>blockShift;
+    const int blocksH=(height+(1<<blockShift)-1)>>blockShift;
+    if (navigationExplored_.size()!=size_t(width)*height || explorationBlocks_.size()!=size_t(blocksW)*blocksH ||
+        explorationBlocks_.empty()) return false;
+    for (int bz=0;bz<blocksH;++bz)
+        for (int bx=0;bx<blocksW;++bx)
+            if (explorationBlocks_[size_t(bz)*blocksW+bx]!=exploredBlockAnd(navigationExplored_,width,height,blockShift,bx,bz))
+                return false;
+    return true;
+}
+
 void World::updateExplorationPlane() {
     if (explorationHeights_.empty()) return;
     const int width=hW_/2,height=hH_/2;
@@ -13165,21 +13191,22 @@ void World::updateExplorationPlane() {
     const int blocksW=(width+(1<<blockShift)-1)>>blockShift;
     const int blocksH=(height+(1<<blockShift)-1)>>blockShift;
     // Derived per-block AND of the owner masks: a block whose every cell
-    // already holds a unit's viewer bits needs no per-cell traversal.
-    auto summarize=[&](const std::vector<uint16_t>& mask,std::vector<uint16_t>& blocks,int bx,int bz) {
-        uint16_t all=0xffff;
-        const int zh=std::min(height,(bz+1)<<blockShift),xh=std::min(width,(bx+1)<<blockShift);
-        for (int z=bz<<blockShift;z<zh;++z)
-            for (int x=bx<<blockShift;x<xh;++x) all&=mask[size_t(z)*width+x];
-        blocks[size_t(bz)*blocksW+bx]=all;
-    };
-    auto summarizeAll=[&](const std::vector<uint16_t>& mask,std::vector<uint16_t>& blocks) {
-        blocks.assign(size_t(blocksW)*blocksH,0);
-        for (int bz=0;bz<blocksH;++bz) for (int bx=0;bx<blocksW;++bx) summarize(mask,blocks,bx,bz);
-    };
-    // Rebuilt every pass (one linear read of the plane) so writes to the
-    // plane from outside this function can never leave it stale.
-    summarizeAll(navigationExplored_,explorationBlocks_);
+    // already holds a unit's viewer bits needs no per-cell traversal. It
+    // stays equal to the plane between passes (see explorationBlocks_), so
+    // only an emptied one is rebuilt -- not one read of the whole plane,
+    // the map-sized part of this pass, every tick.
+    if (explorationBlocks_.size()!=size_t(blocksW)*blocksH) {
+        explorationBlocks_.resize(size_t(blocksW)*blocksH);
+        for (int bz=0;bz<blocksH;++bz)
+            for (int bx=0;bx<blocksW;++bx)
+                explorationBlocks_[size_t(bz)*blocksW+bx]=exploredBlockAnd(navigationExplored_,width,height,blockShift,bx,bz);
+    }
+#ifndef NDEBUG
+    if (verifyLists() && !explorationBlocksMatchPlane()) {
+        std::fprintf(stderr,"TAK_VERIFY_LISTS tick %u: exploration block summaries differ from the plane\n",tickCounter_);
+        std::abort();
+    }
+#endif
     std::vector<uint16_t> playerViewers(players_.size(),0);
     for (size_t owner=0;owner<players_.size();++owner)
         for (size_t viewer=0;viewer<players_.size() && viewer<16;++viewer)
@@ -13189,8 +13216,13 @@ void World::updateExplorationPlane() {
     // bits are already set, so any interleaving of the reveals yields the same
     // plane (O9). With workers the cells and block summaries are accessed
     // atomically (relaxed): a summary computed from a cell read before another
-    // chunk's OR is only lower, i.e. it skips less, never more.
-    auto explore=[&](size_t begin,size_t end,auto shared) {
+    // chunk's OR is only lower, i.e. it skips less, never more. Cells only gain
+    // bits within the pass, so every summary computed (and the one already
+    // there) is such a lower bound; a worker ORs its own into the block rather
+    // than storing it, so one computed from older reads cannot take back bits
+    // another worker's newer summary published. touched (workers only) lists
+    // each block summarized, once, for the join to summarize again exactly.
+    auto explore=[&](size_t begin,size_t end,auto shared,std::vector<uint32_t>* touched) {
         constexpr bool kShared=decltype(shared)::value;
         auto load=[](const uint16_t& v)->uint16_t {
             if constexpr (kShared) return __atomic_load_n(&v,__ATOMIC_RELAXED); else return v;
@@ -13200,8 +13232,13 @@ void World::updateExplorationPlane() {
             const int zh=std::min(height,(bz+1)<<blockShift),xh=std::min(width,(bx+1)<<blockShift);
             for (int z=bz<<blockShift;z<zh;++z)
                 for (int x=bx<<blockShift;x<xh;++x) all&=load(navigationExplored_[size_t(z)*width+x]);
-            uint16_t& out=explorationBlocks_[size_t(bz)*blocksW+bx];
-            if constexpr (kShared) __atomic_store_n(&out,all,__ATOMIC_RELAXED); else out=all;
+            const size_t block=size_t(bz)*blocksW+bx;
+            uint16_t& out=explorationBlocks_[block];
+            if constexpr (kShared) {
+                __atomic_fetch_or(&out,all,__ATOMIC_RELAXED);
+                if (!__atomic_exchange_n(&explorationTouchedFlags_[block],uint8_t(1),__ATOMIC_RELAXED))
+                    touched->push_back(uint32_t(block));
+            } else out=all;
         };
         for (size_t index=begin;index<end;++index) {
             auto& u=units_[index];
@@ -13238,12 +13275,33 @@ void World::updateExplorationPlane() {
     SimPool& pool=simPool();
     constexpr size_t kMinParallel=4096;
     if (!pool.workers() || units_.size()<kMinParallel) {
-        explore(0,units_.size(),std::false_type{});
-        return;
+        explore(0,units_.size(),std::false_type{},nullptr);
+    } else {
+        explorationTouched_.resize(pool.workers()+1);
+        if (explorationTouchedFlags_.size()!=explorationBlocks_.size())
+            explorationTouchedFlags_.assign(explorationBlocks_.size(),0);
+        pool.forChunks(units_.size(),SimPool::kUnitChunk,kMinParallel,[&](size_t,size_t begin,size_t end,unsigned slot) {
+            explore(begin,end,std::true_type{},&explorationTouched_[slot]);
+        });
+        // Every OR is visible after the join: what a worker published from reads
+        // that missed another's ORs is made exact again here, so it is not kept
+        // low into the next passes (only a later change in the block would fix
+        // it). Each block once: never more than one rebuild of the whole plane.
+        for (auto& touched:explorationTouched_) {
+            for (const uint32_t block:touched) {
+                explorationBlocks_[block]=exploredBlockAnd(navigationExplored_,width,height,blockShift,
+                                                           int(block%uint32_t(blocksW)),int(block/uint32_t(blocksW)));
+                explorationTouchedFlags_[block]=0;
+            }
+            touched.clear();
+        }
     }
-    pool.forChunks(units_.size(),SimPool::kUnitChunk,kMinParallel,[&](size_t,size_t begin,size_t end,unsigned) {
-        explore(begin,end,std::true_type{});
-    });
+#ifndef NDEBUG
+    if (verifyLists() && !explorationBlocksMatchPlane()) {
+        std::fprintf(stderr,"TAK_VERIFY_LISTS tick %u: exploration pass left block summaries unlike the plane\n",tickCounter_);
+        std::abort();
+    }
+#endif
 }
 
 // The per-player current-view counters (player +0x88). One pass per tick
@@ -13423,10 +13481,13 @@ void World::applyPowerCode(int player,PowerCode code,PowerArg arg,int unitId) {
         case PowerCode::NowISee: {
             const bool reveal=code==PowerCode::NowISee || !(powerMappingOff_ & bit);
             if (code==PowerCode::NowISee) powerLosOff_|=bit;
+            // The bit goes into (or out of) every cell, so it does the same to
+            // every block's AND (the exploration block summaries).
             if (reveal) {
                 // MappingOn off: the whole map explored for this player.
                 powerMappingOff_|=bit;
                 for (auto& mask:navigationExplored_) mask|=bit;
+                for (auto& block:explorationBlocks_) block|=bit;
                 markViewDirtyAll();
             } else {
                 // 425980 refills the explored grid with 0: past exploration is
@@ -13434,6 +13495,7 @@ void World::applyPowerCode(int player,PowerCode code,PowerArg arg,int unitId) {
                 // footprint that explores for this player starts afresh).
                 powerMappingOff_&=uint16_t(~bit);
                 for (auto& mask:navigationExplored_) mask&=uint16_t(~bit);
+                for (auto& block:explorationBlocks_) block&=uint16_t(~bit);
                 markViewDirtyAll();
                 for (auto& u:units_)
                     if (u.type && allied(u.player,player)) u.sightFootprint={};
