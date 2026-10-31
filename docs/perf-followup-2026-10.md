@@ -186,7 +186,7 @@ workloads"). Ratios are candidate/base; ranges are median [min..max] over pairs.
 | H Legion static refresh | **Implemented and verified** (base-heavy worlds only) | Static sync 0.27x (2000 structures, 8 planes), 0.47x (3000), 0.72x (300). H alone, whole step 0.43 / 0.75 / 0.83, every pair. Below the 64-structure gate 1.00. Recorded games never build the index | [item](#h-legion-static-refresh), [results](#results-legion-h-i-j) |
 | I Legion route invalidation | **Implemented and verified** (small; the owner's keep condition is met) | Index on vs off in one binary. local-10000: faster in all 10 swapped rounds, median 0.4% (about 0.09 ms). local-5000: faster in 8 of 10, median 0.3%. L-2h / L-bench: no regression (+0.05% / +0.10%, nav instructions +0.01%). Costs 0.85-3.3 MB | [item](#i-legion-route-invalidation), [results](#results-legion-h-i-j) |
 | J Legion dirty-rect clustering | **Implemented and verified** (worst-case guard) | clusterchurn-big (960 rectangles): whole tick 0.938 [0.909..0.967], p99 12.15 -> 11.18 ms, clustering 6.5-7.9x. Ordinary sizes inside noise. Recorded games never reach the bin path | [item](#j-legion-dirty-rectangle-clustering), [results](#results-legion-h-i-j) |
-| K Shadow atlas capacity | **Implemented and verified, if the owner accepts the visual change in `98e01695`**. Otherwise all of K is **Measured and rejected**: `git revert -m 1 6916a850` | At 7680x2160, every pair: dense 0.536, above 0.502, below 0.698 (frames over 16.7 ms 52 -> 15%), moving 0.853. Costs: under a continuous sub-pixel pan, p99 +4.0% vs base; +32..+144 MiB GPU memory. Held to four pages it measures exactly like base | [item](#k-shadow-atlas-capacity), [results](#results-client-c-e-f-k-measurement-b), [fidelity](#fidelity-differences-k) |
+| K Shadow atlas capacity | **Implemented and verified**. The owner accepted the visual change in `98e01695` (2026-10-31). | At 7680x2160, every pair: dense 0.536, above 0.502, below 0.698 (frames over 16.7 ms 52 -> 15%), moving 0.853. Costs: under a continuous sub-pixel pan, p99 +4.0% vs base; +32..+144 MiB GPU memory. Held to four pages it measures exactly like base | [item](#k-shadow-atlas-capacity), [results](#results-client-c-e-f-k-measurement-b), [fidelity](#fidelity-differences-k) |
 | L Auras | **Implemented and verified** | Aura pass -26..-69% in every round. Aura-heavy fight, whole tick -16.6% [-18.5..-16.0]. Worker scratch 129,840 -> 25,660 B. Serial mode now keeps 25-148 KB it did not keep before | [item](#l-auras), [results](#results-simulation-a-d-g-l-measurement-a-combined-workloads) |
 
 No item is "Already implemented" or "Blocked". No item was measured and rejected; K is the only one
@@ -284,8 +284,8 @@ None of these blocks a disposition.
 
 ## Next concrete action
 
-The owner decides on `98e01695`. If accepted, the branch content stays as it is. If rejected, run
-`git revert -m 1 6916a850` and the checks listed under "Decision" above. Landing was not done here.
+The owner accepted `98e01695` on 2026-10-31, so the branch content stays as it is. (Had it been rejected, the plan was to run
+`git revert -m 1 6916a850` and the checks listed under "Decision" above.) Landing was not done here.
 Main has moved 22 commits since the base, to `b4e83a49` (protocol 307). Those commits change `sim.cpp`
 (+1513/-248), `ai.cpp` and `gameview_hud.cpp`, so landing needs these steps:
 1. Merge main into `perf-followup` and resolve conflicts against items A, D, G and L in `sim.cpp`.
