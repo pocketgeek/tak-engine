@@ -152,8 +152,18 @@ SCENES = {
                                "TAK_RENDER_JUMP_AT": "4000,4000;28000,4000;28000,28000;4000,28000;16000,16000"},
                           notes="camera jumps between five far-apart views every 20 frames (faster "
                                 "than a view's terrain finishes composing)"),
-    # Build ghosts (perf follow-up E): 16 monarchs x 32 queued builds of 4 repeated
-    # structure types on a 4096x3072 px grid around the camera centre.
+}
+QUICK = ["small-battle", "stationary-mixed", "moving", "pan"]
+SIZES = {"normal": (1280, 960), "uhd": (7680, 2160)}
+# The matrix as it stood before the interactive cases: "--scenes all" keeps meaning
+# exactly these, so historical "all" runs and baselines stay comparable.
+HISTORICAL = list(SCENES)
+
+# Build ghosts (perf follow-up E): kept out of the historical matrix, like the
+# interactive cases below ("--scenes ghost-queues ..." names them explicitly).
+GHOST_SCENES = {
+    # 16 monarchs x 32 queued builds of 4 repeated structure types on a 4096x3072 px
+    # grid around the camera centre.
     "ghost-queues": dict(count=1, zoom=0.5, env={"TAK_RENDER_GHOST_QUEUES": "16,32,4",
                                                  "TAK_RENDER_CAMERA": "1"},
                          notes="512 queued-build ghosts (4 types), zoom 0.5 under the sinusoidal pan: "
@@ -168,11 +178,7 @@ SCENES = {
                       notes="ordinary case: 200 mixed units, 4 monarchs x 12 queued builds south of "
                             "them, panning camera"),
 }
-QUICK = ["small-battle", "stationary-mixed", "moving", "pan"]
-SIZES = {"normal": (1280, 960), "uhd": (7680, 2160)}
-# The matrix as it stood before the interactive cases: "--scenes all" keeps meaning
-# exactly these, so historical "all" runs and baselines stay comparable.
-HISTORICAL = list(SCENES)
+SCENES.update(GHOST_SCENES)
 
 # Interactive cases (perf follow-up measurement B). The matrix above never moves the
 # pointer, so the in-game cursor is never classified (the pointer is unset), nothing is
