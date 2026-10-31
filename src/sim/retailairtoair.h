@@ -39,10 +39,14 @@ namespace tak::sim {
 // Every draw is 535cc0, the shared game random number generator. The host has
 // made the head's checks (the unit may attack, a live target, the leash at
 // mission +0x56). Not ported, as in AirToGround: the group check 51d1e0 and
-// the VTOL_Move_Formation it pushes (so flag 0x8000000 is never set here), the
-// air-traffic step-out (unit +0x12a >= 5 pushes VTOL_StepOut). Every abort
-// returns 5; the VTOL_SEEKATTACK a lost target pushes first (41d654) is the
-// host's (retailAirLostTarget, retailairseek.h).
+// the VTOL_Move_Formation it pushes (so flag 0x8000000 is never set here).
+// Stage 2's air-traffic check (41ce48): with unit +0x12a at 5 or more, an auto
+// attack first rescans on rand(2) == 0 (4d8370, 4d7de0) and ends if it put a
+// new attack ahead; then VTOL_StepOut goes ahead with D = (rand(15) + the
+// target's footX + its own) x 16, and the attack starts again at stage 0 a
+// tick after it ends. Every abort returns 5; the VTOL_SEEKATTACK a lost
+// target pushes first (41d654) is the host's (retailAirLostTarget,
+// retailairseek.h).
 
 // 41d780: whether `a` lies in the half plane ahead of `b` once b's facing is
 // turned by octant x 45 degrees. Both directions are 20 px vectors (5360bf /
@@ -120,6 +124,8 @@ struct RetailAirDuel {
     bool flies=true;                    // a mover and canfly (type +0x260 bit 0x800)
     bool onMap=true;                    // unit +0xa4 is a sector, not the off-map cell
     int32_t width=0,height=0;           // game +0x19e90 / +0x19e94
+    int8_t traffic=0;                   // unit +0x12a, the air-traffic counter
+    int16_t footX=1,targetFootX=1;      // unit +0x78, the target's +0x78
 };
 
 namespace detail {
@@ -148,7 +154,8 @@ int retailAirReturnToMap(RetailMissionState& m,RetailFlightVector position,int32
 // new attack ahead); install(point goal) and install(intercept goal) (4d4d40,
 // which also clears the mission's pending controller events 0x3700);
 // release() (4d4d40 with no controller); evade() (pushes VTOL_Evade on the
-// target, true when inserted). `count` is mission +0x4e.
+// target, true when inserted); stepOut(D) (VTOL_StepOut pushed ahead, 4d7750:
+// false when it could not be built). `count` is mission +0x4e.
 template<class Host>
 int retailAirToAir(RetailMissionState& m,int32_t& count,uint32_t tick,uint32_t events,
                    const RetailAirDuel& duel,Host& host) {
@@ -172,6 +179,13 @@ int retailAirToAir(RetailMissionState& m,int32_t& count,uint32_t tick,uint32_t e
     default: return 7;
     }
     const RetailFlightVector lead=host.lead();                       // 41ce43
+    if (duel.traffic>=5) {                                           // 41ce48
+        if (duel.automatic && host.random(2)==0 && host.retarget()) return 5;
+        const int32_t distance=(int32_t(host.random(15))+duel.targetFootX+duel.footX)*16;
+        if (!host.stepOut(distance)) return 8;
+        m.sleep(tick,1);
+        return 0;
+    }
     const RetailFlightVector& me=duel.position;
     const RetailFlightVector& them=duel.target;
     // 41cf43..41cffe: who is in front of whom.

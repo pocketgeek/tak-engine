@@ -20,8 +20,30 @@ Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
 ## Unreleased
-*protocol 306 · replay format 15 · does not play with 0.9.12 or earlier, nor their replays*
+*protocol 307 · replay format 15 · does not play with 0.9.12 or earlier, nor their replays*
 
+- **Melee units reach the building they attack**, as in the original game:
+  each attacker walks to its own free place touching the building, corners
+  included, and bites from there. They used to head for the building's
+  centre: with Legion pathfinding a second Spirit Wolf on a Lodestone waited
+  behind the first for good, and wolves sent at a Keep, a Barracks or any
+  other long building (every factory and gate) stood out of reach on its short
+  sides and never bit. Swordsmen, Knights, Trolls, the gods and every other
+  melee unit get the same, in both pathfinding modes.
+- **Flyers spread out instead of piling up**, as in the original game: a
+  flyer that keeps sharing its spot in the air with others steps a short way
+  out of the crowd, to its least crowded side, and then carries on with what
+  it was doing. Drakes and other flyers attacking one target or chasing one
+  enemy flyer used to sit on top of each other for the whole fight; groups
+  sent to one point and flyers coming in to land now settle apart. With
+  Legion pathfinding, flyers moving with a formation keep their own lanes.
+- **Hovering attackers move round their target as in the original game.** A
+  Drake (and every flyer that hovers to attack) comes in to a point beside
+  its target, takes a new point round a target that stands still after a
+  wasted shot, gives up an attack it keeps being crowded out of, and goes
+  back to its formation when it strays too far from it. One that loses its
+  target circles the spot and looks for another, as the other air attacks
+  do.
 - **Mind control, stone and freeze take effect when their shot arrives**, as
   in the original game. The Harpy's and Mind Mage's charm, the Basilisk's and
   Acolyte's Turn To Stone and the Mechanic's, Chief Engineer's and Neo

@@ -19,7 +19,17 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 306;      // 306: the mind-control, stone and freeze Line-of-Sight classes fly a real
+constexpr uint32_t kNetVersion = 307;      // 307: a ground melee attacker approaches a building (no mover) on Attack_Melee's
+                                           //      rectangle round its footprint (404690 -> 4d4e80), each to its own nearest
+                                           //      free perimeter origin, instead of at its centre (Legion hands the leg to the
+                                           //      native navigator); the melee in-range test snaps both boxes to their
+                                           //      footprint origins as 52b980 does. Retail's air traffic: a flyer's counter
+                                           //      (unit +0x12a, hashed) steps after each occupancy rebuild, and at 5 the
+                                           //      ported flyer missions push a step-out (4214b0) ahead of themselves (a new
+                                           //      front order, hashed); AirToGroundHover (41d820) is ported whole, and a
+                                           //      shot posts its outcome (4099e0) to the shooter's mission events (hashed).
+                                           //      No new command; replay format unchanged.
+                                           // 306: the mind-control, stone and freeze Line-of-Sight classes fly a real
                                            //      shot (52d8d0 / 52db40 / 52dda0) and take effect on the unit it strikes,
                                            //      through retail's callbacks (52da10 / 52dca0 / 52df00; the area charm and
                                            //      freeze use them too): player, mover, Monarch, immunity and construction

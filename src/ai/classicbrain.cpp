@@ -99,6 +99,10 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     else if (o.patrol) { m.cls = 7; m.flags = 0x3000410; }
     // A factory output's GetBuilt PARK: definition class 14, flags 0x200.
     else if (o.park) { m.cls = 14; m.flags = o.mission.flags; }
+    // A flyer's step-out (retail's air traffic) ahead of its mission: VTOL_StepOut,
+    // VTOL_StepOutStandby or VTOL_StepOutNoFormation (rows 0x5ebee0 / 0x5ebef9 /
+    // 0x5ebf12: class 14, flags 0x1000000 / 0x5000000 / 0), not a move's 0x3000400.
+    else if (o.stepOut) { m.cls = 14; m.flags = o.mission.flags; }
     else { m.cls = 14; m.flags = 0x3000400; }   // a move
     m.kind = m.cls == 14 ? moveKind(u.type->canFly) : m.cls == 7 ? kKindPatrol : otherKind(m.cls);
     // Only the World's auto-attacks (and the return move behind a leashed one):

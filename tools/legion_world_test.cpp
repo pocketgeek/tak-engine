@@ -3098,7 +3098,9 @@ FrontRun flyerfrontRun(bool serial=true,bool cold=false) {
         f.world.tick(1.f/30);
         bool busy=false;for(int id:all)busy|=!f.world.unit(id)->orders.empty();
         if(!busy&&r.done<0)r.done=t;
-        if(r.done>=0) {if(t>r.done+150)break;continue;}
+        // The landing: a flyer that came down on another steps out of the stack first (retail's air traffic,
+        // VTOL_Standby and VTOL_LandIfCan) and then searches for a spot; give it the time.
+        if(r.done>=0) {if(t>r.done+900)break;continue;}
         if(t%30)continue;
         float cx,cz;centroid(cx,cz);
         const float marched=std::hypot(cx-wx,cz-wz);

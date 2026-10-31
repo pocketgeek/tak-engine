@@ -13,8 +13,9 @@ return from off the map, the group flag's draw and every random draw (535cc0,
 native, state at 0x64186c). Controller allocation, construction, the radius
 setter and installation are host stubs that record their arguments; the
 installation stub clears the pending controller events as 4d4d40 does. The
-group check (51d1e0) answers no group, and the air-traffic counter (unit
-+0x12a) stays below the step-out threshold: neither is ported.
+group check (51d1e0) answers no group: it is not ported. The air-traffic
+counter (unit +0x12a) runs below, at and above 5: past stage 0 the seek
+pushes VTOL_StepOut ahead (4d7750) with D = (rand(15) + footX) x 16.
 
 The exits run 41bf80 and 41ca50 on a lost target (gone, dead, dying, carried,
 off the map, or events 0x2/0x8/0x20) with the unit alive or not, dying or not,
@@ -103,8 +104,8 @@ def main():
     def mission_ctor(uc, args):   # 4d6c40(row, target, point, +0x4e, +0x52, +0x56, vec, vec), thiscall
         if uc.reg_read(UC_X86_REG_ECX) != pushed:
             raise AssertionError('mission constructed elsewhere')
-        record('mission', (get(args + 4), bytes(uc.mem_read(get(args + 8), 12)),
-                           get(args + 12), get(args + 16), get(args + 20)))
+        point = bytes(uc.mem_read(get(args + 8), 12)) if get(args + 8) else b''
+        record('mission', (get(args + 4), point, get(args + 12), get(args + 16), get(args + 20)))
         put(pushed + 4, 'B', 0x13)
         return 12, pushed
 
@@ -130,7 +131,8 @@ def main():
     p.hooks[0x4d4bf0] = lookup
     p.hooks[0x4d6c40] = mission_ctor
     p.hooks[0x4d77b0] = insert
-    for address, name in [(0x51a700, 'aim'), (0x51a770, 'ground aim'), (0x4d7750, 'push'),
+    p.hooks[0x4d7750] = lambda uc, a: (record('push', (get(a), get(a + 4))), (2, 0))[1]
+    for address, name in [(0x51a700, 'aim'), (0x51a770, 'ground aim'),
                           (0x50c480, 'group leave'), (0x4d6da0, 'mission destructor')]:
         p.hooks[address] = unexpected(name)
     p.freeze_hooks()
@@ -188,6 +190,8 @@ def main():
         found = rng.random() < 0.3
         retarget = int(rng.random() < 0.5)
         seed = rng.randrange(2**32)
+        traffic = rng.choice((0, 0, 0, 4, 5, 7, 17))
+        foot = rng.choice((1, 2, 3, 4, 6))
         answers.update(found=found, offer=offer, retarget=retarget)
 
         put(game + 0x19f44, 'I', tick)
@@ -198,6 +202,8 @@ def main():
         put(unit + 0x68, 'iii', s32(x), s32(y), s32(z))
         put(unit + 0xa4, 'I', sector if on_map else offmap)
         put(weapon + 0x90, 'i', weapon_range)
+        put(unit + 0x12a, 'b', traffic)
+        put(unit + 0x78, 'h', foot)
         put(mission + 5, 'B', stage)
         put(mission + 6, 'I', 0)
         put(mission + 0xa, 'I', deadline)
@@ -237,11 +243,16 @@ def main():
                          *struct.unpack('<3i', p.uc.mem_read(mission + 0x22, 12)), installs,
                          *point, get(controller + 0xa, 'h') if installs else 0,
                          len(offers), len(log.get('begin', [])), len(log.get('auto', [])),
-                         len(log.get('scan', [])), get(RNG), draws[0]))
+                         len(log.get('scan', [])), get(RNG), draws[0], len(log.get('push', [])),
+                         s32(steps[-1][2]) if (steps := [m for m, n in zip(log.get('mission', []),
+                                                                           log.get('lookup', []))
+                                                         if n == 0x605288]) else 0))
+        if any(c != (unit, pushed) for c in log.get('push', [])):
+            raise AssertionError((i, 'push', log['push']))
         fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, angle & 0xffff,
                                            s32(px), s32(py), s32(pz), s32(x), s32(y), s32(z), weapon_range,
                                            int(armed), int(flies), int(carried), int(on_map), width, height,
-                                           seed, offer, int(found and retarget)))))
+                                           seed, offer, int(found and retarget), traffic, foot))))
     output = subprocess.run([binary, '--air-seek'], input='\n'.join(fixtures) + '\n',
                             text=True, capture_output=True, check=True)
     actual = [tuple(map(int, line.split())) for line in output.stdout.splitlines()]
@@ -256,19 +267,30 @@ def main():
     installed = sum(1 for row in expected if row[10])
     hops = sum(1 for f, row in zip(fixtures, expected)
                if int(f.split()[0]) == 1 and row[0] == 2 and row[6] != int(f.split()[6]))
-    print('PASS: %d VTOL_SeekAttack calls (stages %s), %d controllers, %d hops, every state, point, radius and draw'
-          % (len(expected), ' '.join('%d:%d' % kv for kv in sorted(stages.items())), installed, hops))
+    print('PASS: %d VTOL_SeekAttack calls (stages %s), %d controllers, %d hops, %d step-outs, every state, point, '
+          'radius and draw'
+          % (len(expected), ' '.join('%d:%d' % kv for kv in sorted(stages.items())), installed, hops,
+             sum(1 for row in expected if row[21])))
 
-    # ---- the lost-target exits, 41c8f6 and 41d654 ----
+    # ---- the lost-target exits, 41c8f6, 41d654 and AirToGroundHover's 41e28f ----
     fixtures, expected = [], []
-    for i in range(4000):
-        air_to_air = rng.random() < 0.5
+    hovers = 0
+    for i in range(6000):
+        hover = rng.random() < 0.33
+        air_to_air = not hover and rng.random() < 0.5
+        hovers += hover
+        # AirToGroundHover's type has hoverattack (+0x260 0x8000000); its
+        # exit, like AirToAir's, does not look at the unit's own state.
+        put(kind + 0x260, 'I', 0x8000800 if hover else 0x800)
         alive = rng.random() < 0.85
         dying = rng.random() < 0.15
         last = rng.random() < 0.7
         fire = rng.choice((0, 0x40000, 0x80000, 0xc0000))
         state = rng.choice(('gone', 'dead', 'dying', 'carried', 'offmap', 'live'))
-        events = rng.choice((0, 0x2, 0x8, 0x20, 0x28, 0x2a)) if not air_to_air else rng.choice((0, 0x8, 0x20, 0x28))
+        events = rng.choice((0, 0x2, 0x8, 0x20, 0x28, 0x2a)) if not air_to_air and not hover \
+            else rng.choice((0, 0x8, 0x20, 0x28))
+        if hover and not events:
+            events = rng.choice((0x8, 0x20, 0x28))   # its head reads a gone target's 0x200 path otherwise
         if state in ('gone', 'live') and not events:
             events = 0x8 if air_to_air else rng.choice((0x2, 0x8, 0x20))
         px, py, pz = (rng.randrange(-2**31, 2**31) for _ in range(3))
@@ -286,7 +308,7 @@ def main():
         put(target + 0x114, 'B', 4 if state == 'carried' else 0)
         put(RNG, 'I', rng.randrange(2**32))
         log.clear()
-        result, error = p.call(0x41ca50 if air_to_air else 0x41bf80, (unit, mission, events))
+        result, error = p.call(0x41d820 if hover else 0x41ca50 if air_to_air else 0x41bf80, (unit, mission, events))
         if error:
             raise AssertionError((i, error))
         if result != 5:
@@ -305,8 +327,8 @@ def main():
             carried = int(got_target == target)
         live = state in ('carried', 'offmap', 'live')
         expected.append((int(bool(inserts)), carried))
-        fixtures.append(' '.join(map(str, (int(air_to_air), int(alive), int(dying), int(last), int(fire == 0),
-                                           int(state != 'gone'), int(live)))))
+        fixtures.append(' '.join(map(str, (int(air_to_air or hover), int(alive), int(dying), int(last),
+                                           int(fire == 0), int(state != 'gone'), int(live)))))
     output = subprocess.run([binary, '--air-lost'], input='\n'.join(fixtures) + '\n',
                             text=True, capture_output=True, check=True)
     actual = [tuple(map(int, line.split())) for line in output.stdout.splitlines()]
@@ -317,8 +339,9 @@ def main():
             raise AssertionError('exit fixture %d: %s\n  port   %s\n  native %s' % (i, fixtures[i], got, want))
     pushes = sum(row[0] for row in expected)
     carries = sum(row[1] for row in expected)
-    print('PASS: %d lost-target exits (AirToGround and AirToAir), %d pushes, %d carrying the target, every gate'
-          % (len(expected), pushes, carries))
+    put(kind + 0x260, 'I', 0x800)
+    print('PASS: %d lost-target exits (AirToGround, AirToAir and %d AirToGroundHover), %d pushes, %d carrying the '
+          'target, every gate' % (len(expected), hovers, pushes, carries))
 
 
 if __name__ == '__main__':

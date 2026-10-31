@@ -8,22 +8,25 @@
 
 namespace tak::sim {
 
-// What AirToGround (41bf80) and AirToAir (41ca50) do when they lose their
-// target: AirToGround's head sends events 0x2a and a target that is gone,
-// dead, dying (+0x130 0x1000), carried (+0x114 bit 4), off the map (+0x130 & 3
-// == 0) or now able to fly to 41c8f6; AirToAir's sends events 0x28 and the
-// same states to 41d654. Both then return 5 (the attack ends), first pushing
+// What AirToGround (41bf80), AirToAir (41ca50) and AirToGroundHover (41d820)
+// do when they lose their target: AirToGround's head sends events 0x2a and a
+// target that is gone, dead, dying (+0x130 0x1000), carried (+0x114 bit 4),
+// off the map (+0x130 & 3 == 0) or now able to fly to 41c8f6; AirToAir's sends
+// events 0x28 and the same states to 41d654; AirToGroundHover's sends events
+// 0x28, the same states (bar flying) and a selected weapon with `dropped` to
+// 41e28f. All three then return 5 (the attack ends), first pushing
 // VTOL_SEEKATTACK (4d77b0: inserted at the end of the list, so right behind
 // the attack) when:
 //   41c8f6: the unit is alive (+0x130 0x1000000) and not dying (0x1000);
-//           AirToAir's 41d654 does not look;
-//   both:   the attack is the last mission (+0x66, the list's next link, is
+//           AirToAir's 41d654 and AirToGroundHover's 41e28f do not look;
+//   all:    the attack is the last mission (+0x66, the list's next link, is
 //           0), and the unit is not on Hold Fire (+0x130 & 0xc0000).
 // The seek carries the attack's point (mission +0x22: the target's position
-// at AirToGround's last wake, 41c13c; the led SweetSpot at AirToAir's, 51aa50)
-// and, when the target is still alive and not dying, the target (+0x16).
+// at AirToGround's last wake, 41c13c; the led SweetSpot at AirToAir's, 51aa50,
+// and at AirToGroundHover's stages 2 and 3) and, when the target is still
+// alive and not dying, the target (+0x16).
 struct RetailAirLoss {
-    bool airToAir=false;      // 41d654 rather than 41c8f6
+    bool airToAir=false;      // 41d654 or 41e28f rather than 41c8f6
     bool alive=true;          // unit +0x130 0x1000000
     bool dying=false;         // unit +0x130 0x1000
     bool last=true;           // mission +0x66 == 0
@@ -62,10 +65,12 @@ inline RetailSeekPush retailAirLostTarget(const RetailAirLoss& in) {
 //            0x30, radius 128) at the point less (sin, cos)(angle) x (the
 //            selected weapon's range + 160), a sleep of 30 + rand(30) ticks,
 //            and a wait on the controller (0x700).
+//   head, past stage 0 (41943a): with the air-traffic counter (unit +0x12a)
+//            at 5 or more, VTOL_StepOut goes ahead (D = (rand(15) + footX) x
+//            16) and the seek starts again at stage 0 a tick after it ends.
 // Every draw is 535cc0, the shared game random number generator. Not ported:
-// the air-traffic step-out (unit +0x12a >= 5 pushes VTOL_StepOut) and the
-// group check (51d1e0), whose flag 0x8000000 is therefore never set here, as
-// in AirToGround.
+// the group check (51d1e0), whose flag 0x8000000 is therefore never set here,
+// as in AirToGround.
 struct RetailAirSeek {
     RetailFlightVector position;   // unit +0x68
     int32_t range=0;               // the selected slot's WeaponType +0x90 (519ac0)
@@ -74,20 +79,29 @@ struct RetailAirSeek {
     bool target=false;             // mission +0x16 is set
     bool onMap=true;               // unit +0xa4 is a sector, not the off-map cell
     int32_t width=0,height=0;      // game +0x19e90 / +0x19e94
+    int8_t traffic=0;              // unit +0x12a, the air-traffic counter
+    int16_t footX=1;               // unit +0x78
 };
 
 // Host: random(bound); attack() (stage 0's 4d7de0 on the carried target:
 // true when it put an attack ahead); beginFlight() (416c50); slotsAuto()
 // (519b10(3)); retarget() (4d8370 then 4d7de0(unit, found, 0, 0, 1, 0): true
 // when it put an attack ahead); install(point goal) (4d4d40, which also
-// clears the mission's pending controller events 0x3700). `point` is mission
-// +0x22, `angle` the low word of +0x4e.
+// clears the mission's pending controller events 0x3700); stepOut(D)
+// (VTOL_StepOut pushed ahead, 4d7750: false when it could not be built).
+// `point` is mission +0x22, `angle` the low word of +0x4e.
 template<class Host>
 int retailVtolSeekAttack(RetailMissionState& m,RetailFlightVector& point,uint16_t& angle,uint32_t tick,
                          uint32_t events,const RetailAirSeek& in,Host& host) {
     if (!in.armed) return 7;                                         // 419301
     if (events&0x200) return 5;                                      // 419310
     if (!in.onMap) return detail::retailAirReturnToMap(m,in.position,in.width,in.height,host);   // 419323
+    if (m.stage>0 && in.traffic>=5) {                                // 41943a
+        const int32_t distance=(int32_t(host.random(15))+in.footX)*16;
+        if (!host.stepOut(distance)) return 8;
+        m.sleep(tick,1);
+        return 0;
+    }
     if ((m.flags&0x8000000u) && host.random(25)==0) m.flags&=~0x8000000u;   // 4195f9
     switch (m.stage) {
     case 0:                                                          // 41972e

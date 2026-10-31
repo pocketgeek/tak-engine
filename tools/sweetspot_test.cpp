@@ -117,7 +117,10 @@ int main(int argc, char** argv) {
         // from its centre, past its 2x2 cells, and the drawn offset turns with
         // its heading. Retail's 52a4d0 run on the game's own 47 bolts with the
         // drawn aim point hits sub 328 (heading 14493: 7 of 7) and still misses
-        // sub 106 (heading 4616: 0 of 20); the simulation must do the same.
+        // sub 106 (heading 4616: 0 of 20); the simulation must do the same from
+        // the recorded bearing. (Since protocol 307 AirToGroundHover answers a
+        // wasted shot at a target standing still by moving to a random point of
+        // its ring, 41e145: so only the first bolt at sub 106 is from there.)
         {
             const sim::UnitType* thirsha = reg.find("zonhunt");
             const sim::UnitType* subType = reg.find("cresubm");
@@ -141,21 +144,23 @@ int main(int argc, char** argv) {
                 const float dx = s.mx - s.sx, dz = s.mz - s.sz, len = std::hypot(dx, dz);
                 const int shooter = w.spawn(thirsha, s.sx + 300 * dx / len, s.sz + 300 * dz / len, 0, 0);
                 w.attack(shooter, target, false);
-                int bolts = 0, hits = 0;
+                int bolts = 0, hits = 0, firstBoltHits = -1;
                 size_t live = 0;
                 sim::Fixed hp = w.unit(target)->hp;
                 for (int i = 0; i < 40 * 30; ++i) {
                     w.tick(1.f / 30);
                     size_t n = 0;
                     for (const auto& shot : w.projectiles()) n += shot.fromId == shooter;
+                    if (bolts < 2 && bolts + int(n > live ? n - live : 0) >= 2) firstBoltHits = hits;
                     if (n > live) bolts += int(n - live);
                     live = n;
                     if (w.unit(target)->hp < hp) { ++hits; hp = w.unit(target)->hp; }
                     w.unit(target)->heading = sim::Bam(s.heading);   // parked: hold the recorded heading
                 }
                 char buf[96];
-                std::snprintf(buf, sizeof buf, "hits %d of %d bolts", hits, bolts);
-                check(bolts >= 8 && (s.hits ? hits * 2 >= bolts : hits == 0), s.what, buf);
+                std::snprintf(buf, sizeof buf, "hits %d of %d bolts, the first %s", hits, bolts,
+                              firstBoltHits > 0 ? "hit" : "missed");
+                check(bolts >= 8 && (s.hits ? hits * 2 >= bolts : firstBoltHits == 0), s.what, buf);
             }
         }
     }
