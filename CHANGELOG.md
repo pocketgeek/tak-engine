@@ -85,6 +85,13 @@ their validation reports; both live in [`docs/`](docs/).
   random choice among several targets lands on the same one as in the
   original, and a computer player's caster no longer switches to stone,
   freeze or charm against a building still being built.
+- **Legion: flyers keep the army's pace only in a formation.** Flyers in a
+  group (Ctrl+number) with ground units were held to the ground units' pace,
+  as in a formation, and set down in front of them; they now fly at their own
+  speed to where you send them, as they do in no group. A formation's
+  (Alt+number) flyers still keep to the army's pace and land just in front of
+  it, but no longer on the edge of the map when the army stops near it: where
+  there is no room in front, they land where they were sent.
 
 ## 0.9.12
 *2026-10-29 · protocol 305 · replay format 15 · does not play with 0.9.11 or earlier, nor their replays*

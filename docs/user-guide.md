@@ -1039,7 +1039,9 @@ units in the same group or formation:
 - In **Legion** mode, flyers in a formation hold their places in rows over the
   front of the ground units, keep to the army's pace, follow the front when the
   army turns, and land in a line just in front of the ground units when they
-  arrive.
+  arrive (where they were sent, if the edge of the map leaves no room in
+  front). Flyers in a group fly at their own speed to where you send them, as
+  they do when they are in no group.
 - In **Retail** mode, as in the original game, they are never slowed to the
   army's pace. A flyer that gets far out of place is sent back to the group,
   and a flyer that gets ahead of the group a second time has a one-in-four
@@ -1699,13 +1701,15 @@ measurements](legion-pathfinding.md)):
   speed it really moves.
 - **Flyers land cleanly.** Flyers never land on top of other flyers or ground
   units.
-- **Flyers stay with the army.** Flyers in a formation or a Ctrl+number group
-  with ground units hold places in rows over the front of the ground units of
-  the same order and keep to their pace, instead of racing ahead and waiting at
-  the destination. On arrival they land just in front of the ground units. Over
-  a single unit or a narrow column they gather in a block, not a long file.
+- **Flyers stay with the army.** Flyers in a formation (Alt+number) with
+  ground units hold places in rows over the front of the ground units of the
+  same order and keep to their pace, instead of racing ahead and waiting at the
+  destination. On arrival they land just in front of the ground units, or where
+  they were sent if the edge of the map leaves no room there. Over a single
+  unit or a narrow column they gather in a block, not a long file.
   When the ground stops, for instance at a wall or in a dead end, the flyers
-  go on to land at their destination instead of hovering for minutes.
+  go on to land at their destination instead of hovering for minutes. Flyers
+  in a group (Ctrl+number) fly at their own speed to where they are sent.
 - **Flyers do not trap walkers.** A flyer that has lifted to let an army pass
   comes back down after at most a minute, and it fights while it is up. Ground
   units do not walk in under a flyer that is coming down to land.
@@ -1713,7 +1717,7 @@ measurements](legion-pathfinding.md)):
 Legion handles ground units, ships and hovercraft for moves, fight-moves,
 patrols, attacks, guarding, building, repairing, reclaiming and transport
 orders. Flyers in flight use the original game's movement, except that flyers
-in a formation or Ctrl+number group with ground units keep station over them.
+in a formation with ground units keep station over them.
 
 **Known limits of Legion:**
 
