@@ -1,6 +1,7 @@
 #include "legion.h"
 #include "legion_route.h"
 #include "legion_hier.h"
+#include "legion_cluster.h"
 #include "sim.h"
 #include "footprint.h"
 #include "idmap.h"
@@ -2918,6 +2919,7 @@ struct LegionNavigator::Impl {
     struct RefreshScratch {
         std::vector<uint32_t> seenGen;std::vector<int> seenBy;uint32_t markGen=0;
         uint64_t relabels=0;
+        cluster::Clusters clusters;std::vector<std::array<int,4>> part;   // refreshPlane's (storage reuse only)
     };
     RefreshScratch refreshScratch;
     // A static change (feature placed/removed, corpse, structure built or
@@ -2935,7 +2937,12 @@ struct LegionNavigator::Impl {
     // plane (8-11 ms each, 20-43 ms per tick on Ulasem with 5 planes) for a
     // few dozen changed cells. Clusters are rectangles whose boxes, grown by
     // the relabel margin plus the footprint, overlap; cluster order is the
-    // order of each cluster's first rectangle.
+    // order of each cluster's first rectangle. The clusters come from
+    // sim/legion_cluster.h: a test of every pair for a few rectangles, 8x8-cell
+    // bins for many (a battle's corpses, up to the 1024-rectangle dirty list,
+    // or a background build's pending list of up to 4096: the pairwise test
+    // was quadratic in them), the same partition and order either way
+    // (legion_cluster_test).
     // Stage 7: one cluster's legality change -- the box of the origins whose legality changed, and whether any lost
     // it (a closure) or gained it (an improvement). syncStatic hands staticChanged one list per plane: the routes a
     // change reaches are found per cluster, not by one box round every change of the tick (a corpse in one corner
@@ -2944,25 +2951,33 @@ struct LegionNavigator::Impl {
     uint64_t refreshPlane(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,RefreshScratch& scratch,
                           std::vector<StaticChange>* out=nullptr) {
         const int grow=kRelabelMargin+std::max(p.footX,p.footZ)+1;
-        std::vector<int> cluster(rects.size());
-        for(size_t i=0;i<rects.size();++i)cluster[i]=int(i);
-        auto root=[&](int i) {while(cluster[size_t(i)]!=i)i=cluster[size_t(i)]=cluster[size_t(cluster[size_t(i)])];return i;};
-        for(size_t i=0;i<rects.size();++i)for(size_t j=i+1;j<rects.size();++j) {
-            const auto& a=rects[i];const auto& b=rects[j];
-            if(a[0]-grow<b[0]+b[2]+grow&&b[0]-grow<a[0]+a[2]+grow&&a[1]-grow<b[1]+b[3]+grow&&b[1]-grow<a[1]+a[3]+grow) {
-                const int ra=root(int(i)),rb=root(int(j));
-                if(ra!=rb)cluster[size_t(std::max(ra,rb))]=std::min(ra,rb);
-            }
-        }
+        auto& clusters=scratch.clusters;
+        // TAK_LCLUSTER (debug builds): one line per refresh, the clustering's share of it. Its own switch, not
+        // TAK_LPROBE: a line per refresh would land inside the LPROBE line's refresh timings.
+#ifndef NDEBUG
+        static const bool clusterProbe=std::getenv("TAK_LCLUSTER")!=nullptr;
+#else
+        constexpr bool clusterProbe=false;
+#endif
+        using ProbeClock=std::chrono::steady_clock;
+        const auto probeC0=clusterProbe?ProbeClock::now():ProbeClock::time_point{};
+        cluster::clusterRects(rects,grow,clusters);
+        const auto probeC1=clusterProbe?ProbeClock::now():ProbeClock::time_point{};
         uint64_t work=0;
-        std::vector<std::array<int,4>> part;
-        for(size_t i=0;i<rects.size();++i) {
-            if(root(int(i))!=int(i))continue;
+        auto& part=scratch.part;
+        for(size_t k=0;k<clusters.clusters();++k) {
             part.clear();
-            for(size_t j=i;j<rects.size();++j)if(root(int(j))==int(i))part.push_back(rects[j]);
+            for(int t=clusters.start[k];t<clusters.start[k+1];++t)part.push_back(rects[size_t(clusters.order[size_t(t)])]);
             StaticChange c;
             work+=refreshCluster(p,part,changedAny,scratch,&c);
             if(out&&c.box[2]>=0)out->push_back(c);
+        }
+        if(clusterProbe) {
+            const auto t=ProbeClock::now();
+            std::fprintf(stderr,"LCLUSTER tick=%u plane=%d n=%zu clusters=%zu cluster_us=%.3f refresh_us=%.3f work=%llu\n",
+                         w.tickCounter_,int(&p-planes.data()),rects.size(),clusters.clusters(),
+                         std::chrono::duration<double,std::micro>(probeC1-probeC0).count(),
+                         std::chrono::duration<double,std::micro>(t-probeC0).count(),(unsigned long long)work);
         }
         return work;
     }
