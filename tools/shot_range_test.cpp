@@ -173,7 +173,18 @@ struct Static {
     int held = 0;       // ticks the shooter held the target
     int shots = 0;      // ticks with a shot of its in the air aimed at the target, or a launch
     long damage = 0;    // damage the target took
+    int struck = 0;     // ticks a shot struck the target
 };
+
+// A stone or freeze shot never damages a building: retail's callbacks
+// (52dca0 / 52df00) refuse a body without a mover and replace the damage.
+// Its reach shows in the shots that strike the building instead.
+bool statusShot(const sim::Weapon& w) { return w.losStatus != sim::Weapon::LosStatus::None; }
+
+int strikes(const sim::World& w, int target) {
+    return std::any_of(w.hits().begin(), w.hits().end(),
+                       [&](const auto& h) { return h.victimId == target && h.sound; }) ? 1 : 0;
+}
 
 // A shooter (player 0, fire at will; a mobile one on Hold Position) and an
 // enemy building at (dx, dz) from it. `slot` >= 0 selects a weapon.
@@ -201,6 +212,7 @@ Static staticShooter(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const ch
         for (const auto& p : s.w.projectiles())
             if (p.fromId == shooter && p.targetId == target) { shot = true; break; }
         if (shot) ++out.shots;
+        out.struck += strikes(s.w, target);
         if (sim::Unit* t = s.w.unit(target)) {
             out.damage += 30000 - t->hp.floorInt();
             t->hp = sim::Fixed::fromInt(30000);
@@ -215,6 +227,7 @@ struct Approach {
     long damage = 0;    // damage the target took
     int shots = 0;      // ticks it launched a shot or spell
     int range = 0;      // the weapon it approached on
+    int struck = 0;     // ticks a shot struck the target
     bool held = false;  // still on the attack at the end
     bool ok = false;
 };
@@ -244,6 +257,7 @@ Approach attackBuilding(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const
             t->hp = sim::Fixed::fromInt(30000);
         }
         if (const sim::Unit* u = s.w.unit(shooter); u && u->justFired) ++out.shots;
+        out.struck += strikes(s.w, target);
         if (const sim::Unit* u = s.w.unit(shooter); u && i == ticks - 300) {
             lateX = u->x.toFloat();
             lateZ = u->z.toFloat();
@@ -263,14 +277,16 @@ Approach attackBuilding(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const
 
 std::string describe(const Approach& a) {
     char b[200];
-    std::snprintf(b, sizeof b, "stood %.1f px off (range %d), %d shots, %ld damage, moved %.0f px in the last 10 s%s",
-                  a.dist, a.range, a.shots, a.damage, a.drift, a.held ? "" : ", order gone");
+    std::snprintf(b, sizeof b,
+                  "stood %.1f px off (range %d), %d shots, %d strikes, %ld damage, moved %.0f px in the last 10 s%s",
+                  a.dist, a.range, a.shots, a.struck, a.damage, a.drift, a.held ? "" : ", order gone");
     return b;
 }
 
 std::string describe(const Static& s) {
-    char b[120];
-    std::snprintf(b, sizeof b, "held %d ticks, %d shot ticks, %ld damage", s.held, s.shots, s.damage);
+    char b[140];
+    std::snprintf(b, sizeof b, "held %d ticks, %d shot ticks, %d strikes, %ld damage", s.held, s.shots, s.struck,
+                  s.damage);
     return b;
 }
 
@@ -335,11 +351,13 @@ int main(int argc, char** argv) {
                                           c.slot);
         std::printf("  %s (%s, %s, range %d) on hold %d px off: %s\n", c.unit, w->name.c_str(),
                     retailClass(*w).c_str(), w->range, w->range + oldPad / 2, describe(band).c_str());
-        check(band.held == 0 && band.damage == 0,
+        check(band.held == 0 && band.damage == 0 && band.struck == 0,
               std::string(c.what) + " on hold never targets a building past its range", describe(band));
         const Static in = staticShooter(vfs, standard, c.unit, target, 0, float(w->range) - 20, 900, c.slot);
         std::printf("  %s on hold %d px off: %s\n", c.unit, w->range - 20, describe(in).c_str());
-        check(in.held > 0 && in.damage > 0, std::string(c.what) + " on hold hits one inside its range",
+        check(in.held > 0 && (statusShot(*w) ? in.struck > 0 && in.damage == 0 : in.damage > 0),
+              std::string(c.what) + (statusShot(*w) ? " on hold strikes one inside its range, harmlessly"
+                                                    : " on hold hits one inside its range"),
               describe(in));
     }
 
@@ -372,10 +390,13 @@ int main(int argc, char** argv) {
             // target, weaving: whether one crosses the building is chance, so
             // the caster need only cast.
             const bool storm = w->kind == sim::Weapon::Kind::Wandering;
-            check(a.ok && (t->canFly || a.dist <= float(a.range) + 0.5f) && (storm ? a.shots > 0 : a.damage > 0),
+            const bool status = statusShot(*w);
+            check(a.ok && (t->canFly || a.dist <= float(a.range) + 0.5f) &&
+                      (storm ? a.shots > 0 : status ? a.struck > 0 && a.damage == 0 : a.damage > 0),
                   std::string(c.what) + " ordered to attack a building " +
                       (t->canFly ? "damages it" : storm ? "closes to its plain range and casts"
-                                                        : "closes to its plain range and damages it"),
+                                   : status ? "closes to its plain range and strikes it, harmlessly"
+                                            : "closes to its plain range and damages it"),
                   describe(a));
         }
     }

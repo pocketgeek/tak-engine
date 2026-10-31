@@ -993,8 +993,12 @@ enemies are bunched together and their own units are not.
 **Veterancy.** Units gain experience by destroying enemies and grow stronger as
 they rank up. Some units, such as Monarchs, never gain ranks.
 
-**Status effects.** Some weapons and spells **petrify**, **freeze** or
-**paralyse** their targets. Affected units cannot act until the effect wears off.
+**Status effects.** Some weapons and spells **petrify** or **freeze** a unit,
+which dies as a statue, **paralyse** it, which stops it until the effect wears
+off, or **charm** it (mind control), which makes it yours. Stone, freeze and
+charm spells fly to their target as a ball of energy and work when it strikes,
+on the first unit it strikes; as in the original game they can fail, never take
+a Monarch, a building or a unit still being built, and do no damage.
 
 **Cloaking.** Units that can cloak turn invisible with **K**. Cloaking spends
 the unit's own mana (the blue bar when it is selected), not your mana pool;

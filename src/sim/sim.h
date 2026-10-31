@@ -97,8 +97,17 @@ struct Weapon {
     bool ballistic = false;  // FBI weapon type = Ballistic (lobbed arc, not flat)
     // Line-of-Sight is a trajectory family; its subtypes have distinct updates.
     bool beam = false;
-    bool straight = false; // Ordinary LOS class, without a specialized subtype.
+    bool straight = false; // Ordinary LOS class: any subtype the classes below do not claim.
     bool lightning = false;
+    // The Line-of-Sight status classes (subtype mindcontrol, turntostone,
+    // turntofrozen: LineOfSightMindControl / TurnToStone / TurnToFrozen,
+    // vtables 5f3a90 / 5f3a5c / 5f3a28). They launch and draw as the ordinary
+    // straight shot (52c540 / 52c8c0) but fly with their own update (52d8d0 /
+    // 52db40 / 52dda0), and the unit a shot strikes goes to the class's impact
+    // callback (52da10 / 52dca0 / 52df00) instead of the damage. Retail's
+    // parser (530935..530b16) gives every other subtype the plain class.
+    enum class LosStatus : uint8_t { None, MindControl, Stone, Frozen };
+    LosStatus losStatus = LosStatus::None;
     std::string hwEffectName;
     std::shared_ptr<const RetailLightningDefinition> lightningEffect;
     std::array<uint16_t,3> shotSpin{}; // roll, heading, pitch per collision substep.
@@ -2892,7 +2901,11 @@ public:
                    int victimId = 0;            // primary struck unit (0 = ground hit)
                    float fromX = 0, fromZ = 0;  // attacker pos for hitscan presentation
                    int fromPlayer = 0;         // display colour for hitscan projectile models
-                   std::optional<std::array<int32_t,3>> position, fromPosition; };
+                   std::optional<std::array<int32_t,3>> position, fromPosition;
+                   // A status weapon's impact (529c10 with its effects flag clear)
+                   // plays the hit sound but no explosion; a spell that lands adds
+                   // a silent event with the explosion on the victim (492c80).
+                   bool sound = true, explosion = true; };
     const std::vector<HitFx>& hits() const { return hits_; }
     // Cosmetic events captured at the mission callback, before mover updates.
     struct TransportFx {
@@ -3519,6 +3532,13 @@ private:
     // idle retaliation mission (part a) and, failing that, the per-slot
     // retarget (part b).
     void retailHitResponse(Unit& victim,const Unit* attacker,int dmgType);
+    // The status callbacks' roll (52da10 charm, 52dca0 stone, 52df00 freeze):
+    // chance min(99, (veteran level + 16) * 5), so a green unit falls 80 times
+    // in 100 and a level-4 veteran 99; one CRT rand() scaled to 0..99
+    // (rand()*100/32768: _allmul 5d3c60, _alldiv 5d4470) must fall below the
+    // chance times the area falloff, truncated (x87 product, _ftol). `origin`
+    // is the rand() call site, for the RNG observer.
+    bool retailStatusRoll(const Unit& victim,float scale,uint32_t origin);
     // 4d7de0 with explicit=0, auto=1: insert an auto attack, leashed with a
     // return move on the Maneuver/patrol path. Whether orders were inserted.
     // forced (explicit=1, auto=0, the guards' call): neither the Hold

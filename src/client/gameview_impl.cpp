@@ -1337,15 +1337,15 @@
         if (monarchAlert_.admit(monarchAlerts, localPlayer_, spectating_, SDL_GetTicks64()))
             sounds_.play("alarmmon", 1.f, 1.f, 7, false);
         for (const auto& h : hitsToShow) {
-            // Instant-hit weapons (FBI type = Line of Sight) spawn no projectile, so
-            // nothing was ever drawn for them -- the Aramon King's Thunder, the Creon
-            // tasers, the Zhon lightning and a dozen more fired completely INVISIBLY.
-            // Draw the shot itself: a bolt struck from the firer to the victim, in
-            // the weapon's own inner/middle/outer colours where it declares them.
-            // Fire breath is a Line-of-Sight weapon too, but retail's flame class
-            // draws an emitter, not a bolt -- and we already draw its flame. Excluding
-            // it here stops a drake's breath coming with a spurious lightning streak.
-            if (h.weapon && h.weapon->beam && !h.weapon->straight && !h.weapon->lightning && h.weapon->flameKind<0 && !h.weapon->melee &&
+            // A Line-of-Sight weapon with no weaponvelocity (none shipped) still
+            // lands at once and spawns no projectile: draw a bolt struck from the
+            // firer to the victim, in the weapon's own inner/middle/outer colours.
+            // Every shipped Line-of-Sight class flies a real shot instead (ordinary,
+            // lightning, flame, and the mind-control, stone and freeze balls), so
+            // the effect lands when that shot arrives. Fire breath draws its own
+            // emitter, not a bolt.
+            if (h.weapon && h.weapon->beam && h.weapon->projVel <= 0.0f && !h.weapon->straight &&
+                !h.weapon->lightning && h.weapon->flameKind<0 && !h.weapon->melee &&
                 h.weapon->fx != tak::sim::WeaponFx::Fire &&
                 (noFog_ || cellVisibleR(h.x, h.z))) {
                 BeamFx b;
@@ -1387,7 +1387,9 @@
             // second, each one a dozen-plus particles. The storm's own animation and
             // its one-shot cast sound carry it instead.
             if (h.weapon && h.weapon->kind == tak::sim::Weapon::Kind::Wandering) continue;
-            if (h.weapon && !h.weapon->soundHit.empty()) {
+            // A status spell that lands (charm, stone, freeze) adds a silent event
+            // carrying only its explosion, on the victim (HitFx::sound/explosion).
+            if (h.weapon && h.sound && !h.weapon->soundHit.empty()) {
                 const std::string& body = h.target ? h.target->bodyType : std::string("default");
                 const std::string* wav = soundClasses_.pick(h.weapon->soundHit, body, salt_++);
                 if (!wav) wav = soundClasses_.pick(h.weapon->soundHit, "default", salt_++);
@@ -1398,12 +1400,12 @@
             }
             // Impact visual: play the weapon's real GAF/TAF explosion effect
             // (water variant over water). Missing art does not request extra particles.
-            if (h.weapon) {
+            if (h.weapon && h.explosion) {
                 spawnWeaponImpact(*h.weapon, h.x, h.z, 0, h.position, h.victimId != 0);
             }
             // Weapon area-effect: expanding shockwave rings (radiusart, staggered
             // by ringdelay) and ground fire (firestarter) at the impact.
-            if (h.weapon) {
+            if (h.weapon && h.sound) {
                 float maxR = std::max(h.weapon->aoe * 0.5f, 48.0f);
                 for (int i = 0; i < h.weapon->ringCount && i < 3; ++i)
                     if (!h.weapon->radiusArt[i].empty())
@@ -1589,10 +1591,13 @@
                 if (!(shot.weapons & (uint32_t(1)<<slot))) continue;
                 const auto& w = u.type->weapons[size_t(slot)];
                 // These native initializers start one faction nimbus on the
-                // caster, restarting any prior instance. Remote/wandering
-                // initialization does not require projectile velocity.
+                // caster, restarting any prior instance (52c540 serves the
+                // ordinary and status Line-of-Sight classes, and lightning
+                // through 52cbf0). Remote/wandering initialization does not
+                // require projectile velocity.
                 using Kind = tak::sim::Weapon::Kind;
-                if (w.nimbus && (((w.straight || w.lightning) && w.projVel > 0) ||
+                if (w.nimbus && (((w.straight || w.lightning ||
+                                   w.losStatus != tak::sim::Weapon::LosStatus::None) && w.projVel > 0) ||
                     w.kind == Kind::Remote || w.kind == Kind::Wandering)) {
                     if (!factionNimbusLoaded_) {
                         factionNimbus_ = tak::gaf::factionNimbus(vfs_);
@@ -2055,6 +2060,15 @@
                     paused_=true; // Keep the selected tick while screenshot terrain uploads finish.
                     return;
                 }
+                // A mind-control, stone or freeze ball in flight.
+                for(const auto& shot:world_.projectiles())
+                    if(shot.straight && shot.life>0 && shot.wsrc &&
+                       shot.wsrc->losStatus!=tak::sim::Weapon::LosStatus::None && shot.age>=int32_t(captureAge)) {
+                        std::printf("status shot capture: tick=%u age=%d at=%.1f,%.1f\n",world_.tickCount(),shot.age,
+                            tak::sim::Fixed::raw(shot.position[0]).toFloat(),tak::sim::Fixed::raw(shot.position[2]).toFloat());
+                        paused_=true;
+                        return;
+                    }
             }
             if (trace_ && t >= printed) {
                 printed += 0.5f;

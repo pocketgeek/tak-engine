@@ -33,8 +33,9 @@ linked movement notes for remaining flight and full-scene limitations.
 
 **Weapons** — `WeaponType` maps one subclass per FBI `type`/`subtype`:
 `Melee`, `Ballistic`, `DroppedBallistic` (bombs), `Guided` (homing), `Wandering`,
-`RemoteEffect`, `LineOfSight` (hitscan: `Fire`/`Lightning`/`MindControl`/
-`TurnToFrozen`/`TurnToStone`), `Earthquake`, `Hailstorm`, `AreaMindControl`,
+`RemoteEffect`, `LineOfSight` (a straight shot that flies: plain, `Fire`,
+`Lightning`, `MindControl`, `TurnToFrozen`, `TurnToStone`; none is hitscan,
+see "Mind control, stone and freeze fly"), `Earthquake`, `Hailstorm`, `AreaMindControl`,
 `AreaTurnToFrozen`, and `ATTRIBUTE_ADJUSTER` (stat buffs). **Status effects and
 capture are weapon subtypes**, not unit flags (`turntostone`, `turntofrozen`,
 `paralyze`, `mindcontrol` are real data values).
@@ -274,9 +275,10 @@ that does not block movement, or the corner cells its Bresenham walk skips,
 so since this change the sim also watches where shots land
 (`World::noteShotImpact`, every ballistic, straight and guided shot, and
 since 0.9.2 every flame: `tickFlames` reports a flame's first impact with the
-unit it was fired at, `FlameShot::targetId`, hashed). Melee, beam and other
-instant hits land on the target itself, and Remote Effect spells and
-wandering storms are not aimed shots, so none of them can stop on scenery:
+unit it was fired at, `FlameShot::targetId`, hashed; since protocol 306 the
+mind-control, stone and freeze shots too). Melee hits land on the target
+itself, and Remote Effect spells and wandering storms are not aimed shots, so
+none of them can stop on scenery:
 
 - An impact on terrain, water or scenery the weapon cannot destroy
   (`indestructible`, no `damage`, `unitsonly`; a fire starter still counts a
@@ -1651,10 +1653,14 @@ mode 13 falls to the default entries of both mode tables (no command);
 `0x519cf0` tests it but has no caller. There is no capture by contact, timer
 or low-HP rule. A unit changes sides only through the mind-control impact
 `0x52d8d0` and its roll `0x52da10`, whose gates are, in order: not the
-caster's side, `[+8]` set, not a commander (`0x40000`), **construction
-remaining `+0x108` not above 0**, not in a transport, not `cantbecaptured`
-(`0x100000`); then `min(99,(level+16)*5)` scaled by the area falloff against
-`rand()%100`, and on success `0x514da0`.
+caster's player, `[+8]` set (the unit's mover, so no building), not a
+commander (`0x40000`), **construction remaining `+0x108` not above 0**, not in
+a transport, not `cantbecaptured` (`0x100000`); then `min(99,(level+16)*5)`
+scaled by the area falloff against a CRT `rand()` scaled to 0..99, and on
+success `0x514da0`. Emulated with the stone and freeze callbacks in
+"Mind control, stone and freeze fly" below, which corrects two readings
+here: the first gate compares players, not alliances, and the roll is
+`rand()*100/32768` (`_allmul`, `_alldiv`), not `rand()%100`.
 
 `0x514da0` creates a new object for the new owner (`0x512060`, same type and
 position) and copies onto it the HP raw (`0x514f8a/514f94`, no healing),
@@ -1673,12 +1679,109 @@ ordinary mind-control caster, `captureUnit` keeps HP and resets `xp` /
 `veteran` to a fresh unit's (the scenario's rank for the type, as `spawn`),
 and `canCaptureTarget` and the roll refuse `underConstruction`. Deviations
 kept: the unit keeps its id (and its mana, status timers and cloak) rather
-than becoming a new object; `scenarioTransfer`, which also goes through
-`0x514da0`, still keeps veterancy; and a mind-control slot does not select an
-unfinished unit (`retailSelectTarget`, `sweepKeepsTarget`), where retail's
-selection would pick it and waste the charm on the roll. Probes:
+than becoming a new object; and `scenarioTransfer`, which also goes through
+`0x514da0`, still keeps veterancy. A mind-control slot does not select an
+unfinished unit (`retailSelectTarget`, `sweepKeepsTarget`); this was listed
+as a deviation, but retail's picker skips one too (`4128ca..4128db`, see
+below). Probes:
 `~/tak-tmp/retail-checks/capture/` (outside the repo). Test:
 `tools/capture_combat_test.cpp`.
+
+## Mind control, stone and freeze fly (icd, emulated, 2026-10-30)
+
+The weapon parser picks the Line-of-Sight class by subtype with `_stricmp`
+(`530935..530b16`): `lightning`, `fire`, `bluefire`, `dieselflame`, then
+`mindcontrol` -> `LineOfSightMindControl` (vtable `5f3a90`), `turntostone` ->
+`LineOfSightTurnToStone` (`5f3a5c`), `turntofrozen` ->
+`LineOfSightTurnToFrozen` (`5f3a28`); any other subtype, empty or not, is the
+plain class (`5f39f4`, `530afd`). The three status classes share the plain
+class's aim (`52c4e0`), init (`52c540`) and draw (`52c8c0`): their shot leaves
+the QueryWeapon muzzle on the stored aim angles plus the body heading, starts
+on the release tick plus one (plus `nimbustime` for a nimbus caster with
+nimbus art, which `52c540` also starts), expires one range of travel later
+(see "Live ordinary straight-shot integration" in the transport audit), and is
+drawn at its real position like any straight shot. Only the update differs
+(`52d8d0`, `52db40`, `52dda0`; `tools/re/probe_los_status.py` runs the three
+natively over 1,080 timelines against the model World ports):
+
+- **Flight.** From the tick after activation, every substep turns the shot by
+  its spin, steps its wrapped XYZ and calls the collision `52a4d0`. The first
+  code 2 calls `529c10(shot, struck unit, 1, 0, callback)` and the shot is
+  gone (the third argument retires it). On its expiry tick the shot still
+  flies its substeps, then retires; the plain class does not move on that
+  tick. Activation adds no body heading to the shot's yaw (the plain class
+  does; only a model would show it, and no shipped status shot has one).
+- **Caster.** The mind-control update checks its caster on every update: dead
+  or dying, the shot is retired after that update's flight, which can still
+  land. Stone and freeze check only up to activation, like the plain class:
+  once flying, they land after their caster has died. (A caster that changes
+  sides dies too: `514da0` kills the old object.)
+- **What it strikes.** `52a4d0` stops on any unit of another player whose
+  collision quad the shot enters, an ally's included, or on ground and
+  scenery. The shot is aimed once, at the target's led SweetSpot, and never
+  follows it: a target that moved, died or changed sides is missed and the
+  shot flies on to its expiry, striking whatever stands behind.
+- **Impact.** `529c10` with its effects flag clear plays the hit sound
+  (`50a7d0` / `50b140`: `soundhit`, or `soundhitclass` by the struck body;
+  the water sound in water) but creates no explosion (`492c80` runs only with
+  the flag set). A struck unit (none of these weapons has an `areaofeffect`
+  above 16) goes to the callback with scale 1.0 (`52a460`) instead of the
+  damage `52a330`; with no unit struck, the area pass (radius `aoe/2` = 0)
+  reaches no unit and treats scenery as any shot does.
+
+The callbacks are `52da10` (charm; the Area Mind Control's too, pushed at
+`52f041`), `52dca0` (stone) and `52df00` (freeze; the Area Freeze's too,
+`52f3a1`); the probe runs them over 20,160 cases. None deals damage: the
+Crusades freeze weapons' 450 is a targeting value only. Each returns 0 for a
+refused unit, 1 for a failed roll and 2 for a spell that takes:
+
+- **Charm:** the caster's player (unit `+0xfd` against the shot's `+0x92`:
+  players, so an ally's unit is not spared), no mover (`+8`, made at birth
+  only for `bmcode` 1, `511fcf`: no building), a commander (`+0x264`
+  `0x40000`), construction left (`+0x108` above 0), in a transport (`+0xa8`),
+  `cantbecaptured` (`+0x264` `0x100000`) refuse. Then the roll; on success
+  `514da0` (which leaves a dying unit alone and changes nothing when the new
+  owner's object cannot be made) and the weapon's explosion class on the
+  unit (`492c80(unit +0x68, +0x6c)`).
+- **Stone / freeze:** the caster's player, no mover, a commander,
+  `cantbestoned` / `cantbefrozen` (`+0x268` bit 2 / bit 4, `4c0cff` /
+  `4c0d60`), construction left refuse. Then the roll; on success
+  `51a140(caster, unit, 1, 14 / 15)`, whose `51a240` skips a dying unit and
+  otherwise runs the hit response `409a50`, sets the death type and the last
+  hitter (only while the caster's object lives) and zeroes HP at `51a61a`:
+  a statue. Then the explosion as for the charm.
+- **Roll:** chance `min(99, (getLevel + 16) * 5)` (80 for a green unit, 99
+  from level 4), one CRT `rand()` scaled to 0..99 by `rand()*100/32768`
+  (`_allmul 5d3c60`, `_alldiv 5d4470`), which must fall below
+  `(int)(chance * scale)` (the x87 product, `_ftol`).
+
+The target picker (`412620`, `4127eb..4128db`) asks the same classes (vtable
+`+0x1c` stone, `+0x20` freeze, `+0x24` charm) and skips a unit immune to the
+spell, not alive or dying, or with construction left; it tests neither
+Monarchs, buildings nor paralysis. A Basilisk or a Mechanic set on a Monarch
+or a building spends its shots for nothing.
+
+**Engine (protocol 306).** `Weapon::losStatus` names the three classes
+(any other subtype is the plain class, `Weapon::straight`); `fire` launches
+them through the straight-shot launch, and `tickStraightProjectiles` flies
+them by the updates above; `applyHit`'s `hurt` runs the callbacks for these
+and the two area spells (`World::retailStatusRoll` draws the CRT stream the
+damage spread uses); `retailSelectTarget` has the picker's filters. `HitFx`
+marks a status impact `explosion = false` and adds a silent event with the
+explosion on a unit a spell takes; the viewer draws the shot as a straight
+shot (the faction nimbus starts on its caster) and no longer adds its old
+beam. Before: the three spells took their target on the release tick while
+the viewer drew a ball flying to it for up to 1.5 s; stone and freeze dealt
+the weapon's damage (to immune units too), never failed and took buildings and
+Monarchs (every shipped Monarch is immune anyway); the charm took buildings
+whose category its table did not zero (walls, the Trebuchet, the Veruna
+Mortar), rolled on the game stream and spared allies; the picker skipped
+paralyzed units and not unfinished ones for stone and freeze. Still
+deviating: World updates its flames and straight shots (these three
+included) before its other projectiles, where retail runs one pool in
+creation order (`52afd0`), so in a tick with a status roll and another shot's
+damage spread the two CRT draws can come in the other order; and a charmed
+unit keeps its id (see above). Test: `tools/los_status_flight_test.cpp`.
 
 ## The Crusades balance swaps only the unit roster (icd, 2026-10-26)
 
