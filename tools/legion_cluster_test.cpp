@@ -8,7 +8,7 @@
 // up to 4096 (a background build's pending limit) and 1024+ (the per-tick dirty list's limit).
 //
 // `legion_cluster_test --bench` times reference vs clusterRects on fixed workloads, and `--bench-scn FILE...` on the
-// rectangles of a .scn's churn lines (tools/scenarios/clusterchurn-*.scn); screening numbers only.
+// rectangles of a .scn's churn lines (tools/scenarios/perf/clusterchurn-*.scn); screening numbers only.
 #include "sim/legion_cluster.h"
 #include <chrono>
 #include <cstdio>

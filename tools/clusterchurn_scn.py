@@ -9,7 +9,8 @@ battle-like blobs. Every churn line changes the static map every tick (a place, 
 one or two dirty rectangles), so a tick's static sync hands refreshPlane about LINES..2*LINES rectangles:
 small 4 lines in 4 far-apart blobs, mid 24 lines in 6 blobs (below the pairwise/bin threshold of 64),
 edge 45 lines in 9 blobs (just above it), big 480 lines in 24 blobs (a battle's worth, below the 1024-rectangle dirty-list limit). Deterministic
-(fixed seed); the committed .scn files are this script's output.
+(fixed seed); the committed tools/scenarios/perf/clusterchurn-*.scn files are this script's output
+(kept out of tools/scenarios/*.scn, the baselined gate set).
 """
 import random, sys, os
 

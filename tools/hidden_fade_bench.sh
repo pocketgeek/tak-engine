@@ -15,7 +15,7 @@
 # Compare t_hidden_units (render-thread wall of the pass) and the frame times; the
 # work counters hidden_cover_visits / hidden_cover_reaches exist only in clients with
 # the item-F telemetry (visits = the exact tests the old pass ran, reaches = those run
-# now); hidden_cover_tests (measurement B: sprite/triangle tests) is in both.
+# now); hidden_cover_tests (sprite/triangle tests) is in every client with measurement B.
 # Run timing on the reserved cores through /home/pocket_geek/tak-tmp/tools/timing.sh
 # with --cpus 0-3; captures (--capture) are separate runs and need no quiet cores.
 set -euo pipefail
