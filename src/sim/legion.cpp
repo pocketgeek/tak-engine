@@ -1,6 +1,8 @@
 #include "legion.h"
 #include "legion_route.h"
 #include "legion_hier.h"
+#include "legion_cluster.h"
+#include "legion_routebins.h"
 #include "sim.h"
 #include "footprint.h"
 #include "idmap.h"
@@ -71,10 +73,17 @@ uint64_t gFieldBytes=0;         // LegionNavigator::setFieldBytesForTest (proces
 // 32 in the game, chosen by measurement: docs/legion-10000-progress.md 7.6).
 int gSectorShift=5;
 bool gHierRoutes=true;   // LegionNavigator::setHierarchicalRoutesForTest (process-wide; true in the game)
+// Perf follow-up I: staticChanged finds the routes a change reaches through the route index (routeBins) instead of
+// walking every group (LegionNavigator::setRouteIndexForTest; process-wide, true in the game; never changes behaviour or
+// hashes: both ways visit the same groups in the same order).
+bool gRouteIndex=true;
 // Stage 9 (LegionNavigator::setParallelForTest; process-wide, never hashed, never a decision): run the parallel planning
 // jobs even with no SimPool workers (inline), and shuffle their execution order with random delays (seed; 0 off). A debug
 // build also reads the seed from TAK_LEGION_PAR_PERTURB, so whole-game harnesses (--mpai) can perturb too.
 bool gParForce=false;
+// Perf H (LegionNavigator::setStructureIndexForTest; process-wide, never hashed, never a decision): computeCells reads
+// structures through the spatial index (true, the game) or walks the whole list (the reference it must equal).
+bool gStructureIndex=true;
 #ifndef NDEBUG
 uint64_t gParPerturb=std::getenv("TAK_LEGION_PAR_PERTURB")?std::strtoull(std::getenv("TAK_LEGION_PAR_PERTURB"),nullptr,10):0;
 #else
@@ -788,6 +797,9 @@ struct LegionNavigator::Impl {
         uint64_t pausedSerial=0;
         uint32_t byBuiltKey=0;
         std::array<uint64_t,2> routeKeys{};uint8_t routeCount=0;   // its routeIndex entries
+        // Perf follow-up I: the serials of the field and next its routeBins listing was made for (0: none; see
+        // listBins). Derived, never hashed.
+        uint64_t binField=0,binNext=0;
         // Start requests (Legion 10,000 stage 4): the tick the group last became a request (it went on
         // needFieldIds or staleDoneIds, or a suppressed refresh became eligible again) -- its age orders
         // the admissions and promotes it -- and the tick its start was first refused for want of room
@@ -1214,6 +1226,13 @@ struct LegionNavigator::Impl {
     // so a walk of that entry in id order finds the same first field as a
     // walk of every group. Maintained by listGroup; never hashed.
     std::map<std::pair<int,uint64_t>,std::set<int>> routeIndex;
+    // Route invalidation index for staticChanged (perf follow-up I, legion_routebins.h): per plane, bins of the map
+    // listing every group whose field or next a change in the bin may reach; a superset, fieldTouched decides.
+    // Maintained by listGroup (listBins) and unlistGroup; never hashed (TAK_LEGION_VERIFY: against the groups'
+    // fields, and every staticChanged against a walk of every group). binCands: staticChanged's scratch.
+    routebins::Index routeBins;
+    std::vector<int> binCands;
+    RouteIndexStats ridx;   // observation only (LegionNavigator::routeIndexStats)
     // Join index for registerMove (Legion 10,000 stage 2): the groups by the
     // equality part of the join predicate, all fixed when a group is made --
     // (player, plane, kind, approach, and for a reach kind its target id and
@@ -1246,6 +1265,8 @@ struct LegionNavigator::Impl {
     // LPROBE only: wall time (ms, summed over the ticks) of syncStatic,
     // stampGrounded and liftFlyers. Measured only while the probe is on.
     double probeSyncMs=0,probeStampMs=0,probeLiftMs=0;
+    // LPROBE only (perf follow-up I): wall time (ms, summed) and calls of staticChanged.
+    double probeChangedMs=0;uint64_t probeChangedCalls=0;
     // LPROBE only: the longest single syncStatic (ms) since the last LPROBE
     // line (the static-refresh spike, PF-05) and its breakdown: changed
     // rectangles, planes refreshed incrementally, ms gathering structures,
@@ -1277,6 +1298,24 @@ struct LegionNavigator::Impl {
             if(at->second.empty())routeIndex.erase(at);
         }
         g.routeCount=0;
+    }
+    // routeBins: list the group under the windows (corridor / chain tiles) of its field and next. A field's window
+    // and tile list are fixed when its build starts (startField), so a listing stays valid until the group holds
+    // another field or next (Field::serial is unique); listGroup follows every write of those.
+    void listBins(Group& g) {
+        const uint64_t fs=g.field?g.field->serial:0,ns=g.next?g.next->serial:0;
+        if(fs==g.binField&&ns==g.binNext)return;
+        if(sizeBins())return;   // first use: every group (this one too) was just listed
+        g.binField=fs;g.binNext=ns;
+        routeBins.list(g.id,g.plane,g.field.get(),g.next.get());
+    }
+    void unlistBins(Group& g) {routeBins.unlist(g.id);g.binField=g.binNext=0;}
+    // The bins follow the map's size (fixed for a navigator's life): sized on first use, and a new size lists every
+    // group again (true).
+    bool sizeBins() {
+        if(!routeBins.size(width(),height()))return false;
+        for(auto& [id,g]:groups) {g.binField=g.binNext=0;listBins(g);}
+        return true;
     }
     static bool wantsBuilding(const Group& g) {return (g.field&&!g.field->done&&g.pausedSerial!=g.field->serial)||g.next;}
     static bool wantsNeedField(const Group& g) {return !g.field&&!g.next;}
@@ -1313,9 +1352,11 @@ struct LegionNavigator::Impl {
         if(g.onByBuilt&&(!built||g.byBuiltKey!=g.built)) {byBuilt.erase({g.byBuiltKey,g.id});g.onByBuilt=false;}
         if(built&&!g.onByBuilt) {byBuilt.insert({g.built,g.id});g.byBuiltKey=g.built;g.onByBuilt=true;}
         listRoutes(g);
+        listBins(g);
     }
     void unlistGroup(Group& g) {
         unlistRoutes(g);
+        unlistBins(g);
         if(g.onBuilding)buildingIds.erase(g.id);
         if(g.onNeedField)needFieldIds.erase(g.id);
         if(g.onStaleDone)staleDoneIds.erase(g.id);
@@ -2713,6 +2754,81 @@ struct LegionNavigator::Impl {
     // unit (10k+ in a battle) per rectangle per plane cost 5-10 ms per plane
     // for a 36-cell change. Null outside syncStatic (callers walk units).
     const std::vector<const Unit*>* structureList=nullptr;
+    // ... and, while structureList is set, a spatial index of it (perf H): a base-heavy world (thousands of
+    // structures) still walked the whole list once per changed rectangle per plane. Each structure that can stamp
+    // (alive, not embarked, a structure) is listed once, under the kBucket-square bucket of its footprint origin
+    // (clamped to the map), positions into structureList ascending within a bucket. A rectangle reads only the
+    // buckets an overlapping footprint's origin can lie in (at most the largest footprint up-left of the rectangle,
+    // up to its far corner) and stamps those structures in list order: the same structures, cells and work as the
+    // walk of the whole list (TAK_LEGION_VERIFY compares the two on every call). Built where structureList is
+    // set, read-only until it is reset with it (computeRows' workers share it); derived, never hashed.
+    struct StructureIndex {
+        static constexpr int kBucket=16;
+        const std::vector<const Unit*>* list=nullptr;
+        int bw=0,bh=0,maxFootX=1,maxFootZ=1;
+        std::vector<uint32_t> start,items,fill;   // bucket b holds items[start[b], start[b+1]); fill: build scratch
+        static bool stamps(const Unit& u) {return u.alive()&&!u.embarked()&&u.type&&u.type->isStructure();}
+        void build(const std::vector<const Unit*>& structures,int W,int H) {
+            list=&structures;
+            bw=std::max(1,(W+kBucket-1)/kBucket);bh=std::max(1,(H+kBucket-1)/kBucket);maxFootX=maxFootZ=1;
+            start.assign(size_t(bw)*bh+1,0);items.clear();
+            auto bucket=[&](const Unit& u) {
+                const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
+                const int bx=std::clamp(ux<0?0:ux/kBucket,0,bw-1),bz=std::clamp(uz<0?0:uz/kBucket,0,bh-1);
+                return size_t(bz)*bw+bx;
+            };
+            for(const Unit* u:structures) {
+                if(!stamps(*u))continue;
+                maxFootX=std::max(maxFootX,u->type->footX);maxFootZ=std::max(maxFootZ,u->type->footZ);
+                ++start[bucket(*u)+1];
+            }
+            for(size_t b=1;b<start.size();++b)start[b]+=start[b-1];
+            items.resize(start.back());
+            fill.assign(start.begin(),start.end()-1);
+            for(size_t i=0;i<structures.size();++i)if(stamps(*structures[i]))items[fill[bucket(*structures[i])]++]=uint32_t(i);
+        }
+        // The positions (ascending) of the listed structures whose origin lies in a bucket a footprint over the
+        // inclusive rectangle [x0,x1]x[z0,z1] (inside the map) can start in: a superset of the overlapping ones.
+        void candidates(int x0,int z0,int x1,int z1,std::vector<uint32_t>& out) const {
+            out.clear();
+            const int lx=x0-maxFootX+1,lz=z0-maxFootZ+1;
+            const int bx0=lx<=0?0:std::min(bw-1,lx/kBucket),bz0=lz<=0?0:std::min(bh-1,lz/kBucket);
+            const int bx1=std::min(bw-1,x1/kBucket),bz1=std::min(bh-1,z1/kBucket);
+            int runs=0;
+            for(int bz=bz0;bz<=bz1;++bz) {
+                const size_t a=size_t(bz)*bw+bx0,b=size_t(bz)*bw+bx1+1;   // a row's buckets are contiguous
+                if(start[a]==start[b])continue;
+                out.insert(out.end(),items.begin()+start[a],items.begin()+start[b]);
+                runs+=bx1>bx0?2:1;
+            }
+            if(runs>1)std::sort(out.begin(),out.end());
+        }
+    };
+    // An index is built for at least kStructureIndexMinReads rectangle reads (computeCells calls) of a list of at
+    // least kStructureIndexMinStructures: its build costs about two walks of the list, and a short list (an
+    // ordinary game's few dozen structures) walks in well under a microsecond.
+    static constexpr size_t kStructureIndexMinReads=4,kStructureIndexMinStructures=64;
+    StructureIndex structureIdx;                       // storage, reused
+    const StructureIndex* structureIndex=nullptr;      // set with structureList, or null (walk the list)
+    // Sets structureList (gathered from the unit lists when no caller has) and its index for one operation, and
+    // restores both after. `index`: false where the work is one rectangle (an index costs about a walk to build).
+    struct StructureScope {
+        Impl& I;const std::vector<const Unit*>* list;const StructureIndex* index;
+        std::vector<const Unit*> own;StructureIndex ownIndex;
+        StructureScope(Impl& impl,bool index):I(impl),list(impl.structureList),index(impl.structureIndex) {
+            if(!I.structureList) {
+                I.syncUnitLists();
+                for(const int id:I.lists.structures)if(const Unit* u=I.w.unit(id))own.push_back(u);
+                I.structureList=&own;
+            }
+            if(index&&gStructureIndex&&I.structureList->size()>=kStructureIndexMinStructures&&
+               (!I.structureIndex||I.structureIndex->list!=I.structureList)) {
+                ownIndex.build(*I.structureList,I.width(),I.height());
+                I.structureIndex=&ownIndex;
+            }
+        }
+        ~StructureScope() {I.structureList=list;I.structureIndex=index;}
+    };
     uint64_t computeCells(Plane& p,int x0,int z0,int x1,int z1) {
         const int W=width(),H=height();
         x0=std::max(x0,0);z0=std::max(z0,0);x1=std::min(x1,W-1);z1=std::min(z1,H-1);
@@ -2753,7 +2869,24 @@ struct LegionNavigator::Impl {
                 p.cell[size_t(cz)*W+cx]=0;++work;
             }
         };
-        if(structureList)for(const Unit* u:*structureList)stampStructure(*u);
+        if(structureIndex&&structureIndex->list==structureList) {
+            thread_local std::vector<uint32_t> near;
+            structureIndex->candidates(x0,z0,x1,z1,near);
+            for(const uint32_t i:near)stampStructure(*(*structureList)[i]);
+#ifndef NDEBUG
+            if(gVerify) {   // the index against the walk it replaces: the same overlapping structures, in order
+                auto overlaps=[&](const Unit& u) {
+                    if(!StructureIndex::stamps(u))return false;
+                    const int ux=footprintOrigin(u.x,u.type->footX),uz=footprintOrigin(u.z,u.type->footZ);
+                    return !(ux>x1||uz>z1||ux+u.type->footX<=x0||uz+u.type->footZ<=z0);
+                };
+                std::vector<uint32_t> walk,found;
+                for(size_t i=0;i<structureList->size();++i)if(overlaps(*(*structureList)[i]))walk.push_back(uint32_t(i));
+                for(const uint32_t i:near)if(overlaps(*(*structureList)[i]))found.push_back(i);
+                if(walk!=found)verifyFail("structure index misses or reorders a structure over a refreshed rectangle");
+            }
+#endif
+        } else if(structureList)for(const Unit* u:*structureList)stampStructure(*u);
         else {
             syncUnitLists();
             for(const int id:lists.structures)if(const Unit* u=w.unit(id))stampStructure(*u);
@@ -2770,20 +2903,13 @@ struct LegionNavigator::Impl {
         const int W=width();
         if(z1<=z0)return;
         if(!prefetching()||z1-z0<2*kPlaneRowChunk) {computeCells(p,0,z0,W-1,z1-1);return;}
-        const std::vector<const Unit*>* outer=structureList;
-        std::vector<const Unit*> list;
-        if(!outer) {
-            syncUnitLists();
-            for(const int id:lists.structures)if(const Unit* u=w.unit(id))list.push_back(u);
-            structureList=&list;
-        }
+        const StructureScope scope(*this,true);   // each chunk stamps only the structures over its rows
         const size_t chunks=size_t(z1-z0+kPlaneRowChunk-1)/kPlaneRowChunk;
         par.planeRows+=uint64_t(z1-z0);
         parallelJobs(chunks,[&](size_t k) {
             const int a=z0+int(k)*kPlaneRowChunk;
             computeCells(p,0,a,W-1,std::min(z1,a+kPlaneRowChunk)-1);
         });
-        structureList=outer;
     }
     // (World::unitScript: the dense mirror of unitScripts_, kept by every
     // insert and erase of it.)
@@ -2830,6 +2956,7 @@ struct LegionNavigator::Impl {
     struct RefreshScratch {
         std::vector<uint32_t> seenGen;std::vector<int> seenBy;uint32_t markGen=0;
         uint64_t relabels=0;
+        cluster::Clusters clusters;std::vector<std::array<int,4>> part;   // refreshPlane's (storage reuse only)
     };
     RefreshScratch refreshScratch;
     // A static change (feature placed/removed, corpse, structure built or
@@ -2847,7 +2974,12 @@ struct LegionNavigator::Impl {
     // plane (8-11 ms each, 20-43 ms per tick on Ulasem with 5 planes) for a
     // few dozen changed cells. Clusters are rectangles whose boxes, grown by
     // the relabel margin plus the footprint, overlap; cluster order is the
-    // order of each cluster's first rectangle.
+    // order of each cluster's first rectangle. The clusters come from
+    // sim/legion_cluster.h: a test of every pair for a few rectangles, 8x8-cell
+    // bins for many (a battle's corpses, up to the 1024-rectangle dirty list,
+    // or a background build's pending list of up to 4096: the pairwise test
+    // was quadratic in them), the same partition and order either way
+    // (legion_cluster_test).
     // Stage 7: one cluster's legality change -- the box of the origins whose legality changed, and whether any lost
     // it (a closure) or gained it (an improvement). syncStatic hands staticChanged one list per plane: the routes a
     // change reaches are found per cluster, not by one box round every change of the tick (a corpse in one corner
@@ -2856,25 +2988,33 @@ struct LegionNavigator::Impl {
     uint64_t refreshPlane(Plane& p,const std::vector<std::array<int,4>>& rects,bool& changedAny,RefreshScratch& scratch,
                           std::vector<StaticChange>* out=nullptr) {
         const int grow=kRelabelMargin+std::max(p.footX,p.footZ)+1;
-        std::vector<int> cluster(rects.size());
-        for(size_t i=0;i<rects.size();++i)cluster[i]=int(i);
-        auto root=[&](int i) {while(cluster[size_t(i)]!=i)i=cluster[size_t(i)]=cluster[size_t(cluster[size_t(i)])];return i;};
-        for(size_t i=0;i<rects.size();++i)for(size_t j=i+1;j<rects.size();++j) {
-            const auto& a=rects[i];const auto& b=rects[j];
-            if(a[0]-grow<b[0]+b[2]+grow&&b[0]-grow<a[0]+a[2]+grow&&a[1]-grow<b[1]+b[3]+grow&&b[1]-grow<a[1]+a[3]+grow) {
-                const int ra=root(int(i)),rb=root(int(j));
-                if(ra!=rb)cluster[size_t(std::max(ra,rb))]=std::min(ra,rb);
-            }
-        }
+        auto& clusters=scratch.clusters;
+        // TAK_LCLUSTER (debug builds): one line per refresh, the clustering's share of it. Its own switch, not
+        // TAK_LPROBE: a line per refresh would land inside the LPROBE line's refresh timings.
+#ifndef NDEBUG
+        static const bool clusterProbe=std::getenv("TAK_LCLUSTER")!=nullptr;
+#else
+        constexpr bool clusterProbe=false;
+#endif
+        using ProbeClock=std::chrono::steady_clock;
+        const auto probeC0=clusterProbe?ProbeClock::now():ProbeClock::time_point{};
+        cluster::clusterRects(rects,grow,clusters);
+        const auto probeC1=clusterProbe?ProbeClock::now():ProbeClock::time_point{};
         uint64_t work=0;
-        std::vector<std::array<int,4>> part;
-        for(size_t i=0;i<rects.size();++i) {
-            if(root(int(i))!=int(i))continue;
+        auto& part=scratch.part;
+        for(size_t k=0;k<clusters.clusters();++k) {
             part.clear();
-            for(size_t j=i;j<rects.size();++j)if(root(int(j))==int(i))part.push_back(rects[j]);
+            for(int t=clusters.start[k];t<clusters.start[k+1];++t)part.push_back(rects[size_t(clusters.order[size_t(t)])]);
             StaticChange c;
             work+=refreshCluster(p,part,changedAny,scratch,&c);
             if(out&&c.box[2]>=0)out->push_back(c);
+        }
+        if(clusterProbe) {
+            const auto t=ProbeClock::now();
+            std::fprintf(stderr,"LCLUSTER tick=%u plane=%d n=%zu clusters=%zu cluster_us=%.3f refresh_us=%.3f work=%llu\n",
+                         w.tickCounter_,int(&p-planes.data()),rects.size(),clusters.clusters(),
+                         std::chrono::duration<double,std::micro>(probeC1-probeC0).count(),
+                         std::chrono::duration<double,std::micro>(t-probeC0).count(),(unsigned long long)work);
         }
         return work;
     }
@@ -6006,7 +6146,10 @@ struct LegionNavigator::Impl {
         auto& now=nowStamps;
         auto& structures=structurePtrs;
         now.clear();structures.clear();
-        struct ListScope {const std::vector<const Unit*>*& list;~ListScope(){list=nullptr;}} listScope{structureList};
+        struct ListScope {
+            const std::vector<const Unit*>*& list;const StructureIndex*& index;
+            ~ListScope(){list=nullptr;index=nullptr;}
+        } listScope{structureList,structureIndex};
         syncUnitLists();
         for(const int id:lists.structures) {
             const Unit* found=w.unit(id);
@@ -6055,6 +6198,12 @@ struct LegionNavigator::Impl {
                 if(all) {changed=true;touch[size_t(&p-planes.data())].push_back({{0,0,width()-1,height()-1},true,true});continue;}
                 refreshed.push_back(&p);
             }
+            // Every refreshed plane recomputes every rectangle: index the structures once for all of them, unless
+            // too few rectangle reads or structures would repay its build.
+            if(gStructureIndex&&rects.size()*refreshed.size()>=kStructureIndexMinReads&&
+               structures.size()>=kStructureIndexMinStructures) {
+                structureIdx.build(structures,width(),height());structureIndex=&structureIdx;
+            }
             // Each refresh reads the world and structureList and writes only
             // its own plane, touch slot and result (see RefreshScratch); the
             // results are merged in plane order (planeDebt's capped sum of
@@ -6101,19 +6250,11 @@ struct LegionNavigator::Impl {
     std::vector<RefreshResult> refreshResults;
     // Does a static change box (on the field's plane) reach the field? A field covers its seeds' component box; a
     // change farther than one cell from every cell of that box cannot alter any step inside it (a step reads its
-    // target and the two orthogonal cells), nor merge another region into it.
-    static bool fieldTouched(const Field& f,const std::array<int,4>& b) {
-        if(b[2]<0)return false;
-        if(!(b[0]<=f.x0+f.fw&&b[2]>=f.x0-1&&b[1]<=f.z0+f.fh&&b[3]>=f.z0-1))return false;
-        if(f.allow.empty())return true;
-        // Stage 6: a corridor or chain holds only its listed tiles; a change one cell or more from all of them
-        // reaches none of its steps (the same argument as the box), so only those tiles are tested.
-        const int x0=std::max(b[0]-1,f.x0),z0=std::max(b[1]-1,f.z0),x1=std::min(b[2]+1,f.x0+f.fw-1),z1=std::min(b[3]+1,f.z0+f.fh-1);
-        if(x0>x1||z0>z1)return false;
-        for(int sz=z0>>f.shift;sz<=z1>>f.shift;++sz)for(int sx=x0>>f.shift;sx<=x1>>f.shift;++sx)
-            if(f.allow[size_t(sz-f.sz0)*size_t(f.sw)+size_t(sx-f.sx0)])return true;
-        return false;
-    }
+    // target and the two orthogonal cells), nor merge another region into it. Stage 6: a corridor or chain holds
+    // only its listed tiles; a change one cell or more from all of them reaches none of its steps (the same argument
+    // as the box), so only those tiles are tested. The predicate lives beside the route index that must list every
+    // route it can accept (legion_routebins.h).
+    static bool fieldTouched(const Field& f,const std::array<int,4>& b) {return routebins::touches(f,b);}
     // Stage 7: per plane, the improvements of the recent epochs (the epoch after the change, its box; whole-map
     // changes as the whole map): a trapped member re-registers only when one of them could have joined its
     // component to another (move: trappedReopened), not on every change anywhere. Bounded: past kImproveLog entries
@@ -6128,7 +6269,46 @@ struct LegionNavigator::Impl {
         L.e.push_back({epoch,box});
         while(L.e.size()>kImproveLog) {L.floor=L.e.front().first;L.e.pop_front();}
     }
+    // staticChanged's visit of one group: which of its routes the changes reach (all without boxes), as a closure and/or
+    // an improvement, and what that does to the group. Inlined into both of staticChanged's loops (perf follow-up I:
+    // called out of line once per group, it cost more than the route index saved on maps with few groups).
+    [[gnu::always_inline]] void reachGroup(Group& g,const std::vector<std::vector<StaticChange>>* changes) {
+        bool closes=!changes,opens=false;
+        uint64_t flags=0;   // ridx.decisions only
+        for(Field* f:{g.field.get(),g.next.get()}) {
+            flags<<=2;
+            if(!f)continue;
+            bool fc=!changes,fo=false;
+            if(changes&&g.plane>=0&&size_t(g.plane)<changes->size())
+                for(const auto& c:(*changes)[size_t(g.plane)])
+                    if((c.closes&&!fc)||(c.opens&&!fo))
+                        if(fieldTouched(*f,c.box)) {fc|=c.closes;fo|=c.opens;}
+            if(!fc&&!fo)continue;
+            // Its routes' "unreached" no longer proves anything (RouteView::reach) until the refresh lands.
+            f->touched=true;f->closed|=fc;f->opened|=fo;
+            closes|=fc;opens|=fo;
+            flags|=uint64_t(fc)|uint64_t(fo)<<1;
+        }
+        if(flags) {++ridx.touched;ridx.decisions=mix(mix(ridx.decisions,uint64_t(uint32_t(g.id))),flags);}
+        if(closes&&g.field)++acct.routesClosed;
+        else if(opens&&g.field)++acct.routesOpened;
+        if(!g.field||(!closes&&!opens))return;
+        if(closes) {
+            g.stale=true;g.improveTick=kNoTick;   // the refresh is built on the new plane: it has the improvements too
+            restaleSlots(g);
+        } else if(g.improveTick==kNoTick&&!g.stale)g.improveTick=w.tickCounter_;
+        listGroup(g);
+    }
     void staticChanged(const std::vector<std::vector<StaticChange>>* changes=nullptr) {
+        struct ProbeSpan {   // LPROBE only
+            Impl& I;std::chrono::steady_clock::time_point t0;
+            explicit ProbeSpan(Impl& i):I(i),t0(gProbe?std::chrono::steady_clock::now():std::chrono::steady_clock::time_point{}) {}
+            ~ProbeSpan() {
+                if(!gProbe)return;
+                I.probeChangedMs+=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-t0).count();
+                ++I.probeChangedCalls;
+            }
+        } probeSpan(*this);
         {
             ++epoch;
             // Terrain changed. A finished field keeps steering its group
@@ -6152,32 +6332,66 @@ struct LegionNavigator::Impl {
                 for(size_t pi=0;pi<changes->size();++pi)
                     for(const auto& c:(*changes)[pi])if(c.opens)logImprovement(pi,c.box);
             if(!changes)for(size_t pi=0;pi<planes.size();++pi)logImprovement(pi,{0,0,width()-1,height()-1});
-            stats.groupLoopIters+=groups.size();
-            for(auto& [id,g]:groups) {
-                bool closes=!changes,opens=false;
-                for(Field* f:{g.field.get(),g.next.get()}) {
-                    if(!f)continue;
-                    bool fc=!changes,fo=false;
-                    if(changes&&g.plane>=0&&size_t(g.plane)<changes->size())
-                        for(const auto& c:(*changes)[size_t(g.plane)])
-                            if((c.closes&&!fc)||(c.opens&&!fo))
-                                if(fieldTouched(*f,c.box)) {fc|=c.closes;fo|=c.opens;}
-                    if(!fc&&!fo)continue;
-                    // Its routes' "unreached" no longer proves anything (RouteView::reach) until the refresh lands.
-                    f->touched=true;f->closed|=fc;f->opened|=fo;
-                    closes|=fc;opens|=fo;
-                }
-                if(closes&&g.field)++acct.routesClosed;
-                else if(opens&&g.field)++acct.routesOpened;
-                if(!g.field||(!closes&&!opens))continue;
-                if(closes) {
-                    g.stale=true;g.improveTick=kNoTick;   // the refresh is built on the new plane: it has the improvements too
-                    restaleSlots(g);
-                } else if(g.improveTick==kNoTick&&!g.stale)g.improveTick=w.tickCounter_;
-                listGroup(g);
+            // Perf follow-up I: with per-plane boxes, only the groups the route index lists in a bin some box overlaps
+            // are visited (gatherReached: every group a change can reach), in ascending id order as the walk of every
+            // group visits them; fieldTouched still decides. A group no change reaches is left exactly as the walk left
+            // it, so both ways do the same.
+            ++(changes?ridx.calls:ridx.wholeCalls);
+            ridx.walkGroups+=groups.size();
+#ifndef NDEBUG
+            if(gVerify&&changes)verifyReached(*changes);
+#endif
+            if(changes&&gatherReached(*changes)) {
+                ++ridx.indexed;ridx.candidates+=binCands.size();
+                stats.groupLoopIters+=binCands.size();
+                for(const int id:binCands)if(Group* g=groups.get(id))reachGroup(*g,changes);   // listed groups are live (unlistGroup)
+            } else {
+                ridx.candidates+=groups.size();
+                stats.groupLoopIters+=groups.size();
+                for(auto& [id,g]:groups)reachGroup(g,changes);
             }
         }
     }
+    // Perf follow-up I: walk the whole group list instead of the index when the change boxes' bins hold more than this
+    // many entries per live group (a change over most of the map, the first epoch's whole-map box).
+    static constexpr size_t kBinWalk=4;
+    // binCands := the groups listed (routeBins) in a bin some change box overlaps, ascending: a superset of the groups
+    // a change of `changes` reaches. False when the index is off or cannot answer, or a walk of every group is cheaper.
+    bool gatherReached(const std::vector<std::vector<StaticChange>>& changes) {
+        if(!gRouteIndex)return false;
+        sizeBins();
+        if(!routeBins.usable())return false;
+        size_t entries=0;
+        for(size_t pi=0;pi<changes.size();++pi)
+            for(const auto& c:changes[pi])if(c.closes||c.opens)entries+=routeBins.estimate(int(pi),c.box);
+        if(entries>kBinWalk*groups.size())return false;
+        gatherBins(changes,binCands);
+        return true;
+    }
+    void gatherBins(const std::vector<std::vector<StaticChange>>& changes,std::vector<int>& out) {
+        out.clear();routeBins.begin();
+        for(size_t pi=0;pi<changes.size();++pi)
+            for(const auto& c:changes[pi])if(c.closes||c.opens)routeBins.gather(int(pi),c.box,out);
+        std::sort(out.begin(),out.end());
+    }
+#ifndef NDEBUG
+    // TAK_LEGION_VERIFY: every group a change reaches (the walk's test, without its effects) is a candidate of the index.
+    // Read-only (routebins::Index::collect): a verified run must count and choose exactly as an unverified one.
+    void verifyReached(const std::vector<std::vector<StaticChange>>& changes) {
+        if(!routeBins.usable())return;
+        std::vector<int> found;
+        for(size_t pi=0;pi<changes.size();++pi)
+            for(const auto& c:changes[pi])if(c.closes||c.opens)routeBins.collect(int(pi),c.box,found);
+        std::sort(found.begin(),found.end());
+        for(const auto& [id,g]:groups) {
+            if(g.plane<0||size_t(g.plane)>=changes.size())continue;
+            bool reached=false;
+            for(const Field* f:{g.field.get(),g.next.get()})
+                if(f)for(const auto& c:changes[size_t(g.plane)])reached|=(c.closes||c.opens)&&fieldTouched(*f,c.box);
+            if(reached&&!std::binary_search(found.begin(),found.end(),id))verifyFail("the route index misses a group a static change reaches");
+        }
+    }
+#endif
     // Stage 7: deferred improvement refreshes whose time has come (improveIds, in id order) become stale refreshes.
     void serveImprovements() {
         const uint32_t now=w.tickCounter_;
@@ -6294,6 +6508,7 @@ struct LegionNavigator::Impl {
                         clearStage(p);
                         bool changed=false;
                         if(!pending.empty()) {
+                            const StructureScope scope(*this,pending.size()>=kStructureIndexMinReads);
                             const uint64_t work=refreshPlane(p,pending,changed,refreshScratch);
                             const uint64_t relabel=refreshScratch.relabels*2*uint64_t(W)*H;
                             navc.planeRelabel+=relabel;navc.connectivity+=work-std::min(work,relabel);
@@ -6894,7 +7109,7 @@ struct LegionNavigator::Impl {
             " lifts=%llu lift_members_walked=%llu lift_members_skipped=%llu waiting_member_ticks=%llu demand_resumes=%llu refresh_suppressed=%llu fields_paused=%llu paused_resumes=%llu"
             " still_units_processed=%llu still_per_residue_max=%llu quota_peg_run_max=%llu anchor_walk_iters=%llu share_scan_iters=%llu list_sizes=%llu group_ticks=%llu sync_ms=%.3f stamp_ms=%.3f lift_ms=%.3f sync_max_ms=%.3f"
             " sync_max_rects=%zu sync_max_planes=%zu sync_max_gather_ms=%.3f sync_max_refresh_ms=%.3f sync_max_plane_ms=%.3f sync_max_changed_ms=%.3f"
-            " sync_max_work=%llu sync_max_relabels=%llu\n",
+            " sync_max_work=%llu sync_max_relabels=%llu changed_ms=%.3f changed_calls=%llu\n",
             w.tickCounter_,w.units_.size(),groups.size(),members.size(),(unsigned long long)s.schedGroupVisits,(unsigned long long)s.sharedfieldFullScans,
             (unsigned long long)s.softownerLookups,(unsigned long long)s.fieldWork,(unsigned long long)s.fieldWorkFirstSlot,
             (unsigned long long)s.fieldWorkFirstSolo,(unsigned long long)s.fieldWorkRefreshMoving,(unsigned long long)s.fieldWorkRefreshIdle,
@@ -6905,7 +7120,7 @@ struct LegionNavigator::Impl {
             (unsigned long long)s.shareScanIters,(unsigned long long)probeListSum,(unsigned long long)probeGroupSum,
             probeSyncMs,probeStampMs,probeLiftMs,probeSyncMaxMs,probeSyncMax.rects,probeSyncMax.planes,probeSyncMax.gatherMs,
             probeSyncMax.refreshMs,probeSyncMax.planeMs,probeSyncMax.changedMs,(unsigned long long)probeSyncMax.work,
-            (unsigned long long)probeSyncMax.relabels);
+            (unsigned long long)probeSyncMax.relabels,probeChangedMs,(unsigned long long)probeChangedCalls);
         probeSyncMaxMs=0;probeSyncMax={};
     }
 #ifndef NDEBUG
@@ -7026,6 +7241,25 @@ struct LegionNavigator::Impl {
                 routes[{g.plane,f->seedKey}].insert(id);
             }
             if(routes!=routeIndex)fail("routeIndex differs from the groups' fields");
+            // routeBins (perf follow-up I) against the groups' fields: a group with a plane and a field or next is
+            // listed for exactly those (by serial), in exactly the bins their windows and tiles cover; nobody else is.
+            if(routeBins.usable()) {
+                std::map<std::pair<int,int>,std::vector<int>> want;   // (plane, bin) -> ascending ids
+                for(const auto& [id,g]:groups) {
+                    const uint64_t fs=g.field?g.field->serial:0,ns=g.next?g.next->serial:0;
+                    if(g.binField!=fs||g.binNext!=ns)fail("a group's route index listing is for other fields");
+                    const bool listed=g.plane>=0&&(fs||ns);
+                    if(routeBins.listed(id)!=listed)fail("a group's route index listing differs from its routes");
+                    if(listed)for(const int b:routeBins.binsOf(g.field.get(),g.next.get()))want[{g.plane,b}].push_back(id);
+                }
+                const int bins=routeBins.binsAcross()*routeBins.binsDown();
+                for(size_t pi=0;pi<planes.size();++pi)for(int b=0;b<bins;++b) {
+                    const auto at=want.find({int(pi),b});
+                    if(routeBins.liveIds(int(pi),b)!=(at==want.end()?std::vector<int>{}:at->second))
+                        fail("a route index bin differs from the groups' routes");
+                }
+                if(!routeBins.countsAgree())fail("the route index's entry counts differ from its bins");
+            }
             // joinIndex against the groups (registerMove's join walk).
             std::map<JoinKey,std::vector<int>> joins;
             for(const auto& [id,g]:groups)joins[joinKey(g)].push_back(id);
@@ -14656,7 +14890,16 @@ LegionNavigator::Stats LegionNavigator::stats() const {
     return s;
 }
 LegionNavigator::ParallelStats LegionNavigator::parallelStats() const {return impl_->par;}
+LegionNavigator::RouteIndexStats LegionNavigator::routeIndexStats() const {
+    auto r=impl_->ridx;
+    const auto& b=impl_->routeBins;const auto& s=b.stats();
+    r.lists=s.lists;r.unlists=s.unlists;r.entriesAdded=s.entriesAdded;r.queries=s.queries;r.binsScanned=s.binsScanned;
+    r.entriesScanned=s.entriesScanned;r.staleDropped=s.staleDropped;r.compactions=s.compactions;r.compacted=s.compacted;
+    r.entriesPeak=s.entriesPeak;r.liveEntries=b.liveEntries();r.bytes=b.bytes();
+    return r;
+}
 void LegionNavigator::setParallelForTest(bool force,uint64_t perturbSeed) {gParForce=force;gParPerturb=perturbSeed;}
+void LegionNavigator::setStructureIndexForTest(bool on) {gStructureIndex=on;}
 NavAccounting LegionNavigator::accounting() const {
     NavAccounting a=impl_->acct;
     impl_->windowMax(a);
@@ -14677,7 +14920,12 @@ bool LegionNavigator::planeMatchesRebuild(const Unit& u) {
     const int index=impl_->planeFor(*u.type);
     const auto& p=impl_->plane(index);
     Impl::Plane fresh=p;
-    impl_->buildPlane(fresh);impl_->labelPlane(fresh);
+    {   // the reference rebuild walks every structure (perf H: the incremental refreshes read the index)
+        const bool indexed=gStructureIndex;gStructureIndex=false;
+        const auto* index=impl_->structureIndex;impl_->structureIndex=nullptr;
+        impl_->buildPlane(fresh);impl_->labelPlane(fresh);
+        gStructureIndex=indexed;impl_->structureIndex=index;
+    }
     if(fresh.legal!=p.legal)return false;
     // Stage 6: the routing hierarchy, maintained lazily through the same changes, joins exactly the plane's
     // components (every sector and side built here; derived state only).
@@ -14884,6 +15132,7 @@ void LegionNavigator::setInstrumentProbes(bool on) {gInstrumentProbes=on;}
 void LegionNavigator::setBudgetDivisorForTest(int div) {gBudgetDiv=uint64_t(std::max(div,1));}
 void LegionNavigator::setFieldBytesForTest(uint64_t bytes) {gFieldBytes=bytes;}
 void LegionNavigator::setHierarchicalRoutesForTest(bool on) {gHierRoutes=on;}
+void LegionNavigator::setRouteIndexForTest(bool on) {gRouteIndex=on;}
 void LegionNavigator::setSectorSizeForTest(int k) {
     int shift=5;
     for(int s=2;s<=8;++s)if((1<<s)==k)shift=s;

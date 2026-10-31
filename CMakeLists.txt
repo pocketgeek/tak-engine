@@ -361,12 +361,15 @@ add_executable(crowdbench tools/crowdbench.cpp)
 add_executable(navigation_telemetry_test tools/navigation_telemetry_test.cpp)
 target_link_libraries(navigation_telemetry_test PRIVATE tak-formats)
 add_test(NAME navigation_telemetry COMMAND navigation_telemetry_test)
+# Perf follow-up H: static-sync timing over a base-heavy world (not a test; prints BENCH lines).
+add_executable(legion_staticsync_bench tools/legion_staticsync_bench.cpp)
+target_link_libraries(legion_staticsync_bench PRIVATE tak-formats)
 add_executable(legion_world_test tools/legion_world_test.cpp)
 target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped longroute crowdhold replace unreachable quota pens determinism formation
     slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice wallend staticblock facing
     navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation flyerfront liftflyers aware b3events lanegeom
-    lonetrees slideback stillturn forestedge mixedsettle entryplanes mixedrandom funnelmouth funneltie)
+    lonetrees slideback stillturn forestedge mixedsettle entryplanes mixedrandom funnelmouth funneltie staticindex)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
   # TAK_LEGION_VERIFY (debug builds; compiled out of Release): every derived index, work list
   # and the incrementally kept soft state (W4 B2's softHash, C31) against a recompute, each tick.
@@ -436,6 +439,10 @@ foreach(legion_case improvedefer chainresolve trafficlane)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
   set_tests_properties(legion_${legion_case} PROPERTIES LABELS "legion" ENVIRONMENT TAK_LEGION_VERIFY=1)
 endforeach()
+# Perf follow-up I: the route invalidation index (staticChanged through sim/legion_routebins.h) against the walk of every
+# group, under churn, structures, re-orders and deaths, on two planes; index on == off == workers, under TAK_LEGION_VERIFY.
+add_test(NAME legion_routeindex COMMAND legion_world_test routeindex)
+set_tests_properties(legion_routeindex PROPERTIES LABELS "legion" ENVIRONMENT TAK_LEGION_VERIFY=1)
 foreach(legion_probe pocket deadend tail)
   add_test(NAME legion_${legion_probe} COMMAND legion_world_test ${legion_probe})
   set_tests_properties(legion_${legion_probe} PROPERTIES LABELS "legion;nightly" TIMEOUT 1200)
@@ -461,11 +468,23 @@ add_executable(legion_hier_test tools/legion_hier_test.cpp)
 target_include_directories(legion_hier_test PRIVATE src)
 add_test(NAME legion_hier_test COMMAND legion_hier_test)
 set_tests_properties(legion_hier_test PROPERTIES LABELS legion)
+# refreshPlane's dirty-rectangle clusters (src/sim/legion_cluster.h), header-only: pairwise and binned paths
+# against the pairwise reference.
+add_executable(legion_cluster_test tools/legion_cluster_test.cpp)
+target_include_directories(legion_cluster_test PRIVATE src)
+add_test(NAME legion_cluster_test COMMAND legion_cluster_test)
+set_tests_properties(legion_cluster_test PROPERTIES LABELS legion)
 # Legion 10,000 stage 5: the route-query interface (src/sim/legion_route.h), header-only.
 add_executable(legion_route_test tools/legion_route_test.cpp)
 target_include_directories(legion_route_test PRIVATE src)
 add_test(NAME legion_route_test COMMAND legion_route_test)
 set_tests_properties(legion_route_test PROPERTIES LABELS legion)
+# Perf follow-up I: the route invalidation index (src/sim/legion_routebins.h), header-only: every route a random
+# change box reaches is a candidate, through random listings, unlistings, query drops and compactions.
+add_executable(legion_routebins_test tools/legion_routebins_test.cpp)
+target_include_directories(legion_routebins_test PRIVATE src)
+add_test(NAME legion_routebins_test COMMAND legion_routebins_test)
+set_tests_properties(legion_routebins_test PROPERTIES LABELS legion)
 add_executable(convoy_test tools/convoy_test.cpp)
 target_link_libraries(convoy_test PRIVATE tak-formats)
 add_test(NAME convoy_test COMMAND convoy_test)
@@ -1552,12 +1571,26 @@ add_test(NAME mission_orders COMMAND mission_orders_test)
 add_executable(exploration_parallel_test tools/exploration_parallel_test.cpp)
 target_link_libraries(exploration_parallel_test PRIVATE tak-formats)
 add_test(NAME exploration_parallel COMMAND exploration_parallel_test)
+# Current-view count deltas (src/sim/retailviewcounts.h) against retail's
+# full removal and re-add: the audit probe, footprint level, World level.
+add_executable(viewcount_delta_test tools/viewcount_delta_test.cpp)
+target_link_libraries(viewcount_delta_test PRIVATE tak-formats)
+add_test(NAME viewcount_delta_probe COMMAND viewcount_delta_test probe)
+add_test(NAME viewcount_delta_moves COMMAND viewcount_delta_test moves)
+add_test(NAME viewcount_delta_world COMMAND viewcount_delta_test world)
+# The same footprint updates of a real situation (or generated ones) replayed
+# both ways, timed (tools/viewcount_bench.cpp; a timing tool, not a test).
+add_executable(viewcount_bench tools/viewcount_bench.cpp)
+target_link_libraries(viewcount_bench PRIVATE tak-formats)
 add_executable(state_hash_test tools/state_hash_test.cpp)
 target_link_libraries(state_hash_test PRIVATE tak-formats)
 add_test(NAME state_hash COMMAND state_hash_test)
 add_executable(simpool_passes_test tools/simpool_passes_test.cpp)
 target_link_libraries(simpool_passes_test PRIVATE tak-formats)
 add_test(NAME simpool_passes COMMAND simpool_passes_test)
+add_executable(aura_recipient_test tools/aura_recipient_test.cpp)
+target_link_libraries(aura_recipient_test PRIVATE tak-formats)
+add_test(NAME aura_recipient COMMAND aura_recipient_test)
 add_executable(power_codes_test tools/power_codes_test.cpp)
 target_link_libraries(power_codes_test PRIVATE tak-formats)
 add_test(NAME power_codes COMMAND power_codes_test)
@@ -1909,6 +1942,15 @@ if(TAK_TEST_DATA)
 endif()
 add_executable(simperf tools/simperf.cpp ${TAK_AI_SOURCES})
 target_link_libraries(simperf PRIVATE tak-formats)
+# Feature burn/fade timing harness (World::tickBurning, tickFeatureFades); not a CTest.
+add_executable(featburn_bench tools/featburn_bench.cpp)
+target_link_libraries(featburn_bench PRIVATE tak-formats)
+# Microbenchmark of Controller::reviveIdle (not a CTest).
+add_executable(ai_revive_bench tools/ai_revive_bench.cpp ${TAK_AI_SOURCES})
+target_link_libraries(ai_revive_bench PRIVATE tak-formats)
+# The stat-aura pass alone (World::tickAuras), for screening its cost: tools/aura_bench.cpp.
+add_executable(aura_bench tools/aura_bench.cpp)
+target_link_libraries(aura_bench PRIVATE tak-formats)
 
 # --- Client (needs SDL2; skipped with a warning if unavailable) ---------------
 
@@ -2295,6 +2337,17 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/gate-pick.png")
       set_tests_properties(gate_pick PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: every gate \\(4 types\\)")
+      # Cursor picking (perf follow-up C): a unit live before its type's model loads (the
+      # registration budget) gets the fallback hit box cached by the cursor pass, as a scan
+      # over every unit does, though the pointer is nowhere near it.
+      add_test(NAME pick_late_model COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_PICK_LATE_MODEL_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/pick-late-model-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/pick-late-model-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/pick-late-model.png")
+      set_tests_properties(pick_late_model PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: late model pick leaves the full scan's hit-box cache")
       # Clear orders fan out to every selected reclaimer (box, right-click, armed
       # CLEAR; Shift per unit, a soldier untouched), and Inner Circle's one
       # overlapped map feature (removed at load) is not drawn.
@@ -2529,6 +2582,88 @@ if(TAK_BUILD_CLIENT)
         set_tests_properties(render_unit_index${_variant} PROPERTIES TIMEOUT 300
             PASS_REGULAR_EXPRESSION "UNIT_INDEX_VERIFY frames=[1-9][0-9]* passes=[1-9][0-9]* live=[1-9][0-9]* candidates=[1-9][0-9]* accepted=[1-9][0-9]* .*${_expect}")
       endforeach()
+      # Interactive render cases (perf follow-up measurement B, tools/render_benchmark.py
+      # --scenes interactive): one scene with every knob -- the pointer sweeping the
+      # view (cursor classified every frame), the army selected, builders with queued
+      # ghosts (half at the far map corner), towers with Archers behind them under
+      # HIDDEN UNITS Fade on the study frame clock, the shadow atlas on the software
+      # renderer. Some frame must show all of that work in its telemetry.
+      add_test(NAME render_interactive_cases COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software
+          TAK_SHADOW_BENCH=400 TAK_SHADOW_BENCH_TYPE=araarch TAK_RENDER_SPACING=32 TAK_PROFILE_ZOOM=1
+          TAK_RENDER_COVER=vertower,4 TAK_RENDER_FADE_CLOCK=1 TAK_HIDDEN_UNITS=fade TAK_RENDER_SELECT=all
+          TAK_RENDER_MOUSE=sweep:0.1,0.1,0.9,0.9 TAK_RENDER_GHOSTS=4,6,50 TAK_SHADOW_ATLAS_SOFTWARE=1
+          TAK_RENDER_STUDY=1 TAK_RENDER_FRAMES=120 TAK_PROF=1 TAK_PROF_FRAMES=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/interactive-cases-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/interactive-cases-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1024 768 --novsync)
+      set_tests_properties(render_interactive_cases PROPERTIES TIMEOUT 300
+          PASS_REGULAR_EXPRESSION "hidden_faded=[1-9][0-9]* cursor_evals=1 cursor_pick_tests=[1-9][0-9]* cursor_pick_hits=[1-9][0-9]* ghosts_queued=[1-9][0-9]* ghost_preps=[1-9][0-9]* hidden_cover_tests=[1-9][0-9]* shadow_demand_px=[1-9]")
+      # Cursor picking (perf follow-up C), on the software renderer: the render study's
+      # scripted pointer (TAK_RENDER_CURSOR) moves over unit bodies and bare ground every
+      # frame; every unit the exact pick test accepts must be among the candidates the
+      # unit grid returned, so must every record whose body pick circle holds the
+      # pointer's ground point (Revive/Reclaim), and every cursor decision must equal a
+      # re-evaluation over the whole unit list, or the cursor overlay throws
+      # (TAK_PICK_INDEX_VERIFY). The base
+      # variant is a fogged two-player battle with construction, ghosts, flyers, corpses,
+      # squads, factories and queued builds, moving units (interpolation), a panning and
+      # zooming camera, camera shake, deaths/respawns and world-epoch bumps, with 20
+      # units selected; _orders selects every own unit (large selection) and arms each
+      # order in turn (attack, repair, guard, load, move, patrol, reclaim, fight), with
+      # Tactical Dots from normal size and HIDDEN UNITS dots; _jump is a 3000-unit army
+      # seen through a camera jumping between distant views, nothing selected.
+      file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/pick-index-dots-settings.ini"
+           "fullscreen = 0\ntacticalDots = 1\ntacticalDotsZoom = 100\nhiddenUnits = dots\n")
+      foreach(_variant IN ITEMS "" "_orders" "_jump")
+        set(_settings "")
+        set(_bodies "body_queries=[1-9][0-9]* body_candidates=[0-9]* body_hits=[1-9]")
+        if(_variant STREQUAL "_jump")
+          set(_scene TAK_SHADOW_BENCH=3000 TAK_RENDER_OVERLAYS=1 TAK_PROFILE_ZOOM=1 TAK_RENDER_JUMP=15
+              TAK_RENDER_SHAKE=23 TAK_RENDER_FRAMES=120)
+          set(_bodies "body_queries=")   # nothing selected: no body picks
+        else()
+          set(_scene TAK_SHADOW_BENCH=300 TAK_RENDER_SPACING=120 TAK_RENDER_BATTLE=1 TAK_RENDER_EXTRAS=1
+              TAK_RENDER_OVERLAYS=1 TAK_PROFILE_FOG=1 TAK_RENDER_MOTION=1 TAK_RENDER_CAMERA=1
+              TAK_RENDER_ZOOM=1 TAK_RENDER_SHAKE=37 TAK_RENDER_CHURN=40 TAK_RENDER_EPOCH=90 TAK_RENDER_FRAMES=200)
+          if(_variant STREQUAL "_orders")
+            list(APPEND _scene TAK_RENDER_CURSOR_SELECT=100000 TAK_RENDER_CURSOR_CMD=*)
+            set(_settings TAK_SETTINGS_FILE=${CMAKE_CURRENT_BINARY_DIR}/pick-index-dots-settings.ini)
+          else()
+            list(APPEND _scene TAK_RENDER_CURSOR_SELECT=20)
+          endif()
+        endif()
+        add_test(NAME render_pick_index${_variant} COMMAND ${CMAKE_COMMAND} -E env
+            SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software ${_scene} ${_settings}
+            TAK_RENDER_STUDY=1 TAK_RENDER_CURSOR=1 TAK_PICK_INDEX_VERIFY=1
+            XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/pick-index${_variant}-profile
+            XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/pick-index${_variant}-profile
+            $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+            --testbuild --winsize 1024 768 --novsync)
+        set_tests_properties(render_pick_index${_variant} PROPERTIES TIMEOUT 600
+            PASS_REGULAR_EXPRESSION "PICK_INDEX_VERIFY queries=[1-9][0-9]* live=[1-9][0-9]* candidates=[0-9]* hits=[1-9][0-9]* decisions=[1-9][0-9]* ${_bodies}")
+      endforeach()
+      # Build ghosts (perf follow-up E), on the software renderer: queued-build lists
+      # cycling through repeated structure types under a panning, zooming camera, the
+      # placed-site ghosts of TAK_RENDER_EXTRAS and two simulated render-target resets
+      # (atlases recreated: the retained ghost geometry must be dropped), plus a ghost
+      # of every registry type each frame, on and around the view, half of them
+      # red-washed (TAK_GHOST_ALL_TYPES: every model, including those textured from
+      # outside the colour atlas). Every ghost is also collected and sorted afresh:
+      # retained triangles must equal that reference exactly, and a ghost not drawn
+      # must lie wholly outside the clip (TAK_GHOST_VERIFY), or draw() throws.
+      add_test(NAME render_build_ghosts COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software
+          TAK_SHADOW_BENCH=40 TAK_RENDER_EXTRAS=1 TAK_RENDER_GHOST_QUEUES=6,12,4,0,600
+          TAK_RENDER_CAMERA=1 TAK_RENDER_ZOOM=1 TAK_RENDER_RESET=50 TAK_RENDER_FRAMES=120
+          TAK_RENDER_STUDY=1 TAK_GHOST_VERIFY=1 TAK_GHOST_ALL_TYPES=1 TAK_UNIT_INDEX_VERIFY=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/build-ghosts-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/build-ghosts-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1024 768 --novsync)
+      set_tests_properties(render_build_ghosts PROPERTIES TIMEOUT 300
+          PASS_REGULAR_EXPRESSION "GHOST_VERIFY checked=[1-9][0-9]* hits=[1-9][0-9]* culled=[1-9][0-9]* collected=[1-9][0-9]* inexact=[1-9][0-9]*")
       # CPU budgets (workstream J) in a real scene: a battle, then a sustained empty
       # view, with short trim windows and tiny terrain budgets. Retained buffers must
       # be trimmed after the demand falls, keep their contents byte for byte, never be
@@ -2597,10 +2732,23 @@ if(TAK_BUILD_CLIENT)
       # complete re-bake and the allocator must pass its consistency check every
       # frame (TAK_SHADOW_CACHE_VERIFY).
       # The _band variant holds a still army whose tiles fit four pages by area but
-      # not by packing (every frame falls back), then goes sparse: a frame that does
-      # not fit must create no page texture, so nothing is created and released over
-      # and over while the view stays in that band (at most the sparse view's pages).
-      foreach(_variant IN ITEMS "" "_zoom" "_band")
+      # not by packing (every frame falls back: the page count is held at the four
+      # base pages), then goes sparse: a frame that does not fit must create no page
+      # texture, so nothing is created and released over and over while the view
+      # stays in that band (at most the sparse view's pages).
+      # Perf follow-up K: _extended is the same army with the page limit at 16 -- its
+      # tiles take extended pages instead of falling back, every frame; once the view
+      # goes sparse the extended pages empty and are released. _yield lowers the GPU
+      # cap under it at frame 40 (TAK_RENDER_GPU_CAP_AT, to what is held) and lifts it
+      # at frame 50: the extended pages are given back once (a pressure shed), the
+      # army falls back, and extended pages return only after the cooldown (400 ms /
+      # 16 frames with these windows: at least 24 frames after the shed). _full is a
+      # smaller army that the four base pages hold only just: the four-page atlas
+      # repacks it when a tile outgrows its cell; with extended pages it adds one
+      # page instead and keeps its cells (no fallback, no page released). _off is the
+      # _extended army with unit shadows switched off at frame 60 (Options SHADOWS):
+      # no frame maintains the atlas then, so its extended pages go at once.
+      foreach(_variant IN ITEMS "" "_zoom" "_band" "_extended" "_yield" "_full" "_off")
         if(_variant STREQUAL "")
           set(_scene TAK_RENDER_CAMERA_SNAP=20 TAK_PROFILE_ZOOM=1 TAK_RENDER_SPARSE_AFTER=100
               TAK_RENDER_SPARSE_OFFSET=5200,5000 TAK_RENDER_FRAMES=170)
@@ -2608,9 +2756,25 @@ if(TAK_BUILD_CLIENT)
         elseif(_variant STREQUAL "_zoom")
           set(_scene TAK_RENDER_ZOOM=1 TAK_RENDER_CAMERA=1 TAK_RENDER_FRAMES=120)
           set(_expect "kept=[0-9]+ allocs=[1-9][0-9]* compactions=[1-9][0-9]* migrated=[0-9]+ evicted=[1-9][0-9]*.* validated=[1-9]")
-        else()
-          set(_scene TAK_RENDER_SPARSE_AFTER=80 TAK_RENDER_SPARSE_OFFSET=5200,5000 TAK_RENDER_FRAMES=130)
+        elseif(_variant STREQUAL "_band")
+          set(_scene TAK_RENDER_SPARSE_AFTER=80 TAK_RENDER_SPARSE_OFFSET=5200,5000 TAK_RENDER_FRAMES=130
+              TAK_SHADOW_PAGES_MAX=4)
           set(_expect "page_releases=[0-2] shrinks=[0-9]+ validated=[1-9][0-9]* page_allocs=[1-4] alloc_failures=[1-9][0-9]")
+        elseif(_variant STREQUAL "_extended")
+          set(_scene TAK_RENDER_SPARSE_AFTER=80 TAK_RENDER_SPARSE_OFFSET=5200,5000 TAK_RENDER_FRAMES=130
+              TAK_SHADOW_PAGES_MAX=16)
+          set(_expect "page_releases=[1-9][0-9]* shrinks=[0-9]+ validated=[1-9][0-9]* page_allocs=[0-9]+ alloc_failures=0 extended_frames=[1-9][0-9]* max_pages=([5-9]|1[0-6]) sheds=0 fallbacks=0 regrow_gap=0 extended_releases=[1-9]")
+        elseif(_variant STREQUAL "_full")
+          set(_scene TAK_SHADOW_BENCH=52 TAK_RENDER_FRAMES=100 TAK_RENDER_RESET=0 TAK_SHADOW_PAGES_MAX=16)
+          set(_expect "compactions=[0-1] .* page_releases=0 .* alloc_failures=0 extended_frames=[1-9][0-9]* max_pages=[5-6] sheds=0 fallbacks=0")
+        elseif(_variant STREQUAL "_off")
+          set(_scene TAK_RENDER_FRAMES=80 TAK_RENDER_RESET=0 TAK_SHADOW_PAGES_MAX=16
+              TAK_RENDER_SHADOWS_OFF_AT=60)
+          set(_expect "extended_frames=[1-9][0-9]* max_pages=([5-9]|1[0-6]) .* held_pages=0")
+        else()
+          set(_scene TAK_RENDER_FRAMES=80 TAK_RENDER_RESET=0 TAK_SHADOW_PAGES_MAX=16
+              TAK_RENDER_GPU_CAP_AT=40,0/50,100000)
+          set(_expect "extended_frames=[1-9][0-9]* max_pages=([5-9]|1[0-6]) sheds=1 fallbacks=[1-9][0-9]* regrow_gap=(2[4-9]|[3-9][0-9])")
         endif()
         add_test(NAME render_shadow_atlas${_variant} COMMAND ${CMAKE_COMMAND} -E env
             SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software
@@ -2743,8 +2907,8 @@ if(TAK_BUILD_CLIENT)
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
-          render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail render_unit_index render_unit_index_jump
-          tactical_dots hidden_units retail_fog spectator_health_bars
+          render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_shadow_atlas_extended render_shadow_atlas_yield render_shadow_atlas_full render_shadow_atlas_off render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail render_unit_index render_unit_index_jump render_pick_index render_pick_index_orders render_pick_index_jump
+          render_build_ghosts render_interactive_cases tactical_dots hidden_units retail_fog spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()

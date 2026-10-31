@@ -1111,6 +1111,11 @@
                         }
                     return strong;
                 };
+                // Every FADE frame also tests each unit's covers one by one: the
+                // per-frame bookkeeping must give the same fades and answers (it aborts
+                // otherwise).
+                debugHiddenVerify_=true;
+                const size_t verifiedBefore=debugHiddenVerified_;
                 hiddenFadeOpacity_=hu::fadeOpacity(hu::kDefaultFadePercent);
                 const uint8_t faded=hiddenFadeOpacity_;
                 check(faded==128,"FADE: 50% is alpha 128");
@@ -1152,6 +1157,9 @@
                 fadeFrame(16);
                 check(!dotsFrame_,"FADE: models back");
                 debugHiddenFadeNowMs_=0;
+                check(debugHiddenVerified_>verifiedBefore+underForest.size(),
+                      "FADE: covers found once per frame match testing every cover");
+                debugHiddenVerify_=false;
             }
             SDL_RendererInfo info{};SDL_GetRendererInfo(ren_,&info);
             // ---- the policy on its own ----
@@ -2235,6 +2243,57 @@
             std::fprintf(stderr,"PASS: every gate (%zu types) picks through its open doorway\n",gates.size());
             return;
         }
+        // Cursor picking (perf follow-up C) and a model that is not loaded yet. Registration
+        // is budgeted (kRegistrationsPerFrame), so after a large arrival a unit can be live
+        // before its type's model loads; a cursor pass that reaches unitUnderCursor for it
+        // caches the fallback hit box for the type, for the rest of the game. A scan over
+        // every unit always reaches it (nothing selected, the pointer on bare ground); the
+        // grid's candidates must leave the same cache, so the type picks the same later.
+        if (tak::devFlag("TAK_PICK_LATE_MODEL_TEST")) {
+            noFog_=true;edgeScrollOn_=false;
+            winW_=1000;winH_=700;
+            const auto publish=[&] {captureFrame();beginFrame();cosmeticStep(0);};
+            const auto fail=[](const std::string& m) {throw std::runtime_error("late model pick: "+m);};
+            const auto* filler=registry_.find("arasword");
+            const tak::sim::UnitType* late=nullptr;
+            const float lx=3000,lz=3000;
+            // The structure with the largest footprint whose model is not loaded (first wins a tie).
+            for (const auto& [id,type]:registry_.types())
+                if (type.isStructure() && !type.ghost && id.find("null")==std::string::npos && !visuals_.count(id) &&
+                    (!late || type.footX*type.footZ>late->footX*late->footZ) && world_.canPlace(&type,lx,lz))
+                    late=&type;
+            if (!filler || !late) fail("no fixture types");
+            // The fillers come first in the live list and use up the registration budget.
+            for (int i=0;i<kRegistrationsPerFrame+6;++i)
+                if (writableWorld().spawn(filler,6000+float(i%10)*40,6000+float(i/10)*40,0.0f,localPlayer_)<=0)
+                    fail("filler spawn failed");
+            const int lateId=writableWorld().spawn(late,lx,lz,0.0f,localPlayer_);
+            if (lateId<=0) fail("late spawn failed");
+            mapView_.setZoom(1);
+            mapView_.setOffset(5600,5800);   // the fillers, far from the late unit
+            selection_.clear();pendingCmd_=0;placing_=nullptr;
+            publish();
+            if (unitType_.count(lateId) || visuals_.count(late->id)) fail("the late unit registered in the first frame");
+            mouseX_=600;mouseY_=60;   // bare ground above the fillers
+            bool tint=false;
+            const tak::CursorId first=desiredCursor(tint);
+            const bool cached=hitBoxes_.count(late->id)!=0;
+            for (int i=0;i<16 && !unitType_.count(lateId);++i) publish();
+            if (!unitType_.count(lateId)) fail("the late unit never registered");
+            mapView_.setOffset(lx-500,lz-350);
+            publish();
+            const UnitR* u=frameUnitP(lateId);
+            if (!u) fail("late unit missing from the frame");
+            const SDL_FPoint p=unitScreen(*u);
+            const SDL_FRect& hb=unitHitBox(late);
+            mouseX_=p.x;mouseY_=p.y+12.0f-60.0f;   // 60 px above the anchor: past the fallback box
+            const tak::CursorId probe=desiredCursor(tint);
+            std::fprintf(stderr,"PICK_LATE_MODEL type=%s first=%d cached=%d box=%.1f,%.1f,%.1f,%.1f probe=%d\n",
+                         late->id.c_str(),int(first),cached ? 1 : 0,hb.x,hb.y,hb.w,hb.h,int(probe));
+            if (!cached) fail("the cursor pass left "+late->id+"'s hit box uncached, as a full scan does not");
+            std::fprintf(stderr,"PASS: late model pick leaves the full scan's hit-box cache\n");
+            return;
+        }
         if (tak::devFlag("TAK_CURSOR_TEST")) {
             noFog_=true;edgeScrollOn_=false;
             writableWorld().setPlayerCount(8);
@@ -2553,6 +2612,10 @@
         //   TAK_RENDER_ROSTER=a,b   unit types replacing the 6-type roster ("structures": all of them)
         //   TAK_RENDER_OVERLAYS=1   control squads, factories with production queues,
         //                           builders with queued build orders (ghosts)
+        //   TAK_RENDER_GHOST_QUEUES=B,Q[,T[,dx,dz]]  B monarchs, each with Q queued (shift)
+        //                           builds cycling through T small structure types (repeated
+        //                           types), on a grid centred dx,dz from the army centre:
+        //                           long queues, mostly off screen at zoom >= 0.5
         // All of them only shape the local harness scene; none run in a real game.
         if (const char* countText=tak::devEnv("TAK_SHADOW_BENCH")) {
             const int count=std::clamp(std::atoi(countText),1,16000);
@@ -2595,6 +2658,31 @@
             const char* spacingText=tak::devEnv("TAK_RENDER_SPACING");
             const float spacing=spacingText?std::clamp(float(std::atof(spacingText)),16.f,256.f):40.f;
             const int rows=(count+columns-1)/columns;
+            // Interactive case (measurement B), TAK_RENDER_COVER=type[,every]: a structure
+            // of `type` (default vertower) on every `every`-th row and column of the army
+            // grid (default 4), the army filling the rest of it around their footprints:
+            // units stand just behind each structure (painted before it), the HIDDEN UNITS
+            // cover workload under repeated buildings.
+            std::vector<std::array<float,4>> coverRects;
+            int covers=0;
+            if(const char* coverText=tak::devEnv("TAK_RENDER_COVER")) {
+                std::string spec=coverText;
+                int every=4;
+                if(const size_t comma=spec.find(',');comma!=std::string::npos) {
+                    every=std::clamp(std::atoi(spec.c_str()+comma+1),2,64);spec.resize(comma);
+                }
+                const auto* type=registry_.find(spec.empty() ? "vertower" : spec);
+                if(!type || !isStructure(type))throw std::runtime_error("TAK_RENDER_COVER: not a structure type: "+spec);
+                for(int i=0;i<count;++i) {
+                    if((i%columns)%every!=every/2 || (i/columns)%every!=every/2)continue;
+                    const float x=centerX+(float(i%columns)-float(columns-1)*0.5f)*spacing;
+                    const float z=centerZ+(float(i/columns)-float(rows-1)*0.5f)*spacing;
+                    if(spawn(type->id,x,z,0,localPlayer_)<=0)continue;
+                    ++covers;
+                    const float hx=float(type->footX)*8+12,hz=float(type->footZ)*8+12;
+                    coverRects.push_back({x-hx,z-hz,x+hx,z+hz});
+                }
+            }
             int spawned=0;
             std::vector<int> spawnedIds;
             for(int i=0;i<count;++i) {
@@ -2603,6 +2691,9 @@
                 if(!type || world_.atUnitCap(localPlayer_) || world_.atTypeCap(localPlayer_,type)) continue;
                 const float x=centerX+(float(i%columns)-float(columns-1)*0.5f)*spacing;
                 const float z=centerZ+(float(i/columns)-float(rows-1)*0.5f)*spacing;
+                if(std::any_of(coverRects.begin(),coverRects.end(),[&](const std::array<float,4>& r) {
+                    return x>=r[0] && x<=r[2] && z>=r[1] && z<=r[3];
+                })) continue;   // TAK_RENDER_COVER: the structure stands here
                 const bool battle=tak::devFlag("TAK_RENDER_BATTLE");
                 const int owner=battle?i%2:localPlayer_;
                 if(const int id=spawn(name,x,z,float(i%8)*0.785398163f,owner)) {
@@ -2673,6 +2764,39 @@
                     }
                 }
             }
+            int queueBuilders=0,queueOrders=0,queueTypes=0;
+            if(const char* queues=tak::devEnv("TAK_RENDER_GHOST_QUEUES")) {
+                // Long queued-build lists (the build-ghost workload): builder k stands at the
+                // west end of row k and queues its Q builds eastwards along the row, 128 px
+                // apart (rows 192 px apart), types cycling through the first T small
+                // structures the monarch builds. Sites the map refuses are skipped. Each
+                // builder is first sent 4000 px west (or to the map edge), so no build
+                // starts during a study: the ghost count stays fixed and no conjuring
+                // sparkle (whose particles differ run to run) lands in the captures.
+                int builders=0,perQueue=0,typeCount=4;float dx=0,dz=0;
+                std::sscanf(queues,"%d,%d,%d,%f,%f",&builders,&perQueue,&typeCount,&dx,&dz);
+                builders=std::clamp(builders,0,64);perQueue=std::clamp(perQueue,0,256);
+                std::vector<const tak::sim::UnitType*> sites;
+                for(const auto& option:registry_.buildable("araking"))
+                    if(const auto* site=registry_.find(option);site && isStructure(site) && site->footX<=4 &&
+                       site->footZ<=4 && int(sites.size())<std::max(1,typeCount))sites.push_back(site);
+                queueTypes=int(sites.size());
+                const float gx=centerX+dx,gz=centerZ+dz;
+                for(int k=0;k<builders && !sites.empty();++k) {
+                    const float rowZ=gz+(float(k)-float(builders-1)*0.5f)*192;
+                    const float rowX=gx-float(perQueue-1)*0.5f*128;
+                    const int builder=spawn("araking",rowX-160,rowZ,0,localPlayer_);
+                    if(builder<=0)continue;
+                    ++queueBuilders;
+                    writableWorld().order(builder,std::max(64.f,rowX-4160),rowZ,false);
+                    for(int q=0;q<perQueue;++q) {
+                        const size_t before=world_.unit(builder)->orders.size();
+                        writableWorld().queueBuild(builder,sites[size_t(k+q)%sites.size()],
+                                                   rowX+float(q)*128,rowZ,true);
+                        queueOrders+=world_.unit(builder)->orders.size()>before;
+                    }
+                }
+            }
             if(const char* navalText=tak::devEnv("TAK_RENDER_NAVAL")) {
                 const int wanted=std::clamp(std::atoi(navalText),1,2000);
                 std::vector<const tak::sim::UnitType*> hulls;
@@ -2706,10 +2830,90 @@
                 float ox=0,oz=0;
                 if(std::sscanf(offset,"%f,%f",&ox,&oz)==2)mapView_.setOffset(ox,oz);
             }
+            // Interactive cases (measurement B, tools/render_benchmark.py --scenes
+            // interactive). Presentation and local-harness state only, like the knobs
+            // above; the frame-indexed pointer path is TAK_RENDER_MOUSE (main.cpp).
+            //   TAK_RENDER_SELECT=N|all   the first N of the army's own units selected
+            //   TAK_RENDER_ARM=<key>      that order armed (pendingCmd_: a g r m f p c l u)
+            //   TAK_RENDER_GHOSTS=builders,queue[,offscreen%[,builder]]
+            //                             builders (default arabuild) each with `queue`
+            //                             queued (shift) build orders cycling over its
+            //                             first three plain structure options; the first
+            //                             offscreen% of every queue goes to the map corner
+            //                             farthest from the view (the builders walk there
+            //                             all run: their sites never start), the rest to
+            //                             a 16x12 block (80 px apart) around the army
+            //                             centre, one order a cell (a placed order blocks
+            //                             another one over it). Use a tiny army.
+            int ghostBuilders=0,ghostOrders=0,ghostOffscreen=0;
+            if(const char* ghostText=tak::devEnv("TAK_RENDER_GHOSTS")) {
+                int builders=0,queue=0,offPercent=0;
+                char builderName[64]="arabuild";
+                if(std::sscanf(ghostText,"%d,%d,%d,%63s",&builders,&queue,&offPercent,builderName)<2)
+                    throw std::runtime_error(std::string("TAK_RENDER_GHOSTS: expected builders,queue[,offscreen%[,builder]], got ")+ghostText);
+                builders=std::clamp(builders,1,256);queue=std::clamp(queue,1,200);offPercent=std::clamp(offPercent,0,100);
+                std::vector<const tak::sim::UnitType*> options;
+                for(const auto& option:registry_.buildable(builderName)) {
+                    const auto* site=registry_.find(option);
+                    if(site && isStructure(site) && !site->onMana && site->footX<=4 && site->footZ<=4)options.push_back(site);
+                    if(options.size()==3)break;
+                }
+                if(options.empty())throw std::runtime_error(std::string("TAK_RENDER_GHOSTS: no plain structure option for ")+builderName);
+                int outW=1280,outH=960;
+                SDL_GetRendererOutputSize(ren_,&outW,&outH);
+                const float viewW=float(mapViewW(outW))/mapView_.zoom(),viewH=float(std::max(1,outH-barH()))/mapView_.zoom();
+                const float mapW=float(mapView_.map().width*16),mapH=float(mapView_.map().height*16);
+                const float viewCX=mapView_.offX()+viewW*0.5f,viewCZ=mapView_.offY()+viewH*0.5f;
+                const float farX=viewCX<mapW*0.5f ? mapW-700 : 700,farZ=viewCZ<mapH*0.5f ? mapH-700 : 700;
+                const int offCount=queue*offPercent/100;
+                const float blockX=centerX-900,blockZ=centerZ-420;
+                for(int b=0;b<builders;++b) {
+                    const float bx=centerX+(float(b%16)-7.5f)*64,bz=blockZ+12*80+40+float(b/16)*64;
+                    const int builder=spawn(builderName,bx,bz,0,localPlayer_);
+                    if(builder<=0)continue;
+                    ++ghostBuilders;
+                    for(int q=0;q<queue;++q) {
+                        const auto* site=options[size_t(q)%options.size()];
+                        float x,z;
+                        if(q<offCount) {   // far corner, a 6-wide grid per builder
+                            x=farX+(farX<mapW*0.5f ? 1.f : -1.f)*float((b*offCount+q)%6)*96;
+                            z=farZ+(farZ<mapH*0.5f ? 1.f : -1.f)*float((b*offCount+q)/6%6)*96;
+                        } else {
+                            const int k=b*(queue-offCount)+(q-offCount);
+                            x=blockX+float(k%16)*80;z=blockZ+float(k/16%12)*80;
+                        }
+                        const size_t before=world_.unit(builder)->orders.size();
+                        writableWorld().queueBuild(builder,site,x,z,true);
+                        if(world_.unit(builder)->orders.size()==before)continue;
+                        ++ghostOrders;
+                        // Off the setup view by more than the largest footprint (world px).
+                        ghostOffscreen+=x<mapView_.offX()-96 || z<mapView_.offY()-96 ||
+                                        x>mapView_.offX()+viewW+96 || z>mapView_.offY()+viewH+96;
+                    }
+                }
+            }
+            int selected=0;
+            if(const char* selectText=tak::devEnv("TAK_RENDER_SELECT")) {
+                captureFrame();   // publish the army, or the next frame pin prunes the selection
+                const size_t want=std::strcmp(selectText,"all")==0 ? spawnedIds.size() : size_t(std::max(0,std::atoi(selectText)));
+                selection_.clear();
+                for(int id:spawnedIds) {
+                    if(selection_.size()>=want)break;
+                    const auto* u=world_.unit(id);
+                    if(u && u->alive() && u->player==localPlayer_)selection_.push_back(id);
+                }
+                selected=int(selection_.size());
+            }
+            if(const char* armText=tak::devEnv("TAK_RENDER_ARM"))pendingCmd_=armText[0];
+            if(covers || ghostBuilders || tak::devEnv("TAK_RENDER_SELECT") || pendingCmd_)
+                std::fprintf(stderr,"render interactive: selected=%d armed=%c covers=%d ghost_builders=%d ghost_orders=%d ghost_offscreen=%d\n",
+                    selected,pendingCmd_ ? pendingCmd_ : '-',covers,ghostBuilders,ghostOrders,ghostOffscreen);
             std::fprintf(stderr,"shadow benchmark: requested=%d spawned=%d columns=%d zoom=%.3f type=%s\n",
                 count,spawned,columns,zoom,only ? only : "mixed");
             std::fprintf(stderr,"render scene: sites=%d ghosts=%d flyers=%d corpses=%d boats=%d scenery=%d squads=%d factories=%d build_queues=%d center=%.0f,%.0f offset=%.0f,%.0f\n",
                 sites,ghosts,flyers,corpses,boats,forestTrees,squads,factories,ghostQueues,centerX,centerZ,mapView_.offX(),mapView_.offY());
+            if(tak::devEnv("TAK_RENDER_GHOST_QUEUES"))
+                std::fprintf(stderr,"render ghost queues: builders=%d queued=%d types=%d\n",queueBuilders,queueOrders,queueTypes);
             return;
         }
         // Capture the reclaim particle fix through the existing local build harness.
@@ -4445,6 +4649,50 @@
             const float dx=float(int((frame/period+k)%9)-4)*24;
             spawn(roster[(frame/period+k)%4],x+dx,z+48,float(k%8)*0.785398163f,localPlayer_);
         }
+    }
+
+    void GameView::renderStudyCursor(unsigned frame, int select, char cmd) {
+        cursorStudyOn_ = true;
+        const Frame& f = front();
+        if (select > 0 && selection_.empty())
+            for (const UnitR* u : f.live) {
+                if (int(selection_.size()) >= select) break;
+                if (u->player == localPlayer_ && u->alive() && !u->embarked() && !u->underConstruction && u->type)
+                    selection_.push_back(u->id);
+            }
+        if (cmd == '*') {
+            // Every armed order in turn, seven frames each (and none).
+            static constexpr char kCycle[] = {0, 'a', 'r', 'g', 'l', 'm', 'p', 'c', 'f'};
+            pendingCmd_ = kCycle[(frame / 7) % std::size(kCycle)];
+        } else if (cmd) {
+            pendingCmd_ = cmd;
+        }
+        const float w = float(mapViewW(winW_)), h = float(std::max(1, winH_ - barH()));
+        const float margin = 40.0f;   // clear of the edge-scroll band
+        float x = w * (0.5f + 0.42f * std::sin(float(frame) * 0.037f));
+        float y = h * (0.5f + 0.42f * std::sin(float(frame) * 0.051f + 1.0f));
+        // The units whose anchor can be in the world view (the snapshot's unit grid), so
+        // a large army seen through a small view still puts the pointer on bodies.
+        std::vector<uint32_t> inView;
+        if (f.unitGrid.size() == f.live.size()) {
+            std::vector<uint64_t> bits;
+            const auto rect = tak::render::anchorBandToWorld(-64.0f, -64.0f, w + 64.0f, h + 160.0f, mapView_.offX(),
+                                                             mapView_.offY(), mapView_.zoom(), unitLiftBounds());
+            f.unitGrid.query(rect.left, rect.top, rect.right, rect.bottom, bits, inView);
+        } else {
+            for (uint32_t i = 0; i < uint32_t(f.live.size()); ++i) inView.push_back(i);
+        }
+        if (frame % 2 == 0 && !inView.empty())
+            for (uint32_t k = 0; k < 64; ++k) {
+                const UnitR& u = *f.live[inView[(size_t(frame) * 2654435761u + size_t(k) * 40503u) % inView.size()]];
+                if (!u.type || u.embarked() || !u.alive()) continue;
+                const SDL_FPoint p = dotsFrame_ ? dotCentre(u) : unitScreen(u);
+                if (p.x < margin || p.x > w - margin || p.y < margin || p.y > h - margin) continue;
+                x = p.x; y = p.y;
+                break;
+            }
+        mouseX_ = std::clamp(x, margin, std::max(margin, w - margin));
+        mouseY_ = std::clamp(y, margin, std::max(margin, h - margin));
     }
 
     // Material-only invalidation for the render matrix (workstream E): every

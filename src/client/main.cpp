@@ -1946,8 +1946,30 @@ int main(int argc, char** argv) {
     const unsigned studyFilter=studyPeriod("TAK_RENDER_FILTER");     // Texture Filtering Off<->Units (workstream M)
     const unsigned studyPanSnap=studyPeriod("TAK_RENDER_CAMERA_SNAP");  // whole-pixel pan (1, or N moving/N still)
     const unsigned studySparseAfter=studyPeriod("TAK_RENDER_SPARSE_AFTER");
+    // Perf follow-up C: TAK_RENDER_CURSOR=1 drives the pointer over the world view
+    // (GameView::renderStudyCursor) and prints the frame's cursor evaluation
+    // (CURSORSTATS); TAK_RENDER_CURSOR_SELECT=<n> keeps up to n own units selected,
+    // TAK_RENDER_CURSOR_CMD=<c> arms order c ('a' attack, 'r' repair, 'g' guard,
+    // 'l' load, 'm' move..., '*' each in turn).
+    const bool studyCursor=renderStudy && tak::devFlag("TAK_RENDER_CURSOR");
+    const int studyCursorSelect=int(studyPeriod("TAK_RENDER_CURSOR_SELECT"));
+    const char studyCursorCmd=tak::devEnv("TAK_RENDER_CURSOR_CMD") ? tak::devEnv("TAK_RENDER_CURSOR_CMD")[0] : 0;
     float studySparseX=200,studySparseZ=200;
     if(const char* at=tak::devEnv("TAK_RENDER_SPARSE_OFFSET"))std::sscanf(at,"%f,%f",&studySparseX,&studySparseZ);
+    // TAK_RENDER_GPU_CAP_AT=<frame>,<MiB>[/<frame>,<MiB>...]: from each frame on, the
+    // tracked-GPU cap is <MiB>, or with 0 what is held at that frame (TAK_GPU_CAP_MIB
+    // mid-run: a limit lowered under a held working set, so the caches that obey the
+    // cap give back -- and raised again).
+    std::vector<std::pair<unsigned,unsigned>> studyCaps;
+    if(const char* list=tak::devEnv("TAK_RENDER_GPU_CAP_AT"))
+        for(const char* at=list;at && *at;) {
+            unsigned frame=0,mib=0;
+            if(std::sscanf(at,"%u,%u",&frame,&mib)==2)studyCaps.push_back({frame,mib});
+            at=std::strchr(at,'/');if(at)++at;
+        }
+    // TAK_RENDER_SHADOWS_OFF_AT=<frame>: switch unit shadows off from that frame (the
+    // Options SHADOWS toggle; perf follow-up K: what the shadow atlas holds meanwhile).
+    const unsigned studyShadowsOffAt=studyPeriod("TAK_RENDER_SHADOWS_OFF_AT");
     // Workstream K (terrain under camera motion). TAK_RENDER_SWEEP=cx,cz,ax,az,period:
     // an elliptical sweep around (cx,cz) with amplitudes ax/az world px and the given
     // period in frames (fast pan with reversals in both axes). TAK_RENDER_ZOOM_OSC=
@@ -1971,6 +1993,28 @@ int main(int argc, char** argv) {
         }
         if(studyJumpAt.empty())studyJumpAt.push_back({3800,3800});
     }
+    // Interactive cases (measurement B, tools/render_benchmark.py --scenes interactive).
+    // TAK_RENDER_MOUSE puts the pointer in the world view every frame, in fractions of
+    // that view: "fx,fy" holds it still; "sweep:x0,y0,x1,y1" moves it on a Lissajous
+    // path inside that rectangle (periods 300 and 187 frames). The in-game cursor is then
+    // classified each frame as under a real mouse (the matrix scenes leave the pointer
+    // unset, which skips that work). TAK_RENDER_FADE_CLOCK=1 runs HIDDEN UNITS FADE on
+    // the study frame clock (1/60 s a frame) instead of wall time, so fades are identical
+    // in every run and capture.
+    int studyMouseMode=0;   // 0 unset, 1 fixed, 2 sweep
+    float studyMouse[4]={};
+    if(const char* mouse=tak::devEnv("TAK_RENDER_MOUSE")) {
+        if(std::sscanf(mouse,"sweep:%f,%f,%f,%f",&studyMouse[0],&studyMouse[1],&studyMouse[2],&studyMouse[3])==4)
+            studyMouseMode=2;
+        else if(std::sscanf(mouse,"%f,%f",&studyMouse[0],&studyMouse[1])==2)
+            studyMouseMode=1;
+        else
+            throw std::runtime_error(std::string("TAK_RENDER_MOUSE: expected fx,fy or sweep:x0,y0,x1,y1, got ")+mouse);
+    }
+    const bool studyFadeClock=tak::devFlag("TAK_RENDER_FADE_CLOCK");
+    if(renderStudy && (studyMouseMode || studyFadeClock))
+        std::printf("RENDER_INTERACTIVE mouse=%s fade_clock=%d\n",
+                    studyMouseMode==2 ? "sweep" : studyMouseMode==1 ? "fixed" : "unset",studyFadeClock?1:0);
 #endif
     auto windowTarget = [&] {
         SDL_SetRenderTarget(ren, nullptr);
@@ -2213,12 +2257,22 @@ int main(int argc, char** argv) {
                     gameView->lookAt(p.first,p.second);
                 }
                 if(renderStudy && studyChurn)gameView->renderStudyChurn(studyFrame,studyChurn);
+                if(studyCursor)gameView->renderStudyCursor(studyFrame,studyCursorSelect,studyCursorCmd);
                 if(renderStudy && studyEpoch && studyFrame && studyFrame%studyEpoch==0)
                     gameView->renderStudyBumpWorldEpoch();
                 if(renderStudy && studyShake && studyFrame%studyShake==0)
                     gameView->renderStudyShake(8.0f,float(studyShake)/90.0f);
                 if(renderStudy && studySparseAfter && studyFrame>=studySparseAfter)
                     gameView->renderStudyOffset(studySparseX,studySparseZ);
+                for(const auto& [capFrame,capMiB]:studyCaps)
+                    if(renderStudy && studyFrame==capFrame) {
+                        const size_t cap=capMiB ? size_t(capMiB)*gpuvram::kMiB : gpuvram::bytes();
+                        gpuvram::g_policy.limit=gpuvram::g_policy.cap=cap;
+                        std::printf("RENDER_GPU_CAP frame=%u cap=%zu KiB held=%zu KiB\n",studyFrame,cap>>10,
+                                    gpuvram::bytes()>>10);
+                    }
+                if(renderStudy && studyShadowsOffAt && studyFrame==studyShadowsOffAt)
+                    gameView->renderStudyShadows(false);
                 if(renderStudy && studyFilter && studyFrame && studyFrame%studyFilter==0)
                     gameView->renderStudyToggleFilter();
                 if(renderStudy && studyFullscreen && studyFrame && studyFrame%studyFullscreen==0) {
@@ -2231,6 +2285,16 @@ int main(int argc, char** argv) {
                     windowTarget();
                     gameView->invalidateRenderTargets();
                 }
+                if(renderStudy && studyMouseMode) {
+                    const auto view=gameView->renderStudyWorldView(w,h);
+                    float fx=studyMouse[0],fy=studyMouse[1];
+                    if(studyMouseMode==2) {
+                        fx+=(studyMouse[2]-studyMouse[0])*(.5f+.5f*std::sin(float(studyFrame)*6.2831853f/300));
+                        fy+=(studyMouse[3]-studyMouse[1])*(.5f+.5f*std::sin(float(studyFrame)*6.2831853f/187));
+                    }
+                    gameView->renderStudyMouse(fx*float(view.first),fy*float(view.second));
+                }
+                if(renderStudy && studyFadeClock)gameView->renderStudyFadeClock(1+uint64_t(studyFrame)*1000/60);
 #endif
 #ifndef NDEBUG
                 if(tak::devFlag("TAK_PROFILE_PAN"))
@@ -2294,6 +2358,14 @@ int main(int argc, char** argv) {
                 streaming.frame(w,h);
                 if (panel) gameView->drawCursorOverlay(true);
             }
+#ifndef NDEBUG
+            if (studyCursor) {
+                const auto& c = gameView->renderStudyCursorStats();
+                std::printf("CURSORSTATS frame=%u ns=%llu tests=%llu cursor=%d tint=%d x=%.1f y=%.1f\n", studyFrame,
+                            static_cast<unsigned long long>(c.ns), static_cast<unsigned long long>(c.tests),
+                            c.cursor, c.tint ? 1 : 0, c.x, c.y);
+            }
+#endif
         }
         // Read both metrics from the pinned snapshot before releasing it.
         const uint32_t profTick = prof && gameView ? gameView->framedTick() : 0;
@@ -2479,6 +2551,18 @@ int main(int argc, char** argv) {
                     ull(t.overlays[0]),ull(t.overlays[1]),ull(t.overlays[2]),ull(t.ghosts));
                 if(!t.passes)throw std::runtime_error("unit index verify ran no checks");
             }
+            if(tak::devFlag("TAK_PICK_INDEX_VERIFY")) {
+                // Cursor picking (perf follow-up C): every unit the exact test accepted was
+                // a candidate, and every cursor decision equalled a full-scan one, or the
+                // cursor overlay threw.
+                const auto& t=gameView->pickVerifyTotals();
+                using ull=unsigned long long;
+                std::printf("PICK_INDEX_VERIFY queries=%llu live=%llu candidates=%llu hits=%llu decisions=%llu "
+                            "body_queries=%llu body_candidates=%llu body_hits=%llu\n",
+                    ull(t.queries),ull(t.live),ull(t.candidates),ull(t.hits),ull(t.decisions),
+                    ull(t.bodyQueries),ull(t.bodyCandidates),ull(t.bodyHits));
+                if(!t.queries || !t.decisions)throw std::runtime_error("pick index verify ran no checks");
+            }
             if(tak::devFlag("TAK_DISTANT_VERIFY")) {
                 // Distant-image lookup before body generation (workstream G): every
                 // deferred body was regenerated in a copy and matched, or draw() threw.
@@ -2493,15 +2577,22 @@ int main(int argc, char** argv) {
                 // re-bake of the frame, or draw() threw at the first differing pixel.
                 const auto& t=gameView->shadowVerifyTotals();
                 // Workstream F appends the cell counts (kept = reused in a cell kept from
-                // an earlier frame; validated = frames whose allocator passed validate()).
+                // an earlier frame; validated = frames whose allocator passed validate()),
+                // perf follow-up K the page budget (frames on extended pages, most pages
+                // held, pressure sheds, frames that fell back for any reason, frames from
+                // the last shed to the next frame on extended pages: the cooldown;
+                // the pages held after the last frame).
                 using ull=unsigned long long;
                 std::printf("SHADOW_CACHE_VERIFY frames=%llu tiles=%llu reused=%llu body=%llu translated=%llu "
                             "original_reused=%llu kept=%llu allocs=%llu compactions=%llu migrated=%llu "
                             "evicted=%llu page_releases=%llu shrinks=%llu validated=%llu page_allocs=%llu "
-                            "alloc_failures=%llu\n",
+                            "alloc_failures=%llu extended_frames=%llu max_pages=%llu sheds=%llu fallbacks=%llu "
+                            "regrow_gap=%llu extended_releases=%llu held_pages=%llu\n",
                     ull(t.frames),ull(t.tiles),ull(t.reused),ull(t.body),ull(t.translated),ull(t.original),
                     ull(t.kept),ull(t.allocs),ull(t.compactions),ull(t.migrated),ull(t.evicted),
-                    ull(t.pageReleases),ull(t.shrinks),ull(t.validated),ull(t.pageAllocs),ull(t.failures));
+                    ull(t.pageReleases),ull(t.shrinks),ull(t.validated),ull(t.pageAllocs),ull(t.failures),
+                    ull(t.extendedFrames),ull(t.maxPages),ull(t.sheds),ull(t.fallbacks),ull(t.regrowGap),
+                    ull(t.extendedReleases),ull(t.heldPages));
                 if(!t.frames)throw std::runtime_error("shadow cache verify ran no checks");
             }
             if(tak::devFlag("TAK_GEOMETRY_OWNERSHIP_VERIFY")) {
@@ -2522,6 +2613,15 @@ int main(int argc, char** argv) {
                     gameView->atlasVerifyRegions());
                 if(!gameView->atlasVerifyChecks())
                     throw std::runtime_error("atlas verify ran no checks");
+            }
+            if(tak::devFlag("TAK_GHOST_VERIFY")) {
+                // Build ghosts (perf follow-up E): every ghost matched the reference
+                // collection, or drawGhostAt() threw.
+                const auto& t=gameView->ghostVerifyTotals();
+                using ull=unsigned long long;
+                std::printf("GHOST_VERIFY checked=%llu hits=%llu culled=%llu collected=%llu inexact=%llu\n",
+                    ull(t.checked),ull(t.hits),ull(t.culled),ull(t.collected),ull(t.inexact));
+                if(!t.checked)throw std::runtime_error("ghost verify ran no checks");
             }
             running=false;quitApp=true;
             if(studyQuery){studyDeleteQuery(GLsizei(kStudyQueries),studyQueries);studyQuery=false;}

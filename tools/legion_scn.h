@@ -1127,7 +1127,7 @@ inline std::unique_ptr<Built> build(const Scenario& s, const BuildOptions& opt) 
     }
     if (!s.exploredRle.empty()) {
         w.updateNavigationExploration();
-        auto& known = const_cast<std::vector<uint16_t>&>(w.navigationExploration());
+        auto& known = w.editNavigationExploration();
         size_t at = 0;
         for (const auto& [n, v] : s.exploredRle) {
             if (at + n > known.size()) throw std::runtime_error(s.origin + ": `explored rle` is longer than the map");
@@ -1138,7 +1138,7 @@ inline std::unique_ptr<Built> build(const Scenario& s, const BuildOptions& opt) 
                                                          " cells, the map has " + std::to_string(known.size()));
     } else if (s.explored) {
         w.updateNavigationExploration();
-        auto& known = const_cast<std::vector<uint16_t>&>(w.navigationExploration());
+        auto& known = w.editNavigationExploration();
         std::fill(known.begin(), known.end(), 0xffff);
     }
     if (s.hasClock) w.resumeClocks(s.clockTick, s.clockRng);

@@ -182,6 +182,9 @@ enum class Phase : uint8_t {
     Fog,             // fog-of-war overlay
     SchedulePlan,    // (nested) building the cost plans of the pool passes (workstream I)
     HiddenUnits,     // HIDDEN UNITS option: cover search, fade and dot tests
+    Cursor,          // the in-game cursor's classification (desiredCursor), after the world pass
+    Ghosts,          // the queued-build ghosts of the local player's builders (world pass)
+    BuildGhosts,     // the same scope as Ghosts, under workstream E's name (drawGhostAt loop)
     Count
 };
 
@@ -457,6 +460,50 @@ enum class Counter : uint8_t {
     HiddenCandidates,
     HiddenMarked,
     HiddenFaded,
+    // Interactive render cases (tools/render_benchmark.py --scenes interactive):
+    // cursor classifications run (desiredCursor), the precise per-unit pick tests
+    // (unitUnderCursor) since the frame began and those that hit; queued-build ghosts
+    // the overlay pass asked for and those of them drawGhostAt found a model for and
+    // prepared (with workstream E's retained geometry most reuse it: ghost_collects
+    // counts the real collections); HIDDEN UNITS FADE coverage tests run against a cover
+    // (sprite texels or structure triangles); and the frame's shadow tile area (incl.
+    // the 1 px padding) as the atlas is asked for it, recorded whether or not the
+    // atlas then takes it (shadow_atlas_tile_px is 0 on a fallback frame).
+    CursorEvals,
+    CursorPickTests,
+    CursorPickHits,
+    GhostsQueued,
+    GhostPreps,
+    HiddenCoverTests,
+    ShadowDemandPx,
+    // Build ghosts (GameView::drawGhostAt: queued builds, placed sites, the placement
+    // preview): ghosts requested; of which rejected before any geometry work because
+    // they lie wholly outside the clip; model collections + depth sorts run; ghosts
+    // drawn from retained model-local geometry; triangles submitted; gauge: bytes
+    // of the retained ghost geometry.
+    GhostDraws,
+    GhostCulled,
+    GhostCollects,
+    GhostCacheHits,
+    GhostTris,
+    GhostCacheBytes,
+    // FADE's cover bookkeeping (perf follow-up F): covers the unit queries handed out
+    // (each one an exact test before the per-frame bookkeeping) and exact cover tests
+    // (rectangle, then sprite/triangles) asked of them; hidden_cover_tests above counts
+    // only the sprite/triangle tests those ran.
+    HiddenCoverVisits,
+    HiddenCoverReaches,
+    // Shadow atlas capacity (perf follow-up K): composite submissions (one per run
+    // of painter-order neighbours on one silhouette page, plus one per shadow drawn
+    // directly) and the page limit that applied (gauge). The tile area the frame
+    // asked for is ShadowDemandPx above (measurement B and K defined the same gauge;
+    // K's sum is kept, which also covers the units examined before an early failure).
+    ShadowCompositeRuns,
+    ShadowPageLimit,
+    // ... live pages past the base pages (gauge; client/shadowatlas.h), and the
+    // atlas resets that gave them back under GPU pressure (per frame).
+    ShadowExtendedPages,
+    ShadowPressureSheds,
     Count
 };
 
@@ -475,7 +522,7 @@ inline constexpr const char* kPhaseNames[size_t(Phase::Count)] = {
     "candidates", "painter_sort", "atlas", "geometry", "distant", "shadow_pack",
     "shadow_composite", "body_assembly", "body_submit", "terrain", "terrain_upload",
     "shadow_alloc", "shadow_prep", "shadow_raster", "pool_dispatch", "pool_wait", "effects",
-    "fog", "schedule_plan", "hidden_units"};
+    "fog", "schedule_plan", "hidden_units", "cursor", "ghosts", "build_ghosts"};
 inline constexpr const char* kWorkNames[size_t(Work::Count)] = {
     "geometry_key", "geometry_build", "pool_busy", "pool_wake", "terrain_compose",
     "terrain_upload", "section_decode", "terrain_wasted", "unit_grid_build"};
@@ -541,7 +588,11 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "palette_mode", "palette_pages", "palette_gpu_bytes", "palette_cpu_bytes", "palette_upload_bytes",
     "palette_indexed_draws", "palette_fallbacks", "palette_switches", "palette_spans",
     "palette_span_commands", "native_passes", "native_pass_commands", "native_pass_refused",
-    "native_primes", "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded"};
+    "native_primes", "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded",
+    "cursor_evals", "cursor_pick_tests", "cursor_pick_hits", "ghosts_queued", "ghost_preps", "hidden_cover_tests",
+    "shadow_demand_px", "ghost_draws", "ghost_culled", "ghost_collects", "ghost_cache_hits", "ghost_tris",
+    "ghost_cache_bytes", "hidden_cover_visits", "hidden_cover_reaches", "shadow_composite_runs",
+    "shadow_page_limit", "shadow_extended_pages", "shadow_pressure_sheds"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

@@ -3801,7 +3801,12 @@ docs/legion-10000-progress.md section 7.7.
 * **Static changes per cluster, closures apart from improvements.** `refreshPlane` reports each cluster of changed
   origins as its own box (`StaticChange`), and whether any origin lost legality (a closure) or gained it (an
   improvement); `staticChanged` tests every route against each box at tile granularity (`fieldTouched`), so a corpse
-  in one corner and a building in another no longer touch every route between them. A **closure** reaching a route
+  in one corner and a building in another no longer touch every route between them. Since the 2026-10 perf follow-up
+  (item I) the routes tested are the candidates of a route index (`src/sim/legion_routebins.h`: per plane, 32-cell bins
+  listing the groups whose field or next covers a bin, windows and corridor / chain tiles grown by the one cell
+  `fieldTouched` reaches), visited in ascending group id order like the walk of every group they replace, which stays
+  for changes without boxes (legacy worlds, the first epoch); `legion_routebins_test`, `legion_routeindex` and
+  TAK_LEGION_VERIFY check that every route a change reaches is a candidate. A **closure** reaching a route
   makes it stale at once, as before (the plane and `commitGroundStep` still decide every step). An **improvement**
   only leaves every step the route describes legal and every estimate the length of a real way: the route keeps
   steering, its "unreached" stops proving anything (`RouteGrid::touched`: Unknown, never Unreachable), and its refresh

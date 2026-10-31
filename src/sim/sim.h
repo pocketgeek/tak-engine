@@ -1380,10 +1380,11 @@ struct alignas(64) Unit {
     // 4c6800's current-view footprint (the sight object at unit+0x84 as the
     // per-player view counters see it) and the plane it is counted in (-1 =
     // none). Kept beside sightFootprint, which feeds the persistent exploration
-    // plane and skips removals; this one is always removed before it moves, so
-    // World::viewCounts_ is exactly the sum of the active footprints. Recording
-    // the counted player makes deaths and ownership changes self-correcting.
-    // Hashed.
+    // plane and skips removals; this one always takes its old cells out of the
+    // counts when it moves (only those it no longer admits, see
+    // retailSightMove), so World::viewCounts_ is exactly the sum of the active
+    // footprints. Recording the counted player makes deaths and ownership
+    // changes self-correcting. Hashed.
     RetailSightFootprint viewSight;
     int8_t viewPlayer = -1;
     // An upgrade consumes its old building when the new site is admitted. Keep
@@ -2240,6 +2241,9 @@ public:
     // 4f6a40/4c6a70/4c6800 for the per-player current-view counters: one pass
     // after each tick, beside updateNavigationExploration.
     void updateViewCounts();
+    // Test reference: move counted footprints by retail's full removal and
+    // re-add instead of retailSightMove (the counts and hashes must not differ).
+    void setViewCountsByRebuildForTest(bool on) { viewCountsByRebuild_=on; }
     void updateExplorationPlane();
     // Per-player current-view count of one projected 32px cell (0 = unseen).
     int viewCount(int player,int cx,int cz) const {
@@ -2264,6 +2268,15 @@ public:
     int viewDirtyW() const { return viewDirtyW_; }
     void clearViewDirty() { std::fill(viewDirty_.begin(),viewDirty_.end(),uint8_t(0)); }
     const std::vector<uint16_t>& navigationExploration() const { return navigationExplored_; }
+    // Write access for the harnesses and tests that seed or restore the plane
+    // (situations, "everything explored" fixtures); nothing else may write it.
+    // The block summaries derived from the plane (explorationBlocks_) are kept by
+    // its own writers, so this drops them and the next exploration pass rebuilds
+    // them from what the caller wrote: finish writing before that pass.
+    std::vector<uint16_t>& editNavigationExploration() { explorationBlocks_.clear(); return navigationExplored_; }
+    // Tests and TAK_VERIFY_LISTS: the block summaries are present and equal a
+    // fresh rebuild from the plane.
+    bool explorationBlocksMatchPlane() const;
     // `player`'s Mapping-plane bit at the 32 px cell under (x,z), as tickManaBuildArea
     // reads it: true without a plane (no terrain), false off the map.
     bool exploredAt(int player,float x,float z) const {
@@ -2319,6 +2332,7 @@ public:
     // client ctor may have pre-registered the launch map's via registerMapFeatures).
     void clearFeatures() {
         features_.clear(); featureIdx_.clear(); clearFeatureTypes(); burnSequence_=0; fadingFeatures_=0;
+        clearFeatureMarks();
     }
     const std::vector<FeatType>& featureTypes() const { return featTypes_; }
     bool featureAliveAt(float x, float z) const;          // viewer decal sync
@@ -2437,9 +2451,11 @@ public:
         scriptSounds_.clear();
         features_.clear();
         burnSequence_ = 0; fadingFeatures_ = 0;
+        clearFeatureMarks();
         mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
         installedMapFeatures_.clear();sacredUnderlay_.clear();
-        explorationHeights_.clear();navigationExplored_.clear();viewCounts_.clear();deathSights_.clear();
+        explorationHeights_.clear();navigationExplored_.clear();explorationBlocks_.clear();
+        viewCounts_.clear();deathSights_.clear();
         restoredNavigationViewer_=-1;
         featureIdx_.clear();
         clearFeatureTypes();
@@ -3152,6 +3168,8 @@ private:
     void tickManaBuildArea(Unit& b);
     void tickAbilities(float dt);   // reclaim / resurrect on nearby corpses
     void tickAuras(float dt);       // AdjustArmor/Attack stat auras
+    bool prepareAuraSources();      // tickAuras, big worlds: the sources and tiles,
+    void applyAuraTiles(bool pooled);   // then the folds, tile by tile
     void tickHealAuras();           // AdjustJoy passive repair aura (1 Hz)
 
     // Connected-component labelling of a nav grid for one footprint, built on first
@@ -3682,6 +3700,7 @@ private:
     // 60 ticks (at most 20 per player). Hashed, in order.
     struct RetailDeathSight { RetailSightFootprint sight; int8_t player=-1; uint32_t expiry=0; };
     std::vector<RetailDeathSight> deathSights_;
+    bool viewCountsByRebuild_ = false;   // setViewCountsByRebuildForTest; not hashed
     std::vector<uint8_t> viewDirty_;   // viewDirty(); display bookkeeping, not hashed
     int viewDirtyW_ = 0;
     void markViewDirty(const RetailSightFootprint& sight);   // the squares it covers (relaxed stores)
@@ -3864,10 +3883,18 @@ private:
     }();
     int winningTeam_ = -1;
     bool monarchExpendable_ = true;      // default: Monarch is just a unit (net option overrides)
-    // Derived, unhashed, rebuilt each exploration pass: per 8x8-cell block,
-    // the AND of navigationExplored_, so fully explored blocks are skipped.
+    // Derived, unhashed: per 8x8-cell block, the AND of navigationExplored_,
+    // so fully explored blocks are skipped. Every writer of the plane keeps it
+    // equal to that AND (the exploration pass per block it changes,
+    // applyPowerCode per bit) or empties it (setTerrain, resetForReplay,
+    // editNavigationExploration); the next pass rebuilds an emptied one whole.
     static constexpr int kExplorationBlockShift=3;
     std::vector<uint16_t> explorationBlocks_;
+    // Scratch per SimPool slot: the blocks a worker summarized during a pooled
+    // exploration pass, summarized again exactly after the join. A block is
+    // listed once per pass (its flag, per block, is set while it is listed).
+    std::vector<std::vector<uint32_t>> explorationTouched_;
+    std::vector<uint8_t> explorationTouchedFlags_;
     bool serialThreads_ = false;
     int simWorkers_ = -1;
     // The intra-tick worker pool (0 workers when serialThreads_), created on
@@ -3884,6 +3911,18 @@ private:
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition
     uint64_t burnSequence_ = 0;  // display order for active feature burns; not lockstep state
     uint32_t fadingFeatures_ = 0; // features with fadeLeft > 0 (tickFeatureFades walks only then)
+    // Derived marks, one bit per features_ index, never hashed and never the
+    // authority: tickBurning and tickFeatureFades walk only the marked indices
+    // (ascending, the order of the old full pass) and decide on the feature's
+    // own burn/alive/fadeLeft. A mark is a SUPERSET: every feature that is
+    // alive with burn != 0 is marked in burningMarks_ (igniteFeature, the only
+    // way into that state, sets it) and every feature with fadeLeft != 0 in
+    // fadingMarks_ (finishReclaim); a stale mark (a swap put the fire or the
+    // fade out) is dropped when the walk reaches it. burningMarked_ counts the
+    // set bits, so a tick without fire visits nothing.
+    std::vector<uint64_t> burningMarks_, fadingMarks_;
+    uint32_t burningMarked_ = 0;
+    void clearFeatureMarks() { burningMarks_.clear(); fadingMarks_.clear(); burningMarked_ = 0; }
     std::vector<BenchStage> benchPlan_;   // benchmark staged spawns (executed in tick)
     size_t benchCursor_ = 0;              // next unexecuted stage
     uint32_t benchEndTick_ = 0;           // 0 = not a benchmark run
@@ -4073,11 +4112,25 @@ private:
     std::vector<AbilityChunk> abilityChunks_;   // tickAbilities on the SimPool (WE E4.3)
     // The post-loop passes go to the SimPool from this many units.
     static constexpr size_t kPostMinParallel = 2048;
-    // tickAuras on the SimPool: per chunk of kAuraEmitterChunk emitters, the
-    // units refreshed, in the serial order.
-    struct AuraHit { uint32_t index; uint8_t flags; float amt; };   // flags: 1 armour, 2 debuff
-    std::vector<std::vector<AuraHit>> auraChunks_;
-    static constexpr size_t kAuraEmitterChunk = 4;
+    // tickAuras in a big world (prepareAuraSources, applyAuraTiles), scratch
+    // rebuilt every pass, never hashed: every Armor/Attack aura of an eligible
+    // emitter, in emitter then aura order, with the grid cells its forEachNear
+    // square covers; per tile of 8x8 grid cells the sources whose square meets
+    // it (CSR, in source order); the tiles that have any; per pool slot, a tile's
+    // row and column masks over its sources.
+    struct AuraSource {
+        Fixed x, z;               // the emitter: the scan centre
+        const Aura* aura;
+        float r2;                 // a.radius * a.radius, as the serial gather computes it
+        int32_t player;           // the emitter's owner
+        uint64_t sides;           // bit p: the aura reaches player p's units (p < 64)
+        int32_t x0, z0, x1, z1;   // the cells scanned, clamped to the grid
+    };
+    std::vector<AuraSource> auraSources_;
+    std::vector<uint32_t> auraTileFirst_, auraTileList_, auraTiles_;
+    std::vector<std::vector<uint64_t>> auraTileMasks_;
+    static constexpr size_t kAuraMinEmitters = 8;   // the tiles go to the SimPool from this many emitters
+    static constexpr int kAuraTileShift = 3;        // tiles of 8x8 grid cells
     // Per player, this tick's retail construction demand (World::tick's economy step).
     std::vector<float> retailDemand_;
     // The economy walk on the SimPool (WE E4.3): per chunk, its units'

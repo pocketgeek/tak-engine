@@ -256,4 +256,55 @@ inline ScreenBand squadMarkerBand(const AnchorView& v, int footMin, int footMax)
 }
 }  // namespace unitpass
 
+// Cursor picking (perf follow-up C). GameView::unitUnderCursor accepts a unit when the
+// pointer (mx, my) lies in a box around the unit's sprite anchor
+//   A = ((ix - offX) * zoom - liftX * zoom,
+//        (iz - offY) * zoom - liftY * zoom + sink * zoom - altitude * zoom)
+// (ix, iz: the interpolated position; sink: the waterline sink; altitude: a flyer's):
+// the type's hit box (offset from A, px at zoom 1, scaled by the zoom and widened to
+// at least kPickMinHalf each side of its centre), or a dot of half side `dotHalf`
+// centred on A (Tactical Dots, HIDDEN UNITS dots). PickBoxes is the union of the hit
+// boxes over every unit type.
+inline constexpr float kPickMinHalf = 9.0f;
+struct PickBoxes {
+    bool any = false;
+    float minL = 0, maxR = 0, minCx = 0, maxCx = 0;   // box left, right, centre (x)
+    float minT = 0, maxB = 0, minCy = 0, maxCy = 0;   // box top, bottom, centre (y)
+    void add(float x, float y, float w, float h) {
+        const float cx = x + w * 0.5f, cy = y + h * 0.5f;
+        if (!any) {
+            any = true;
+            minL = x; maxR = x + w; minCx = maxCx = cx;
+            minT = y; maxB = y + h; minCy = maxCy = cy;
+            return;
+        }
+        minL = std::min(minL, x); maxR = std::max(maxR, x + w);
+        minCx = std::min(minCx, cx); maxCx = std::max(maxCx, cx);
+        minT = std::min(minT, y); maxB = std::max(maxB, y + h);
+        minCy = std::min(minCy, cy); maxCy = std::max(maxCy, cy);
+    }
+};
+// The band of snapshot-lifted anchors S = ((x - offX) * zoom - liftX * zoom,
+// (z - offY) * zoom - liftY * zoom) -- unitpass's convention, for anchorBandToWorld --
+// that can hold a unit the pointer picks, for a unit WITHOUT altitude, whose
+// interpolated position lies within `interp` world px of its snapshot position on
+// each axis and whose sink lies in [sinkLo, sinkHi] world px. A box of a type, at
+// any zoom > 0, spans [c * zoom - max(w * zoom / 2, kPickMinHalf), c * zoom + ...]:
+// inside [minL * zoom, maxR * zoom] when the half width is the box's own, else inside
+// [minCx * zoom - kPickMinHalf, maxCx * zoom + kPickMinHalf]. One screen px of slack
+// stands for the exact test's own float evaluation order.
+inline ScreenBand pickBand(float mx, float my, float zoom, const PickBoxes& boxes, float dotHalf, float interp,
+                           float sinkLo, float sinkHi) {
+    float left = -dotHalf, right = dotHalf, top = -dotHalf, bottom = dotHalf;   // A + offset
+    if (boxes.any) {
+        left = std::min({left, boxes.minL * zoom, boxes.minCx * zoom - kPickMinHalf});
+        right = std::max({right, boxes.maxR * zoom, boxes.maxCx * zoom + kPickMinHalf});
+        top = std::min({top, boxes.minT * zoom, boxes.minCy * zoom - kPickMinHalf});
+        bottom = std::max({bottom, boxes.maxB * zoom, boxes.maxCy * zoom + kPickMinHalf});
+    }
+    const float slack = 1.0f + interp * zoom;
+    return {mx - right - slack, my - bottom - sinkHi * zoom - slack,
+            mx - left + slack, my - top - sinkLo * zoom + slack};
+}
+
 }  // namespace tak::render

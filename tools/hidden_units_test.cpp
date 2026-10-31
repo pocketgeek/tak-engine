@@ -198,6 +198,70 @@ int main() {
         check("rect: thinner than a step", hu::spriteCoversRect(m, 100, 50, 40, 20, 0, {135, 51, 135.5f, 51.5f}));
     }
 
+    {
+        // FADE's per-frame bookkeeping against testing every cover of every unit: the
+        // same covers fade (each reported once), every unit gets the same answer, and
+        // fewer exact tests run. Units walk in frame order; each sees some covers.
+        uint32_t seed = 12345;
+        const auto rnd = [&](uint32_t n) { seed = seed * 1664525u + 1013904223u; return (seed >> 8) % n; };
+        bool same = true, once = true, fewer = true, saved = false;
+        for (int round = 0; round < 300; ++round) {
+            const uint32_t covers = 1 + rnd(12), units = 1 + rnd(20);
+            std::vector<std::vector<uint32_t>> sees(units);
+            std::vector<std::vector<char>> reach(units, std::vector<char>(covers, 0));
+            for (uint32_t u = 0; u < units; ++u) {
+                for (uint32_t c = 0; c < covers; ++c)
+                    if (rnd(3) == 0) { sees[u].push_back(c); reach[u][c] = char(rnd(2)); }
+                for (size_t i = sees[u].size(); i > 1; --i) std::swap(sees[u][i - 1], sees[u][rnd(uint32_t(i))]);
+            }
+            std::vector<char> refFaded(covers, 0), refHit(units, 0);
+            size_t refTests = 0;
+            for (uint32_t u = 0; u < units; ++u)
+                for (uint32_t c : sees[u]) {
+                    ++refTests;
+                    if (reach[u][c]) refFaded[c] = refHit[u] = 1;
+                }
+            hu::CoverMarks marks;
+            marks.add();   // storage from an earlier frame
+            marks.clear();
+            for (uint32_t c = 0; c < covers; ++c) marks.add();
+            std::vector<int> reported(covers, 0);
+            size_t tests = 0;
+            for (uint32_t u = 0; u < units; ++u) {
+                const bool hit = marks.unit(
+                    [&](auto&& visit) {
+                        for (uint32_t c : sees[u])
+                            if (!visit(c)) return;
+                    },
+                    [&](uint32_t c) { ++tests; return reach[u][c] != 0; }, [&](uint32_t c) { ++reported[c]; });
+                same = same && hit == (refHit[u] != 0);
+            }
+            for (uint32_t c = 0; c < covers; ++c) {
+                same = same && (reported[c] > 0) == (refFaded[c] != 0) && marks.found(c) == (refFaded[c] != 0);
+                once = once && reported[c] <= 1;
+            }
+            fewer = fewer && tests <= refTests;
+            saved = saved || tests < refTests;
+        }
+        check("marks: same fades and answers as testing every cover", same);
+        check("marks: each cover reported once a frame", once);
+        check("marks: never more exact tests, sometimes fewer", fewer && saved);
+        // A unit whose only cover was already found over another unit, seen after a
+        // found cover that does not reach it: still covered.
+        hu::CoverMarks m;
+        for (int i = 0; i < 3; ++i) m.add();
+        int fades = 0;
+        const auto unit = [&](std::vector<uint32_t> ids, std::vector<uint32_t> reaching) {
+            return m.unit([&](auto&& visit) { for (uint32_t c : ids) if (!visit(c)) return; },
+                          [&](uint32_t c) { return std::find(reaching.begin(), reaching.end(), c) != reaching.end(); },
+                          [&](uint32_t) { ++fades; });
+        };
+        check("marks: first unit fades both covers", unit({0, 1}, {0, 1}) && fades == 2);
+        check("marks: covered by an already-found cover", unit({0, 1}, {1}) && fades == 2);
+        check("marks: found covers that miss: not covered", !unit({0, 1}, {}) && fades == 2);
+        check("marks: a new cover still fades", unit({0, 2}, {0, 2}) && fades == 3 && m.found(2));
+    }
+
     std::printf(g_fail ? "hidden_units_test: %d FAILURE(S)\n" : "hidden_units_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

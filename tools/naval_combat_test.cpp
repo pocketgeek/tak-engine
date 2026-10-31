@@ -86,7 +86,10 @@ int main(int argc,char**argv) {
                 for (int tick=0;tick<1800 && !fired;++tick) { w.tick(1.f/30.f);fired=w.unit(a)->justFired;served(w,a,routed); }
                 std::printf("melee balance=%d unit=%s order=%d fired=%d\n",crusades,name.c_str(),order,fired);
                 ++cases;check(fired,"melee water creature closes and attacks");
-                if (legion && order>0) check(routed,"Legion routes the water creature's approach");
+                // An explicit attack on this mover-less target is Attack_Melee's
+                // rectangle approach (protocol 307), which the original-style
+                // navigator serves in both modes; the attack-move is Legion's.
+                if (legion && order==1) check(routed,"Legion routes the water creature's approach");
             }
         }
         // Shore defenders must also be able to see and fire at ships. Face the

@@ -34,7 +34,7 @@ inline void setup(World& world,PathfindingMode selected,bool serial=true,bool bo
 }
 inline void known(World& world) {
     world.updateNavigationExploration();
-    auto& exploration=const_cast<std::vector<uint16_t>&>(world.navigationExploration());
+    auto& exploration=world.editNavigationExploration();
     std::fill(exploration.begin(),exploration.end(),0xffff);
 }
 inline bool finished(const World& world,const std::vector<int>& ids) {

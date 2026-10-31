@@ -12,10 +12,13 @@
 #include "sim/retailai.h"
 #include "util/devenv.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <iterator>
 #include <map>
+#include <mutex>
+#include <optional>
 #include <set>
 #include <tuple>
 #include <unordered_map>
@@ -3360,6 +3363,44 @@ void Controller::logExploration(const tak::sim::World& world, uint32_t simTick) 
                  vacatedTrips_, vacatedLost_);
 }
 
+namespace {
+// Debug hook, TAK_AI_REVIVE_STATS: reviveIdle's work and time over the whole
+// process (every AI), printed at exit as one AIREVIVE line. A measuring hook
+// only: it changes nothing the AI does. Each running room thinks on its own
+// worker thread, so a call counts locally and merges under the lock.
+struct ReviveStats {
+    bool on = tak::devEnv("TAK_AI_REVIVE_STATS") != nullptr;
+    std::mutex m;
+    uint64_t calls = 0, casters = 0, records = 0, bodies = 0, visits = 0, commands = 0;
+    std::vector<double> us;
+    ~ReviveStats() {
+        if (!on) return;
+        std::sort(us.begin(), us.end());
+        double total = 0;
+        for (double v : us) total += v;
+        auto q = [&](double f) { return us.empty() ? 0.0 : us[std::min(us.size() - 1, size_t(f * double(us.size())))]; };
+        std::fprintf(stderr, "AIREVIVE calls=%llu casters=%llu records=%llu bodies=%llu visits=%llu commands=%llu "
+                     "total_ms=%.3f mean_us=%.3f median_us=%.3f p95_us=%.3f p99_us=%.3f max_us=%.3f\n",
+                     (unsigned long long)calls, (unsigned long long)casters, (unsigned long long)records,
+                     (unsigned long long)bodies, (unsigned long long)visits, (unsigned long long)commands,
+                     total / 1000, us.empty() ? 0.0 : total / double(us.size()), q(0.5), q(0.95), q(0.99),
+                     us.empty() ? 0.0 : us.back());
+    }
+};
+ReviveStats reviveStats;
+struct ReviveCall {
+    uint64_t casters = 0, records = 0, bodies = 0, visits = 0, commands = 0;
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    ~ReviveCall() {
+        const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+        std::lock_guard lock(reviveStats.m);
+        ++reviveStats.calls; reviveStats.casters += casters; reviveStats.records += records;
+        reviveStats.bodies += bodies; reviveStats.visits += visits; reviveStats.commands += commands;
+        reviveStats.us.push_back(us);
+    }
+};
+} // namespace
+
 // Until 0.9.12 the sim raised bodies by itself: an idle caster took up a body
 // within 56 px, and our levels' priests, Chief Engineers, Spirit Wolves and
 // kings raised the dead that way. Retail raises only by order, so the sim no
@@ -3373,32 +3414,54 @@ void Controller::logExploration(const tak::sim::World& world, uint32_t simTick) 
 // order 0x50b5d0 takes only modes 2 and 9.
 void Controller::reviveIdle(const tak::sim::World& world, std::vector<int>& assigned,
                             const CommandSink& sink) const {
+    std::optional<ReviveCall> stats;
+    if (reviveStats.on) stats.emplace();
     if (double(world.player(player_).allocation()) < 0.7 || world.atUnitCap(player_)) return;
     constexpr float kReach = 56.0f;
-    std::vector<int> claimed;
+    // The bodies a caster can take up, in world.units() order (the order every
+    // caster's search walks them, so an equal distance still goes to the
+    // earlier body). Gathered once, at the first idle caster, rather than
+    // every caster scanning every unit record: nothing this think changes
+    // them (a Resurrect only gives the caster its order). No body, no raise.
+    struct Body { float x, z; int id; const tak::sim::UnitType* type; bool claimed; };
+    std::vector<Body> bodies;
+    bool gathered = false;
     for (const auto& u : world.units()) {
-        if (!u.alive() || u.player != player_ || !u.type || u.underConstruction || u.embarked() ||
-            u.incapacitated() || u.buildSiteId || !idle(u) ||
+        // The type's caster flags before idle(), which walks the unit's orders:
+        // most units are no caster (every test here is a pure read).
+        if (!u.alive() || u.player != player_ || !u.type ||
             !(u.type->canResurrect || (u.type->canAnimate && u.type->animateType)) ||
+            u.underConstruction || u.embarked() || u.incapacitated() || u.buildSiteId || !idle(u) ||
             std::find(assigned.begin(), assigned.end(), u.id) != assigned.end()) continue;
-        int best = 0;
+        if (stats) ++stats->casters;
+        if (!gathered) {
+            gathered = true;
+            if (stats) stats->records += world.units().size();
+            for (const auto& c : world.units())
+                if (!c.alive() && c.type && !c.corpseFading && c.deadFor >= c.corpseAnimationTicks() &&
+                    c.deadFor < c.corpseUntil)
+                    bodies.push_back({c.x.toFloat(), c.z.toFloat(), c.id, c.type, false});
+            if (stats) stats->bodies += bodies.size();
+            if (bodies.empty()) return;
+        }
+        if (stats) stats->visits += bodies.size();
+        const float ux = u.x.toFloat(), uz = u.z.toFloat();
+        Body* best = nullptr;
         float bestD = kReach * kReach;
-        for (const auto& c : world.units()) {
-            if (c.alive() || !c.type || c.corpseFading || c.deadFor < c.corpseAnimationTicks() ||
-                c.deadFor >= c.corpseUntil) continue;
-            const float dx = c.x.toFloat() - u.x.toFloat(), dz = c.z.toFloat() - u.z.toFloat();
+        for (auto& c : bodies) {
+            const float dx = c.x - ux, dz = c.z - uz;
             const float d = dx * dx + dz * dz;
             if (d > bestD || (d == bestD && best)) continue;
             const uint8_t kind = world.reviveKind(u.id, c.id);
-            if (!kind || world.atTypeCap(player_, kind == 1 ? c.type : u.type->animateType) ||
-                std::find(claimed.begin(), claimed.end(), c.id) != claimed.end()) continue;
-            best = c.id; bestD = d;
+            if (!kind || world.atTypeCap(player_, kind == 1 ? c.type : u.type->animateType) || c.claimed) continue;
+            best = &c; bestD = d;
         }
         if (!best) continue;
         tak::net::Command c; c.kind = tak::net::Cmd::Resurrect; c.player = uint8_t(player_);
-        c.unitId = u.id; c.targetId = best;
+        c.unitId = u.id; c.targetId = best->id;
         sink(c);
-        claimed.push_back(best);
+        if (stats) ++stats->commands;
+        best->claimed = true;
         assigned.push_back(u.id);
     }
 }

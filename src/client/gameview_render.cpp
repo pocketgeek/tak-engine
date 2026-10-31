@@ -556,6 +556,10 @@
         // targets fall back to the direct geometry path.
         shadowSilhouetteAtlasActive_ = false;
         size_t shadowAtlasPackedUnits=0,shadowAtlasPackedPages=0,shadowAtlasReusedUnits=0;
+        // Telemetry: the frame's tile area incl. padding (what the pages must hold;
+        // the units examined before an early failure) and the page limit applied.
+        uint64_t shadowDemandPx=0;
+        size_t shadowPageLimit=0;
         const char* shadowAtlasFallback="not requested";
 #ifndef NDEBUG
         const bool verifyShadowCache=tak::devFlag("TAK_SHADOW_CACHE_VERIFY");
@@ -571,10 +575,22 @@
         // fragmented (demand <= 3/4 of capacity), at most once per 60 frames unless
         // nothing else fits -- or for free, when every tile of the frame is
         // redrawn anyway, or >= 90% are and the atlas is loose.
+        //
+        // Page count (perf follow-up K, client/shadowatlas.h): up to the base pages
+        // as before; past them (extended pages, up to maxPages, within three quarters
+        // of the GPU cap) only where the base pages cannot hold the frame's tiles --
+        // the four-page atlas fell back to direct shadows there -- or are full when a
+        // tile needs a cell -- it repacked every tile there. An extended page that
+        // empties is kept 8 s / 240 frames (not 2 s), so demand crossing a page
+        // boundary back and forth reuses it instead of creating and destroying it;
+        // extended pages yield under GPU pressure (the atlas is reset), after which
+        // none is added for 10 s / 300 frames.
         struct AtlasPolicyTimes {
             uint64_t retainMs=2000, retainFrames=30, emptyMs=2000, emptyFrames=60;
             uint64_t sparseMs=2000, sparseFrames=60, shrinkMs=5000, shrinkFrames=120, compactCooldown=60;
+            uint64_t extendedEmptyMs=8000, extendedEmptyFrames=240, cooldownMs=10000, cooldownFrames=300;
             size_t migratePerFrame=64;
+            size_t maxPages=tak::render::kShadowMaxPages;
             int pageMax=2048;
             bool repack=false;
         };
@@ -584,21 +600,30 @@
             // Debug: short windows and small pages, so a short verification run
             // expires, evicts, compacts, migrates, releases and shrinks
             // (render_shadow_atlas*); TAK_SHADOW_REPACK runs the former per-frame
-            // packer (a reference for capture comparisons, slot for slot).
+            // packer (a reference for capture comparisons, slot for slot: four pages
+            // at most, like that packer); TAK_SHADOW_PAGES_MAX=N sets the page count
+            // limit (4 = the base pages only, the pre-K limit).
             if (const char* v=tak::devEnv("TAK_SHADOW_ATLAS_DELAY_MS")) {
                 const uint64_t ms=uint64_t(std::max(0,std::atoi(v)));
                 t.retainMs=t.emptyMs=t.sparseMs=ms; t.shrinkMs=2*ms;
                 t.retainFrames=t.emptyFrames=t.sparseFrames=4; t.shrinkFrames=8; t.compactCooldown=8;
+                t.extendedEmptyMs=t.cooldownMs=4*ms; t.extendedEmptyFrames=t.cooldownFrames=16;
             }
             if (const char* v=tak::devEnv("TAK_SHADOW_PAGE_MAX")) t.pageMax=std::max(64,std::atoi(v));
+            if (const char* v=tak::devEnv("TAK_SHADOW_PAGES_MAX")) t.maxPages=size_t(std::clamp(std::atoi(v),1,64));
             t.repack=tak::devFlag("TAK_SHADOW_REPACK");
+            if (t.repack) t.maxPages=std::min(t.maxPages,tak::render::kShadowBasePages);
 #endif
             return t;
         }();
+        const size_t basePages=std::min(tak::render::kShadowBasePages,atlasTimes.maxPages);
+        const auto gpuBudget=[] {
+            return tak::render::ShadowGpuBudget{gpuvram::bytes(),gpuvram::cap(),gpuvram::tightened()};
+        };
         const uint64_t atlasNowMs=tak::devFlag("TAK_RENDER_STUDY") ? uint64_t(animClock_*1000) : SDL_GetTicks64();
         struct AtlasFrameCounts {
             uint64_t allocs=0,kept=0,freed=0,expired=0,evicted=0,compactions=0,freeCompactions=0,migrated=0,
-                     releases=0,shrinks=0,pageAllocs=0,failures=0;
+                     releases=0,shrinks=0,pageAllocs=0,failures=0,sheds=0,extendedReleases=0;
         } atlasCounts;
         auto& atlas=shadowAtlas_;
         using tak::render::RenderHandle;
@@ -627,6 +652,16 @@
             auto& pol=shadowAtlasPolicy_;
             ++pol.frame;
             if (atlasTimes.repack) return;   // the former packer kept everything until reset
+            // Extended pages yield when the GPU budget comes under pressure: the whole
+            // atlas goes (cells and stamps with it) and is rebuilt on base pages only
+            // -- or falls back -- until the cooldown ends.
+            if (atlas.livePages()>basePages && tak::render::shadowExtendedPressure(gpuBudget())) {
+                resetShadowAtlas();
+                pol.extendedAfterFrame=pol.frame+atlasTimes.cooldownFrames;
+                pol.extendedAfterMs=atlasNowMs+atlasTimes.cooldownMs;
+                ++atlasCounts.sheds;
+                return;
+            }
             std::vector<RenderHandle> expired;
             atlas.forEach([&](RenderHandle h,const tak::render::ShadowAllocation& a) {
                 if (pol.frame-a.lastFrame>atlasTimes.retainFrames && atlasNowMs-a.lastMs>atlasTimes.retainMs)
@@ -638,10 +673,13 @@
                 if (!atlas.pageLive(p)) continue;
                 if (atlas.pageCells(p)) { page.emptySinceFrame=0; continue; }
                 if (!page.emptySinceFrame) { page.emptySinceFrame=pol.frame; page.emptySinceMs=atlasNowMs; continue; }
-                if (pol.frame-page.emptySinceFrame>=atlasTimes.emptyFrames &&
-                    atlasNowMs-page.emptySinceMs>=atlasTimes.emptyMs) {
+                // Slots past the base pages hold the extended pages (low slots fill first).
+                const bool extended=p>=basePages;
+                if (pol.frame-page.emptySinceFrame>=(extended ? atlasTimes.extendedEmptyFrames : atlasTimes.emptyFrames) &&
+                    atlasNowMs-page.emptySinceMs>=(extended ? atlasTimes.extendedEmptyMs : atlasTimes.emptyMs)) {
                     destroyPage(p);
                     ++atlasCounts.releases;
+                    atlasCounts.extendedReleases+=extended;
                 }
             }
             if (!atlas.livePages() && shadowSilhouetteWidth_) resetShadowAtlas();
@@ -668,9 +706,18 @@
             int pageW=info.max_texture_width>0 ? std::min(atlasTimes.pageMax,info.max_texture_width) : atlasTimes.pageMax;
             int pageH=info.max_texture_height>0 ? std::min(atlasTimes.pageMax,info.max_texture_height) : atlasTimes.pageMax;
             if (pageW < 16 || pageH < 16) return fail("renderer target size too small");
-            constexpr size_t kMaxPages=4;
+            // Page count (perf follow-up K): a frame starts at the base pages unless the
+            // atlas holds extended pages already, and reaches past them where the base
+            // pages cannot hold its tiles or are full (below), while extended pages are
+            // allowed: not after a pressure shed (cooldown), not while the cap is
+            // tightened. Extended pages already held are never more than may be used.
+            auto& pol=shadowAtlasPolicy_;
+            const bool extendedAllowed=atlasTimes.maxPages>basePages && !gpuvram::tightened() &&
+                pol.frame>=pol.extendedAfterFrame && atlasNowMs>=pol.extendedAfterMs;
+            const size_t frameMaxPages=extendedAllowed ? atlasTimes.maxPages : basePages;
+            if (!force) shadowPageLimit=frameMaxPages;
             size_t pageBytes=size_t(pageW)*size_t(pageH)*4;
-            if (!pageBytes || pageBytes > SIZE_MAX/kMaxPages) return fail("invalid page allocation size");
+            if (!pageBytes || pageBytes > SIZE_MAX/atlasTimes.maxPages) return fail("invalid page allocation size");
 
             struct Work {
                 UnitGeom* geom;
@@ -718,6 +765,7 @@
                 const int height=std::max(1,int(bottomD)-pixelY);
                 if (width+2>pageW || height+2>pageH) return fail("one unit exceeds page size");
 
+                if (!force) shadowDemandPx+=uint64_t(width+2)*uint64_t(height+2);
                 work.push_back({&g,0,0,0,pixelX,pixelY,width,height});
             }
             if (work.empty()) return fail("no visible unit shadows");
@@ -740,7 +788,6 @@
                 }
                 return std::pair<int,int>{wW,wH};
             };
-            auto& pol=shadowAtlasPolicy_;
             if (!force) {
                 const auto [wantW,wantH]=pageDims(1);
                 if (wantW>shadowSilhouetteWidth_ || wantH>shadowSilhouetteHeight_) {
@@ -766,6 +813,7 @@
             pageW=shadowSilhouetteWidth_;pageH=shadowSilhouetteHeight_;
             pageBytes=size_t(pageW)*size_t(pageH)*4;
             const uint64_t pageArea=uint64_t(pageW)*uint64_t(pageH);
+            size_t pageLimit=atlas.livePages()>basePages ? std::max(frameMaxPages,atlas.livePages()) : basePages;
 
             // Cells. Each unit keeps the cell it had while its tile still fits (and
             // the cell is at most 1.5x the area a fresh one would take). Otherwise
@@ -802,15 +850,20 @@
             // (realizePages below). A frame that does not fit -- the allocator's own
             // or the former packer's attempt -- therefore creates no texture, and
             // the logical pages it added go with it (dropPendingPages). Otherwise a
-            // scene whose tiles fit four pages by area but not by packing would
+            // scene whose tiles fit the page limit by area but not by packing would
             // create pages, empty them on the failed repack, destroy them 2 s later
             // and create them again (VRAM churn while every frame falls back). A
             // pending page is a live allocator page whose texture is still null.
             bool budgetRefused=false;
             size_t pendingPages=0;
+            // A base page needs only to fit the cap; an extended page must leave a
+            // quarter of it (tak::render::shadowPageFits). Pending pages count as held.
             const auto createPage=[&]() -> bool {
-                if (atlas.livePages()>=kMaxPages) return false;
-                if (gpuAllocBlocked() || !gpuvram::wouldFit((pendingPages+1)*pageBytes)) { budgetRefused=true; return false; }
+                if (atlas.livePages()>=pageLimit) return false;
+                if (gpuAllocBlocked() || !tak::render::shadowPageFits(atlas.livePages(),pendingPages*pageBytes,pageBytes,
+                                                                      gpuBudget(),basePages)) {
+                    budgetRefused=true; return false;
+                }
                 const size_t p=size_t(atlas.addPage());
                 if (p>=shadowSilhouettePages_.size()) shadowSilhouettePages_.resize(p+1);
                 shadowSilhouettePages_[p]={};
@@ -905,12 +958,27 @@
                         needs.push_back(wi);
                     }
                 }
-                // More tile area than four full pages: no packer fits it (the former
-                // one included), so fall back at once instead of trying; the cells
-                // left unused expire and their pages go (the former code kept them).
-                // (Pages are already at the largest size here: they grow first
-                // whenever the frame's tiles exceed 3/4 of one page.)
-                if (tilePx>uint64_t(kMaxPages)*pageArea) return fail("tile area exceeds page limit");
+                // More tile area than the frame's page limit holds: no packer fits it
+                // (the former one included), so fall back at once instead of trying;
+                // the cells left unused expire and their pages go (the former code
+                // kept them). (Pages are already at the largest size here: they grow
+                // first whenever the frame's tiles exceed 3/4 of one page.) More than
+                // the base pages hold -- where the four-page atlas fell back at once --
+                // goes straight to the extended pages, when this frame may use them.
+                if (tilePx>uint64_t(frameMaxPages)*pageArea) return fail("tile area exceeds page limit");
+                if (tilePx>uint64_t(basePages)*pageArea) {
+                    // Past the base pages: only as many pages as the GPU budget admits
+                    // now (live ones included). A frame they cannot hold falls back at
+                    // once, without a packing attempt -- like the four-page atlas did.
+                    const auto budget=gpuBudget();
+                    const size_t live=atlas.livePages();
+                    size_t affordable=live;
+                    while (affordable<frameMaxPages && !gpuAllocBlocked() &&
+                           tak::render::shadowPageFits(affordable,(affordable-live)*pageBytes,pageBytes,budget,basePages))
+                        ++affordable;
+                    if (tilePx>uint64_t(affordable)*pageArea) return fail("VRAM budget reached");
+                    pageLimit=std::max(pageLimit,frameMaxPages);
+                }
                 // After a frame whose repack did not fit, go straight to the former
                 // packer (its cost, not three attempts) until a frame fits again.
                 const bool failedLast=pol.failFrame && pol.failFrame+1==frame;
@@ -957,6 +1025,11 @@
                             // repack rather than grow, at most once per cooldown.
                             const bool fragmented=demandPx*4<=uint64_t(atlas.livePages())*pageArea*3;
                             if (fragmented && frame-pol.lastCompactFrame>=atlasTimes.compactCooldown) { compact=true; break; }
+                            // Full (perf follow-up K): grow past the base pages, where the
+                            // four-page atlas could only repack -- every frame a tile did
+                            // not fit, so near its limit most frames relocated and redrew
+                            // every tile. A fragmented atlas still repacks (below).
+                            if (!fragmented) pageLimit=std::max(pageLimit,frameMaxPages);
                             if (createPage()) h=atlas.allocate(cellW(w),cellH(w),false);
                         }
                         if (!h.valid()) { compact=true; break; }
@@ -1035,7 +1108,19 @@
                         }
                         return true;
                     };
-                    if (!(!atlasTimes.repack && !failedLast && !allRedrawn && pass(true)) && !pass(false))
+                    const auto repackAll=[&] {
+                        return (!atlasTimes.repack && !failedLast && !allRedrawn && pass(true)) || pass(false);
+                    };
+                    bool packed=repackAll();
+                    if (!packed && pageLimit<frameMaxPages && !budgetRefused) {
+                        // The base pages cannot hold this frame (the four-page atlas fell
+                        // back here): the same repack with the extended pages. (After a
+                        // budget refusal an extended page, which must leave a quarter of
+                        // the cap, would be refused too.)
+                        pageLimit=frameMaxPages;
+                        packed=repackAll();
+                    }
+                    if (!packed)
                         return failAllocation(budgetRefused ? "VRAM budget reached" : "page limit reached");
                 }
                 // Every cell is placed: create the GPU targets of the pages added this
@@ -1418,6 +1503,8 @@
             renderStats_.add(RS::ShadowTilesReused, shadowAtlasReusedUnits);
             renderStats_.add(RS::ShadowPages, shadowAtlasPackedPages);
             renderStats_.add(RS::ShadowFallback, shadowSilhouetteAtlasActive_ ? 0 : 1);
+            renderStats_.set(RS::ShadowDemandPx, shadowDemandPx);
+            renderStats_.set(RS::ShadowPageLimit, shadowPageLimit);
             if (renderStats_.enabled()) {
                 renderStats_.add(RS::ShadowCellAllocs, atlasCounts.allocs);
                 renderStats_.add(RS::ShadowCellKept, atlasCounts.kept);
@@ -1443,6 +1530,8 @@
                 renderStats_.set(RS::ShadowAtlasTilePx, shadowSilhouetteAtlasActive_ ? tilePx : 0);
                 renderStats_.set(RS::ShadowAtlasShelfFreePx, st.shelfFreePx);
                 renderStats_.set(RS::ShadowAtlasGpuBytes, st.capacityPx*4);
+                renderStats_.set(RS::ShadowExtendedPages, st.pages>basePages ? st.pages-basePages : 0);
+                renderStats_.add(RS::ShadowPressureSheds, atlasCounts.sheds);
             }
 #ifndef NDEBUG
             shadowVerify_.allocs+=atlasCounts.allocs;
@@ -1450,6 +1539,17 @@
             shadowVerify_.migrated+=atlasCounts.migrated;shadowVerify_.evicted+=atlasCounts.evicted;
             shadowVerify_.pageReleases+=atlasCounts.releases;shadowVerify_.shrinks+=atlasCounts.shrinks;
             shadowVerify_.pageAllocs+=atlasCounts.pageAllocs;shadowVerify_.failures+=atlasCounts.failures;
+            // Perf follow-up K: frames drawn with extended pages, the most pages held,
+            // pressure sheds, and frames with shadow tiles that fell back to direct
+            // shadows (any reason).
+            shadowVerify_.extendedFrames+=shadowSilhouetteAtlasActive_ && atlas.livePages()>basePages;
+            shadowVerify_.maxPages=std::max<uint64_t>(shadowVerify_.maxPages,atlas.livePages());
+            shadowVerify_.sheds+=atlasCounts.sheds;shadowVerify_.extendedReleases+=atlasCounts.extendedReleases;
+            shadowVerify_.fallbacks+=!shadowSilhouetteAtlasActive_ && shadowDemandPx>0;
+            if (atlasCounts.sheds) { shadowVerify_.lastShedFrame=shadowAtlasPolicy_.frame; shadowVerify_.regrowGap=0; }
+            else if (shadowVerify_.lastShedFrame && !shadowVerify_.regrowGap && shadowSilhouetteAtlasActive_ &&
+                     atlas.livePages()>basePages)
+                shadowVerify_.regrowGap=shadowAtlasPolicy_.frame-shadowVerify_.lastShedFrame;
 #endif
             if(shadowSilhouetteAtlasActive_ && tak::devFlag("TAK_SHADOW_CACHE_VERIFY")) {
                 const auto readPages=[&] {
@@ -1509,7 +1609,15 @@
                 lastState=state;lastUnits=shadowAtlasPackedUnits;lastPages=shadowAtlasPackedPages;
                 lastReason=shadowAtlasFallback;
             }
+        } else if (atlas.livePages()>basePages) {
+            // Perf follow-up K: with the shadow pass off (Options SHADOWS) no frame
+            // maintains the atlas, so nothing would expire, release or shed its
+            // extended pages: give them back at once. (The base pages stay, as before.)
+            resetShadowAtlas();
         }
+#ifndef NDEBUG
+        shadowVerify_.heldPages=atlas.livePages();
+#endif
         if(tak::devFlag("TAK_CACHE_STATS") && ++geometryFrame_%120==0) {
             size_t reused=0;
             for(size_t i=0;i<visUnits_.size();++i)reused+=visGeom(i).reused;
@@ -2220,6 +2328,7 @@
                 if (tak::render::buildGhostDrawn(u, i, site)) {
                     const auto& o = u.orders[i];
                     any = true;
+                    if (draw) renderStats_.add(RS::GhostsQueued);
                     if (draw) drawGhostAt(o.buildType,
                         o.buildRectangle ? o.buildX.toFloat() : o.x.toFloat(),
                         o.buildRectangle ? o.buildZ.toFloat() : o.z.toFloat() - float(o.buildType->footZ) * 8 - 24);
@@ -2227,6 +2336,10 @@
             return any;
         };
         {
+            // Two names for the same scope: t_ghosts (measurement B's interactive cases)
+            // and t_build_ghosts (workstream E's ghost scenes).
+            tak::render::ScopedPhase ghostPhase(renderStats_, RP::Ghosts);
+            tak::render::ScopedPhase buildGhostPhase(renderStats_, RP::BuildGhosts);
             const Frame& frame = front();
 #ifndef NDEBUG
             if (unitIndexVerify_) {
@@ -2244,7 +2357,28 @@
             } else
 #endif
             for (uint32_t i : frame.buildGhostUnits) buildGhosts(*frame.live[i], true);
+#ifndef NDEBUG
+            // TAK_GHOST_ALL_TYPES (render study, perf follow-up E): also a ghost of EVERY
+            // registry type each frame, on a grid over the view and 30% around it (on
+            // screen, straddling the edges, off screen), alternately red-washed. With
+            // TAK_GHOST_VERIFY this puts every model, including those textured from
+            // outside the colour atlas, through the reference check.
+            static const bool allTypes = tak::devFlag("TAK_GHOST_ALL_TYPES");
+            if (allTypes) {
+                const float zmA = mapView_.zoom();
+                const float x0 = mapView_.offX() - 0.3f * float(mvw) / zmA, x1 = mapView_.offX() + 1.3f * float(mvw) / zmA;
+                const float z0 = mapView_.offY() - 0.3f * float(winH) / zmA, z1 = mapView_.offY() + 1.3f * float(winH) / zmA;
+                const size_t cols = size_t(std::max(1.0, std::ceil(std::sqrt(double(registry_.types().size())))));
+                size_t k = 0;
+                for (const auto& [id, type] : registry_.types()) {
+                    drawGhostAt(&type, x0 + (x1 - x0) * (float(k % cols) + 0.37f) / float(cols),
+                                z0 + (z1 - z0) * (float(k / cols) + 0.61f) / float(cols), k % 2 == 1);
+                    ++k;
+                }
+            }
+#endif
         }
+        renderStats_.set(tak::render::Counter::GhostCacheBytes, ghostGeometryBytes_);
 
         // Projectiles: drawn per weapon family (only where visible).
         float zm = mapView_.zoom();
@@ -4499,10 +4633,13 @@
         shadowCellStamps_.clear();shadowCellStampValid_.clear();
         // The frame counter and the failure mark survive: while frames keep falling
         // back (their pages released, so the atlas resets), the next one still goes
-        // straight to the former packer -- one attempt, as before F.
-        const uint64_t frame=shadowAtlasPolicy_.frame,failFrame=shadowAtlasPolicy_.failFrame;
+        // straight to the former packer -- one attempt, as before F. So does the
+        // extended-page cooldown after a pressure shed (perf follow-up K).
+        const auto kept=shadowAtlasPolicy_;
         shadowAtlasPolicy_={};
-        shadowAtlasPolicy_.frame=frame;shadowAtlasPolicy_.failFrame=failFrame;
+        shadowAtlasPolicy_.frame=kept.frame;shadowAtlasPolicy_.failFrame=kept.failFrame;
+        shadowAtlasPolicy_.extendedAfterFrame=kept.extendedAfterFrame;
+        shadowAtlasPolicy_.extendedAfterMs=kept.extendedAfterMs;
     }
 
     // Workstream H: the retained body vertex arena (client/vertexarena.h).
@@ -4612,6 +4749,7 @@
         fogSubmit_.clear();fogUpload_.clear();fogTexGen_=~0u;
         miniFogUpload_.clear();miniFogTexGen_=~0u;
         distantModelCache_.clear();
+        ghostGeometry_.clear(); ghostGeometryBytes_ = 0;   // keyed on the atlases destroyed below
         geomEntries_.makeAllCold();   // owners stay; every entry rebuilds against the new targets
         for (SDL_Texture* t : atlasTex_) if (t) gpuvram::destroy(t);
         atlasTex_.clear();
@@ -4933,12 +5071,14 @@
                 bodySubmit_.draw(ren_,texture,shadowCompositeBatch_,!tak::devFlag("TAK_SHADOW_SDL_SUBMIT"));
                 noteNeed(Retained::ShadowComposite,shadowCompositeBatch_);
                 shadowCompositeBatch_.clear();
+                renderStats_.add(tak::render::Counter::ShadowCompositeRuns);
             }
         };
         for(const auto* g:shadows) {
             if(!shadowSilhouetteAtlasActive_ || !g->shadowAtlasPage || tak::devFlag("TAK_SHADOW_BATCH_OFF")) {
                 flush();texture=nullptr;drawUnitShadow(*g);
                 renderStats_.add(tak::render::Counter::ShadowDirectUnits);
+                renderStats_.add(tak::render::Counter::ShadowCompositeRuns);
                 continue;
             }
             if(texture!=g->shadowAtlasPage) {flush();texture=g->shadowAtlasPage;}
@@ -7693,20 +7833,147 @@
         drawModelTriangles();
     }
 
+    // The model-local ghost of `model` under the current atlas (see GhostGeometry):
+    // filled on first use and whenever the atlas or a generation it was made under
+    // changed. Collection and sort are drawGhostAt's former code, unchanged.
+    const GameView::GhostGeometry& GameView::ghostGeometry(const tak::tdo::Model* model,
+                                                           SDL_Texture* atlas) {
+        // A renderer reset or an asset reload makes every entry stale at once.
+        if (ghostRendererGen_ != rendererGeneration_.current() ||
+            ghostAssetGen_ != assetGeneration_.current() || ghostGeometry_.size() > 256) {
+            ghostGeometry_.clear();
+            ghostGeometryBytes_ = 0;
+            ghostRendererGen_ = rendererGeneration_.current();
+            ghostAssetGen_ = assetGeneration_.current();
+        }
+        auto [it, fresh] = ghostGeometry_.try_emplace(model);
+        GhostGeometry& g = it->second;
+        if (!fresh && g.atlas == atlas && g.atlasW == atlasW_ && g.atlasH == atlasH_) return g;
+        ghostGeometryBytes_ -= g.tris.capacity() * sizeof(Tri);
+        renderStats_.add(tak::render::Counter::GhostCollects);
+        g.tris.clear();
+        workerScratch().unpackedTextures = 0;
+        collect(g.tris, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
+        std::stable_sort(g.tris.begin(), g.tris.end(),
+                  [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+        g.atlas = atlas; g.atlasW = atlasW_; g.atlasH = atlasH_;
+        g.exact = workerScratch().unpackedTextures == 0;
+        g.empty = g.tris.empty();
+        g.minX = g.minY = 0; g.maxX = g.maxY = 0;
+        if (!g.empty) {
+            g.minX = g.maxX = g.tris[0].v[0].position.x;
+            g.minY = g.maxY = g.tris[0].v[0].position.y;
+            for (const auto& t : g.tris) for (const auto& v : t.v) {
+                g.minX = std::min(g.minX, v.position.x); g.maxX = std::max(g.maxX, v.position.x);
+                g.minY = std::min(g.minY, v.position.y); g.maxY = std::max(g.maxY, v.position.y);
+            }
+        }
+        // Only the bounds of an inexact model are reusable: its triangles are
+        // collected again for every ghost drawn.
+        if (!g.exact) std::vector<Tri>().swap(g.tris);
+        ghostGeometryBytes_ += g.tris.capacity() * sizeof(Tri);
+        return g;
+    }
+
     void GameView::drawGhostAt(const tak::sim::UnitType* type, float x, float z,
                      bool invalid) {
+        renderStats_.add(tak::render::Counter::GhostDraws);
         const tak::tdo::Model* model = ghostModel(type->id);
         if (!model) return;
-        noteNeed(Retained::ModelTris, tris_);
-        tris_.clear();
+        renderStats_.add(tak::render::Counter::GhostPreps);
         SDL_Texture* atlas = atlasFor(colorSlot_[localPlayer_ & 7]);
-        collect(tris_, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
-        std::stable_sort(tris_.begin(), tris_.end(),
-                  [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+#ifndef NDEBUG
+        static const bool reference = tak::devFlag("TAK_GHOST_REFERENCE");
+        static const bool verify = tak::devFlag("TAK_GHOST_VERIFY");
+#else
+        constexpr bool reference = false;
+#endif
+        const GhostGeometry* g = reference ? nullptr : &ghostGeometry(model, atlas);
         float zm = mapView_.zoom();
         // The ghost lifts onto the relief exactly like the finished unit/building will.
         float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
         float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm;
+        // Wholly outside the clip (the world viewport; else the render viewport), the
+        // ghost draws no pixel: skip it before any triangle work. The placed bounds
+        // are the model-local bounds under the same placement (monotone in each
+        // coordinate); one pixel of margin.
+        SDL_Rect clip{};
+        if (SDL_RenderIsClipEnabled(ren_)) SDL_RenderGetClipRect(ren_, &clip);
+        else { SDL_RenderGetViewport(ren_, &clip); clip.x = clip.y = 0; }
+        const auto outside = [&](float x0, float y0, float x1, float y1, float margin) {
+            const float sx0 = x0 * zm + ax, sx1 = x1 * zm + ax;
+            const float sy0 = y0 * zm + ay, sy1 = y1 * zm + ay;
+            return std::max(sx0, sx1) < float(clip.x) - margin ||
+                   std::min(sx0, sx1) > float(clip.x + clip.w) + margin ||
+                   std::max(sy0, sy1) < float(clip.y) - margin ||
+                   std::min(sy0, sy1) > float(clip.y + clip.h) + margin;
+        };
+        const bool culled = g && (g->empty || outside(g->minX, g->minY, g->maxX, g->maxY, 1.0f));
+#ifndef NDEBUG
+        if (verify && g) {
+            // The reference path: drawGhostAt's former collection and sort.
+            ghostVerifyTris_.clear();
+            collect(ghostVerifyTris_, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
+            std::stable_sort(ghostVerifyTris_.begin(), ghostVerifyTris_.end(),
+                      [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+            const auto fail = [&](const char* what) {
+                throw std::runtime_error(std::string("ghost verify: ") + what + " (" + type->id + ")");
+            };
+            if (ghostVerifyTris_.empty() != g->empty) fail("emptiness differs from the reference");
+            float minX = 0, minY = 0, maxX = 0, maxY = 0;
+            if (!ghostVerifyTris_.empty()) {
+                minX = maxX = ghostVerifyTris_[0].v[0].position.x;
+                minY = maxY = ghostVerifyTris_[0].v[0].position.y;
+            }
+            for (const auto& t : ghostVerifyTris_) for (const auto& v : t.v) {
+                minX = std::min(minX, v.position.x); maxX = std::max(maxX, v.position.x);
+                minY = std::min(minY, v.position.y); maxY = std::max(maxY, v.position.y);
+            }
+            if (std::bit_cast<uint32_t>(minX) != std::bit_cast<uint32_t>(g->minX) ||
+                std::bit_cast<uint32_t>(maxX) != std::bit_cast<uint32_t>(g->maxX) ||
+                std::bit_cast<uint32_t>(minY) != std::bit_cast<uint32_t>(g->minY) ||
+                std::bit_cast<uint32_t>(maxY) != std::bit_cast<uint32_t>(g->maxY))
+                fail("bounds differ from the reference");
+            ++ghostVerify_.checked;
+            if (culled) {
+                // No reference vertex may land inside the clip.
+                if (!ghostVerifyTris_.empty() && !outside(minX, minY, maxX, maxY, 0.0f))
+                    fail("a culled ghost reaches the clip");
+                ++ghostVerify_.culled;
+            } else if (g->exact) {
+                if (g->tris.size() != ghostVerifyTris_.size()) fail("triangle count differs from the reference");
+                for (size_t i = 0; i < g->tris.size(); ++i) {
+                    const Tri& a = g->tris[i];
+                    const Tri& b = ghostVerifyTris_[i];
+                    if (a.tex != b.tex || std::memcmp(a.v, b.v, sizeof a.v) != 0 ||
+                        std::bit_cast<uint32_t>(a.depth) != std::bit_cast<uint32_t>(b.depth))
+                        fail("retained triangles differ from the reference");
+                }
+                ++ghostVerify_.hits;
+            } else {
+                ++ghostVerify_.inexact;
+            }
+        }
+#endif
+        if (culled) {
+            renderStats_.add(tak::render::Counter::GhostCulled);
+            return;
+        }
+        noteNeed(Retained::ModelTris, tris_);
+        if (g && g->exact) {
+            tris_.assign(g->tris.begin(), g->tris.end());
+            renderStats_.add(tak::render::Counter::GhostCacheHits);
+        } else {
+            tris_.clear();
+            collect(tris_, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
+            std::stable_sort(tris_.begin(), tris_.end(),
+                      [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+            renderStats_.add(tak::render::Counter::GhostCollects);
+#ifndef NDEBUG
+            if (verify && g) ++ghostVerify_.collected;
+#endif
+        }
+        renderStats_.add(tak::render::Counter::GhostTris, tris_.size());
         for (auto& t : tris_) for (auto& v : t.v) {
             v.position.x = v.position.x * zm + ax;
             v.position.y = v.position.y * zm + ay;
@@ -7791,6 +8058,7 @@
                     arect = packed;
                 } else {
                     // Fallback for any texture not packed into the atlas.
+                    ++workerScratch().unpackedTextures;
                     auto it = textures_.find(name);
                     if (it != textures_.end() && !it->second.empty()) {
                         // Unpacked previews/projectiles use the same animation

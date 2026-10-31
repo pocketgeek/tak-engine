@@ -8,6 +8,7 @@
 #include "sim/retailinstantcorpse.h"
 #include "sim/retailsplash.h"
 #include "sim/retailairattack.h"
+#include "sim/retailviewcounts.h"
 
 #include <type_traits>
 
@@ -27,6 +28,7 @@
 #include "tdo/tdo.h"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <cmath>
 #include <chrono>
@@ -61,7 +63,8 @@ static thread_local double g_exploreMs = 0;   // navigation exploration; part of
 static thread_local double g_prologueMs = 0, g_compactMs = 0;
 #ifndef NDEBUG
 // TAK_VERIFY_LISTS (debug): every tick, each id list and reused count that
-// stands in for a full walk over units_ (WE E2.5) is checked against that walk.
+// stands in for a full walk over units_ (WE E2.5) is checked against that walk,
+// and the exploration block summaries against a rebuild from the plane.
 static bool verifyLists() {
     static const bool on = std::getenv("TAK_VERIFY_LISTS") != nullptr;
     return on;
@@ -1377,6 +1380,7 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
     explorationHeights_=retailExplorationHeights(w,h,uint8_t(seaLevel),
         [&](int x,int z){return heights_[size_t(z)*w+x];});
     navigationExplored_.assign(explorationHeights_.size(),0);
+    explorationBlocks_.clear();   // rebuilt for the new plane by the next exploration pass
     restoredNavigationViewer_=-1;
     for (auto& u:units_) { u.sightFootprint={};u.viewSight={};u.viewPlayer=-1; }
     viewCounts_.clear();deathSights_.clear();
@@ -10399,6 +10403,10 @@ void World::addFeature(int id, float x, float z, float energy,
     if (placeOnMap && !placeMapFeature(f)) return;
     featureIdx_[id] = features_.size();
     features_.push_back(f);
+    if (const size_t words = (features_.size() + 63) / 64; burningMarks_.size() < words) {
+        burningMarks_.resize(words, 0);
+        fadingMarks_.resize(words, 0);
+    }
     if (placeOnMap && blocks) blockCells(footprintOrigin(f.x,fx),footprintOrigin(f.z,fz),fx,fz,true);
     bumpFeatGen();   // a new feature needs a visual instance
 }
@@ -10427,6 +10435,22 @@ bool World::featureAliveAt(float x, float z) const {
 // subsection which no shipped feature has, so burning never damages units, and
 // neither does ours. Match setup resolves authored burn lifetimes identically
 // for headless servers and clients, independent of rendering quality.
+
+// Walk the set bits of `marks` in ascending index order. The current word is
+// re-read after every visit, so a bit the visit sets AHEAD of the cursor is
+// reached later in the same walk and one set behind it is not -- exactly what
+// a plain index loop over every feature does with state it changes as it goes.
+template <class Visit>
+static void forEachMarked(std::vector<uint64_t>& marks, Visit&& visit) {
+    for (size_t w = 0; w < marks.size(); ++w) {
+        uint64_t behind = 0;   // bits of this word at or below the cursor
+        while (const uint64_t ahead = marks[w] & ~behind) {
+            const int b = std::countr_zero(ahead);
+            behind = b == 63 ? ~uint64_t(0) : (uint64_t(2) << b) - 1;
+            visit(w * 64 + size_t(b), marks[w], uint64_t(1) << b);
+        }
+    }
+}
 
 // Swap a feature IN PLACE to another stage of its chain (featureburnt on
 // burn-out, featuredead on destruction; retail places the replacement neutral
@@ -10466,6 +10490,13 @@ void World::igniteFeature(Feature& f) {
         std::fprintf(stderr, "ignite %s at %.0f,%.0f (spark %d)\n",
                      ft.name.c_str(), f.x.toFloat(), f.z.toFloat(), ft.sparkTicks);
     f.burn = 1;
+    // Mark its index for tickBurning. Indices are stable: features_ is never
+    // reordered, only addFeature appends (rubble can arrive mid-fire, and it
+    // grows the marks with it), and no burn path adds features.
+    const size_t index = size_t(&f - features_.data());
+    uint64_t& word = burningMarks_[index / 64];
+    const uint64_t bit = uint64_t(1) << (index % 64);
+    if (!(word & bit)) { word |= bit; ++burningMarked_; }
     f.burnStarted = tickCounter_;
     f.burnSequence = ++burnSequence_;
     bumpFeatGen();   // ignition edge: flame overlay + smoke start
@@ -10476,16 +10507,23 @@ void World::igniteFeature(Feature& f) {
 }
 
 void World::tickBurning() {
-    if (featTypes_.empty()) return;
-    // Index-based: igniteFeature never reallocates (spread only flips state).
-    for (size_t i = 0; i < features_.size(); ++i) {
+    if (featTypes_.empty() || !burningMarked_) return;   // no fire anywhere: nothing to visit
+    // The marked features in index order, as the full pass over features_ took
+    // them: a spark that ignites a HIGHER index burns later in this same tick,
+    // a LOWER one first burns next tick (a tick-start snapshot of the marks
+    // would get the first case wrong). Index-based: igniteFeature never
+    // reallocates (spread only flips state).
+    forEachMarked(burningMarks_, [&](size_t i, uint64_t& word, uint64_t bit) {
         Feature& f = features_[i];
-        if (!f.alive || !f.burn) continue;
+        // Put out (a swap) or removed while burning: only igniteFeature can
+        // make it burn again, and that marks it afresh.
+        if (!f.alive || !f.burn) { word &= ~bit; --burningMarked_; return; }
         // Native feature clocks retire before evaluating this tick's spark.
         if (f.burnLeft <= 1) {
             f.burnLeft = 0;
             swapFeature(f, featTypes_[size_t(f.type)].burntType);
-            continue;
+            word &= ~bit; --burningMarked_;   // swapFeature put it out
+            return;
         }
         --f.burnLeft;
         // Spread fires ONCE per burning feature (retail slot+0x44 never reloads):
@@ -10508,7 +10546,7 @@ void World::tickBurning() {
                     if (burnRand(100) < nft.spreadChance) igniteFeature(nf);
                 }
         }
-    }
+    });
 }
 
 void World::reclaimArea(int builderId,float x0,float z0,float x1,float z1,bool queue) {
@@ -10846,21 +10884,27 @@ void World::finishReclaim(Unit&,int target) {
     Feature& f=features_[it->second];
     if (!f.fadeLeft) ++fadingFeatures_;
     f.fadeLeft=kReclaimFadeTicks;
+    fadingMarks_[it->second/64]|=uint64_t(1)<<(it->second%64);
     bumpFeatGen();   // no longer a reclaim target: the viewer's cursor follows
 }
 
 void World::tickFeatureFades() {
     if (!fadingFeatures_) return;
-    for (auto& f:features_) {
-        if (!f.fadeLeft || --f.fadeLeft) continue;
+    // Only the marked features, in index order (a stale mark: swapFeature
+    // ended that fade early).
+    forEachMarked(fadingMarks_,[&](size_t i,uint64_t& word,uint64_t bit) {
+        Feature& f=features_[i];
+        if (!f.fadeLeft) { word&=~bit;return; }
+        if (--f.fadeLeft) return;
+        word&=~bit;
         --fadingFeatures_;
-        if (!f.alive) continue;
+        if (!f.alive) return;
         f.alive=false;
         removeMapFeature(footprintOrigin(f.x,f.fx),footprintOrigin(f.z,f.fz));
         bumpFeatGen();   // reclaimed away: stop drawing it
         if (f.blocks)   // free the ground cells it occupied (setupMatch blocked nav_)
             blockCells(footprintOrigin(f.x,f.fx),footprintOrigin(f.z,f.fz),f.fx,f.fz,false);
-    }
+    });
 }
 
 // Retail's revive work counter (icd 0x406c2e, 0x4201e9): 65536 x buildtime /
@@ -13850,6 +13894,17 @@ void World::tickAuras(float dt) {
     // over the same wall-clock ~0.5s after its projector stops refreshing it.
     uint32_t stride = units_.size() > 8000 ? 3u : 1u;
     if (tickCounter_ % stride != 0) return;   // buffs held between refreshes
+    // The emitters alone, in unit order (UnitClassLists); see tickHealAuras.
+    syncUnitLists();
+    const auto& emitters = unitLists_.emitters;
+    // A big world folds the auras per unit, tile by tile (applyAuraTiles): on the
+    // SimPool when it has workers and a few emitters, else inline. A small one keeps
+    // the serial walk below. The sources go first: they read no buff, and the
+    // relax then runs straight into the tiles, with no serial gap for the
+    // workers to sleep in.
+    const bool tiled = units_.size() >= kPostMinParallel;
+    const bool pooled = tiled && emitters.size() >= kAuraMinEmitters && simPool().workers();
+    const bool sources = tiled && prepareAuraSources();
     // Every unit's buffs relax back toward 1.0; aura projectors then refresh the
     // units in their radius, so a buff holds while in range and fades on leaving.
     float relax = std::min(1.0f, 2.0f * dt * float(stride));   // catch up skipped ticks
@@ -13869,13 +13924,12 @@ void World::tickAuras(float dt) {
         TAK_PASS();
         relaxBuffs(0, units_.size());
     }
-    // The emitters alone, in unit order (UnitClassLists); see tickHealAuras.
-    syncUnitLists();
     // Per emitter, in forEachNear order, every unit it refreshes and the
     // value. The values depend only on positions, owners and liveness, none
-    // of which the pass changes, so they can be gathered first and applied
-    // after, in the serial order (a unit both buffed and debuffed takes a max
-    // and a min, which do not commute).
+    // of which the pass changes, so a unit's result is the fold of the max
+    // (buff) and min (debuff) ops that reach it, in emitter-then-aura order
+    // (a unit both buffed and debuffed takes a max and a min, which do not
+    // commute). applyAuraTiles folds them per unit.
     auto gather = [&](const Unit& s, auto&& hit) {
         if (!s.alive() || s.embarked() || s.underConstruction || !s.active || s.incapacitated())
             return;
@@ -13903,42 +13957,191 @@ void World::tickAuras(float dt) {
         float& buff = armor ? e.armBuff : e.atkBuff;
         buff = affectsEnemy ? std::min(buff, amt) : std::max(buff, amt);
     };
-    const auto& emitters = unitLists_.emitters;
-    if (units_.size() >= kPostMinParallel && emitters.size() >= 2 * kAuraEmitterChunk && simPool().workers()) {
-        // WE E4.3 (P6): the gathers on the SimPool, a few emitters per chunk.
-        const size_t chunks = (emitters.size() + kAuraEmitterChunk - 1) / kAuraEmitterChunk;
-        if (auraChunks_.size() < chunks) auraChunks_.resize(chunks);
-        simPool().forChunks(emitters.size(), kAuraEmitterChunk, 0, [&](size_t k, size_t begin, size_t end, unsigned) {
-            auto& hits = auraChunks_[k];
-            hits.clear();
-            for (size_t i = begin; i < end; ++i)
-                gather(*unitNoRepair(emitters[i]), [&](uint32_t idx, bool armor, bool affectsEnemy, float amt) {
-                    hits.push_back({idx, uint8_t(armor | (affectsEnemy << 1)), amt});
-                });
-        });
+    if (tiled) {
 #ifndef NDEBUG
+        // TAK_VERIFY_POOL: the serial fold, on copies of the relaxed buffs.
+        std::vector<std::pair<float, float>> serial;
         if (verifyPool()) {
-            std::vector<AuraHit> serial;
+            serial.reserve(units_.size());
+            for (const Unit& u : units_) serial.emplace_back(u.atkBuff, u.armBuff);
             for (const int id : emitters)
                 gather(*unit(id), [&](uint32_t idx, bool armor, bool affectsEnemy, float amt) {
-                    serial.push_back({idx, uint8_t(armor | (affectsEnemy << 1)), amt});
+                    float& buff = armor ? serial[idx].second : serial[idx].first;
+                    buff = affectsEnemy ? std::min(buff, amt) : std::max(buff, amt);
                 });
-            size_t at = 0;
-            for (size_t k = 0; k < chunks; ++k)
-                for (const AuraHit& h : auraChunks_[k]) {
-                    if (at >= serial.size() || serial[at].index != h.index || serial[at].flags != h.flags ||
-                        std::bit_cast<uint32_t>(serial[at].amt) != std::bit_cast<uint32_t>(h.amt))
-                        poolMismatch("tickAuras gathers", tickCounter_);
-                    ++at;
-                }
-            if (at != serial.size()) poolMismatch("tickAuras gathers", tickCounter_);
         }
 #endif
-        for (size_t k = 0; k < chunks; ++k)
-            for (const AuraHit& h : auraChunks_[k]) apply(h.index, h.flags & 1, h.flags & 2, h.amt);
+        if (sources) applyAuraTiles(pooled);
+#ifndef NDEBUG
+        if (verifyPool())
+            for (size_t i = 0; i < units_.size(); ++i)
+                if (std::bit_cast<uint32_t>(units_[i].atkBuff) != std::bit_cast<uint32_t>(serial[i].first) ||
+                    std::bit_cast<uint32_t>(units_[i].armBuff) != std::bit_cast<uint32_t>(serial[i].second))
+                    poolMismatch("tickAuras recipients", tickCounter_);
+#endif
     } else {
         for (const int id : emitters) gather(*unit(id), apply);
     }
+}
+
+// tickAuras for a big world (perf follow-up L; it replaced the WE E4.3 pooled
+// gathers, whose AuraHit lists were applied serially). The serial pass walks
+// each aura's forEachNear square and folds a max or min into every unit it
+// reaches. A unit is in one grid cell, so an aura reaches it at most once, and
+// its result is the fold of the auras that do, in emitter-then-aura order.
+// prepareAuraSources lists every aura once, in that order, with the cells its
+// scan covers (scanNear's float arithmetic and clamping), bucketed by tiles of
+// 8x8 grid cells; applyAuraTiles gives each pool chunk whole tiles, whose
+// cells' unit chains -- the membership forEachNear reads, so a unit spawned
+// since rebuildGrid (a revive in tickAbilities) is still no recipient -- it
+// walks, folding each unit's auras in list order. One chunk writes a unit; it
+// reads only the sources, positions, owners and liveness, which nothing writes
+// here. Each unit is read once, not once per aura over it. False when no aura
+// reaches a unit's cell.
+bool World::prepareAuraSources() {
+    auraSources_.clear();
+    auraTiles_.clear();
+    if (gW_ <= 0) return false;   // an empty grid: forEachNear visits nothing
+    // Which owners an aura reaches: (!allied(p, owner)) == affectsEnemy, per owner and side.
+    uint64_t sideMask[2][64], sideKnown[2] = {0, 0};
+    auto sides = [&](int owner, bool affectsEnemy) {
+        auto build = [&] {
+            uint64_t m = 0;
+            for (int p = 0; p < 64; ++p)
+                if (!allied(p, owner) == affectsEnemy) m |= uint64_t(1) << p;
+            return m;
+        };
+        if (unsigned(owner) >= 64) return build();
+        if (!(sideKnown[affectsEnemy] >> owner & 1)) {
+            sideMask[affectsEnemy][owner] = build();
+            sideKnown[affectsEnemy] |= uint64_t(1) << owner;
+        }
+        return sideMask[affectsEnemy][owner];
+    };
+    for (const int id : unitLists_.emitters) {
+        const Unit& s = *unitNoRepair(id);
+        if (!s.alive() || s.embarked() || s.underConstruction || !s.active || s.incapacitated())
+            continue;
+        for (const Aura& a : s.type->auras) {
+            if (a.kind == Aura::Kind::Joy || a.radius <= 0) continue;
+            // forEachNear(s.x.toFloat(), s.z.toFloat(), a.radius): scanNear's square.
+            const float x = s.x.toFloat(), z = s.z.toFloat(), radius = float(a.radius);
+            const int r = int(radius / gCell_) + 1;
+            const int cx = int((x - gOx_) / gCell_), cz = int((z - gOz_) / gCell_);
+            AuraSource src;
+            src.x0 = std::max(0, cx - r); src.x1 = std::min(gW_ - 1, cx + r);
+            src.z0 = std::max(0, cz - r); src.z1 = std::min(gH_ - 1, cz + r);
+            if (src.x0 > src.x1 || src.z0 > src.z1) continue;   // the square misses the grid
+            src.x = s.x; src.z = s.z; src.aura = &a; src.player = s.player;
+            src.r2 = a.radius * a.radius;
+            src.sides = sides(s.player, a.affectsEnemy);
+            auraSources_.push_back(src);
+        }
+    }
+    if (auraSources_.empty()) return false;
+    // The sources per tile, in source order: counts, offsets, then a fill that
+    // walks each tile's offset forward to the next tile's, shifted back after.
+    constexpr int kShift = kAuraTileShift, kSide = 1 << kShift;
+    const int tilesW = (gW_ + kSide - 1) >> kShift, tilesH = (gH_ + kSide - 1) >> kShift;
+    const size_t tiles = size_t(tilesW) * size_t(tilesH);
+    auraTileFirst_.assign(tiles + 1, 0);
+    for (const AuraSource& src : auraSources_)
+        for (int tz = src.z0 >> kShift; tz <= src.z1 >> kShift; ++tz)
+            for (int tx = src.x0 >> kShift; tx <= src.x1 >> kShift; ++tx)
+                ++auraTileFirst_[size_t(tz) * size_t(tilesW) + size_t(tx) + 1];
+    for (size_t t = 0; t < tiles; ++t) auraTileFirst_[t + 1] += auraTileFirst_[t];
+    auraTileList_.resize(auraTileFirst_[tiles]);
+    for (uint32_t k = 0; k < uint32_t(auraSources_.size()); ++k) {
+        const AuraSource& src = auraSources_[k];
+        for (int tz = src.z0 >> kShift; tz <= src.z1 >> kShift; ++tz)
+            for (int tx = src.x0 >> kShift; tx <= src.x1 >> kShift; ++tx)
+                auraTileList_[auraTileFirst_[size_t(tz) * size_t(tilesW) + size_t(tx)]++] = k;
+    }
+    for (size_t t = tiles; t > 0; --t) auraTileFirst_[t] = auraTileFirst_[t - 1];
+    auraTileFirst_[0] = 0;
+    // A tile is one of the grid's 8x8-cell blocks: with valid owner masks, a block
+    // whose mask is empty holds no unit (forEachNear's block skip, WE A2b).
+    const bool blocks = gPlayersValid_ && gBlockW_ == tilesW && gBlockPlayers_.size() == tiles;
+    for (size_t t = 0; t < tiles; ++t)
+        if (auraTileFirst_[t + 1] > auraTileFirst_[t] && (!blocks || gBlockPlayers_[t]))
+            auraTiles_.push_back(uint32_t(t));
+    return !auraTiles_.empty();
+}
+
+void World::applyAuraTiles(bool pooled) {
+    constexpr int kShift = kAuraTileShift, kSide = 1 << kShift;
+    const int tilesW = (gW_ + kSide - 1) >> kShift;
+    SimPool& pool = simPool();
+    const size_t threads = pooled ? size_t(pool.workers()) + 1 : 1;
+    if (auraTileMasks_.size() < threads) auraTileMasks_.resize(threads);
+    auto fold = [&](size_t, size_t begin, size_t end, unsigned slot) {
+        std::vector<uint64_t>& masks = auraTileMasks_[slot];
+        for (size_t i = begin; i < end; ++i) {
+            const uint32_t t = auraTiles_[i];
+            const int ox = int(t % uint32_t(tilesW)) << kShift, oz = int(t / uint32_t(tilesW)) << kShift;
+            const uint32_t* list = auraTileList_.data() + auraTileFirst_[t];
+            const uint32_t n = auraTileFirst_[t + 1] - auraTileFirst_[t];
+            // Per row and per column of the tile, the sources (bit j: list[j]) whose
+            // square covers it; a cell's are its row's AND its column's, and walking
+            // the bits upward walks them in source order. And the box of the tile's
+            // cells that any source covers.
+            const size_t words = (n + 63) >> 6;
+            masks.assign(size_t(2 * kSide) * words, 0);
+            int bx0 = ox + kSide, bz0 = oz + kSide, bx1 = ox - 1, bz1 = oz - 1;
+            for (uint32_t j = 0; j < n; ++j) {
+                const AuraSource& src = auraSources_[list[j]];
+                const int r0 = std::max(src.z0, oz), r1 = std::min(src.z1, oz + kSide - 1);
+                const int c0 = std::max(src.x0, ox), c1 = std::min(src.x1, ox + kSide - 1);
+                const uint64_t bit = uint64_t(1) << (j & 63);
+                for (int r = r0; r <= r1; ++r) masks[size_t(r - oz) * words + (j >> 6)] |= bit;
+                for (int c = c0; c <= c1; ++c) masks[size_t(kSide + c - ox) * words + (j >> 6)] |= bit;
+                bx0 = std::min(bx0, c0); bx1 = std::max(bx1, c1);
+                bz0 = std::min(bz0, r0); bz1 = std::max(bz1, r1);
+            }
+            for (int gz = bz0; gz <= bz1; ++gz) {
+                const uint64_t* row = masks.data() + size_t(gz - oz) * words;
+                for (int gx = bx0; gx <= bx1; ++gx) {
+                    const int head = gHead_[size_t(gz) * size_t(gW_) + size_t(gx)];
+                    if (head < 0) continue;
+                    const uint64_t* col = masks.data() + size_t(kSide + gx - ox) * words;
+                    uint64_t any = 0;
+                    for (size_t w = 0; w < words; ++w) any |= row[w] & col[w];
+                    if (!any) continue;
+                    for (int idx = head; idx >= 0; idx = gNext_[size_t(idx)]) {
+                        Unit& e = units_[size_t(idx)];
+                        if (!e.alive() || e.embarked() || !e.type) continue;
+                        float atk = e.atkBuff, arm = e.armBuff;
+                        bool refreshed = false;
+                        for (size_t w = 0; w < words; ++w)
+                            for (uint64_t m = row[w] & col[w]; m; m &= m - 1) {
+                                const AuraSource& src = auraSources_[list[(w << 6) + size_t(std::countr_zero(m))]];
+                                const Aura& a = *src.aura;
+                                // buff friends OR debuff foes, as the gather's allied() test
+                                if (unsigned(e.player) < 64 ? !(src.sides >> e.player & 1)
+                                                             : !allied(e.player, src.player) != a.affectsEnemy)
+                                    continue;
+                                const float dx = (e.x - src.x).toFloat(), dz = (e.z - src.z).toFloat();
+                                const float d2 = dx * dx + dz * dz;
+                                if (d2 > src.r2) continue;
+                                const float amt = 1.0f + (a.amount - 1.0f) * a.falloff(std::sqrt(d2));
+                                float& buff = a.kind == Aura::Kind::Armor ? arm : atk;
+                                buff = a.affectsEnemy ? std::min(buff, amt) : std::max(buff, amt);
+                                refreshed = true;
+                            }
+                        if (refreshed) { e.atkBuff = atk; e.armBuff = arm; }
+                    }
+                }
+            }
+        }
+    };
+    if (!pooled) {
+        fold(0, 0, auraTiles_.size(), 0u);
+        return;
+    }
+    // About eight chunks a thread: enough to even out heavy tiles, few enough that a
+    // wide field of light ones is not all chunk overhead. No result depends on it.
+    pool.forChunks(auraTiles_.size(), std::max<size_t>(1, auraTiles_.size() / (threads * 8)), 0,
+                   [&](size_t k, size_t begin, size_t end, unsigned slot) { fold(k, begin, end, slot); });
 }
 
 void World::tickAbilities(float) {
@@ -14091,6 +14294,30 @@ void World::markViewDirty(const RetailSightFootprint& sight) {
 
 void World::markViewDirtyAll() { std::fill(viewDirty_.begin(),viewDirty_.end(),uint8_t(1)); }
 
+// The AND of the exploration plane's owner masks over one block of
+// (1<<blockShift)^2 cells: one entry of explorationBlocks_.
+static uint16_t exploredBlockAnd(const std::vector<uint16_t>& plane,int width,int height,int blockShift,int bx,int bz) {
+    uint16_t all=0xffff;
+    const int zh=std::min(height,(bz+1)<<blockShift),xh=std::min(width,(bx+1)<<blockShift);
+    for (int z=bz<<blockShift;z<zh;++z)
+        for (int x=bx<<blockShift;x<xh;++x) all&=plane[size_t(z)*width+x];
+    return all;
+}
+
+bool World::explorationBlocksMatchPlane() const {
+    const int width=hW_/2,height=hH_/2;
+    constexpr int blockShift=kExplorationBlockShift;
+    const int blocksW=(width+(1<<blockShift)-1)>>blockShift;
+    const int blocksH=(height+(1<<blockShift)-1)>>blockShift;
+    if (navigationExplored_.size()!=size_t(width)*height || explorationBlocks_.size()!=size_t(blocksW)*blocksH ||
+        explorationBlocks_.empty()) return false;
+    for (int bz=0;bz<blocksH;++bz)
+        for (int bx=0;bx<blocksW;++bx)
+            if (explorationBlocks_[size_t(bz)*blocksW+bx]!=exploredBlockAnd(navigationExplored_,width,height,blockShift,bx,bz))
+                return false;
+    return true;
+}
+
 void World::updateExplorationPlane() {
     if (explorationHeights_.empty()) return;
     const int width=hW_/2,height=hH_/2;
@@ -14098,21 +14325,22 @@ void World::updateExplorationPlane() {
     const int blocksW=(width+(1<<blockShift)-1)>>blockShift;
     const int blocksH=(height+(1<<blockShift)-1)>>blockShift;
     // Derived per-block AND of the owner masks: a block whose every cell
-    // already holds a unit's viewer bits needs no per-cell traversal.
-    auto summarize=[&](const std::vector<uint16_t>& mask,std::vector<uint16_t>& blocks,int bx,int bz) {
-        uint16_t all=0xffff;
-        const int zh=std::min(height,(bz+1)<<blockShift),xh=std::min(width,(bx+1)<<blockShift);
-        for (int z=bz<<blockShift;z<zh;++z)
-            for (int x=bx<<blockShift;x<xh;++x) all&=mask[size_t(z)*width+x];
-        blocks[size_t(bz)*blocksW+bx]=all;
-    };
-    auto summarizeAll=[&](const std::vector<uint16_t>& mask,std::vector<uint16_t>& blocks) {
-        blocks.assign(size_t(blocksW)*blocksH,0);
-        for (int bz=0;bz<blocksH;++bz) for (int bx=0;bx<blocksW;++bx) summarize(mask,blocks,bx,bz);
-    };
-    // Rebuilt every pass (one linear read of the plane) so writes to the
-    // plane from outside this function can never leave it stale.
-    summarizeAll(navigationExplored_,explorationBlocks_);
+    // already holds a unit's viewer bits needs no per-cell traversal. It
+    // stays equal to the plane between passes (see explorationBlocks_), so
+    // only an emptied one is rebuilt -- not one read of the whole plane,
+    // the map-sized part of this pass, every tick.
+    if (explorationBlocks_.size()!=size_t(blocksW)*blocksH) {
+        explorationBlocks_.resize(size_t(blocksW)*blocksH);
+        for (int bz=0;bz<blocksH;++bz)
+            for (int bx=0;bx<blocksW;++bx)
+                explorationBlocks_[size_t(bz)*blocksW+bx]=exploredBlockAnd(navigationExplored_,width,height,blockShift,bx,bz);
+    }
+#ifndef NDEBUG
+    if (verifyLists() && !explorationBlocksMatchPlane()) {
+        std::fprintf(stderr,"TAK_VERIFY_LISTS tick %u: exploration block summaries differ from the plane\n",tickCounter_);
+        std::abort();
+    }
+#endif
     std::vector<uint16_t> playerViewers(players_.size(),0);
     for (size_t owner=0;owner<players_.size();++owner)
         for (size_t viewer=0;viewer<players_.size() && viewer<16;++viewer)
@@ -14122,8 +14350,13 @@ void World::updateExplorationPlane() {
     // bits are already set, so any interleaving of the reveals yields the same
     // plane (O9). With workers the cells and block summaries are accessed
     // atomically (relaxed): a summary computed from a cell read before another
-    // chunk's OR is only lower, i.e. it skips less, never more.
-    auto explore=[&](size_t begin,size_t end,auto shared) {
+    // chunk's OR is only lower, i.e. it skips less, never more. Cells only gain
+    // bits within the pass, so every summary computed (and the one already
+    // there) is such a lower bound; a worker ORs its own into the block rather
+    // than storing it, so one computed from older reads cannot take back bits
+    // another worker's newer summary published. touched (workers only) lists
+    // each block summarized, once, for the join to summarize again exactly.
+    auto explore=[&](size_t begin,size_t end,auto shared,std::vector<uint32_t>* touched) {
         constexpr bool kShared=decltype(shared)::value;
         auto load=[](const uint16_t& v)->uint16_t {
             if constexpr (kShared) return __atomic_load_n(&v,__ATOMIC_RELAXED); else return v;
@@ -14133,8 +14366,13 @@ void World::updateExplorationPlane() {
             const int zh=std::min(height,(bz+1)<<blockShift),xh=std::min(width,(bx+1)<<blockShift);
             for (int z=bz<<blockShift;z<zh;++z)
                 for (int x=bx<<blockShift;x<xh;++x) all&=load(navigationExplored_[size_t(z)*width+x]);
-            uint16_t& out=explorationBlocks_[size_t(bz)*blocksW+bx];
-            if constexpr (kShared) __atomic_store_n(&out,all,__ATOMIC_RELAXED); else out=all;
+            const size_t block=size_t(bz)*blocksW+bx;
+            uint16_t& out=explorationBlocks_[block];
+            if constexpr (kShared) {
+                __atomic_fetch_or(&out,all,__ATOMIC_RELAXED);
+                if (!__atomic_exchange_n(&explorationTouchedFlags_[block],uint8_t(1),__ATOMIC_RELAXED))
+                    touched->push_back(uint32_t(block));
+            } else out=all;
         };
         for (size_t index=begin;index<end;++index) {
             auto& u=units_[index];
@@ -14171,20 +14409,43 @@ void World::updateExplorationPlane() {
     SimPool& pool=simPool();
     constexpr size_t kMinParallel=4096;
     if (!pool.workers() || units_.size()<kMinParallel) {
-        explore(0,units_.size(),std::false_type{});
-        return;
+        explore(0,units_.size(),std::false_type{},nullptr);
+    } else {
+        explorationTouched_.resize(pool.workers()+1);
+        if (explorationTouchedFlags_.size()!=explorationBlocks_.size())
+            explorationTouchedFlags_.assign(explorationBlocks_.size(),0);
+        pool.forChunks(units_.size(),SimPool::kUnitChunk,kMinParallel,[&](size_t,size_t begin,size_t end,unsigned slot) {
+            explore(begin,end,std::true_type{},&explorationTouched_[slot]);
+        });
+        // Every OR is visible after the join: what a worker published from reads
+        // that missed another's ORs is made exact again here, so it is not kept
+        // low into the next passes (only a later change in the block would fix
+        // it). Each block once: never more than one rebuild of the whole plane.
+        for (auto& touched:explorationTouched_) {
+            for (const uint32_t block:touched) {
+                explorationBlocks_[block]=exploredBlockAnd(navigationExplored_,width,height,blockShift,
+                                                           int(block%uint32_t(blocksW)),int(block/uint32_t(blocksW)));
+                explorationTouchedFlags_[block]=0;
+            }
+            touched.clear();
+        }
     }
-    pool.forChunks(units_.size(),SimPool::kUnitChunk,kMinParallel,[&](size_t,size_t begin,size_t end,unsigned) {
-        explore(begin,end,std::true_type{});
-    });
+#ifndef NDEBUG
+    if (verifyLists() && !explorationBlocksMatchPlane()) {
+        std::fprintf(stderr,"TAK_VERIFY_LISTS tick %u: exploration pass left block summaries unlike the plane\n",tickCounter_);
+        std::abort();
+    }
+#endif
 }
 
 // The per-player current-view counters (player +0x88). One pass per tick
 // after the tick, like exploration (retail runs it once per frame, 52654e ->
-// 4f6ae0). Every footprint change is a full removal then a full add over the
-// admitted cells, so the plane always equals the sum of the active footprints
-// plus the death revealers. Count deltas commute, so chunks add atomically
-// (relaxed) in any order to the same result.
+// 4f6ae0). Retail removes a changed footprint and adds it again; a footprint
+// that stays counted on the same plane instead changes only the cells whose
+// admission differs (retailSightMove), which leaves the same counts. The plane
+// always equals the sum of the active footprints plus the death revealers.
+// Count deltas commute, so chunks add atomically (relaxed) in any order to the
+// same result.
 void World::updateViewCounts() {
     if (explorationHeights_.empty()) return;
     const int width=hW_/2,height=hH_/2;
@@ -14249,12 +14510,15 @@ void World::updateViewCounts() {
             uint16_t* plane=viewCounts_.data()+size_t(u.player)*cells;
             constexpr bool kShared=decltype(shared)::value;
             const RetailSightFootprint before=u.viewSight;
-            retailUpdateSight(u.viewSight,u.x,y,u.z,uint8_t(seaLevel_),false,width,height,uint8_t(u.player),heightAt,
-                [&](int x,int z,int delta,uint16_t) {
-                    uint16_t& cell=plane[size_t(z)*width+x];
-                    if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);
-                    else cell=uint16_t(cell+delta);
-                });
+            auto count=[&](int x,int z,int delta,uint16_t) {
+                uint16_t& cell=plane[size_t(z)*width+x];
+                if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);
+                else cell=uint16_t(cell+delta);
+            };
+            if (viewCountsByRebuild_)
+                retailUpdateSight(u.viewSight,u.x,y,u.z,uint8_t(seaLevel_),false,width,height,uint8_t(u.player),heightAt,count);
+            else
+                retailUpdateSightCounts(u.viewSight,u.x,y,u.z,uint8_t(seaLevel_),width,height,uint8_t(u.player),heightAt,count);
             if (before.x!=u.viewSight.x || before.z!=u.viewSight.z || before.eyeHeight!=u.viewSight.eyeHeight ||
                 before.active!=u.viewSight.active) {
                 if (before.active) markViewDirty(before);
@@ -14356,10 +14620,13 @@ void World::applyPowerCode(int player,PowerCode code,PowerArg arg,int unitId) {
         case PowerCode::NowISee: {
             const bool reveal=code==PowerCode::NowISee || !(powerMappingOff_ & bit);
             if (code==PowerCode::NowISee) powerLosOff_|=bit;
+            // The bit goes into (or out of) every cell, so it does the same to
+            // every block's AND (the exploration block summaries).
             if (reveal) {
                 // MappingOn off: the whole map explored for this player.
                 powerMappingOff_|=bit;
                 for (auto& mask:navigationExplored_) mask|=bit;
+                for (auto& block:explorationBlocks_) block|=bit;
                 markViewDirtyAll();
             } else {
                 // 425980 refills the explored grid with 0: past exploration is
@@ -14367,6 +14634,7 @@ void World::applyPowerCode(int player,PowerCode code,PowerArg arg,int unitId) {
                 // footprint that explores for this player starts afresh).
                 powerMappingOff_&=uint16_t(~bit);
                 for (auto& mask:navigationExplored_) mask&=uint16_t(~bit);
+                for (auto& block:explorationBlocks_) block&=uint16_t(~bit);
                 markViewDirtyAll();
                 for (auto& u:units_)
                     if (u.type && allied(u.player,player)) u.sightFootprint={};

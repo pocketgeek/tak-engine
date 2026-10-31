@@ -1,6 +1,9 @@
 #include "sim/sim.h"
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <cstdio>
+#include <vector>
 
 // Compare the permanent-reveal shortcut against the full retail traversal,
 // including cached footprint state, over uneven terrain and changing viewers.
@@ -76,12 +79,111 @@ static bool checkBlockExploration() {
         std::any_of(blocks.begin(),blocks.end(),[](uint16_t v){return v!=0;});
 }
 
+// World keeps its per-block summaries of the plane between passes instead of
+// rebuilding them from the whole plane every pass. A world that drops them
+// before every pass (editNavigationExploration: the old per-pass rebuild) must
+// reach the same plane and hash as one that keeps them, and the kept ones must
+// equal a rebuild after every pass and after every change made to the plane
+// outside the pass. Covers plane sizes with partial edge blocks, moving and
+// stationary units, an alliance change, the Mapping and NowISee power codes
+// (a bit added to and taken from every cell), a harness write that removes
+// bits, new terrain of the same size, and a reused world (resetForReplay) of
+// another size. workers<0: serial; otherwise a pool of that many workers.
+static bool checkKeptBlocks(int workers,std::vector<uint64_t>& hashes) {
+    using namespace tak::sim;
+    UnitType near{},far{};
+    near.name=near.id="sight-near";far.name=far.id="sight-far";
+    for (auto* type:{&near,&far}) {
+        type->maxHp=100;type->maxVel=Fixed::fromInt(1);type->canMove=true;type->footX=type->footZ=1;
+    }
+    near.sight=64;near.sightHeight=24;   // radius 4 cells, under a sight cone
+    far.sight=96;far.sightHeight=0;      // radius 6, the whole disc
+    World kept,rebuilt;
+    for (auto* world:{&kept,&rebuilt}) {
+        if (workers<0) world->setSerialThreads(true); else world->setSimWorkers(workers);
+    }
+    auto fail=[&](const char* what,int step) {
+        std::fprintf(stderr,"kept exploration blocks (%s): %s at step %d\n",workers<0?"serial":"workers",what,step);
+        return false;
+    };
+    // Planes of 45x37 cells (partial edge blocks); new terrain of the same
+    // size under the same units (setTerrain alone: the last map's summaries
+    // must not survive it); then a reused world (resetForReplay) at 100x33.
+    const std::array<std::array<int,2>,3> maps{{{90,74},{90,74},{200,66}}};
+    int step=0,growing=0;   // growing: passes that revealed cells while some stayed unexplored
+    for (size_t m=0;m<maps.size();++m) {
+        const int mw=maps[m][0],mh=maps[m][1];
+        std::vector<uint8_t> terrain(size_t(mw)*mh);
+        for (int z=0;z<mh;++z) for (int x=0;x<mw;++x)
+            terrain[size_t(z)*mw+x]=uint8_t((x*7+z*3+int(m)*40)%180);
+        for (auto* world:{&kept,&rebuilt}) {
+            if (m==1) { world->setTerrain(terrain,mw,mh,30);continue; }
+            if (m) world->resetForReplay();
+            world->setPlayerCount(4);
+            world->setPowerCodes(true);
+            world->setTerrain(terrain,mw,mh,30);
+            for (int i=0;i<4096;++i)
+                world->spawn(i%5 ? &near : &far,float((i%64)*16),float((i/64)*16),0,i%4);
+        }
+        for (int round=0;round<10;++round,++step) {
+            for (auto* world:{&kept,&rebuilt}) {
+                world->setDoubleSight(round>=8);
+                world->setTeam(1,round<2 ? 1 : 0);
+                // Player 2's shroud off, then back on (its exploration forgotten).
+                if (round==3 || round==5) world->applyPowerCode(2,PowerCode::Mapping,PowerArg::None,0);
+                if (round==6) world->applyPowerCode(3,PowerCode::NowISee,PowerArg::None,0);
+                if (round==7) {
+                    auto& plane=world->editNavigationExploration();
+                    for (size_t i=0;i<plane.size();++i)
+                        if (i%3!=1) plane[i]&=uint16_t(~(i%2 ? 0x3u : 0x9u));
+                }
+                if (round==4 || round==9) continue;   // nobody moves
+                // Each player's units in an 8x8-cell cluster that drifts across
+                // (and off) the map, so the plane fills in round by round.
+                for (size_t i=0;i<world->units().size();++i) {
+                    auto& u=world->units()[i];
+                    const int p=int(i%4),k=int(i/4);
+                    const int cx=(step*5+p*11)%(mw/2+8)-4+k%8,cz=(step*3+p*7)%(mh/2+8)-4+k/8%8;
+                    u.x=Fixed::fromInt(cx*32+int(i%32));
+                    u.z=Fixed::fromInt(cz*32+int(i/32%32));
+                    u.groundY=Fixed::fromInt(int((i+size_t(step)*9)%200));
+                    u.underConstruction=(i+size_t(step))%17==0;
+                }
+            }
+            if ((round==3 || round==5 || round==6) && !kept.explorationBlocksMatchPlane())
+                return fail("a power code left the summaries unlike the plane",step);
+            rebuilt.editNavigationExploration();   // rebuilt by this pass, as every pass used to
+            const auto before=kept.navigationExploration();
+            kept.tick(1.f/30);rebuilt.tick(1.f/30);
+            const auto& after=kept.navigationExploration();
+            growing+=after!=before && std::any_of(after.begin(),after.end(),[](uint16_t v){return (v&15)!=15;});
+            if (kept.navigationExploration()!=rebuilt.navigationExploration())
+                return fail("plane differs from the per-pass rebuild",step);
+            if (kept.stateHash()!=rebuilt.stateHash()) return fail("hash differs from the per-pass rebuild",step);
+            if (!kept.explorationBlocksMatchPlane()) return fail("summaries unlike the plane after the pass",step);
+            hashes.push_back(kept.stateHash());
+        }
+    }
+    // The fixture must keep exploring partly explored planes, or it shows little.
+    std::printf("kept exploration blocks (%s): %d of %d passes revealed part of a partly explored plane\n",
+                workers<0?"serial":"workers",growing,step);
+    if (growing<20) return fail("too few passes revealed part of a partly explored plane",step);
+    return true;
+}
+
 int main() {
     if (!checkRevealShortcut()) {
         std::fputs("exploration shortcut differs from full traversal\n",stderr);return 1;
     }
     if (!checkBlockExploration()) {
         std::fputs("block exploration differs from full traversal\n",stderr);return 1;
+    }
+    {
+        std::vector<uint64_t> serialHashes,workerHashes;
+        if (!checkKeptBlocks(-1,serialHashes) || !checkKeptBlocks(3,workerHashes)) return 1;
+        if (serialHashes!=workerHashes) {
+            std::fputs("kept exploration blocks: workers differ from serial\n",stderr);return 1;
+        }
     }
     using namespace tak::sim;
     UnitType type{};
