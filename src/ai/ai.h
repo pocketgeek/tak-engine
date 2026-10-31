@@ -412,8 +412,9 @@ private:
     // The strength a site needs sent at it (its defence, with this level's margin).
     float siteNeed(const StrikeSite&) const;
     // Where unit `u` goes for `site`: an Attack on the anchor once it is close (or
-    // the anchor is a site still building, which nothing auto-acquires), else an
-    // attack-move to the nearest point it can reach. False when it cannot get there.
+    // the anchor is a site still building, which auto-acquisition takes only
+    // behind finished targets), else an attack-move to the nearest point it can
+    // reach. False when it cannot get there.
     bool strikeOrder(const tak::sim::World&, const tak::sim::Unit& u, const StrikeSite& site,
                      uint32_t simTick, const CommandSink&);
     // What this AI knows of an enemy unit, by id: its type, owner and position

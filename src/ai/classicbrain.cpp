@@ -696,11 +696,9 @@ std::vector<ClassicEnemy> ClassicBrain::visibleEnemies(const tak::sim::World& wo
 
 void ClassicBrain::refreshVisible(const tak::sim::World& world) {
     // The World rebuilds its lists on the bookkeeping clock (every >= 7 ticks)
-    // and leaves sites still being built off its enemy list; retail's 0x411700
-    // drops only 0x2000 (U10), which such a site does not carry (U16). So when
-    // the World's stamp moves, take its list and add the enemies it skipped for
-    // being unfinished, under the same test (alive, hp > 0, not allied, not
-    // neutral, seen), as of the brain's tick.
+    // as retail's 0x411700 does: list +5 drops only 0x2000 (U10), which a site
+    // still being built does not carry (U16), so the World's list holds such
+    // sites and the brain takes it as it is when the stamp moves.
     if (player_ < 0 || player_ >= world.numPlayers()) return;
     const auto& owner = world.player(player_);
     const uint32_t stamp = owner.cacheClock.enabled ? owner.cacheClock.lastRefresh : owner.visibleRefresh;
@@ -708,11 +706,6 @@ void ClassicBrain::refreshVisible(const tak::sim::World& world) {
     visibleStamp_ = stamp;
     const auto listed = world.visibleEnemies(player_);
     visible_.assign(listed.begin(), listed.end());
-    for (const auto& u : world.units())
-        if (u.underConstruction && u.alive() && u.hp > tak::sim::Fixed() && u.type && !world.allied(player_, u.player) &&
-            !world.isNeutralPlayer(u.player) && world.playerSees(player_, u))
-            visible_.push_back(u.id);
-    std::sort(visible_.begin(), visible_.end());
 }
 
 bool ClassicBrain::sendOrder(const tak::sim::World& world, ClassicSquadUnit& member, bool patrol, bool queue,
