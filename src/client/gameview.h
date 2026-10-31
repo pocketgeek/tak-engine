@@ -642,6 +642,14 @@ public:
     const UnitR* frameUnitP(int id) const;
     std::optional<int> reclaimTargetAt(float wx,float wz) const;   // feature id, or -corpse id
     int raiseTargetAt(float wx,float wz) const;   // a body a selected unit can raise, or 0
+    // Perf follow-up C: indices into front().live, ascending, of every record whose body
+    // pick circle (reclaimPickRadius of its corpse footprint, centred on its snapshot
+    // position) can hold the world point -- a superset, from the snapshot's unit grid
+    // (Frame::maxCorpseFoot bounds the radius); the body scans of raiseTargetAt and
+    // reclaimTargetAt keep their exact tests and order. Valid until the next call.
+    std::span<const uint32_t> bodyCandidates(float wx, float wz) const;
+    mutable std::vector<uint64_t> bodyQueryBits_;
+    mutable std::vector<uint32_t> bodyQuery_, bodyAll_;
     uint8_t reviveKindOn(const UnitR& caster,const UnitR& body) const;
     bool canAssistSite(const UnitR& builder,const UnitR& site) const;
     bool canLoadPassenger(const UnitR& passenger, const UnitR& carrier) const;
@@ -846,6 +854,21 @@ public:
     void renderStudyChurn(unsigned frame, unsigned period);
     std::optional<std::pair<float,float>> panSnapBase_;
     void renderStudyOffset(float x, float z) { mapView_.setOffset(x, z); }
+    // Perf follow-up C (cursor picking): the render study's scripted pointer. Each
+    // frame the pointer moves to a spot fixed by the frame number -- on even frames
+    // the body of a live unit in the world view (the first of up to 64 picked by
+    // frame number among the unit grid's candidates for the view), otherwise a
+    // Lissajous sweep over the world view -- so the cursor classifies units and bare
+    // ground the way a moving mouse does. Up to
+    // `select` own finished units are selected while the selection is empty, and
+    // `cmd` (0: none; '*': every order in turn) is armed every frame. drawCursorOverlay times the frame's
+    // cursor evaluation (renderStudyCursorStats; CURSORSTATS lines).
+    void renderStudyCursor(unsigned frame, int select, char cmd);
+    struct CursorStudyStats { uint64_t ns = 0, tests = 0; int cursor = -1; bool tint = false; float x = 0, y = 0; };
+    const CursorStudyStats& renderStudyCursorStats() const { return cursorStudy_; }
+    CursorStudyStats cursorStudy_;
+    bool cursorStudyOn_ = false;
+    uint64_t debugPickTests_ = 0;   // unitUnderCursor calls (debug builds)
     // The world view at this output size (left of the command panel, above the
     // bottom bar): the region a render capture comparison should cover.
     std::pair<int,int> renderStudyWorldView(int w, int h) const { return {mapViewW(w), std::max(1, h - barH())}; }
@@ -915,6 +938,54 @@ private:
     // the same region click-select uses, so the hover cursor and a click always
     // agree. Optional out: squared distance to the sprite centre (tie-breaks).
     bool unitUnderCursor(const UnitR& u, float mx, float my, float* d2 = nullptr);
+    // Perf follow-up C: indices into front().live, ascending, of every unit that
+    // unitUnderCursor(u, mx, my) can accept -- a superset; callers keep that exact test
+    // and their own filters, so whatever a loop over the whole list picks (first hit,
+    // nearest centre, ties to the earlier unit) is picked the same. The ground units
+    // come from the snapshot's unit grid (Frame::unitGrid) for the band
+    // tak::render::pickBand bounds; the flyers (Frame::flyerUnits) from a second query
+    // whose band also allows for their altitude.
+    // Valid until the next call. TAK_PICK_FULL_SCAN=1 (debug), like TAK_UNIT_FULL_SCAN,
+    // returns the whole list; TAK_PICK_INDEX_VERIFY=1 checks every query against the
+    // exact test over the whole list and every cursor decision against a full-scan
+    // re-evaluation, and throws at the first difference.
+    std::span<const uint32_t> pickCandidates(float mx, float my);
+    // Per unit type, cached: the union of the hit boxes the exact test can use, the
+    // largest footprint side (dot size), and the range of the waterline sink.
+    struct PickBounds { tak::render::PickBoxes boxes; int maxCells = 1; float sinkLo = 0, sinkHi = 0, cruiseAlt = 0; };
+    // The largest Anim::altitude ever written (never lowered): with the flyer types'
+    // largest cruisealt (a flyer without an Anim yet), every flyer's altLift is within
+    // max(both) * kProjY. A flyer's datum lift is within unitLiftBounds.
+    float flyerAltitudeSeen_ = 0;
+    const PickBounds& pickBounds();
+    struct PickBoundsKey {
+        const void* types = nullptr; size_t typeCount = 0, visuals = 0, hitBoxes = 0;
+        const void* map = nullptr; const void* heights = nullptr; size_t size = 0;
+        int sea = 0; float scale = 0;
+        bool operator==(const PickBoundsKey&) const = default;
+    };
+    PickBoundsKey pickBoundsKey_;
+    PickBounds pickBounds_;
+    bool pickBoundsValid_ = false;     // cleared where the type registry or the model caches reset
+    // The exact test caches unitHitBox's FALLBACK box for a type whose model is not loaded
+    // yet, for good, and a scan over every unit reaches such a unit wherever the pointer
+    // is; candidates reach it only near the pointer. A registered unit's type has its
+    // model (registerUnit loads it first), so the grid is used only while every typed
+    // record is registered: cosmeticStep's registration pass records that for the
+    // snapshot it walked (generation, unitSlots size bounding its ids, complete). Unit ids
+    // are never reused, so a later snapshot whose ids stay under that bound holds no
+    // record the pass did not see; anything else takes the whole list, as before.
+    struct PickRegistered { uint32_t gen = 0; size_t idBound = 0; bool complete = false; };
+    PickRegistered pickRegistered_;
+    std::vector<uint64_t> pickQueryBits_;
+    std::vector<uint32_t> pickQuery_, pickFlyers_, pickMerged_, pickAll_;
+    bool pickForceFull_ = false;       // the verify's full-scan reference evaluation
+public:
+    struct PickVerifyTotals { uint64_t queries = 0, live = 0, candidates = 0, hits = 0, decisions = 0,
+                              bodyQueries = 0, bodyCandidates = 0, bodyHits = 0; };
+    const PickVerifyTotals& pickVerifyTotals() const { return pickVerify_; }
+private:
+    mutable PickVerifyTotals pickVerify_;
 
     // Everything about a model piece that never changes: whether it draws at all,
     // and its primitives' texture names folded to lower case. collect() used to
@@ -2768,6 +2839,8 @@ private:
     // Per-type on-screen sprite box (offset from the draw anchor, px @ zoom 1),
     // computed once by projecting the model over all facings and cached in hitBoxes_.
     const SDL_FRect& unitHitBox(const tak::sim::UnitType* type);
+    // The box of a type whose model is not loaded: a small box just above the anchor.
+    static constexpr SDL_FRect kFallbackHitBox{-12.0f, -28.0f, 24.0f, 30.0f};
 
     // Per-type model-space extents driving the selection ring, cached in ringBoxes_.
     const RingBox& unitRingBox(const tak::sim::UnitType* type);
@@ -3080,7 +3153,7 @@ private:
     // Units per pool job. Whole blocks keep each thread's writes to the per-slot side
     // arrays (captureSlots_, transportFlags_) off the other threads' cache lines.
     static constexpr size_t kCaptureBlock = 64;
-    struct CaptureSlot { int32_t id = 0, site = 0; bool typed = false, buildGhosts = false; float x = 0, z = 0; };
+    struct CaptureSlot { int32_t id = 0, site = 0; bool typed = false, buildGhosts = false, flyer = false; int corpseFoot = 0; float step = 0, x = 0, z = 0; };
     std::unique_ptr<ThreadPool> capturePool_;
     std::vector<CaptureSlot> captureSlots_;
     // Capture-thread scratch for Frame::unitGrid (workstream L): live positions in live

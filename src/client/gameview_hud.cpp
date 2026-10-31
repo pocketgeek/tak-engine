@@ -1,4 +1,5 @@
 #include <ctime>
+#include <iterator>
 #include <type_traits>
 #include "client/guiart.h"
 #include "client/cliprect.h"
@@ -78,7 +79,9 @@ namespace {
             pick.offer(f.simId,f.x,f.z,f.fx,f.fz);
         }
         // Corpses / statues / rubble (negative id), sized by their FEATURE footprint.
-        for (const auto* u:front().live) {
+        const auto& live=front().live;
+        for (uint32_t index:bodyCandidates(wx,wz)) {
+            const UnitR* u=live[index];
             if (u->alive() || !u->corpsePhase || !u->corpseReclaimable || !canPickPoint(u->x,u->z)) continue;
             pick.offer(-u->id,u->x,u->z,u->corpseFootX,u->corpseFootZ);
         }
@@ -323,12 +326,33 @@ namespace {
             return;
         }
         bool fightTint = false;
+#ifndef NDEBUG
+        const auto cursorStart = std::chrono::steady_clock::now();
+        debugPickTests_ = 0;
+#endif
         tak::CursorId c = tak::CursorId::Normal;
         if (!uiOverlay) {
             tak::render::ScopedPhase phase(renderStats_, tak::render::Phase::Cursor);
             renderStats_.add(tak::render::Counter::CursorEvals);
             c = desiredCursor(fightTint);
         }
+#ifndef NDEBUG
+        if (cursorStudyOn_ && !uiOverlay)
+            cursorStudy_ = {uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now() - cursorStart).count()),
+                            debugPickTests_, int(c), fightTint, mouseX_, mouseY_};
+        static const bool pickVerify = tak::devFlag("TAK_PICK_INDEX_VERIFY");
+        if (pickVerify && !uiOverlay) {
+            // The same decision from a scan over every unit (pickCandidates' reference).
+            bool fullTint = false;
+            pickForceFull_ = true;
+            const tak::CursorId full = desiredCursor(fullTint);
+            pickForceFull_ = false;
+            ++pickVerify_.decisions;
+            if (full != c || fullTint != fightTint)
+                throw std::runtime_error("pick index verify: the cursor differs from a full scan");
+        }
+#endif
         int sc = settings_ ? settings_->cursorScale : 1;
         SDL_Color tint = fightTint ? kFightMoveTint : SDL_Color{255, 255, 255, 255};
 
@@ -421,7 +445,9 @@ namespace {
                 }
                 // Native 520b60 requires exactly one selected carrier.
                 if(transportCount==1 && mouseX_>=0) {
-                    for(const UnitR* unit:front().live) {
+                    const auto& live=front().live;
+                    for(uint32_t index:pickCandidates(mouseX_,mouseY_)) {
+                        const UnitR* unit=live[index];
                         if(canPickUnit(*unit) && unitUnderCursor(*unit,mouseX_,mouseY_) &&
                            canLoadPassenger(*unit,*loadTransport)) {
                             hasLoadTarget=true;
@@ -453,7 +479,9 @@ namespace {
             // Repair and guard are target-dependent in the native selector.
             if (pendingCmd_=='r' || pendingCmd_=='g') {
                 bool eligible=false;
-                for (const auto* target:front().live) {
+                const auto& live=front().live;
+                for (uint32_t index:pickCandidates(mouseX_,mouseY_)) {
+                    const UnitR* target=live[index];
                     if (!canPickUnit(*target) || !target->alive() || target->embarked() ||
                         !target->type || !unitUnderCursor(*target,mouseX_,mouseY_)) continue;
                     for (int id:selection_) {
@@ -510,7 +538,8 @@ namespace {
             int loadId = -1, siteId = -1, ownId = -1, allyId = -1, enemy = -1;
             float bLoad = 1e30f, bSite = 1e30f, bOwn = 1e30f, bAlly = 1e30f,
                   bEnemy = 1e30f;
-            for (const UnitR* _up : front().live) { const UnitR& u = *_up;
+            const auto& live = front().live;
+            for (uint32_t index : pickCandidates(mouseX_, mouseY_)) { const UnitR& u = *live[index];
                 if (!canPickUnit(u)) continue;
                 if (!u.alive() || u.embarked() || !u.type) continue;
                 float d = 0;
@@ -590,7 +619,8 @@ namespace {
         }
 
         // Nothing selected: highlight your own unit under the pointer, else the arrow.
-        for (const UnitR* _up : front().live) { const UnitR& u = *_up;
+        const auto& live = front().live;
+        for (uint32_t index : pickCandidates(mouseX_, mouseY_)) { const UnitR& u = *live[index];
             if (!canPickUnit(u)) continue;
             if (!u.alive() || u.embarked() || !u.type || u.player != localPlayer_) continue;
             if (!u.underConstruction && unitUnderCursor(u,mouseX_,mouseY_)) return tak::CursorId::Select;
@@ -2565,8 +2595,161 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
     button("CLOSE",{x+width-164*scale,y+height-56*scale,140*scale,rowH},-1,DiplomacyAction::Close,true);
 }
 
+    const GameView::PickBounds& GameView::pickBounds() {
+        const auto& types = registry_.types();
+        const auto& m = mapView_.map();
+        const PickBoundsKey key{&types, types.size(), visuals_.size(), hitBoxes_.size(), &m, m.heights.data(),
+                                m.heights.size(), int(m.seaLevel), kHeightScale_};
+        if (pickBoundsValid_ && key == pickBoundsKey_) return pickBounds_;
+        pickBoundsKey_ = key;
+        pickBoundsValid_ = true;
+        PickBounds b;
+        // The deepest a wading or floating unit can sink (waterSink): rawHeight never
+        // falls below the lowest heightmap corner (+1 for the bilinear sample's rounding).
+        int low = 255;
+        for (uint8_t v : m.heights) low = std::min(low, int(v));
+        const float depth = m.heights.empty() || m.width <= 0 ? 0.0f
+                            : std::max(0.0f, float(m.seaLevel) - float(low) + 1.0f);
+        float sink = 0;
+        for (const auto& [id, type] : types) {
+            // The box the exact test would use for this type now: the cached one, else
+            // the model's (computing it here caches exactly what the test would compute),
+            // else the fallback box -- not cached, since the model may load later (that
+            // changes visuals_.size(), part of the key, and the bound is rebuilt).
+            const bool known = hitBoxes_.count(type.id) || visuals_.count(type.id);
+            const SDL_FRect hb = known ? unitHitBox(&type) : kFallbackHitBox;
+            b.boxes.add(hb.x, hb.y, hb.w, hb.h);
+            b.maxCells = std::max({b.maxCells, type.footX, type.footZ});
+            if (type.waterline > 0 && (type.canHover || type.floater))
+                sink = std::max(sink, std::min(float(type.waterline), depth));
+            if (type.canFly) b.cruiseAlt = std::max(b.cruiseAlt, float(type.cruiseAlt));
+        }
+        const float s = sink * kHeightScale_;
+        b.sinkLo = std::min(0.0f, s);
+        b.sinkHi = std::max(0.0f, s);
+        pickBounds_ = b;
+        return pickBounds_;
+    }
+
+    std::span<const uint32_t> GameView::pickCandidates(float mx, float my) {
+        const Frame& f = front();
+        const size_t n = f.live.size();
+        const auto everything = [&] {
+            for (size_t i = pickAll_.size(); i < n; ++i) pickAll_.push_back(uint32_t(i));
+            return std::span<const uint32_t>(pickAll_.data(), n);
+        };
+        static const bool fullScan = tak::devFlag("TAK_PICK_FULL_SCAN");
+        // Every typed record registered, so its type's model is loaded (see pickRegistered_).
+        const bool registered = pickRegistered_.complete && f.gen >= pickRegistered_.gen &&
+                                f.unitSlots.size() <= pickRegistered_.idBound;
+        std::span<const uint32_t> out;
+        if (fullScan || pickForceFull_ || unitFullScan_ || f.unitGrid.size() != n || !registered) {
+            out = everything();
+        } else {
+            const PickBounds& b = pickBounds();
+            const float zm = mapView_.zoom();
+            const float dotHalf = std::max(tak::tacticaldots::dotSide(b.maxCells, b.maxCells, zm, uiScale_) * 0.5f + 1.0f,
+                                           tak::render::kPickMinHalf);
+            // interpPose stays within maxInterpStep of the snapshot position (+1: rounding).
+            const auto band = tak::render::pickBand(mx, my, zm, b.boxes, dotHalf, f.maxInterpStep + 1.0f, b.sinkLo, b.sinkHi);
+            const auto rect = tak::render::anchorBandToWorld(band.left, band.top, band.right, band.bottom,
+                                                             mapView_.offX(), mapView_.offY(), zm, unitLiftBounds());
+            if (f.unitGrid.covers(rect.left, rect.top, rect.right, rect.bottom)) {
+                out = everything();
+            } else {
+                f.unitGrid.query(rect.left, rect.top, rect.right, rect.bottom, pickQueryBits_, pickQuery_);
+                if (f.flyerUnits.empty()) {
+                    out = pickQuery_;
+                } else {
+                    // Flyers: altLift raises the anchor by up to max(altitude) * kProjY (a
+                    // negative sink); their own query's units that fly join the ground
+                    // candidates. All lists ascending: merges, each index once.
+                    const float altitude = std::max(flyerAltitudeSeen_, b.cruiseAlt) * kProjY + 1.0f;
+                    const auto airBand = tak::render::pickBand(mx, my, zm, b.boxes, dotHalf, f.maxInterpStep + 1.0f,
+                                                               std::min(b.sinkLo, 0.0f) - altitude, b.sinkHi);
+                    const auto air = tak::render::anchorBandToWorld(airBand.left, airBand.top, airBand.right,
+                                                                    airBand.bottom, mapView_.offX(), mapView_.offY(),
+                                                                    zm, unitLiftBounds());
+                    f.unitGrid.query(air.left, air.top, air.right, air.bottom, pickQueryBits_, pickFlyers_);
+                    pickMerged_.clear();
+                    std::set_intersection(pickFlyers_.begin(), pickFlyers_.end(), f.flyerUnits.begin(),
+                                          f.flyerUnits.end(), std::back_inserter(pickMerged_));
+                    pickFlyers_.swap(pickMerged_);
+                    pickMerged_.clear();
+                    std::set_union(pickQuery_.begin(), pickQuery_.end(), pickFlyers_.begin(), pickFlyers_.end(),
+                                   std::back_inserter(pickMerged_));
+                    out = pickMerged_;
+                }
+            }
+        }
+#ifndef NDEBUG
+        static const bool verify = tak::devFlag("TAK_PICK_INDEX_VERIFY");
+        if (verify && !pickForceFull_) {
+            ++pickVerify_.queries;
+            pickVerify_.live += n;
+            pickVerify_.candidates += out.size();
+            if (!std::is_sorted(out.begin(), out.end()) ||
+                std::adjacent_find(out.begin(), out.end()) != out.end() || (!out.empty() && out.back() >= n))
+                throw std::runtime_error("pick index verify: candidates are not ascending live indices");
+            // Before the exact tests below cache anything: a query that skipped units has
+            // no unit whose type's hit box the exact test could still cache as the fallback.
+            if (out.size() < n)
+                for (const UnitR* u : f.live)
+                    if (u->type && !hitBoxes_.count(u->type->id) && !visuals_.count(u->type->id))
+                        throw std::runtime_error("pick index verify: candidates skipped units while a type has no model");
+            for (size_t i = 0; i < n; ++i)
+                if (unitUnderCursor(*f.live[i], mx, my)) {
+                    ++pickVerify_.hits;
+                    if (!std::binary_search(out.begin(), out.end(), uint32_t(i)))
+                        throw std::runtime_error("pick index verify: a unit under the cursor is not a candidate");
+                }
+        }
+#endif
+        return out;
+    }
+
+    std::span<const uint32_t> GameView::bodyCandidates(float wx, float wz) const {
+        const Frame& f = front();
+        const size_t n = f.live.size();
+        static const bool fullScan = tak::devFlag("TAK_PICK_FULL_SCAN");
+        std::span<const uint32_t> out;
+        if (fullScan || pickForceFull_ || unitFullScan_ || f.unitGrid.size() != n) {
+            for (size_t i = bodyAll_.size(); i < n; ++i) bodyAll_.push_back(uint32_t(i));
+            out = std::span<const uint32_t>(bodyAll_.data(), n);
+        } else {
+            // ReclaimPick::offer accepts only dx*dx + dz*dz < r*r: |dx|, |dz| < r. One
+            // world px of slack for the float evaluation.
+            const float r = tak::client::reclaimPickRadius(f.maxCorpseFoot, f.maxCorpseFoot) + 1.0f;
+            f.unitGrid.query(wx - r, wz - r, wx + r, wz + r, bodyQueryBits_, bodyQuery_);
+            out = bodyQuery_;
+        }
+#ifndef NDEBUG
+        static const bool verify = tak::devFlag("TAK_PICK_INDEX_VERIFY");
+        if (verify && !pickForceFull_) {
+            ++pickVerify_.bodyQueries;
+            pickVerify_.bodyCandidates += out.size();
+            if (!std::is_sorted(out.begin(), out.end()) ||
+                std::adjacent_find(out.begin(), out.end()) != out.end() || (!out.empty() && out.back() >= n))
+                throw std::runtime_error("pick index verify: body candidates are not ascending live indices");
+            for (size_t i = 0; i < n; ++i) {
+                const UnitR& u = *f.live[i];
+                tak::client::ReclaimPick probe{wx, wz};
+                probe.offer(0, u.x, u.z, u.corpseFootX, u.corpseFootZ);
+                if (!probe.id) continue;
+                ++pickVerify_.bodyHits;
+                if (!std::binary_search(out.begin(), out.end(), uint32_t(i)))
+                    throw std::runtime_error("pick index verify: a body pick circle holding the point is not a candidate");
+            }
+        }
+#endif
+        return out;
+    }
+
     bool GameView::unitUnderCursor(const UnitR& u, float mx, float my, float* d2) {
         renderStats_.add(tak::render::Counter::CursorPickTests);
+#ifndef NDEBUG
+        ++debugPickTests_;
+#endif
         if (!canPickUnit(u)) return false;
         if (dotsFrame_) {
             // Tactical Dots on screen: the hit region is the dot, with the same

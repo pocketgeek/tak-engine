@@ -2298,6 +2298,17 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/gate-pick.png")
       set_tests_properties(gate_pick PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: every gate \\(4 types\\)")
+      # Cursor picking (perf follow-up C): a unit live before its type's model loads (the
+      # registration budget) gets the fallback hit box cached by the cursor pass, as a scan
+      # over every unit does, though the pointer is nowhere near it.
+      add_test(NAME pick_late_model COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_PICK_LATE_MODEL_TEST=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/pick-late-model-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/pick-late-model-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1000 700 --shot "${CMAKE_CURRENT_BINARY_DIR}/pick-late-model.png")
+      set_tests_properties(pick_late_model PROPERTIES TIMEOUT 90
+          PASS_REGULAR_EXPRESSION "PASS: late model pick leaves the full scan's hit-box cache")
       # Clear orders fan out to every selected reclaimer (box, right-click, armed
       # CLEAR; Shift per unit, a soldier untouched), and Inner Circle's one
       # overlapped map feature (removed at load) is not drawn.
@@ -2550,6 +2561,50 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1024 768 --novsync)
       set_tests_properties(render_interactive_cases PROPERTIES TIMEOUT 300
           PASS_REGULAR_EXPRESSION "hidden_faded=[1-9][0-9]* cursor_evals=1 cursor_pick_tests=[1-9][0-9]* cursor_pick_hits=[1-9][0-9]* ghosts_queued=[1-9][0-9]* ghost_preps=[1-9][0-9]* hidden_cover_tests=[1-9][0-9]* shadow_demand_px=[1-9]")
+      # Cursor picking (perf follow-up C), on the software renderer: the render study's
+      # scripted pointer (TAK_RENDER_CURSOR) moves over unit bodies and bare ground every
+      # frame; every unit the exact pick test accepts must be among the candidates the
+      # unit grid returned, so must every record whose body pick circle holds the
+      # pointer's ground point (Revive/Reclaim), and every cursor decision must equal a
+      # re-evaluation over the whole unit list, or the cursor overlay throws
+      # (TAK_PICK_INDEX_VERIFY). The base
+      # variant is a fogged two-player battle with construction, ghosts, flyers, corpses,
+      # squads, factories and queued builds, moving units (interpolation), a panning and
+      # zooming camera, camera shake, deaths/respawns and world-epoch bumps, with 20
+      # units selected; _orders selects every own unit (large selection) and arms each
+      # order in turn (attack, repair, guard, load, move, patrol, reclaim, fight), with
+      # Tactical Dots from normal size and HIDDEN UNITS dots; _jump is a 3000-unit army
+      # seen through a camera jumping between distant views, nothing selected.
+      file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/pick-index-dots-settings.ini"
+           "fullscreen = 0\ntacticalDots = 1\ntacticalDotsZoom = 100\nhiddenUnits = dots\n")
+      foreach(_variant IN ITEMS "" "_orders" "_jump")
+        set(_settings "")
+        set(_bodies "body_queries=[1-9][0-9]* body_candidates=[0-9]* body_hits=[1-9]")
+        if(_variant STREQUAL "_jump")
+          set(_scene TAK_SHADOW_BENCH=3000 TAK_RENDER_OVERLAYS=1 TAK_PROFILE_ZOOM=1 TAK_RENDER_JUMP=15
+              TAK_RENDER_SHAKE=23 TAK_RENDER_FRAMES=120)
+          set(_bodies "body_queries=")   # nothing selected: no body picks
+        else()
+          set(_scene TAK_SHADOW_BENCH=300 TAK_RENDER_SPACING=120 TAK_RENDER_BATTLE=1 TAK_RENDER_EXTRAS=1
+              TAK_RENDER_OVERLAYS=1 TAK_PROFILE_FOG=1 TAK_RENDER_MOTION=1 TAK_RENDER_CAMERA=1
+              TAK_RENDER_ZOOM=1 TAK_RENDER_SHAKE=37 TAK_RENDER_CHURN=40 TAK_RENDER_EPOCH=90 TAK_RENDER_FRAMES=200)
+          if(_variant STREQUAL "_orders")
+            list(APPEND _scene TAK_RENDER_CURSOR_SELECT=100000 TAK_RENDER_CURSOR_CMD=*)
+            set(_settings TAK_SETTINGS_FILE=${CMAKE_CURRENT_BINARY_DIR}/pick-index-dots-settings.ini)
+          else()
+            list(APPEND _scene TAK_RENDER_CURSOR_SELECT=20)
+          endif()
+        endif()
+        add_test(NAME render_pick_index${_variant} COMMAND ${CMAKE_COMMAND} -E env
+            SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software ${_scene} ${_settings}
+            TAK_RENDER_STUDY=1 TAK_RENDER_CURSOR=1 TAK_PICK_INDEX_VERIFY=1
+            XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/pick-index${_variant}-profile
+            XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/pick-index${_variant}-profile
+            $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+            --testbuild --winsize 1024 768 --novsync)
+        set_tests_properties(render_pick_index${_variant} PROPERTIES TIMEOUT 600
+            PASS_REGULAR_EXPRESSION "PICK_INDEX_VERIFY queries=[1-9][0-9]* live=[1-9][0-9]* candidates=[0-9]* hits=[1-9][0-9]* decisions=[1-9][0-9]* ${_bodies}")
+      endforeach()
       # CPU budgets (workstream J) in a real scene: a battle, then a sustained empty
       # view, with short trim windows and tiny terrain budgets. Retained buffers must
       # be trimmed after the demand falls, keep their contents byte for byte, never be
@@ -2764,7 +2819,7 @@ if(TAK_BUILD_CLIENT)
       # These isolated UI processes own SDL's DBus initialization; release its
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
-          render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail render_unit_index render_unit_index_jump
+          render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail render_unit_index render_unit_index_jump render_pick_index render_pick_index_orders render_pick_index_jump
           render_interactive_cases tactical_dots hidden_units retail_fog spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")

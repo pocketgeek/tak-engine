@@ -22,6 +22,13 @@
 //     snapshot every step, against a full scan.
 //  5. UnitTypeTable: registered(id) equals the map's key set through random
 //     sets/erases, negative and large ids, ids past the flag table.
+//  6. Cursor picking (perf follow-up C, pickBand): GameView::unitUnderCursor's
+//     exact float test written out (hit box widened to 9 px, or a dot), for random
+//     zooms, offsets, hit boxes, dots, lifts, waterline sinks and interpolation
+//     offsets up to the bound: every unit the test accepts lies inside the world
+//     rectangle built from pickBand and is a grid candidate, and filtering the
+//     candidates gives the full scan's hits in order. Units are placed at the
+//     exact flip points of the test's edges (bisection) and a few ulps either side.
 
 #include "client/unitindex.h"
 #include "client/unittypetable.h"
@@ -374,6 +381,132 @@ void testTypeTable(std::mt19937& rng) {
     CHECK(!table.registered(1 << 30), "type table: id past the flags");
 }
 
+// GameView::unitUnderCursor for a unit without altitude, in the same float expression
+// order (gameview_hud.cpp / unitScreen in gameview_impl.cpp).
+struct PickBox { float x, y, w, h; };
+struct PickUnit { float x, z, dx, dz, liftX, liftY, sink, dotHalf; int box; bool dot; };
+bool exactPick(float mx, float my, const PickUnit& u, const PickBox& hb, float offX, float offY, float zms) {
+    const float ix = u.x + u.dx, iz = u.z + u.dz;
+    const float px = (ix - offX) * zms - u.liftX * zms;
+    const float py = (iz - offY) * zms - u.liftY * zms + u.sink * zms - 0.0f * zms - 12.0f * zms;
+    if (u.dot) {
+        const float cx = px, cy = py + 12.0f * zms;
+        return !(std::fabs(mx - cx) > u.dotHalf || std::fabs(my - cy) > u.dotHalf);
+    }
+    const float ax = px, ay = py + 12.0f * zms;
+    const float cx = ax + (hb.x + hb.w * 0.5f) * zms;
+    const float cy = ay + (hb.y + hb.h * 0.5f) * zms;
+    const float hw = std::max(hb.w * zms * 0.5f, 9.0f);
+    const float hh = std::max(hb.h * zms * 0.5f, 9.0f);
+    return !(std::fabs(mx - cx) > hw || std::fabs(my - cy) > hh);
+}
+
+void testPick(std::mt19937& rng) {
+    std::uniform_real_distribution<float> u01(0.0f, 1.0f);
+    std::vector<uint64_t> bits;
+    std::vector<uint32_t> scratch, out;
+    size_t hits = 0, edge = 0, candidates = 0, units = 0;
+    const float interp = 201.0f;
+    for (int trial = 0; trial < 1500; ++trial) {
+        const float zm = trial % 7 == 0 ? 0.05f + u01(rng) * 0.2f : 0.2f + u01(rng) * 3.8f;
+        const float offX = (u01(rng) - 0.1f) * 12000, offY = (u01(rng) - 0.1f) * 12000;
+        const float mx = (u01(rng) - 0.05f) * 7000, my = (u01(rng) - 0.05f) * 2400;
+        const float above = float(rng() % 256) + 1.0f;
+        const float sy = trial % 11 == 0 ? -0.5f : trial % 5 == 0 ? 0.0f : 0.5f;
+        const float sxs = trial % 3 == 0 ? 0.25f : trial % 17 == 0 ? -0.3f : 0.0f;
+        const LiftBounds lift{std::min(0.0f, above * sxs), std::max(0.0f, above * sxs),
+                              std::min(0.0f, above * sy), std::max(0.0f, above * sy)};
+        const float sinkHeight = trial % 4 == 0 ? 0.0f : float(rng() % 40) * sy;
+        const float sinkLo = std::min(0.0f, sinkHeight), sinkHi = std::max(0.0f, sinkHeight);
+        // Hit boxes as unitHitBox makes them (-r, minY, 2r, maxY - minY), tiny to huge,
+        // plus the fallback box.
+        // Every 13th trial: only tiny, off-centre boxes and no fallback, so the 9 px
+        // floor (not another type's box or the dot) is what reaches furthest.
+        const bool tiny = trial % 13 == 0;
+        std::vector<PickBox> boxes;
+        if (!tiny) boxes.push_back({-12.0f, -28.0f, 24.0f, 30.0f});
+        for (int k = 1 + int(rng() % 6); k-- > 0;) {
+            const float r = tiny ? u01(rng) * 3 : 2 + u01(rng) * 120;
+            const float cx = tiny ? (u01(rng) - 0.5f) * 200 : 0.0f;
+            const float lo = -u01(rng) * 160, hi = lo + (tiny ? u01(rng) * 4 : u01(rng) * 180) + 0.5f;
+            boxes.push_back({cx - r, lo, 2 * r, hi - lo});
+        }
+        tak::render::PickBoxes union_;
+        for (const auto& b : boxes) union_.add(b.x, b.y, b.w, b.h);
+        const float dotHalf = tiny ? 9.0f : std::max(9.0f, 1.0f + u01(rng) * 40);
+        const auto band = tak::render::pickBand(mx, my, zm, union_, dotHalf, interp, sinkLo, sinkHi);
+        const auto rect = anchorBandToWorld(band.left, band.top, band.right, band.bottom, offX, offY, zm, lift);
+        std::vector<PickUnit> pop;
+        const auto randomUnit = [&](size_t i) {
+            PickUnit u{};
+            u.box = int(rng() % boxes.size());
+            u.dot = !tiny && i % 9 == 0;
+            u.dotHalf = 9.0f + (dotHalf - 9.0f) * u01(rng);
+            // Each input at an extreme of its range half the time, independently.
+            const auto pick = [&](float lo, float hi) { return rng() % 2 ? (rng() % 2 ? hi : lo) : lo + (hi - lo) * u01(rng); };
+            u.liftX = pick(lift.minX, lift.maxX);
+            u.liftY = pick(lift.minY, lift.maxY);
+            u.sink = pick(sinkLo, sinkHi);
+            u.dx = pick(-200.0f, 200.0f);   // interpPose: within interp (Frame::maxInterpStep + 1)
+            u.dz = pick(-200.0f, 200.0f);
+            return u;
+        };
+        const size_t n = 300 + rng() % 900;
+        for (size_t i = 0; i < n; ++i) {
+            PickUnit u = randomUnit(i);
+            // Solve for the snapshot position whose box centre (or dot) is on the pointer.
+            const PickBox& hb = boxes[size_t(u.box)];
+            const float ox = u.dot ? 0.0f : (hb.x + hb.w * 0.5f), oy = u.dot ? 0.0f : (hb.y + hb.h * 0.5f);
+            const float cxw = offX + (mx / zm - ox) + u.liftX - u.dx;
+            const float czw = offY + (my / zm - oy) + u.liftY - u.sink - u.dz;
+            if (i % 2 == 0) {
+                // At an edge of the test: bisect along x or z from the centre outward.
+                u.x = cxw; u.z = czw;
+                const bool alongX = i % 4 == 0;
+                const float dir = (i / 4) % 2 ? 1.0f : -1.0f;
+                const float far = (alongX ? cxw : czw) + dir * (400.0f + 2000.0f / zm);
+                const auto inside = [&](float v) {
+                    PickUnit t = u; (alongX ? t.x : t.z) = v;
+                    return exactPick(mx, my, t, boxes[size_t(t.box)], offX, offY, zm);
+                };
+                if (!inside(alongX ? cxw : czw)) { pop.push_back(u); continue; }
+                float f = flipPoint(alongX ? cxw : czw, far, inside);
+                const int steps = int(rng() % 9) - 4;
+                for (int s = 0; s < std::abs(steps); ++s) f = std::nextafter(f, steps > 0 ? 1e30f : -1e30f);
+                (alongX ? u.x : u.z) = f;
+                ++edge;
+            } else {
+                const float spread = 3.0f * (dotHalf + 200) / zm + 600;
+                u.x = cxw + (u01(rng) - 0.5f) * spread;
+                u.z = czw + (u01(rng) - 0.5f) * spread;
+            }
+            pop.push_back(u);
+        }
+        Population p;
+        for (const auto& u : pop) { p.x.push_back(u.x); p.z.push_back(u.z); }
+        UnitGrid g;
+        g.build(p.x, p.z, scratch);
+        g.query(rect.left, rect.top, rect.right, rect.bottom, bits, out);
+        std::vector<char> cand(pop.size(), 0);
+        for (uint32_t i : out) cand[i] = 1;
+        std::vector<uint32_t> full, indexed;
+        for (size_t i = 0; i < pop.size(); ++i)
+            if (exactPick(mx, my, pop[i], boxes[size_t(pop[i].box)], offX, offY, zm)) {
+                full.push_back(uint32_t(i));
+                CHECK(p.x[i] >= rect.left && p.x[i] <= rect.right && p.z[i] >= rect.top && p.z[i] <= rect.bottom,
+                      "pick: unit %zu is under the cursor outside the world rectangle (zoom %.6g)", i, double(zm));
+                CHECK(cand[i], "pick: unit %zu is under the cursor but no candidate (zoom %.6g)", i, double(zm));
+            }
+        for (uint32_t i : out)
+            if (exactPick(mx, my, pop[i], boxes[size_t(pop[i].box)], offX, offY, zm)) indexed.push_back(i);
+        CHECK(full == indexed, "pick: filtered candidates differ from the full scan");
+        hits += full.size(); candidates += out.size(); units += pop.size();
+    }
+    std::printf("unit_index_test: pick hits=%zu edge=%zu candidates=%zu units=%zu\n", hits, edge, candidates, units);
+    CHECK(hits > 100000 && edge > 100000, "pick test exercised too little (%zu hits, %zu on edges)", hits, edge);
+    CHECK(candidates < units, "pick test: the band selected every unit");
+}
+
 int main() {
     std::mt19937 rng(20261017);
     testGrid(rng);
@@ -381,6 +514,7 @@ int main() {
     testPasses(rng);
     testMovement(rng);
     testTypeTable(rng);
+    testPick(rng);
     if (failures) { std::printf("unit_index_test: %d failures\n", failures); return 1; }
     std::printf("unit_index_test: PASS\n");
     return 0;

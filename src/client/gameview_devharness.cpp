@@ -2235,6 +2235,57 @@
             std::fprintf(stderr,"PASS: every gate (%zu types) picks through its open doorway\n",gates.size());
             return;
         }
+        // Cursor picking (perf follow-up C) and a model that is not loaded yet. Registration
+        // is budgeted (kRegistrationsPerFrame), so after a large arrival a unit can be live
+        // before its type's model loads; a cursor pass that reaches unitUnderCursor for it
+        // caches the fallback hit box for the type, for the rest of the game. A scan over
+        // every unit always reaches it (nothing selected, the pointer on bare ground); the
+        // grid's candidates must leave the same cache, so the type picks the same later.
+        if (tak::devFlag("TAK_PICK_LATE_MODEL_TEST")) {
+            noFog_=true;edgeScrollOn_=false;
+            winW_=1000;winH_=700;
+            const auto publish=[&] {captureFrame();beginFrame();cosmeticStep(0);};
+            const auto fail=[](const std::string& m) {throw std::runtime_error("late model pick: "+m);};
+            const auto* filler=registry_.find("arasword");
+            const tak::sim::UnitType* late=nullptr;
+            const float lx=3000,lz=3000;
+            // The structure with the largest footprint whose model is not loaded (first wins a tie).
+            for (const auto& [id,type]:registry_.types())
+                if (type.isStructure() && !type.ghost && id.find("null")==std::string::npos && !visuals_.count(id) &&
+                    (!late || type.footX*type.footZ>late->footX*late->footZ) && world_.canPlace(&type,lx,lz))
+                    late=&type;
+            if (!filler || !late) fail("no fixture types");
+            // The fillers come first in the live list and use up the registration budget.
+            for (int i=0;i<kRegistrationsPerFrame+6;++i)
+                if (writableWorld().spawn(filler,6000+float(i%10)*40,6000+float(i/10)*40,0.0f,localPlayer_)<=0)
+                    fail("filler spawn failed");
+            const int lateId=writableWorld().spawn(late,lx,lz,0.0f,localPlayer_);
+            if (lateId<=0) fail("late spawn failed");
+            mapView_.setZoom(1);
+            mapView_.setOffset(5600,5800);   // the fillers, far from the late unit
+            selection_.clear();pendingCmd_=0;placing_=nullptr;
+            publish();
+            if (unitType_.count(lateId) || visuals_.count(late->id)) fail("the late unit registered in the first frame");
+            mouseX_=600;mouseY_=60;   // bare ground above the fillers
+            bool tint=false;
+            const tak::CursorId first=desiredCursor(tint);
+            const bool cached=hitBoxes_.count(late->id)!=0;
+            for (int i=0;i<16 && !unitType_.count(lateId);++i) publish();
+            if (!unitType_.count(lateId)) fail("the late unit never registered");
+            mapView_.setOffset(lx-500,lz-350);
+            publish();
+            const UnitR* u=frameUnitP(lateId);
+            if (!u) fail("late unit missing from the frame");
+            const SDL_FPoint p=unitScreen(*u);
+            const SDL_FRect& hb=unitHitBox(late);
+            mouseX_=p.x;mouseY_=p.y+12.0f-60.0f;   // 60 px above the anchor: past the fallback box
+            const tak::CursorId probe=desiredCursor(tint);
+            std::fprintf(stderr,"PICK_LATE_MODEL type=%s first=%d cached=%d box=%.1f,%.1f,%.1f,%.1f probe=%d\n",
+                         late->id.c_str(),int(first),cached ? 1 : 0,hb.x,hb.y,hb.w,hb.h,int(probe));
+            if (!cached) fail("the cursor pass left "+late->id+"'s hit box uncached, as a full scan does not");
+            std::fprintf(stderr,"PASS: late model pick leaves the full scan's hit-box cache\n");
+            return;
+        }
         if (tak::devFlag("TAK_CURSOR_TEST")) {
             noFog_=true;edgeScrollOn_=false;
             writableWorld().setPlayerCount(8);
@@ -4533,6 +4584,50 @@
             const float dx=float(int((frame/period+k)%9)-4)*24;
             spawn(roster[(frame/period+k)%4],x+dx,z+48,float(k%8)*0.785398163f,localPlayer_);
         }
+    }
+
+    void GameView::renderStudyCursor(unsigned frame, int select, char cmd) {
+        cursorStudyOn_ = true;
+        const Frame& f = front();
+        if (select > 0 && selection_.empty())
+            for (const UnitR* u : f.live) {
+                if (int(selection_.size()) >= select) break;
+                if (u->player == localPlayer_ && u->alive() && !u->embarked() && !u->underConstruction && u->type)
+                    selection_.push_back(u->id);
+            }
+        if (cmd == '*') {
+            // Every armed order in turn, seven frames each (and none).
+            static constexpr char kCycle[] = {0, 'a', 'r', 'g', 'l', 'm', 'p', 'c', 'f'};
+            pendingCmd_ = kCycle[(frame / 7) % std::size(kCycle)];
+        } else if (cmd) {
+            pendingCmd_ = cmd;
+        }
+        const float w = float(mapViewW(winW_)), h = float(std::max(1, winH_ - barH()));
+        const float margin = 40.0f;   // clear of the edge-scroll band
+        float x = w * (0.5f + 0.42f * std::sin(float(frame) * 0.037f));
+        float y = h * (0.5f + 0.42f * std::sin(float(frame) * 0.051f + 1.0f));
+        // The units whose anchor can be in the world view (the snapshot's unit grid), so
+        // a large army seen through a small view still puts the pointer on bodies.
+        std::vector<uint32_t> inView;
+        if (f.unitGrid.size() == f.live.size()) {
+            std::vector<uint64_t> bits;
+            const auto rect = tak::render::anchorBandToWorld(-64.0f, -64.0f, w + 64.0f, h + 160.0f, mapView_.offX(),
+                                                             mapView_.offY(), mapView_.zoom(), unitLiftBounds());
+            f.unitGrid.query(rect.left, rect.top, rect.right, rect.bottom, bits, inView);
+        } else {
+            for (uint32_t i = 0; i < uint32_t(f.live.size()); ++i) inView.push_back(i);
+        }
+        if (frame % 2 == 0 && !inView.empty())
+            for (uint32_t k = 0; k < 64; ++k) {
+                const UnitR& u = *f.live[inView[(size_t(frame) * 2654435761u + size_t(k) * 40503u) % inView.size()]];
+                if (!u.type || u.embarked() || !u.alive()) continue;
+                const SDL_FPoint p = dotsFrame_ ? dotCentre(u) : unitScreen(u);
+                if (p.x < margin || p.x > w - margin || p.y < margin || p.y > h - margin) continue;
+                x = p.x; y = p.y;
+                break;
+            }
+        mouseX_ = std::clamp(x, margin, std::max(margin, w - margin));
+        mouseY_ = std::clamp(y, margin, std::max(margin, h - margin));
     }
 
     // Material-only invalidation for the render matrix (workstream E): every

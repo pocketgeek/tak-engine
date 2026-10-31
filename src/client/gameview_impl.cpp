@@ -294,7 +294,9 @@
     // reclaim pick circle (nearest wins); 0 = none.
     int GameView::raiseTargetAt(float wx, float wz) const {
         tak::client::ReclaimPick pick{wx, wz};
-        for (const auto* body : front().live) {
+        const auto& live = front().live;
+        for (uint32_t index : bodyCandidates(wx, wz)) {
+            const UnitR* body = live[index];
             if (body->alive() || !body->corpsePhase || !canPickPoint(body->x, body->z)) continue;
             for (int id : selection_)
                 if (const auto* caster = frameUnitP(id); caster && reviveKindOn(*caster, *body)) {
@@ -795,7 +797,7 @@
         UnitR& s=fb.units[slot];
         if(s.id!=u.id)s=UnitR{};
         const int conjureSiteId=u.buildSiteId ? u.buildSiteId : u.productionSiteId;
-        captureSlots_[slot]={u.id,conjureSiteId,u.type!=nullptr};
+        captureSlots_[slot]={u.id,conjureSiteId,u.type!=nullptr,false,u.type && u.type->canFly};
         if (!u.type) { s.seeded = false; s.type = nullptr; return; }
         s.conjuring=false;   // the serial tail sets it for the few units that have a site
         // Render-read fields, captured for ALL units (alive + dead-recent: the death
@@ -933,6 +935,8 @@
             s.seeded = u.alive();   // dead holds its pose (never interpolated)
         }
         captureSlots_[slot].x = s.x; captureSlots_[slot].z = s.z;   // Frame::unitGrid
+        captureSlots_[slot].corpseFoot = std::max(s.corpseFootX, s.corpseFootZ);   // Frame::maxCorpseFoot
+        captureSlots_[slot].step = std::max(std::fabs(s.x - s.px), std::fabs(s.z - s.pz));   // Frame::maxInterpStep
         captureSlots_[slot].buildGhosts = std::any_of(s.orders.begin(), s.orders.end(),
             [](const RenderOrder& o) { return o.buildType && !o.manaBuildArea; });   // Frame::buildGhostUnits
     }
@@ -965,7 +969,8 @@
         forEachUnitSlot([&](size_t i) {captureUnit(fb, pf, i);});
         // Serial tail, in slot order (the same order as before): the ID table, the compact
         // live list, and the conjure flag for the few units that have a site.
-        captureGridX_.clear(); captureGridZ_.clear(); fb.buildGhostUnits.clear();
+        captureGridX_.clear(); captureGridZ_.clear(); fb.buildGhostUnits.clear(); fb.flyerUnits.clear();
+        fb.maxCorpseFoot = 0; fb.maxInterpStep = 0;
         for (size_t i=0; i<count; ++i) {
             const CaptureSlot& c=captureSlots_[i];
             if(fb.unitSlots.size()<=size_t(c.id))fb.unitSlots.resize(size_t(c.id)+1,-1);
@@ -974,6 +979,9 @@
             UnitR& s=fb.units[i];
             fb.live.push_back(&s);   // compact live list (mirrors world_.units())
             if (c.buildGhosts) fb.buildGhostUnits.push_back(uint32_t(captureGridX_.size()));
+            if (c.flyer) fb.flyerUnits.push_back(uint32_t(captureGridX_.size()));
+            fb.maxCorpseFoot = std::max(fb.maxCorpseFoot, c.corpseFoot);
+            fb.maxInterpStep = std::max(fb.maxInterpStep, c.step);
             captureGridX_.push_back(c.x); captureGridZ_.push_back(c.z);
             // Zero means no site (captureUnit already cleared the flag). Only the few
             // units with one are touched here: a pool thread just wrote every record,
@@ -1492,15 +1500,22 @@
         // stragglers just pop in a few frames later. Purely cosmetic -- the sim already has
         // them (they move/fight); this only gates when the client starts drawing them.
         int regBudget = kRegistrationsPerFrame;
+        // Cursor picking (perf follow-up C) also learns here whether every typed record of
+        // this snapshot is registered (a budget break leaves that unknown).
+        bool unregistered = false;
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
             if (u.type && u.alive() && !unitType_.count(u.id)) {
                 if (u.replacementModel && !visuals_.count(u.replacementModel->id))
                     loadVisual(u.replacementModel->id);
                 registerUnit(u.id, u.type);
-                if (--regBudget <= 0) break;
+                if (!unitType_.registered(u.id)) unregistered = true;   // no model
+                if (--regBudget <= 0) { unregistered = true; break; }
+            } else if (u.type && !u.alive() && !unitType_.registered(u.id)) {
+                unregistered = true;   // died before it was registered
             }
         }
+        pickRegistered_ = {front().gen, front().unitSlots.size(), !unregistered};
         consumeSmokeTicks();
         for(auto it=pointParticles_.begin();it!=pointParticles_.end();) {
             const auto* owner=frameUnitP(it->first);
@@ -1676,6 +1691,7 @@
                 const float datum=flyerGround(u.x,u.z); // also resolves heightRef_
                 const auto [ground,altitude]=u.flightRenderHeight(datum,heightRef_);
                 a.groundY=ground;a.groundInit=true;a.altitude=altitude;
+                flyerAltitudeSeen_=std::max(flyerAltitudeSeen_,altitude);   // cursor picking's flyer bound
                 // Occupancy is authoritative too: a hovering conjurer stays active
                 // even when stationary; a landed flyer plays its landing pose.
                 const bool air=u.flightGroundMode==2;
@@ -2887,7 +2903,7 @@
         // while the lobby still used the previous data set.
         destroyGpuTextures();anims_.clear();cobCache_.clear();visuals_.clear();
         atlasRect_.clear();atlasLaidOut_=false;modelTextureAnimations_.clear();animatedTex_.clear();
-        hitBoxes_.clear();ringBoxes_.clear();kingdomPals_.clear();
+        hitBoxes_.clear();ringBoxes_.clear();kingdomPals_.clear();pickBoundsValid_=false;pickRegistered_={};
         featureDefs_.clear();featurePals_.clear();cursorsInit_=false;
         loadTextures();loadOrderButtons();
         loadInterfaceFonts();
@@ -3047,8 +3063,7 @@
     const SDL_FRect& GameView::unitHitBox(const tak::sim::UnitType* type) {
         auto it = hitBoxes_.find(type->id);
         if (it != hitBoxes_.end()) return it->second;
-        // Fallback (model not loaded): a small box just above the anchor.
-        SDL_FRect box{-12.0f, -28.0f, 24.0f, 30.0f};
+        SDL_FRect box = kFallbackHitBox;   // model not loaded
         auto vt = visuals_.find(type->id);
         if (vt != visuals_.end()) {
             std::vector<Tri> scratch;
