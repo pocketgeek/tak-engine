@@ -108,7 +108,7 @@ Fight fight(const TypeRegistry& registry,const UnitType& attacker,const UnitType
             if (held && f.firstStill<0) f.firstStill=tick;
         }
         f.dogfight+=o.airToAir.has_value();
-        f.hover+=o.hoverAttackRefresh!=0;
+        f.hover+=o.flightGoal && (o.flightGoal->flags&1);   // AirToGroundHover's ring controller
     }
     f.hash=w.stateHash();
     return f;

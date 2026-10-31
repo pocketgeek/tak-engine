@@ -596,9 +596,14 @@ simultaneous descent serializes: the later lander sees the earlier one's
 stage 3 in the same tick. The refused flyer then runs retail's own
 candidate search (`417188..4172ff`) to find another site. Test:
 `retail_motion`, where 12 flyers stacked on one point land with no shared
-cells (Retail: all 66 pairs overlap). The test also covers 8 flyers
-arriving over a landed one, and the same at a site that is unexplored for
-them.
+cells (Retail through protocol 306: all 66 pairs overlapped). The test also
+covers 8 flyers arriving over a landed one, and the same at a site that is
+unexplored for them. Since protocol 307 Retail lands that stack apart too:
+retail's air traffic (unit +0x12a, [retail-engine.md](retail-engine.md),
+"Air traffic") makes each flyer of a stack step out of it from VTOL_Standby
+or VTOL_LandIfCan before it looks for a site, so the hovering stacks behind
+most of the overlapping landings above no longer form in either mode.
+`509400` itself is unchanged.
 
 **A second deliberate flight difference: flyers stay with a mixed
 formation.** Retail (`417c20`, VTOL_Move) runs Move_Ground's two group

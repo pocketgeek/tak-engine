@@ -416,19 +416,21 @@ int main(int argc,char** argv) {
             const std::array<int32_t,3> middle{b->x.v,b->groundY.v,b->z.v};
             const auto sweetSpot=w.queryUnitScriptPoint(target,true);
             int ticks=0,headed=0,refreshes=0,ringed=0;
-            uint32_t refresh=0;
+            tak::sim::RetailFlightVector last{};
             for (int tick=0;tick<1200;++tick) {
                 const auto* f=w.unit(flyer);
                 const std::array<int32_t,3> from{f->x.v,f->flightY.v,f->z.v};
                 w.tick(1.f/30.f);
                 f=w.unit(flyer);
-                if (f->orders.empty() || !f->orders.front().flightGoal) continue;
+                // AirToGroundHover's ring: the target controller (flag 1), not
+                // the stage-1 approach point.
+                if (f->orders.empty() || !f->orders.front().flightGoal || !(f->orders.front().flightGoal->flags&1)) continue;
                 const auto& order=f->orders.front();
                 ++ticks;
                 headed+=order.flightGoal->heading==nativeFrom(from,sweetSpot);
-                if (order.hoverAttackRefresh==refresh) continue;
-                refresh=order.hoverAttackRefresh;++refreshes;
                 const auto& point=order.flightGoal->point;
+                if (point.x==last.x && point.z==last.z) continue;
+                last=point;++refreshes;
                 const float radius=std::hypot(float(point.x-sweetSpot[0])/65536.f,float(point.z-sweetSpot[2])/65536.f);
                 // Within 16 px, plus the ring point's fixed-point truncation
                 // (the Barracks' drawn SweetSpot leaves one wake at 133.99 px).

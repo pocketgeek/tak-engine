@@ -786,9 +786,10 @@ SweetSpot and fires once the led SweetSpot is within tolerance.
 World faced the target's centre in all three places. Since protocol 263,
 `queryWeaponAim` returns the request (`retailSlotFacing`), the gate checks it,
 an auto slot posts it as `faceRequest`, and an attacking pivoting ground unit
-brakes and turns to the request of its last aiming slot. `tickHoverAttack` rings
-the selected weapon's led SweetSpot (`retailLeadPoint`) and heads at the
-target's SweetSpot. Of the 202 unit types, 60 post requests and carry a weapon
+brakes and turns to the request of its last aiming slot. The hover attack
+(`tickAirToGroundHover` since protocol 307, which ports the whole of `41d820`:
+"Air traffic" below) rings the selected weapon's led SweetSpot
+(`retailLeadPoint`) and heads at the target's SweetSpot. Of the 202 unit types, 60 post requests and carry a weapon
 that is not melee, in both balances.
 
 Checked:
@@ -822,10 +823,11 @@ Still deviating:
 - A request stays posted in retail until something clears it (`4dc0e0`), so a
   pivoting unit whose slots stop aiming keeps turning to the last point. World
   turns it to the target's centre.
-- Retail's hover-attack target controller holds its ring point fixed between
-  wakes: flag 0x80 makes `4e41d0` return the stored point. World moves the
-  point with the target. It also accepts at radius 4 where World's persistent
-  controller never accepts.
+- (Retail's hover-attack target controller holds its ring point fixed between
+  wakes: flag 0x80 makes `4e41d0` return the stored point; it posts 0x100
+  within radius 4 and stays. World moved the point with the target and never
+  posted; both are ported since protocol 307, with the hover mission, "Air
+  traffic" below.)
 
 A flyer attacking a flyer is no longer held facing its centre: it flies
 AirToAir (protocol 305, "AirToAir" below). Against a target that cannot fly it
@@ -964,10 +966,8 @@ Still deviating:
   for a flying target, is ported since protocol 305: next section.)
 - (When the target is lost, AirToGround pushes `VTOL_SEEKATTACK` (`4192f0`):
   ported since protocol 305, see "VTOL_SeekAttack" below.)
-- The group check (`51d1e0`, VTOL_Move_Formation) is not ported. Neither is
-  stage 4's air-traffic step-out: unit +0x12a, a counter `51dc4b..` keeps
-  from the overlap list, pushes `VTOL_StepOut` at 5 or more, and World keeps no
-  such counter.
+- The group check (`51d1e0`, VTOL_Move_Formation) is not ported. (Stage 4's
+  air-traffic step-out is, since protocol 307: see "Air traffic" below.)
 - Off the map, World flies at the clamped sector's cruise height (retail: the
   off-map cell's height 0 plus cruisealt), and its velocity kernel keeps the
   vertical control that `4dab71` skips for an off-map unit.
@@ -1141,8 +1141,9 @@ Checked:
   (no damage before either).
 
 Not ported or still deviating:
-- The group check (`51d1e0`, VTOL_Move_Formation) and the air-traffic step-out
-  (unit +0x12a >= 5 pushes VTOL_StepOut), as for AirToGround.
+- The group check (`51d1e0`, VTOL_Move_Formation), as for AirToGround.
+  (Stage 2's air-traffic step-out is ported since protocol 307: see "Air
+  traffic" below.)
 - (A lost target pushes VTOL_SEEKATTACK (`41d654`): ported since protocol 305,
   next section.)
 - The retarget scan is World's target scan (`findTarget`, as the ground
@@ -1179,8 +1180,9 @@ right behind the attack, which then goes, so it runs at once.
 `4192f0`: a unit without a weapon (+0x130 `0x8000000`) clears its list (7);
 event `0x200` (its controller failed) ends the seek (5); off the map it flies
 800 px toward the map, radius 128, waiting on `0x700` (as AirToGround's
-stage 7). The step-out (+0x12a >= 5) and the group check `51d1e0` come next
-(not ported), then the group flag's rand(25). Stage 0 (`41972e`): with a
+stage 7). Past stage 0 the air-traffic step-out (+0x12a >= 5, ported since
+protocol 307: "Air traffic" below) and the group check `51d1e0` (not
+ported) come next, then the group flag's rand(25). Stage 0 (`41972e`): with a
 carried target, `4d7de0(unit, target, 0, 0, 0, 0)`; an attack put ahead
 clears the wait mask and returns 0, a refusal goes straight on to stage 1.
 Without one, a zero point becomes the unit's position, +0x4e = rand(0x10000)
@@ -1225,9 +1227,158 @@ Not ported or deviating:
 - The point's height is not kept (a point controller flies the cruise height).
 - Before the attack's first wake World takes the target's own position as
   the point.
-- AirToGroundHover (`41d820`) pushes the seek too (`41e301`, `41e35f`); not
-  ported, a hover attacker's attack ends.
-- The step-out and the group check, as for AirToGround.
+- (AirToGroundHover (`41d820`) pushes the seek too (`41e301`, `41e35f`):
+  ported since protocol 307, with the mission, "Air traffic" below.)
+- The group check, as for AirToGround.
+
+## Air traffic: flyers step out of a stack (icd + emulation, 2026-10-31, protocol 307)
+
+A flyer's secondary occupancy list (unit +0x117 count, -1 when it overflowed,
++0x118 seven 16-bit ids: "Air occupancy" above, `RetailAirOccupant`) holds the
+flyers whose footprint cells it shares. After the rebuild (`51da6a..51dbbe`)
+every live, not dying flyer of a player of type 1 or 2 steps a signed byte at
+unit +0x12a (`51dc4b..51dce4`): capped at 10, it rises by the list's count, by
+14 when the list overflowed, or falls by 2 with no overlap; a negative result
+is 0. Every flyer mission reads it at its wake and, at 5 or more (8 for a
+flying builder at work), pushes a step-out ahead of itself (`4d7750`) with a
+distance D in the step-out's +0x4e:
+
+| mission | where | pushes | D (x16 px) | then |
+|---|---|---|---|---|
+| VTOL_Standby `417350` | every wake | VTOL_StepOutStandby | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_LandIfCan `416cd0` | after the +0x66 / 0x200 exits | VTOL_StepOut | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_Move_Formation `417750` | past stage 0 | VTOL_StepOut (StepOutStandby under 0x4000000) | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_Move `417c20` | past stage 0 | VTOL_StepOut | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_Follow `418860` | past stage 0 | VTOL_StepOut | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_SeekAttack `4192f0` | past stage 0 | VTOL_StepOut | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_Patrol `419db0` | past stage 0 | VTOL_StepOut | rand(15) + footX | stage 1, sleep 1 |
+| VTOL_Pickup `41a680`, VTOL_Unload `41ae20` | stage 1 | VTOL_StepOut | rand(15) + footX | stage 1, sleep 1 |
+| AirToGround `41bf80` | stage 4 | VTOL_StepOut | rand(10) x 3 + footX | auto rescan first; stage 1, sleep 1 |
+| AirToAir `41ca50` | stage 2 | VTOL_StepOut | rand(15) + both footX | auto rescan first; sleep 1, stage 0 |
+| AirToGroundHover `41d820` | stage 4 | VTOL_StepOut | rand(10) x 3 + footX | below |
+| VTOL_MobileBuild `41ef00`, VTOL_HelpBuild `41f7f0`, VTOL_RepairUnit `420e60` | every wake, at 8 | VTOL_StepOutNoFormation | rand(15) + footX | sleep 1, StopBuilding (`51e4d0(8, 0)`), stage 0 |
+
+VTOL_SeekGuard (`4197d0`) and AirStrike (`41b5e0`) check it too. "Auto rescan"
+is `4d8370` (the idle scan, `412620` on the selected slot) and `4d7de0(unit,
+found, 0, 0, 1, 0)` on rand(2) == 0 for an auto attack (+0x52): a new attack
+put ahead ends the mission. The three step-outs share handler `4214b0` and
+differ only in their registry flags (0x1000000, 0x5000000, 0). Off the map it
+flies 800 px back toward the map (radius 128) and ends. Stage 0: eight octant
+scores round the flyer's heading (ahead 100, 45 degrees off 0, abeam 100, 135
+degrees 200, behind 300, each plus rand(80)), 100 more for every octant a
+live listed flyer lies ahead of (`41d780`), the first lowest wins; the point is
+D - rand(D/4) + rand(D/4) px out at a random angle within that octant, a point
+controller (`4e40e0`, flags 0x30) of radius (rand(5) + 5) x 16, waiting on
+0x700. Stage 1 (woken by the controller) ends it. The mission behind it runs
+again from the state it set.
+
+**AirToGroundHover** (`41d820`) is ported whole since then
+(`retailAirToGroundHover`), where World had ported only stage 3's ring
+point. Head: events 0x28, a lost target or a `dropped` weapon go to `41e28f`
+(VTOL_SEEKATTACK as AirToAir's exit: no look at the unit's own state, the
+attack last, not Hold Fire); off the map, 800 px back (0x700); 0x40 restarts
+after a tick; the group check `51d1e0(unit, 1, 5)`: out of its formation,
+once flagged (0x8000000), it may leave on rand(2) == 0 (return 8, 50c480 first
+unless the next mission moves with the group), else it flags itself and pushes
+VTOL_Move_Formation (+0x56 = -4); back in, rand(25) == 0 clears the flag.
+Stage 0 takes off and zeroes +0x4e; stage 1 (the target's position in +0x22,
+every slot automatic) installs a point controller of radius D + 144 on it, wait
+0x768 and sleep 15, while the flyer is more than D + 160 whole pixels away;
+stage 2 makes the selected slot manual on the target and reads its led
+SweetSpot; stage 3 reads it again, draws the ring point (41de5d, as before),
+installs the target controller there (`4e4140`: flags 0xa3, radius 4, the
+attack altitude over the ground under the point: a fixed point that posts
+0x100 within its radius and stays, headed at the target's SweetSpot) and
+waits on 0xe70768 with a sleep of 15 + rand(15). Stage 4 (that wake: the
+sleep, the controller, a shot fired (0x70000) or a shot's outcome
+(0xe00000)): congested, it counts the step-out in +0x4e, rescans an auto
+attack, pushes VTOL_StepOut (D = (rand(10) x 3 + footX) x 16) and ends the
+attack past rand(5) + rand(5) + 1 step-outs, else goes back to stage 1 a tick
+after the step-out; otherwise a wasted shot (0xe00000) on rand(2) == 0
+against a target without a mover or one standing still (+0x130 & 0xc) sends
+it to stage 5, a random point of the ring (rand(8) + D - 3 px at angle
+rand(0x10000)), and anything else back to stage 3 after a tick.
+
+**Shot outcome** (`4099e0`, from `529dc0` and `52a460`): the area pass sums
+each recipient's damage callback (52a330's amount, or a status class's
+answer) by the recipient's player against the shot's (+0xfd vs +0x92); the
+direct hit takes its one recipient's, as a word. The shooter (+0x7c) gets
+0x1000000 when the other side took more than twice what its own did, else
+0x200000 << slot (the shot's +0xd8 & 0xc, the WeaponRecord's slot). Only
+AirToGroundHover and the ground Attack_Chase (`403bb0`, mask 0x1f40068, not
+ported) wait on these.
+
+Ours: `retailairtraffic.h` (`retailAirTrafficStep`, `retailStepOutGoal`,
+`retailVtolStepOut`), `retailAirToGroundHover` in `retailairattack.h`, and
+the checks in `retailAirToGround`, `retailAirToAir` and
+`retailVtolSeekAttack`. `Unit::airTraffic` is stepped in
+`World::updateAirOccupancy` after the insert pass and hashed. A step-out is
+its own order at the front (`Order::stepOut`, D in `airRunCount`), pushed
+after the pushing mission's dispatch (`World::pushStepOut`) and run at once
+(`tickStepOutMission`), flown by `flyMissionGoal`; the mission behind it runs
+again when it ends. While it leads, the attack behind it keeps firing its
+manual slots at its target (`fireBehindStepOut`: the weapon update `52ae90`
+fires whatever mission leads). The hover runs on the attack order
+(`tickAirToGroundHover`, after the order's weapons fire) and flies with
+`flyHoverGoal`. `applyHit` sums the damage per side and posts the outcome to
+the shot's slot for the shots World resolves from a slot (instant and melee
+shots, projectiles, flames, bombs).
+
+Checked:
+- `tools/re/check_air_traffic.py` runs the counter step natively for all
+  65,536 counter/overlap pairs (and its three gates), `4214b0` on 3,000
+  random states (429 off the map, 1,604 at stage 0, 655 at stage 1, 312
+  past it; up to seven listed flyers, live and dead) and `41d820` on 8,000
+  (1,185 off the map, 534 / 1,099 / 518 / 1,058 / 2,033 / 1,070 at stages
+  0-5, 503 past them; 1,549 lost targets, 186 leaves, 609 formation pushes,
+  1,139 approaches, 1,358 ring points, 173 rescans, 728 step-outs, 472
+  give-ups), against `retail_motion_test --air-traffic`, `--step-out` and
+  `--air-hover`: every result, stage, wait mask, deadline, pending and flag
+  word, count, point, controller, radius, slot call, push, D, random draw and
+  generator state. `check_air_attack_run.py`, `check_air_to_air.py` and
+  `check_air_seek_attack.py` now run with the counter below, at and above 5
+  (AirToGround: 90 step-outs in 6,000 calls; AirToAir: 2,188 in 12,000;
+  VTOL_SeekAttack: 947 in 6,000), and the last also runs AirToGroundHover's
+  lost-target exit (1,932 of its 6,000 exits).
+- `air_traffic_test` (data, both modes, the air-stack-*.scn fixtures, the
+  target topped up): the airborne Drake-ticks near the fight that share
+  footprint cells with another flyer, per mille. On protocol 306: 992 (five
+  Drakes on an Aramon Barracks), 980 (two groups of five), 282 (three Drakes
+  on a patrolling Spyhawk), 277 (six Drakes moved to one point). Now 44, 58,
+  86 and 141, the same in both modes; the Drakes still hurt the target
+  (36,811 -> 34,837 and 62,254 -> 57,146 hit points on the Barracks, 5,605 ->
+  9,251 on the Spyhawk). The test fails on 306 (eight of its checks).
+- `retail_motion_test`'s stacked landing (twelve flyers sent to land on one
+  spot) now lands them apart in Retail too: each steps out of the stack from
+  VTOL_Standby or VTOL_LandIfCan before it searches for a spot (the landing
+  test itself, `509400`, still lets a lone flyer touch down on a ground unit
+  at an unexplored site).
+
+Not ported or still deviating:
+- World flies a flyer's fight-move legs and an armed flyer's patrol without a
+  mission (`attackMove` orders skip the VTOL_Move port), so no check runs on
+  them; the standby's check runs once the leg ends.
+- The flying builders' checks (VTOL_MobileBuild, VTOL_HelpBuild,
+  VTOL_RepairUnit: threshold 8, StopBuilding, stage 0): World runs these
+  missions as an approach and a work stage that do not restart at stage 0.
+- VTOL_SeekGuard and AirStrike are not ported at all.
+- The group check (`51d1e0`) is ported for AirToGroundHover only (with
+  VTOL_Move's), not for AirToGround, AirToAir or VTOL_SeekAttack.
+- A step-out runs its first wake as soon as it is pushed, as retail's
+  dispatcher runs a new head at once. One that ends hands over in the same
+  tick to the missions World dispatches after it (VTOL_Move, VTOL_Patrol, the
+  attacks), as retail does, but to VTOL_Standby and VTOL_LandIfCan, which
+  World dispatches before it, a tick later.
+- Shots World ends without an impact (an arrow landing with no
+  areaofeffect), storms, pending area effects and death blasts post no
+  outcome.
+- Legion's flight stations (Legion's design, not retail: each flyer of a
+  Legion move holds its own lane over the ground) take the place of the
+  check on VTOL_Move and VTOL_Patrol: a flyer holding a station does not
+  step out of its lane (that broke `legion_mixedformation` and
+  `legion_flyerfront`). Its standby and landing still step out, so a Legion
+  formation's flyers take longer to land (`legion_flyerfront` waits 900
+  ticks for the last landing instead of 150).
 
 ## SweetSpot is the drawn piece bounds (icd + live capture, 2026-10-24, protocol 295)
 
@@ -4376,7 +4527,8 @@ differences are in [the 0.9.7 notes](release-0.9.7-notes.md).
   active weapon's range + 160 when armed, the angle stepping back
   0x4000 + rand(0x2000) on each arrival, looking again after 15 ticks. Ours:
   `World::tickFlyingGuard`. The guarded unit's attacker check
-  (event 0x10) is ported since protocol 302 (next section). Not ported: the landed step-out (+0x12a >= 5), the stage-2 attack scan
+  (event 0x10) is ported since protocol 302 (next section), its air-traffic
+  step-out since protocol 307 ("Air traffic"). Not ported: the stage-2 attack scan
   (`0x51d1e0`, whose work our target acquisition does) and the optional leash.
   Our draws come from the sim's RNG over the same ranges, not retail's stream.
 
@@ -4418,8 +4570,8 @@ Ours (protocol 302): `World::retailHitResponse` stamps the victim's
 guard, `tickFlyingGuard` as event `0x10` in the wait mask), and
 `World::guardDefend` takes `lastHitBy` as `+0xf8`. The attack is
 `retailIssueAutoAttack(..., forced)`, not an auto target, so it chases until
-the attacker dies, and the guard order under it resumes. The step-out and the
-attack scan (`0x51d1e0`) stay unported; the latter is our target acquisition.
+the attacker dies, and the guard order under it resumes. The attack scan
+(`0x51d1e0`) stays unported; it is our target acquisition.
 
 ## Helping and repairing on the ground: the approach (icd, 2026-10-30, protocol 305)
 
