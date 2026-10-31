@@ -395,6 +395,16 @@ struct LegionNavigator::Impl {
         std::vector<int> column;
         std::vector<std::array<int,4>> pending;   // static changes during the build
         std::array<int,4> box{};                  // box of the component being flooded
+        Plane() {
+            compSize.reserve(64);
+            compBox.reserve(64);
+            cell.reserve(1024);
+            queue.reserve(256);
+            run.reserve(256);
+            column.reserve(256);
+            pending.reserve(64);
+        }
+        // std::array<int,4> box{};                  // box of the component being flooded
         // nearObstacle's static memo (C10): per origin, the packed clearance
         // and outward normal, valid where nearGen holds nearGenCur. A pure
         // function of `legal`; a new epoch starts a new generation. Derived,
