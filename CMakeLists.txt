@@ -1603,6 +1603,9 @@ add_test(NAME los_status_flight COMMAND los_status_flight_test)
 # melee-*.scn fixtures, both pathfinding modes; data-gated below).
 add_executable(melee_building_test tools/melee_building_test.cpp)
 target_link_libraries(melee_building_test PRIVATE tak-formats)
+# A melee weapon never reaches a flyer in the air (52b980, 412620, 404690; data-gated below).
+add_executable(melee_air_test tools/melee_air_test.cpp)
+target_link_libraries(melee_air_test PRIVATE tak-formats)
 # Flyers step out of a stack (retail's air traffic, the air-stack-*.scn fixtures, both pathfinding modes;
 # data-gated below).
 add_executable(air_traffic_test tools/air_traffic_test.cpp)
@@ -1658,6 +1661,7 @@ if(TAK_TEST_DATA)
     add_test(NAME capture_combat_roster COMMAND capture_combat_test "${TAK_TEST_DATA}")
     add_test(NAME los_status_flight_roster COMMAND los_status_flight_test "${TAK_TEST_DATA}")
     add_test(NAME melee_building COMMAND melee_building_test "${TAK_TEST_DATA}" "${CMAKE_SOURCE_DIR}/tools/scenarios")
+    add_test(NAME melee_air COMMAND melee_air_test "${TAK_TEST_DATA}")
     add_test(NAME air_traffic COMMAND air_traffic_test "${TAK_TEST_DATA}" "${CMAKE_SOURCE_DIR}/tools/scenarios")
     add_test(NAME gate_scripts COMMAND retail_script_test --gates "${TAK_TEST_DATA}")
     add_test(NAME scenery_damage COMMAND retail_script_test --features "${TAK_TEST_DATA}")

@@ -22,6 +22,15 @@ their validation reports; both live in [`docs/`](docs/).
 ## Unreleased
 *protocol 307 · replay format 15 · does not play with 0.9.12 or earlier, nor their replays*
 
+- **Melee units cannot hit flyers in the air**, as in the original game. A
+  Titan, Swordsman, Troll or any other unit fighting with a melee weapon now
+  drops an order to attack a flyer that is in the air (or a unit that boards a
+  transport), does not go after one on its own and does not answer one that
+  attacks it. Titans used to walk under a slow or hovering flyer, such as a
+  Gryphon, and hammer it. A flyer that has landed is fair game, as in the
+  original: melee units attack it, ordered or not, also when they pass one on
+  a move, and stop when it takes off. A melee blow's splash still never
+  reaches a flyer at its flying height.
 - **Melee units reach the building they attack**, as in the original game:
   each attacker walks to its own free place touching the building, corners
   included, and bites from there. They used to head for the building's

@@ -402,6 +402,10 @@ private:
     static bool armed(const tak::sim::UnitType*);
     // Some weapon of `a` can hurt `t` (flyers need a weapon that is not noair).
     static bool canHurt(const tak::sim::UnitType* a, const tak::sim::UnitType* t);
+    // `u`'s attack weapon (a switcher's selected slot, else the first) can
+    // reach `t` where it is now: a melee one never reaches a unit in the air,
+    // and the sim drops such an attack order at once (Attack_Melee's head).
+    static bool reachesNow(const tak::sim::Unit& u, const tak::sim::Unit& t);
     // The best site for a force of `force` strength at (x,z) whose units move as
     // `type`, by value (economy, production, the Monarch, finishing a player off),
     // threat (armed units, nearer our base) and practicality (distance, whether the

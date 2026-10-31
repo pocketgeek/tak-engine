@@ -204,7 +204,10 @@ splash within 300 px of the sub) and behind a shore (no shot, no churn).
   (`(pos - foot<<19 + 0x80000) >> 20`, our `footprintOrigin`) before the
   compare, so overlap and contact anywhere in the origin cell pass. Ported
   exactly (`meleeInRange`) since protocol 307; before, raw centres let a body
-  standing on the near edge of a perimeter cell test out of range.
+  standing on the near edge of a perimeter cell test out of range. Before the
+  boxes it reads the target's flight layer (`+0x130 & 3`, `52b98c..52b997`):
+  a target in the air (2) is never in range. See "Melee never reaches a flyer
+  in the air".
 - **Attack_Melee @0x404690** (registry row `0x5eb8ea`, flags `0x1000280`):
   the ground attack mission of a melee selected weapon (any other weapon hands
   the order to Attack_Chase, `4d4bf0`/`4d4ef0`). Stage 0 (`404cfa`): the slot
@@ -571,6 +574,87 @@ coast scatters a packed flyer formation's touchdowns (`legion_flyerfront`
 air-only 56 -> 171 px), so that is left for a separate decision. Computer
 players (owner type 3) get no default mission in retail; World gives every
 player one, as before. `transport_post_unload` covers every shipped carrier.
+
+## Melee never reaches a flyer in the air (icd + emulation, 2026-10-30, protocol 307)
+
+The owner asked whether Titans are supposed to hit flying things. In retail a
+melee weapon never strikes a flyer in the air, and strikes a landed one like
+any other unit. Every test reads the target's flight layer, unit `+0x130 & 3`
+(1 on the ground, 2 in the air, 0 off the map; World's `flightGroundMode`,
+with `embarked()` for 0), never its type. Emulated (`tools/re/check_melee_air.py`,
+synthetic units, the checks native, the enemy scan, damage and navigator
+calls hooked):
+
+- **In range.** `52b980` returns 0 for a layer-2 target before it boxes the
+  footprints (`52b98c..52b997`): two 2x2 bodies in contact are in range in
+  layers 0, 1 and 3, never in 2. The weapon update (`52ae90` -> `52ad60` ->
+  vtable +0xc) therefore never aims or swings a melee slot at a flyer in the
+  air, whoever gave it the target. It reaches the release (`530220`, SET 23)
+  only after aim start `52fe30` has passed the same test, so a swing begun on
+  a landed flyer that then takes off does not land (World's release sits
+  behind `meleeInRange` too).
+- **Picker.** `412620` asks the slot's handler (vtable +0x14, true only for
+  `MeleeWeapon`) and then keeps layer-1 candidates only (`412932..412945`);
+  the sweep's keep test does the same (`40fcb3..40fcc6`). Sweep and idle-scan
+  (`4d8370`) variants: a lone enemy in the air -> nothing, one in the air and
+  one on the ground -> the grounded one, a landed flyer -> taken; a plain
+  ranged slot takes the one in the air.
+- **Hit response.** `409a50`'s retaliation answers a melee victim's attacker
+  in layer 1 only (`409db4..409dcc`): an attacker in the air gets no `4d7de0`,
+  a grounded or landed one does.
+- **Orders.** `4de530` kind 3 gives a walker whose weapon (`519ac0`) is melee
+  `ATTACK_MELEE` whatever the target's layer: it tests the air bits only
+  against `toairweapon`/`noairweapon`. Attack_Melee's head (`404778..4047ee`)
+  returns 5 (the mission is removed) for a carried target (+0x114 bit 4) or
+  one in layer 0 or 2, at every dispatch, before any navigator or weapon
+  call; a grounded or landed target
+  gets the manual slot, its target and the chase circle (`519b70`, `51a700`,
+  `4d4da0`). So a right-click on a flyer in the air is taken and dropped at
+  once, and a chase ends when its target takes off. The cursor selector
+  (`0x4dd780`) does not special-case melee: the attack cursor shows.
+- **Splash.** A melee shot sits on the struck unit's origin (`52bac0`) and its
+  area pass (`529dc0`, see "Impact damage") measures to the unit boxes in 3D.
+  The Titan's Hammer (aoe 31, edge 0.7) striking a ground unit with a flyer
+  straight overhead hits the flyer only while its box is within 15 px of the
+  struck unit's height (fraction 1.0 at 0 px, 0.70 at 14, nothing from 15);
+  shipped flyers cruise 50 to 200 px up. `retailSplashUnits` already matched.
+
+World boxed the footprints in 2D only and filtered flyers by type. A Titan
+told to attack a Gryphon hovering over it hammered it (4073 HP in 10 s; 5703
+in Crusades), and an idle one 120 px away acquired it (`findTarget`, World's
+`4d8370`), walked under it and hit it. Of the 48 shipped mobile melee types
+(47 in Crusades) only the five whose weapon has `noairweapon` (the Knight,
+both wolves, the Giant Orm and the Giant Barracuda) left it alone; 38 others
+hammered it from under it (37 in Crusades), and so did the four gods. The
+sweep skipped every flyer type, so a landed one was never swept. In the
+owner's 0.9.12 replay (`titan-0912.takrep`, Crusades) a Titan struck flyers
+ten times: two Gryphons, an Iron Beak and a Parrot in the air, six landed
+Parrots.
+
+Since protocol 307 (no bump: 307 is unreleased): `meleeInRange` returns
+false for a target with `flightGroundMode == 2`; `tickCombat` drops the
+attack of a walker whose selected weapon is melee while its target is in the
+air or carried (Attack_Melee's head; World kept chasing a unit that boarded a
+transport); `findTarget` skips a target off the ground when
+the scan's weapon (`519ac0`) is melee; the sweep picker, its keep test and
+the retaliation read the layer instead of the type, so a landed flyer is a
+melee target (a Titan walking a move into a landed Gryphon swings at it). Our
+AI levels do not order a melee unit at a flyer in the air (the order would go
+at once): a defender leaves it alone, a strike unit goes for its site.
+`melee_air_test` (both balances) covers the Titan and every shipped mobile
+melee type: no kept order, no hit, no acquisition and no walk after a held
+Gryphon, ordered or idle; the landed Gryphon hit ordered, idle and by the
+sweep; the attack dropped on the tick it takes off and when its target
+boards a Roc; the Hammer's splash missing a Gryphon 150 px over its target.
+Before the change 16 of its checks failed (8 in each balance).
+
+Still deviating: World drops the attack on the tick the target is airborne,
+retail at Attack_Melee's next dispatch (stage 1 sleeps
+`rand(5)+rand(5)+4` ticks while the target is far); the weapon cannot swing
+meanwhile in either. `noairweapon`/`toairweapon` and the Retail AI's enemy
+list still read the flyer's type, not its layer. Attack_Chase (`403c9c`,
+`403ca9`) ends on a carried target too; World's ranged attacks keep one (not
+changed here).
 
 ## Shooting at flyers: lead, hit band, and the held attacker (icd, 2026-10-14, protocol 262)
 

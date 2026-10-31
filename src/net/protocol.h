@@ -28,6 +28,11 @@ constexpr uint32_t kNetVersion = 307;      // 307: a ground melee attacker appro
                                            //      ported flyer missions push a step-out (4214b0) ahead of themselves (a new
                                            //      front order, hashed); AirToGroundHover (41d820) is ported whole, and a
                                            //      shot posts its outcome (4099e0) to the shooter's mission events (hashed).
+                                           //      A melee weapon never reaches a unit in the air: 52b980's layer test,
+                                           //      Attack_Melee's exit for a target in the air or carried
+                                           //      (404778..4047ee) and the melee layer-1 test of the picker, its keep
+                                           //      test and the hit response (412620, 40fcb3, 409db4) read
+                                           //      flightGroundMode; a landed flyer is a target.
                                            //      No new command; replay format unchanged.
                                            // 306: the mind-control, stone and freeze Line-of-Sight classes fly a real
                                            //      shot (52d8d0 / 52db40 / 52dda0) and take effect on the unit it strikes,
