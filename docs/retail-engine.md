@@ -311,7 +311,7 @@ road, 150 in 0.5 water, road over water when both bits are set, 700 x -0.5 ->
 65186. It is the same scaling the cost search applies (`4151ef`); both now
 share `retailEffectiveTurnRate` (pinned by `fire_sweep_turnrate`).
 
-## Enemies with construction left (icd, emulated 2026-10-30, protocol 306)
+## Enemies with construction left (icd, emulated 2026-10-30, protocol 307)
 
 A unit with construction left (`+0x108`, a float: 1.0 for a fresh site, 0 once
 finished) is a site still being conjured, or a unit still being built at a
