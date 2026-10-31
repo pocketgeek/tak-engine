@@ -2740,6 +2740,28 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
                 if (!std::binary_search(out.begin(), out.end(), uint32_t(i)))
                     throw std::runtime_error("pick index verify: a body pick circle holding the point is not a candidate");
             }
+            // The cursor rarely rests on a body, so also probe one body's own centre
+            // per query (round robin): the grid query there must return it.
+            if (out.size() < n && f.maxCorpseFoot > 0) {
+                std::vector<size_t> bodies;
+                for (size_t i = 0; i < n; ++i)
+                    if (f.live[i]->corpseFootX > 0 || f.live[i]->corpseFootZ > 0) bodies.push_back(i);
+                if (!bodies.empty()) {
+                    const size_t i = bodies[size_t(pickVerify_.bodyQueries) % bodies.size()];
+                    const UnitR& u = *f.live[i];
+                    const float r = tak::client::reclaimPickRadius(f.maxCorpseFoot, f.maxCorpseFoot) + 1.0f;
+                    std::vector<uint64_t> bits;
+                    std::vector<uint32_t> probeOut;
+                    f.unitGrid.query(u.x - r, u.z - r, u.x + r, u.z + r, bits, probeOut);
+                    tak::client::ReclaimPick probe{u.x, u.z};
+                    probe.offer(0, u.x, u.z, u.corpseFootX, u.corpseFootZ);
+                    if (probe.id) {
+                        ++pickVerify_.bodyHits;
+                        if (!std::binary_search(probeOut.begin(), probeOut.end(), uint32_t(i)))
+                            throw std::runtime_error("pick index verify: a body is not a candidate at its own centre");
+                    }
+                }
+            }
         }
 #endif
         return out;
