@@ -6248,7 +6248,9 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
         // it will never reach and then drop it again next tick.
         float ar = u.type->maxRange() + (u.moveState == 0 ? 0.0f : 90.0f);
         int best = 0;
-        float bestD = ar * ar;
+        // The rank of the best so far: its squared distance, ten times that for
+        // a target with construction left (below). The range test is its own.
+        float bestD = 1e30f;
         // fireatwillrandom: spread fire across whatever is in range instead of
         // every unit converging on the nearest body. Only while AUTO-acquiring --
         // an explicit attack order still goes exactly where it was pointed, which
@@ -6270,6 +6272,25 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
         // it entirely -- those orders mean "advance and engage everything en route".
         float leash2 = (u.moveState == 1 && u.orders.empty() && u.type->leash > 0)
                            ? u.type->leash * u.type->leash : 1e30f;
+        // This scan stands in for retail's 4d8370 (Standby, Patrol, a move's
+        // attack response, the VTOL missions' retargets), which runs the picker
+        // 412620 over list +5. That list holds enemies with construction left
+        // (411700: a site still being conjured, a unit still being built at a
+        // factory door), and the picker takes one behind finished targets: its
+        // score is multiplied by 10 (412b52..412b77). Here the nearest-first
+        // rank is a site's squared distance x10, and the scatter score x10.
+        // Two scans take no site, as in retail: a guard's (Follow_Ground and
+        // VTOL_Follow run no scan; they answer the guarded unit's attacker,
+        // and a site never attacks), and one whose scanning slot (519ac0: a
+        // switcher's selected weapon, else the first) is a stone, freeze or
+        // charm class, which the picker never offers a site (4127eb..4128db).
+        const bool guarding = !groundResponse && !u.orders.empty() && u.orders.front().guard;
+        const Weapon* scanWeapon = u.type->weapons.empty() ? nullptr :
+            &u.type->weapons[size_t(u.type->weaponSwitching ?
+                std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1) : 0)];
+        const bool takesSites = !guarding && !(scanWeapon &&
+            (scanWeapon->status==Weapon::Status::Stoned || scanWeapon->status==Weapon::Status::Frozen ||
+             scanWeapon->mindControl));
         // A ranged unit only auto-acquires enemies it can actually see, so it
         // doesn't charge a target hidden behind a wall (which caused pile-ups at
         // corners). Melee/flyers acquire regardless.
@@ -6283,13 +6304,14 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
         forEachNear(u.x.toFloat(), u.z.toFloat(), ar, [&](int idx) {
             const Unit& e = units_[size_t(idx)];
             if (!e.alive() || e.embarked() || isNeutralPlayer(e.player) || allied(e.player, u.player) || !e.type) return;
-            if (e.underConstruction) return;   // don't auto-react to a site still conjuring
+            if (e.underConstruction && !takesSites) return;
             float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
             float d = dx * dx + dz * dz;
+            const float rank = e.underConstruction ? d * 10.0f : d;
             // A scatter-firing unit still only considers what is in RANGE (retail
             // gathers by radius the same way), but inside that set it no longer
             // prefers the nearest -- so the early-out on distance is skipped.
-            if (!scatter && d >= bestD) return;
+            if (!scatter && rank >= bestD) return;
             if (d >= ar * ar) return;
             float hx = (e.x - u.homeX).toFloat(), hz = (e.z - u.homeZ).toFloat();
             if (hx * hx + hz * hz > leash2) return;   // outside the leash
@@ -6328,11 +6350,12 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
                 const auto firstRoll = fireRand(n);
                 const auto secondRoll = fireRand(n);
                 float score = float(firstRoll) / 2.0f + float(secondRoll);
+                if (e.underConstruction) score *= 10.0f;
                 if (score >= bestScore) return;
                 bestScore = score; best = e.id;
                 return;
             }
-            bestD = d; best = e.id;
+            bestD = rank; best = e.id;
         },enemies);
         return best;
     }
@@ -6898,7 +6921,9 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
     for (int iteration=0;iteration<50 && !candidates.empty();++iteration) {
         const size_t index=fireRand(uint32_t(candidates.size()));
         const int id=candidates[index];
-        candidates.erase(candidates.begin()+long(index));
+        // 50b2c0: the last candidate takes the drawn one's place.
+        candidates[index]=candidates.back();
+        candidates.pop_back();
         const Unit* tp=unit(id);
         if (!tp || !tp->alive() || tp->hp<=Fixed()) continue;
         const Unit& t=*tp;
@@ -6953,7 +6978,12 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
             }
         }
         if (insideMin) score*=10u;
-        if (t.incapacitated()) score*=10u;
+        // 412b52..412b77: x10 unless the target is alive, not dying and has no
+        // construction left (+0x108 == 0). Alive and not dying were tested at
+        // the draw, so this is a site still being built, or a unit still being
+        // built at a factory: a candidate, put behind finished ones. Nothing
+        // here looks at paralysis.
+        if (t.underConstruction) score*=10u;
         const int32_t s=int32_t(score);
         if (slotBadTarget(u,slot,t)) { if (s<bestBad) { bestBad=s;pickBad=id; } }
         else if (s<best) { best=s;pick=id; }
@@ -6962,11 +6992,13 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
 }
 
 // 40f330's slot part, for one player: a budget of N/30+1 counted units per
-// call from a cursor that walks the player's slot range and wraps. Dead and
-// status-locked slots cost nothing; live unarmed units cost budget but get no
-// sweep. The walk stops when it returns to the slot it started on, so with
-// fewer live units than the budget that slot is skipped until the counts
-// change -- an emulated retail quirk, kept on purpose.
+// call from a cursor that walks the player's slot range and wraps. A dead or
+// dying unit, or one with construction left (40f3a1..40f3c9: the same test as
+// the picker's x10), costs nothing; every other live unit costs budget, an
+// unarmed one with no sweep and a paralyzed one with its slots manual. The
+// walk stops when it returns to the slot it started on, so with fewer live
+// units than the budget that slot is skipped until the counts change -- an
+// emulated retail quirk, kept on purpose.
 void World::tickFireSweep(int player) {
     Player& owner=players_[size_t(player)];
     std::vector<int> pool;
@@ -6998,7 +7030,7 @@ void World::tickFireSweep(int player) {
         const size_t i=size_t(position+long(step))%pool.size();
         if (present && step==pool.size()) break;   // back at the start slot
         Unit* u=unit(pool[i]);
-        if (!u || !u->alive() || u->hp<=Fixed() || !u->type || u->player!=player || u->incapacitated()) continue;
+        if (!u || !u->alive() || u->hp<=Fixed() || !u->type || u->player!=player || u->underConstruction) continue;
         if (!u->type->weapons.empty()) {
             // 40f411: the switch block, after the armed test and before the
             // fireState test, so the new slot is swept in this same visit.
@@ -7142,11 +7174,15 @@ void World::retailAiWeaponSwitch(Unit& u) {
         slot.costlyOrSpecial=stone || freeze || w.mindControl || paralyzer || slot.aoe>=200 ||
             double(u.type->maxMana)*0.1<double(cost);
         if (live) {
+            // 40f50e..40f5ea / 40f7b8..40f8ab: a stone, freeze or charm class
+            // is no use on a type immune to it or on a target with
+            // construction left (+0x108 above 0); a paralyzer on an immune or
+            // already paralyzed one.
             const Unit& t=*target;
-            const bool locked=t.stonedFor>0 || t.frozenFor>0;
-            slot.usable=!(stone && (t.type->cantBeStoned || locked)) &&
-                        !(freeze && (t.type->cantBeFrozen || locked)) &&
-                        !(w.mindControl && (t.type->cantBeCaptured || locked)) &&
+            const bool unfinished=t.underConstruction;
+            slot.usable=!(stone && (t.type->cantBeStoned || unfinished)) &&
+                        !(freeze && (t.type->cantBeFrozen || unfinished)) &&
+                        !(w.mindControl && (t.type->cantBeCaptured || unfinished)) &&
                         !(paralyzer && (t.type->immuneToParalyzer || t.paralyzedFor>0));
         }
     }
@@ -13437,8 +13473,11 @@ void World::applyPowerCode(int player,PowerCode code,PowerArg arg,int unitId) {
 }
 
 // 411700: the player's visible-enemy (+5) and visible-ally (+0x15) lists, in
-// unit order. Sites still conjuring and neutral scenery stay off the enemy
-// list, as they do for every other auto-targeting path here.
+// unit order. An enemy with construction left (+0x108) is listed like any
+// other: 411700 drops only a live unit's scenario flag 0x2000 (never set
+// here), so a site still being conjured, or a unit still being built at a
+// factory door, is a candidate for every scan over the list (the picker
+// 412620 scores it x10). Neutral scenery stays off it.
 void World::rebuildVisibleLists(int player) {
     Player& owner=players_[size_t(player)];
     owner.visibleEnemies.clear();owner.visibleAllies.clear();
@@ -13447,7 +13486,7 @@ void World::rebuildVisibleLists(int player) {
         if (!u.alive() || u.hp<=Fixed() || !u.type) continue;
         if (allied(player,u.player)) {
             if (playerSees(player,u)) owner.visibleAllies.push_back(u.id);
-        } else if (!u.underConstruction && !isNeutralPlayer(u.player) && playerSees(player,u))
+        } else if (!isNeutralPlayer(u.player) && playerSees(player,u))
             owner.visibleEnemies.push_back(u.id);
     }
     // units_ is id order in practice; sort so lookups may binary-search.

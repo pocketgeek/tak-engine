@@ -1834,8 +1834,9 @@ bool Controller::strikeOrder(const tak::sim::World& world, const tak::sim::Unit&
         const float dx = e->x.toFloat() - ux, dz = e->z.toFloat() - uz;
         const bool close = dx * dx + dz * dz <= reach * reach;
         if (close) tried(e->id, e->hp.toFloat());
-        // Nothing auto-acquires a site still being built, and up close an order on
-        // the anchor itself makes sure of it.
+        // Auto-acquisition takes a site still being built only behind finished
+        // targets (as retail's picker, x10), and up close an order on the anchor
+        // itself makes sure of it.
         // A charm cannot take a unit still being built (the sim refuses the
         // order), so a caster attack-moves there instead of standing idle.
         const bool charmRefused = e->underConstruction &&

@@ -306,9 +306,9 @@ private:
     tak::sim::RetailPlayerCacheClock clock_{true, 0};
     uint32_t refreshes_ = 0;
     ClassicSquads squads_;
-    // 0x411700's list +5 for this player, as of the World's last rebuild: the
-    // World's own list plus the enemies it leaves off as still being built,
-    // which retail lists (U16); id order. visibleStamp_ is that rebuild's tick.
+    // 0x411700's list +5 for this player, as of the World's last rebuild (the
+    // World's own list, enemy sites still being built included, U16); id
+    // order. visibleStamp_ is that rebuild's tick.
     std::vector<int> visible_;
     uint32_t visibleStamp_ = 0;
     std::unordered_map<int, int32_t> squadOf_;
