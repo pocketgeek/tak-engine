@@ -146,6 +146,24 @@ void callbackPresentation(LosStatus kind) {
           name+" that lands puts its explosion on the victim (492c80)");
 }
 
+// A stone or freeze shot lands after its caster changed sides, but retail's
+// ownership change (514da0) made the caster a new object: 51a140 names no
+// hitter, so the old object gets no kill credit.
+void callbackCasterSwitched(LosStatus kind) {
+    if(kind==LosStatus::MindControl)return;   // a charm in flight dies with its caster
+    const Weapon weapon=statusWeapon(kind);
+    const std::string name=kindName(kind);
+    UnitType caster=body("caster"),victim=body("victim");
+    World w;setup(w);
+    const int a=w.spawn(&caster,1000,1000,0,0);
+    const int b=w.spawn(&victim,1000,1200,0,1);
+    w.unit(b)->veteran=10;
+    tak::sim::RetailReplayProbe::capture(w,a,1);
+    for(int i=0;i<40 && !taken(w,b,kind);++i)tak::sim::RetailReplayProbe::impact(w,weapon,a,0,b);
+    check(taken(w,b,kind) && w.unit(b)->lastHitBy!=a,
+          name+" from a caster that changed sides lands and credits no hitter (51a140)");
+}
+
 // ---- The shipped casters, in flight ------------------------------------------
 struct Caster { const UnitType* type; int slot; LosStatus kind; };
 
@@ -330,6 +348,7 @@ int main(int argc,char** argv) {
         callbackGates(kind);
         callbackRoll(kind);
         callbackPresentation(kind);
+        callbackCasterSwitched(kind);
     }
     if(argc==2) {
         auto vfs=tak::hpi::mountRetailRoot(argv[1]);

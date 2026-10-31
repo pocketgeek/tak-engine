@@ -5509,11 +5509,15 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             // unit dies on the spot and the death edge places its stone=/frozen=
             // STATUE (blocking, permanent, resurrectable back to life).
             if (e.hp <= Fixed()) return;
-            retailHitResponse(e, attacker, freeze ? 15 : 14);
-            e.deathType = freeze ? 15 : 14;
             // 51a140 names the hitter only while its object lives: a stone or
-            // freeze shot still lands after its caster died (52db40 / 52dda0).
-            if (attacker && attacker->alive()) { e.lastHitBy = fromId; e.lastHitPlayer = fromPlayer; }
+            // freeze shot still lands after its caster died (52db40 / 52dda0),
+            // and a caster that changed sides is a dead object to retail (514da0
+            // makes the new owner a new one), though World keeps its id.
+            const Unit* caster = attacker && attacker->alive() && attacker->player == fromPlayer
+                                     ? attacker : nullptr;
+            retailHitResponse(e, caster, freeze ? 15 : 14);
+            e.deathType = freeze ? 15 : 14;
+            if (caster) { e.lastHitBy = fromId; e.lastHitPlayer = fromPlayer; }
             if (freeze) e.frozenFor = int32_t(kTick); else e.stonedFor = int32_t(kTick);
             e.hp = Fixed();
             e.speed = Fixed();
