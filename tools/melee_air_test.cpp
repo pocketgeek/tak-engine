@@ -221,6 +221,54 @@ int main(int argc,char** argv) {
                   std::string(balance)+": the attack ends when its target boards a transport");
         }
 
+        // noairweapon (WeaponType +0xc8 0x8000) is judged against the target's
+        // layer too (530580's head, the picker, 4de530): a Knight (melee) and a
+        // Grenadier (ballistic, every slot noairweapon) hit a LANDED flyer,
+        // ordered or idle. World judged it by the flyer's type and never did.
+        for (const char* name:{"arapal","aragren"}) {
+            for (bool told:{true,false}) {
+                Field f(registry);
+                const int flyer=f.w.spawn(&gryphon,1150,1000,0,1);
+                f.run(2);
+                const int id=f.w.spawn(registry.find(name),1000,1000,0,0);
+                if (told) f.w.attack(id,flyer,false);
+                const Fixed hp=f.hp(flyer);
+                f.run(600);
+                const int lost=(hp-f.hp(flyer)).floorInt();
+                std::printf("noair-landed balance=%s unit=%s %s lost=%d\n",balance,name,told ? "ordered" : "idle",lost);
+                check(lost>0,std::string(balance)+" "+name+(told ? ": an ordered noairweapon attack hits a landed flyer"
+                                                               : ": an idle noairweapon unit takes a landed flyer"));
+            }
+            // In the air it stays out of reach: no order is kept, nothing lands.
+            Field f(registry);
+            const int flyer=f.heldFlyer(&gryphon,1150,1000);
+            const int id=f.w.spawn(registry.find(name),1000,1000,0,0);
+            f.w.attack(id,flyer,false);
+            const Fixed hp=f.hp(flyer);
+            bool kept=false;
+            for (int tick=0;tick<300;++tick) { f.run(1); kept=kept || (tick>=1 && f.targets(id,flyer)); }
+            check(!kept && hp==f.hp(flyer),std::string(balance)+" "+name+": noairweapon leaves a flyer in the air alone");
+        }
+
+        // Attack_Chase (403bb0), a walker's ranged attack, ends on a carried
+        // target too (403c9c: +0x114 & 4): a Grenadier's attack on a unit that
+        // boards a Roc goes instead of standing aimed at the transport.
+        {
+            Field f(registry);
+            const int victim=f.w.spawn(&dummy,1600,1000,0,1);
+            const int roc=f.w.spawn(registry.find("zonroc"),1640,1000,0,1);
+            const int id=f.w.spawn(registry.find("aragren"),1000,1000,0,0);
+            f.w.attack(id,victim,false);
+            f.run(10);
+            const bool chasing=f.targets(id,victim);
+            const bool boarded=f.w.embarkInto(victim,roc);
+            f.run(2);
+            std::printf("carried-ranged balance=%s chasing=%d boarded=%d kept=%d\n",
+                balance,int(chasing),int(boarded),int(f.targets(id,victim)));
+            check(chasing && boarded && !f.targets(id,victim),
+                  std::string(balance)+": a ranged attack ends when its target boards a transport");
+        }
+
         // A swing at a ground unit splashes its own origin's height (529dc0's
         // 3D box distance): a flyer held overhead at cruise height is not hit.
         {

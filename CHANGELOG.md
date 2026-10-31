@@ -31,6 +31,11 @@ their validation reports; both live in [`docs/`](docs/).
   original: melee units attack it, ordered or not, also when they pass one on
   a move, and stop when it takes off. A melee blow's splash still never
   reaches a flyer at its flying height.
+- **"Not against air" weapons judge whether the target is flying right now**,
+  as in the original game. The Knight, the Grenadier and the wolves now attack
+  a flyer that has landed; before, any unit of a flying type was off limits to
+  them. A ranged attack on a unit that boards a transport now ends, as a melee
+  one does. The Retail AI sees landed flyers as ground units too.
 - **Melee units reach the building they attack**, as in the original game:
   each attacker walks to its own free place touching the building, corners
   included, and bites from there. They used to head for the building's

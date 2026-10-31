@@ -651,10 +651,23 @@ Before the change 16 of its checks failed (8 in each balance).
 Still deviating: World drops the attack on the tick the target is airborne,
 retail at Attack_Melee's next dispatch (stage 1 sleeps
 `rand(5)+rand(5)+4` ticks while the target is far); the weapon cannot swing
-meanwhile in either. `noairweapon`/`toairweapon` and the Retail AI's enemy
-list still read the flyer's type, not its layer. Attack_Chase (`403c9c`,
-`403ca9`) ends on a carried target too; World's ranged attacks keep one (not
-changed here).
+meanwhile in either.
+
+**Air flags by layer, carried targets (2026-10-31, protocol 307).** Every
+`noairweapon` / `toairweapon` test in the binary reads the target's layer,
+not its type (static: the only `+0xc8` bit 0x4000/0x8000 tests are
+`530580`'s head, Attack_Chase `403d8f`, the hit response `409dd2`, the hover
+selector `4ddaae..4ddbf5`, the order resolver `4de7f7..4de817` and the mission
+at `4030d4`, each against `+0x130 & 3 == 2`): toairweapon takes a target in the
+air only, noairweapon never one, and a landed flyer is a ground target. World
+now tests `flightGroundMode` in `canAttackTarget` (which also gained the
+toairweapon refusal of `4de7f7`), the picker, the hit response, the
+fire-at-will scorer and the slot aim/fire gates; the Retail AI's enemy list
+(`ClassicBrain`) reports layer 2 from `flightGroundMode`. No shipped weapon has
+`toairweapon`; the Knight, the Grenadier and the wolves have `noairweapon` and
+now attack a landed Gryphon (`melee_air_test`). Attack_Chase's head
+(`403c9c..403cb0`) ends a walker's ranged attack on a carried target as
+Attack_Melee does; World now drops it too.
 
 ## Shooting at flyers: lead, hit band, and the held attacker (icd, 2026-10-14, protocol 262)
 

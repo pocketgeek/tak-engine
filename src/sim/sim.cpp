@@ -6277,7 +6277,11 @@ bool World::canCaptureTarget(int player,const Unit& target) const {
 bool World::canAttackTarget(const Unit& from,const Unit& target) const {
     if (!from.type || !target.type) return false;
     const auto usable=[&](const Weapon& weapon) {
-        return !(target.type->canFly && weapon.noAir) && weapon.damageVs(target.type)>0 &&
+        // 4de7ec..4de817: the order resolver refuses a toairweapon slot against a
+        // target not in the air and a noairweapon slot against one in the air
+        // (+0x130 & 3 == 2), its current layer, never its type.
+        return !(weapon.noAir && target.flightGroundMode==2) && !(weapon.toAir && target.flightGroundMode!=2) &&
+            weapon.damageVs(target.type)>0 &&
             (!weapon.mindControl || canCaptureTarget(from.player,target));
     };
     if (from.type->weaponSwitching && !from.type->weapons.empty()) {
@@ -6454,7 +6458,7 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
                 // the half of the original scoring the flag does NOT remove.
                 float dmg = 0;
                 for (const auto& wp : u.type->weapons)
-                    if (!(e.type->canFly && wp.noAir))
+                    if (!(wp.noAir && e.flightGroundMode==2))
                         dmg = std::max(dmg, wp.damageVs(e.type));
                 if (dmg <= 0) return;
                 uint32_t n = uint32_t(float(0x7FFFFFFF) / dmg);
@@ -7064,8 +7068,10 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
         // 412932..412945: a melee slot takes grounded units only (+0x130 & 3
         // == 1): a flyer in the air never, a landed one like any other.
         if (w.melee && t.flightGroundMode!=1) continue;
-        if (w.toAir && !t.type->canFly) continue;
-        if (w.noAir && t.type->canFly) continue;
+        // 530580's head: toairweapon takes a target in the air only, noairweapon
+        // never one (+0x130 & 3 == 2) -- a landed flyer is a ground target.
+        if (w.toAir && t.flightGroundMode!=2) continue;
+        if (w.noAir && t.flightGroundMode==2) continue;
         const bool insideMin=slotInsideMinRange(u,t,slot);
         if (insideMin && !mobile) continue;
         if (eff<=0) continue;   // 531e50
@@ -7404,7 +7410,7 @@ void World::retailHitResponse(Unit& e,const Unit* a,int dmgType) {
         // 409db4..409dcc: a melee weapon answers only an attacker on the
         // ground (+0x130 & 3 == 1); one in the air is left alone.
         const bool usable=canAttackTarget(e,*a) && !(w.melee && a->flightGroundMode!=1) &&
-            !(w.toAir && !a->type->canFly) && !(w.noAir && a->type->canFly) && eff>0;
+            !(w.toAir && a->flightGroundMode!=2) && !(w.noAir && a->flightGroundMode==2) && eff>0;
         if (categoriesOk && reach && usable) {
             const bool flag=e.fireState==2 && mobile && patrolling;
             mission=retailIssueAutoAttack(e,a->id,flag);
@@ -7440,7 +7446,10 @@ void World::fireBehindStepOut(Unit& u) {
         if (u.slotAuto>>sl&1) return;
         const Weapon& sw=u.type->weapons[size_t(sl)];
         if (sw.mindControl && !canCaptureTarget(u.player,*target)) return;
-        if (sw.noAir && target->type->canFly) return;
+        // 530580 (every non-melee in-range test): the slot's air flags against
+        // the target's current layer.
+        if (sw.noAir && target->flightGroundMode==2) return;
+        if (sw.toAir && target->flightGroundMode!=2) return;
         if (sw.melee ? !meleeInRange(u,*target) : sw.ballisticClass() ? !ballisticInRange(u,*target,sw) : dist>sw.range)
             return;
         if (dist<sw.minRange) return;
@@ -7569,8 +7578,11 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // the flyer and hit it from under it (meleeInRange had no air test). The
     // head ends it for a carried target too (+0x114 & 4 and layer 0,
     // 404778..40478d): one that boards a transport, a Roc's included.
-    if (sel && sel->melee && u.type->canMove && !u.type->canFly && !u.type->isStructure() &&
-        (target->flightGroundMode==2 || target->embarked())) {
+    // Attack_Chase (403bb0), a walker's ranged attack, ends the same way on a
+    // carried target (403c9c..403cb0: +0x114 & 4, or layer 0), so a unit that
+    // boards a transport is let go instead of chased.
+    if (sel && u.type->canMove && !u.type->canFly && !u.type->isStructure() &&
+        ((sel->melee && target->flightGroundMode==2) || target->embarked())) {
         if(u.scriptAimTarget)clearScriptWeaponTarget(u);
         dropLeg(u);
         cancelPath(u);
@@ -7773,7 +7785,8 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     auto slotAims = [&](int sl) {
         const Weapon& sw = u.type->weapons[size_t(sl)];
         if (sw.mindControl && !canCaptureTarget(u.player,*target)) return false;
-        if (sw.noAir && target->type && target->type->canFly) return false;
+        if (sw.noAir && target->flightGroundMode==2) return false;
+        if (sw.toAir && target->flightGroundMode!=2) return false;
         if (groundPair && sw.needsClearLine() && !los) return false;
         if (sw.melee ? !adj : sw.ballisticClass() ? !ballisticInRange(u,*target,sw) : dist > sw.range)
             return false;

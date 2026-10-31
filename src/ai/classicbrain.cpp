@@ -685,7 +685,7 @@ ClassicEnemy ClassicBrain::enemyView(const tak::sim::World&, const tak::sim::Uni
     ClassicEnemy c;
     c.id = e.id;
     c.flags = ClassicEnemy::kLive | (e.alive() && e.hp > tak::sim::Fixed() ? 0u : ClassicEnemy::kDying) |
-              (e.embarked() ? 0u : e.type->canFly ? 2u : 1u) |
+              (e.embarked() ? 0u : e.flightGroundMode==2 ? 2u : 1u) |
               ((info ? info->armed : !e.type->weapons.empty()) ? ClassicSquadUnit::kArmed : 0u);
     c.x = e.x.v; c.y = (e.type->canFly ? e.flightY : e.groundY).v; c.z = e.z.v;
     c.cloaked = e.cloaked;
