@@ -1191,6 +1191,194 @@ python3 -I $P/bin/cmprep.py <base>.takrep <cand>.takrep
 The two new bench workloads are plain `ai_revive_bench` options (`--casters 256 --bodies 4000 --layout near`;
 `--units 10000 --bodies 300 --layout near`), no new scenario files.
 
+### Results: Legion (H, I, J)
+
+Serial measurement, 2026-10-31 04:12 to 05:46, one agent. Base = `461e9c4b`, candidate = `perf-followup` at the
+integration (code identical to `dad93045`); every timed command through `/home/pocket_geek/tak-tmp/tools/timing.sh`
+(flock, cores 0-3).
+
+**Provenance**
+
+- Builds (Debug, `CMAKE_CXX_FLAGS=-O2 -g`, `-ffp-contract=off` from the tree, GCC 16.2.1, all targets; `ninja -n`
+  shows nothing stale but the build id): `BASE=~/tak-tmp/build-pfint-base-o2` (`461e9c4b`),
+  `CAND=~/tak-tmp/build-pfint-o2`. H base: `~/tak-tmp/build-pf-H-base-o2` (`822c36c3` = `461e9c4b` + the
+  `legion_staticsync_bench` commit; the bench source is identical in the candidate). Attribution (item heads alone):
+  `~/tak-tmp/build-pf-H-o2` (`d0d11901`), `~/tak-tmp/build-pf-J-o2` (`c09ee993`). H work counters:
+  `~/tak-tmp/build-pf-H-cnt` (`2eae31d7` + `/home/pocket_geek/tak-tmp/tmp/pfH-counters.patch`; same `src/` as
+  `d0d11901`). I is isolated inside the candidate binary with `legion_scenario --no-route-index` (the bins are still
+  maintained, only the query is off), which keeps code layout fixed.
+- Hardware: Core Ultra 9 275HX, timing on cores 0-3 (P-cores). Pinning per harness: `legion_staticsync_ab.sh`
+  base on 2 + candidate on 3, then swapped; J's pair driver and `routeinv_ab.sh` 0-1 + 2-3 concurrently, then
+  swapped (with 2 CPUs `--workers` runs the serial pass); `we_timing.sh` the same; `legion_cluster_test --bench` on
+  core 0; `routeinv_pmu.sh` on 4-7 after the timing (instruction counts, not time). No documented harness for these
+  items has a full P-core (0-7) variant, so none was run.
+- Host load: about 2-3 during every timed step (the runs themselves are 2-4 busy threads; a 10 s sampler wrote
+  `load.log`), with one exception: at 05:04:48 something outside this run raised the load to 12 for about two
+  minutes during the first routeinv `we_timing` set. That set is not quoted; it was repeated at 05:33-05:43 (load
+  2.5-2.8) and only the repeat is quoted. Another session ran an unpinned build in `~/TAK/build-o2` at 04:34-04:50,
+  during the correctness runs only; the timing waited for load < 3.
+- Statistics: "pair d%" = cand/base - 1 per concurrent pair, median [min..max]; for swapped pairs the
+  "round" value is the mean (or geometric mean) of the two swapped pairs. Distributions pool every measured tick.
+  SIMPHASE has 0.01 ms steps. n = pairs.
+- Correctness, separate from timing (cores 4-23), all on the candidate unless noted:
+  `ctest -R 'legion_staticindex|legion_routebins_test|legion_routeindex|legion_cluster_test|legion_route_test|legion_staticblock|legion_staticidle|legion_route_paused'`
+  10/10 passed. H: `legion_staticsync_bench --check` on base and candidate for w3000, w2000c12p8, w300, w50 and
+  w3000 with `--churn 5 --workers`: identical final hashes, `planes_differing=0` everywhere. J:
+  `legion_scenario clusterchurn-{mid,edge,big}.scn --mode both --json` byte-identical to base; `clusterchurn-small`
+  identical hashes (all 3 offsets) and identical except the `work.group_loop_iters` / `legion_total` work keys
+  (1995 -> 1095), which is I's documented counter change (groups visited), not J. I: the five `L-routeinv-*`
+  scenarios, 1000 ticks, base / candidate / candidate `--no-route-index` / candidate with `TAK_LEGION_VERIFY=1`:
+  JSON identical on all four, ROUTEIDX decision digests equal index on vs off (`ed9842757cda98dc` local-10000,
+  `8bc5dde3ebca7017` local-5000, `c863609991566593` scatter-10000, `96338bd81945cd8b` many-2500, `8feff981a866d1eb`
+  scatter-2500), verify clean. Every timing run below printed the same final hash for base and candidate.
+
+**H. Legion static refresh** (`legion_staticsync_ab.sh --rounds 5 -- --steps 1500`: 10 swapped pairs per workload,
+1500 steps each; a step = static sync + world tick; ms; one warm-up pair first)
+
+| workload | base sync mean / median / p95 / p99 / max | cand sync mean / median / p95 / p99 / max | sync pair ratio | step (sync + tick) pair ratio |
+|---|---|---|---|---|
+| w3000 (3000 structures, 6 planes, 4 changes) | 0.260 / 0.224 / 0.547 / 0.807 / 5.5 | 0.122 / 0.086 / 0.414 / 0.677 / 4.7 | **0.471 [0.425..0.530]** | 0.733 [0.661..0.798] |
+| w2000c12p8 (2000, 8 planes, 12 changes) | 0.681 / 0.649 / 0.926 / 1.386 / 4.4 | 0.182 / 0.134 / 0.428 / 1.033 / 3.5 | **0.269 [0.245..0.296]** | 0.417 [0.383..0.460] |
+| w300 | 0.062 / 0.056 / 0.115 / 0.174 / 3.8 | 0.045 / 0.036 / 0.103 / 0.167 / 1.2 | **0.722 [0.635..0.794]** | 0.754 [0.679..0.825] |
+| w50 (below the 64-structure gate) | 0.037 / 0.033 / 0.067 / 0.103 / 1.1 | 0.037 / 0.033 / 0.067 / 0.101 / 4.4 | 0.998 [0.915..1.169] | 0.849 [0.782..0.976] |
+
+The integrated step ratio includes other items' work in the bench's world tick (w50's 0.849 is D, not H). H alone
+(`pf-H` vs H base, 10 pairs): sync 0.473 [0.427..0.527] / 0.269 [0.248..0.297] / 0.721 [0.692..0.752] / 1.002
+[0.962..1.042], step 0.747 [0.678..0.818] / 0.427 [0.392..0.472] / 0.830 [0.797..0.858] / 1.002 [0.966..1.045]
+(w3000 / w2000c12p8 / w300 / w50). A/A control (candidate vs itself, 6 pairs): every ratio 0.995-1.006, ranges
+0.957..1.049. Max values are single spikes on both sides (3-5 ms in 15,000 steps) and are not attributed.
+
+Work counters (`HCOUNT`, H counter build, index vs `TAK_H_NOINDEX=1`, 1500 steps; equal `computeCells` calls,
+overlaps and hashes both ways):
+
+| workload | `computeCells` calls | structure tests index / walk | per call | index builds |
+|---|---|---|---|---|
+| w3000 | 42,450 | 571,218 / 127,604,544 (0.45%) | 13.5 / 3006 | 1500 |
+| w2000c12p8 | 213,272 | 2,794,568 / 427,825,240 (0.65%) | 13.1 / 2006 | 1500 |
+| w300 | 59,436 | 489,948 / 18,188,820 (2.7%) | 8.2 / 306 | 1500 |
+| w50 | 70,428 | 3,945,678 both (gate) | 56 | 0 |
+| L-2h-1800 situation (300 ticks) | 1,516 | 1,516 both | 1 | 0 |
+| L-bench-1900 situation (300 ticks) | 672 | 4,704 both | 7 | 0 |
+
+Recorded games never reach the 64-structure gate, so the index is never built there and the code path equals base;
+L-2h / L-bench whole tick is in the I table below (no change). Peak RSS w2000c12p8: 37.3 -> 37.4 MB.
+
+**I. Legion route invalidation**
+
+The route index is isolated in one binary (index on vs `--no-route-index`, `routeinv_ab.sh`, warm 400, ms per tick;
+"off/on - 1" > 0 means the index is faster). Two sets: 4 rounds x 900 ticks (500 measured) and 6 rounds x 1400 ticks
+(1000 measured):
+
+| workload | static sync per tick in window, off -> on | `staticChanged` per tick off -> on | whole tick off/on - 1, pairs: median [min..max] | per swapped round | nav off/on - 1 |
+|---|---|---|---|---|---|
+| L-routeinv-local-10000 (17.6 ms tick) set 1, n=8 | 284 -> 79 us | 224 -> 18.4 us | +0.35% [+0.0..+0.7] | +0.25 +0.20 +0.55 +0.35 | +2.8% [+1.7..+3.0] |
+| local-10000 set 2, n=12 | | | +0.70% [-0.2..+1.2] | +0.60 +0.50 +0.25 +0.75 +0.30 +0.55 | +2.8% [+1.7..+3.6] |
+| L-routeinv-local-5000 (9.0 ms) set 1, n=8 | 155 -> 82 us | 99 -> 24.6 us | +0.20% [-1.6..+0.7] | +0.25 +0.20 +0.40 -0.65 | +1.5% [-0.1..+2.0] |
+| local-5000 set 2, n=12 | | | +0.40% [-1.0..+0.7] | +0.40 +0.40 -0.15 +0.25 +0.50 +0.30 | +1.4% [+0.1..+1.9] |
+| L-2h-1800 situation (22.6 ms), n=6 | 17.1 -> 16.0 us | 3.5 -> 2.2 us | +0.05% [-2.2..+6.8] | -1.05 +0.10 +3.40 | +0.2% [-2.3..+6.9] |
+| L-bench-1900 situation (4.0 ms), n=6 | 4.45 -> 4.2 us | 0.5 -> 0.3 us | +0.10% [-1.0..+9.0] | -0.30 -0.25 +4.90 | +0.1% [-0.9..+8.7] |
+
+(The one +6.8% / +9.0% pair on the recordings is the same round on both; the load was 2.5-2.9 then and the other
+five pairs are within +-2.2%: unexplained single pairs, not the index, whose work there is 1.3 / 0.2 us per tick.)
+On local-10000 all 10 swapped rounds favour the index (+0.20..+0.75%, about 0.09 ms per tick), on local-5000 8 of 10
+(median +0.3%). Tick p99 off/on: +0.7 / +0.8% (local-10000), +1.0 / +0.2% (local-5000). The time gained is smaller
+than the 0.20 ms (10k) / 0.074 ms (5k) of static sync the LPROBE wall shows; movement reads 0.6-1.4% faster with
+the index off in the same pairs (set 1).
+
+Base vs integrated (`we_timing.sh --sitdir tools/scenarios/perf ... --rounds 4 --warm 400 --ticks 1000 --catchup 0`,
+8 pairs, repeat set; the candidate also carries D/G in `sep`/`explore`, so `nav` is the phase I changes):
+
+| situation | tick mean / median / p95 / p99 / max base -> cand | tick pair d% | nav pair d% | other pair d% |
+|---|---|---|---|---|
+| L-routeinv-local-10000 | 18.63 / 18.62 / 20.63 / 23.28 / 25.4 -> 18.26 / 18.27 / 20.32 / 22.90 / 25.1 | -1.9 [-2.4..-1.3] | **-2.6 [-3.0..-1.8]** | +3.2 [+2.8..+4.4] |
+| L-routeinv-local-5000 | 9.52 / 9.53 / 11.12 / 12.03 / 19.5 -> 9.36 / 9.36 / 10.93 / 11.85 / 14.5 | -1.5 [-2.8..-1.2] | **-1.8 [-3.3..-1.3]** | +3.4 [+2.0..+4.4] |
+| L-routeinv-scatter-10000 | 22.21 / 22.78 / 25.28 / 26.72 / 33.1 -> 22.05 / 22.67 / 25.11 / 26.61 / 28.5 | -0.6 [-2.0..+0.3] | -1.3 [-2.0..-0.6] | +10.3 [+4.2..+11.9] |
+| L-routeinv-many-2500 | 9.57 / 9.94 / 13.16 / 16.25 / 18.5 -> 9.26 / 9.66 / 12.88 / 16.07 / 19.2 | -2.2 [-9.6..+1.7] | +0.0 [-7.0..+3.9] | +1.4 [-6.3..+5.8] |
+| L-2h-1800 (`--sits`, 8 pairs) | 22.72 / 21.69 / 34.34 / 36.87 / 40.8 -> 22.64 / 21.59 / 34.26 / 36.46 / 40.1 | -0.3 [-1.2..+0.5] | +0.0 [-1.3..+0.6] | -0.5 [-1.1..+0.5] |
+| L-bench-1900 (8 pairs) | 4.17 / 3.82 / 5.98 / 6.62 / 8.0 -> 4.14 / 3.79 / 5.95 / 6.62 / 11.0 | -1.8 [-4.0..+6.3] | -1.1 [-5.9..+8.7] | -0.5 [-4.4..+5.8] |
+
+Ticks over 33.3 ms on L-2h: 519 -> 505 of 8,000 (Legion movement); none elsewhere. The `other` phase rises +3..+10%
+on the routeinv worlds in the integrated build (not with the index toggled: there `other` is flat); it is outside
+`nav` and outside I's code, and the whole tick still falls. Flagged, not attributed.
+
+Work counters (`routeinv_pmu.sh`, serial, cores 4-7, ticks 400-900 / 1000-2000, user-mode instructions per tick;
+ROUTEIDX from the correctness runs, 1000 ticks):
+
+| workload | groups tested walk -> index (`candidates`) | nav instr base / cand-off / cand | index on vs off: nav instr | base vs cand: nav instr | index memory (peak RSS base -> cand) |
+|---|---|---|---|---|---|
+| local-10000 | 6,810,724 -> 66,021 | 30.32 / 30.41 / 29.70 M | -709k (-2.33%) | -629k (-2.07%) | 996 KB (167.1 -> 168.0 MB) |
+| local-5000 | 3,405,174 -> 133,603 | 25.58 / 25.63 / 25.26 M | -376k (-1.47%) | -321k (-1.25%) | 854 KB |
+| scatter-10000 | 5,385,557 -> 550,824 | 59.97 / 60.11 / 59.58 M | -529k (-0.88%) | -391k (-0.65%) | 3.33 MB (301.6 -> 304.8 MB) |
+| many-2500 | 92,540 -> 64,054 | 33.66 / 33.70 / 33.70 M | +0.3k (0.00%) | +37k (+0.11%) | 1.10 MB |
+| L-2h-1800 | | 54.56 / 54.57 / 54.57 M | -5.5k (-0.01%) | +3.9k (+0.01%) | |
+| L-bench-1900 | | 27.20 / 27.21 / 27.20 M | -4.2k (-0.02%) | +2.3k (+0.01%) | |
+
+"cand-off - base" (+37..+138k nav instructions per tick on the routeinv worlds, +6..+9k on the recordings) bounds
+the bins' upkeep. On many-2500 the index saves nothing (few groups per bin) and the upkeep costs +0.11% nav
+instructions, invisible in time (nav pair +0.0%).
+
+**J. Legion dirty-rectangle clustering** (`jpair.sh` = `/home/pocket_geek/tak-tmp/tmp/pfJ/timing/pair.sh` with `BB`/`CB`
+as arguments: `legion_scenario --mode legion --serial --offsets 0`, `TAK_PHASE=1 TAK_PHASE_MS=0`; 5 swapped rounds,
+first 20 ticks dropped; `stats2.py`; ms per tick; rectangles per refresh from `TAK_LCLUSTER`)
+
+| scenario (rects per refresh) | build | tick mean / median / p95 / p99 / max | swapped-round ratio cand/base: median [min..max] |
+|---|---|---|---|
+| clusterchurn-big (960, max 1920) | base | 10.68 / 10.53 / 11.50 / 12.15 / 20.8 | |
+| | J alone | 10.01 / 9.90 / 10.76 / 11.18 / 14.6 | **0.938 [0.909..0.967]** (n=5; first set 0.940 [0.939..0.958], n=3) |
+| | integrated | 9.72 / 9.69 / 10.09 / 10.26 / 18.3 | 0.921 [0.903..0.926] |
+| clusterchurn-edge (90) | base / J alone | 2.278 / 2.250 / 2.78 / 3.12 / 3.7 -> 2.249 / 2.220 / 2.71 / 3.06 / 5.7 | 0.965 [0.964..1.045] (first set 0.999 [0.982..1.023]): noise |
+| clusterchurn-mid (48, max 96) | base / J alone | 1.594 / 1.56 / 2.02 / 2.27 / 4.8 -> 1.594 / 1.56 / 2.02 / 2.29 / 5.9 | 0.998 [0.962..1.044]: noise |
+| clusterchurn-small (8) | base / J alone | 0.466 / 0.41 / 0.90 / 1.16 / 3.4 -> 0.462 / 0.40 / 0.90 / 1.09 / 3.0 | 1.000 [0.967..1.003]: noise |
+
+The integrated edge / mid / small ratios (0.918 / 0.884 / 0.596) are the other items (D's exploration summaries on
+an idle map), not J. Worst tick per run on big: base 11.0-20.8 ms (J2 set; 11.1-11.7 in the first set), J alone 10.3-14.6,
+integrated 9.9-10.5 with one run at 18.3 (a single tick); the large maxima are single ticks on both sides. Clustering cost per call (`legion_cluster_test --bench-scn`, core 0,
+reference = the old pairwise loop in the same binary): big 353-363 -> 46-55 us (6.5-7.9x), edge 3.3-3.5 -> 3.6-4.5 us
+(**0.74-0.98x: up to +1.2 us per call slower** just above the 64-rectangle switch; about 3 refreshes per tick, so
+at most +3.5 us on a 2.25 ms tick), mid 1.10 -> 0.82 us, small 0.10 -> 0.04 us. Synthetic (`--bench`): 256 rects
+4.8-7.2x, 1024 15-29x, 4096 74-119x; 16-96 rects 0.93-4.1x (n32-n64 dense 0.93-0.99x). In the candidate (`TAK_LCLUSTER`)
+clustering is 1.9% of refresh time on big (55 us of 2.9 ms per refresh), 1.2% on edge. Recorded games: L-2h-1800
+1,840 refreshes in 1000 ticks, at most 7 rectangles (median 2); L-bench at most 5: the bin path (> 64) never runs.
+
+**Unexpected**
+
+- The candidate's `other` phase reads +3..+10% on the routeinv worlds vs base (L-2h / L-bench: -0.5%), with `nav`,
+  `sep` and `explore` all lower and the whole tick lower; it does not move when I's index is toggled inside one
+  binary, so it is not I (likely the same layout effect the simulation results describe). Not investigated further.
+- `clusterchurn-small` JSON is not byte-identical to base in the integrated build (it is for `pf-J` alone): I's
+  `group_loop_iters` now counts groups visited. Hashes and every behaviour key are equal.
+- I's measured whole-tick gain on local-10000 (about 0.09 ms) is about half the static-sync wall it removes
+  (0.20 ms); the rest shows up as slightly slower movement in the index-on runs.
+
+**Recommended dispositions (Legion)**
+
+| item | recommendation | deciding numbers |
+|---|---|---|
+| H Legion static refresh | **Implemented and verified** (base-heavy worlds only) | sync 0.27 [0.25..0.30] (2000 structures, 8 planes), 0.47 [0.43..0.53] (3000), 0.72 [0.64..0.79] (300); H alone whole step 0.43 / 0.75 / 0.83, every pair a gain; structure tests 0.45-2.7% of the walk; below the gate (50) 1.00 and A/A 1.00. No recorded game reaches the gate (0 index builds), so ordinary games are unchanged |
+| I Legion route invalidation | **Implemented and verified (small)**: the owner's condition is met on local-10000 (every one of 10 swapped rounds a whole-tick gain, +0.20..+0.75%, median +0.4%; nav 2.8% lower) and on local-5000 in 8 of 10 rounds (median +0.3%, range -0.65..+0.50); no regression on L-2h / L-bench (index on/off +0.05% / +0.10%, base vs cand -0.3% / -1.8%, nav instructions +0.01%) | groups tested 6.81M -> 66k (local-10000); staticChanged 224 -> 18 us per tick; cost: 0.85-3.3 MB of bins, +37k nav instructions per tick (+0.11%) on many-2500 where it saves nothing. If the owner wants a gain beyond the 1% resolution, it does not have one: then revert `e342a202`, `63a2a0e0`, `9dcbe1f8` |
+| J Legion dirty-rect clustering | **Implemented and verified (worst-case guard)** | large churn (960 rectangles): whole tick 0.938 [0.909..0.967] J alone, p99 12.15 -> 11.18 ms; clustering 6.5-7.9x; ordinary sizes (8-90 rectangles) inside noise (0.965-1.000, ranges straddle 1); the 65-90-rectangle band costs up to +1.2 us per call (not visible in the tick); recorded games never use the bin path |
+
+**Commands** (all from `~/tak-tmp/wt-perf-int`; `X=~/tak-tmp/tmp/pf-final-legion`; scratch `HOME`/`XDG_*` under `$X`;
+drivers `$X/correct.sh` (correctness), `$X/timing.sh` (`RUN="H J I"`, then `RUN="J2 I2 PMU"`), helpers
+`$X/hsum.py`, `$X/lprobe_win.py`):
+
+```sh
+tools/legion_staticsync_ab.sh --base ~/tak-tmp/build-pf-H-base-o2 --cand $CAND --rounds 5 --out $X/H -- --steps 1500   # also --cand ~/tak-tmp/build-pf-H-o2; A/A --base $CAND --cand $CAND --rounds 3
+python3 $X/hsum.py $X/H
+for s in big:150 edge:300 mid:300 small:600; do
+  BB=$BASE CB=$CAND $T $X/jpair.sh $X/J 5 tools/scenarios/perf/clusterchurn-${s%:*}.scn ${s#*:}          # and CB=~/tak-tmp/build-pf-J-o2 -> $X/J2-alone
+  python3 /home/pocket_geek/tak-tmp/tmp/pfJ/timing/stats2.py $X/J clusterchurn-${s%:*} 20
+done
+$T taskset -c 0 $CAND/legion_cluster_test --bench; $T taskset -c 0 $CAND/legion_cluster_test --bench-scn tools/scenarios/perf/clusterchurn-{small,mid,edge,big}.scn
+ROUNDS=6 $T tools/scenarios/perf/routeinv_ab.sh $CAND $CAND $X/scn/ri-local-10000.scn 1400 $X/I2-onoff-local-10000 "" --no-route-index   # also local-5000; set 1: ROUNDS=4, 900 ticks
+EXTRA="--data $D --catchup 60" ROUNDS=3 $T tools/scenarios/perf/routeinv_ab.sh $CAND $CAND $X/scn/L-2h-1800.scn 2000 $X/I-onoff-L-2h-1800 "" --no-route-index   # also L-bench-1900
+python3 tools/scenarios/perf/routeinv_ab.py <out> 400; python3 $X/lprobe_win.py <out> 400
+tools/we_timing.sh --base $BASE --cand $CAND --sitdir tools/scenarios/perf --sits L-routeinv-local-10000,L-routeinv-local-5000,L-routeinv-scatter-10000,L-routeinv-many-2500 --rounds 4 --warm 400 --ticks 1000 --catchup 0 --data $D --out $X/I2-we-ri
+tools/we_timing.sh --base $BASE --cand $CAND --sits L-2h-1800,L-bench-1900 --rounds 4 --data $D --out $X/I-we-L
+python3 tools/we_timing_dist.py <out> --warm 400 --phases tick,nav
+CORES=4-7 tools/scenarios/perf/routeinv_pmu.sh $BASE $CAND $X/scn/ri-<s>.scn 900 $X/I-pmu-<s>   # recordings: EXTRA="--data $D --catchup 60", 2000 ticks, WARM 1000
+```
+
 ## Progress log
 
 - 2026-10-30: branch created at `61f294ac`; plan written. Next: launch the
@@ -1211,3 +1399,8 @@ The two new bench workloads are plain `ai_revive_bench` options (`--casters 256 
 - 2026-10-31: serial final measurement, AI (B): results under "Results: AI". Exact everywhere (bench
   streams, `ai_behavior`, recorded commands of the 7 gates and an 8-AI Benchmark game); per call 0.013-0.41x
   of base in every pair; in real games the raise path never fires and the AI-phase change is inside noise.
+- 2026-10-31: serial final measurement, Legion (H, I, J): results under "Results: Legion". H: static sync
+  0.27-0.47x at 2000-3000 structures, 0.72x at 300, unchanged below the gate and in recorded games. I: the
+  conditional keep is met (local-10000 every swapped round +0.2..+0.75% whole tick with the index toggled in one
+  binary, local-5000 8 of 10, L-2h / L-bench unchanged); recommended keep, small. J: large churn whole tick 0.94x,
+  ordinary sizes inside noise.
