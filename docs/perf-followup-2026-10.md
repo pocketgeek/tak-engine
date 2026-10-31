@@ -750,6 +750,317 @@ replays patched by `legion_identity.py patch-replay`; `simperf --mode match --un
 --ticks 1800` pairs (report core and `complete_*`); the render matrix `--scenes all`
 (historical 24) at both sizes.
 
+### Results: simulation (A, D, G, L, measurement A, combined workloads)
+
+Serial measurement, 2026-10-30 22:06 to 2026-10-31 03:33, one agent, every timed command through
+`/home/pocket_geek/tak-tmp/tools/timing.sh` (flock, cores 0-3). Base = `461e9c4b`, candidate =
+`perf-followup` at the integration (`fccacc61`, code identical to `dad93045`).
+
+**Provenance**
+
+- Builds (Debug, `CMAKE_CXX_FLAGS=-O2 -g`, `-ffp-contract=off` from the tree, GCC 16.2.1, mold,
+  `TAK_TEST_DATA` set; all targets, see Integration): `BASE=~/tak-tmp/build-pfint-base-o2` (`461e9c4b`),
+  `CAND=~/tak-tmp/build-pfint-o2`. Base tools the plain base lacks, built against the base's own objects
+  and libraries with the same flags: `simperf` with `pf-mA`'s `tools/simperf.cpp` (`ecd3efeb`, identical
+  in the candidate; `~/tak-tmp/tmp/pf-final/mAbase/simperf`), `featburn_bench`
+  (`tools/featburn_build_base.sh`, `~/tak-tmp/tmp/pf-final/featburn-base/`). Aura base:
+  `~/tak-tmp/build-pf-L-base-o2` (`a6fbc251` = `461e9c4b` + bench and test, no `src/` change).
+  Attribution: the item heads alone, `~/tak-tmp/build-pf-{A,D,G,L}-o2` (`38b303fb`, `9d1e9636`,
+  `233f08b4`, `ec1bc4d6`); every build checked up to date with `ninja -n` (only the build id restamps).
+- Hardware: Core Ultra 9 275HX, cores 0-3 (P-cores) for timing. Pinning per harness: `we_timing.sh`
+  runs each pair concurrently on 0-1 and 2-3 (with 2 CPUs `SimPool::defaultWorkers()` is 0: the serial
+  pass; `TAK_SIM_WORKERS=1` runs the pooled path with one worker); `featburn_timing.sh`, `wall.sh`,
+  `viewcount_bench` on core 2; `simperf` and `aura_bench` on 0-3. No documented harness has a full P-core
+  (0-7) variant, and 4-7 are the build/test pool, so none was run.
+- Host load. The machine was not quiet when the phase began: other workflows ran scenario sweeps and
+  builds on 4-23 (load average 18-45; one unpinned compile reached cores 0-3 at 21:27). The task's
+  "load below 3" did not come in 60 minutes of waiting, so **pass 1** (22:06-00:26) ran under load
+  average 9-55. The load then fell to 1.5-3 (only this run), and **pass 2** repeated every timing step
+  (01:06-02:53, the attribution runs again 02:53-03:33). **All numbers below are pass
+  2** unless marked; pass 1 (`~/tak-tmp/tmp/pf-final/*`, pass 2 in `.../q/` and `.../q2/`) agrees in
+  sign on every item-level number, with whole-tick pair spreads 5-20x wider (e.g. R-2h tick pair range
+  -27.7..+30.4% in pass 1, -1.9..-0.4% in pass 2). A desktop backup (`restic`, unpinned, all 24 cores)
+  ran from about 02:20 to 02:30; the runs it overlapped (the last `TAK_SIM_WORKERS=1` replay pair and the
+  first attribution set) were repeated afterwards and only the repeats are quoted.
+- Statistics: "pair d%" is cand/base - 1 per swapped or concurrent pair, median [min..max] over the
+  pairs; n is the number of pairs. Distributions pool every measured tick of every run (warm-up dropped).
+  SIMPHASE prints 0.01 ms steps. `explore` is inside `sep`; the aura pass is inside `sep` too
+  (SIMPHASE `other=` subtracts `sep`).
+- Correctness, separate from timing (cores 4-23): `ctest -R 'featgen|reclaim|exploration|viewcount|aura|sim_pool|simpool|cli_tools'`
+  on the candidate, 15/15 passed; `featgen_test` on both builds, the four `spread ... hash` lines equal
+  (higher/lower gap 1 and 70); `viewcount_delta_test probe` reproduces the audit probe (below); every
+  timing run below that prints a state or buff hash prints the same one for base and candidate
+  (`we_timing` final hashes, simperf's 30-60 checkpoint hashes per run, featburn hashes on all 12
+  workloads, `aura_bench` buff digests, `viewcount_bench` "planes EQUAL").
+
+**Measurement A: core vs complete tick** (simperf, base simperf with the new fields; `simperf_pair.sh`:
+one discarded warm-up run per build, then alternating pairs; ms per tick)
+
+| workload (n pairs) | build | core mean / median / p95 / p99 / max | complete mean / median / p95 / p99 / max | hash total | over 33.3 ms core / complete |
+|---|---|---|---|---|---|
+| Ultima Online B1, 8 units, 1800 t (8) | base | 0.145 / 0.129 / 0.171 / 0.215 / 7.9 | 0.318 / 0.130 / 0.207 / 5.40 / 8.1 | 311 ms (60 hashes) | 0 / 0 |
+| | cand | 0.025 / 0.009 / 0.040 / 0.057 / 7.6 | 0.196 / 0.009 / 0.053 / 5.25 / 7.6 | 308 ms | 0 / 0 |
+| generated map, 2000 units, 900 t (5) | base | 2.97 / 2.88 / 3.53 / 3.99 / 49.0 | 3.06 / 2.89 / 3.75 / 6.01 / 49.0 | 81 ms (30) | 1 / 1 |
+| | cand | 2.87 / 2.79 / 3.39 / 3.95 / 49.2 | 2.96 / 2.81 / 3.69 / 6.03 / 49.2 | 83 ms | 1 / 1 |
+| generated map, 4000 units, 1800 t (5) | base | 5.26 / 5.21 / 6.24 / 6.93 / 52.4 | 5.42 / 5.25 / 6.65 / 10.40 / 52.4 | 288 ms (60) | 1 / 1 |
+| | cand | 5.09 / 5.04 / 6.00 / 6.72 / 52.0 | 5.25 / 5.06 / 6.43 / 10.12 / 52.0 | 287 ms | 1 / 1 |
+
+The due `stateHash()` (every 30th tick) is the dominant p99 term whenever the core tick is small: Ultima
+Online B1 core p99 0.215 ms vs complete p99 5.40 ms (base), 4000 units 6.93 vs 10.40 ms. The complete
+distribution is the one to quote for service time. Pair d% of the candidate (whole service =
+`complete_mean`, median [min..max]): Ultima Online B1 **-38.4% [-41.3..-33.6]** (world part 239 -> 23 ms
+per run, -90.4%: the map-sized exploration and burn scans of D and A on a large retail map with 8
+units; core p99 -74%); 2000 units -3.0% [-4.9..+1.5]; 4000 units -3.1% [-4.3..+5.0] (4 of 5 pairs negative; the first
+pair's candidate run was the slow one, 5.71 ms). Hashes per tick are unchanged (no item touches
+`stateHash`).
+
+**A. Feature burning and fading** (`featburn_timing.sh ... 5 3000 2`, 5 swapped rounds per workload,
+core 2, us per tick; routine = `tickBurning` + `tickFeatureFades` alone, tick = the complete
+`World::tick` of a world with two idle monarchs; hashes identical on all 12 workloads)
+
+| workload | features | base mean | cand mean | saved/tick | pair ratio median [min..max] | p99 base -> cand |
+|---|---|---|---|---|---|---|
+| Ulasem nofire routine | 1250 | 0.761 | 0.011 | 0.75 | 0.014 [0.014..0.015] | 0.77 -> 0.01 |
+| Ulasem sparse routine (1.1 burning) | 1250 | 0.791 | 0.047 | 0.74 | 0.060 [0.052..0.065] | 2.33 -> 1.41 |
+| Ulasem fire routine (9.8 burning) | 1250 | 0.964 | 0.195 | 0.77 | 0.201 [0.179..0.209] | 2.32 -> 1.32 |
+| Ulasem fade routine | 1250 | 1.203 | 0.105 | 1.10 | 0.087 [0.079..0.143] | 2.11 -> 0.92 |
+| gen 1024 nofire routine | 11,595 | 7.99 | 0.014 | 7.98 | 0.002 [0.002..0.002] | 9.0 -> 0.01 |
+| gen 1024 sparse routine | 11,595 | 7.90 | 0.129 | 7.77 | 0.016 [0.015..0.017] | 11.0 -> 2.4 |
+| gen 1024 fire routine (82 burning) | 11,595 | 10.31 | 1.95 | 8.36 | 0.190 [0.186..0.275] | 25.8 -> 1.6 |
+| gen 1024 fade routine | 11,595 | 13.44 | 0.27 | 13.17 | 0.020 [0.020..0.021] | 15.8 -> 1.9 |
+| Ulasem nofire tick (A+D) | 1250 | 18.22 | 4.61 | 13.61 | 0.250 [0.239..0.261] | 29.7 -> 7.4 |
+| Ulasem fire tick (A+D) | 1250 | 18.43 | 4.85 | 13.58 | 0.263 [0.259..0.307] | 36.9 -> 10.5 |
+| gen 1024 nofire tick (A+D) | 11,595 | 44.34 | 4.77 | 39.58 | 0.107 [0.106..0.108] | 72.5 -> 7.7 |
+| gen 1024 fire tick (A+D) | 11,595 | 47.03 | 6.97 | 40.06 | 0.147 [0.144..0.151] | 255 -> 18.1 |
+
+Forested maps with and without fires, whole tick: the integrated candidate cuts the idle-world tick to
+0.11-0.26 of base, mostly D's exploration summaries. A alone (`pf-A` bench vs base, 3 rounds): Ulasem
+nofire tick 18.08 -> 17.34 us, ratio **0.961 [0.953..0.976]**, fire tick 0.963 [0.957..0.989]; gen 1024
+nofire tick 44.9 -> 36.5 us, 0.817 [0.796..0.827], fire 0.823 [0.823..0.851]. Every pair of every
+workload is a gain, the counter-free routine never visits a feature without fires. Real games rarely burn
+(0 ignitions in the 300 s gates), so in a recorded game A is worth about 0.75 us (Ulasem) to 8 us
+(11.6k features) per tick.
+
+**D. Exploration block summaries: map-size cost separated from unit cost**
+
+Map-sized part (`wall.sh --reps 9 --ticks 3000`, 16 idle bodies, whole run on core 2, nothing but the
+fixed per-tick cost changes):
+
+| map (plane cells) | base us/tick | cand us/tick | saved us/tick, pair median [min..max] (n=9) |
+|---|---|---|---|
+| flat 256 (16,384) | 5.0 | 3.0 | 2.0 [1.7..2.3] |
+| Ulasem Arena (102,400) | 18.0 | 4.7 | 13.3 [13.0..13.7] |
+| flat 1024 (262,144) | 40.3 | 8.7 | 31.3 [31.0..31.7] |
+| flat 2048 (1,048,576) | 176.3 | 46.0 | 131.0 [129.7..135.0] |
+
+The saving is linear in plane size (about 0.125 us per 1000 cells). Work counters (`TAK_PMU`, explore
+phase, median per tick, one run each on core 2, pass 1; instruction counts do not depend on load):
+idle 1024 1,238,312 -> 7,490 instructions; explore-move-2048 8.03M -> 1.83M; the march (Ulasem Arena,
+4,400 moving) 18.4M -> 6.5M; R-2h situation 5.80M -> 3.55M (D and G together).
+
+SIMPHASE (`run.sh`, 6 concurrent pairs x 400 ticks, ms per tick, explore mean base -> cand, pair d%):
+
+| situation | explore base -> cand | explore pair d% | tick base -> cand (mean / p99) | tick pair d% |
+|---|---|---|---|---|
+| explore-idle-ulasem | 0.0125 -> 0.0004 | -97.1 [-97.7..-95.9] | 0.020 -> 0.010 / 0.03 -> 0.01 | -50.3 [-51.5..-50.0] |
+| explore-idle-1024 | 0.031 -> 0.0004 | -98.6 [-98.9..-98.4] | 0.040 -> 0.010 / 0.06 -> 0.01 | -75.0 [-75.2..-74.9] |
+| explore-idle-2048 | 0.125 -> 0.0003 | -99.8 [-99.9..-99.7] | 0.133 -> 0.010 / 0.18 -> 0.02 | -92.3 [-92.5..-92.1] |
+| explore-move-2048 (1000 units), D+G | 0.381 -> 0.184 | -51.8 [-52.1..-50.9] | 1.22 -> 1.00 / 2.14 -> 1.86 | -18.3 [-19.1..-15.4] |
+| explore-reveal-2048 (4800, pooled, w1), D+G | 0.896 -> 0.536 | -40.3 [-41.2..-39.0] | 4.54 -> 4.17 / 5.25 -> 4.86 | -7.9 [-8.9..-7.6] |
+
+Separating D from the unit-dependent work on explore-move-2048 (item heads alone vs base, 6 pairs each):
+base explore 0.379 ms; D alone 0.256 (saves 0.124 ms, = the idle-2048 map cost of 0.125 ms, so D leaves
+the unit-dependent reveal work unchanged), G alone 0.310 (saves 0.072 ms, all unit-dependent), both
+0.184 (0.196 ms, the sum). Pooled reveal-2048: D alone explore -19.8% [-22.4..-15.4], tick -3.1%
+[-5.7..-2.1]; G alone explore -22.3%, tick -3.5% [-4.0..-2.4].
+
+**G. View-count deltas**
+
+Audit probe (`viewcount_delta_test probe`): one-cell move, flat terrain, sight 320, height 100: rebuild
+2,514 counter updates, delta 82, 82 cells changed; eye 100 -> 106 at the same cell: 2,514 updates rebuilt,
+0 as deltas, 0 cells changed. Reproduced exactly (an operation count, not a speedup).
+
+Per move, real recorded moves replayed through both paths in one binary (`viewcount_bench --load ...
+--reps 15`, core 2; "plain" = serial adds, "atomic" = the worker path's relaxed atomics; planes equal
+after every replay; the delta time includes the span and limit-table cost):
+
+| capture (moves) | counter updates rebuild -> delta | ns plain rebuild -> delta (ratio) | ns atomic rebuild -> delta (ratio) |
+|---|---|---|---|
+| R-2h-1800 (9,061) | 866.6 -> 23.1 | 2466 -> 1014 (0.411) | 4217 -> 1185 (0.281) |
+| L-2h-1800 (16,760) | 289.9 -> 22.8 | 2337 -> 948 (0.406) | 2761 -> 1102 (0.399) |
+| R-bench-1900 (7,639) | 574.6 -> 26.8 | 3027 -> 1161 (0.384) | 4040 -> 1367 (0.338) |
+| L-bench-1900 (7,230) | 359.7 -> 22.3 | 2273 -> 948 (0.417) | 2852 -> 1088 (0.381) |
+| march (70,096; 234 per tick) | 1160.6 -> 49.3 | 2447 -> 907 (0.371) | 5073 -> 1152 (0.227) |
+
+(The bench's "direct" path, the rejected per-cell admission variant, is 0.68-0.71x plain / 0.35-0.62x
+atomic: the limit tables are worth a further 30-40%.)
+
+Whole tick on the march workload (`we_timing.sh --sitdir ... R-march,L-march --rounds 3 --warm 300 --ticks
+1000`, 6 pairs, 4,400 marching bodies, weapons off):
+
+| run | R-march tick mean base -> cand, pair d% | L-march tick mean, pair d% | explore pair d% R / L |
+|---|---|---|---|
+| integrated, serial | 5.79 -> 5.28, **-7.8% [-15.8..-6.5]** | 9.12 -> 8.65, **-5.0% [-7.2..-3.8]** | -55.3 / -53.8 |
+| integrated, `TAK_SIM_WORKERS=1` | 5.82 -> 5.25, -9.8% [-10.4..-8.9] | 9.26 -> 8.88, -5.4% [-7.9..+4.5] | -67.9 / -64.4 |
+| G alone, serial | 5.74 -> 5.34, -7.3% [-8.0..-5.4] | 9.34 -> 8.73, -5.5% [-13.8..-2.5] | -52.4 / -50.7 |
+| D alone, serial | 5.70 -> 5.71, -1.0% [-1.8..+6.3] | 9.19 -> 9.11, -0.3% [-5.2..+1.3] | -4.8 / -4.7 |
+
+March tick distribution, integrated serial (ms): R base mean 5.79 / median 5.74 / p95 6.53 / p99 6.92 /
+max 9.51 -> cand 5.28 / 5.25 / 5.66 / 5.96 / 6.32; pair-median of p95 -7.9%, p99 -7.2%. L base 9.12 /
+8.92 / 10.72 / 13.11 / 15.97 -> 8.65 / 8.45 / 10.08 / 12.76 / 15.65. No tick over 33.3 ms on either side.
+Untouched phases do not shift on the integrated build (scripts, movement, other within +-2%). On the WE
+situations, see "Combined" below.
+
+**L. Auras** (`aura_bench_ab.sh --rounds 6`, ABBA per round on 0-3, us per pass; buff digests identical
+everywhere)
+
+| workload | base mean / p99 | cand mean / p99 | per-round d% median [min..max] | retained scratch base -> cand |
+|---|---|---|---|---|
+| R-2h, 3 workers (11.9k units, 229 emitters) | 99.8 / 118.8 | 52.8 / 89.1 | -47.5 [-48.0..-45.4] | 129,840 -> 25,660 B |
+| R-2h, serial | 232.6 / 245.4 | 172.0 / 182.1 | -26.2 [-27.5..-25.1] | 0 -> 25,204 B |
+| L-2h, 3 workers | 108.8 / 127.8 | 56.7 / 82.8 | -47.9 [-49.1..-47.2] | 145,800 -> 25,772 B |
+| L-2h, serial | 255.9 / 269.8 | 185.1 / 193.4 | -27.7 [-28.8..-26.8] | 0 -> 25,316 B |
+| dense 12k / 1000 emitters + debuffs, 3 workers | 2904 / 3325 | 903 / 956 | -68.9 [-69.1..-68.5] | 3,078,000 -> 148,948 B |
+| dense 12k / 1000, serial | 8801 / 8910 | 3382 / 3431 | -61.9 [-63.0..-60.7] | 0 -> 147,724 B |
+| dense 4k / 100, 3 workers | 99.8 / 129.9 | 46.0 / 67.1 | -54.1 [-55.2..-51.8] | 114,264 -> 17,748 B |
+| sparse 12k / 200, 3 workers | 80.3 / 118.0 | 73.0 / 96.6 | -9.3 [-10.4..-7.1] | 40,368 -> 27,064 B |
+| sparse 12k / 200, serial | 248.4 / 259.5 | 209.6 / 218.0 | -15.6 [-16.8..-13.7] | 0 -> 26,608 B |
+| dense 2000 / 40, serial (below the 2048 gate: unchanged code) | 33.8 / 41.3 | 35.6 / 41.7 | +4.9 [-4.5..+13.5] | 0 -> 0 |
+| small 300 / 5, serial (unchanged code) | 0.9 / 1.0 | 0.9 / 0.9 | +0.0 [+0.0..+0.0] | 0 -> 0 |
+| relax only, R-2h, 3 workers | 8.1 / 13.2 | 8.2 / 12.1 | -0.6 [-18.6..+20.5] | 0 -> 0 |
+
+The dense-2000 row runs the unchanged serial walk on both sides; its spread straddles zero (noise). Work
+counter: `near_scans` per tick on the 2-hour situations fall 1238 -> 1168 (L-2h) and 1230 -> 1171 (R-2h)
+(`we_timing.sh --counters`, pass 1): the aura scans no longer go through `forEachNear`.
+
+Aura-heavy whole tick (new workload `tools/scenarios/perf/aurafight.scn`: two battles on Ulasem Arena,
+3,200 armed bodies of which 1,200 are Aramon Smiths with the retail AdjustArmor aura, fighting at once;
+`we_timing.sh --sitdir <dir with R-/L-aurafight.scn.gz> --rounds 3 --warm 300 --ticks 1000 --catchup 0`,
+6 pairs; units 3027 -> 2533 (R) over the window, so the tiled pass runs throughout):
+
+| run | R tick base -> cand (mean / p99), pair d% | sep (aura pass inside) pair d% | L tick pair d% |
+|---|---|---|---|
+| integrated, serial | 3.97 -> 3.30 / 5.04 -> 4.13, **-16.6% [-18.5..-16.0]** | -48.0 [-48.9..-47.6] | -9.0% [-9.9..+2.1] |
+| integrated, w1 | 3.68 -> 3.16 / 4.48 -> 4.10, -15.8% [-17.5..-9.4] | -55.6 | -10.7% [-11.9..-6.9] |
+| L alone, serial | 4.00 -> 3.30 / 5.15 -> 4.00, **-15.7% [-21.3..-15.5]** | -46.2 [-49.5..-45.8] | -6.6% [-8.5..+1.3] |
+
+Final hashes identical (`ebe4a7cfff986cee` R, `b4481fd4fca182f5` L). Memory (peak RSS, `/usr/bin/time`,
+1300 ticks, 2 runs each): R-2h 196.6/196.7 MB both builds; L-2h 457.3 -> 459.0 MB (+1.7 MB, +0.4%;
+not attributed); aurafight 133.4-133.5 MB both.
+
+**Combined workloads** (integrated candidate vs base)
+
+Large moving armies, exact replays (`we_timing.sh --replays` with the four WE recordings re-stamped to
+protocol 305, `--rounds 3`, warm 1000 + 1000 measured ticks from the harvest tick; 6 concurrent pairs):
+
+| replay | tick mean base -> cand | tick pair d% | p95 / p99 / max base -> cand | sep pair d% | explore pair d% |
+|---|---|---|---|---|---|
+| R-2h (10.4k units) | 11.08 -> 10.90 | **-1.9% [-2.2..-0.4]** | 12.31 / 12.90 / 15.5 -> 12.13 / 12.67 / 16.0 | -13.4 | -18.3 |
+| L-2h (10.0k) | 23.88 -> 23.75 | -0.4% [-1.3..+0.1] | 30.21 / 31.51 / 32.9 -> 30.12 / 31.56 / 33.6 | -15.5 | -20.8 |
+| R-bench (1.6k) | 0.947 -> 0.930 | -2.3% [-7.5..+6.2] | 1.14 / 1.42 / 3.5 -> 1.13 / 1.40 / 4.1 | -18.4 | -34.3 |
+| L-bench (1.2k) | 4.05 -> 3.96 | **-1.4% [-5.1..-0.9]** | 5.90 / 6.57 / 7.9 -> 5.71 / 6.33 / 7.4 | -29.6 | -41.4 |
+
+With `TAK_SIM_WORKERS=1` (2 rounds, 4 pairs): L-2h -0.4% [-1.3..+0.0], R-2h **-1.1% [-1.7..-0.8]**
+(repeat after the backup; sep -23.8%). Ticks over 33.3 ms: 0 -> 0 except L-2h 0 -> 1 (33.55 ms).
+
+Situations (`we_timing.sh --rounds 3`, warm 1000, 6 pairs; serial / `TAK_SIM_WORKERS=1`):
+
+| situation | tick mean base -> cand | tick pair d% serial | tick pair d% w1 | sep pair d% serial / w1 |
+|---|---|---|---|---|
+| R-2h-1800 | 11.07 -> 10.94 | **-1.1% [-1.9..-0.4]** | **-1.0% [-1.5..-0.5]** | -12.5 / -23.3 |
+| L-2h-1800 | 22.71 -> 22.59 | **-0.4% [-1.3..-0.2]** | -0.1% [-0.8..+4.5] | -13.0 / -20.9 |
+| R-bench-1900 | 2.09 -> 2.02 | **-3.9% [-5.7..-0.6]** | **-3.8% [-5.8..-1.0]** | -34.3 / -36.7 |
+| L-bench-1900 | 4.20 -> 4.12 | -1.8% [-3.3..+0.0] | -0.0% [-1.8..+0.9] | -30.7 / -32.0 |
+
+A/A control (candidate vs itself, 6 pairs, two sets): R-2h -0.1% [-0.7..+0.6] and +0.1% [-1.0..+2.2],
+L-2h -0.0% [-0.4..+0.3] and -1.0% [-6.4..+0.4]; per phase within +-1.5% except one pair. Tick
+distributions of the situations (serial, ms): R-2h p95 12.38 -> 12.25, p99 12.91 -> 12.74, max 13.9 ->
+16.1; L-2h p95 34.24 -> 34.24, p99 36.52 -> 36.41, ticks over 33.3 ms 384 -> 388 of 6,000 (L-2h's
+over-budget ticks are Legion movement, which no sim item touches); R-bench and L-bench none over.
+
+Late game with AI, combat, construction and deaths: `simperf --mode match` (8 Absurd AIs) above: 4000
+units -3.1% complete mean (4 of 5 pairs), 2000 units -3.0% [-4.9..+1.5], Ultima Online B1 (8 starting
+units, AI builds up) -38.4% [-41.3..-33.6]. Forested maps with and without fires: featburn tick rows above.
+Aura-heavy: aurafight above.
+
+Attribution on the 10k-unit situations (item heads alone vs base, `--rounds 3`, 6 pairs, 02:53-03:27,
+quiet):
+
+| build | R-2h tick pair d% | R-2h sep / other | L-2h tick pair d% | L-2h sep / other / scripts |
+|---|---|---|---|---|
+| D alone | -0.7 [-1.1..-0.4] | -5.4 / -0.6 | +0.6 [-2.1..+1.0] | -4.2 / +1.7 / +2.3 [+0.9..+2.4] |
+| G alone | **+0.9 [+0.2..+1.1]** | -5.3 / **+3.5 [+2.9..+4.1]** | -0.2 [-0.5..-0.0] | -5.9 / +0.6 / +0.9 |
+| L alone | -0.0 [-0.8..+1.0] | -2.6 / -0.0 | +0.8 [-0.7..+1.3] | -3.2 / **+3.9 [+2.0..+4.6]** / +1.9 |
+| integrated (pass 2 above) | -1.1 [-1.9..-0.4] | -12.5 / -0.4 | -0.4 [-1.3..-0.2] | -13.0 / -0.3 / +0.8 |
+
+The first quiet attribution set (02:20-02:53) agrees: G alone R-2h tick +0.9 [-0.3..+1.5], other +3.7
+[+2.2..+4.2]; L alone L-2h tick +0.9 [+0.6..+6.5], other +3.9 [+3.6..+9.5]. Work counters settle what
+that is (`TAK_PMU`, situations, ticks 1000-2000, one run per build on core 2, mean per tick):
+
+| R-2h / L-2h | tick instructions | tick cycles | sep instructions | `other` instructions | `other` cycles |
+|---|---|---|---|---|---|
+| integrated | -1.5% / -0.9% | -0.2% / -2.2% | -25.6% / -26.8% | -0.1% / -0.2% | +0.2% / -2.9% |
+| G alone | -0.8% / -0.5% | +0.9% / -1.5% | -14.5% / -15.8% | +0.1% / +0.1% | +2.5% / -1.3% |
+| L alone | -0.2% / -0.1% | +2.9% / +0.8% | -4.2% / -4.8% | +0.3% / +0.0% | +3.3% / +2.1% |
+
+The phases an item does not touch execute the same instructions in every build (`other` +-0.3%,
+`scripts` +0.0..+0.2%); their extra cycles in the single-item builds are that binary's code and data
+layout, not work, and they are absent from the integrated binary. The consequence for the dispositions:
+on the 10k-unit recordings G alone and L alone are not a measurable whole-tick gain (their work there is
+0.02-0.06 ms per tick, below the +-1% layout effects), so their verdicts rest on the workloads where their work is
+large (the march, the aura fight) and on instructions; the integrated branch is a gain on all four
+recordings.
+
+**Unexpected**
+
+- **COB scripts phase on the L-2h replay: +5.0% [+4.4..+5.8]** (0.096 ms per tick; `TAK_SIM_WORKERS=1`:
+  +4.4% [+1.4..+5.5]) in the integrated `takclient`; the same build's `legion_scenario` on the L-2h
+  situation shows +0.8% [+0.5..+1.0] and the R-2h replay -1.0%. No sim item touches the script VM and the
+  scripts phase runs the same instructions in every build (+0.0..+0.2%), so this is layout in that
+  binary; `other` falls 4.3% in the same runs and the whole L-2h replay tick is -0.4% [-1.3..+0.1] (one
+  pair of six at +0.1%). Flagged for the Legion measurement, which owns the other L-2h changes.
+- The single-item builds' layout effects above (G alone `other` +3.5% on R-2h, L alone `other` +3.9% on
+  L-2h, D alone `scripts` +2.3% on L-2h) repeat across both quiet sets: an item measured alone on a
+  small-gain workload can read as a +1% loss that is not its code.
+- The 4000-unit simperf's first pair: candidate 5.71 ms vs base 5.44 ms (the other four pairs -1.9..-4.3%).
+
+**Recommended dispositions (sim)**
+
+| item | recommendation | deciding numbers (pass 2) |
+|---|---|---|
+| Measurement A | Implemented and verified (instrumentation) | complete p99 differs from core p99 by the hash: 0.215 vs 5.40 ms (UOB1), 6.93 vs 10.40 ms (4000 units); checkpoint hashes identical |
+| A Feature burning/fading | **Implemented and verified** | routine 0.002-0.20x of base in every pair of every workload; A alone, whole idle tick Ulasem 0.961 [0.953..0.976], gen 1024 0.817 [0.796..0.827] |
+| D Exploration summaries | **Implemented and verified** | map-sized cost removed: 2.0 / 13.3 / 31.3 / 131 us per tick at 16K / 102K / 262K / 1M cells (n=9, tight); unit-dependent work unchanged; UOB1 whole service -38% |
+| G View-count deltas | **Implemented and verified** | per move 0.37-0.42x (plain), 0.23-0.40x (atomic); march whole tick -7.8% [-15.8..-6.5] (R), -5.0% [-7.2..-3.8] (L); G alone -7.3% [-8.0..-5.4]; explore instructions -15..-64%. Alone on the 10k recordings: within layout effects (R-2h +0.9%, same instructions) |
+| L Auras | **Implemented and verified** | pass -26..-69% in every round of every tiled workload; aura-heavy whole tick -16.6% [-18.5..-16.0], L alone -15.7% [-21.3..-15.5]; worker scratch 129,840 -> 25,660 B (R-2h), 3.08 MB -> 149 KB (dense). Cost: serial mode keeps 25-148 KB it did not before. Alone on the 10k recordings (aura work 0.02-0.07 ms): R-2h -0.0%, L-2h +0.8% with unchanged instructions outside the pass (layout) |
+
+None of the sim items is inside noise or negative on its own workload. On the recorded 10k-unit games the
+whole-tick gain of the four together is small (R-2h -1.9% replay / -1.1% situation, L-2h -0.4% with one
+of six replay pairs at +0.1%), as screening predicted; it is a gain, not a regression.
+
+**Commands** (pass 2; `X=~/tak-tmp/tmp/pf-final`, `Q=$X/q`, drivers `$X/master.sh` (pass 1),
+`$X/qrun.sh` (pass 2), `$X/attr.sh`, `$X/extra.sh`, `$X/rerun.sh`, `$X/rss.sh`; summaries
+`$X/simperf_summ.py`, `$X/featburn_pairs.py`; all run from `~/tak-tmp/wt-perf-int` with scratch
+`HOME`/`XDG_*`):
+
+```sh
+tools/we_timing.sh --base $BASE --cand $CAND --rounds 3 --data $D --out $Q/WE              # + TAK_SIM_WORKERS=1 ... --out $Q/WE-w1
+tools/we_timing.sh --base $BASE --cand $CAND --replays $X/replays --sits R-2h-1800,L-2h-1800,R-bench-1900,L-bench-1900 --rounds 3 --data ~/tak_data --out $Q/REP
+gzip -c tools/scenarios/perf/aurafight.scn > $X/sits-aura/R-aurafight.scn.gz; cp $X/sits-aura/R-aurafight.scn.gz $X/sits-aura/L-aurafight.scn.gz
+tools/we_timing.sh --base $BASE --cand $CAND --sitdir $X/sits-aura --sits R-aurafight,L-aurafight --rounds 3 --warm 300 --ticks 1000 --catchup 0 --data $D --out $Q/aurafight
+tools/we_timing.sh --base $BASE --cand $CAND --sitdir $X/sits --sits R-march,L-march --rounds 3 --warm 300 --ticks 1000 --data $D --out $Q/G-march
+$T $X/simperf_pair.sh $Q/sp-match4000 5 --mode match --units 4000 --ticks 1800 --data ~/tak_data   # also --units 2000 --ticks 900 (5), --units 8 --map 'Ultima Online B1' (8)
+$T tools/featburn_timing.sh $X/featburn-base/featburn_bench $CAND/featburn_bench $D 5 3000 2 > $Q/featburn.log
+tools/scenarios/perf-explore/wall.sh --base $BASE --cand $CAND --reps 9 --ticks 3000 --data $D --out $Q/D-wall
+tools/scenarios/perf-explore/run.sh --base $BASE --cand $CAND --sits explore-idle-256,explore-idle-ulasem,explore-idle-1024,explore-idle-2048,explore-move-2048 --rounds 3 --warm 100 --ticks 400 --data $D --out $Q/D-serial
+TAK_SIM_WORKERS=1 tools/scenarios/perf-explore/run.sh --base $BASE --cand $CAND --sits explore-reveal-2048 --rounds 3 --warm 100 --ticks 400 --data $D --out $Q/D-pooled
+tools/aura_bench_ab.sh --base ~/tak-tmp/build-pf-L-base-o2 --cand $CAND --rounds 6 --data $D --out $Q/L
+$T taskset -c 2 $CAND/viewcount_bench --load $X/G-vcb/<capture>.vcb --reps 15 [--atomic]     # captures: viewcount_bench <scn> --save, on 4-23
+python3 tools/we_timing_dist.py <out> --warm <warm> --phases tick,sep,explore                 # distributions
+```
+
+Attribution runs swap `--cand` for `~/tak-tmp/build-pf-<A|D|G|L>-o2`.
+
 ## Progress log
 
 - 2026-10-30: branch created at `61f294ac`; plan written. Next: launch the
@@ -762,3 +1073,8 @@ replays patched by `legion_identity.py patch-replay`; `simperf --mode match --un
   campaign smoke identical to base, and the full identity harness (see Integration).
   Next: the serial measurement phase, then final dispositions (I conditional, K's
   `98e01695` for the owner).
+- 2026-10-31: serial final measurement, simulation (A, D, G, L, measurement A, combined workloads):
+  results and recommended dispositions under "Results: simulation". Every sim item shows a repeatable gain
+  on its workload; the integrated branch is a whole-tick gain on all four WE recordings (R-2h replay -1.9%,
+  L-2h -0.4%). Pass 1 ran under other workflows' load and is kept only as a sign check; pass 2 ran quiet.
+  New workload `tools/scenarios/perf/aurafight.scn` (aura-heavy fight).
