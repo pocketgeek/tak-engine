@@ -50,6 +50,19 @@ their validation reports; both live in [`docs/`](docs/).
   original.
 - **A spell's explosion shows on the unit it takes**, and only when it takes;
   the hit sound plays where the shot strikes.
+- **Units attack enemy buildings still being built**, as in the original
+  game. A building still being conjured, and a unit still being built at a
+  factory, were invisible to every automatic target choice: idle, patrolling
+  and moving units stood or walked past an enemy castle going up beside them.
+  They now take one as a target, after any finished enemy near enough (the
+  original scores it ten times worse). A guard keeps to the unit it guards
+  but shoots one in range, and stone, freeze and charm casters still leave it
+  alone.
+- **Automatic targeting follows the original more closely in three more
+  places:** a paralyzed enemy is no longer passed over for a healthy one, the
+  random choice among several targets lands on the same one as in the
+  original, and a computer player's caster no longer switches to stone,
+  freeze or charm against a building still being built.
 
 ## 0.9.12
 *2026-10-29 · protocol 305 · replay format 15 · does not play with 0.9.11 or earlier, nor their replays*

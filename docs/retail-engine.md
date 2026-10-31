@@ -219,8 +219,10 @@ weapon slots is **auto** or **manual**:
   reason ends (retail: the mission destructor's setAuto `4d6da0`).
 - **Auto** slots are filled by `retailSelectTarget` (port of `412620`): 50
   `gameRand` draws over the player's visible list (melee 5), integer distance
-  squared, `fireatwillrandom`, turn penalty, x10 multipliers, bad-target
-  fallback. Auto slots fire en route without braking or steering; only a
+  squared, `fireatwillrandom`, turn penalty, x10 inside the minimum range and
+  x10 for a target with construction left, bad-target fallback; a drawn
+  candidate leaves the list with the last one taking its place (`50b2c0`).
+  See "Enemies with construction left" below. Auto slots fire en route without braking or steering; only a
   stopped, order-less ground unit pivots (at `turninplacerate`). Only
   hover-attack flyers and ground units with `turninplacerate > 0` must face
   the target to fire.
@@ -253,6 +255,92 @@ penalty. Emulating the snippet on synthetic units gives 300 -> 359 on a 1.2
 road, 150 in 0.5 water, road over water when both bits are set, 700 x -0.5 ->
 65186. It is the same scaling the cost search applies (`4151ef`); both now
 share `retailEffectiveTurnRate` (pinned by `fire_sweep_turnrate`).
+
+## Enemies with construction left (icd, emulated 2026-10-30, protocol 306)
+
+A unit with construction left (`+0x108`, a float: 1.0 for a fresh site, 0 once
+finished) is a site still being conjured, or a unit still being built at a
+factory door or beside a Zhon builder. Retail's target scans take one, behind
+finished targets:
+
+- **The list.** `411700` puts on the visible-enemy list +5 every live, not
+  dying unit of a non-allied owner that the player sees (`4f7210`), dropping
+  only the scenario flag `0x2000` (never set at creation, U16 in
+  [the classic AI plan](classic-ai-plan.md)). There is no `+0x108` test for
+  an enemy; allied and own sites go on +0x15.
+- **The picker** (`412620`) multiplies a target's score by 10 unless it is
+  alive, not dying and has no construction left (`412b52..412b77`; alive and
+  not dying were tested at the draw, so this is construction left alone), so
+  a finished target comes first and a site is taken when nothing finished is
+  near enough. It looks at no paralysis there. Stone, freeze and charm
+  classes skip a site (`4127eb..4128db`). A drawn candidate leaves the list
+  with the last one moved into its place (`50b2c0`), which decides which
+  candidate the later draws land on.
+- **Which scans.** Every scan over the list. The fire-at-will sweep (`40f330`
+  -> `40f2e0` -> `412620` with the slot's range) and the mission scan
+  `4d8370`: Fire At Will and armed only, `412620` on the scanning slot
+  (`519ac0`: a switcher's selected slot, else the first weapon the unit has)
+  with the radius max(sightdistance, range). `4d8370` is called by Standby
+  (`407770`), Standby_Wander, Patrol (`403600`), VTOL_Patrol, Move_Ground's
+  attack response (`402e2d`, a move with a response mode),
+  Move_Ground_Formation, Attack_Chase and Attack_Melee's retargets,
+  VTOL_Standby, VTOL_Move(_Formation), VTOL_SeekAttack, AirStrike,
+  AirToGround, AirToAir and AirToGroundHover. Follow_Ground and VTOL_Follow
+  (guard) run no scan: they answer the guarded unit's attacker (`+0xf8`),
+  which a site never is, and the guard's auto slots take a site in range
+  through the sweep. The hit response `409a50` answers an attacker, never a
+  site (and a site under fire answers nothing, above). The scripted wait
+  `401480` and the AI weapon switch's counts (`411ae0`) count sites too.
+- **The sweep's budget** (`40f3a1..40f3c9`): the player's own dead, dying
+  and unfinished units cost nothing; every other unit costs one, a paralyzed
+  one included (its slots are manual).
+- **The AI weapon switch** (`40f50e..40f5ea`, `40f7b8..40f8ab`): a stone,
+  freeze or charm slot is no use against a target with construction left.
+- The Retail AI's own picker (`40a200`) divides an unfinished target's score
+  by rand(3)+1, and its threat test and defence planner count sites (U16):
+  both read the same list.
+
+Evidence, from the user's own binary: `tools/re/probe_site_targets.py` runs
+`411700` over eleven units (own, ally and enemy; finished, a fresh site and
+one a quarter left; seen and unseen; `0x2000`; dying), `4d8370` (no scan on
+Hold Fire, Return Fire or unarmed; a lone site returned; the radius and the
+scanning slot), `40f330`'s budget (two own sites passed, a paralyzed unit
+counted) and its switch block (a stone slot taken against a finished target,
+not against one with 1.0 or 0.25 left): 14 observations.
+`tools/re/check_fire_sweep_picker.py` runs `412620` on 4,000 random cases
+(plain, melee, stone, freeze and charm classes, `fireatwillrandom`, the sweep
+and the mission radius, one to six candidates finished or not, paralyzed or
+not, bad targets, immune types, AI-owned or not) against `fire_sweep_test
+--picker`: the same pick and the same RNG state in every case; with the old
+x10 test it fails 119 of 600 cases, with the old erase 65 of 600.
+
+Before: World left enemies with construction left off its lists (the Retail
+AI's brain added them back for itself), its acquisition (`findTarget`)
+skipped them, the picker gave the x10 to a paralyzed target instead and
+erased a drawn candidate keeping the list's order, the sweep charged its own
+sites and passed paralyzed units for free, and the AI switch counted a stone,
+freeze or charm slot as usable against a site. Units standing beside an
+enemy building going up never touched it (a user's replay: three Spirit
+Wolves idle 153 to 186 px from an unfinished Aramon castle until ordered).
+Rebuilt with the real Crusades types on a flat map, none ever targeted it
+before; now all three take it at their first scan.
+
+Now: `rebuildVisibleLists` lists them, `retailSelectTarget` gives the x10 to
+`underConstruction` and moves the last candidate into a drawn one's place,
+`tickFireSweep` passes its own unfinished units for free, and
+`retailAiWeaponSwitch` counts a stone, freeze or charm slot unusable against
+one. `findTarget`, the engine's stand-in for `4d8370` (nearest first rather
+than the picker's draws, within the longest range + 90 px), takes a site with
+its rank, the squared distance, x10 (the scatter score x10 for
+`fireatwillrandom`), except in a guard's scan and in a scan whose slot is a
+stone, freeze or charm class. The Classic brain takes the World's list as it
+is. Test: `fire_sweep_sites`.
+
+Not ported: a retail site at HP 0 or below is live to retail's scans; only
+restored saves have such sites here, and World's lists and slot checks test
+HP > 0. Found on the way and left alone: the picker's paralyzer immunity
+test (`4128e1..4128ff`: a paralyzer class skips an `immunetoparalyzer` type)
+is not in `retailSelectTarget`.
 
 ## Blocked shots: retail fires on, the engine walks to a clear shot (2026-10-19)
 
