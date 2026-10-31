@@ -487,6 +487,12 @@ enum class Counter : uint8_t {
     GhostCacheHits,
     GhostTris,
     GhostCacheBytes,
+    // FADE's cover bookkeeping (perf follow-up F): covers the unit queries handed out
+    // (each one an exact test before the per-frame bookkeeping) and exact cover tests
+    // (rectangle, then sprite/triangles) asked of them; hidden_cover_tests above counts
+    // only the sprite/triangle tests those ran.
+    HiddenCoverVisits,
+    HiddenCoverReaches,
     Count
 };
 
@@ -574,7 +580,7 @@ inline constexpr const char* kCounterNames[size_t(Counter::Count)] = {
     "native_primes", "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded",
     "cursor_evals", "cursor_pick_tests", "cursor_pick_hits", "ghosts_queued", "ghost_preps", "hidden_cover_tests",
     "shadow_demand_px", "ghost_draws", "ghost_culled", "ghost_collects", "ghost_cache_hits", "ghost_tris",
-    "ghost_cache_bytes"};
+    "ghost_cache_bytes", "hidden_cover_visits", "hidden_cover_reaches"};
 inline constexpr const char* kMissNames[size_t(MissCause::Count)] = {
     "cold", "changed", "owner", "pose", "material", "placement", "resource", "settings",
     "reference", "zoom"};

@@ -809,7 +809,9 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "cursor_evals", "cursor_pick_tests", "cursor_pick_hits", "ghosts_queued", "ghost_preps",
                     "hidden_cover_tests", "shadow_direct_units", "shadow_demand_px",
                     # build ghosts (perf follow-up E)
-                    "ghost_draws", "ghost_culled", "ghost_collects", "ghost_cache_hits", "ghost_tris"]
+                    "ghost_draws", "ghost_culled", "ghost_collects", "ghost_cache_hits", "ghost_tris",
+                    # perf follow-up F: FADE covers handed out (= the base's exact tests) and exact tests run
+                    "hidden_cover_visits", "hidden_cover_reaches"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",

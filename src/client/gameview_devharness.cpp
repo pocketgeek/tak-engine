@@ -1111,6 +1111,11 @@
                         }
                     return strong;
                 };
+                // Every FADE frame also tests each unit's covers one by one: the
+                // per-frame bookkeeping must give the same fades and answers (it aborts
+                // otherwise).
+                debugHiddenVerify_=true;
+                const size_t verifiedBefore=debugHiddenVerified_;
                 hiddenFadeOpacity_=hu::fadeOpacity(hu::kDefaultFadePercent);
                 const uint8_t faded=hiddenFadeOpacity_;
                 check(faded==128,"FADE: 50% is alpha 128");
@@ -1152,6 +1157,9 @@
                 fadeFrame(16);
                 check(!dotsFrame_,"FADE: models back");
                 debugHiddenFadeNowMs_=0;
+                check(debugHiddenVerified_>verifiedBefore+underForest.size(),
+                      "FADE: covers found once per frame match testing every cover");
+                debugHiddenVerify_=false;
             }
             SDL_RendererInfo info{};SDL_GetRendererInfo(ren_,&info);
             // ---- the policy on its own ----

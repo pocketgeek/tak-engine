@@ -2840,6 +2840,7 @@ private:
     std::vector<HiddenRec> hiddenRecs_;    // in REVERSE painter order
     std::vector<uint32_t> hiddenCoverRec_; // CoverGrid id -> hiddenRecs_ index
     tak::hiddenunits::CoverGrid hiddenGrid_;      // the covers
+    tak::hiddenunits::CoverMarks hiddenMarks_;    // FADE: covers already found this frame
     std::vector<int> hiddenDotIds_;        // sorted: units given a hidden dot this frame (picking)
     // The exact screen bounds of a unit's body this frame: its distant image's quad,
     // or its triangles (cached per geometry revision in hiddenBounds_, by slot).
@@ -2852,6 +2853,12 @@ private:
 #ifndef NDEBUG
     size_t debugHiddenCandidates_ = 0;
     uint64_t debugHiddenFadeNowMs_ = 0;         // nonzero: FADE's display clock (harness)
+    // FADE reference check (TAK_HIDDEN_VERIFY=1, or set by the harness): every unit's
+    // covers are also tested one by one, and the fades and the per-unit answers must be
+    // the bookkeeping's. A mismatch aborts.
+    bool debugHiddenVerify_ = false;
+    size_t debugHiddenVerified_ = 0;            // units checked (cumulative)
+    std::vector<uint64_t> debugHiddenFound_, debugHiddenRef_;
 #endif
     // The sprite a feature shows this frame (burn playback, animation frame, wind
     // sway), in screen space: what the body pass draws and the cover tests read.
