@@ -16,7 +16,7 @@
 //               selection centroid, clamped to +-60 px per axis)
 //       Attack  right-click on an enemy      gameview_hud.cpp:230-237
 //       Fight / Patrol  armed order (F / P)  gameview_hud.cpp:1062-1090
-//               (Patrol: flyers take retail's spread, everyone else the point)
+//               (flyers take retail's spread, everyone else the point)
 //       Guard   armed order (G)              gameview_hud.cpp:994-1013
 //       Stop    Act::Stop                    gameview_impl.cpp:4707-4714
 //       Squad   Ctrl/Alt+N (assignSquad)     gameview_impl.cpp:4748-4767
@@ -139,17 +139,15 @@ inline std::vector<tak::net::Command> hudCommands(const tak::sim::World& world,
         break;
     case Verb::Fight:
     case Verb::Patrol: {
-        const bool spread = order.verb == Verb::Patrol;
         tak::sim::FlyerGroupCentre air;
-        if (spread)
-            for (int id : selection)
-                if (const auto* u = live(id))
-                    air.add(tak::sim::Fixed::fromFloat(u->x.toFloat()).v, tak::sim::Fixed::fromFloat(u->z.toFloat()).v);
+        for (int id : selection)
+            if (const auto* u = live(id))
+                air.add(tak::sim::Fixed::fromFloat(u->x.toFloat()).v, tak::sim::Fixed::fromFloat(u->z.toFloat()).v);
         for (int id : selection) {
             auto c = make(order.verb == Verb::Fight ? Cmd::AttackMove : Cmd::Patrol, id);
             c.x = order.x;
             c.z = order.z;
-            const auto* u = spread ? live(id) : nullptr;
+            const auto* u = live(id);
             if (u && u->type && u->type->canFly) flyerSpreadGoal(air, *u, order.x, order.z, c.x, c.z);
             c.queue = order.queue ? 1 : 0;
             out.push_back(c);
@@ -200,7 +198,7 @@ inline std::vector<tak::net::Command> hudItems(const tak::sim::World& world, con
     if (!tak::sim::isLegionPathfinding(world.pathfindingMode())) return cmds;
     tak::net::ClickShape shape;
     if (order.verb == Verb::Move) { shape.moveOffsets = true; shape.x = order.x; shape.z = order.z; }
-    if (order.verb == Verb::Patrol) { shape.flyerOffsets = true; shape.x = order.x; shape.z = order.z; }
+    if (order.verb == Verb::Patrol || order.verb == Verb::Fight) { shape.flyerOffsets = true; shape.x = order.x; shape.z = order.z; }
     return tak::net::packClick(cmds, shape, serial);
 }
 

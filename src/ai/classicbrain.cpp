@@ -57,7 +57,10 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
         if (!u.buildQueue.empty()) { m.any = true; m.cls = 19; m.kind = otherKind(19); m.flags = 0x8010c; m.buildingBuild = true; m.builds = u.buildQueue.front(); }
         return m;
     }
-    if (u.buildSiteId) {
+    // A flying builder's step-out (VTOL_StepOutNoFormation, its job's air
+    // traffic) leads the list ahead of the job it stopped: it keeps its site
+    // (buildSiteId) but its first mission is the step-out, read below.
+    if (u.buildSiteId && !(!u.orders.empty() && u.orders.front().stepOut)) {
         const auto* site = world.unit(u.buildSiteId);
         m.any = true; m.cls = 0; m.kind = otherKind(0); m.flags = 0x80508; m.builds = site ? site->type : nullptr;
         if (site) { m.goalX = site->x.v; m.goalZ = site->z.v; }
@@ -96,6 +99,9 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     // target is lost. World's seek never carries the target, so the mission
     // ctor (0x4d6d66) has cleared the target bit 0x200, as for a dead one.
     else if (o.seekAttack) { m.cls = 19; m.flags = 0x1000400; }
+    // VTOL_SEEKGUARD (row 0x5ebe95: 0x1000600), a flyer's guard after its
+    // guarded unit is lost: World's seek carries none, so 0x200 is clear.
+    else if (o.seekGuard) { m.cls = 19; m.flags = 0x1000400; }
     else if (o.patrol) { m.cls = 7; m.flags = 0x3000410; }
     // A factory output's GetBuilt PARK: definition class 14, flags 0x200.
     else if (o.park) { m.cls = 14; m.flags = o.mission.flags; }
@@ -127,6 +133,11 @@ const tak::sim::Weapon* currentWeapon(const tak::sim::Unit& u) {
     return &w[size_t(slot)];
 }
 }  // namespace
+
+std::pair<uint8_t, uint32_t> ClassicBrain::firstMissionOf(const tak::sim::World& world, const tak::sim::Unit& u) {
+    const FirstMission m = firstMission(world, u);
+    return {m.cls, m.flags};
+}
 
 ClassicBrain::ClassicBrain(int player, uint32_t roomSeed)
     : player_(player), seed_(seedFor(player, roomSeed)), profile_(catalogue_.size()),

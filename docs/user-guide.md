@@ -770,7 +770,11 @@ target underneath.
   out, or its weapon's range plus 160 when it is armed. Each time it reaches
   its point it moves on a quarter to three-eighths of a turn round the circle,
   and the circle moves with the guarded unit. A flyer given the guard while
-  off the edge of the map flies back onto it first.
+  off the edge of the map flies back onto it first. When the guarded unit
+  dies, a flyer with no other orders keeps circling where it last stood
+  (160 pixels out, or its weapon's range plus 160) and guards the first
+  friendly ground unit or building that comes within its sight, as in the
+  original game.
 - **Clearing the site**: a builder that can reclaim automatically clears trees
   and rocks from a valid building site before it starts.
 - **Your units make way**: you can place a building on top of your own idle
