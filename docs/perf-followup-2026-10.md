@@ -1061,6 +1061,136 @@ python3 tools/we_timing_dist.py <out> --warm <warm> --phases tick,sep,explore   
 
 Attribution runs swap `--cand` for `~/tak-tmp/build-pf-<A|D|G|L>-o2`.
 
+### Results: AI (B, AI resurrection)
+
+Serial measurement, 2026-10-31 03:35 to 04:09, one agent; timing 04:01:57-04:08:58 with load
+average 1.0-1.7 (no other workflow running; correctness runs had finished before it). Every timed
+command through `/home/pocket_geek/tak-tmp/tools/timing.sh` (flock, cores 0-3).
+
+**Provenance**
+
+- Builds (Debug, `CMAKE_CXX_FLAGS=-O2 -g`, `-ffp-contract=off` from the tree, GCC 16.2.1 via ccache, all
+  checked up to date with `ninja -n`: only the build id restamps):
+  - candidate `CAND=~/tak-tmp/build-pfint-o2`: `perf-followup` integration (`fccacc61`, code identical to
+    `dad93045` and `9070f50e`), all targets.
+  - bench base `~/tak-tmp/build-pf-B-pure-o2`: `bdbdae58` = `461e9c4b` + the bench program only
+    (`tools/ai_revive_bench.cpp`, identical in the candidate); only the `ai_revive_bench` target is built
+    there (the bench links nothing else from that tree that matters).
+  - plain base for the uninstrumented AI phase: `~/tak-tmp/tmp/pf-final/mAbase/simperf` (`461e9c4b` with
+    `pf-mA`'s `simperf.cpp`, from the simulation results above).
+  - counter base `~/tak-tmp/build-pf-B-base-o2`: `5fcbac9b` = `461e9c4b` + the `TAK_AI_REVIVE_STATS` hook on
+    the 0.9.12 search (no behaviour change), all targets.
+- Hardware: Core Ultra 9 275HX, timing on P-cores 0-3. `ai_revive_bench` is single-threaded (the scheduler
+  picks one of 0-3); `simperf` uses its pool on 0-3. No documented AI harness has a 0-7 variant (and 4-7 are
+  the build/test pool), so none was run.
+- Statistics: "pair ratio" is cand/base per round (alternating order), median [min..max]; distributions
+  are the per-run statistics' median over runs (max = largest). Correctness and counter runs (cores 4-23)
+  are separate from the timing runs; the counter hook times every call, so its runs are never used as
+  timing of the AI phase.
+
+**Correctness, complete AI command streams** (cores 4-23, before timing)
+
+- `ctest -R '^(ai_behavior|ai_behavior_data|revive_order|classic_ai_.*|ai_profile|ai_profile_data|server_ai_level)$'`
+  on the candidate: 14/14 pass (`ai_behavior` holds the 400-scene reference comparison with the 0.9.12
+  search, commands, order, `assigned` and hash). `ai_profile`, `ai_profile_data` and
+  `classic_ai_map_profile` first failed on a bad `TMPDIR` in my scratch environment and pass on the rerun.
+- Bench streams: every one of the 8 workloads emits the same command count and stream hash on base and
+  candidate in every run (6 + 5 rounds, below; the bench also checks every call against the first).
+- Real games, server replays compared bundle by bundle (`cmprep.py`: header fields, every tick bundle,
+  the referee's hash trail): the 7 `--mpai` gates (Inner Circle, seed 1, `TAK_SPEED=80`) on the counter base
+  and the candidate give the documented hashes on both, and every recorded tick bundle and every hash
+  checkpoint is identical; in 4 of the 7 one side recorded one extra empty bundle (12 bytes) after the
+  client's time limit, a wall-clock end effect, alternately on the base and the candidate side. A heavier
+  game with live casters: the 8-AI Benchmark (`TAK_BENCH=4`, Ulasem Arena, all five sides, 600 s, 18,003
+  bundles): replay body byte-identical, final hash `99a3f429852aa439` on both.
+- Where the code runs in real games (`TAK_AI_REVIVE_STATS=1`; `visits` = caster-body distance tests, defined
+  the same way in both hooks; `casters`/`records` are counted differently, the candidate stops counting
+  after an empty gather):
+
+| game | calls | eligible casters | visits | Resurrect commands | us/call base -> cand (mean / p99) |
+|---|---|---|---|---|---|
+| 7 `--mpai` gates | 61-301 each (0 for Retail AI) | 0 | 0 | 0 | 0.28-0.33 -> 0.20-0.25 / 0.5-1.3 -> 0.5-0.7 |
+| Benchmark level 4, 600 s (8 AIs) | 4,803 | 974 | 93,337 | 0 | 6.71 -> 4.64 / 17.2 -> 16.5 |
+| simperf match 4000 units, 1800 t (4 pairs, timed on 0-3) | 720 | 0 | 0 | 0 | 5.89 -> 3.00 / 10.2 -> 4.9 |
+
+  No real game produced a Resurrect order (the bodies were never within 56 px of an idle caster), so the
+  reference comparison in `ai_behavior` and the synthetic bench are the only places the raise path runs.
+  The Benchmark row ran unpinned on 4-23 with the client and the other build's game beside it: a
+  counter, not a timing.
+
+**Timing: `reviveIdle` per call, zero / few / many bodies** (`ai_revive_bench`, 4,000 live units on a
+12,288 px map unless noted, 2,000 timed calls after 100 warm-up calls per run, plus one discarded warm-up
+run per build and workload; 6 rounds alternating order, us per call)
+
+| workload | records | commands | base mean / median / p95 / p99 / max | cand mean / median / p95 / p99 / max | pair ratio median [min..max] (n=6) | saved us/call |
+|---|---|---|---|---|---|---|
+| zero: 64 casters, no body | 4,064 | 0 | 101.8 / 101.5 / 103.2 / 106.7 / 156 | 1.38 / 1.38 / 1.40 / 1.41 / 6.5 | 0.0135 [0.0134..0.0138] | 100.4 |
+| few: 64 casters, 16 bodies | 4,080 | 0 | 114.0 / 113.8 / 115.4 / 115.7 / 392 | 5.52 / 5.51 / 5.59 / 5.70 / 10.7 | 0.0482 [0.0480..0.0489] | 108.4 |
+| near: 64 casters, 300 bodies by them | 4,364 | 47 | 150.6 / 149.9 / 152.5 / 154.2 / 590 | 14.5 / 14.4 / 14.9 / 16.2 / 58.9 | 0.0962 [0.0924..0.0981] | 136.0 |
+| many near: 64 casters, 2,000 bodies by them | 6,064 | 59 | 400.3 / 399.0 / 405.5 / 409.8 / 486 | 69.2 / 69.0 / 75.8 / 77.3 / 123 | 0.1737 [0.1712..0.1778] | 331.1 |
+| many: 64 casters, 2,000 bodies anywhere | 6,064 | 6 | 376.8 / 376.0 / 384.5 / 393.3 / 3593 | 65.6 / 65.0 / 70.6 / 73.1 / 131 | 0.1741 [0.1625..0.1772] | 311.2 |
+| small: 4 casters, 200 bodies by them | 4,204 | 4 | 14.9 / 14.8 / 15.4 / 16.3 / 72 | 6.19 / 6.17 / 6.31 / 6.46 / 78.5 | 0.4126 [0.4005..0.4355] | 8.7 |
+| resurrection-heavy: 256 casters, 4,000 bodies by them (new) | 8,256 | 237 | 2859 / 2861 / 2970 / 2997 / 4921 | 413 / 411 / 436 / 455 / 4870 | 0.1457 [0.1394..0.1537] | 2446 |
+| big army: 10,000 units, 64 casters, 300 bodies by them (new) | 10,364 | 46 | 539.3 / 538.9 / 546.3 / 549.5 / 4983 | 27.7 / 27.6 / 28.7 / 29.6 / 305 | 0.0523 [0.0483..0.0533] | 511.6 |
+
+Every pair of every workload is a gain; the widest spread (small, 0.40-0.44) is far from 1. The documented
+command (`tools/ai_revive_bench.py --rounds 5 --calls 2000`, exit 0, streams SAME) agrees: cand/base of the
+round-median means 0.0137, 0.0481, 0.0909, 0.1642, 0.1751, 0.4028 for its six workloads. The occasional base
+max of 3-5 ms is a one-off interruption inside a run (the p99 stays at 0.4-3.0 ms). Memory: the candidate
+keeps a per-call vector of the raisable bodies (32 bytes each, at most 128 KB at 4,000 bodies, freed at
+return; the base kept a vector of claimed ids); no retained state, RSS not measured.
+
+**Timing: the AI phase in a whole game** (`simperf --mode match`, 8 Absurd AIs, uninstrumented; plain base
+simperf vs candidate, one discarded warm-up run per build, then alternating pairs on 0-3; `ai_total_ms` =
+the AI part of every tick over the run, windows = the AI time of each 30-tick hash interval, first dropped)
+
+| workload (pairs) | AI total base -> cand, ms per run (mean) | AI pair d% median [min..max] | 30-tick AI window base -> cand: mean / median / p95 / p99 / max (ms) | core tick pair d% (all items) |
+|---|---|---|---|---|
+| 4000 units, 1800 t (8) | 304.8 -> 303.8 | -0.9 [-3.7..+4.3] | 4.26 / 3.71 / 6.33 / 7.30 / 7.54 -> 4.22 / 3.64 / 6.26 / 7.32 / 7.48 | -2.0 [-5.7..+2.6] |
+| 2000 units, 900 t (6) | 112.8 -> 112.7 | +0.3 [-6.5..+3.9] | 2.25 / 1.73 / 3.82 / 4.04 / 4.05 -> 2.23 / 1.69 / 3.68 / 4.00 / 4.03 | -3.6 [-11.1..-1.1] |
+
+Checkpoint hashes identical in every pair (60 resp. 30 per run). What B saves here is the per-call
+difference counted in the same game (the counter row above): 2.9 us x 720 calls = 2.1 ms per 1800-tick
+run, 0.7% of the AI phase and 0.02% of the tick. The AI-phase pair spread (-3.7..+4.3%) is about ten times
+that, so **B is not measurable in the whole AI phase or the tick of any real game measured**; the core-tick
+gain in the last column is the simulation items' (A, D, G, L), not B's.
+
+**Recommendation (B)**
+
+- **Implemented and verified** as a change to `reviveIdle`: exact (identical streams in the bench, in
+  `ai_behavior`'s 400 reference scenes, and identical recorded commands in 8 real games), and a repeatable
+  per-call gain on its workload: 0.013-0.17x of base with 64-256 casters and 0-4,000 bodies, 0.41x with 4
+  casters, every pair a gain, worst case (256 casters, 4,000 bodies) 2.86 -> 0.41 ms per call.
+- **Not a measurable gain in real games**: in every game measured the raise path never fires (0 Resurrect
+  orders in the gates, the 8-AI Benchmark and simperf), the per-call saving there is 2-3 us, and the AI
+  phase difference is inside its noise (4000 units -0.9% [-3.7..+4.3], 2000 units +0.3% [-6.5..+3.9]). It
+  should not be quoted as an AI-phase or tick gain. If the disposition requires a whole-game gain, this item
+  would be "Measured and rejected" on that criterion; I recommend keeping it, because it is exact, small,
+  and removes a cost that grows as casters x unit records (2.9 ms per call at 256 casters / 8,256 records,
+  about a tenth of a 33 ms tick per think).
+
+**Commands** (`P=~/tak-tmp/tmp/pf-final-ai`; driver `$P/bin/qrun.sh`; scripts outside the repo:
+`benchpairs.py`/`benchsumm.py` (bench pairs and table), `simperf_pair.sh`/`simperf_pair_stats.sh` (copies of
+`pf-final/simperf_pair.sh` with the plain base resp. the counter base and `TAK_AI_REVIVE_STATS=1`),
+`aisumm.py` (AI phase), `all.sh`/`gate.sh` (the B gate scripts, keeping the server replay), `game7.sh`
+(8-AI game with counters and replay), `cmprep.py` (replay comparison); outputs `$P/q/`, `$P/correct/`):
+
+```sh
+$T python3 -I $P/bin/benchpairs.py --base ~/tak-tmp/build-pf-B-pure-o2 --cand $CAND --rounds 6 --calls 2000 --out $P/q/bench
+python3 -I $P/bin/benchsumm.py $P/q/bench/raw.jsonl
+$T python3 -I tools/ai_revive_bench.py --base ~/tak-tmp/build-pf-B-pure-o2 --cand $CAND --rounds 5 --calls 2000
+$T $P/bin/simperf_pair.sh $P/q/sp4000 8 --mode match --units 4000 --ticks 1800 --data ~/tak_data      # and sp2000: 6 --units 2000 --ticks 900
+$T $P/bin/simperf_pair_stats.sh $P/q/sp4000-stats 4 --mode match --units 4000 --ticks 1800 --data ~/tak_data
+python3 -I $P/bin/aisumm.py $P/q/sp4000
+$P/bin/all.sh ~/tak-tmp/build-pf-B-base-o2 $P/correct/gates-base; $P/bin/all.sh $CAND $P/correct/gates-cand   # cores 4-23
+CPUS=4-13 $P/bin/game7.sh ~/tak-tmp/build-pf-B-base-o2 $P/correct/bench4 base 600 "Ulasem Arena" TAK_BENCH=4 &
+CPUS=14-23 $P/bin/game7.sh $CAND $P/correct/bench4 cand 600 "Ulasem Arena" TAK_BENCH=4 & wait
+python3 -I $P/bin/cmprep.py <base>.takrep <cand>.takrep
+```
+
+The two new bench workloads are plain `ai_revive_bench` options (`--casters 256 --bodies 4000 --layout near`;
+`--units 10000 --bodies 300 --layout near`), no new scenario files.
+
 ## Progress log
 
 - 2026-10-30: branch created at `61f294ac`; plan written. Next: launch the
@@ -1078,3 +1208,6 @@ Attribution runs swap `--cand` for `~/tak-tmp/build-pf-<A|D|G|L>-o2`.
   on its workload; the integrated branch is a whole-tick gain on all four WE recordings (R-2h replay -1.9%,
   L-2h -0.4%). Pass 1 ran under other workflows' load and is kept only as a sign check; pass 2 ran quiet.
   New workload `tools/scenarios/perf/aurafight.scn` (aura-heavy fight).
+- 2026-10-31: serial final measurement, AI (B): results under "Results: AI". Exact everywhere (bench
+  streams, `ai_behavior`, recorded commands of the 7 gates and an 8-AI Benchmark game); per call 0.013-0.41x
+  of base in every pair; in real games the raise path never fires and the AI-phase change is inside noise.
