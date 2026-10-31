@@ -3121,6 +3121,8 @@ private:
     void tickManaBuildArea(Unit& b);
     void tickAbilities(float dt);   // reclaim / resurrect on nearby corpses
     void tickAuras(float dt);       // AdjustArmor/Attack stat auras
+    bool prepareAuraSources();      // tickAuras, big worlds: the sources and tiles,
+    void applyAuraTiles(bool pooled);   // then the folds, tile by tile
     void tickHealAuras();           // AdjustJoy passive repair aura (1 Hz)
 
     // Connected-component labelling of a nav grid for one footprint, built on first
@@ -4042,11 +4044,25 @@ private:
     std::vector<AbilityChunk> abilityChunks_;   // tickAbilities on the SimPool (WE E4.3)
     // The post-loop passes go to the SimPool from this many units.
     static constexpr size_t kPostMinParallel = 2048;
-    // tickAuras on the SimPool: per chunk of kAuraEmitterChunk emitters, the
-    // units refreshed, in the serial order.
-    struct AuraHit { uint32_t index; uint8_t flags; float amt; };   // flags: 1 armour, 2 debuff
-    std::vector<std::vector<AuraHit>> auraChunks_;
-    static constexpr size_t kAuraEmitterChunk = 4;
+    // tickAuras in a big world (prepareAuraSources, applyAuraTiles), scratch
+    // rebuilt every pass, never hashed: every Armor/Attack aura of an eligible
+    // emitter, in emitter then aura order, with the grid cells its forEachNear
+    // square covers; per tile of 8x8 grid cells the sources whose square meets
+    // it (CSR, in source order); the tiles that have any; per pool slot, a tile's
+    // row and column masks over its sources.
+    struct AuraSource {
+        Fixed x, z;               // the emitter: the scan centre
+        const Aura* aura;
+        float r2;                 // a.radius * a.radius, as the serial gather computes it
+        int32_t player;           // the emitter's owner
+        uint64_t sides;           // bit p: the aura reaches player p's units (p < 64)
+        int32_t x0, z0, x1, z1;   // the cells scanned, clamped to the grid
+    };
+    std::vector<AuraSource> auraSources_;
+    std::vector<uint32_t> auraTileFirst_, auraTileList_, auraTiles_;
+    std::vector<std::vector<uint64_t>> auraTileMasks_;
+    static constexpr size_t kAuraMinEmitters = 8;   // the tiles go to the SimPool from this many emitters
+    static constexpr int kAuraTileShift = 3;        // tiles of 8x8 grid cells
     // Per player, this tick's retail construction demand (World::tick's economy step).
     std::vector<float> retailDemand_;
     // The economy walk on the SimPool (WE E4.3): per chunk, its units'

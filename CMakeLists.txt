@@ -1568,6 +1568,9 @@ add_test(NAME state_hash COMMAND state_hash_test)
 add_executable(simpool_passes_test tools/simpool_passes_test.cpp)
 target_link_libraries(simpool_passes_test PRIVATE tak-formats)
 add_test(NAME simpool_passes COMMAND simpool_passes_test)
+add_executable(aura_recipient_test tools/aura_recipient_test.cpp)
+target_link_libraries(aura_recipient_test PRIVATE tak-formats)
+add_test(NAME aura_recipient COMMAND aura_recipient_test)
 add_executable(power_codes_test tools/power_codes_test.cpp)
 target_link_libraries(power_codes_test PRIVATE tak-formats)
 add_test(NAME power_codes COMMAND power_codes_test)
@@ -1887,6 +1890,9 @@ target_link_libraries(featburn_bench PRIVATE tak-formats)
 # Microbenchmark of Controller::reviveIdle (not a CTest).
 add_executable(ai_revive_bench tools/ai_revive_bench.cpp ${TAK_AI_SOURCES})
 target_link_libraries(ai_revive_bench PRIVATE tak-formats)
+# The stat-aura pass alone (World::tickAuras), for screening its cost: tools/aura_bench.cpp.
+add_executable(aura_bench tools/aura_bench.cpp)
+target_link_libraries(aura_bench PRIVATE tak-formats)
 
 # --- Client (needs SDL2; skipped with a warning if unavailable) ---------------
 
