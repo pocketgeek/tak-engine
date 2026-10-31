@@ -19,7 +19,14 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 305;      // 305: our AI levels (not Retail AI) target only enemies their side has seen
+constexpr uint32_t kNetVersion = 306;      // 306: the mind-control, stone and freeze Line-of-Sight classes fly a real
+                                           //      shot (52d8d0 / 52db40 / 52dda0) and take effect on the unit it strikes,
+                                           //      through retail's callbacks (52da10 / 52dca0 / 52df00; the area charm and
+                                           //      freeze use them too): player, mover, Monarch, immunity and construction
+                                           //      gates, one CRT roll, no damage; the stone and freeze picker skips
+                                           //      unfinished units, not paralyzed ones (hashed state). No new command;
+                                           //      replay format unchanged.
+                                           // 305: our AI levels (not Retail AI) target only enemies their side has seen
                                            //      (own and allies' sight, recent attackers), remember buildings where
                                            //      seen and mobiles for 25 s, and scout/explore when nothing is known;
                                            //      World::stateHash mixes a 64-bit word per round over four lanes and

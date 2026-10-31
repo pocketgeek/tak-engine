@@ -190,9 +190,11 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 305, "replay format 11 is kept under protocol 305");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 305");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 305");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 306, "replay format 11 is kept under protocol 306");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 306");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 306");
+    // 306 flies the mind-control, stone and freeze shots and lands them through retail's callbacks.
+    check(!supportedReplayProtocol(15, 305), "previous protocol (status spells landing on release) is refused");
     // 305 has our AI levels target only what their side has seen (and explore), and changes the
     // stateHash mixing, so every recorded checkpoint value differs.
     check(!supportedReplayProtocol(15, 304), "previous protocol (whole-world AI targets, byte-wise state hash) is refused");

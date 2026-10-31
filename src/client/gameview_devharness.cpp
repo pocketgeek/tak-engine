@@ -3416,7 +3416,13 @@
                     where[victims[i]]={u->x.toFloat(),u->z.toFloat()};
                     tak::sim::Weapon w=*statusWeapon[i&1];
                     w.aoe=0;w.dmgVs.clear();w.dmgVsIds.clear();
-                    writableWorld().debugApplyHit(w,victims[i],enemy);
+                    // A green unit falls to the status roll 80 times in 100
+                    // (World::retailStatusRoll): repeat the hit until it takes.
+                    for (int attempt=0;attempt<64;++attempt) {
+                        writableWorld().debugApplyHit(w,victims[i],enemy);
+                        const auto* hit=world_.unit(victims[i]);
+                        if (!hit || hit->hp<=tak::sim::Fixed()) break;
+                    }
                 }
                 for (int t=0;t<240;++t) frame();
                 int statues=0,chosenCries=0,heardCries=0;
@@ -3548,7 +3554,11 @@
             effects_.clear();
             particles_.resize(particlesBeforeFallback);
             // Exercise the Harpy's status-shot presentation through the real
-            // hit consumer. It used to draw a beam and discard its direct WAV.
+            // hit consumer. Its ball is a real shot, drawn by the straight-shot
+            // renderer from its FireballD art; its impact (529c10 with the
+            // effects flag clear, as World::applyHit records it) plays the
+            // direct WAV with no beam and no explosion, and a charm that takes
+            // puts the weapon's explosion class on the victim (492c80).
             const auto* harpy = registry_.find("zonharp");
             if (!harpy || harpy->weapons.empty())
                 throw std::runtime_error("Harpy presentation fixture has no weapon");
@@ -3559,13 +3569,21 @@
             hit.x = cx + 120; hit.z = cz;
             hit.fromPosition=std::array<int32_t,3>{int32_t((cx-120)*65536),200*65536,int32_t(cz*65536)};
             hit.position=std::array<int32_t,3>{int32_t((cx+120)*65536),80*65536,int32_t(cz*65536)};
+            hit.explosion = false;
+            const size_t beamsBefore = beams_.size();
+            effects_.clear();
             hitQueue_.push_back({front().gameTick, hit});
             cosmeticStep(0);
-            if (beams_.empty() || beams_.back().fromPosition != hit.fromPosition ||
-                beams_.back().position != hit.position || beams_.back().sprite != spell.weaponArt ||
-                !effectFor(beams_.back().sprite) || !sounds_.has(spell.soundHit) ||
+            if (spell.losStatus != tak::sim::Weapon::LosStatus::MindControl || !effectFor(spell.weaponArt) ||
+                beams_.size() != beamsBefore || !effects_.empty() || !sounds_.has(spell.soundHit) ||
                 sounds_.peakOf(spell.soundHit) <= 0)
                 throw std::runtime_error("Harpy authored projectile/sound failed to load");
+            auto landed = hit;
+            landed.sound = false; landed.explosion = true; landed.victimId = 1;   // on a unit: the land class
+            hitQueue_.push_back({front().gameTick, landed});
+            cosmeticStep(0);
+            if (effects_.size() != 1 || effects_.back().worldPosition != landed.position)
+                throw std::runtime_error("Harpy charm explosion did not land on its victim");
             auto cob = tak::cob::load(vfs_.read("scripts/zonharp.cob"));
             tak::cob::Vm vm(std::move(cob), true);
             vm.enableRetailAnimation();
@@ -3592,9 +3610,9 @@
             cosmeticStep(0);
             sounds_.setVerbose(false);
             std::printf("BASILISK_AUDIO_END\n");
-            beams_.back().age = beams_.back().life * 0.5f;
             lookAt(cx, cz);
-            std::fprintf(stderr, "PASS: Harpy FireballD sprite, direct ARROW08 impact, scripted SWOOSH2 fire\n");
+            std::fprintf(stderr, "PASS: Harpy FireballD sprite, direct ARROW08 impact without explosion, "
+                "charm explosion on the victim, scripted SWOOSH2 fire\n");
             std::fprintf(stderr,
                 "PASS: Arapult land/water authored impact variants, direct-hit class, exact tick/contact XYZ and authored expiry; missing-class silence (%zu/%zu/%zu variants)\n",
                 landVariants, waterVariants, directVariants);

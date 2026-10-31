@@ -58,7 +58,10 @@ int main(int argc,char** argv) {
             check(!unit->orders.empty(),"conversion preserves the Harpy's queued move");
             const auto& charm=registry.find("tarmind")->weapons.front();
             for(int i=0;i<20;++i)tak::sim::RetailReplayProbe::impact(world,charm,from,target);
-            check(world.unit(target)->player==newOwner,"late charm impacts do not take a converted ally");
+            // 52da10 spares only the caster's own player: a late charm that
+            // strikes a unit turned to an ally takes it.
+            check(world.unit(target)->player==0,newOwner==0 ? "late charm impacts leave the caster's own unit alone" :
+                  "a late charm impact takes a unit turned to an ally");
             world.stop(from);
             const int next=world.spawn(&victim,world.unit(from)->x.toFloat(),world.unit(from)->z.toFloat()+48,0,1);
             world.unit(from)->fireState=2;world.unit(from)->moveState=2;

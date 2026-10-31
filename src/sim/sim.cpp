@@ -510,7 +510,6 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 // Subtype selects the flame emitter, independently of hit-effect art.
                 wp.beam = lower(w->valueOr("type", "")) == "line of sight";
                 const auto flameSubtype=lower(w->valueOr("subtype", ""));
-                wp.straight=wp.beam && flameSubtype.empty();
                 wp.lightning=wp.beam && flameSubtype=="lightning";
                 wp.hwEffectName=hwe;
                 if(wp.lightning) {
@@ -521,7 +520,14 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     if(flameSubtype=="fire")wp.flameKind=0;
                     else if(flameSubtype=="bluefire")wp.flameKind=1;
                     else if(flameSubtype=="dieselflame")wp.flameKind=2;
+                    using LosStatus=Weapon::LosStatus;
+                    wp.losStatus=flameSubtype=="mindcontrol" ? LosStatus::MindControl :
+                                 flameSubtype=="turntostone" ? LosStatus::Stone :
+                                 flameSubtype=="turntofrozen" ? LosStatus::Frozen : LosStatus::None;
                 }
+                // 530afd: any other subtype (none shipped) is the plain class.
+                wp.straight=wp.beam && !wp.lightning && wp.flameKind<0 &&
+                            wp.losStatus==Weapon::LosStatus::None;
                 wp.groundBounce=w->numberOr("groundbounce",0)!=0;
                 wp.waterWeapon=w->numberOr("waterweapon",0)!=0;
                 wp.emitTime = int32_t(w->numberOr("emittime", 0));   // already ticks in the FBI
@@ -5416,6 +5422,13 @@ float Weapon::damageVs(const UnitType* t) const {
     return it == dmgVs.end() ? damage : float(it->second);
 }
 
+bool World::retailStatusRoll(const Unit& victim,float scale,uint32_t origin) {
+    const int32_t chance=std::min(99,(int32_t(victim.veteran)+16)*5);
+    damageCrtUsed_=true;   // the CRT stream now shapes the game: fold it
+    const int64_t roll=int64_t(crtRand(origin))*100/32768;
+    return roll<int64_t(double(chance)*double(scale));
+}
+
 void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId,
                      Unit* primary, std::optional<std::array<int32_t,3>> position,
                      std::optional<std::array<int32_t,3>> impact) {
@@ -5437,6 +5450,10 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             Fixed::fromFloat(hz).v};
         if (from) hf.fromPosition = std::array<int32_t,3>{from->x.v,
             (from->type && from->type->canFly ? from->flightY : from->groundY).v,from->z.v};
+        // The status callbacks' impacts (52d8d0, 52db40, 52dda0, 52f000, 52f360)
+        // call 529c10 with its effects flag clear: the sound, no explosion.
+        hf.explosion = !w.mindControl && w.status != Weapon::Status::Stoned &&
+                       w.status != Weapon::Status::Frozen;
         hits_.push_back(hf);
     }
     // Attacker's veteran attack multiplier boosts damage dealt (retail scales the
@@ -5447,33 +5464,64 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     // Damage + status one victim, honouring veterancy, auras and immunities.
     auto hurt = [&](Unit& e, float scale) {
         if (e.stonedFor > 0) return;   // petrified units are impervious
-        // subtype=mindcontrol (the Taros Mind Mage's Individual + Area Mind
-        // Control): the shot CONVERTS the victim instead of hurting it. Retail
-        // encodes eligibility in the weapon's own [DAMAGE] table -- it zeroes
-        // monarch/god/dragon/fort/factory/naval/lodestone -- so "damage > 0
-        // against this category" is exactly "can be charmed", which damageVs()
-        // already computes. Conversion is permanent.
-        if (w.mindControl) {
-            // A previously launched charm may arrive after another conversion.
-            if (allied(fromPlayer,e.player)) return;
-            // Retail's charm roll (icd 0x52da10), gates in this exact order so the
-            // RNG stream can never diverge between peers. Note the [DAMAGE] table is
-            // the ACQUISITION filter -- it decides what you may TARGET -- so a
-            // Monarch caught inside an area charm is stopped by the commander gate
-            // here, not by its zeroed damage row.
-            if (e.embarked()) return;                 // safe inside a transport
-            if (e.type->commander) return;            // Monarchs are never charmed
-            if (e.underConstruction) return;          // nor anything still being built (+0x108 > 0)
-            if (e.type->cantBeCaptured) return;
+        // Mind control, stone and freeze (the Line-of-Sight classes and the area
+        // spells alike) never damage: 52a460 / 529dc0 hand each unit to the
+        // class's callback instead of 52a330 -- charm 52da10 (also the Area Mind
+        // Control's, 52f041), stone 52dca0, freeze 52df00 (also the Area
+        // Freeze's, 52f3a1); tools/re/probe_los_status.py runs all three. The
+        // [DAMAGE] table only decides what may be TARGETED (retail zeroes
+        // monarch/god/dragon/fort/factory/naval/lodestone for the charms).
+        // Gates in the callbacks' order: the caster's own player (unit +0xfd
+        // against the shot's +0x92 -- an ally's unit is not spared), a body
+        // without a mover (+8, made only for bmcode 1 at 511fcf: no building),
+        // a Monarch (+0x264 0x40000); then charm: construction left (+0x108),
+        // in a transport, cantbecaptured; stone and freeze: cantbestoned /
+        // cantbefrozen (+0x268 bits 2 / 4), construction left. A unit past
+        // them draws its roll (retailStatusRoll), and a spell that takes puts
+        // the weapon's explosion class on it (492c80). A failed roll does
+        // nothing at all.
+        const bool stone = w.status == Weapon::Status::Stoned, freeze = w.status == Weapon::Status::Frozen;
+        if (w.mindControl || stone || freeze) {
+            if (e.player == fromPlayer || e.type->buildMovementCode != 1 || e.type->commander) return;
+            if (w.mindControl ? e.underConstruction || e.embarked() || e.type->cantBeCaptured
+                              : (stone ? e.type->cantBeStoned : e.type->cantBeFrozen) || e.underConstruction)
+                return;
+            if (!retailStatusRoll(e, scale, w.mindControl ? 0x52dab5u : stone ? 0x52dd32u : 0x52df92u))
+                return;
+            {
+                HitFx effect;
+                effect.x = e.x.toFloat(); effect.z = e.z.toFloat(); effect.weapon = &w;
+                effect.victimId = e.id;
+                effect.fromPlayer = fromPlayer;
+                effect.position = std::array<int32_t,3>{e.x.v, (e.type->canFly ? e.flightY : e.groundY).v, e.z.v};
+                effect.sound = false;
+                hits_.push_back(effect);
+            }
+            if (w.mindControl) {
+                // 514da0 leaves a dying unit as it is (captureUnit), and nothing
+                // changes when the new owner has no room for the new object.
+                if (!atUnitCap(fromPlayer)) captureUnit(e, fromPlayer);
+                return;
+            }
+            // 51a140 -> 51a240 (type 14 stone / 15 freeze, amount 1): a dying unit
+            // takes nothing; otherwise the hit response (409a50), the death type
+            // and the last hitter, then 51a61a zeroes HP whatever the amount: the
+            // unit dies on the spot and the death edge places its stone=/frozen=
+            // STATUE (blocking, permanent, resurrectable back to life).
             if (e.hp <= Fixed()) return;
-            if (atUnitCap(fromPlayer)) return;        // no room on the new side
-            // Chance rises with the victim's veterancy -- a green unit is ~80%, a
-            // 10-star veteran is capped at 99%. Scaled by the area falloff so the
-            // rim of an Area Mind Control is less reliable than its centre.
-            int chance = std::min(99, (int(e.veteran) + 16) * 5);
-            if (burnRand(100) >= int(float(chance) * std::clamp(scale, 0.0f, 1.0f)))
-                return;                               // it shrugged the spell off
-            captureUnit(e, fromPlayer);
+            retailHitResponse(e, attacker, freeze ? 15 : 14);
+            e.deathType = freeze ? 15 : 14;
+            // 51a140 names the hitter only while its object lives: a stone or
+            // freeze shot still lands after its caster died (52db40 / 52dda0).
+            if (attacker && attacker->alive()) { e.lastHitBy = fromId; e.lastHitPlayer = fromPlayer; }
+            if (freeze) e.frozenFor = int32_t(kTick); else e.stonedFor = int32_t(kTick);
+            e.hp = Fixed();
+            e.speed = Fixed();
+            static const bool kStatLog = tak::devEnv("TAK_BURNLOG") != nullptr;
+            if (kStatLog)
+                std::fprintf(stderr, "statue kill: %s %s at %.0f,%.0f\n",
+                             e.type->id.c_str(), freeze ? "frozen" : "stoned",
+                             e.x.toFloat(), e.z.toFloat());
             return;
         }
         if (benchmarkMode() && e.type && e.type->commander) return;   // benchmark: Monarchs are invincible
@@ -5541,32 +5589,10 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         if (fromId) e.lastHitBy = fromId;
         e.lastHitPlayer = fromPlayer;
         retailHitResponse(e,attacker,w.dmgType);
-        if (w.status != Weapon::Status::None && e.type) {
-            bool immune =
-                (w.status == Weapon::Status::Frozen && e.type->cantBeFrozen) ||
-                (w.status == Weapon::Status::Stoned && e.type->cantBeStoned);
-            if (!immune) {
-                if (w.status == Weapon::Status::Paralyzed) {
-                    e.paralyzedFor = std::max(e.paralyzedFor, int32_t(w.statusDur * kTick + 0.5f));
-                    e.speed = Fixed();
-                } else {
-                    // Retail petrify/freeze (icd 0x51a61a): HP zeroes INSTANTLY
-                    // regardless of amount -- the victim dies on the spot and
-                    // the death edge places its stone=/frozen= STATUE (blocking,
-                    // permanent, resurrectable back to life). The old temporary
-                    // stoned/frozen debuff was our pre-RE guess.
-                    bool freeze = w.status == Weapon::Status::Frozen;
-                    if (freeze) e.frozenFor = int32_t(kTick); else e.stonedFor = int32_t(kTick);
-                    e.hp = Fixed();
-                    e.deathType = freeze ? 15 : 14;
-                    e.speed = Fixed();
-                    static const bool kStatLog = tak::devEnv("TAK_BURNLOG") != nullptr;
-                    if (kStatLog)
-                        std::fprintf(stderr, "statue kill: %s %s at %.0f,%.0f\n",
-                                     e.type->id.c_str(), freeze ? "frozen" : "stoned",
-                                     e.x.toFloat(), e.z.toFloat());
-                }
-            }
+        // Stone and freeze returned above; the paralyzer is the one status left.
+        if (w.status == Weapon::Status::Paralyzed && e.type) {
+            e.paralyzedFor = std::max(e.paralyzedFor, int32_t(w.statusDur * kTick + 0.5f));
+            e.speed = Fixed();
         }
     };
     // Retail 529c10: a shot that struck a unit with a weapon of areaofeffect
@@ -5956,7 +5982,9 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         projectiles_.push_back(p);
         return;
     }
-    if((w.straight || w.lightning) && w.projVel>0) {
+    // The status classes (mind control, stone, freeze) share this launch
+    // (52c540); tickStraightProjectiles flies them with their own update.
+    if((w.straight || w.lightning || w.losStatus!=Weapon::LosStatus::None) && w.projVel>0) {
         const int32_t raw=int32_t(double(w.projVel)*2184.5333333333333);
         if(raw<=0)return;
         Projectile p;p.straight=true;p.wsrc=&w;p.fromId=u.id;p.fromPlayer=u.player;
@@ -5987,10 +6015,10 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         return;
     }
     if (w.melee || w.beam || w.projVel <= 0) {
-        // Legacy delivery for the remaining classes; flames use the native
-        // advancing front above. Other Line-of-Sight subclasses remain separate.
-        // The aim pass already queried these attachment points. Reuse them for
-        // status-shot presentation without another script call at release.
+        // Legacy delivery: melee, and a Line-of-Sight weapon with no
+        // weaponvelocity (none shipped: every shipped Line-of-Sight class flies
+        // above). The aim pass already queried these attachment points. Reuse
+        // them for the viewer's beam without another script call at release.
         const bool captured=w.beam && scriptTriggered && slot >= 0 && slot < 3;
         const auto muzzle=captured ? u.weaponMuzzlePoints[size_t(slot)] : std::array<int32_t,3>{};
         const auto aimPoint=captured ? u.weaponAimPoints[size_t(slot)] : std::array<int32_t,3>{};
@@ -6878,14 +6906,15 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
         if (!u.type->kamikaze && !w.melee && !(eff>0 && slotInRange(u,t,slot) && slotClearShot(u,t,slot)))
             continue;   // 52ad60
         if (categoryMatch(u.type->noTargetCats,*t.type)) continue;
-        if (w.status==Weapon::Status::Stoned && (t.type->cantBeStoned || t.incapacitated())) continue;
-        if (w.status==Weapon::Status::Frozen && (t.type->cantBeFrozen || t.incapacitated())) continue;
-        if (w.mindControl && (t.type->cantBeCaptured || t.incapacitated())) continue;
-        // Engine deviation: retail picks an unfinished unit here too, then the
-        // charm roll (52da10) refuses it and the shot's mana is wasted. fire()
-        // refuses a target the charm cannot take, so keeping one would stall
-        // the slot on it until it is finished.
-        if (w.mindControl && t.underConstruction) continue;
+        // 4127eb..4128db: a stone, freeze or charm class (vtable +0x1c / +0x20 /
+        // +0x24) skips a unit immune to it and one with construction left; it
+        // does not skip a paralyzed one. Their callbacks refuse a Monarch and a
+        // building too, but the picker does not look: the shot is wasted.
+        const bool status=w.status==Weapon::Status::Stoned || w.status==Weapon::Status::Frozen || w.mindControl;
+        if (w.status==Weapon::Status::Stoned && t.type->cantBeStoned) continue;
+        if (w.status==Weapon::Status::Frozen && t.type->cantBeFrozen) continue;
+        if (w.mindControl && t.type->cantBeCaptured) continue;
+        if (status && t.underConstruction) continue;
         if (w.status==Weapon::Status::Paralyzed && t.paralyzedFor>0) continue;
         if (w.melee && t.type->canFly) continue;
         if (w.toAir && !t.type->canFly) continue;
@@ -13904,6 +13933,40 @@ void World::tickStraightProjectiles(std::span<const int> airGrid) {
     for(auto& p:projectiles_) {
         if(!p.straight || p.life<=0)continue;
         const auto& w=*p.wsrc;
+        if(w.losStatus!=Weapon::LosStatus::None) {
+            // The status classes' updates (52d8d0 mind control, 52db40 stone,
+            // 52dda0 freeze; tools/re/probe_los_status.py runs all three). The
+            // shot flies like the ordinary one, but: a caster dead or dying
+            // retires a mind-control shot at any time, after that update's flight
+            // (which can still land), while stone and freeze check only up to
+            // activation; activation adds no body heading; the expiry tick still
+            // flies; and the first unit struck goes to the class's callback
+            // (applyHit -> hurt), the shot retiring at once (529c10's destroy flag).
+            // A caster that changed sides is gone too: retail's ownership change
+            // (514da0) kills the old object and gives the new owner a new one.
+            const auto* owner=unit(p.fromId);
+            const bool ownerGone=!owner || !owner->alive() || owner->hp<=Fixed() || owner->player!=p.fromPlayer;
+            if(ownerGone && tickCounter_<=p.start) {p.life=0;continue;}
+            if(tickCounter_<=p.start)continue;
+            const bool retire=ownerGone && w.losStatus==Weapon::LosStatus::MindControl;
+            p.age=int32_t(tickCounter_-p.start);
+            const uint32_t flags=(w.unitsOnly?0x800u:0u)|(w.groundBounce?0x1000u:0u)|(w.waterWeapon?0x2000u:0u);
+            bool struck=false;
+            for(uint32_t step=0;step<p.substeps && !struck;++step) {
+                for(unsigned axis=0;axis<3;++axis)p.angles[axis]=uint16_t(p.angles[axis]+w.shotSpin[axis]);
+                for(unsigned axis=0;axis<3;++axis)p.position[axis]=std::bit_cast<int32_t>(
+                    uint32_t(p.position[axis])+uint32_t(p.velocity[axis]));
+                const auto hit=projectileCollision(p.position,p.velocity[1],flags,p.fromPlayer,airGrid);
+                if(hit.code!=2)continue;
+                struck=true;
+                p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
+                noteShotImpact(p.fromId,p.targetId,w,p.position,hit.unitId);
+                applyHit(w,p.x.toFloat(),p.z.toFloat(),p.fromPlayer,p.fromId,unit(hit.unitId),p.position);
+            }
+            p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
+            if(struck || retire || tickCounter_>=p.end) {p.spent=true;p.life=0;}
+            continue;
+        }
         if(w.lightning) {
             const auto* owner=unit(p.fromId);
             if(!owner || !owner->alive() || owner->hp<=Fixed()) {p.life=0;continue;}
