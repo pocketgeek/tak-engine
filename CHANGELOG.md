@@ -19,6 +19,38 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+*protocol 306 · replay format 15 · does not play with 0.9.12 or earlier, nor their replays*
+
+- **Mind control, stone and freeze take effect when their shot arrives**, as
+  in the original game. The Harpy's and Mind Mage's charm, the Basilisk's and
+  Acolyte's Turn To Stone and the Mechanic's, Chief Engineer's and Neo
+  Dragon's freeze took their target the moment they were cast, while the ball
+  of energy was still drawn flying towards it. The ball is now a real shot: the
+  spell works when it strikes, on the first unit it strikes (one that steps
+  into its path, or the one behind a target that died, moved off or changed
+  sides meanwhile; the ball is never steered). A charm in flight is lost if
+  its caster dies; a stone or freeze shot still lands.
+- **Stone and freeze follow the original's rules.** Like the charm they can
+  fail: a unit without veteran rank falls 80 times in 100, one of rank 4 or
+  more 99 times. They never take a Monarch, a building, a unit still being
+  built or one of the caster's own, and they do no damage at all (in Crusades
+  the freeze weapons hit immune units and buildings for 450). The same holds
+  for the Area Freeze. Their roll, and the charm's, now draws on the
+  original's random stream.
+- **A charm no longer takes a building** (a wall, a Trebuchet or a Mortar,
+  and in Crusades a Bomb Sprinkler, Gatling Crossbow or Prismatic Mirror), as
+  in the original game, which charms only units that move; nor does the Area
+  Mind Control.
+- **A charm, stone or freeze shot that strikes an ally's unit takes it**, as in
+  the original game, which spares only the caster's own units; the Area Mind
+  Control and Area Freeze take allies' units in their area too. Casters still
+  never pick an ally as a target. A stone or freeze caster no longer passes
+  over a paralyzed enemy, and no longer picks one still being built, as in the
+  original.
+- **A spell's explosion shows on the unit it takes**, and only when it takes;
+  the hit sound plays where the shot strikes.
+
 ## 0.9.12
 *2026-10-29 · protocol 305 · replay format 15 · does not play with 0.9.11 or earlier, nor their replays*
 
