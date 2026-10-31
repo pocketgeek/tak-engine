@@ -5,7 +5,7 @@ shipped). It superseded the 2-player peer-to-peer lockstep (`net::Session`,
 since removed; `src/net/lockstep.h` is now header-only); the deterministic-sim
 substrate underneath it is kept. Sections 1-12 are the original design, kept as
 written apart from short notes where it has since moved on; the later sections
-and the protocol history (to protocol 306) describe the
+and the protocol history (to protocol 307) describe the
 current engine.
 Notable changes since the v1 design: single-player runs a private local
 `takserver` (`--local --no-auth`) instead of in-process AI
@@ -1155,6 +1155,25 @@ one CRT roll decides, and nothing deals damage. The stone and freeze picker
 skips unfinished units and no longer skips paralyzed ones. All of it is hashed
 state; no command changes; replay format 15 is unchanged; 305 replays are
 refused (docs/retail-engine.md, "Mind control, stone and freeze fly").
+306 was never released.
+
+Protocol 307 changes four combat and flight rules, all hashed state
+(docs/retail-engine.md, "Enemies with construction left", "Melee never
+reaches a flyer in the air" and "Air traffic"). A ground melee attacker on a
+building walks to Attack_Melee's rectangle round its footprint, each to its
+own free perimeter origin, and the melee in-range test snaps both boxes to
+their footprint origins. A flyer's air-traffic counter steps after each
+occupancy rebuild, and at 5 the ported flyer missions push a step-out ahead
+of themselves (a new front order); AirToGroundHover, VTOL_SeekGuard and
+AirStrike are ported whole, and a shot posts its outcome to the shooter's
+mission. A melee weapon never reaches a unit in the air, and every
+`noairweapon` / `toairweapon` test reads the target's current layer, not its
+type; a ranged attack on a carried target ends. Idle, patrolling and moving
+units take an enemy with construction left as a target, behind finished
+ones. Legion flight stations hold only an Alt+N formation's flyers. No
+command changes; replay format 15 is unchanged; 305 and 306 replays are
+refused. 0.9.13 ships protocol 307; it plays with neither 0.9.12 nor any
+earlier version, nor their replays.
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
@@ -1445,6 +1464,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Version 0.9.12 (peers and server) requires protocol 305; 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.9.13 (peers and server) requires protocol 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions remain fixed to Retail.

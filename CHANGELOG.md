@@ -19,8 +19,8 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
-## Unreleased
-*protocol 307 · replay format 15 · does not play with 0.9.12 or earlier, nor their replays*
+## 0.9.13
+*2026-10-31 · protocol 307 · replay format 15 · does not play with 0.9.12 or earlier, nor their replays*
 
 - **Melee units cannot hit flyers in the air**, as in the original game. A
   Titan, Swordsman, Troll or any other unit fighting with a melee weapon now
@@ -125,6 +125,54 @@ their validation reports; both live in [`docs/`](docs/).
   (Alt+number) flyers still keep to the army's pace and land just in front of
   it, but no longer on the edge of the map when the army stops near it: where
   there is no room in front, they land where they were sent.
+- **Faster with big armies, the same game.** A performance pass changed how
+  much work the game does, not what it does: every game plays out exactly as
+  before (the same lockstep checks, AI orders and random draws), and the
+  screen shows the same picture except for unit shadows in very large views
+  (below). Measured on an Intel Core Ultra 9 275HX:
+  - **Very large views draw much faster.** Unit shadows have room for four
+    times as many models (up to 16 shadow pages instead of 4), so a
+    7680x2160 view of 5,000-10,000 units keeps its soft shadows instead of
+    falling back to slow per-triangle shadows: a 10,000-unit view drew in
+    18.4 ms a frame instead of 31.5, and frames over 16.7 ms fell from 52% to
+    15% in a view at the edge of the old limit. Those views' shadows now look
+    like every smaller view's (lighter where a model overlaps itself); the
+    extra pages cost 32 to 144 MiB of video memory, and a slow continuous
+    pan across such a view is about 4% slower at its worst frames.
+  - **The mouse pointer** finds the unit under it about 25 times faster with
+    10,000 units (0.3-0.5 ms a frame down to 0.01-0.02 ms).
+  - **Long build queues** draw their ghost buildings 3 to 15 times faster,
+    and **Hidden Units: Fade** costs about half as much (whole frames 4-11%
+    faster on forested and walled maps).
+  - **Auras** (such as the Aramon Smith's armour aura) cost about half as
+    much: a battle of 3,200 units with 1,200 Smiths took 17% less time a tick.
+  - **Exploration and sight** cost far less on big maps (on a
+    1-million-cell map 0.18 ms a tick down to 0.05) and update only the
+    squares a moving unit's sight gains or loses: a marching army's tick
+    takes 5-8% less time. The first minute of an 8-AI game on a large map
+    took 38% less time a tick.
+  - **Burning and fading scenery** is tracked by itself instead of scanning
+    every tree each tick: an idle tick on a map with 11,600 features takes
+    18% less time.
+  - **Legion pathfinding** refreshes its view of buildings, finds the routes
+    a new building or wall touches, and merges map changes faster on maps
+    with very many buildings or changes (a static refresh with 2,000
+    buildings takes about a quarter of the time).
+  - **Whole games:** a late game of 8 Absurd AIs at 4,000 units ran 3% faster
+    a tick, and recorded 10,000-unit games 0.4-1.9% faster.
+  - **`simperf`** (a benchmark tool) also reports whole ticks including the
+    lockstep check, and the render benchmark has new interactive cases.
+- **Protocol 307:** the flying status spells, the melee and air-traffic rules
+  and the new targets change what players compare, so this release does not
+  play with 0.9.12 or earlier, nor their replays. A 0.9.12 client or server
+  is turned away with a *protocol version mismatch* message, and a 0.9.12
+  replay is refused with the version message. (Protocol 306 was never
+  released.)
+
+**Upgrading (server operators):** update `takserver` together with your
+players.
+
+[Release notes](docs/release-0.9.13-notes.md) · [Validation report](docs/release-0.9.13-validation.md) · [Source at v0.9.13](https://github.com/pocketgeek/tak-engine/tree/v0.9.13)
 
 ## 0.9.12
 *2026-10-29 · protocol 305 · replay format 15 · does not play with 0.9.11 or earlier, nor their replays*
