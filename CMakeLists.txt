@@ -1598,6 +1598,10 @@ add_test(NAME capture_combat COMMAND capture_combat_test)
 add_executable(los_status_flight_test tools/los_status_flight_test.cpp)
 target_link_libraries(los_status_flight_test PRIVATE tak-formats)
 add_test(NAME los_status_flight COMMAND los_status_flight_test)
+# Melee attackers on a building walk to Attack_Melee's rectangle round its footprint (the
+# melee-*.scn fixtures, both pathfinding modes; data-gated below).
+add_executable(melee_building_test tools/melee_building_test.cpp)
+target_link_libraries(melee_building_test PRIVATE tak-formats)
 set(TAK_TEST_DATA "" CACHE PATH "Retail install for the data-backed tests (optional)")
 if(TAK_TEST_DATA)
     add_test(NAME builder_automation_data COMMAND builder_automation_test "${TAK_TEST_DATA}")
@@ -1648,6 +1652,7 @@ if(TAK_TEST_DATA)
     add_test(NAME air_seek_attack COMMAND air_seek_attack_test "${TAK_TEST_DATA}")
     add_test(NAME capture_combat_roster COMMAND capture_combat_test "${TAK_TEST_DATA}")
     add_test(NAME los_status_flight_roster COMMAND los_status_flight_test "${TAK_TEST_DATA}")
+    add_test(NAME melee_building COMMAND melee_building_test "${TAK_TEST_DATA}" "${CMAKE_SOURCE_DIR}/tools/scenarios")
     add_test(NAME gate_scripts COMMAND retail_script_test --gates "${TAK_TEST_DATA}")
     add_test(NAME scenery_damage COMMAND retail_script_test --features "${TAK_TEST_DATA}")
     add_test(NAME cobanim COMMAND cobanim_test "${CMAKE_SOURCE_DIR}/assets/extracted/all/scripts")
@@ -1753,6 +1758,16 @@ if(TAK_TEST_DATA)
                      --data "${TAK_TEST_DATA}" --wanderers on --json)
     set_tests_properties(legion_motion_wall_wanderers_on PROPERTIES
                          SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 600)
+    # Melee attackers on a building (protocol 307, Attack_Melee's rectangle round the footprint): every key
+    # against baseline.json over the gate offsets, both modes. melee_building gates the outcome per commit.
+    foreach(legion_scn melee-lode-late melee-lode-together melee-castle-4 melee-keep-late melee-castle-fight
+                       melee-castle-20)
+        add_test(NAME legion_check_${legion_scn}
+                 COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
+                         --data "${TAK_TEST_DATA}" --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+        set_tests_properties(legion_check_${legion_scn} PROPERTIES
+                             SKIP_RETURN_CODE 77 LABELS "legion;data;nightly" TIMEOUT 600)
+    endforeach()
     # Harvested situations (tools/scenarios/situations/README.txt): not faithful enough to gate on, so these only
     # check that each file loads and runs deterministically, serial == workers, in both modes.
     # Each of these is one of the longest tests in the suite (50-150 s), so it is split into independent

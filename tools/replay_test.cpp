@@ -190,9 +190,12 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 306, "replay format 11 is kept under protocol 306");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 306");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 306");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 307, "replay format 11 is kept under protocol 307");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 307");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 307");
+    // 307 walks a ground melee attacker to Attack_Melee's rectangle round a building's footprint
+    // (hashed: the attack leg's rectangle) and snaps the melee boxes to their origin cells.
+    check(!supportedReplayProtocol(15, 306), "previous protocol (melee attackers sent at a building's centre) is refused");
     // 306 flies the mind-control, stone and freeze shots and lands them through retail's callbacks.
     check(!supportedReplayProtocol(15, 305), "previous protocol (status spells landing on release) is refused");
     // 305 has our AI levels target only what their side has seen (and explore), and changes the

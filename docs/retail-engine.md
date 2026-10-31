@@ -199,7 +199,62 @@ splash within 300 px of the sub) and behind a shore (no shot, no churn).
   unit's footprint box is position ∓ `foot<<19` (∓ 8px·footCells, cell-snapped);
   in range iff on BOTH axes `|centreΔ| − halfA − halfB < 0x80000` (= 8 px) —
   i.e. the boxes are within half a cell of touching. (`range` in melee TDFs —
-  10..250 in shipped data — is dead weight.)
+  10..250 in shipped data — is dead weight.) The boxes are the footprints'
+  cells: each position is snapped to its footprint origin
+  (`(pos - foot<<19 + 0x80000) >> 20`, our `footprintOrigin`) before the
+  compare, so overlap and contact anywhere in the origin cell pass. Ported
+  exactly (`meleeInRange`) since protocol 307; before, raw centres let a body
+  standing on the near edge of a perimeter cell test out of range.
+- **Attack_Melee @0x404690** (registry row `0x5eb8ea`, flags `0x1000280`):
+  the ground attack mission of a melee selected weapon (any other weapon hands
+  the order to Attack_Chase, `4d4bf0`/`4d4ef0`). Stage 0 (`404cfa`): the slot
+  goes manual with the target (`519b70`, `51a700`); in range it stops the
+  navigator (`4d4d40(0)`); otherwise a target WITH a mover (unit +8) gets a
+  radius-0 circle on its position (`4d4da0`), and a target with NONE (a
+  building: a mover exists only for `bmcode=1` with a turn rate and a
+  velocity, so a factory with `canmove=1` and no velocity has none) gets
+  `4d4e80` with its footprint-origin cell (+0x74) and footprint (+0x78): the
+  rectangle controller RECLAIM, HelpBuild and RepairUnit use (`4e3590`:
+  minX = ax - bw .. maxX = ax + fw, the same in z), whose arrival is any
+  origin where the attacker's footprint touches the building's, edge or
+  corner. Stage 1 (`404b61`) re-installs a circle only when a mobile
+  target's cell changed, sets the wait mask `0x40068` (`|0x100000` in range)
+  and sleeps `rand(5)+rand(5)+4` ticks when the target is more than
+  `3*maxFoot/2+1` cells off (`535e90`), else a short cadence sleep; stage 2
+  (`40496a`) goes back to stage 1 (a mobile target in range may stop the
+  navigator first). No give-up: a building's attacker loops until it dies.
+  The mission never fires: the weapon update `52ae90` does, every tick in
+  range (`52fe30` AimWeapon and the facing request toward the target's
+  origin, `52fff0` readiness, `530140` FireWeapon). Emulated end to end
+  (scratch probe: `52ae90`, the shipped `zonwolf.cob` in retail's VM,
+  `4d8450` -> `404690`, `4dc800` per tick, a Spirit Wolf against a building
+  with no mover): head-on at a 2x2 building, `4d4e80(cell 37,79, foot 2x2)`
+  at the order, contact t=75, AimWeapon t=76, FireWeapon t=77, the bite (SET
+  23, attack1's wind-up) t=99; at the side of a 7x14 one, stopped t=55 on
+  its west face, pivoted 38 degrees toward its centre, FireWeapon t=61,
+  bite t=83. A second attacker whose nearest perimeter origin a first one
+  holds: retail's whole route-search attempt (`415170`, tracer, cost slice,
+  `414450`, delivery `4e4ea0`) on that rectangle, the first attacker's
+  origin blocked, ends complete on the free perimeter corner beside it
+  (a radius-0 circle on the centre ends partial). Ours through protocol 306
+  chased the building's centre: Retail mode by best-effort routes to the
+  nearest reachable origin, Legion by a point seed every lone or late
+  attacker shared (a second Spirit Wolf held behind the first for good) and,
+  for groups, a radial ring of `8*(maxFootA+maxFootB)+8` px whose short-side
+  spots on a long building (every factory) stood out of contact. Since 307
+  `World::installMeleeApproach` installs the rectangle on the attack leg;
+  Legion does not route a leg with a rectangle it does not own, so the
+  native navigator takes it in both modes. `melee_building_test` runs the
+  `melee-*.scn` fixtures in both modes with the target topped up and counts
+  each attacker's hits. On protocol 306 Legion's second wolf on a lodestone
+  (`melee-lode-late`) never bit and four wolves on a Keep (`melee-castle-4`)
+  never touched it; twenty Swordsmen round a Keep (`melee-castle-20`): 11 of
+  20 bit in both modes, 87 hits in Retail and 106 in Legion. Now every wolf
+  bites in every fixture, in both modes, and 16 of the 20 Swordsmen bite
+  (about 150 hits); Retail and Legion take the same routes. Still deviating:
+  Legion's melee ring round a MOBILE target has no corner places (at most
+  four attackers round a 2x2 unit), and an idle unit's target scan skips
+  construction sites (retail's list includes them).
 - Weapon TDF parse @0x530780: `range` readInt → `[WeaponType+0x90]`, clamped
   min 2; `minrange` → `+0x94`. Unit-def weapon-type pointers at `+0x1aa`
   (3 dwords). Range-ring UI strings @0x4d6823; debug dump @0x4fbf6b.

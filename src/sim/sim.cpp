@@ -6141,10 +6141,17 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
 // (Ranged weapons use the base test, icd @0x530580: 2D centre-to-centre,
 // inclusive.) Treating melee `range` as radial left Zhon beasts (range 250)
 // halting 15 cells out and biting air, and the Sailor (range 10) unable to ever
-// reach a legal firing distance past the 13px separation floor.
-static bool meleeInRange(const UnitType* a, const UnitType* b, float dx, float dz) {
-    return std::abs(dx) < 8.0f * float(a->footX + b->footX) + 8.0f &&
-           std::abs(dz) < 8.0f * float(a->footZ + b->footZ) + 8.0f;
+// reach a legal firing distance past the 13px separation floor. The boxes are
+// the footprints' cells: 52b980 snaps each position to its footprint origin
+// ((pos - foot*8 + 8) >> 4, footprintOrigin) and centres the box on it, so a
+// body on the rectangle Attack_Melee walks to (4d4e80) is always in range,
+// wherever in its origin cell it stands.
+static bool meleeInRange(const Unit& a, const Unit& b) {
+    auto axis=[](Fixed pa,int fa,Fixed pb,int fb) {
+        const int64_t ca=int64_t(footprintOrigin(pa,fa))*16+fa*8,cb=int64_t(footprintOrigin(pb,fb))*16+fb*8;
+        return std::abs(ca-cb)-8*int64_t(fa)-8*int64_t(fb)<8;
+    };
+    return axis(a.x,a.type->footX,b.x,b.type->footX) && axis(a.z,a.type->footZ,b.z,b.type->footZ);
 }
 
 // Naval shots cross both water and shore. Water depth is a movement restriction,
@@ -6514,7 +6521,7 @@ bool World::approachNeedsClearLine(const Unit& u,const Unit& t) const {
 
 bool World::slotInRange(const Unit& u,const Unit& t,int slot) const {
     const Weapon& w=u.type->weapons[size_t(slot)];
-    if (w.melee) return meleeInRange(u.type,t.type,(t.x-u.x).toFloat(),(t.z-u.z).toFloat());
+    if (w.melee) return meleeInRange(u,t);
     if (w.ballisticClass()) return ballisticInRange(u,t,w);
     // The base test (530580) is centre to centre, inclusive, for a structure
     // too (Weapon::centreReach): no footprint pad.
@@ -7419,8 +7426,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     };
     // Melee: retail closes to footprint adjacency (see meleeInRange above);
     // `range` and LoS play no part.
-    bool adj = sel && sel->melee && target->type &&
-               meleeInRange(u.type, target->type, dx, dz);
+    bool adj = sel && sel->melee && target->type && meleeInRange(u, *target);
     // Ranged units whose shot flies the line need a clear line to shoot; a
     // wall between them means close in / reposition rather than firing through
     // it (melee & flyers are exempt). Ballistic shots use retail's pitched 3D
@@ -7522,9 +7528,26 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
                             : (!inReach || (approachNeedsLine && !los && mayChase) || (mayChase && arcShort())))) {
         if (hovering) return;
         if (chaseMission) u.orders.front().attackChased = true;
+        // Attack_Melee (404690) stage 0: a melee weapon's target with no
+        // mover (a structure) is approached on 4d4e80's rectangle round its
+        // footprint, not at its centre: each attacker walks to its own
+        // nearest perimeter origin and any perimeter origin is arrival.
+        if (sel && sel->melee && !u.type->canFly && target->type->isStructure()) {
+            installMeleeApproach(u,*target);
+            return;
+        }
         // Advance toward the target, steering around impassable terrain.
         if (u.repathLeft > 0) --u.repathLeft;
         Order& o = u.orders[currentLeg(u.orders)];
+        // A selected weapon that is no longer melee hands the target to
+        // Attack_Chase (Attack_Melee's head, 4d4bf0/4d4ef0): the melee
+        // rectangle goes, and the chase steers at the target again.
+        if (o.buildRectangle) {
+            o.buildRectangle.reset();
+            o.controller=0;
+            o.navigationExhausted=o.navigationConsumed=false;
+            cancelPath(u);
+        }
         o.x = target->x;
         o.z = target->z;
         // Refresh the leg's destination, preserving its intermediate waypoints.
@@ -11356,6 +11379,33 @@ void World::installRepairApproach(Unit& u, Order& goal, const Unit& t) {
     goal.mission.stage=2;
     goal.mission.waitMask=0x700;
     goal.mission.sleep(tickCounter_,7+pathRand(15));
+    goal.controller=++nextMovementController_;
+    goal.navigationExhausted=goal.navigationConsumed=false;
+    goal.mission.pending&=~0x3700u;
+    if (u.routeStamp<0 || uint32_t(u.routeStamp)<=tickCounter_-6u) u.routeStamp=0;
+    cancelPath(u);
+    requestPath(u,goal.x.toFloat(),goal.z.toFloat());
+}
+
+// Attack_Melee (404690) stage 0 on a target with no mover: 4d4e80 with the
+// target's footprint-origin cell (+0x74) and footprint (+0x78), the
+// rectangle RECLAIM, HelpBuild and RepairUnit walk to. Stage 1 installs
+// again only when the target's cell changes, which a structure's never does,
+// so the controller stays until it accepts. Legion does not route a leg with
+// a rectangle it does not own (LegionNavigator::routedLeg): the native
+// navigator takes it, whose search accepts every perimeter origin.
+void World::installMeleeApproach(Unit& u, const Unit& t) {
+    Order& goal=u.orders[currentLeg(u.orders)];
+    const RetailRectGoal rect=retailReclaimRectangle(footprintOrigin(t.x,t.type->footX),footprintOrigin(t.z,t.type->footZ),
+                                                     t.type->footX,t.type->footZ,u.type->footX,u.type->footZ);
+    if (goal.buildRectangle && *goal.buildRectangle==rect) return;
+    goal.buildRectangle=rect;
+    const auto [x,z]=rect.navigationCell(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
+    goal.x=Fixed::fromInt(x*16+u.type->footX*8);
+    goal.z=Fixed::fromInt(z*16+u.type->footZ*8);
+    goal.segmentX=Fixed::fromInt(u.x.floorInt());
+    goal.segmentZ=Fixed::fromInt(u.z.floorInt());
+    goal.hasSegment=true;
     goal.controller=++nextMovementController_;
     goal.navigationExhausted=goal.navigationConsumed=false;
     goal.mission.pending&=~0x3700u;
@@ -16834,7 +16884,7 @@ void World::tick(float dt) {
                 const Weapon* sel =
                     slot < int(u.type->weapons.size()) ? &u.type->weapons[slot] : nullptr;
                 if (sel && sel->melee && t->type)
-                    return meleeInRange(u.type, t->type, dx, dz);
+                    return meleeInRange(u, *t);
                 // Pad by a structure target's footprint half-extent so "holding in
                 // range" agrees with tickCombat's fire gate (else a unit stopped at a
                 // building's edge gets dragged back into moving) -- and, as there,

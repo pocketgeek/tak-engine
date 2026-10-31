@@ -3106,6 +3106,9 @@ private:
     void prepareHelpApproach(Unit& u);
     void prepareRepairApproach(Unit& u);
     void installRepairApproach(Unit& u, Order& leg, const Unit& target);
+    // Attack_Melee (404690) stage 0 for a target with no mover: the same
+    // rectangle controller round the target's footprint (4d4e80).
+    void installMeleeApproach(Unit& u, const Unit& target);
     void tickGroundHelp(Unit& b, Unit& site, size_t leg, float dt);
     void tickGroundRepair(Unit& b, Unit& target, float dt);
     bool constructionWork(Unit& b, Unit& site, float dt);
