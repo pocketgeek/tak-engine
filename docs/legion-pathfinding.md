@@ -615,11 +615,19 @@ formation flew at about 4 px/tick against the ground's 0.6. They got up to
 5,500 px ahead, landed at the goal, and waited there for up to 2,000 ticks.
 
 `World::planLegionFlightStations` (Legion only) runs every tick. It covers a
-flyer in a squad -- an Alt+N formation or (since W6) a Ctrl+N group -- that
-has ground members still under way, when the flyer's head order is a plain
-move, fight-move or patrol leg with no target or job. Since W6 the flyer is
+flyer in an Alt+N formation that has ground members still under way, when
+the flyer's head order is a plain move, fight-move or patrol leg with no
+target or job. A Ctrl+N group is not a formation: its flyers fly their own
+orders at their own speed, as a plain selection's do (owner ruling
+2026-10-30: "They should be kept with the ground army only when in a
+formation, not a control group"). W6 had given Ctrl+N groups stations too;
+in the user's replay `wolves-0912.takrep` they held a Ctrl+1 group's drakes,
+fight-moving with wolves, goblins and harpies, to the ground's pace (of 6,795
+drake-ticks on plain move and fight legs, 6,601 on station and 1,387 capped
+under 2 px/tick), and the arrival rule below then sent them to the map's west
+edge. Since W6 the flyer is
 paired with the ground of its own click: the busy ground members' last orders
-fall into up to 4 buckets per squad keyed by (order class, `convoyTick`), and
+fall into up to 4 buckets per formation keyed by (order class, `convoyTick`), and
 a flyer whose last order carries the same key keeps station over that bucket
 (a 5th click counts `stationOverflow` and flies free). The convoy table puts
 a flyer's click in its ground's convoy (an explicit order joins once, at the
@@ -696,7 +704,17 @@ station: a known limit.
   member's formation slot; a squad of one bucket adds its idle ground where
   it stands): the same rows of lanes, `8 * (ground foot + flyer foot) + 16`
   px beyond the front and each further row a spacing farther on, clear of the
-  slots. `Order::stationFree` 3 marks it. The flyer then flies that order, as
+  slots. `Order::stationFree` 3 marks it. If the lanes do not all lie on
+  the map with a lane's room (`16 * flyer foot + 16` px) between each flyer's
+  footprint and the map's edge, no flyer's point moves: the wing keeps its own
+  points, where it was sent, as in retail. The front is the farthest goal the
+  way the ground travelled, so goals near the map's edge put the lanes against
+  or past it. Until 2026-10-30 they were clamped onto the edge instead:
+  in `wolves-0912.takrep` (tick 48,990) three of the group's slots lay 208 px
+  beyond the click (x 288) toward the west edge, the lanes 64 px beyond those
+  (x 12 to 271), and the clamp to `8 * flyer foot` (24 px) pinned two drakes
+  at x 24 with the others at x 35 and 87, where the wing crawled at a quarter
+  of its speed and landed. The flyer then flies that order, as
   in retail; the pace cap, measured from its front station but never below a
   quarter of its own speed, stays until it is within 160 px of its point. It
   arrives, completes the order and lands through the retail landing search
@@ -733,7 +751,31 @@ the full width with the rest in the second row, all land in front, and an
 air-only formation still lands at its own points. It also moves 8 flyers with
 one body and with columns 1 and 2 bodies wide and 10 deep: the leading flyers
 ride over the leading body, at most 4 rows deep (193 to 220 px; the file of
-one lane per spacing 448 to 455 px), none behind a column's middle.
+one lane per spacing 448 to 455 px), none behind a column's middle. (Its map
+is 240 cells deep since 2026-10-30: on the first version's 220 the south leg
+stopped 320 px from the map's edge, where the third row of lanes was clamped
+onto the edge.)
+
+`legion_flyers_test ctrlfree` and `formationedge` (2026-10-30) send 20 ground
+bodies (1.8 px/tick) and 6 flyers (4 px/tick) through the HUD's click path
+west across an open map. `ctrlfree`, as a Ctrl+1 group, fight-moves and moves
+2,900 px to a point 288 px from the west edge, as in `wolves-0912.takrep`:
+no flyer keeps station, none is held below its own speed, every flyer reaches
+its own point by tick 806 (the ground finishes at 2,206 on the fight-move,
+1,850 on the move) and lands within 132 px of it. On the code before the
+ruling the same fight-move put 10,493 flyer-ticks on station, 9,903 of them
+capped (down to 0), and moved every point into lanes in front of the ground,
+so only 3 of 6 flyers ever came within 48 px of their own point (the last at
+tick 1,699; ground done 1,850). `formationedge`, as an Alt+1 formation,
+checks that the flyers keep the ground's pace (flown 1.04-1.05 of the
+ground's march, no stalled window, within 160 px of a ground body). Sent 640
+px from the edge they land in front of the ground as before (the same
+hashes); sent 224 px from it, the lanes would lie at x 55, so the points stay
+(they moved to the edge band before) and the wing lands within 62 px of them
+on a move and 197 px on a fight-move, where every flyer has the click itself
+and the landing search spreads them round the arriving ground. That
+fight-move's ground finishes at 2,068 instead of 1,889: its flyers land among
+the slots and are lifted, the case the landing lanes were made for.
 
 **A third deliberate flight difference: idle landed flyers make way for an
 allied ground group.** Retail stamps a landed flyer into the ground word
@@ -1733,7 +1775,9 @@ stations, the lift area and landing); this is the list.
 
 - **Flight stations pair on the click.** A Ctrl+N group's flyers keep station
   over the ground of their own click, like an Alt+N formation's; up to 4
-  buckets a squad, keyed by (order class, `convoyTick`).
+  buckets a squad, keyed by (order class, `convoyTick`). (Since 2026-10-30,
+  by the owner's ruling, only an Alt+N formation's flyers keep station; a
+  Ctrl+N group's fly their own orders at their own speed.)
 - **Release.** A station flyer is released for its order when the ground
   stops (no headway for 450 ticks, or a centroid still for 900), so a sealed
   wall or a dead end no longer keeps the wing hovering.

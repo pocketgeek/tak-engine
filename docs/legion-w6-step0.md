@@ -7,6 +7,14 @@ each case is the acceptance check of the step that meets it and fails on a head 
 and `mv08group`'s slow_done leg fail on this head; see "Status" below). `W6_VERBOSE=1` prints traces, `W6_SHIFT=n`
 shifts every spawn by n cells (the baselined offsets 0, +1, -1, +2, -2).
 
+**2026-10-30 (owner ruling):** only an Alt+N formation's flyers keep station; a Ctrl+N group's fly their own orders
+at their own speed, so the T5 targets for Ctrl+1 below no longer hold. Under `W6_REQUIRE=1`, `mixedsquad` now asks
+the flyer targets of the Alt+1 run and that no Ctrl+1 flyer keeps station, `mv08group` asks the Alt+1 run's
+landed_ahead (its away_max, 312 px, was never an Alt+1 target) and the ground's slow_done of Ctrl+1 as before, and
+`ctrlmixed` / `ctrlmixedbig` ask that no Ctrl+1 flyer keeps station (the convoy link as before). `ctrlfree` and `formationedge`
+assert the ruling, and the map-edge rule for a formation's landing lanes, unconditionally
+([legion-pathfinding.md](legion-pathfinding.md)).
+
 Head measured: `6333e38d` (W4 land, protocol 242) plus the instrument-only counters below, optimized Debug (`-O2`),
 `TAK_LEGION_VERIFY` clean on the lift and touchdown cases. Step 0 changes no simulated state: the counters are
 observation only (never hashed, never read by a decision).
