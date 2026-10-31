@@ -5,7 +5,7 @@ shipped). It superseded the 2-player peer-to-peer lockstep (`net::Session`,
 since removed; `src/net/lockstep.h` is now header-only); the deterministic-sim
 substrate underneath it is kept. Sections 1-12 are the original design, kept as
 written apart from short notes where it has since moved on; the later sections
-and the protocol history (to protocol 305) describe the
+and the protocol history (to protocol 306) describe the
 current engine.
 Notable changes since the v1 design: single-player runs a private local
 `takserver` (`--local --no-auth`) instead of in-process AI
@@ -1144,6 +1144,17 @@ simulation is unchanged but every hash value differs. A server with no human
 slot computes the hash only for replay checkpoints. No command changes; replay
 format 15 is unchanged; 304 replays are refused. 0.9.12 ships protocol 305; it
 plays with neither 0.9.11 nor any earlier version, nor their replays.
+
+Protocol 306 flies the mind-control, stone and freeze Line-of-Sight shots.
+They launch as the ordinary straight shot and fly by retail's own updates
+(`52d8d0`, `52db40`, `52dda0`); the unit a shot strikes goes to retail's
+callback (`52da10`, `52dca0`, `52df00`, which the Area Mind Control and Area
+Freeze use too) instead of the damage: the caster's player, a body without a
+mover, a Monarch, an immune unit and one still being built are refused, then
+one CRT roll decides, and nothing deals damage. The stone and freeze picker
+skips unfinished units and no longer skips paralyzed ones. All of it is hashed
+state; no command changes; replay format 15 is unchanged; 305 replays are
+refused (docs/retail-engine.md, "Mind control, stone and freeze fly").
 
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte

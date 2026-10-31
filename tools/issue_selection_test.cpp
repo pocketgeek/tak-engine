@@ -140,7 +140,7 @@ struct ClientRef {
             }
             return;
         }
-        const bool spread = cmd == 'm' || cmd == 'p';
+        const bool spread = cmd == 'm' || cmd == 'p' || cmd == 'f' || cmd == 'a';
         FlyerGroupCentre air;
         if (spread) {
             for (int id : selection_)
@@ -528,7 +528,8 @@ void flyerSpread() {
         // A mixed group, right-click: the flyers' centre counts the ground units
         // too; the ground keeps OUR rule (Retail: +-60 px per axis; Legion: the click).
         // Armed PATROL: flyers the spread, ground the point (retail's ground Patrol
-        // has no offset flag). Armed FIGHT: no flyer mission with the flag, all at the point.
+        // has no offset flag). Armed FIGHT: a flyer's leg is VTOL_Move, which carries
+        // the flag (retail has no fight-move), so the flyers spread as on a move.
         for (const Verb verb : {Verb::Move, Verb::Patrol, Verb::Fight}) {
             Field f(mode);
             auto sel = spawnAt(f, a, {{1600, 1600}, {1690, 1600}, {1600, 1690}, {1440, 1440}, {2400, 2400}});
@@ -543,9 +544,8 @@ void flyerSpread() {
             else compare(f.world, sel, o, -1, [&](ClientRef& c) { c.armedOrder(verb == Verb::Patrol ? 'p' : 'f', o.x, o.z, -1, false); }, what, &b);
             if (legion) {
                 if (const auto* order = oneOrder(b, sel, verb == Verb::Move ? Cmd::Move : verb == Verb::Patrol ? Cmd::Patrol : Cmd::AttackMove, what))
-                    check(order->shape == (verb == Verb::Move     ? tak::net::OrderShape::Offsets
-                                           : verb == Verb::Patrol ? tak::net::OrderShape::FlyerOffsets
-                                                                  : tak::net::OrderShape::Shared),
+                    check(order->shape == (verb == Verb::Move ? tak::net::OrderShape::Offsets
+                                                              : tak::net::OrderShape::FlyerOffsets),
                           what + ": the order's shape");
             }
             // The expected goals, from the positions the click saw (goalsOf lands a Legion order later).
@@ -555,7 +555,7 @@ void flyerSpread() {
             cx /= float(sel.size()); cz /= float(sel.size());
             for (int id : sel) {
                 const auto* u = f.world.unit(id);
-                if (u->type->canFly) want[id] = verb == Verb::Fight ? std::pair<double, double>{o.x, o.z} : retailFlyerGoal(f.world, sel, id, o.x, o.z);
+                if (u->type->canFly) want[id] = retailFlyerGoal(f.world, sel, id, o.x, o.z);
                 else if (legion || verb != Verb::Move) want[id] = {o.x, o.z};
                 else want[id] = {o.x + std::clamp(u->x.toFloat() - cx, -60.0f, 60.0f), o.z + std::clamp(u->z.toFloat() - cz, -60.0f, 60.0f)};
             }
@@ -577,7 +577,7 @@ void flyerSpread() {
                 }
             }
             check(ok, what + ": flyers take retail's spread, ground our rule");
-            if (verb != Verb::Fight) check(kept && far, what + ": a flyer keeps an offset past 60 px and the straggler takes the click");
+            check(kept && far, what + ": a flyer keeps an offset past 60 px and the straggler takes the click");
         }
     }
 }

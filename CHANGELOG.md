@@ -19,6 +19,113 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+*protocol 307 · replay format 15 · does not play with 0.9.12 or earlier, nor their replays*
+
+- **Melee units cannot hit flyers in the air**, as in the original game. A
+  Titan, Swordsman, Troll or any other unit fighting with a melee weapon now
+  drops an order to attack a flyer that is in the air (or a unit that boards a
+  transport), does not go after one on its own and does not answer one that
+  attacks it. Titans used to walk under a slow or hovering flyer, such as a
+  Gryphon, and hammer it. A flyer that has landed is fair game, as in the
+  original: melee units attack it, ordered or not, also when they pass one on
+  a move, and stop when it takes off. A melee blow's splash still never
+  reaches a flyer at its flying height.
+- **"Not against air" weapons judge whether the target is flying right now**,
+  as in the original game. The Knight, the Grenadier and the wolves now attack
+  a flyer that has landed; before, any unit of a flying type was off limits to
+  them. A ranged attack on a unit that boards a transport now ends, as a melee
+  one does. The Retail AI sees landed flyers as ground units too.
+- **Melee units reach the building they attack**, as in the original game:
+  each attacker walks to its own free place touching the building, corners
+  included, and bites from there. They used to head for the building's
+  centre: with Legion pathfinding a second Spirit Wolf on a Lodestone waited
+  behind the first for good, and wolves sent at a Keep, a Barracks or any
+  other long building (every factory and gate) stood out of reach on its short
+  sides and never bit. Swordsmen, Knights, Trolls, the gods and every other
+  melee unit get the same, in both pathfinding modes.
+- **Flyers spread out instead of piling up**, as in the original game: a
+  flyer that keeps sharing its spot in the air with others steps a short way
+  out of the crowd, to its least crowded side, and then carries on with what
+  it was doing. Drakes and other flyers attacking one target or chasing one
+  enemy flyer used to sit on top of each other for the whole fight; groups
+  sent to one point and flyers coming in to land now settle apart. With
+  Legion pathfinding, flyers moving with a formation keep their own lanes.
+- **Flyers on a fight-move or a patrol step out of a crowd too, and a
+  fight-move keeps a flying group's shape**, as in the original game.
+  Drakes and other flyers sent on a fight-move flew the whole way stacked on
+  one another and piled onto the clicked point; armed flyers on patrol lapped
+  as one stack. They now fly a move's course, keep their places in the group
+  as on an ordinary move, and step aside when they crowd together. A
+  factory's flyers follow their rally the same way, and a Shift-patrol given
+  to a patrolling flyer joins its loop at the end, as on the ground.
+- **A flying guard whose charge dies looks for another**, as in the original
+  game: it circles where its charge last stood and guards the first friendly
+  unit on the ground (a building too) that comes within its sight. It used to
+  stand down at once.
+- **Flying builders at work step out of a crowd**: Flying Builders, Dark and
+  Darkest Priests and Thirsha building, helping or repairing on one job
+  hovered on top of each other; one crowded in now steps aside, stops working
+  for a moment and comes back to the job.
+- **Flyers with a `dropped` weapon make bombing passes** (mods only: no unit
+  of the game has one), as in the original game, instead of ordinary attack
+  runs.
+- **Hovering attackers move round their target as in the original game.** A
+  Drake (and every flyer that hovers to attack) comes in to a point beside
+  its target, takes a new point round a target that stands still after a
+  wasted shot, gives up an attack it keeps being crowded out of, and goes
+  back to its formation when it strays too far from it. One that loses its
+  target circles the spot and looks for another, as the other air attacks
+  do.
+- **Mind control, stone and freeze take effect when their shot arrives**, as
+  in the original game. The Harpy's and Mind Mage's charm, the Basilisk's and
+  Acolyte's Turn To Stone and the Mechanic's, Chief Engineer's and Neo
+  Dragon's freeze took their target the moment they were cast, while the ball
+  of energy was still drawn flying towards it. The ball is now a real shot: the
+  spell works when it strikes, on the first unit it strikes (one that steps
+  into its path, or the one behind a target that died, moved off or changed
+  sides meanwhile; the ball is never steered). A charm in flight is lost if
+  its caster dies; a stone or freeze shot still lands.
+- **Stone and freeze follow the original's rules.** Like the charm they can
+  fail: a unit without veteran rank falls 80 times in 100, one of rank 4 or
+  more 99 times. They never take a Monarch, a building, a unit still being
+  built or one of the caster's own, and they do no damage at all (in Crusades
+  the freeze weapons hit immune units and buildings for 450). The same holds
+  for the Area Freeze. Their roll, and the charm's, now draws on the
+  original's random stream.
+- **A charm no longer takes a building** (a wall, a Trebuchet or a Mortar,
+  and in Crusades a Bomb Sprinkler, Gatling Crossbow or Prismatic Mirror), as
+  in the original game, which charms only units that move; nor does the Area
+  Mind Control.
+- **A charm, stone or freeze shot that strikes an ally's unit takes it**, as in
+  the original game, which spares only the caster's own units; the Area Mind
+  Control and Area Freeze take allies' units in their area too. Casters still
+  never pick an ally as a target. A stone or freeze caster no longer passes
+  over a paralyzed enemy, and no longer picks one still being built, as in the
+  original.
+- **A spell's explosion shows on the unit it takes**, and only when it takes;
+  the hit sound plays where the shot strikes.
+- **Units attack enemy buildings still being built**, as in the original
+  game. A building still being conjured, and a unit still being built at a
+  factory, were invisible to every automatic target choice: idle, patrolling
+  and moving units stood or walked past an enemy castle going up beside them.
+  They now take one as a target, after any finished enemy near enough (the
+  original scores it ten times worse). A guard keeps to the unit it guards
+  but shoots one in range, and stone, freeze and charm casters still leave it
+  alone.
+- **Automatic targeting follows the original more closely in three more
+  places:** a paralyzed enemy is no longer passed over for a healthy one, the
+  random choice among several targets lands on the same one as in the
+  original, and a computer player's caster no longer switches to stone,
+  freeze or charm against a building still being built.
+- **Legion: flyers keep the army's pace only in a formation.** Flyers in a
+  group (Ctrl+number) with ground units were held to the ground units' pace,
+  as in a formation, and set down in front of them; they now fly at their own
+  speed to where you send them, as they do in no group. A formation's
+  (Alt+number) flyers still keep to the army's pace and land just in front of
+  it, but no longer on the edge of the map when the army stops near it: where
+  there is no room in front, they land where they were sent.
+
 ## 0.9.12
 *2026-10-29 · protocol 305 · replay format 15 · does not play with 0.9.11 or earlier, nor their replays*
 

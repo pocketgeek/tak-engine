@@ -832,10 +832,12 @@ static void ordinaryFlightMoves() {
             check(coarse && completed && (queued ? !precise : precise),
                   "all flying roles execute coarse move and terminal refinement");
         }
+        // Retail has no fight-move: a flyer's fight-move leg flies VTOL_Move
+        // (its air-traffic check included) and keeps its engage-en-route flag.
         World converted;setTestPathfinding(converted);const int id=converted.spawn(&air,160,160);
         converted.attackMove(id,800,800,false);
-        check(!converted.unit(id)->orders.front().flightMoveMission,
-              "fight conversion retains its combat movement handler");
+        check(converted.unit(id)->orders.front().flightMoveMission && converted.unit(id)->orders.front().attackMove,
+              "fight conversion flies VTOL_Move and engages en route");
         converted.patrolTo(id,800,800,false);
         check(!converted.unit(id)->orders.front().flightMoveMission,
               "patrol conversion retains its looping handler");

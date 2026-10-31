@@ -3247,7 +3247,10 @@ struct FrontRun {FrontPhase east,south;int landed=0,behind=0;int done=-1;uint64_
 // registration FIFO for a few ticks; its flyers must still keep station (0.8.4 regression: release A read the
 // waiting ground as stalled and freed every flyer, which flew straight to the goal).
 FrontRun flyerfrontRun(bool serial=true,bool cold=false) {
-    Fixture f(cold?400:260,cold?400:220,serial);f.publish();
+    // 240 cells deep: the south leg stops 640 px from the map's south edge, room for the three rows of landing lanes
+    // in front of the ground. On the 220-cell map of the first version the third row lay past the edge, where the
+    // clamp then put it; since 2026-10-30 lanes within a lane of the edge send the whole wing to its own points.
+    Fixture f(cold?400:260,cold?400:240,serial);f.publish();
     const auto type=mover(2);
     UnitType flyer{};flyer.id=flyer.name="legion-flyer";
     flyer.canFly=flyer.canMove=true;flyer.maxHp=100;flyer.footX=flyer.footZ=3;flyer.sight=4096;
@@ -3296,7 +3299,9 @@ FrontRun flyerfrontRun(bool serial=true,bool cold=false) {
         f.world.tick(1.f/30);
         bool busy=false;for(int id:all)busy|=!f.world.unit(id)->orders.empty();
         if(!busy&&r.done<0)r.done=t;
-        if(r.done>=0) {if(t>r.done+150)break;continue;}
+        // The landing: a flyer that came down on another steps out of the stack first (retail's air traffic,
+        // VTOL_Standby and VTOL_LandIfCan) and then searches for a spot; give it the time.
+        if(r.done>=0) {if(t>r.done+900)break;continue;}
         if(t%30)continue;
         float cx,cz;centroid(cx,cz);
         const float marched=std::hypot(cx-wx,cz-wz);

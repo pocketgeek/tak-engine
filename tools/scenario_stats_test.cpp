@@ -43,6 +43,7 @@ int main() try {
     {
         auto t=fighter(),victim=t;t.weapon.mindControl=true;t.weapons={t.weapon};
         victim.id="victim";victim.weapon.damage=0;victim.weapons.clear();
+        victim.buildMovementCode=1;   // a mobile body: the charm (52da10) refuses one without a mover
         World w;terrain(w);w.enableScenarioNeutralPlayer();
         int a=w.spawn(&t,400,400,0,0),n=w.spawn(&victim,440,400,0,8);
         w.attack(a,n,false);

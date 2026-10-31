@@ -16,9 +16,11 @@ scan 4d8370 and attack 4d7de0 (controlled answers), controller allocation and
 construction (4e40e0 + radius 4e4540, 4e4560; 4e4c60 runs natively on the
 returned buffer), installation 4d4d40 (clears the pending controller events
 as it does), and the mission push (4d4bf0 + 4d6c40 + 4d7750). The group check
-51d1e0 answers no group and the air-traffic counter (unit +0x12a) stays below
-the step-out threshold: neither is ported. A lost target's VTOL_SEEKATTACK
-push (41d654) is counted here; check_air_seek_attack.py compares it.
+51d1e0 answers no group: it is not ported. The air-traffic counter (unit
++0x12a) runs below, at and above 5: stage 2 then rescans an auto attack and
+pushes VTOL_StepOut with D = (rand(15) + the target's footX + its own) x 16.
+A lost target's VTOL_SEEKATTACK push (41d654) is counted here;
+check_air_seek_attack.py compares it.
 
     python3 tools/re/check_air_to_air.py [build-o2/retail_motion_test]
 """
@@ -99,7 +101,8 @@ def main():
         record('descriptor', name)
         return 1, 0
 
-    def build(uc, args):           # 4d6c40, thiscall, 12 dwords
+    def build(uc, args):           # 4d6c40(row, target, point, +0x4e, ...), thiscall, 12 dwords
+        record('built', (log['descriptor'][-1], get(args + 12, 'i')))
         put(pushed + 4, 'B', answers['inserted'])
         return 12, pushed
 
@@ -295,11 +298,16 @@ def main():
         answers.update(scan=found, attack=rng.choice((0, 1)), inserted=rng.choice((0, 1, 1, 1)), lead=lead)
         retarget = int(found not in (0, target) and answers['attack'] != 0)
         fire_bits = rng.choice((0, 0, 0x40000, 0xc0000))
+        traffic = rng.choice((0, 0, 0, 4, 5, 6, 17))
+        foot, target_foot = rng.choice((1, 2, 3, 4, 6)), rng.choice((1, 2, 3, 5))
 
         put(game + 0x19f44, 'I', tick)
         put(game + 0x19e90, 'I', width)
         put(game + 0x19e94, 'I', height)
         put(unit + 0x130, 'I', 0x9000000 | fire_bits)
+        put(unit + 0x12a, 'b', traffic)
+        put(unit + 0x78, 'h', foot)
+        put(target + 0x78, 'h', target_foot)
         put(unit + 0x68, 'iii', s32(x), s32(y), s32(z))
         put(unit + 0x7e, 'H', heading)
         put(unit + 0xa4, 'I', sector if on_map else offmap)
@@ -336,7 +344,8 @@ def main():
         seek = names.count('VTOL_SEEKATTACK')
         seeks += seek
         evades = names.count('VTOL_EVADE')
-        if set(names) - {'VTOL_SEEKATTACK', 'VTOL_EVADE'}:
+        steps = [b[1] for b in log.get('built', []) if b[0] == 'VTOL_StepOut']
+        if set(names) - {'VTOL_SEEKATTACK', 'VTOL_EVADE', 'VTOL_StepOut'}:
             raise AssertionError((i, 'pushed', names))
         installs = [c for c in log.get('install', []) if c]
         releases = log.get('install', []).count(0)
@@ -363,14 +372,15 @@ def main():
                          get(mission + 0x6a), get(mission + 0x5a), get(mission + 0x4e, 'i'), len(points),
                          len(moving), *goal, goal_radius, mx, my, mz, vx, vy, vz, mh,
                          len(log.get('begin', [])), len(log.get('auto', [])), len(log.get('scan', [])),
-                         releases, evades, get(RNG), draws[0]))
+                         releases, evades, get(RNG), draws[0], len(steps), steps[-1] if steps else 0))
         fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, count, s32(x), s32(y),
                                            s32(z), heading, s32(tx), s32(ty), s32(tz), target_heading, *velocity,
                                            *lead, speed, max_speed, reach, automatic, flies, int(on_map), width,
-                                           height, seed, retarget, answers['inserted']))))
+                                           height, seed, retarget, answers['inserted'], traffic, foot,
+                                           target_foot))))
         # Which branch: a reposition draws rand(0x8000), a break-off pushes
         # VTOL_Evade, a pursuit installs the controller with neither.
-        kind_of = 'evade' if evades else 'reposition' if moving and 0x8000 in bounds else \
+        kind_of = 'step-out' if steps else 'evade' if evades else 'reposition' if moving and 0x8000 in bounds else \
             'pursuit' if moving else 'off-map' if points else 'other'
         stats[kind_of] = stats.get(kind_of, 0) + 1
     compare('41ca50', fixtures, expected, run('--air-to-air', fixtures))

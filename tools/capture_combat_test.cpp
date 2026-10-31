@@ -21,7 +21,8 @@ void check(bool ok,const char* message) {
     if(!ok)++failures;
 }
 tak::sim::UnitType victimType() {
-    tak::sim::UnitType t;t.id="victim";t.maxHp=10000;t.canMove=true;
+    // bmcode 1: retail's charm (52da10) refuses a body without a mover.
+    tak::sim::UnitType t;t.id="victim";t.maxHp=10000;t.canMove=true;t.buildMovementCode=1;
     return t;
 }
 tak::sim::UnitType casterType() {
@@ -74,7 +75,11 @@ void rejectedTargets(const tak::sim::UnitType& caster) {
         check(w.unit(b)->player==(reason==5?2:1),"rejected capture preserves ownership");
         if(const auto* charm=charmOf(caster)) {
             for(int i=0;i<20;++i)tak::sim::RetailReplayProbe::impact(w,*charm,a,b);
-            check(w.unit(b)->player==(reason==5?2:1),"a charm impact cannot take an ineligible target");
+            // 5: an ally's unit. The caster does not choose it, but the charm
+            // spares only the caster's own player (52da10 compares +0xfd), so a
+            // shot that strikes it takes it.
+            if(reason==5)check(w.unit(b)->player==0,"a charm impact takes an ally's unit it strikes");
+            else check(w.unit(b)->player==1,"a charm impact cannot take an ineligible target");
         }
     }
 }

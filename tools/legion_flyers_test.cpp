@@ -12,7 +12,9 @@
 //
 // Cases: mixedsquad mixedseal mv08group deadendrejoin(mv08deadend) ctrlmixed
 // ctrlmixedbig factoryjoin landunder descentwalkin auditlift auditlift40 fl04
-// fl05match fl05unreach splitpatrol liftcombat.
+// fl05match fl05unreach splitpatrol liftcombat ctrlfree formationedge edgeclick.
+// ctrlfree and formationedge assert their behaviour unconditionally (the owner's
+// ruling of 2026-10-30), not only under W6_REQUIRE.
 // Env: W6_REQUIRE (assert targets), W6_VERBOSE (traces), W6_SHIFT (start offset in cells).
 // Same as tools/legion_world_test.cpp: no libm transcendentals reach the sim from here
 // (std::hypot below only measures).
@@ -41,6 +43,11 @@ struct RetailReplayProbe {
     static int station(const World& w,const Unit& u) {
         const auto* s=w.legionFlightStation(u);
         return !s?0:s->hold?2:1;
+    }
+    // The maximum a station holds the flyer to this tick (-1: none).
+    static float stationCap(const World& w,const Unit& u) {
+        const auto* s=w.legionFlightStation(u);
+        return s&&s->capped?s->cap.toFloat():-1.f;
     }
     static bool grounded(const Unit& u) {return World::flyerGrounded(u);}
 };
@@ -334,11 +341,14 @@ void mixedsquad() {
     print(asOut(mixedRun({1,true,Cmd::AttackMove})));
     print(asOut(mixedRun({1,true,Cmd::Patrol})));
     if(requireW6()) {
-        // PLAN 3.5 (T5) acceptance, Ctrl+1: the ground finishes, the flyers stay over it, none lands ahead.
-        check(ctrl.groundDone>=0&&ctrl.groundDone<=2650,"Ctrl mixedformation: ground_done must be <= 2650");
-        check(ctrl.maxOff<=200.f,"Ctrl mixedformation: off_max (an airborne flyer from its nearest ground body) must be <= 200");
-        check(ctrl.landedAhead==0,"Ctrl mixedformation: no flyer lands ahead of the ground");
-        check(ctrl.maxHover<=60,"Ctrl mixedformation: max_hover must be <= 60");
+        // PLAN 3.5 (T5) acceptance, for the Alt+1 formation since the owner's ruling of 2026-10-30 (only a formation's
+        // flyers keep station; T5 asked it of Ctrl+1 too): the ground finishes, the flyers stay over it, none lands
+        // ahead. A Ctrl+1 group's flyers fly their own orders: no station holds their leg open.
+        check(alt.groundDone>=0&&alt.groundDone<=2650,"Alt mixedformation: ground_done must be <= 2650");
+        check(alt.maxOff<=200.f,"Alt mixedformation: off_max (an airborne flyer from its nearest ground body) must be <= 200");
+        check(alt.landedAhead==0,"Alt mixedformation: no flyer lands ahead of the ground");
+        check(alt.maxHover<=60,"Alt mixedformation: max_hover must be <= 60");
+        check(ctrl.holdTicks==0,"Ctrl mixedformation: a Ctrl+1 flyer kept station over the ground");
         check(ctrl.overlap==0&&alt.overlap==0&&none.overlap==0,"a landed flyer shares a cell with a ground body");
         check(ctrl.illegal==0&&alt.illegal==0&&none.illegal==0,"a ground body stands on an illegal footprint");
         check(overlapOffsets==0&&illegalOffsets==0,"a landed flyer shares a cell with a ground body at a start offset");
@@ -426,19 +436,20 @@ Out mv08Run(int squad,bool legion,bool serial=true) {
 }
 void mv08group() {
     for(int squad:{1,0})print(mv08Run(squad,false));
-    Out ctrl;
+    Out ctrl,alt;
     for(int squad:{1,0,-1}) {
         const Out o=mv08Run(squad,true);
-        print(o);if(squad==1)ctrl=o;
+        print(o);if(squad==1)ctrl=o;if(squad==-1)alt=o;
     }
-    // PLAN 3.5: Ctrl+1 fly_away_max <= 300, landed_ahead 0, slow_done <= 2700. Parsed back from the text.
+    // PLAN 3.5: Ctrl+1 fly_away_max <= 300, landed_ahead 0, slow_done <= 2700, parsed back from the text. The
+    // flyer targets were withdrawn for Ctrl+1 by the owner's ruling of 2026-10-30 (a Ctrl+1 group's flyers fly their
+    // own orders, as the untagged run's do); the Alt+1 formation's flyers still land none ahead of the ground.
     auto num=[&](const Out& o,const char* key) {
         const auto p=o.text.find(std::string(key)+"=");
         return p==std::string::npos?-1:std::atoi(o.text.c_str()+p+std::strlen(key)+1);
     };
     if(requireW6()) {
-        check(num(ctrl,"fly_away_max")<=300,"mv08group Ctrl+1: flyers must stay within 300 px of the ground");
-        check(num(ctrl,"landed_ahead")==0,"mv08group Ctrl+1: no flyer lands ahead of the ground");
+        check(num(alt,"landed_ahead")==0,"mv08group Alt+1: no flyer lands ahead of the ground");
         check(num(ctrl,"slow_done")>=0&&num(ctrl,"slow_done")<=2700,"mv08group Ctrl+1: slow_done must be <= 2700");
     }
     checkWorkers("mv08group",[&](bool serial) {return mv08Run(1,true,serial);},ctrl);
@@ -527,9 +538,10 @@ void mv08deadend() {
 // ---------------------------------------------------------------------------
 // ctrlmixed: a Ctrl+1 group of ground and flyers given orders through issueSelection (the client's HUD
 // split and 64-per-tick uplink). Per flyer: away_max from the ground of ITS OWN click, and whether
-// the order it got carries the convoyTick of that click's ground (C12).
+// the order it got carries the convoyTick of that click's ground (C12). station_ticks: flyer-ticks on
+// a flight station (0 since the owner's ruling of 2026-10-30: a Ctrl+N group's flyers fly free).
 // ---------------------------------------------------------------------------
-struct CtrlRun {std::string text;uint64_t hash=0;float awayMax=0;int cross=0;int convoyOwn=0,convoyAll=0;int parts=0;};
+struct CtrlRun {std::string text;uint64_t hash=0;float awayMax=0;int cross=0;int convoyOwn=0,convoyAll=0;int parts=0;int stationTicks=0;};
 // kind 0: ctrlmixed two-click, separated; 1: two-click, second click 12 ticks later (its convoy has
 // closed) 48 px from the first; 2: two-click close (48 px, +2 ticks); 3: big (200 ground + 24 flyers,
 // 4 parts), flyers first in the selection; 4: big, flyers last; 5: huge (300 + 24, 5 parts), flyers
@@ -594,6 +606,7 @@ CtrlRun ctrlRun(int kind,bool serial=true) {
         }
         for(const auto& s:sets)for(int id:s.flyers) {
             run[id]=hovering(*f.world.unit(id),t)?run[id]+1:0;hover=std::max(hover,run[id]);
+            r.stationTicks+=RetailReplayProbe::station(f.world,*f.world.unit(id))>0;
         }
         if(verbose()&&t%300==0) {
             std::printf("  t=%d",t);
@@ -611,10 +624,11 @@ CtrlRun ctrlRun(int kind,bool serial=true) {
     int landed=0;for(const auto& s:sets)for(int id:s.flyers)landed+=f.world.unit(id)->flightGroundMode==1;
     const auto stats=f.world.legionStats();
     static const char* names[]={"two-click-separated","two-click-closed-convoy","two-click-close","big-flyers-first","big-flyers-last","huge-flyers-first","huge-flyers-last"};
-    char buf[460];
+    char buf[500];
     std::snprintf(buf,sizeof buf,"ctrlmixed %s parts=%d distinct_convoys=%d off_max=%.0f convoy_own=%d/%d cross_pairs=%d max_hover=%d landed=%d/%d ground_last_busy=%d "
-        "lifts=%llu relifts=%llu station_overflow=%llu",names[kind],r.parts,sets.size()>1&&sets[0].convoy!=sets[1].convoy,r.awayMax,r.convoyOwn,r.convoyAll,r.cross,hover,landed,
-        r.convoyAll,lastBusy,(unsigned long long)stats.lifts,(unsigned long long)stats.relifts,(unsigned long long)stats.stationOverflow);
+        "lifts=%llu relifts=%llu station_overflow=%llu station_ticks=%d",names[kind],r.parts,sets.size()>1&&sets[0].convoy!=sets[1].convoy,r.awayMax,r.convoyOwn,
+        r.convoyAll,r.cross,hover,landed,r.convoyAll,lastBusy,(unsigned long long)stats.lifts,(unsigned long long)stats.relifts,
+        (unsigned long long)stats.stationOverflow,r.stationTicks);
     r.text=buf;r.hash=f.world.stateHash();
     return r;
 }
@@ -624,8 +638,10 @@ void ctrlmixed() {
         const auto r=ctrlRun(kind);print({r.text,r.hash});
         if(kind==0)first={r.text,r.hash};
         if(requireW6()) {
-            // PLAN 3.5: every flyer within 300 px of its own click's ground, each carries that click's convoyTick.
-            check(r.awayMax<=300.f,"ctrlmixed: a flyer strayed from its own click's ground");
+            // PLAN 3.5: each flyer carries its own click's convoyTick. (PLAN 3.5's stations for a Ctrl+1 group -- every
+            // flyer within 300 px of its own click's ground -- were withdrawn by the owner's ruling of 2026-10-30:
+            // only a formation's flyers keep station, a Ctrl+1 group's fly their own orders.)
+            check(r.stationTicks==0,"ctrlmixed: a Ctrl+1 flyer kept station");
             check(r.convoyOwn==r.convoyAll,"ctrlmixed: a flyer's order does not carry its own ground's convoyTick");
             if(kind!=2)check(r.cross==0,"ctrlmixed: a flyer was paired with the other click's ground");
         }
@@ -638,7 +654,8 @@ void ctrlmixedbig() {
         const auto r=ctrlRun(kind);print({r.text,r.hash});
         if(kind==3)first={r.text,r.hash};
         if(requireW6()) {
-            check(r.awayMax<=300.f,"ctrlmixed-big/huge: a flyer strayed from its click's ground");
+            // As ctrlmixed: no station for a Ctrl+1 group's flyers since 2026-10-30, the convoy link as before.
+            check(r.stationTicks==0,"ctrlmixed-big/huge: a Ctrl+1 flyer kept station");
             check(r.convoyOwn==r.convoyAll,"ctrlmixed-big/huge: a flyer's order does not carry its ground's convoyTick");
         }
     }
@@ -1218,6 +1235,172 @@ void liftcombat() {
     }
     checkWorkers("liftcombat",[&](bool serial) {return liftCombatRun(0,serial);},lifted);
 }
+
+// ---------------------------------------------------------------------------
+// ctrlfree / formationedge (owner ruling 2026-10-30, the user's replay wolves-0912): flyers keep the ground's
+// pace only in a formation (Alt+N), not in a control group (Ctrl+N). In the replay a Ctrl+1 group of drakes,
+// wolves, goblins and harpies fought its way west; flight stations capped the drakes as low as 0.8 px/tick to
+// hold the ground's pace, and at ~tick 49000 the arrival rule moved their point from the click (292,2451) onto
+// the map's west edge (x=24, the clamp), where they crawled and landed. Here 20 ground bodies (1.8 px/tick) and
+// 6 flyers (4 px/tick) on an open field are sent through the HUD (issueSelection) west to a point `clickCell`
+// cells from the west edge. squad +1: Ctrl+1 group, -1: Alt+1 formation, 0: none. Per flyer: the ticks a flight
+// station held it and capped it below its own speed, its top speed while more than 300 px from its point, when
+// it came within 48 px of its own point (the click, or retail's spread for a Move: what its order got), whether
+// its order's point ever moved, and where it ended (from its point, and from the map's edge). For the formation
+// as mixedsquad measures it: what the flyers flew against the ground's march in 30-tick windows, and the
+// farthest an airborne flyer strays from the nearest ground body while the ground is under way.
+// ---------------------------------------------------------------------------
+struct EdgeRun {
+    int stationTicks=0,cappedTicks=0,moved=0,reached=0,lastReach=-1,groundDone=-1,flyersDone=-1,landed=0,windows=0,stalls=0;
+    float minCap=-1,topSpeed=0,endFar=0,endEdge=1e9f,maxOff=0;double flown=0,marched=0;
+    std::string text;uint64_t hash=0;
+};
+EdgeRun edgeRun(int squad,tak::scn::Verb verb,int clickCell,bool serial=true) {
+    constexpr int kW=260,kH=100;
+    Fixture f(kW,kH,serial);f.publish();
+    const auto type=mover(2);
+    const auto flyer=flyerType(3);
+    std::vector<int> ground,flyers;
+    for(int i=0;i<20;++i)ground.push_back(f.spawn(type,200+(i%5)*3,40+(i/5)*4));
+    for(int i=0;i<6;++i)flyers.push_back(f.spawn(flyer,202+(i%3)*4,58+(i/3)*4));
+    const auto all=cat(ground,flyers);
+    f.start();
+    if(squad)for(int id:all)f.command(tak::net::Cmd::SetSquad,id,squad,0,0);
+    f.tick(300);
+    f.click(all,verb,float(clickCell*16),float(50*16));
+    // Each flyer's own point: what its order got from the click (that order: its issue tick; a lift later gives
+    // a landed flyer orders of its own).
+    std::map<int,std::pair<float,float>> point;std::map<int,uint32_t> issued;
+    for(int id:flyers) {
+        const auto& u=*f.world.unit(id);
+        check(!u.orders.empty(),"edgeclick: a flyer got no order");
+        point[id]={u.orders.back().x.toFloat(),u.orders.back().z.toFloat()};issued[id]=u.orders.back().issuedTick;
+    }
+    EdgeRun r;
+    std::set<int> moved;std::map<int,int> reach;
+    std::map<int,std::pair<float,float>> windowStart;float windowCx=0,windowCz=0;
+    auto centroid=[&](float& cx,float& cz) {
+        double ax=0,az=0;for(int id:ground){ax+=f.world.unit(id)->x.toFloat();az+=f.world.unit(id)->z.toFloat();}
+        cx=float(ax/ground.size());cz=float(az/ground.size());
+    };
+    centroid(windowCx,windowCz);
+    for(int t=0;t<8000;++t) {
+        f.world.tick(1.f/30);
+        bool groundBusy=false,flyersBusy=false;
+        for(int id:ground)groundBusy|=!f.world.unit(id)->orders.empty();
+        for(int id:flyers)flyersBusy|=!f.world.unit(id)->orders.empty();
+        if(!groundBusy&&r.groundDone<0)r.groundDone=t;
+        if(!flyersBusy&&r.flyersDone<0)r.flyersDone=t;
+        for(int id:flyers) {
+            const auto& u=*f.world.unit(id);
+            const auto [px,pz]=point[id];
+            r.stationTicks+=RetailReplayProbe::station(f.world,u)>0;
+            if(const float cap=RetailReplayProbe::stationCap(f.world,u);cap>=0&&cap<u.baseSpeed.toFloat()-0.01f) {
+                ++r.cappedTicks;r.minCap=r.minCap<0?cap:std::min(r.minCap,cap);
+            }
+            // Moved: that order's point, by more than 32 px (VTOL_Move's stage 1 snaps it to the footprint's cell).
+            if(!u.orders.empty()&&u.orders.back().issuedTick==issued[id]&&
+               std::hypot(u.orders.back().x.toFloat()-px,u.orders.back().z.toFloat()-pz)>32.f)moved.insert(id);
+            if(!u.orders.empty()&&u.flightGroundMode==2&&dist(u,px,pz)>300.f)r.topSpeed=std::max(r.topSpeed,u.speed.toFloat());
+            if(!reach.count(id)&&dist(u,px,pz)<=48.f)reach[id]=t;
+            if(groundBusy&&u.flightGroundMode==2&&!u.orders.empty())r.maxOff=std::max(r.maxOff,nearestBody(f.world,u,ground));
+        }
+        if(t%30==0) {
+            // The formation's pace (mixedsquad's windows): a travelling flyer -- more than 300 px from its point
+            // -- against the ground centroid's march, in windows where the ground marched at least 9 px.
+            float cx,cz;centroid(cx,cz);
+            const float marched=std::hypot(cx-windowCx,cz-windowCz);
+            for(int id:flyers) {
+                const auto& u=*f.world.unit(id);
+                const auto it=windowStart.find(id);
+                const bool travelling=!u.orders.empty()&&dist(u,point[id].first,point[id].second)>300.f;
+                if(groundBusy&&it!=windowStart.end()&&travelling&&marched>=9.f) {
+                    const float flown=std::hypot(u.x.toFloat()-it->second.first,u.z.toFloat()-it->second.second);
+                    ++r.windows;r.stalls+=flown<0.4f*marched;r.flown+=flown;r.marched+=marched;
+                }
+                windowStart[id]={u.x.toFloat(),u.z.toFloat()};
+            }
+            windowCx=cx;windowCz=cz;
+        }
+        if(verbose()&&t%150==0) {
+            float cx,cz;centroid(cx,cz);
+            std::printf("  t=%d ground %.0f,%.0f busy=%d |",t,cx,cz,int(groundBusy));
+            for(int id:flyers) {
+                const auto& u=*f.world.unit(id);
+                std::printf(" %.0f,%.0f/%zu%d%s",u.x.toFloat(),u.z.toFloat(),u.orders.size(),int(u.flightGroundMode),
+                    u.orders.empty()?"":(" ->"+std::to_string(int(u.orders.back().x.toFloat()))+","+std::to_string(int(u.orders.back().z.toFloat()))).c_str());
+            }
+            std::printf("\n");
+        }
+        if(r.groundDone>=0&&r.flyersDone>=0&&t>std::max(r.groundDone,r.flyersDone)+300)break;
+    }
+    for(int id:flyers) {
+        const auto& u=*f.world.unit(id);
+        r.landed+=u.flightGroundMode==1;
+        r.endFar=std::max(r.endFar,dist(u,point[id].first,point[id].second));
+        const float x=u.x.toFloat(),z=u.z.toFloat();
+        r.endEdge=std::min({r.endEdge,x,z,float(kW*16)-x,float(kH*16)-z});
+        if(const auto it=reach.find(id);it!=reach.end()) {++r.reached;r.lastReach=std::max(r.lastReach,it->second);}
+    }
+    r.moved=int(moved.size());
+    r.hash=f.world.stateHash();
+    const char* name=verb==tak::scn::Verb::Fight?"fight":verb==tak::scn::Verb::Move?"move":"other";
+    char buf[600];
+    std::snprintf(buf,sizeof buf,"edgeclick %s squad=%d click_x=%d station_ticks=%d capped_ticks=%d min_cap=%.2f top_speed=%.2f moved=%d reached=%d/6 "
+        "last_reach=%d ground_done=%d flyers_done=%d landed=%d end_far=%.0f end_edge=%.0f pace=%.2f stalls=%d/%d off_max=%.0f",
+        name,squad,clickCell*16,r.stationTicks,r.cappedTicks,r.minCap,r.topSpeed,r.moved,r.reached,r.lastReach,r.groundDone,r.flyersDone,r.landed,
+        r.endFar,r.endEdge,r.marched>0?r.flown/r.marched:0.0,r.stalls,r.windows,r.maxOff);
+    r.text=buf;
+    return r;
+}
+Out asOut(const EdgeRun& r) {return {r.text,r.hash};}
+// Measurement only: EDGE_SQUAD (default -1), EDGE_VERB (move | fight, default move), EDGE_CELL (default 8).
+void edgeclick() {
+    const char* verb=std::getenv("EDGE_VERB");
+    const bool fight=verb&&std::string_view(verb)=="fight";
+    print(asOut(edgeRun(envInt("EDGE_SQUAD",-1),fight?tak::scn::Verb::Fight:tak::scn::Verb::Move,envInt("EDGE_CELL",8))));
+}
+// A Ctrl+1 group's flyers fly their own orders: never on a station, never capped, at their own speed to the
+// click (a fight-move: the click itself; a move: retail's spread), long before the ground; their points never
+// move and they land there, not at the map's edge. The click is the replay's distance from the edge (18 cells).
+void ctrlfree() {
+    using tak::scn::Verb;
+    const auto none=edgeRun(0,Verb::Fight,18);print(asOut(none));
+    for(const Verb verb:{Verb::Fight,Verb::Move}) {
+        const auto r=edgeRun(1,verb,18);print(asOut(r));
+        check(r.stationTicks==0,"ctrlfree: a Ctrl+1 flyer kept station over the ground");
+        check(r.cappedTicks==0,"ctrlfree: a Ctrl+1 flyer was held below its own speed");
+        check(r.topSpeed>=3.9f,"ctrlfree: a Ctrl+1 flyer did not fly at its own speed");
+        check(r.moved==0,"ctrlfree: a Ctrl+1 flyer's point was moved");
+        check(r.reached==6,"ctrlfree: a Ctrl+1 flyer never reached its point");
+        // 2,900 px at 4 px/tick: the flyers are there by ~tick 800 (the ground, at 1.8, after 1,600).
+        check(r.lastReach>=0&&r.lastReach<=1100&&r.groundDone>r.lastReach,"ctrlfree: the Ctrl+1 flyers did not fly ahead of the ground to their points");
+        // Six flyers on one point: the landing search spreads them up to ~180 px (as without a squad).
+        check(r.landed==6&&r.endFar<=240.f&&r.endEdge>=48.f,"ctrlfree: a Ctrl+1 flyer did not land at its point");
+    }
+    checkWorkers("ctrlfree",[&](bool serial) {return asOut(edgeRun(1,Verb::Fight,18,serial));},asOut(edgeRun(1,Verb::Fight,18)));
+}
+// An Alt+1 formation still keeps the ground's pace -- over its ground the whole way, the flyers' march within
+// the ground's -- and lands in front of the ground where the map has room (a click 40 cells from the edge: the
+// lanes ~470 px from it). Sent 14 cells from the edge, the lanes would lie at x 55, within a lane of the edge
+// (where the rule before 2026-10-30 landed them, as it landed the replay's drakes at x 35 and 87), so the
+// flyers keep their own points.
+void formationedge() {
+    using tak::scn::Verb;
+    for(const int cell:{40,14})for(const Verb verb:{Verb::Move,Verb::Fight}) {
+        const auto r=edgeRun(-1,verb,cell);print(asOut(r));
+        check(r.stationTicks>0,"formationedge: the formation's flyers kept no station");
+        check(r.windows>0&&r.stalls==0,"formationedge: a formation flyer stalled behind the ground");
+        check(r.flown>=0.8*r.marched&&r.flown<=1.5*r.marched,"formationedge: the formation's flyers did not keep the ground's pace");
+        check(r.maxOff<=240.f,"formationedge: a formation flyer strayed from the ground");
+        check(r.groundDone>=0&&r.flyersDone>=0&&r.landed==6,"formationedge: the formation did not finish and land");
+        if(cell==40)check(r.moved==6&&r.endEdge>=200.f,"formationedge: with room in front, the formation's flyers did not land in front of the ground");
+        // Six flyers landing round one point among the ground's slots spread up to ~200 px (a fight-move: the
+        // click itself; the landing search, not the arrival rule).
+        if(cell==14)check(r.moved==0&&r.endFar<=240.f,"formationedge: near the map's edge a formation flyer's point was moved toward it");
+    }
+    checkWorkers("formationedge",[&](bool serial) {return asOut(edgeRun(-1,Verb::Move,14,serial));},asOut(edgeRun(-1,Verb::Move,14)));
+}
 }
 
 // ---------------------------------------------------------------------------
@@ -1277,7 +1460,8 @@ int main(int argc,char** argv) {
         {"mixedsquad",mixedsquad},{"mixedseal",mixedseal},{"mv08group",mv08group},{"mv08deadend",mv08deadend},{"deadendrejoin",deadendrejoin},
         {"ctrlmixed",ctrlmixed},{"ctrlmixedbig",ctrlmixedbig},{"factoryjoin",factoryjoin},{"landunder",landunder},{"descentwalkin",descentwalkin},
         {"auditlift",auditlift},{"auditlift40",auditlift40},{"fl04",fl04},{"fl05match",fl05match},{"fl05unreach",fl05unreach},
-        {"splitpatrol",splitpatrol},{"liftcombat",liftcombat},{"predicates",predicates}};
+        {"splitpatrol",splitpatrol},{"liftcombat",liftcombat},{"predicates",predicates},{"ctrlfree",ctrlfree},
+        {"formationedge",formationedge},{"edgeclick",edgeclick}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

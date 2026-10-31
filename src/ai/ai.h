@@ -402,6 +402,10 @@ private:
     static bool armed(const tak::sim::UnitType*);
     // Some weapon of `a` can hurt `t` (flyers need a weapon that is not noair).
     static bool canHurt(const tak::sim::UnitType* a, const tak::sim::UnitType* t);
+    // `u`'s attack weapon (a switcher's selected slot, else the first) can
+    // reach `t` where it is now: a melee one never reaches a unit in the air,
+    // and the sim drops such an attack order at once (Attack_Melee's head).
+    static bool reachesNow(const tak::sim::Unit& u, const tak::sim::Unit& t);
     // The best site for a force of `force` strength at (x,z) whose units move as
     // `type`, by value (economy, production, the Monarch, finishing a player off),
     // threat (armed units, nearer our base) and practicality (distance, whether the
@@ -412,8 +416,9 @@ private:
     // The strength a site needs sent at it (its defence, with this level's margin).
     float siteNeed(const StrikeSite&) const;
     // Where unit `u` goes for `site`: an Attack on the anchor once it is close (or
-    // the anchor is a site still building, which nothing auto-acquires), else an
-    // attack-move to the nearest point it can reach. False when it cannot get there.
+    // the anchor is a site still building, which auto-acquisition takes only
+    // behind finished targets), else an attack-move to the nearest point it can
+    // reach. False when it cannot get there.
     bool strikeOrder(const tak::sim::World&, const tak::sim::Unit& u, const StrikeSite& site,
                      uint32_t simTick, const CommandSink&);
     // What this AI knows of an enemy unit, by id: its type, owner and position
@@ -580,12 +585,15 @@ private:
     // Idle, or only holding a factory's PARK release: retail parks every factory
     // output with no rally (GetBuilt 0x402220) and that PARK lasts until the next
     // order, so a parked newborn is as free to command as one with no orders.
+    // A flyer's step-out (retail's air traffic) leading the queue is read past,
+    // as waveFree does: an idle flyer stepping out of a stack is still idle.
     static bool idle(const tak::sim::Unit& u) {
-        return std::all_of(u.orders.begin(),u.orders.end(),[](const tak::sim::Order& o) {
+        const auto first=u.orders.begin()+(!u.orders.empty() && u.orders.front().stepOut ? 1 : 0);
+        return std::all_of(first,u.orders.end(),[](const tak::sim::Order& o) {
             return o.park || (!o.goal && !o.groundMission && !o.buildType && !o.targetId && !o.reclaimFeat &&
                 !bool(o.reclaimArea) && !o.repairTarget && !o.load && !o.unload && !o.patrol &&
                 !o.attackMove && !o.guard);
-        }) && (u.orders.empty() || std::any_of(u.orders.begin(),u.orders.end(),
+        }) && (first==u.orders.end() || std::any_of(first,u.orders.end(),
             [](const tak::sim::Order& o){return bool(o.park);}));
     }
     // Only raising a body (a RESURRECT leg, which reviveIdle gives): as free to
@@ -604,10 +612,13 @@ private:
     // A fighter is free to be committed to a wave when it's idle or only doing a plain
     // move -- NOT while it's already fight-moving or attacking (so re-commanding it each
     // think doesn't reset its march and thrash it in place).
+    // A flyer's step-out (retail's air traffic) leads its queue for a moment; the
+    // order behind it is what the unit is doing.
     static bool waveFree(const tak::sim::Unit& u) {
-        return u.orders.empty() ||
-               (u.orders.front().targetId == 0 && !u.orders.front().attackMove && !u.orders.front().buildType &&
-                !u.orders.front().load && !u.orders.front().unload && !u.orders.front().guard);
+        const size_t k = !u.orders.empty() && u.orders.front().stepOut ? 1 : 0;
+        if (u.orders.size() <= k) return true;
+        const auto& o = u.orders[k];
+        return o.targetId == 0 && !o.attackMove && !o.buildType && !o.load && !o.unload && !o.guard;
     }
     void emit(const CommandSink& sink, tak::net::Cmd kind, int unitId,
               const std::string& type, float x, float z) const;

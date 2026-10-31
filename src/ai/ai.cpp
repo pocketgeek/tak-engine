@@ -1648,6 +1648,13 @@ bool Controller::canHurt(const tak::sim::UnitType* a, const tak::sim::UnitType* 
     return a->weapons.empty() ? hurts(a->weapon) : std::any_of(a->weapons.begin(), a->weapons.end(), hurts);
 }
 
+bool Controller::reachesNow(const tak::sim::Unit& u, const tak::sim::Unit& t) {
+    const auto& weapons = u.type->weapons;
+    const auto& weapon = weapons.empty() ? u.type->weapon
+                                         : weapons[size_t(std::clamp(u.weaponSlot, 0, int(weapons.size()) - 1))];
+    return !(weapon.melee && t.flightGroundMode == 2);
+}
+
 // Every enemy unit this AI knows of (knowledge_), scored where it was last seen.
 // A unit's value is its cost, tripled for a lodestone or mana building and
 // doubled for production and builders (retail's picker divides everything that
@@ -1837,14 +1844,16 @@ bool Controller::strikeOrder(const tak::sim::World& world, const tak::sim::Unit&
         const float dx = e->x.toFloat() - ux, dz = e->z.toFloat() - uz;
         const bool close = dx * dx + dz * dz <= reach * reach;
         if (close) tried(e->id, e->hp.toFloat());
-        // Nothing auto-acquires a site still being built, and up close an order on
-        // the anchor itself makes sure of it.
+        // Auto-acquisition takes a site still being built only behind finished
+        // targets (as retail's picker, x10), and up close an order on the anchor
+        // itself makes sure of it.
         // A charm cannot take a unit still being built (the sim refuses the
         // order), so a caster attack-moves there instead of standing idle.
         const bool charmRefused = e->underConstruction &&
             std::any_of(u.type->weapons.begin(), u.type->weapons.end(),
                         [](const auto& w) { return w.mindControl; });
-        if ((close || e->underConstruction) && !charmRefused) {
+        // A melee unit cannot reach an anchor in the air: it goes for the site.
+        if ((close || e->underConstruction) && !charmRefused && reachesNow(u, *e)) {
             tak::net::Command c; c.kind = tak::net::Cmd::Attack; c.player = uint8_t(player_);
             c.unitId = u.id; c.targetId = e->id;
             sink(c);
@@ -2007,7 +2016,13 @@ void Controller::updateBuilderProgress(const tak::sim::World& world, uint32_t si
     for (const auto& u:world.units()) {
         if (!u.alive() || !u.type || !world.allied(player_,u.player) ||
             std::none_of(u.orders.begin(),u.orders.end(),holds)) continue;
-        const auto& task=u.orders[tak::sim::World::currentLeg(u.orders)];
+        // The job, read past a flying builder's leading step-out (its air
+        // traffic), which stands where the builder was.
+        size_t leg=tak::sim::World::currentLeg(u.orders);
+        if (u.orders[leg].stepOut)
+            for (size_t i=leg+1;i<u.orders.size();++i)
+                if (u.orders[i].goal) { leg=i;break; }
+        const auto& task=u.orders[leg];
         const bool site=task.buildType && (task.buildX.v || task.buildZ.v);
         const float sx=(site ? task.buildX : task.x).toFloat(),sz=(site ? task.buildZ : task.z).toFloat();
         const float dx=u.x.toFloat()-sx,dz=u.z.toFloat()-sz,d=std::sqrt(dx*dx+dz*dz);
@@ -2165,8 +2180,9 @@ void Controller::sendDefenders(const tak::sim::World& world, const CommandSink& 
             continue; // preserve unrelated explicit attacks and working orders
         }
         float tx=0,tz=0;
+        // A melee defender leaves a flyer in the air alone (it cannot reach it).
         auto answer=[&](const tak::sim::Unit& e) {
-            return reachablePoint(world,u.type,u.x.toFloat(),u.z.toFloat(),
+            return reachesNow(u,e) && reachablePoint(world,u.type,u.x.toFloat(),u.z.toFloat(),
                 e.x.toFloat(),e.z.toFloat(),tx,tz) &&
                 (shooter(e.id) ? nearHome(tx,tz) : local(tx,tz));
         };
@@ -3568,8 +3584,10 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         const bool armed = u.type->weapon.damage > 0 ||
             std::any_of(u.type->weapons.begin(), u.type->weapons.end(), [](const auto& w) { return w.damage > 0; });
         if (!armed || reach <= 0) break;
-        if (!u.orders.empty()) {
-            const auto& front = u.orders.front();
+        // A flyer's step-out (retail's air traffic) leads for a moment: the
+        // order behind it is the task.
+        if (const size_t k = !u.orders.empty() && u.orders.front().stepOut ? 1 : 0; u.orders.size() > k) {
+            const auto& front = u.orders[k];
             if (front.targetId || front.attackMove || front.patrol || front.guard ||
                 front.load || front.unload) break;   // already fighting, or a deliberate task
         }

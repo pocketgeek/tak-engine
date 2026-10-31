@@ -8,7 +8,7 @@
 // A run of consecutive commands that differ only in their unit (same verb,
 // target, queue flag, type and area endpoint; the same point, or any point for
 // the right-click Move when the click declared it -- OrderShape::Offsets -- and
-// for an armed Move or Patrol that declared its flyers' spread --
+// for an armed Move, Patrol or fight-move that declared its flyers' spread --
 // OrderShape::FlyerOffsets; the sim recomputes the offsets) becomes ONE order
 // over those units. A unit appearing
 // twice starts a new run (an order holds a unit once), as does a run reaching
@@ -34,7 +34,7 @@ namespace tak::net {
 struct ClickShape {
     bool moveOffsets = false;   // the right-click move: Move runs carry the click, shape Offsets
     float x = 0, z = 0;         // the click (world px)
-    bool flyerOffsets = false;  // an armed move / patrol: Move and Patrol runs carry the click, shape FlyerOffsets
+    bool flyerOffsets = false;  // an armed move / patrol / fight-move: Move, Patrol and AttackMove runs carry the click, shape FlyerOffsets
 };
 
 inline std::vector<Command> packClick(const std::vector<Command>& cmds, const ClickShape& click, uint32_t& nextSerial) {
@@ -52,7 +52,8 @@ inline std::vector<Command> packClick(const std::vector<Command>& cmds, const Cl
             continue;
         }
         const bool offsets = click.moveOffsets && c.kind == Cmd::Move;
-        const bool flyers = !offsets && click.flyerOffsets && (c.kind == Cmd::Move || c.kind == Cmd::Patrol);
+        const bool flyers = !offsets && click.flyerOffsets &&
+                            (c.kind == Cmd::Move || c.kind == Cmd::Patrol || c.kind == Cmd::AttackMove);
         auto o = std::make_shared<SelectionOrder>();
         std::unordered_set<int32_t> seen;
         size_t j = i;

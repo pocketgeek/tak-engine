@@ -357,6 +357,14 @@ the same with and without the change (60 s and 300 s).
 > already landed one 343 times. Retail therefore stays as it is. Legion alone
 > refuses landed and descending flyers' footprints; see
 > [legion-pathfinding.md](legion-pathfinding.md#scope).
+>
+> **Air traffic (protocol 307).** The stacks those landings came from were
+> World's own: it kept no air-traffic counter (unit +0x12a), so a hovering or
+> descending stack never broke up. Retail's VTOL_Standby and VTOL_LandIfCan
+> step a crowded flyer out of the stack before it searches for a site
+> ([retail-engine.md](retail-engine.md), "Air traffic"), and since protocol
+> 307 World does too: twelve flyers sent to one spot now land apart in Retail
+> as well. `509400` and its port are unchanged.
 
 **User decision.** The user was asked whether to port retail's landing check
 exactly, port it for Retail only, or keep our rule. The answer was "Port it".

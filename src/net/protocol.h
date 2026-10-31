@@ -19,7 +19,29 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 305;      // 305: our AI levels (not Retail AI) target only enemies their side has seen
+constexpr uint32_t kNetVersion = 307;      // 307: a ground melee attacker approaches a building (no mover) on Attack_Melee's
+                                           //      rectangle round its footprint (404690 -> 4d4e80), each to its own nearest
+                                           //      free perimeter origin, instead of at its centre (Legion hands the leg to the
+                                           //      native navigator); the melee in-range test snaps both boxes to their
+                                           //      footprint origins as 52b980 does. Retail's air traffic: a flyer's counter
+                                           //      (unit +0x12a, hashed) steps after each occupancy rebuild, and at 5 the
+                                           //      ported flyer missions push a step-out (4214b0) ahead of themselves (a new
+                                           //      front order, hashed); AirToGroundHover (41d820) is ported whole, and a
+                                           //      shot posts its outcome (4099e0) to the shooter's mission events (hashed).
+                                           //      A melee weapon never reaches a unit in the air: 52b980's layer test,
+                                           //      Attack_Melee's exit for a target in the air or carried
+                                           //      (404778..4047ee) and the melee layer-1 test of the picker, its keep
+                                           //      test and the hit response (412620, 40fcb3, 409db4) read
+                                           //      flightGroundMode; a landed flyer is a target.
+                                           //      No new command; replay format unchanged.
+                                           // 306: the mind-control, stone and freeze Line-of-Sight classes fly a real
+                                           //      shot (52d8d0 / 52db40 / 52dda0) and take effect on the unit it strikes,
+                                           //      through retail's callbacks (52da10 / 52dca0 / 52df00; the area charm and
+                                           //      freeze use them too): player, mover, Monarch, immunity and construction
+                                           //      gates, one CRT roll, no damage; the stone and freeze picker skips
+                                           //      unfinished units, not paralyzed ones (hashed state). No new command;
+                                           //      replay format unchanged.
+                                           // 305: our AI levels (not Retail AI) target only enemies their side has seen
                                            //      (own and allies' sight, recent attackers), remember buildings where
                                            //      seen and mobiles for 25 s, and scout/explore when nothing is known;
                                            //      World::stateHash mixes a 64-bit word per round over four lanes and

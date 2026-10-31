@@ -33,8 +33,9 @@ linked movement notes for remaining flight and full-scene limitations.
 
 **Weapons** — `WeaponType` maps one subclass per FBI `type`/`subtype`:
 `Melee`, `Ballistic`, `DroppedBallistic` (bombs), `Guided` (homing), `Wandering`,
-`RemoteEffect`, `LineOfSight` (hitscan: `Fire`/`Lightning`/`MindControl`/
-`TurnToFrozen`/`TurnToStone`), `Earthquake`, `Hailstorm`, `AreaMindControl`,
+`RemoteEffect`, `LineOfSight` (a straight shot that flies: plain, `Fire`,
+`Lightning`, `MindControl`, `TurnToFrozen`, `TurnToStone`; none is hitscan,
+see "Mind control, stone and freeze fly"), `Earthquake`, `Hailstorm`, `AreaMindControl`,
 `AreaTurnToFrozen`, and `ATTRIBUTE_ADJUSTER` (stat buffs). **Status effects and
 capture are weapon subtypes**, not unit flags (`turntostone`, `turntofrozen`,
 `paralyze`, `mindcontrol` are real data values).
@@ -198,7 +199,66 @@ splash within 300 px of the sub) and behind a shore (no shot, no churn).
   unit's footprint box is position ∓ `foot<<19` (∓ 8px·footCells, cell-snapped);
   in range iff on BOTH axes `|centreΔ| − halfA − halfB < 0x80000` (= 8 px) —
   i.e. the boxes are within half a cell of touching. (`range` in melee TDFs —
-  10..250 in shipped data — is dead weight.)
+  10..250 in shipped data — is dead weight.) The boxes are the footprints'
+  cells: each position is snapped to its footprint origin
+  (`(pos - foot<<19 + 0x80000) >> 20`, our `footprintOrigin`) before the
+  compare, so overlap and contact anywhere in the origin cell pass. Ported
+  exactly (`meleeInRange`) since protocol 307; before, raw centres let a body
+  standing on the near edge of a perimeter cell test out of range. Before the
+  boxes it reads the target's flight layer (`+0x130 & 3`, `52b98c..52b997`):
+  a target in the air (2) is never in range. See "Melee never reaches a flyer
+  in the air".
+- **Attack_Melee @0x404690** (registry row `0x5eb8ea`, flags `0x1000280`):
+  the ground attack mission of a melee selected weapon (any other weapon hands
+  the order to Attack_Chase, `4d4bf0`/`4d4ef0`). Stage 0 (`404cfa`): the slot
+  goes manual with the target (`519b70`, `51a700`); in range it stops the
+  navigator (`4d4d40(0)`); otherwise a target WITH a mover (unit +8) gets a
+  radius-0 circle on its position (`4d4da0`), and a target with NONE (a
+  building: a mover exists only for `bmcode=1` with a turn rate and a
+  velocity, so a factory with `canmove=1` and no velocity has none) gets
+  `4d4e80` with its footprint-origin cell (+0x74) and footprint (+0x78): the
+  rectangle controller RECLAIM, HelpBuild and RepairUnit use (`4e3590`:
+  minX = ax - bw .. maxX = ax + fw, the same in z), whose arrival is any
+  origin where the attacker's footprint touches the building's, edge or
+  corner. Stage 1 (`404b61`) re-installs a circle only when a mobile
+  target's cell changed, sets the wait mask `0x40068` (`|0x100000` in range)
+  and sleeps `rand(5)+rand(5)+4` ticks when the target is more than
+  `3*maxFoot/2+1` cells off (`535e90`), else a short cadence sleep; stage 2
+  (`40496a`) goes back to stage 1 (a mobile target in range may stop the
+  navigator first). No give-up: a building's attacker loops until it dies.
+  The mission never fires: the weapon update `52ae90` does, every tick in
+  range (`52fe30` AimWeapon and the facing request toward the target's
+  origin, `52fff0` readiness, `530140` FireWeapon). Emulated end to end
+  (scratch probe: `52ae90`, the shipped `zonwolf.cob` in retail's VM,
+  `4d8450` -> `404690`, `4dc800` per tick, a Spirit Wolf against a building
+  with no mover): head-on at a 2x2 building, `4d4e80(cell 37,79, foot 2x2)`
+  at the order, contact t=75, AimWeapon t=76, FireWeapon t=77, the bite (SET
+  23, attack1's wind-up) t=99; at the side of a 7x14 one, stopped t=55 on
+  its west face, pivoted 38 degrees toward its centre, FireWeapon t=61,
+  bite t=83. A second attacker whose nearest perimeter origin a first one
+  holds: retail's whole route-search attempt (`415170`, tracer, cost slice,
+  `414450`, delivery `4e4ea0`) on that rectangle, the first attacker's
+  origin blocked, ends complete on the free perimeter corner beside it
+  (a radius-0 circle on the centre ends partial). Ours through protocol 306
+  chased the building's centre: Retail mode by best-effort routes to the
+  nearest reachable origin, Legion by a point seed every lone or late
+  attacker shared (a second Spirit Wolf held behind the first for good) and,
+  for groups, a radial ring of `8*(maxFootA+maxFootB)+8` px whose short-side
+  spots on a long building (every factory) stood out of contact. Since 307
+  `World::installMeleeApproach` installs the rectangle on the attack leg;
+  Legion does not route a leg with a rectangle it does not own, so the
+  native navigator takes it in both modes. `melee_building_test` runs the
+  `melee-*.scn` fixtures in both modes with the target topped up and counts
+  each attacker's hits. On protocol 306 Legion's second wolf on a lodestone
+  (`melee-lode-late`) never bit and four wolves on a Keep (`melee-castle-4`)
+  never touched it; twenty Swordsmen round a Keep (`melee-castle-20`): 11 of
+  20 bit in both modes, 87 hits in Retail and 106 in Legion. Now every wolf
+  bites in every fixture, in both modes, and 16 of the 20 Swordsmen bite
+  (about 150 hits); Retail and Legion take the same routes. Still deviating:
+  Legion's melee ring round a MOBILE target has no corner places (at most
+  four attackers round a 2x2 unit). (An idle unit's target scan skipped
+  construction sites through 307's first landing; since 307 it takes them
+  as retail does, see "Enemies with construction left" below.)
 - Weapon TDF parse @0x530780: `range` readInt → `[WeaponType+0x90]`, clamped
   min 2; `minrange` → `+0x94`. Unit-def weapon-type pointers at `+0x1aa`
   (3 dwords). Range-ring UI strings @0x4d6823; debug dump @0x4fbf6b.
@@ -218,8 +278,10 @@ weapon slots is **auto** or **manual**:
   reason ends (retail: the mission destructor's setAuto `4d6da0`).
 - **Auto** slots are filled by `retailSelectTarget` (port of `412620`): 50
   `gameRand` draws over the player's visible list (melee 5), integer distance
-  squared, `fireatwillrandom`, turn penalty, x10 multipliers, bad-target
-  fallback. Auto slots fire en route without braking or steering; only a
+  squared, `fireatwillrandom`, turn penalty, x10 inside the minimum range and
+  x10 for a target with construction left, bad-target fallback; a drawn
+  candidate leaves the list with the last one taking its place (`50b2c0`).
+  See "Enemies with construction left" below. Auto slots fire en route without braking or steering; only a
   stopped, order-less ground unit pivots (at `turninplacerate`). Only
   hover-attack flyers and ground units with `turninplacerate > 0` must face
   the target to fire.
@@ -253,6 +315,92 @@ road, 150 in 0.5 water, road over water when both bits are set, 700 x -0.5 ->
 65186. It is the same scaling the cost search applies (`4151ef`); both now
 share `retailEffectiveTurnRate` (pinned by `fire_sweep_turnrate`).
 
+## Enemies with construction left (icd, emulated 2026-10-30, protocol 307)
+
+A unit with construction left (`+0x108`, a float: 1.0 for a fresh site, 0 once
+finished) is a site still being conjured, or a unit still being built at a
+factory door or beside a Zhon builder. Retail's target scans take one, behind
+finished targets:
+
+- **The list.** `411700` puts on the visible-enemy list +5 every live, not
+  dying unit of a non-allied owner that the player sees (`4f7210`), dropping
+  only the scenario flag `0x2000` (never set at creation, U16 in
+  [the classic AI plan](classic-ai-plan.md)). There is no `+0x108` test for
+  an enemy; allied and own sites go on +0x15.
+- **The picker** (`412620`) multiplies a target's score by 10 unless it is
+  alive, not dying and has no construction left (`412b52..412b77`; alive and
+  not dying were tested at the draw, so this is construction left alone), so
+  a finished target comes first and a site is taken when nothing finished is
+  near enough. It looks at no paralysis there. Stone, freeze and charm
+  classes skip a site (`4127eb..4128db`). A drawn candidate leaves the list
+  with the last one moved into its place (`50b2c0`), which decides which
+  candidate the later draws land on.
+- **Which scans.** Every scan over the list. The fire-at-will sweep (`40f330`
+  -> `40f2e0` -> `412620` with the slot's range) and the mission scan
+  `4d8370`: Fire At Will and armed only, `412620` on the scanning slot
+  (`519ac0`: a switcher's selected slot, else the first weapon the unit has)
+  with the radius max(sightdistance, range). `4d8370` is called by Standby
+  (`407770`), Standby_Wander, Patrol (`403600`), VTOL_Patrol, Move_Ground's
+  attack response (`402e2d`, a move with a response mode),
+  Move_Ground_Formation, Attack_Chase and Attack_Melee's retargets,
+  VTOL_Standby, VTOL_Move(_Formation), VTOL_SeekAttack, AirStrike,
+  AirToGround, AirToAir and AirToGroundHover. Follow_Ground and VTOL_Follow
+  (guard) run no scan: they answer the guarded unit's attacker (`+0xf8`),
+  which a site never is, and the guard's auto slots take a site in range
+  through the sweep. The hit response `409a50` answers an attacker, never a
+  site (and a site under fire answers nothing, above). The scripted wait
+  `401480` and the AI weapon switch's counts (`411ae0`) count sites too.
+- **The sweep's budget** (`40f3a1..40f3c9`): the player's own dead, dying
+  and unfinished units cost nothing; every other unit costs one, a paralyzed
+  one included (its slots are manual).
+- **The AI weapon switch** (`40f50e..40f5ea`, `40f7b8..40f8ab`): a stone,
+  freeze or charm slot is no use against a target with construction left.
+- The Retail AI's own picker (`40a200`) divides an unfinished target's score
+  by rand(3)+1, and its threat test and defence planner count sites (U16):
+  both read the same list.
+
+Evidence, from the user's own binary: `tools/re/probe_site_targets.py` runs
+`411700` over eleven units (own, ally and enemy; finished, a fresh site and
+one a quarter left; seen and unseen; `0x2000`; dying), `4d8370` (no scan on
+Hold Fire, Return Fire or unarmed; a lone site returned; the radius and the
+scanning slot), `40f330`'s budget (two own sites passed, a paralyzed unit
+counted) and its switch block (a stone slot taken against a finished target,
+not against one with 1.0 or 0.25 left): 14 observations.
+`tools/re/check_fire_sweep_picker.py` runs `412620` on 4,000 random cases
+(plain, melee, stone, freeze and charm classes, `fireatwillrandom`, the sweep
+and the mission radius, one to six candidates finished or not, paralyzed or
+not, bad targets, immune types, AI-owned or not) against `fire_sweep_test
+--picker`: the same pick and the same RNG state in every case; with the old
+x10 test it fails 119 of 600 cases, with the old erase 65 of 600.
+
+Before: World left enemies with construction left off its lists (the Retail
+AI's brain added them back for itself), its acquisition (`findTarget`)
+skipped them, the picker gave the x10 to a paralyzed target instead and
+erased a drawn candidate keeping the list's order, the sweep charged its own
+sites and passed paralyzed units for free, and the AI switch counted a stone,
+freeze or charm slot as usable against a site. Units standing beside an
+enemy building going up never touched it (a user's replay: three Spirit
+Wolves idle 153 to 186 px from an unfinished Aramon castle until ordered).
+Rebuilt with the real Crusades types on a flat map, none ever targeted it
+before; now all three take it at their first scan.
+
+Now: `rebuildVisibleLists` lists them, `retailSelectTarget` gives the x10 to
+`underConstruction` and moves the last candidate into a drawn one's place,
+`tickFireSweep` passes its own unfinished units for free, and
+`retailAiWeaponSwitch` counts a stone, freeze or charm slot unusable against
+one. `findTarget`, the engine's stand-in for `4d8370` (nearest first rather
+than the picker's draws, within the longest range + 90 px), takes a site with
+its rank, the squared distance, x10 (the scatter score x10 for
+`fireatwillrandom`), except in a guard's scan and in a scan whose slot is a
+stone, freeze or charm class. The Classic brain takes the World's list as it
+is. Test: `fire_sweep_sites`.
+
+Not ported: a retail site at HP 0 or below is live to retail's scans; only
+restored saves have such sites here, and World's lists and slot checks test
+HP > 0. Found on the way and left alone: the picker's paralyzer immunity
+test (`4128e1..4128ff`: a paralyzer class skips an `immunetoparalyzer` type)
+is not in `retailSelectTarget`.
+
 ## Blocked shots: retail fires on, the engine walks to a clear shot (2026-10-19)
 
 Retail has no line-of-fire test and no reposition. The common weapon update
@@ -274,9 +422,10 @@ that does not block movement, or the corner cells its Bresenham walk skips,
 so since this change the sim also watches where shots land
 (`World::noteShotImpact`, every ballistic, straight and guided shot, and
 since 0.9.2 every flame: `tickFlames` reports a flame's first impact with the
-unit it was fired at, `FlameShot::targetId`, hashed). Melee, beam and other
-instant hits land on the target itself, and Remote Effect spells and
-wandering storms are not aimed shots, so none of them can stop on scenery:
+unit it was fired at, `FlameShot::targetId`, hashed; since protocol 306 the
+mind-control, stone and freeze shots too). Melee hits land on the target
+itself, and Remote Effect spells and wandering storms are not aimed shots, so
+none of them can stop on scenery:
 
 - An impact on terrain, water or scenery the weapon cannot destroy
   (`indestructible`, no `damage`, `unitsonly`; a fire starter still counts a
@@ -425,6 +574,100 @@ coast scatters a packed flyer formation's touchdowns (`legion_flyerfront`
 air-only 56 -> 171 px), so that is left for a separate decision. Computer
 players (owner type 3) get no default mission in retail; World gives every
 player one, as before. `transport_post_unload` covers every shipped carrier.
+
+## Melee never reaches a flyer in the air (icd + emulation, 2026-10-30, protocol 307)
+
+The owner asked whether Titans are supposed to hit flying things. In retail a
+melee weapon never strikes a flyer in the air, and strikes a landed one like
+any other unit. Every test reads the target's flight layer, unit `+0x130 & 3`
+(1 on the ground, 2 in the air, 0 off the map; World's `flightGroundMode`,
+with `embarked()` for 0), never its type. Emulated (`tools/re/check_melee_air.py`,
+synthetic units, the checks native, the enemy scan, damage and navigator
+calls hooked):
+
+- **In range.** `52b980` returns 0 for a layer-2 target before it boxes the
+  footprints (`52b98c..52b997`): two 2x2 bodies in contact are in range in
+  layers 0, 1 and 3, never in 2. The weapon update (`52ae90` -> `52ad60` ->
+  vtable +0xc) therefore never aims or swings a melee slot at a flyer in the
+  air, whoever gave it the target. It reaches the release (`530220`, SET 23)
+  only after aim start `52fe30` has passed the same test, so a swing begun on
+  a landed flyer that then takes off does not land (World's release sits
+  behind `meleeInRange` too).
+- **Picker.** `412620` asks the slot's handler (vtable +0x14, true only for
+  `MeleeWeapon`) and then keeps layer-1 candidates only (`412932..412945`);
+  the sweep's keep test does the same (`40fcb3..40fcc6`). Sweep and idle-scan
+  (`4d8370`) variants: a lone enemy in the air -> nothing, one in the air and
+  one on the ground -> the grounded one, a landed flyer -> taken; a plain
+  ranged slot takes the one in the air.
+- **Hit response.** `409a50`'s retaliation answers a melee victim's attacker
+  in layer 1 only (`409db4..409dcc`): an attacker in the air gets no `4d7de0`,
+  a grounded or landed one does.
+- **Orders.** `4de530` kind 3 gives a walker whose weapon (`519ac0`) is melee
+  `ATTACK_MELEE` whatever the target's layer: it tests the air bits only
+  against `toairweapon`/`noairweapon`. Attack_Melee's head (`404778..4047ee`)
+  returns 5 (the mission is removed) for a carried target (+0x114 bit 4) or
+  one in layer 0 or 2, at every dispatch, before any navigator or weapon
+  call; a grounded or landed target
+  gets the manual slot, its target and the chase circle (`519b70`, `51a700`,
+  `4d4da0`). So a right-click on a flyer in the air is taken and dropped at
+  once, and a chase ends when its target takes off. The cursor selector
+  (`0x4dd780`) does not special-case melee: the attack cursor shows.
+- **Splash.** A melee shot sits on the struck unit's origin (`52bac0`) and its
+  area pass (`529dc0`, see "Impact damage") measures to the unit boxes in 3D.
+  The Titan's Hammer (aoe 31, edge 0.7) striking a ground unit with a flyer
+  straight overhead hits the flyer only while its box is within 15 px of the
+  struck unit's height (fraction 1.0 at 0 px, 0.70 at 14, nothing from 15);
+  shipped flyers cruise 50 to 200 px up. `retailSplashUnits` already matched.
+
+World boxed the footprints in 2D only and filtered flyers by type. A Titan
+told to attack a Gryphon hovering over it hammered it (4073 HP in 10 s; 5703
+in Crusades), and an idle one 120 px away acquired it (`findTarget`, World's
+`4d8370`), walked under it and hit it. Of the 48 shipped mobile melee types
+(47 in Crusades) only the five whose weapon has `noairweapon` (the Knight,
+both wolves, the Giant Orm and the Giant Barracuda) left it alone; 38 others
+hammered it from under it (37 in Crusades), and so did the four gods. The
+sweep skipped every flyer type, so a landed one was never swept. In the
+owner's 0.9.12 replay (`titan-0912.takrep`, Crusades) a Titan struck flyers
+ten times: two Gryphons, an Iron Beak and a Parrot in the air, six landed
+Parrots.
+
+Since protocol 307 (no bump: 307 is unreleased): `meleeInRange` returns
+false for a target with `flightGroundMode == 2`; `tickCombat` drops the
+attack of a walker whose selected weapon is melee while its target is in the
+air or carried (Attack_Melee's head; World kept chasing a unit that boarded a
+transport); `findTarget` skips a target off the ground when
+the scan's weapon (`519ac0`) is melee; the sweep picker, its keep test and
+the retaliation read the layer instead of the type, so a landed flyer is a
+melee target (a Titan walking a move into a landed Gryphon swings at it). Our
+AI levels do not order a melee unit at a flyer in the air (the order would go
+at once): a defender leaves it alone, a strike unit goes for its site.
+`melee_air_test` (both balances) covers the Titan and every shipped mobile
+melee type: no kept order, no hit, no acquisition and no walk after a held
+Gryphon, ordered or idle; the landed Gryphon hit ordered, idle and by the
+sweep; the attack dropped on the tick it takes off and when its target
+boards a Roc; the Hammer's splash missing a Gryphon 150 px over its target.
+Before the change 16 of its checks failed (8 in each balance).
+
+Still deviating: World drops the attack on the tick the target is airborne,
+retail at Attack_Melee's next dispatch (stage 1 sleeps
+`rand(5)+rand(5)+4` ticks while the target is far); the weapon cannot swing
+meanwhile in either.
+
+**Air flags by layer, carried targets (2026-10-31, protocol 307).** Every
+`noairweapon` / `toairweapon` test in the binary reads the target's layer,
+not its type (static: the only `+0xc8` bit 0x4000/0x8000 tests are
+`530580`'s head, Attack_Chase `403d8f`, the hit response `409dd2`, the hover
+selector `4ddaae..4ddbf5`, the order resolver `4de7f7..4de817` and the mission
+at `4030d4`, each against `+0x130 & 3 == 2`): toairweapon takes a target in the
+air only, noairweapon never one, and a landed flyer is a ground target. World
+now tests `flightGroundMode` in `canAttackTarget` (which also gained the
+toairweapon refusal of `4de7f7`), the picker, the hit response, the
+fire-at-will scorer and the slot aim/fire gates; the Retail AI's enemy list
+(`ClassicBrain`) reports layer 2 from `flightGroundMode`. No shipped weapon has
+`toairweapon`; the Knight, the Grenadier and the wolves have `noairweapon` and
+now attack a landed Gryphon (`melee_air_test`). Attack_Chase's head
+(`403c9c..403cb0`) ends a walker's ranged attack on a carried target as
+Attack_Melee does; World now drops it too.
 
 ## Shooting at flyers: lead, hit band, and the held attacker (icd, 2026-10-14, protocol 262)
 
@@ -729,9 +972,10 @@ SweetSpot and fires once the led SweetSpot is within tolerance.
 World faced the target's centre in all three places. Since protocol 263,
 `queryWeaponAim` returns the request (`retailSlotFacing`), the gate checks it,
 an auto slot posts it as `faceRequest`, and an attacking pivoting ground unit
-brakes and turns to the request of its last aiming slot. `tickHoverAttack` rings
-the selected weapon's led SweetSpot (`retailLeadPoint`) and heads at the
-target's SweetSpot. Of the 202 unit types, 60 post requests and carry a weapon
+brakes and turns to the request of its last aiming slot. The hover attack
+(`tickAirToGroundHover` since protocol 307, which ports the whole of `41d820`:
+"Air traffic" below) rings the selected weapon's led SweetSpot
+(`retailLeadPoint`) and heads at the target's SweetSpot. Of the 202 unit types, 60 post requests and carry a weapon
 that is not melee, in both balances.
 
 Checked:
@@ -765,10 +1009,11 @@ Still deviating:
 - A request stays posted in retail until something clears it (`4dc0e0`), so a
   pivoting unit whose slots stop aiming keeps turning to the last point. World
   turns it to the target's centre.
-- Retail's hover-attack target controller holds its ring point fixed between
-  wakes: flag 0x80 makes `4e41d0` return the stored point. World moves the
-  point with the target. It also accepts at radius 4 where World's persistent
-  controller never accepts.
+- (Retail's hover-attack target controller holds its ring point fixed between
+  wakes: flag 0x80 makes `4e41d0` return the stored point; it posts 0x100
+  within radius 4 and stays. World moved the point with the target and never
+  posted; both are ported since protocol 307, with the hover mission, "Air
+  traffic" below.)
 
 A flyer attacking a flyer is no longer held facing its centre: it flies
 AirToAir (protocol 305, "AirToAir" below). Against a target that cannot fly it
@@ -903,14 +1148,14 @@ flyers on their runs: Gryphon 3/21, Wrath 3/18 (Crusades 22/65), Dirigible
 hit 72-75 of 72-75.
 
 Still deviating:
-- AirStrike (`41b5e0`) is not ported; no shipped weapon reaches it. (AirToAir,
-  for a flying target, is ported since protocol 305: next section.)
+- (AirStrike (`41b5e0`), for a selected weapon with the `dropped` key, is
+  ported since protocol 307: see "Air traffic" below. No shipped weapon
+  reaches it. AirToAir, for a flying target, is ported since protocol 305:
+  next section.)
 - (When the target is lost, AirToGround pushes `VTOL_SEEKATTACK` (`4192f0`):
   ported since protocol 305, see "VTOL_SeekAttack" below.)
-- The group check (`51d1e0`, VTOL_Move_Formation) is not ported. Neither is
-  stage 4's air-traffic step-out: unit +0x12a, a counter `51dc4b..` keeps
-  from the overlap list, pushes `VTOL_StepOut` at 5 or more, and World keeps no
-  such counter.
+- The group check (`51d1e0`, VTOL_Move_Formation) is not ported. (Stage 4's
+  air-traffic step-out is, since protocol 307: see "Air traffic" below.)
 - Off the map, World flies at the clamped sector's cruise height (retail: the
   off-map cell's height 0 plus cruisealt), and its velocity kernel keeps the
   vertical control that `4dab71` skips for an off-map unit.
@@ -1084,8 +1329,9 @@ Checked:
   (no damage before either).
 
 Not ported or still deviating:
-- The group check (`51d1e0`, VTOL_Move_Formation) and the air-traffic step-out
-  (unit +0x12a >= 5 pushes VTOL_StepOut), as for AirToGround.
+- The group check (`51d1e0`, VTOL_Move_Formation), as for AirToGround.
+  (Stage 2's air-traffic step-out is ported since protocol 307: see "Air
+  traffic" below.)
 - (A lost target pushes VTOL_SEEKATTACK (`41d654`): ported since protocol 305,
   next section.)
 - The retarget scan is World's target scan (`findTarget`, as the ground
@@ -1122,8 +1368,9 @@ right behind the attack, which then goes, so it runs at once.
 `4192f0`: a unit without a weapon (+0x130 `0x8000000`) clears its list (7);
 event `0x200` (its controller failed) ends the seek (5); off the map it flies
 800 px toward the map, radius 128, waiting on `0x700` (as AirToGround's
-stage 7). The step-out (+0x12a >= 5) and the group check `51d1e0` come next
-(not ported), then the group flag's rand(25). Stage 0 (`41972e`): with a
+stage 7). Past stage 0 the air-traffic step-out (+0x12a >= 5, ported since
+protocol 307: "Air traffic" below) and the group check `51d1e0` (not
+ported) come next, then the group flag's rand(25). Stage 0 (`41972e`): with a
 carried target, `4d7de0(unit, target, 0, 0, 0, 0)`; an attack put ahead
 clears the wait mask and returns 0, a refusal goes straight on to stage 1.
 Without one, a zero point becomes the unit's position, +0x4e = rand(0x10000)
@@ -1168,9 +1415,301 @@ Not ported or deviating:
 - The point's height is not kept (a point controller flies the cruise height).
 - Before the attack's first wake World takes the target's own position as
   the point.
-- AirToGroundHover (`41d820`) pushes the seek too (`41e301`, `41e35f`); not
-  ported, a hover attacker's attack ends.
-- The step-out and the group check, as for AirToGround.
+- (AirToGroundHover (`41d820`) pushes the seek too (`41e301`, `41e35f`):
+  ported since protocol 307, with the mission, "Air traffic" below.)
+- The group check, as for AirToGround.
+
+## Air traffic: flyers step out of a stack (icd + emulation, 2026-10-31, protocol 307)
+
+A flyer's secondary occupancy list (unit +0x117 count, -1 when it overflowed,
++0x118 seven 16-bit ids: "Air occupancy" above, `RetailAirOccupant`) holds the
+flyers whose footprint cells it shares. After the rebuild (`51da6a..51dbbe`)
+every live, not dying flyer of a player of type 1 or 2 steps a signed byte at
+unit +0x12a (`51dc4b..51dce4`): capped at 10, it rises by the list's count, by
+14 when the list overflowed, or falls by 2 with no overlap; a negative result
+is 0. Every flyer mission reads it at its wake and, at 5 or more (8 for a
+flying builder at work), pushes a step-out ahead of itself (`4d7750`) with a
+distance D in the step-out's +0x4e:
+
+| mission | where | pushes | D (x16 px) | then |
+|---|---|---|---|---|
+| VTOL_Standby `417350` | every wake | VTOL_StepOutStandby | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_LandIfCan `416cd0` | after the +0x66 / 0x200 exits | VTOL_StepOut | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_Move_Formation `417750` | past stage 0 | VTOL_StepOut (StepOutStandby under 0x4000000) | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_Move `417c20` | past stage 0 | VTOL_StepOut | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_Follow `418860` | past stage 0 | VTOL_StepOut | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_SeekAttack `4192f0` | past stage 0 | VTOL_StepOut | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_SeekGuard `4197d0` | every wake | VTOL_StepOut | rand(15) + footX | sleep 1, stage 0 |
+| VTOL_Patrol `419db0` | past stage 0 | VTOL_StepOut | rand(15) + footX | stage 1, sleep 1 |
+| VTOL_Pickup `41a680`, VTOL_Unload `41ae20` | stage 1 | VTOL_StepOut | rand(15) + footX | stage 1, sleep 1 |
+| AirToGround `41bf80` | stage 4 | VTOL_StepOut | rand(10) x 3 + footX | auto rescan first; stage 1, sleep 1 |
+| AirToAir `41ca50` | stage 2 | VTOL_StepOut | rand(15) + both footX | auto rescan first; sleep 1, stage 0 |
+| AirToGroundHover `41d820` | stage 4 | VTOL_StepOut | rand(10) x 3 + footX | below |
+| AirStrike `41b5e0` | stage 4 | VTOL_StepOut | rand(10) x 3 + footX | auto rescan first; wait cleared, stage 1, sleep 1 |
+| VTOL_MobileBuild `41ef00`, VTOL_HelpBuild `41f7f0`, VTOL_RepairUnit `420e60` | every wake, at 8 | VTOL_StepOutNoFormation | rand(15) + footX | sleep 1, StopBuilding (`51e4d0(8, 0)`), stage 0 |
+
+These are all seventeen readers of +0x12a in the icd. "Auto rescan" is
+`4d8370` (the idle scan, `412620` on the selected slot) and `4d7de0(unit,
+found, 0, 0, 1, 0)` on rand(2) == 0 for an auto attack (+0x52): a new attack
+put ahead ends the mission. The three step-outs share handler `4214b0` and
+differ only in their registry flags (0x1000000, 0x5000000, 0). Off the map it
+flies 800 px back toward the map (radius 128) and ends. Stage 0: eight octant
+scores round the flyer's heading (ahead 100, 45 degrees off 0, abeam 100, 135
+degrees 200, behind 300, each plus rand(80)), 100 more for every octant a
+live listed flyer lies ahead of (`41d780`), the first lowest wins; the point is
+D - rand(D/4) + rand(D/4) px out at a random angle within that octant, a point
+controller (`4e40e0`, flags 0x30) of radius (rand(5) + 5) x 16, waiting on
+0x700. Stage 1 (woken by the controller) ends it. The mission behind it runs
+again from the state it set. To the Retail AI the step-out is the unit's
+first mission, read from its registry row as for any other: class 14 with
+the step-out's own flags (`0x5ebee0` / `0x5ebef9` / `0x5ebf12`), not a
+move's `0x3000400`, so a wave does not take a stepping-out flyer for one
+moving to a goal (`ClassicBrain`'s mission summary). That holds for a
+flying builder stepping out of its job too: World keeps its site
+(`buildSiteId`) while the step-out leads, and the summary reads the step-out
+(class 14, flags 0), not a build. Our own AI levels (`waveFree`, `idle`, the
+stalled-builder watch) and the Monarch's self-defence look past a leading
+step-out to the order behind it, so a Drake stepping out of its hover is not
+taken for a free fighter, nor an idle flyer stepping out for a busy one.
+
+**AirToGroundHover** (`41d820`) is ported whole since then
+(`retailAirToGroundHover`), where World had ported only stage 3's ring
+point. Head: events 0x28, a lost target or a `dropped` weapon go to `41e28f`
+(VTOL_SEEKATTACK as AirToAir's exit: no look at the unit's own state, the
+attack last, not Hold Fire); off the map, 800 px back (0x700); 0x40 restarts
+after a tick; the group check `51d1e0(unit, 1, 5)`: out of its formation,
+once flagged (0x8000000), it may leave on rand(2) == 0 (return 8, 50c480 first
+unless the next mission moves with the group), else it flags itself and pushes
+VTOL_Move_Formation (+0x56 = -4); back in, rand(25) == 0 clears the flag.
+Stage 0 takes off and zeroes +0x4e; stage 1 (the target's position in +0x22,
+every slot automatic) installs a point controller of radius D + 144 on it, wait
+0x768 and sleep 15, while the flyer is more than D + 160 whole pixels away;
+stage 2 makes the selected slot manual on the target and reads its led
+SweetSpot; stage 3 reads it again, draws the ring point (41de5d, as before),
+installs the target controller there (`4e4140`: flags 0xa3, radius 4, the
+attack altitude over the ground under the point: a fixed point that posts
+0x100 within its radius and stays, headed at the target's SweetSpot) and
+waits on 0xe70768 with a sleep of 15 + rand(15). Stage 4 (that wake: the
+sleep, the controller, a shot fired (0x70000) or a shot's outcome
+(0xe00000)): congested, it counts the step-out in +0x4e, rescans an auto
+attack, pushes VTOL_StepOut (D = (rand(10) x 3 + footX) x 16) and ends the
+attack past rand(5) + rand(5) + 1 step-outs, else goes back to stage 1 a tick
+after the step-out; otherwise a wasted shot (0xe00000) on rand(2) == 0
+against a target without a mover or one standing still (+0x130 & 0xc) sends
+it to stage 5, a random point of the ring (rand(8) + D - 3 px at angle
+rand(0x10000)), and anything else back to stage 3 after a tick.
+
+**Shot outcome** (`4099e0`, from `529dc0` and `52a460`): the area pass sums
+each recipient's damage callback (52a330's amount, or a status class's
+answer) by the recipient's player against the shot's (+0xfd vs +0x92); the
+direct hit takes its one recipient's, as a word. The shooter (+0x7c) gets
+0x1000000 when the other side took more than twice what its own did, else
+0x200000 << slot (the shot's +0xd8 & 0xc, the WeaponRecord's slot). Only
+AirToGroundHover and the ground Attack_Chase (`403bb0`, mask 0x1f40068, not
+ported) wait on these.
+
+Ours: `retailairtraffic.h` (`retailAirTrafficStep`, `retailStepOutGoal`,
+`retailVtolStepOut`, and `retailAirTrafficCheck`: the plain check of the ten
+missions that share it, `RetailTrafficMission`), `retailAirToGroundHover` and
+`retailAirStrike` in `retailairattack.h`, `retailVtolSeekGuard` in
+`retailairseek.h`, and the checks in `retailAirToGround`, `retailAirToAir`
+and `retailVtolSeekAttack`. VTOL_Standby, VTOL_LandIfCan, VTOL_Move(_Formation),
+VTOL_Patrol, VTOL_Follow and the flying builders' jobs call
+`retailAirTrafficCheck`; VTOL_Pickup's and VTOL_Unload's keep theirs inline
+in their stage 1. `Unit::airTraffic` is stepped in
+`World::updateAirOccupancy` after the insert pass and hashed. A step-out is
+its own order at the front (`Order::stepOut`, D in `airRunCount`), pushed
+after the pushing mission's dispatch (`World::pushStepOut`) and run at once
+(`tickStepOutMission`), flown by `flyMissionGoal`; the mission behind it runs
+again when it ends. While it leads, the attack behind it keeps firing its
+manual slots at its target (`fireBehindStepOut`: the weapon update `52ae90`
+fires whatever mission leads). The hover runs on the attack order
+(`tickAirToGroundHover`, after the order's weapons fire) and flies with
+`flyHoverGoal`. `applyHit` sums the damage per side and posts the outcome to
+the shot's slot for the shots World resolves from a slot (instant and melee
+shots, projectiles, flames, bombs).
+
+**Fight-move legs, patrols and rally steps (protocol 307).** Retail has
+no fight-move mission (none of the registry's 77 rows): a flyer's leg of one
+is VTOL_Move (`Order::flightMoveMission` kept beside `attackMove`), the
+move's mission with its air-traffic check, its coarse and refining
+controllers and, for a Ctrl group in Retail mode, its group checks;
+World's target acquisition still puts its attacks ahead of it. Every
+flyer's patrol is VTOL_Patrol, armed or a builder (`plainFlightPatrol`;
+until now only an unarmed flyer that builds nothing ran it): its stage-2
+target scan and job search are World's acquisition and `tickPatrolRepair`. A
+patrol from idle gives its return leg the anchor's flags (0x1000412) and the
+outbound leg 0x4000, so VTOL_Patrol does not append a second anchor and a
+Shift-patrol joins the loop at its tail, as a ground patrol's does (before,
+an unarmed flyer lapped start, B, start, C). A flyer output's rally steps are
+VTOL_Move and VTOL_Patrol too: GetBuilt resolves each QMove and QPatrol for
+the output (`4de530` actions 2 and 9, `0x4022ec` / `0x402319`); they used to
+fly with no mission. The group spread (`0x5214b0`, "Group move spread"
+below) reads the resolved mission's flag 0x2 at +0x11, which VTOL_Move
+carries, so a fight-move's flyers keep their offsets as on a move: the client
+(`gameview_hud.cpp`), `OrderShape::FlyerOffsets` (now valid for `AttackMove`)
+and the tools' mirror (`legion_issue_selection.h`). Before, every flyer of a
+fight-move flew to the clicked point and piled onto it. Legion's flight
+stations keep their lanes, as before.
+
+**VTOL_SeekGuard** (`4197d0`, `retailVtolSeekGuard`), ported since then.
+VTOL_Follow's lost-ward exit (`4191d7`): with its ward gone, dead or dying
+(or events 0x208), the guard, when it is the last mission (+0x66 is 0),
+inserts VTOL_SEEKGUARD (`4d77b0`) carrying its point (+0x22, the ward's
+position read at each look past the head, `418b72`) and the ward when alive
+and not dying, and ends. The seek: event 0x200 ends it; off the map, 800 px
+back; the air-traffic check at every wake, stage 0 included; the group check
+`51d1e0(unit, 1, 4)` and its flag's rand(10); stage 0 takes the flyer's own
+position for a zero point and draws the orbit angle rand(0x10000); stage 1
+looks for allied units that cannot fly within its sightdistance (`509ac0`
+with the filter `421910`: alive, not dying, allied to its owner, not a flyer,
+not itself; structures included) and offers the first a guard (`4de530`
+action 7: VTOL_FOLLOW for a type with `canguard`, nothing otherwise): a guard
+goes ahead (the seek sleeps 15 + rand(30) behind it), no guard ends the seek
+(8). Found nothing: woken by its controller the angle steps back 0x4000 +
+rand(0x2000); a point controller (radius 128) at the point less (sin,
+cos)(angle) x (the selected weapon's range + 160 when armed, else 160), a
+sleep of 7 + rand(7) and a wait on 0x718. World inserted nothing: the guard
+just ended and the flyer stood down. Ours: `World::seekLostWard` (from
+`tickCombat`'s guard), `tickSeekGuard`, `Order::seekGuard`; the guard keeps
+the ward's position in `attackPointX/Z` at each look (`tickFlyingGuard`).
+
+**The flying builders** (VTOL_MobileBuild `41ef00`, VTOL_HelpBuild `41f7f0`,
+VTOL_RepairUnit `420e60`) check at every wake, at 8, before their stages:
+VTOL_StepOutNoFormation goes ahead, a tick's sleep, StopBuilding
+(`51e4d0(8, 0)`: the StopBuilding script when the build bit was set) and
+stage 0, which takes off again and approaches to 2 x builddistance; a
+MobileBuild whose site already stands turns into VTOL_HelpBuild at its stage
+2 (`41f2d6`). Their wakes: the first dispatch, the approach's controller
+events (no timer), and every tick of the work (each work stage sleeps one).
+World runs these jobs as an approach and a work stage, not as stages, so ours
+(`World::flyingJobTraffic`) runs the check at the matching ticks:
+`prepareBuildApproach`'s stage 0 and its arrival (a MobileBuild before its
+site stands), `tickConstruction`'s first approach tick and every work tick
+(a flyer's help or build on a standing site), `tickFlyingRepair`'s approach
+install and every work tick. A help or build restarts from a help leg on the
+site (`restartFlyingHelp`: the approach goal at 2 x builddistance); a repair
+from its approach. A job waits while the step-out leads (its mission is not
+the head). The Zhon conjurers' production is BuildingBuild in retail, which
+has no check.
+
+**AirStrike** (`41b5e0`, `retailAirStrike`), ported since then: the attack of
+a flyer whose selected weapon has the `dropped` key (WeaponType +0xc8 bit
+0x20; mods only, no shipped weapon sets it) on a target that cannot fly,
+before the hover and the attack runs (`4de530`'s order); World flew
+AirToGround. Head: no weapon, 7; events 0x2a, a dead, dying, carried or
+off-map target, or a selected weapon without `dropped`: the lost-target exit
+(`41be1b`: VTOL_SEEKATTACK inserted at the point when the flyer is alive and
+not dying, the strike is last and not on Hold Fire, carrying the target when
+alive and not dying; 5); a strike without a target whose flags keep 0x200:
+the seek at the flyer's own position when last, 5; event 0x40: a tick's
+sleep, stage 0; the target's position becomes the point; a leash (+0x56)
+ends it once the flyer's whole-pixel distance from its origin reaches it;
+the group check (`51d1e0(unit, 1, 5)`) and its flag's rand(25). Stage 0
+takes off; stage 1 makes every slot automatic and the selected one manual
+and, within 480 px of the point (its 16.16 distance through the x87 and
+`_ftol`), installs a pass 2240 px from the flyer through the point (radius
+960, wait 0x742); stage 2 a point half the distance off at rand(0x4000) -
+0x2000 round the bearing (radius 480, wait 0x768); stage 3 goes on; stage 4 is the air-traffic check (table), else on a
+controller event stage 5, else the release ring: trunc(sqrt(2 cruisealt /
+(gravity x 2^-16)) x 30 x the navigator's +0x22) + attackrunlength + 1 px,
+round the target (`4e3f70`, the point controller following it) or the point,
+a tick's sleep and a wait on 0x768; stage 5 aims the selected slot at the
+point (`51a770`) and flies attackrunlength + 960 px through it (radius 960);
+stage 6 clears the slot (`51a7f0`) and flies 1440 px ahead on its heading
+(radius 128), then stage 3. The navigator's +0x22 is the high word of its
+destination's z step (+0x18 is the step, `524af0`): what the binary reads.
+Ours: `World::tickAirStrike` from `tickCombat`.
+
+Checked:
+- `tools/re/check_air_traffic.py` runs the counter step natively for all
+  65,536 counter/overlap pairs (and its three gates), `4214b0` on 3,000
+  random states (429 off the map, 1,604 at stage 0, 655 at stage 1, 312
+  past it; up to seven listed flyers, live and dead) and `41d820` on 8,000
+  (1,185 off the map, 534 / 1,099 / 518 / 1,058 / 2,033 / 1,070 at stages
+  0-5, 503 past them; 1,549 lost targets, 186 leaves, 609 formation pushes,
+  1,139 approaches, 1,358 ring points, 173 rescans, 728 step-outs, 472
+  give-ups), against `retail_motion_test --air-traffic`, `--step-out` and
+  `--air-hover`: every result, stage, wait mask, deadline, pending and flag
+  word, count, point, controller, radius, slot call, push, D, random draw and
+  generator state. `check_air_attack_run.py`, `check_air_to_air.py` and
+  `check_air_seek_attack.py` now run with the counter below, at and above 5
+  (AirToGround: 90 step-outs in 6,000 calls; AirToAir: 2,188 in 12,000;
+  VTOL_SeekAttack: 947 in 6,000), and the last also runs AirToGroundHover's
+  lost-target exit (1,932 of its 6,000 exits).
+- The same script runs `retailAirTrafficCheck` against each of its ten
+  missions' own handlers (`--traffic-check`): 16,000 calls (1,600 each, the
+  counter at -4..13 and the byte's extremes, every stage, the push built or
+  not), each handler called past its head's exits and stopped where it goes
+  on without a step-out: every result, stage, wait mask, deadline, flag word,
+  step-out name, D, push, StopBuilding, draw and generator state agree
+  (VTOL_SeekGuard's check runs at every wake, stage 0 included, where
+  `retailairtraffic.h` had it past stage 0). `4197d0` on 8,000 random states (1,182 off the map,
+  1,968 / 3,851 at stages 0 / 1, 999 past them; 1,931 orbit points, 1,606
+  searches, 603 guards offered, 441 put ahead, 2,658 step-outs, 162 ended)
+  against `--air-seek-guard`, and `41b5e0` on 12,000 (every stage; 2,037 point
+  and 245 following controllers, 560 aims, 541 step-outs, 2,992 seeks)
+  against `--air-strike`, with the x87 release ring and `_ftol` native. Five
+  planted bugs fail them: the release ring's 30 as 31, the strike's check at
+  6, its half distance as a shift, the seek's check past stage 0 only, its
+  sleep one tick longer.
+- `air_traffic_test` (data, both modes, the air-stack-*.scn fixtures, the
+  target topped up): the airborne Drake-ticks near the fight that share
+  footprint cells with another flyer, per mille. On protocol 306: 992 (five
+  Drakes on an Aramon Barracks), 980 (two groups of five), 282 (three Drakes
+  on a patrolling Spyhawk), 277 (six Drakes moved to one point). Now 44, 58,
+  86 and 141, the same in both modes; the Drakes still hurt the target
+  (36,811 -> 34,837 and 62,254 -> 57,146 hit points on the Barracks, 5,605 ->
+  9,251 on the Spyhawk). The test fails on 306 (eight of its checks).
+- The rest of the port adds `air_traffic_test` cases (new fixtures, both
+  modes alike), 20 of whose checks fail on its parent: six Drakes
+  fight-moved to one point (436 -> 141 per mille, as the move), five
+  fight-moved from one cell with a click each (298 -> 44; no step-out -> 10),
+  five armed Drakes on one patrol (245 -> 49; none -> 19), three Flying
+  Builders repairing one Keep (361 -> 78; none -> 14; the Keep still mended)
+  and building one (99 -> 71; none -> 7; still built), three Drakes whose
+  guarded Goblin dies inside a ring of Goblins (all three stood down; each
+  now guards one of the ring) and the five Drakes on the Barracks given a
+  `dropped` weapon (no pass -> 11 passes turned). The duel's Spyhawk no
+  longer appends a second anchor to its patrol, so that fight moves: 86 ->
+  75 per mille, 7,461 hit points left.
+- `retail_motion_test`'s stacked landing (twelve flyers sent to land on one
+  spot) now lands them apart in Retail too: each steps out of the stack from
+  VTOL_Standby or VTOL_LandIfCan before it searches for a spot (the landing
+  test itself, `509400`, still lets a lone flyer touch down on a ground unit
+  at an unexplored site).
+
+Not ported or still deviating:
+- The group check (`51d1e0`) is ported for AirToGroundHover only (with
+  VTOL_Move's), not for AirToGround, AirToAir, VTOL_SeekAttack,
+  VTOL_SeekGuard or AirStrike: those fly as if in formation (only the flag's
+  clearing draw runs, rand(10) for the seek, rand(25) for the strike).
+- The flying builders' jobs keep World's approach and work stage: the check
+  runs at the ticks that are retail's wakes (above), and the job restarts
+  from World's approach (a help leg accepting inside 2 x builddistance, or
+  the repair's own approach) rather than from a retail stage 0.
+- VTOL_SeekGuard's search takes the lowest unit id within a 128-px sector:
+  retail walks each sector's own unit list, whose order World does not keep.
+- AirStrike: World's attack always has a unit, so its lost-target exits are
+  `tickCombat`'s (`seekLostTarget`) before the dispatch; stage 5 aims the slot
+  at the target unit where `51a770` aims at the point (the target's position
+  at that wake). AirToAir still takes a `dropped` weapon against a flyer
+  (above).
+- A step-out runs its first wake as soon as it is pushed, as retail's
+  dispatcher runs a new head at once. One that ends hands over in the same
+  tick to the missions World dispatches after it (VTOL_Move, VTOL_Patrol, the
+  attacks), as retail does, but to VTOL_Standby and VTOL_LandIfCan, which
+  World dispatches before it, a tick later.
+- Shots World ends without an impact (an arrow landing with no
+  areaofeffect), storms, pending area effects and death blasts post no
+  outcome.
+- Legion's flight stations (Legion's design, not retail: each flyer of a
+  Legion move holds its own lane over the ground) take the place of the
+  check on VTOL_Move and VTOL_Patrol: a flyer holding a station does not
+  step out of its lane (that broke `legion_mixedformation` and
+  `legion_flyerfront`). Its standby and landing still step out, so a Legion
+  formation's flyers take longer to land (`legion_flyerfront` waits 900
+  ticks for the last landing instead of 150).
 
 ## SweetSpot is the drawn piece bounds (icd + live capture, 2026-10-24, protocol 295)
 
@@ -1651,10 +2190,14 @@ mode 13 falls to the default entries of both mode tables (no command);
 `0x519cf0` tests it but has no caller. There is no capture by contact, timer
 or low-HP rule. A unit changes sides only through the mind-control impact
 `0x52d8d0` and its roll `0x52da10`, whose gates are, in order: not the
-caster's side, `[+8]` set, not a commander (`0x40000`), **construction
-remaining `+0x108` not above 0**, not in a transport, not `cantbecaptured`
-(`0x100000`); then `min(99,(level+16)*5)` scaled by the area falloff against
-`rand()%100`, and on success `0x514da0`.
+caster's player, `[+8]` set (the unit's mover, so no building), not a
+commander (`0x40000`), **construction remaining `+0x108` not above 0**, not in
+a transport, not `cantbecaptured` (`0x100000`); then `min(99,(level+16)*5)`
+scaled by the area falloff against a CRT `rand()` scaled to 0..99, and on
+success `0x514da0`. Emulated with the stone and freeze callbacks in
+"Mind control, stone and freeze fly" below, which corrects two readings
+here: the first gate compares players, not alliances, and the roll is
+`rand()*100/32768` (`_allmul`, `_alldiv`), not `rand()%100`.
 
 `0x514da0` creates a new object for the new owner (`0x512060`, same type and
 position) and copies onto it the HP raw (`0x514f8a/514f94`, no healing),
@@ -1673,12 +2216,109 @@ ordinary mind-control caster, `captureUnit` keeps HP and resets `xp` /
 `veteran` to a fresh unit's (the scenario's rank for the type, as `spawn`),
 and `canCaptureTarget` and the roll refuse `underConstruction`. Deviations
 kept: the unit keeps its id (and its mana, status timers and cloak) rather
-than becoming a new object; `scenarioTransfer`, which also goes through
-`0x514da0`, still keeps veterancy; and a mind-control slot does not select an
-unfinished unit (`retailSelectTarget`, `sweepKeepsTarget`), where retail's
-selection would pick it and waste the charm on the roll. Probes:
+than becoming a new object; and `scenarioTransfer`, which also goes through
+`0x514da0`, still keeps veterancy. A mind-control slot does not select an
+unfinished unit (`retailSelectTarget`, `sweepKeepsTarget`); this was listed
+as a deviation, but retail's picker skips one too (`4128ca..4128db`, see
+below). Probes:
 `~/tak-tmp/retail-checks/capture/` (outside the repo). Test:
 `tools/capture_combat_test.cpp`.
+
+## Mind control, stone and freeze fly (icd, emulated, 2026-10-30)
+
+The weapon parser picks the Line-of-Sight class by subtype with `_stricmp`
+(`530935..530b16`): `lightning`, `fire`, `bluefire`, `dieselflame`, then
+`mindcontrol` -> `LineOfSightMindControl` (vtable `5f3a90`), `turntostone` ->
+`LineOfSightTurnToStone` (`5f3a5c`), `turntofrozen` ->
+`LineOfSightTurnToFrozen` (`5f3a28`); any other subtype, empty or not, is the
+plain class (`5f39f4`, `530afd`). The three status classes share the plain
+class's aim (`52c4e0`), init (`52c540`) and draw (`52c8c0`): their shot leaves
+the QueryWeapon muzzle on the stored aim angles plus the body heading, starts
+on the release tick plus one (plus `nimbustime` for a nimbus caster with
+nimbus art, which `52c540` also starts), expires one range of travel later
+(see "Live ordinary straight-shot integration" in the transport audit), and is
+drawn at its real position like any straight shot. Only the update differs
+(`52d8d0`, `52db40`, `52dda0`; `tools/re/probe_los_status.py` runs the three
+natively over 1,080 timelines against the model World ports):
+
+- **Flight.** From the tick after activation, every substep turns the shot by
+  its spin, steps its wrapped XYZ and calls the collision `52a4d0`. The first
+  code 2 calls `529c10(shot, struck unit, 1, 0, callback)` and the shot is
+  gone (the third argument retires it). On its expiry tick the shot still
+  flies its substeps, then retires; the plain class does not move on that
+  tick. Activation adds no body heading to the shot's yaw (the plain class
+  does; only a model would show it, and no shipped status shot has one).
+- **Caster.** The mind-control update checks its caster on every update: dead
+  or dying, the shot is retired after that update's flight, which can still
+  land. Stone and freeze check only up to activation, like the plain class:
+  once flying, they land after their caster has died. (A caster that changes
+  sides dies too: `514da0` kills the old object.)
+- **What it strikes.** `52a4d0` stops on any unit of another player whose
+  collision quad the shot enters, an ally's included, or on ground and
+  scenery. The shot is aimed once, at the target's led SweetSpot, and never
+  follows it: a target that moved, died or changed sides is missed and the
+  shot flies on to its expiry, striking whatever stands behind.
+- **Impact.** `529c10` with its effects flag clear plays the hit sound
+  (`50a7d0` / `50b140`: `soundhit`, or `soundhitclass` by the struck body;
+  the water sound in water) but creates no explosion (`492c80` runs only with
+  the flag set). A struck unit (none of these weapons has an `areaofeffect`
+  above 16) goes to the callback with scale 1.0 (`52a460`) instead of the
+  damage `52a330`; with no unit struck, the area pass (radius `aoe/2` = 0)
+  reaches no unit and treats scenery as any shot does.
+
+The callbacks are `52da10` (charm; the Area Mind Control's too, pushed at
+`52f041`), `52dca0` (stone) and `52df00` (freeze; the Area Freeze's too,
+`52f3a1`); the probe runs them over 20,160 cases. None deals damage: the
+Crusades freeze weapons' 450 is a targeting value only. Each returns 0 for a
+refused unit, 1 for a failed roll and 2 for a spell that takes:
+
+- **Charm:** the caster's player (unit `+0xfd` against the shot's `+0x92`:
+  players, so an ally's unit is not spared), no mover (`+8`, made at birth
+  only for `bmcode` 1, `511fcf`: no building), a commander (`+0x264`
+  `0x40000`), construction left (`+0x108` above 0), in a transport (`+0xa8`),
+  `cantbecaptured` (`+0x264` `0x100000`) refuse. Then the roll; on success
+  `514da0` (which leaves a dying unit alone and changes nothing when the new
+  owner's object cannot be made) and the weapon's explosion class on the
+  unit (`492c80(unit +0x68, +0x6c)`).
+- **Stone / freeze:** the caster's player, no mover, a commander,
+  `cantbestoned` / `cantbefrozen` (`+0x268` bit 2 / bit 4, `4c0cff` /
+  `4c0d60`), construction left refuse. Then the roll; on success
+  `51a140(caster, unit, 1, 14 / 15)`, whose `51a240` skips a dying unit and
+  otherwise runs the hit response `409a50`, sets the death type and the last
+  hitter (only while the caster's object lives) and zeroes HP at `51a61a`:
+  a statue. Then the explosion as for the charm.
+- **Roll:** chance `min(99, (getLevel + 16) * 5)` (80 for a green unit, 99
+  from level 4), one CRT `rand()` scaled to 0..99 by `rand()*100/32768`
+  (`_allmul 5d3c60`, `_alldiv 5d4470`), which must fall below
+  `(int)(chance * scale)` (the x87 product, `_ftol`).
+
+The target picker (`412620`, `4127eb..4128db`) asks the same classes (vtable
+`+0x1c` stone, `+0x20` freeze, `+0x24` charm) and skips a unit immune to the
+spell, not alive or dying, or with construction left; it tests neither
+Monarchs, buildings nor paralysis. A Basilisk or a Mechanic set on a Monarch
+or a building spends its shots for nothing.
+
+**Engine (protocol 306).** `Weapon::losStatus` names the three classes
+(any other subtype is the plain class, `Weapon::straight`); `fire` launches
+them through the straight-shot launch, and `tickStraightProjectiles` flies
+them by the updates above; `applyHit`'s `hurt` runs the callbacks for these
+and the two area spells (`World::retailStatusRoll` draws the CRT stream the
+damage spread uses); `retailSelectTarget` has the picker's filters. `HitFx`
+marks a status impact `explosion = false` and adds a silent event with the
+explosion on a unit a spell takes; the viewer draws the shot as a straight
+shot (the faction nimbus starts on its caster) and no longer adds its old
+beam. Before: the three spells took their target on the release tick while
+the viewer drew a ball flying to it for up to 1.5 s; stone and freeze dealt
+the weapon's damage (to immune units too), never failed and took buildings and
+Monarchs (every shipped Monarch is immune anyway); the charm took buildings
+whose category its table did not zero (walls, the Trebuchet, the Veruna
+Mortar), rolled on the game stream and spared allies; the picker skipped
+paralyzed units and not unfinished ones for stone and freeze. Still
+deviating: World updates its flames and straight shots (these three
+included) before its other projectiles, where retail runs one pool in
+creation order (`52afd0`), so in a tick with a status roll and another shot's
+damage spread the two CRT draws can come in the other order; and a charmed
+unit keeps its id (see above). Test: `tools/los_status_flight_test.cpp`.
 
 ## The Crusades balance swaps only the unit roster (icd, 2026-10-26)
 
@@ -3865,12 +4505,13 @@ with no mismatch.
 
 Ours (protocol 305): **flyers** take this rule exactly
 (`src/sim/retailflyerspread.h`, `FlyerGroupCentre`), on a right-click move and
-on the armed MOVE and PATROL buttons (a fight-move has no flyer mission with
-the bit: everyone takes the point). The client computes it from its frame in
-16.16 integers; a Legion net game sends the click as an explicit order --
-`OrderShape::Offsets` (right-click) or `OrderShape::FlyerOffsets` (armed
-move/patrol) -- and `applySelectionOrder` gives the flyers the same goals from
-the hashed positions. **Ground units keep our own rule** (a deliberate
+on the armed MOVE and PATROL buttons and, since protocol 307, on a
+fight-move (its flyer legs are VTOL_Move, which has the bit: see "Air
+traffic"; before, everyone took the point). The client computes it from its
+frame in 16.16 integers; a Legion net game sends the click as an explicit
+order -- `OrderShape::Offsets` (right-click) or `OrderShape::FlyerOffsets`
+(armed move/patrol, fight-move) -- and `applySelectionOrder` gives the flyers
+the same goals from the hashed positions. **Ground units keep our own rule** (a deliberate
 difference): a right-click gives each the click plus its offset from the
 selection centroid clamped to +-60 px per axis (Legion: the click itself for
 the surface movers it plans, `legionSharedClick`), and armed MOVE/PATROL give
@@ -4218,8 +4859,11 @@ differences are in [the 0.9.7 notes](release-0.9.7-notes.md).
   active weapon's range + 160 when armed, the angle stepping back
   0x4000 + rand(0x2000) on each arrival, looking again after 15 ticks. Ours:
   `World::tickFlyingGuard`. The guarded unit's attacker check
-  (event 0x10) is ported since protocol 302 (next section). Not ported: the landed step-out (+0x12a >= 5), the stage-2 attack scan
-  (`0x51d1e0`, whose work our target acquisition does) and the optional leash.
+  (event 0x10) is ported since protocol 302 (next section), its air-traffic
+  step-out and its lost ward (`0x4191d7`: the last mission goes on as
+  VTOL_SeekGuard round the guarded unit's last position) since protocol 307
+  ("Air traffic"). Not ported: the group check (`0x51d1e0(unit, 1, 4)`, which
+  this note used to call an attack scan) and the optional leash.
   Our draws come from the sim's RNG over the same ranges, not retail's stream.
 
 ## A guard answers its guarded unit's attacker (icd, 2026-10-27)
@@ -4260,8 +4904,8 @@ Ours (protocol 302): `World::retailHitResponse` stamps the victim's
 guard, `tickFlyingGuard` as event `0x10` in the wait mask), and
 `World::guardDefend` takes `lastHitBy` as `+0xf8`. The attack is
 `retailIssueAutoAttack(..., forced)`, not an auto target, so it chases until
-the attacker dies, and the guard order under it resumes. The step-out and the
-attack scan (`0x51d1e0`) stay unported; the latter is our target acquisition.
+the attacker dies, and the guard order under it resumes. The attack scan
+(`0x51d1e0`) stays unported; it is our target acquisition.
 
 ## Helping and repairing on the ground: the approach (icd, 2026-10-30, protocol 305)
 

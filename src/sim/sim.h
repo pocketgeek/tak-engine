@@ -21,6 +21,7 @@
 #include "sim/retailflight.h"
 #include "sim/retailairseek.h"
 #include "sim/retailairtoair.h"
+#include "sim/retailairtraffic.h"
 #include "sim/retailballistic.h"
 #include "sim/retailwind.h"
 #include "sim/retailweapon.h"
@@ -97,8 +98,17 @@ struct Weapon {
     bool ballistic = false;  // FBI weapon type = Ballistic (lobbed arc, not flat)
     // Line-of-Sight is a trajectory family; its subtypes have distinct updates.
     bool beam = false;
-    bool straight = false; // Ordinary LOS class, without a specialized subtype.
+    bool straight = false; // Ordinary LOS class: any subtype the classes below do not claim.
     bool lightning = false;
+    // The Line-of-Sight status classes (subtype mindcontrol, turntostone,
+    // turntofrozen: LineOfSightMindControl / TurnToStone / TurnToFrozen,
+    // vtables 5f3a90 / 5f3a5c / 5f3a28). They launch and draw as the ordinary
+    // straight shot (52c540 / 52c8c0) but fly with their own update (52d8d0 /
+    // 52db40 / 52dda0), and the unit a shot strikes goes to the class's impact
+    // callback (52da10 / 52dca0 / 52df00) instead of the damage. Retail's
+    // parser (530935..530b16) gives every other subtype the plain class.
+    enum class LosStatus : uint8_t { None, MindControl, Stone, Frozen };
+    LosStatus losStatus = LosStatus::None;
     std::string hwEffectName;
     std::shared_ptr<const RetailLightningDefinition> lightningEffect;
     std::array<uint16_t,3> shotSpin{}; // roll, heading, pitch per collision substep.
@@ -849,16 +859,38 @@ struct alignas(64) Order {
     // leg keeps where its target stood when the approach was installed
     // (mission +0x22), for the look that re-aims it once that cell changes.
     Fixed buildX, buildZ;
-    uint32_t hoverAttackRefresh = 0;
+    // A step-out (VTOL_StepOut, VTOL_StepOutStandby or
+    // VTOL_StepOutNoFormation: RetailStepOut, 4214b0) that a flyer mission
+    // pushed ahead of itself when the air-traffic counter told it it was in a
+    // stack (retailVtolStepOut, World::tickStepOutMission). It runs on
+    // `mission`, its distance D (mission +0x4e) in airRunCount, its point in
+    // x/z and its controller in flightGoal. 0 on every other order. Hashed
+    // with a tag when set.
+    uint8_t stepOut = 0;
+    // VTOL_SeekGuard (4197d0, tickSeekGuard): what a flyer's guard becomes when
+    // its guarded unit is lost and the guard was its last order (VTOL_Follow's
+    // 4191d7, seekLostWard). It circles x/z, the guarded unit's position at
+    // the guard's last look (mission +0x22, kept in attackPointX/Z on the
+    // guard), on `mission`, its orbit angle in guardOrbitAngle (+0x4e), and
+    // guards the first allied ground unit it finds. targetId stays 0. In the
+    // pad after stepOut. Hashed with a tag.
+    bool seekGuard = false;
+    // AirStrike's stage-4 controller (4e3f70, tickAirStrike) follows the
+    // attack's target: flightGoal's point is the target's, every tick. In the
+    // same pad. Hashed when set.
+    bool strikeFollow = false;
     // The attack mission's point (mission +0x22) on a flyer's attack order:
-    // the target's position as AirToGroundHover last read it (every tick),
-    // as AirToGround last read it (41c13c, each wake) or AirToAir's led
-    // SweetSpot (51aa50, each stage-2 wake). A lost target's VTOL_SEEKATTACK
-    // circles it (retailAirLostTarget). Zero until first read.
+    // the target's position or the selected slot's led SweetSpot as
+    // AirToGroundHover last read it (stages 0-3), as AirToGround last read it
+    // (41c13c, each wake) or AirToAir's led SweetSpot (51aa50, each stage-2
+    // wake). A lost target's VTOL_SEEKATTACK circles it
+    // (retailAirLostTarget). Zero until first read.
     Fixed attackPointX, attackPointZ;
-    // AirToGround's mission +0x4e (retailAirToGround, which runs on
-    // `mission`): 1 once a run has brought the flyer within half its range
-    // of the target; stage 7 counts wakes off the map on it.
+    // The attack mission's +0x4e (retailAirToGround, retailAirToGroundHover,
+    // which run on `mission`): AirToGround's is 1 once a run has brought the
+    // flyer within half its range of the target, and its stage 7 counts
+    // wakes off the map on it; AirToGroundHover's counts its step-outs. A
+    // step-out order's D.
     int32_t airRunCount = 0;
     // A ground attack (Attack_Chase, 403bb0; tickCombat): whether the unit
     // has walked toward its target under this order (`attackChased`, beside
@@ -1293,6 +1325,11 @@ struct alignas(64) Unit {
     // Retail unit+0x10e: the 1/256-HP remainder self-repair carries between calls
     // (retailSelfRepairPoints). Zero at creation, like retail's (0x511ae2).
     uint8_t healCarry = 0;
+    // Retail unit +0x12a: a flyer's air-traffic counter (retailAirTrafficStep),
+    // stepped from its overlap list after each occupancy rebuild. Every flyer
+    // mission steps out of a stack at 5 or more (8 for a flying builder at
+    // work). Hashed when nonzero.
+    int8_t airTraffic = 0;
     RetailAirOccupant airOccupant; // secondary occupancy list/origin (+0x117..+0x128)
     RetailFlightVector flightVelocity;
     std::array<int32_t,3> flightAcceleration{}; // retained native banking input
@@ -1503,7 +1540,8 @@ inline constexpr size_t kUnitPrefetchHot=9*64;
                   "Unit::" #field " must sit on cache lines " #first "-" #last)
 TAK_UNIT_LINE(standbyState, 8); TAK_UNIT_LINE(guardNoMoveState, 8); TAK_UNIT_LINE(standbyAllowed, 8);
 TAK_UNIT_LINES(deathAnimationTicks, 8, 11); TAK_UNIT_LINES(corpseUntil, 8, 11); TAK_UNIT_LINES(corpseStatue, 8, 11);
-TAK_UNIT_LINES(corpseFading, 8, 11); TAK_UNIT_LINES(airOccupant, 9, 11); TAK_UNIT_LINES(flightVelocity, 9, 11);
+TAK_UNIT_LINES(corpseFading, 8, 11); TAK_UNIT_LINES(airTraffic, 9, 11); TAK_UNIT_LINES(airOccupant, 9, 11);
+TAK_UNIT_LINES(flightVelocity, 9, 11);
 TAK_UNIT_LINES(flightAcceleration, 9, 11); TAK_UNIT_LINES(flightNavigation, 9, 11);
 TAK_UNIT_LINES(retainedFlightGoal, 9, 11); TAK_UNIT_LINES(flightSectorZ, 9, 11);
 TAK_UNIT_LINES(legionLiftUntil, 9, 11); TAK_UNIT_LINES(legionLiftEnded, 9, 11);
@@ -2908,7 +2946,11 @@ public:
                    int victimId = 0;            // primary struck unit (0 = ground hit)
                    float fromX = 0, fromZ = 0;  // attacker pos for hitscan presentation
                    int fromPlayer = 0;         // display colour for hitscan projectile models
-                   std::optional<std::array<int32_t,3>> position, fromPosition; };
+                   std::optional<std::array<int32_t,3>> position, fromPosition;
+                   // A status weapon's impact (529c10 with its effects flag clear)
+                   // plays the hit sound but no explosion; a spell that lands adds
+                   // a silent event with the explosion on the victim (492c80).
+                   bool sound = true, explosion = true; };
     const std::vector<HitFx>& hits() const { return hits_; }
     // Cosmetic events captured at the mission callback, before mover updates.
     struct TransportFx {
@@ -2998,9 +3040,11 @@ private:
     // alone; any other impact damages every unit near the 3D `impact` point
     // (default `position`, else hx/hz at the primary's or the ground's height)
     // by its distance to their bounding boxes. `position` is display geometry.
+    // `slot`: the shooter's weapon slot when the hit resolves a shot it fired
+    // (4099e0 posts the shot's outcome to it); -1 for everything else.
     void applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId, Unit* primary,
                   std::optional<std::array<int32_t,3>> position = {},
-                  std::optional<std::array<int32_t,3>> impact = {});
+                  std::optional<std::array<int32_t,3>> impact = {}, int slot = -1);
 
     void tickProduction(Unit& u, float dt);
     // One product's shared progress (see the definitions): the producer's own
@@ -3109,6 +3153,9 @@ private:
     void prepareHelpApproach(Unit& u);
     void prepareRepairApproach(Unit& u);
     void installRepairApproach(Unit& u, Order& leg, const Unit& target);
+    // Attack_Melee (404690) stage 0 for a target with no mover: the same
+    // rectangle controller round the target's footprint (4d4e80).
+    void installMeleeApproach(Unit& u, const Unit& target);
     void tickGroundHelp(Unit& b, Unit& site, size_t leg, float dt);
     void tickGroundRepair(Unit& b, Unit& target, float dt);
     bool constructionWork(Unit& b, Unit& site, float dt);
@@ -3456,18 +3503,32 @@ private:
     void beginStandby(Unit& u);
     Order* navigationMissionOrder(Unit& u);
     void tickGuardNoMove(Unit& u);
-    // A Shift-queued patrol leg of an armed or builder flyer (Order::patrolOpen)
-    // closes its loop when it starts, as the ground patrol mission does.
-    void openFlightPatrol(Unit& u);
     void tickFlightMovement(Unit& u, bool persistent = false);
     void tickRetainedFlightMovement(Unit& u);
     void tickFlightBody(Unit& u);
-    void tickHoverAttack(Unit& u, const Unit& target, const Weapon* weapon, int slot);
+    void tickAirToGroundHover(Unit& u, const Unit& target, const Weapon* weapon, int slot);
+    void flyHoverGoal(Unit& u, Order& order, const Unit& target);
     void tickAirToGround(Unit& u, const Unit& target, const Weapon* weapon);
     void tickAirToAir(Unit& u, const Unit& target, const Weapon* weapon);
+    void tickAirStrike(Unit& u, const Unit& target);
     bool seekLostTarget(Unit& u, const Unit* target, bool targetLive);
     void tickSeekAttack(Unit& u, bool carriesTarget = false);
+    // VTOL_Follow's lost ward (4191d7) and VTOL_SeekGuard (4197d0).
+    bool seekLostWard(Unit& u);
+    void tickSeekGuard(Unit& u);
+    int seekGuardFind(const Unit& u) const;
+    // A flying builder's job at a wake of its mission (VTOL_MobileBuild,
+    // VTOL_HelpBuild, VTOL_RepairUnit): the air-traffic check at 8; the
+    // step-out's D when the job steps out of a stack.
+    std::optional<int32_t> flyingJobTraffic(Unit& b, RetailTrafficMission mission);
+    void restartFlyingHelp(Unit& b, const Unit& site);
     void flyMissionGoal(Unit& u, Order& order);
+    // Retail's air traffic (retailairtraffic.h): a step-out order pushed ahead
+    // of the unit's mission (4d7750), and its mission (4214b0) at the head.
+    static bool stepOutFront(const Unit& u) { return !u.orders.empty() && u.orders.front().stepOut; }
+    void pushStepOut(Unit& u, RetailStepOut kind, int32_t distance);
+    void tickStepOutMission(Unit& u);
+    void fireBehindStepOut(Unit& u);
     void tickFlightPatrol(Unit& u);
     int flightGround(const Unit& u) const;
     bool flightLandingFree(const Unit& u, Fixed x, Fixed z) const;
@@ -3537,6 +3598,13 @@ private:
     // idle retaliation mission (part a) and, failing that, the per-slot
     // retarget (part b).
     void retailHitResponse(Unit& victim,const Unit* attacker,int dmgType);
+    // The status callbacks' roll (52da10 charm, 52dca0 stone, 52df00 freeze):
+    // chance min(99, (veteran level + 16) * 5), so a green unit falls 80 times
+    // in 100 and a level-4 veteran 99; one CRT rand() scaled to 0..99
+    // (rand()*100/32768: _allmul 5d3c60, _alldiv 5d4470) must fall below the
+    // chance times the area falloff, truncated (x87 product, _ftol). `origin`
+    // is the rand() call site, for the RNG observer.
+    bool retailStatusRoll(const Unit& victim,float scale,uint32_t origin);
     // 4d7de0 with explicit=0, auto=1: insert an auto attack, leashed with a
     // return move on the Maneuver/patrol path. Whether orders were inserted.
     // forced (explicit=1, auto=0, the guards' call): neither the Hold

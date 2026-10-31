@@ -320,6 +320,7 @@ add_test(NAME fire_sweep_vision COMMAND fire_sweep_test vision)
 add_test(NAME fire_sweep_switch COMMAND fire_sweep_test switch)
 add_test(NAME fire_sweep_retaliation COMMAND fire_sweep_test retaliation)
 add_test(NAME fire_sweep_turnrate COMMAND fire_sweep_test turnrate)
+add_test(NAME fire_sweep_sites COMMAND fire_sweep_test sites)
 add_executable(hp_overflow_test tools/hp_overflow_test.cpp)
 target_link_libraries(hp_overflow_test PRIVATE tak-formats)
 add_test(NAME hp_overflow COMMAND hp_overflow_test)
@@ -383,7 +384,7 @@ set_tests_properties(legion_planeincremental PROPERTIES ENVIRONMENT "TAK_LEGION_
 add_executable(legion_flyers_test tools/legion_flyers_test.cpp)
 target_link_libraries(legion_flyers_test PRIVATE tak-formats)
 foreach(legion_probe mixedsquad mixedseal mv08group mv08deadend deadendrejoin ctrlmixed ctrlmixedbig factoryjoin auditlift
-    fl04 fl05match fl05unreach predicates)
+    fl04 fl05match fl05unreach predicates ctrlfree formationedge)
   add_test(NAME legion_flyers_${legion_probe} COMMAND legion_flyers_test ${legion_probe})
   set_tests_properties(legion_flyers_${legion_probe} PROPERTIES LABELS "legion;w6")
 endforeach()
@@ -1628,6 +1629,20 @@ target_link_libraries(air_seek_attack_test PRIVATE tak-formats)
 add_executable(capture_combat_test tools/capture_combat_test.cpp)
 target_link_libraries(capture_combat_test PRIVATE tak-formats)
 add_test(NAME capture_combat COMMAND capture_combat_test)
+add_executable(los_status_flight_test tools/los_status_flight_test.cpp)
+target_link_libraries(los_status_flight_test PRIVATE tak-formats)
+add_test(NAME los_status_flight COMMAND los_status_flight_test)
+# Melee attackers on a building walk to Attack_Melee's rectangle round its footprint (the
+# melee-*.scn fixtures, both pathfinding modes; data-gated below).
+add_executable(melee_building_test tools/melee_building_test.cpp)
+target_link_libraries(melee_building_test PRIVATE tak-formats)
+# A melee weapon never reaches a flyer in the air (52b980, 412620, 404690; data-gated below).
+add_executable(melee_air_test tools/melee_air_test.cpp)
+target_link_libraries(melee_air_test PRIVATE tak-formats)
+# Flyers step out of a stack (retail's air traffic, the air-stack-*.scn fixtures, both pathfinding modes;
+# data-gated below).
+add_executable(air_traffic_test tools/air_traffic_test.cpp ${TAK_AI_SOURCES})
+target_link_libraries(air_traffic_test PRIVATE tak-formats)
 set(TAK_TEST_DATA "" CACHE PATH "Retail install for the data-backed tests (optional)")
 if(TAK_TEST_DATA)
     add_test(NAME builder_automation_data COMMAND builder_automation_test "${TAK_TEST_DATA}")
@@ -1677,6 +1692,10 @@ if(TAK_TEST_DATA)
     add_test(NAME air_to_air COMMAND air_to_air_test "${TAK_TEST_DATA}")
     add_test(NAME air_seek_attack COMMAND air_seek_attack_test "${TAK_TEST_DATA}")
     add_test(NAME capture_combat_roster COMMAND capture_combat_test "${TAK_TEST_DATA}")
+    add_test(NAME los_status_flight_roster COMMAND los_status_flight_test "${TAK_TEST_DATA}")
+    add_test(NAME melee_building COMMAND melee_building_test "${TAK_TEST_DATA}" "${CMAKE_SOURCE_DIR}/tools/scenarios")
+    add_test(NAME melee_air COMMAND melee_air_test "${TAK_TEST_DATA}")
+    add_test(NAME air_traffic COMMAND air_traffic_test "${TAK_TEST_DATA}" "${CMAKE_SOURCE_DIR}/tools/scenarios")
     add_test(NAME gate_scripts COMMAND retail_script_test --gates "${TAK_TEST_DATA}")
     add_test(NAME scenery_damage COMMAND retail_script_test --features "${TAK_TEST_DATA}")
     add_test(NAME cobanim COMMAND cobanim_test "${CMAKE_SOURCE_DIR}/assets/extracted/all/scripts")
@@ -1782,6 +1801,26 @@ if(TAK_TEST_DATA)
                      --data "${TAK_TEST_DATA}" --wanderers on --json)
     set_tests_properties(legion_motion_wall_wanderers_on PROPERTIES
                          SKIP_RETURN_CODE 77 LABELS "data;nightly" TIMEOUT 600)
+    # Melee attackers on a building (protocol 307, Attack_Melee's rectangle round the footprint): every key
+    # against baseline.json over the gate offsets, both modes. melee_building gates the outcome per commit.
+    foreach(legion_scn melee-lode-late melee-lode-together melee-castle-4 melee-keep-late melee-castle-fight
+                       melee-castle-20)
+        add_test(NAME legion_check_${legion_scn}
+                 COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
+                         --data "${TAK_TEST_DATA}" --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+        set_tests_properties(legion_check_${legion_scn} PROPERTIES
+                             SKIP_RETURN_CODE 77 LABELS "legion;data;nightly" TIMEOUT 600)
+    endforeach()
+    # Flyers stepping out of a stack (protocol 307, retail's air traffic): the same, for the air-stack-*.scn
+    # fixtures and air-guard-lost.scn (VTOL_SeekGuard). air_traffic gates the outcome per commit.
+    foreach(legion_scn air-stack-barracks air-stack-barracks-5 air-stack-duel air-stack-move air-stack-fight
+                       air-stack-fight-cell air-stack-patrol air-stack-repair air-stack-help air-guard-lost)
+        add_test(NAME legion_check_${legion_scn}
+                 COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
+                         --data "${TAK_TEST_DATA}" --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+        set_tests_properties(legion_check_${legion_scn} PROPERTIES
+                             SKIP_RETURN_CODE 77 LABELS "legion;data;nightly" TIMEOUT 600)
+    endforeach()
     # Harvested situations (tools/scenarios/situations/README.txt): not faithful enough to gate on, so these only
     # check that each file loads and runs deterministically, serial == workers, in both modes.
     # Each of these is one of the longest tests in the suite (50-150 s), so it is split into independent

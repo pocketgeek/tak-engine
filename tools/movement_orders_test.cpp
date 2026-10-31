@@ -472,9 +472,8 @@ void queuedFlyerPatrols(PathfindingMode mode) {
             std::snprintf(label,sizeof label,"%s: Shift-patrols from idle lap start, B, C in order",kind.name);
             check(got==std::vector<int>{0,1,2,0,1,2,0},label);
         }
-        // The unarmed handler appends its own return point to a running
-        // (non-queued) patrol and laps start, B, start, C; not covered here.
-        if(!kind.weapon&&!kind.builder)continue;
+        // Every flyer's patrol is VTOL_Patrol: a running (non-queued) patrol's
+        // return leg is its anchor, so a Shift-patrol joins the loop at its tail.
         {   World w;setup(w,mode);auto type=aircraft(kind.weapon,kind.builder);const int id=w.spawn(&type,320,320,0,0);
             send(w,Cmd::Patrol,id,1200,320,false);send(w,Cmd::Patrol,id,1200,1200,true);
             const auto got=flyRoute(w,id,square,7,18000);report(got,"patrol+shift-patrol");

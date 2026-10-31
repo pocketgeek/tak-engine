@@ -23,6 +23,7 @@
 #include "sim/matchsetup.h"
 #include "tnt/mapgen.h"
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -270,8 +271,10 @@ void flyerFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,co
             if(!u.alive() || u.type!=flyer || u.underConstruction)continue;
             auto it=std::find_if(out.begin(),out.end(),[&](const Out& o){return o.id==u.id;});
             if(it==out.end()) {out.push_back({u.id});it=out.end()-1;}
-            // The order it was released with, once its park (if any) has its point.
-            if(!it->resolved && !u.orders.empty() && (!u.orders.front().park || u.orders.front().park->attempts)) {
+            // The order it was released with, once its park (if any) has its point (not a step-out of the
+            // newborns' stack, which leads its own order for a while: retail's air traffic).
+            if(!it->resolved && !u.orders.empty() && !u.orders.front().stepOut &&
+               (!u.orders.front().park || u.orders.front().park->attempts)) {
                 it->resolved=true;it->legs=u.orders.size();
                 it->x=u.orders.front().x.toFloat();it->z=u.orders.front().z.toFloat();
             }
@@ -295,7 +298,9 @@ void flyerFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,co
         minR=std::min(minR,r);maxR=std::max(maxR,r);
         inRadius+=r>=float(inner)-kSnap && r<=float(outer)+kSnap;
         quadrants|=1u<<((dx>=0?1:0)|(dz>=0?2:0));behind=behind || dz<0;
-        straight+=o.legs==1 && std::abs(o.x-kRx)<1 && std::abs(o.z-kRz)<1;
+        // A rally step is the output's VTOL_Move (GetBuilt resolves QMove for
+        // it), whose stage 1 snaps the point to its footprint grid.
+        straight+=o.legs==1 && std::abs(o.x-kRx)<=16 && std::abs(o.z-kRz)<=16;
     }
     std::printf("flyer mode=%s factory=%s flyer=%s rally=%d outputs=%zu resolved=%d r=[%.1f,%.1f] want=[%d,%d] "
                 "inRadius=%d quadrants=%x straight=%d onPad=%d ticks=%d hash=%016llx\n",
@@ -306,7 +311,10 @@ void flyerFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,co
         check(resolved==count && straight==count,label+"a rally flyer flies straight to the rally point, no hop before it");
     } else {
         check(resolved==count && inRadius==count,label+"a parked flyer's point lies within PARK's flight radius");
-        check(quadrants==0xfu && behind,label+"parked flyers spread round the factory, behind it too");
+        // Twelve random bearings: three quadrants at least (all four miss one about one game in eight; the
+        // newborns' step-outs since protocol 307 draw the shared random too, and the Spyhawks now leave one
+        // empty).
+        check(std::popcount(quadrants)>=3 && behind,label+"parked flyers spread round the factory, behind it too");
         check(unparkedFlight==0,label+"a parked flyer's leg stays a PARK until it arrives");
     }
 }

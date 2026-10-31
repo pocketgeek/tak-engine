@@ -910,19 +910,23 @@ static void classicExpansion(const char* root) {
             // A Build is judged against its builder's base once the think is
             // over: an expansion moves its founder into the new base in the
             // same think that orders the first lodestone there, and squadOf
-            // only reports the move after it.
-            std::vector<std::tuple<int,float,float>> thinkBuilds;
+            // only reports the move after it. A base may also give a member a
+            // Build and the expansion take that member as its founder later in
+            // the same think: such a Build is its old base's, so the base the
+            // builder belonged to when the Build was issued counts too.
+            std::vector<std::tuple<int,float,float,int>> thinkBuilds;
             controller.tick(w,tick,[&](const net::Command& c) {
-                if (c.kind==net::Cmd::Build) thinkBuilds.emplace_back(c.unitId,c.x,c.z);
+                if (c.kind==net::Cmd::Build) thinkBuilds.emplace_back(c.unitId,c.x,c.z,brain.squadOf(c.unitId));
                 sim::applyCommand(w,reg,c);
             });
-            for (const auto& [unitId,x,z]:thinkBuilds) {
+            for (const auto& [unitId,x,z,issued]:thinkBuilds) {
                 ++builds;
-                const int slot=brain.squadOf(unitId);
-                if (const auto centre=anchorCentre(slot)) {
-                    const float d=std::hypot(x-centre->first,z-centre->second);
-                    if (d>float(sim::retailAiBaseRadius(baseFootprint(slot),1))+40*16) ++outside;
-                }
+                auto inside=[&](int slot) {
+                    const auto centre=anchorCentre(slot);
+                    return !centre || std::hypot(x-centre->first,z-centre->second)<=
+                                      float(sim::retailAiBaseRadius(baseFootprint(slot),1))+40*16;
+                };
+                if (!inside(brain.squadOf(unitId)) && !inside(issued)) ++outside;
             }
             w.tick(1.f/30.f);
             const uint32_t now=tick+1;

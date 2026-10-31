@@ -1,13 +1,18 @@
 // The fire-at-will sweep's companions: deterministic per-player vision (icd
 // 4f7210 / 4c6800 / 411700), AI weapon switching (40f411..40fb92) and the
-// idle retaliation mission (409a50 part a, 4d7de0), and the target score's
-// terrain-scaled turn rate (412a77..412ae2). One ctest per part:
-//   fire_sweep_test vision | switch | retaliation | turnrate
+// idle retaliation mission (409a50 part a, 4d7de0), the target score's
+// terrain-scaled turn rate (412a77..412ae2), and enemies with construction
+// left (411700, 412620, 40f330). One ctest per part:
+//   fire_sweep_test vision | switch | retaliation | turnrate | sites
+// `fire_sweep_test --picker` is the oracle tools/re/check_fire_sweep_picker.py
+// compares with retail's target picker 412620.
 #include "sim/sim.h"
 #include "sim/retailcost.h"
 #include "sim/retailexploration.h"
 #include <cstdio>
 #include <cstring>
+#include <iostream>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <algorithm>
@@ -117,14 +122,18 @@ void shootMe() {
 void weaponSwitch();
 void retaliation();
 void turnRate();
+void sites();
+int pickerOracle();
 
 int main(int argc,char** argv) {
     const std::string part=argc>1 ? argv[1] : "all";
+    if(part=="--picker")return pickerOracle();
     if(part=="vision" || part=="all")vision();
     if(part=="vision" || part=="all")shootMe();
     if(part=="switch" || part=="all")weaponSwitch();
     if(part=="retaliation" || part=="all")retaliation();
     if(part=="turnrate" || part=="all")turnRate();
+    if(part=="sites" || part=="all")sites();
     return failures?1:0;
 }
 void weaponSwitch() {
@@ -323,4 +332,232 @@ void turnRate() {
     const int base=draws(0x20000,0x8000,0);
     check(base>0 && draws(0x20000,0x8000,0x800)==base-2,"turnrate: a 2.0 road lifts the sweep's rate past the penalty");
     check(base>0 && draws(0x20000,0x8000,0x1000)==base,"turnrate: 0.5 water keeps the penalty draws");
+}
+
+// Enemies with construction left (a site still being conjured, a unit still
+// being built at a factory door). Retail lists them on +5 (411700 drops only
+// the scenario flag 0x2000), its picker offers them with the score x10
+// (412620, 412b52..412b77), its sweep skips its own ones for free (40f3a1),
+// and its AI weapon switch takes no stone, freeze or charm slot against one
+// (40f50e..40f5ea). tools/re/probe_site_targets.py and
+// tools/re/check_fire_sweep_picker.py hold the emulated evidence.
+sim::UnitType siteType() {
+    sim::UnitType t;t.id="keep";t.maxHp=3000;t.footX=t.footZ=4;t.sight=40;t.sightHeight=24;
+    t.buildTime=100000;   // an unattended site decays slowly instead of vanishing
+    return t;
+}
+void sites() {
+    const auto keep=siteType();const auto d=dummy();
+    auto site=[&](sim::World& w,float x,float z){
+        const int id=w.spawn(&keep,x,z,0,1);w.unit(id)->underConstruction=true;return id;
+    };
+    {   // The list and the sweep: a site in sight is listed, and alone in range
+        // the sweep picks it.
+        const auto g=gunner(400);
+        sim::World w;setup(w,2);
+        const int shooter=w.spawn(&g,400,1000,0,0);
+        const int s=site(w,600,1000);
+        w.unit(shooter)->fireState=0;   // keep the order-driven acquisition out of it
+        ticks(w,8);
+        const auto ve=w.visibleEnemies(0);
+        check(std::find(ve.begin(),ve.end(),s)!=ve.end(),"sites: an enemy site in sight is on the visible-enemy list");
+        check(w.retailSelectTarget(*w.unit(shooter),0,true)==s,"sites: the sweep picks a lone site in range");
+    }
+    // A tower: no turn penalty in the score, so only distance and the x10 count.
+    auto tower=gunner(400);tower.id="tower";tower.canMove=false;tower.maxVel=sim::Fixed();
+    {   // The x10: a finished enemy twice as far as a site is still taken about
+        // nine times in ten (one in fifty with no x10).
+        sim::World w;setup(w,2);
+        const int shooter=w.spawn(&tower,400,1000,0,0);
+        const int s=site(w,500,1000),foe=w.spawn(&d,400,1200,0,1);
+        w.unit(shooter)->fireState=0;
+        ticks(w,8);
+        int siteN=0,foeN=0;
+        for (int i=0;i<400;++i) {
+            const int picked=w.retailSelectTarget(*w.unit(shooter),0,true);
+            siteN+=picked==s;foeN+=picked==foe;
+        }
+        std::printf("  site %d finished %d of 400\n",siteN,foeN);
+        check(siteN>=10 && siteN<=100 && siteN+foeN==400,"sites: the picker takes a site behind a finished target (x10), not never");
+    }
+    {   // Paralysis is no x10: a paralyzed enemy and a healthy one at the same
+        // distance are taken about equally often.
+        sim::World w;setup(w,2);
+        const int shooter=w.spawn(&tower,400,1000,0,0);
+        const int still=w.spawn(&d,600,1000,0,1),foe=w.spawn(&d,400,1200,0,1);
+        w.unit(shooter)->fireState=0;
+        ticks(w,8);
+        w.unit(still)->paralyzedFor=3000;
+        int stillN=0,foeN=0;
+        for (int i=0;i<400;++i) {
+            const int picked=w.retailSelectTarget(*w.unit(shooter),0,true);
+            stillN+=picked==still;foeN+=picked==foe;
+        }
+        std::printf("  paralyzed %d healthy %d of 400\n",stillN,foeN);
+        check(stillN>=140 && foeN>=140 && stillN+foeN==400,"sites: a paralyzed target is scored like a healthy one");
+    }
+    {   // Stone, freeze and charm classes never take one (4127eb..4128db).
+        for (int c=0;c<3;++c) {
+            auto g=gunner(400);
+            g.weapons[0].status=c==0 ? sim::Weapon::Status::Stoned : c==1 ? sim::Weapon::Status::Frozen :
+                                                                            sim::Weapon::Status::None;
+            g.weapons[0].mindControl=c==2;g.weapon=g.weapons[0];
+            sim::World w;setup(w,2);
+            const int shooter=w.spawn(&g,400,1000,0,0);
+            site(w,600,1000);
+            w.unit(shooter)->fireState=0;
+            ticks(w,8);
+            check(w.retailSelectTarget(*w.unit(shooter),0,true)==0,
+                  c==0 ? "sites: a stone class does not pick a site" : c==1 ? "sites: a freeze class does not pick a site"
+                                                                         : "sites: a charm class does not pick a site");
+        }
+    }
+    {   // Idle (Standby's scan, 4d8370, through the engine's acquisition): an
+        // idle armed unit beside an enemy site attacks it.
+        const auto g=gunner(300);
+        sim::World w;setup(w,2);
+        const int u=w.spawn(&g,400,1000,0,0);
+        const int s=site(w,650,1000);
+        bool attacked=false,hit=false;
+        for (int t=0;t<240 && !hit;++t) {
+            ticks(w,1);
+            const auto& o=w.unit(u)->orders;
+            attacked=attacked || (!o.empty() && o[0].targetId==s && o[0].autoTarget);
+            hit=w.unit(s) && w.unit(s)->lastHitBy==u;
+        }
+        check(attacked && hit,"sites: an idle armed unit attacks an enemy site in reach");
+    }
+    {   // Behind finished targets: at the same distance the idle unit takes the
+        // finished one; with the site four times nearer (16 > 10) the site.
+        const auto g=gunner(300);
+        for (const bool near:{false,true}) {
+            sim::World w;setup(w,2);
+            const int u=w.spawn(&g,400,1000,0,0);
+            const int s=site(w,near ? 450 : 600,1000),foe=w.spawn(&d,400,1200,0,1);
+            int first=0;
+            for (int t=0;t<120 && !first;++t) {
+                ticks(w,1);
+                const auto& o=w.unit(u)->orders;
+                if (!o.empty() && o[0].targetId) first=o[0].targetId;
+            }
+            if (near) check(first==s,"sites: an idle unit takes a site four times nearer than a finished enemy");
+            else check(first==foe,"sites: an idle unit takes a finished enemy before a site as near");
+        }
+    }
+    {   // A guard runs no scan of its own (Follow_Ground): it keeps its ward and
+        // shoots a site in range from its auto slots.
+        const auto g=gunner(300);
+        sim::World w;setup(w,2);
+        const int ward=w.spawn(&d,400,1000,0,0),u=w.spawn(&g,400,1060,0,0);
+        const int s=site(w,600,1060);
+        w.guard(u,ward,false);
+        bool left=false,hit=false;
+        for (int t=0;t<240;++t) {
+            ticks(w,1);
+            const auto& o=w.unit(u)->orders;
+            left=left || o.empty() || o[0].targetId==s;
+            hit=hit || (w.unit(s) && w.unit(s)->lastHitBy==u);
+        }
+        check(!left && hit,"sites: a guard keeps its ward and its auto slots shoot the site");
+    }
+    {   // A stone-class unit does not go for one either (its scanning slot).
+        auto g=gunner(300);g.weapons[0].status=sim::Weapon::Status::Stoned;g.weapon=g.weapons[0];
+        sim::World w;setup(w,2);
+        const int u=w.spawn(&g,400,1000,0,0);
+        site(w,650,1000);
+        ticks(w,120);
+        check(w.unit(u)->orders.empty(),"sites: an idle stone-class unit does not attack a site");
+    }
+    {   // The sweep's budget (40f3a1..40f3c9): with a cap of 30 it is two units
+        // a call; an own unit with construction left costs nothing, a paralyzed
+        // one costs one.
+        sim::World w;setup(w,2);w.setUnitCap(30);
+        const int a=w.spawn(&d,200,200,0,0);
+        const int s1=w.spawn(&keep,300,200,0,0),s2=w.spawn(&keep,400,200,0,0);
+        const int b=w.spawn(&d,500,200,0,0),p=w.spawn(&d,600,200,0,0),c=w.spawn(&d,700,200,0,0);
+        w.spawn(&d,1500,1500,0,1);
+        for (const int id:{s1,s2}) w.unit(id)->underConstruction=true;
+        w.unit(p)->paralyzedFor=3000;
+        ticks(w,1);
+        const int first=w.player(0).sweepCursor;
+        ticks(w,1);
+        const int second=w.player(0).sweepCursor;
+        std::printf("  cursor %d then %d (a %d b %d p %d c %d)\n",first,second,a,b,p,c);
+        check(first==b,"sites: the sweep passes own sites at no cost");
+        check(second==c,"sites: a paralyzed unit costs the sweep one");
+    }
+    {   // The AI weapon switch takes no stone slot against a site (an AI
+        // switcher ordered onto one keeps its primary).
+        auto caster=gunner(400);caster.id="caster";caster.weaponSwitching=true;
+        sim::Weapon stone=caster.weapons[0];stone.name="stone";stone.status=sim::Weapon::Status::Stoned;
+        caster.weapons={caster.weapons[0],stone};caster.weapon=caster.weapons[0];
+        sim::World w;setup(w,2);w.player(0).automaticGates=true;
+        const int u=w.spawn(&caster,400,1000,0,0);
+        const int s=site(w,600,1000);
+        w.attack(u,s,false);
+        int slot=0;bool hit=false;
+        for (int t=0;t<150;++t) {
+            ticks(w,1);
+            slot=std::max(slot,w.unit(u)->weaponSlot);
+            hit=hit || (w.unit(s) && w.unit(s)->lastHitBy==u);
+        }
+        check(slot==0 && hit,"sites: an AI switcher on a site keeps its primary, no stone slot");
+    }
+}
+
+// The oracle for tools/re/check_fire_sweep_picker.py. One case per stdin line:
+//   seed sweep fawr melee cls ai sight range damage sx sz k {x z unfinished paralyzed bad immune}*k
+// cls 0 plain, 1 stone, 2 freeze, 3 charm. The shooter is a structure of
+// player 0 (no turn penalty) and every candidate an enemy unit, listed on
+// player 0's visible-enemy list in id order, in range of the shooter.
+// Prints the picked candidate's index (-1 none) and the game RNG state after
+// retailSelectTarget(shooter, slot 0, sweep).
+int pickerOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        uint32_t seed=0;int sweep=0,fawr=0,melee=0,cls=0,ai=0,sight=0,range=0,damage=0,sx=0,sz=0,k=0;
+        in>>seed>>sweep>>fawr>>melee>>cls>>ai>>sight>>range>>damage>>sx>>sz>>k;
+        sim::UnitType shooter;shooter.id="shooter";shooter.maxHp=500;shooter.footX=shooter.footZ=2;
+        shooter.sight=sight;shooter.sightHeight=24;shooter.fireAtWillRandom=fawr!=0;
+        shooter.badTargetCats[0]={"BAD"};
+        sim::Weapon wp;wp.name="w";wp.range=range;wp.damage=damage;wp.reload=1;wp.melee=melee!=0;
+        wp.status=cls==1 ? sim::Weapon::Status::Stoned : cls==2 ? sim::Weapon::Status::Frozen : sim::Weapon::Status::None;
+        wp.mindControl=cls==3;
+        shooter.weapon=wp;shooter.weapons={wp};
+        // The four candidate kinds: bad target or not, immune to the class or not.
+        std::array<sim::UnitType,4> kinds;
+        for (int b=0;b<4;++b) {
+            // Mobile: a structure would block the engine's 2D clear-shot line
+            // to the candidates behind it (retail has no such test).
+            auto& t=kinds[size_t(b)];t=dummy();t.id="cand"+std::to_string(b);
+            if (b&1) t.categories={"BAD"};
+            t.cantBeStoned=t.cantBeFrozen=t.cantBeCaptured=(b&2)!=0;
+        }
+        sim::World w;setup(w,2);w.player(0).automaticGates=ai!=0;
+        const int shooterId=w.spawn(&shooter,float(sx),float(sz),0,0);
+        struct Cand { int id,unfinished,paralyzed; };
+        std::vector<Cand> cands;
+        for (int i=0;i<k;++i) {
+            int x=0,z=0,unfinished=0,paralyzed=0,bad=0,immune=0;
+            in>>x>>z>>unfinished>>paralyzed>>bad>>immune;
+            cands.push_back({w.spawn(&kinds[size_t(bad+2*immune)],float(x),float(z),0,1),unfinished,paralyzed});
+        }
+        w.unit(shooterId)->fireState=0;
+        ticks(w,1);   // the spatial grid
+        std::vector<int> listed;
+        for (const auto& c:cands) {
+            auto& u=*w.unit(c.id);
+            u.underConstruction=c.unfinished!=0;u.paralyzedFor=c.paralyzed ? 300 : 0;
+            listed.push_back(c.id);
+        }
+        std::sort(listed.begin(),listed.end());
+        w.player(0).visibleEnemies=listed;
+        w.setGameSeed(seed^0x66e29572u);   // retailSeed: the state is `seed` (odd)
+        const int picked=w.retailSelectTarget(*w.unit(shooterId),0,sweep!=0);
+        int index=-1;
+        for (int i=0;i<k;++i) if (cands[size_t(i)].id==picked) index=i;
+        std::printf("%d %u\n",index,w.gameRngState());
+    }
+    return 0;
 }

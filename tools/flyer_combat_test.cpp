@@ -58,7 +58,10 @@ int main(int argc,char** argv) {
             check(!unit->orders.empty(),"conversion preserves the Harpy's queued move");
             const auto& charm=registry.find("tarmind")->weapons.front();
             for(int i=0;i<20;++i)tak::sim::RetailReplayProbe::impact(world,charm,from,target);
-            check(world.unit(target)->player==newOwner,"late charm impacts do not take a converted ally");
+            // 52da10 spares only the caster's own player: a late charm that
+            // strikes a unit turned to an ally takes it.
+            check(world.unit(target)->player==0,newOwner==0 ? "late charm impacts leave the caster's own unit alone" :
+                  "a late charm impact takes a unit turned to an ally");
             world.stop(from);
             const int next=world.spawn(&victim,world.unit(from)->x.toFloat(),world.unit(from)->z.toFloat()+48,0,1);
             world.unit(from)->fireState=2;world.unit(from)->moveState=2;
@@ -413,19 +416,21 @@ int main(int argc,char** argv) {
             const std::array<int32_t,3> middle{b->x.v,b->groundY.v,b->z.v};
             const auto sweetSpot=w.queryUnitScriptPoint(target,true);
             int ticks=0,headed=0,refreshes=0,ringed=0;
-            uint32_t refresh=0;
+            tak::sim::RetailFlightVector last{};
             for (int tick=0;tick<1200;++tick) {
                 const auto* f=w.unit(flyer);
                 const std::array<int32_t,3> from{f->x.v,f->flightY.v,f->z.v};
                 w.tick(1.f/30.f);
                 f=w.unit(flyer);
-                if (f->orders.empty() || !f->orders.front().flightGoal) continue;
+                // AirToGroundHover's ring: the target controller (flag 1), not
+                // the stage-1 approach point.
+                if (f->orders.empty() || !f->orders.front().flightGoal || !(f->orders.front().flightGoal->flags&1)) continue;
                 const auto& order=f->orders.front();
                 ++ticks;
                 headed+=order.flightGoal->heading==nativeFrom(from,sweetSpot);
-                if (order.hoverAttackRefresh==refresh) continue;
-                refresh=order.hoverAttackRefresh;++refreshes;
                 const auto& point=order.flightGoal->point;
+                if (point.x==last.x && point.z==last.z) continue;
+                last=point;++refreshes;
                 const float radius=std::hypot(float(point.x-sweetSpot[0])/65536.f,float(point.z-sweetSpot[2])/65536.f);
                 // Within 16 px, plus the ring point's fixed-point truncation
                 // (the Barracks' drawn SweetSpot leaves one wake at 133.99 px).

@@ -57,7 +57,10 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
         if (!u.buildQueue.empty()) { m.any = true; m.cls = 19; m.kind = otherKind(19); m.flags = 0x8010c; m.buildingBuild = true; m.builds = u.buildQueue.front(); }
         return m;
     }
-    if (u.buildSiteId) {
+    // A flying builder's step-out (VTOL_StepOutNoFormation, its job's air
+    // traffic) leads the list ahead of the job it stopped: it keeps its site
+    // (buildSiteId) but its first mission is the step-out, read below.
+    if (u.buildSiteId && !(!u.orders.empty() && u.orders.front().stepOut)) {
         const auto* site = world.unit(u.buildSiteId);
         m.any = true; m.cls = 0; m.kind = otherKind(0); m.flags = 0x80508; m.builds = site ? site->type : nullptr;
         if (site) { m.goalX = site->x.v; m.goalZ = site->z.v; }
@@ -96,9 +99,16 @@ FirstMission firstMission(const tak::sim::World& world, const tak::sim::Unit& u)
     // target is lost. World's seek never carries the target, so the mission
     // ctor (0x4d6d66) has cleared the target bit 0x200, as for a dead one.
     else if (o.seekAttack) { m.cls = 19; m.flags = 0x1000400; }
+    // VTOL_SEEKGUARD (row 0x5ebe95: 0x1000600), a flyer's guard after its
+    // guarded unit is lost: World's seek carries none, so 0x200 is clear.
+    else if (o.seekGuard) { m.cls = 19; m.flags = 0x1000400; }
     else if (o.patrol) { m.cls = 7; m.flags = 0x3000410; }
     // A factory output's GetBuilt PARK: definition class 14, flags 0x200.
     else if (o.park) { m.cls = 14; m.flags = o.mission.flags; }
+    // A flyer's step-out (retail's air traffic) ahead of its mission: VTOL_StepOut,
+    // VTOL_StepOutStandby or VTOL_StepOutNoFormation (rows 0x5ebee0 / 0x5ebef9 /
+    // 0x5ebf12: class 14, flags 0x1000000 / 0x5000000 / 0), not a move's 0x3000400.
+    else if (o.stepOut) { m.cls = 14; m.flags = o.mission.flags; }
     else { m.cls = 14; m.flags = 0x3000400; }   // a move
     m.kind = m.cls == 14 ? moveKind(u.type->canFly) : m.cls == 7 ? kKindPatrol : otherKind(m.cls);
     // Only the World's auto-attacks (and the return move behind a leashed one):
@@ -123,6 +133,11 @@ const tak::sim::Weapon* currentWeapon(const tak::sim::Unit& u) {
     return &w[size_t(slot)];
 }
 }  // namespace
+
+std::pair<uint8_t, uint32_t> ClassicBrain::firstMissionOf(const tak::sim::World& world, const tak::sim::Unit& u) {
+    const FirstMission m = firstMission(world, u);
+    return {m.cls, m.flags};
+}
 
 ClassicBrain::ClassicBrain(int player, uint32_t roomSeed)
     : player_(player), seed_(seedFor(player, roomSeed)), profile_(catalogue_.size()),
@@ -670,7 +685,7 @@ ClassicEnemy ClassicBrain::enemyView(const tak::sim::World&, const tak::sim::Uni
     ClassicEnemy c;
     c.id = e.id;
     c.flags = ClassicEnemy::kLive | (e.alive() && e.hp > tak::sim::Fixed() ? 0u : ClassicEnemy::kDying) |
-              (e.embarked() ? 0u : e.type->canFly ? 2u : 1u) |
+              (e.embarked() ? 0u : e.flightGroundMode==2 ? 2u : 1u) |
               ((info ? info->armed : !e.type->weapons.empty()) ? ClassicSquadUnit::kArmed : 0u);
     c.x = e.x.v; c.y = (e.type->canFly ? e.flightY : e.groundY).v; c.z = e.z.v;
     c.cloaked = e.cloaked;
@@ -692,11 +707,9 @@ std::vector<ClassicEnemy> ClassicBrain::visibleEnemies(const tak::sim::World& wo
 
 void ClassicBrain::refreshVisible(const tak::sim::World& world) {
     // The World rebuilds its lists on the bookkeeping clock (every >= 7 ticks)
-    // and leaves sites still being built off its enemy list; retail's 0x411700
-    // drops only 0x2000 (U10), which such a site does not carry (U16). So when
-    // the World's stamp moves, take its list and add the enemies it skipped for
-    // being unfinished, under the same test (alive, hp > 0, not allied, not
-    // neutral, seen), as of the brain's tick.
+    // as retail's 0x411700 does: list +5 drops only 0x2000 (U10), which a site
+    // still being built does not carry (U16), so the World's list holds such
+    // sites and the brain takes it as it is when the stamp moves.
     if (player_ < 0 || player_ >= world.numPlayers()) return;
     const auto& owner = world.player(player_);
     const uint32_t stamp = owner.cacheClock.enabled ? owner.cacheClock.lastRefresh : owner.visibleRefresh;
@@ -704,11 +717,6 @@ void ClassicBrain::refreshVisible(const tak::sim::World& world) {
     visibleStamp_ = stamp;
     const auto listed = world.visibleEnemies(player_);
     visible_.assign(listed.begin(), listed.end());
-    for (const auto& u : world.units())
-        if (u.underConstruction && u.alive() && u.hp > tak::sim::Fixed() && u.type && !world.allied(player_, u.player) &&
-            !world.isNeutralPlayer(u.player) && world.playerSees(player_, u))
-            visible_.push_back(u.id);
-    std::sort(visible_.begin(), visible_.end());
 }
 
 bool ClassicBrain::sendOrder(const tak::sim::World& world, ClassicSquadUnit& member, bool patrol, bool queue,

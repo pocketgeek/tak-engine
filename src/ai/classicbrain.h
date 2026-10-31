@@ -49,6 +49,7 @@
 #include <functional>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "ai/classicdefence.h"
@@ -133,6 +134,8 @@ public:
         uint32_t builderTransfers = 0, groundTransfers = 0, airTransfers = 0, expansions = 0;
     };
     const WaveStats& waveStats() const { return waves_; }
+    // A unit's first mission as the manager reads it (class U1, flags; tests).
+    static std::pair<uint8_t, uint32_t> firstMissionOf(const tak::sim::World& world, const tak::sim::Unit& u);
     // The block grids the build manager drew as it was built (0x4110f0).
     const ClassicBlockGrids& blockGrids() const { return grids_; }
     // Retail's per-type cache (mgr+0x85 / +0x95, recounted every tick by 0x4119d0):
@@ -306,9 +309,9 @@ private:
     tak::sim::RetailPlayerCacheClock clock_{true, 0};
     uint32_t refreshes_ = 0;
     ClassicSquads squads_;
-    // 0x411700's list +5 for this player, as of the World's last rebuild: the
-    // World's own list plus the enemies it leaves off as still being built,
-    // which retail lists (U16); id order. visibleStamp_ is that rebuild's tick.
+    // 0x411700's list +5 for this player, as of the World's last rebuild (the
+    // World's own list, enemy sites still being built included, U16); id
+    // order. visibleStamp_ is that rebuild's tick.
     std::vector<int> visible_;
     uint32_t visibleStamp_ = 0;
     std::unordered_map<int, int32_t> squadOf_;

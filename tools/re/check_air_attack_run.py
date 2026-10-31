@@ -9,8 +9,10 @@ the abort (0x2a) and restart (0x40) events and every random draw (535cc0,
 native, state at 0x64186c). Controller allocation, construction, the radius
 setter and installation are host stubs that record their arguments; the
 installation stub clears the pending controller events as 4d4d40 does. The
-group check (51d1e0) answers no group, and the air-traffic counter (unit
-+0x12a) stays below the step-out threshold: neither is ported.
+group check (51d1e0) answers no group: it is not ported. Stage 4's air-traffic
+step-out runs with the counter (unit +0x12a) below, at and above 5: the auto
+rescan (4d8370, then 4d7de0) and the VTOL_StepOut push (4d4bf0, 4d6c40,
+4d7750) are stubs that answer as the fixture says and record D.
 
     python3 tools/re/check_air_attack_run.py [build-dbg/retail_motion_test]
 """
@@ -21,7 +23,7 @@ import sys
 
 from emu import Icd, HEAP
 from unicorn import UC_HOOK_CODE
-from unicorn.x86_const import UC_X86_REG_FPCW
+from unicorn.x86_const import UC_X86_REG_FPCW, UC_X86_REG_ECX
 
 RNG = 0x64186c
 
@@ -75,8 +77,33 @@ def main():
             raise AssertionError('unexpected call to ' + name)
         return hook
 
+    block, found = HEAP + 0x30000, HEAP + 0x31000
+    answer = {}
+
+    def allocate_any(uc, args):
+        return (0, block) if get(args) == 0x72 else allocate(uc, args)
+
+    def lookup(uc, args):          # 4d4bf0(name): the row slot is ecx
+        record('lookup', bytes(uc.mem_read(get(args), 32)).split(b'\0')[0].decode())
+        return 1, uc.reg_read(UC_X86_REG_ECX)
+
+    def build(uc, args):           # 4d6c40(row, target, point, +0x4e, +0x52, +0x56, vec, vec)
+        record('mission', (log['lookup'][-1], get(args + 12, 'i')))
+        put(block + 4, 'B', 1)
+        return 12, block
+
+    def attack(uc, args):          # 4d7de0(unit, found, 0, 0, 1, 0)
+        if (get(args + 4), get(args + 8), get(args + 12), get(args + 16), get(args + 20)) != (found, 0, 0, 1, 0):
+            raise AssertionError('unexpected 4d7de0 arguments')
+        return 6, 1 if answer['attack'] else 0
+
     p.hooks[0x51d1e0] = lambda uc, a: (3, 0)                       # no group
-    p.hooks[0x4eb9e0] = allocate
+    p.hooks[0x4eb9e0] = allocate_any
+    p.hooks[0x4d4bf0] = lookup
+    p.hooks[0x4d6c40] = build
+    p.hooks[0x4d7750] = lambda uc, a: (record('push'), (2, 0))[1]
+    p.hooks[0x4d8370] = lambda uc, a: (record('scan'), (1, found if answer['scan'] else 0))[1]
+    p.hooks[0x4d7de0] = attack
     p.hooks[0x4e40e0] = construct
     p.hooks[0x4e4540] = radius
     p.hooks[0x4d4d40] = install
@@ -84,9 +111,7 @@ def main():
     p.hooks[0x519b10] = lambda uc, a: (record('auto', get(a)), (1, 0))[1]
     p.hooks[0x519b70] = lambda uc, a: (record('manual', get(a)), (1, 0))[1]
     p.hooks[0x51a700] = lambda uc, a: (record('aim', (get(a), get(a + 4), get(a + 8))), (3, 0))[1]
-    for address, name in [(0x51a770, 'ground aim'), (0x4d8370, 'target scan'), (0x4d7de0, 'attack'),
-                          (0x4d4bf0, 'mission lookup'), (0x4d6c40, 'mission'), (0x4d7750, 'push'),
-                          (0x4d77b0, 'insert'), (0x50c480, 'group leave')]:
+    for address, name in [(0x51a770, 'ground aim'), (0x4d77b0, 'insert'), (0x50c480, 'group leave')]:
         p.hooks[address] = unexpected(name)
     p.freeze_hooks()
     draws = [0]
@@ -141,6 +166,10 @@ def main():
         run_length = rng.choice((0, 0, 1, 150, 200, 400, rng.randrange(0, 2000), rng.randrange(65536)))
         on_map = rng.random() < 0.6
         seed = rng.randrange(2**32)
+        traffic = rng.choice((0, 0, 3, 4, 5, 6, 12, 17))
+        foot = rng.choice((1, 2, 3, 4, 6))
+        automatic = rng.random() < 0.5
+        answer.update(scan=rng.random() < 0.5, attack=rng.random() < 0.5)
 
         put(game + 0x19f44, 'I', tick)
         put(game + 0x19e90, 'I', width)
@@ -148,6 +177,8 @@ def main():
         put(unit + 0x68, 'iii', s32(x), s32(y), s32(z))
         put(unit + 0x7e, 'H', heading)
         put(unit + 0xa4, 'I', sector if on_map else offmap)
+        put(unit + 0x12a, 'b', traffic)
+        put(unit + 0x78, 'h', foot)
         put(kind + 0x234, 'H', run_length)
         put(weapon + 0x90, 'i', weapon_range)
         put(target + 0x68, 'iii', s32(tx), s32(ty), s32(tz))
@@ -156,7 +187,7 @@ def main():
         put(mission + 0xa, 'I', deadline)
         put(mission + 0x16, 'I', target)
         put(mission + 0x4e, 'i', count)
-        put(mission + 0x52, 'I', 0)
+        put(mission + 0x52, 'I', 1 if automatic else 0)
         put(mission + 0x56, 'I', 0)
         put(mission + 0x5a, 'I', flags)
         put(mission + 0x66, 'I', 0)
@@ -182,10 +213,14 @@ def main():
                          get(mission + 0x6a), get(mission + 0x5a), get(mission + 0x4e, 'i'), installs,
                          *point, get(controller + 0xa, 'h') if installs else 0,
                          len(log.get('begin', [])), len(log.get('auto', [])), len(log.get('aim', [])),
-                         get(RNG), draws[0]))
+                         get(RNG), draws[0], len(log.get('scan', [])), len(log.get('push', [])),
+                         log['mission'][-1][1] if log.get('mission') else 0))
+        # The port's retarget() is the scan and the attack together.
         fixtures.append(' '.join(map(str, (stage, events, tick, deadline, pending, flags, count,
                                            s32(x), s32(y), s32(z), s32(tx), s32(ty), s32(tz), heading,
-                                           weapon_range, run_length, int(on_map), width, height, seed))))
+                                           weapon_range, run_length, int(on_map), width, height, seed,
+                                           traffic, foot, int(automatic), 1,
+                                           int(answer['scan'] and answer['attack'])))))
     output = subprocess.run([binary, '--air-run'], input='\n'.join(fixtures) + '\n',
                             text=True, capture_output=True, check=True)
     actual = [tuple(map(int, line.split())) for line in output.stdout.splitlines()]
@@ -198,8 +233,9 @@ def main():
     for fixture, row in zip(fixtures, expected):
         stages[int(fixture.split()[0])] = stages.get(int(fixture.split()[0]), 0) + 1
     installed = sum(1 for row in expected if row[7])
-    print('PASS: %d AirToGround calls (stages %s), %d controllers, every state, point, radius and draw'
-          % (len(expected), ' '.join('%d:%d' % kv for kv in sorted(stages.items())), installed))
+    print('PASS: %d AirToGround calls (stages %s), %d controllers, %d step-outs, every state, point, radius and draw'
+          % (len(expected), ' '.join('%d:%d' % kv for kv in sorted(stages.items())), installed,
+             sum(1 for row in expected if row[18])))
 
 
 if __name__ == '__main__':

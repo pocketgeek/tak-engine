@@ -73,8 +73,8 @@ struct Command {
     std::shared_ptr<const SelectionOrder> order;
 };
 
-// How an order's members get their goal (only Move uses Offsets; only Move and
-// Patrol use FlyerOffsets):
+// How an order's members get their goal (only Move uses Offsets; only Move,
+// Patrol and AttackMove use FlyerOffsets):
 //   Shared        every member is given the template's command as it stands;
 //   Offsets       the right-click move rule (client/gameview_hud.cpp): a flyer
 //                 takes retail's flyer spread (sim/retailflyerspread.h: the
@@ -84,8 +84,9 @@ struct Command {
 //                 takes the click itself; every other member the click plus its
 //                 offset from the centroid of the order's live owned members,
 //                 clamped to 60 px per axis;
-//   FlyerOffsets  the armed MOVE / PATROL rule: a flyer takes retail's flyer
-//                 spread as above, every other member the click itself.
+//   FlyerOffsets  the armed MOVE / PATROL / fight-move rule: a flyer takes
+//                 retail's flyer spread as above, every other member the click
+//                 itself.
 // The sim computes the offsets at activation from hashed positions (integer
 // Fixed arithmetic), so no per-member coordinates travel.
 enum class OrderShape : uint8_t { Shared = 0, Offsets = 1, FlyerOffsets = 2 };

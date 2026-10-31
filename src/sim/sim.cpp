@@ -513,7 +513,6 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                 // Subtype selects the flame emitter, independently of hit-effect art.
                 wp.beam = lower(w->valueOr("type", "")) == "line of sight";
                 const auto flameSubtype=lower(w->valueOr("subtype", ""));
-                wp.straight=wp.beam && flameSubtype.empty();
                 wp.lightning=wp.beam && flameSubtype=="lightning";
                 wp.hwEffectName=hwe;
                 if(wp.lightning) {
@@ -524,7 +523,14 @@ void TypeRegistry::loadDir(const hpi::Vfs& vfs, const std::string& prefix) {
                     if(flameSubtype=="fire")wp.flameKind=0;
                     else if(flameSubtype=="bluefire")wp.flameKind=1;
                     else if(flameSubtype=="dieselflame")wp.flameKind=2;
+                    using LosStatus=Weapon::LosStatus;
+                    wp.losStatus=flameSubtype=="mindcontrol" ? LosStatus::MindControl :
+                                 flameSubtype=="turntostone" ? LosStatus::Stone :
+                                 flameSubtype=="turntofrozen" ? LosStatus::Frozen : LosStatus::None;
                 }
+                // 530afd: any other subtype (none shipped) is the plain class.
+                wp.straight=wp.beam && !wp.lightning && wp.flameKind<0 &&
+                            wp.losStatus==Weapon::LosStatus::None;
                 wp.groundBounce=w->numberOr("groundbounce",0)!=0;
                 wp.waterWeapon=w->numberOr("waterweapon",0)!=0;
                 wp.emitTime = int32_t(w->numberOr("emittime", 0));   // already ticks in the FBI
@@ -2069,15 +2075,18 @@ int World::flightGround(const Unit& u) const {
     return height;
 }
 
+// A flyer's move, fight-move or patrol leg: VTOL_Move (VTOL_Move_Formation
+// for a formation leg) or VTOL_Patrol, run by tickFlightPatrol. Retail has no
+// fight-move: a fight-move leg (attackMove) flies VTOL_Move as a move does,
+// and World's target acquisition puts its attacks ahead of it. Every flyer's
+// patrol is VTOL_Patrol, armed or a builder: its stage-2 scan and job search
+// are World's acquisition and tickPatrolRepair.
 static bool plainFlightPatrol(const Unit& u) {
     if (!u.type || !u.type->canFly || u.orders.empty()) return false;
     const auto& order=u.orders.front();
     if (order.targetId || order.buildType || order.buildRectangle || order.reclaimFeat ||
         order.repairTarget || u.retailBuild) return false;
-    // Ordinary VTOL_Move is shared by armed aircraft, flying builders and
-    // transports. The patrol handler below only covers plain patrols.
-    return order.flightMoveMission ||
-        (order.patrol && !u.type->isBuilder && u.type->weapons.empty());
+    return order.flightMoveMission || order.patrol;
 }
 
 void World::tickFlightPatrol(Unit& u) {
@@ -2086,8 +2095,10 @@ void World::tickFlightPatrol(Unit& u) {
     u.orders.reserve(u.orders.size()+1);
     struct Host {
         World& w; Unit& u;
+        RetailStepOut stepOutKind=RetailStepOut::None;   // a step-out pushed ahead once the dispatch is done
+        int32_t stepOutTo=0;
         bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
-        RetailMissionState* head() { return plainFlightPatrol(u) ? &u.orders.front().mission : nullptr; }
+        RetailMissionState* head() { return !stepOutTo && plainFlightPatrol(u) ? &u.orders.front().mission : nullptr; }
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
         void idle() {}
         uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
@@ -2097,7 +2108,24 @@ void World::tickFlightPatrol(Unit& u) {
             u.orders.erase(u.orders.begin()); u.orders.push_back(order);
         }
         void clear() { u.orders.clear(); }
+        bool stepOut(RetailStepOut kind,int32_t distance) { stepOutKind=kind;stepOutTo=distance;return true; }
+        void stopBuilding() {}
         int handle(RetailMissionState& m,uint32_t events) {
+            // The air-traffic check past stage 0 (VTOL_Move 417d4e,
+            // VTOL_Move_Formation 41787e, VTOL_Patrol 419ee0): a step-out
+            // ahead -- VTOL_StepOutStandby under VTOL_Move_FormationStandby's
+            // 0x4000000 -- then the move again from stage 0, the patrol from
+            // stage 1, a tick after it ends. Legion (by design, not retail):
+            // a flyer its flight station holds over a mixed formation's
+            // ground is placed by the station, in its lane, and is not
+            // stepped out of it.
+            if (!w.legionFlightStation(u)) {
+                const auto& front=u.orders.front();
+                const RetailTrafficMission mission=!front.flightMoveMission ? RetailTrafficMission::Patrol
+                    : front.formationLevel ? RetailTrafficMission::MoveFormation : RetailTrafficMission::Move;
+                if (const int result=retailAirTrafficCheck(mission,m,w.tickCounter_,u.airTraffic,
+                        int16_t(u.type->footX),m.flags,*this);result>=0) return result;
+            }
             const RetailGroupRecord* group=w.retailGroupOf(u);
             if (u.orders.front().flightMoveMission && u.orders.front().formationLevel) {
                 // 417750 VTOL_Move_Formation: fly to the group centre until
@@ -2223,19 +2251,8 @@ void World::tickFlightPatrol(Unit& u) {
         }
     } host{*this,u};
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    if (host.stepOutTo) pushStepOut(u,host.stepOutKind,host.stepOutTo);
     noteOrders(u.id);
-}
-
-void World::openFlightPatrol(Unit& u) {
-    const size_t current=currentLeg(u.orders);
-    if (current>=u.orders.size() || !u.orders[current].patrol || !u.orders[current].patrolOpen) return;
-    // As the ground host's initializer: a patrol leg that starts with no
-    // closed patrol leg behind it adds the return point where the flyer stands.
-    u.orders[current].patrolOpen=false;
-    bool loop=false;
-    for (size_t i=current+1;i<u.orders.size();++i)
-        loop|=u.orders[i].goal && u.orders[i].patrol && !u.orders[i].patrolOpen;
-    if (!loop) patrolTo(u.id,u.x.toFloat(),u.z.toFloat(),true,u.orders[current].identity());
 }
 
 // World holds a flyer in place by skipping its flight body, so the flyer does
@@ -2665,6 +2682,7 @@ const RetailGroupRecord* World::retailGroupOf(const Unit& u) const {
 // Flags of the unit's current mission (+0x5a), for the missions this host
 // models: landing, ground missions and standby. Other orders report none.
 uint32_t World::retailMissionFlags(Unit& u) {
+    if (stepOutFront(u)) return u.orders.front().mission.flags;   // the step-out leads
     if (u.landing) return u.landing->mission.flags;
     // VTOL_Move, VTOL_Move_Formation and VTOL_Patrol all carry 0x1000000.
     if (plainFlightPatrol(u)) return u.orders.front().mission.flags;
@@ -2850,16 +2868,19 @@ static void legionFrontSlots(const std::vector<std::array<int64_t,2>>& at,int64_
 }
 
 // Legion (a deliberate difference from retail, docs/legion-pathfinding.md):
-// a flyer in a squad -- an Alt+N formation (squad < 0) or a Ctrl+N group
-// (squad > 0) -- that also has ground members travels with the ground of its
-// own click. Retail flies it at its own speed toward the shared point and,
-// once it is far out of slot, pulls it back to the group centre (417e02,
-// ported for Retail mode); with neither, a Legion flyer raced ahead, landed
-// at the goal and waited there.
+// a flyer in an Alt+N formation (squad < 0) that also has ground members
+// travels with the ground of its own click. Retail flies it at its own speed
+// toward the shared point and, once it is far out of slot, pulls it back to
+// the group centre (417e02, ported for Retail mode); with neither, a Legion
+// flyer raced ahead, landed at the goal and waited there. A Ctrl+N group
+// (squad > 0) is not a formation: its flyers fly their own orders at their
+// own speed, as a selection's do (owner ruling 2026-10-30; W6 had given Ctrl
+// groups stations too, and in the user's replay wolves-0912 they held a
+// Ctrl+1 group's drakes to the ground's pace, often under 2 px/tick).
 //
 // Pairing (W6, PLAN 3.5 / C4): one click is one convoy (Order::convoyTick,
 // sim/convoy.h), whatever the client's uplink split and whatever the flyer's
-// click offset (retail's spread, sim/retailflyerspread.h). Per squad (retailGroupIndex: Ctrl 1..10, Alt 11..20)
+// click offset (retail's spread, sim/retailflyerspread.h). Per formation
 // the busy ground members' last orders fall into up to kBuckets buckets keyed
 // by (order class, convoyTick); a flyer whose last order carries the same key
 // keeps station over that bucket's ground. A further distinct click gets no
@@ -2882,7 +2903,10 @@ static void legionFrontSlots(const std::vector<std::array<int64_t,2>>& at,int64_
 // flyer's destination its order's point moves, once (stationFree 3), to its
 // lane just beyond the front of the ground's goals (their formation slots), and
 // it is released to that order, as in retail; it arrives, completes the order
-// and lands at once, in front of the ground rather than on its slots. A squad with one bucket
+// and lands at once, in front of the ground rather than on its slots. Where
+// those lanes do not all fit on the map with a lane's room to its edge (goals
+// near the edge, the way the ground travelled) the wing keeps its own points
+// instead. A formation with one bucket
 // keeps every ground member (idle ones too) in its centroid, radius and
 // spacing, as before W6; with several, each bucket counts its own busy
 // members only. Everything here is derived from hashed state each tick, in
@@ -2890,8 +2914,8 @@ static void legionFrontSlots(const std::vector<std::array<int64_t,2>>& at,int64_
 void World::planLegionFlightStations() {
     legionFlightStationsLive_=false;
     if (!isLegionPathfinding(pathfindingMode_)) return;
-    constexpr int kSquads=21;         // retailGroupIndex: 1..10 Ctrl, 11..20 Alt
-    constexpr int kBuckets=4;         // clicks per squad with a station (PLAN 3.5)
+    constexpr int kFormations=11;     // Alt+1..Alt+10: squad -1..-10
+    constexpr int kBuckets=4;         // clicks per formation with a station (PLAN 3.5)
     constexpr int32_t kLead=160;      // px ahead of the station the flyer steers at
     constexpr int64_t kCatchUp=192;   // px behind the station at which it flies at full speed
     constexpr int64_t kBrake=128;     // px ahead of the station at which it stops
@@ -2935,16 +2959,17 @@ void World::planLegionFlightStations() {
         std::array<Bucket,kBuckets> bucket{};
         std::vector<Body> bodies;
     };
-    std::array<std::array<Ground,kSquads>,kMaxPlayers> groups{};
+    std::array<std::array<Ground,kFormations>,kMaxPlayers> groups{};
+    // Formation members only: a Ctrl+N group's flyers fly free.
     const auto member=[](const Unit& u) {
-        return u.alive() && u.type && u.squad!=0 && u.squad>=-10 && u.squad<=10 && u.player>=0 && u.player<kMaxPlayers &&
+        return u.alive() && u.type && u.squad<0 && u.squad>=-10 && u.player>=0 && u.player<kMaxPlayers &&
                !u.type->isStructure() && !u.underConstruction && !u.embarked();
     };
     bool flyers=false;
     TAK_PASS();
     for (const auto& u:units_) {
         if (!member(u) || !u.type->canFly) continue;
-        auto& g=groups[size_t(u.player)][size_t(retailGroupIndex(u))];
+        auto& g=groups[size_t(u.player)][size_t(-u.squad)];
         g.flyers=flyers=true;
         g.foot=std::max({g.foot,int(u.type->footX),int(u.type->footZ)});
     }
@@ -2952,7 +2977,7 @@ void World::planLegionFlightStations() {
     TAK_PASS();
     for (const auto& u:units_) {
         if (!member(u) || u.type->canFly) continue;
-        auto& g=groups[size_t(u.player)][size_t(retailGroupIndex(u))];
+        auto& g=groups[size_t(u.player)][size_t(-u.squad)];
         if (!g.flyers) continue;
         g.sx+=u.x.v;g.sz+=u.z.v;
         ++g.n;g.area+=u.type->footX*u.type->footZ;
@@ -3006,7 +3031,7 @@ void World::planLegionFlightStations() {
             if (g.bucket[size_t(k)].cls==cls && g.bucket[size_t(k)].convoy==last.convoyTick) return &g.bucket[size_t(k)];
         return nullptr;
     };
-    // A bucket's ground centroid and formation radius (px): a squad with one
+    // A bucket's ground centroid and formation radius (px): a formation with one
     // bucket counts all its ground, idle members too.
     const auto centre=[&](const Ground& g,const Bucket& b,Fixed& cx,Fixed& cz) {
         const bool whole=g.buckets==1;
@@ -3017,7 +3042,7 @@ void World::planLegionFlightStations() {
     TAK_PASS();
     for (const auto& u:units_) {
         if (!member(u) || !u.type->canFly || !legionStationOrder(u)) continue;
-        auto& g=groups[size_t(u.player)][size_t(retailGroupIndex(u))];
+        auto& g=groups[size_t(u.player)][size_t(-u.squad)];
         const Order& last=u.orders.back();
         if (g.n==0 || last.convoyTick==ConvoyTable::kNone || last.stationFree==1 || last.stationFree==2) continue;
         Bucket* b=bucketOf(g,last);
@@ -3034,9 +3059,9 @@ void World::planLegionFlightStations() {
     for (size_t i=0;i<units_.size();++i) {
         Unit& u=units_[i];
         if (!member(u) || !u.type->canFly || !legionStationOrder(u)) continue;
-        auto& g=groups[size_t(u.player)][size_t(retailGroupIndex(u))];
+        auto& g=groups[size_t(u.player)][size_t(-u.squad)];
         if (g.overflow && legion_) {
-            // Observation only: once per squad and tick.
+            // Observation only: once per formation and tick.
             legion_->noteFlyerEvent(LegionNavigator::FlyerEvent::StationOverflow);
             g.overflow=false;
         }
@@ -3056,7 +3081,7 @@ void World::planLegionFlightStations() {
         }
         // The front: the bucket's busy bodies as they stand (one that has
         // arrived waits at its slot, and the flyers stay with those still
-        // under way), or at their goals with, for a squad of one bucket, its
+        // under way), or at their goals with, for a formation of one bucket, its
         // idle ground where it stands (the first arrivals among them).
         const auto bodies=[&](bool goals) {
             std::vector<std::array<int64_t,2>> at;
@@ -3076,11 +3101,26 @@ void World::planLegionFlightStations() {
                     if (const int64_t l=int64_t(isqrt64(uint64_t(ex*ex+ez*ez)));l>0) { ax=(ex<<16)/l; az=(ez<<16)/l; }
                 }
                 if (ax || az) legionFrontSlots(bodies(true),ax,az,spacing,8*(g.groundFoot+g.foot)+16,b->toLand,b->landing);
+                // The lanes must all lie on the map with a lane's room
+                // (spacing) between each flyer's footprint and the map's edge.
+                // The front is the farthest goal the way the ground travelled,
+                // so goals near the edge put the lanes against or past it, and
+                // the clamp that stood here landed the wing on the edge itself:
+                // in the user's replay wolves-0912 three of a group's slots lay
+                // 208 px beyond its click (x 288) toward the west edge, the
+                // lanes 64 px beyond those (x 12 to 271), and two drakes were
+                // pinned at x 24 with others at x 35 and 87. With no room in
+                // front of the ground the wing keeps its own points: where it
+                // was sent, as in retail.
+                const int32_t edge=8*g.foot+spacing;
+                for (const auto& p:b->landing) {
+                    const int32_t x=p[0].floorInt(),z=p[1].floorInt();
+                    if (x<edge || z<edge || x>terW_*16-edge || z>terH_*16-edge) { b->landing.clear(); break; }
+                }
             }
             if (size_t(landing)<b->landing.size()) {
-                const int32_t edge=8*g.foot;
-                last.x=Fixed::fromInt(std::clamp(b->landing[size_t(landing)][0].floorInt(),edge,std::max(edge,terW_*16-edge)));
-                last.z=Fixed::fromInt(std::clamp(b->landing[size_t(landing)][1].floorInt(),edge,std::max(edge,terH_*16-edge)));
+                last.x=Fixed::fromInt(b->landing[size_t(landing)][0].floorInt());
+                last.z=Fixed::fromInt(b->landing[size_t(landing)][1].floorInt());
             }
             last.stationFree=3;
         }
@@ -3189,12 +3229,15 @@ void World::beginStandby(Unit& u) {
 }
 
 void World::tickGroundMission(Unit& u) {
-    // Other mission kinds continue through their existing handlers.
-    if (!u.orders.empty() && !u.orders.front().landing) {
+    // Other mission kinds continue through their existing handlers. A
+    // step-out pushed ahead of the standby or the landing leaves them under it.
+    if (!u.orders.empty() && !u.orders.front().landing && !u.orders.front().stepOut) {
         u.standbyActive=false; u.landing.reset();
     }
     struct Host {
         World& w; Unit& u;
+        RetailStepOut stepOutKind=RetailStepOut::None;   // a step-out pushed ahead once the dispatch is done
+        int32_t stepOutTo=0;
         uint64_t replaceController=0;
         bool completeUnloadApproach=false,abortUnloadApproach=false;
         std::optional<std::pair<Fixed,Fixed>> patrolReturn; // appended after dispatch
@@ -3202,6 +3245,7 @@ void World::tickGroundMission(Unit& u) {
         bool enabled() const { return u.alive() && !u.underConstruction && !u.embarked(); }
         bool canStandby() const { return w.standbyEligible(u); }
         RetailMissionState* head() {
+            if (stepOutTo || stepOutFront(u)) return nullptr;
             if (u.landing) return &u.landing->mission;
             if (auto* o = groundMissionOrder(u,true)) {
                 if (o->transportUnloadApproach) {
@@ -3237,10 +3281,24 @@ void World::tickGroundMission(Unit& u) {
             u.orders.push_back(goal);
         }
         void clear() { w.cancelPath(u); u.orders.clear(); u.routeStamp=-1; u.standbyActive=false; u.landing.reset(); }
+        bool stepOut(RetailStepOut kind,int32_t distance) { stepOutKind=kind;stepOutTo=distance;return true; }
+        void stopBuilding() {}
         int handle(RetailMissionState& m, uint32_t events) {
-            if (u.landing && &m==&u.landing->mission)
+            if (u.landing && &m==&u.landing->mission) {
+                // VTOL_LandIfCan's air-traffic check (416e23), after its exits
+                // (+0x66, event 0x200): VTOL_StepOut ahead, then stage 0 a
+                // tick after it ends.
+                if (!u.landing->canceled && !(events&0x200))
+                    if (const int result=retailAirTrafficCheck(RetailTrafficMission::LandIfCan,m,w.tickCounter_,
+                            u.airTraffic,int16_t(u.type->footX),m.flags,*this);result>=0) return result;
                 return retailLanding(*u.landing,events,{u.x.v,u.flightY.v,u.z.v},portHeadingToRetail(u.heading),
                     int16_t(u.type->footX),int16_t(u.type->footZ),true,u.type->canFly,*this);
+            }
+            // VTOL_Standby's air-traffic check (417472), at every wake:
+            // VTOL_StepOutStandby ahead, then stage 0 a tick after it ends.
+            if (&m==&u.standbyState && u.type->canFly)
+                if (const int result=retailAirTrafficCheck(RetailTrafficMission::Standby,m,w.tickCounter_,
+                        u.airTraffic,int16_t(u.type->footX),m.flags,*this);result>=0) return result;
             if (&m==&u.standbyState && u.type->canFly)
                 return retailVtolStandby(m,w.tickCounter_,true,true,u.flightGroundMode==2,
                     [&](int n){return random(n);},[&]{ initialize(); },
@@ -3500,6 +3558,7 @@ void World::tickGroundMission(Unit& u) {
         }
     } host{*this,u};
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    if (host.stepOutTo) { pushStepOut(u,host.stepOutKind,host.stepOutTo); return; }
     if(host.patrolReturn) patrolTo(u.id,host.patrolReturn->first.toFloat(),host.patrolReturn->second.toFloat(),true,
                                    host.patrolReturnIdentity);
     if(host.abortUnloadApproach) {
@@ -4483,6 +4542,15 @@ bool World::tickTransport(Unit& u, float dt) {
             removePickup();
             return true;
         }
+        // VTOL_Pickup's air-traffic check, at its stage 1 (41a909): VTOL_StepOut
+        // ahead, then stage 1 again a tick after it ends.
+        if(mission.stage==1 && u.type->canFly && u.airTraffic>=5) {
+            const int32_t distance=retailStepOutDistance(int16_t(u.type->footX),[&](int n) { return pathRand(uint32_t(n)); });
+            mission.sleep(tickCounter_,1);
+            pushStepOut(u,RetailStepOut::StepOut,distance);   // `o` is not read past this point
+            flyMissionGoal(u,u.orders.front());
+            return true;
+        }
         if(retailTransportInRange((passenger->x-u.x).v,(passenger->z-u.z).v,uint16_t(u.type->transportDist))) {
             mission.stage=2;mission.sleep(tickCounter_,1);
             o.transportTicks=0;o.transportApproachAttempts=0;
@@ -4683,6 +4751,15 @@ bool World::tickTransport(Unit& u, float dt) {
     if(mission.waitMask && !events)return advanceCarrier();
     u.missionEvents&=~events;mission.pending&=~events;mission.waitMask=0;
     if (mission.stage==1) {
+        // VTOL_Unload's air-traffic check, at its stage 1 (41afc5):
+        // VTOL_StepOut ahead, then stage 1 again a tick after it ends.
+        if (u.type->canFly && u.airTraffic>=5) {
+            const int32_t distance=retailStepOutDistance(int16_t(u.type->footX),[&](int n) { return pathRand(uint32_t(n)); });
+            mission.sleep(tickCounter_,1);
+            pushStepOut(u,RetailStepOut::StepOut,distance);   // `o` is not read past this point
+            flyMissionGoal(u,u.orders.front());
+            return true;
+        }
         if (u.type->canFly) {
             // Both approach and departure install a new native controller.
             mission.pending&=~0x3700u;
@@ -4779,10 +4856,9 @@ void World::attackMove(int unitId, float x, float z, bool queue) {
     }
     size_t before = queue ? u->orders.size() : 0;
     order(unitId, x, z, queue, ConvoyClass::Fight);
-    for (size_t i = before; i < u->orders.size(); ++i) {
-        u->orders[i].attackMove = true;
-        u->orders[i].flightMoveMission = false;
-    }
+    // A flyer's leg keeps order()'s VTOL_Move (flightMoveMission): retail
+    // has no fight-move, so it flies the move's mission, check and all.
+    for (size_t i = before; i < u->orders.size(); ++i) u->orders[i].attackMove = true;
 }
 
 void World::patrol(int unitId, float x, float z) {
@@ -4821,11 +4897,16 @@ void World::patrol(int unitId, float x, float z) {
         return;
     }
     if (u->type->canFly) {
-        // Flying patrols keep their existing handler and definition flags.
+        // VTOL_Patrol (plainFlightPatrol, every flyer's). The return leg where
+        // the flyer stands is the anchor its stage 0 would append (0x1000412),
+        // and the outbound leg is marked anchored (0x4000), so a Shift-patrol
+        // queued behind joins the loop at its tail, as a ground patrol's does,
+        // instead of a second anchor going in behind it.
         u->orders.clear();cancelPath(*u);
         Order a{u->x,u->z,0},b{Fixed::fromFloat(x),Fixed::fromFloat(z),0};
         a.goal=a.patrol=a.attackMove=true;
         b.goal=b.patrol=b.attackMove=true;
+        a.mission.flags=0x1000412u;b.mission.flags=0x4000u;
         // The outbound leg joins the click's Patrol convoy; the return leg (the
         // flyer's own position) copies it rather than open a convoy of its own.
         if(isLegionPathfinding(pathfindingMode_)) {const auto id=stampIdentity(*u,ConvoyClass::Patrol,b.x,b.z);a.setIdentity(id);b.setIdentity(id);}
@@ -4868,11 +4949,9 @@ void World::queuePatrol(int unitId, float x, float z) {
     if (!u || !u->alive() || !u->type) return;
     const size_t before = u->orders.size();
     patrolTo(unitId, x, z, true);
-    // Producers keep rally lists and unarmed flyers the VTOL patrol handler
+    // Producers keep rally lists and flyers the VTOL patrol handler
     // (plainFlightPatrol), which appends its return point when the patrol
-    // starts. Armed and builder flyers fly patrols on the ordinary VTOL_Move
-    // path and close the loop in openFlightPatrol; without it a lone queued
-    // point was reached once and then hovered over for good.
+    // starts. Ground units close the loop in their patrol initializer.
     if (u->type->isStructure() || u->repeatType) {
         // A queued patrol rally step stays OPEN, as a unit's own queued patrol
         // does: each output closes the loop from where it starts that leg, so
@@ -4881,7 +4960,7 @@ void World::queuePatrol(int unitId, float x, float z) {
             u->rally.back().patrolOpen = true;
         return;
     }
-    if (u->type->canFly && !u->type->isBuilder && u->type->weapons.empty()) return;
+    if (u->type->canFly) return;
     for (size_t i = before; i < u->orders.size(); ++i) u->orders[i].patrolOpen = true;
 }
 
@@ -5420,9 +5499,16 @@ float Weapon::damageVs(const UnitType* t) const {
     return it == dmgVs.end() ? damage : float(it->second);
 }
 
+bool World::retailStatusRoll(const Unit& victim,float scale,uint32_t origin) {
+    const int32_t chance=std::min(99,(int32_t(victim.veteran)+16)*5);
+    damageCrtUsed_=true;   // the CRT stream now shapes the game: fold it
+    const int64_t roll=int64_t(crtRand(origin))*100/32768;
+    return roll<int64_t(double(chance)*double(scale));
+}
+
 void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fromId,
                      Unit* primary, std::optional<std::array<int32_t,3>> position,
-                     std::optional<std::array<int32_t,3>> impact) {
+                     std::optional<std::array<int32_t,3>> impact, int slot) {
 
     const size_t hitIndex = hits_.size();
     // Record the impact for the viewer (hit sound / effect).
@@ -5441,8 +5527,28 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             Fixed::fromFloat(hz).v};
         if (from) hf.fromPosition = std::array<int32_t,3>{from->x.v,
             (from->type && from->type->canFly ? from->flightY : from->groundY).v,from->z.v};
+        // The status callbacks' impacts (52d8d0, 52db40, 52dda0, 52f000, 52f360)
+        // call 529c10 with its effects flag clear: the sound, no explosion.
+        hf.explosion = !w.mindControl && w.status != Weapon::Status::Stoned &&
+                       w.status != Weapon::Status::Frozen;
         hits_.push_back(hf);
     }
+    // What the shot did to the other side and to its own (529dc0 sums each
+    // recipient's damage callback -- 52a330's amount, a status callback's
+    // answer -- by the recipient's player against the shot's, +0xfd vs
+    // +0x92; 52a460 takes the one recipient's, as a word). 4099e0 then tells
+    // the shooter's mission: 0x1000000 when the other side took more than
+    // twice what its own did, else 0x200000 << slot -- a wasted shot, which
+    // AirToGroundHover's stage 4 answers (41e145).
+    int64_t enemyDamage = 0, ownDamage = 0;
+    auto shotOutcome = [&](bool direct) {
+        if (slot < 0 || slot > 2 || !fromId) return;
+        Unit* shooter = unit(fromId);
+        if (!shooter || !shooter->alive()) return;
+        const int64_t enemy = direct ? (enemyDamage & 0xffff) : enemyDamage;
+        const int64_t own = direct ? (ownDamage & 0xffff) : ownDamage;
+        shooter->missionEvents |= enemy > 2 * own ? 0x1000000u : 0x200000u << slot;
+    };
     // Attacker's veteran attack multiplier boosts damage dealt (retail scales the
     // attacker's attack stat by vetMul); the victim's boosts armour (below).
     const Unit* attacker = fromId ? unit(fromId) : nullptr;
@@ -5451,33 +5557,69 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     // Damage + status one victim, honouring veterancy, auras and immunities.
     auto hurt = [&](Unit& e, float scale) {
         if (e.stonedFor > 0) return;   // petrified units are impervious
-        // subtype=mindcontrol (the Taros Mind Mage's Individual + Area Mind
-        // Control): the shot CONVERTS the victim instead of hurting it. Retail
-        // encodes eligibility in the weapon's own [DAMAGE] table -- it zeroes
-        // monarch/god/dragon/fort/factory/naval/lodestone -- so "damage > 0
-        // against this category" is exactly "can be charmed", which damageVs()
-        // already computes. Conversion is permanent.
-        if (w.mindControl) {
-            // A previously launched charm may arrive after another conversion.
-            if (allied(fromPlayer,e.player)) return;
-            // Retail's charm roll (icd 0x52da10), gates in this exact order so the
-            // RNG stream can never diverge between peers. Note the [DAMAGE] table is
-            // the ACQUISITION filter -- it decides what you may TARGET -- so a
-            // Monarch caught inside an area charm is stopped by the commander gate
-            // here, not by its zeroed damage row.
-            if (e.embarked()) return;                 // safe inside a transport
-            if (e.type->commander) return;            // Monarchs are never charmed
-            if (e.underConstruction) return;          // nor anything still being built (+0x108 > 0)
-            if (e.type->cantBeCaptured) return;
+        // Mind control, stone and freeze (the Line-of-Sight classes and the area
+        // spells alike) never damage: 52a460 / 529dc0 hand each unit to the
+        // class's callback instead of 52a330 -- charm 52da10 (also the Area Mind
+        // Control's, 52f041), stone 52dca0, freeze 52df00 (also the Area
+        // Freeze's, 52f3a1); tools/re/probe_los_status.py runs all three. The
+        // [DAMAGE] table only decides what may be TARGETED (retail zeroes
+        // monarch/god/dragon/fort/factory/naval/lodestone for the charms).
+        // Gates in the callbacks' order: the caster's own player (unit +0xfd
+        // against the shot's +0x92 -- an ally's unit is not spared), a body
+        // without a mover (+8, made only for bmcode 1 at 511fcf: no building),
+        // a Monarch (+0x264 0x40000); then charm: construction left (+0x108),
+        // in a transport, cantbecaptured; stone and freeze: cantbestoned /
+        // cantbefrozen (+0x268 bits 2 / 4), construction left. A unit past
+        // them draws its roll (retailStatusRoll), and a spell that takes puts
+        // the weapon's explosion class on it (492c80). A failed roll does
+        // nothing at all.
+        const bool stone = w.status == Weapon::Status::Stoned, freeze = w.status == Weapon::Status::Frozen;
+        if (w.mindControl || stone || freeze) {
+            if (e.player == fromPlayer || e.type->buildMovementCode != 1 || e.type->commander) return;
+            if (w.mindControl ? e.underConstruction || e.embarked() || e.type->cantBeCaptured
+                              : (stone ? e.type->cantBeStoned : e.type->cantBeFrozen) || e.underConstruction)
+                return;
+            if (!retailStatusRoll(e, scale, w.mindControl ? 0x52dab5u : stone ? 0x52dd32u : 0x52df92u))
+                return;
+            ++enemyDamage;   // the callback answers nonzero; the caster's own player was refused above
+            {
+                HitFx effect;
+                effect.x = e.x.toFloat(); effect.z = e.z.toFloat(); effect.weapon = &w;
+                effect.victimId = e.id;
+                effect.fromPlayer = fromPlayer;
+                effect.position = std::array<int32_t,3>{e.x.v, (e.type->canFly ? e.flightY : e.groundY).v, e.z.v};
+                effect.sound = false;
+                hits_.push_back(effect);
+            }
+            if (w.mindControl) {
+                // 514da0 leaves a dying unit as it is (captureUnit), and nothing
+                // changes when the new owner has no room for the new object.
+                if (!atUnitCap(fromPlayer)) captureUnit(e, fromPlayer);
+                return;
+            }
+            // 51a140 -> 51a240 (type 14 stone / 15 freeze, amount 1): a dying unit
+            // takes nothing; otherwise the hit response (409a50), the death type
+            // and the last hitter, then 51a61a zeroes HP whatever the amount: the
+            // unit dies on the spot and the death edge places its stone=/frozen=
+            // STATUE (blocking, permanent, resurrectable back to life).
             if (e.hp <= Fixed()) return;
-            if (atUnitCap(fromPlayer)) return;        // no room on the new side
-            // Chance rises with the victim's veterancy -- a green unit is ~80%, a
-            // 10-star veteran is capped at 99%. Scaled by the area falloff so the
-            // rim of an Area Mind Control is less reliable than its centre.
-            int chance = std::min(99, (int(e.veteran) + 16) * 5);
-            if (burnRand(100) >= int(float(chance) * std::clamp(scale, 0.0f, 1.0f)))
-                return;                               // it shrugged the spell off
-            captureUnit(e, fromPlayer);
+            // 51a140 names the hitter only while its object lives: a stone or
+            // freeze shot still lands after its caster died (52db40 / 52dda0),
+            // and a caster that changed sides is a dead object to retail (514da0
+            // makes the new owner a new one), though World keeps its id.
+            const Unit* caster = attacker && attacker->alive() && attacker->player == fromPlayer
+                                     ? attacker : nullptr;
+            retailHitResponse(e, caster, freeze ? 15 : 14);
+            e.deathType = freeze ? 15 : 14;
+            if (caster) { e.lastHitBy = fromId; e.lastHitPlayer = fromPlayer; }
+            if (freeze) e.frozenFor = int32_t(kTick); else e.stonedFor = int32_t(kTick);
+            e.hp = Fixed();
+            e.speed = Fixed();
+            static const bool kStatLog = tak::devEnv("TAK_BURNLOG") != nullptr;
+            if (kStatLog)
+                std::fprintf(stderr, "statue kill: %s %s at %.0f,%.0f\n",
+                             e.type->id.c_str(), freeze ? "frozen" : "stoned",
+                             e.x.toFloat(), e.z.toFloat());
             return;
         }
         if (benchmarkMode() && e.type && e.type->commander) return;   // benchmark: Monarchs are invincible
@@ -5489,6 +5631,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         float scaledDamage = w.damageVs(e.type) * atkMul / armour * scale;
         damageCrtUsed_ = true;
         const int dealt = retailDamageWithSpread(scaledDamage, crtRand(0x52a3ba), uint8_t(damageMode_));
+        (e.player == fromPlayer ? ownDamage : enemyDamage) += dealt;   // 52a330's answer, before 51a140
         // Retail 51a140/51a240: a unit whose HP has reached zero is flagged
         // dying (+0x130 |= 0x1000, 51a639) on the spot, and every later hit
         // that tick returns before touching it -- no HP, no kill credit, no
@@ -5545,32 +5688,10 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         if (fromId) e.lastHitBy = fromId;
         e.lastHitPlayer = fromPlayer;
         retailHitResponse(e,attacker,w.dmgType);
-        if (w.status != Weapon::Status::None && e.type) {
-            bool immune =
-                (w.status == Weapon::Status::Frozen && e.type->cantBeFrozen) ||
-                (w.status == Weapon::Status::Stoned && e.type->cantBeStoned);
-            if (!immune) {
-                if (w.status == Weapon::Status::Paralyzed) {
-                    e.paralyzedFor = std::max(e.paralyzedFor, int32_t(w.statusDur * kTick + 0.5f));
-                    e.speed = Fixed();
-                } else {
-                    // Retail petrify/freeze (icd 0x51a61a): HP zeroes INSTANTLY
-                    // regardless of amount -- the victim dies on the spot and
-                    // the death edge places its stone=/frozen= STATUE (blocking,
-                    // permanent, resurrectable back to life). The old temporary
-                    // stoned/frozen debuff was our pre-RE guess.
-                    bool freeze = w.status == Weapon::Status::Frozen;
-                    if (freeze) e.frozenFor = int32_t(kTick); else e.stonedFor = int32_t(kTick);
-                    e.hp = Fixed();
-                    e.deathType = freeze ? 15 : 14;
-                    e.speed = Fixed();
-                    static const bool kStatLog = tak::devEnv("TAK_BURNLOG") != nullptr;
-                    if (kStatLog)
-                        std::fprintf(stderr, "statue kill: %s %s at %.0f,%.0f\n",
-                                     e.type->id.c_str(), freeze ? "frozen" : "stoned",
-                                     e.x.toFloat(), e.z.toFloat());
-                }
-            }
+        // Stone and freeze returned above; the paralyzer is the one status left.
+        if (w.status == Weapon::Status::Paralyzed && e.type) {
+            e.paralyzedFor = std::max(e.paralyzedFor, int32_t(w.statusDur * kTick + 0.5f));
+            e.speed = Fixed();
         }
     };
     // Retail 529c10: a shot that struck a unit with a weapon of areaofeffect
@@ -5578,7 +5699,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
     // splash or scenery. Every other impact is the area pass 529dc0 below,
     // where the struck unit takes the same falloff as any other.
     const uint16_t aoe = uint16_t(w.aoe);
-    if (primary && retailDirectHitOnly(aoe, true)) { hurt(*primary, 1.0f); return; }
+    if (primary && retailDirectHitOnly(aoe, true)) { hurt(*primary, 1.0f); shotOutcome(true); return; }
     // Features under fire (retail icd 0x529dc0 -> DamageFeature 0x4961a0):
     // every feature head cell within aoe/2 of the impact -- the impact cell
     // (resolved to its head for footprint tails) exempt from the radius check,
@@ -5685,7 +5806,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         point[1] = Fixed::fromInt(retailTerrainHeight(point[0], point[2], terW_, terH_,
             [&](int x, int z) { return heights_[size_t(z) * size_t(terW_) + size_t(x)]; })).v;
     const auto window = retailSplashWindow(point[0], point[2], aoe, hW_, hH_);
-    if (window.x0 >= window.x1 || window.z0 >= window.z1) return;
+    if (window.x0 >= window.x1 || window.z0 >= window.z1) { shotOutcome(false); return; }
     const SearchBodyRect bodies = searchBodyRect(window.x0, window.z0,
         window.x1 - window.x0, window.z1 - window.z0);
     const auto air = airOccupancy_.cells();
@@ -5717,6 +5838,7 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
         [&](int id, float fraction) { recipients.emplace_back(id, fraction); });
     for (const auto& [id, fraction] : recipients)
         if (Unit* e = unit(id)) hurt(*e, fraction);
+    shotOutcome(false);
     static const bool kLog = tak::devEnv("TAK_SPLASHLOG") != nullptr;
     if (!recipients.empty() && kLog)
         std::fprintf(stderr, "splash %s aoe=%d hit %zu\n",
@@ -5960,7 +6082,9 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         projectiles_.push_back(p);
         return;
     }
-    if((w.straight || w.lightning) && w.projVel>0) {
+    // The status classes (mind control, stone, freeze) share this launch
+    // (52c540); tickStraightProjectiles flies them with their own update.
+    if((w.straight || w.lightning || w.losStatus!=Weapon::LosStatus::None) && w.projVel>0) {
         const int32_t raw=int32_t(double(w.projVel)*2184.5333333333333);
         if(raw<=0)return;
         Projectile p;p.straight=true;p.wsrc=&w;p.fromId=u.id;p.fromPlayer=u.player;
@@ -5991,10 +6115,10 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         return;
     }
     if (w.melee || w.beam || w.projVel <= 0) {
-        // Legacy delivery for the remaining classes; flames use the native
-        // advancing front above. Other Line-of-Sight subclasses remain separate.
-        // The aim pass already queried these attachment points. Reuse them for
-        // status-shot presentation without another script call at release.
+        // Legacy delivery: melee, and a Line-of-Sight weapon with no
+        // weaponvelocity (none shipped: every shipped Line-of-Sight class flies
+        // above). The aim pass already queried these attachment points. Reuse
+        // them for the viewer's beam without another script call at release.
         const bool captured=w.beam && scriptTriggered && slot >= 0 && slot < 3;
         const auto muzzle=captured ? u.weaponMuzzlePoints[size_t(slot)] : std::array<int32_t,3>{};
         const auto aimPoint=captured ? u.weaponAimPoints[size_t(slot)] : std::array<int32_t,3>{};
@@ -6002,7 +6126,7 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
         // A melee shot sits on the target's origin (52bac0 copies +68..+70).
         applyHit(w, target.x.toFloat(), target.z.toFloat(), u.player, u.id, &target, {},
                  std::array<int32_t,3>{target.x.v,
-                     (target.type && target.type->canFly ? target.flightY : target.groundY).v, target.z.v});
+                     (target.type && target.type->canFly ? target.flightY : target.groundY).v, target.z.v}, slot);
         if (captured) {
             hits_[event].fromPosition=muzzle;
             hits_[event].position=aimPoint;
@@ -6113,10 +6237,23 @@ void World::fire(Unit& u, Unit& target, int slot,bool scriptTriggered) {
 // (Ranged weapons use the base test, icd @0x530580: 2D centre-to-centre,
 // inclusive.) Treating melee `range` as radial left Zhon beasts (range 250)
 // halting 15 cells out and biting air, and the Sailor (range 10) unable to ever
-// reach a legal firing distance past the 13px separation floor.
-static bool meleeInRange(const UnitType* a, const UnitType* b, float dx, float dz) {
-    return std::abs(dx) < 8.0f * float(a->footX + b->footX) + 8.0f &&
-           std::abs(dz) < 8.0f * float(a->footZ + b->footZ) + 8.0f;
+// reach a legal firing distance past the 13px separation floor. The boxes are
+// the footprints' cells: 52b980 snaps each position to its footprint origin
+// ((pos - foot*8 + 8) >> 4, footprintOrigin) and centres the box on it, so a
+// body on the rectangle Attack_Melee walks to (4d4e80) is always in range,
+// wherever in its origin cell it stands.
+// Before the boxes it reads the target's +0x130 low bits (52b98c..52b997): a
+// target in the air (2, our flightGroundMode) is never in range, so a melee
+// weapon never aims or swings at a flyer; one that has landed (1) is boxed
+// like any other unit. World tested the boxes alone, in 2D, so a Titan under
+// a hovering Gryphon hammered it.
+static bool meleeInRange(const Unit& a, const Unit& b) {
+    if (b.flightGroundMode==2) return false;
+    auto axis=[](Fixed pa,int fa,Fixed pb,int fb) {
+        const int64_t ca=int64_t(footprintOrigin(pa,fa))*16+fa*8,cb=int64_t(footprintOrigin(pb,fb))*16+fb*8;
+        return std::abs(ca-cb)-8*int64_t(fa)-8*int64_t(fb)<8;
+    };
+    return axis(a.x,a.type->footX,b.x,b.type->footX) && axis(a.z,a.type->footZ,b.z,b.type->footZ);
 }
 
 // Naval shots cross both water and shore. Water depth is a movement restriction,
@@ -6144,7 +6281,11 @@ bool World::canCaptureTarget(int player,const Unit& target) const {
 bool World::canAttackTarget(const Unit& from,const Unit& target) const {
     if (!from.type || !target.type) return false;
     const auto usable=[&](const Weapon& weapon) {
-        return !(target.type->canFly && weapon.noAir) && weapon.damageVs(target.type)>0 &&
+        // 4de7ec..4de817: the order resolver refuses a toairweapon slot against a
+        // target not in the air and a noairweapon slot against one in the air
+        // (+0x130 & 3 == 2), its current layer, never its type.
+        return !(weapon.noAir && target.flightGroundMode==2) && !(weapon.toAir && target.flightGroundMode!=2) &&
+            weapon.damageVs(target.type)>0 &&
             (!weapon.mindControl || canCaptureTarget(from.player,target));
     };
     if (from.type->weaponSwitching && !from.type->weapons.empty()) {
@@ -6209,8 +6350,17 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
             throw std::runtime_error("findTarget: reordered acquisition gates disagree with the original order");
     }
 #endif
+    // Retail's scan (4d8370) runs the picker (412620) for the slot 519ac0
+    // names, a switcher's selected one, else the first. For a melee slot the
+    // picker keeps grounded units only (+0x130 & 3 == 1, 412932..412945):
+    // a flyer in the air is never acquired, a landed one is.
+    const Weapon* scanWeapon = u.type->weapons.empty() ? nullptr :
+        &u.type->weapons[size_t(u.type->weaponSwitching ?
+            std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1) : 0)];
+    const bool groundOnly = scanWeapon && scanWeapon->melee;
     auto canTarget = [&](const Unit& e) {
         if (e.cloaked) return false;   // cloaked units are invisible to auto-acquire
+        if (groundOnly && e.flightGroundMode != 1) return false;
         return canAttackTarget(u,e);
     };
     if (acquiring) {
@@ -6220,7 +6370,9 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
         // it will never reach and then drop it again next tick.
         float ar = u.type->maxRange() + (u.moveState == 0 ? 0.0f : 90.0f);
         int best = 0;
-        float bestD = ar * ar;
+        // The rank of the best so far: its squared distance, ten times that for
+        // a target with construction left (below). The range test is its own.
+        float bestD = 1e30f;
         // fireatwillrandom: spread fire across whatever is in range instead of
         // every unit converging on the nearest body. Only while AUTO-acquiring --
         // an explicit attack order still goes exactly where it was pointed, which
@@ -6242,6 +6394,22 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
         // it entirely -- those orders mean "advance and engage everything en route".
         float leash2 = (u.moveState == 1 && u.orders.empty() && u.type->leash > 0)
                            ? u.type->leash * u.type->leash : 1e30f;
+        // This scan stands in for retail's 4d8370 (Standby, Patrol, a move's
+        // attack response, the VTOL missions' retargets), which runs the picker
+        // 412620 over list +5. That list holds enemies with construction left
+        // (411700: a site still being conjured, a unit still being built at a
+        // factory door), and the picker takes one behind finished targets: its
+        // score is multiplied by 10 (412b52..412b77). Here the nearest-first
+        // rank is a site's squared distance x10, and the scatter score x10.
+        // Two scans take no site, as in retail: a guard's (Follow_Ground and
+        // VTOL_Follow run no scan; they answer the guarded unit's attacker,
+        // and a site never attacks), and one whose scanning slot (519ac0: a
+        // switcher's selected weapon, else the first) is a stone, freeze or
+        // charm class, which the picker never offers a site (4127eb..4128db).
+        const bool guarding = !groundResponse && !u.orders.empty() && u.orders.front().guard;
+        const bool takesSites = !guarding && !(scanWeapon &&
+            (scanWeapon->status==Weapon::Status::Stoned || scanWeapon->status==Weapon::Status::Frozen ||
+             scanWeapon->mindControl));
         // A ranged unit only auto-acquires enemies it can actually see, so it
         // doesn't charge a target hidden behind a wall (which caused pile-ups at
         // corners). Melee/flyers acquire regardless.
@@ -6255,13 +6423,14 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
         forEachNear(u.x.toFloat(), u.z.toFloat(), ar, [&](int idx) {
             const Unit& e = units_[size_t(idx)];
             if (!e.alive() || e.embarked() || isNeutralPlayer(e.player) || allied(e.player, u.player) || !e.type) return;
-            if (e.underConstruction) return;   // don't auto-react to a site still conjuring
+            if (e.underConstruction && !takesSites) return;
             float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
             float d = dx * dx + dz * dz;
+            const float rank = e.underConstruction ? d * 10.0f : d;
             // A scatter-firing unit still only considers what is in RANGE (retail
             // gathers by radius the same way), but inside that set it no longer
             // prefers the nearest -- so the early-out on distance is skipped.
-            if (!scatter && d >= bestD) return;
+            if (!scatter && rank >= bestD) return;
             if (d >= ar * ar) return;
             float hx = (e.x - u.homeX).toFloat(), hz = (e.z - u.homeZ).toFloat();
             if (hx * hx + hz * hz > leash2) return;   // outside the leash
@@ -6293,18 +6462,19 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
                 // the half of the original scoring the flag does NOT remove.
                 float dmg = 0;
                 for (const auto& wp : u.type->weapons)
-                    if (!(e.type->canFly && wp.noAir))
+                    if (!(wp.noAir && e.flightGroundMode==2))
                         dmg = std::max(dmg, wp.damageVs(e.type));
                 if (dmg <= 0) return;
                 uint32_t n = uint32_t(float(0x7FFFFFFF) / dmg);
                 const auto firstRoll = fireRand(n);
                 const auto secondRoll = fireRand(n);
                 float score = float(firstRoll) / 2.0f + float(secondRoll);
+                if (e.underConstruction) score *= 10.0f;
                 if (score >= bestScore) return;
                 bestScore = score; best = e.id;
                 return;
             }
-            bestD = d; best = e.id;
+            bestD = rank; best = e.id;
         },enemies);
         return best;
     }
@@ -6486,7 +6656,7 @@ bool World::approachNeedsClearLine(const Unit& u,const Unit& t) const {
 
 bool World::slotInRange(const Unit& u,const Unit& t,int slot) const {
     const Weapon& w=u.type->weapons[size_t(slot)];
-    if (w.melee) return meleeInRange(u.type,t.type,(t.x-u.x).toFloat(),(t.z-u.z).toFloat());
+    if (w.melee) return meleeInRange(u,t);
     if (w.ballisticClass()) return ballisticInRange(u,t,w);
     // The base test (530580) is centre to centre, inclusive, for a structure
     // too (Weapon::centreReach): no footprint pad.
@@ -6809,11 +6979,14 @@ bool World::hoverForShot(Unit& u,const Unit& t,int slot,const std::array<int32_t
             ++u.repositions;
             u.blockedShots=0;
             u.searchFailed=0;
-            order.flightGoal=RetailFlightGoal{{x,y,z},0x68,angle,0};
+            // The ring's target controller (tickAirToGroundHover), at the
+            // clear point; the hover's next wake is put off until the flyer
+            // can have flown there (an event may still wake it first).
+            order.flightGoal=RetailFlightGoal{{x,y,z},0x79,angle,4};
             const int64_t dx=(int64_t(x)-u.x.v)>>16,dz=(int64_t(z)-u.z.v)>>16;
             const int64_t span=std::max(std::abs(dx),std::abs(dz))+std::min(std::abs(dx),std::abs(dz))/2;
             const int64_t speed=std::max<int64_t>(u.type->maxVel.v,1<<14);
-            order.hoverAttackRefresh=tickCounter_+uint32_t(std::min<int64_t>((span<<16)/speed,600))+30;
+            order.mission.deadline=tickCounter_+uint32_t(std::min<int64_t>((span<<16)/speed,600))+30;
             return true;
         }
     u.searchFailed=1;
@@ -6831,7 +7004,9 @@ bool World::slotBadTarget(const Unit& u,int slot,const Unit& t) const {
 bool World::sweepKeepsTarget(const Unit& u,int slot,const Unit& t) const {
     const Weapon& w=u.type->weapons[size_t(slot)];
     if (!t.alive() || t.hp<=Fixed() || !t.type || allied(u.player,t.player) || t.embarked()) return false;
-    if (w.melee && t.type->canFly) return false;
+    // 40fcb3..40fcc6: a melee slot keeps a grounded target only (+0x130 & 3
+    // == 1), so a flyer that takes off is let go; a landed one is kept.
+    if (w.melee && t.flightGroundMode!=1) return false;
     if (slotBadTarget(u,slot,t)) return false;
     if (w.status==Weapon::Status::Paralyzed && t.paralyzedFor>0) return false;
     if (w.mindControl && t.underConstruction) return false;   // see retailSelectTarget
@@ -6870,7 +7045,9 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
     for (int iteration=0;iteration<50 && !candidates.empty();++iteration) {
         const size_t index=fireRand(uint32_t(candidates.size()));
         const int id=candidates[index];
-        candidates.erase(candidates.begin()+long(index));
+        // 50b2c0: the last candidate takes the drawn one's place.
+        candidates[index]=candidates.back();
+        candidates.pop_back();
         const Unit* tp=unit(id);
         if (!tp || !tp->alive() || tp->hp<=Fixed()) continue;
         const Unit& t=*tp;
@@ -6882,18 +7059,23 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
         if (!u.type->kamikaze && !w.melee && !(eff>0 && slotInRange(u,t,slot) && slotClearShot(u,t,slot)))
             continue;   // 52ad60
         if (categoryMatch(u.type->noTargetCats,*t.type)) continue;
-        if (w.status==Weapon::Status::Stoned && (t.type->cantBeStoned || t.incapacitated())) continue;
-        if (w.status==Weapon::Status::Frozen && (t.type->cantBeFrozen || t.incapacitated())) continue;
-        if (w.mindControl && (t.type->cantBeCaptured || t.incapacitated())) continue;
-        // Engine deviation: retail picks an unfinished unit here too, then the
-        // charm roll (52da10) refuses it and the shot's mana is wasted. fire()
-        // refuses a target the charm cannot take, so keeping one would stall
-        // the slot on it until it is finished.
-        if (w.mindControl && t.underConstruction) continue;
+        // 4127eb..4128db: a stone, freeze or charm class (vtable +0x1c / +0x20 /
+        // +0x24) skips a unit immune to it and one with construction left; it
+        // does not skip a paralyzed one. Their callbacks refuse a Monarch and a
+        // building too, but the picker does not look: the shot is wasted.
+        const bool status=w.status==Weapon::Status::Stoned || w.status==Weapon::Status::Frozen || w.mindControl;
+        if (w.status==Weapon::Status::Stoned && t.type->cantBeStoned) continue;
+        if (w.status==Weapon::Status::Frozen && t.type->cantBeFrozen) continue;
+        if (w.mindControl && t.type->cantBeCaptured) continue;
+        if (status && t.underConstruction) continue;
         if (w.status==Weapon::Status::Paralyzed && t.paralyzedFor>0) continue;
-        if (w.melee && t.type->canFly) continue;
-        if (w.toAir && !t.type->canFly) continue;
-        if (w.noAir && t.type->canFly) continue;
+        // 412932..412945: a melee slot takes grounded units only (+0x130 & 3
+        // == 1): a flyer in the air never, a landed one like any other.
+        if (w.melee && t.flightGroundMode!=1) continue;
+        // 530580's head: toairweapon takes a target in the air only, noairweapon
+        // never one (+0x130 & 3 == 2) -- a landed flyer is a ground target.
+        if (w.toAir && t.flightGroundMode!=2) continue;
+        if (w.noAir && t.flightGroundMode==2) continue;
         const bool insideMin=slotInsideMinRange(u,t,slot);
         if (insideMin && !mobile) continue;
         if (eff<=0) continue;   // 531e50
@@ -6924,7 +7106,12 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
             }
         }
         if (insideMin) score*=10u;
-        if (t.incapacitated()) score*=10u;
+        // 412b52..412b77: x10 unless the target is alive, not dying and has no
+        // construction left (+0x108 == 0). Alive and not dying were tested at
+        // the draw, so this is a site still being built, or a unit still being
+        // built at a factory: a candidate, put behind finished ones. Nothing
+        // here looks at paralysis.
+        if (t.underConstruction) score*=10u;
         const int32_t s=int32_t(score);
         if (slotBadTarget(u,slot,t)) { if (s<bestBad) { bestBad=s;pickBad=id; } }
         else if (s<best) { best=s;pick=id; }
@@ -6933,11 +7120,13 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
 }
 
 // 40f330's slot part, for one player: a budget of N/30+1 counted units per
-// call from a cursor that walks the player's slot range and wraps. Dead and
-// status-locked slots cost nothing; live unarmed units cost budget but get no
-// sweep. The walk stops when it returns to the slot it started on, so with
-// fewer live units than the budget that slot is skipped until the counts
-// change -- an emulated retail quirk, kept on purpose.
+// call from a cursor that walks the player's slot range and wraps. A dead or
+// dying unit, or one with construction left (40f3a1..40f3c9: the same test as
+// the picker's x10), costs nothing; every other live unit costs budget, an
+// unarmed one with no sweep and a paralyzed one with its slots manual. The
+// walk stops when it returns to the slot it started on, so with fewer live
+// units than the budget that slot is skipped until the counts change -- an
+// emulated retail quirk, kept on purpose.
 void World::tickFireSweep(int player) {
     Player& owner=players_[size_t(player)];
     std::vector<int> pool;
@@ -6969,7 +7158,7 @@ void World::tickFireSweep(int player) {
         const size_t i=size_t(position+long(step))%pool.size();
         if (present && step==pool.size()) break;   // back at the start slot
         Unit* u=unit(pool[i]);
-        if (!u || !u->alive() || u->hp<=Fixed() || !u->type || u->player!=player || u->incapacitated()) continue;
+        if (!u || !u->alive() || u->hp<=Fixed() || !u->type || u->player!=player || u->underConstruction) continue;
         if (!u->type->weapons.empty()) {
             // 40f411: the switch block, after the armed test and before the
             // fireState test, so the new slot is swept in this same visit.
@@ -7113,11 +7302,15 @@ void World::retailAiWeaponSwitch(Unit& u) {
         slot.costlyOrSpecial=stone || freeze || w.mindControl || paralyzer || slot.aoe>=200 ||
             double(u.type->maxMana)*0.1<double(cost);
         if (live) {
+            // 40f50e..40f5ea / 40f7b8..40f8ab: a stone, freeze or charm class
+            // is no use on a type immune to it or on a target with
+            // construction left (+0x108 above 0); a paralyzer on an immune or
+            // already paralyzed one.
             const Unit& t=*target;
-            const bool locked=t.stonedFor>0 || t.frozenFor>0;
-            slot.usable=!(stone && (t.type->cantBeStoned || locked)) &&
-                        !(freeze && (t.type->cantBeFrozen || locked)) &&
-                        !(w.mindControl && (t.type->cantBeCaptured || locked)) &&
+            const bool unfinished=t.underConstruction;
+            slot.usable=!(stone && (t.type->cantBeStoned || unfinished)) &&
+                        !(freeze && (t.type->cantBeFrozen || unfinished)) &&
+                        !(w.mindControl && (t.type->cantBeCaptured || unfinished)) &&
                         !(paralyzer && (t.type->immuneToParalyzer || t.paralyzedFor>0));
         }
     }
@@ -7218,8 +7411,10 @@ void World::retailHitResponse(Unit& e,const Unit* a,int dmgType) {
             const int32_t oct=retailOctDistance(a->x.floorInt()-e.x.floorInt(),a->z.floorInt()-e.z.floorInt());
             reach=oct<(leash*9)/10+(w.melee ? 0 : w.range);
         }
-        const bool usable=canAttackTarget(e,*a) && !(w.melee && a->type->canFly) &&
-            !(w.toAir && !a->type->canFly) && !(w.noAir && a->type->canFly) && eff>0;
+        // 409db4..409dcc: a melee weapon answers only an attacker on the
+        // ground (+0x130 & 3 == 1); one in the air is left alone.
+        const bool usable=canAttackTarget(e,*a) && !(w.melee && a->flightGroundMode!=1) &&
+            !(w.toAir && a->flightGroundMode!=2) && !(w.noAir && a->flightGroundMode==2) && eff>0;
         if (categoriesOk && reach && usable) {
             const bool flag=e.fireState==2 && mobile && patrolling;
             mission=retailIssueAutoAttack(e,a->id,flag);
@@ -7230,8 +7425,50 @@ void World::retailHitResponse(Unit& e,const Unit* a,int dmgType) {
     if (!mission) slotHitResponse(e,*a);   // (b)
 }
 
+// A step-out at the head (retail's air traffic, tickStepOutMission): the
+// mission behind it does not run until it ends, so nothing scans or chases,
+// but the weapon update (52ae90) fires every slot that has its target in
+// range whatever mission leads: the attack's manual slots keep shooting at
+// the attack's target. As tickCombat's fire gate (tryFire), for a flyer.
+void World::fireBehindStepOut(Unit& u) {
+    if (u.orders.size()<2) return;
+    const Order& attack=u.orders[1];
+    if (!attack.targetId || attack.guard || attack.load || attack.unload || attack.transportPickup ||
+        attack.seekAttack) return;
+    Unit* target=unit(attack.targetId);
+    if (!target || !target->alive() || !target->type || !canAttackTarget(u,*target) ||
+        (target->hp<=Fixed() && !(target->retailSite && target->underConstruction))) return;
+    if ((attack.autoTarget || std::any_of(u.type->weapons.begin(),u.type->weapons.end(),
+            [](const Weapon& w){return w.mindControl;})) && allied(u.player,target->player)) return;
+    if (u.type->weapons.empty()) return;
+    const int slot=std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1);
+    const bool allWeapons=!u.type->weaponSwitching && u.type->weapons.size()>1;
+    const float dx=(target->x-u.x).toFloat(),dz=(target->z-u.z).toFloat();
+    const float dist=std::sqrt(dx*dx+dz*dz);
+    const int32_t diff=bamDiff(fxAtan2(Fixed::fromFloat(dx),Fixed::fromFloat(dz)),u.heading);
+    auto tryFire=[&](int sl) {
+        if (u.slotAuto>>sl&1) return;
+        const Weapon& sw=u.type->weapons[size_t(sl)];
+        if (sw.mindControl && !canCaptureTarget(u.player,*target)) return;
+        // 530580 (every non-melee in-range test): the slot's air flags against
+        // the target's current layer.
+        if (sw.noAir && target->flightGroundMode==2) return;
+        if (sw.toAir && target->flightGroundMode!=2) return;
+        if (sw.melee ? !meleeInRange(u,*target) : sw.ballisticClass() ? !ballisticInRange(u,*target,sw) : dist>sw.range)
+            return;
+        if (dist<sw.minRange) return;
+        if (tickScriptWeapon(u,*target,sl)) return;
+        if (u.reloads[size_t(sl)]>0) return;
+        if (sw.kind!=Weapon::Kind::Dropped && std::abs(diff)>=std::max(sw.aimTol,int32_t(0.03f/kCobAngle))) return;
+        fire(u,*target,sl);
+    };
+    if (allWeapons) for (int sl=0;sl<int(u.type->weapons.size());++sl) tryFire(sl);
+    else tryFire(slot);
+}
+
 void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     if (u.type->onOffable && !u.active) return;   // explicitly powered down
+    if (stepOutFront(u)) { fireBehindStepOut(u); return; }
 
     if (!u.standbyActive && !u.guardNoMoveActive) acquireTarget(u, false);
     const int activeTarget=!u.orders.empty() && !u.orders.front().guard ? u.orders.front().targetId : 0;
@@ -7241,12 +7478,19 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         groundMovementHandled=true;
         return;
     }
+    if (!u.orders.empty() && u.orders.front().seekGuard) {
+        tickSeekGuard(u);
+        groundMovementHandled=true;
+        return;
+    }
     if (u.orders.empty() || u.orders.front().targetId == 0) return;
 
     if (u.orders.front().guard) {
         Order& o = u.orders.front();
         Unit* t = unit(o.targetId);
         if (!t || !t->alive()) {
+            // A flyer's last order, VTOL_Follow, goes on as VTOL_SeekGuard.
+            if (seekLostWard(u)) { groundMovementHandled=true; return; }
             dropLeg(u);
             cancelPath(u);
             u.routeStamp = -1;
@@ -7329,6 +7573,26 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     int slot = u.type->weapons.empty()
                    ? 0 : std::clamp(u.weaponSlot, 0, int(u.type->weapons.size()) - 1);
     const Weapon* sel = slot < int(u.type->weapons.size()) ? &u.type->weapons[slot] : nullptr;
+    // A walker whose weapon (519ac0: the selected slot, else the first) is
+    // melee attacks on Attack_Melee (404690). 4de530 gives it that mission
+    // against a flyer too, as it tests no air bit for melee, but its head ends
+    // it on every dispatch while the target is airborne (+0x130 & 3 == 2,
+    // 4047e6..4047ee) -- emulated: return 5 with no other call, so the order
+    // goes at once and a target that takes off ends the chase. World chased
+    // the flyer and hit it from under it (meleeInRange had no air test). The
+    // head ends it for a carried target too (+0x114 & 4 and layer 0,
+    // 404778..40478d): one that boards a transport, a Roc's included.
+    // Attack_Chase (403bb0), a walker's ranged attack, ends the same way on a
+    // carried target (403c9c..403cb0: +0x114 & 4, or layer 0), so a unit that
+    // boards a transport is let go instead of chased.
+    if (sel && u.type->canMove && !u.type->canFly && !u.type->isStructure() &&
+        ((sel->melee && target->flightGroundMode==2) || target->embarked())) {
+        if(u.scriptAimTarget)clearScriptWeaponTarget(u);
+        dropLeg(u);
+        cancelPath(u);
+        u.routeStamp = -1;
+        return;
+    }
     // 4de530 gives a flyer whose target's type can fly AirToAir (41ca50,
     // tickAirToAir) for any weapon without the `dropped` key, hoverattack or
     // not (4de981..4de9b8). A Dropped bomb does not count, and no shipped
@@ -7336,16 +7600,21 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     // 4de6ed; World dogfights anyway). Against a target that cannot fly, a
     // flyer without hoverattack gets AirToGround (41bf80): attack runs
     // (tickAirToGround); one with it hovers (AirToGroundHover 41d820,
-    // tickHoverAttack).
+    // tickAirToGroundHover).
     const bool airToAir = u.type->canFly && !u.type->isStructure() && target->type && target->type->canFly;
-    const bool hovering = !airToAir && u.type->canFly && (u.type->hoverAttack || (sel && sel->hoverAttack));
-    const bool airRun = u.type->canFly && !hovering && !airToAir && !u.type->isStructure();
+    // A selected weapon with the `dropped` key (mods only) strikes a target
+    // that cannot fly: AirStrike (41b5e0, tickAirStrike), before the hover
+    // and the attack runs (4de530's order).
+    const bool strike = !airToAir && u.type->canFly && !u.type->isStructure() && sel && sel->cursorAirstrike;
+    const bool hovering = !airToAir && !strike && u.type->canFly && (u.type->hoverAttack || (sel && sel->hoverAttack));
+    const bool airRun = u.type->canFly && !hovering && !airToAir && !strike && !u.type->isStructure();
     if (u.scriptAimTarget!=target->id) {
         u.scriptAimTarget=target->id;
         // An attack must wake the airborne script pose too. Movement alone
         // cannot do this when a landed flyer acquires a target already in range.
-        // AirToGround's and AirToAir's first stage does it (416c50).
-        if (u.type->canFly && !airRun && !airToAir) notifyUnitScript(u,"BeginFlight");
+        // AirToGround's, AirToAir's, AirToGroundHover's and AirStrike's first
+        // stage does it (416c50).
+        if (u.type->canFly && !airRun && !airToAir && !hovering && !strike) notifyUnitScript(u,"BeginFlight");
     }
     float dx = (target->x - u.x).toFloat(), dz = (target->z - u.z).toFloat();
     float dist = std::sqrt(dx * dx + dz * dz);
@@ -7390,8 +7659,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     };
     // Melee: retail closes to footprint adjacency (see meleeInRange above);
     // `range` and LoS play no part.
-    bool adj = sel && sel->melee && target->type &&
-               meleeInRange(u.type, target->type, dx, dz);
+    bool adj = sel && sel->melee && target->type && meleeInRange(u, *target);
     // Ranged units whose shot flies the line need a clear line to shoot; a
     // wall between them means close in / reposition rather than firing through
     // it (melee & flyers are exempt). Ballistic shots use retail's pitched 3D
@@ -7476,26 +7744,36 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         u.routeStamp = -1;
         return;
     }
-    if (hovering) {
-        tickHoverAttack(u,*target,sel,slot);
-        groundMovementHandled=true; // the flight controller already committed movement
-        dx=(target->x-u.x).toFloat(); dz=(target->z-u.z).toFloat();
-        dist=std::sqrt(dx*dx+dz*dz);
-    }
     // Attack_Chase (403bb0): the attack mission of a body that walks, its
     // selected weapon not melee (Attack_Melee, 404690, closes to contact).
     const bool chaseMission = !u.type->canFly && !u.type->isStructure() && u.type->canMove &&
                               !(sel && sel->melee);
-    // An attack run or a dogfight flies in and out of range: its weapons fire
-    // (below) when a slot has the target in range, and the mission flies on
-    // regardless.
-    if (!airRun && !airToAir && ((sel && sel->melee) ? !adj
+    // An attack run, a hover or a dogfight flies in and out of range: its
+    // weapons fire (below) when a slot has the target in range, and the
+    // mission flies on regardless.
+    if (!airRun && !airToAir && !hovering && !strike && ((sel && sel->melee) ? !adj
                             : (!inReach || (approachNeedsLine && !los && mayChase) || (mayChase && arcShort())))) {
-        if (hovering) return;
         if (chaseMission) u.orders.front().attackChased = true;
+        // Attack_Melee (404690) stage 0: a melee weapon's target with no
+        // mover (a structure) is approached on 4d4e80's rectangle round its
+        // footprint, not at its centre: each attacker walks to its own
+        // nearest perimeter origin and any perimeter origin is arrival.
+        if (sel && sel->melee && !u.type->canFly && !u.type->isStructure() && target->type->isStructure()) {
+            installMeleeApproach(u,*target);
+            return;
+        }
         // Advance toward the target, steering around impassable terrain.
         if (u.repathLeft > 0) --u.repathLeft;
         Order& o = u.orders[currentLeg(u.orders)];
+        // A selected weapon that is no longer melee hands the target to
+        // Attack_Chase (Attack_Melee's head, 4d4bf0/4d4ef0): the melee
+        // rectangle goes, and the chase steers at the target again.
+        if (o.buildRectangle) {
+            o.buildRectangle.reset();
+            o.controller=0;
+            o.navigationExhausted=o.navigationConsumed=false;
+            cancelPath(u);
+        }
         o.x = target->x;
         o.z = target->z;
         // Refresh the leg's destination, preserving its intermediate waypoints.
@@ -7511,7 +7789,8 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
     auto slotAims = [&](int sl) {
         const Weapon& sw = u.type->weapons[size_t(sl)];
         if (sw.mindControl && !canCaptureTarget(u.player,*target)) return false;
-        if (sw.noAir && target->type && target->type->canFly) return false;
+        if (sw.noAir && target->flightGroundMode==2) return false;
+        if (sw.toAir && target->flightGroundMode!=2) return false;
         if (groundPair && sw.needsClearLine() && !los) return false;
         if (sw.melee ? !adj : sw.ballisticClass() ? !ballisticInRange(u,*target,sw) : dist > sw.range)
             return false;
@@ -7589,7 +7868,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
             }
         } else brakeGround(u,want);
         groundMovementHandled=true;
-    } else if (!hovering && !airRun && !airToAir && !u.type->isStructure()) {
+    } else if (!hovering && !airRun && !airToAir && !strike && !u.type->isStructure()) {
         u.speed=fxMax(Fixed(),u.speed-u.type->brake);
         if (u.speed==Fixed()) {
             // Flyers use their flight turn rate while aiming too. Many have no
@@ -7621,8 +7900,16 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         tickAirToGround(u,*target,sel);
         groundMovementHandled=true;
     }
+    if (hovering && !u.orders.empty() && u.orders.front().targetId==target->id) {
+        tickAirToGroundHover(u,*target,sel,slot);
+        groundMovementHandled=true;
+    }
     if (airToAir && !u.orders.empty() && u.orders.front().targetId==target->id) {
         tickAirToAir(u,*target,sel);
+        groundMovementHandled=true;
+    }
+    if (strike && !u.orders.empty() && u.orders.front().targetId==target->id) {
+        tickAirStrike(u,*target);
         groundMovementHandled=true;
     }
 }
@@ -9722,6 +10009,13 @@ bool World::prepareBuildApproach(Unit& u) {
     // A reclaim leg's rectangle belongs to tickReclaim.
     if (!goal.buildType) return false;
     if (goal.buildRectangle && goal.mission.stage==0) {
+        // VTOL_MobileBuild's first wake (stage 0) runs its air-traffic check
+        // first (41f0a6): a flyer in a stack steps out before it sets off.
+        if (u.type->canFly)
+            if (const auto d=flyingJobTraffic(u,RetailTrafficMission::MobileBuild)) {
+                pushStepOut(u,RetailStepOut::NoFormation,*d);   // `goal` is not read past this point
+                return false;
+            }
         // A queued build computes its approach when it becomes active,
         // after earlier movement/build orders have changed our position.
         const auto [x,z]=goal.buildRectangle->navigationCell(
@@ -9758,7 +10052,19 @@ bool World::prepareBuildApproach(Unit& u) {
         requestPath(u,goal.x.toFloat(),goal.z.toFloat());
     }
     if (!goal.buildRectangle) return false;
-    if (u.type->canFly) return (goal.mission.pending & goal.mission.waitMask & 0x100)!=0;
+    if (u.type->canFly) {
+        if (!(goal.mission.pending & goal.mission.waitMask & 0x100)) return false;
+        // The arrival wakes the mission (stage 2), whose head runs the
+        // air-traffic check before the site goes down: a flyer in a stack
+        // steps out and starts again from stage 0, its approach.
+        if (const auto d=flyingJobTraffic(u,RetailTrafficMission::MobileBuild)) {
+            goal.mission.pending&=~0x100u;goal.mission.waitMask=0;goal.mission.stage=0;
+            stopWorkAnimation(u);
+            pushStepOut(u,RetailStepOut::NoFormation,*d);   // `goal` is not read past this point
+            return false;
+        }
+        return true;
+    }
     const uint32_t events=(u.missionEvents | goal.mission.pending) & goal.mission.waitMask;
     if (!events) return false;
     // 4d8450 consumes the approach events before MobileBuild enters placement.
@@ -11055,8 +11361,12 @@ void World::clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, F
 //    from look to look; reaching it wakes the look at once.
 //  - first in stage 2, a look woken by the guarded unit's event 0x10 answers
 //    its attacker (guardDefend), before the help and repair look;
-// Not ported: the landed step-out (unit +0x12a >= 5) and the stage-2 attack
-// scan (51d1e0), whose work World's target acquisition does for a guard.
+//  - past stage 0, before all of it, the air-traffic check (4189c7,
+//    retailAirTrafficCheck): VTOL_StepOut ahead, the guard again from stage 0;
+//  - a guarded unit lost (dead or dying; World posts no 0x208) while the
+//    guard is the last mission inserts VTOL_SeekGuard (4191d7, seekLostWard).
+// Not ported: the group check (51d1e0(unit, 1, 4)) with its VTOL_Move_Formation
+// push and its flag's rand(10), as in AirToGround.
 void World::tickFlyingGuard(Unit& u) {
     const size_t end=currentLeg(u.orders);
     if (!u.orders[end].guard) return;
@@ -11097,6 +11407,25 @@ void World::tickFlyingGuard(Unit& u) {
         o.mission.deadline=0xffffffffu;
         return;
     }
+    // The air-traffic check past stage 0 (4189c7): VTOL_StepOut ahead, and
+    // the guard starts again at stage 0 a tick after it ends.
+    {
+        struct Host {
+            World& w; RetailStepOut kind=RetailStepOut::None; int32_t distance=0;
+            uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+            bool stepOut(RetailStepOut k,int32_t d) { kind=k;distance=d;return true; }
+            void stopBuilding() {}
+        } host{*this};
+        if (const int result=retailAirTrafficCheck(RetailTrafficMission::Follow,o.mission,tickCounter_,u.airTraffic,
+                int16_t(u.type->footX),o.mission.flags,host);result>=0) {
+            if (result==0) o.mission.stage=0;   // the dispatcher's result 0
+            pushStepOut(u,host.kind,host.distance);   // `o` is not read past this point
+            return;
+        }
+    }
+    // 418b72: each look past its head reads the guarded unit's position into
+    // mission +0x22, the point a lost ward's VTOL_SeekGuard circles.
+    o.attackPointX=g->x;o.attackPointZ=g->z;
     bool woken=(events&0x700u)!=0,attacked=(events&0x10u)!=0;
     if (o.mission.stage==0) {
         if (auto script=unitScripts_.find(u.id);script!=unitScripts_.end() && !script->second.activated) {
@@ -11196,6 +11525,9 @@ void World::repair(int builderId, int targetId, bool queue) {
 // the unit (buildTime / workerTime), draining the owner's mana proportional to the
 // HP restored -- pauses if the mana runs out.
 void World::tickRepair(Unit& b, float dt) {
+    // A flying repair waits behind a step-out pushed ahead of it (its
+    // air-traffic check): its mission is not the head meanwhile.
+    if (b.type && b.type->canFly && stepOutFront(b)) return;
     Unit* t = unit(b.repairId);
     auto endRepair = [&] {
         stopWorkAnimation(b);
@@ -11375,6 +11707,33 @@ void World::installRepairApproach(Unit& u, Order& goal, const Unit& t) {
     requestPath(u,goal.x.toFloat(),goal.z.toFloat());
 }
 
+// Attack_Melee (404690) stage 0 on a target with no mover: 4d4e80 with the
+// target's footprint-origin cell (+0x74) and footprint (+0x78), the
+// rectangle RECLAIM, HelpBuild and RepairUnit walk to. Stage 1 installs
+// again only when the target's cell changes, which a structure's never does,
+// so the controller stays until it accepts. Legion does not route a leg with
+// a rectangle it does not own (LegionNavigator::routedLeg): the native
+// navigator takes it, whose search accepts every perimeter origin.
+void World::installMeleeApproach(Unit& u, const Unit& t) {
+    Order& goal=u.orders[currentLeg(u.orders)];
+    const RetailRectGoal rect=retailReclaimRectangle(footprintOrigin(t.x,t.type->footX),footprintOrigin(t.z,t.type->footZ),
+                                                     t.type->footX,t.type->footZ,u.type->footX,u.type->footZ);
+    if (goal.buildRectangle && *goal.buildRectangle==rect) return;
+    goal.buildRectangle=rect;
+    const auto [x,z]=rect.navigationCell(footprintOrigin(u.x,u.type->footX),footprintOrigin(u.z,u.type->footZ));
+    goal.x=Fixed::fromInt(x*16+u.type->footX*8);
+    goal.z=Fixed::fromInt(z*16+u.type->footZ*8);
+    goal.segmentX=Fixed::fromInt(u.x.floorInt());
+    goal.segmentZ=Fixed::fromInt(u.z.floorInt());
+    goal.hasSegment=true;
+    goal.controller=++nextMovementController_;
+    goal.navigationExhausted=goal.navigationConsumed=false;
+    goal.mission.pending&=~0x3700u;
+    if (u.routeStamp<0 || uint32_t(u.routeStamp)<=tickCounter_-6u) u.routeStamp=0;
+    cancelPath(u);
+    requestPath(u,goal.x.toFloat(),goal.z.toFloat());
+}
+
 // RepairUnit stage 0 (0x407289) once the leg is current: the give-up count
 // starts at 0, and stage 1 installs the approach on the same dispatch.
 void World::prepareRepairApproach(Unit& u) {
@@ -11450,8 +11809,30 @@ void World::tickFlyingRepair(Unit& b, Unit& t, float dt) {
         const size_t end=currentLeg(b.orders);
         Order& job=b.orders[end];
         job.x=t.x;job.z=t.z;
-        if (!job.flightGoal || job.flightGoal->flags!=0x30 || job.flightGoal->radius!=reach)
-            job.flightGoal=RetailFlightGoal{{t.x.v,0,t.z.v},0x30,0,int16_t(reach)};
+        if (!job.flightGoal || job.flightGoal->flags!=0x30 || job.flightGoal->radius!=reach) {
+            // Its first tick (stage 0, then the approach's install) is a wake
+            // of the mission, and runs the air-traffic check; the approach
+            // waits on its controller alone after it.
+            if (const auto d=flyingJobTraffic(b,RetailTrafficMission::RepairUnit)) {
+                pushStepOut(b,RetailStepOut::NoFormation,*d);
+                return;
+            }
+            Order& leg=b.orders[currentLeg(b.orders)];
+            leg.flightGoal=RetailFlightGoal{{t.x.v,0,t.z.v},0x30,0,int16_t(reach)};
+        }
+        return;
+    }
+    // Every tick of the work is a wake (stage 5 sleeps one tick), the
+    // arrival's too: at 8 on the air-traffic counter the flyer steps out of
+    // the stack (StopBuilding) and the repair starts again from its approach.
+    if (const auto d=flyingJobTraffic(b,RetailTrafficMission::RepairUnit)) {
+        stopWorkAnimation(b);
+        b.conjureHoverTarget=0;b.conjureHoverGoal.reset();
+        if (!b.orders.empty()) {
+            Order& job=b.orders[currentLeg(b.orders)];
+            if (job.repairTarget==t.id) job.flightGoal.reset();
+        }
+        pushStepOut(b,RetailStepOut::NoFormation,*d);
         return;
     }
     // 421218: 519b70(3) drops every weapon target, then the work stance
@@ -11726,39 +12107,208 @@ void World::tickRetailConstruction(Unit& builder) {
     noteOrders(builder.id);
 }
 
-void World::tickHoverAttack(Unit& u,const Unit& target,const Weapon* weapon,int slot) {
-    auto& order=u.orders.front();
+// AirToGroundHover (41d820, retailAirToGroundHover): the mission of a
+// `hoverattack` flyer attacking a target that cannot fly. It runs on the
+// attack order's own state (Order::mission, its +0x4e in airRunCount and
+// +0x22 in attackPointX/Z), after the order's weapons have fired, then the
+// mover (flyHoverGoal). Its stage-3 controller is the target controller
+// (4e4140): a fixed ring point at the attack altitude, radius 4, headed at the
+// target's SweetSpot, kept on arrival (it posts 0x100 and stays).
+void World::tickAirToGroundHover(Unit& u,const Unit& target,const Weapon* selected,int slot) {
+    // 519ac0: a switcher's selected slot, otherwise the first slot.
+    const Weapon* weapon=u.type->weaponSwitching ? selected
+                       : u.type->weapons.empty() ? nullptr : &u.type->weapons.front();
     const int distance=weapon && weapon->hoverAttackDistance ? weapon->hoverAttackDistance : u.type->hoverAttackDistance;
     const int altitude=weapon && weapon->hoverAttackAltitude ? weapon->hoverAttackAltitude : u.type->hoverAttackAltitude;
-    if (!order.flightGoal || !order.hoverAttackRefresh || tickCounter_>=order.hoverAttackRefresh) {
-        // 41de3f: the ring is drawn around the selected weapon's led SweetSpot
-        // (51aa50), taken afresh at every mission wake.
-        const auto centre=retailLeadPoint(u,target,weapon);
-        order.flightGoal=retailHoverAttackGoal({u.x.v,u.flightY.v,u.z.v},
-            {centre[0],centre[1],centre[2]},distance,[&](int n) {return pathRand(uint32_t(n));});
-        order.hoverAttackRefresh=tickCounter_+15+pathRand(15);
-        // Engine deviation: shots from here keep stopping on something the
-        // weapon cannot destroy (noteShotImpact): move round the ring.
-        if (shotBlockedHere(u,target)) hoverForShot(u,target,slot,centre,distance,altitude);
-    } else {
-        // The retail target controller follows its entity between mission wakes.
-        order.flightGoal->point.x+=(target.x-order.attackPointX).v;
-        order.flightGoal->point.z+=(target.z-order.attackPointZ).v;
+    struct Host {
+        World& w; Unit& u; const Unit& target; const Weapon* weapon; int altitude;
+        int retargetTo=0;            // 4d7de0's new attack, put ahead once the dispatch is done
+        int32_t stepOutTo=0;         // a step-out's D, pushed ahead once the dispatch is done
+        bool formationTo=false;      // VTOL_Move_Formation, pushed ahead once the dispatch is done
+        bool ringInstalled=false;    // stage 3 drew a ring point this dispatch
+        RetailFlightVector led;      // the last led SweetSpot (51aa50)
+        bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
+        RetailMissionState* head() {
+            return !stepOutTo && !retargetTo && !formationTo && !u.orders.empty() &&
+                   u.orders.front().targetId==target.id ? &u.orders.front().mission : nullptr;
+        }
+        bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
+        void idle() {}
+        uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+        void remove(RetailMissionState&) {
+            if(u.scriptAimTarget)w.clearScriptWeaponTarget(u);
+            w.dropLeg(u);w.cancelPath(u);u.routeStamp=-1;
+        }
+        void rotate(RetailMissionState&) {}
+        void clear() { w.cancelPath(u);u.orders.clear();u.routeStamp=-1; }
+        // Events 0x28: World ends a lost target before the dispatch (tickCombat,
+        // seekLostTarget) and posts neither; the exit just ends the attack.
+        int lostTarget() { return 5; }
+        bool outOfSlot() {
+            // 51d1e0(unit, 1, 5): the attack's own flags lack 0x4000000.
+            const RetailGroupRecord* group=w.retailGroupOf(u);
+            return group && retailGroupOutOfSlot(*group,w.retailGroupMember(u),true,5,false);
+        }
+        void leave() {
+            // 41db23: 50c480 unless the next mission moves with the group
+            // (+0x5a 0x1000000 without 0x4000000).
+            const uint32_t next=u.orders.size()>1 ? u.orders[1].mission.flags : 0;
+            if (!(next&0x1000000u) || (next&0x4000000u)) w.leaveRetailGroupCentre(u);
+        }
+        bool formation() { formationTo=true;return true; }
+        void beginFlight() {
+            // 416c50, as AirToGround's stage 0 (tickAirToGround).
+            if (auto script=w.unitScripts_.find(u.id);script!=w.unitScripts_.end() && !script->second.activated) {
+                script->second.activated=true;w.notifyUnitScript(u,"Activate");
+            }
+            w.notifyUnitScript(u,"BeginFlight");
+            u.missionEvents&=~0x3700u;
+            // 416c57: 519b70(3), every slot manual.
+            for (int s=0;s<3;++s) w.setSlotMode(u,s,false);
+        }
+        // Stage 1 (41dd20): 519b10(3), every slot automatic. Stage 2 (41ddcd):
+        // the selected slot manual, given the target (519b70, 51a700); the
+        // others pick their own targets for the rest of the mission, as
+        // AirToGround's (tickAirToGround).
+        void slotsAuto() {
+            for (int s=0;s<3;++s) w.setSlotMode(u,s,true);
+            u.orders.front().mixedSlots=true;
+        }
+        void aim() {
+            const int sel=u.type->weaponSwitching ? std::clamp(u.weaponSlot,0,2) : 0;
+            w.setSlotMode(u,sel,false);
+            w.setSlotTarget(u,sel,target.id);
+        }
+        RetailFlightVector targetPoint() const {
+            return {target.x.v,target.flightGroundMode==2 ? target.flightY.v : target.groundY.v,target.z.v};
+        }
+        RetailFlightVector lead() {
+            const auto p=w.retailLeadPoint(u,target,weapon);
+            led={p[0],p[1],p[2]};
+            return led;
+        }
+        bool retarget() {
+            // 4d8370 is World's target scan, as AirToAir's; then 4d7de0(unit,
+            // found, 0, 0, 1, 0), retailIssueAutoAttack's gates.
+            const int found=w.findTarget(u,true,true,false);
+            if (!found || found==target.id) return false;
+            const Unit* t=w.unit(found);
+            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            retargetTo=found;
+            return true;
+        }
+        bool stepOut(int32_t d) { stepOutTo=d;return true; }
+        void approach(const RetailFlightGoal& goal) {
+            // A point controller (4e40e0), let go on arrival; 4d4d40 clears
+            // the mission's pending controller events.
+            auto& order=u.orders.front();
+            order.flightGoal=goal;order.mission.pending&=~0x3700u;
+        }
+        void ring(RetailFlightGoal goal) {
+            // 4e4140 + 4e4540(4) + 4e44c0(altitude): the point is fixed (flag
+            // 0x80: 4e41d0 answers it) at the ground under it (or the sea)
+            // plus the attack altitude, at most 511; with a live target it is
+            // never let go (4e41b0: flag 1 and an entity), bit 1 here.
+            int ground=w.seaLevel_;
+            if (!w.heights_.empty()) ground=std::max(ground,retailTerrainHeight(goal.point.x,goal.point.z,
+                w.terW_,w.terH_,[&](int x,int z) {return w.heights_[size_t(z)*w.terW_+x];}));
+            goal.point.y=Fixed::fromInt(std::min(511,ground+altitude)).v;
+            goal.flags|=0x9;
+            auto& order=u.orders.front();
+            order.flightGoal=goal;order.mission.pending&=~0x3700u;
+            ringInstalled=true;
+        }
+        int handle(RetailMissionState& m,uint32_t events) {
+            auto& order=u.orders.front();
+            RetailAirHover in;
+            in.position={u.x.v,u.flightY.v,u.z.v};
+            in.distance=weapon && weapon->hoverAttackDistance ? weapon->hoverAttackDistance : u.type->hoverAttackDistance;
+            in.flies=u.type->canFly && u.type->canMove;
+            in.target=true;
+            // 41e160: no mover (+8: a building), or its MoveRate tier
+            // (+0x130 & 0xc, 4db350) at rest.
+            const UnitScript* script=w.unitScript(target.id);
+            in.targetStill=target.type->isStructure() ||
+                (script ? script->movementRate==0 : target.speed.v==0);
+            in.automatic=order.autoTarget;
+            in.traffic=u.airTraffic;
+            in.footX=int16_t(u.type->footX);
+            // 5066f0: off the map when the footprint does not fit the cell grid.
+            const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
+            in.onMap=ox>=0 && oz>=0 && ox+u.type->footX<w.hW_ && oz+u.type->footZ<w.hH_;
+            // 50ef03: the playable map is 32 px narrower and 128 px shorter.
+            in.width=w.hW_*16-32;in.height=w.hH_*16-128;
+            RetailFlightVector point{order.attackPointX.v,0,order.attackPointZ.v};
+            const int result=retailAirToGroundHover(m,order.airRunCount,point,w.tickCounter_,events,in,*this);
+            // Mission +0x22, the point a lost target's seek circles. (`order`
+            // is gone when the attack ended.)
+            if (!u.orders.empty() && &u.orders.front()==&order && order.targetId==target.id) {
+                order.attackPointX=Fixed::raw(point.x);order.attackPointZ=Fixed::raw(point.z);
+            }
+            return result;
+        }
+    } host{*this,u,target,weapon,altitude};
+    // A new attack goes in ahead of the hover and takes its next mission, as
+    // AirToAir's retarget does.
+    const bool aheadOfDefault=u.orders.front().aheadOfDefault;
+    retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    if (host.ringInstalled && !u.orders.empty() && u.orders.front().targetId==target.id &&
+        shotBlockedHere(u,target)) {
+        // Engine deviation (protocol 304): shots from here keep stopping on
+        // something the weapon cannot destroy (noteShotImpact): move round the
+        // ring to a clear shot instead, kept until the flyer can have flown
+        // there or a wake redraws it.
+        hoverForShot(u,target,slot,{host.led.x,host.led.y,host.led.z},distance,altitude);
     }
-    order.attackPointX=target.x;order.attackPointZ=target.z;
-    auto& goal=*order.flightGoal;
-    int ground=seaLevel_;
-    if (!heights_.empty()) ground=std::max(ground,retailTerrainHeight(goal.point.x,goal.point.z,
-        terW_,terH_,[&](int x,int z) {return heights_[size_t(z)*terW_+x];}));
-    goal.point.y=Fixed::fromInt(std::min(511,ground+altitude)).v;
-    // The target controller (4e4140, flags 0xa3) heads the flyer at the
-    // target's SweetSpot, unled (4e4330 -> 4dd4f0, 51b340), while 52fff0
-    // holds fire until the body is within tolerance of the led one.
-    const auto sweetSpot=queryUnitScriptPoint(target.id,true);
-    goal.heading=uint16_t(retailDirection(Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.x.v)-uint32_t(sweetSpot[0]))),
-                                          Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.z.v)-uint32_t(sweetSpot[2])))).v);
-    order.x=Fixed::raw(goal.point.x);order.z=Fixed::raw(goal.point.z);
-    tickFlightMovement(u,true);
+    if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
+        u.orders.front().aheadOfDefault=aheadOfDefault;
+    if (host.formationTo) {
+        // 41db51: VTOL_Move_Formation (row 5ebca1), level -4 (+0x56): the
+        // moving members' centre until back within level 4; the hover starts
+        // again at stage 0 when it retires.
+        Order formation;
+        formation.x=u.x;formation.z=u.z;formation.goal=formation.flightMoveMission=true;
+        formation.formationLevel=-4;formation.mission.flags=0x1000000u;
+        formation.issuedTick=tickCounter_;
+        u.orders.insert(u.orders.begin(),formation);
+        noteOrders(u.id);
+    }
+    if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
+    if (stepOutFront(u)) { flyMissionGoal(u,u.orders.front());return; }
+    if (!u.orders.empty() && u.orders.front().targetId==target.id) { flyHoverGoal(u,u.orders.front(),target);return; }
+    tickFlightBody(u);notifyFlightOccupancy(u);
+}
+
+// The mover under AirToGroundHover: its controller (Order::flightGoal) is the
+// navigator's destination. A point controller (the approach, the return to
+// the map) is let go on arrival (524c10 posts 0x100, the navigator 0x400) and
+// flown at cruise height (4e41d0); the ring's target controller (flag 1) has
+// its own altitude, heads at the target's SweetSpot, unled (4e4330 -> 4dd4f0,
+// 51b340, within 320 px), and only posts 0x100 while the flyer is within its
+// radius, as 4e41b0 keeps it.
+void World::flyHoverGoal(Unit& u,Order& order,const Unit& target) {
+    if (u.flightGroundMode!=2) { u.flightGroundMode=2;groundMove(u); }   // 51b3b0: taking off unstamps
+    u.retainedFlightGoal.reset();u.retainedFlightControllerActive=false;
+    const int cruise=flightGround(u)+u.type->cruiseAlt;
+    const RetailFlightVector position{u.x.v,u.flightY.v,u.z.v};
+    if (order.flightGoal) {
+        auto& goal=*order.flightGoal;
+        auto destination=goal.point;
+        if (!(goal.flags&8)) destination.y=Fixed::fromInt(std::min(cruise,511)).v;
+        if (goal.flags&1) {
+            const auto sweetSpot=queryUnitScriptPoint(target.id,true);
+            goal.heading=uint16_t(retailDirection(Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.x.v)-uint32_t(sweetSpot[0]))),
+                                                  Fixed::raw(std::bit_cast<int32_t>(uint32_t(u.z.v)-uint32_t(sweetSpot[2])))).v);
+        }
+        u.flightNavigation=retailFlightNavigation(position,u.flightNavigation.destination,destination,
+            u.flightNavigation.heading,Fixed::fromInt(cruise).v,false,(goal.flags&0x40)!=0,goal.heading);
+        order.x=Fixed::raw(goal.point.x);order.z=Fixed::raw(goal.point.z);
+        if (goal.accepts(position)) {
+            if (goal.flags&1) order.mission.pending|=0x100;
+            else { order.mission.pending|=0x500;order.flightGoal.reset(); }
+        }
+    }
+    tickFlightBody(u);
     notifyFlightOccupancy(u);
 }
 
@@ -11773,9 +12323,12 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
                        : u.type->weapons.empty() ? nullptr : &u.type->weapons.front();
     struct Host {
         World& w; Unit& u; const Unit& target; const Weapon* weapon;
+        int retargetTo=0;     // 4d7de0's new attack, put ahead once the dispatch is done
+        int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
         bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
         RetailMissionState* head() {
-            return !u.orders.empty() && u.orders.front().targetId==target.id ? &u.orders.front().mission : nullptr;
+            return !stepOutTo && !retargetTo && !u.orders.empty() && u.orders.front().targetId==target.id
+                ? &u.orders.front().mission : nullptr;
         }
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
         void idle() {}
@@ -11816,6 +12369,17 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
             w.setSlotMode(u,selected,false);
             w.setSlotTarget(u,selected,target.id);
         }
+        bool retarget() {
+            // 4d8370 is World's target scan, as AirToAir's; then 4d7de0(unit,
+            // found, 0, 0, 1, 0), retailIssueAutoAttack's gates.
+            const int found=w.findTarget(u,true,true,false);
+            if (!found || found==target.id) return false;
+            const Unit* t=w.unit(found);
+            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            retargetTo=found;
+            return true;
+        }
+        bool stepOut(int32_t distance) { stepOutTo=distance;return true; }
         void install(const RetailFlightGoal& goal) {
             // 4d4d40 also clears the mission's pending controller events.
             auto& order=u.orders.front();
@@ -11824,6 +12388,8 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
         int handle(RetailMissionState& m,uint32_t events) {
             auto& order=u.orders.front();
             RetailAirRun run;
+            run.traffic=u.airTraffic;run.footX=int16_t(u.type->footX);
+            run.automatic=order.autoTarget;run.hasTarget=true;
             run.position={u.x.v,u.flightY.v,u.z.v};
             run.target={target.x.v,target.flightGroundMode==2 ? target.flightY.v : target.groundY.v,target.z.v};
             // 41c13c: mission +0x22, the point a lost target's seek circles.
@@ -11839,9 +12405,132 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
             return retailAirToGround(m,order.airRunCount,w.tickCounter_,events,run,*this);
         }
     } host{*this,u,target,weapon};
+    // The new attack goes in ahead of AirToGround and takes its next mission,
+    // as AirToAir's retarget does.
+    const bool aheadOfDefault=u.orders.front().aheadOfDefault;
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
-    if (u.orders.empty() || u.orders.front().targetId!=target.id) { tickFlightBody(u); notifyFlightOccupancy(u); return; }
-    flyMissionGoal(u,u.orders.front());
+    if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
+        u.orders.front().aheadOfDefault=aheadOfDefault;
+    if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
+    if (stepOutFront(u) || (!u.orders.empty() && u.orders.front().targetId==target.id)) {
+        flyMissionGoal(u,u.orders.front());
+        return;
+    }
+    tickFlightBody(u); notifyFlightOccupancy(u);
+}
+
+// AirStrike (41b5e0, retailAirStrike) on a flyer's attack order when its
+// selected weapon has the `dropped` key (mods only) and the target cannot
+// fly: approach passes round a release ring, the selected slot aimed and let
+// go over the target, the air-traffic check at stage 4. World's attack always
+// has a unit: the lost-target exits (a dead, dying, carried target) are
+// tickCombat's (seekLostTarget) before the dispatch, so the head's own seek is
+// never reached; 51a770's ground point is the target (setSlotTarget), and
+// 4e3f70's controller follows it (flyMissionGoal re-aims a following goal at
+// the target every tick). The release ring reads the navigator's +0x22, the
+// high word of its destination's z step (flightNavigation.velocity), as retail
+// does.
+void World::tickAirStrike(Unit& u,const Unit& target) {
+    struct Host {
+        World& w; Unit& u; const Unit& target;
+        int retargetTo=0;     // 4d7de0's new attack, put ahead once the dispatch is done
+        int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
+        bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
+        RetailMissionState* head() {
+            return !stepOutTo && !retargetTo && !u.orders.empty() && u.orders.front().targetId==target.id
+                ? &u.orders.front().mission : nullptr;
+        }
+        bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
+        void idle() {}
+        uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+        void remove(RetailMissionState&) {
+            if(u.scriptAimTarget)w.clearScriptWeaponTarget(u);
+            w.dropLeg(u);w.cancelPath(u);u.routeStamp=-1;
+        }
+        void rotate(RetailMissionState&) {}
+        void clear() { w.cancelPath(u);u.orders.clear();u.routeStamp=-1; }
+        int slot() const { return u.type->weaponSwitching ? std::clamp(u.weaponSlot,0,2) : 0; }
+        void beginFlight() {
+            // 416c50: Activate, BeginFlight, take-off, every slot manual
+            // (as AirToGround's stage 0, tickAirToGround).
+            if (auto script=w.unitScripts_.find(u.id);script!=w.unitScripts_.end() && !script->second.activated) {
+                script->second.activated=true;w.notifyUnitScript(u,"Activate");
+            }
+            w.notifyUnitScript(u,"BeginFlight");
+            u.missionEvents&=~0x3700u;
+            for (int s=0;s<3;++s) w.setSlotMode(u,s,false);
+        }
+        void slotsAuto() {
+            for (int s=0;s<3;++s) w.setSlotMode(u,s,true);
+            u.orders.front().mixedSlots=true;
+        }
+        void slotManual() { w.setSlotMode(u,slot(),false); }
+        void aimGround(RetailFlightVector) { w.setSlotTarget(u,slot(),target.id); }
+        void clearSlot() { w.dropSlotTarget(u,slot()); }
+        void install(const RetailFlightGoal& goal) {
+            // 4d4d40 also clears the mission's pending controller events.
+            auto& order=u.orders.front();
+            order.flightGoal=goal;order.mission.pending&=~0x3700u;
+            order.strikeFollow=false;
+        }
+        void follow(int32_t radius) {
+            // 4e3f70: the point controller's class with the target attached:
+            // its point is the target's (moved every tick below), its radius
+            // the release ring's.
+            install(RetailFlightGoal{{target.x.v,0,target.z.v},0x30,0,int16_t(radius)});
+            u.orders.front().strikeFollow=true;
+        }
+        bool retarget() {
+            // 4d8370 is World's target scan; then 4d7de0(unit, found, 0, 0, 1,
+            // 0), retailIssueAutoAttack's gates, as AirToGround's.
+            const int found=w.findTarget(u,true,true,false);
+            if (!found || found==target.id) return false;
+            const Unit* t=w.unit(found);
+            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            retargetTo=found;
+            return true;
+        }
+        bool stepOut(int32_t distance) { stepOutTo=distance;return true; }
+        void seek(bool,RetailFlightVector) {}
+        int handle(RetailMissionState& m,uint32_t events) {
+            auto& order=u.orders.front();
+            RetailAirStrike in;
+            in.position={u.x.v,u.flightY.v,u.z.v};
+            in.heading=portHeadingToRetail(u.heading);
+            in.flies=u.type->canFly && u.type->canMove;
+            in.target=true;
+            in.targetPoint={target.x.v,target.flightGroundMode==2 ? target.flightY.v : target.groundY.v,target.z.v};
+            in.automatic=order.autoTarget;
+            in.last=u.orders.size()==1 && !order.aheadOfDefault;
+            in.holdFire=u.fireState==0;
+            if (order.chaseLeashed) { in.leash=order.chaseLeash;in.origin=order.chaseOrigin; }
+            in.runLength=uint16_t(u.type->attackRunLength);
+            in.cruiseAlt=int16_t(u.type->cruiseAlt);
+            in.gravity=w.ballisticGravityRaw_;
+            in.speed=int16_t(uint32_t(u.flightNavigation.velocity.z)>>16);
+            in.traffic=u.airTraffic;in.footX=int16_t(u.type->footX);
+            RetailFlightVector point{order.attackPointX.v,0,order.attackPointZ.v};
+            const int result=retailAirStrike(m,point,w.tickCounter_,events,in,*this);
+            // Mission +0x22, the point a lost target's seek circles.
+            order.attackPointX=Fixed::raw(point.x);order.attackPointZ=Fixed::raw(point.z);
+            return result;
+        }
+    } host{*this,u,target};
+    const bool aheadOfDefault=u.orders.front().aheadOfDefault;
+    retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
+        u.orders.front().aheadOfDefault=aheadOfDefault;
+    if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
+    if (stepOutFront(u) || (!u.orders.empty() && u.orders.front().targetId==target.id)) {
+        Order& front=u.orders.front();
+        // 4e3f70's controller: its point is the target's, every tick.
+        if (front.strikeFollow && front.flightGoal) {
+            front.flightGoal->point.x=target.x.v;front.flightGoal->point.z=target.z.v;
+        }
+        flyMissionGoal(u,front);
+        return;
+    }
+    tickFlightBody(u); notifyFlightOccupancy(u);
 }
 
 // The mover under AirToGround and VTOL_SeekAttack: the mission's point
@@ -11885,6 +12574,7 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
         World& w; Unit& u; const Unit& target; const Weapon* weapon;
         bool evading=false;   // the handler running is VTOL_Evade's
         int retargetTo=0;     // 4d7de0's new attack, put ahead once the dispatch is done
+        int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
         Order* order() {
             if (u.orders.empty()) return nullptr;
             Order& o=u.orders.front();
@@ -11893,7 +12583,7 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
         bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
         RetailMissionState* head() {
             Order* o=order();
-            if (!o) return nullptr;
+            if (!o || stepOutTo) return nullptr;
             return o->airToAir->evade ? &o->airToAir->evade->mission : &o->mission;
         }
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
@@ -11966,6 +12656,7 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
             o.flightGoal.reset();o.airToAir->intercept.reset();o.airToAir->evadeController=false;
         }
         bool evade() { order()->airToAir->evade.emplace();return true; }
+        bool stepOut(int32_t distance) { stepOutTo=distance;return true; }
         void install(const RetailFlightGoal& goal) {
             // 4d4d40 also clears the mission's pending controller events.
             Order& o=*order();
@@ -12009,6 +12700,7 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
             duel.speed=u.speed.v;duel.maxSpeed=u.baseSpeed.v;duel.distance=distance;
             duel.automatic=o.autoTarget;   // mission +0x52, 4d7de0's auto argument
             duel.onMap=onMap;duel.width=w.hW_*16-32;duel.height=w.hH_*16-128;
+            duel.traffic=u.airTraffic;duel.footX=int16_t(u.type->footX);duel.targetFootX=int16_t(target.type->footX);
             return retailAirToAir(m,a.count,w.tickCounter_,events,duel,*this);
         }
     } host{*this,u,target,weapon};
@@ -12018,6 +12710,8 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.retargetTo && retailIssueAutoAttack(u,host.retargetTo,false,false))
         u.orders.front().aheadOfDefault=aheadOfDefault;
+    if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
+    if (stepOutFront(u)) { flyMissionGoal(u,u.orders.front());return; }
     if (u.orders.empty() || u.orders.front().targetId!=target.id || !u.orders.front().airToAir) {
         tickFlightBody(u);notifyFlightOccupancy(u);return;
     }
@@ -12068,16 +12762,17 @@ bool World::seekLostTarget(Unit& u,const Unit* target,bool targetLive) {
     if (!o.targetId || o.guard || o.load) return false;
     // The mission the attack ran (4de530): AirToAir once it has started, or
     // for a target whose type can fly; a hoverattack flyer's AirToGroundHover
-    // (41d820), whose own pushes (41e301, 41e35f) are not ported; otherwise
-    // AirToGround.
+    // (41d820, its pushes 41e301, 41e35f); otherwise AirToGround. AirToAir's
+    // and AirToGroundHover's exits do not look at the unit's own state.
     const bool airToAir=o.airToAir || (target && target->type && target->type->canFly);
+    bool hover=false;
     if (!airToAir) {
         const int slot=u.type->weapons.empty() ? 0 : std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1);
         const Weapon* sel=slot<int(u.type->weapons.size()) ? &u.type->weapons[size_t(slot)] : nullptr;
-        if (u.type->hoverAttack || (sel && sel->hoverAttack)) return false;
+        hover=u.type->hoverAttack || (sel && sel->hoverAttack);
     }
     RetailAirLoss loss;
-    loss.airToAir=airToAir;
+    loss.airToAir=airToAir || hover;
     loss.alive=u.alive();loss.dying=u.hp<=Fixed();
     loss.last=u.orders.size()==1 && !o.aheadOfDefault;   // +0x66: nothing queued behind it
     loss.holdFire=u.fireState==0;
@@ -12099,6 +12794,76 @@ bool World::seekLostTarget(Unit& u,const Unit* target,bool targetLive) {
     return true;
 }
 
+// 4d7750: a flyer mission pushes a step-out ahead of itself (retail's air
+// traffic, retailairtraffic.h). The step-out is its own order at the front
+// (Order::stepOut), D in airRunCount (mission +0x4e); the mission it was
+// pushed ahead of waits behind it, in the state it set before the push, and
+// runs again once the step-out ends. Missions push it after their dispatch,
+// so the dispatcher's reference to the pushing mission stays valid, and run
+// its first wake at once, as 4d8450 goes straight on to the new head.
+void World::pushStepOut(Unit& u,RetailStepOut kind,int32_t distance) {
+    Order step;
+    step.x=u.x;step.z=u.z;
+    step.goal=true;
+    step.stepOut=uint8_t(kind);
+    step.airRunCount=distance;
+    step.mission.flags=retailStepOutFlags(kind);
+    step.issuedTick=tickCounter_;
+    u.orders.insert(u.orders.begin(),step);
+    noteOrders(u.id);
+    tickStepOutMission(u);
+}
+
+// VTOL_StepOut, VTOL_StepOutStandby and VTOL_StepOutNoFormation (4214b0,
+// retailVtolStepOut) on the step-out order at the front: stage 0 picks the
+// least crowded octant round the flyer's heading against the flyers its
+// overlap list holds and installs a point controller D +- D/4 px out there
+// (Order::flightGoal, flown by flyMissionGoal); stage 1, woken by that
+// controller (0x700), ends it. Off the map it ends at once.
+void World::tickStepOutMission(Unit& u) {
+    struct Host {
+        World& w; Unit& u;
+        bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
+        RetailMissionState* head() { return stepOutFront(u) ? &u.orders.front().mission : nullptr; }
+        bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
+        void idle() {}
+        uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+        void remove(RetailMissionState&) { w.dropLeg(u);w.cancelPath(u);u.routeStamp=-1;w.noteOrders(u.id); }
+        void rotate(RetailMissionState&) {}
+        void clear() { w.cancelPath(u);u.orders.clear();u.routeStamp=-1;w.noteOrders(u.id); }
+        void install(const RetailFlightGoal& goal) {
+            // 4d4d40 also clears the mission's pending controller events.
+            auto& order=u.orders.front();
+            order.flightGoal=goal;order.mission.pending&=~0x3700u;
+        }
+        int handle(RetailMissionState& m,uint32_t) {
+            auto& order=u.orders.front();
+            RetailStepOutInput in;
+            in.position={u.x.v,u.flightY.v,u.z.v};
+            in.heading=portHeadingToRetail(u.heading);
+            in.distance=order.airRunCount;
+            in.flies=u.type->canFly && u.type->canMove;
+            // 5066f0: off the map when the footprint does not fit the cell grid.
+            const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
+            in.onMap=ox>=0 && oz>=0 && ox+u.type->footX<w.hW_ && oz+u.type->footZ<w.hH_;
+            // 50ef03: the playable map is 32 px narrower and 128 px shorter.
+            in.width=w.hW_*16-32;in.height=w.hH_*16-128;
+            // +0x117/+0x118: the live flyers on the overlap list (alive,
+            // +0x130 0x1000000: a dying one still counts).
+            std::array<RetailFlightVector,7> others{};
+            size_t n=0;
+            for (int k=0;k<u.airOccupant.count && k<7;++k)
+                if (const Unit* o=w.unit(u.airOccupant.links[size_t(k)]); o && o->alive())
+                    others[n++]={o->x.v,o->flightY.v,o->z.v};
+            RetailFlightVector point{order.x.v,u.flightY.v,order.z.v};
+            const int result=retailVtolStepOut(m,point,in,std::span<const RetailFlightVector>(others.data(),n),*this);
+            order.x=Fixed::raw(point.x);order.z=Fixed::raw(point.z);
+            return result;
+        }
+    } host{*this,u};
+    retailDispatchMissions(tickCounter_,u.missionEvents,host);
+}
+
 // VTOL_SeekAttack (4192f0, retailVtolSeekAttack) on a seekAttack order: it
 // circles the lost target's last point (the order's x/z) at the selected
 // weapon's range + 160 px, hopping 120-165 degrees on at each arrival and
@@ -12114,9 +12879,10 @@ void World::tickSeekAttack(Unit& u,bool carriesTarget) {
     struct Host {
         World& w; Unit& u; bool carries;
         int retargetTo=0;     // 4d7de0's new attack, put ahead once the dispatch is done
+        int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
         bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
         RetailMissionState* head() {
-            return !u.orders.empty() && u.orders.front().seekAttack ? &u.orders.front().mission : nullptr;
+            return !stepOutTo && !u.orders.empty() && u.orders.front().seekAttack ? &u.orders.front().mission : nullptr;
         }
         bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
         void idle() {}
@@ -12147,6 +12913,7 @@ void World::tickSeekAttack(Unit& u,bool carriesTarget) {
             retargetTo=found;
             return true;
         }
+        bool stepOut(int32_t distance) { stepOutTo=distance;return true; }
         void install(const RetailFlightGoal& goal) {
             // 4d4d40 also clears the mission's pending controller events.
             auto& order=u.orders.front();
@@ -12155,6 +12922,7 @@ void World::tickSeekAttack(Unit& u,bool carriesTarget) {
         int handle(RetailMissionState& m,uint32_t events) {
             auto& order=u.orders.front();
             RetailAirSeek in;
+            in.traffic=u.airTraffic;in.footX=int16_t(u.type->footX);
             in.position={u.x.v,u.flightY.v,u.z.v};
             // 519ac0: a switcher's selected slot, otherwise the first slot.
             const auto& weapons=u.type->weapons;
@@ -12181,10 +12949,192 @@ void World::tickSeekAttack(Unit& u,bool carriesTarget) {
     } host{*this,u,carriesTarget};
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
     if (host.retargetTo) retailIssueAutoAttack(u,host.retargetTo,false,false);
-    if (u.orders.empty() || !u.orders.front().seekAttack) { tickFlightBody(u);notifyFlightOccupancy(u);return; }
-    flyMissionGoal(u,u.orders.front());
+    if (host.stepOutTo) pushStepOut(u,RetailStepOut::StepOut,host.stepOutTo);
+    if (stepOutFront(u) || (!u.orders.empty() && u.orders.front().seekAttack)) { flyMissionGoal(u,u.orders.front()); return; }
+    tickFlightBody(u);notifyFlightOccupancy(u);
 }
 
+// VTOL_Follow's lost ward (4191d7): a flyer's guard whose guarded unit is
+// gone, dead or dying while the guard is its last order (+0x66 is 0) becomes
+// VTOL_SeekGuard (4d77b0 puts it behind the guard, which then ends), carrying
+// the point the guard read at its last look (mission +0x22, the guarded
+// unit's position: attackPointX/Z on the guard order; zero before the first
+// look, which the seek's stage 0 turns into the flyer's own position). A
+// guard with orders behind it just ends. The seek's first dispatch runs at
+// once, as retail's dispatcher goes straight on to the new head. (World posts
+// no events 0x208, so a live guarded unit is never lost.)
+bool World::seekLostWard(Unit& u) {
+    if (!u.type || !u.type->canFly || u.type->isStructure() || u.orders.size()!=1 || !u.orders.front().guard)
+        return false;
+    const Order& guard=u.orders.front();
+    Order seek{guard.attackPointX,guard.attackPointZ,0};
+    seek.seekGuard=true;seek.goal=true;seek.issuedTick=tickCounter_;
+    seek.setIdentity(guard.identity());
+    u.orders.front()=std::move(seek);
+    cancelPath(u);u.routeStamp=-1;
+    noteOrders(u.id);
+    tickSeekGuard(u);
+    return true;
+}
+
+// 509ac0 with 421910, VTOL_SeekGuard's search: the units within the flyer's
+// sightdistance (whole-pixel squares per axis, 16.16 differences) that are
+// alive, allied to its owner, cannot fly and are not itself, in the order of
+// 509ac0's walk over 128 px sectors (rows, then columns); the first is the one
+// a seek guards. Retail walks each sector's own unit list, whose order World
+// does not keep: within a sector World takes the lowest unit id.
+int World::seekGuardFind(const Unit& u) const {
+    const int64_t reach=int64_t(std::max(0,sightDistance(*u.type)));
+    int best=0;
+    std::tuple<int32_t,int32_t,int> bestKey{INT32_MAX,INT32_MAX,INT_MAX};
+    forEachNear(u.x.toFloat(),u.z.toFloat(),float(reach)+32.0f,[&](int index) {
+        const Unit& t=units_[size_t(index)];
+        if (t.id==u.id || !t.alive() || !t.type || t.embarked() || t.type->canFly || t.hp<=Fixed() ||
+            !allied(u.player,t.player)) return;
+        const int64_t dx=int64_t(t.x.v)-u.x.v,dz=int64_t(t.z.v)-u.z.v;
+        if (((dx*dx)>>32)+((dz*dz)>>32)>reach*reach) return;
+        const std::tuple<int32_t,int32_t,int> key{t.z.v>>23,t.x.v>>23,t.id};
+        if (key<bestKey) { bestKey=key;best=t.id; }
+    });
+    return best;
+}
+
+// VTOL_SeekGuard (4197d0, retailVtolSeekGuard) on a seekGuard order: it
+// circles the lost ward's last point (the order's x/z) at the selected
+// weapon's range + 160 px (160 unarmed), hopping 90-135 degrees back at each
+// arrival and looking every 7-13 ticks for an allied ground unit within its
+// sightdistance; it guards the first it finds (a canguard type; VTOL_Follow
+// put ahead, the seek waiting behind it) and ends when it cannot guard one.
+void World::tickSeekGuard(Unit& u) {
+    struct Host {
+        World& w; Unit& u;
+        int guardTo=0;        // the unit to guard, put ahead once the dispatch is done
+        int candidate=0;      // the search's first find
+        RetailStepOut stepOutKind=RetailStepOut::None;
+        int32_t stepOutTo=0;  // a step-out's D, pushed ahead once the dispatch is done
+        bool enabled() const { return u.alive() && !u.incapacitated() && !u.underConstruction && !u.embarked(); }
+        RetailMissionState* head() {
+            return !stepOutTo && !guardTo && !u.orders.empty() && u.orders.front().seekGuard
+                ? &u.orders.front().mission : nullptr;
+        }
+        bool hasNext(const RetailMissionState&) const { return u.orders.size()>1; }
+        void idle() {}
+        uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+        void remove(RetailMissionState&) { w.dropLeg(u);w.cancelPath(u);u.routeStamp=-1; }
+        void rotate(RetailMissionState&) {}
+        void clear() { w.cancelPath(u);u.orders.clear();u.routeStamp=-1; }
+        bool stepOut(RetailStepOut kind,int32_t distance) { stepOutKind=kind;stepOutTo=distance;return true; }
+        void stopBuilding() {}
+        bool found() { candidate=w.seekGuardFind(u);return candidate!=0; }
+        void release() {
+            // 4d4d40(0): the controller goes and its pending events with it.
+            auto& order=u.orders.front();
+            order.flightGoal.reset();order.mission.pending&=~0x3700u;
+        }
+        // 4de530 action 7: VTOL_FOLLOW for a type with canguard, no mission
+        // otherwise (the seek then ends).
+        bool guard() { if (!u.type->canGuard) return false; guardTo=candidate;return true; }
+        void install(const RetailFlightGoal& goal) {
+            // 4d4d40 also clears the mission's pending controller events.
+            auto& order=u.orders.front();
+            order.flightGoal=goal;order.mission.pending&=~0x3700u;
+        }
+        int handle(RetailMissionState& m,uint32_t events) {
+            auto& order=u.orders.front();
+            RetailAirSeekGuard in;
+            in.traffic=u.airTraffic;in.footX=int16_t(u.type->footX);
+            in.position={u.x.v,u.flightY.v,u.z.v};
+            // 519ac0: a switcher's selected slot, otherwise the first slot.
+            const auto& weapons=u.type->weapons;
+            in.armed=!weapons.empty();
+            if (in.armed) {
+                const int slot=u.type->weaponSwitching
+                    ? std::clamp(u.weaponSlot,0,int(std::min<size_t>(3,weapons.size()))-1) : 0;
+                in.range=weapons[size_t(slot)].range;
+            }
+            in.flies=u.type->canFly && u.type->canMove;
+            // 5066f0: off the map when the footprint does not fit the cell grid.
+            const int ox=footprintOrigin(u.x,u.type->footX),oz=footprintOrigin(u.z,u.type->footZ);
+            in.onMap=ox>=0 && oz>=0 && ox+u.type->footX<w.hW_ && oz+u.type->footZ<w.hH_;
+            // 50ef03: the playable map is 32 px narrower and 128 px shorter.
+            in.width=w.hW_*16-32;in.height=w.hH_*16-128;
+            // The point's height plays no part: a point controller without an
+            // altitude flies the cruise height (4e41d0).
+            RetailFlightVector point{order.x.v,0,order.z.v};
+            const int result=retailVtolSeekGuard(m,point,order.guardOrbitAngle,w.tickCounter_,events,in,*this);
+            order.x=Fixed::raw(point.x);order.z=Fixed::raw(point.z);
+            return result;
+        }
+    } host{*this,u};
+    retailDispatchMissions(tickCounter_,u.missionEvents,host);
+    if (host.guardTo) {
+        // The guard goes ahead of the seek (4d7750), which sleeps behind it;
+        // its first look runs at once (tickFlyingGuard), as the dispatcher
+        // goes straight on to the new head.
+        const Unit* ward=unit(host.guardTo);
+        Order g;
+        g.targetId=host.guardTo;g.guard=true;g.goal=true;
+        g.x=ward->x;g.z=ward->z;g.issuedTick=tickCounter_;
+        u.orders.insert(u.orders.begin(),g);
+        u.guardHelpTick=0;u.guardHeard=ward->attackedTick;   // as World::guard's fresh guard
+        noteOrders(u.id);
+        tickFlyingGuard(u);
+    }
+    if (host.stepOutTo) pushStepOut(u,host.stepOutKind,host.stepOutTo);
+    if (!u.orders.empty() && (stepOutFront(u) || u.orders.front().seekGuard)) { flyMissionGoal(u,u.orders.front()); return; }
+    if (!u.orders.empty() && u.orders.front().guard) { tickFlightMovement(u);notifyFlightOccupancy(u);return; }
+    tickFlightBody(u);notifyFlightOccupancy(u);
+}
+
+
+// The air-traffic check of a flying builder's job (VTOL_MobileBuild 41f0a6,
+// VTOL_HelpBuild 41f981, VTOL_RepairUnit 421066; retailAirTrafficCheck): at
+// every wake of the mission, with the counter at 8 or more, it pushes
+// VTOL_StepOutNoFormation ahead, sleeps a tick, stops building (51e4d0(8, 0):
+// StopBuilding, stopWorkAnimation) and returns 0, so the job starts again
+// from its stage 0 -- its approach to 2 x builddistance -- once the step-out
+// ends. World keeps no retail stage for these jobs: their wakes are the first
+// tick of an approach and every tick of the work (each work stage sleeps one
+// tick), and the caller puts the approach back (restartFlyingHelp for a site)
+// before the step-out goes ahead (StopBuilding, then the push). Returns the
+// step-out's D, or nothing.
+std::optional<int32_t> World::flyingJobTraffic(Unit& b, RetailTrafficMission mission) {
+    if (!b.type || !b.type->canFly) return std::nullopt;
+    struct Host {
+        World& w; RetailStepOut kind=RetailStepOut::None; int32_t distance=0;
+        uint32_t random(int n) { return w.pathRand(uint32_t(n)); }
+        bool stepOut(RetailStepOut k,int32_t d) { kind=k;distance=d;return true; }
+        void stopBuilding() {}
+    } host{*this};
+    RetailMissionState m;   // the job's stage: the caller restarts the job itself
+    if (retailAirTrafficCheck(mission,m,tickCounter_,b.airTraffic,int16_t(b.type->footX),0u,host)<0)
+        return std::nullopt;
+    return host.distance;
+}
+
+// A flying builder working on a site (VTOL_HelpBuild, or VTOL_MobileBuild
+// whose site stands: its stage 2 turns it into VTOL_HelpBuild, 41f2d6) starts
+// again from its approach: the hover lets go and a help leg on the site goes
+// to the front (helpApproach's point goal, accepting inside 2 x
+// builddistance), unless the arrival's own leg is still there.
+void World::restartFlyingHelp(Unit& b, const Unit& site) {
+    b.conjureHoverTarget=0;b.conjureHoverGoal.reset();
+    b.buildStuckT=0;b.buildStuckD=INT32_MAX;   // the approach starts afresh
+    const RetailFlightGoal approach{{site.x.v,0,site.z.v},0x30,0,int16_t(2*std::max(0,int(b.type->buildDist)))};
+    if (!b.orders.empty() && b.orders.front().helpSite==site.id) {
+        Order& leg=b.orders.front();
+        leg.x=site.x;leg.z=site.z;leg.flightGoal=approach;
+        return;
+    }
+    Order o;
+    o.x=site.x;o.z=site.z;
+    o.goal=true;
+    o.issuedTick=tickCounter_;
+    o.flightGoal=approach;
+    o.helpSite=site.id;
+    b.orders.insert(b.orders.begin(),o);
+    noteOrders(b.id);
+}
 
 // Flying construction (retail 41ef00, stages 4--6) wanders near builddistance
 // while facing the site. Use the same flight controller as ordinary flight;
@@ -12263,6 +13213,9 @@ void World::tickConstruction(Unit& b, float dt) {
         return;
     }
     site->beingBuilt = true;   // a builder is assigned (walking or working): no decay
+    // A flying job waits behind a step-out pushed ahead of it (its air-traffic
+    // check, flyingJobTraffic): its mission is not the head meanwhile.
+    if (b.type->canFly && stepOutFront(b)) return;
     if (const int leg=groundHelpLeg(b,site->id);leg>=0) { tickGroundHelp(b,*site,size_t(leg),dt); return; }
     float dx = (site->x - b.x).toFloat(), dz = (site->z - b.z).toFloat();
     float half = 16.0f * float(std::max(site->type->footX, site->type->footZ)) / 2;
@@ -12281,6 +13234,15 @@ void World::tickConstruction(Unit& b, float dt) {
         ? b.conjureHoverTarget!=site->id && gd>=flyingReach*flyingReach
         : gd>reach*reach;
     if (outOfReach) {                                  // out of range: still walking there
+        // A flying job's approach (its stage 1) waits on its controller alone:
+        // only its first tick -- the job's start, or its start again -- is a
+        // wake of the mission, and runs its air-traffic check.
+        if (b.type->canFly && b.buildStuckD==INT32_MAX && !b.orders.empty() && b.orders.front().helpSite==site->id)
+            if (const auto d=flyingJobTraffic(b,RetailTrafficMission::HelpBuild)) {
+                stopWorkAnimation(b);
+                pushStepOut(b,RetailStepOut::NoFormation,*d);
+                return;
+            }
         // Give-up watchdog: if the builder gets no closer (~20px, squared 400) for ~8s,
         // it can't reach the site -- abandon it and pop the next queued build. Uses the
         // same fixed-dt / squared-distance idiom as the deleted movement watchdogs, so
@@ -12306,6 +13268,18 @@ void World::tickConstruction(Unit& b, float dt) {
         }
         return;
     }
+    // Every tick of a flying job's work is a wake (VTOL_HelpBuild's and
+    // VTOL_MobileBuild's work stages sleep one tick), the arrival's too: at 8
+    // on the air-traffic counter the flyer steps out of the stack and the job
+    // starts again from its approach.
+    if (b.type->canFly)
+        if (const auto d=flyingJobTraffic(b,!b.orders.empty() && b.orders.front().buildType
+                                                ? RetailTrafficMission::MobileBuild : RetailTrafficMission::HelpBuild)) {
+            restartFlyingHelp(b,*site);
+            stopWorkAnimation(b);
+            pushStepOut(b,RetailStepOut::NoFormation,*d);
+            return;
+        }
     b.buildStuckT = 0; b.buildStuckD = INT32_MAX;      // in range: reset the watchdog
     // MobileBuild's and HelpBuild's work stages (icd 0x405bc8, 0x4060bb) keep a
     // ground builder visible for 300 ticks on every work tick, paid or not;
@@ -13672,8 +14646,11 @@ void World::applyPowerCode(int player,PowerCode code,PowerArg arg,int unitId) {
 }
 
 // 411700: the player's visible-enemy (+5) and visible-ally (+0x15) lists, in
-// unit order. Sites still conjuring and neutral scenery stay off the enemy
-// list, as they do for every other auto-targeting path here.
+// unit order. An enemy with construction left (+0x108) is listed like any
+// other: 411700 drops only a live unit's scenario flag 0x2000 (never set
+// here), so a site still being conjured, or a unit still being built at a
+// factory door, is a candidate for every scan over the list (the picker
+// 412620 scores it x10). Neutral scenery stays off it.
 void World::rebuildVisibleLists(int player) {
     Player& owner=players_[size_t(player)];
     owner.visibleEnemies.clear();owner.visibleAllies.clear();
@@ -13682,7 +14659,7 @@ void World::rebuildVisibleLists(int player) {
         if (!u.alive() || u.hp<=Fixed() || !u.type) continue;
         if (allied(player,u.player)) {
             if (playerSees(player,u)) owner.visibleAllies.push_back(u.id);
-        } else if (!u.underConstruction && !isNeutralPlayer(u.player) && playerSees(player,u))
+        } else if (!isNeutralPlayer(u.player) && playerSees(player,u))
             owner.visibleEnemies.push_back(u.id);
     }
     // units_ is id order in practice; sort so lookups may binary-search.
@@ -14172,6 +15149,40 @@ void World::tickStraightProjectiles(std::span<const int> airGrid) {
     for(auto& p:projectiles_) {
         if(!p.straight || p.life<=0)continue;
         const auto& w=*p.wsrc;
+        if(w.losStatus!=Weapon::LosStatus::None) {
+            // The status classes' updates (52d8d0 mind control, 52db40 stone,
+            // 52dda0 freeze; tools/re/probe_los_status.py runs all three). The
+            // shot flies like the ordinary one, but: a caster dead or dying
+            // retires a mind-control shot at any time, after that update's flight
+            // (which can still land), while stone and freeze check only up to
+            // activation; activation adds no body heading; the expiry tick still
+            // flies; and the first unit struck goes to the class's callback
+            // (applyHit -> hurt), the shot retiring at once (529c10's destroy flag).
+            // A caster that changed sides is gone too: retail's ownership change
+            // (514da0) kills the old object and gives the new owner a new one.
+            const auto* owner=unit(p.fromId);
+            const bool ownerGone=!owner || !owner->alive() || owner->hp<=Fixed() || owner->player!=p.fromPlayer;
+            if(ownerGone && tickCounter_<=p.start) {p.life=0;continue;}
+            if(tickCounter_<=p.start)continue;
+            const bool retire=ownerGone && w.losStatus==Weapon::LosStatus::MindControl;
+            p.age=int32_t(tickCounter_-p.start);
+            const uint32_t flags=(w.unitsOnly?0x800u:0u)|(w.groundBounce?0x1000u:0u)|(w.waterWeapon?0x2000u:0u);
+            bool struck=false;
+            for(uint32_t step=0;step<p.substeps && !struck;++step) {
+                for(unsigned axis=0;axis<3;++axis)p.angles[axis]=uint16_t(p.angles[axis]+w.shotSpin[axis]);
+                for(unsigned axis=0;axis<3;++axis)p.position[axis]=std::bit_cast<int32_t>(
+                    uint32_t(p.position[axis])+uint32_t(p.velocity[axis]));
+                const auto hit=projectileCollision(p.position,p.velocity[1],flags,p.fromPlayer,airGrid);
+                if(hit.code!=2)continue;
+                struck=true;
+                p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
+                noteShotImpact(p.fromId,p.targetId,w,p.position,hit.unitId);
+                applyHit(w,p.x.toFloat(),p.z.toFloat(),p.fromPlayer,p.fromId,unit(hit.unitId),p.position,{},p.slot);
+            }
+            p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
+            if(struck || retire || tickCounter_>=p.end) {p.spent=true;p.life=0;}
+            continue;
+        }
         if(w.lightning) {
             const auto* owner=unit(p.fromId);
             if(!owner || !owner->alive() || owner->hp<=Fixed()) {p.life=0;continue;}
@@ -14199,7 +15210,7 @@ void World::tickStraightProjectiles(std::span<const int> airGrid) {
             if(hit.code==2) {
                 noteShotImpact(p.fromId,p.targetId,w,p.position,hit.unitId);
                 applyHit(w,Fixed::raw(p.position[0]).toFloat(),Fixed::raw(p.position[2]).toFloat(),
-                    p.fromPlayer,p.fromId,unit(hit.unitId),p.position);
+                    p.fromPlayer,p.fromId,unit(hit.unitId),p.position,{},p.slot);
                 p.spent=true;break;
             }
         }
@@ -14242,7 +15253,7 @@ void World::tickFlames(std::span<const int> airGrid) {
             if(hit.code==2) {
                 noteShotImpact(flame.fromId,flame.targetId,w,flame.position,hit.unitId);
                 applyHit(w,Fixed::raw(flame.position[0]).toFloat(),Fixed::raw(flame.position[2]).toFloat(),
-                    flame.owner,flame.fromId,unit(hit.unitId),flame.position);
+                    flame.owner,flame.fromId,unit(hit.unitId),flame.position,{},flame.slot);
                 flame.impacted=true;break;
             }
         }
@@ -14322,6 +15333,11 @@ std::span<const int> World::updateAirOccupancy() {
     AirOccupancyHost host{*this};
     for (auto* u:flyers) airOccupancy_.clear(u->id,host);
     for (auto* u:flyers) airOccupancy_.insert(u->id,host,[&](unsigned n){return gameRand(int32_t(n));});
+    // 51dc4b..51dce4: then every live flyer that is not dying (+0x130 0x1000,
+    // hit points gone) steps its air-traffic counter from its fresh overlap
+    // list, landed ones too (an empty list: down by 2).
+    for (auto* u:flyers)
+        if (u->hp>Fixed()) u->airTraffic=retailAirTrafficStep(u->airTraffic,u->airOccupant.count);
     return airOccupancy_.cells();
 }
 
@@ -15253,10 +16269,15 @@ void World::finishProduction(int producerId,Unit& finished) {
                 }
             } else {
                 nu->orders.push_back(ro);
-                nu->orders.back().issuedTick = tickCounter_;
-                // An unarmed, non-building flyer's patrol handler closes its own
-                // loop (plainFlightPatrol), as queuePatrol leaves it.
-                if (!t->isBuilder && t->weapons.empty()) nu->orders.back().patrolOpen=false;
+                Order& leg=nu->orders.back();
+                leg.issuedTick = tickCounter_;
+                // GetBuilt resolves each QMove / QPatrol for the output
+                // (4de530 actions 2 and 9, 0x4022ec / 0x402319): a flyer's
+                // VTOL_Move and VTOL_Patrol (plainFlightPatrol). The patrol
+                // closes its own loop, as queuePatrol leaves it; a move or
+                // fight-move step carries the move's flags.
+                leg.patrolOpen=false;
+                if (!leg.patrol) { leg.flightMoveMission=true;leg.mission.flags=0x3000400u; }
             }
         }
     // A rally whose every entry was dropped (its attack targets are dead) hands
@@ -15487,6 +16508,9 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
         const bool rectangleReached = leg.buildRectangle && leg.buildRectangle->accepts(
             footprintOrigin(u.x,u.type->footX), footprintOrigin(u.z,u.type->footZ));
         if (u.type->canFly) {
+            // A step-out (tickStepOutMission) flies its own point controller,
+            // let go on arrival, which wakes it to end.
+            if (u.orders.front().stepOut) { flyMissionGoal(u,u.orders.front()); return; }
             if (leg.buildRectangle && leg.flightGoal &&
                 leg.flightGoal->accepts({u.x.v,u.flightY.v,u.z.v})) {
                 u.orders[currentLeg(u.orders)].mission.pending |= 0x100;
@@ -15496,8 +16520,6 @@ void World::tickNavigationMovement(Unit& u,Fixed maximum) {
                 notifyFlightOccupancy(u);
                 return;
             }
-            // May grow the queue: `leg` is not read past this point.
-            openFlightPatrol(u);
             tickFlightMovement(u); notifyFlightOccupancy(u); return;
         }
         if(legion_&&isLegionPathfinding(pathfindingMode_)&&legion_->supports(u)) {
@@ -16187,7 +17209,7 @@ void World::tick(float dt) {
             if(hit) {
                 noteShotImpact(p.fromId,p.targetId,*p.wsrc,p.position,hitUnit);
                 applyHit(*p.wsrc,Fixed::raw(p.position[0]).toFloat(),
-                    Fixed::raw(p.position[2]).toFloat(),p.fromPlayer,p.fromId,unit(hitUnit),p.position);
+                    Fixed::raw(p.position[2]).toFloat(),p.fromPlayer,p.fromId,unit(hitUnit),p.position,{},p.slot);
                 p.spent=true;p.life=0;
             } else if(p.life>0)--p.life;
             continue;
@@ -16218,7 +17240,8 @@ void World::tick(float dt) {
                 p.x=Fixed::raw(p.position[0]);p.z=Fixed::raw(p.position[2]);
                 if(hit.code==2) {
                     noteShotImpact(p.fromId,p.targetId,*p.wsrc,state.position,hit.unitId);
-                    applyHit(*p.wsrc,p.x.toFloat(),p.z.toFloat(),p.fromPlayer,p.fromId,unit(hit.unitId),p.position);
+                    applyHit(*p.wsrc,p.x.toFloat(),p.z.toFloat(),p.fromPlayer,p.fromId,unit(hit.unitId),p.position,{},
+                             p.slot);
                 }
                 // Native retires an out-of-map shell without damage and dispatches
                 // exactly one impact when collision returns 2.
@@ -16259,7 +17282,8 @@ void World::tick(float dt) {
                 // point of use in 76 places and snapshots it onto nothing. The
                 // Projectile::damage this branch used was a dead copy of w.damage.
                 applyHit(*p.wsrc, t->x.toFloat(), t->z.toFloat(), p.fromPlayer, p.fromId, t, {},
-                         std::array<int32_t,3>{t->x.v, (t->type && t->type->canFly ? t->flightY : t->groundY).v, t->z.v});
+                         std::array<int32_t,3>{t->x.v, (t->type && t->type->canFly ? t->flightY : t->groundY).v, t->z.v},
+                         p.slot);
                 p.life = -1;
                 p.spent = true;   // connected: don't also crater at expiry
             }
@@ -16307,7 +17331,7 @@ void World::tick(float dt) {
         const int ground = heights_.empty() ? 0 : retailTerrainHeight(bp.x.v, bp.z.v, terW_, terH_,
             [&](int x, int z) { return heights_[size_t(z) * size_t(terW_) + size_t(x)]; });
         applyHit(*bp.wsrc, bp.x.toFloat(), bp.z.toFloat(), bp.fromPlayer, bp.fromId, under,
-                 {}, std::array<int32_t,3>{bp.x.v, Fixed::fromInt(ground).v, bp.z.v});
+                 {}, std::array<int32_t,3>{bp.x.v, Fixed::fromInt(ground).v, bp.z.v}, bp.slot);
     }
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
 
@@ -16812,6 +17836,9 @@ void World::tick(float dt) {
                 PhaseSpan span(g_moveMs,probe::kMovement);
                 tickGroundMission(u);
             } else tickGroundMission(u);
+            // A step-out ahead of the unit's mission runs first; the mission
+            // behind it takes over in this dispatch once it ends.
+            if (stepOutFront(u)) tickStepOutMission(u);
             if (plainFlightPatrol(u)) tickFlightPatrol(u);
             tickGuardNoMove(u);
         }
@@ -17035,7 +18062,7 @@ void World::tick(float dt) {
                 const Weapon* sel =
                     slot < int(u.type->weapons.size()) ? &u.type->weapons[slot] : nullptr;
                 if (sel && sel->melee && t->type)
-                    return meleeInRange(u.type, t->type, dx, dz);
+                    return meleeInRange(u, *t);
                 // Pad by a structure target's footprint half-extent so "holding in
                 // range" agrees with tickCombat's fire gate (else a unit stopped at a
                 // building's edge gets dragged back into moving) -- and, as there,
@@ -17882,6 +18909,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(uint32_t(u.baseSpeed.v)));
         if (u.type && u.type->canFly) {
             if (u.scriptOccupancy) { mix(0x5346584fu);mix(u.scriptOccupancy); }
+            if (u.airTraffic) { mix(0x41495254u);mix(uint8_t(u.airTraffic)); }   // air-traffic counter (+0x12a)
             mix(u.flightGroundMode); mix(u.landing.has_value());
             if (u.landing) {
                 const auto& l=*u.landing; const auto& m=l.mission;
@@ -18017,7 +19045,6 @@ uint64_t World::stateHash() const {
             if (u.type && u.type->canFly) {
                 mix(order.landing);
                 mix(order.flightMoveMission);
-                mix(order.hoverAttackRefresh);
                 mix(uint32_t(order.attackPointX.v));mix(uint32_t(order.attackPointZ.v));
                 mix(order.flightGoal.has_value());
                 if (order.flightGoal) {
@@ -18037,13 +19064,27 @@ uint64_t World::stateHash() const {
                     mix(order.mission.stage); mix(order.mission.waitMask); mix(order.mission.deadline);
                     mix(order.mission.pending); mix(order.mission.flags); mix(uint32_t(order.airRunCount));
                 }
+                // A step-out (tickStepOutMission) runs on its order's mission.
+                else if (order.stepOut) {
+                    mix(0x535445504f5554ull); mix(order.stepOut); mix(uint32_t(order.airRunCount));
+                    mix(uint32_t(order.x.v)); mix(uint32_t(order.z.v));
+                    mix(order.mission.stage); mix(order.mission.waitMask); mix(order.mission.deadline);
+                    mix(order.mission.pending); mix(order.mission.flags);
+                }
                 // VTOL_SeekAttack (tickSeekAttack) runs on a seek order's mission.
                 else if (order.seekAttack) {
                     mix(0x5345454b41545400ull); mix(uint32_t(order.x.v)); mix(uint32_t(order.z.v));
                     mix(order.guardOrbitAngle); mix(order.mission.stage); mix(order.mission.waitMask);
                     mix(order.mission.deadline); mix(order.mission.pending); mix(order.mission.flags);
                 }
+                // VTOL_SeekGuard (tickSeekGuard) runs on a seek order's mission.
+                else if (order.seekGuard) {
+                    mix(0x5345454b47554152ull); mix(uint32_t(order.x.v)); mix(uint32_t(order.z.v));
+                    mix(order.guardOrbitAngle); mix(order.mission.stage); mix(order.mission.waitMask);
+                    mix(order.mission.deadline); mix(order.mission.pending); mix(order.mission.flags);
+                }
                 if (order.aheadOfDefault) mix(0x4445464155ull);
+                if (order.strikeFollow) mix(0x5354524b464full);
                 if (order.mixedSlots) mix(0x4d49584544ull);
                 if (order.airToAir) {
                     const auto& a=*order.airToAir;
