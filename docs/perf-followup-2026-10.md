@@ -1379,6 +1379,406 @@ python3 tools/we_timing_dist.py <out> --warm 400 --phases tick,nav
 CORES=4-7 tools/scenarios/perf/routeinv_pmu.sh $BASE $CAND $X/scn/ri-<s>.scn 900 $X/I-pmu-<s>   # recordings: EXTRA="--data $D --catchup 60", 2000 ticks, WARM 1000
 ```
 
+### Results: client (C, E, F, K, measurement B)
+
+Serial measurement, 2026-10-31 05:49 to 13:15, one agent, no other workflow running. Correctness and
+verify runs 05:55-06:42, then the timing series 06:42:50-09:50:50 (load average 1.2-3.2, from the timed
+client itself and the desktop; no build, test or capture ran during it), then captures 09:51-13:10 on
+cores 16-23. Every timed client went through `/home/pocket_geek/tak-tmp/tools/timing.sh` (flock, cores 0-3).
+
+**Provenance**
+
+- Builds (Debug, `CMAKE_CXX_FLAGS=-O2 -g`, `-ffp-contract=off` from the tree, GCC 16.2.1 via ccache, mold,
+  `TAK_TEST_DATA=/home/pocket_geek/TAK/assets/game`, all targets; `ninja -n` shows only the build-id restamp):
+  - candidate `CAND=~/tak-tmp/build-pfint-o2`: `perf-followup` code at `dad93045` (the head `72bd6941` adds
+    only docs); `takclient` sha256 `629e0f45738b9e7a...`.
+  - plain base `BASE=~/tak-tmp/build-pfint-base-o2`: `461e9c4b` (= `61f294ac` code); `d8b563453bb86049...`.
+  - measurement-B base `MB=~/tak-tmp/build-pf-mB-o2`: `ae7e86f0` = `461e9c4b` + measurement B's telemetry and
+    render-study knobs, no PROD commit (a plain base client is refused by the interactive scenes);
+    `5c71c726c84ed345...`.
+  - C's A side `CA=~/tak-tmp/build-pf-C-A`: `cd9a9f1c` = `461e9c4b` + C's cursor-study instrumentation (old
+    picking), built for this phase (worktree `~/tak-tmp/wt-pf-C-A`); `e3d295331c6ba137...`.
+  - E's base `EB=~/tak-tmp/build-pf-E-base-o2`: `d8e63f3a` = `461e9c4b` + E's workload knob and telemetry (old
+    ghost path), built for this phase (worktree `~/tak-tmp/wt-pf-E-base`); `2e58f1a6c5f532bf...`.
+  - Attribution only: `~/tak-tmp/build-pf-E-o2` (`pf-E` head `f95a6155`, E alone).
+- Hardware: Core Ultra 9 275HX, RTX 5070 Laptop GPU 8 GB (driver 615.78.08, OpenGL 4.6 core), Fedora 44,
+  SDL offscreen video driver with the OpenGL renderer. Timed clients pinned to P-cores 0-3; the render
+  harnesses have no 0-7 variant (4-7 are the build/test pool), so none was run.
+- Harnesses: `tools/render_benchmark.py` (forced completion: `glFinish` before present, fixed 1/60 s frame
+  clock, fixed-step local simulation; 900 frames per run, the first 300 discarded, 600 measured) and
+  `tools/cursor_pick_study.py` (pipelined frames, 900 frames, 300 warm-up; each client wrapped in
+  `timing.sh`). Runs are A B B A groups; a pair is (A, B) of legs 0/1 and 3/2 of each group. `--repeats 3`
+  = 6 pairs (the measurement-B scenes, C at 1280x960, C whole frame, K at 7680x2160), `--repeats 2` = 4 pairs
+  (C at 7680x2160, the C and K same-binary references, E, K at 1280x960), F's bench `--repeats 4` = 8 pairs.
+  One discarded A/B warm-up group (240 frames) before each series.
+- Statistics: per-run mean / median / p95 / p99 of the frame (FRAME `ms`, update + anim + draw + present),
+  then the median over runs; max = largest frame of any run. Budget columns: share of all measured frames
+  above 16.67 / 8.33 / 4.17 ms (60 / 120 / 240 Hz). Hitch = a frame above twice its run's median (meaningless
+  below ~1 ms, where a 0.3 ms frame counts). Pair ratio = B/A of the per-run means, median [min..max] over the
+  pairs: an item counts as a repeatable gain only when every pair is below 1. Phase columns are the
+  RENDERSTATS render-thread walls (`t_*`, median of per-run means) and the FRAME phases.
+- Every scene's runs gave one world hash (the harness refuses otherwise); the cursor study's per-frame
+  cursor sequence was identical A vs B in every scene. The integrated candidate carries every item, so a
+  whole-frame difference against an instrumented base includes the simulation items (the `update` phase,
+  0.02-0.12 ms lower in these scenes) and the other client items; the per-item phase and the same-binary
+  references isolate each item.
+
+**Correctness** (not timed; cores 4-23 before the timing series, captures after it)
+
+- `ctest -R` on the candidate: `unit_index`, `render_unit_index`, `render_unit_index_jump`, `render_pick_index`,
+  `_orders`, `_jump`, `pick_late_model`, `gate_pick`, `reclaim_pick`, `cursor_enemy`, `cursor_roster`,
+  `render_build_ghosts`, `hidden_units_policy`, `hidden_units`, `shadow`, `shadow_tiles`, `shadow_atlas`,
+  `render_shadow_atlas` + `_zoom`, `_band`, `_extended`, `_yield`, `_full`, `_off`, `render_shadow_cache`,
+  `render_interactive_cases`: 26/26 pass.
+- C, `TAK_PICK_INDEX_VERIFY=1` (every cursor decision re-made by a scan over every unit; the client throws on
+  a difference): the six cursor-study scenes at 1280x960 (3,600 decisions, 333k candidates for 25.1M live-unit
+  visits, 1,627 body queries) and at 7680x2160 (2,400 decisions), and the four measurement-B pointer scenes at
+  both sizes (6,400 decisions, 1,766 body queries): no difference.
+- E, `TAK_GHOST_VERIFY=1` (retained triangles equal a fresh collection, culled ghosts' reference bounds
+  outside the clip): 24 runs, 2.53M ghosts checked, 1.26M culled, `inexact=0`; `render_build_ghosts` passes.
+- F, `TAK_HIDDEN_VERIFY=1` (aborts at the first unit whose cover decision, or the first frame whose fade set,
+  differs from testing every cover): F's three bench workloads and fade-forest / fade-buildings /
+  dots-buildings at both sizes, 18 runs: no abort.
+- K, `TAK_SHADOW_CACHE_VERIFY=1` (every kept tile equals a complete re-bake), 7680x2160, 499 frames per run,
+  2 runs each, identical counters run to run:
+
+| scene | cap | pages held (max) | frames on extended pages | sheds | fallback frames | alloc failures |
+|---|---|---|---|---|---|---|
+| shadow-pages-dense | none | 9 | 499 | 0 | 0 | 0 |
+| shadow-pages-above / -below / -osc | none | 6 / 6 / 6 (osc ends at 5) | 499 | 0 | 0 | 0 |
+| shadow-pages-moving | none | 7 | 499 | 0 | 0 | 0 |
+| shadow-cap-below / -above / -cross | none | 6 / 6 / 6 | 499 | 0 | 0 | 0 |
+| shadow-cap-below-pan / -above-pan | none | 5 / 5 | 483 / 499 (one extended page given back) | 0 | 0 | 0 |
+| shadow-pages-dense | 448 / 512 / 640 MiB | 9, then 0 | 23 / 21 / 33 | 1 | 476 / 478 / 466 | 0 |
+| shadow-pages-below | 448 / 512 MiB | 6, then 4 | 20 / 30 | 1 | 0 | 0 |
+| shadow-pages-below | 640 MiB | 6 | 499 | 0 | 0 | 0 |
+
+  Under a tight cap the dense view sheds its extended pages once (in the first 21-33 frames, while the
+  terrain loads) and then draws direct shadows exactly as the base does; the below view sheds back to the four
+  base pages and keeps silhouettes. No re-growth, no further allocation and no repack churn after the shed
+  (`regrow_gap=0`, `extended_releases=0`, `page_allocs` constant). A real texture-allocation failure cannot be
+  injected in a client run (no knob); it is covered by `shadow_atlas` `testPageBudget` and
+  `render_shadow_atlas_full` (pass).
+
+**Measurement B: the interactive scenes, combined branch vs `MB`** (`render_benchmark.py --scenes <...>
+--repeats 3`, 6 pairs; frame ms A then B as mean / median / p95 / p99 / max)
+
+C scenes (pointer evaluation every frame; 10,000 own units, a corner in view; `select-large` 2,000 units all
+selected; at 7680x2160 `select-large` runs as Tactical Dots):
+
+| scene/size | A frame | B frame | % > 16.7 / 8.3 / 4.2 ms, A -> B | hitches A -> B | pair ratio mean | pair ratio p99 | `t_cursor` ms | pick tests/frame | present ms | update ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| hover-armed-10k/normal | 6.78 / 6.53 / 8.03 / 10.23 / 21.1 | 6.42 / 6.20 / 7.59 / 8.73 / 20.6 | 0.2 / 3.2 / 100.0 -> 0.2 / 1.5 / 100.0 | 7 -> 6 | 0.944 [0.923..0.957] | 0.904 [0.779..1.006] | 0.237 -> 0.00354 | 10,002 -> 37.8 | 0.602 -> 0.335 | 5.208 -> 5.088 |
+| hover-armed-10k/uhd | 9.11 / 8.94 / 10.41 / 11.62 / 23.3 | 8.83 / 8.69 / 10.25 / 12.05 / 23.0 | 0.2 / 78.2 / 100.0 -> 0.2 / 63.7 / 100.0 | 6 -> 6 | 0.971 [0.961..0.986] | 1.028 [0.964..1.153] | 0.244 -> 0.00442 | 10,002 -> 62.8 | 0.656 -> 0.463 | 5.512 -> 5.393 |
+| hover-ground-10k/normal | 7.40 / 7.30 / 8.25 / 10.14 / 19.0 | 6.98 / 6.89 / 7.77 / 9.52 / 18.5 | 0.2 / 4.1 / 100.0 -> 0.2 / 2.1 / 100.0 | 6 -> 6 | 0.945 [0.933..0.954] | 0.915 [0.869..0.976] | 0.305 -> 0.00318 | 10,002 -> 0 | 0.688 -> 0.370 | 5.533 -> 5.445 |
+| hover-ground-10k/uhd | 7.98 / 7.87 / 8.89 / 11.16 / 19.4 | 7.62 / 7.52 / 8.56 / 10.83 / 19.6 | 0.2 / 19.2 / 100.0 -> 0.2 / 8.6 / 100.0 | 7 -> 6 | 0.958 [0.938..0.980] | 0.986 [0.907..1.090] | 0.306 -> 0.00319 | 10,002 -> 0 | 0.616 -> 0.313 | 5.504 -> 5.460 |
+| hover-units-10k/normal | 6.66 / 6.41 / 7.89 / 8.53 / 20.7 | 6.39 / 6.15 / 7.56 / 8.69 / 20.5 | 0.2 / 1.8 / 100.0 -> 0.2 / 1.5 / 100.0 | 7 -> 6 | 0.961 [0.940..0.969] | 0.979 [0.883..1.181] | 0.245 -> 0.00528 | 10,002 -> 37.8 | 0.557 -> 0.341 | 5.142 -> 5.086 |
+| hover-units-10k/uhd | 8.94 / 8.71 / 10.30 / 12.21 / 23.7 | 8.59 / 8.46 / 9.92 / 12.00 / 22.7 | 0.2 / 70.4 / 100.0 -> 0.2 / 54.3 / 100.0 | 6 -> 6 | 0.964 [0.946..0.993] | 0.964 [0.862..1.114] | 0.243 -> 0.00599 | 10,002 -> 62.8 | 0.679 -> 0.473 | 5.401 -> 5.346 |
+| select-large/normal | 5.40 / 5.38 / 6.20 / 7.05 / 9.8 | 5.20 / 5.20 / 6.01 / 6.81 / 10.3 | 0.0 / 0.3 / 100.0 -> 0.0 / 0.2 / 100.0 | 0 -> 0 | 0.961 [0.953..0.978] | 0.957 [0.918..0.995] | 0.0614 -> 0.00864 | 2,002 -> 79 | 0.314 -> 0.251 | 0.965 -> 0.938 |
+| select-large/uhd | 1.87 / 1.86 / 2.11 / 2.31 / 4.2 | 1.80 / 1.79 / 2.02 / 2.18 / 4.4 | 0.0 / 0.0 / 0.0 -> 0.0 / 0.0 / 0.1 | 7 -> 7 | 0.972 [0.907..1.019] | 0.941 [0.860..1.076] | 0.0443 -> 0.00536 | 2,002 -> 6.87 | 0.460 -> 0.407 | 0.688 -> 0.659 |
+
+The cursor phase falls 0.24-0.31 ms -> 0.003-0.006 ms (10,002 -> 0-63 exact tests) in the 10k scenes and
+0.044-0.061 -> 0.005-0.009 ms (2,002 -> 7-79) in `select-large`; the `present` phase (it holds the cursor
+overlay) falls by the same amount. Every pair is a whole-frame gain in every scene except `select-large`
+at 7680x2160 (0.972 [0.907..1.019], a 1.8 ms frame). At 120 Hz the share of frames over budget falls from
+70 / 78 / 19% to 54 / 64 / 9% in the 7680x2160 hover scenes. p99 ranges straddle 1 except hover-ground-10k
+(0.915 [0.869..0.976]) and select-large (0.957 [0.918..0.995]) at 1280x960.
+
+E scenes (16 builders x 24 queued builds, 3 repeated types, half of each queue at the far map corner):
+
+| scene/size | A frame | B frame | % > 16.7 / 8.3 / 4.2 ms, A -> B | hitches A -> B | pair ratio mean | pair ratio p99 | `t_ghosts` ms | ghosts culled | retained-geometry hits |
+|---|---|---|---|---|---|---|---|---|---|
+| ghosts-queue-pan/normal | 4.49 / 4.41 / 4.86 / 5.23 / 8.4 | 1.01 / 0.97 / 1.23 / 1.55 / 4.2 | 0.0 / 0.0 / 100.0 -> 0.0 / 0.0 / 0.0 | 0 -> 14 | 0.224 [0.214..0.229] | 0.300 [0.269..0.345] | 4.06 -> 0.654 | - -> 167 | - -> 149 |
+| ghosts-queue-pan/uhd | 5.24 / 5.19 / 5.53 / 5.75 / 9.0 | 1.49 / 1.45 / 1.68 / 1.84 / 4.9 | 0.0 / 0.2 / 100.0 -> 0.0 / 0.0 / 0.2 | 0 -> 16 | 0.285 [0.282..0.294] | 0.322 [0.304..0.508] | 4.42 -> 0.74 | - -> 173 | - -> 163 |
+| ghosts-queue/normal | 4.36 / 4.32 / 4.53 / 4.71 / 7.7 | 0.99 / 0.95 / 1.13 / 1.33 / 4.1 | 0.0 / 0.0 / 98.7 -> 0.0 / 0.0 / 0.0 | 0 -> 12 | 0.226 [0.223..0.231] | 0.280 [0.268..0.290] | 4.03 -> 0.73 | - -> 150 | - -> 166 |
+| ghosts-queue/uhd | 5.03 / 4.97 / 5.28 / 5.69 / 8.6 | 1.46 / 1.42 / 1.76 / 2.19 / 4.5 | 0.0 / 0.1 / 100.0 -> 0.0 / 0.0 / 0.1 | 0 -> 12 | 0.286 [0.272..0.295] | 0.387 [0.343..0.391] | 4.28 -> 0.734 | - -> 170 | - -> 166 |
+
+`ghosts_queued` = `ghost_preps` = 316 (1280x960) / 336 (7680x2160) on both sides; the candidate's retained
+geometry is 46,080 bytes. The "hitches" on B are frames above twice a 1 ms median.
+
+F scenes (Fade unless noted; fade clock on the study frame):
+
+| scene/size | A frame | B frame | % > 16.7 / 8.3 / 4.2 ms, A -> B | hitches A -> B | pair ratio mean | pair ratio p99 | `t_hidden_units` ms | cover tests/frame | update ms |
+|---|---|---|---|---|---|---|---|---|---|
+| dots-buildings/normal | 1.66 / 1.73 / 2.22 / 2.51 / 4.1 | 1.62 / 1.69 / 2.20 / 2.42 / 4.2 | 0.0 / 0.0 / 0.0 -> 0.0 / 0.0 / 0.0 | 8 -> 10 | 0.983 [0.963..1.007] | 0.981 [0.922..1.082] | 0.0803 -> 0.0772 | 0 -> 0 | 0.386 -> 0.367 |
+| dots-buildings/uhd | 2.48 / 2.55 / 3.17 / 3.47 / 10.4 | 2.44 / 2.51 / 3.14 / 3.48 / 4.5 | 0.0 / 0.0 / 0.3 -> 0.0 / 0.0 / 0.3 | 1 -> 0 | 0.982 [0.972..0.995] | 1.009 [0.968..1.080] | 0.137 -> 0.133 | 0 -> 0 | 0.420 -> 0.394 |
+| fade-buildings/normal | 1.71 / 1.78 / 2.18 / 2.36 / 3.9 | 1.68 / 1.75 / 2.16 / 2.40 / 4.0 | 0.0 / 0.0 / 0.0 -> 0.0 / 0.0 / 0.0 | 8 -> 4 | 0.975 [0.940..1.073] | 0.982 [0.883..1.289] | 0.0905 -> 0.0838 | 297 -> 250 | 0.384 -> 0.363 |
+| fade-buildings/uhd | 2.52 / 2.57 / 3.05 / 3.28 / 4.8 | 2.48 / 2.51 / 3.01 / 3.19 / 4.6 | 0.0 / 0.0 / 0.2 -> 0.0 / 0.0 / 0.2 | 0 -> 0 | 0.984 [0.981..0.987] | 0.987 [0.954..1.002] | 0.152 -> 0.143 | 443 -> 384 | 0.406 -> 0.382 |
+| fade-forest/normal | 1.72 / 1.69 / 2.04 / 2.29 / 4.1 | 1.67 / 1.63 / 2.03 / 2.42 / 5.4 | 0.0 / 0.0 / 0.0 -> 0.0 / 0.0 / 0.0 | 12 -> 13 | 0.977 [0.950..0.992] | 1.043 [0.925..1.149] | 0.109 -> 0.09 | 692 -> 579 | 0.563 -> 0.535 |
+| fade-forest/uhd | 2.57 / 2.54 / 2.85 / 3.02 / 4.8 | 2.50 / 2.48 / 2.77 / 3.01 / 4.9 | 0.0 / 0.0 / 0.2 -> 0.0 / 0.0 / 0.2 | 0 -> 0 | 0.977 [0.966..0.991] | 0.993 [0.955..1.046] | 0.159 -> 0.137 | 790 -> 676 | 0.605 -> 0.573 |
+
+F's pass is 5-18% cheaper here (0.007-0.022 ms; every pair below 1 except fade-buildings and
+dots-buildings at 1280x960), 2-3% in dots-buildings (Dots tests no cover). The whole-frame ratios (0.975-0.984)
+split between the simulation items (`update` -0.02..-0.03 ms) and F (hidden pass -0.003..-0.022 ms).
+
+K scenes (7680x2160 only; the 6-type roster 40 px apart at zoom 1):
+
+| scene/size | A frame | B frame | % > 16.7 / 8.3 / 4.2 ms, A -> B | hitches A -> B | pair ratio mean | pair ratio p99 | direct-shadow units | atlas pages | atlas GPU bytes (max) | tracked GPU bytes (max) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| shadow-cap-above-pan/uhd | 30.99 / 31.29 / 33.67 / 34.93 / 39.0 | 30.15 / 29.53 / 34.65 / 36.12 / 39.4 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 0 -> 0 | 0.973 [0.966..0.981] | 1.031 [1.023..1.047] | 3.29e+03 -> 0 | 1.02 -> 4.75 | 64 MiB -> 80 MiB | 262 MiB -> 278 MiB |
+| shadow-cap-above/uhd | 25.59 / 25.47 / 27.88 / 28.80 / 33.7 | 12.23 / 12.29 / 14.61 / 15.44 / 26.1 | 100.0 / 100.0 / 100.0 -> 0.4 / 100.0 / 100.0 | 0 -> 3 | 0.478 [0.477..0.480] | 0.534 [0.524..0.547] | 4.46e+03 -> 0 | 0 -> 5.93 | 0 MiB -> 96 MiB | 288 MiB -> 384 MiB |
+| shadow-cap-below-pan/uhd | 25.40 / 26.19 / 28.65 / 29.97 / 33.0 | 25.20 / 25.96 / 28.39 / 29.85 / 33.4 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 0 -> 0 | 0.993 [0.966..1.013] | 0.994 [0.970..1.027] | 53.2 -> 0 | 3.95 -> 4.01 | 64 MiB -> 80 MiB | 262 MiB -> 278 MiB |
+| shadow-cap-below/uhd | 14.07 / 11.75 / 21.99 / 24.08 / 29.8 | 10.28 / 10.34 / 12.18 / 13.04 / 16.5 | 39.0 / 100.0 / 100.0 -> 0.0 / 100.0 / 100.0 | 68 -> 0 | 0.729 [0.724..0.735] | 0.543 [0.534..0.560] | 0 -> 0 | 4 -> 6 | 64 MiB -> 96 MiB | 339 MiB -> 371 MiB |
+| shadow-cap-cross/uhd | 29.55 / 29.37 / 31.27 / 33.23 / 40.7 | 28.90 / 29.00 / 31.56 / 33.28 / 39.9 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 0 -> 0 | 0.979 [0.968..0.986] | 1.006 [0.981..1.044] | 2.31e+03 -> 0 | 1.75 -> 4.56 | 64 MiB -> 96 MiB | 262 MiB -> 295 MiB |
+
+Above capacity (`shadow-cap-above`) the frame halves; just below it (`-below`, the base repacks the full
+four pages most frames: 1,401 relocated tiles per frame, 0.47 compactions) the mean falls 27% and p99 46%,
+and 16.7 ms misses go from 39% of frames to none. Under the sinusoidal pan every tile is redrawn every frame on
+both sides; `-above-pan` (base: 75% of frames direct) is 2.7% faster on the mean but **3.1% slower at p99
+in every pair** (1.031 [1.023..1.047]), `-cross` 2.1% faster on the mean, p99 inside noise; `-below-pan` inside
+noise. The extra GPU memory is the atlas: +16 to +32 MiB where the base kept its four pages, +96 MiB in
+`-above` (the base held none there).
+
+**C: cursor picking** (`cursor_pick_study.py`; A = `CA` (old picking, same study hooks), B = `CAND`; cursor
+evaluation = `desiredCursor` wall per frame; ms as mean / median / p95 / p99 / max)
+
+1280x960, 6 pairs:
+
+| scene | exact tests/frame A -> B | cursor A | cursor B | cursor pair ratio | saved ms/frame | frame mean A -> B (p99) | frame pair ratio |
+|---|---|---|---|---|---|---|---|
+| subset10k-sel | 10002 -> 57.3 | 0.3332 / 0.3044 / 0.3833 / 0.4956 / 0.97 | 0.0134 / 0.0112 / 0.0197 / 0.0216 / 0.15 | 0.040 [0.040..0.041] | 0.320 | 7.28 -> 6.94 (p99 8.25 -> 7.88) | 0.952 [0.944..0.983] |
+| subset10k-nosel | 4304 -> 9.6 | 0.1368 / 0.0180 / 0.3178 / 0.4076 / 0.51 | 0.0054 / 0.0056 / 0.0074 / 0.0082 / 0.14 | 0.039 [0.034..0.040] | 0.131 | 6.89 -> 6.70 (p99 7.89 -> 7.59) | 0.977 [0.963..0.990] |
+| subset10k-attack | 10002 -> 57.3 | 0.3312 / 0.3026 / 0.3798 / 0.4667 / 0.81 | 0.0139 / 0.0118 / 0.0199 / 0.0221 / 0.15 | 0.042 [0.041..0.043] | 0.317 | 7.20 -> 6.84 (p99 8.12 -> 7.76) | 0.948 [0.936..0.959] |
+| visible10k-sel | 10002 -> 179.0 | 0.4697 / 0.4665 / 0.5541 / 0.5832 / 0.74 | 0.0193 / 0.0193 / 0.0248 / 0.0286 / 0.10 | 0.041 [0.039..0.043] | 0.450 | 21.98 -> 20.88 (p99 25.54 -> 24.67) | 0.951 [0.946..0.966] |
+| small-battle-sel | 102 -> 21.7 | 0.0082 / 0.0063 / 0.0138 / 0.0171 / 0.13 | 0.0055 / 0.0042 / 0.0093 / 0.0139 / 0.09 | 0.668 [0.658..0.685] | 0.003 | 0.99 -> 0.97 (p99 1.58 -> 1.58) | 0.976 [0.968..0.988] |
+| effects-pan-sel | 1479 -> 162.8 | 0.0693 / 0.0687 / 0.0802 / 0.0920 / 0.23 | 0.0192 / 0.0141 / 0.0396 / 0.0448 / 0.16 | 0.277 [0.268..0.283] | 0.050 | 10.87 -> 10.69 (p99 12.92 -> 12.60) | 0.983 [0.978..0.985] |
+
+7680x2160, 4 pairs:
+
+| scene | exact tests/frame A -> B | cursor A | cursor B | cursor pair ratio | saved ms/frame | frame mean A -> B (p99) | frame pair ratio |
+|---|---|---|---|---|---|---|---|
+| subset10k-sel | 10002 -> 109.4 | 0.4790 / 0.4717 / 0.5919 / 0.6418 / 0.83 | 0.0153 / 0.0154 / 0.0200 / 0.0238 / 0.09 | 0.033 [0.031..0.034] | 0.464 | 31.58 -> 18.37 (p99 35.47 -> 22.46) | 0.585 [0.574..0.588] |
+| subset10k-nosel | 4347 -> 35.5 | 0.1878 / 0.1240 / 0.5006 / 0.5421 / 0.74 | 0.0083 / 0.0086 / 0.0122 / 0.0135 / 0.02 | 0.044 [0.043..0.048] | 0.180 | 30.92 -> 18.09 (p99 34.99 -> 22.13) | 0.584 [0.581..0.589] |
+| subset10k-attack | 10002 -> 109.4 | 0.4511 / 0.4438 / 0.5538 / 0.6098 / 0.77 | 0.0158 / 0.0158 / 0.0203 / 0.0240 / 0.10 | 0.035 [0.034..0.036] | 0.435 | 31.45 -> 18.34 (p99 35.47 -> 22.39) | 0.583 [0.581..0.591] |
+| visible10k-sel | 10002 -> 97.9 | 0.2587 / 0.2321 / 0.2987 / 0.4029 / 0.43 | 0.0129 / 0.0118 / 0.0217 / 0.0241 / 0.14 | 0.050 [0.049..0.051] | 0.246 | 8.14 -> 7.82 (p99 8.98 -> 8.80) | 0.961 [0.951..0.980] |
+| small-battle-sel | 102 -> 15.5 | 0.0090 / 0.0071 / 0.0133 / 0.0153 / 0.09 | 0.0055 / 0.0054 / 0.0080 / 0.0095 / 0.09 | 0.609 [0.606..0.632] | 0.004 | 1.27 -> 1.24 (p99 1.83 -> 1.81) | 0.978 [0.969..0.992] |
+| effects-pan-sel | 1479 -> 6.5 | 0.0845 / 0.0837 / 0.0947 / 0.1128 / 0.21 | 0.0153 / 0.0151 / 0.0171 / 0.0231 / 0.05 | 0.182 [0.174..0.192] | 0.069 | 12.85 -> 12.68 (p99 15.03 -> 15.05) | 0.987 [0.984..0.990] |
+
+The 7680x2160 subset10k frames (31.5 -> 18.4 ms) are K's shadow atlas, not C: C saves 0.18-0.46 ms of them.
+
+Same binary, `TAK_PICK_FULL_SCAN=1` on A (isolates C from everything else), 1280x960, 4 pairs:
+
+| scene | exact tests/frame A -> B | cursor A | cursor B | cursor pair ratio | saved ms/frame | frame mean A -> B (p99) | frame pair ratio |
+|---|---|---|---|---|---|---|---|
+| subset10k-sel | 10002 -> 57.3 | 0.3396 / 0.3125 / 0.3885 / 0.4291 / 0.80 | 0.0133 / 0.0111 / 0.0193 / 0.0216 / 0.16 | 0.039 [0.039..0.040] | 0.326 | 7.19 -> 6.85 (p99 8.35 -> 7.89) | 0.947 [0.938..0.958] |
+| subset10k-nosel | 4304 -> 9.6 | 0.1388 / 0.0188 / 0.3224 / 0.3667 / 0.46 | 0.0054 / 0.0057 / 0.0076 / 0.0082 / 0.12 | 0.039 [0.038..0.040] | 0.133 | 6.93 -> 6.79 (p99 8.07 -> 7.86) | 0.979 [0.967..0.994] |
+| subset10k-attack | 10002 -> 57.3 | 0.3444 / 0.3117 / 0.4155 / 0.5115 / 3.57 | 0.0141 / 0.0118 / 0.0200 / 0.0224 / 0.15 | 0.041 [0.040..0.042] | 0.331 | 7.23 -> 6.81 (p99 8.17 -> 7.70) | 0.941 [0.928..0.950] |
+| visible10k-sel | 10002 -> 179.0 | 0.4794 / 0.4756 / 0.5583 / 0.5906 / 1.87 | 0.0193 / 0.0191 / 0.0241 / 0.0282 / 0.10 | 0.041 [0.036..0.042] | 0.460 | 21.32 -> 20.97 (p99 24.79 -> 24.56) | 0.985 [0.979..0.993] |
+| small-battle-sel | 102 -> 21.7 | 0.0085 / 0.0064 / 0.0141 / 0.0184 / 0.10 | 0.0055 / 0.0042 / 0.0094 / 0.0142 / 0.07 | 0.646 [0.638..0.653] | 0.003 | 0.97 -> 0.96 (p99 1.56 -> 1.47) | 0.991 [0.988..0.994] |
+| effects-pan-sel | 1479 -> 162.8 | 0.0713 / 0.0695 / 0.0831 / 0.1487 / 0.23 | 0.0191 / 0.0142 / 0.0396 / 0.0445 / 0.16 | 0.269 [0.261..0.272] | 0.052 | 10.62 -> 10.54 (p99 12.59 -> 12.46) | 0.993 [0.989..0.998] |
+
+Whole frame with the in-game cursor on (`render_benchmark.py --scenes total10k-subset effects --env
+TAK_RENDER_CURSOR=1 --env TAK_RENDER_CURSOR_SELECT=20`, A = `CA`, 6 pairs):
+
+| scene/size | A frame | B frame | % > 16.7 / 8.3 / 4.2 ms, A -> B | hitches A -> B | pair ratio mean | pair ratio p99 | present ms | update ms |
+|---|---|---|---|---|---|---|---|---|
+| effects/normal | 3.53 / 3.49 / 4.15 / 4.63 / 5.8 | 3.48 / 3.43 / 4.12 / 4.64 / 6.2 | 0.0 / 0.0 / 5.1 -> 0.0 / 0.0 / 3.9 | 0 -> 0 | 0.987 [0.944..1.006] | 1.012 [0.880..1.056] | 0.178 -> 0.172 | 0.730 -> 0.695 |
+| effects/uhd | 3.98 / 3.94 / 4.58 / 5.29 / 6.9 | 3.94 / 3.88 / 4.55 / 5.31 / 6.8 | 0.0 / 0.0 / 25.2 -> 0.0 / 0.0 / 20.3 | 0 -> 0 | 0.988 [0.982..0.990] | 0.997 [0.975..1.024] | 0.205 -> 0.197 | 0.729 -> 0.692 |
+| total10k-subset/normal | 7.48 / 7.43 / 8.17 / 8.60 / 19.2 | 7.09 / 7.06 / 7.76 / 8.40 / 19.0 | 0.2 / 2.6 / 100.0 -> 0.2 / 1.2 / 100.0 | 6 -> 6 | 0.948 [0.931..0.951] | 0.965 [0.935..0.988] | 0.695 -> 0.369 | 5.509 -> 5.465 |
+| total10k-subset/uhd | 8.29 / 8.20 / 8.98 / 10.74 / 20.2 | 7.88 / 7.81 / 8.56 / 9.26 / 19.7 | 0.2 / 38.7 / 100.0 -> 0.2 / 12.9 / 100.0 | 6 -> 6 | 0.949 [0.936..0.961] | 0.872 [0.835..1.028] | 0.660 -> 0.283 | 5.667 -> 5.622 |
+
+C is a repeatable gain wherever many units are live: cursor evaluation 0.033-0.050x of A at 10,000 units
+(0.13-0.46 ms per frame saved), 0.18-0.28x in the 2,000-unit battle with flyers (0.05-0.07 ms), 0.61-0.67x
+in the 200-unit battle (0.003-0.004 ms, below any frame effect). With full scan toggled in one binary the
+whole frame is 1.5-5.9% faster in the 10k scenes in every pair; in the two small scenes the frame ratio is
+0.991-0.993 (inside noise). With the in-game cursor in the matrix scenes: total10k-subset 0.948 / 0.949 (every pair, `present` -0.33 /
+-0.38 ms), `effects` (450 units in view) 0.987 / 0.988, every pair only at 7680x2160.
+
+**E: build-queue ghosts** (`render_benchmark.py --scenes ghost-queues ghost-offscreen ghost-visible ghost-few
+--repeats 2`, A = `EB`, B = `CAND`, 4 pairs)
+
+| scene/size | A frame | B frame | % > 16.7 / 8.3 / 4.2 ms, A -> B | hitches A -> B | pair ratio mean | pair ratio p99 | `t_build_ghosts` ms | ghosts culled | retained hits |
+|---|---|---|---|---|---|---|---|---|---|
+| ghost-few/normal | 1.54 / 1.50 / 1.79 / 1.95 / 3.5 | 1.28 / 1.25 / 1.55 / 1.73 / 3.6 | 0.0 / 0.0 / 0.0 -> 0.0 / 0.0 / 0.0 | 4 -> 4 | 0.830 [0.806..0.857] | 0.879 [0.819..0.918] | 0.246 -> 0.0228 | 0 -> 15 | 0 -> 12 |
+| ghost-few/uhd | 2.04 / 2.01 / 2.29 / 2.48 / 4.8 | 2.00 / 1.98 / 2.27 / 2.43 / 5.2 | 0.0 / 0.0 / 0.1 -> 0.0 / 0.0 / 0.1 | 2 -> 3 | 0.984 [0.947..1.000] | 0.986 [0.958..1.015] | 0.252 -> 0.0503 | 0 -> 0 | 0 -> 27 |
+| ghost-offscreen/normal | 2.59 / 2.57 / 2.80 / 2.89 / 3.3 | 0.17 / 0.14 / 0.33 / 0.43 / 1.4 | 0.0 / 0.0 / 0.0 -> 0.0 / 0.0 / 0.0 | 0 -> 271 | 0.066 [0.065..0.068] | 0.147 [0.129..0.157] | 2.21 -> 0.00683 | 0 -> 249 | 0 -> 0 |
+| ghost-offscreen/uhd | 3.27 / 3.28 / 3.40 / 3.59 / 6.3 | 0.86 / 0.83 / 0.97 / 1.18 / 4.1 | 0.0 / 0.0 / 0.2 -> 0.0 / 0.0 / 0.0 | 0 -> 5 | 0.264 [0.246..0.279] | 0.325 [0.268..0.375] | 2.23 -> 0.00668 | 0 -> 249 | 0 -> 0 |
+| ghost-queues/normal | 3.63 / 3.62 / 3.78 / 3.99 / 6.6 | 0.56 / 0.54 / 0.66 / 0.78 / 3.6 | 0.0 / 0.0 / 0.4 -> 0.0 / 0.0 / 0.0 | 0 -> 7 | 0.155 [0.154..0.156] | 0.198 [0.183..0.212] | 3.03 -> 0.211 | 0 -> 218 | 0 -> 110 |
+| ghost-queues/uhd | 3.74 / 3.72 / 3.95 / 4.10 / 6.9 | 1.15 / 1.13 / 1.31 / 1.56 / 4.2 | 0.0 / 0.0 / 0.8 -> 0.0 / 0.0 / 0.0 | 0 -> 4 | 0.308 [0.290..0.325] | 0.381 [0.371..0.434] | 2.97 -> 0.42 | 0 -> 104 | 0 -> 224 |
+| ghost-visible/normal | 3.97 / 3.96 / 4.11 / 4.34 / 7.1 | 1.33 / 1.31 / 1.44 / 1.62 / 3.9 | 0.0 / 0.0 / 2.7 -> 0.0 / 0.0 / 0.0 | 0 -> 4 | 0.334 [0.331..0.340] | 0.374 [0.361..0.387] | 2.99 -> 0.498 | 0 -> 64 | 0 -> 264 |
+| ghost-visible/uhd | 3.77 / 3.75 / 3.97 / 4.07 / 9.8 | 1.27 / 1.24 / 1.42 / 1.74 / 4.4 | 0.0 / 0.0 / 0.5 -> 0.0 / 0.0 / 0.1 | 1 -> 4 | 0.336 [0.327..0.339] | 0.427 [0.406..0.436] | 3 -> 0.573 | 0 -> 20 | 0 -> 308 |
+
+The ghost pass falls 2.2-3.0 ms -> 0.007-0.57 ms in the long-queue scenes: off-screen ghosts (all 249 in
+`ghost-offscreen`) are culled before any triangle work and visible ones reuse the sorted model-local
+triangles (collections 328 -> 0 per frame). `ghost-few` (200 units, 27 ghosts) gains 17% at 1280x960 (every
+pair) and 1.6% at 7680x2160 (0.984 [0.947..1.000]: one pair at 1.000, so not established there). Retained
+memory: 25,600 bytes in these scenes (46,080 in measurement B's).
+
+**F: hidden-unit Fade** (`tools/hidden_fade_bench.sh --repeats 4`, A = `BASE`, B = `CAND`, 8 pairs, 1280x960)
+
+| workload | A frame | B frame | % > 16.7 / 8.3 / 4.2 ms, A -> B | hitches A -> B | pair ratio mean | pair ratio p99 | `t_hidden_units` ms | covers handed out (= base's exact tests) | exact tests run | update ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| fade-forest (300) | 0.91 / 0.91 / 1.13 / 1.31 / 4.7 | 0.88 / 0.87 / 1.10 / 1.33 / 4.6 | 0.0 / 0.0 / 0.0 -> 0.0 / 0.0 / 0.0 | 8 -> 9 | 0.960 [0.939..0.984] | 0.989 [0.919..1.084] | 0.0896 -> 0.0527 | - -> 1.06e+03 | - -> 365 | 0.123 -> 0.117 |
+| fade-forest1200 | 2.90 / 2.92 / 3.27 / 3.55 / 6.7 | 2.56 / 2.59 / 2.95 / 3.26 / 8.1 | 0.0 / 0.0 / 0.6 -> 0.0 / 0.0 / 0.4 | 1 -> 2 | 0.888 [0.878..0.898] | 0.916 [0.764..0.965] | 0.478 -> 0.194 | - -> 8.12e+03 | - -> 1.24e+03 | 0.462 -> 0.440 |
+| fade-keeps | 2.07 / 1.85 / 3.00 / 3.16 / 5.7 | 1.94 / 1.73 / 2.85 / 3.06 / 4.7 | 0.0 / 0.0 / 0.2 -> 0.0 / 0.0 / 0.2 | 17 -> 18 | 0.934 [0.908..0.949] | 0.969 [0.906..0.991] | 0.221 -> 0.141 | - -> 2.92e+03 | - -> 1.57e+03 | 0.381 -> 0.352 |
+
+(Rows: fade-forest = `forest` 300 units; fade-forest1200 = 1,200 units 24 px apart under repeated trees;
+fade-keeps = 1,000 units with every eighth a Keep.) The pass is 0.58x / 0.41x / 0.64x of base (0.04 / 0.28 /
+0.08 ms per frame); the whole frame is a gain in every pair (0.888-0.960), most of it the hidden pass (the
+`update` phase moves 0.006-0.03 ms).
+
+**K: shadow atlas** (`render_benchmark.py`, A = `BASE`, B = `CAND`; 7680x2160 6 pairs, 1280x960 4 pairs)
+
+7680x2160 (`shadow-pages-*`, zoom 0.82):
+
+| scene/size | A frame | B frame | % > 16.7 / 8.3 / 4.2 ms, A -> B | hitches A -> B | pair ratio mean | pair ratio p99 | direct-shadow units | atlas pages | atlas GPU bytes (max) | tracked GPU bytes (max) | relocated tiles/frame |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| shadow-pages-above/uhd | 36.91 / 36.75 / 40.12 / 41.46 / 47.5 | 18.47 / 18.71 / 21.90 / 23.42 / 27.2 | 100.0 / 100.0 / 100.0 -> 71.6 / 100.0 / 100.0 | 0 -> 0 | 0.502 [0.497..0.503] | 0.566 [0.555..0.568] | 6.6e+03 -> 0 | 0 -> 6.01 | 0 MiB -> 112 MiB | 391 MiB -> 486 MiB | 0 -> 0 |
+| shadow-pages-below/uhd | 21.72 / 17.40 / 33.05 / 35.46 / 43.3 | 15.17 / 15.38 / 18.26 / 19.42 / 22.6 | 52.0 / 100.0 / 100.0 -> 15.3 / 100.0 / 100.0 | 74 -> 0 | 0.698 [0.695..0.700] | 0.548 [0.531..0.563] | 0 -> 0 | 4 -> 6 | 64 MiB -> 96 MiB | 443 MiB -> 475 MiB | 2.33e+03 -> 0 |
+| shadow-pages-constrained/uhd | 58.63 / 58.90 / 61.58 / 66.41 / 77.9 | 58.72 / 58.95 / 61.69 / 65.28 / 77.8 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 0 -> 0 | 1.006 [0.992..1.011] | 0.980 [0.941..1.012] | 9.78e+03 -> 9.78e+03 | 0 -> 0 | 0 -> 0 | 327 MiB -> 327 MiB | 0 -> 0 |
+| shadow-pages-dense/uhd | 54.48 / 54.42 / 58.94 / 60.49 / 72.3 | 29.10 / 29.11 / 34.04 / 35.23 / 46.2 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 0 -> 0 | 0.536 [0.530..0.539] | 0.583 [0.574..0.595] | 9.78e+03 -> 0 | 0 -> 9 | 0 MiB -> 144 MiB | 391 MiB -> 535 MiB | 0 -> 0 |
+| shadow-pages-moving/uhd | 41.74 / 42.04 / 52.83 / 55.96 / 63.9 | 35.55 / 34.71 / 48.27 / 50.86 / 57.0 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 0 -> 0 | 0.853 [0.850..0.859] | 0.903 [0.885..0.928] | 2.43e+03 -> 0 | 2.2 -> 6.01 | 64 MiB -> 112 MiB | 490 MiB -> 538 MiB | 820 -> 7.18 |
+| shadow-pages-osc/uhd | 35.09 / 35.12 / 37.70 / 40.31 / 50.1 | 34.56 / 34.61 / 37.67 / 39.68 / 46.7 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 0 -> 0 | 0.992 [0.980..0.997] | 0.986 [0.964..0.993] | 2.5e+03 -> 0 | 1.97 -> 4.51 | 64 MiB -> 96 MiB | 344 MiB -> 376 MiB | 2.33e+03 -> 4.72e+03 |
+| shadow-pages-pan/uhd | 55.72 / 55.97 / 59.34 / 60.56 / 68.2 | 55.23 / 54.78 / 60.53 / 63.26 / 67.7 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 0 -> 0 | 0.996 [0.985..1.010] | 1.040 [1.026..1.056] | 7.58e+03 -> 0 | 0 -> 5.64 | 0 MiB -> 96 MiB | 247 MiB -> 342 MiB | 0 -> 7.16e+03 |
+
+Same binary, `TAK_SHADOW_PAGES_MAX=4` on A (the candidate held to four pages = what `c3c312eb`, `0397c088`
+and `192f7c4b` alone give, i.e. without the visual commit `98e01695`), 4 pairs:
+
+| scene/size | A frame | B frame | % > 16.7 / 8.3 / 4.2 ms, A -> B | hitches A -> B | pair ratio mean | pair ratio p99 | atlas pages | relocated tiles/frame |
+|---|---|---|---|---|---|---|---|---|
+| shadow-pages-above/uhd | 36.51 / 36.38 / 39.73 / 41.17 / 45.1 | 18.54 / 18.79 / 21.84 / 23.15 / 27.1 | 100.0 / 100.0 / 100.0 -> 72.3 / 100.0 / 100.0 | 0 -> 0 | 0.507 [0.506..0.510] | 0.565 [0.556..0.567] | 0 -> 6.01 | 0 -> 0 |
+| shadow-pages-below/uhd | 21.33 / 16.92 / 32.81 / 35.15 / 38.8 | 15.36 / 15.56 / 18.49 / 19.69 / 22.8 | 50.7 / 100.0 / 100.0 -> 19.0 / 100.0 / 100.0 | 64 -> 0 | 0.720 [0.716..0.726] | 0.562 [0.544..0.567] | 4 -> 6 | 2.33e+03 -> 0 |
+| shadow-pages-constrained/uhd | 58.23 / 58.45 / 61.12 / 65.62 / 76.5 | 58.38 / 58.58 / 61.53 / 64.28 / 77.6 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 0 -> 0 | 1.001 [0.992..1.012] | 0.977 [0.955..1.002] | 0 -> 0 | 0 -> 0 |
+| shadow-pages-dense/uhd | 53.78 / 53.66 / 58.22 / 59.53 / 70.2 | 29.33 / 29.30 / 34.03 / 35.51 / 46.4 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 0 -> 0 | 0.545 [0.538..0.555] | 0.597 [0.593..0.609] | 0 -> 9 | 0 -> 0 |
+| shadow-pages-moving/uhd | 41.34 / 41.71 / 52.42 / 55.33 / 61.3 | 35.56 / 34.39 / 48.22 / 50.94 / 54.6 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 0 -> 0 | 0.859 [0.858..0.861] | 0.926 [0.886..0.934] | 2.2 -> 6.01 | 820 -> 7.18 |
+| shadow-pages-osc/uhd | 34.60 / 34.71 / 37.27 / 39.61 / 49.0 | 34.69 / 34.66 / 37.78 / 40.12 / 48.6 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 0 -> 0 | 1.003 [0.981..1.005] | 1.011 [0.997..1.028] | 1.97 -> 4.51 | 2.33e+03 -> 4.72e+03 |
+| shadow-pages-pan/uhd | 54.89 / 55.17 / 58.66 / 60.27 / 68.3 | 55.51 / 55.03 / 60.99 / 63.37 / 69.5 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 0 -> 0 | 1.010 [1.009..1.012] | 1.050 [1.037..1.077] | 0 -> 5.64 | 0 -> 7.16e+03 |
+
+1280x960 controls (no scene there needs more than two pages; `shadow_extended_pages` stays 0):
+
+| scene/size | A frame | B frame | % > 16.7 / 8.3 / 4.2 ms, A -> B | hitches A -> B | pair ratio mean | pair ratio p99 | atlas pages | extended pages | `t_hidden_units` ms | update ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| churn/normal | 13.42 / 12.90 / 17.27 / 19.01 / 37.0 | 13.18 / 12.63 / 17.23 / 18.90 / 35.7 | 8.2 / 100.0 / 100.0 -> 8.2 / 100.0 / 100.0 | 8 -> 8 | 0.986 [0.974..0.994] | 0.994 [0.921..1.044] | 1.5 -> 1.5 | - -> 0 | 0.834 -> 0.803 | 2.886 -> 2.791 |
+| moving/normal | 7.75 / 7.77 / 12.16 / 13.44 / 15.6 | 7.66 / 7.70 / 11.93 / 13.11 / 16.6 | 0.0 / 33.5 / 98.2 -> 0.0 / 31.0 / 97.8 | 0 -> 2 | 0.988 [0.984..0.995] | 0.983 [0.950..1.015] | 1 -> 1 | - -> 0 | 0.262 -> 0.256 | 1.567 -> 1.490 |
+| pan-snap/normal | 5.70 / 5.66 / 6.26 / 6.67 / 10.5 | 5.55 / 5.53 / 6.09 / 6.63 / 10.3 | 0.0 / 0.2 / 100.0 -> 0.0 / 0.1 / 100.0 | 0 -> 0 | 0.976 [0.959..0.987] | 0.990 [0.949..1.064] | 2 -> 2 | - -> 0 | 0.497 -> 0.454 | 1.167 -> 1.122 |
+| stationary-mixed/normal | 4.46 / 4.47 / 5.10 / 5.45 / 8.1 | 4.18 / 4.21 / 4.70 / 5.02 / 6.9 | 0.0 / 0.0 / 72.3 -> 0.0 / 0.0 / 54.7 | 0 -> 0 | 0.940 [0.883..0.976] | 0.915 [0.879..0.980] | 1 -> 1 | - -> 0 | 0.378 -> 0.257 | 0.992 -> 0.931 |
+| total10k-visible/normal | 22.05 / 22.10 / 24.57 / 25.90 / 51.7 | 21.28 / 21.39 / 23.71 / 25.42 / 52.0 | 100.0 / 100.0 / 100.0 -> 100.0 / 100.0 / 100.0 | 4 -> 4 | 0.968 [0.959..0.971] | 0.976 [0.971..0.985] | 1 -> 1 | - -> 0 | 2.16 -> 1.55 | 6.284 -> 6.185 |
+| zoom/normal | 10.81 / 11.58 / 12.90 / 15.75 / 18.3 | 10.69 / 11.42 / 12.82 / 15.48 / 17.7 | 0.4 / 86.2 / 100.0 -> 0.3 / 85.8 / 100.0 | 0 -> 0 | 0.990 [0.983..0.994] | 0.983 [0.952..0.997] | 1.14 -> 1.14 | - -> 0 | 1.28 -> 1.16 | 1.247 -> 1.204 |
+
+- With four pages the candidate times like the base in every scene (the four-page A side is within 2% of
+  `BASE`, measured in separate series): the whole gain is the visual commit `98e01695`.
+- Gains, every pair: dense 0.54 (p99 0.58), above 0.50 (p99 0.57), below 0.70 (p99 0.55; 16.7 ms misses 52%
+  -> 15%), moving 0.85 (p99 0.90; base fell back to direct shadows on 45% of frames).
+- Neutral: constrained (448 MiB cap; pages shed, direct shadows as base) 1.006 [0.992..1.011]; osc 0.992
+  [0.980..0.997] vs base but 1.003 [0.981..1.005] against the same binary at four pages.
+- **Regression under the continuous sub-pixel pan:** `shadow-pages-pan` mean 0.996 [0.985..1.010] vs base,
+  1.010 [1.009..1.012] same-binary; p99 1.040 [1.026..1.056] vs base and 1.050 [1.037..1.077] same-binary,
+  every pair above 1 (+2.5-3.1 ms on a 60 ms p99). Here every tile is re-rasterized every frame (7,160
+  relocated tiles per frame) and the shadow phases cost 1.53x the direct path; the cheaper composite does not
+  pay for it. measurement B's `shadow-cap-above-pan` shows the same p99 (+3.1%, every pair).
+- Memory: tracked GPU memory +32 to +144 MiB in the views that keep extended pages (atlas 96-144 MiB vs 0-64
+  MiB); peak client RSS within +-60 MiB except the pan (+156 MiB). No pending-page growth: pending pages exist
+  only inside a frame (no texture), `page_allocs` stays at the held count.
+- 1280x960: every control is 0.94-0.99 (the hidden pass, the cursor-free sim phases); the shadow phases are
+  inside noise (0.976-1.019), as expected with no extended page.
+
+**Captures** (`--capture-only`, cores 16-23, 12 frames per scene for measurement B and K, 28 for E;
+world-view pixels; A/A = two runs of one build)
+
+- **C** (measurement B pointer scenes, `MB` vs `CAND`): 0 px in every frame of 7 of 8 scene/sizes;
+  `select-large` at 1280x960 76-177 px (max channel error 1-2) in 1-3 frames, the A/A level of either build
+  (76-207 px), also with distant images off. C also passes the stricter checks above (identical cursor
+  sequences, `TAK_PICK_INDEX_VERIFY`).
+- **E**: with the wall-clock-driven content off (`TAK_HIDDEN_UNITS=off TAK_DISTANT_MODELS_OFF=1
+  TAK_TERRAIN_SETTLE=1`; 28 frames per scene) `EB` vs `CAND` is 0 px in every frame of ghost-queues,
+  ghost-visible and ghost-offscreen at both sizes and ghost-few at 1280x960; ghost-few at 7680x2160 differs by
+  55-130 px in 16 frames, as do A/A pairs of `EB` and of `CAND` and E alone (`build-pf-E-o2`) vs `EB` (same
+  frames, same size). Same binary, the reference path (`TAK_GHOST_REFERENCE=1`: collect and sort every frame,
+  no culling) vs the retained path: 0 px in ghost-queues and ghost-visible at both sizes, every model type
+  ghosted on, across and off the view (`TAK_GHOST_ALL_TYPES`) 0 px, ghost-few at 1280x960 0 px in three
+  repeats (both orders and a reference A/A; one earlier run differed by 23-127 px in 13 frames and did not
+  repeat). measurement B's ghosts-queue: 0 px at 1280x960; at 7680x2160 one frame (720) differs by 3.6-5.6k
+  px in a 100x110 px box around a swaying tree, where the candidate's own A/A also differs (3.2-4.8k).
+  Without the exact environment the A/B differences exceed A/A (ghost-visible 1280x960 2.8-6.1k px vs at most
+  1.6k): HIDDEN UNITS fades and distant-image bakes run on wall time and the candidate renders faster.
+  **E is pixel-identical.**
+- **F**: `hidden_fade_bench.sh --capture` `BASE` vs `CAND`: 0 px in every frame of all three workloads (A/A
+  0). measurement B's fade-forest 0 px at both sizes; fade-buildings and dots-buildings show a two-state
+  run-to-run difference (1.5-3k px around the towers, max error 46-86) that both builds produce: every
+  candidate capture is 0 px against one of the base captures. **F is pixel-identical.**
+- **K**, 7680x2160, `TAK_TERRAIN_SETTLE=1` (frame 480; world view 7475x2088 = 15.6M px):
+
+| comparison | differing px | of view | max channel error | A/A (same frame) |
+|---|---|---|---|---|
+| shadow-pages-dense, `BASE` vs `CAND` | 997,708 | 6.39% | 144 | 4,285 (max 32) |
+| shadow-pages-above, `BASE` vs `CAND` | 804,305 | 5.15% | 141 | 1,992 (max 13) |
+| shadow-pages-dense, exact environment | 748,356 | 4.79% | 144 | 0 (cand), 3,396 (base) |
+| shadow-pages-below (base 4 pages, cand 6), exact environment | 907 | 0.006% | 53 | 666 |
+| shadow-pages-moving, `BASE` vs `CAND` (worst frame: base on direct shadows) | 1,526,580 | 9.8% | - | 4,078 |
+| fidelity control: `BASE` with `TAK_SHADOW_PAGE_MAX=4096` (silhouettes there too) vs `CAND`, dense / above | 4,332 / 3,356 | 0.028 / 0.022% | 95 / 91 | 4,285 / 1,992 (max 32 / 13) |
+| `CAND` held to 4 pages vs `BASE`, exact environment, dense / above | 2,528 / 1,952 | 0.016 / 0.013% | 15 / 7 | 0-3,396 / 1,827 |
+| `pf-K` held to 4 pages vs `BASE`, exact environment, dense | 0 (all 12 frames) | 0 | 0 | 3,396 (base) |
+
+  In the overflow views 99.9% of the differing pixels are lighter in the candidate (997,454 of 997,708 in
+  dense; 30% exactly one shadow level): the base's whole-frame direct fallback darkened overlapping triangles
+  inside a model twice, the atlas silhouette darkens once. measurement B's shadow-cap-above / -cross /
+  -above-pan show the same (0.60-0.88M px, max error 124-133) and shadow-cap-below 8-287 px (max 27), -below-pan
+  0.9-2.8k px of 1-2 LSB, within its A/A. Against silhouettes in the base (the 4096 control) the candidate
+  differs by A/A-level counts with a few hundred edge pixels up to error 95 (atlas placement and filtering).
+  Held to four pages the candidate equals the base (K alone: 0 px; the integrated build: inside the base's
+  own A/A). At 1280x960 (no extended page) `BASE` vs `CAND` with the exact environment: 0 px in pan-snap,
+  moving and churn, zoom 379 px = A/A 384; with the default environment the differences are fade timing.
+  **The only visual change is `98e01695`'s, in views that need more than four pages.**
+
+**Unexpected**
+
+- The candidate's `t_ghosts` reads about 0.0002 ms in scenes with no ghost where `MB` reads 0.00001 ms: at
+  integration one scope feeds both `t_ghosts` and `t_build_ghosts` and it now encloses E's per-frame setup
+  (0.2 us per frame; not visible in any frame).
+- `present` at 7680x2160 is higher on the candidate in some K views (`shadow-pages-pan` 0.31 -> 3.49 ms,
+  `-osc` 1.14 -> 2.35 ms): with `glFinish` before present the GPU's atlas work is waited for there instead of
+  inside draw; the frame total is what is compared.
+- C's study at 7680x2160 shows the subset10k frame at 31.5 -> 18.4 ms: K's atlas (the base falls back to
+  direct shadows in that view), not cursor picking.
+- Capture A/A noise sources seen here (not investigated beyond attribution): a two-state run-to-run render
+  around the towers in fade-buildings / dots-buildings (both builds), a swaying tree in ghosts-queue at
+  7680x2160 (candidate runs differ from each other at frame 720), 55-130 px in ghost-few at 7680x2160 (both
+  builds), and 3.4k px between two base runs of shadow-pages-dense even with the exact environment.
+- `shadow-pages-below` (sized to fit about 95% of four pages) holds six pages on the candidate: the first
+  frames after the spawn draw larger silhouettes (about 1.3x the settled area), the atlas grows past four
+  pages and keeps them while demand stays near the limit. That is also where its gain comes from (base: 2,332
+  relocated tiles and 0.46 compactions per frame, candidate: 0), at +32 MiB.
+- Under a 448-640 MiB cap the dense view creates its extended pages during the first 21-33 frames and sheds
+  them once (pending pages count as held, so the shed happens at the first frame over 7/8 of the cap); after
+  that it behaves exactly like the base, with no further allocation.
+
+**Recommended dispositions (client)**
+
+| item | recommendation | deciding numbers |
+|---|---|---|
+| Measurement B: interactive render cases | **Implemented and verified** (instrumentation) | all 14 scenes ran at both sizes with their expectations checked by the harness in every run (pointer, selection, armed command, ghost counts, covers, fades, demand band); they expose C, E, F and K above with ranges outside noise. Its own cost was not re-measured here (screening: about 0.001 ms) |
+| C Cursor picking | **Implemented and verified** | cursor evaluation 0.033-0.050x of the old scan at 10,000 units (0.13-0.46 ms per frame), 0.18-0.28x at 2,000 units with flyers; same-binary whole frame 0.941-0.985 in every pair of the 10k scenes; measurement B 10k pointer scenes 0.944-0.971 (every pair), 120 Hz misses at 7680x2160 70 -> 54% / 78 -> 64%; 200-unit battle inside noise (0.991). Decisions identical (verify, cursor sequences), pixels identical |
+| E Build-queue ghosts | **Implemented and verified** | long queues: frame 0.066-0.336x (`ghost-offscreen` 2.59 -> 0.17 ms, `ghost-queues` 3.63 -> 0.56 ms at 1280x960), measurement B ghosts-queue 0.22-0.29x, every pair; ghost pass 2.2-3.0 -> 0.007-0.57 ms; ghost-few 0.830 at 1280x960, 0.984 [0.947..1.000] at 7680x2160 (not established there); retained memory 25-46 KB; pixel-identical (exact-environment captures, reference path, every model type) |
+| F Hidden-unit Fade covers | **Implemented and verified** | pass 0.58 / 0.41 / 0.64x (forest / forest1200 / keeps), frame 0.960 / 0.888 / 0.934, every one of 8 pairs below 1; measurement B Fade scenes pass 0.82-0.95x (Dots 0.97-0.98x), whole frame 0.975-0.984 (half of it the simulation items); pixel-identical, verify clean |
+| K Shadow atlas capacity | **Owner's decision on `98e01695`.** If accepted: **Implemented and verified**, with a documented regression under continuous sub-pixel pans. If not accepted: **Measured and rejected** for all of K (revert `c3c312eb`, `0397c088`, `192f7c4b` too), because held to four pages K measures exactly as the base | gains only with more than four pages: dense 0.536, above 0.502, below 0.698 (p99 0.548, 16.7 ms misses 52 -> 15%), moving 0.853, measurement B above 0.478 / below 0.729, every pair; held to four pages 1.00 (same binary) and 0 px (K alone). Costs: `shadow-pages-pan` p99 +4.0% vs base / +5.0% same-binary (mean +1.0% same-binary, every pair), shadow-cap-above-pan p99 +3.1% every pair; +32..+144 MiB tracked GPU memory in views that keep extended pages. Visual: 5-6% of the view lighter in views that overflowed four pages (direct path's double darkening gone); otherwise A/A-level. Constrained VRAM: sheds once, then identical to base (1.006 [0.992..1.011]); 1280x960 unaffected |
+
+**Commands** (from `~/tak-tmp/wt-perf-int`; `X=~/tak-tmp/tmp/pf-final/client`; drivers outside the repo:
+`~/tak-tmp/pf-final-client/timing-run.sh` (every timing series, warm-up group first), `correct-run.sh`
+(verify runs and captures, `STAGES=...`), `capfew.sh`; summaries `summ.py rb|cs <dir>`, `table.py`,
+`ctable.py`, `capcmp.py <AB dir> <AA dirs>`, K's `~/tak-tmp/pf-K/capdiff.py`):
+
+```sh
+T=/home/pocket_geek/tak-tmp/tools/timing.sh; TD=~/tak_data; D=/home/pocket_geek/TAK/assets/game
+B="python3 tools/render_benchmark.py --cpus 0-3"
+$T $B --a $MB/takclient --b $CAND/takclient --data $TD --repeats 3 --scenes hover-ground-10k hover-units-10k hover-armed-10k select-large --sizes normal uhd --output $X/mB-c
+$T $B --a $MB/takclient --b $CAND/takclient --data $TD --repeats 3 --scenes ghosts-queue ghosts-queue-pan --sizes normal uhd --output $X/mB-e
+$T $B --a $MB/takclient --b $CAND/takclient --data $TD --repeats 3 --scenes fade-forest fade-buildings dots-buildings --sizes normal uhd --output $X/mB-f
+$T $B --a $MB/takclient --b $CAND/takclient --data $TD --repeats 3 --scenes shadow-cap-below shadow-cap-above shadow-cap-cross shadow-cap-below-pan shadow-cap-above-pan --sizes uhd --output $X/mB-k
+python3 tools/cursor_pick_study.py --a $CA/takclient --b $CAND/takclient --data $D --output $X/C --scenes subset10k-sel subset10k-nosel subset10k-attack visible10k-sel small-battle-sel effects-pan-sel --frames 900 --warmup 300 --repeats 3 --wrap $T
+#   the same with --repeats 2 --width 7680 --height 2160 (-> $X/C-uhd); and --a $CAND/takclient --a-env TAK_PICK_FULL_SCAN=1 --repeats 2 (-> $X/C-ref)
+$T $B --a $CA/takclient --b $CAND/takclient --data $D --repeats 3 --scenes total10k-subset effects --sizes normal uhd --env TAK_RENDER_CURSOR=1 --env TAK_RENDER_CURSOR_SELECT=20 --output $X/C-frame
+$T $B --a $EB/takclient --b $CAND/takclient --data $D --repeats 2 --frames 900 --warmup 300 --scenes ghost-queues ghost-offscreen ghost-visible ghost-few --sizes normal uhd --output $X/E
+$T tools/hidden_fade_bench.sh --a $BASE/takclient --b $CAND/takclient --data $TD --output $X/F --repeats 4 --frames 900 --warmup 300 --cpus 0-3
+$T $B --a $BASE/takclient --b $CAND/takclient --data $TD --repeats 3 --sizes uhd --scenes shadow-pages-dense shadow-pages-above shadow-pages-below shadow-pages-moving shadow-pages-pan shadow-pages-osc shadow-pages-constrained --output $X/K
+$T $B --a $BASE/takclient --b $CAND/takclient --data $TD --repeats 2 --sizes normal --scenes stationary-mixed pan-snap moving total10k-visible zoom churn --output $X/K-normal
+$T $B --a $CAND/takclient --b $CAND/takclient --a-env TAK_SHADOW_PAGES_MAX=4 --data $TD --repeats 2 --sizes uhd --scenes <the seven shadow-pages-*> --output $X/K-ref
+# correctness (cores 16-23): cursor_pick_study / render_benchmark with --env TAK_PICK_INDEX_VERIFY=1, TAK_GHOST_VERIFY=1,
+#   TAK_HIDDEN_VERIFY=1, TAK_SHADOW_CACHE_VERIFY=1 [--env TAK_GPU_CAP_MIB=448|512|640] --allow-unverified-env
+# captures: render_benchmark --capture-only --cpus 16-23 (A/B and A/A), K with --env TAK_TERRAIN_SETTLE=1 --frames 730 --warmup 100;
+#   exact identity: --env TAK_HIDDEN_UNITS=off --env TAK_DISTANT_MODELS_OFF=1 --env TAK_TERRAIN_SETTLE=1
+python3 ~/tak-tmp/pf-final-client/summ.py rb $X/<series>; python3 ~/tak-tmp/pf-final-client/summ.py cs $X/C
+```
+
 ## Progress log
 
 - 2026-10-30: branch created at `61f294ac`; plan written. Next: launch the
@@ -1404,3 +1804,9 @@ CORES=4-7 tools/scenarios/perf/routeinv_pmu.sh $BASE $CAND $X/scn/ri-<s>.scn 900
   conditional keep is met (local-10000 every swapped round +0.2..+0.75% whole tick with the index toggled in one
   binary, local-5000 8 of 10, L-2h / L-bench unchanged); recommended keep, small. J: large churn whole tick 0.94x,
   ordinary sizes inside noise.
+- 2026-10-31: serial final measurement, client (C, E, F, K, measurement B): results under "Results: client".
+  C, E and F are repeatable gains in every pair of their workloads and pixel-identical (C: cursor evaluation
+  0.033-0.050x at 10,000 units, whole frame 0.94-0.985 same-binary; E: long-queue frames 0.07-0.34x; F: pass
+  0.41-0.64x, frame 0.89-0.96). K gains only through the visual commit `98e01695` (dense / above / below / moving
+  at 7680x2160 0.50-0.85x) and costs +4-5% p99 under a continuous sub-pixel pan and +32..144 MiB GPU memory;
+  held to four pages it equals the base, so without the owner's acceptance all of K is Measured and rejected.
