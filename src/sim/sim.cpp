@@ -27,6 +27,7 @@
 #include "tdo/tdo.h"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <cmath>
 #include <chrono>
@@ -10093,6 +10094,10 @@ void World::addFeature(int id, float x, float z, float energy,
     if (placeOnMap && !placeMapFeature(f)) return;
     featureIdx_[id] = features_.size();
     features_.push_back(f);
+    if (const size_t words = (features_.size() + 63) / 64; burningMarks_.size() < words) {
+        burningMarks_.resize(words, 0);
+        fadingMarks_.resize(words, 0);
+    }
     if (placeOnMap && blocks) blockCells(footprintOrigin(f.x,fx),footprintOrigin(f.z,fz),fx,fz,true);
     bumpFeatGen();   // a new feature needs a visual instance
 }
@@ -10121,6 +10126,22 @@ bool World::featureAliveAt(float x, float z) const {
 // subsection which no shipped feature has, so burning never damages units, and
 // neither does ours. Match setup resolves authored burn lifetimes identically
 // for headless servers and clients, independent of rendering quality.
+
+// Walk the set bits of `marks` in ascending index order. The current word is
+// re-read after every visit, so a bit the visit sets AHEAD of the cursor is
+// reached later in the same walk and one set behind it is not -- exactly what
+// a plain index loop over every feature does with state it changes as it goes.
+template <class Visit>
+static void forEachMarked(std::vector<uint64_t>& marks, Visit&& visit) {
+    for (size_t w = 0; w < marks.size(); ++w) {
+        uint64_t behind = 0;   // bits of this word at or below the cursor
+        while (const uint64_t ahead = marks[w] & ~behind) {
+            const int b = std::countr_zero(ahead);
+            behind = b == 63 ? ~uint64_t(0) : (uint64_t(2) << b) - 1;
+            visit(w * 64 + size_t(b), marks[w], uint64_t(1) << b);
+        }
+    }
+}
 
 // Swap a feature IN PLACE to another stage of its chain (featureburnt on
 // burn-out, featuredead on destruction; retail places the replacement neutral
@@ -10160,6 +10181,13 @@ void World::igniteFeature(Feature& f) {
         std::fprintf(stderr, "ignite %s at %.0f,%.0f (spark %d)\n",
                      ft.name.c_str(), f.x.toFloat(), f.z.toFloat(), ft.sparkTicks);
     f.burn = 1;
+    // Mark its index for tickBurning. Indices are stable: features_ is never
+    // reordered, only addFeature appends (rubble can arrive mid-fire, and it
+    // grows the marks with it), and no burn path adds features.
+    const size_t index = size_t(&f - features_.data());
+    uint64_t& word = burningMarks_[index / 64];
+    const uint64_t bit = uint64_t(1) << (index % 64);
+    if (!(word & bit)) { word |= bit; ++burningMarked_; }
     f.burnStarted = tickCounter_;
     f.burnSequence = ++burnSequence_;
     bumpFeatGen();   // ignition edge: flame overlay + smoke start
@@ -10170,16 +10198,23 @@ void World::igniteFeature(Feature& f) {
 }
 
 void World::tickBurning() {
-    if (featTypes_.empty()) return;
-    // Index-based: igniteFeature never reallocates (spread only flips state).
-    for (size_t i = 0; i < features_.size(); ++i) {
+    if (featTypes_.empty() || !burningMarked_) return;   // no fire anywhere: nothing to visit
+    // The marked features in index order, as the full pass over features_ took
+    // them: a spark that ignites a HIGHER index burns later in this same tick,
+    // a LOWER one first burns next tick (a tick-start snapshot of the marks
+    // would get the first case wrong). Index-based: igniteFeature never
+    // reallocates (spread only flips state).
+    forEachMarked(burningMarks_, [&](size_t i, uint64_t& word, uint64_t bit) {
         Feature& f = features_[i];
-        if (!f.alive || !f.burn) continue;
+        // Put out (a swap) or removed while burning: only igniteFeature can
+        // make it burn again, and that marks it afresh.
+        if (!f.alive || !f.burn) { word &= ~bit; --burningMarked_; return; }
         // Native feature clocks retire before evaluating this tick's spark.
         if (f.burnLeft <= 1) {
             f.burnLeft = 0;
             swapFeature(f, featTypes_[size_t(f.type)].burntType);
-            continue;
+            word &= ~bit; --burningMarked_;   // swapFeature put it out
+            return;
         }
         --f.burnLeft;
         // Spread fires ONCE per burning feature (retail slot+0x44 never reloads):
@@ -10202,7 +10237,7 @@ void World::tickBurning() {
                     if (burnRand(100) < nft.spreadChance) igniteFeature(nf);
                 }
         }
-    }
+    });
 }
 
 void World::reclaimArea(int builderId,float x0,float z0,float x1,float z1,bool queue) {
@@ -10540,21 +10575,27 @@ void World::finishReclaim(Unit&,int target) {
     Feature& f=features_[it->second];
     if (!f.fadeLeft) ++fadingFeatures_;
     f.fadeLeft=kReclaimFadeTicks;
+    fadingMarks_[it->second/64]|=uint64_t(1)<<(it->second%64);
     bumpFeatGen();   // no longer a reclaim target: the viewer's cursor follows
 }
 
 void World::tickFeatureFades() {
     if (!fadingFeatures_) return;
-    for (auto& f:features_) {
-        if (!f.fadeLeft || --f.fadeLeft) continue;
+    // Only the marked features, in index order (a stale mark: swapFeature
+    // ended that fade early).
+    forEachMarked(fadingMarks_,[&](size_t i,uint64_t& word,uint64_t bit) {
+        Feature& f=features_[i];
+        if (!f.fadeLeft) { word&=~bit;return; }
+        if (--f.fadeLeft) return;
+        word&=~bit;
         --fadingFeatures_;
-        if (!f.alive) continue;
+        if (!f.alive) return;
         f.alive=false;
         removeMapFeature(footprintOrigin(f.x,f.fx),footprintOrigin(f.z,f.fz));
         bumpFeatGen();   // reclaimed away: stop drawing it
         if (f.blocks)   // free the ground cells it occupied (setupMatch blocked nav_)
             blockCells(footprintOrigin(f.x,f.fx),footprintOrigin(f.z,f.fz),f.fx,f.fz,false);
-    }
+    });
 }
 
 // Retail's revive work counter (icd 0x406c2e, 0x4201e9): 65536 x buildtime /

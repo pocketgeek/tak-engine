@@ -1870,6 +1870,9 @@ if(TAK_TEST_DATA)
 endif()
 add_executable(simperf tools/simperf.cpp ${TAK_AI_SOURCES})
 target_link_libraries(simperf PRIVATE tak-formats)
+# Feature burn/fade timing harness (World::tickBurning, tickFeatureFades); not a CTest.
+add_executable(featburn_bench tools/featburn_bench.cpp)
+target_link_libraries(featburn_bench PRIVATE tak-formats)
 
 # --- Client (needs SDL2; skipped with a warning if unavailable) ---------------
 

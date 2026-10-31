@@ -2281,6 +2281,7 @@ public:
     // client ctor may have pre-registered the launch map's via registerMapFeatures).
     void clearFeatures() {
         features_.clear(); featureIdx_.clear(); clearFeatureTypes(); burnSequence_=0; fadingFeatures_=0;
+        clearFeatureMarks();
     }
     const std::vector<FeatType>& featureTypes() const { return featTypes_; }
     bool featureAliveAt(float x, float z) const;          // viewer decal sync
@@ -2399,6 +2400,7 @@ public:
         scriptSounds_.clear();
         features_.clear();
         burnSequence_ = 0; fadingFeatures_ = 0;
+        clearFeatureMarks();
         mapPlacementCells_.clear();mapPlacementTypes_.clear();corpseFootprints_.clear();corpseAnchors_.clear();
         installedMapFeatures_.clear();sacredUnderlay_.clear();
         explorationHeights_.clear();navigationExplored_.clear();viewCounts_.clear();deathSights_.clear();
@@ -3816,6 +3818,18 @@ private:
     uint32_t tickCounter_ = 0;   // ticks elapsed; staggers per-unit auto-acquisition
     uint64_t burnSequence_ = 0;  // display order for active feature burns; not lockstep state
     uint32_t fadingFeatures_ = 0; // features with fadeLeft > 0 (tickFeatureFades walks only then)
+    // Derived marks, one bit per features_ index, never hashed and never the
+    // authority: tickBurning and tickFeatureFades walk only the marked indices
+    // (ascending, the order of the old full pass) and decide on the feature's
+    // own burn/alive/fadeLeft. A mark is a SUPERSET: every feature that is
+    // alive with burn != 0 is marked in burningMarks_ (igniteFeature, the only
+    // way into that state, sets it) and every feature with fadeLeft != 0 in
+    // fadingMarks_ (finishReclaim); a stale mark (a swap put the fire or the
+    // fade out) is dropped when the walk reaches it. burningMarked_ counts the
+    // set bits, so a tick without fire visits nothing.
+    std::vector<uint64_t> burningMarks_, fadingMarks_;
+    uint32_t burningMarked_ = 0;
+    void clearFeatureMarks() { burningMarks_.clear(); fadingMarks_.clear(); burningMarked_ = 0; }
     std::vector<BenchStage> benchPlan_;   // benchmark staged spawns (executed in tick)
     size_t benchCursor_ = 0;              // next unexecuted stage
     uint32_t benchEndTick_ = 0;           // 0 = not a benchmark run
