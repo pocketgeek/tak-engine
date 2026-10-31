@@ -1551,6 +1551,17 @@ add_test(NAME mission_orders COMMAND mission_orders_test)
 add_executable(exploration_parallel_test tools/exploration_parallel_test.cpp)
 target_link_libraries(exploration_parallel_test PRIVATE tak-formats)
 add_test(NAME exploration_parallel COMMAND exploration_parallel_test)
+# Current-view count deltas (src/sim/retailviewcounts.h) against retail's
+# full removal and re-add: the audit probe, footprint level, World level.
+add_executable(viewcount_delta_test tools/viewcount_delta_test.cpp)
+target_link_libraries(viewcount_delta_test PRIVATE tak-formats)
+add_test(NAME viewcount_delta_probe COMMAND viewcount_delta_test probe)
+add_test(NAME viewcount_delta_moves COMMAND viewcount_delta_test moves)
+add_test(NAME viewcount_delta_world COMMAND viewcount_delta_test world)
+# The same footprint updates of a real situation (or generated ones) replayed
+# both ways, timed (tools/viewcount_bench.cpp; a timing tool, not a test).
+add_executable(viewcount_bench tools/viewcount_bench.cpp)
+target_link_libraries(viewcount_bench PRIVATE tak-formats)
 add_executable(state_hash_test tools/state_hash_test.cpp)
 target_link_libraries(state_hash_test PRIVATE tak-formats)
 add_test(NAME state_hash COMMAND state_hash_test)

@@ -1343,10 +1343,11 @@ struct alignas(64) Unit {
     // 4c6800's current-view footprint (the sight object at unit+0x84 as the
     // per-player view counters see it) and the plane it is counted in (-1 =
     // none). Kept beside sightFootprint, which feeds the persistent exploration
-    // plane and skips removals; this one is always removed before it moves, so
-    // World::viewCounts_ is exactly the sum of the active footprints. Recording
-    // the counted player makes deaths and ownership changes self-correcting.
-    // Hashed.
+    // plane and skips removals; this one always takes its old cells out of the
+    // counts when it moves (only those it no longer admits, see
+    // retailSightMove), so World::viewCounts_ is exactly the sum of the active
+    // footprints. Recording the counted player makes deaths and ownership
+    // changes self-correcting. Hashed.
     RetailSightFootprint viewSight;
     int8_t viewPlayer = -1;
     // An upgrade consumes its old building when the new site is admitted. Keep
@@ -2202,6 +2203,9 @@ public:
     // 4f6a40/4c6a70/4c6800 for the per-player current-view counters: one pass
     // after each tick, beside updateNavigationExploration.
     void updateViewCounts();
+    // Test reference: move counted footprints by retail's full removal and
+    // re-add instead of retailSightMove (the counts and hashes must not differ).
+    void setViewCountsByRebuildForTest(bool on) { viewCountsByRebuild_=on; }
     void updateExplorationPlane();
     // Per-player current-view count of one projected 32px cell (0 = unseen).
     int viewCount(int player,int cx,int cz) const {
@@ -3626,6 +3630,7 @@ private:
     // 60 ticks (at most 20 per player). Hashed, in order.
     struct RetailDeathSight { RetailSightFootprint sight; int8_t player=-1; uint32_t expiry=0; };
     std::vector<RetailDeathSight> deathSights_;
+    bool viewCountsByRebuild_ = false;   // setViewCountsByRebuildForTest; not hashed
     std::vector<uint8_t> viewDirty_;   // viewDirty(); display bookkeeping, not hashed
     int viewDirtyW_ = 0;
     void markViewDirty(const RetailSightFootprint& sight);   // the squares it covers (relaxed stores)
