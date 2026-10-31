@@ -3505,8 +3505,10 @@ void Controller::tick(const tak::sim::World& world, uint32_t simTick,
         const bool armed = u.type->weapon.damage > 0 ||
             std::any_of(u.type->weapons.begin(), u.type->weapons.end(), [](const auto& w) { return w.damage > 0; });
         if (!armed || reach <= 0) break;
-        if (!u.orders.empty()) {
-            const auto& front = u.orders.front();
+        // A flyer's step-out (retail's air traffic) leads for a moment: the
+        // order behind it is the task.
+        if (const size_t k = !u.orders.empty() && u.orders.front().stepOut ? 1 : 0; u.orders.size() > k) {
+            const auto& front = u.orders[k];
             if (front.targetId || front.attackMove || front.patrol || front.guard ||
                 front.load || front.unload) break;   // already fighting, or a deliberate task
         }

@@ -7652,7 +7652,7 @@ void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
         // mover (a structure) is approached on 4d4e80's rectangle round its
         // footprint, not at its centre: each attacker walks to its own
         // nearest perimeter origin and any perimeter origin is arrival.
-        if (sel && sel->melee && !u.type->canFly && target->type->isStructure()) {
+        if (sel && sel->melee && !u.type->canFly && !u.type->isStructure() && target->type->isStructure()) {
             installMeleeApproach(u,*target);
             return;
         }

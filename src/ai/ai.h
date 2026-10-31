@@ -604,10 +604,13 @@ private:
     // A fighter is free to be committed to a wave when it's idle or only doing a plain
     // move -- NOT while it's already fight-moving or attacking (so re-commanding it each
     // think doesn't reset its march and thrash it in place).
+    // A flyer's step-out (retail's air traffic) leads its queue for a moment; the
+    // order behind it is what the unit is doing.
     static bool waveFree(const tak::sim::Unit& u) {
-        return u.orders.empty() ||
-               (u.orders.front().targetId == 0 && !u.orders.front().attackMove && !u.orders.front().buildType &&
-                !u.orders.front().load && !u.orders.front().unload && !u.orders.front().guard);
+        const size_t k = !u.orders.empty() && u.orders.front().stepOut ? 1 : 0;
+        if (u.orders.size() <= k) return true;
+        const auto& o = u.orders[k];
+        return o.targetId == 0 && !o.attackMove && !o.buildType && !o.load && !o.unload && !o.guard;
     }
     void emit(const CommandSink& sink, tak::net::Cmd kind, int unitId,
               const std::string& type, float x, float z) const;
