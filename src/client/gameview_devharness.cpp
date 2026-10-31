@@ -2764,7 +2764,7 @@
                     }
                 }
             }
-            int ghostBuilders=0,ghostOrders=0,ghostTypes=0;
+            int queueBuilders=0,queueOrders=0,queueTypes=0;
             if(const char* queues=tak::devEnv("TAK_RENDER_GHOST_QUEUES")) {
                 // Long queued-build lists (the build-ghost workload): builder k stands at the
                 // west end of row k and queues its Q builds eastwards along the row, 128 px
@@ -2780,20 +2780,20 @@
                 for(const auto& option:registry_.buildable("araking"))
                     if(const auto* site=registry_.find(option);site && isStructure(site) && site->footX<=4 &&
                        site->footZ<=4 && int(sites.size())<std::max(1,typeCount))sites.push_back(site);
-                ghostTypes=int(sites.size());
+                queueTypes=int(sites.size());
                 const float gx=centerX+dx,gz=centerZ+dz;
                 for(int k=0;k<builders && !sites.empty();++k) {
                     const float rowZ=gz+(float(k)-float(builders-1)*0.5f)*192;
                     const float rowX=gx-float(perQueue-1)*0.5f*128;
                     const int builder=spawn("araking",rowX-160,rowZ,0,localPlayer_);
                     if(builder<=0)continue;
-                    ++ghostBuilders;
+                    ++queueBuilders;
                     writableWorld().order(builder,std::max(64.f,rowX-4160),rowZ,false);
                     for(int q=0;q<perQueue;++q) {
                         const size_t before=world_.unit(builder)->orders.size();
                         writableWorld().queueBuild(builder,sites[size_t(k+q)%sites.size()],
                                                    rowX+float(q)*128,rowZ,true);
-                        ghostOrders+=world_.unit(builder)->orders.size()>before;
+                        queueOrders+=world_.unit(builder)->orders.size()>before;
                     }
                 }
             }
@@ -2913,7 +2913,7 @@
             std::fprintf(stderr,"render scene: sites=%d ghosts=%d flyers=%d corpses=%d boats=%d scenery=%d squads=%d factories=%d build_queues=%d center=%.0f,%.0f offset=%.0f,%.0f\n",
                 sites,ghosts,flyers,corpses,boats,forestTrees,squads,factories,ghostQueues,centerX,centerZ,mapView_.offX(),mapView_.offY());
             if(tak::devEnv("TAK_RENDER_GHOST_QUEUES"))
-                std::fprintf(stderr,"render ghost queues: builders=%d queued=%d types=%d\n",ghostBuilders,ghostOrders,ghostTypes);
+                std::fprintf(stderr,"render ghost queues: builders=%d queued=%d types=%d\n",queueBuilders,queueOrders,queueTypes);
             return;
         }
         // Capture the reclaim particle fix through the existing local build harness.
