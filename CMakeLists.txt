@@ -1604,7 +1604,7 @@ add_executable(melee_building_test tools/melee_building_test.cpp)
 target_link_libraries(melee_building_test PRIVATE tak-formats)
 # Flyers step out of a stack (retail's air traffic, the air-stack-*.scn fixtures, both pathfinding modes;
 # data-gated below).
-add_executable(air_traffic_test tools/air_traffic_test.cpp)
+add_executable(air_traffic_test tools/air_traffic_test.cpp ${TAK_AI_SOURCES})
 target_link_libraries(air_traffic_test PRIVATE tak-formats)
 set(TAK_TEST_DATA "" CACHE PATH "Retail install for the data-backed tests (optional)")
 if(TAK_TEST_DATA)

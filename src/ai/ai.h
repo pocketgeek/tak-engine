@@ -580,12 +580,15 @@ private:
     // Idle, or only holding a factory's PARK release: retail parks every factory
     // output with no rally (GetBuilt 0x402220) and that PARK lasts until the next
     // order, so a parked newborn is as free to command as one with no orders.
+    // A flyer's step-out (retail's air traffic) leading the queue is read past,
+    // as waveFree does: an idle flyer stepping out of a stack is still idle.
     static bool idle(const tak::sim::Unit& u) {
-        return std::all_of(u.orders.begin(),u.orders.end(),[](const tak::sim::Order& o) {
+        const auto first=u.orders.begin()+(!u.orders.empty() && u.orders.front().stepOut ? 1 : 0);
+        return std::all_of(first,u.orders.end(),[](const tak::sim::Order& o) {
             return o.park || (!o.goal && !o.groundMission && !o.buildType && !o.targetId && !o.reclaimFeat &&
                 !bool(o.reclaimArea) && !o.repairTarget && !o.load && !o.unload && !o.patrol &&
                 !o.attackMove && !o.guard);
-        }) && (u.orders.empty() || std::any_of(u.orders.begin(),u.orders.end(),
+        }) && (first==u.orders.end() || std::any_of(first,u.orders.end(),
             [](const tak::sim::Order& o){return bool(o.park);}));
     }
     // Only raising a body (a RESURRECT leg, which reviveIdle gives): as free to

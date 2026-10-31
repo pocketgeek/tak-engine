@@ -23,6 +23,7 @@
 // flying builder's repair -- step-outs that leg pushed included. A leg's case
 // also counts the step-outs its mission pushed. air-guard-lost.scn checks
 // VTOL_SeekGuard: Drakes whose guarded Goblin dies guard the other Goblin.
+#include "ai/classicbrain.h"
 #include "legion_scn.h"
 
 #include <algorithm>
@@ -30,6 +31,7 @@
 #include <cstdio>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -83,6 +85,9 @@ void run(const std::string& dir,const char* data,const Case& c,tak::sim::Pathfin
     const int target=c.target ? b->groups.at(c.target).front() : 0;
     tak::scn::OrderFeed feed(s,*b);
     int counted=0,stacked=0,stepOuts=0,site=0;
+    // The Retail AI's read of a builder stepping out (ClassicBrain's first
+    // mission): VTOL_StepOutNoFormation (class 14, flags 0), not its job.
+    int aiReads=0,aiStepOuts=0;
     long damage=0,mended=0;
     std::map<int,uint32_t> stepped;   // a flyer's last step-out (its issue tick)
     for(uint32_t t=0;t<s.ticks;++t) {
@@ -140,6 +145,10 @@ void run(const std::string& dir,const char* data,const Case& c,tak::sim::Pathfin
                 stepped[id]=u->orders.front().issuedTick+1;
                 ++stepOuts;
             }
+            if(builder && !u->orders.empty() && u->orders.front().stepOut==3) {
+                ++aiReads;
+                aiStepOuts+=tak::ai::ClassicBrain::firstMissionOf(w,*u)==std::pair<uint8_t,uint32_t>{14,0};
+            }
         }
     }
     const char* what=c.count==Count::Near ? (target ? "near the fight" : "near the point")
@@ -152,6 +161,9 @@ void run(const std::string& dir,const char* data,const Case& c,tak::sim::Pathfin
     if(c.minStepOuts)
         check(stepOuts>=c.minStepOuts,std::string(c.file)+" "+modeName+": "+std::to_string(stepOuts)+
               " step-outs "+what+" (at least "+std::to_string(c.minStepOuts)+")");
+    if(c.count==Count::Repair || c.count==Count::Help)
+        check(aiReads>0 && aiStepOuts==aiReads,std::string(c.file)+" "+modeName+": the Retail AI reads the step-out "+
+              "ahead of the job ("+std::to_string(aiStepOuts)+" of "+std::to_string(aiReads)+" flyer-ticks)");
     if(target && c.count!=Count::Repair && c.count!=Count::Help)
         check(damage>0,std::string(c.file)+" "+modeName+": the Drakes still hurt the target ("+
               std::to_string(damage)+" hit points)");

@@ -49,6 +49,7 @@
 #include <functional>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "ai/classicdefence.h"
@@ -133,6 +134,8 @@ public:
         uint32_t builderTransfers = 0, groundTransfers = 0, airTransfers = 0, expansions = 0;
     };
     const WaveStats& waveStats() const { return waves_; }
+    // A unit's first mission as the manager reads it (class U1, flags; tests).
+    static std::pair<uint8_t, uint32_t> firstMissionOf(const tak::sim::World& world, const tak::sim::Unit& u);
     // The block grids the build manager drew as it was built (0x4110f0).
     const ClassicBlockGrids& blockGrids() const { return grids_; }
     // Retail's per-type cache (mgr+0x85 / +0x95, recounted every tick by 0x4119d0):

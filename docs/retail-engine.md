@@ -1278,9 +1278,13 @@ again from the state it set. To the Retail AI the step-out is the unit's
 first mission, read from its registry row as for any other: class 14 with
 the step-out's own flags (`0x5ebee0` / `0x5ebef9` / `0x5ebf12`), not a
 move's `0x3000400`, so a wave does not take a stepping-out flyer for one
-moving to a goal (`ClassicBrain`'s mission summary). Our own AI levels and
-the Monarch's self-defence look past a leading step-out to the order behind
-it, so a Drake stepping out of its hover is not taken for a free fighter.
+moving to a goal (`ClassicBrain`'s mission summary). That holds for a
+flying builder stepping out of its job too: World keeps its site
+(`buildSiteId`) while the step-out leads, and the summary reads the step-out
+(class 14, flags 0), not a build. Our own AI levels (`waveFree`, `idle`, the
+stalled-builder watch) and the Monarch's self-defence look past a leading
+step-out to the order behind it, so a Drake stepping out of its hover is not
+taken for a free fighter, nor an idle flyer stepping out for a busy one.
 
 **AirToGroundHover** (`41d820`) is ported whole since then
 (`retailAirToGroundHover`), where World had ported only stage 3's ring

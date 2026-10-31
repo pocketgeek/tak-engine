@@ -2004,7 +2004,13 @@ void Controller::updateBuilderProgress(const tak::sim::World& world, uint32_t si
     for (const auto& u:world.units()) {
         if (!u.alive() || !u.type || !world.allied(player_,u.player) ||
             std::none_of(u.orders.begin(),u.orders.end(),holds)) continue;
-        const auto& task=u.orders[tak::sim::World::currentLeg(u.orders)];
+        // The job, read past a flying builder's leading step-out (its air
+        // traffic), which stands where the builder was.
+        size_t leg=tak::sim::World::currentLeg(u.orders);
+        if (u.orders[leg].stepOut)
+            for (size_t i=leg+1;i<u.orders.size();++i)
+                if (u.orders[i].goal) { leg=i;break; }
+        const auto& task=u.orders[leg];
         const bool site=task.buildType && (task.buildX.v || task.buildZ.v);
         const float sx=(site ? task.buildX : task.x).toFloat(),sz=(site ? task.buildZ : task.z).toFloat();
         const float dx=u.x.toFloat()-sx,dz=u.z.toFloat()-sz,d=std::sqrt(dx*dx+dz*dz);
