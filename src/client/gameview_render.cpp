@@ -2234,7 +2234,10 @@
             return any;
         };
         {
+            // Two names for the same scope: t_ghosts (measurement B's interactive cases)
+            // and t_build_ghosts (workstream E's ghost scenes).
             tak::render::ScopedPhase ghostPhase(renderStats_, RP::Ghosts);
+            tak::render::ScopedPhase buildGhostPhase(renderStats_, RP::BuildGhosts);
             const Frame& frame = front();
 #ifndef NDEBUG
             if (unitIndexVerify_) {
@@ -2252,7 +2255,28 @@
             } else
 #endif
             for (uint32_t i : frame.buildGhostUnits) buildGhosts(*frame.live[i], true);
+#ifndef NDEBUG
+            // TAK_GHOST_ALL_TYPES (render study, perf follow-up E): also a ghost of EVERY
+            // registry type each frame, on a grid over the view and 30% around it (on
+            // screen, straddling the edges, off screen), alternately red-washed. With
+            // TAK_GHOST_VERIFY this puts every model, including those textured from
+            // outside the colour atlas, through the reference check.
+            static const bool allTypes = tak::devFlag("TAK_GHOST_ALL_TYPES");
+            if (allTypes) {
+                const float zmA = mapView_.zoom();
+                const float x0 = mapView_.offX() - 0.3f * float(mvw) / zmA, x1 = mapView_.offX() + 1.3f * float(mvw) / zmA;
+                const float z0 = mapView_.offY() - 0.3f * float(winH) / zmA, z1 = mapView_.offY() + 1.3f * float(winH) / zmA;
+                const size_t cols = size_t(std::max(1.0, std::ceil(std::sqrt(double(registry_.types().size())))));
+                size_t k = 0;
+                for (const auto& [id, type] : registry_.types()) {
+                    drawGhostAt(&type, x0 + (x1 - x0) * (float(k % cols) + 0.37f) / float(cols),
+                                z0 + (z1 - z0) * (float(k / cols) + 0.61f) / float(cols), k % 2 == 1);
+                    ++k;
+                }
+            }
+#endif
         }
+        renderStats_.set(tak::render::Counter::GhostCacheBytes, ghostGeometryBytes_);
 
         // Projectiles: drawn per weapon family (only where visible).
         float zm = mapView_.zoom();
@@ -4620,6 +4644,7 @@
         fogSubmit_.clear();fogUpload_.clear();fogTexGen_=~0u;
         miniFogUpload_.clear();miniFogTexGen_=~0u;
         distantModelCache_.clear();
+        ghostGeometry_.clear(); ghostGeometryBytes_ = 0;   // keyed on the atlases destroyed below
         geomEntries_.makeAllCold();   // owners stay; every entry rebuilds against the new targets
         for (SDL_Texture* t : atlasTex_) if (t) gpuvram::destroy(t);
         atlasTex_.clear();
@@ -7701,21 +7726,147 @@
         drawModelTriangles();
     }
 
+    // The model-local ghost of `model` under the current atlas (see GhostGeometry):
+    // filled on first use and whenever the atlas or a generation it was made under
+    // changed. Collection and sort are drawGhostAt's former code, unchanged.
+    const GameView::GhostGeometry& GameView::ghostGeometry(const tak::tdo::Model* model,
+                                                           SDL_Texture* atlas) {
+        // A renderer reset or an asset reload makes every entry stale at once.
+        if (ghostRendererGen_ != rendererGeneration_.current() ||
+            ghostAssetGen_ != assetGeneration_.current() || ghostGeometry_.size() > 256) {
+            ghostGeometry_.clear();
+            ghostGeometryBytes_ = 0;
+            ghostRendererGen_ = rendererGeneration_.current();
+            ghostAssetGen_ = assetGeneration_.current();
+        }
+        auto [it, fresh] = ghostGeometry_.try_emplace(model);
+        GhostGeometry& g = it->second;
+        if (!fresh && g.atlas == atlas && g.atlasW == atlasW_ && g.atlasH == atlasH_) return g;
+        ghostGeometryBytes_ -= g.tris.capacity() * sizeof(Tri);
+        renderStats_.add(tak::render::Counter::GhostCollects);
+        g.tris.clear();
+        workerScratch().unpackedTextures = 0;
+        collect(g.tris, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
+        std::stable_sort(g.tris.begin(), g.tris.end(),
+                  [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+        g.atlas = atlas; g.atlasW = atlasW_; g.atlasH = atlasH_;
+        g.exact = workerScratch().unpackedTextures == 0;
+        g.empty = g.tris.empty();
+        g.minX = g.minY = 0; g.maxX = g.maxY = 0;
+        if (!g.empty) {
+            g.minX = g.maxX = g.tris[0].v[0].position.x;
+            g.minY = g.maxY = g.tris[0].v[0].position.y;
+            for (const auto& t : g.tris) for (const auto& v : t.v) {
+                g.minX = std::min(g.minX, v.position.x); g.maxX = std::max(g.maxX, v.position.x);
+                g.minY = std::min(g.minY, v.position.y); g.maxY = std::max(g.maxY, v.position.y);
+            }
+        }
+        // Only the bounds of an inexact model are reusable: its triangles are
+        // collected again for every ghost drawn.
+        if (!g.exact) std::vector<Tri>().swap(g.tris);
+        ghostGeometryBytes_ += g.tris.capacity() * sizeof(Tri);
+        return g;
+    }
+
     void GameView::drawGhostAt(const tak::sim::UnitType* type, float x, float z,
                      bool invalid) {
+        renderStats_.add(tak::render::Counter::GhostDraws);
         const tak::tdo::Model* model = ghostModel(type->id);
         if (!model) return;
         renderStats_.add(tak::render::Counter::GhostPreps);
-        noteNeed(Retained::ModelTris, tris_);
-        tris_.clear();
         SDL_Texture* atlas = atlasFor(colorSlot_[localPlayer_ & 7]);
-        collect(tris_, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
-        std::stable_sort(tris_.begin(), tris_.end(),
-                  [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+#ifndef NDEBUG
+        static const bool reference = tak::devFlag("TAK_GHOST_REFERENCE");
+        static const bool verify = tak::devFlag("TAK_GHOST_VERIFY");
+#else
+        constexpr bool reference = false;
+#endif
+        const GhostGeometry* g = reference ? nullptr : &ghostGeometry(model, atlas);
         float zm = mapView_.zoom();
         // The ghost lifts onto the relief exactly like the finished unit/building will.
         float ax = (x - mapView_.offX()) * zm - terrainLiftX(x, z) * zm;
         float ay = (z - mapView_.offY()) * zm - terrainLift(x, z) * zm;
+        // Wholly outside the clip (the world viewport; else the render viewport), the
+        // ghost draws no pixel: skip it before any triangle work. The placed bounds
+        // are the model-local bounds under the same placement (monotone in each
+        // coordinate); one pixel of margin.
+        SDL_Rect clip{};
+        if (SDL_RenderIsClipEnabled(ren_)) SDL_RenderGetClipRect(ren_, &clip);
+        else { SDL_RenderGetViewport(ren_, &clip); clip.x = clip.y = 0; }
+        const auto outside = [&](float x0, float y0, float x1, float y1, float margin) {
+            const float sx0 = x0 * zm + ax, sx1 = x1 * zm + ax;
+            const float sy0 = y0 * zm + ay, sy1 = y1 * zm + ay;
+            return std::max(sx0, sx1) < float(clip.x) - margin ||
+                   std::min(sx0, sx1) > float(clip.x + clip.w) + margin ||
+                   std::max(sy0, sy1) < float(clip.y) - margin ||
+                   std::min(sy0, sy1) > float(clip.y + clip.h) + margin;
+        };
+        const bool culled = g && (g->empty || outside(g->minX, g->minY, g->maxX, g->maxY, 1.0f));
+#ifndef NDEBUG
+        if (verify && g) {
+            // The reference path: drawGhostAt's former collection and sort.
+            ghostVerifyTris_.clear();
+            collect(ghostVerifyTris_, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
+            std::stable_sort(ghostVerifyTris_.begin(), ghostVerifyTris_.end(),
+                      [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+            const auto fail = [&](const char* what) {
+                throw std::runtime_error(std::string("ghost verify: ") + what + " (" + type->id + ")");
+            };
+            if (ghostVerifyTris_.empty() != g->empty) fail("emptiness differs from the reference");
+            float minX = 0, minY = 0, maxX = 0, maxY = 0;
+            if (!ghostVerifyTris_.empty()) {
+                minX = maxX = ghostVerifyTris_[0].v[0].position.x;
+                minY = maxY = ghostVerifyTris_[0].v[0].position.y;
+            }
+            for (const auto& t : ghostVerifyTris_) for (const auto& v : t.v) {
+                minX = std::min(minX, v.position.x); maxX = std::max(maxX, v.position.x);
+                minY = std::min(minY, v.position.y); maxY = std::max(maxY, v.position.y);
+            }
+            if (std::bit_cast<uint32_t>(minX) != std::bit_cast<uint32_t>(g->minX) ||
+                std::bit_cast<uint32_t>(maxX) != std::bit_cast<uint32_t>(g->maxX) ||
+                std::bit_cast<uint32_t>(minY) != std::bit_cast<uint32_t>(g->minY) ||
+                std::bit_cast<uint32_t>(maxY) != std::bit_cast<uint32_t>(g->maxY))
+                fail("bounds differ from the reference");
+            ++ghostVerify_.checked;
+            if (culled) {
+                // No reference vertex may land inside the clip.
+                if (!ghostVerifyTris_.empty() && !outside(minX, minY, maxX, maxY, 0.0f))
+                    fail("a culled ghost reaches the clip");
+                ++ghostVerify_.culled;
+            } else if (g->exact) {
+                if (g->tris.size() != ghostVerifyTris_.size()) fail("triangle count differs from the reference");
+                for (size_t i = 0; i < g->tris.size(); ++i) {
+                    const Tri& a = g->tris[i];
+                    const Tri& b = ghostVerifyTris_[i];
+                    if (a.tex != b.tex || std::memcmp(a.v, b.v, sizeof a.v) != 0 ||
+                        std::bit_cast<uint32_t>(a.depth) != std::bit_cast<uint32_t>(b.depth))
+                        fail("retained triangles differ from the reference");
+                }
+                ++ghostVerify_.hits;
+            } else {
+                ++ghostVerify_.inexact;
+            }
+        }
+#endif
+        if (culled) {
+            renderStats_.add(tak::render::Counter::GhostCulled);
+            return;
+        }
+        noteNeed(Retained::ModelTris, tris_);
+        if (g && g->exact) {
+            tris_.assign(g->tris.begin(), g->tris.end());
+            renderStats_.add(tak::render::Counter::GhostCacheHits);
+        } else {
+            tris_.clear();
+            collect(tris_, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
+            std::stable_sort(tris_.begin(), tris_.end(),
+                      [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
+            renderStats_.add(tak::render::Counter::GhostCollects);
+#ifndef NDEBUG
+            if (verify && g) ++ghostVerify_.collected;
+#endif
+        }
+        renderStats_.add(tak::render::Counter::GhostTris, tris_.size());
         for (auto& t : tris_) for (auto& v : t.v) {
             v.position.x = v.position.x * zm + ax;
             v.position.y = v.position.y * zm + ay;
@@ -7800,6 +7951,7 @@
                     arect = packed;
                 } else {
                     // Fallback for any texture not packed into the atlas.
+                    ++workerScratch().unpackedTextures;
                     auto it = textures_.find(name);
                     if (it != textures_.end() && !it->second.empty()) {
                         // Unpacked previews/projectiles use the same animation

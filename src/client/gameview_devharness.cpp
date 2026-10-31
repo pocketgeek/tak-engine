@@ -2604,6 +2604,10 @@
         //   TAK_RENDER_ROSTER=a,b   unit types replacing the 6-type roster ("structures": all of them)
         //   TAK_RENDER_OVERLAYS=1   control squads, factories with production queues,
         //                           builders with queued build orders (ghosts)
+        //   TAK_RENDER_GHOST_QUEUES=B,Q[,T[,dx,dz]]  B monarchs, each with Q queued (shift)
+        //                           builds cycling through T small structure types (repeated
+        //                           types), on a grid centred dx,dz from the army centre:
+        //                           long queues, mostly off screen at zoom >= 0.5
         // All of them only shape the local harness scene; none run in a real game.
         if (const char* countText=tak::devEnv("TAK_SHADOW_BENCH")) {
             const int count=std::clamp(std::atoi(countText),1,16000);
@@ -2752,6 +2756,39 @@
                     }
                 }
             }
+            int ghostBuilders=0,ghostOrders=0,ghostTypes=0;
+            if(const char* queues=tak::devEnv("TAK_RENDER_GHOST_QUEUES")) {
+                // Long queued-build lists (the build-ghost workload): builder k stands at the
+                // west end of row k and queues its Q builds eastwards along the row, 128 px
+                // apart (rows 192 px apart), types cycling through the first T small
+                // structures the monarch builds. Sites the map refuses are skipped. Each
+                // builder is first sent 4000 px west (or to the map edge), so no build
+                // starts during a study: the ghost count stays fixed and no conjuring
+                // sparkle (whose particles differ run to run) lands in the captures.
+                int builders=0,perQueue=0,typeCount=4;float dx=0,dz=0;
+                std::sscanf(queues,"%d,%d,%d,%f,%f",&builders,&perQueue,&typeCount,&dx,&dz);
+                builders=std::clamp(builders,0,64);perQueue=std::clamp(perQueue,0,256);
+                std::vector<const tak::sim::UnitType*> sites;
+                for(const auto& option:registry_.buildable("araking"))
+                    if(const auto* site=registry_.find(option);site && isStructure(site) && site->footX<=4 &&
+                       site->footZ<=4 && int(sites.size())<std::max(1,typeCount))sites.push_back(site);
+                ghostTypes=int(sites.size());
+                const float gx=centerX+dx,gz=centerZ+dz;
+                for(int k=0;k<builders && !sites.empty();++k) {
+                    const float rowZ=gz+(float(k)-float(builders-1)*0.5f)*192;
+                    const float rowX=gx-float(perQueue-1)*0.5f*128;
+                    const int builder=spawn("araking",rowX-160,rowZ,0,localPlayer_);
+                    if(builder<=0)continue;
+                    ++ghostBuilders;
+                    writableWorld().order(builder,std::max(64.f,rowX-4160),rowZ,false);
+                    for(int q=0;q<perQueue;++q) {
+                        const size_t before=world_.unit(builder)->orders.size();
+                        writableWorld().queueBuild(builder,sites[size_t(k+q)%sites.size()],
+                                                   rowX+float(q)*128,rowZ,true);
+                        ghostOrders+=world_.unit(builder)->orders.size()>before;
+                    }
+                }
+            }
             if(const char* navalText=tak::devEnv("TAK_RENDER_NAVAL")) {
                 const int wanted=std::clamp(std::atoi(navalText),1,2000);
                 std::vector<const tak::sim::UnitType*> hulls;
@@ -2867,6 +2904,8 @@
                 count,spawned,columns,zoom,only ? only : "mixed");
             std::fprintf(stderr,"render scene: sites=%d ghosts=%d flyers=%d corpses=%d boats=%d scenery=%d squads=%d factories=%d build_queues=%d center=%.0f,%.0f offset=%.0f,%.0f\n",
                 sites,ghosts,flyers,corpses,boats,forestTrees,squads,factories,ghostQueues,centerX,centerZ,mapView_.offX(),mapView_.offY());
+            if(tak::devEnv("TAK_RENDER_GHOST_QUEUES"))
+                std::fprintf(stderr,"render ghost queues: builders=%d queued=%d types=%d\n",ghostBuilders,ghostOrders,ghostTypes);
             return;
         }
         // Capture the reclaim particle fix through the existing local build harness.

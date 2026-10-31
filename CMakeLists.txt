@@ -2605,6 +2605,26 @@ if(TAK_BUILD_CLIENT)
         set_tests_properties(render_pick_index${_variant} PROPERTIES TIMEOUT 600
             PASS_REGULAR_EXPRESSION "PICK_INDEX_VERIFY queries=[1-9][0-9]* live=[1-9][0-9]* candidates=[0-9]* hits=[1-9][0-9]* decisions=[1-9][0-9]* ${_bodies}")
       endforeach()
+      # Build ghosts (perf follow-up E), on the software renderer: queued-build lists
+      # cycling through repeated structure types under a panning, zooming camera, the
+      # placed-site ghosts of TAK_RENDER_EXTRAS and two simulated render-target resets
+      # (atlases recreated: the retained ghost geometry must be dropped), plus a ghost
+      # of every registry type each frame, on and around the view, half of them
+      # red-washed (TAK_GHOST_ALL_TYPES: every model, including those textured from
+      # outside the colour atlas). Every ghost is also collected and sorted afresh:
+      # retained triangles must equal that reference exactly, and a ghost not drawn
+      # must lie wholly outside the clip (TAK_GHOST_VERIFY), or draw() throws.
+      add_test(NAME render_build_ghosts COMMAND ${CMAKE_COMMAND} -E env
+          SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy SDL_RENDER_DRIVER=software
+          TAK_SHADOW_BENCH=40 TAK_RENDER_EXTRAS=1 TAK_RENDER_GHOST_QUEUES=6,12,4,0,600
+          TAK_RENDER_CAMERA=1 TAK_RENDER_ZOOM=1 TAK_RENDER_RESET=50 TAK_RENDER_FRAMES=120
+          TAK_RENDER_STUDY=1 TAK_GHOST_VERIFY=1 TAK_GHOST_ALL_TYPES=1 TAK_UNIT_INDEX_VERIFY=1
+          XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/build-ghosts-profile
+          XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/build-ghosts-profile
+          $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+          --testbuild --winsize 1024 768 --novsync)
+      set_tests_properties(render_build_ghosts PROPERTIES TIMEOUT 300
+          PASS_REGULAR_EXPRESSION "GHOST_VERIFY checked=[1-9][0-9]* hits=[1-9][0-9]* culled=[1-9][0-9]* collected=[1-9][0-9]* inexact=[1-9][0-9]*")
       # CPU budgets (workstream J) in a real scene: a battle, then a sustained empty
       # view, with short trim windows and tiny terrain budgets. Retained buffers must
       # be trimmed after the demand falls, keep their contents byte for byte, never be
@@ -2820,7 +2840,7 @@ if(TAK_BUILD_CLIENT)
       # global cache at shutdown so leak checks can see engine allocations.
       set_tests_properties(build_controls render_texture_reuse render_atlas_verify render_geometry_ownership
           render_geometry_stages render_schedule render_shadow_cache render_shadow_atlas render_shadow_atlas_zoom render_shadow_atlas_band render_distant_lookup render_cpu_budget render_body_arena render_body_arena_still render_body_arena_fail render_unit_index render_unit_index_jump render_pick_index render_pick_index_orders render_pick_index_jump
-          render_interactive_cases tactical_dots hidden_units retail_fog spectator_health_bars
+          render_build_ghosts render_interactive_cases tactical_dots hidden_units retail_fog spectator_health_bars
           gui_smoothing_menu gui_smoothing_game
           menu_launch_failure options_datafolder PROPERTIES ENVIRONMENT "SDL_SHUTDOWN_DBUS_ON_QUIT=1")
     endif()

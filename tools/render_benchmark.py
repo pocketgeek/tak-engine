@@ -152,6 +152,21 @@ SCENES = {
                                "TAK_RENDER_JUMP_AT": "4000,4000;28000,4000;28000,28000;4000,28000;16000,16000"},
                           notes="camera jumps between five far-apart views every 20 frames (faster "
                                 "than a view's terrain finishes composing)"),
+    # Build ghosts (perf follow-up E): 16 monarchs x 32 queued builds of 4 repeated
+    # structure types on a 4096x3072 px grid around the camera centre.
+    "ghost-queues": dict(count=1, zoom=0.5, env={"TAK_RENDER_GHOST_QUEUES": "16,32,4",
+                                                 "TAK_RENDER_CAMERA": "1"},
+                         notes="512 queued-build ghosts (4 types), zoom 0.5 under the sinusoidal pan: "
+                               "part of the grid on screen, the rest off it"),
+    "ghost-visible": dict(count=1, zoom=0.25, env={"TAK_RENDER_GHOST_QUEUES": "16,32,4"},
+                          notes="the same 512 ghosts, zoom 0.25, still camera: (nearly) all on screen"),
+    "ghost-offscreen": dict(count=1, zoom=1.0, env={"TAK_RENDER_GHOST_QUEUES": "16,32,4,0,4000"},
+                            notes="the same 512 ghosts 4000 px south of the view: every queued "
+                                  "ghost off screen"),
+    "ghost-few": dict(count=200, zoom=0.75, env={"TAK_RENDER_GHOST_QUEUES": "4,12,4,0,700",
+                                                 "TAK_RENDER_CAMERA": "1"},
+                      notes="ordinary case: 200 mixed units, 4 monarchs x 12 queued builds south of "
+                            "them, panning camera"),
 }
 QUICK = ["small-battle", "stationary-mixed", "moving", "pan"]
 SIZES = {"normal": (1280, 960), "uhd": (7680, 2160)}
@@ -725,7 +740,7 @@ TELEMETRY_PHASES = ["t_candidates", "t_painter_sort", "t_atlas", "t_geometry", "
                     "t_shadow_pack", "t_shadow_alloc", "t_shadow_prep", "t_shadow_raster",
                     "t_shadow_composite", "t_body_assembly", "t_body_submit", "t_terrain",
                     "t_terrain_upload", "t_effects", "t_fog", "t_pool_dispatch", "t_pool_wait", "t_schedule_plan",
-                    "t_hidden_units", "t_cursor", "t_ghosts",
+                    "t_hidden_units", "t_cursor", "t_ghosts", "t_build_ghosts",
                     "w_geometry_key", "w_geometry_build", "w_pool_busy", "w_pool_wake",
                     "w_terrain_compose", "w_section_decode", "w_terrain_upload", "w_terrain_wasted",
                     "w_unit_grid_build"]
@@ -786,7 +801,9 @@ TELEMETRY_COUNTS = ["visible_units", "geometry_hits", "geometry_misses", "miss_c
                     "hidden_eligible", "hidden_candidates", "hidden_marked", "hidden_faded",
                     # measurement B: interactive cases (cursor, ghosts, cover tests, shadow demand)
                     "cursor_evals", "cursor_pick_tests", "cursor_pick_hits", "ghosts_queued", "ghost_preps",
-                    "hidden_cover_tests", "shadow_direct_units", "shadow_demand_px"]
+                    "hidden_cover_tests", "shadow_direct_units", "shadow_demand_px",
+                    # build ghosts (perf follow-up E)
+                    "ghost_draws", "ghost_culled", "ghost_collects", "ghost_cache_hits", "ghost_tris"]
 TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", "body_capacity_bytes",
                    "shadow_scratch_used_bytes", "shadow_scratch_capacity_bytes",
                    "frame_lists_used_bytes", "frame_lists_capacity_bytes", "terrain_mip_cpu_bytes",
@@ -802,7 +819,9 @@ TELEMETRY_BYTES = ["geom_used_bytes", "geom_capacity_bytes", "body_used_bytes", 
                    # workstream L: the shown snapshot's unit grid
                    "unit_grid_bytes",
                    # workstream H: arena storage (GPU, counted in gpuvram) and its in-flight estimate
-                   "arena_capacity_bytes", "arena_inflight_bytes"]
+                   "arena_capacity_bytes", "arena_inflight_bytes",
+                   # build ghosts (perf follow-up E): retained model-local ghost geometry
+                   "ghost_cache_bytes"]
 
 
 def metric(result, path):
