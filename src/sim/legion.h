@@ -318,6 +318,22 @@ public:
         uint64_t workerJobs=0,forkNs=0,waitNs=0,joinNs=0;
     };
     ParallelStats parallelStats() const;
+    // Perf follow-up I (sim/legion_routebins.h): how static changes found the routes they reach. Observation only,
+    // never hashed, read by no decision. calls: static changes with per-plane boxes (wholeCalls: without, which walk
+    // every group); indexed: calls answered from the route index (the rest walked every group: boxes over most of the
+    // map, or the index off); walkGroups: the groups a walk of every group visits over all calls (what
+    // Stats::groupLoopIters counted for them before the index); candidates: the groups actually visited (now in
+    // groupLoopIters); touched: groups a change reached; decisions: a digest of each reached group's id and its
+    // routes' closure / improvement flags, in visit order (the same with the index on or off). The index's own work:
+    // listings, unlistings and the bin entries they wrote; gathers, bins and entries read and stale entries dropped;
+    // compactions and the stale entries they swept; the most entries held, the live ones now, and its bytes now
+    // (not part of NavBytes).
+    struct RouteIndexStats {
+        uint64_t calls=0,wholeCalls=0,indexed=0,walkGroups=0,candidates=0,touched=0,decisions=0;
+        uint64_t lists=0,unlists=0,entriesAdded=0,queries=0,binsScanned=0,entriesScanned=0,staleDropped=0;
+        uint64_t compactions=0,compacted=0,entriesPeak=0,liveEntries=0,bytes=0;
+    };
+    RouteIndexStats routeIndexStats() const;
     // Test hook: is a footprint origin legal on the static plane Legion plans
     // on (terrain, features, structures; mobile bodies excluded)?
     bool staticLegal(const Unit&,int originX,int originZ);
@@ -446,6 +462,10 @@ public:
     // chains). Off, every route is the window build, as before stage 6: the scheduler's load tests
     // (legion_sched_load) keep the continuous quota load they were written for. Changes behaviour and hashes.
     static void setHierarchicalRoutesForTest(bool on);
+    // Test hook (process-wide; default on): a static change finds the routes it reaches through the route index
+    // (perf follow-up I, sim/legion_routebins.h). Off, it walks every group, as before. Never changes behaviour or
+    // hashes: both ways visit the groups a change reaches, in the same order (routeIndexStats().decisions agrees).
+    static void setRouteIndexForTest(bool on);
     // Test hook (process-wide; default off, 0): stage 9's parallel planning jobs (tile builds ahead of the serial
     // pass, plane first-build row chunks) run even with no SimPool workers (`force`, inline), and their execution
     // order is shuffled with random delays (`perturbSeed`, 0 off; debug builds also read TAK_LEGION_PAR_PERTURB).

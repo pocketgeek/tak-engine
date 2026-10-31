@@ -501,6 +501,113 @@ void trafficlane() {
     check(done>=0,"trafficlane: the walker did not arrive");
 }
 
+// Perf follow-up I: the route invalidation index (sim/legion_routebins.h). Four walled lanes, ten groups in each, every
+// group its own order (its own issue tick) to its own goal along its lane, on two movement planes; blocking features
+// toggle and structures are built and destroyed at spatially separated spots of lanes 0 and 2 only, units are
+// re-ordered (fields replaced, refreshes discarded) and a quarter of them die (groups erased). With the index on and
+// off (LegionNavigator::setRouteIndexForTest) the checkpoint hashes, the reached groups' decisions
+// (routeIndexStats().decisions: ids and closure / improvement flags in visit order) and the closure / improvement
+// counts agree, serial equals workers, and the index visits far fewer groups than the walk of every group (the routes
+// of lanes 1 and 3 are never candidates). The ctest runs it under TAK_LEGION_VERIFY: every tick checks the index
+// against the groups' fields, every static change against the walk.
+struct RouteIndexRun {uint64_t hash=0,trail=0,closed=0,opened=0;int alive=0,arrived=0;LegionNavigator::RouteIndexStats r;};
+RouteIndexRun routeindexRun(bool index,bool serial) {
+    LegionNavigator::setRouteIndexForTest(index);
+    Fixture f(320,262,serial);
+    for(int k=1;k<4;++k)f.rect(0,k*66-2,320,2);   // lanes z 0..61, 66..127, 132..193, 198..261
+    f.publish();
+    const auto small=mover(1),large=mover(2);
+    UnitType keep{};keep.id=keep.name="legion-routeindex-keep";keep.maxHp=100;keep.footX=keep.footZ=4;keep.buildTime=1;keep.maxVel=Fixed();
+    std::vector<int> ids,keeps;
+    for(int k=0;k<40;++k)ids.push_back(f.spawn(k%3==0?small:large,6+(k%2)*14,10+(k/10)*66+(k/2%5)*10));
+    f.start();
+    // Churn spots in lanes 0 and 2, on the routes and beside them: x, z, period (a blocking feature placed, lifted, ...).
+    static constexpr int kSpots[6][3]={{90,30,7},{200,12,9},{290,50,11},{120,160,13},{230,140,8},{300,185,10}};
+    RouteIndexRun out;
+    for(int t=0;t<1500;++t) {
+        if(t<40)f.world.order(ids[size_t(t)],float((200+(t*37)%110)*16),float((6+(t/10)*66+(t*53)%50)*16),false);
+        if(t==500)for(size_t i=1;i<ids.size();i+=5)
+            if(const Unit* u=f.world.unit(ids[i]);u&&u->alive())f.world.order(ids[i],float((40+int(i)*5)*16),float((8+int(i)/10*66+int(i)%40)*16),false);
+        if(t==800)for(size_t i=3;i<ids.size();i+=4)if(Unit* u=f.world.unit(ids[i]))u->hp=Fixed();
+        for(const auto& s:kSpots)if(t%s[2]==0)
+            f.world.addFeature(s[1]*f.width+s[0],s[0]*16+8.f,s[1]*16+8.f,0,1,1,(t/s[2])%2==0,-1,true);
+        if(t==200||t==700)keeps.push_back(f.world.spawn(&keep,float(160*16),float((t==200?40:150)*16),std::nullopt,1));
+        if((t==450||t==1100)&&!keeps.empty()) {
+            if(Unit* u=f.world.unit(keeps.front()))u->hp=Fixed();
+            keeps.erase(keeps.begin());
+        }
+        f.world.tick(1.f/30);
+        if(t%150==149)out.trail=(out.trail^f.world.stateHash())*0x100000001b3ull;
+    }
+    out.hash=f.world.stateHash();
+    const auto* nav=f.world.legionNavigator();
+    out.r=nav->routeIndexStats();
+    out.closed=nav->accounting().routesClosed;out.opened=nav->accounting().routesOpened;
+    for(int id:ids)if(const Unit* u=f.world.unit(id);u&&u->alive()) {++out.alive;out.arrived+=u->orders.empty();}
+    LegionNavigator::setRouteIndexForTest(true);
+    return out;
+}
+// ... and a pending refresh that covers other ground than the field it replaces: single bodies on long routes across a
+// wall with two gaps (corridors and chains: tile-listed routes), gap A closed under them so their refreshes re-plan
+// through gap B, and churn beside gap B while those refreshes build. A change there reaches only the refresh (`next`),
+// which the index must list too (it failed with a listing of the field alone: the decisions differed).
+struct RouteIndexRefreshRun {uint64_t hash=0,trail=0,decisions=0,touched=0,tiled=0;};
+RouteIndexRefreshRun routeindexRefreshRun(bool index) {
+    LegionNavigator::setRouteIndexForTest(index);
+    Fixture f(640,256);
+    f.rect(320,0,4,20);f.rect(320,36,4,164);f.rect(320,216,4,40);   // gap A z 20..35, gap B z 200..215
+    f.publish();
+    const auto type=mover(2);
+    std::vector<int> ids;
+    for(int k=0;k<8;++k)ids.push_back(f.spawn(type,20,24+k*8));
+    f.start();
+    RouteIndexRefreshRun out;
+    for(int t=0;t<700;++t) {
+        if(t<8)f.world.order(ids[size_t(t)],float((600+t*4)*16),float((24+t*8)*16),false);
+        if(t==150)for(int z=20;z<36;++z)for(int x=320;x<324;++x)f.world.addFeature(z*f.width+x,x*16+8.f,z*16+8.f,0,1,1,true,-1,true);
+        if(t>=150&&t<450&&t%3==0) {
+            f.world.addFeature(222*f.width+330,330*16+8.f,222*16+8.f,0,1,1,(t/3)%2==0,-1,true);
+            f.world.addFeature(194*f.width+300,300*16+8.f,194*16+8.f,0,1,1,(t/3)%2==1,-1,true);
+        }
+        f.world.tick(1.f/30);
+        if(t%100==99)out.trail=(out.trail^f.world.stateHash())*0x100000001b3ull;
+    }
+    out.hash=f.world.stateHash();
+    const auto* nav=f.world.legionNavigator();
+    out.decisions=nav->routeIndexStats().decisions;out.touched=nav->routeIndexStats().touched;
+    out.tiled=nav->accounting().corridors+nav->accounting().chains;
+    LegionNavigator::setRouteIndexForTest(true);
+    return out;
+}
+void routeindex() {
+    const auto on=routeindexRun(true,true),off=routeindexRun(false,true),workers=routeindexRun(true,false);
+    auto line=[](const char* name,const RouteIndexRun& x) {
+        std::printf("routeindex %s hash=%016llx arrived=%d/%d calls=%llu indexed=%llu walk_groups=%llu candidates=%llu touched=%llu "
+                    "closed=%llu opened=%llu decisions=%016llx lists=%llu entries_added=%llu entries_scanned=%llu stale_dropped=%llu "
+                    "compactions=%llu entries_peak=%llu bytes=%llu\n",name,(unsigned long long)x.hash,x.arrived,x.alive,
+                    (unsigned long long)x.r.calls,(unsigned long long)x.r.indexed,(unsigned long long)x.r.walkGroups,
+                    (unsigned long long)x.r.candidates,(unsigned long long)x.r.touched,(unsigned long long)x.closed,
+                    (unsigned long long)x.opened,(unsigned long long)x.r.decisions,(unsigned long long)x.r.lists,
+                    (unsigned long long)x.r.entriesAdded,(unsigned long long)x.r.entriesScanned,(unsigned long long)x.r.staleDropped,
+                    (unsigned long long)x.r.compactions,(unsigned long long)x.r.entriesPeak,(unsigned long long)x.r.bytes);
+    };
+    line("index",on);line("walk",off);line("index-workers",workers);
+    check(on.hash==off.hash&&on.trail==off.trail,"routeindex: the route index changed the world");
+    check(on.r.decisions==off.r.decisions&&on.r.touched==off.r.touched,"routeindex: the route index reached other groups");
+    check(on.closed==off.closed&&on.opened==off.opened,"routeindex: the route index changed closures or improvements");
+    check(workers.hash==on.hash&&workers.trail==on.trail&&workers.r.decisions==on.r.decisions,"routeindex: serial and workers differ");
+    check(off.r.indexed==0&&on.r.indexed>0,"routeindex: the switch did not select the index");
+    check(on.r.candidates*3<on.r.walkGroups*2,"routeindex: the index did not leave out the lanes no change reaches");
+    check(on.r.touched>0&&on.closed>0&&on.opened>0,"routeindex: the churn reached no route (the case tests nothing)");
+    const auto ron=routeindexRefreshRun(true),roff=routeindexRefreshRun(false);
+    std::printf("routeindex refresh index hash=%016llx decisions=%016llx touched=%llu tiled=%llu | walk hash=%016llx decisions=%016llx touched=%llu\n",
+                (unsigned long long)ron.hash,(unsigned long long)ron.decisions,(unsigned long long)ron.touched,(unsigned long long)ron.tiled,
+                (unsigned long long)roff.hash,(unsigned long long)roff.decisions,(unsigned long long)roff.touched);
+    check(ron.tiled>0,"routeindex refresh: no corridor or chain was built (the case tests nothing)");
+    check(ron.hash==roff.hash&&ron.trail==roff.trail,"routeindex refresh: the route index changed the world");
+    check(ron.decisions==roff.decisions&&ron.touched==roff.touched,"routeindex refresh: the route index reached other groups");
+}
+
 void longroute() {
     // A connected route farther than 16-bit potentials reach: the serpentine
     // of tools/scenarios/serplong.scn (30 lanes of 600 cells, 14 high, about
@@ -4498,7 +4605,7 @@ int main(int argc,char** argv) {
         {"pocket",pocket},{"deadend",deadend},{"tail",tail},{"settlelatency",settlelatency},{"doorplug",doorplug},
         {"staticidle",staticidle},{"b3events",b3events},{"pausedemand",pausedemand},{"planepin",planepin},{"chains",chains},{"chainschurn",chainschurn},{"chainplane",chainplane},{"structsquad",structsquad},{"factorysquad",factorysquad},{"patrolrepair",patrolrepair},
         {"lonetrees",lonetrees},{"slideback",slideback},{"forestedge",forestedge},{"stillturn",stillturn},{"facing",facing},{"rb02",rb02},{"awarebig",awarebig},{"awaredense",awaredense},{"crossthree",crossthree},{"crosslong",crosslong},{"mixedsettle",mixedsettle},{"mixedrandom",mixedrandom},{"funnelmouth",funnelmouth},{"funneltie",funneltie},{"entryplanes",entryplanes},
-        {"improvedefer",improvedefer},{"chainresolve",chainresolve},{"trafficlane",trafficlane},{"staticindex",staticindex}};
+        {"improvedefer",improvedefer},{"chainresolve",chainresolve},{"trafficlane",trafficlane},{"staticindex",staticindex},{"routeindex",routeindex}};
     try {
         if(argc<2) {for(const auto& [name,fn]:cases)fn();}
         else {

@@ -21,6 +21,10 @@
 //                               and in a shuffled order with random delays, LegionNavigator::setParallelForTest --
 //                               never changes behaviour or hashes; a NAVPAR line on stderr reports the jobs)
 //       [--navpar]             (the NAVPAR line without --scale)
+//       [--no-route-index]     (test: static changes walk every group instead of the route index,
+//                               LegionNavigator::setRouteIndexForTest -- perf follow-up I; never changes behaviour or
+//                               hashes)
+//       [--routeidx]           (a ROUTEIDX line on stderr per run: LegionNavigator::routeIndexStats)
 //       [--check <baseline.json> [--step ID] [--cumulative] [--ratchet "reason"]]
 //       [--baseline <baseline.json> --reason "text" [--since ID]]
 //       [--exit-table <old.json|run.jsonl>] [--anchor <anchor.json>]
@@ -176,6 +180,8 @@ struct Options {
     bool parForce = false;     // --par-force: setParallelForTest (stage 9: the parallel jobs inline with no workers)
     uint64_t parPerturb = 0;   // --par-perturb SEED: ... in a shuffled order with random delays (0 off)
     bool navpar = false;       // --navpar: the NAVPAR line without --scale (it comes with --scale and the --par-* flags)
+    bool routeIndex = true;    // --no-route-index: setRouteIndexForTest(false) (perf follow-up I: the walk of every group)
+    bool routeIdx = false;     // --routeidx: the ROUTEIDX line (routeIndexStats) on stderr per run
     uint32_t dumpUnits = 0;    // --dump-units N: a DUMP line per live unit on stderr every N ticks (observation only)
     std::vector<int> trace; // --trace IDS: decision trace lines on stderr for these members (debug build)
     std::vector<std::string> traceGroups;   // ... and whole groups, by name (a token that is not a number)
@@ -198,7 +204,7 @@ void emit(const std::string& line) {
         "       [--workers|--serial|--both-exec] [--window R] [--data <install>] [--json] [--ticks N]\n"
         "       [--no-observer] [--neutral] [--wanderers on|off] [--w9] [--scale] [--trace ID[,ID...]] [--no-vertex-probe]\n"
         "       [--budget-div N] [--field-bytes N] [--pause-all] [--sector K] [--no-hier-routes] [--dump-units N]\n"
-        "       [--par-force] [--par-perturb SEED] [--navpar]\n"
+        "       [--par-force] [--par-perturb SEED] [--navpar] [--no-route-index] [--routeidx]\n"
         "       [--check B.json [--step ID] [--cumulative] [--ratchet REASON]] [--baseline B.json --reason TEXT\n"
         "       [--since ID]] [--exit-table OLD] [--anchor A.json]   (gate modes: tools/legion_check.py)\n", why);
     std::exit(2);
@@ -1025,6 +1031,23 @@ Run runOnce(const scn::Scenario& s, PathfindingMode mode, int offset, bool seria
                      (unsigned long long)p.stagedBytesPeak, (unsigned long long)p.planeRows, (unsigned long long)p.workerJobs,
                      double(p.forkNs) / 1e6, double(p.waitNs) / 1e6, double(p.joinNs) / 1e6);
     }
+    if (nav && opt.routeIdx) {   // perf follow-up I: how static changes found their routes (stderr only, observation)
+        const auto x = nav->routeIndexStats();
+        const auto a = nav->accounting();
+        std::fprintf(stderr, "ROUTEIDX %s offset=%d %s index=%d calls=%llu whole_calls=%llu indexed=%llu walk_groups=%llu "
+                     "candidates=%llu touched=%llu decisions=%016llx routes_closed=%llu routes_opened=%llu group_loop_iters=%llu "
+                     "lists=%llu unlists=%llu entries_added=%llu queries=%llu bins_scanned=%llu entries_scanned=%llu "
+                     "stale_dropped=%llu compactions=%llu compacted=%llu entries_peak=%llu live_entries=%llu bytes=%llu\n",
+                     s.name.c_str(), offset, serial ? "serial" : "workers", int(opt.routeIndex), (unsigned long long)x.calls,
+                     (unsigned long long)x.wholeCalls, (unsigned long long)x.indexed, (unsigned long long)x.walkGroups,
+                     (unsigned long long)x.candidates, (unsigned long long)x.touched, (unsigned long long)x.decisions,
+                     (unsigned long long)a.routesClosed, (unsigned long long)a.routesOpened,
+                     (unsigned long long)nav->stats().groupLoopIters, (unsigned long long)x.lists, (unsigned long long)x.unlists,
+                     (unsigned long long)x.entriesAdded, (unsigned long long)x.queries, (unsigned long long)x.binsScanned,
+                     (unsigned long long)x.entriesScanned, (unsigned long long)x.staleDropped, (unsigned long long)x.compactions,
+                     (unsigned long long)x.compacted, (unsigned long long)x.entriesPeak, (unsigned long long)x.liveEntries,
+                     (unsigned long long)x.bytes);
+    }
     if (o) {
         r.keys = o->report();
         if (approach) approach->report(r.keys, mode == PathfindingMode::Legion);
@@ -1215,6 +1238,8 @@ int main(int argc, char** argv) {
         else if (a == "--no-hier-routes") opt.hierRoutes = false;
         else if (a == "--par-force") opt.parForce = true;
         else if (a == "--navpar") opt.navpar = true;
+        else if (a == "--no-route-index") opt.routeIndex = false;
+        else if (a == "--routeidx") opt.routeIdx = true;
         else if (a == "--par-perturb") opt.parPerturb = std::strtoull(value().c_str(), nullptr, 10);
         else if (a == "--dump-units") opt.dumpUnits = uint32_t(std::max(0L, std::atol(value().c_str())));
         else if (a == "--ticks") {
@@ -1266,6 +1291,7 @@ int main(int argc, char** argv) {
     tak::sim::LegionNavigator::setPauseAllForTest(opt.pauseAll);
     if (opt.sector) tak::sim::LegionNavigator::setSectorSizeForTest(opt.sector);
     tak::sim::LegionNavigator::setHierarchicalRoutesForTest(opt.hierRoutes);
+    tak::sim::LegionNavigator::setRouteIndexForTest(opt.routeIndex);
     if (opt.parForce || opt.parPerturb) tak::sim::LegionNavigator::setParallelForTest(opt.parForce, opt.parPerturb);
     if (gate && opt.neutral) usage("--neutral and a gate mode do not combine");
     for (size_t i = 0; i + 1 < opt.gateArgs.size(); ++i)

@@ -105,6 +105,7 @@ legion_scenario_strait-3x80 12
 legion_situation_r10-46292_legion 12
 cartographer_place_terrain_veruna 12
 cartographer_feature_ops_creon 12
+legion_routeindex 12
 legion_gen1_route_27459_om1 11
 legion_scenario_battle-field-2x250 11
 legion_scenario_island-1x150 11
