@@ -323,7 +323,12 @@ namespace {
             return;
         }
         bool fightTint = false;
-        tak::CursorId c = uiOverlay ? tak::CursorId::Normal : desiredCursor(fightTint);
+        tak::CursorId c = tak::CursorId::Normal;
+        if (!uiOverlay) {
+            tak::render::ScopedPhase phase(renderStats_, tak::render::Phase::Cursor);
+            renderStats_.add(tak::render::Counter::CursorEvals);
+            c = desiredCursor(fightTint);
+        }
         int sc = settings_ ? settings_->cursorScale : 1;
         SDL_Color tint = fightTint ? kFightMoveTint : SDL_Color{255, 255, 255, 255};
 
@@ -2561,6 +2566,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
 }
 
     bool GameView::unitUnderCursor(const UnitR& u, float mx, float my, float* d2) {
+        renderStats_.add(tak::render::Counter::CursorPickTests);
         if (!canPickUnit(u)) return false;
         if (dotsFrame_) {
             // Tactical Dots on screen: the hit region is the dot, with the same
@@ -2569,6 +2575,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
             float half = std::max(dotSide(u) * 0.5f + 1.0f, 9.0f);
             if (std::fabs(mx - c.x) > half || std::fabs(my - c.y) > half) return false;
             if (d2) { float dx = c.x - mx, dy = c.y - my; *d2 = dx * dx + dy * dy; }
+            renderStats_.add(tak::render::Counter::CursorPickHits);
             return true;
         }
         // A HIDDEN UNITS dot on screen (the unit behind scenery) is clickable like a
@@ -2578,6 +2585,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
             const float half = std::max(dotSide(u) * 0.5f + 1.0f, 9.0f);
             if (std::fabs(mx - c.x) <= half && std::fabs(my - c.y) <= half) {
                 if (d2) { float dx = c.x - mx, dy = c.y - my; *d2 = dx * dx + dy * dy; }
+                renderStats_.add(tak::render::Counter::CursorPickHits);
                 return true;
             }
         }
@@ -2599,6 +2607,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
             if (openGateDoorwayAt(u, wx, wz)) return false;
         }
         if (d2) { float dx = cx - mx, dy = cy - my; *d2 = dx * dx + dy * dy; }
+        renderStats_.add(tak::render::Counter::CursorPickHits);
         return true;
     }
 

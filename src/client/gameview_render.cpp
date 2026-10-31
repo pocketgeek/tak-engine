@@ -556,6 +556,7 @@
         // targets fall back to the direct geometry path.
         shadowSilhouetteAtlasActive_ = false;
         size_t shadowAtlasPackedUnits=0,shadowAtlasPackedPages=0,shadowAtlasReusedUnits=0;
+        uint64_t shadowAtlasDemandPx=0;   // telemetry: the frame's tile area as asked (shadow_demand_px)
         const char* shadowAtlasFallback="not requested";
 #ifndef NDEBUG
         const bool verifyShadowCache=tak::devFlag("TAK_SHADOW_CACHE_VERIFY");
@@ -721,6 +722,10 @@
                 work.push_back({&g,0,0,0,pixelX,pixelY,width,height});
             }
             if (work.empty()) return fail("no visible unit shadows");
+            if (!force && renderStats_.enabled()) {
+                shadowAtlasDemandPx=0;
+                for (const Work& w:work) shadowAtlasDemandPx+=uint64_t(w.width+2)*uint64_t(w.height+2);
+            }
             // Page size. Small scenes should not clear a 16 MiB target for one
             // monarch: pages grow (at once) to hold the largest tile and until the
             // frame's tiles take <= 3/4 of one page -- the former rule. Since F they
@@ -1442,6 +1447,7 @@
                 for (const auto& t:shadowTileStamps_) tilePx+=uint64_t(t.width+2)*uint64_t(t.height+2);
                 renderStats_.set(RS::ShadowAtlasTilePx, shadowSilhouetteAtlasActive_ ? tilePx : 0);
                 renderStats_.set(RS::ShadowAtlasShelfFreePx, st.shelfFreePx);
+                renderStats_.set(RS::ShadowDemandPx, shadowAtlasDemandPx);
                 renderStats_.set(RS::ShadowAtlasGpuBytes, st.capacityPx*4);
             }
 #ifndef NDEBUG
@@ -2220,6 +2226,7 @@
                 if (tak::render::buildGhostDrawn(u, i, site)) {
                     const auto& o = u.orders[i];
                     any = true;
+                    if (draw) renderStats_.add(RS::GhostsQueued);
                     if (draw) drawGhostAt(o.buildType,
                         o.buildRectangle ? o.buildX.toFloat() : o.x.toFloat(),
                         o.buildRectangle ? o.buildZ.toFloat() : o.z.toFloat() - float(o.buildType->footZ) * 8 - 24);
@@ -2227,6 +2234,7 @@
             return any;
         };
         {
+            tak::render::ScopedPhase ghostPhase(renderStats_, RP::Ghosts);
             const Frame& frame = front();
 #ifndef NDEBUG
             if (unitIndexVerify_) {
@@ -7697,6 +7705,7 @@
                      bool invalid) {
         const tak::tdo::Model* model = ghostModel(type->id);
         if (!model) return;
+        renderStats_.add(tak::render::Counter::GhostPreps);
         noteNeed(Retained::ModelTris, tris_);
         tris_.clear();
         SDL_Texture* atlas = atlasFor(colorSlot_[localPlayer_ & 7]);

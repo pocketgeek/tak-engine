@@ -146,6 +146,7 @@ namespace hu = tak::hiddenunits;
                     // A tree fades if its opaque texels reach the body.
                     const FeatureInst& f = *items[cov.item].f;
                     const FeatureSprite sp = featureSprite(f, zm);
+                    if (f.simId >= 0 && sp.mask) renderStats_.add(RS::HiddenCoverTests);
                     if (f.simId >= 0 && (!sp.mask || hu::spriteCoversRect(*sp.mask, sp.dst.x, sp.dst.y, sp.dst.w,
                                                                           sp.dst.h, sp.shear, body))) {
                         hiddenFades_.cover(hu::featureCover(uint32_t(f.simId)));
@@ -157,6 +158,7 @@ namespace hu = tak::hiddenunits;
                 // image) reaches the body.
                 const auto& distant = distantModelItems_[size_t(cov.slot)];
                 const UnitGeom& cg = visGeom(size_t(cov.slot));
+                if (!distant.texture) renderStats_.add(RS::HiddenCoverTests);
                 if (distant.texture || hu::trianglesCoverRect(std::span<const SDL_Vertex>(cg.verts), body)) {
                     hiddenFades_.cover(hu::structureCover(uint32_t(items[cov.item].u->id)));
                     hit = true;

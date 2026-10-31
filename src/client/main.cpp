@@ -1971,6 +1971,28 @@ int main(int argc, char** argv) {
         }
         if(studyJumpAt.empty())studyJumpAt.push_back({3800,3800});
     }
+    // Interactive cases (measurement B, tools/render_benchmark.py --scenes interactive).
+    // TAK_RENDER_MOUSE puts the pointer in the world view every frame, in fractions of
+    // that view: "fx,fy" holds it still; "sweep:x0,y0,x1,y1" moves it on a Lissajous
+    // path inside that rectangle (periods 300 and 187 frames). The in-game cursor is then
+    // classified each frame as under a real mouse (the matrix scenes leave the pointer
+    // unset, which skips that work). TAK_RENDER_FADE_CLOCK=1 runs HIDDEN UNITS FADE on
+    // the study frame clock (1/60 s a frame) instead of wall time, so fades are identical
+    // in every run and capture.
+    int studyMouseMode=0;   // 0 unset, 1 fixed, 2 sweep
+    float studyMouse[4]={};
+    if(const char* mouse=tak::devEnv("TAK_RENDER_MOUSE")) {
+        if(std::sscanf(mouse,"sweep:%f,%f,%f,%f",&studyMouse[0],&studyMouse[1],&studyMouse[2],&studyMouse[3])==4)
+            studyMouseMode=2;
+        else if(std::sscanf(mouse,"%f,%f",&studyMouse[0],&studyMouse[1])==2)
+            studyMouseMode=1;
+        else
+            throw std::runtime_error(std::string("TAK_RENDER_MOUSE: expected fx,fy or sweep:x0,y0,x1,y1, got ")+mouse);
+    }
+    const bool studyFadeClock=tak::devFlag("TAK_RENDER_FADE_CLOCK");
+    if(renderStudy && (studyMouseMode || studyFadeClock))
+        std::printf("RENDER_INTERACTIVE mouse=%s fade_clock=%d\n",
+                    studyMouseMode==2 ? "sweep" : studyMouseMode==1 ? "fixed" : "unset",studyFadeClock?1:0);
 #endif
     auto windowTarget = [&] {
         SDL_SetRenderTarget(ren, nullptr);
@@ -2231,6 +2253,16 @@ int main(int argc, char** argv) {
                     windowTarget();
                     gameView->invalidateRenderTargets();
                 }
+                if(renderStudy && studyMouseMode) {
+                    const auto view=gameView->renderStudyWorldView(w,h);
+                    float fx=studyMouse[0],fy=studyMouse[1];
+                    if(studyMouseMode==2) {
+                        fx+=(studyMouse[2]-studyMouse[0])*(.5f+.5f*std::sin(float(studyFrame)*6.2831853f/300));
+                        fy+=(studyMouse[3]-studyMouse[1])*(.5f+.5f*std::sin(float(studyFrame)*6.2831853f/187));
+                    }
+                    gameView->renderStudyMouse(fx*float(view.first),fy*float(view.second));
+                }
+                if(renderStudy && studyFadeClock)gameView->renderStudyFadeClock(1+uint64_t(studyFrame)*1000/60);
 #endif
 #ifndef NDEBUG
                 if(tak::devFlag("TAK_PROFILE_PAN"))
