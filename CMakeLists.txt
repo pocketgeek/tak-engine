@@ -360,12 +360,15 @@ add_executable(crowdbench tools/crowdbench.cpp)
 add_executable(navigation_telemetry_test tools/navigation_telemetry_test.cpp)
 target_link_libraries(navigation_telemetry_test PRIVATE tak-formats)
 add_test(NAME navigation_telemetry COMMAND navigation_telemetry_test)
+# Perf follow-up H: static-sync timing over a base-heavy world (not a test; prints BENCH lines).
+add_executable(legion_staticsync_bench tools/legion_staticsync_bench.cpp)
+target_link_libraries(legion_staticsync_bench PRIVATE tak-formats)
 add_executable(legion_world_test tools/legion_world_test.cpp)
 target_link_libraries(legion_world_test PRIVATE tak-formats)
 foreach(legion_case clearance groupreuse jagged trapped longroute crowdhold replace unreachable quota pens determinism formation
     slotblock deaths deathsshared splitgoal farclick churn approachhold approachopen churnfield approachchurn legacyyield planeincremental planeprebuild penstale lattice wallend staticblock facing
     navalclearance navalisland hovershore navalmissions squadformation pinwheel landedflyers mixedformation flyerfront liftflyers aware b3events lanegeom
-    lonetrees slideback stillturn forestedge mixedsettle entryplanes mixedrandom funnelmouth funneltie)
+    lonetrees slideback stillturn forestedge mixedsettle entryplanes mixedrandom funnelmouth funneltie staticindex)
   add_test(NAME legion_${legion_case} COMMAND legion_world_test ${legion_case})
   # TAK_LEGION_VERIFY (debug builds; compiled out of Release): every derived index, work list
   # and the incrementally kept soft state (W4 B2's softHash, C31) against a recompute, each tick.
