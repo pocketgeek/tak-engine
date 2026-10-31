@@ -152,41 +152,6 @@ SCENES = {
                                "TAK_RENDER_JUMP_AT": "4000,4000;28000,4000;28000,28000;4000,28000;16000,16000"},
                           notes="camera jumps between five far-apart views every 20 frames (faster "
                                 "than a view's terrain finishes composing)"),
-    # Perf follow-up K: silhouette atlas capacity, at 7680x2160 ("uhd"; the armies are
-    # sized for that view and stay far below the limit at 1280x960). Ulasem Arena's
-    # zoom-out floor there is 0.73, where TACTICAL DOTS (default on) replace the models,
-    # so these views sit at 0.82 -- one wheel notch in -- where a settled mixed-roster
-    # tile takes ~2700 px^2 and four 2048^2 pages hold ~6150 of them (the first frames
-    # after the spawn draw larger silhouettes, ~1.3x the area). Before K the atlas
-    # stopped at four pages: a view needing more drew every shadow directly, for the
-    # whole frame, and a view filling them repacked every tile each frame a tile did
-    # not fit. TAK_RENDER_OFFSET centres the army in the uhd view.
-    "shadow-cap-below": dict(count=5800, zoom=0.82, env={"TAK_RENDER_OFFSET": "442,3727"},
-                             notes="stationary mixed army whose settled shadow tiles fill ~95% of "
-                                   "four silhouette pages at 7680x2160 (zoom 0.82)"),
-    "shadow-cap-moving": dict(count=5400, zoom=0.82,
-                              env={"TAK_RENDER_MOTION": "1", "TAK_RENDER_OFFSET": "442,3727"},
-                              notes="moving mixed army around four silhouette pages at 7680x2160 "
-                                    "(zoom 0.82, orders reissued every 240 frames)"),
-    "shadow-cap-above": dict(count=6600, zoom=0.82, env={"TAK_RENDER_OFFSET": "442,3727"},
-                             notes="stationary mixed army needing ~108% of four silhouette pages "
-                                   "at 7680x2160 (zoom 0.82)"),
-    "shadow-cap-dense": dict(count=10000, zoom=0.82, env={"TAK_RENDER_OFFSET": "442,3727"},
-                             notes="10k mixed army, ~9800 in view at 7680x2160 (zoom 0.82): tiles "
-                                   "of ~6.4 pages"),
-    "shadow-cap-pan": dict(count=10000, zoom=0.82, env={"TAK_RENDER_CAMERA": "1"},
-                           notes="10k mixed army (~7900 in view) under the sinusoidal pan at 7680x2160: "
-                                 "every shadow tile is redrawn every frame (sub-pixel camera steps)"),
-    "shadow-cap-osc": dict(count=5000, zoom=0.82,
-                           env={"TAK_RENDER_OFFSET": "442,3727", "TAK_RENDER_ZOOM_OSC": "0.8,1.0,600"},
-                           notes="5000-unit army, zoom oscillating 0.8..1.0 every 600 frames at "
-                                 "7680x2160: its tiles cross four pages twice per period"),
-    # 448 MiB, not the 384 MiB floor: under 384 MiB this view crashes 461e9c4b in the body
-    # arena's native draw (GeometrySubmit::passDrawBuffer, a pre-existing defect).
-    "shadow-cap-constrained": dict(count=10000, zoom=0.82,
-                                   env={"TAK_RENDER_OFFSET": "442,3727", "TAK_GPU_CAP_MIB": "448"},
-                                   notes="shadow-cap-dense under a 448 MiB tracked-GPU cap: pages past the "
-                                         "first four fit only while the terrain loads, then give way"),
 }
 QUICK = ["small-battle", "stationary-mixed", "moving", "pan"]
 SIZES = {"normal": (1280, 960), "uhd": (7680, 2160)}
@@ -214,6 +179,48 @@ GHOST_SCENES = {
                             "them, panning camera"),
 }
 SCENES.update(GHOST_SCENES)
+
+# Silhouette atlas capacity (perf follow-up K), kept out of the historical matrix.
+# Named shadow-pages-* because measurement B's interactive cases already have
+# shadow-cap-below/-above (zoom 1, a different army) for the same question.
+SHADOW_PAGE_SCENES = {
+    # At 7680x2160 ("uhd"; the armies are sized for that view and stay far below the
+    # limit at 1280x960). Ulasem Arena's
+    # zoom-out floor there is 0.73, where TACTICAL DOTS (default on) replace the models,
+    # so these views sit at 0.82 -- one wheel notch in -- where a settled mixed-roster
+    # tile takes ~2700 px^2 and four 2048^2 pages hold ~6150 of them (the first frames
+    # after the spawn draw larger silhouettes, ~1.3x the area). Before K the atlas
+    # stopped at four pages: a view needing more drew every shadow directly, for the
+    # whole frame, and a view filling them repacked every tile each frame a tile did
+    # not fit. TAK_RENDER_OFFSET centres the army in the uhd view.
+    "shadow-pages-below": dict(count=5800, zoom=0.82, env={"TAK_RENDER_OFFSET": "442,3727"},
+                               notes="stationary mixed army whose settled shadow tiles fill ~95% of "
+                                     "four silhouette pages at 7680x2160 (zoom 0.82)"),
+    "shadow-pages-moving": dict(count=5400, zoom=0.82,
+                                env={"TAK_RENDER_MOTION": "1", "TAK_RENDER_OFFSET": "442,3727"},
+                                notes="moving mixed army around four silhouette pages at 7680x2160 "
+                                      "(zoom 0.82, orders reissued every 240 frames)"),
+    "shadow-pages-above": dict(count=6600, zoom=0.82, env={"TAK_RENDER_OFFSET": "442,3727"},
+                               notes="stationary mixed army needing ~108% of four silhouette pages "
+                                     "at 7680x2160 (zoom 0.82)"),
+    "shadow-pages-dense": dict(count=10000, zoom=0.82, env={"TAK_RENDER_OFFSET": "442,3727"},
+                               notes="10k mixed army, ~9800 in view at 7680x2160 (zoom 0.82): tiles "
+                                     "of ~6.4 pages"),
+    "shadow-pages-pan": dict(count=10000, zoom=0.82, env={"TAK_RENDER_CAMERA": "1"},
+                             notes="10k mixed army (~7900 in view) under the sinusoidal pan at 7680x2160: "
+                                   "every shadow tile is redrawn every frame (sub-pixel camera steps)"),
+    "shadow-pages-osc": dict(count=5000, zoom=0.82,
+                             env={"TAK_RENDER_OFFSET": "442,3727", "TAK_RENDER_ZOOM_OSC": "0.8,1.0,600"},
+                             notes="5000-unit army, zoom oscillating 0.8..1.0 every 600 frames at "
+                                   "7680x2160: its tiles cross four pages twice per period"),
+    # 448 MiB, not the 384 MiB floor: under 384 MiB this view crashes 461e9c4b in the body
+    # arena's native draw (GeometrySubmit::passDrawBuffer, a pre-existing defect).
+    "shadow-pages-constrained": dict(count=10000, zoom=0.82,
+                                     env={"TAK_RENDER_OFFSET": "442,3727", "TAK_GPU_CAP_MIB": "448"},
+                                     notes="shadow-pages-dense under a 448 MiB tracked-GPU cap: pages past the "
+                                           "first four fit only while the terrain loads, then give way"),
+}
+SCENES.update(SHADOW_PAGE_SCENES)
 
 # Interactive cases (perf follow-up measurement B). The matrix above never moves the
 # pointer, so the in-game cursor is never classified (the pointer is unset), nothing is
