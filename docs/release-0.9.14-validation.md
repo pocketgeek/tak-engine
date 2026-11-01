@@ -3,6 +3,10 @@
 Protocol **308** (was 307 in 0.9.13), replay format **15** (unchanged),
 generator version **9** (unchanged).
 
+Tag `v0.9.14` -> `c92da57dc6a736296d8e7cf8d1db408998b43fad` (the preparation
+commit); annotated tag object `a76907c780d30b8ffde7e7f8787831216595ef8b`.
+Published 2026-11-01 05:53:26 UTC as the Latest release.
+
 ## Scope and compatibility
 
 0.9.14 follows 0.9.13 (protocol 307; tag `v0.9.13` -> `4ad86ec6`, validation
@@ -60,6 +64,73 @@ On Linux, cores 4-23, scratch `HOME` and XDG dirs, data and logs in
 ## Desync sweeps
 
 None was run, by the project's testing rule; no hashed state changed.
+
+## CI and packages
+
+All four tag workflows ran on `c92da57d` (tag `v0.9.14`) on 2026-11-01 from about
+05:19 UTC and all passed on attempt 1: Linux packages 41276454053, Windows
+41276454050, macOS 41276454134 and Determinism 41276476783, whose GCC and Clang
+builds agree on golden `dcef618cd2e4d558` ("DETERMINISM OK", unchanged). The
+`main` runs of the same commit were cancelled as duplicates.
+
+All 29 assets were downloaded fresh and match GitHub's SHA-256 digests and sizes.
+The file set is identical to 0.9.13's: the same 29 asset names, and the file lists
+of all 28 extracted packages, installer, zips and debug archives match after
+replacing the version string (the 2 DMGs had no 0.9.13 extraction to compare). 18
+assets grew, by at most 5,722 bytes (+0.02%, openSUSE x86_64 rpm; largest relative
++0.03%, Ubuntu 24.04 arm64 deb); 11 shrank, by at most 2,712 bytes (-0.02%, the
+Windows x64 installer).
+
+All 75 release `takclient`, `takserver` and `cartographer` binaries (48 Linux ELF,
+9 Windows including the installer's three, 18 macOS in the zips, apps and DMGs)
+carry the `v0.9.14` build string and no other `v0.x.y` string. None of the 48 ELF
+binaries has a libva, libdrm, libsecret, GLib or libsqlite `NEEDED` entry, and none
+of the 75 contains `__vaDriverInit_`, `SQLite format` or `sqlite3_`. The `TAK_`
+names are 0.9.13's and none of the forbidden names appears. Licence files are in
+every package, zip, installer and app, and all 29 `STREAMING-LICENSES.txt` copies
+carry the OpenSSL notice. No `mods/`, `overrides/`, `click.hpi`, ManaPost or
+CUTbugfix is shipped. The packaged Linux `takclient --help` lists only `--data`,
+`--play-map`, `--game-mod` and `--version`. Every x86-64 package and the Linux x64
+debug archive report `0.9.14 (build v0.9.14)`; the Arch `takclient` needs GLIBC
+2.44 and cannot run on this Fedora host, as before.
+
+The Fedora 44 x86-64 RPM's `takserver` listened on protocol v308 with retail
+gameplay hash `d6000f4fa9095a51` and ran the Retail AI game (Inner Circle, seed 1,
+scratch profile dirs, the Debug client of `c92da57d`, `TAK_AI_LEVEL=6 TAK_SPEED=80
+--mpai --time 60`): `hash=12003fba552b8696 units=4 err=none end=timelimit`, the
+expected value, with no desync or referee-suspect line. The draft's body equals the
+prepared one, and every `blob` `v0.9.14` link in it names a file at the tag.
+
+## Signing
+
+Windows: on oden-win, `Get-AuthenticodeSignature` reports **Valid** (timestamped,
+"Curtis Edge") for the same 7 files as 0.9.13: the x64 installer and `takclient`,
+`takserver` and `cartographer` in both the x64 and arm64 zips. The x64
+`takclient.exe` and `takserver.exe` report `0.9.14 (build v0.9.14)`, and the arm64
+ones carry the build string. They ran from a scratch copy with a scratch profile,
+removed afterwards. The real profile's listing before the run was not captured, so
+"identical before and after" was not checked this time; the listing after differs
+from 0.9.13's only by a replay and a `settings.ini` time from hours earlier.
+
+macOS: on the MacBook (no builds), both DMGs and all eight app copies pass `stapler
+validate`, and `spctl -a -vv` accepts them as "Notarized Developer ID" (Curtis Edge,
+L479Y59RN8). Each app passes `codesign --verify --strict --deep` and has
+`NSHighResolutionCapable` true; the game apps have `NSMicrophoneUsageDescription`,
+and only `takclient` has `audio-input`. The bare zip programs pass `codesign
+--strict`; `spctl` calls them "not an app", as expected. `takclient` and `takserver`
+report `0.9.14 (build v0.9.14)`. `otool -L` shows no `libssl`, `libcrypto`,
+`libsqlite` or libopus dylib; both takclients contain `OpenSSL 3.5.8 25 Aug 2026`,
+no SecureTransport symbols, and link Security.framework. `vtool -show-build` on all
+24 Mach-O binaries reports `minos 14.0 sdk 15.5`, and all 8 apps have
+`LSMinimumSystemVersion` 14.0 and version 0.9.14. The Mac's real profile listing
+(107 files) was identical before and after, and the scratch folder was removed.
+
+`--mpai` was not run on Windows or macOS, per the release rule.
+
+## Publication
+
+Published on 2026-11-01 05:53:26 UTC as the Latest release, 29 assets; 0.9.13 and
+earlier releases are kept.
 
 ## Limits
 
