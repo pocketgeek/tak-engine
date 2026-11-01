@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.14-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.15-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,15 +26,13 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.14
+## What's new in 0.9.15
 
-- A new AI level, Passive: Easy that stays home, never scouts or explores, and attacks only what it has seen.
-- The lobby lists the AI levels Passive, Easy, Normal, Hard, Absurd, Defensive, Absurdly Defensive, Retail.
-- The selection ring lies at a unit's feet, as in the original, and turns with the unit.
-- The system arrow no longer shows through loading screens when Hardware Cursor is on.
+- Selection rings stay rings at every zoom, instead of turning into small filled boxes.
+- Arrows, bolts, harpoons and spears draw at their own size at every zoom.
 
-Does not play with 0.9.13 or its replays (protocol 308); servers must update.
-Details in the [CHANGELOG](CHANGELOG.md#0914).
+Plays with 0.9.14 and its replays (protocol 308); servers need no update.
+Details in the [CHANGELOG](CHANGELOG.md#0915).
 
 ## Features
 

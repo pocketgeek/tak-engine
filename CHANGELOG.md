@@ -19,6 +19,25 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.15
+*2026-11-01 · protocol 308 · replay format 15 · plays with 0.9.14, and its replays*
+
+- **Selection rings stay rings at every zoom.** Zoomed far out, a unit with a
+  small ring got a small filled box instead. That was our own shortcut, not the
+  original's, and 0.9.14's plate-sized rings made it common. Every selected unit
+  now draws its two dashed rings.
+- **Arrows, bolts, harpoons and spears draw at their own size.** They were
+  enlarged at most zooms, up to 1.5 times longer and 3.4 times wider, so a
+  Hunter's spear looked too big zoomed out. That was our own addition too. They
+  are now the size of their models, as in the original, and zoomed out they can
+  be thin streaks.
+- **Protocol 308, unchanged:** both changes are display only, so 0.9.15 and 0.9.14
+  clients and servers play together in either direction, and each plays the
+  other's replays. Servers need no update.
+
+Full notes: [release-0.9.15-notes.md](docs/release-0.9.15-notes.md) ·
+validation: [release-0.9.15-validation.md](docs/release-0.9.15-validation.md)
+
 ## 0.9.14
 *2026-11-01 · protocol 308 · replay format 15 · does not play with 0.9.13 or earlier, nor their replays*
 

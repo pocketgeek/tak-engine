@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.9.14**. Which versions it plays with, and whose
+This guide covers **TAK Engine 0.9.15**. Which versions it plays with, and whose
 replays it plays: see [Versions](#versions). What changed in each release: see
 the [CHANGELOG](../CHANGELOG.md). It is written for three kinds of reader:
 
@@ -2274,19 +2274,18 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 0.9.14 uses network protocol **308** and replay format **15**. No
-earlier release uses protocol 308, so:
+TAK Engine 0.9.15 uses network protocol **308** and replay format **15**, the
+same as 0.9.14. No earlier release uses protocol 308, so:
 
-- **Multiplayer:** 0.9.14 plays only with 0.9.14. A server turns away a client
-  whose protocol differs from its own, so a 0.9.13 or older player cannot join a
-  0.9.14 server, nor a 0.9.14 player an older one; the connection fails with a
-  *protocol version mismatch* message. When a release changes the protocol, a
-  server and all of its players update together.
-- **Replays:** 0.9.14 plays only replays recorded by 0.9.14. A replay recorded by
-  0.9.13 or earlier needs a version with that replay's protocol; keep an old
-  copy of the engine (built from its tag, see the
-  [development guide](development.md)) if you want to keep watching old
-  replays.
+- **Multiplayer:** 0.9.15 plays with 0.9.14, in either direction, and with nothing
+  older. A server turns away a client whose protocol differs from its own, so a
+  0.9.13 or older player cannot join a 0.9.15 server, nor a 0.9.15 player an older
+  one; the connection fails with a *protocol version mismatch* message. When a
+  release changes the protocol, a server and all of its players update together.
+- **Replays:** 0.9.15 plays replays recorded by 0.9.15 and 0.9.14. A replay
+  recorded by 0.9.13 or earlier needs a version with that replay's protocol; keep
+  an old copy of the engine (built from its tag, see the
+  [development guide](development.md)) if you want to keep watching old replays.
 
 Every release's protocol and replay format are listed in the
 [CHANGELOG](../CHANGELOG.md).
