@@ -91,7 +91,7 @@ std::string sanitizedHeader(std::string_view h) {
     return out;
 }
 
-constexpr Difficulty kLevels[] = {Difficulty::Passive, Difficulty::Easy, Difficulty::Normal, Difficulty::Hard,
+constexpr Difficulty kLevels[] = {Difficulty::Defensive, Difficulty::Easy, Difficulty::Normal, Difficulty::Hard,
                                   Difficulty::Absurd, Difficulty::AbsurdlyDefensive};
 
 // Edit distance, for "Did you mean".
@@ -147,8 +147,9 @@ AiKind aiKindOf(const std::string& key) {
 }
 const char* aiLevelName(Difficulty d) {
     switch (d) {
-        case Difficulty::Passive: return "Defensive";
+        case Difficulty::Defensive: return "Defensive";
         case Difficulty::Easy: return "Easy";
+        case Difficulty::Passive: return "Passive";
         case Difficulty::Normal: return "Normal";
         case Difficulty::Hard: return "Hard";
         case Difficulty::Absurd: return "Absurd";
@@ -1088,12 +1089,12 @@ int aiGroupRuleLimit(const AiGroupRule& g) { return g.value.empty() ? 0 : tak::a
 
 int aiLevelLimitScale(Difficulty d) {
     switch (d) {
-        case Difficulty::Easy: return 50;
+        case Difficulty::Easy: case Difficulty::Passive: return 50;
         case Difficulty::Hard: case Difficulty::Absurd: return 150;
         default: return 100;
     }
 }
-bool aiLevelIgnoresLimits(Difficulty d) { return d == Difficulty::Passive || d == Difficulty::AbsurdlyDefensive; }
+bool aiLevelIgnoresLimits(Difficulty d) { return d == Difficulty::Defensive || d == Difficulty::AbsurdlyDefensive; }
 
 AiLevelLimit aiEffectiveLimit(Difficulty d, std::optional<int> limit, const tak::sim::UnitType* type,
                               const tak::sim::TypeRegistry* registry) {

@@ -1124,21 +1124,23 @@ float createOptionPx(float maxW) {
                 blockText("NEEDED BY SCENARIO", x + 100, y + 9, 1.4f, {235, 205, 120, 255});
             else if (s.type == 2) {
                 cell(s.name.empty() ? "Computer" : s.name, x + 100, y + 8, 1.6f, 74, {210, 200, 150, 255});
-                // AI difficulty (host cycles DEFENSIVE -> EASY -> NORMAL -> HARD -> ABSURD
-                // -> ABSURDLY DEFENSIVE -> RETAIL, the wire aiLevel order). RETAIL is
-                // level 6, internally Classic: the 1999 game's own AI, driven by its
+                // AI difficulty (host cycles PASSIVE -> EASY -> NORMAL -> HARD -> ABSURD ->
+                // DEFENSIVE -> ABSURDLY DEFENSIVE -> RETAIL: kCycle, which is not the wire
+                // aiLevel order that diffName and diffCol follow). RETAIL is level 6, internally Classic: the 1999 game's own AI, driven by its
                 // ai/default.txt; a new AI seat still starts NORMAL.
                 constexpr int kLevels = tak::ai::kAiLevels;
                 static const char* diffName[kLevels] = {"DEFENSIVE", "EASY", "NORMAL", "HARD", "ABSURD",
-                                                        "ABSURDLY DEFENSIVE", "RETAIL"};
+                                                        "ABSURDLY DEFENSIVE", "RETAIL", "PASSIVE"};
                 static const SDL_Color diffCol[kLevels] = {
-                    {150, 180, 210, 255},   // passive  (calm blue)
+                    {150, 180, 210, 255},   // defensive (calm blue)
                     {150, 200, 150, 255},   // easy     (green)
                     {210, 200, 150, 255},   // normal   (neutral gold)
                     {225, 150, 140, 255},   // hard     (red)
                     {230, 120, 220, 255},   // absurd   (magenta)
                     {165, 140, 245, 255},   // absurdly defensive (violet)
-                    {205, 165, 105, 255}};  // retail (Classic, bronze): the retail AI's port
+                    {205, 165, 105, 255},   // retail (Classic, bronze): the retail AI's port
+                    {170, 195, 175, 255}};  // passive (pale green): Easy that stays home
+                static constexpr uint8_t kCycle[kLevels] = {7, 1, 2, 3, 4, 0, 5, 6};
                 const uint8_t lvl = uint8_t(s.aiLevel % kLevels);
                 // Two words that overrun the 82 px column stack in two smaller lines.
                 if (const char* gap = std::strchr(diffName[lvl], ' ')) {
@@ -1148,8 +1150,9 @@ float createOptionPx(float maxW) {
                     blockText(diffName[lvl], x + 178, y + 9, 1.4f, diffCol[lvl]);
                 if (host) { SDL_FRect db{x + 176, y + 2, 82, 26};
                     lobbyHots_.push_back({db, [this, i](int direction) { const auto& s2 = mpRoom().slots[i];
+                        const int at = int(std::find(kCycle, kCycle + kLevels, s2.aiLevel) - kCycle);
                         mp_->setSlot(i, s2.type, s2.faction, s2.color, s2.team, s2.ready,
-                                     uint8_t((s2.aiLevel + direction + kLevels) % kLevels)); }}); }
+                                     kCycle[(at + direction + kLevels) % kLevels]); }}); }
             }
             if (i >= startCount && size_t(i) < bySlotSpot.size() && bySlotSpot[size_t(i)] >= 0) {
                 const int spot = bySlotSpot[size_t(i)];

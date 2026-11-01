@@ -1,7 +1,7 @@
 #pragma once
 
 // The build profiles of OUR AI levels (Defensive, Easy, Normal, Hard, Absurd,
-// Absurdly Defensive): per-unit weight and limit, built into the engine.
+// Absurdly Defensive, Passive): per-unit weight and limit, built into the engine.
 //
 // These levels never read a game's ai/default.txt. Each has its own built-in table
 // (builtinProfile). ONE file, ai/takengine.txt, adjusts all six of them: a GAME MOD

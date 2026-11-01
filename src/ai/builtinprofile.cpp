@@ -95,19 +95,20 @@ Profile build(std::span<const Entry> changes) {
 const Profile& builtinProfile(Difficulty d) {
     static const std::array<Profile, kAiLevels> profiles = [] {
         std::array<Profile, kAiLevels> out;
-        out[size_t(Difficulty::Passive)] = build(kDefensiveChanges);
+        out[size_t(Difficulty::Defensive)] = build(kDefensiveChanges);
         out[size_t(Difficulty::Easy)] = build(kEasyChanges);
         out[size_t(Difficulty::Normal)] = build(kNormalChanges);
         out[size_t(Difficulty::Hard)] = build(kHardChanges);
         out[size_t(Difficulty::Absurd)] = build(kAbsurdChanges);
         out[size_t(Difficulty::AbsurdlyDefensive)] = build(kAbsurdlyDefensiveChanges);
+        out[size_t(Difficulty::Passive)] = build(kEasyChanges);   // Easy's table, always
         return out;   // Classic stays empty
     }();
     return size_t(d) < profiles.size() ? profiles[size_t(d)] : profiles[size_t(Difficulty::Classic)];
 }
 
 const char* levelProfileFile(Difficulty d) {
-    return size_t(d) < size_t(Difficulty::Classic) ? kEngineProfileFile : nullptr;
+    return d != Difficulty::Classic ? kEngineProfileFile : nullptr;
 }
 
 void applyProfileText(std::string_view text, Profile& prof) {

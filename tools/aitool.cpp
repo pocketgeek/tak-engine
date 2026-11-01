@@ -30,7 +30,8 @@ int main(int argc, char** argv) {
     std::string map = argc >= 3 ? argv[2] : "Inner Circle";
     std::string dstr = argc >= 4 ? argv[3] : "normal";
     int seconds = argc >= 5 ? std::atoi(argv[4]) : 180;
-    ai::Difficulty diff = (dstr == "defensive" || dstr == "passive") ? ai::Difficulty::Passive
+    ai::Difficulty diff = dstr == "defensive" ? ai::Difficulty::Defensive
+                        : dstr == "passive" ? ai::Difficulty::Passive
                         : dstr == "easy"    ? ai::Difficulty::Easy
                         : dstr == "hard"    ? ai::Difficulty::Hard
                         : dstr == "absurd"  ? ai::Difficulty::Absurd

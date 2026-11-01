@@ -72,7 +72,7 @@ int main(int argc,char** argv) {
                 world.spawn(&parent,px,800,std::nullopt,0);
                 ai::Profile profile;profile.weight[child]=100;
                 ai::Controller controller(0,registry,profile,1,
-                    defensive?ai::Difficulty::Passive:ai::Difficulty::Normal,{{3280,800}});
+                    defensive?ai::Difficulty::Defensive:ai::Difficulty::Normal,{{3280,800}});
                 int completed=0,attackOrders=0;
                 for (uint32_t tick=0;tick<18000 && !completed;++tick) {
                     world.player(0).mana=100000;world.player(0).income=100;

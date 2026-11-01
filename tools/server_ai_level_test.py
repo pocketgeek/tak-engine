@@ -2,8 +2,8 @@
 """AI levels through a real server's lobby (protocol 290).
 
   classic     the host seats an AI at level 6 (RETAIL, internally Classic): the room's table shows 6
-  every level each of 0..6 round-trips through SlotUpdate -> LobbyState
-  unknown     level 7 or more is stored as Normal (2), as an older peer's clamp did
+  every level each of 0..7 round-trips through SlotUpdate -> LobbyState
+  unknown     level 8 or more is stored as Normal (2), as an older peer's clamp did
 """
 import argparse
 import contextlib
@@ -15,7 +15,7 @@ import server_net as auth
 from server_net import lobby
 from server_public_test import login, options, server
 
-LEVELS = 7      # ai::kAiLevels
+LEVELS = 8      # ai::kAiLevels
 CLASSIC = 6
 
 
@@ -51,7 +51,7 @@ def main():
                 assert level(host, value) == 2, ('an unknown level was not stored as Normal', value)
             assert level(host, CLASSIC) == CLASSIC
             assert process.poll() is None, 'server exited'
-    print('PASS: AI levels -- RETAIL (6, Classic) and every level round-trip the lobby; 7 and up store Normal')
+    print('PASS: AI levels -- RETAIL (6, Classic) and every level round-trip the lobby; 8 and up store Normal')
 
 
 if __name__ == '__main__':

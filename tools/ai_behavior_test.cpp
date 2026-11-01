@@ -109,7 +109,7 @@ static void defensiveShooters(const sim::TypeRegistry& registry,const ai::Profil
         w.spawn(&base,400,800,0,0);
         const int defender=w.spawn(defenderType,1000,800,0,0);   // inside the 900 home radius
         const int shooter=w.spawn(&archer,1420,800,0,1);           // 1020 from home, unseen
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive,{{3400,800}});
         check(attacks(seen(defensive,w))==0,"an unseen archer outside the territory is no threat until it hits something");
         w.unit(defender)->lastHitBy=shooter;
         auto cs=seen(defensive,w,30);
@@ -132,7 +132,7 @@ static void defensiveShooters(const sim::TypeRegistry& registry,const ai::Profil
         const int defender=w.spawn(&blind,1000,800,0,0);
         const int shooter=w.spawn(&archer,1700,800,0,1);   // out of its own reach of the victim
         w.unit(defender)->lastHitBy=shooter;
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive,{{3400,800}});
         check(attacks(seen(defensive,w))==0,"a stale attacker no longer within reach of its victim is ignored");
     }
 }
@@ -156,7 +156,7 @@ static void defensiveMeleeTargets(const sim::TypeRegistry& registry,const ai::Pr
         const int defender=w.spawn(&melee,1000,800,0,0);
         const int shooter=w.spawn(&archer,1400,800,0,1);         // outside the radius, hitting it
         w.unit(defender)->lastHitBy=shooter;
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive,{{3400,800}});
         auto cs=seen(defensive,w);
         check(attackOf(cs,defender)==shooter,"a melee defender attacks the archer hitting it, not the threat nearest home");
         for (const auto& c:cs) sim::applyCommand(w,registry,c);
@@ -182,7 +182,7 @@ static void defensiveMeleeTargets(const sim::TypeRegistry& registry,const ai::Pr
         sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
         const int intruder=w.spawn(&soldier,600,800,0,1);
         const int defender=w.spawn(&melee,1000,800,0,0);
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive,{{3400,800}});
         auto cs=seen(defensive,w);
         check(attackOf(cs,defender)==intruder,"a melee defender with no attacker of its own answers a spotted intruder");
         for (const auto& c:cs) sim::applyCommand(w,registry,c);
@@ -196,7 +196,7 @@ static void defensiveMeleeTargets(const sim::TypeRegistry& registry,const ai::Pr
         const int farther=w.spawn(&soldier,900,1100,0,1);       // ~580 from home
         const int first=w.spawn(&melee,700,500,0,0);
         const int second=w.spawn(&melee,950,1150,0,0);
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive,{{3400,800}});
         auto cs=seen(defensive,w);
         check(attackOf(cs,first)==nearHome && attackOf(cs,second)==farther,
               "melee defenders spread over the threats nearest each of them");
@@ -297,7 +297,7 @@ static void strikeTargets(const sim::TypeRegistry& registry,const ai::Profile& p
     {
         // Defensive levels mostly defend, but clearly ahead they send half their idle
         // fighters out to clean up.
-        for (auto difficulty:{ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive}) {
+        for (auto difficulty:{ai::Difficulty::Defensive,ai::Difficulty::AbsurdlyDefensive}) {
             sim::World w;terrain(w);w.player(0).income=100;army(w,30);
             const int last=w.spawn(&lode,3400,3400,0,1);
             pastStart(w);
@@ -610,7 +610,7 @@ static void fogKnowledge(const sim::TypeRegistry& registry,const ai::Profile& pr
         w.spawn(&base,400,800,0,0);w.spawn(&soldier,400,1000,0,0);
         w.spawn(&soldier,850,800,0,1);
         sight(w);
-        ai::Controller c(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        ai::Controller c(0,registry,profile,1,ai::Difficulty::Defensive,{{3400,800}});
         check(attacks(think(c,w,30))==1,"Defensive answers an intruder its side's view shows");
     }
 }
@@ -890,7 +890,7 @@ static void fogScouting(const sim::TypeRegistry& registry,const ai::Profile& pro
         for (int i=0;i<30;++i) w.spawn(&soldier,400+float(i%6)*40,800+float(i/6)*40,0,0);
         w.spawn(&soldier,3600,3600,0,1);
         sight(w);
-        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Passive,{{3400,3400}});
+        ai::Controller controller(0,registry,profile,1,ai::Difficulty::Defensive,{{3400,3400}});
         // The first think walks the army out of the base (stationArmy).
         for (const auto& c:think(controller,w,5*60*30)) sim::applyCommand(w,registry,c);
         sight(w);
@@ -1017,7 +1017,7 @@ static void monarchFightsBack(const sim::TypeRegistry& registry,const ai::Profil
         const int builderId=w.spawn(&monarch,800,800,0,0);
         sim::UnitType building;building.id="site-test";building.maxHp=100;building.maxVel=sim::Fixed();
         building.footX=building.footZ=2;
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive,{{3400,800}});
         float x=0,z=0;
         check(ai::PlacementProbe::place(defensive,w,&building,*w.unit(builderId),x,z),
               "Defensive placement baseline finds a site");
@@ -1071,7 +1071,7 @@ static void builderCaps() {
     check(trainsMason(ai::Difficulty::Normal,150,3),"Normal grows to the Monarch and four builders");
     check(!trainsMason(ai::Difficulty::Normal,1000,4),"Normal stops at the Monarch and four builders");
     check(!trainsMason(ai::Difficulty::Easy,150,1),"Easy keeps the Monarch and one builder");
-    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive}) {
+    for (auto difficulty : {ai::Difficulty::Defensive,ai::Difficulty::AbsurdlyDefensive}) {
         check(!trainsMason(difficulty,20,1),"Defensive opens with the Monarch and one builder");
         check(trainsMason(difficulty,150,1),"Defensive adds builders as its income grows");
         check(trainsMason(difficulty,1000,4),"Defensive passes the profile's builder limit while income allows");
@@ -1093,7 +1093,7 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         const int unfinished=w.spawn(&soldier,500,1200,0,0);w.unit(unfinished)->underConstruction=true;
         const int cargo=w.spawn(&soldier,500,1240,0,0);w.unit(cargo)->inTransport=monarch;
         const int intruder=w.spawn(&soldier,1100,800,0,1);
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive,{{3400,800}});
         auto cs=seen(defensive,w);
         check(attacks(cs)==6 && std::all_of(cs.begin(),cs.end(),[&](const auto& c) {
             return c.kind!=net::Cmd::AttackMove || (c.x==1100 && c.z==800 &&
@@ -1119,7 +1119,7 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         sim::World w;terrain(w);w.spawn(&base,400,800,0,0);
         const int defender=w.spawn(&soldier,400,1000,0,0);
         const int enemy=w.spawn(&soldier,1100,800,0,1);
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive,{{3400,800}});
         auto cs=seen(defensive,w);for(const auto& c:cs)sim::applyCommand(w,registry,c);
         w.unit(enemy)->x=sim::Fixed::fromInt(3000);
         cs=seen(defensive,w,30);
@@ -1134,7 +1134,7 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         sim::World w;terrain(w);auto blindBase=base;blindBase.sight=80;
         w.spawn(&blindBase,400,800,0,0);w.spawn(&soldier,400,1000,0,0);
         const int enemy=w.spawn(&soldier,1000,800,0,1);
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive,{{3400,800}});
         check(attacks(seen(defensive,w))==0,"Defensive ignores nearby threats hidden by fog");
         blindBase.radar=700;
         auto cs=seen(defensive,w,30);
@@ -1147,7 +1147,7 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         w.spawn(&soldier,400,1000,0,0);
         auto scout=soldier;scout.weapon.damage=0;scout.weapons.clear();scout.sight=500;
         w.spawn(&scout,2500,800,0,0);w.spawn(&soldier,2700,800,0,1);
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive,{{2700,800}});
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive,{{2700,800}});
         check(attacks(seen(defensive,w))==0,"Defensive ignores distant visible enemies and known enemy starts");
         w.player(2).team=w.player(0).team;w.spawn(&soldier,1050,800,0,2);
         auto unarmed=scout;w.spawn(&unarmed,1000,800,0,1);
@@ -1161,7 +1161,7 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         auto flyer=soldier;flyer.canFly=true;
         const int air=w.spawn(&flyer,1300,1200,0,0);
         w.spawn(&soldier,2624,800,0,1);
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive);
         // An outlying building reveals the threat across disconnected land.
         w.spawn(&base,2624,1200,0,0);
         const auto cs=seen(defensive,w);
@@ -1175,7 +1175,7 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         sim::World w;terrain(w,true);w.spawn(&base,1480,800,0,0);
         auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;boat.weapon.range=240;
         const int ship=w.spawn(&boat,1800,800,0,0);w.spawn(&soldier,1480,1000,0,1);
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive);
         const auto cs=seen(defensive,w);
         check(attacks(cs)==1 && std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
             return c.kind==net::Cmd::AttackMove && c.unitId==ship && c.x>=1536;
@@ -1187,7 +1187,7 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         w.spawn(&soldier,1100,800,0,1);
         // A strong enemy army far off: not clearly winning, so this is interception alone.
         for(int i=0;i<70;++i)w.spawn(&soldier,3200+float(i%10)*32,3200+float(i/10)*32,0,1);
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive);
         auto cs=seen(defensive,w);
         check(attacks(cs)==256,"Defensive limits interception commands per think for large armies");
         for(const auto& c:cs)sim::applyCommand(w,registry,c);
@@ -1198,7 +1198,7 @@ static void defensiveResponses(const sim::TypeRegistry& registry,const ai::Profi
         const int defender=w.spawn(&soldier,400,1000,0,0);
         const int enemy=w.spawn(&soldier,1100,800,0,1);
         w.attack(defender,enemy,false);
-        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Passive);
+        ai::Controller defensive(0,registry,profile,1,ai::Difficulty::Defensive);
         check(attacks(seen(defensive,w))==0,"Defensive preserves an existing explicit attack order");
     }
 }
@@ -1400,7 +1400,7 @@ static void fullStore() {
     };
     check(!buildsMine(ai::Difficulty::Normal,3000),"Normal's builders rest once income meets its target");
     check(buildsMine(ai::Difficulty::Normal,4800),"Normal's idle builders build income while the store is full");
-    check(buildsMine(ai::Difficulty::Passive,4800),"Defensive's idle builders build income while the store is full");
+    check(buildsMine(ai::Difficulty::Defensive,4800),"Defensive's idle builders build income while the store is full");
     check(!buildsMine(ai::Difficulty::Easy,4800),"Easy's builders rest beside a full store");
 }
 
@@ -1600,7 +1600,7 @@ static void divineLodestones() {
     // Hard 6, Absurd and Absurdly Defensive none; Easy builds none.
     struct Limit { ai::Difficulty difficulty; int limit; const char* label; };
     for (const auto& [difficulty,limit,label] : {
-            Limit{ai::Difficulty::Passive,5,"Defensive stops at five Divine Lodestones"},
+            Limit{ai::Difficulty::Defensive,5,"Defensive stops at five Divine Lodestones"},
             Limit{ai::Difficulty::Normal,2,"Normal stops at two Divine Lodestones"},
             Limit{ai::Difficulty::Hard,6,"Hard stops at six Divine Lodestones"},
             Limit{ai::Difficulty::Absurd,-1,"Absurd keeps upgrading past eight Divine Lodestones"},
@@ -1641,7 +1641,7 @@ static void unboundedLevels() {
         file(std::string("canbuild/worker/")+child+".tdf","[CANBUILD]{sortbias=0;}");
     hpi::Vfs vfs;vfs.setMapFiles(files);
     sim::TypeRegistry reg;reg.loadDir(vfs,"units");reg.loadBuildTree(vfs,"canbuild");
-    const auto levels={ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive,ai::Difficulty::Hard};
+    const auto levels={ai::Difficulty::Defensive,ai::Difficulty::AbsurdlyDefensive,ai::Difficulty::Hard};
     auto count=[](const std::vector<net::Command>& cs,net::Cmd kind,const char* type) {
         return int(std::count_if(cs.begin(),cs.end(),[&](const auto& c){return c.kind==kind && std::string(c.type)==type;}));
     };
@@ -1703,7 +1703,7 @@ static void unboundedLevels() {
     }
     // Idle fighters walk out of the base to a ring around it and stay home there;
     // a fighter already outside the base is left alone.
-    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive}) {
+    for (auto difficulty : {ai::Difficulty::Defensive,ai::Difficulty::AbsurdlyDefensive}) {
         sim::World w;terrain(w);w.buildNavClasses(reg);
         w.spawn(reg.find("factory"),1600,1600,0,0);
         const int inside=w.spawn(reg.find("soldier"),1640,1680,0,0);
@@ -1719,7 +1719,7 @@ static void unboundedLevels() {
     }
     // A fighter is not sent onto a ring spot another stands on, nor onto the enemy's
     // side of the map.
-    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive}) {
+    for (auto difficulty : {ai::Difficulty::Defensive,ai::Difficulty::AbsurdlyDefensive}) {
         sim::World w;terrain(w);w.buildNavClasses(reg);
         w.spawn(reg.find("factory"),1600,1600,0,0);
         const int inside=w.spawn(reg.find("soldier"),1640,1680,0,0);
@@ -1748,7 +1748,7 @@ static void unboundedLevels() {
     // builders (they used to idle beside it with a full store). A site past it
     // lies within retail's base radius, on the AI's own side of the map, with a
     // lane to every building.
-    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive}) {
+    for (auto difficulty : {ai::Difficulty::Defensive,ai::Difficulty::AbsurdlyDefensive}) {
         sim::World w;terrain(w);w.buildNavClasses(reg);
         // 81 towers 140 apart around (800,800): no 2x2 site with a 48 px lane fits
         // within 640 px of home; their footprint (81 * 4) makes a 1440 px base.
@@ -1773,7 +1773,7 @@ static void unboundedLevels() {
     // Two builders moved in one think take two sites, a lane apart; and a site whose
     // order came to nothing (the builder idle again, nothing started there) is not
     // picked again at once.
-    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::AbsurdlyDefensive}) {
+    for (auto difficulty : {ai::Difficulty::Defensive,ai::Difficulty::AbsurdlyDefensive}) {
         sim::World w;terrain(w);w.buildNavClasses(reg);
         w.spawn(reg.find("factory"),1600,1600,0,0);
         w.spawn(reg.find("worker"),1500,1800,0,0);
@@ -1805,7 +1805,7 @@ static void unboundedLevels() {
         const int factory=w.spawn(reg.find("factory"),800,800,0,0);
         w.unit(factory)->buildQueue.push_back(reg.find("soldier"));
         ai::Profile p;p.weight["soldier"]=10;
-        ai::Controller controller(0,reg,p,1,ai::Difficulty::Passive);
+        ai::Controller controller(0,reg,p,1,ai::Difficulty::Defensive);
         auto unqueues=[&](uint32_t tick) {
             const auto cs=think(controller,w,tick);
             return std::any_of(cs.begin(),cs.end(),[&](const auto& c) {
@@ -1825,12 +1825,12 @@ static void unboundedLevels() {
 // to end: the level, the multiplier and stance every peer derives from it, and
 // the room and replay records that carry it.
 static void levelWiring() {
-    check(ai::difficultyFromLevel(5)==ai::Difficulty::AbsurdlyDefensive && ai::difficultyFromLevel(7)==ai::Difficulty::Normal &&
+    check(ai::difficultyFromLevel(5)==ai::Difficulty::AbsurdlyDefensive && ai::difficultyFromLevel(8)==ai::Difficulty::Normal &&
           ai::difficultyFromLevel(255)==ai::Difficulty::Normal,
-          "aiLevel 5 is Absurdly Defensive; an unknown level (7 and up) is Normal");
+          "aiLevel 5 is Absurdly Defensive; an unknown level (8 and up) is Normal");
     check(ai::incomeMultFor(ai::Difficulty::AbsurdlyDefensive)==2.0f && ai::incomeMultFor(ai::Difficulty::Absurd)==2.0f &&
-          ai::incomeMultFor(ai::Difficulty::Passive)==1.0f,"Absurdly Defensive earns Absurd's double income");
-    const auto a=ai::paramsFor(ai::Difficulty::AbsurdlyDefensive),d=ai::paramsFor(ai::Difficulty::Passive);
+          ai::incomeMultFor(ai::Difficulty::Defensive)==1.0f,"Absurdly Defensive earns Absurd's double income");
+    const auto a=ai::paramsFor(ai::Difficulty::AbsurdlyDefensive),d=ai::paramsFor(ai::Difficulty::Defensive);
     check(!a.attack && a.unbounded && a.thinkPeriod==d.thinkPeriod && a.producersPerThink==d.producersPerThink &&
           a.limitScale==d.limitScale && a.raidSize==d.raidSize && a.waveSize==d.waveSize,
           "Absurdly Defensive plays exactly as Defensive");
@@ -1867,7 +1867,15 @@ static void levelWiring() {
 // is exactly a Normal seat's, the level survives the room and replay records, and
 // the P0 brain takes every tick from the Controller and does nothing with it.
 static void classicLevel() {
-    check(ai::kAiLevels==7 && ai::difficultyFromLevel(6)==ai::Difficulty::Classic,"aiLevel 6 is Classic");
+    check(ai::kAiLevels==8 && ai::difficultyFromLevel(6)==ai::Difficulty::Classic,"aiLevel 6 is Classic");
+    check(ai::difficultyFromLevel(7)==ai::Difficulty::Passive && ai::incomeMultFor(ai::Difficulty::Passive)==1.0f &&
+          !ai::defensiveLevel(ai::Difficulty::Passive),"aiLevel 7 is Passive, with an Easy seat's sim config");
+    {
+        const auto easy=ai::paramsFor(ai::Difficulty::Easy),passive=ai::paramsFor(ai::Difficulty::Passive);
+        check(easy.thinkPeriod==passive.thinkPeriod && easy.waveSize==passive.waveSize && easy.limitScale==passive.limitScale &&
+              easy.attack==passive.attack && easy.raidSize==passive.raidSize && easy.unbounded==passive.unbounded &&
+              ai::exploreLevelFor(ai::Difficulty::Passive).maxScouts==0,"Passive's knobs are Easy's, with no scouts");
+    }
     check(ai::incomeMultFor(ai::Difficulty::Classic)==1.0f && !ai::defensiveLevel(ai::Difficulty::Classic),
           "Classic has no income cheat and no defensive stance");
     net::SlotInfo slots[net::kMaxSlots]{};
@@ -1961,7 +1969,7 @@ static void aiRaisesTheDead(const sim::TypeRegistry& registry,const ai::Profile&
             return c.kind==net::Cmd::Resurrect && c.unitId==caster && c.targetId==dead;
         })==1;
     };
-    for (auto difficulty:{ai::Difficulty::Passive,ai::Difficulty::Normal}) {
+    for (auto difficulty:{ai::Difficulty::Defensive,ai::Difficulty::Normal}) {
         for (int owner:{0,1}) {
             auto s=scene(440,owner);
             ai::Controller c(0,registry,profile,1,difficulty,{{3400,800}});
@@ -2150,7 +2158,7 @@ static void aiRaisesTheDeadLikeTheReference(const sim::TypeRegistry& registry,co
 
 int main(int argc,char** argv) {
     sim::TypeRegistry empty;ai::Profile profile;auto soldier=fighter();
-    for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd,
+    for (auto difficulty : {ai::Difficulty::Defensive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd,
                             ai::Difficulty::AbsurdlyDefensive}) {
         sim::World w;terrain(w);w.player(0).income=100;
         for (int i=0;i<35;++i) w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
@@ -2197,6 +2205,31 @@ int main(int argc,char** argv) {
         for (const auto& c:cs) sim::applyCommand(w,empty,c);
         check(attacks(think(controller,w,5*60*30))==0,"Easy waits between attack waves");
         check(attacks(think(controller,w,6*60*30))==8,"Easy resumes attacking after two minutes");
+    }
+    {
+        // Passive goes nowhere for an enemy it has not seen: no scout, and neither
+        // the army nor a wave heads for a start position, however large it grows.
+        sim::World w;terrain(w);w.player(0).income=100;
+        for(int i=0;i<35;++i)w.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
+        sight(w);
+        ai::Controller controller(0,empty,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        check(controller.difficulty()==ai::Difficulty::Passive,"a Passive controller reports its own level");
+        check(attacks(think(controller,w,3*60*30))==0,"Passive leaves four minutes before anything");
+        bool quiet=true;
+        for (uint32_t minute=4;minute<30;++minute) quiet=quiet && attacks(think(controller,w,minute*60*30))==0;
+        check(quiet,"Passive never looks for an enemy it has not seen");
+        // An enemy it has seen gets Easy's wave on Easy's timing.
+        sim::World seen;terrain(seen);seen.player(0).income=100;
+        for(int i=0;i<35;++i)seen.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
+        seen.spawn(&soldier,690,800,0,1);
+        seen.setTeam(1,1);sight(seen);pastStart(seen);
+        ai::Controller known(0,empty,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        auto cs=think(known,seen,3*60*30);
+        check(attacks(cs)==0,"Passive waits four minutes to attack what it has seen, as Easy does");
+        cs=think(known,seen,4*60*30);
+        check(attacks(cs)==8,"Passive attacks what it has seen with Easy's wave of eight");
+        for (const auto& c:cs) sim::applyCommand(seen,empty,c);
+        check(attacks(think(known,seen,5*60*30))==0,"Passive waits between attack waves");
     }
     for (float income : {20.f,200.f}) {
         sim::World w;terrain(w);w.player(0).income=income;
@@ -2277,7 +2310,7 @@ int main(int argc,char** argv) {
         ai::Controller controller(0,empty,profile,1,ai::Difficulty::Normal,{{2700,800}});
         check(attacks(think(controller,w))==0,"naval coastal projection takes the enemy's nearest coast, not a farther lake");
     }
-    for (auto difficulty:{ai::Difficulty::Passive,ai::Difficulty::Easy,ai::Difficulty::Normal}) {
+    for (auto difficulty:{ai::Difficulty::Defensive,ai::Difficulty::Easy,ai::Difficulty::Normal}) {
         sim::World w;terrain(w,true);w.player(0).income=200;
         auto boat=soldier;boat.domain=sim::UnitType::Domain::Water;
         const int count=difficulty==ai::Difficulty::Easy ? 2 : 3;
@@ -2285,7 +2318,7 @@ int main(int argc,char** argv) {
         sight(w);
         ai::Controller controller(0,empty,profile,1,difficulty,{{3400,800}});
         const auto cs=think(controller,w,4*60*30);
-        check(attacks(cs)==(difficulty==ai::Difficulty::Passive ? 0 : count),
+        check(attacks(cs)==(difficulty==ai::Difficulty::Defensive ? 0 : count),
               "small fleets deploy despite a large land-army budget; Defensive never attacks");
     }
     {
@@ -2382,7 +2415,7 @@ int main(int argc,char** argv) {
         file("canbuild/handler/lode.tdf","[CANBUILD]{sortbias=0;}");
         hpi::Vfs vfs;vfs.setMapFiles(files);
         sim::TypeRegistry reg;reg.loadDir(vfs,"units");reg.loadBuildTree(vfs,"canbuild");
-        for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
+        for (auto difficulty : {ai::Difficulty::Defensive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
             sim::World w;terrain(w);w.buildNavClasses(reg);w.setUnitCap(250);
             w.player(0).mana=10000;w.player(0).income=200;
             w.spawn(reg.find("factory"),400,800,0,0);
@@ -2410,7 +2443,7 @@ int main(int argc,char** argv) {
             check(std::any_of(cs.begin(),cs.end(),[&](const auto& c){return c.unitId==handler && c.kind==net::Cmd::Build && std::string(c.type)=="soldier";}),
                   "mobile production creature makes an opening army before more economy");
             const int defender=w.spawn(reg.find("soldier"),880,800,0,0);
-            ai::Profile none;ai::Controller passive(0,reg,none,1,ai::Difficulty::Passive);
+            ai::Profile none;ai::Controller passive(0,reg,none,1,ai::Difficulty::Defensive);
             cs=think(passive,w);
             check(attacks(cs)==0 && std::any_of(cs.begin(),cs.end(),[&](const auto& c){return c.unitId==defender && c.kind==net::Cmd::Move;}),
                   "defensive troops clear mobile production sites without an attack order");
@@ -2588,7 +2621,7 @@ int main(int argc,char** argv) {
         // Without it two Normal allies, or two builders of one Normal AI, raced
         // for the nearest free deposit and the later one walked there for nothing.
         for (auto owner : {Owner::Self,Owner::Ally,Owner::Enemy})
-            for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Easy,ai::Difficulty::Normal}) {
+            for (auto difficulty : {ai::Difficulty::Defensive,ai::Difficulty::Easy,ai::Difficulty::Normal}) {
                 sim::World w;terrain(w);w.buildNavClasses(reg);
                 w.setManaSpots({{2000,800},{2000,1200}});
                 w.spawn(reg.find("factory"),1800,1000,0,0);   // home, within Defensive's 600
@@ -2615,7 +2648,7 @@ int main(int argc,char** argv) {
                           ? "Normal, Easy and Defensive leave a deposit their own walking builder will take"
                           : "Normal, Easy and Defensive leave a deposit an ally's walking builder will take");
             }
-        for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal}) {
+        for (auto difficulty : {ai::Difficulty::Defensive,ai::Difficulty::Normal}) {
             sim::World w;terrain(w);w.buildNavClasses(reg);
             w.setManaSpots({{2000,800},{2000,1200}});
             w.spawn(reg.find("factory"),1800,1000,0,0);
@@ -2628,6 +2661,22 @@ int main(int argc,char** argv) {
             for (const auto& c:think(controller,w)) if (c.kind==net::Cmd::Build) sites.push_back(c.z);
             check(sites.size()==2 && sites[0]!=sites[1],"Normal and Defensive builders take different deposits in one think");
         }
+        // Passive's builders stay home: a deposit within 900 px of it, never one past
+        // that, where Easy's walk out to 1600.
+        for (auto difficulty : {ai::Difficulty::Easy,ai::Difficulty::Passive})
+            for (float distance : {800.f,1300.f}) {
+                sim::World w;terrain(w);w.buildNavClasses(reg);
+                w.setManaSpots({{1200+distance,800}});
+                w.spawn(reg.find("factory"),1200,800,0,0);
+                const int idle=w.spawn(reg.find("worker"),1300,800,0,0);
+                w.player(0).mana=10000;
+                ai::Profile p;p.weight["lode"]=100;
+                ai::Controller controller(0,reg,p,1,difficulty);
+                bool built=false;
+                for (const auto& c:think(controller,w,0)) built=built || (c.unitId==idle && c.kind==net::Cmd::Build);
+                check(built==(difficulty==ai::Difficulty::Easy || distance<900),
+                      "Passive takes a deposit near home and leaves one Easy would walk to");
+            }
         // ...and leave a living ally's home deposit to it while the ally is claiming
         // it. Normal's and Easy's builders reach 1600 from home, far enough to take a
         // close ally's deposits before the ally gets to them.
@@ -2767,7 +2816,7 @@ int main(int argc,char** argv) {
         // alone held it to one lodestone for a whole game on "4x4 team", where a
         // deposit pays 100 a second, however short of mana it ran.
         enum class Store { Short, Starved, Full, Covered, Walking };
-        for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Easy,ai::Difficulty::Normal})
+        for (auto difficulty : {ai::Difficulty::Defensive,ai::Difficulty::Easy,ai::Difficulty::Normal})
             for (auto store : {Store::Short,Store::Starved,Store::Full,Store::Covered,Store::Walking}) {
                 sim::World w;terrain(w);w.buildNavClasses(reg);
                 w.setManaSpots({{1200,800},{1200,1200},{1600,800}});
@@ -2816,7 +2865,7 @@ int main(int argc,char** argv) {
         // 560 for the Monarch, while the base is small. Searching Normal's own 1600
         // instead sent a builder 1250 px into an enemy base on Inner Circle for a
         // freed home deposit, where it died with the lodestone.
-        for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal})
+        for (auto difficulty : {ai::Difficulty::Defensive,ai::Difficulty::Normal})
             for (bool monarch : {false,true})
                 for (bool inside : {true,false}) {
                     sim::World w;terrain(w);w.buildNavClasses(reg);
@@ -2897,7 +2946,7 @@ int main(int argc,char** argv) {
                 }
                 check(started,"Absurd Aramon starts its first Keep without repeating rejected approaches");
             }
-            for (auto difficulty : {ai::Difficulty::Passive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
+            for (auto difficulty : {ai::Difficulty::Defensive,ai::Difficulty::Normal,ai::Difficulty::Hard,ai::Difficulty::Absurd}) {
                 sim::World w;terrain(w);w.buildNavClasses(reg);w.player(0).mana=10000;
                 w.setManaSpots({{2800,800}});
                 auto king=*reg.find("araking");king.commander=false; // expansion builder using the same menu
@@ -2951,7 +3000,7 @@ int main(int argc,char** argv) {
                 w.spawn(reg.find("arakeep"),800,800,0,0);
                 const int guard=w.spawn(reg.find("araarch"),800,880,0,0);
                 ai::Profile p;
-                ai::Controller controller(0,reg,p,1,ai::Difficulty::Passive,{{3400,800}});
+                ai::Controller controller(0,reg,p,1,ai::Difficulty::Defensive,{{3400,800}});
                 const auto cs=think(controller,w);
                 check(std::any_of(cs.begin(),cs.end(),[&](const auto& c){
                     return c.kind==net::Cmd::Move && c.unitId==guard &&

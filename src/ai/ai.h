@@ -53,18 +53,22 @@ Profile loadProfile(const tak::hpi::Vfs& vfs, const std::string& name = "default
 // rather than cheating its economy -- so all three respect the same rules the human
 // does. See paramsFor().
 // The value is the wire aiLevel (SlotInfo.aiLevel); 0-4 run weakest -> strongest.
-// Passive (displayed as Defensive) builds a home force and intercepts nearby
+// Defensive builds a home force and intercepts nearby
 // threats, scouting or attacking enemy bases only when far ahead, and keeps
 // building in step with its income with no AI-imposed limit on how much. Absurd = Hard with a
 // mana-income cheat (see incomeMultFor). AbsurdlyDefensive (5, added under protocol
 // 273) = Defensive with Absurd's cheat. Classic (6, added under protocol 290) is a
 // port of the retail game's own AI (docs/classic-ai-plan.md): a separate brain
 // (ClassicBrain) with no difficulty knobs and no income cheat, so the sim gives its
-// seat exactly a Normal seat's config. Renumbering is versioned by kNetVersion.
+// seat exactly a Normal seat's config. Passive (7, added under protocol 308) plays
+// Easy in every way but two: nothing of its goes looking for the enemy, scout, army
+// or fleet, so it attacks only what it has seen, and its builders stay within 900 px
+// of home (Controller::stayHome_). Its seat's sim config is exactly an Easy seat's.
+// Renumbering is versioned by kNetVersion.
 enum class Difficulty : uint8_t {
-    Passive = 0, Easy = 1, Normal = 2, Hard = 3, Absurd = 4, AbsurdlyDefensive = 5, Classic = 6
+    Defensive = 0, Easy = 1, Normal = 2, Hard = 3, Absurd = 4, AbsurdlyDefensive = 5, Classic = 6, Passive = 7
 };
-inline constexpr uint8_t kAiLevels = 7;
+inline constexpr uint8_t kAiLevels = 8;
 
 // Map a wire aiLevel to a Difficulty, clamping anything out of range to Normal.
 inline Difficulty difficultyFromLevel(uint8_t lvl) {
@@ -74,7 +78,7 @@ inline Difficulty difficultyFromLevel(uint8_t lvl) {
 // The defensive levels: no offensive waves, a non-pursuing stance from birth
 // (MatchSlot::defensiveAi), and production that follows income without caps.
 inline constexpr bool defensiveLevel(Difficulty d) {
-    return d == Difficulty::Passive || d == Difficulty::AbsurdlyDefensive;
+    return d == Difficulty::Defensive || d == Difficulty::AbsurdlyDefensive;
 }
 
 // Per-player mana-income multiplier for a difficulty. This is the ONE economy cheat:
@@ -96,12 +100,12 @@ inline constexpr float incomeMultFor(Difficulty d) {
 struct UpgradeLevel { int earliestMin, horizonMin, limit; float saveFraction; };
 inline constexpr UpgradeLevel upgradeLevelFor(Difficulty d) {
     switch (d) {
-        case Difficulty::Passive:           return {15, 15, 5, 0.6f};
+        case Difficulty::Defensive:           return {15, 15, 5, 0.6f};
         case Difficulty::Normal:            return {10, 15, 2, 0.6f};
         case Difficulty::Hard:              return {8, 15, 6, 0.6f};
         case Difficulty::Absurd:            return {6, 15, -1, 0.6f};
         case Difficulty::AbsurdlyDefensive: return {8, 20, -1, 0.6f};
-        default:                            return {0, 0, 0, 0.0f};   // Easy, Classic: never
+        default:                            return {0, 0, 0, 0.0f};   // Easy, Passive, Classic: never
     }
 }
 
@@ -115,13 +119,13 @@ inline constexpr UpgradeLevel upgradeLevelFor(Difficulty d) {
 struct ExploreLevel { int firstMin, everySec, maxScouts; bool keep; int maxLosses; };
 inline constexpr ExploreLevel exploreLevelFor(Difficulty d) {
     switch (d) {
-        case Difficulty::Passive:           return {5, 60, 1, false, 1};
+        case Difficulty::Defensive:           return {5, 60, 1, false, 1};
         case Difficulty::AbsurdlyDefensive: return {5, 60, 1, false, 1};
         case Difficulty::Easy:              return {4, 150, 1, false, 1};
         case Difficulty::Normal:            return {0, 60, 1, false, 1};
         case Difficulty::Hard:              return {0, 40, 2, true, 2};
         case Difficulty::Absurd:            return {0, 20, 3, true, 3};
-        default:                            return {0, 0, 0, false, 0};   // Classic: its own brain
+        default:                            return {0, 0, 0, false, 0};   // Passive: never; Classic: its own brain
     }
 }
 
@@ -250,7 +254,7 @@ public:
 
     // Read-only identity, for the debug roster dump (server/rosterdump.h).
     int player() const { return player_; }
-    Difficulty difficulty() const { return diff_; }
+    Difficulty difficulty() const { return stayHome_ ? Difficulty::Passive : diff_; }
 
 private:
     friend struct PlacementProbe;
@@ -627,7 +631,8 @@ private:
     const tak::sim::TypeRegistry& registry_;
     const Profile& profile_;
     uint32_t rng_;
-    Difficulty diff_;
+    Difficulty diff_;     // Passive runs as Easy: every Easy branch is its own
+    bool stayHome_;       // Passive: never explores, builders within 900 px of home
     DiffParams dp_;
     std::vector<std::pair<float, float>> enemyStarts_;   // starts_ not gone, refreshed each think
     std::optional<std::pair<float,float>> home_;

@@ -19,7 +19,10 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 307;      // 307: a ground melee attacker approaches a building (no mover) on Attack_Melee's
+constexpr uint32_t kNetVersion = 308;      // 308: AI level 7, Passive (SlotInfo.aiLevel): Easy that never explores and
+                                           //      builds only near home. A 307 server stores 7 as Normal. Sim unchanged;
+                                           //      307 replays refused
+                                           // 307: a ground melee attacker approaches a building (no mover) on Attack_Melee's
                                            //      rectangle round its footprint (404690 -> 4d4e80), each to its own nearest
                                            //      free perimeter origin, instead of at its centre (Legion hands the leg to the
                                            //      native navigator); the melee in-range test snaps both boxes to their

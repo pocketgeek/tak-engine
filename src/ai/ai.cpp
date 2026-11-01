@@ -43,12 +43,13 @@ DiffParams paramsFor(Difficulty d) {
         // no AI-imposed limits -- every idle producer may act each think and spending
         // is held to income by the affordability gate and the low-mana throttle alone.
         // 256 bounds one think's orders for the wire frame, not the pace.
-        case Difficulty::Passive: return {30, 5, 256, 100, false, 0, true};
+        case Difficulty::Defensive: return {30, 5, 256, 100, false, 0, true};
         // Defensive's behaviour, plus Absurd's 2x income cheat (incomeMultFor).
         case Difficulty::AbsurdlyDefensive: return {30, 5, 256, 100, false, 0, true};
         // Sluggish: reacts slowly, builds up slowly, and only commits once it has
         // gathered a sizeable group -- so it's passive and beatable. No raiding.
-        case Difficulty::Easy:   return {90, 4, 1, 50,  true,  0, false};
+        case Difficulty::Easy:
+        case Difficulty::Passive: return {90, 4, 1, 50,  true,  0, false};
         // Fast, army-heavy, and aggressive: reacts often, musters a large army before
         // the big push, harasses with raids meanwhile, and pushes bigger unit limits.
         case Difficulty::Hard:   return {20, 6, 8, 150, true,  4, false};
@@ -70,7 +71,8 @@ Controller::Controller(int player, const tak::sim::TypeRegistry& registry,
       // is gated on that player's own unit counts / income / producers, which differ
       // by map position. The AI runs server-side only, so this RNG exists just to make
       // a --mpai run repeatable, not for lockstep.
-      rng_(seed), diff_(difficulty), dp_(paramsFor(difficulty)),
+      rng_(seed), diff_(difficulty == Difficulty::Passive ? Difficulty::Easy : difficulty),
+      stayHome_(difficulty == Difficulty::Passive), dp_(paramsFor(difficulty)),
       enemyStarts_(std::move(enemyStarts)) {
     if (diff_ == Difficulty::Classic) classic_ = std::make_unique<ClassicBrain>(player, seed, registry);
     for (const auto& [x, z] : enemyStarts_) starts_.push_back({x, z, -1});
@@ -1247,10 +1249,10 @@ bool Controller::placeSite(const tak::sim::World& world, const tak::sim::UnitTyp
         defensiveRadius=std::max(defensiveRadius,retailLodestoneRadius(world,builder));
         if (t->onMana && !builder.type->commander) defensiveRadius=std::max(defensiveRadius,1600.0f);
     }
-    const float homeRadius=!dp_.attack ? defensiveRadius : (builder.type->commander ? 900.0f : aggressive ? 100000.0f : 1600.0f);
+    const float homeRadius=!dp_.attack ? defensiveRadius : (builder.type->commander || stayHome_ ? 900.0f : aggressive ? 100000.0f : 1600.0f);
     // A coastal outpost may be farther away than an ordinary base building.
     // Send an expansion builder; keep the Monarch and Defensive AI near home.
-    const float navalRadius=builder.type->commander || !dp_.attack ? 900.0f : 2400.0f;
+    const float navalRadius=builder.type->commander || !dp_.attack || stayHome_ ? 900.0f : 2400.0f;
     const float fullRadius=naval ? std::max(homeRadius,navalRadius) : waterUnit ? std::max(homeRadius,900.0f) : homeRadius;
     const float radius=limit>0 ? std::min(fullRadius,limit) : fullRadius;
     // Reserve the largest lodestone this faction may use, including upgrades.
@@ -1775,7 +1777,7 @@ float Controller::siteNeed(const StrikeSite& site) const {
     switch (diff_) {
         case Difficulty::Easy: return 0;
         case Difficulty::Hard: case Difficulty::Absurd: return site.defence * 1.25f;
-        case Difficulty::Passive: case Difficulty::AbsurdlyDefensive: return site.defence * 1.5f;
+        case Difficulty::Defensive: case Difficulty::AbsurdlyDefensive: return site.defence * 1.5f;
         default: return site.defence;
     }
 }
@@ -2821,6 +2823,7 @@ bool Controller::sectorCentre(int s, float mapX, float mapZ, float& x, float& z)
 // passed over for kUnreachableTicks.
 bool Controller::exploreTarget(const tak::sim::World& world, const tak::sim::UnitType* type, float x, float z,
                                float& tx, float& tz, int& slot, bool scout) {
+    if (stayHome_) return false;   // Passive looks nowhere: not with scouts, nor with its army or fleet
     constexpr uint32_t kNeverSeen = 3 * 60 * 30, kRecent = 60 * 30, kUnreachableTicks = 3 * 60 * 30;
     constexpr int kProbes = 12;
     constexpr uint32_t kVacatedRecheck = 5 * 60 * 30;
@@ -2937,7 +2940,7 @@ void Controller::sendScouts(const tak::sim::World& world, uint32_t simTick, cons
     constexpr uint32_t kLossWindow = 5 * 60 * 30, kLossMemory = 10 * 60 * 30;
     constexpr int kMaxParty = 4;
     const ExploreLevel level = exploreLevelFor(diff_);
-    const bool scouting = level.maxScouts > 0 && (dp_.attack || board.knownAhead);
+    const bool scouting = !stayHome_ && level.maxScouts > 0 && (dp_.attack || board.knownAhead);
     std::erase_if(losses_, [&](const Loss& l) { return simTick - l.tick > kLossMemory; });
     std::set<int> parties;
     for (auto it = scouts_.begin(); it != scouts_.end();) {

@@ -40,7 +40,7 @@ Details in the [CHANGELOG](CHANGELOG.md#0913).
 ## Features
 
 - **Skirmish** on up to eight slots with all five sides, teams, Retail or
-  Crusades balance and seven computer-player levels, including **RETAIL**, the
+  Crusades balance and eight computer-player levels, including **RETAIL**, the
   original game's own AI ([AI difficulty](docs/user-guide.md#ai-difficulty)).
 - **Random maps** in five themed layouts and three classic ones, up to 64×64
   ([random maps](docs/user-guide.md#random-maps)).
@@ -211,7 +211,7 @@ interaction is identical or fully verified.
   against the original executable by emulating them headlessly. Retail
   pathfinding is a port of the original's.
 - The **RETAIL** AI level is the original game's own AI, ported routine by
-  routine and checked by emulation. The six other levels (Defensive to Absurdly
+  routine and checked by emulation. The seven other levels (Passive to Absurdly
   Defensive) are TAK Engine's own.
 
 The evidence and the remaining gaps: [retail engine notes](docs/retail-engine.md),

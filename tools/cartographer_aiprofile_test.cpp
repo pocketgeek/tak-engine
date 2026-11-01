@@ -563,13 +563,13 @@ static void names() {
     cart::setAiFile(files, "AI/N.txt", "");
     cart::setAiFile(files, "ai/e.txt", "weight y 2\n");
     check(!files.count("ai/n.txt") && files.at("ai/e.txt") == bytesOf("weight y 2\n"), "an empty draft deletes its file");
-    for (Difficulty d : {Difficulty::Passive, Difficulty::Easy, Difficulty::Normal, Difficulty::Hard, Difficulty::Absurd,
+    for (Difficulty d : {Difficulty::Defensive, Difficulty::Easy, Difficulty::Normal, Difficulty::Hard, Difficulty::Absurd,
                          Difficulty::AbsurdlyDefensive})
         check(cart::aiEngineFile(tak::ai::levelProfileFile(d)), "every level's file is ai/takengine.txt (ai::levelProfileFile)");
     check(cart::aiEngineFile("AI/TakEngine.TXT") && !cart::aiEngineFile("ai/n.txt") && !cart::aiEngineFile("ai/default.txt") &&
           cart::aiKindOf("ai/takengine.txt") == AiKind::Level && cart::aiKindOf("ai/n.txt") == AiKind::Level &&
           cart::aiOldLevelOf("AI/N.TXT") == Difficulty::Normal && cart::aiOldLevelOf("ai/ad.txt") == Difficulty::AbsurdlyDefensive &&
-          cart::aiOldLevelOf("ai/d.txt") == Difficulty::Passive && !cart::aiOldLevelOf("ai/takengine.txt") &&
+          cart::aiOldLevelOf("ai/d.txt") == Difficulty::Defensive && !cart::aiOldLevelOf("ai/takengine.txt") &&
           !cart::aiOldLevelOf("ai/default.txt") && cart::aiKindOf("ai/islands.txt") == AiKind::Default,
           "ai/takengine.txt and the old level names");
 }
@@ -920,7 +920,7 @@ static void groupRules() {
 
 static void levelLimits() {
     // The scale and the defensive rule are paramsFor's.
-    for (const auto d : {Difficulty::Passive, Difficulty::Easy, Difficulty::Normal, Difficulty::Hard, Difficulty::Absurd,
+    for (const auto d : {Difficulty::Defensive, Difficulty::Easy, Difficulty::Normal, Difficulty::Hard, Difficulty::Absurd,
                          Difficulty::AbsurdlyDefensive}) {
         const auto p = tak::ai::paramsFor(d);
         check(cart::aiLevelLimitScale(d) == p.limitScale && cart::aiLevelIgnoresLimits(d) == p.unbounded,
@@ -939,7 +939,7 @@ static void levelLimits() {
     check(in(Difficulty::Hard, 4, &builder).limit == 4 && !in(Difficulty::Hard, 4, &builder).mayRise, "a builder never passes its own number");
     check(in(Difficulty::Easy, 4, &builder).limit == 2, "Easy halves a builder's limit");
     check(in(Difficulty::Hard, 2, &mine).limit == -1 && in(Difficulty::Normal, 2, &mine).limit == 2, "Hard lifts income buildings");
-    for (const auto d : {Difficulty::Passive, Difficulty::AbsurdlyDefensive}) {
+    for (const auto d : {Difficulty::Defensive, Difficulty::AbsurdlyDefensive}) {
         check(in(d, 5, &army).limit == -1 && in(d, 5, &army).changed, "defensive levels ignore limits");
         check(in(d, 0, &army).limit == 0, "defensive levels keep a limit of 0");
     }

@@ -71,7 +71,12 @@ std::optional<tak::ai::Difficulty> cart::Editor::aiTabLevel() const {
 }
 
 void cart::Editor::aiStepPreview(int by) {
-    aiPreviewLevel=Difficulty((int(aiPreviewLevel)+6+by)%6);   // Defensive .. Absurdly Defensive
+    // The lobby's order, less Passive (it plays Easy's table) and Retail (its own tab).
+    static constexpr Difficulty order[]={Difficulty::Easy,Difficulty::Normal,Difficulty::Hard,Difficulty::Absurd,
+                                         Difficulty::Defensive,Difficulty::AbsurdlyDefensive};
+    constexpr int n=int(std::size(order));
+    const int at=int(std::find(std::begin(order),std::end(order),aiPreviewLevel)-std::begin(order));
+    aiPreviewLevel=order[(at+n+by)%n];
     if(aiTab!=1)aiSelectTab(1);
 }
 

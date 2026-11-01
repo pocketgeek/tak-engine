@@ -337,11 +337,12 @@ except passwords, Spectate and Map scenario.
 
 | Difficulty | What to expect |
 | --- | --- |
-| **Defensive** | Keeps building as fast as its mana income allows, with no limit of its own on how many factories, builders, towers or troops it makes; only the room's unit cap and the game's rules stop it. Builds at home; the base spreads outward as it grows, but stays on its own side of the map, and its builders claim mana deposits farther out. Sends its army to meet attackers near its base, then pulls it back, including attackers it cannot see that shoot its units from out of sight. Its melee troops go first for the unit hitting them, and keep chasing a target while it stays near, instead of all walking at one enemy. Does not build where enemy troops are about. Never raids; once it is far ahead (five times the armed strength of all its enemies together, as far as it knows: an enemy whose home it has not looked at in the last five minutes counts as at least as strong as its own army), it sends half its army out to find and finish them off. |
+| **Passive** | Plays exactly like Easy, except that nothing of its goes looking for you and its builders never leave home. It sends no scouts, and its army and fleet never explore or head for a start position, so it attacks only what it has seen. It takes mana deposits and builds only within 900 pixels of its base. |
 | **Easy** | Builds slowly. First attack after about four minutes, then small waves of at most eight units, at least two minutes apart. |
 | **Normal** | Sends small raiding parties to probe and scout while it builds up a main army sized to its income. |
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
 | **Absurd** | Plays like Hard, with **double mana income**. |
+| **Defensive** | Keeps building as fast as its mana income allows, with no limit of its own on how many factories, builders, towers or troops it makes; only the room's unit cap and the game's rules stop it. Builds at home; the base spreads outward as it grows, but stays on its own side of the map, and its builders claim mana deposits farther out. Sends its army to meet attackers near its base, then pulls it back, including attackers it cannot see that shoot its units from out of sight. Its melee troops go first for the unit hitting them, and keep chasing a target while it stays near, instead of all walking at one enemy. Does not build where enemy troops are about. Never raids; once it is far ahead (five times the armed strength of all its enemies together, as far as it knows: an enemy whose home it has not looked at in the last five minutes counts as at least as strong as its own army), it sends half its army out to find and finish them off. |
 | **Absurdly Defensive** | Plays like Defensive, with Absurd's **double mana income** ([details](ai-defensive-2026-10-17.md)). |
 | **Retail** | The Retail AI: the original 1999 game's own AI, driven by `ai/default.txt` (or the profile the map names; 30 campaign missions name their own), ported from the original program and checked against it. A game pack or a map archive that carries the profile file replaces the install's. No difficulty setting and no income bonus; it keeps the original's quirks and plays weaker than Normal. It always plays the campaign opponents. A new AI seat starts on Normal. See [Retail AI](#retail-ai). |
 
@@ -373,7 +374,7 @@ locations whose start each is, with **Random** only the map's start spots, any o
 which may hold an enemy or nobody until it has looked. It does not know how many
 units the others have or how strong they are, only what it has seen.
 
-When it knows of nothing to attack, it explores: its army and its raiders head
+When it knows of nothing to attack, it explores (Passive never does): its army and its raiders head
 first for the start positions that may hold an enemy and that it has not looked
 at yet, then for the parts of the map it has gone longest without seeing,
 mana deposits first, each group to a different part. A beaten player's base,
@@ -386,13 +387,13 @@ it fell, and later send a small group there instead of one scout; when several
 scouts die within five minutes it sends no more for a while. Absurd scouts from
 the start and keeps scouting, with more scouts on a large map, Hard likewise but
 fewer, Normal scouts steadily, Easy rarely and not before about four minutes,
-and Defensive and Absurdly Defensive from their fifth minute, with one scout at
+Passive never, and Defensive and Absurdly Defensive from their fifth minute, with one scout at
 a time, while their army is far stronger than every enemy unit they know of.
 A winning AI therefore hunts down what is left, but a last unit hidden in a far
 corner can take it a long time to find, so a game between AIs does not always
 end.
 
-Defensive, Easy, Normal and Absurdly Defensive also build another lodestone
+Defensive, Easy, Passive, Normal and Absurdly Defensive also build another lodestone
 whenever they run short of mana (less than 30% of their storage left while
 their builders and producers ask for more mana than they earn), one at a time,
 on a free deposit near their own base, as the original game's AI does. Every
@@ -415,11 +416,12 @@ starts a dragon only when the mana store is well stocked.
 
 | Difficulty | Divine lodestones from | At most |
 | --- | --- | --- |
-| **Defensive** | 15 minutes | 5 |
+| **Passive** | never | none |
 | **Easy** | never | none |
 | **Normal** | 10 minutes | 2 |
 | **Hard** | 8 minutes | 6 |
 | **Absurd** | 6 minutes | no limit |
+| **Defensive** | 15 minutes | 5 |
 | **Absurdly Defensive** | 8 minutes | no limit |
 
 On a team, an AI leaves the free mana deposits around an ally's start to that
@@ -431,7 +433,7 @@ for it, its own or an ally's, has got no nearer for a minute, and sends its own
 stuck builders to other work.
 
 Normal starts with its Monarch and one builder and adds builders as its income
-grows, up to the Monarch and four; Easy keeps two. Defensive and Absurdly
+grows, up to the Monarch and four; Easy and Passive keep two. Defensive and Absurdly
 Defensive add one per 50 income with no ceiling. No other AI builds more of one
 builder type than its build profile allows. Zhon has no factory
 buildings, so its AI counts its Beast Handlers, Tamers, Lords and Shamans as
@@ -2662,7 +2664,7 @@ win when they change the same file. Game packs load first, then cosmetic packs.
 ### AI profiles in game mods
 
 A game pack can change the build profiles of our AI levels (Defensive, Easy,
-Normal, Hard, Absurd and Absurdly Defensive; not Retail) with ONE file,
+Passive, Normal, Hard, Absurd and Absurdly Defensive; not Retail) with ONE file,
 `ai/takengine.txt`, in the pack's `ai` folder, loose
 (`mods/game/My AI/ai/takengine.txt`) or in the `ai` folder inside an archive in
 the pack. A map can too: the map's own archive in `Maps/` (a `.kmp` map, for
@@ -2720,7 +2722,7 @@ which writes one of them into `ai/takengine.txt`. See
 
 | AI | Looks for, first to last |
 | --- | --- |
-| Our levels (Defensive to Absurdly Defensive) | `ai/takengine.txt` in a ticked game pack, then in the map. Neither: each level's built-in profile. The file it finds replaces the other one whole (the two are never mixed), and each level applies it over its own built-in profile. |
+| Our levels (Passive to Absurdly Defensive) | `ai/takengine.txt` in a ticked game pack, then in the map. Neither: each level's built-in profile. The file it finds replaces the other one whole (the two are never mixed), and each level applies it over its own built-in profile. |
 | Retail AI | The map's own profile name (`ai/islands.txt`) in a ticked game pack, then the map, then the install; only if there is none, `ai/default.txt` in the same order. A game pack's `ai/default.txt` therefore does not replace a map's own profile, but a game pack's `ai/islands.txt` does. |
 
 Two maps that carry the same file name (both `ai/takengine.txt`, say) each keep and
@@ -3083,7 +3085,7 @@ differences:
 Everything else, such as unit statistics, weapons, the economy and the
 campaign scripts, aims to behave as it did in 1999. The computer players are
 the exception: the **Retail** level (and every campaign opponent) is the
-original 1999 AI, while the six other levels, Defensive to Absurdly Defensive,
+original 1999 AI, while the seven other levels, Passive to Absurdly Defensive,
 are TAK Engine's own AI and do not try to play as the original did (see
 [AI difficulty](#ai-difficulty)). If you find
 a difference that is not listed here, it is probably a bug. Please report it.
