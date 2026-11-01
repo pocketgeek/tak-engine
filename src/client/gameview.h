@@ -69,6 +69,7 @@
 #include "client/mapview.h"   // terrain pan/zoom + async chunk compositor (extracted leaf)
 #include "client/modelpiece.h"
 #include "client/modelmath.h"   // Tri/Xform/scriptRot (shared by GameView + model viewer)
+#include "client/selectionring.h"
 #include "client/projectilemodelscale.h"
 #include "client/modelview.h"   // standalone 3DO model viewer (extracted leaf)
 #include "client/renderframe.h"   // UnitR/PlayerR/Frame render snapshot (extracted leaf)
@@ -1780,10 +1781,9 @@ private:
     // click anywhere on the drawn unit (a tall building's roof, a body above its
     // feet) hits it -- computed lazily via unitHitBox(), cached here.
     std::map<std::string, SDL_FRect> hitBoxes_;
-    // Per-type MODEL-space extents (world units) for the retail selection ring:
-    // its radii come from the model's x/z half-extents and it floats at the model's
-    // mid height, none of which survives unitHitBox's projection into screen space.
-    struct RingBox { float halfX = 12.0f, halfZ = 12.0f, midY = 12.0f; };
+    // Per-type MODEL-space box (world units) of the retail selection ring: its root
+    // piece's, see client/selectionring.h.
+    using RingBox = SelectionRingBox;
     std::map<std::string, RingBox> ringBoxes_;
     // After a failed GPU allocation, pause the optional bake paths (palette, shadow
     // silhouette and distant-model pages, model icons) for a few seconds instead of
@@ -2895,7 +2895,7 @@ private:
     // The box of a type whose model is not loaded: a small box just above the anchor.
     static constexpr SDL_FRect kFallbackHitBox{-12.0f, -28.0f, 24.0f, 30.0f};
 
-    // Per-type model-space extents driving the selection ring, cached in ringBoxes_.
+    // Per-type model-space box driving the selection ring, cached in ringBoxes_.
     const RingBox& unitRingBox(const tak::sim::UnitType* type);
     // Half-extent of the model's GROUND PLATE -- the flat untextured quad at
     // y = 0 that every TAK unit's root carries (AraGP and friends). It is the

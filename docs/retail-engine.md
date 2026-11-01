@@ -5221,3 +5221,23 @@ runs every one. Not ported: firing at the ground (`a X Y` walks the unit until
 the point is in its weapon's reach), the patrol's time, the selectable bit,
 BuildWeapon and resurrect; SetMission's owner test (`0x4d37be`: a player of
 kind 1 or 2 only) is not applied.
+
+## Selection ring (`4fd0d0`)
+
+Both draw passes (`4fca0f`, `4fcbef`) call one routine, and it draws through the
+renderer's vtable (`[esi]+0x64`, 24 vertices as lines), so Glide and software share it.
+
+- **Box.** `546fa0(model, &min, &max, 0)`. The last argument is the recursion flag, so
+  `546fe0` returns at `5470e4` without visiting siblings or children: the box is the
+  ROOT piece alone, the ground plate in every shipped model checked (447 extracted
+  models, 391 with a 4-vertex root). Both corners start at zero, so the origin is always
+  inside, and a root of 2 vertices or fewer adds nothing.
+- **Size and centre.** Radii are 1.2 (`5f03f0`) times the half extents; the centre is the
+  box's centre on all three axes. So a tall unit's ring lies at its feet at the plate's
+  size: the Death Totem's is 38.3 by 38.6 at the origin, not its 34.8 by 25.2 body at
+  mid height 72.
+- **Turn.** Each point goes through `535d50` with the three angles at `unit+0x7c`
+  (heading `+0x7e`), Ry Rx Rz, so the ring turns and tilts with the body. `unit+2` is only
+  the dash phase.
+
+`client/selectionring.h` is the port; `selection_ring_test` checks it.

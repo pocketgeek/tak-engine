@@ -3119,6 +3119,11 @@ if(TAK_BUILD_CLIENT)
     target_compile_definitions(model_transform_test PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(model_transform_test PRIVATE ${_tak_sdl2})
     add_test(NAME model_transform COMMAND model_transform_test)
+    add_executable(selection_ring_test tools/selection_ring_test.cpp)
+    target_include_directories(selection_ring_test PRIVATE src)
+    target_compile_definitions(selection_ring_test PRIVATE SDL_MAIN_HANDLED)
+    target_link_libraries(selection_ring_test PRIVATE tak-formats ${_tak_sdl2})
+    add_test(NAME selection_ring COMMAND selection_ring_test)
     # The retail-backed COB/3DO trace is an optional local regression. It uses
     # Unicorn and the extracted LIFBIRD assets, so keep it out of environments
     # that only have the C++ build dependencies installed.
