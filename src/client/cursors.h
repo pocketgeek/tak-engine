@@ -138,7 +138,8 @@ public:
         return anims_[size_t(c)].front().delayTicks;
     }
 
-    // Free the cached SDL_Cursors and restore the default OS arrow. Call when turning
+    // Free the cached SDL_Cursors, except the one on screen, which stays up until a set
+    // next applies one (so a screen change never flashes the OS arrow). Call when turning
     // hardware mode off (so the software path can hide the arrow and draw its own).
     void releaseHardware();
 

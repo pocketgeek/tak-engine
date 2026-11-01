@@ -25,6 +25,9 @@ std::string lower(std::string s) {
     return s;
 }
 
+// What the last set to let go left on screen (releaseHardware).
+SDL_Cursor* parkedCursor = nullptr;
+
 }  // namespace
 
 const char* cursorSequenceName(CursorId c) {
@@ -314,7 +317,11 @@ bool CursorSet::applyHardware(CursorId c, int scale, SDL_Color tint) {
     const uint64_t now = SDL_GetTicks64();
     const size_t idx = animClock_.frameAt(size_t(c), now, anims_);
 
-    if (curs[idx].cursor != hwSet_) { hwSet_ = curs[idx].cursor; SDL_SetCursor(hwSet_); }
+    if (curs[idx].cursor != hwSet_) {
+        hwSet_ = curs[idx].cursor;
+        SDL_SetCursor(hwSet_);
+        if (parkedCursor) { SDL_FreeCursor(parkedCursor); parkedCursor = nullptr; }
+    }
     // Mirror what the OS now shows, for the broadcast (client/cursorpath.h).
     auto& shown = shownHardwareCursor();
     if (shown.cursor != hwSet_ || shown.pixelScale != pixelScale) {
@@ -328,14 +335,21 @@ bool CursorSet::applyHardware(CursorId c, int scale, SDL_Color tint) {
 void CursorSet::releaseHardware() {
     auto& shown = shownHardwareCursor();
     if (hwSet_ && shown.cursor == hwSet_) shown = {};   // ours is about to be freed
+    // The cursor on screen stays there, parked: nothing draws while a screen loads, so
+    // putting the default back here left the OS arrow up until the next set's first
+    // frame. That set's first SDL_SetCursor frees it.
+    SDL_Cursor* const active = SDL_GetCursor();
     for (auto& kv : hw_)
-        for (HwFrame& f : kv.second)
-            if (f.cursor) SDL_FreeCursor(f.cursor);
+        for (HwFrame& f : kv.second) {
+            if (!f.cursor) continue;
+            if (f.cursor != active) { SDL_FreeCursor(f.cursor); continue; }
+            if (parkedCursor) SDL_FreeCursor(parkedCursor);
+            parkedCursor = active;
+        }
     hw_.clear();
     hwFailed_.clear();   // a different scale may be accepted where this one was not
     hwScale_ = 0;
     hwSet_ = nullptr;
-    SDL_SetCursor(SDL_GetDefaultCursor());   // don't leave a freed cursor active
 }
 
 }  // namespace tak
