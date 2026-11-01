@@ -70,7 +70,6 @@
 #include "client/modelpiece.h"
 #include "client/modelmath.h"   // Tri/Xform/scriptRot (shared by GameView + model viewer)
 #include "client/selectionring.h"
-#include "client/projectilemodelscale.h"
 #include "client/modelview.h"   // standalone 3DO model viewer (extracted leaf)
 #include "client/renderframe.h"   // UnitR/PlayerR/Frame render snapshot (extracted leaf)
 #include "client/rendertelemetry.h" // per-frame render stats + generation vocabulary

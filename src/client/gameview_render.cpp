@@ -3015,13 +3015,6 @@
                     col.r = 255;
                     col.g = Uint8(std::min(255, 255 * hp16 / std::max(1, mx / 2)));
                 }
-                if (rx * zms < 6.0f || ry * zms < 2.0f) {
-                    // Tiny on screen (a whole army zoomed out): the dashes would be
-                    // sub-pixel, so drop to one marker quad -- 12x less geometry.
-                    float s = std::max(2.0f, rx * zms * 0.6f);
-                    pushQuad(overlayBatch_, cx - s, cy - s * 0.65f, 2 * s, 2 * s * 0.65f, col);
-                    continue;
-                }
                 // Per-unit phase so neighbouring units are out of step, as retail's
                 // [unit+2] does.
                 float phase = float(selId * 37 % 360) / 360.0f;
@@ -7780,38 +7773,6 @@
         collect(tris_, atlas, model->root, base, nullptr, facing, player,
                 false, false);
         if (tris_.empty()) return;
-        // The authored arrow/bolt 3DOs are only about 14 world units long and
-        // less than 3 units wide. At normal map zoom their arrowheads and
-        // fletching collapse into a one-pixel streak, so the shot reads like a
-        // laser despite using the correct mesh. Keep the native trajectory,
-        // heading, altitude and texture, but enlarge the projected silhouette
-        // perpendicular to its travel axis more than along it. At close zoom
-        // the meshes retain native size. This display-only correction is limited to the
-        // arrow/bolt/harpoon/spear families; round shells and magical beams keep
-        // their native scale.
-        const auto displayScale = tak::projectileModelDisplayScale(name, mapView_.zoom());
-        if (displayScale.along > 1.0f) {
-            const float alongScale = displayScale.along;
-            const float crossScale = displayScale.across;
-            float modelAxis[3] = {0.0f, 0.0f, 1.0f};
-            if (native) base.apply(0.0f, 0.0f, 1.0f, modelAxis);
-            const float cs = std::cos(facing), sn = std::sin(facing);
-            const float axisX = modelAxis[0] * cs + modelAxis[2] * sn;
-            const float axisZ = -modelAxis[0] * sn + modelAxis[2] * cs;
-            float axisX2 = axisX;
-            float axisY2 = -(modelAxis[1] * kProjY + axisZ * kProjZ);
-            const float axisLength = std::max(std::sqrt(axisX2 * axisX2 + axisY2 * axisY2), 1e-4f);
-            axisX2 /= axisLength;
-            axisY2 /= axisLength;
-            const float crossX = -axisY2, crossY = axisX2;
-            for (auto& tri : tris_)
-                for (auto& vertex : tri.v) {
-                    const float along = vertex.position.x * axisX2 + vertex.position.y * axisY2;
-                    const float across = vertex.position.x * crossX + vertex.position.y * crossY;
-                    vertex.position.x = axisX2 * along * alongScale + crossX * across * crossScale;
-                    vertex.position.y = axisY2 * along * alongScale + crossY * across * crossScale;
-                }
-        }
         std::stable_sort(tris_.begin(), tris_.end(),
                          [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         float zm = mapView_.zoom();
