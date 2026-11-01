@@ -190,9 +190,11 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 307, "replay format 11 is kept under protocol 307");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 307");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 307");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 308, "replay format 11 is kept under protocol 308");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 308");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 308");
+    // 308 adds AI level 7, Passive; a 307 server would store it as Normal.
+    check(!supportedReplayProtocol(15, 307), "previous protocol (no Passive AI level) is refused");
     // 307 walks a ground melee attacker to Attack_Melee's rectangle round a building's footprint
     // (hashed: the attack leg's rectangle) and snaps the melee boxes to their origin cells; a
     // crowded flyer steps out of its stack (retail's air traffic: the counter and the step-out

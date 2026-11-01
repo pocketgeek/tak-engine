@@ -19,6 +19,29 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.14
+*2026-11-01 · protocol 308 · replay format 15 · does not play with 0.9.13 or earlier, nor their replays*
+
+- **New AI level: Passive.** It plays exactly like Easy, with the same build
+  pace and the same small waves on the same timing, except that nothing of its
+  goes looking for you. It sends no scouts, and its army and fleet never explore
+  or head for a start position, so it attacks only what it has seen. Its
+  builders never leave home: it takes mana deposits and builds only within 900
+  pixels of its base. Leave it alone and it sits at home building.
+- **The lobby's AI levels are in a new order:** Passive, Easy, Normal, Hard,
+  Absurd, Defensive, Absurdly Defensive, Retail. Cartographer's preview level
+  follows it. A new AI seat still starts on Normal.
+- **The selection ring lies at a unit's feet, as in the original.** It sits on
+  the unit's ground plate, at the plate's size, and turns with the unit. It used
+  to float at the model's mid height, so a tall unit such as the Death Totem wore
+  it round its crown.
+- **The system arrow no longer shows through loading screens** with Hardware
+  Cursor on. Each screen put the default cursor back as it closed, and it stayed
+  up until the next screen's first frame.
+
+Full notes: [release-0.9.14-notes.md](docs/release-0.9.14-notes.md) ·
+validation: [release-0.9.14-validation.md](docs/release-0.9.14-validation.md)
+
 ## 0.9.13
 *2026-10-31 · protocol 307 · replay format 15 · does not play with 0.9.12 or earlier, nor their replays*
 

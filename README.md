@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.13-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.14-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,16 +26,15 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.13
+## What's new in 0.9.14
 
-- Melee units cannot hit flyers in the air, and every unit judges a flyer by whether it is flying now: a landed flyer is a ground target.
-- Melee units reach the building they attack, each from its own place round it; flyers step out of a crowd instead of stacking.
-- Mind control, stone and freeze fly to their target and work when they strike, with the original's chances; units attack enemy buildings still being built.
-- Legion: flyers keep the army's pace only in a formation (Alt+number), not in a group.
-- Faster with big armies, the same game: very large views draw in about 40% less time, auras cost half, and the pointer is 25 times cheaper with 10,000 units.
+- A new AI level, Passive: Easy that stays home, never scouts or explores, and attacks only what it has seen.
+- The lobby lists the AI levels Passive, Easy, Normal, Hard, Absurd, Defensive, Absurdly Defensive, Retail.
+- The selection ring lies at a unit's feet, as in the original, and turns with the unit.
+- The system arrow no longer shows through loading screens when Hardware Cursor is on.
 
-Does not play with 0.9.12 or its replays (protocol 307); servers must update.
-Details in the [CHANGELOG](CHANGELOG.md#0913).
+Does not play with 0.9.13 or its replays (protocol 308); servers must update.
+Details in the [CHANGELOG](CHANGELOG.md#0914).
 
 ## Features
 
