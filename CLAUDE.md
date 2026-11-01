@@ -42,9 +42,13 @@ outside the repo and nothing from the binary is copied into the engine.
 ## Build / run / test
 
 ```sh
-cmake -B build -G Ninja && cmake --build build      # Release -> ./build/*
+cmake -B build && cmake --build build      # Release -> ./build/*
 ```
 
+- **A build dir keeps the generator it was configured with.** The local `build/`
+  is Unix Makefiles while `build-dbg/` and `build-o2/` are Ninja, so `-G Ninja` on
+  `build/` errors and `ninja -C build` finds no `build.ninja`. Use `cmake --build
+  <dir>`, which works for either; add `-G Ninja` only when creating a new dir.
 - **Two build dirs coexist: `build/` (Release) and `build-dbg/` (Debug).** After
   editing code, rebuild **whichever binary you actually run** — a stale build
   silently shows old behaviour (this has caused confusion). Rebuild both if unsure.
