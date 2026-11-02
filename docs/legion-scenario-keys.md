@@ -167,3 +167,62 @@ All are observation only: never hashed, never summed into `work.legion_total`, a
 `legion_scenario --trace ID|GROUP[,...]` (debug builds; the environment variable `TAK_LEGION_TRACE=ID,...` does the same in any tool or test) prints one `TRACE t=... u=...` line on
 stderr for every settle window, re-choice, yield request, gate commit and release, pinwheel turn and gate width read of those members; a group name traces the whole group. With
 `--w9`, a run also prints `TAIL <scenario> group <G> offset=<o>: n not arrived: ids...`, so a second run can trace the tail.
+
+## Mechanism attribution keys (`why.*`; 2026-11-02 pathfinding deep dive; src/sim/legion.h, tools/legion_observe.h)
+
+Every Legion member carries an unhashed `why` byte, the mechanism of its last update: the walk it was on, or why it
+stood (`LegionNavigator::Why`, read through `steerWhy`; finer than `steerSite`). At each per-tick sample the observer
+reads it and splits five of its motion keys by it, so a fixture says which mechanism makes bodies slide, back up or
+stand. Observation only: never hashed, never read by a decision, not in the baseline and not gated by `legion_doc_links`.
+A mechanism with no ticks and no samples prints no keys. Retail bodies are no members, so everything of theirs is
+`why.none.*`. The `<mechanism>` names, in the enum's order:
+
+| `<mechanism>` | the member's last update was |
+|---|---|
+| `none` | not a member (Retail), or no update yet |
+| `steer` | an ordinary step toward its route: the field descent, the passage gate, the pinwheel aim |
+| `direct` | a straight walk to its goal (its own line, or the heading while its field builds) |
+| `pass` | a lane-discipline pass, or walking its new lane after one |
+| `flow_first` | the first step of a flow-around shuffle, committed in drive's blocked branch |
+| `flow_brisk`, `flow_cap` | walking a committed flow-around shuffle: one that kept travel speed before 2026-11-02 (a formation member's on a move-like or fight leg, a side-step round a still target), or any other. Since the no-cap change (a06d3f80, narrowed in c4933aa8) a `flow_cap` shuffle walks at travel speed too unless the body is a plain mover (no formation slot), whose shuffle keeps the facing cap; the names keep the old split for comparison with earlier sweeps |
+| `sidestep` | an opposing-traffic side-step (`sidestep`) |
+| `room` | a move over at a merge (`makeRoom`) |
+| `corner` | the corner clip (`cornerStep`) |
+| `route_brisk`, `route_cap` | walking a local detour route: a long one (`kBriskRoute` cells or more, a still target, a spot route), or a short one. Both at travel speed since 2026-11-02 (the names keep the old split, as above) |
+| `press` | a `pressIn` walk toward reach (attackers); it keeps the facing cap (8dcb123f) |
+| `yield` | a settled body stepping aside (`serviceYields`) |
+| `hold_movers` | held: the wanted cell is covered by bodies of its own order that will move (a queue) |
+| `hold_settled` | held: by settled, idle or engaged bodies (`blockedBySettled`) |
+| `hold_jam` | held: by another order's jam (`blockedByJam`) |
+| `hold_corner` | held: the corner clip found no legal axis |
+| `hold_refused` | held: `commitGroundStep` refused the step |
+| `hold_detour` | held this update: a local detour was just planned (walked from the next) |
+| `hold_ask` | held: asked bodies to yield, part or give way |
+| `hold_admission` | held: a narrow passage is open the other way |
+| `hold_noaim` | held: no legal neighbour nearer (`aimCell < 0`) |
+| `hold_ring` | held: a blind or shadowed ring member standing in reach |
+| `hold_spot` | held: `spotRoute` found no way to its spot yet |
+| `hold_rest` | held: a long-held body's rest stride (`heldRest`) |
+| `hold_yielding` | held: parting a lane for another body |
+| `hold_livelock` | held: the livelock latch forbids a flow-around |
+| `hold_still` | held: an attacker round a still target gaining nothing (no new shuffle) |
+| `wait` | waiting for its field, its registration or a repair |
+| `trapped` | trapped |
+| `nudge` | the press of 2026-11-02 (75925618, 8dcb123f): on a leg that engages no enemies, blocked by bodies with no way round, the free axis of the step walked and the other to the origin cell's edge (Retail's clamp); an unturned step at travel speed |
+
+The `<metric>` suffixes; each is the mechanism's share of the fixture-wide key named, and the shares sum to it:
+
+| Key | Definition |
+|---|---|
+| `why.<mechanism>.ticks`, `.moved_ticks` | ordered ground member-ticks tagged with the mechanism, and those of them on which the body moved (no fixture-wide key; `ticks` over all mechanisms is the number of ordered ground member-ticks) |
+| `why.<mechanism>.samples`, `.stopped` | ordered member decision samples (every `decisionEvery` = 10 ticks) tagged with the mechanism, and those at speed 0: the split of `decision_samples` and of `stopped_permille`'s numerator |
+| `why.<mechanism>.statue` | the split of `statue_ticks`: ticks on which the body moved, did not turn, and stepped at most a ninth of its travel speed (the facing cap's eighth plus slack). A press's sub-cell nudge is a statue by this definition, so `why.nudge.statue` is the press, not a creep |
+| `why.<mechanism>.sideways`, `.backward` | the split of `sideways` and `backward`: steps whose direction is more than 45 / more than 90 degrees off the body's facing |
+| `why.<mechanism>.reversals` | the split of `reversals`: entries into a cell the body left within the last 90 ticks |
+
+The deep dive's reading of main with these keys (`docs/legion-deep-dive-2026-11-02.md` 3.2): `flow_cap` and `route_cap` held
+98% of the statue ticks, `route_brisk` 54% of the backward steps, `hold_movers` and `hold_rest` 60% of the stopped samples.
+The ctests `legion_nocap` (`why.flow_cap.statue`, `why.route_cap.statue` at most 10 each on island-1x100) and `legion_press`
+(`why.hold_movers.stopped` at most 5,200 on corner-1x100) bound them; `legion_flowahead` bounds the fixture-wide `backward`.
+Since 2026-11-02 the nudges count as statue, sideways and backward steps (`why.nudge.*`), so a fixture's nudge-free
+creep is `statue_ticks` minus `why.nudge.statue`: the sweep tooling subtracts it, the ctests bound the cap keys instead.
