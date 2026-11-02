@@ -13518,7 +13518,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // taperbridge-100 -7%; one loss, motion-cross-100 +5%) and no fixture
         // under the Retail floor (docs/legion-deep-dive-2026-11-02.md, 5.4).
         // Retail's mover traces round a body at its own speed.
-        if(pass||brisk||!face) {}
+        // The in-reach press (pressIn) keeps the cap: at travel speed its braked bodies glided past
+        // reach and pressed again from the same origin (legion_pressin, 2026-11-02 check).
+        if(pass||brisk||(!face&&m.pressX==kNoPress)) {}
         else if(facing>12288)cap=Fixed::raw(cap.v/8);
         else if(facing>4096)cap=Fixed::raw(cap.v/2);
         Fixed speed=fxMin(cap,u.speed+u.type->accel*multiplier);
@@ -13700,7 +13702,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             // wall-1x48 -5..-8%; corner-8x56 +8%, motion-wall +8%), done 13 / 6; on real terrain standing
             // -30% on all 13. The press's nudges count as statue / sideways / backward steps in the
             // observer (a few pixels at a time), which those keys cannot tell from a creep (deep dive 5.4).
-            if(!moved&&!livelock(u)) {
+            if(!moved&&!livelock(u)&&!engagesEnemies(m.kind)) {
                 auto edge=[](Fixed at,Fixed by,int origin,int foot) {
                     const int64_t offset=int64_t(foot-1)*8*Fixed::kOne;
                     const int64_t lo=(int64_t(origin)<<20)+offset,hi=lo+(int64_t(1)<<20)-1;
@@ -13713,7 +13715,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     if(!stepFree(u,ox,oz,kx,kz))continue;
                     const Fixed cx=kx==ox?edge(u.x,sx0,ox,fx):sx0,cz=kz==oz?edge(u.z,sz0,oz,fz):sz0;
                     if(std::abs(int64_t(cx.v))+std::abs(int64_t(cz.v))<Fixed::kOne/16)continue;
-                    sx=cx;sz=cz;nx=kx;nz=kz;moved=true;m.why=LegionNavigator::WhyNudge;break;
+                    sx=cx;sz=cz;nx=kx;nz=kz;moved=true;face=false;m.why=LegionNavigator::WhyNudge;break;
                 }
             }
             // Room at a merge: a held body heading its queue records the origin it waits for (see makeRoom): its
