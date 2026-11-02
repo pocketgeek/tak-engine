@@ -423,11 +423,6 @@ void OptionsScreen::build(int channels) {
         slider(label.c_str(), 0, 1, [this, i] { return s_.chanGain[i]; },
                [this, i](float v) { s_.chanGain[i] = v; }, [](float v) { return pctOf(v, 1); });
     }
-    // Voice chat keeps its own page and settings; this row is the way there.
-    if (showVoice_) {
-        ctls_.push_back({Control::Button, "VOICE CHAT", 0, 0, {}, {}, {}, [this] { voiceRequested_ = true; }, {}});
-        ctls_.back().note = [this] { return std::string(s_.voiceEnabled ? "ON - OPEN" : "OFF - OPEN"); };
-    }
 
     // DISPLAY: the window / output device itself.
     section("DISPLAY");
@@ -518,9 +513,10 @@ void OptionsScreen::build(int channels) {
     };
 #endif
     // Three stops, game area only (client/texturefilter.h); applied live like the rest.
-    slider("TEXTURE FILTERING", 0, 2, [&] { return float(s_.textureFilter); },
-           [&](float v) { s_.textureFilter = std::clamp(int(v + 0.5f), 0, 2); },
-           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "EVERYTHING" : l >= 1 ? "UNITS" : "OFF"); });
+    dropdown("TEXTURE FILTERING",
+        [] { return std::vector<std::string>{"Off", "Units", "Everything"}; },
+        [this] { return float(std::clamp(s_.textureFilter, 0, 2)); },
+        [this](float idx) { s_.textureFilter = std::clamp(int(idx + 0.5f), 0, 2); });
     ctls_.back().help = [&] {
         const char* lines[] = {
             "OFF: NOTHING IS SMOOTHED, AS IN THE ORIGINAL GAME.",
@@ -554,12 +550,10 @@ void OptionsScreen::build(int channels) {
     ctls_.back().enabled = [&] { return s_.tacticalDots; };   // only meaningful with dots on
     // A unit behind a tree, rock or building, shown anyway (not in retail;
     // client/hiddenunits.h). Three stops; applied live.
-    slider("HIDDEN UNITS", 0, 2, [&] { return float(s_.hiddenUnits); },
-           [&](float v) { s_.hiddenUnits = std::clamp(int(v + 0.5f), 0, 2); },
-           [](float v) {
-               int l = int(v + 0.5f);
-               return std::string(l >= 2 ? "FADE" : l >= 1 ? "DOTS" : "OFF");
-           });
+    dropdown("HIDDEN UNITS",
+        [] { return std::vector<std::string>{"Off", "Dots", "Fade"}; },
+        [this] { return float(std::clamp(s_.hiddenUnits, 0, 2)); },
+        [this](float idx) { s_.hiddenUnits = std::clamp(int(idx + 0.5f), 0, 2); });
     ctls_.back().help = [&] {
         const char* lines[] = {
             "OFF: TREES, ROCKS AND BUILDINGS HIDE THE UNITS BEHIND THEM, AS IN THE ORIGINAL GAME.",
@@ -627,20 +621,21 @@ void OptionsScreen::build(int channels) {
 
     // INTERFACE: on-screen HUD -- its size, and the game overlays.
     section("INTERFACE");
-    // UI FONT: the face of every plain interface text -- menus, rooms, Options, HUD
-    // readouts, briefings, the scoreboard. MODERN is Noto Sans Bold (the chat box's
-    // face); CLASSIC is the block font and retail text faces the game always had. The
-    // retail art lettering (big messages, Unit Info labels, the doors) stays either way.
-    slider("UI FONT", 0, 1, [&] { return float(s_.uiFont); },
-           [&](float v) { s_.uiFont = std::clamp(int(v + 0.5f), 0, 1); },
-           [](float v) { return std::string(v >= 0.5f ? "CLASSIC" : "MODERN"); });
+    // MODERN UI FONT: the face of every plain interface text -- menus, rooms, Options,
+    // HUD readouts, briefings, the scoreboard. ON is Noto Sans Bold (the chat box's
+    // face; uiFont 0); OFF is the block font and retail text faces the game always had
+    // (uiFont 1). The retail art lettering (big messages, Unit Info labels, the doors)
+    // stays either way.
+    toggle("MODERN UI FONT", [&] { return s_.uiFont == 0 ? 1.0f : 0.0f; },
+           [&](float v) { s_.uiFont = v > 0.5f ? 0 : 1; });
     slider("F4 SCORECARD SCALE", 0.5f, 2.0f, [&] { return s_.scorecardScale; },
            [&](float v) { s_.scorecardScale = v; }, [](float v) { return pctOf(v, 1); });
     slider("UI SCALE", 0.5f, 2.0f, [&] { return s_.uiScale; },
            [&](float v) { s_.uiScale = v; }, [](float v) { return pctOf(v, 1); });
-    slider("HEALTH BARS", 0, 2, [&] { return float(s_.healthBars); },
-           [&](float v) { s_.healthBars = std::clamp(int(v + 0.5f), 0, 2); },
-           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "ALWAYS" : l >= 1 ? "DAMAGED" : "OFF"); });
+    dropdown("HEALTH BARS",
+        [] { return std::vector<std::string>{"Off", "Damaged", "Always"}; },
+        [this] { return float(std::clamp(s_.healthBars, 0, 2)); },
+        [this](float idx) { s_.healthBars = std::clamp(int(idx + 0.5f), 0, 2); });
     // The right-hand strip between the minimap and the command panel is dead black
     // space at every resolution. This fills it with a live readout. It is sized to the
     // gap rather than assuming one: on a short window, or at a large UI SCALE, there is
@@ -650,17 +645,19 @@ void OptionsScreen::build(int channels) {
     toggle("STATS PANEL", [&] { return s_.statsPanel ? 1.0f : 0.0f; },
            [&](float v) { s_.statsPanel = v > 0.5f; });
     // Where the in-game conjure/build icon row sits along the bottom of the screen.
-    slider("BUILD MENU", 0, 2, [&] { return float(s_.buildBarAlign); },
-           [&](float v) { s_.buildBarAlign = std::clamp(int(v + 0.5f), 0, 2); },
-           [](float v) { int l = int(v + 0.5f); return std::string(l >= 2 ? "RIGHT" : l >= 1 ? "CENTER" : "LEFT"); });
+    dropdown("BUILD MENU",
+        [] { return std::vector<std::string>{"Left", "Center", "Right"}; },
+        [this] { return float(std::clamp(s_.buildBarAlign, 0, 2)); },
+        [this](float idx) { s_.buildBarAlign = std::clamp(int(idx + 0.5f), 0, 2); });
     // Extra scale for the build icon row, applied ON TOP of UI SCALE (same range).
     slider("BUILD MENU SCALE", 0.75f, 4.0f, [&] { return s_.buildBarScale; },
            [&](float v) { s_.buildBarScale = v; }, [](float v) { return pctOf(v, 1); });
     // The in-game chat box: where it sits over the play area, and its size ON TOP of
     // UI SCALE, in 10% steps (client/chatbox.h).
-    slider("CHAT POSITION", 0, 1, [&] { return float(s_.chatAlign); },
-           [&](float v) { s_.chatAlign = std::clamp(int(v + 0.5f), 0, 1); },
-           [](float v) { return std::string(v >= 0.5f ? "CENTERED" : "LEFT"); });
+    dropdown("CHAT POSITION",
+        [] { return std::vector<std::string>{"Left", "Centered"}; },
+        [this] { return float(std::clamp(s_.chatAlign, 0, 1)); },
+        [this](float idx) { s_.chatAlign = std::clamp(int(idx + 0.5f), 0, 1); });
     slider("CHAT SCALE", 0.5f, 3.0f, [&] { return s_.chatScale; },
            [&](float v) { s_.chatScale = std::clamp(std::round(v * 10) / 10, 0.5f, 3.0f); },
            [](float v) { return pctOf(std::round(v * 10) / 10, 1); });
@@ -707,12 +704,11 @@ void OptionsScreen::layout(int winW, int winH) {
         c.row = {panel_.x + 26 * u_, y, panelW - 52 * u_, h};
         y += h;
     }
-    float bw = 150 * u_, bh = 32 * u_, gap = 18 * u_;
-    float total = 2 * bw + gap;
-    float x0 = panel_.x + (panel_.w - total) / 2;
+    // DEFAULTS at the left edge and BACK at the right, in line with the rows.
+    float bw = 150 * u_, bh = 32 * u_, inset = 26 * u_;
     float by = panel_.y + panel_.h - footerH + (footerH - bh) / 2;
-    defaultsRect_ = {x0, by, bw, bh};
-    backRect_ = {x0 + bw + gap, by, bw, bh};
+    defaultsRect_ = {panel_.x + inset, by, bw, bh};
+    backRect_ = {panel_.x + panel_.w - inset - bw, by, bw, bh};
 }
 
 void OptionsScreen::commit(Control& c, float mx) {
@@ -920,7 +916,7 @@ bool OptionsScreen::handle(const SDL_Event& e, int winW, int winH) {
             }
             if (c.kind == Control::Button) {
                 if (c.action) c.action();
-                return voiceRequested_;   // VOICE CHAT: leave, so the host opens that page
+                return false;
             }
             if (c.kind == Control::Folder) { clickFolder(); return false; }
             if (c.kind == Control::Dropdown) { refreshDevices(); openDrop_ = int(i); dropScroll_ = 0; return false; }   // fresh A-Z list

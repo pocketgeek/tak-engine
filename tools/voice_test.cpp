@@ -617,24 +617,6 @@ static void testPage() {
         check(s.masterVol == 256, "the page touches nothing but voice");
     }
     check(monitorOff == 1, "closing the page stops the meter");
-    {   // OPTIONS offers a VOICE CHAT row that hands over to the voice page.
-        OptionsScreen opts(ren, s, [] {}, [] {}, 2);
-        opts.offerVoicePage();
-        opts.render(W, H);
-        const SDL_FRect* r = opts.rowRect("VOICE CHAT");
-        check(r != nullptr && opts.page() == OptionsPage::General, "Options has a VOICE CHAT row");
-        if (r) {
-            // It may sit below the fold of the long page: scroll it to the middle.
-            for (int i = 0; i < 60 && r->y + r->h / 2 > H * 0.6f; ++i) {
-                SDL_Event e{}; e.type = SDL_MOUSEWHEEL; e.wheel.y = -1;
-                opts.input(e, W, H); opts.render(W, H);
-                r = opts.rowRect("VOICE CHAT");
-            }
-            SDL_Event c{}; c.type = SDL_MOUSEBUTTONDOWN; c.button.button = SDL_BUTTON_LEFT;
-            c.button.x = int(r->x + r->w - 20); c.button.y = int(r->y + r->h / 2);
-            check(opts.input(c, W, H) && opts.voiceRequested(), "clicking it leaves Options for the voice page");
-        }
-    }
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
 }

@@ -178,7 +178,7 @@ static void panel(SDL_Renderer* ren) {
     click(p, p.bitrateRect(W, H), SDL_BUTTON_RIGHT);
     check(s.streamBitrate == 17000, "stepping back from the lowest lands on the cap");
     // FRAME RATE row (the row above BITRATE): 60 -> 30 lowers the cap to 14000.
-    SDL_FRect fps = p.bitrateRect(W, H); fps.y -= 45 * (fps.h / 34);
+    SDL_FRect fps = p.bitrateRect(W, H); fps.y -= 38 * (fps.h / 32);
     click(p, fps);
     check(s.streamFps == 30 && s.streamBitrate == 14000, "30 fps lowers 17000 to 1080p 30's 14000");
     check(p.notice().find("14000") != std::string::npos, "...with the note");
@@ -188,7 +188,7 @@ static void panel(SDL_Renderer* ren) {
     click(p, p.recommendedRect(W, H));
     check(s.streamBitrate == 14000 && p.notice().empty(), "RECOMMENDED fills in 1080p 30's 14000");
     // RESOLUTION to 1440p: its 12000 floor is under 1440p 30's 21000, so nothing changes.
-    SDL_FRect res = p.bitrateRect(W, H); res.y -= 90 * (res.h / 34);
+    SDL_FRect res = p.bitrateRect(W, H); res.y -= 76 * (res.h / 32);
     click(p, res);
     check(s.streamResolution == 2 && s.streamBitrate == 14000, "1440p keeps 14000");
     click(p, p.recommendedRect(W, H));

@@ -49,12 +49,11 @@ void HotkeysScreen::layout(int winW, int winH) {
         r.rect = {panel_.x + 26 * u_, y, panelW - 52 * u_, h};
         y += h;
     }
-    float bw = 150 * u_, bh = 32 * u_, gap = 18 * u_;
-    float total = 2 * bw + gap;
-    float x0 = panel_.x + (panel_.w - total) / 2;
+    // DEFAULTS at the left edge and BACK at the right, in line with the rows.
+    float bw = 150 * u_, bh = 32 * u_, inset = 26 * u_;
     float by = panel_.y + panel_.h - footerH + (footerH - bh) / 2;
-    defaultsRect_ = {x0, by, bw, bh};
-    backRect_ = {x0 + bw + gap, by, bw, bh};
+    defaultsRect_ = {panel_.x + inset, by, bw, bh};
+    backRect_ = {panel_.x + panel_.w - inset - bw, by, bw, bh};
 }
 
 bool HotkeysScreen::input(const SDL_Event& e, int winW, int winH) {

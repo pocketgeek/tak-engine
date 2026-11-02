@@ -2269,9 +2269,6 @@ private:
     float uiScale_ = 1.0f;
     tak::Settings* settings_ = nullptr;               // main()'s settings (for the in-game Options)
     std::unique_ptr<tak::OptionsScreen> options_;     // in-game Options overlay
-    // The VOICE CHAT page in options_ was opened from Options' own VOICE CHAT row: its
-    // BACK returns to Options, as CONTROLS' does.
-    bool voiceFromOptions_ = false;
     std::unique_ptr<tak::HotkeysScreen> hotkeysScreen_;   // opened from Options -> CONTROLS
     tak::Hotkeys hotkeys_;                             // effective bindings (from settings)
     int gameSpeed_ = 0;         // retail game-speed level -9..+10 (+/- keys, (d+10)/10 x); 0 = normal

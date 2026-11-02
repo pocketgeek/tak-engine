@@ -121,12 +121,6 @@ public:
     // returned true for it. The host then leaves its loop and relaunches the game.
     bool restartRequested() const { return restartRequested_; }
 
-    // General page: show a VOICE CHAT row (in AUDIO) that leaves this screen for the
-    // VOICE CHAT page. A click makes input() return true with voiceRequested() set; the
-    // host then closes this screen and opens the voice page in its place.
-    void offerVoicePage() { showVoice_ = true; build(channels_); }
-    bool voiceRequested() const { return voiceRequested_; }
-
     // For the in-process UI tests: a row's rectangle as last laid out (nullptr if no row
     // has that label), the data-folder row's status line, the footer's DEFAULTS button,
     // and the restart and DEFAULTS prompts' buttons (empty rects while they are closed).
@@ -264,7 +258,6 @@ private:
     OptionsPage page_ = OptionsPage::General;
     VoicePageHooks voice_;
     int channels_ = 2;                  // the speaker count build() last laid out
-    bool showVoice_ = false, voiceRequested_ = false;
     float voiceLabelW_ = 0;   // widest chip/meter row label on the VOICE CHAT page, at 2.0 (per u)
     float u_ = 1.0f;        // layout unit (scaled to window)
     SDL_FRect panel_{};     // the panel rect (for scroll clamping)

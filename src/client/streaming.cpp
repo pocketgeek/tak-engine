@@ -225,20 +225,27 @@ struct Streaming::Impl {
     UploadWatch upload; // UPLOAD CAN'T KEEP UP (client/uploadwatch.h)
     // Stream::start() sends only to YouTube, so its bitrate cap always applies here.
     const bool youtube=video::isYouTubeIngest(video::kYouTubeIngest);
+    // The layout is in the Options screen's unit (u) and text sizes, so this panel grows
+    // with the window exactly as Options, Voice Chat and Controls do.
+    static constexpr float kW=660,kH=524,kRowPx=2.f,kSmallPx=1.6f; // panel size; row and status text
     float x=0,y=0,u=1;
     // Row 0 is the key; the REMEMBER KEY row sits under it, then rows 1-4, the SAVE A
     // LOCAL COPY row, and row 5 (start/stop).
-    SDL_FRect row(int n) const {return {x+20*u,y+(70+45*(n+(n>0)+(n>4)))*u,600*u,34*u};}
-    SDL_FRect rememberRect() const {return {x+20*u,y+115*u,600*u,34*u};}
-    SDL_FRect localCopyRect() const {return {x+20*u,y+340*u,600*u,34*u};}
+    SDL_FRect slot(int k) const {return {x+26*u,y+(76+38*k)*u,(kW-52)*u,32*u};}
+    SDL_FRect row(int n) const {return slot(n+(n>0)+(n>4));}
+    SDL_FRect rememberRect() const {return slot(1);}
+    SDL_FRect localCopyRect() const {return slot(6);}
     std::pair<int,int> windowResolution(int w,int h) const {
         if(resolution!=5)return {w&~1,h&~1};
         const int width=std::max(2,std::min(w&~1,3840));
         const int height=std::max(2,int(int64_t(h)*width/std::max(w,1))&~1);
         return {width,height};
     }
-    SDL_FRect pasteRect() const {auto r=row(0);r.x+=500*u;r.w=100*u;return r;}
-    SDL_FRect recommendedRect() const {auto r=row(3);r.x+=430*u;r.w=170*u;return r;}
+    SDL_FRect pasteRect() const {auto r=row(0);r.x+=r.w-110*u;r.w=110*u;return r;}
+    SDL_FRect recommendedRect() const {auto r=row(3);r.x+=r.w-170*u;r.w=170*u;return r;}
+    // Footer BACK, as Options' and Controls', at the right edge in line with the rows:
+    // closes, as Esc.
+    SDL_FRect backRect() const {return {x+(kW-26-150)*u,y+(kH-52+10)*u,150*u,32*u};}
     std::pair<int,int> outputSize(int w,int h) const {
         return resolution>=4&&!stream.active() ? windowResolution(w,h) : std::pair<int,int>{config.width,config.height};
     }
@@ -301,9 +308,9 @@ struct Streaming::Impl {
         if(s.local.empty())return {};
         std::string file=s.localFile;
         if(s.active) {const auto cut=file.find_last_of("/\\");if(cut!=std::string::npos)file.erase(0,cut+1);}
-        if(file.empty())return uiTextFit(s.local,1.5f*u,maxW);
+        if(file.empty())return uiTextFit(s.local,kSmallPx*u,maxW);
         const std::string head=s.local+": ";
-        return head+uiTextFitStart(file,1.5f*u,std::max(0.f,maxW-uiTextWidth(head,1.5f*u)));
+        return head+uiTextFitStart(file,kSmallPx*u,std::max(0.f,maxW-uiTextWidth(head,kSmallPx*u)));
     }
     void pollKeys() {
         keys->poll(config.key);
@@ -341,7 +348,11 @@ struct Streaming::Impl {
 #endif
         return s;
     }
-    void layout(int w,int h) {u=std::max(.4f,std::min({float(w)/680,float(h)/620,1.5f}));x=(w-640*u)/2;y=(h-580*u)/2;}
+    void layout(int w,int h) {
+        u=std::clamp(std::min(w/1280.0f,h/720.0f),1.0f,3.0f); // Options' unit
+        u=std::max(.4f,std::min({u,w*.95f/kW,h*.95f/kH}));      // a window too small to hold it
+        x=(w-kW*u)/2;y=(h-kH*u)/2;
+    }
     void show(bool on) {
         if(on&&!visible)wasTextInput=SDL_IsTextInputActive();
         if(on)keys->check();else if(visible)keys->sync(config.key);
@@ -373,15 +384,20 @@ struct Streaming::Impl {
         if(!s.active && capBitrate(w,h,config.bitrateKbps))saveChoices();
         const bool storeOk=keys->state()==StreamKeyMemory::State::Available;
         SDL_SetRenderDrawBlendMode(ren,SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(ren,12,17,26,248);SDL_FRect panel{x,y,640*u,580*u};SDL_RenderFillRectF(ren,&panel);
-        auto text=[&](const std::string& t,float px,float py,SDL_Color col=SDL_Color{235,235,235,255}) {uiText(ren,t,x+px*u,y+py*u,1.5f*u,col);};
-        text("YOUTUBE STREAMING",20,20);
-        text(storeOk&&keys->remember()?"GAME VIDEO AND AUDIO - KEY SAVED IN PASSWORD STORE":
-                                       "GAME VIDEO AND AUDIO - KEY IS NOT SAVED",20,45);
+        SDL_SetRenderDrawColor(ren,12,17,26,248);SDL_FRect panel{x,y,kW*u,kH*u};SDL_RenderFillRectF(ren,&panel);
+        const float rpx=kRowPx*u,spx=kSmallPx*u,left=x+26*u,width=(kW-52)*u;
+        auto line=[&](const std::string& t,float py,SDL_Color col=SDL_Color{235,235,235,255}) {uiText(ren,t,left,y+py*u,spx,col);};
+        auto rowText=[&](const std::string& t,float tx,const SDL_FRect& r,SDL_Color col) {
+            uiText(ren,t,tx,r.y+(r.h-7*rpx)/2,rpx,col);
+        };
+        const std::string title="YOUTUBE STREAMING";
+        uiText(ren,title,x+(kW*u-uiTextWidth(title,3.4f*u))/2,y+13*u,3.4f*u,{235,225,180,255});
+        line(storeOk&&keys->remember()?"GAME VIDEO AND AUDIO - KEY SAVED IN PASSWORD STORE":
+                                       "GAME VIDEO AND AUDIO - KEY IS NOT SAVED",54);
         const auto [outputW,outputH]=resolution>=4&&!s.active ? windowResolution(w,h) :
             std::pair<int,int>{config.width,config.height};
         std::array<std::string,6> labels={
-            "STREAM KEY: " + (config.key.empty()?std::string("NOT SET"):std::string(std::min<size_t>(config.key.size(),36),'*')),
+            "STREAM KEY: " + (config.key.empty()?std::string("NOT SET"):std::string(std::min<size_t>(config.key.size(),24),'*')),
             "RESOLUTION: " + std::string(resolution==5?"MAX 3840 / ":resolution==4?"FULL ":"") +
                 std::to_string(outputW)+" X "+std::to_string(outputH),
             "FRAME RATE: " + std::to_string(config.fps),
@@ -390,61 +406,59 @@ struct Streaming::Impl {
             "ENCODER: " + std::string(config.encoder.empty()?"AUTOMATIC":"CPU"),
             s.active?"STOP STREAMING":"START STREAMING"};
         for(int i=0;i<6;++i) {
-            auto r=row(i);if(i==0)r.w=490*u;if(i==3&&youtube)r.w=420*u;
+            auto r=row(i);if(i==0)r.w-=118*u;if(i==3&&youtube)r.w-=178*u;
             SDL_SetRenderDrawColor(ren,i==0&&editing?55:35,45,60,255);SDL_RenderFillRectF(ren,&r);
-            uiText(ren,labels[i],r.x+10*u,r.y+11*u,1.5f*u,{240,235,210,255});
+            rowText(uiTextFit(labels[i],rpx,r.w-20*u),r.x+10*u,r,{240,235,210,255});
         }
+        const SDL_Color live{240,235,210,255},grey{110,115,120,255},side{170,175,180,255};
+        // A tick-box row: box, label, and a note on the right in the smaller text.
+        auto tickRow=[&](const SDL_FRect& r,bool ticked,bool on,const char* label,const std::string& note,bool noteOn) {
+            SDL_SetRenderDrawColor(ren,35,45,60,255);SDL_RenderFillRectF(ren,&r);
+            SDL_FRect box{r.x+10*u,r.y+(r.h-18*u)/2,18*u,18*u};
+            SDL_SetRenderDrawColor(ren,on?200:90,on?195:95,on?175:100,255);SDL_RenderDrawRectF(ren,&box);
+            if(ticked) {
+                SDL_FRect tick{box.x+4*u,box.y+4*u,10*u,10*u};
+                SDL_SetRenderDrawColor(ren,on?255:90,on?210:95,on?100:100,255);SDL_RenderFillRectF(ren,&tick);
+            }
+            const float lx=r.x+38*u;
+            rowText(label,lx,r,on?live:grey);
+            const float room=r.x+r.w-10*u-(lx+uiTextWidth(label,rpx)+16*u);
+            const std::string fit=uiTextFit(note,spx,std::max(0.f,room));
+            uiText(ren,fit,r.x+r.w-10*u-uiTextWidth(fit,spx),r.y+(r.h-7*spx)/2,spx,noteOn?side:grey);
+        };
         // REMEMBER KEY: greyed out, with the reason, when there is no usable store.
-        const auto remember=rememberRect();
-        SDL_SetRenderDrawColor(ren,35,45,60,255);SDL_RenderFillRectF(ren,&remember);
-        const SDL_Color live{240,235,210,255},grey{110,115,120,255};
-        SDL_FRect box{remember.x+10*u,remember.y+7*u,20*u,20*u};
-        SDL_SetRenderDrawColor(ren,storeOk?200:90,storeOk?195:95,storeOk?175:100,255);SDL_RenderDrawRectF(ren,&box);
-        if(keys->remember()) {
-            SDL_FRect tick{box.x+5*u,box.y+5*u,10*u,10*u};
-            SDL_SetRenderDrawColor(ren,storeOk?255:90,storeOk?210:95,storeOk?100:100,255);SDL_RenderFillRectF(ren,&tick);
-        }
-        uiText(ren,"REMEMBER KEY",remember.x+42*u,remember.y+11*u,1.5f*u,storeOk?live:grey);
         const std::string where=keys->state()==StreamKeyMemory::State::Unavailable?keys->reason():
             !storeOk?std::string("CHECKING PASSWORD STORE"):keys->busy()?std::string("SAVING..."):keys->storeName();
-        uiText(ren,where,remember.x+remember.w-10*u-uiTextWidth(where,1.5f*u),remember.y+11*u,1.5f*u,
-                      storeOk?SDL_Color{170,175,180,255}:grey);
+        tickRow(rememberRect(),keys->remember(),storeOk,"REMEMBER KEY",where,storeOk);
         // SAVE A LOCAL COPY: the same look, greyed out while streaming (applies at start).
-        const auto copyRow=localCopyRect();
-        SDL_SetRenderDrawColor(ren,35,45,60,255);SDL_RenderFillRectF(ren,&copyRow);
-        SDL_FRect copyBox{copyRow.x+10*u,copyRow.y+7*u,20*u,20*u};
-        SDL_SetRenderDrawColor(ren,s.active?90:200,s.active?95:195,s.active?100:175,255);SDL_RenderDrawRectF(ren,&copyBox);
-        if(localCopy) {
-            SDL_FRect tick{copyBox.x+5*u,copyBox.y+5*u,10*u,10*u};
-            SDL_SetRenderDrawColor(ren,s.active?90:255,s.active?95:210,s.active?100:100,255);SDL_RenderFillRectF(ren,&tick);
-        }
-        uiText(ren,"SAVE A LOCAL COPY",copyRow.x+42*u,copyRow.y+11*u,1.5f*u,s.active?grey:live);
-        const std::string copyWhere=s.active?"APPLIES AT START":"MP4 IN THE VIDEOS FOLDER";
-        uiText(ren,copyWhere,copyRow.x+copyRow.w-10*u-uiTextWidth(copyWhere,1.5f*u),copyRow.y+11*u,1.5f*u,
-                      s.active?grey:SDL_Color{170,175,180,255});
-        const auto paste=pasteRect();
-        SDL_SetRenderDrawColor(ren,s.active?35:50,s.active?40:65,s.active?45:85,255);
-        SDL_RenderFillRectF(ren,&paste);
-        uiText(ren,"PASTE",paste.x+27*u,paste.y+11*u,1.5f*u,
-                      s.active?SDL_Color{110,115,120,255}:SDL_Color{240,235,210,255});
-        if(youtube) { // RECOMMENDED: YouTube's bitrate for these settings
-            const auto rec=recommendedRect();
-            SDL_SetRenderDrawColor(ren,s.active?35:50,s.active?40:65,s.active?45:85,255);
-            SDL_RenderFillRectF(ren,&rec);
-            const std::string label="RECOMMENDED";
-            uiText(ren,label,rec.x+(rec.w-uiTextWidth(label,1.5f*u))/2,rec.y+11*u,1.5f*u,
-                          s.active?SDL_Color{110,115,120,255}:SDL_Color{240,235,210,255});
-        }
-        text(s.state,20,442,{255,210,100,255});
-        text(s.encoder+"  FRAMES "+std::to_string(s.frames)+"  DROPPED "+std::to_string(s.dropped),20,465);
-        text("REPLACED "+std::to_string(s.replaced)+"  RATE "+std::to_string(rateKbps)+" KBPS",20,488);
-        if(const auto line=localLine(s,600*u);!line.empty())
-            text(line,20,511,s.local.find("STOPPED")!=std::string::npos||s.local.find("FAILED")!=std::string::npos?
+        tickRow(localCopyRect(),localCopy,!s.active,"SAVE A LOCAL COPY",
+                s.active?"APPLIES AT START":"MP4 IN THE VIDEOS FOLDER",!s.active);
+        auto smallButton=[&](const SDL_FRect& r,const std::string& label) {
+            SDL_SetRenderDrawColor(ren,s.active?35:50,s.active?40:65,s.active?45:85,255);SDL_RenderFillRectF(ren,&r);
+            rowText(label,r.x+(r.w-uiTextWidth(label,rpx))/2,r,s.active?grey:live);
+        };
+        smallButton(pasteRect(),"PASTE");
+        if(youtube)smallButton(recommendedRect(),"RECOMMENDED"); // YouTube's bitrate for these settings
+        line(s.state,384,{255,210,100,255});
+        line((s.encoder.empty()?"":s.encoder+"  ")+"FRAMES "+std::to_string(s.frames)+"  DROPPED "+std::to_string(s.dropped),406);
+        line("REPLACED "+std::to_string(s.replaced)+"  RATE "+std::to_string(rateKbps)+" KBPS",428);
+        if(const auto local=localLine(s,width);!local.empty())
+            line(local,450,s.local.find("STOPPED")!=std::string::npos||s.local.find("FAILED")!=std::string::npos?
                  SDL_Color{255,150,110,255}:SDL_Color{170,215,170,255});
-        if(!error.empty())text(error,20,547);
-        else if(s.active&&upload.warning())text(kUploadWarning,20,547,{255,150,110,255});
-        else if(!notice.empty()&&!s.active)text(notice,20,547,{255,210,100,255});
-        else text((panelKey().empty() ? std::string("ESC") : "ESC / "+panelKey())+": CLOSE - STREAM CONTINUES UNTIL STOP",20,547);
+        // An error or notice shares the footer with BACK, on its left, its text made
+        // smaller when it would not fit beside the button.
+        const auto back=backRect();
+        auto bottom=[&](const std::string& t,SDL_Color col) {
+            const float px=uiTextFitPx(t,spx,back.x-16*u-left);
+            uiText(ren,t,left,back.y+(back.h-7*px)/2,px,col);
+        };
+        if(!error.empty())bottom(error,{235,235,235,255});
+        else if(s.active&&upload.warning())bottom(kUploadWarning,{255,150,110,255});
+        else if(!notice.empty()&&!s.active)bottom(notice,{255,210,100,255});
+        // the BACK button every other settings screen has
+        SDL_SetRenderDrawColor(ren,60,66,86,255);SDL_RenderFillRectF(ren,&back);
+        SDL_SetRenderDrawColor(ren,130,140,170,255);SDL_RenderDrawRectF(ren,&back);
+        uiText(ren,"BACK",back.x+(back.w-uiTextWidth("BACK",2.2f*u))/2,back.y+(back.h-7*2.2f*u)/2,2.2f*u,{228,232,242,255});
     }
 };
 Streaming::Streaming(SDL_Renderer* ren,Settings* settings,std::function<void()> save,
@@ -476,7 +490,7 @@ Streaming::~Streaming(){
 }
 SDL_FRect Streaming::rememberRect(int w,int h){p_->layout(w,h);return p_->rememberRect();}
 SDL_FRect Streaming::localCopyRect(int w,int h){p_->layout(w,h);return p_->localCopyRect();}
-SDL_FRect Streaming::bitrateRect(int w,int h){p_->layout(w,h);auto r=p_->row(3);if(p_->youtube)r.w=420*p_->u;return r;}
+SDL_FRect Streaming::bitrateRect(int w,int h){p_->layout(w,h);auto r=p_->row(3);if(p_->youtube)r.w-=178*p_->u;return r;}
 SDL_FRect Streaming::recommendedRect(int w,int h){p_->layout(w,h);return p_->recommendedRect();}
 const std::string& Streaming::notice() const{return p_->notice;}
 bool Streaming::waitKeyStore(int ms){const bool idle=p_->keys->waitIdle(ms);p_->pollKeys();return idle;}
@@ -511,6 +525,7 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
     if(e.type==SDL_MOUSEBUTTONDOWN && (e.button.button==SDL_BUTTON_LEFT || e.button.button==SDL_BUTTON_RIGHT)) {
         const int direction=e.button.button==SDL_BUTTON_LEFT?1:-1;
         SDL_FPoint pt{float(e.button.x),float(e.button.y)};
+        if(const auto back=p_->backRect();SDL_PointInFRect(&pt,&back)) {if(direction>0)p_->show(false);return true;}
         const auto paste=p_->pasteRect();
         if(SDL_PointInFRect(&pt,&paste)) {
             if(direction>0 && !p_->stream.active())p_->pasteKey();

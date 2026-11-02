@@ -1830,7 +1830,6 @@ is the one both use next time.
 | **Music volume** | 50% | Soundtrack volume. |
 | **Sound effects** | 100% | Unit, world and interface sounds. |
 | **Speaker** sliders | 100% | One per speaker channel on your device, for surround setups. |
-| **Voice chat** | Off | Opens the **Voice Chat** page; the row says whether voice chat is on (**ON - OPEN** or **OFF - OPEN**). Voice chat has its own devices, volumes and **Defaults**; see [Voice chat](#voice-chat). |
 
 World sounds are full volume inside the view and fade with distance outside
 it, falling silent once a sound is as far beyond the nearest edge of the view as
@@ -2035,7 +2034,7 @@ your system appear.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| **UI Font** | Modern | The lettering of the interface's text. **Modern** is a clean bold sans-serif (the chat box's), sharp at every UI Scale; **Classic** is the look this engine had before: its blocky pixel font in the menus, rooms and Options, and the game's original serif faces in the HUD, scoreboard, briefings and Unit Info. The original decorative lettering (big messages, PAUSED, briefing headings, Unit Info labels, the title doors) is the same with either. Takes effect at once. |
+| **Modern UI Font** | On | The lettering of the interface's text. **On** is a clean bold sans-serif (the chat box's), sharp at every UI Scale; **Off** is the look this engine had before: its blocky pixel font in the menus, rooms and Options, and the game's original serif faces in the HUD, scoreboard, briefings and Unit Info. The original decorative lettering (big messages, PAUSED, briefing headings, Unit Info labels, the title doors) is the same with either. Takes effect at once. |
 | **F4 Scorecard Scale** | 100% | Size of the F4 player panel (50–200%). |
 | **UI Scale** | 100% | Size of the in-game interface (50–200%). |
 | **Health Bars** | Damaged | Off, only on damaged units, or always. |
@@ -2094,8 +2093,8 @@ saved as `chatScale` and `chatAlign` (0 left, 1 centred) in `settings.ini`.
 
 ![The in-game chat box centred on its dark panel just above a Barracks' build row and its TRAINING Horseman (10) line: four messages, each starting with the sender's name in their player colour, and a line being typed after SAY:](img/guide/chat-box.jpg)
 
-**UI Font** is saved as `uiFont = modern` or `uiFont = classic` in `settings.ini`; a
-file without it uses Modern. With Modern, names keep their own capitals (players, maps,
+**Modern UI Font** is saved as `uiFont = modern` (on) or `uiFont = classic` (off) in `settings.ini`; a
+file without it uses on. With it on, names keep their own capitals (players, maps,
 mod packs, units), while labels such as **START** stay in capitals.
 
 ### Camera
@@ -2376,8 +2375,7 @@ opened there to test the microphone).
 ### Turning it on
 
 1. Open the **Voice Chat** page: **Settings → Voice Chat** on the main menu,
-   **Esc → Voice Chat** in a game, or the **Voice chat** row in the Audio section
-   of **Options** (its **Back** then returns to Options).
+   or **Esc → Voice Chat** in a game.
 2. Turn **Voice chat** on.
 3. Speak, and check that the **Mic level** meter moves.
 

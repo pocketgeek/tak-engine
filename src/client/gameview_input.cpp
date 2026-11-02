@@ -93,16 +93,7 @@
             // below): the custom cursor renders from mouseX_/mouseY_, so swallowing
             // motion events here froze it for as long as Options was open.
             if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
-            if (options_->input(e, winW, winH)) {   // BACK / Esc (all saved)
-                if (options_->voiceRequested()) {   // Options > VOICE CHAT
-                    openVoiceOptions();
-                    voiceFromOptions_ = true;
-                } else if (voiceFromOptions_ && options_->page() == tak::OptionsPage::Voice) {
-                    openOptions();                  // BACK -> Options, where it came from
-                } else {
-                    options_.reset();
-                }
-            }
+            if (options_->input(e, winW, winH)) options_.reset();   // BACK / Esc (all saved)
             return;
         }
         // In-game exit menu (opened with Esc). While it's up, all game input is

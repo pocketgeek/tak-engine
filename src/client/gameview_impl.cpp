@@ -258,7 +258,6 @@
                 replayMode_ ? "Change it from Options on the main menu, not while watching a replay."
                 : inLobbyPhase() ? "Change it from Options on the main menu, not in a lobby."
                                  : "Change it from Options on the main menu, not during a game.", {}});
-        options_->offerVoicePage();
     }
 
     namespace {
