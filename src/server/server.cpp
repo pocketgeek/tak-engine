@@ -1882,7 +1882,7 @@ void Server::tryStart(Client& c) {
     const uint64_t blockedFrom = nowMs();   // see the clock shift before GameStarting
     Room* r = roomOf(c);
     if (!r || r->hostId != c.id || r->running) return;
-    if(std::count_if(rooms_.begin(),rooms_.end(),[](const auto& entry){return entry.second.running;})>=limits_.running) {
+    if(uint64_t(std::count_if(rooms_.begin(),rooms_.end(),[](const auto& entry){return entry.second.running;}))>=limits_.running) {
         sendReject(c,"server running-game capacity reached; retry later");return;
     }
     if (!mapsReady(*r)) {
@@ -3508,7 +3508,7 @@ static int serverMain(int argc, char** argv) {
     return s.run();
 }
 
-int main(int argc,char** argv) {
+int main([[maybe_unused]] int argc,[[maybe_unused]] char** argv) {   // Windows reads its own wide arguments
     try {
 #ifdef _WIN32
         return tak::utf8Main(serverMain);

@@ -67,7 +67,7 @@ int main(int argc,char** argv) try {
     // Interleave the kinds the way a game's unit records are: casters, bodies
     // and the live army spawned in mixed order.
     const int total=units+casters+bodies;
-    int placedU=0,placedC=0,placedB=0;
+    int placedU=0,placedC=0;
     for (int i=0;i<total;++i) {
         const int pick=int(next(uint32_t(total-i)));
         if (pick<casters-placedC) {
@@ -82,7 +82,7 @@ int main(int argc,char** argv) try {
                 x=cx-64+float(next(128));z=cz-64+float(next(128));
             }
             const int id=w.spawn(&soldier,x,z,0,int(next(2)));
-            auto& d=*w.unit(id);d.hp={};d.deadFor=200;d.corpseUntil=100000;++placedB;
+            auto& d=*w.unit(id);d.hp={};d.deadFor=200;d.corpseUntil=100000;
         }
     }
     w.resumeClocks(1,w.gameRngState());

@@ -47,7 +47,10 @@ static void trust(const std::filesystem::path& cert) {
 struct Echo {
     int listener=-1;uint16_t port=0;std::atomic<bool> stop=false;
     std::thread worker;
+    std::mutex activeMutex;
     std::shared_ptr<TlsContext> active;
+    std::shared_ptr<TlsContext> activeContext() {std::lock_guard lock(activeMutex);return active;}
+    void setActive(std::shared_ptr<TlsContext> context) {std::lock_guard lock(activeMutex);active=std::move(context);}
     explicit Echo(std::shared_ptr<TlsContext> context):active(std::move(context)) {
         std::string error;listener=listenOn(0,error,true);check(listener>=0,"listen");
         sockaddr_in address{};socklen_t length=sizeof address;
@@ -56,7 +59,7 @@ struct Echo {
             std::vector<Conn> peers;
             while(!stop.load()) {
                 const int fd=int(accept(listener,nullptr,nullptr));
-                if(fd>=0) {setupSocket(fd);peers.emplace_back(fd,std::atomic_load(&active));}
+                if(fd>=0) {setupSocket(fd);peers.emplace_back(fd,activeContext());}
                 for(auto& peer:peers) {
                     if(!peer.ok())continue;
                     peer.recv();Frame f;
@@ -232,7 +235,7 @@ int main(int argc,char** argv) {
             Conn good;check(good.connect("tls://localhost",server.port),"trusted hostname rejected");
             auto read=[](const auto& path) {std::ifstream in(path,std::ios::binary);return std::string(std::istreambuf_iterator<char>(in),{});};
             const auto bundle=read(cert)+read(key);
-            std::atomic_store(&server.active,TlsContext::serverPem(bundle,bundle));
+            server.setActive(TlsContext::serverPem(bundle,bundle));
             // An established connection must survive a renewal context swap;
             // later connections below also exercise the new in-memory context.
             const std::vector<uint8_t> payload(65536,0x5a);

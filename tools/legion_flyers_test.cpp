@@ -593,9 +593,8 @@ CtrlRun ctrlRun(int kind,bool serial=true) {
         f.world.tick(1.f/30);
         bool any=false;
         for(size_t k=0;k<sets.size();++k) {
-            double ax=0,az=0;bool busy=false;
-            for(int id:sets[k].ground) {const auto& u=*f.world.unit(id);ax+=u.x.toFloat();az+=u.z.toFloat();busy|=!u.orders.empty();}
-            ax/=double(sets[k].ground.size());az/=double(sets[k].ground.size());
+            bool busy=false;
+            for(int id:sets[k].ground) busy|=!f.world.unit(id)->orders.empty();
             any|=busy;
             // Straying: an airborne flyer's distance from its own click's nearest ground body (formation flyers
             // ride over the front of their ground, so their distance from its centroid grows with its depth).
@@ -1438,7 +1437,7 @@ void predicates() {
     // stall clock's two-scale progress measure would read it stalled from t~120), then stalled 120 ticks
     // after its last gain at the plug.
     check(lastAdv>=300&&lastAdv<700,"predicates: a walking body advances, a stalled body stops advancing (kLiftStall)");
-    check(lastAdvStation-lastAdv>=LegionNavigator::kStationStall-LegionNavigator::kLiftStall-1,"predicates: kStationStall outlasts kLiftStall");
+    check(lastAdvStation-lastAdv>=int(LegionNavigator::kStationStall-LegionNavigator::kLiftStall)-1,"predicates: kStationStall outlasts kLiftStall");
     // flyerGrounded: airborne under an order, grounded through the descent and once landed.
     check(!RetailReplayProbe::grounded(*f.world.unit(fid))||f.world.unit(fid)->flightGroundMode==1,"predicates: flyerGrounded off the ground");
     f.command(tak::net::Cmd::Move,fid,0,30*16,10*16);

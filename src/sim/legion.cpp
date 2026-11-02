@@ -11317,12 +11317,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         auto& r=g.ring;
         if(r.band0>0) {
             const int comp=compAt(p,centre);
-            int band0=0;
             for(size_t i=0;i<r.cells.size();++i) {
                 const int x=r.cells[i]%W+dx,z=r.cells[i]/W+dz;
                 // A spot that leaves the map keeps its index, unclaimable.
                 r.cells[i]=x>=0&&z>=0&&x<W&&z<H?z*W+x:r.cells[i];
-                if(r.band[i]==0&&legal(p,x,z)&&compAt(p,z*W+x)==comp)++band0;
             }
             r.tx+=int64_t(dx)*16;r.tz+=int64_t(dz)*16;
             r.spent.clear();r.scanned=kNoTick;

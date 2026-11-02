@@ -330,7 +330,7 @@ static void classicLodestoneSites() {
     auto pick=[&](bool second,bool& upgradable) {
         sim::World w;w.setPlayerCount(2);
         w.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
-        std::vector<sim::SacredSite> sites{{31,31,2,2,1.0f}};
+        std::vector<sim::SacredSite> sites;sites.push_back({31,31,2,2,1.0f});
         std::vector<std::pair<float,float>> spots{{512,512}};
         if (second) { sites.push_back({31,45,2,2,1.0f});spots.push_back({512,736}); }
         w.setManaSpots(spots);w.setSacredSites(sites);

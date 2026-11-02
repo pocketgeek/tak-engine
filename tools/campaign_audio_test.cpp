@@ -113,7 +113,8 @@ int main(int argc,char**argv) {
             const auto bytes=vfs.read(path);SDL_AudioSpec spec{};Uint8* pcm=nullptr;Uint32 length=0;
             check(SDL_LoadWAV_RW(SDL_RWFromConstMem(bytes.data(),int(bytes.size())),1,&spec,&pcm,&length) && length,
                   "present mission WAV decodes");
-            if(pcm)SDL_FreeWAV(pcm);++decoded;
+            if(pcm)SDL_FreeWAV(pcm);
+            ++decoded;
         }
         std::cout<<scripts<<" mission scripts reference "<<scriptReferences<<" clips, plus native objective cue: "<<decoded<<" decoded, "<<missing<<" absent\n";
     }

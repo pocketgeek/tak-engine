@@ -56,7 +56,8 @@ int main(int argc, char** argv) {
                             if (nx < 0 || nz < 0 || nx >= W || nz >= H) continue;
                             if (!g.fits(nx, nz, n)) continue;
                             size_t id = size_t(nz) * size_t(W) + size_t(nx);
-                            if (seen[id]) continue; seen[id] = 1; q.push_back(int(id));
+                            if (seen[id]) continue;
+                            seen[id] = 1; q.push_back(int(id));
                         }
                     }
                     best = std::max(best, cnt);

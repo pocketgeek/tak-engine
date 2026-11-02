@@ -113,7 +113,9 @@ int main(int argc,char** argv){try{
   }
   if(loaded){
    auto advance=[&](net::MpClient& c,sim::World& world,uint32_t& tick,bool first){net::Bundle b;while((first || hashes.count(tick))&&c.takeBundle(tick,b)){
-    for(const auto& cmd:b.cmds)sim::applyCommand(world,registry,cmd);for(const auto& ev:b.events)sim::applyEvent(world,ev);world.tick(1.f/net::kServerHz);auto h=world.stateHash();if(first)hashes[tick]=h;else check(hashes.at(tick)==h,"peers diverged");if(tick%net::kHashPeriod==0)c.sendHash(tick,h);++tick;}};
+    for(const auto& cmd:b.cmds)sim::applyCommand(world,registry,cmd);
+    for(const auto& ev:b.events)sim::applyEvent(world,ev);
+    world.tick(1.f/net::kServerHz);auto h=world.stateHash();if(first)hashes[tick]=h;else check(hashes.at(tick)==h,"peers diverged");if(tick%net::kHashPeriod==0)c.sendHash(tick,h);++tick;}};
    advance(host,wh,ht,true);advance(peer,wp,pt,false);check(!host.desynced()&&!peer.desynced(),"server disagrees with game-mod simulation");
    if(ht>=90 && pt>=90 && !campaign){check(!badLoaded,"incorrect loaded hash was admitted");host.leaveGame();peer.leaveGame();loaded=false;campaign=1;}
   }

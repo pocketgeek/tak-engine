@@ -58,12 +58,12 @@ std::vector<windowsgpu_detail::Counter> counters(PDH_HCOUNTER counter) {
     constexpr DWORD format=PDH_FMT_DOUBLE|PDH_FMT_NOCAP100;
     for (int retry=0;retry<3;++retry) {
         DWORD bytes=0,count=0;
-        if (PdhGetFormattedCounterArrayW(counter,format,&bytes,&count,nullptr)!=PDH_MORE_DATA ||
+        if (PdhGetFormattedCounterArrayW(counter,format,&bytes,&count,nullptr)!=PDH_STATUS(PDH_MORE_DATA) ||
             bytes==0 || bytes>16*1024*1024) return {};
         std::vector<unsigned char> storage(bytes);
         auto* items=reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(storage.data());
         const auto status=PdhGetFormattedCounterArrayW(counter,format,&bytes,&count,items);
-        if (status==PDH_MORE_DATA) continue;
+        if (status==PDH_STATUS(PDH_MORE_DATA)) continue;
         if (status!=ERROR_SUCCESS || size_t(count)*sizeof(*items)>storage.size()) return {};
         std::vector<windowsgpu_detail::Counter> out;
         for (DWORD i=0;i<count;++i) {

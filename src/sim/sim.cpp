@@ -7466,7 +7466,7 @@ void World::fireBehindStepOut(Unit& u) {
     else tryFire(slot);
 }
 
-void World::tickCombat(Unit& u, float dt, bool& groundMovementHandled) {
+void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     if (u.type->onOffable && !u.active) return;   // explicitly powered down
     if (stepOutFront(u)) { fireBehindStepOut(u); return; }
 
@@ -13488,7 +13488,7 @@ bool World::constructionWork(Unit& b, Unit& site, float dt) {
     return false;
 }
 
-void World::decayConstruction(Unit& u, float dt) {
+void World::decayConstruction(Unit& u, float /*dt*/) {
     // No builder worked this conjure this tick: it "un-conjures", losing HP at the
     // rate it was last built, and vanishes at zero (no corpse -- it was never
     // finished). A site that never materialised falls back to its nominal rate.

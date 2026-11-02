@@ -64,6 +64,7 @@ int main() {
     word(64,1,2);word(60,3,4);write();
     auto writeEffect = [&](const char* name,uint32_t delay,uint8_t pixel) {
         auto bytes=art;
+        if(bytes.size()<64)throw std::runtime_error("effect fixture too short");
         std::memset(bytes.data()+24,0,32);std::memcpy(bytes.data()+24,name,std::strlen(name));
         for(int i=0;i<4;++i)bytes[60+size_t(i)]=uint8_t(delay>>(8*i));
         bytes.back()=pixel;

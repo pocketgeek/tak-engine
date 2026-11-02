@@ -500,7 +500,11 @@ std::optional<std::time_t> acme_detail::ariRenewalTime(const std::string& body,c
 struct AcmeCertificates::Impl {
     AcmeOptions options;
     std::unique_ptr<FileLease> lease;
+    // The live certificate: replaced by renewals, read by every new connection.
+    mutable std::mutex currentMutex;
     std::shared_ptr<tak::net::TlsContext> current;
+    void setCurrent(std::shared_ptr<tak::net::TlsContext> context) {std::lock_guard lock(currentMutex);current=std::move(context);}
+    std::shared_ptr<tak::net::TlsContext> currentContext() const {std::lock_guard lock(currentMutex);return current;}
     std::time_t renewAt=0,nextAttempt=0;
     unsigned failures=0;
     // Renewal information (RFC 9773) for the current certificate. renewAt holds the
@@ -541,7 +545,7 @@ struct AcmeCertificates::Impl {
         auto retry=readFile(options.state/"retry.json");if(!retry.empty()) {auto r=json(retry);nextAttempt=r.value("next",std::time_t{});failures=std::min(r.value("failures",0u),4u);}
         const auto stored=readFile(options.state/"current.pem");
         if(!stored.empty()) {
-            try {renewAt=renewalTime(stored,options.domain);std::atomic_store(&current,tak::net::TlsContext::serverPem(stored,stored));adopt(stored,renewAt);}
+            try {renewAt=renewalTime(stored,options.domain);setCurrent(tak::net::TlsContext::serverPem(stored,stored));adopt(stored,renewAt);}
             catch(const std::exception& e) {std::fprintf(stderr,"ACME: stored certificate unavailable: %s\n",e.what());}
         }
         // Initial issuance uses the same persistent, interruptible retry loop as
@@ -564,7 +568,7 @@ struct AcmeCertificates::Impl {
         require(renewal>std::time(nullptr),"issued certificate already due for renewal");
         auto context=tak::net::TlsContext::serverPem(issued,issued);
         save(options.state/"current.pem",issued);
-        std::atomic_store(&current,std::move(context));renewAt=renewal;nextAttempt=0;failures=0;adopt(issued,renewal);
+        setCurrent(std::move(context));renewAt=renewal;nextAttempt=0;failures=0;adopt(issued,renewal);
         save(options.state/"retry.json",Json{{"next",0},{"failures",0}}.dump());
         std::fprintf(stderr,"ACME: certificate installed; existing game connections retained\n");
     }
@@ -625,5 +629,5 @@ struct AcmeCertificates::Impl {
 };
 AcmeCertificates::AcmeCertificates(AcmeOptions options):impl_(std::make_unique<Impl>(std::move(options))){}
 AcmeCertificates::~AcmeCertificates()=default;
-std::shared_ptr<tak::net::TlsContext> AcmeCertificates::context() const {return std::atomic_load(&impl_->current);}
+std::shared_ptr<tak::net::TlsContext> AcmeCertificates::context() const {return impl_->currentContext();}
 }

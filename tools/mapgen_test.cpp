@@ -100,10 +100,10 @@ void syntheticMaps() {
     fs::create_directories(root/"features"/"aramon");
     {
         std::ofstream out(root/"features"/"aramon"/"fixture.tdf");
-        for(const auto [kind,count]:std::array<std::pair<const char*,int>,4>{{{"Tree",10},{"Rock",7},{"Henge",9},{"Mana",3}}})
+        for(const auto& [kind,count]:std::array<std::pair<std::string,int>,4>{{{"Tree",10},{"Rock",7},{"Henge",9},{"Mana",3}}})
             for(int i=1;i<=count;++i) {
-                char name[32];std::snprintf(name,sizeof name,"Ara%s%02d",kind,i);
-                const bool mana=std::string(kind)=="Mana";
+                const std::string name="Ara"+kind+(i<10?"0":"")+std::to_string(i);
+                const bool mana=kind=="Mana";
                 out<<"["<<name<<"] {\nfootprintx="<<(mana?2:3)<<";\nfootprintz="<<(mana?2:4)
                    <<";\nblocking="<<(!mana)<<"; }\n";
             }

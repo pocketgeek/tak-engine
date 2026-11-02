@@ -144,7 +144,8 @@ void weaponSwitch() {
     auto run=[&](const RetailWeaponSwitchInput& in,int e,int f,int rnd=5,int* drawsOut=nullptr){
         int draws=0;auto [E,F,R]=row(e,f,rnd,&draws);
         const int c=sim::retailWeaponSwitchChoice(in,E,F,R);
-        if(drawsOut)*drawsOut=draws;return c;
+        if(drawsOut)*drawsOut=draws;
+        return c;
     };
     RetailWeaponSwitchInput base;base.target=true;base.selected=0;base.targetHp=500;
     base.slots[0]={true,true,true,0,false,false,60};

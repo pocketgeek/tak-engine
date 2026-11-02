@@ -262,7 +262,7 @@ bool Controller::navalBodyAtLeast(const tak::sim::World& world,const tak::sim::U
     std::set<std::pair<int,int>> seen{{sx,sz}};
     for (size_t head=0;head<queue.size() && int(queue.size())<cells;++head) {
         const auto [cx,cz]=queue[head];
-        for (const auto [nx,nz]:{std::pair{cx-1,cz},std::pair{cx+1,cz},std::pair{cx,cz-1},std::pair{cx,cz+1}})
+        for (auto [nx,nz]:{std::pair{cx-1,cz},std::pair{cx+1,cz},std::pair{cx,cz-1},std::pair{cx,cz+1}})
             if (grid.fits(nx,nz,foot) && seen.insert({nx,nz}).second) queue.emplace_back(nx,nz);
     }
     return int(queue.size())>=cells;
@@ -296,7 +296,7 @@ bool Controller::navalLaunchClear(const tak::sim::World& world,const tak::sim::U
         if (!fits) continue;
         if (cx+ship->footX<=ox || cx>=ox+factory->footX ||
             cz+ship->footZ<=oz || cz>=oz+factory->footZ) return true;
-        for (const auto [nx,nz]:{std::pair{cx-1,cz},std::pair{cx+1,cz},std::pair{cx,cz-1},std::pair{cx,cz+1}}) {
+        for (auto [nx,nz]:{std::pair{cx-1,cz},std::pair{cx+1,cz},std::pair{cx,cz-1},std::pair{cx,cz+1}}) {
             if (nx<x0 || nz<z0 || nx>=x1 || nz>=z1) continue;
             auto& seen=visited[size_t(nz-z0)*width+nx-x0];
             if (!seen) {seen=1;queue.emplace_back(nx,nz);}
@@ -351,7 +351,7 @@ int Controller::navalDoorSteps(const tak::sim::World& world,const tak::sim::Unit
                                   oz-(cz+ship->footZ),cz-(oz+factory->footZ)});
         if (clear>=reach) {found=std::max(0,steps-door-reach);break;}
         if (steps>=budget) continue;
-        for (const auto [nx,nz]:{std::pair{cx-1,cz},std::pair{cx+1,cz},std::pair{cx,cz-1},std::pair{cx,cz+1}}) {
+        for (auto [nx,nz]:{std::pair{cx-1,cz},std::pair{cx+1,cz},std::pair{cx,cz-1},std::pair{cx,cz+1}}) {
             if (nx<x0 || nz<z0 || nx>=x1 || nz>=z1) continue;
             auto& seen=depth[size_t(nz-z0)*width+nx-x0];
             if (seen<0) {seen=int16_t(steps+1);queue.emplace_back(nx,nz);}

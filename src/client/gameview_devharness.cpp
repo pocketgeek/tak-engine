@@ -837,7 +837,7 @@
             check(artSide_=="ara","the panel art follows back");
             frame();
             check(!guiBtnRects_.empty(),"the order buttons are on show");
-            for (const auto [r,cmd]:std::vector<std::pair<SDL_FRect,char>>(guiBtnRects_)) {
+            for (auto [r,cmd]:std::vector<std::pair<SDL_FRect,char>>(guiBtnRects_)) {
                 clickAt(r.x+r.w/2,r.y+r.h/2);
                 check(selection_==std::vector<int>{a1},"a button press does not reach the map");
             }

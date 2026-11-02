@@ -79,7 +79,7 @@ std::vector<int> distances(const sim::NavGrid& nav,Point start,int foot) {
     q.reserve(d.size());q.push_back(start.second*w+start.first);d[q[0]]=0;
     for (size_t head=0;head<q.size();++head) {
         const int c=q[head],x=c%w,z=c/w;
-        for (const auto [dx,dz]:std::array<Point,4>{{{0,-1},{1,0},{0,1},{-1,0}}}) {
+        for (auto [dx,dz]:std::array<Point,4>{{{0,-1},{1,0},{0,1},{-1,0}}}) {
             const int nx=x+dx,nz=z+dz;
             if (nx<0||nz<0||nx>=w||nz>=h) continue;
             const int n=nz*w+nx;
@@ -146,7 +146,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
             mark(a.first+(b.first-a.first)*i/std::max(1,steps),
                  a.second+(b.second-a.second)*i/std::max(1,steps),radius,1);
     };
-    for (const auto s:r.starts) {
+    for (auto s:r.starts) {
         mark(s.first,s.second,43,2); // home economy: terrain is flat; scenery allowed only outside base/routes
         mark(s.first,s.second,14,5); // bit 4: walkable lane home (see scattered mana)
         if (p.layout!=Islands && p.layout!=Maze && p.layout!=Ports) reserveRoute(s,{w/2,h/2},8);
@@ -178,7 +178,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
             const int bend=int(noise(p.seed,x*32,0,w/3)%3)-1;
             water=std::abs(z-sh/2-bend)<=1 || std::abs(x-sw/2)<=1;
         }
-        for (const auto [sx,sz]:r.starts) {
+        for (auto [sx,sz]:r.starts) {
             const int dx=std::abs(x*32-sx),dz=std::abs(z*32-sz);
             const int radius=p.layout==Islands?islandRadius:48;
             // Round larger islands without cutting into their identical home areas.
@@ -320,7 +320,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
                 {3+4*std::clamp((x/32-1)/4,0,cols-1),3+4*std::clamp((z/32-1)/4,0,rows-1)});
         } else {
             for(int z=0;z<=sh;++z)for(int x=0;x<=sw;++x)
-                high[size_t(z)*(sw+1)+x]=p.reliefDensity && fractal(p.seed^0x48494748,x*32,z*32,std::max(w,h))<80+int(p.reliefDensity)*100/255;
+                high[size_t(z)*(sw+1)+x]=p.reliefDensity && int(fractal(p.seed^0x48494748,x*32,z*32,std::max(w,h)))<80+int(p.reliefDensity)*100/255;
         }
         for(int z=0;z<=sh;++z)for(int x=0;x<=sw;++x) {
             for(auto [sx,sz]:r.starts) if(std::abs(x*32-sx)<=48&&std::abs(z*32-sz)<=48) high[size_t(z)*(sw+1)+x]=0;
@@ -459,7 +459,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
         decorateDeposit(x,z);
         mark(x,z,7,1);
     };
-    for(const auto s:r.starts)for(int tier=0;tier<3;++tier) {
+    for(auto s:r.starts)for(int tier=0;tier<3;++tier) {
         const Point d={s.first+homeOffsets[tier].first,s.second+homeOffsets[tier].second};
         if(!flat(d.first-5,d.second-5,12,12))throw std::runtime_error("Random map home resource area is obstructed");
         reserveRoute(s,d,5);deposit(d.first,d.second,tier);
@@ -473,7 +473,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
     std::vector<std::vector<int>> homeDistances;
     for(size_t k=0;k<r.starts.size();++k) {
         auto d=distances(ground,r.starts[k],6);
-        if(p.layout!=Islands&&k==0)for(const auto s:r.starts)
+        if(p.layout!=Islands&&k==0)for(auto s:r.starts)
             if(d[size_t(s.second)*w+s.first]<0)throw std::runtime_error("Random map has disconnected starts");
         for(size_t i=0;i<cells;++i)if(d[i]>=0)reachable[i]=1;
         homeDistances.push_back(std::move(d));
@@ -502,7 +502,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
                 bool good=true;
                 for(size_t other=0;other<homeDistances.size();++other)
                     if(other!=player&&homeDistances[other][i]>=0&&homeDistances[other][i]<distance+8)good=false;
-                for(const auto* group:{&deposits,&sites})for(const auto pt:*group)
+                for(const auto* group:{&deposits,&sites})for(auto pt:*group)
                     if((pt.first-x)*(pt.first-x)+(pt.second-z)*(pt.second-z)<32*32)good=false;
                 if(!good)continue;
                 const int score=std::abs(distance-target);
@@ -523,14 +523,14 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
             while(d[size_t(at.second)*w+at.first]>0) {
                 mark(at.first,at.second,4,5);
                 const int here=d[size_t(at.second)*w+at.first];
-                for(const auto [dx,dz]:std::array<Point,4>{{{0,-1},{1,0},{0,1},{-1,0}}}) {
+                for(auto [dx,dz]:std::array<Point,4>{{{0,-1},{1,0},{0,1},{-1,0}}}) {
                     const int nx=at.first+dx,nz=at.second+dz;
                     if(nx>=0&&nz>=0&&nx<w&&nz<h&&d[size_t(nz)*w+nx]==here-1){at={nx,nz};break;}
                 }
             }
         }
         try {
-            for (const auto site : sites) deposit(site.first,site.second,1);
+            for (auto site : sites) deposit(site.first,site.second,1);
         } catch(const NoManaRuins&) {
             // Ruins can lose their last free position when all approaches in
             // the round are reserved. Omit the complete round fairly, restoring
@@ -571,9 +571,9 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
                 const size_t i=size_t(z)*w+x;
                 if(reserved[i]||!reachable[i]||!flat(x-6,z-6,14,14))continue;
                 bool good=true;
-                for(const auto s:r.starts)
+                for(auto s:r.starts)
                     if((s.first-x)*(s.first-x)+(s.second-z)*(s.second-z)<60*60)good=false;
-                for(const auto pt:deposits)
+                for(auto pt:deposits)
                     if((pt.first-x)*(pt.first-x)+(pt.second-z)*(pt.second-z)<24*24)good=false;
                 for(int dz=-1;good&&dz<=1;++dz)for(int dx=-1;dx<=1;++dx) {
                     if(gx+dx<0||gz+dz<0||gx+dx>=nx||gz+dz>=nz)continue;
@@ -585,7 +585,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
             }
         }
         // Reserve every approach before any ruins exist, as the expansion rounds do.
-        for(const auto site:sites) {
+        for(auto site:sites) {
             size_t owner=0;int best=-1;
             for(size_t player=0;player<homeDistances.size();++player) {
                 const int d=homeDistances[player][size_t(site.second)*w+site.first];
@@ -596,14 +596,14 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
             while(d[size_t(at.second)*w+at.first]>0&&!(reserved[size_t(at.second)*w+at.first]&4)) {
                 lane.push_back(at);
                 const int here=d[size_t(at.second)*w+at.first];
-                for(const auto [dx,dz]:std::array<Point,4>{{{0,-1},{1,0},{0,1},{-1,0}}}) {
+                for(auto [dx,dz]:std::array<Point,4>{{{0,-1},{1,0},{0,1},{-1,0}}}) {
                     const int nx2=at.first+dx,nz2=at.second+dz;
                     if(nx2>=0&&nz2>=0&&nx2<w&&nz2<h&&d[size_t(nz2)*w+nx2]==here-1){at={nx2,nz2};break;}
                 }
             }
-            for(const auto pt:lane)mark(pt.first,pt.second,4,5);
+            for(auto pt:lane)mark(pt.first,pt.second,4,5);
         }
-        for(const auto site:sites) {
+        for(auto site:sites) {
             // Shipped sacred-stone tier mix (223:446:537), as retail maps scatter them.
             const uint32_t roll=uint32_t(splitmix(scatterRng)%1206);
             const int tier=roll<223?0:roll<669?1:2;
@@ -655,7 +655,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
         for(size_t j=r.starts.size()*3+k;j<roundDeposits;j+=r.starts.size())
             if(d[size_t(deposits[j].second)*w+deposits[j].first]<0)
                 throw std::runtime_error("Random map expansion mana is unreachable");
-        if(p.layout!=Islands)for(const auto target:r.starts)
+        if(p.layout!=Islands)for(auto target:r.starts)
             if(d[size_t(target.second)*w+target.first]<0)throw std::runtime_error("Random map scenery blocks an army route");
         for(size_t j=roundDeposits;j<deposits.size();++j)
             if(d[size_t(deposits[j].second)*w+deposits[j].first]>=0)scatterReached[j-roundDeposits]=1;
@@ -666,7 +666,7 @@ Result generateBalanced(const Params& p,const hpi::Vfs& vfs) {
         sim::NavGrid::Limits shipLimits;shipLimits.minWaterDepth=15;
         sim::NavGrid ships(m.heights,w,h,m.seaLevel,shipLimits);ships.setObstacles(&obstacles);
         std::vector<int> waterDistances;
-        for(const auto s:r.starts) {
+        for(auto s:r.starts) {
             Point best={-1,-1};int bestDistance=w*w+h*h;
             for(int z=16;z<h-16;++z)for(int x=16;x<w-16;++x) {
                 const int d=(x-s.first)*(x-s.first)+(z-s.second)*(z-s.second);

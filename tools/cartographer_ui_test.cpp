@@ -100,7 +100,8 @@ static int objectsWorkflow(const char* data) {
         tak::hpi::Archive archive(root/"Objects.kmp");
         for(const auto& entry:archive.entries())if(entry.path.ends_with(".crt")) {
             const auto saved=cart::toPlaced(tak::crt::parse(archive.read(entry)));
-            if(saved.size()!=2 || saved[0].health!=100 || saved[1].health!=75 || saved[1].name!="West watch")throw std::runtime_error("object list edited the wrong unit");found=true;
+            if(saved.size()!=2 || saved[0].health!=100 || saved[1].health!=75 || saved[1].name!="West watch")throw std::runtime_error("object list edited the wrong unit");
+            found=true;
         }
     }
     fs::remove_all(root);if(result || failed || !found || lastFrame<13 || lastFrame>14)return 1;

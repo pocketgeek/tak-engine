@@ -1996,7 +1996,7 @@ int main(int argc, char** argv) {
         if (!regen) std::printf("  (no regenerating unit type; skipped)\n");
         else {
             struct Case { const sim::UnitType* t; const char* label; };
-            std::vector<Case> cases{{regen, "a REGENERATING unit"}};
+            std::vector<Case> cases;cases.push_back({regen, "a REGENERATING unit"});
             if (norgen) cases.push_back({norgen, "a non-regenerating unit"});
             for (const auto& c : cases) {
                 sim::World w;

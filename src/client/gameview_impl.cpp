@@ -2523,7 +2523,7 @@
             event.code%2 ? 8:16,[&] {return tak::sim::retailCrtRandom(smokeRandom_);}));
     }
 
-    void GameView::emitSfx(const UnitR& u, Anim& a, int piece, int32_t sfx) {
+    void GameView::emitSfx(const UnitR& /*u*/, Anim& a, int piece, int32_t sfx) {
         // These emissions come from the simulation instruction stream, not the
         // independently paced display VM.
         if(sfx==257 || sfx==258 || sfx==265 || (sfx>=260 && sfx<=262))return;

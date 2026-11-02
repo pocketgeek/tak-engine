@@ -251,7 +251,7 @@ struct RetailReplayProbe {
         u.routeStamp=int32_t(stamp);u.routeCrowded=u.routeTraffic=u.routeFailed=u.routeDetour=false;
         u.groundMovementMode=0;u.groundScanTick=0;
     }
-    static size_t navigationPoints(const World& world,const Unit& u) {
+    static size_t navigationPoints(const World& /*world*/,const Unit& u) {
         return u.orders.empty()?0:u.orders[World::currentLeg(u.orders)].navigationConsumed?1:
             World::currentLeg(u.orders)+2;
     }
@@ -1398,7 +1398,8 @@ int main(int argc, char** argv) {
             RetailReplayProbe::queuedBuild(world,queued.id,queued.type,queued.x,queued.z);
         // Initial setup draws must not advance the observed starting RNG state.
         RetailReplayProbe::boundary(world, tick, rng,version>=22);
-        std::unique_ptr<FILE, decltype(&std::fclose)> output(std::fopen(argv[3], "wx"), &std::fclose);
+        struct CloseFile {void operator()(FILE* f) const {std::fclose(f);}};
+        std::unique_ptr<FILE, CloseFile> output(std::fopen(argv[3], "wx"));
         if (!output) throw std::runtime_error("output must be a new writable file");
         if (argc==5 && std::string(argv[4])=="--feature-map") {
             if (steps!=0) throw std::runtime_error("feature map inspection requires zero steps");

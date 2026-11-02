@@ -1238,7 +1238,7 @@ void quota() {
     for(int t=0;t<9000;++t)f.world.tick(1.f/30);
     int arrived=0;for(int id:ids)arrived+=f.world.unit(id)->orders.empty();
     const auto s=f.world.legionStats();
-    std::printf("quota arrived=%d fields=%llu evictions=%llu bytes=%zu\n",arrived,(unsigned long long)s.fieldsBuilt,
+    std::printf("quota arrived=%d fields=%llu evictions=%llu bytes=%llu\n",arrived,(unsigned long long)s.fieldsBuilt,
         (unsigned long long)s.fieldEvictions,(unsigned long long)s.bytes);
     check(arrived==int(ids.size()),"orders starved under the field cap");
     check(s.fieldEvictions>0,"fixture did not exercise eviction");
@@ -1271,7 +1271,7 @@ void pens() {
         if(arrived==int(ids.size()))all=t;
     }
     const auto s=f.world.legionStats();
-    std::printf("pens all_arrived_tick=%d arrived=%d/%zu fields=%llu evictions=%llu bytes=%zu\n",all,arrived,ids.size(),(unsigned long long)s.fieldsBuilt,
+    std::printf("pens all_arrived_tick=%d arrived=%d/%zu fields=%llu evictions=%llu bytes=%llu\n",all,arrived,ids.size(),(unsigned long long)s.fieldsBuilt,
         (unsigned long long)s.fieldEvictions,(unsigned long long)s.bytes);
     check(ids.size()>48,"fixture does not exceed the whole-map field cap");
     check(arrived==int(ids.size()),"penned orders starved under the field budget");
@@ -3405,7 +3405,7 @@ NarrowRun flyerfrontNarrow(int cols,int rows) {
     for(int t=0;t<2400;++t) {
         f.world.tick(1.f/30);
         if(t%30||t<300)continue;
-        double sx=0,sz=0;for(int id:ground){sx+=f.world.unit(id)->x.toFloat();sz+=f.world.unit(id)->z.toFloat();}
+        double sx=0;for(int id:ground)sx+=f.world.unit(id)->x.toFloat();
         const float cx=float(sx/ground.size());
         bool busy=false;for(int id:ground)busy|=!f.world.unit(id)->orders.empty();
         if(busy&&cx-wx>=9.f) {
@@ -3443,7 +3443,7 @@ void flyerfront() {
     // Narrow ground (measured: depth 193 / 219 / 220, a lane per 64 px of front 448 / 455 / 455): the 8 flyers
     // over the front in at most 4 rows (2 lanes; 192 px plus the lag), the leading ones over the leading body,
     // and over a 10-deep column none behind its middle (the file down a column had 4 of 8 behind it).
-    for(const auto [cols,rows]:{std::pair{1,1},std::pair{1,10},std::pair{2,10}}) {
+    for(auto [cols,rows]:{std::pair{1,1},std::pair{1,10},std::pair{2,10}}) {
         const auto n=flyerfrontNarrow(cols,rows);
         check(n.n>0,"flyerfront narrow: no window measured");
         check(n.top>=-80&&n.top<=60,"flyerfront narrow: the leading flyers were not over the ground's leading body");

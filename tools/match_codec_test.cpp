@@ -9,6 +9,10 @@
 // rules digest to what shipped. A golden that changes is a protocol change: bump
 // kNetVersion (or kReplayFormat) deliberately, never re-capture to make it pass.
 
+// GCC 16 sees Writer::str's copy of a short literal as running past the string's
+// 8-byte buffer; the copy is bounded by the string's own size.
+#pragma GCC diagnostic ignored "-Warray-bounds"
+
 #include "client/replayfile.h"
 #include "net/crypto.h"
 #include "net/matchconfig.h"
