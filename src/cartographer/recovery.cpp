@@ -1,4 +1,5 @@
 #include "cartographer/recovery.h"
+#include "util/u8path.h"
 #include "cartographer/document.h"
 #include "cartographer/scenarioinfo.h"
 #include <algorithm>
@@ -147,7 +148,7 @@ std::optional<RecoveryDestination> readRecoveryInfo(const std::vector<uint8_t>& 
     if(!(in>>magic>>version) || magic!="TAK_CARTOGRAPHER_RECOVERY" || version!=1 ||
        !(in>>std::quoted(result.name)>>std::quoted(result.directory)) || !validDocumentName(result.name) ||
        result.directory.empty() || result.directory.size()>4096 || result.directory.find('\0')!=std::string::npos ||
-       !fs::u8path(result.directory).is_absolute())return {};
+       !tak::u8path(result.directory).is_absolute())return {};
     return result;
 }
 }

@@ -12,6 +12,7 @@
 
 #include <string>
 #include <vector>
+#include "util/u8path.h"
 
 #ifdef _WIN32
   #include <filesystem>
@@ -37,9 +38,9 @@ public:
     bool start(const std::string& program, const std::vector<std::string>& args) {
         stop();
 #ifdef _WIN32
-        const auto executable = std::filesystem::u8path(program).wstring();
+        const auto executable = tak::u8path(program).wstring();
         std::wstring cmd = quoteWindowsArgument(executable);
-        for (const auto& a : args) cmd += L" " + quoteWindowsArgument(std::filesystem::u8path(a).wstring());
+        for (const auto& a : args) cmd += L" " + quoteWindowsArgument(tak::u8path(a).wstring());
         STARTUPINFOW si{}; si.cb = sizeof(si);
         if (!CreateProcessW(executable.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
                             nullptr, nullptr, &si, &proc_)) return false;

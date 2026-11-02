@@ -7,10 +7,11 @@
 #include <cstdio>
 #include <filesystem>
 #include <utility>
+#include "util/u8path.h"
 
 bool loadReplayFile(const std::string& path, ReplayFile& out) {
 #ifdef _WIN32
-    FILE* f = _wfopen(std::filesystem::u8path(path).c_str(), L"rb");
+    FILE* f = _wfopen(tak::u8path(path).c_str(), L"rb");
 #else
     FILE* f = std::fopen(path.c_str(), "rb");
 #endif

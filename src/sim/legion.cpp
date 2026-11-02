@@ -8093,8 +8093,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             const int64_t v=int64_t(gx-cx)*(gx-cx)+int64_t(gz-cz)*(gz-cz);
             if(v<here)options[size_t(count++)]={v,k};
         }
+#pragma GCC diagnostic push   // GCC sees std::sort's 16-element path past this 8-slot array
+#pragma GCC diagnostic ignored "-Warray-bounds"
         std::sort(options.begin(),options.begin()+count);
         for(int i=0;i<count;++i) {
+#pragma GCC diagnostic pop
             const auto& d=kDirections[size_t(options[size_t(i)].second)];
             if(!requestYield(u,ox+d[0],oz+d[1]))continue;
             m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;m.detourPass=false;m.detourFlow=false;
@@ -13633,8 +13636,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     const int64_t v=metric(ox+d[0],oz+d[1]);
                     if(v<here)options[size_t(count++)]={v,k};
                 }
+#pragma GCC diagnostic push   // GCC sees std::sort's 16-element path past this 8-slot array
+#pragma GCC diagnostic ignored "-Warray-bounds"
                 std::sort(options.begin(),options.begin()+count);
                 for(int i=0;i<count&&!moved;++i) {
+#pragma GCC diagnostic pop
                     const auto& d=kDirections[size_t(options[size_t(i)].second)];
                     if(!stepFree(u,ox,oz,ox+d[0],oz+d[1]))continue;
                     const auto [cx,cz]=stepAim(u,(oz+d[1])*W+ox+d[0]);

@@ -13,6 +13,14 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 add_compile_options(-Wall -Wextra)
+# Aggregates such as Order{...} name only the fields they set and leave the rest at their
+# defaults on purpose; -Wextra's missing-field-initializers would flag every one.
+add_compile_options(-Wno-missing-field-initializers)
+# GCC 11 and 12 (Slackware 15.0, Debian 12, Ubuntu 22.04) report memcpy overlaps inside
+# std::string and maybe-uninitialized values that later compilers no longer see.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 13)
+  add_compile_options(-Wno-restrict -Wno-maybe-uninitialized)
+endif()
 
 # Unoptimized builds (no -O1..-O3/-Os/-Oz/-Ofast in the configuration's C++ flags, as in a
 # plain Debug build) and sanitizer builds run the simulation many times slower. A few long

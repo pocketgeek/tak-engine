@@ -8,13 +8,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include "util/u8path.h"
 using namespace tak;
 int main() {
     auto root = std::filesystem::temp_directory_path() / ("tak-benchmods-" + crypto::toHex(crypto::randomVec(8)));
     int failures = 0;
     auto check = [&](bool value, const char* label) { if (!value) { std::cerr << "FAIL: " << label << '\n'; ++failures; } };
     auto put = [&](const std::string& path, const std::string& value) {
-        auto p = root / std::filesystem::u8path(path);
+        auto p = root / tak::u8path(path);
         std::filesystem::create_directories(p.parent_path());
         std::ofstream(p, std::ios::binary) << value;
     };

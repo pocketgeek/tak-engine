@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstring>
 #include <cmath>
+#include "util/u8path.h"
 
 // Out-of-line GameView method definitions (lobby concern), split from the
 // class body in gameview.h so editing a body recompiles only this translation
@@ -470,7 +471,7 @@ float createOptionPx(float maxW) {
 
     void GameView::scanModPacks() {
         if(!modPacksScanned_){
-            const auto root=std::filesystem::u8path(installRoot_);
+            const auto root=tak::u8path(installRoot_);
             availableGameMods_=mods_.game?tak::hpi::modPacks(root,tak::hpi::ModKind::Game):std::vector<std::string>{};
             availableCosmeticMods_=mods_.cosmetic?tak::hpi::modPacks(root,tak::hpi::ModKind::Cosmetic):std::vector<std::string>{};
             alwaysCosmeticMods_=mods_.cosmetic?tak::hpi::alwaysEnabledPacks(root,tak::hpi::ModKind::Cosmetic):std::vector<std::string>{};

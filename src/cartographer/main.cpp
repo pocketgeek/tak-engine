@@ -36,6 +36,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <chrono>
+#include "util/u8path.h"
 
 float cart::kUIScale = 1.5f;
 float cart::kBacking = 1.0f;
@@ -78,9 +79,9 @@ static const char* testProfile() {
 // Preferences/recovery folder. A test profile (above) names it outright; otherwise the
 // per-user folder, which follows XDG_DATA_HOME in tests on every platform (util/prefpath.h).
 static std::filesystem::path profileFolder() {
-    if(const char* o=testProfile()) return std::filesystem::u8path(o);
+    if(const char* o=testProfile()) return tak::u8path(o);
     const std::string path=tak::prefPath("Cartographer");
-    return path.empty()?std::filesystem::path():std::filesystem::u8path(path);
+    return path.empty()?std::filesystem::path():tak::u8path(path);
 }
 
 namespace {
@@ -106,13 +107,13 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
     // A test profile has its own copy of the game's settings file, so a test can
     // exercise the shared data folder without ever touching the player's real one.
     if(const char* profile=testProfile())
-        tak::setSettingsPath(pathText(std::filesystem::u8path(profile)/"game-settings.ini"));
+        tak::setSettingsPath(pathText(tak::u8path(profile)/"game-settings.ini"));
     // Data root, by the game's own rules (tak::chooseDataFolder): --data wins; then the
     // local directory if it holds a valid install (drop the editor into a game folder
     // and it just works); then the GAME's saved folder, which Preferences changes for
     // both programs; then ask.
     {
-        const auto valid=[](const std::string& folder,std::string* why) {return tak::hpi::validInstall(std::filesystem::u8path(folder),why);};
+        const auto valid=[](const std::string& folder,std::string* why) {return tak::hpi::validInstall(tak::u8path(folder),why);};
         std::error_code ec;const auto here=std::filesystem::current_path(ec);
         const auto choice=tak::chooseDataFolder(dataRoot,ec?std::string():pathText(here),tak::loadSettings().dataDir,valid);
         dataOrigin=choice.origin;
@@ -124,7 +125,7 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
                 const auto picked=tak::pickDirectory(tak::kDataFolderPickerTitle,"");
                 if(picked.empty())break;   // cancelled
                 std::string why;
-                if(valid(picked,&why)) {dataRoot=picked;tak::saveDataFolderSetting(picked,tak::hpi::rootManifest(std::filesystem::u8path(picked)));}
+                if(valid(picked,&why)) {dataRoot=picked;tak::saveDataFolderSetting(picked,tak::hpi::rootManifest(tak::u8path(picked)));}
                 else SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Not a game folder",tak::dataFolderInvalidMessage(why).c_str(),nullptr);
             }
     }
@@ -133,13 +134,13 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
         throw Exit{2};
     }
 
-    if(!explicitOutput) outDir=pathText(std::filesystem::u8path(dataRoot)/"Maps");
+    if(!explicitOutput) outDir=pathText(tak::u8path(dataRoot)/"Maps");
     // A .kmp/.tnt FILE named at launch (how a restart reopens a saved document) opens
     // through File > Open once the editor is up; a bare name is an installed map.
     {
         std::error_code ec;
         if(!mapName.empty() && shotPath.empty() && exportPath.empty() && bundlePath.empty() && stampName.empty() &&
-           std::filesystem::is_regular_file(std::filesystem::u8path(mapName),ec)) {pendingOpen=mapName;mapName.clear();}
+           std::filesystem::is_regular_file(tak::u8path(mapName),ec)) {pendingOpen=mapName;mapName.clear();}
     }
 
     SDL_SetMainReady();   // we own main() (SDL_MAIN_HANDLED); tell SDL not to hijack it
@@ -241,9 +242,9 @@ cart::Session::Session(int argc,char** argv,const FrameHook& frameHook,const Edi
 
     // The game's downloaded maps and Test Map copies (MapCache/) and saved generated
     // maps live in the game's per-user folder, beside its settings.ini; list them too.
-    tak::hpi::setUserMapRoot(std::filesystem::u8path(tak::replayDir()));
+    tak::hpi::setUserMapRoot(tak::u8path(tak::replayDir()));
     try {
-        vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot));
+        vfs = tak::hpi::mountRetailRoot(tak::u8path(dataRoot));
     } catch (const std::exception& e) {
         std::fprintf(stderr, "mount %s: %s\n", dataRoot.c_str(), e.what());
         throw Exit{1};

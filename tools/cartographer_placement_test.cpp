@@ -60,6 +60,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "util/u8path.h"
 
 namespace fs=std::filesystem;
 using Editor=cart::Editor;
@@ -184,7 +185,7 @@ bool drive(std::vector<std::string> args,const std::function<bool(Editor&,const 
 // (maps/) one, else the first downloaded one.
 std::map<std::string,std::string> mapsByWorld(const std::string& data) {
     std::map<std::string,std::pair<bool,std::string>> found;
-    const auto vfs=tak::hpi::mountRetailRoot(fs::u8path(data));
+    const auto vfs=tak::hpi::mountRetailRoot(tak::u8path(data));
     for(const auto& [name,path]:tak::hpi::listMaps(vfs)) {
         try {
             const auto bytes=vfs.read(path.substr(0,path.rfind('.'))+".ota");
@@ -528,7 +529,7 @@ std::map<std::string,FeatureTraits> featureTraits(const tak::hpi::Vfs& vfs,const
 // resolves each name with the browser's footprint.
 bool featureSession(const std::string& data,const std::string& world,Tally& tally) {
     const auto root=tempRoot("features");isolateProfile(root);
-    const auto traits=featureTraits(tak::hpi::mountRetailRoot(fs::u8path(data)),tak::hpi::mountRetailRoot(fs::u8path(data)),world);
+    const auto traits=featureTraits(tak::hpi::mountRetailRoot(tak::u8path(data)),tak::hpi::mountRetailRoot(tak::u8path(data)),world);
     enum {START,SEARCH,PICK,PLACED,UNDONE,REDONE,ERASED,RESTORED,REOPENED} phase=START;
     size_t item=0;int cellX=0,cellZ=0;BrowserPick pick;tak::tnt::Map expected,prior;
     std::vector<std::pair<cart::FeatureRef,size_t>> placed;   // browser entry, cell
@@ -632,7 +633,7 @@ int featuresWorkflow(const std::string& data,std::vector<std::string> worlds) {
 // click, undo; then save, reopen and compare (the .crt round trip).
 bool unitSession(const std::string& data,const std::string& world,Tally& tally) {
     const auto root=tempRoot("units");isolateProfile(root);
-    tak::hpi::Vfs plain=tak::hpi::mountRetailRoot(fs::u8path(data));
+    tak::hpi::Vfs plain=tak::hpi::mountRetailRoot(tak::u8path(data));
     enum {START,WATER,WATERED,SEARCH,PICK,PLACED,UNDONE,REDONE,ERASED,RESTORED,REOPENED} phase=START;
     size_t item=0;int water=-1;BrowserPick pick;tak::tnt::Map expectedMap;
     std::vector<cart::PlacedUnit> expected;std::vector<bool> legal;
@@ -876,13 +877,13 @@ int slotsWorkflow(const std::string& data,std::vector<std::string> worlds) {
 // opened from disk replaces the view and the library is rescanned without them.
 std::optional<std::string> packInstall(const std::string& data,const std::string& root) {
     const auto install=fs::path(root)/"install";fs::create_directories(install/"Maps");
-    for(const auto& entry:fs::directory_iterator(fs::u8path(data))) {
+    for(const auto& entry:fs::directory_iterator(tak::u8path(data))) {
         if(!entry.is_regular_file())continue;   // root archives are all validInstall needs
         std::error_code ec;fs::create_symlink(fs::absolute(entry.path()),install/entry.path().filename(),ec);
         if(ec)fs::create_hard_link(entry.path(),install/entry.path().filename(),ec);
         if(ec)return std::nullopt;
     }
-    cart::FeatureLibrary library;library.scan(tak::hpi::mountRetailRoot(fs::u8path(data)),"aramon");
+    cart::FeatureLibrary library;library.scan(tak::hpi::mountRetailRoot(tak::u8path(data)),"aramon");
     if(library.list().empty())return std::nullopt;
     const auto& art=library.list().front();   // borrowed sprite
     std::string tdf;
@@ -1868,7 +1869,7 @@ int smokeWorkflow(const std::string& data,std::vector<std::string> worlds) {
 int main(int argc,char** argv) {
     if(argc<3)return 2;
     const std::string data=argv[1],mode=argv[2];
-    if(data.empty() || !tak::hpi::validInstall(fs::u8path(data),nullptr)) {std::cout<<"SKIP: no game data at '"<<data<<"'\n";return 77;}
+    if(data.empty() || !tak::hpi::validInstall(tak::u8path(data),nullptr)) {std::cout<<"SKIP: no game data at '"<<data<<"'\n";return 77;}
     std::vector<std::string> rest(argv+3,argv+argc);
     if(mode=="starts")return startsWorkflow(data,rest);
     if(mode=="terrain")return terrainWorkflow(data,rest);

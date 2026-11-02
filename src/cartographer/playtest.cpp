@@ -1,4 +1,5 @@
 #include "cartographer/playtest.h"
+#include "util/u8path.h"
 #include "util/winargv.h"
 #include "cartographer/document.h"
 #include "util/virtualpath.h"
@@ -68,7 +69,7 @@ bool Playtest::start(const fs::path& client,const fs::path& data,
 #ifdef _WIN32
         std::wstring command=tak::quoteWindowsArgument(fs::absolute(client).wstring())+L" --data "+tak::quoteWindowsArgument(fs::absolute(data).wstring())+
             L" --play-map "+tak::quoteWindowsArgument(snapshot_.wstring());
-        if(!gameMod.empty())command+=L" --game-mod "+tak::quoteWindowsArgument(fs::u8path(gameMod).wstring());
+        if(!gameMod.empty())command+=L" --game-mod "+tak::quoteWindowsArgument(tak::u8path(gameMod).wstring());
         STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION process{};
         if(!CreateProcessW(fs::absolute(client).c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,
                            nullptr,nullptr,&startup,&process))

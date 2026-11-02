@@ -13,6 +13,7 @@
 
 #include <chrono>
 #include <fstream>
+#include "util/u8path.h"
 
 Uint64 cart::Session::recoveryClock() const {return hooks.recoveryClock?hooks.recoveryClock():SDL_GetTicks64();}
 
@@ -38,8 +39,8 @@ bool cart::Session::saveDocument(const std::string& destination,bool bundle) {
         cart::SaveSnapshot snapshot;
         snapshot.map=mapView.map();snapshot.metadata=scenario;snapshot.scenario=scen;
         snapshot.units=units;snapshot.useOnly=useOnly;snapshot.aiFiles=aiFiles;snapshot.vfs=&vfs;
-        snapshot.installMaps=cart::installMapsFolder(std::filesystem::u8path(dataRoot));
-        snapshot.destination=std::filesystem::u8path(destination);
+        snapshot.installMaps=cart::installMapsFolder(tak::u8path(dataRoot));
+        snapshot.destination=tak::u8path(destination);
         snapshot.bundle=bundle;snapshot.rebuildMinimaps=edited;
         const auto path=snapshot.destination;
         auto progress=std::make_shared<cart::SaveProgress>();
@@ -90,10 +91,10 @@ bool cart::Session::saveBundle(const std::string& path) {return saveDocument(pat
 
 bool cart::Editor::openDocument(const std::string& request) {
     try {
-        auto nextVfs=tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot));
+        auto nextVfs=tak::hpi::mountRetailRoot(tak::u8path(dataRoot));
         std::string path,chosen=request;
         cart::AiFiles nextAiFiles;
-        const auto disk=std::filesystem::u8path(request);
+        const auto disk=tak::u8path(request);
         if(std::filesystem::is_regular_file(disk)) {
             auto files=std::make_shared<tak::hpi::Vfs::Files>();
             if(lowerText(pathText(disk.extension()))==".kmp") {
@@ -107,9 +108,9 @@ bool cart::Editor::openDocument(const std::string& request) {
                 const auto base=pathText(disk.stem());path="kmap/"+base+".tnt";
                 // A sibling ai/ folder, except the install's Maps/ai (read for every map).
                 const auto folder=disk.parent_path();
-                if(!cart::insideFolder(folder,cart::installMapsFolder(std::filesystem::u8path(dataRoot))))nextAiFiles=cart::aiFilesFromFolder(folder);
+                if(!cart::insideFolder(folder,cart::installMapsFolder(tak::u8path(dataRoot))))nextAiFiles=cart::aiFilesFromFolder(folder);
                 for(const char* ext:{".tnt",".ota",".crt",".tdf",".recipe",".editor"}) {
-                    const auto input=disk.parent_path()/std::filesystem::u8path(base+ext);std::ifstream stream(input,std::ios::binary);
+                    const auto input=disk.parent_path()/tak::u8path(base+ext);std::ifstream stream(input,std::ios::binary);
                     if(stream)(*files)[tak::hpi::MountSet::key("kmap/"+base+ext)]={std::istreambuf_iterator<char>(stream),{}};
                 }
             }
@@ -150,10 +151,10 @@ bool cart::Editor::openDocument(const std::string& request) {
 }
 
 std::filesystem::path cart::Editor::gameClient() const {
-    if(hooks.gameClient)return std::filesystem::u8path(hooks.gameClient());
+    if(hooks.gameClient)return tak::u8path(hooks.gameClient());
     std::unique_ptr<char,decltype(&SDL_free)> base(SDL_GetBasePath(),SDL_free);
     if(!base)throw std::runtime_error("Cannot locate the game executable");
-    return cart::Playtest::clientPath(std::filesystem::u8path(base.get()));
+    return cart::Playtest::clientPath(tak::u8path(base.get()));
 }
 
 cart::DocumentFiles cart::Session::installedMapFiles(const std::string& path,const std::string& name) const {
@@ -188,11 +189,11 @@ void cart::Editor::testMap() {
             file.data.insert(file.data.end(),marker.begin(),marker.end());
         }
         std::string error;
-        if(!playtest.start(client,std::filesystem::u8path(dataRoot),files,error))throw std::runtime_error(error);
+        if(!playtest.start(client,tak::u8path(dataRoot),files,error))throw std::runtime_error(error);
         playtestAiMod=false;
         const auto log=preferences.tracePlaytest?" Trigger log: "+pathText(tak::scenarioTracePath(preferencesFolder,playtest.snapshot())):std::string{};
         openMessage("TEST MAP", "Opened a private game lobby from a snapshot. Seat the players used by your scenario, then start. Close the game to return here. Your document and save destination are unchanged."+log+
-            cart::alwaysEnabledGameNote(std::filesystem::u8path(dataRoot)));
+            cart::alwaysEnabledGameNote(tak::u8path(dataRoot)));
     } catch(const std::exception& e) {openMessage("TEST MAP FAILED",e.what());}
 }
 
@@ -224,7 +225,7 @@ void cart::Editor::autosaveRecovery() {
             nextRecovery=recoveryClock()+60000;
             try {
                 auto files=cart::documentFiles(mapView.map(),scenario,scen,units,useOnly,aiFiles,mapName);
-                files.members.push_back(cart::recoveryInfo(mapName,std::filesystem::u8path(outDir)));
+                files.members.push_back(cart::recoveryInfo(mapName,tak::u8path(outDir)));
                 recoveryFilesPresent=true;
                 recoveryJob=std::async(std::launch::async,[files=std::move(files),path=recoverySession->path()]() {
                     std::string error;cart::writeDocumentBundle(path,files,error);return error;

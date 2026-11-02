@@ -15,6 +15,7 @@
 #include "client/datafolder.h"
 #include "client/dirpicker.h"
 #include "hpi/hpi.h"
+#include "util/u8path.h"
 
 namespace tak {
 
@@ -32,8 +33,8 @@ public:
             const std::string picked = picker ? picker(kDataFolderPickerTitle, start)
                                               : pickDirectory(kDataFolderPickerTitle, start);
             return evaluateDataFolderPick(picked, saved,
-                [](const std::string& f, std::string* why) { return hpi::validInstall(std::filesystem::u8path(f), why); },
-                [](const std::string& f) { return hpi::rootManifest(std::filesystem::u8path(f)); });
+                [](const std::string& f, std::string* why) { return hpi::validInstall(tak::u8path(f), why); },
+                [](const std::string& f) { return hpi::rootManifest(tak::u8path(f)); });
         });
     }
     // The dialog (or the validation after it) is still running.

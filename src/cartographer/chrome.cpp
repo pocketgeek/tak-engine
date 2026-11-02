@@ -457,8 +457,8 @@ void cart::Editor::drawHints() {
                     "Features: place trees, rocks and other map objects. Tab cycles tools. Select mode supports box selection and group editing.",
                     "Units: place units for the current owner. Enter edits a selected unit. Ctrl+C/V copies/pastes; Delete removes selected units.",
                     "Starts: place or move player start positions. Check Map (C) reports numbering, overlap and placement issues.",
-                    "Blocked: paint impassable cells that nothing can be built on (the game's blocker marker; flyers pass over). Place paints empty ground, Erase clears; "
-                    "Shift+drag fills a rectangle; [ and ] change the brush size; B shows blocked cells with every tool."};
+                    ("Blocked: paint impassable cells that nothing can be built on (the game's blocker marker; flyers pass over). Place paints empty ground, Erase clears; "
+                     "Shift+drag fills a rectangle; [ and ] change the brush size; B shows blocked cells with every tool.")};
                 hint=hints[(hx-kToolX)/kToolW];
             } else if(hx>=kModeX && hx<kModeX+4*kModeW) {
                 const char* hints[]={

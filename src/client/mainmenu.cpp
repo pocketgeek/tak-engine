@@ -46,6 +46,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "util/u8path.h"
 
 namespace fs = std::filesystem;
 
@@ -595,7 +596,7 @@ struct MainMenu::Impl {
             if (!shotDir || !name) return;
             std::vector<uint8_t> px(size_t(width) * height * 4);
             if (SDL_RenderReadPixels(ren, nullptr, SDL_PIXELFORMAT_RGBA32, px.data(), width * 4) == 0)
-                png::write(text(fs::u8path(shotDir) / name), width, height, px);
+                png::write(text(tak::u8path(shotDir) / name), width, height, px);
         };
         auto send = [&](OptionsScreen& o, Uint32 type, float x, float y) {
             SDL_Event e{}; e.type = type;
@@ -630,7 +631,7 @@ struct MainMenu::Impl {
 
         send(opts, SDL_MOUSEBUTTONDOWN, rx, ry); settle(opts);   // 3: the real install
         check(s.dataDir == good && fileDir() == good, "a valid pick is saved at once (file has '" + fileDir() + "')");
-        check(loadSettings().dataManifest == hpi::rootManifest(fs::u8path(good)), "a valid pick saves its manifest");
+        check(loadSettings().dataManifest == hpi::rootManifest(tak::u8path(good)), "a valid pick saves its manifest");
         check(opts.restartNowRect().w > 0, "a valid pick offers RESTART NOW");
         check(!saved, "picking a folder writes only the folder, not the whole screen's settings");
         frame(opts, "options-datafolder-restart.png");
@@ -786,7 +787,7 @@ struct MainMenu::Impl {
                 if (settings)
                     campaign_ = std::make_unique<CampaignScreen>(ren, vfs, *settings, 0,
                         [this](const std::string& sound) { loadSfx(sound); playSfx(sound); },
-                        std::filesystem::u8path(install));
+                        tak::u8path(install));
                 break;
             case FailTo::Notice: case FailTo::Exit: break;
         }
@@ -1083,7 +1084,7 @@ struct MainMenu::Impl {
         tak::net::recoverReplayParts(dir);
         std::vector<std::pair<std::filesystem::file_time_type, std::string>> found;
         std::error_code ec;
-        for (const auto& e : std::filesystem::directory_iterator(std::filesystem::u8path(dir), ec)) {
+        for (const auto& e : std::filesystem::directory_iterator(tak::u8path(dir), ec)) {
             if (ec) break;
             if (!e.is_regular_file(ec)) continue;
             if (e.path().extension() != ".takrep") continue;
@@ -1334,7 +1335,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         // client_restart test can drive the real relaunch (main clears this pick first).
         if (p.rfind("restart:", 0) == 0) {
             const std::string folder = p.substr(8);
-            saveDataFolderSetting(folder, hpi::rootManifest(std::filesystem::u8path(folder)));
+            saveDataFolderSetting(folder, hpi::rootManifest(tak::u8path(folder)));
             return Choice::Restart;
         }
     }
@@ -1366,7 +1367,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
             // rows and the next-up highlight (nothing is locked either way).
             if (tab == 1)
                 for (int i = 0; i < 12; ++i) tmp.campaignCompleted["the iron plague"].insert(i);
-            CampaignScreen cs(d_->ren, d_->vfs, tmp, tab, {}, std::filesystem::u8path(d_->install));
+            CampaignScreen cs(d_->ren, d_->vfs, tmp, tab, {}, tak::u8path(d_->install));
             cs.render(w, h);
         }
         // Debug: TAK_SHOT_SERVER captures the CONNECT dropdown (2 = CUSTOM selected,
@@ -1760,7 +1761,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                     // returns Choice::Campaign (handled by the campaign_ router above).
                     d_->campaign_ = std::make_unique<CampaignScreen>(d_->ren, d_->vfs, *settings,0,
                         [this](const std::string& sound){d_->loadSfx(sound);d_->playSfx(sound);},
-                        std::filesystem::u8path(d_->install));
+                        tak::u8path(d_->install));
                 }
                 else if (c != Choice::None && c != Choice::Campaign) {
                     d_->flushSfx(w, h);   // let the click sound finish before we tear down

@@ -11,6 +11,7 @@
 #include <iostream>
 #include <iterator>
 #include <stdexcept>
+#include "util/u8path.h"
 
 #ifndef _WIN32
   #include <csignal>
@@ -79,7 +80,7 @@ ReplayFile load(const std::string& path) {
 
 void run() {
     // A non-ASCII folder: the writer and recovery take UTF-8 paths on every platform.
-    const fs::path root = fs::temp_directory_path() / fs::u8path("tak-replay-writer-\xc3\xa9-" +
+    const fs::path root = fs::temp_directory_path() / tak::u8path("tak-replay-writer-\xc3\xa9-" +
                                                                 tak::crypto::toHex(tak::crypto::randomVec(8)));
     fs::create_directories(root);
     struct Cleanup { fs::path p; ~Cleanup() { std::error_code ec; fs::remove_all(p, ec); } } cleanup{root};
@@ -92,7 +93,7 @@ void run() {
         const auto c = trail(200);
         ReplayWriter w;
         check(w.open(dir, h, 5, 1000), "open: " + w.error());
-        check(fs::exists(fs::u8path(w.partPath())) && w.partPath().find(".takrep.part") != std::string::npos,
+        check(fs::exists(tak::u8path(w.partPath())) && w.partPath().find(".takrep.part") != std::string::npos,
               "recording is not a .part");
         for (size_t at : {0u, 1u, 31u, 120u, 200u}) {
             const std::vector<std::vector<uint8_t>> sofar(log.begin(), log.begin() + ptrdiff_t(at));
@@ -102,10 +103,10 @@ void run() {
             check(w.flush(), "flush");
         }
         // The live .part is locked: recovery (even from this process) leaves it alone.
-        check(recoverReplayParts(dir).empty() && fs::exists(fs::u8path(w.partPath())), "recovery touched a live recording");
+        check(recoverReplayParts(dir).empty() && fs::exists(tak::u8path(w.partPath())), "recovery touched a live recording");
         const std::string path = w.finish();
         check(path == dir + "game-5-1000.takrep", "finished name: " + path);
-        check(bytes(fs::u8path(path)) == oneShot(h, log, c), "streamed file differs from the one-shot layout");
+        check(bytes(tak::u8path(path)) == oneShot(h, log, c), "streamed file differs from the one-shot layout");
         check(count(root, ".part") == 0 && count(root, ".chk") == 0, "finish left a .part or sidecar");
         const auto r = load(path);
         check(r.bundles.size() == 200 && r.checks.size() == c.size() && r.checks.back().tick == c.back().tick,
@@ -123,14 +124,14 @@ void run() {
         w.append(ticks(30), trail(30));         // catch-up, part way
         w.append(ticks(90), trail(90));         // caught up and beyond
         const std::string path = w.finish();
-        check(bytes(fs::u8path(path)) == oneShot(h, ticks(90), trail(90)), "rejoin duplicated or lost ticks");
+        check(bytes(tak::u8path(path)) == oneShot(h, ticks(90), trail(90)), "rejoin duplicated or lost ticks");
     }
     // 3. Nothing recorded: nothing kept.
     {
         ReplayWriter w;
         check(w.open(dir, h, 6, 1000), "open 3");
         const std::string part = w.partPath();
-        check(w.finish().empty() && !fs::exists(fs::u8path(part)) && !fs::exists(fs::u8path(part + ".chk")),
+        check(w.finish().empty() && !fs::exists(tak::u8path(part)) && !fs::exists(tak::u8path(part + ".chk")),
               "an empty recording left a file");
     }
 #ifndef _WIN32
@@ -148,7 +149,7 @@ void run() {
         };
         ReplayWriter w;
         check(w.open(dir, h, 12, 1000), "open 3b");
-        const fs::path part = fs::u8path(w.partPath());
+        const fs::path part = tak::u8path(w.partPath());
         limitTo(rlim_t(fs::file_size(part) + 30));
         w.append(ticks(60), trail(60));
         check(!w.flush() && w.failing(), "a write past the limit did not fail");
@@ -158,7 +159,7 @@ void run() {
         check(w.flush() && !w.failing(), "the retry did not recover once there was room");
         w.append(ticks(150), trail(150));
         const std::string path = w.finish();
-        check(!path.empty() && bytes(fs::u8path(path)) == oneShot(h, ticks(150), trail(150)),
+        check(!path.empty() && bytes(tak::u8path(path)) == oneShot(h, ticks(150), trail(150)),
               "a write failure lost or duplicated ticks");
 
         // Still failing at the end: finish keeps what reached the disk as a .part
@@ -167,7 +168,7 @@ void run() {
         check(f.open(dir, h, 13, 1000), "open 3b-2");
         f.append(ticks(40), trail(40));
         check(f.flush(), "flush 3b-2");
-        const fs::path part2 = fs::u8path(f.partPath());
+        const fs::path part2 = tak::u8path(f.partPath());
         limitTo(rlim_t(fs::file_size(part2) + 7));
         f.append(ticks(80), trail(80));
         const std::string none = f.finish();
@@ -179,7 +180,7 @@ void run() {
         fs::rename(fs::path(part2.native() + fs::path(".chk").native()),
                    keep / fs::path(part2.filename().native() + fs::path(".chk").native()));
         const auto rec = recoverReplayParts(u8(keep) + "/");
-        check(rec.size() == 1 && rec[0].bundles == 40 && bytes(fs::u8path(rec[0].path)) == oneShot(h, ticks(40), trail(40)),
+        check(rec.size() == 1 && rec[0].bundles == 40 && bytes(tak::u8path(rec[0].path)) == oneShot(h, ticks(40), trail(40)),
               "the .part of a failed finish did not recover to its complete ticks");
     }
 #endif
@@ -192,7 +193,7 @@ void run() {
         check(w.open(dir, h, gameId, 2000), "open leftovers");
         w.append(ticks(n), trail(n));
         w.flush();
-        const fs::path part = fs::u8path(w.partPath());
+        const fs::path part = tak::u8path(w.partPath());
         const fs::path to = dead / part.filename();
         // Read, not copy_file: the live recording is shared for reading only (Windows).
         put(to, bytes(part));
@@ -222,7 +223,7 @@ void run() {
               "recovery did not keep exactly the complete ticks");
         check(!fs::exists(empty) && count(dead, ".part") == 0 && count(dead, ".chk") == 0,
               "recovery left a .part or sidecar behind");
-        check(bytes(fs::u8path(rec[0].path)) == oneShot(h, ticks(100), trail(100)),
+        check(bytes(tak::u8path(rec[0].path)) == oneShot(h, ticks(100), trail(100)),
               "recovered replay is not the finished layout of its complete ticks");
         const auto r = load(rec[0].path);
         check(r.bundles.size() == 100 && r.checks.size() == trail(100).size(), "recovered replay lost its checkpoints");
@@ -236,7 +237,7 @@ void run() {
         // ...and a finished replay already holds its name: recovery picks another.
         put(dead / "game-10-2000.takrep", {'x'});
         const auto rec = recoverReplayParts(deadDir);
-        check(rec.size() == 1 && rec[0].path == deadDir + "game-10-2000-1.takrep" && bytes(fs::u8path(rec[0].path)) == finished,
+        check(rec.size() == 1 && rec[0].path == deadDir + "game-10-2000-1.takrep" && bytes(tak::u8path(rec[0].path)) == finished,
               "a finished-but-unrenamed recording was changed or overwrote a replay");
         check(bytes(dead / "game-10-2000.takrep") == std::vector<uint8_t>{'x'}, "recovery overwrote an existing replay");
     }

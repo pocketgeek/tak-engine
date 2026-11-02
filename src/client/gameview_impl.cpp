@@ -16,6 +16,7 @@
 #include "sim/retailmotion.h"
 #include <cmath>
 #include <cstdlib>
+#include "util/u8path.h"
 
 // Out-of-line GameView method definitions (core concern), split from the
 // class body in gameview.h so editing a body recompiles only this translation
@@ -3153,7 +3154,7 @@
         else {
             // Debug local harnesses (no server): this launch's own always-enabled and
             // ticked game packs, as a room it hosted would apply; none in a mission.
-            const auto root=std::filesystem::u8path(installRoot_);
+            const auto root=tak::u8path(installRoot_);
             const bool gamePacks=mods_.game && missionStem_.empty();
             auto game=gamePacks && settings_?settings_->gameModPacks:std::vector<std::string>{};
             const auto have=tak::hpi::modPacks(root,tak::hpi::ModKind::Game);
@@ -3167,7 +3168,7 @@
         // A cosmetic mod left out (it cannot load, or its anims/ art would change
         // gameplay timing) is named in the game's chat rather than stopping it.
         alwaysOnLoaded_.clear();
-        if(mods_.cosmetic)for(const auto& name:tak::hpi::alwaysEnabledPacks(std::filesystem::u8path(installRoot_),tak::hpi::ModKind::Cosmetic))
+        if(mods_.cosmetic)for(const auto& name:tak::hpi::alwaysEnabledPacks(tak::u8path(installRoot_),tak::hpi::ModKind::Cosmetic))
             if(std::none_of(skipped.begin(),skipped.end(),[&](const std::string& why){return why.starts_with(name+" (");}))
                 alwaysOnLoaded_.push_back(name);
         for(const auto& why:skipped) {

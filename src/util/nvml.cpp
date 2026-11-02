@@ -45,7 +45,8 @@ class Nvml {
 #if defined(_WIN32)
     HMODULE library_ = nullptr;
     template<class T> void resolve(T& target, const char* name) {
-        target = reinterpret_cast<T>(GetProcAddress(library_, name));
+        // Through void(*)(): FARPROC's own signature is not the function's.
+        target = reinterpret_cast<T>(reinterpret_cast<void (*)()>(GetProcAddress(library_, name)));
     }
 #elif !defined(__APPLE__)
     void* library_ = nullptr;

@@ -17,6 +17,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "util/u8path.h"
 
 namespace {
 
@@ -197,8 +198,8 @@ int main() {
     {
         const std::string self = selfExecutable();
         std::error_code ec;
-        check(!self.empty() && fs::is_regular_file(fs::u8path(self), ec) &&
-              fs::u8path(self).filename().u8string().find(u8"datafolder_test") != std::u8string::npos,
+        check(!self.empty() && fs::is_regular_file(tak::u8path(self), ec) &&
+              tak::u8path(self).filename().u8string().find(u8"datafolder_test") != std::u8string::npos,
               "selfExecutable names this program (" + self + ")");
     }
 

@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include "util/u8path.h"
 
 #ifdef _WIN32
   #ifndef WIN32_LEAN_AND_MEAN
@@ -32,7 +33,7 @@ bool endsWith(const std::string& s, const std::string& tail) {
     return s.size() >= tail.size() && s.compare(s.size() - tail.size(), tail.size(), tail) == 0;
 }
 
-std::filesystem::path fsPath(const std::string& utf8) { return std::filesystem::u8path(utf8); }
+std::filesystem::path fsPath(const std::string& utf8) { return tak::u8path(utf8); }
 
 bool exists(const std::string& path) {
     std::error_code ec;

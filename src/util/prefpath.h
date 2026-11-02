@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <string>
 #include <system_error>
+#include "util/u8path.h"
 
 namespace tak {
 
@@ -30,7 +31,7 @@ inline constexpr const char* kPrefOrg = "TAKengine";
 inline std::string prefPath(const char* app) {
 #if (defined(_WIN32) || defined(__APPLE__)) && (!defined(NDEBUG) || !defined(TAK_PRODUCT))
     if (const char* root = SDL_getenv("XDG_DATA_HOME"); root && *root) {
-        const auto dir = std::filesystem::u8path(root) / kPrefOrg / app;
+        const auto dir = tak::u8path(root) / kPrefOrg / app;
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
         if (ec) return {};

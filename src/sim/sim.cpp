@@ -8571,8 +8571,8 @@ World::SearchBodyRect World::searchBodyRect(int x,int z,int w,int h,int ignoreId
                     // deliberately derives its bounds from live coordinates.
                     // These pure comparisons can execute together instead of
                     // taking up to four dependent early-exit branches.
-                    if ((bounds[0]>=x+w) | (bounds[1]>=z+h) |
-                        (bounds[2]<=x) | (bounds[3]<=z)) continue;
+                    if (int(bounds[0]>=x+w) | int(bounds[1]>=z+h) |
+                        int(bounds[2]<=x) | int(bounds[3]<=z)) continue;
                     stamp(units_[size_t(index)],&bounds);
                 }
             }
@@ -17138,9 +17138,12 @@ void World::tick(float dt) {
                     (recipients & (1u<<i)) && players_[size_t(i)].mana < cap(i))
                     needy[size_t(count++)] = i;
             auto fill = [&](int i) { return players_[size_t(i)].mana / double(cap(i)); };
+#pragma GCC diagnostic push   // GCC sees std::sort's 16-element path past this 8-slot array
+#pragma GCC diagnostic ignored "-Warray-bounds"
             std::sort(needy.begin(), needy.begin()+count, [&](int a, int b) {
                 return fill(a) != fill(b) ? fill(a) < fill(b) : a < b;
             });
+#pragma GCC diagnostic pop
             // Raise the emptiest stores together toward the next fill percentage.
             // Equal need shares proportionally to capacity, without slot preference.
             double capacity = 0, stored = 0, level = 0;

@@ -29,6 +29,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include "util/u8path.h"
 
 namespace tak::hpi {
 
@@ -43,7 +44,7 @@ std::string utf8(const std::filesystem::path& p) {
 std::optional<std::filesystem::path> looseFile(const std::filesystem::path& root,
                                                const std::string& name) {
     try {
-        auto p=root/std::filesystem::u8path(name);
+        auto p=root/tak::u8path(name);
         std::error_code ec;
         if (std::filesystem::is_regular_file(p,ec)) return p;
     } catch (const std::runtime_error&) {
@@ -538,7 +539,7 @@ std::vector<std::string> MountSet::list(const std::string& prefix) const {
         if (under(k)) out[k] = w.entry.path;
     // ...then loose files override (same precedence as read()).
     if (cfg_.includeLoose) {
-        fs::path base = kp.empty() ? dir_ : dir_ / fs::u8path(prefix);
+        fs::path base = kp.empty() ? dir_ : dir_ / tak::u8path(prefix);
         std::error_code ec;
         if (fs::is_directory(base, ec))
             for (auto it = fs::recursive_directory_iterator(base, ec);
@@ -1097,8 +1098,8 @@ Vfs::Files modFiles(const std::filesystem::path& root,ModKind kind,const std::ve
     std::vector<std::filesystem::path> paths,later;
     const auto alwaysDir=modAlwaysDirectory(root,kind),dir=modDirectory(root,kind);
     for(const auto& name:names) {
-        if(std::binary_search(always.begin(),always.end(),name))paths.push_back(alwaysDir/std::filesystem::u8path(name));
-        else if(std::binary_search(available.begin(),available.end(),name))later.push_back(dir/std::filesystem::u8path(name));
+        if(std::binary_search(always.begin(),always.end(),name))paths.push_back(alwaysDir/tak::u8path(name));
+        else if(std::binary_search(available.begin(),available.end(),name))later.push_back(dir/tak::u8path(name));
         else throw std::runtime_error("mod pack not found: "+name);
     }
     paths.insert(paths.end(),later.begin(),later.end());

@@ -10,6 +10,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include "util/u8path.h"
 using namespace tak::net;
 namespace {
 int checks=0;
@@ -34,7 +35,7 @@ Writer recording(uint32_t protocol=kNetVersion,const Command& command=Command{},
 void run(){
  const auto root=std::filesystem::temp_directory_path()/("tak-replay-file-"+tak::crypto::toHex(tak::crypto::randomVec(12)));
  std::filesystem::create_directories(root);struct Cleanup{std::filesystem::path p;~Cleanup(){std::error_code ec;std::filesystem::remove_all(p,ec);}}cleanup{root};
- const auto path=root/std::filesystem::u8path("replay-\xc3\xa9.takrep");
+ const auto path=root/tak::u8path("replay-\xc3\xa9.takrep");
  const auto utf=path.u8string();const std::string name(utf.begin(),utf.end());
  auto load=[&](const Writer& value,ReplayFile* decoded=nullptr){std::ofstream out(path,std::ios::binary|std::ios::trunc);out.write(reinterpret_cast<const char*>(value.b.data()),std::streamsize(value.b.size()));out.close();ReplayFile replay;const bool ok=loadReplayFile(name,replay);if(ok && decoded)*decoded=std::move(replay);return ok;};
  check(load(recording()),"current simulation recording refused");

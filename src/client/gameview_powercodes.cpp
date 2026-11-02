@@ -14,6 +14,7 @@
 #include <mutex>
 #include <thread>
 #include <vector>
+#include "util/u8path.h"
 
 namespace {
     // Poster writer threads outlive the match that made them (leaving to the menu
@@ -124,10 +125,10 @@ namespace {
     std::string GameView::posterFolder() const {
         namespace fs = std::filesystem;
         std::vector<fs::path> candidates;
-        if (const char* dir = tak::devEnv("TAK_POSTER_DIR")) candidates.push_back(fs::u8path(dir));   // tests
-        if (!installRoot_.empty()) candidates.push_back(fs::u8path(installRoot_) / "screenshots");
+        if (const char* dir = tak::devEnv("TAK_POSTER_DIR")) candidates.push_back(tak::u8path(dir));   // tests
+        if (!installRoot_.empty()) candidates.push_back(tak::u8path(installRoot_) / "screenshots");
         if (const std::string profile = tak::replayDir(); !profile.empty())
-            candidates.push_back(fs::u8path(profile) / "screenshots");
+            candidates.push_back(tak::u8path(profile) / "screenshots");
         for (const auto& dir : candidates) {
             std::error_code ec;
             fs::create_directories(dir, ec);
@@ -153,7 +154,7 @@ namespace {
         namespace fs = std::filesystem;
         int highest = 0;
         std::error_code ec;
-        for (const auto& entry : fs::directory_iterator(fs::u8path(folder), ec)) {
+        for (const auto& entry : fs::directory_iterator(tak::u8path(folder), ec)) {
             const auto name = entry.path().filename().string();
             int n = 0;
             // BIGSHOTnnnn.png, or .png.part while an earlier poster is still writing.
@@ -171,7 +172,7 @@ namespace {
             systemChat("POSTER NOT SAVED: THE MAP IS TOO LARGE FOR MEMORY");
             return;
         }
-        const auto path = fs::u8path(folder) / file;
+        const auto path = tak::u8path(folder) / file;
         const auto text = path.u8string();
         job->path.assign(text.begin(), text.end());
         job->startMs = SDL_GetTicks64();
@@ -260,7 +261,7 @@ namespace {
                      job.maxTileMs);
         posterWriters().start([rgb = job.rgb, path = job.path, w = job.width, h = job.height, notes = posterNotes_] {
             std::vector<std::string> lines;
-            const auto file = std::filesystem::u8path(path);
+            const auto file = tak::u8path(path);
             auto part = file;
             part += ".part";
             try {

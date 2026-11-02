@@ -8,9 +8,10 @@
 #include <iostream>
 #include <regex>
 #include <thread>
+#include "util/u8path.h"
 using namespace tak;
 static void check(bool b,const char* why){if(!b)throw std::runtime_error(why);}
-static void put(const std::filesystem::path& root,const std::string& p,const std::string& b){auto f=root/std::filesystem::u8path(p);std::filesystem::create_directories(f.parent_path());std::ofstream(f,std::ios::binary)<<b;}
+static void put(const std::filesystem::path& root,const std::string& p,const std::string& b){auto f=root/tak::u8path(p);std::filesystem::create_directories(f.parent_path());std::ofstream(f,std::ios::binary)<<b;}
 static void archive(const std::filesystem::path& root,const std::string& p,const std::vector<std::pair<std::string,std::string>>& entries){
  std::vector<hpi::PackFile> files;for(const auto& [name,value]:entries)files.push_back({name,std::vector<uint8_t>(value.begin(),value.end())});
  const auto bytes=hpi::pack(files);put(root,p,std::string(bytes.begin(),bytes.end()));}

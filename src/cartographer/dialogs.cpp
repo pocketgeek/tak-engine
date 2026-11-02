@@ -12,6 +12,7 @@
 #include <charconv>
 #include <cmath>
 #include <limits>
+#include "util/u8path.h"
 
 namespace {
 std::string objectOwner(int player) {return player==8?std::string("Neutral"):"Player "+std::to_string(player+1);}
@@ -102,9 +103,9 @@ void cart::Editor::openModal(Modal m, int unitIdx) {
     } else if(m==M_NEWAIMOD) {
         // A pack name the install does not have yet (Open AI mod edits an existing one).
         std::vector<std::string> packs;
-        try {packs=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
+        try {packs=tak::hpi::modPacks(tak::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
         auto taken=[&](const std::string& name) {return std::any_of(packs.begin(),packs.end(),[&](const std::string& p){return lowerText(p)==lowerText(name);}) ||
-                                                        !cart::modPackReservedError(std::filesystem::u8path(dataRoot),name).empty();};
+                                                        !cart::modPackReservedError(tak::u8path(dataRoot),name).empty();};
         std::string name="my-ai";
         for(int n=2;taken(name);++n)name="my-ai-"+std::to_string(n);
         mTitle="NEW AI MOD";mN=1;
@@ -255,13 +256,13 @@ void cart::Editor::applyModal() {
     } else if(modal==M_SAVEAS) {
         if(!cart::validDocumentName(mf[0])) {modalError="Choose a map name without path separators or reserved filename characters.";return;}
         const auto nextName=mf[0],nextDir=mf[1];
-        const auto path=pathText(std::filesystem::u8path(nextDir)/std::filesystem::u8path(nextName+".kmp"));
+        const auto path=pathText(tak::u8path(nextDir)/tak::u8path(nextName+".kmp"));
         auto performSave=[&,path,nextName,nextDir] {
             if(!saveBundle(path)) {openMessage("SAVE FAILED",saveError);return;}
             mapName=nextName;outDir=nextDir;historyPending=true;commitHistory();history.markSaved();dirty=false;
             openMessage("SAVED",path);
         };
-        if(std::filesystem::exists(std::filesystem::u8path(path)) && (nextName!=mapName || nextDir!=outDir)) {
+        if(std::filesystem::exists(tak::u8path(path)) && (nextName!=mapName || nextDir!=outDir)) {
             openConfirm("REPLACE MAP", "Replace the existing map? Its previous version will be retained as a .bak file.",performSave);return;
         }
         performSave();return;
@@ -281,9 +282,9 @@ void cart::Editor::applyModal() {
         while(!name.empty() && name.back()==' ')name.pop_back();
         while(!name.empty() && name.front()==' ')name.erase(name.begin());
         if(const auto why=cart::modPackNameError(name);!why.empty()) {modalError=why;return;}
-        if(const auto why=cart::modPackReservedError(std::filesystem::u8path(dataRoot),name);!why.empty()) {modalError=why;return;}
+        if(const auto why=cart::modPackReservedError(tak::u8path(dataRoot),name);!why.empty()) {modalError=why;return;}
         std::vector<std::string> packs;
-        try {packs=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
+        try {packs=tak::hpi::modPacks(tak::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
         for(const auto& pack:packs)if(lowerText(pack)==lowerText(name)) {
             modalError="mods/game/"+pack+" already exists: File > Open AI mod edits its AI files.";return;
         }

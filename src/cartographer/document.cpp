@@ -1,4 +1,5 @@
 #include "cartographer/document.h"
+#include "util/u8path.h"
 #include "cartographer/scenarioinfo.h"
 
 #include <algorithm>
@@ -178,7 +179,7 @@ bool planModProfiles(const fs::path& dataRoot, const std::string& packName, cons
                     fileText(other)+" is not a folder.";
                 return false;
             }
-            if(next.empty()) {missing=true;next=dir/fs::u8path(parts[i]);plan.create.push_back(next);}
+            if(next.empty()) {missing=true;next=dir/tak::u8path(parts[i]);plan.create.push_back(next);}
             dir=next;
             if(i==2) {plan.packFolder=dir;plan.pack=nameOf(dir);}
         }
@@ -196,10 +197,10 @@ bool planModProfiles(const fs::path& dataRoot, const std::string& packName, cons
             try {archives=std::make_unique<MountSet>(plan.packFolder,tak::hpi::MountConfig{false,{".hpi",".ufo",".kmp"},{},{}});} catch(const std::exception&) {}
         auto add=[&](const std::string& key,const std::vector<uint8_t>* data) {
             if(key!=MountSet::key(key) || !aiFileKey(key)) {error="Invalid AI profile file name: "+key;return false;}
-            if(links.count(key)) {error=fileText(dir/fs::u8path(key.substr(3)))+" is a symbolic link; it was not replaced.";return false;}
+            if(links.count(key)) {error=fileText(dir/tak::u8path(key.substr(3)))+" is a symbolic link; it was not replaced.";return false;}
             ModProfileChange change;change.key=key;
             const auto found=onDisk.find(key);const bool exists=found!=onDisk.end();
-            change.path=exists?found->second:dir/fs::u8path(key.substr(3));
+            change.path=exists?found->second:dir/tak::u8path(key.substr(3));
             if(exists)change.existing=readAll(change.path);
             if(data) {change.data=*data;change.action=!exists?Action::Create:change.existing==change.data?Action::Same:Action::Replace;}
             else if(exists)change.action=Action::Delete;
@@ -240,7 +241,7 @@ bool writeModProfiles(const fs::path& dataRoot, const ModProfilePlan& plan, cons
             if(backupRoot.empty())throw std::runtime_error("There is no Cartographer profile folder for the backups, so nothing was replaced.");
             char stamp[32]{};const std::time_t t=std::time(nullptr);
             if(const std::tm* utc=std::gmtime(&t))std::strftime(stamp,sizeof stamp,"%Y%m%d-%H%M%SZ",utc);
-            const auto base=backupRoot/"mod-backups"/fs::u8path(now.pack);
+            const auto base=backupRoot/"mod-backups"/tak::u8path(now.pack);
             backup=base/stamp;
             for(int n=2;fs::exists(backup);++n)backup=base/(std::string(stamp)+"-"+std::to_string(n));
             fs::create_directories(backup/"ai");
@@ -366,7 +367,7 @@ bool writeDocumentFiles(const fs::path& directory, const std::vector<tak::hpi::P
         for(const auto& file:files) {
             if(!validDocumentName(file.path) || !names.insert(file.path).second)
                 throw std::runtime_error("Invalid or duplicate export filename");
-            const auto target=dir/fs::u8path(file.path);
+            const auto target=dir/tak::u8path(file.path);
             if(fs::exists(target) && !fs::is_regular_file(target))
                 throw std::runtime_error("Save destination is not a regular file");
         }
@@ -377,7 +378,7 @@ bool writeDocumentFiles(const fs::path& directory, const std::vector<tak::hpi::P
         for(size_t i=0;i<files.size();++i) {
             checkCancel();
             write(stage/(std::to_string(i)+".new"),files[i].data);
-            const auto target=dir/fs::u8path(files[i].path);
+            const auto target=dir/tak::u8path(files[i].path);
             existed.push_back(fs::exists(target));
             if(existed.back()) {
                 fs::copy_file(target,stage/(std::to_string(i)+".old"));
@@ -389,9 +390,9 @@ bool writeDocumentFiles(const fs::path& directory, const std::vector<tak::hpi::P
         checkCancel();
         // Finish every write/backup before replacing any member of the document.
         for(size_t i=0;i<files.size();++i) if(existed[i])
-            replace(stage/(std::to_string(i)+".backup"),dir/fs::u8path(files[i].path+".bak"));
+            replace(stage/(std::to_string(i)+".backup"),dir/tak::u8path(files[i].path+".bak"));
         for(size_t i=0;i<files.size();++i) {
-            replace(stage/(std::to_string(i)+".new"),dir/fs::u8path(files[i].path));
+            replace(stage/(std::to_string(i)+".new"),dir/tak::u8path(files[i].path));
             ++installed;
         }
     } catch(const std::exception& e) {
@@ -399,7 +400,7 @@ bool writeDocumentFiles(const fs::path& directory, const std::vector<tak::hpi::P
         const fs::path dir=directory.empty()?fs::path("."):directory;
         for(size_t i=0;i<installed;++i) {
             try {
-                const auto target=dir/fs::u8path(files[i].path);
+                const auto target=dir/tak::u8path(files[i].path);
                 if(existed[i]) replace(stage/(std::to_string(i)+".old"),target);
                 else fs::remove(target);
             } catch(const std::exception& restore) {

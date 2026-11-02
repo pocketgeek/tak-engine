@@ -28,6 +28,7 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#include "util/u8path.h"
 
 namespace tak {
 
@@ -76,7 +77,7 @@ inline std::string dataFolderOverrideReason(DataFolderOrigin origin) {
 // folded on Windows, where the file system ignores it.
 inline std::string comparableFolder(const std::string& folder) {
     if (folder.empty()) return {};
-    const auto text = std::filesystem::u8path(folder).lexically_normal().generic_u8string();
+    const auto text = tak::u8path(folder).lexically_normal().generic_u8string();
     std::string s(text.begin(), text.end());
     while (s.size() > 1 && s.back() == '/') s.pop_back();
 #ifdef _WIN32

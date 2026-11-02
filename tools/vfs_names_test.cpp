@@ -6,12 +6,13 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include "util/u8path.h"
 
 static void require(bool b,const char* m) { if(!b) throw std::runtime_error(m); }
 int main(int argc,char** argv) {
     namespace fs=std::filesystem;
     std::setlocale(LC_ALL,"C"); // Match the default Windows release process locale.
-    const auto root=fs::temp_directory_path()/fs::u8path("tak-vfs-\xc3\xa9-\xe6\xb0\xb4-"+
+    const auto root=fs::temp_directory_path()/tak::u8path("tak-vfs-\xc3\xa9-\xe6\xb0\xb4-"+
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     try {
         fs::create_directories(root/"Maps");
@@ -19,9 +20,9 @@ int main(int argc,char** argv) {
         const std::string legacy="Maps/Legacy \xe9.tnt";
         const std::string archived="Maps/Archive \xe6\xb0\xb4.tnt";
         const std::vector<uint8_t> data{'m','a','p'};
-        { std::ofstream f(root/fs::u8path(unicode),std::ios::binary); f.write("map",3); }
+        { std::ofstream f(root/tak::u8path(unicode),std::ios::binary); f.write("map",3); }
         { auto bytes=tak::hpi::pack({{legacy,data},{archived,data}});
-          std::ofstream f(root/fs::u8path("\xe6\xb0\xb4.hpi"),std::ios::binary);
+          std::ofstream f(root/tak::u8path("\xe6\xb0\xb4.hpi"),std::ios::binary);
           f.write(reinterpret_cast<const char*>(bytes.data()),bytes.size()); }
         { // Close mapped archives before deleting their directory on Windows.
             tak::hpi::Vfs vfs;
@@ -63,7 +64,7 @@ int main(int argc,char** argv) {
                 require(artVfs.list("Boneyards/Metagame", true).empty(), "Boneyards folder listed");
             }
             if(argc>1) {
-                auto real=tak::hpi::mountRetailRoot(fs::u8path(argv[1]));
+                auto real=tak::hpi::mountRetailRoot(tak::u8path(argv[1]));
                 auto all=tak::hpi::listMaps(real);
                 unsigned checked=0;
                 for(const auto& [name,path]:all) {

@@ -16,6 +16,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include "util/u8path.h"
 
 static void check(bool value,const char* message) {if(!value)throw std::runtime_error(message);}
 static std::vector<uint8_t> read(const std::filesystem::path& path) {
@@ -439,10 +440,10 @@ int main() {
         const auto legacy=root/"recovery-old.kmp";std::ofstream(legacy)<<"legacy";
         lease=cart::RecoveryFile::claimNewest(root);check(lease && lease->path()==legacy,"legacy recovery supported");
         check(lease->discard(recoveryError),"discard legacy recovery");lease.reset();
-        const auto destination=root/fs::u8path("été maps");
+        const auto destination=root/tak::u8path("été maps");
         const auto info=cart::recoveryInfo("Recovered map",destination);
         const auto decoded=cart::readRecoveryInfo(info.data);
-        check(decoded && decoded->name=="Recovered map" && fs::u8path(decoded->directory)==destination,"recovery destination UTF-8 roundtrip");
+        check(decoded && decoded->name=="Recovered map" && tak::u8path(decoded->directory)==destination,"recovery destination UTF-8 roundtrip");
         check(!cart::readRecoveryInfo({1,2,3}),"bad recovery metadata rejected");
         cart::EditorPreferences preferences;preferences.guideSeen=true;preferences.tracePlaytest=true;preferences.width=1440;preferences.height=900;preferences.scalePercent=125;preferences.showFeatures=false;preferences.showUnits=false;preferences.showStarts=false;preferences.showRegions=false;preferences.showGrid=true;preferences.showBlocked=true;
         for(int i=0;i<20;++i)preferences.remember("Map "+std::to_string(i));

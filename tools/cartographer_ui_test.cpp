@@ -30,6 +30,7 @@
 #include <set>
 #include <stdexcept>
 #include <vector>
+#include "util/u8path.h"
 
 // MinGW's create_symlink always fails with ENOSYS: fall back to a hard link, then a copy.
 static void linkOrCopy(const std::filesystem::path& target, const std::filesystem::path& link) {
@@ -667,12 +668,12 @@ static int recordTestClient(int argc,char** argv) {
     std::string out;
     for(int i=1;i<argc;++i)out+=std::string(argv[i])+"\n";
     try {
-        tak::hpi::Archive snapshot(std::filesystem::u8path(argc>4?argv[4]:""));
+        tak::hpi::Archive snapshot(tak::u8path(argc>4?argv[4]:""));
         int maps=0;for(const auto& entry:snapshot.entries())maps+=entry.path.ends_with(".tnt");
         out+="snapshot maps="+std::to_string(maps)+"\n";
     } catch(const std::exception& e) {out+=std::string("snapshot error=")+e.what()+"\n";}
-    std::ofstream(std::filesystem::u8path(std::string(record)+".tmp"),std::ios::binary)<<out;
-    std::error_code ec;std::filesystem::rename(std::filesystem::u8path(std::string(record)+".tmp"),std::filesystem::u8path(record),ec);
+    std::ofstream(tak::u8path(std::string(record)+".tmp"),std::ios::binary)<<out;
+    std::error_code ec;std::filesystem::rename(tak::u8path(std::string(record)+".tmp"),tak::u8path(record),ec);
     return ec?3:0;
 }
 // File > New AI mod / Open AI mod: an AI mod made and edited without a map, through real
@@ -2413,14 +2414,14 @@ static int dataFolderWorkflow(const char* data) {
     });
     std::error_code same;
     check(result==0 && relaunches.size()==3 && relaunches.back().size()==3 && relaunches.back()[0]=="--out" &&
-          fs::equivalent(fs::u8path(relaunches.back()[2]),saved,same),"SAVE relaunches with the saved file");
+          fs::equivalent(tak::u8path(relaunches.back()[2]),saved,same),"SAVE relaunches with the saved file");
     std::vector<std::string> reopened={"cartographer"};
     if(relaunches.size()==3)reopened.insert(reopened.end(),relaunches.back().begin(),relaunches.back().end());
     editor=nullptr;
     if(failure.empty())result=run(reopened,[&](SDL_Window*,SDL_Renderer*,const Pointer&,Uint64) {
         if(phase!=0)return;
         check(editor && editor->dataRoot==other && editor->modal!=cart::Editor::M_MESSAGE && editor->mapName=="Ulasem Arena" &&
-              !editor->dirty && fs::equivalent(fs::u8path(editor->documentRequest),saved,same),
+              !editor->dirty && fs::equivalent(tak::u8path(editor->documentRequest),saved,same),
               "the restarted editor reopens the saved file on the new folder ("+(editor?editor->mapName+", "+editor->mTitle:std::string())+")");
         if(editor)editor->dirty=false;   // leave without the save prompt, whatever was open
         quit();next();

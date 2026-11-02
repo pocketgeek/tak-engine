@@ -7,11 +7,12 @@
 #include <iostream>
 #include <iterator>
 #include <map>
+#include "util/u8path.h"
 using namespace tak;
 int main(){
  auto root=std::filesystem::temp_directory_path()/("tak-packs-"+crypto::toHex(crypto::randomVec(8)));
  int failures=0;auto check=[&](bool value,const char* label){if(!value){std::cerr<<"FAIL: "<<label<<'\n';++failures;}};
- auto put=[&](const std::string& path,const std::string& value){auto p=root/std::filesystem::u8path(path);std::filesystem::create_directories(p.parent_path());std::ofstream(p,std::ios::binary)<<value;};
+ auto put=[&](const std::string& path,const std::string& value){auto p=root/tak::u8path(path);std::filesystem::create_directories(p.parent_path());std::ofstream(p,std::ios::binary)<<value;};
  auto archive=[&](const std::string& path,std::vector<std::pair<std::string,std::string>> entries){
    std::vector<hpi::PackFile> files;for(auto& [name,value]:entries)files.push_back({name,std::vector<uint8_t>(value.begin(),value.end())});
    const auto bytes=hpi::pack(files);put(path,std::string(bytes.begin(),bytes.end()));};

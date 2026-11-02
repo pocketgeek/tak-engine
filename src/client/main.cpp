@@ -120,6 +120,7 @@
 // (included first, before SDL).
 #include "client/localserver.h"
 #include "client/sessionfailure.h"
+#include "util/u8path.h"
 #ifdef _WIN32
   #include <windows.h>
 #endif
@@ -177,10 +178,10 @@ std::string resolveServerBin(const char* argv0) {
         const auto text=p.u8string();return {text.begin(),text.end()};
     };
     if(char* base=SDL_GetBasePath()) {
-        const auto directory=fs::u8path(base);SDL_free(base);
+        const auto directory=tak::u8path(base);SDL_free(base);
         if(auto result=tryDir(directory);!result.empty())return result;
     }
-    if (auto r = tryDir(fs::u8path(argv0).parent_path()); !r.empty()) return r;
+    if (auto r = tryDir(tak::u8path(argv0).parent_path()); !r.empty()) return r;
     if (const char* path = std::getenv("PATH")) {
         std::string ps(path);
         for (size_t s = 0; s <= ps.size();) {
@@ -199,9 +200,9 @@ std::string resolveServerBin(const char* argv0) {
     }
     // Nothing found -- return the old argv[0]-relative guess so the caller can report it.
 #ifdef _WIN32
-    const auto fallback=fs::u8path(argv0).parent_path()/"takserver.exe";
+    const auto fallback=tak::u8path(argv0).parent_path()/"takserver.exe";
 #else
-    const auto fallback=fs::u8path(argv0).parent_path()/"takserver";
+    const auto fallback=tak::u8path(argv0).parent_path()/"takserver";
 #endif
     const auto text=fallback.u8string();return {text.begin(),text.end()};
 }
@@ -265,7 +266,7 @@ void screenshot(SDL_Renderer* ren, int w, int h, const std::string& path) {
 static tak::DataFolderOrigin resolveDataDir(std::string& dataRoot, tak::Settings& settings, bool allowPrompt) {
     namespace hpi = tak::hpi;
     const auto valid = [](const std::string& f, std::string* why) {
-        return hpi::validInstall(std::filesystem::u8path(f), why);
+        return hpi::validInstall(tak::u8path(f), why);
     };
     std::string here;
     {
@@ -280,7 +281,7 @@ static tak::DataFolderOrigin resolveDataDir(std::string& dataRoot, tak::Settings
         case tak::DataFolderOrigin::CommandLine:
             if (!tak::sameFolder(settings.dataDir, dataRoot) && valid(dataRoot, nullptr)) {
                 settings.dataDir = dataRoot;
-                settings.dataManifest = hpi::rootManifest(std::filesystem::u8path(dataRoot));
+                settings.dataManifest = hpi::rootManifest(tak::u8path(dataRoot));
                 tak::saveSettings(settings);
             }
             return choice.origin;
@@ -294,7 +295,7 @@ static tak::DataFolderOrigin resolveDataDir(std::string& dataRoot, tak::Settings
         // 3. The saved folder, if it still holds a valid install.
         case tak::DataFolderOrigin::Saved: {
             dataRoot = choice.folder;
-            std::string m = hpi::rootManifest(std::filesystem::u8path(dataRoot));   // note if the root archives changed
+            std::string m = hpi::rootManifest(tak::u8path(dataRoot));   // note if the root archives changed
             if (m != settings.dataManifest) { settings.dataManifest = m; tak::saveSettings(settings); }
             return choice.origin;
         }
@@ -314,7 +315,7 @@ static tak::DataFolderOrigin resolveDataDir(std::string& dataRoot, tak::Settings
         if (valid(picked, &why)) {
             dataRoot = picked;
             settings.dataDir = picked;
-            settings.dataManifest = hpi::rootManifest(std::filesystem::u8path(picked));
+            settings.dataManifest = hpi::rootManifest(tak::u8path(picked));
             tak::saveSettings(settings);
             return choice.origin;
         }
@@ -342,7 +343,7 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
         // A single-player room always verifies a game-mod package, an empty one
         // when no game pack was ticked; that one any install can rebuild.
         if(!pack) try {
-            auto empty=tak::net::mods::build(std::filesystem::u8path(dataRoot),{});
+            auto empty=tak::net::mods::build(tak::u8path(dataRoot),{});
             if(empty->digest==rf.modDigest)pack=std::move(empty);
         } catch (const std::exception&) {}
         if(!pack)throw std::runtime_error("the verified game mods for this replay are missing");
@@ -351,7 +352,7 @@ std::unique_ptr<GameView> makeReplayView(SDL_Renderer* ren, const std::string& p
     // A campaign mission loads no ticked cosmetic packs, as the live game did.
     const bool campaignReplay=!rf.mission.empty();
     std::vector<std::string> skippedMods;
-    auto rvfs = tak::hpi::mountPlayVfs(std::filesystem::u8path(dataRoot),std::move(game),
+    auto rvfs = tak::hpi::mountPlayVfs(tak::u8path(dataRoot),std::move(game),
         campaignReplay?std::vector<std::string>{}:settings.cosmeticModPacks,true,&skippedMods);
     for(const auto& why:skippedMods)std::fprintf(stderr,"replay: cosmetic mod left out: %s\n",why.c_str());
     std::string mapPath;
@@ -697,7 +698,7 @@ int main(int argc, char** argv) {
     tak::net::recoverReplayParts(tak::replayDir());
     // Map and game-mod downloads, Test Map copies and saved generated maps live
     // beside settings.ini, never in the game data folder (hpi::setUserMapRoot).
-    tak::hpi::setUserMapRoot(std::filesystem::u8path(tak::replayDir()));
+    tak::hpi::setUserMapRoot(tak::u8path(tak::replayDir()));
 #ifdef _WIN32
     if (tak::dpiIgnoredAtStartup()) {
         // First run (or first run since this option arrived): the old stretched window made
@@ -727,11 +728,11 @@ int main(int argc, char** argv) {
             SDL_Quit();
             return 1;
         }
-        vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot));
+        vfs = tak::hpi::mountRetailRoot(tak::u8path(dataRoot));
         gInstallRoot = dataRoot;   // the loading screen reads Movies/Gui from here
         // The legacy overrides/ folder is left exactly as it is, just no longer read.
         static bool legacyNoted = false;
-        if (!legacyNoted && tak::hpi::hasLegacyOverridesDir(std::filesystem::u8path(dataRoot))) {
+        if (!legacyNoted && tak::hpi::hasLegacyOverridesDir(tak::u8path(dataRoot))) {
             legacyNoted = true;
             std::fprintf(stderr, "overrides/ is no longer read; put packs in mods/cosmetic or mods/game\n");
         }
@@ -739,7 +740,7 @@ int main(int argc, char** argv) {
     std::shared_ptr<tak::ScenarioTraceLog> playtestTrace;
     if (!playMap.empty()) {
         try {
-            const auto snapshot = tak::net::maps::importSnapshot(vfs, std::filesystem::u8path(playMap));
+            const auto snapshot = tak::net::maps::importSnapshot(vfs, tak::u8path(playMap));
             const auto& ota=snapshot->files->at(tak::vpath::replaceExtension(snapshot->mapPath,".ota"));
             const auto metadata=tak::tdf::parseText(std::string(ota.begin(),ota.end()));
             const auto* test=metadata.child("takplaytest");
@@ -747,7 +748,7 @@ int main(int argc, char** argv) {
                 const std::string folder=tak::prefPath("Cartographer");
                 if(folder.empty())throw std::runtime_error("Cannot locate the trigger log folder");
                 playtestTrace=std::make_shared<tak::ScenarioTraceLog>(tak::scenarioTracePath(
-                    std::filesystem::u8path(folder),std::filesystem::u8path(playMap)));
+                    tak::u8path(folder),tak::u8path(playMap)));
             }
             // The verified copy goes in the per-user MapCache, where this client's
             // private server (--map-cache-dir) finds it too; the data folder stays
@@ -775,7 +776,7 @@ int main(int argc, char** argv) {
         if (playMap.empty()) why = "--game-mod is only used with --play-map";
         else if (!modUse.game) why = "--mods leaves game mods out of this launch";
         else {
-            const auto root = std::filesystem::u8path(dataRoot);
+            const auto root = tak::u8path(dataRoot);
             const auto packs = tak::hpi::modPacks(root, tak::hpi::ModKind::Game);
             const auto always = tak::hpi::alwaysEnabledPacks(root, tak::hpi::ModKind::Game);
             if (std::find(always.begin(), always.end(), playGameMod) != always.end()) alreadyAlways = true;
@@ -1425,7 +1426,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<tak::net::MpClient> mp;
     if (!serverHost.empty()) {
         mp = std::make_unique<tak::net::MpClient>();
-        mp->setMapRoot(std::filesystem::u8path(dataRoot));
+        mp->setMapRoot(tak::u8path(dataRoot));
         mp->setGameModsAllowed(modUse.game);   // debug --mods none|cosmetic: no game packs at all
         mp->setGameModPacks(settings.gameModPacks);
         if (playerName.empty()) playerName = settings.playerName;
@@ -1439,7 +1440,7 @@ int main(int argc, char** argv) {
         if (!dataRoot.empty()) {
             if (!retailHash)
                 retailHash = tak::hpi::gameplayHash(
-                    tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot)));
+                    tak::hpi::mountRetailRoot(tak::u8path(dataRoot)));
             mp->setDataHash(retailHash);
         }
         // A freshly-spawned local server takes a moment to mount + listen (~0.25s
@@ -1611,7 +1612,7 @@ int main(int argc, char** argv) {
                                                   // Campaign result/progression and the next
                                                   // session still need the front-end catalog.
                                                   (fromMenu || !campaignStem.empty())
-                                                      ? tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot)) : std::move(vfs),
+                                                      ? tak::hpi::mountRetailRoot(tak::u8path(dataRoot)) : std::move(vfs),
                                                   mapPath, dataRoot, modUse, demo,
                                                   scenario,
                                                   navy || amphib || firetest || facetest || mp,
@@ -2379,7 +2380,7 @@ int main(int argc, char** argv) {
             if(renderStudy && (studyFrame==360 || (studyFrame>=480 && studyFrame<490) || studyFrame==720 ||
                                (studyCaptureEvery && studyFrame%studyCaptureEvery==0)))
                 if(const char* directory=tak::devEnv("TAK_RENDER_CAPTURE_DIR")) {
-                    const auto path=std::filesystem::u8path(directory)/("frame-"+std::to_string(studyFrame)+".png");
+                    const auto path=tak::u8path(directory)/("frame-"+std::to_string(studyFrame)+".png");
                     const auto utf8=path.u8string();
                     screenshot(ren,w,h,std::string(utf8.begin(),utf8.end()));
                 }

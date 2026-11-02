@@ -12,7 +12,7 @@ template<class T> struct LeftEmptyOnCopy : T {
     using T::T;
     LeftEmptyOnCopy()=default;
     LeftEmptyOnCopy(T&& value):T(std::move(value)) {}
-    LeftEmptyOnCopy(const LeftEmptyOnCopy&) noexcept {}
+    LeftEmptyOnCopy(const LeftEmptyOnCopy&) noexcept:T() {}
     LeftEmptyOnCopy(LeftEmptyOnCopy&&)=default;
     LeftEmptyOnCopy& operator=(const LeftEmptyOnCopy&) {static_cast<T&>(*this)=T();return *this;}
     LeftEmptyOnCopy& operator=(LeftEmptyOnCopy&&)=default;

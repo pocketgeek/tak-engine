@@ -8,6 +8,7 @@
 #include <iostream>
 #include <thread>
 #include <stdexcept>
+#include "util/u8path.h"
 
 static void check(bool good,const char* message) {if(!good)throw std::runtime_error(message);}
 static int runTest(int argc,char** argv) try {
@@ -18,14 +19,14 @@ static int runTest(int argc,char** argv) try {
         // TEST IN GAME adds --game-mod <pack> (an AI mod without a map): this pack only.
         check((argc==5 || (argc==7 && std::string(argv[5])=="--game-mod" && std::string(argv[6])=="My AI \xc3\xbc & $")) &&
               std::string(argv[3])=="--play-map","launch arguments lost");
-        check(fs::u8path(argv[2]).filename()==fs::u8path("data spaces ü & $"),"data path quoting/Unicode changed");
-        tak::hpi::Archive snapshot(fs::u8path(argv[4]));
+        check(tak::u8path(argv[2]).filename()==tak::u8path("data spaces ü & $"),"data path quoting/Unicode changed");
+        tak::hpi::Archive snapshot(tak::u8path(argv[4]));
         check(!snapshot.entries().empty(),"child could not read snapshot");
         // The game's own import (takclient --play-map): the whitelisted AI profiles
         // reach the test room; a stray ai/ file stays behind.
         tak::hpi::Vfs base;auto art=std::make_shared<tak::hpi::Vfs::Files>();
         (*art)["terrain/00000001.jpg"]={1};base.setModFiles(art);   // the tile art a real install supplies
-        const auto package=tak::net::maps::importSnapshot(base,fs::u8path(argv[4]));
+        const auto package=tak::net::maps::importSnapshot(base,tak::u8path(argv[4]));
         check(package->files->count("ai/takengine.txt") && package->files->at("ai/takengine.txt")==std::vector<uint8_t>({'w',' ','x',' ','0','\n'}),"test room lost ai/takengine.txt");
         check(package->files->count("ai/islands.txt"),"test room lost the map's own DEFAULT profile");
         check(!package->files->count("ai/notes.txt"),"a stray ai/ file travelled into the test room");
@@ -34,7 +35,7 @@ static int runTest(int argc,char** argv) try {
     }
     {
         // clientPath: macOS bundle layouts (DMG: two apps; ZIP: apps plus bare takclient).
-        const auto top=fs::temp_directory_path()/fs::u8path("tak clientpath ü");
+        const auto top=fs::temp_directory_path()/tak::u8path("tak clientpath ü");
         std::error_code ec;fs::remove_all(top,ec);
         const auto editor=top/"dmg"/"TAK Cartographer.app"/"Contents";
         const auto game=top/"dmg"/"Total Annihilation - Kingdoms.app"/"Contents"/"MacOS";
@@ -65,12 +66,12 @@ static int runTest(int argc,char** argv) try {
     tak::tnt::Scenario metadata;metadata.aiProfile="islands";
     const auto files=cart::documentFiles(map,metadata, {},{}, {},
         {{"ai/takengine.txt",{'w',' ','x',' ','0','\n'}},{"ai/islands.txt",{'l','i','m','i','t',' ','f','l','y',' ','2','\n'}},{"ai/notes.txt",{'p','l','a','n','\n'}}},"Snapshot");
-    const auto root=fs::temp_directory_path()/fs::u8path("data spaces ü & $");
+    const auto root=fs::temp_directory_path()/tak::u8path("data spaces ü & $");
     std::string error;
     check(!test.start(root/"nonexistent",root,files,error) && !error.empty() && !test.running(),"missing executable did not fail cleanly");
-    check(test.start(fs::absolute(fs::u8path(argv[0])),root,files,error),error.c_str());
+    check(test.start(fs::absolute(tak::u8path(argv[0])),root,files,error),error.c_str());
     const auto path=test.snapshot();check(fs::is_regular_file(path),"temporary snapshot missing");
-    check(!test.start(fs::absolute(fs::u8path(argv[0])),root,files,error),"second concurrent test accepted");
+    check(!test.start(fs::absolute(tak::u8path(argv[0])),root,files,error),"second concurrent test accepted");
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(15);
     std::optional<int> result;
     while(!result && std::chrono::steady_clock::now()<deadline) {
@@ -80,7 +81,7 @@ static int runTest(int argc,char** argv) try {
     check(!fs::exists(path.parent_path()) && !test.running(),"finished snapshot not cleaned up");
     check(map.width==32 && files.members.front().data==map.save(),"playtest modified source document");
     // An AI mod's TEST IN GAME: the same snapshot handoff plus the pack to tick.
-    check(test.start(fs::absolute(fs::u8path(argv[0])),root,files,error,"My AI \xc3\xbc & $"),error.c_str());
+    check(test.start(fs::absolute(tak::u8path(argv[0])),root,files,error,"My AI \xc3\xbc & $"),error.c_str());
     result.reset();
     while(!result && std::chrono::steady_clock::now()<deadline+std::chrono::seconds(15)) {
         result=test.poll();std::this_thread::sleep_for(std::chrono::milliseconds(10));

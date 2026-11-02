@@ -41,6 +41,8 @@ void* operator new(std::size_t n) {
 }
 
 void operator delete(void* p) noexcept { std::free(p); }
+// The sized form, which the compiler calls when it knows the size: the same release.
+void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 
 void* operator new(std::size_t n, std::align_val_t align) {
     const std::size_t alignment = std::max(std::size_t(align), sizeof(void*));

@@ -13,6 +13,7 @@
 // server is a pure relay and clients cross-check hashes among themselves (M3).
 
 #include "net/mappackage.h"
+#include "util/u8path.h"
 #include "net/modpackage.h"
 #include "server/commands.h"
 #include "server/orders.h"
@@ -551,7 +552,7 @@ private:
         r.slots[slot].name = *avail[rng() % avail.size()];
     }
     void buildDataSet(DataSet& ds) {
-        ds.vfs = tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot_));
+        ds.vfs = tak::hpi::mountRetailRoot(tak::u8path(dataRoot_));
         tak::sim::setupRegistry(ds.reg, ds.vfs, false);
         if (!ds.vfs.list("unitscb").empty()) {
             tak::sim::setupRegistry(ds.regCb, ds.vfs, true);
@@ -723,7 +724,7 @@ void Server::writeReplay(Room& r) {
                        std::to_string(r.createdMs) + ".takrep";
     // Written under a temporary name and renamed, so a server stopped part way never
     // leaves a truncated .takrep; u8path, so a non-ASCII --replaydir works on Windows.
-    const auto final = std::filesystem::u8path(path);
+    const auto final = tak::u8path(path);
     auto temp = final; temp += ".tmp";
     std::ofstream out(temp, std::ios::binary | std::ios::trunc);
     out.write(reinterpret_cast<const char*>(w.b.data()), std::streamsize(w.b.size()));
@@ -1643,7 +1644,7 @@ void Server::validatePackage(Client& c,Room& room,bool mods,bool cache) {
     if(!receive.size || mapMemory()>limits_.mapMemory)throw std::runtime_error("server map memory budget reached");
     Validation job{nextValidation_++,c.id,room.id,receive.size,mods,cache,receive.digest,room.mapId,{}, {}};
     const auto token=job.stop.get_token();
-    const auto root=std::filesystem::u8path(mapRoot_);
+    const auto root=tak::u8path(mapRoot_);
     const auto digest=job.digest;const auto size=job.size;const auto quota=limits_.mapDisk;
     job.result=validationWorker_.submit([root,digest,size,quota,mods,cache,token,bytes=std::move(receive.bytes)]() mutable {
         if(token.stop_requested())throw std::runtime_error("map validation cancelled");
@@ -1960,7 +1961,7 @@ void Server::tryStart(Client& c) {
         return;
     }
     if (!wantMission && tak::mapgen::isGeneratedMapId(r->mapId)) {
-        try { tak::net::maps::saveGenerated(std::filesystem::u8path(mapRoot_), dataSet.vfs, r->mapId,limits_.mapDisk); }
+        try { tak::net::maps::saveGenerated(tak::u8path(mapRoot_), dataSet.vfs, r->mapId,limits_.mapDisk); }
         catch (const std::exception& e) {
             Writer w; w.u32(r->id); w.str(std::string("cannot save generated map: ") + e.what());
             c.conn.send(Msg::MapError, w); return;
@@ -3319,13 +3320,13 @@ int Server::run() {
 std::string defaultMapCacheDir() {
     namespace fs = std::filesystem;
     fs::path base;
-    if (const char* x = std::getenv("XDG_DATA_HOME"); x && *x) base = fs::u8path(x);
+    if (const char* x = std::getenv("XDG_DATA_HOME"); x && *x) base = tak::u8path(x);
 #ifdef _WIN32
     else if (const wchar_t* a = _wgetenv(L"APPDATA"); a && *a) base = fs::path(a);
 #elif defined(__APPLE__)
-    else if (const char* h = std::getenv("HOME"); h && *h) base = fs::u8path(h) / "Library" / "Application Support";
+    else if (const char* h = std::getenv("HOME"); h && *h) base = tak::u8path(h) / "Library" / "Application Support";
 #else
-    else if (const char* h = std::getenv("HOME"); h && *h) base = fs::u8path(h) / ".local" / "share";
+    else if (const char* h = std::getenv("HOME"); h && *h) base = tak::u8path(h) / ".local" / "share";
 #endif
     if (base.empty()) return {};
     const auto text = (base / "TAKengine" / "takserver").u8string();
@@ -3393,7 +3394,7 @@ static int serverMain(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--tls-key") && i+1<argc) tlsKey=argv[++i];
         else if (!std::strcmp(argv[i], "--acme-domain") && i+1<argc) {acme.domain=argv[++i];acmeOption=true;}
         else if (!std::strcmp(argv[i], "--acme-email") && i+1<argc) {acme.email=argv[++i];acmeOption=true;}
-        else if (!std::strcmp(argv[i], "--acme-state") && i+1<argc) {acme.state=std::filesystem::u8path(argv[++i]);acmeOption=true;}
+        else if (!std::strcmp(argv[i], "--acme-state") && i+1<argc) {acme.state=tak::u8path(argv[++i]);acmeOption=true;}
         else if (!std::strcmp(argv[i], "--acme-agree-tos")) {acme.agreeTerms=true;acmeOption=true;}
         else if (!std::strcmp(argv[i], "--acme-staging")) {acme.directory="https://acme-staging-v02.api.letsencrypt.org/directory";acmeOption=true;}
         else if (!std::strcmp(argv[i], "--allow-plaintext")) allowPlaintext=true;
@@ -3479,7 +3480,7 @@ static int serverMain(int argc, char** argv) {
     }
     // --data is only read: uploads and saved generated maps go here, and every
     // mount lists them (hpi::userMapRoot).
-    tak::hpi::setUserMapRoot(std::filesystem::u8path(mapRoot));
+    tak::hpi::setUserMapRoot(tak::u8path(mapRoot));
     Server s(port, dataRoot,mapRoot);
 #ifndef NDEBUG
     if(allowTestWork)s.allowBenchmarks();

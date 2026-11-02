@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cstdio>
 #include <tuple>
+#include "util/u8path.h"
 
 namespace {
 using tak::ai::Difficulty;
@@ -177,7 +178,7 @@ void cart::Editor::aiUseRoster(const std::string& pack) {
     if(!pack.empty() && !(aiPackRoster && aiPackRoster->pack==pack)) {
         try {
             auto roster=std::make_unique<AiPackRoster>();roster->pack=pack;
-            const auto packVfs=tak::hpi::mountRetailRoot(std::filesystem::u8path(dataRoot),{pack});
+            const auto packVfs=tak::hpi::mountRetailRoot(tak::u8path(dataRoot),{pack});
             tak::sim::setupRegistry(roster->registry,packVfs,false);
             for(const auto& [id,type]:roster->registry.types())if(!unitRegistry.find(id))roster->added.insert(id);
             aiPackRoster=std::move(roster);
@@ -195,7 +196,7 @@ bool cart::Editor::aiRosterLists(const std::string& pack) const {
 
 void cart::Editor::openAiProfiles() {
     if(aiOpen)return;
-    try {aiPacks=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {aiPacks.clear();}
+    try {aiPacks=tak::hpi::modPacks(tak::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {aiPacks.clear();}
     if(aiPack>int(aiPacks.size())) {aiPack=0;aiPackFiles.reset();}
     aiPackRoster.reset();aiRosterPack.clear();aiCatalogue.reset();   // units are read afresh each time
     aiMod.reset();aiModSaveOpen=aiModOpenOpen=false;aiView=AiView::Table;
@@ -789,7 +790,7 @@ void cart::Editor::handleAiProfiles(SDL_Event& e) {
     if(!aiMod && cart::pointIn(mx,my,aiPackButton)) {
         aiPack=(aiPack+1)%(int(aiPacks.size())+1);aiPackFiles.reset();
         if(aiPack) try {
-            auto files=tak::hpi::modFiles(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game,{aiPacks[size_t(aiPack-1)]});
+            auto files=tak::hpi::modFiles(tak::u8path(dataRoot),tak::hpi::ModKind::Game,{aiPacks[size_t(aiPack-1)]});
             std::erase_if(files,[](const auto& file){return !file.first.starts_with("ai/");});   // only ai/ is asked
             aiPackFiles=std::move(files);
         } catch(const std::exception& error) {aiNote=std::string("Game mod: ")+error.what();aiPack=0;}
@@ -1279,7 +1280,7 @@ void cart::Editor::aiModReplan() {
             else write[row.target]=it->second;
         }
         aiModPlanError.clear();
-        if(!cart::planModProfiles(std::filesystem::u8path(dataRoot),pack,write,remove,aiModPlan,aiModPlanError))aiModPlan=ModProfilePlan{};
+        if(!cart::planModProfiles(tak::u8path(dataRoot),pack,write,remove,aiModPlan,aiModPlanError))aiModPlan=ModProfilePlan{};
     };
     plan(trimmed(aiModPack));
     // An existing pack keeps its own spelling on disk; the header names it that way.
@@ -1301,7 +1302,7 @@ void cart::Editor::aiModSave() {
     }
     auto write=[this,plan] {
         std::string error;std::filesystem::path backup;
-        if(!cart::writeModProfiles(std::filesystem::u8path(dataRoot),plan,preferencesFolder,error,&backup)) {aiAfterSave=nullptr;openMessage("SAVE FAILED",error);return;}
+        if(!cart::writeModProfiles(tak::u8path(dataRoot),plan,preferencesFolder,error,&backup)) {aiAfterSave=nullptr;openMessage("SAVE FAILED",error);return;}
         int written=0,same=0,deleted=0;
         for(const auto& change:plan.changes) {
             if(change.action==A::Same)++same;else if(change.action==A::Delete)++deleted;else ++written;
@@ -1312,7 +1313,7 @@ void cart::Editor::aiModSave() {
         }
         if(aiMod)aiMod->pack=plan.pack;
         aiModSaveOpen=false;aiModPack=plan.pack;
-        try {aiPacks=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
+        try {aiPacks=tak::hpi::modPacks(tak::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
         aiPack=0;aiPackFiles.reset();   // the preview reads packs again when picked
         aiUseRoster(aiMod?aiMod->pack:"");
         std::string text="Saved to "+pathText(plan.folder)+": "+std::to_string(written)+" written";
@@ -1327,7 +1328,7 @@ void cart::Editor::aiModSave() {
         }
         openMessage("SAVED",text);
     };
-    if(replaces)openConfirm("REPLACE PACK FILES",compare+"The old files are kept in "+pathText(preferencesFolder/"mod-backups"/std::filesystem::u8path(plan.pack))+
+    if(replaces)openConfirm("REPLACE PACK FILES",compare+"The old files are kept in "+pathText(preferencesFolder/"mod-backups"/tak::u8path(plan.pack))+
         ", not in the pack. Save?",write);
     else write();
 }
@@ -1336,7 +1337,7 @@ void cart::Editor::aiOpenPack(const std::string& pack) {
     aiModOpenOpen=false;
     if(aiModPickWorkspace && !aiOpen) {aiModPickWorkspace=false;startAiModWorkspace(pack,false);return;}   // File > Open AI mod
     try {
-        auto files=cart::readModProfiles(std::filesystem::u8path(dataRoot),pack);
+        auto files=cart::readModProfiles(tak::u8path(dataRoot),pack);
         AiModSet set;set.pack=pack;set.files=files;set.opened=std::move(files);
         // The DEFAULT tab shows ai/default.txt, or the pack's file for this map's profile name.
         if(!set.files.count("ai/default.txt")) {
@@ -1412,7 +1413,7 @@ bool cart::Editor::mapHasUnsavedWork() const {
 void cart::Editor::requestAiMod(bool create) {
     auto next=[this,create] {
         if(create) {openModal(M_NEWAIMOD);return;}
-        try {aiPacks=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {aiPacks.clear();}
+        try {aiPacks=tak::hpi::modPacks(tak::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {aiPacks.clear();}
         if(aiPacks.empty()) {openMessage("OPEN AI MOD","This install has no game mods yet (mods/game/<pack>/). File > New AI mod makes one.");return;}
         aiOpenPackList();
     };
@@ -1475,7 +1476,7 @@ void cart::Editor::aiTestInGame() {
     auto pick=[this] {
         if(!aiMod)return;
         std::vector<std::string> packs;
-        try {packs=tak::hpi::modPacks(std::filesystem::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
+        try {packs=tak::hpi::modPacks(tak::u8path(dataRoot),tak::hpi::ModKind::Game);} catch(const std::exception&) {}
         if(std::none_of(packs.begin(),packs.end(),[&](const std::string& p){return p==aiMod->pack;})) {
             aiNote="Save the pack first: mods/game/"+aiMod->pack+" is not in the data folder yet, so the game has nothing to tick.";return;
         }
@@ -1504,11 +1505,11 @@ void cart::Editor::aiLaunchTest(const std::string& mapPath) {
         const auto name="Test "+std::to_string(std::chrono::system_clock::now().time_since_epoch().count());
         const auto files=installedMapFiles(mapPath,name);
         std::string error;
-        if(!playtest.start(client,std::filesystem::u8path(dataRoot),files,error,aiMod->pack))throw std::runtime_error(error);
+        if(!playtest.start(client,tak::u8path(dataRoot),files,error,aiMod->pack))throw std::runtime_error(error);
         playtestAiMod=true;
         openMessage("TEST IN GAME","Opened a private game lobby on a test copy of "+label+" with game mod "+aiMod->pack+
             " ticked for that room only (your own ticks are kept). Seat AIs at the levels to test (RETAIL for the DEFAULT AI), then start. Close the game to return here."+
-            cart::alwaysEnabledGameNote(std::filesystem::u8path(dataRoot)));
+            cart::alwaysEnabledGameNote(tak::u8path(dataRoot)));
     } catch(const std::exception& e) {openMessage("TEST IN GAME FAILED",e.what());}
 }
 
