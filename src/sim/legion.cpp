@@ -9560,6 +9560,40 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // travel speed, unturned (round 3, 2026-10-20). At the facing cap a
     // press round a wall's end to a flush point (see pressIn) ran out of
     // its kPressTicks half way, and the body walked back and pressed again.
+    // A press step is over: its point reached, timed out, dropped blocked, or combat braked the
+    // body. Ended in reach of the target it did what it was for, and the next press from this
+    // origin is no repeat (Member::pressFrom, the observer's in/out shuffle count: a ring spot
+    // handed on and back put a body that had pressed in and been held in reach at the same
+    // origin again, out of reach, 300 ticks later). The end is read as the hold in reach reads
+    // it, in whole pixels. Ended short, the origin stays marked: a press from it again is the
+    // in/out shuffle legion_pressin guards.
+    void pressEnd(const Unit& u,Member& m) {
+        m.pressX=kNoPress;m.lineCell=-1;
+        const auto group=groups.find(m.group);
+        if(group==groups.end())return;
+        const Unit* t=w.unit(group->second.reachTarget);
+        if(!t||!t->alive()||!t->type)return;
+        const int64_t R=reachPx(u,t,false).first;
+        const int64_t dx=(u.x.v>>16)-(t->x.v>>16),dz=(u.z.v>>16)-(t->z.v>>16);
+        if(R>0&&dx*dx+dz*dz<=R*R)m.pressFrom=-1;
+    }
+    // A press step blocked on its way into its point's origin (px,pz) waits when every body on
+    // that origin is a member on the move (a body walking through), and is dropped otherwise.
+    bool pressWaits(const Unit& u,int px,int pz) const {
+        const int fx=u.type->footX,fz=u.type->footZ;
+        if(px==footprintOrigin(u.x,fx)&&pz==footprintOrigin(u.z,fz))return false;
+        bool any=false;
+        for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+            const int x=px+i,z=pz+j;
+            if(x<0||z<0||x>=w.occW_||z>=w.occH_)return false;
+            const int32_t o=occAt(size_t(z)*w.occW_+x);
+            if(!o||o==u.id)continue;
+            const Member* peer=member(o);
+            if(!peer||peer->state!=Moving)return false;
+            any=true;
+        }
+        return any;
+    }
     bool pressHidden(const Unit& u,const Member& m) const {
         const auto group=groups.find(m.group);
         if(group==groups.end())return false;
@@ -11512,7 +11546,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 m->slot=-1;m->goal=m->requested;m->lineCell=-1;markPass(u,*m);
             }
         }
-        m->state=Engaged;m->pressX=kNoPress;setWant(u.id,*m,-1);
+        m->state=Engaged;if(m->pressX!=kNoPress)pressEnd(u,*m);setWant(u.id,*m,-1);
     }
     // Round 2 (2026-10-19): the firing rings as discs, for ringBend. Rebuilt
     // by ringScan every kRingScan ticks from the groups in id order: the
@@ -11917,13 +11951,19 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(m.pressX!=kNoPress) {
             const int64_t dx=int64_t(m.pressX)-u.x.v,dz=int64_t(m.pressZ)-u.z.v;
             const int px=footprintOrigin(Fixed::raw(m.pressX),fx),pz=footprintOrigin(Fixed::raw(m.pressZ),fz);
-            if(++m.pressTicks>kPressTicks||std::abs(px-ox)>1||std::abs(pz-oz)>1||(!dx&&!dz)) {m.pressX=kNoPress;m.lineCell=-1;}
+            if(++m.pressTicks>kPressTicks||std::abs(px-ox)>1||std::abs(pz-oz)>1||(!dx&&!dz))pressEnd(u,m);
             else {
                 holdStall(m);
                 m.site=LegionNavigator::SiteBlocked;
                 m.why=LegionNavigator::WhyPress;
                 drive(u,m,p,nullptr,maximum,Fixed::raw(m.pressX),Fixed::raw(m.pressZ),false,false,false,false,pressHidden(u,m));
-                if(m.state==Holding)m.pressX=kNoPress;   // blocked: the next hold may press elsewhere
+                // Blocked: by a body standing still the press is dropped (the next hold may press
+                // elsewhere); by a mover walking through the point's origin it waits (2026-11-02).
+                // Dropped, the body walked back to its spot's centre out of reach and pressed again
+                // from the same origin once the mover had passed (attackring-wall-64 offsets 2 / -1
+                // with the queued attackers' shuffles at travel speed: the in/out shuffle
+                // legion_pressin guards). The wait is bounded by kPressTicks as the walk is.
+                if(m.state==Holding&&!pressWaits(u,px,pz))pressEnd(u,m);
                 return;
             }
         }
