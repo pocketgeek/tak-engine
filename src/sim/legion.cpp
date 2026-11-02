@@ -13480,6 +13480,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
         const int ox=footprintOrigin(u.x,fx),oz=footprintOrigin(u.z,fz);
         int64_t dx=int64_t(aimX.v)-u.x.v,dz=int64_t(aimZ.v)-u.z.v;
+        const int64_t aimDx=dx,aimDz=dz;   // the aim as given: the blocked branch keeps its shuffles ahead of it
         int64_t length=isqrtFloor(uint64_t(dx*dx+dz*dz));
         if(final&&length<=Fixed::kOne/2) {
             // Exactly on the goal centre (sub-pixel): this leg is complete.
@@ -13646,6 +13647,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     // holds. MV-16 stays an intended trade.)
                     if(m.passUntil>w.tickCounter_&&d[0]*m.passRX+d[1]*m.passRZ<0) {passFiltered=true;continue;}
                     if((oz+d[1])*W+ox+d[0]==back)continue;
+                    // Never behind the aim (2026-11-02): a shuffle more than 90 degrees from the way
+                    // the body is going was a backward step at travel speed, undone by the next
+                    // descent. Without them: t90 5 better / 0 worse over the suite (bridges-100 -15%,
+                    // densehead -9%), reversals 29 better / 9 worse, backward 27 / 9 (deep dive 5.4).
+                    if(int64_t(d[0])*aimDx+int64_t(d[1])*aimDz<0)continue;
                     const int64_t v=metric(ox+d[0],oz+d[1]);
                     if(v<here)options[size_t(count++)]={v,k};
                 }
