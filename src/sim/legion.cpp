@@ -940,8 +940,13 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // A generated production exit point: a body without headway and
         // with its whole birthplace clear is done (never blocks the lane).
         bool exitClear=false;
+        constexpr bool operator==(const Policy&) const=default;
     };
-    static Policy policy(Kind k) {
+    // The rule, by kind. Read through policy() below: a table built from this switch once at
+    // compile time, since policy() is read many times per member update (drive, the claims, the
+    // room and reach tests) and as a switch returning a struct it was an out-of-line call with
+    // 1-3% self time at 1,000 bodies (deep dive 6.3 item 4).
+    static constexpr Policy policyRule(Kind k) {
         Policy p;
         switch(k) {
         case Kind::Move:break;
@@ -958,6 +963,23 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         default:break;
         }
         return p;
+    }
+    static constexpr size_t kKinds=size_t(Kind::Park)+1;
+    // Whole rows are assigned: GCC 16.2's constant evaluation drops a row's default member
+    // initializers when a single member of a value-initialized element is written (a table built
+    // that way lost completes/area on every row it touched, and changed battle-field-2x60).
+    static constexpr std::array<Policy,kKinds> makePolicies() {
+        std::array<Policy,kKinds> t{};
+        for(size_t i=0;i<kKinds;++i)t[i]=policyRule(Kind(i));
+        return t;
+    }
+    static Policy policy(Kind k) {
+        static constexpr std::array<Policy,kKinds> kPolicies=makePolicies();
+        static_assert(size_t(Kind::None)==0,"the table is indexed by the kind's value");
+        static_assert([] {for(size_t i=0;i<kKinds;++i)if(!(makePolicies()[i]==policyRule(Kind(i))))return false;return true;}(),
+                      "every table row equals its rule");
+        // A kind outside the table (a corrupt byte) gets the defaults, as the switch's default case does.
+        const size_t i=size_t(k);return i<kPolicies.size()?kPolicies[i]:Policy{};
     }
     struct Point;
     struct Member {
