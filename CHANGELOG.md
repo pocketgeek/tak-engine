@@ -19,6 +19,27 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.18
+*2026-11-02 · protocol 309 · replay format 15 · plays with 0.9.17 and 0.9.16, and their replays*
+
+- **A clean build.** Every compiler warning on every platform is gone: about 390
+  distinct warnings at 0.9.17, none on Linux, Windows or macOS now. None of them was
+  a bug in the game. Most were style warnings, now silenced, and the rest are fixed
+  in the code without changing behaviour; the deprecated C++ path call is replaced
+  everywhere.
+- **Windows: a single-player game's server now closes with the game.** If the game
+  was killed or crashed, its private server kept running in the background, holding
+  its network port and files (it could block an update). It also writes its log to
+  the same place as the game now.
+- **Password hashing refuses an absurdly long salt** instead of risking an overflow
+  that real salts can never reach.
+- **Protocol 309, unchanged:** nothing that games or replays depend on changed, so
+  0.9.18, 0.9.17 and 0.9.16 play together and play each other's replays. Servers
+  need no update.
+
+Full notes: [release-0.9.18-notes.md](docs/release-0.9.18-notes.md) ·
+validation: [release-0.9.18-validation.md](docs/release-0.9.18-validation.md)
+
 ## 0.9.17
 *2026-11-02 · protocol 309 · replay format 15 · plays with 0.9.16, and its replays*
 
