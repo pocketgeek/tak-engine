@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.9.16**. Which versions it plays with, and whose
+This guide covers **TAK Engine 0.9.17**. Which versions it plays with, and whose
 replays it plays: see [Versions](#versions). What changed in each release: see
 the [CHANGELOG](../CHANGELOG.md). It is written for three kinds of reader:
 
@@ -1783,8 +1783,9 @@ in a formation with ground units keep station over them.
 ## Options
 
 Open **Options** from **Settings** on the main menu, or **Esc → Options** in a
-game. Changes apply and are saved immediately; there is no Save button. A
-slider is saved when you let go of it, and your player name when you press
+game. Changes apply and are saved immediately; there is no Save button
+(**Defaults** is at the bottom left, **Back** at the bottom right). A
+slider is saved when you let go of it, a dropdown when you pick a choice, and your player name when you press
 Enter or click elsewhere. **Defaults** asks first (**Reset to defaults?**
 **Yes** / **No**), then puts the options back to their defaults; it leaves your
 player name, data folder, key bindings and voice chat settings alone. It also sets UI Scale and Cursor Size
@@ -2030,7 +2031,7 @@ your system appear.
 
 ### Interface
 
-![Options, Interface section: UI Font Modern, F4 Scorecard Scale and UI Scale 100%, Health Bars Damaged, Stats Panel on, Build Menu Center at 100%, Chat Position Centered and Chat Scale 100%](img/guide/options-interface.jpg)
+![Options, Interface section: Modern UI Font on, F4 Scorecard Scale and UI Scale 100%, Health Bars Damaged, Stats Panel on, Build Menu Center at 100%, Chat Position Centered and Chat Scale 100%](img/guide/options-interface.jpg)
 
 | Option | Default | What it does |
 | --- | --- | --- |
@@ -2314,15 +2315,15 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 0.9.16 uses network protocol **309** and replay format **15**. No earlier
-release uses protocol 309, so:
+TAK Engine 0.9.17 uses network protocol **309** and replay format **15**, the same as
+0.9.16. No earlier release uses protocol 309, so:
 
-- **Multiplayer:** 0.9.16 plays only with 0.9.16. A server turns away a client whose
-  protocol differs from its own, so a 0.9.15 or older player cannot join a 0.9.16
-  server, nor a 0.9.16 player an older one; the connection fails with a *protocol
-  version mismatch* message. When a release changes the protocol, a server and all of
+- **Multiplayer:** 0.9.17 plays with 0.9.17 and 0.9.16, in either direction. A server
+  turns away a client whose protocol differs from its own, so a 0.9.15 or older player
+  cannot join a 0.9.17 server, nor a 0.9.17 player an older one; the connection fails
+  with a *protocol version mismatch* message. When a release changes the protocol, a server and all of
   its players update together.
-- **Replays:** 0.9.16 plays only replays recorded by 0.9.16. A replay recorded by 0.9.15
+- **Replays:** 0.9.17 plays replays recorded by 0.9.17 and 0.9.16. A replay recorded by 0.9.15
   or earlier needs a version with that replay's protocol; keep an old copy of the
   engine (built from its tag, see the [development guide](development.md)) if you want
   to keep watching old replays.

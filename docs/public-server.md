@@ -12,10 +12,12 @@ independent security audit or protection against a volumetric DDoS.
 ## Versions
 
 Server and clients must speak the same gameplay protocol; update the server and
-every client together when it changes. **0.9.16 changes it (protocol 309):** a
-0.9.16 `takserver` accepts only 0.9.16 players and turns away 0.9.15 and older clients
-with a *protocol version mismatch* message, and a 0.9.15 or older server turns away
-0.9.16 players, so update `takserver` when you announce 0.9.16 to your players. (0.9.15 and 0.9.14 used protocol 308, 0.9.13 307, 0.9.12 305, 0.9.11 304; 0.9.9 and 0.9.10 shared 303;
+every client together when it changes. **0.9.17 keeps protocol 309**, so a 0.9.16
+`takserver` and 0.9.17 players (or the other way round) play together, and the server
+needs no update for 0.9.17. **0.9.16 changed it (protocol 309):** a 0.9.16 or 0.9.17
+`takserver` turns away 0.9.15 and older clients with a *protocol version mismatch*
+message, and a 0.9.15 or older server turns them away, so a server still on 0.9.15
+must update. (0.9.15 and 0.9.14 used protocol 308, 0.9.13 307, 0.9.12 305, 0.9.11 304; 0.9.9 and 0.9.10 shared 303;
 306 was never released.) Since 0.9.12 a
 server whose game has no human player left (AIs watched by spectators) no longer
 computes the lockstep check nobody compares, except for a recorded replay's

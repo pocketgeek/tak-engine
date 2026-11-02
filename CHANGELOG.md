@@ -19,6 +19,30 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.17
+*2026-11-02 · protocol 309 · replay format 15 · plays with 0.9.16, and its replays*
+
+- **Options: more dropdowns.** Texture Filtering, Hidden Units, Health Bars, Build
+  Menu and Chat Position are dropdowns like Renderer, with the same choices as before.
+- **UI Font is now Modern UI Font, a switch:** on is the modern face (the default),
+  off the classic one. Your current choice carries over.
+- **No Voice Chat row in Options.** Open the Voice Chat page from Settings on the main
+  menu, or from the game menu.
+- **One footer everywhere:** on Options, Voice Chat and Controls, Defaults sits at
+  the left edge and Back at the right.
+- **YouTube Streaming has a Back button,** and its window is laid out like Options:
+  same size and text, and it grows with the window. Its messages show beside Back,
+  and the Esc / F9 hint is gone.
+- **Settings, Benchmark and Load Replay grow with the window** like Options, from 1x
+  at 1280 × 720 to 3x at 4K and up, each with an Options-sized Back; the "ESC - BACK"
+  hints are gone.
+- **Protocol 309, unchanged:** all of this is interface only, so 0.9.17 and 0.9.16
+  clients and servers play together in either direction, and each plays the other's
+  replays. Servers need no update.
+
+Full notes: [release-0.9.17-notes.md](docs/release-0.9.17-notes.md) ·
+validation: [release-0.9.17-validation.md](docs/release-0.9.17-validation.md)
+
 ## 0.9.16
 *2026-11-01 · protocol 309 · replay format 15 · does not play with 0.9.15 or earlier, nor their replays*
 

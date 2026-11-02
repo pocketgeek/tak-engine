@@ -16,7 +16,7 @@ TAK Engine can broadcast the game straight to YouTube, with no extra software.
 5. Watch the preview and status in YouTube Studio and make the broadcast public
    there. See [YouTube's encoder setup guide](https://support.google.com/youtube/answer/2907883).
 
-**Closing the panel does not stop the stream.** Esc or F9 closes it, and a small badge
+**Closing the panel does not stop the stream.** **Back**, Esc or F9 closes it, and a small badge
 in the corner shows the stream state while it runs. Returning to the title screen
 keeps it running too. Stop it with **Stop Streaming**, or by exiting the application.
 

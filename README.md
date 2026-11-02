@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.16-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.17-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,16 +26,14 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.16
+## What's new in 0.9.17
 
-- Replays: a clean bar with a clickable timeline, rewind, fast forward and speeds up to 256x.
-- Replays and spectating: select any unit silently, see its owner's panel, track it with T, and no orders.
-- Units from an infinite-queue builder start their rally orders straight away.
-- Surrender in the game menu; the result screen's right door leads to New Game or Game Select, signed in by a temporary token.
-- The Benchmark can run Retail or Legion, the streaming key can be rebound, and START shows STARTING...
+- Options: Texture Filtering, Hidden Units, Health Bars, Build Menu and Chat Position are dropdowns; UI Font becomes a Modern UI Font switch.
+- Back is at the right and Defaults at the left on every settings screen.
+- YouTube Streaming gets a Back button and, with Settings, Benchmark and Load Replay, grows with the window like Options.
 
-Does not play with 0.9.15 or its replays (protocol 309); servers must update.
-Details in the [CHANGELOG](CHANGELOG.md#0916).
+Plays with 0.9.16 and its replays (protocol 309); servers need no update.
+Details in the [CHANGELOG](CHANGELOG.md#0917).
 
 ## Features
 
