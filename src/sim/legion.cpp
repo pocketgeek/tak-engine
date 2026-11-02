@@ -5281,46 +5281,96 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             const uint32_t g=f.cellAt(x,z);
             if(g+f.heuristic(x,z)!=f.current)continue;   // stale entry
             const uint32_t open=steps(p,x,z);
+            // The relaxation of neighbour (nx,nz), whose estimate is `slot`, by a step of cost `base` from the popped
+            // cell: its improved potential, or kUnreached when the step improves nothing. `label` is the opening the
+            // step crosses (stage 8). Shared by the two neighbour loops below.
+            const auto relaxed=[&](int nx,int nz,uint32_t base,uint32_t slot,uint16_t& label)->uint32_t {
+                if(g+base>=slot)return kUnreached;   // no charge can improve it
+#ifndef NDEBUG
+                // C1's soundness: a settled potential is final (a paused
+                // build's gates read only settled cells, see Field::known).
+                if(gVerify&&slot!=kUnreached&&uint32_t(slot)+f.heuristic(nx,nz)<=f.current&&
+                   g+base+f.heuristic(nx,nz)<f.current)
+                    verifyFail("a relaxation could lower a settled potential");
+#endif
+                const int level=softLevel(nx,nz,p.footX,p.footZ,f.command,f.softCounts,f.ownArrivals,f.liftAllied);
+                f.softened|=level>0;
+                // Stage 8: a step across a sector boundary may cross an opening (a body at the neighbour walks
+                // into this cell): its label, and the route's queue charge for that crossing.
+                uint32_t queue=0;
+                if(f.labels&&(((x^nx)|(z^nz))>>shift)) {
+                    label=crossLabel(p,x,z,nx,nz,opWork);
+                    if(label&&!f.charges.empty())queue=f.chargeFor(label);
+                }
+                const uint32_t next=g+(level==2?base*kSoftFactor:level==1?base*kSoftNear:base)+
+                    (f.avoid.empty()?0:base*f.corridorMult(nx,nz,p.footX,p.footZ))+queue;
+                if(next>=kUnreached)return kUnreached;   // out of range (never: over 40M cells even at the highest charge)
+                return next<slot?next:kUnreached;
+            };
+            const auto push=[&](int nx,int nz,uint32_t next) {
+                f.buckets[(next+f.heuristic(nx,nz))&f.mask].push_back(nz*W+nx);++f.queued;
+            };
+            const int m=(1<<f.shift)-1,bx=x&m,bz=z&m;
+            if(g!=kUnreached&&bx>0&&bx<m&&bz>0&&bz<m) {
+                // The popped cell is an interior cell of its tile (the common case: 88% of a 32-tile), so its eight
+                // neighbours lie in that tile: the tile's pointers, offset, dAllow bit and via plane are resolved
+                // once here instead of per neighbour (inside / cellIn / slot / viaTile / viaSlot each resolved them
+                // again; cellIn alone was 9-12% of a 1,000-body tick, docs/legion-deep-dive-2026-11-02.md 6.3).
+                // Exact: every read and write is the same cell of the same tile and every allocation the same call
+                // (slot, viaSlot), the pointers re-read after one. inside(x,z) holds (g was read from a tile), so the
+                // tile's allow bit is set; a neighbour's inside() is the window's bounds alone.
+                const size_t ti=f.tileOf(x,z),ci=f.inTile(x,z);
+                const bool dBlocked=!f.dAllow.empty()&&!f.dAllow[ti];
+                const bool deep=x-1>=f.x0&&x+1<f.x0+f.fw&&z-1>=f.z0&&z+1<f.z0+f.fh;
+                const int64_t off=f.offsetP?f.offsetP[ti]:0;
+                const uint32_t* t=f.tiles[ti];uint32_t* wt=f.own[ti].get();
+                uint16_t* vt=f.via.empty()?nullptr:f.via[ti].get();
+                for(size_t k=0;k<kDirections.size();++k) {
+                    const auto& d=kDirections[k];
+                    ++spent;
+                    if(!(open>>k&1))continue;
+                    const int nx=x+d[0],nz=z+d[1];
+                    if(!deep&&!(nx>=f.x0&&nz>=f.z0&&nx<f.x0+f.fw&&nz<f.z0+f.fh))continue;
+                    if(dBlocked)continue;
+                    const size_t ni=size_t(int(ci)+d[1]*(m+1)+d[0]);
+                    const uint32_t raw=t[ni];
+                    const uint32_t slot=raw==kUnreached?raw:uint32_t(int64_t(raw)+off);
+                    uint16_t label=0;
+                    const uint32_t next=relaxed(nx,nz,d[0]&&d[1]?kDiagonal:kOrthogonal,slot,label);
+                    if(next==kUnreached)continue;
+                    if(wt)wt[ni]=next;
+                    else {f.slot(nx,nz)=next;t=f.tiles[ti];wt=f.own[ti].get();}
+                    if(f.labels) {
+                        // Allocated only where some label is not 0 (an unwritten tile reads 0).
+                        const uint16_t v=label?label:(vt?vt[ci]:uint16_t(0));
+                        if(vt)vt[ni]=v;
+                        else if(v) {f.viaSlot(nx,nz)=v;vt=f.via[ti].get();}
+                    }
+                    push(nx,nz,next);
+                }
+                continue;
+            }
+            // A cell on its tile's rim: its neighbours may lie in up to four tiles, each resolved as before.
             for(size_t k=0;k<kDirections.size();++k) {
                 const auto& d=kDirections[k];
                 ++spent;
                 if(!(open>>k&1))continue;
-                const uint32_t base=d[0]&&d[1]?kDiagonal:kOrthogonal;
+                const int nx=x+d[0],nz=z+d[1];
                 // Outside the window only after a static change mid-build
                 // (the field is then stale and rebuilt on the new plane).
-                if(!f.inside(x+d[0],z+d[1]))continue;
+                if(!f.inside(nx,nz))continue;
                 // A chain's own field covers its destination's tiles only (stage 6).
-                if(!f.dAllow.empty()&&!f.dAllow[f.tileOf(x+d[0],z+d[1])])continue;
-                const uint32_t slot=f.cellIn(x+d[0],z+d[1]);
-                if(g+base>=slot)continue;   // no charge can improve it
-#ifndef NDEBUG
-                // C1's soundness: a settled potential is final (a paused
-                // build's gates read only settled cells, see Field::known).
-                if(gVerify&&slot!=kUnreached&&uint32_t(slot)+f.heuristic(x+d[0],z+d[1])<=f.current&&
-                   g+base+f.heuristic(x+d[0],z+d[1])<f.current)
-                    verifyFail("a relaxation could lower a settled potential");
-#endif
-                const int level=softLevel(x+d[0],z+d[1],p.footX,p.footZ,f.command,f.softCounts,f.ownArrivals,f.liftAllied);
-                f.softened|=level>0;
-                // Stage 8: a step across a sector boundary may cross an opening (a body at the neighbour walks
-                // into this cell): its label, and the route's queue charge for that crossing.
-                uint16_t label=0;uint32_t queue=0;
-                if(f.labels&&(((x^(x+d[0]))|(z^(z+d[1])))>>shift)) {
-                    label=crossLabel(p,x,z,x+d[0],z+d[1],opWork);
-                    if(label&&!f.charges.empty())queue=f.chargeFor(label);
+                if(!f.dAllow.empty()&&!f.dAllow[f.tileOf(nx,nz)])continue;
+                uint16_t label=0;
+                const uint32_t next=relaxed(nx,nz,d[0]&&d[1]?kDiagonal:kOrthogonal,f.cellIn(nx,nz),label);
+                if(next==kUnreached)continue;
+                f.slot(nx,nz)=next;
+                if(f.labels) {
+                    // Allocated only where some label is not 0 (an unwritten tile reads 0).
+                    const uint16_t v=label?label:f.viaAt(x,z);
+                    if(v||f.viaTile(nx,nz))f.viaSlot(nx,nz)=v;
                 }
-                const uint32_t next=g+(level==2?base*kSoftFactor:level==1?base*kSoftNear:base)+
-                    (f.avoid.empty()?0:base*f.corridorMult(x+d[0],z+d[1],p.footX,p.footZ))+queue;
-                if(next>=kUnreached)continue;   // out of range (never: over 40M cells even at the highest charge)
-                if(next<slot) {
-                    f.slot(x+d[0],z+d[1])=next;
-                    if(f.labels) {
-                        // Allocated only where some label is not 0 (an unwritten tile reads 0).
-                        const uint16_t v=label?label:f.viaAt(x,z);
-                        if(v||f.viaTile(x+d[0],z+d[1]))f.viaSlot(x+d[0],z+d[1])=v;
-                    }
-                    f.buckets[(next+f.heuristic(x+d[0],z+d[1]))&f.mask].push_back((z+d[1])*W+x+d[0]);++f.queued;
-                }
+                push(nx,nz,next);
             }
         }
         if(!f.queued&&f.seedNext>=f.seedKeys.size()) {
