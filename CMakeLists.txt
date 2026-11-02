@@ -2119,8 +2119,12 @@ add_test(NAME streaming COMMAND stream_test)
 add_test(NAME streaming_overload COMMAND stream_test libx264 overload)
 add_test(NAME streaming_native COMMAND stream_test libx264 native)
 # A 7680x2160 capture into a small 60 FPS stream: the worker's resize keeps pace.
-add_test(NAME streaming_pacing COMMAND stream_test libx264 pacing)
-set_tests_properties(streaming_pacing PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE SKIP_RETURN_CODE 77)
+# Real-time encoding of a 7680x2160 capture at 60 fps: meaningless where everything runs
+# several times slower (ASan dropped 74 of 105 frames), so optimized builds only.
+if(NOT TAK_SLOW_TEST_BUILD)
+  add_test(NAME streaming_pacing COMMAND stream_test libx264 pacing)
+  set_tests_properties(streaming_pacing PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE SKIP_RETURN_CODE 77)
+endif()
 add_executable(rgbascale_test tools/rgbascale_test.cpp src/video/rgbascale.cpp)
 target_include_directories(rgbascale_test PRIVATE src)
 target_link_libraries(rgbascale_test PRIVATE Threads::Threads)
