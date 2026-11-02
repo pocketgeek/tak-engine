@@ -157,6 +157,7 @@ Digest hmacSha256(const void* key, size_t keyLen, const void* msg, size_t msgLen
 std::vector<uint8_t> pbkdf2Sha256(std::string_view password, const void* salt,
                                   size_t saltLen, uint32_t iters, size_t dkLen) {
     if (iters == 0) iters = 1;
+    if (saltLen > SIZE_MAX - 4) throw std::length_error("pbkdf2Sha256: salt too long");   // saltLen + 4 must not wrap
     std::vector<uint8_t> out(dkLen);
     const Hmac prf(password.data(), password.size());   // key schedule: computed once
     std::vector<uint8_t> first(saltLen + 4);
