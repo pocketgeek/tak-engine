@@ -11874,21 +11874,14 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 const auto [ax,az]=stepAim(u,m.detour);
                 holdStall(m);
                 m.site=m.detourPass?LegionNavigator::SitePass:LegionNavigator::SiteBlocked;
-                // A formation member's flow-around shuffle on a move-like or fight leg keeps travel speed
-                // (detourFlow, see drive), as a long detour route does. An attack, guard or patrol leg's
-                // shuffles round its own melee or ring keep the facing cap, and so do a body with a goal of its own
-                // (crowdheld's 64 distinct goals packed at a 3-cell pitch behind a door: 60 of 64 in goal at
-                // speed, the ratchet is 61), a member whose point is in a head-on meet with another order
-                // (Point::meet: at speed the two streams interleave into a knot -- bridges-1000's two-way 32-cell
-                // bridge ended with 97 bodies stuck at offset 0, 5 at the crawl), a body admitted through a
-                // narrow passage (passLabel: admission's commit and clear times were set on the crawl; at speed
-                // bridges-100 at offset -5 and taperbridge-100 at +2 ended with 52 and 97 bodies stuck head on
-                // in a bridge's mouth) and a body that has gained nothing for a crowd window (kCrowdWindow): at
-                // speed its shuffles round a settled crowd carried it along the crowd's edge, out of reach of
-                // the settle rule (a production rally's last output stood 7 cells off the point for good,
-                // movement_orders_test; gen1-route-61923 240 -> 221 arrived). An attack or guard member round
-                // a target standing still (stillTarget) keeps travel speed on any committed side-step; one
-                // that gains nothing commits no new flow-around shuffle (see drive).
+                // Since 2026-11-02 every unturned step keeps travel speed (see the cap in drive): the brisk
+                // flag below only still names the shuffles that kept speed before (a formation member's on
+                // a move-like or fight leg, Member::detourFlow, and a side-step round a target standing
+                // still), for the why tag and for a pass that faces its step. The cases that once kept the
+                // crawl -- crowdheld's packed lattice, a head-on meet (Point::meet), a body admitted through
+                // a narrow passage (passLabel), a body stalled a crowd window -- were measured again with the
+                // body facing its motion and lost nothing (deep dive 5.4: bridges-100 and taperbridge-100
+                // arrive sooner, crowdheld keeps its ratchet, gen1-route-61923 is unchanged).
                 const bool brisk=(m.detourFlow&&!m.passLabel&&!(m.pt&&m.pt->meet.tick!=kNoTick)&&stalledFor(m)<=kCrowdWindow)||stillTarget(m);
                 m.why=m.detourPass?LegionNavigator::WhyPass:m.detourWhy==1?LegionNavigator::WhySidestep:m.detourWhy==2?LegionNavigator::WhyRoom:
                       brisk?LegionNavigator::WhyFlowBrisk:LegionNavigator::WhyFlowCap;
@@ -13507,17 +13500,24 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         Fixed cap=retailGroundSpeedCap(maximum*multiplier,u.groundPitch,0);
         const Fixed full=cap;
         const int32_t facing=std::abs(diff);
-        // A lane-discipline pass slides one cell over without turning (turning
-        // there read as spinning in a jam); it keeps travel speed, as do a
-        // long local detour route (brisk, see the route walk in move) and a
-        // flow-around shuffle (Member::detourFlow, committed below). At the
-        // facing cap a shuffle sideways crept at an eighth of travel speed:
-        // a one-cell step took about 70 ticks, longer than the 45 a side-step
-        // lives, and a crowd folding round a wall end or a block of idle
-        // bodies stood in its own shuffles (island-1x100: 30-50% of the
-        // bodies under a third of their speed in front of the rock, Retail
-        // 10-20%). Retail's mover traces round a body at its own speed.
-        if(pass||brisk) {}
+        // The cap applies to a step that turns the course (face): a body turning
+        // toward its route slows until it faces it, so turning never sweeps the
+        // footprint off the proven line. An unturned step -- a lane-discipline
+        // pass, a detour route, a flow-around shuffle, a side-step, a press --
+        // keeps travel speed, and faceMotion turns the body to its actual motion
+        // as it goes (the 2026-10-28 facing). Until 2026-11-02 only passes, long
+        // routes and formation move shuffles (Member::detourFlow) kept speed and
+        // every other unturned step crept at an eighth: a one-cell shuffle took
+        // about 70 ticks, longer than the 45 a side-step lives, and the creeps
+        // were 98% of Legion's statue ticks (11x Retail's: bodies visibly sliding
+        // sideways at a crawl). Each exemption had been measured with bodies that
+        // did not turn to their motion; with the facing in place, speed for every
+        // unturned step removed 99% of the statue ticks on 60 of 64 fixtures with
+        // arrival equal or better (bridges-100 t90 -19%, densehead -14%,
+        // taperbridge-100 -7%; one loss, motion-cross-100 +5%) and no fixture
+        // under the Retail floor (docs/legion-deep-dive-2026-11-02.md, 5.4).
+        // Retail's mover traces round a body at its own speed.
+        if(pass||brisk||!face) {}
         else if(facing>12288)cap=Fixed::raw(cap.v/8);
         else if(facing>4096)cap=Fixed::raw(cap.v/2);
         Fixed speed=fxMin(cap,u.speed+u.type->accel*multiplier);
