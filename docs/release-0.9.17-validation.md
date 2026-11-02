@@ -3,6 +3,10 @@
 Protocol **309** (unchanged from 0.9.16), replay format **15** (unchanged), generator
 version **9** (unchanged).
 
+Tag `v0.9.17` -> `13e0a3a65ddbd473c11b04d3d174ae5fc4f86bb9` (the preparation
+commit); annotated tag object `62d4926f1808a56a589e37f0bec576e0f7638122`.
+Published 2026-11-02 14:56:18 UTC as the Latest release.
+
 ## Scope and compatibility
 
 0.9.17 follows 0.9.16 (tag `v0.9.16` -> `ede3d06b`, validation commit `a286ed3a`). One
@@ -47,6 +51,54 @@ On Linux, cores 4-23, scratch `HOME` and XDG dirs, logs in
   `docs/img/README.md`) and looked at.
 - **Targeted tests during the work:** `options_autosave`, `voice`, `stream_key`,
   `stream_bitrate` and `benchmark_pathfinding` passed after each change.
+
+## CI and packages
+
+All four tag workflows ran on `13e0a3a6` (tag `v0.9.17`) on 2026-11-02: Determinism
+41451343164 (golden `dcef618cd2e4d558`, "DETERMINISM OK", unchanged), Windows
+41451329474 and macOS 41451329483 (both signing jobs about two minutes) passed on
+attempt 1. Linux packages 41451329453 passed on attempt 4. Attempts 1 to 3 failed only
+in Slackware 15.0 x64's dependency step: the runners could not connect to
+`mirrors.kernel.org` (connection timed out), before anything was compiled; the mirror
+answered normally from outside GitHub. Only the failed jobs were rerun, on the same
+commit, and the tag was not moved.
+
+All 29 assets were downloaded fresh and match GitHub's SHA-256 digests, and the asset
+names are 0.9.16's with the version changed. Every extracted x86-64 Linux binary carries
+the `v0.9.17` build string and no other `v0.x.y` string; none has a libva, libdrm,
+libsecret, GLib or libsqlite `NEEDED` entry or embedded VA or SQLite code, and no
+release binary contains a forbidden `TAK_` name. Each one that runs here reports
+`0.9.17 (build v0.9.17)` from scratch profile dirs and leaves no files; the Arch
+`takclient` needs GLIBC 2.44 and cannot run on this Fedora host, as before.
+
+The Fedora 44 x86-64 RPM's `takserver` listened on protocol v309 with retail gameplay
+hash `d6000f4fa9095a51` and ran the Retail AI game with the 0.9.17 Debug client
+(`TAK_AI_LEVEL=6 TAK_SPEED=80 --mpai --time 60`): `hash=12003fba552b8696 units=4
+err=none end=timelimit`, with no desync, mismatch or referee-suspect line.
+
+## Signing
+
+Windows: on oden-win, `Get-AuthenticodeSignature` reports **Valid** (timestamped,
+"Curtis Edge") for the same 7 files as 0.9.16. The x64 `takclient.exe` and
+`takserver.exe` report `0.9.17 (build v0.9.17)`, and the arm64 ones carry the build
+string. The real profile's listing (374 lines) is identical before and after, and the
+scratch copy was removed.
+
+macOS: on the MacBook, both DMGs and all eight app copies pass `stapler validate`, and
+`spctl -a -vv` accepts them as "Notarized Developer ID" (Curtis Edge, L479Y59RN8). Each
+app passes `codesign --verify --strict --deep` and has version 0.9.17 and
+`LSMinimumSystemVersion` 14.0; `takclient` and `takserver` report `0.9.17 (build
+v0.9.17)`, and every Mach-O binary reports `minos 14.0`. The bare zip programs pass
+`codesign`; `spctl` calls them "not an app", as expected. The Mac's real profile listing
+(117 lines) was identical before and after, and the scratch folder was removed.
+
+`--mpai` was not run on Windows or macOS, per the release rule.
+
+## Publication
+
+Published on 2026-11-02 14:56:18 UTC as the Latest release, 29 assets; 0.9.16 and
+earlier releases are kept. Every `blob` `v0.9.17` link in the notes names a file at
+the tag.
 
 ## Limits
 
