@@ -165,6 +165,8 @@ static void rules() {
 
 // The keyframe budget stands on this, so every route a World::clone allocates by.
 struct alignas(64) Aligned { char bytes[128]; };
+// Clang at -O2 may drop an allocation nothing reads; storing each pointer here keeps them.
+static const void* volatile allocationSink = nullptr;
 static void allocations() {
     std::vector<char> before(1000);
     uint64_t counted = 0;
@@ -174,7 +176,9 @@ static void allocations() {
         const auto array = std::make_unique<int[]>(1000);
         std::vector<Aligned> aligned(100);
         const std::vector<Aligned> copy = aligned;
-        std::thread([] { std::vector<char> elsewhere(1 << 24); }).join();
+        allocationSink = plain.data(); allocationSink = array.get();
+        allocationSink = aligned.data(); allocationSink = copy.data();
+        std::thread([] { std::vector<char> elsewhere(1 << 24); allocationSink = elsewhere.data(); }).join();
         counted = count.bytes();
         const uint64_t want = (1 << 20) + 1000 * sizeof(int) + 2 * 100 * sizeof(Aligned);
         check(counted >= want, "plain, array and over-aligned allocations are all counted");
