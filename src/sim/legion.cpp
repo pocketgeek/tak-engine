@@ -13953,7 +13953,14 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         int32_t diff=0;
         if(face) {
             diff=retailTurnRequest(wanted,u.heading);
-            if(std::abs(retailTurnRequest(m.course,u.heading))<=std::max(turn,int32_t(2048))) {u.heading=m.course;return diff;}
+            if(std::abs(retailTurnRequest(m.course,u.heading))<=std::max(turn,int32_t(2048))) {
+                // The course catching up with a body that already faces its way (turned to its motion
+                // on the step before) turns nothing: it requests nothing either, or the gait's
+                // TurnDirection walked a step that turned nothing (legion_stillturn, 2026-11-02:
+                // 1 of 122,737 unturned steps requested 1,680 BAM).
+                const bool turned=u.heading!=m.course;
+                u.heading=m.course;return turned?diff:0;
+            }
         }
         else if(u.faceRequest<0&&!engagesEnemies(m.kind)&&kFacePace*step>=full.v) {
             const int64_t fx=m.faceX,fz=m.faceZ,net=int64_t(isqrtFloor(uint64_t(fx*fx+fz*fz)));
