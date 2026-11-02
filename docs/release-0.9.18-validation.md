@@ -3,6 +3,10 @@
 Protocol **309** (unchanged from 0.9.17), replay format **15** (unchanged), generator
 version **9** (unchanged).
 
+Tag `v0.9.18` -> `5fbfbc9fb4d754ceac172e9d1935610a82a60d6f` (the preparation
+commit); annotated tag object `47c019976fe4f912a3c2357e45a8e6875e2e590d`.
+Published 2026-11-02 23:03:18 UTC as the Latest release.
+
 ## Scope and compatibility
 
 0.9.18 follows 0.9.17 (tag `v0.9.17` -> `13e0a3a6`, validation commit `3c84ba67`). Its
@@ -134,6 +138,51 @@ On `729d7801` with the 0.9.18 version line (the preparation tree), on Linux: `bu
 Release and Debug all built with no compiler warning; `ctest -L quick` on `build-o2`
 passed 558 of 558; the seven `--mpai` gates above repeated exactly; and
 `tools/check-determinism.sh` reported "DETERMINISM OK" with golden `dcef618cd2e4d558`.
+
+## CI and packages
+
+All four tag workflows ran on `5fbfbc9f` (tag `v0.9.18`) on 2026-11-02 and passed on
+attempt 1: Determinism 41537116953 (golden `dcef618cd2e4d558`, "DETERMINISM OK"),
+Linux packages 41537104115, Windows 41537104123 and macOS 41537104142 (both signing
+jobs passed; no notary stall). No compiler warning in any job.
+
+All 29 assets were downloaded fresh and match GitHub's SHA-256 digests and sizes, and
+the asset names are 0.9.17's with the version changed. All 30 extracted x86-64 Linux
+binaries carry the `v0.9.18` build string and no other `v0.x.y` string; none has a
+libva, libdrm, libsecret, GLib or libsqlite `NEEDED` entry or embedded VA or SQLite
+code; the 27 release binaries hold no forbidden `TAK_` name, and every binary's `TAK_`
+name set equals 0.9.17's. Each reports `0.9.18 (build v0.9.18)` from scratch profile
+dirs and leaves no files, except the Arch `takclient`, which needs GLIBC 2.44 and
+cannot run on this Fedora host, as before.
+
+The Fedora 44 x86-64 RPM's `takserver` (protocol v309, retail gameplay hash
+`d6000f4fa9095a51`) ran the Retail AI game with the 0.9.18 Debug client (a local Debug
+build of `729d7801` with the 0.9.18 version line; `TAK_AI_LEVEL=6 TAK_SPEED=80 --mpai
+--time 60`): `hash=12003fba552b8696 units=4 err=none`, with no desync, mismatch or
+referee-suspect line. **Plays with 0.9.17:** the 0.9.17 Fedora 44 RPM's `takserver`
+gave the identical result with the same client.
+
+## Signing
+
+Windows: on oden-win, no `takserver.exe` or `takclient.exe` was running before the
+check. `Get-AuthenticodeSignature` reports **Valid** (timestamped, "Curtis Edge") for
+the same 7 files as 0.9.17; the x64 `takclient.exe` and `takserver.exe` report
+`0.9.18 (build v0.9.18)` and the arm64 ones carry the build string. The real profile's
+listing (384 lines) is identical before and after, and the scratch copy was removed.
+
+macOS: on the MacBook, both DMGs and all eight app copies pass `stapler validate` and
+`spctl -a -vv` accepts them as "Notarized Developer ID" (Curtis Edge, L479Y59RN8); each
+app passes `codesign --verify --strict --deep` and has version 0.9.18 and
+`LSMinimumSystemVersion` 14.0; `takclient` and `takserver` report 0.9.18 and every
+Mach-O binary reports `minos 14.0`. The bare zip programs pass `codesign`; `spctl`
+calls them "not an app", as expected. The real profile listing (121 lines) was identical
+before and after, and the scratch folder was removed.
+
+## Publication
+
+Published on 2026-11-02 23:03:18 UTC as the Latest release, 29 assets; 0.9.17 and
+earlier releases are kept. Every `blob` `v0.9.18` link in the notes names a file at
+the tag.
 
 ## Limits
 
