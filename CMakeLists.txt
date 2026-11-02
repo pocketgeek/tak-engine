@@ -1823,21 +1823,25 @@ if(TAK_TEST_DATA)
     # against baseline.json over the gate offsets, both modes. melee_building gates the outcome per commit.
     foreach(legion_scn melee-lode-late melee-lode-together melee-castle-4 melee-keep-late melee-castle-fight
                        melee-castle-20)
-        add_test(NAME legion_check_${legion_scn}
-                 COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
-                         --data "${TAK_TEST_DATA}" --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
-        set_tests_properties(legion_check_${legion_scn} PROPERTIES
-                             SKIP_RETURN_CODE 77 LABELS "legion;data;nightly" TIMEOUT 600)
+        if(NOT WIN32)   # gate modes need python3 and a POSIX shell (legion_scenario's runChecker)
+          add_test(NAME legion_check_${legion_scn}
+                   COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
+                           --data "${TAK_TEST_DATA}" --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+          set_tests_properties(legion_check_${legion_scn} PROPERTIES
+                               SKIP_RETURN_CODE 77 LABELS "legion;data;nightly" TIMEOUT 600)
+        endif()
     endforeach()
     # Flyers stepping out of a stack (protocol 307, retail's air traffic): the same, for the air-stack-*.scn
     # fixtures and air-guard-lost.scn (VTOL_SeekGuard). air_traffic gates the outcome per commit.
     foreach(legion_scn air-stack-barracks air-stack-barracks-5 air-stack-duel air-stack-move air-stack-fight
                        air-stack-fight-cell air-stack-patrol air-stack-repair air-stack-help air-guard-lost)
-        add_test(NAME legion_check_${legion_scn}
-                 COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
-                         --data "${TAK_TEST_DATA}" --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
-        set_tests_properties(legion_check_${legion_scn} PROPERTIES
-                             SKIP_RETURN_CODE 77 LABELS "legion;data;nightly" TIMEOUT 600)
+        if(NOT WIN32)   # gate modes need python3 and a POSIX shell (legion_scenario's runChecker)
+          add_test(NAME legion_check_${legion_scn}
+                   COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/${legion_scn}.scn --mode both
+                           --data "${TAK_TEST_DATA}" --check ${CMAKE_SOURCE_DIR}/tools/scenarios/baseline.json)
+          set_tests_properties(legion_check_${legion_scn} PROPERTIES
+                               SKIP_RETURN_CODE 77 LABELS "legion;data;nightly" TIMEOUT 600)
+        endif()
     endforeach()
     # Harvested situations (tools/scenarios/situations/README.txt): not faithful enough to gate on, so these only
     # check that each file loads and runs deterministically, serial == workers, in both modes.
@@ -3496,9 +3500,15 @@ if(TAK_TEST_DATA)
     # The game data folder is only read: a host-only map through a read-only server
     # (default per-user cache) and --play-map on a read-only install (hpi::userMapRoot).
     if(TARGET takclient)
+      # A Release takclient off Linux ignores XDG_DATA_HOME (util/prefpath.h) and would
+      # write the player's real profile, so there the --play-map half is skipped.
+      set(map_cache_readonly_flags "")
+      if((WIN32 OR APPLE) AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(map_cache_readonly_flags --no-play-map)
+      endif()
       add_test(NAME map_cache_readonly COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tools/map_cache_readonly_test.py"
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>"
-        --map-tool "$<TARGET_FILE:map_transfer_test>" --data "${TAK_TEST_DATA}")
+        --map-tool "$<TARGET_FILE:map_transfer_test>" --data "${TAK_TEST_DATA}" ${map_cache_readonly_flags})
       set_tests_properties(map_cache_readonly PROPERTIES TIMEOUT 300)
     endif()
     # A game mod's ai/n.txt (the real mod transfer) or the map's (its .kmp, the map
