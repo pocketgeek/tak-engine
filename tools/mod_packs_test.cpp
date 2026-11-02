@@ -1,6 +1,8 @@
 // GCC 14 reports net::Writer's push_back into a freshly built vector as writing past
 // an empty buffer; the vector grows as it should.
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
 #include "net/modpackage.h"
 #include "net/client.h"
 #include <cstring>
