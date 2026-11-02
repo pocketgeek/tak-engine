@@ -13689,6 +13689,33 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 }
             }
             if(!moved&&corner) {moved=cornerStep();if(moved)m.why=LegionNavigator::WhyCorner;else why=LegionNavigator::WhyHoldCorner;}
+            // Blocked by a body with no way round (2026-11-02): press on as Retail's mover does. Its
+            // blocked step is clamped per axis -- the free axis is walked and the other stops at the
+            // body's own origin cell's edge -- so a queued body closes on the body ahead and slides
+            // along a file instead of stopping dead. Only when that moves the body at least 1/16 px;
+            // at the edge it holds, and the hold's own ways out (side-step, detour, yield) run as
+            // before. 60% of Legion's standing was such holds for a cell its own moving order covers
+            // (Retail hides the same queue by walking in place). Over the suite: standing 52 better /
+            // 0 worse (-25% median), t90 10 / 5 (densehead, doorplug100-124, doubleturn, pocket-304-wall,
+            // wall-1x48 -5..-8%; corner-8x56 +8%, motion-wall +8%), done 13 / 6; on real terrain standing
+            // -30% on all 13. The press's nudges count as statue / sideways / backward steps in the
+            // observer (a few pixels at a time), which those keys cannot tell from a creep (deep dive 5.4).
+            if(!moved&&!livelock(u)) {
+                auto edge=[](Fixed at,Fixed by,int origin,int foot) {
+                    const int64_t offset=int64_t(foot-1)*8*Fixed::kOne;
+                    const int64_t lo=(int64_t(origin)<<20)+offset,hi=lo+(int64_t(1)<<20)-1;
+                    return Fixed::raw(int32_t(std::clamp<int64_t>(int64_t(at.v)+by.v,lo,hi)-at.v));
+                };
+                const std::array<std::array<int,2>,2> tries{{{nx0,oz},{ox,nz0}}};   // keep z in the cell / keep x in the cell
+                for(const auto& t:tries) {
+                    const int kx=t[0],kz=t[1];
+                    if((kx!=ox||kz!=oz)&&!legal(p,kx,kz))continue;
+                    if(!stepFree(u,ox,oz,kx,kz))continue;
+                    const Fixed cx=kx==ox?edge(u.x,sx0,ox,fx):sx0,cz=kz==oz?edge(u.z,sz0,oz,fz):sz0;
+                    if(std::abs(int64_t(cx.v))+std::abs(int64_t(cz.v))<Fixed::kOne/16)continue;
+                    sx=cx;sz=cz;nx=kx;nz=kz;moved=true;m.why=LegionNavigator::WhyNudge;break;
+                }
+            }
             // Room at a merge: a held body heading its queue records the origin it waits for (see makeRoom): its
             // own blocked step's (nx0,nz0), not the last flow-around option tried above.
             if(!moved)setWant(u.id,m,f&&roomKind(m)&&queueHead(u,m,p,f,ox,oz)?nz0*W+nx0:-1);
@@ -15153,7 +15180,7 @@ int LegionNavigator::steerWhy(int id) const {
 const char* LegionNavigator::whyName(int why) {
     static constexpr const char* names[kWhys]={"none","steer","direct","pass","flow_first","flow_brisk","flow_cap","sidestep","room","corner",
         "route_brisk","route_cap","press","yield","hold_movers","hold_settled","hold_jam","hold_corner","hold_refused","hold_detour","hold_ask",
-        "hold_admission","hold_noaim","hold_ring","hold_spot","hold_rest","hold_yielding","hold_livelock","hold_still","wait","trapped"};
+        "hold_admission","hold_noaim","hold_ring","hold_spot","hold_rest","hold_yielding","hold_livelock","hold_still","wait","trapped","nudge"};
     return why>=0&&why<kWhys?names[why]:"?";
 }
 std::vector<std::pair<std::string,uint64_t>> LegionNavigator::census() const {

@@ -450,8 +450,9 @@ public:
         WhyHoldLivelock,   // held: the livelock latch forbids a flow-around
         WhyHoldStill,      // held: an attacker round a still target gaining nothing (no new shuffle)
         WhyWait,           // waiting for its field / registration / a repair
-        WhyTrapped};
-    static constexpr int kWhys=31;
+        WhyTrapped,
+        WhyNudge};         // pressing on against a body: the free axis walked, the other to the cell's edge
+    static constexpr int kWhys=32;
     static const char* whyName(int why);
     int steerWhy(int id) const;
     // W9 step 0 (debug builds only; empty when NDEBUG is defined): the predicate census, (name, count)
