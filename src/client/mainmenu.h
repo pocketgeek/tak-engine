@@ -50,6 +50,8 @@ public:
     // replay or a dead single-player server with the multiplayer sign-in dialog
     // has shipped before.
     void setFailure(const SessionFailure& failure);
+    // Open on the CONNECT screen with `server` picked, at the top of run().
+    void reopenConnect(const std::string& server);
 
     // The Options screen's GAME DATA FOLDER row: the folder this launch mounted, and why
     // it cannot be changed (a --data or launch-folder override), if it cannot.

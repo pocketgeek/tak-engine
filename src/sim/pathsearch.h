@@ -312,6 +312,13 @@ class PathService {
     };
     // Callbacks must outlive the service; finish also runs on cancellation.
     void setGradeHost(GradeHost host) { gradeHost_=std::move(host); }
+    // Bind a copied service to the world that now holds it (World::clone), or a new
+    // one to its world. A copy may carry a request queue, so unlike setEntitySlots
+    // this needs none empty; observers stay with the service they were set on.
+    void bindHost(const EntitySlotTable* table,GradeHost host) {
+        slots_=table;gradeHost_=std::move(host);
+        telemetry_=nullptr;telemetryTickActive_=false;
+    }
 
     // Queue a search. Replaces any request already outstanding for this unit.
     void request(int unitId, PathCell start, PathCell goal, int mapW, int mapH,

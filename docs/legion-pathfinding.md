@@ -968,7 +968,7 @@ The mission goals (`LegionMission`):
 | Reclaim | feature and corpse reclaims (also those an area reclaim queues) | the feature's point | work: `tickReclaim` starts at reach; Legion never completes it |
 | Load | passenger to its carrier, ground carrier to its passenger | the transport circle's centre | the native circle: `0x500` on `transportMission`; elsewhere `0x200` |
 | Unload | ground carrier's surface-unload approach | the drop point | as Load |
-| Exit | automatic production exit step | the generated exit point | arrival `0x500`; or, without headway for a crowd window, once the whole birthplace is clear (or after two windows when a rally follows) |
+| Exit | automatic production exit step (a mobile producer's output with no rally to start, or an idle unit sent out of its next output's way) | the generated exit point | arrival `0x500`; or, without headway for a crowd window, once the whole birthplace is clear (or after two windows when an order is queued behind it) |
 | Park | PARK sequences (factory output, released cargo) | the ring's navigation point; since protocol 295 (0.9.1) a factory output's own spot over the ring band (`World::legionParkSpot`: two footprints apart, nearest the door first, never in the door lane, reachable, free of claims and bodies; growing past the band when full) | the ring (`park->ring`): `0x500`, a spread PARK only at its spot; elsewhere `0x200` and the next spot (`ctest:legion_park`) |
 
 Legion is the route provider only. The mission handlers keep every mission
@@ -1015,7 +1015,7 @@ and steering for these legs; the native mover never runs for them.
   its landing point. Production exits carry their birthplace
   (`Order::productionExit`) in Legion mode too, so a held-up exit never
   blocks the factory lane: it ends only once clear of the birthplace, or
-  hands over to its rally. Mission semantics (build start, placement, reach,
+  hands over to an order queued behind it. Mission semantics (build start, placement, reach,
   park rotation, transfers, retirement) stay in the handlers.
 
 A leg is supported only if the legs ahead of it are route corners (for Move,

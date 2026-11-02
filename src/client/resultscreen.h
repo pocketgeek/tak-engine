@@ -18,7 +18,7 @@ namespace tak {
 class MenuMusic;
 struct Settings;
 
-enum class ResultChoice { Menu, Retry, Next };
+enum class ResultChoice { Menu, Retry, Next, NewGame, GameSelect };
 
 // One row of the statistics table. Filled from the sim's per-player counters.
 struct ResultRow {
@@ -47,11 +47,13 @@ public:
     // Show VICTORY (victory=true) or DEFEAT for `title`. `hasNext` enables the NEXT
     // MISSION button (victory + a mission after this one). `stats` may be empty, in
     // which case the table is omitted. Returns the player's choice. `settings` supplies
-    // the cursor scale; `music` keeps the front-end track looping.
+    // the cursor scale; `music` keeps the front-end track looping. `skirmishNext`
+    // (NewGame or GameSelect, title empty) is where a skirmish's right door leads.
     static ResultChoice run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool victory,
                             const std::string& title, bool hasNext,
                             Settings* settings = nullptr, MenuMusic* music = nullptr,
-                            const ResultStats* stats = nullptr);
+                            const ResultStats* stats = nullptr,
+                            ResultChoice skirmishNext = ResultChoice::Menu);
 };
 
 }  // namespace tak

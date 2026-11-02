@@ -31,11 +31,13 @@
 #include "client/renderframe.h"
 #include "hpi/hpi.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <vector>
 #include <memory>
+#include <tuple>
 
 using namespace tak::sim;
 
@@ -1315,6 +1317,324 @@ static void defensiveBodyStaysFixed() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 5. A rally starts at once: a producer's output takes its first rally step as
+//    its first order, with no walk to an exit spot ahead of it. A mobile
+//    producer's output used to step south first (reported on a repeating Zhon
+//    builder); a factory's never did, and the factory run pins that. The rally
+//    lies north-east, so the old step shows as a walk the wrong way.
+// ---------------------------------------------------------------------------
+enum class RallyKind { Move, Fight, Patrol, Attack, Chain };
+constexpr float kRallyX = 1500, kRallyZ = 200;
+
+static std::pair<float, float> legPoint(const Order& leg) {
+    const auto point = leg.missionTarget.value_or(std::pair{leg.x, leg.z});
+    return {point.first.toFloat(), point.second.toFloat()};
+}
+
+static bool legAimsAt(const Order& leg, float x, float z) {
+    const auto [lx, lz] = legPoint(leg);
+    return std::abs(lx - x) <= 16 && std::abs(lz - z) <= 16;   // a footprint cell's snap
+}
+
+static float rallyDistance(const Unit& u) {
+    return std::hypot(u.x.toFloat() - kRallyX, u.z.toFloat() - kRallyZ);
+}
+
+static void rallyStartsAtOnce(bool mobile, RallyKind kind) {
+    const char* name = kind == RallyKind::Move ? "move" : kind == RallyKind::Fight ? "fight-move" :
+                       kind == RallyKind::Patrol ? "patrol" : kind == RallyKind::Attack ? "live attack" : "Shift-queued";
+    std::printf("%s: a %s rally starts at once:\n", mobile ? "mobile producer" : "factory", name);
+    auto ownedWorld = makeWorld(160, 160);
+    World& w = *ownedWorld;
+    UnitType prod = producerType(mobile), sol = armedSoldierType(), dummy = soldierType();
+    dummy.maxVel = Fixed(); dummy.id = "dummy";
+    const int id = w.spawn(&prod, 600, 600, 0, 0);
+    const int enemy = kind == RallyKind::Attack ? w.spawn(&dummy, kRallyX, kRallyZ, 0, 1) : 0;
+    w.player(0).mana = 1e9f;
+    w.setRepeat(id, &sol);
+    if (kind == RallyKind::Move) w.order(id, kRallyX, kRallyZ, false);
+    else if (kind == RallyKind::Fight) w.attackMove(id, kRallyX, kRallyZ, false);
+    else if (kind == RallyKind::Patrol) w.patrol(id, kRallyX, kRallyZ);
+    else if (kind == RallyKind::Attack) w.attack(id, enemy, false);
+    else { w.order(id, kRallyX, kRallyZ, false); w.attackMove(id, 1500, 800, true); w.queuePatrol(id, 1200, 800); }
+    const int child = firstOutput(w, id, 900);
+    check(child != 0, "an output is produced");
+    if (!child) return;
+    const Unit& u = *w.unit(child);
+    check(!u.orders.empty(), "it holds the rally when finished");
+    if (u.orders.empty()) return;
+    check(std::none_of(u.orders.begin(), u.orders.end(), [](const Order& o) { return bool(o.productionExit); }),
+          "no leg is an automatic exit");
+    const Order& leg = u.orders[World::currentLeg(u.orders)];
+    const auto [lx, lz] = legPoint(leg);
+    if (kind == RallyKind::Attack) {
+        check(leg.targetId == enemy, "its first order is the attack", std::to_string(leg.targetId));
+    } else {
+        check(legAimsAt(leg, kRallyX, kRallyZ), "its first order is the rally point",
+              std::to_string(lx) + "," + std::to_string(lz));
+        const bool fight = kind == RallyKind::Fight || kind == RallyKind::Patrol;
+        check(leg.attackMove == fight && leg.patrol == (kind == RallyKind::Patrol),
+              "the first leg carries the rally's kind");
+    }
+    if (kind == RallyKind::Chain) {
+        check(u.orders.size() == 3 && u.orders[1].attackMove && !u.orders[1].patrol && u.orders[2].patrol,
+              "the rest of the plan queues behind it", std::to_string(u.orders.size()));
+    }
+    const float birthZ = u.z.toFloat(), birthDistance = rallyDistance(u);
+    for (int n = 0; n < 60; ++n) w.tick(1.0f / 30.0f);
+    const Unit& later = *w.unit(child);
+    // The route round the producer's corner may dip one cell; the old step was 60+ px.
+    check(later.z.toFloat() <= birthZ + 24, "it does not walk south first",
+          std::to_string(birthZ) + " -> " + std::to_string(later.z.toFloat()));
+    check(rallyDistance(later) < birthDistance, "two seconds on it is nearer the rally",
+          std::to_string(birthDistance) + " -> " + std::to_string(rallyDistance(later)));
+}
+
+// An attack step on a dead target is skipped: the output starts the next step
+// that survives, still with nothing ahead of it.
+static void rallyPartlyDropped(bool mobile) {
+    std::printf("%s: dead attack step, then a move:\n", mobile ? "mobile producer" : "factory");
+    auto ownedWorld = makeWorld(160, 160);
+    World& w = *ownedWorld;
+    UnitType prod = producerType(mobile), sol = armedSoldierType(), dummy = soldierType();
+    dummy.maxVel = Fixed(); dummy.id = "dummy";
+    const int id = w.spawn(&prod, 600, 600, 0, 0);
+    const int enemy = w.spawn(&dummy, 1400, 1200, 0, 1);
+    w.player(0).mana = 1e9f;
+    w.setRepeat(id, &sol);
+    w.attack(id, enemy, false);
+    w.order(id, kRallyX, kRallyZ, true);
+    w.unit(enemy)->hp = Fixed(); w.unit(enemy)->deadFor = 0;
+    const int child = firstOutput(w, id, 900);
+    check(child != 0, "an output is produced");
+    if (!child) return;
+    const Unit& u = *w.unit(child);
+    check(u.orders.size() == 1 && !u.orders.front().productionExit && legAimsAt(u.orders.front(), kRallyX, kRallyZ),
+          "it starts the step that survives", std::to_string(u.orders.size()));
+}
+
+// A rally that hands over nothing -- every step dropped -- is no rally: a mobile
+// producer's output takes the exit step, or it would stand where the next one
+// is built. Deciding on the rally being empty would leave it there. Passes
+// without the fix too: this is the naive fix's guard.
+static void rallyHandsOverNothing(bool deadTarget) {
+    std::printf("mobile producer: rally that hands over nothing (%s):\n", deadTarget ? "dead target" : "unarmed output");
+    auto ownedWorld = makeWorld(160, 160);
+    World& w = *ownedWorld;
+    UnitType prod = producerType(true), sol = deadTarget ? armedSoldierType() : soldierType(), dummy = soldierType();
+    dummy.maxVel = Fixed(); dummy.id = "dummy";
+    const int id = w.spawn(&prod, 600, 600, 0, 0);
+    const int enemy = w.spawn(&dummy, 1400, 1200, 0, 1);
+    w.player(0).mana = 1e9f;
+    w.setRepeat(id, &sol);
+    w.attack(id, enemy, false);
+    if (deadTarget) { w.unit(enemy)->hp = Fixed(); w.unit(enemy)->deadFor = 0; }
+    check(w.unit(id)->rally.size() == 1, "the rally holds the attack step");
+    const int child = firstOutput(w, id, 900);
+    check(child != 0, "an output is produced");
+    if (!child) return;
+    const Unit& u = *w.unit(child);
+    check(u.orders.size() == 1, "it holds one order", std::to_string(u.orders.size()));
+    if (u.orders.empty()) return;
+    const auto [lx, lz] = legPoint(u.orders.front());
+    check(lz >= u.z.toFloat() + 40, "the order is the exit step, south of its birth",
+          std::to_string(u.z.toFloat()) + " -> " + std::to_string(lz));
+    check(bool(u.orders.front().productionExit) == (g_pathfinding == PathfindingMode::Legion),
+          "Legion tags it as the automatic exit");
+}
+
+// An attack step the output has no weapon for (here a ground-only weapon against a
+// flyer in the air) goes on the output's first tick. It must not be handed over:
+// the output would be left with nothing on the spot it was made, and the steps
+// behind it must start at once. The exit step, or PARK, stands in for a plan left
+// empty.
+static void rallyStepItCannotDo(bool mobile, bool moveBehind) {
+    std::printf("%s: attack rally on a target out of its weapon's layer%s:\n",
+                mobile ? "mobile producer" : "factory", moveBehind ? ", then a move" : "");
+    auto ownedWorld = makeWorld(160, 160);
+    World& w = *ownedWorld;
+    UnitType prod = producerType(mobile), sol = armedSoldierType(), flyer = soldierType();
+    sol.weapons.front().noAir = true; sol.weapon.noAir = true;
+    flyer.id = "flyer"; flyer.canFly = true;
+    const int id = w.spawn(&prod, 600, 600, 0, 0);
+    const int enemy = w.spawn(&flyer, 1400, 1200, 0, 1);
+    w.player(0).mana = 1e9f;
+    w.setRepeat(id, &sol);
+    w.attack(id, enemy, false);
+    if (moveBehind) w.order(id, kRallyX, kRallyZ, true);
+    w.unit(enemy)->flightGroundMode = 2;
+    const int child = firstOutput(w, id, 900);
+    check(child != 0, "an output is produced");
+    if (!child) return;
+    check(w.unit(enemy)->flightGroundMode == 2, "the target is still in the air");
+    const Unit& u = *w.unit(child);
+    check(u.orders.size() == 1, "it holds one order", std::to_string(u.orders.size()));
+    if (u.orders.empty()) return;
+    if (moveBehind) check(legAimsAt(u.orders.front(), kRallyX, kRallyZ), "it starts the move at once");
+    else if (mobile) check(legPoint(u.orders.front()).second >= u.z.toFloat() + 40, "it takes the exit step");
+    else check(u.orders.front().park.has_value(), "it parks");
+}
+
+// A structure holds its orders as its own rally, so a mobile producer's rally lands
+// there and its orders stay empty. That is a handed-over plan, not an empty one:
+// the exit step would replace it. With no rally the exit step is all it gets.
+static void rallyOnAStructureOutput(bool withRally) {
+    std::printf("mobile producer: structure output, %s:\n", withRally ? "a rally" : "no rally");
+    auto ownedWorld = makeWorld(160, 160);
+    World& w = *ownedWorld;
+    UnitType prod = producerType(true), keep = factoryType();
+    keep.id = "keep"; keep.buildTime = 1;
+    const int id = w.spawn(&prod, 600, 600, 0, 0);
+    w.player(0).mana = 1e9f;
+    w.setRepeat(id, &keep);
+    if (withRally) { w.order(id, 1500, 1500, false); w.order(id, 1700, 1500, true); }
+    int child = 0;
+    for (int n = 0; n < 900 && !child; ++n) {
+        w.tick(1.0f / 30.0f);
+        for (const auto& u : w.units())
+            if (u.id != id && u.alive() && !u.underConstruction) child = u.id;
+    }
+    check(child != 0, "the structure is produced");
+    if (!child) return;
+    const Unit& u = *w.unit(child);
+    check(u.orders.empty(), "it holds no orders", std::to_string(u.orders.size()));
+    if (withRally) {
+        check(u.rally.size() == 2 && u.rally[0].x == Fixed::fromInt(1500) && u.rally[1].x == Fixed::fromInt(1700),
+              "it keeps the player's plan, with nothing in front of it", std::to_string(u.rally.size()));
+    } else {
+        check(u.rally.size() == 1 && u.rally[0].z > u.z, "it keeps the exit step", std::to_string(u.rally.size()));
+    }
+}
+
+// How many outputs a repeating mobile producer makes in `seconds`, one every
+// `paceTicks`, all with nowhere to go: the rally is `rally` (or none).
+struct RoomRun { int made = 0, moved = 0; uint32_t searched = 0; uint64_t hash = 0; };
+static RoomRun runOutOfRoom(int foot, bool rally, float rx, float rz, int seconds, UnitType* extra = nullptr) {
+    auto ownedWorld = makeWorld(160, 160);
+    World& w = *ownedWorld;
+    UnitType prod = producerType(true), big = soldierType();
+    prod.workerTime = 100; prod.storage = 10000000;
+    big.id = "big"; big.footX = big.footZ = foot; big.buildTime = 30;
+    const int id = w.spawn(&prod, 1200, 1200, 0, 0);
+    const int bystander = extra ? w.spawn(extra, 400, 400, 0, 0) : 0;
+    w.player(0).mana = 1e9f;
+    w.setRepeat(id, &big);
+    if (rally) w.order(id, rx, rz, false);
+    RoomRun r;
+    for (int n = 0; n < 30 * seconds; ++n) {
+        w.tick(1.0f / 30.0f);
+        r.searched |= w.unit(id)->productionRetryTick;
+    }
+    for (const auto& u : w.units())
+        if (u.id != id && u.id != bystander && u.alive() && !u.underConstruction) ++r.made;
+    if (bystander) r.moved = w.unit(bystander)->x != Fixed::fromInt(400) || w.unit(bystander)->z != Fixed::fromInt(400);
+    r.hash = w.stateHash();
+    return r;
+}
+
+// The area the next output may be made in is 12 cells round the point south of a
+// mobile producer. With the exit step gone, an output whose rally ends in it stands
+// in it. The idle ones must move, or the producer stops for good, repeat on and no
+// error: 28-52 outputs here without them (61-67 Retail, 41 Legion with the exit step
+// that used to clear the way).
+static void rallyLeavesRoomForTheNext() {
+    std::printf("mobile producer: a rally that ends beside the producer does not stop production:\n");
+    constexpr int kMade = 70;
+    for (const auto& [rx, rz, where] : {std::tuple{1200.f, 1300.f, "it outbuilds the area, rally on the birth spot"},
+                                        std::tuple{1264.f, 1364.f, "it outbuilds the area, rally 64 px away"}}) {
+        const RoomRun r = runOutOfRoom(4, true, rx, rz, 240);
+        check(r.made >= kMade, where, std::to_string(r.made));
+        check(r.searched != 0, "...by the room search");
+    }
+    // The choice is the same on every peer: two runs, one hash.
+    check(runOutOfRoom(4, true, 1200, 1300, 120).hash == runOutOfRoom(4, true, 1200, 1300, 120).hash,
+          "the same run gives the same hash");
+    // A unit well outside the area is not moved for it.
+    UnitType bystander = soldierType();
+    bystander.id = "bystander";
+    check(!runOutOfRoom(4, true, 1200, 1300, 120, &bystander).moved, "a unit far from the area stays where it is");
+    // With no rally the search never runs, however full the area: as before.
+    check(!runOutOfRoom(4, false, 0, 0, 240).searched, "a producer with no rally never searches");
+}
+
+// A scripted mobile producer has one pad, and an output with a rally on it stands
+// on it. The pad is cleared as a build site is, or the first output is the last.
+static void rallyOnAScriptedPad() {
+    std::printf("mobile producer with a pad: a rally on the pad does not stop production:\n");
+    auto ownedWorld = makeWorld(160, 160);
+    World& w = *ownedWorld;
+    UnitType prod = producerType(true), sol = soldierType();
+    auto script = std::make_shared<tak::cob::File>();
+    script->pieces = {"emit", "root"};
+    script->scripts = {{"Create", 0}, {"QueryBuildInfo", 19}};   // as scriptControlsReadinessAndPosition's
+    script->code = {0x10021001, 5, 0x10021001, 0, 0x10082000,
+                    0x10021001, 100, 0x10013000,
+                    0x10021001, 18, 0x10021001, 1, 0x10082000,
+                    0x10021001, 5, 0x10021001, 1, 0x10082000, 0x10065000,
+                    0x10021001, 0, 0x10023002, 0, 0x10065000};
+    prod.productionScript = script;
+    prod.productionModel = {{{0, 0, 0}, -1, 1}, {{0, 0, 128 * 65536}, 0, 0}};
+    prod.workerTime = 100; prod.storage = 10000000; sol.buildTime = 30;
+    const int id = w.spawn(&prod, 600, 600, 3.14159265f, 0);
+    w.player(0).mana = 1e9f;
+    w.setRepeat(id, &sol);
+    w.order(id, 600, 728, false);
+    run(w, 20.0f);
+    int made = 0;
+    for (const auto& u : w.units()) made += u.id != id && u.alive() && !u.underConstruction;
+    check(made >= 5, "it keeps producing", std::to_string(made));
+}
+
+// A rally point on the birth spot or inside the mobile producer's own rectangle:
+// nothing walks the outputs clear first any more, so they must clear each other
+// by the site search alone, and every one must be built and come to rest.
+static void rallyBesideThePad(float x, float z, const char* where) {
+    std::printf("mobile producer: rally %s:\n", where);
+    auto ownedWorld = makeWorld(160, 160);
+    World& w = *ownedWorld;
+    UnitType prod = producerType(true), sol = soldierType();
+    const int id = w.spawn(&prod, 600, 600, 0, 0);
+    w.player(0).mana = 1e9f;
+    w.setRepeat(id, &sol);
+    w.order(id, x, z, false);
+    constexpr int kOutputs = 8;
+    std::vector<int> outputs;
+    bool stopped = false;
+    const auto finished = [&] {
+        outputs.clear();
+        for (const auto& u : w.units())
+            if (u.id != id && u.alive() && !u.underConstruction) outputs.push_back(u.id);
+    };
+    const auto rest = [&] {
+        return stopped && std::all_of(outputs.begin(), outputs.end(), [&](int o) { return w.unit(o)->orders.empty(); });
+    };
+    int tick = 0;
+    for (; tick < 30 * 300 && !rest(); ++tick) {
+        w.tick(1.0f / 30.0f);
+        finished();
+        if (!stopped && int(outputs.size()) >= kOutputs) { w.stop(id); stopped = true; }
+    }
+    finished();
+    check(stopped && int(outputs.size()) >= kOutputs, "all eight outputs are built", std::to_string(outputs.size()));
+    check(rest(), "all of them stop", "tick " + std::to_string(tick));
+    int overlaps = 0, onProducer = 0;
+    const Unit& p = *w.unit(id);
+    const int px = footprintOrigin(p.x, prod.footX), pz = footprintOrigin(p.z, prod.footZ);
+    for (size_t a = 0; a < outputs.size(); ++a) {
+        const Unit& u = *w.unit(outputs[a]);
+        const int ux = footprintOrigin(u.x, sol.footX), uz = footprintOrigin(u.z, sol.footZ);
+        onProducer += ux < px + prod.footX && ux + sol.footX > px && uz < pz + prod.footZ && uz + sol.footZ > pz;
+        for (size_t b = a + 1; b < outputs.size(); ++b) {
+            const Unit& v = *w.unit(outputs[b]);
+            const int vx = footprintOrigin(v.x, sol.footX), vz = footprintOrigin(v.z, sol.footZ);
+            overlaps += std::abs(ux - vx) < sol.footX && std::abs(uz - vz) < sol.footZ;
+        }
+    }
+    check(overlaps == 0, "no two outputs rest on each other", std::to_string(overlaps));
+    check(onProducer == 0, "none rests on the producer", std::to_string(onProducer));
+}
+
 int main(int argc,char** argv) {
     if(argc==2 && !std::strcmp(argv[1],"--legion"))g_pathfinding=PathfindingMode::Legion;
     else if(argc!=1)return 2;
@@ -1369,7 +1689,17 @@ int main(int argc,char** argv) {
         rallyPlanIsFollowed(mobile);
         rallyAttackThenMove(mobile);
         rallyQueueStopAndHash(mobile);
+        for (RallyKind kind : {RallyKind::Move, RallyKind::Fight, RallyKind::Patrol, RallyKind::Attack, RallyKind::Chain})
+            rallyStartsAtOnce(mobile, kind);
+        rallyPartlyDropped(mobile);
+        for (bool moveBehind : {false, true}) rallyStepItCannotDo(mobile, moveBehind);
     }
+    for (bool deadTarget : {true, false}) rallyHandsOverNothing(deadTarget);
+    for (bool withRally : {true, false}) rallyOnAStructureOutput(withRally);
+    rallyBesideThePad(600, 716, "on the birth spot");
+    rallyBesideThePad(600, 600, "inside the producer's rectangle");
+    rallyLeavesRoomForTheNext();
+    rallyOnAScriptedPad();
     if (g_pathfinding == PathfindingMode::Legion) {
         std::printf("Legion routed:");
         for (size_t k = 0; k < 16; ++k) if (g_legionSaw[k]) std::printf(" %zu", k);

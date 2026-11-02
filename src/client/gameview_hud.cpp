@@ -389,6 +389,20 @@ namespace {
         // Build icons and their strip cover the map. Do not classify world
         // targets behind them, even with a placement or command armed.
         if (overBuildMenu(mouseX_, mouseY_)) return tak::CursorId::Normal;
+        // A watcher has no orders to promise: the arrow, or Select over what a click selects.
+        if (watchOnly()) {
+            if (mouseX_ < 0 || dragging_ || mouseX_ > mapViewW(winW_) ||
+                (hudShown() && mouseY_ > winH_ - barH()) ||
+                (replayMode_ && replayBar_.box.hit(mouseX_, mouseY_)))
+                return tak::CursorId::Normal;
+            const auto& live = front().live;
+            for (uint32_t index : pickCandidates(mouseX_, mouseY_)) {
+                const UnitR& u = *live[index];
+                if (canPickUnit(u) && u.alive() && u.type && !u.underConstruction &&
+                    unitUnderCursor(u, mouseX_, mouseY_)) return tak::CursorId::Select;
+            }
+            return tak::CursorId::Normal;
+        }
         // Native action mode 14 (armed by selecting a build item) returns
         // FindSite for a selected builder; placement validity is shown by the
         // ghost and does not change this cursor slot.
@@ -675,7 +689,7 @@ namespace {
             // square while ours already honours the map's shape, and stretching a
             // 2:1 map to a 16:9 viewport would distort every distance on it.
             // Spectators have no bottom HUD: use the entire available height.
-            float vw = float(mapViewW(winW)), vh = float(winH) - (spectating_ ? 0 : barH());
+            float vw = float(mapViewW(winW)), vh = float(winH) - (hudShown() ? barH() : 0);
             float w = vw, h = vw * aspect;
             if (h > vh) { h = vh; w = vh / aspect; }
             return {(vw - w) * 0.5f, (vh - h) * 0.5f, w, h};
@@ -743,8 +757,8 @@ namespace {
         }
         // Bottom edge: the top of the command panel art when a GUI is loaded, else the
         // bottom bar. A spectator gets neither, so the strip runs to the window edge.
-        float bot = spectating_ ? float(winH) - pad : float(winH) - barH() - pad;
-        if (!spectating_) {
+        float bot = hudShown() ? float(winH) - barH() - pad : float(winH) - pad;
+        if (hudShown()) {
             int mi = guiIdx("UnitMenu");
             if (mi >= 0 && mi < int(gui_.gadgets.size()))
                 bot = guiCmdRect(gui_.gadgets[size_t(mi)]).y - pad;
@@ -774,12 +788,15 @@ namespace {
             // The measured speed as retail's level (NORMAL, +5, -3), not a multiplier.
             rows.push_back({"SIM", tak::speedLevelText(tak::speedLevelOf(actualSpeed_))});
         }
+        // A benchmark run's identity, so two runs on screen can be told apart.
+        if (benchmarkMode_) rows.push_back({"PATHFINDER", tak::benchmarkPathLabel(worldTables().pathfindingMode())});
 
-        // Living units owned by the player, including embarked units. Spectators
-        // have no player army and retain the match-wide living count.
+        // Living units owned by the player on show, including embarked units. With
+        // nobody on show (a watcher, nothing selected) the match-wide living count.
         int units = 0;
+        const int shown = hudPlayer();
         for (const UnitR* up : front().live)
-            if (up->alive() && up->type && (spectating_ || up->player == localPlayer_)) ++units;
+            if (up->alive() && up->type && (shown < 0 || up->player == shown)) ++units;
         std::snprintf(b, sizeof b, "%d", units);
         rows.push_back({"UNITS", b});
 
@@ -794,10 +811,10 @@ namespace {
         else std::snprintf(b, sizeof b, "--:--");
         rows.push_back({"CLOCK", b});
 
-        if (!spectating_) {
-            std::snprintf(b, sizeof b, "%d", framePlayer(localPlayer_).kills);
+        if (shown >= 0) {
+            std::snprintf(b, sizeof b, "%d", framePlayer(shown).kills);
             rows.push_back({"KILLS", b});
-            rows.push_back({"SCORE", std::to_string(framePlayer(localPlayer_).score)});
+            rows.push_back({"SCORE", std::to_string(framePlayer(shown).score)});
         }
         const uint64_t wallNow = SDL_GetTicks64();
         const uint64_t elapsed = gameStartMs_ && wallNow >= gameStartMs_
@@ -885,6 +902,15 @@ namespace {
             blockText(r.value, x1 - blockWidth(r.value, px), y, px, mc);
             y += fit.rowH;
         }
+#ifndef NDEBUG
+        // TAK_BENCH_REPORT: the rows as drawn during a run, for benchmark_pathfinding.
+        static bool reported = false;
+        if (!reported && worldTables().benchmarkMode() && tak::devFlag("TAK_BENCH_REPORT")) {
+            reported = true;
+            for (const auto& r : rows) std::printf("BENCHSTATS %s %s\n", r.label, r.value.c_str());
+            std::fflush(stdout);
+        }
+#endif
     }
 
     void GameView::drawMinimap(int winW, int winH) {
@@ -896,7 +922,7 @@ namespace {
         // map's aspect inside, which would leave the terrain peeking through the
         // letterbox margins and read as a window rather than a map.
         SDL_FRect frame = fsRadar_
-            ? SDL_FRect{0, 0, float(mapViewW(winW)), float(winH) - (spectating_ ? 0 : barH())}
+            ? SDL_FRect{0, 0, float(mapViewW(winW)), float(winH) - (hudShown() ? barH() : 0)}
             : SDL_FRect{r.x - 2, r.y - 2, r.w + 4, r.h + 4};
         SDL_SetRenderDrawColor(ren_, 30, 30, 40, 255);
         SDL_RenderFillRectF(ren_, &frame);
@@ -932,7 +958,7 @@ namespace {
         float zm = mapView_.zoom();
         SDL_FPoint a = toMini(mapView_.offX(), mapView_.offY());
         SDL_FRect view{a.x, a.y, winW / zm / mapW * r.w,
-                       (winH - barH()) / zm / mapH * r.h};
+                       mapViewH(winH) / zm / mapH * r.h};
         SDL_SetRenderDrawColor(ren_, 240, 240, 240, 200);
         SDL_RenderDrawRectF(ren_, &view);
     }
@@ -950,13 +976,13 @@ namespace {
         if (!minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
         float zm = mapView_.zoom();   // centre the clicked point in the map viewport
         mapView_.setOffset(wx - mapViewW(winW) / zm / 2,
-                           wz - (winH - int(barH())) / zm / 2);
+                           wz - mapViewH(winH) / zm / 2);
         return true;
     }
 
     bool GameView::minimapOrder(float mx, float my, int winW, int winH, bool queue) {
         float wx, wz;
-        if (selection_.empty() || !minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
+        if (watchOnly() || selection_.empty() || !minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
         for (int id : selection_) {
             const auto* u = frameUnitP(id);
             if (!u || u->player != localPlayer_) continue;
@@ -1123,7 +1149,7 @@ namespace {
     }
 
     bool GameView::minimapArmedOrder(float mx, float my, int winW, int winH) {
-        if (!pendingCmd_) return false;
+        if (watchOnly() || !pendingCmd_) return false;
         float wx, wz;
         if (!minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
         const bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
@@ -1159,6 +1185,7 @@ namespace {
     }
 
     void GameView::reloadInterfaceArt(const tak::Settings& s) {
+        clearSideArt();
         loadInterfaceFonts();
         loadPanel(side_);
         loadGui(side_);
@@ -1245,6 +1272,7 @@ namespace {
                 if (t) gpuvram::destroy(t);
         guiTex_.clear();
         gui_ = {};
+        artSide_ = side;
         if (tak::devFlag("TAK_NOGUI")) return;   // debug: shoot the fallback stone HUD instead
         std::string path = "guis/" + side + "ingame.gui";
         try {
@@ -1273,6 +1301,60 @@ namespace {
                 std::fprintf(stderr, "\n");
             }
         }
+    }
+
+    GameView::SideArt GameView::takeSideArt() {
+        SideArt art{panelTex_, panelW_, panelH_, botTex_, botW_, botH_, std::move(gui_), std::move(guiTex_)};
+        panelTex_ = botTex_ = nullptr;
+        gui_ = {};
+        guiTex_.clear();
+        return art;
+    }
+
+    void GameView::useSideArt(SideArt art) {
+        panelTex_ = art.panelTex; panelW_ = art.panelW; panelH_ = art.panelH;
+        botTex_ = art.botTex; botW_ = art.botW; botH_ = art.botH;
+        gui_ = std::move(art.gui);
+        guiTex_ = std::move(art.guiTex);
+    }
+
+    void GameView::destroySideArt(SideArt& art) {
+        gpuvram::destroy(art.panelTex);
+        gpuvram::destroy(art.botTex);
+        for (auto& row : art.guiTex) for (auto* t : row) if (t) gpuvram::destroy(t);
+        art = {};
+    }
+
+    void GameView::clearSideArt() {
+        for (auto& [side, art] : sideArt_) destroySideArt(art);
+        sideArt_.clear();
+    }
+
+    // The first selection of a side loads its art once; every later one swaps pointers.
+    void GameView::showSideArt(std::string side) {
+        std::transform(side.begin(), side.end(), side.begin(), ::tolower);
+        if (side.empty() || side == artSide_) return;   // neutral units have no side
+        const auto found = sideArt_.find(side);
+        if (found != sideArt_.end() && found->second.missing) return;
+        const std::string shown = artSide_;
+        SideArt previous = takeSideArt();
+        if (found != sideArt_.end()) {
+            useSideArt(std::move(found->second));
+            sideArt_.erase(found);
+            artSide_ = side;
+        } else {
+            loadPanel(side);
+            loadGui(side);
+            if (gui_.gadgets.empty()) {   // a side with no .gui keeps the art already showing
+                SideArt nothing = takeSideArt();
+                destroySideArt(nothing);
+                useSideArt(std::move(previous));
+                artSide_ = shown;
+                sideArt_[side].missing = true;
+                return;
+            }
+        }
+        sideArt_[shown] = std::move(previous);
     }
 
     void GameView::loadOrderButtons() {
@@ -1419,7 +1501,7 @@ namespace {
         for (size_t i = 0; i < weaponRects_.size(); ++i) {
             const auto& r = weaponRects_[i];
             if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
-            selectWeapon(int(i));
+            if (!watchOnly()) selectWeapon(int(i));   // a watcher's click is swallowed, no more
             return true;
         }
         return false;
@@ -1483,7 +1565,7 @@ namespace {
         for (int id : selection_) {
             const auto* u = frameUnitP(id);
             if (!u || !u->alive() || !u->type || !u->type->isBuilder ||
-                !u->type->canMove || u->player != localPlayer_ || u->repeatType)
+                !u->type->canMove || u->player != hudPlayer() || u->repeatType)
                 continue;   // a repeating producer refuses repair/reclaim
             builder = true;
             if (u->type->canReclaim) reclaimer = true;
@@ -1630,7 +1712,7 @@ namespace {
         // above it, with +income to the orb's left and -expenditure to its right.
         int cb = guiIdx("CrystalBall");
         if (cb >= 0) {
-            const PlayerR& tm = framePlayer(localPlayer_);
+            const PlayerR& tm = framePlayer(hudPlayer());
             float cap = tm.storage;
             SDL_FRect orb = guiCmdRect(gui_.gadgets[cb]);
             if (!guiTex_[cb].empty()) {
@@ -1677,6 +1759,7 @@ namespace {
     bool GameView::guiClick(float mx, float my) {
         for (auto& [r, cmd] : guiBtnRects_) {
             if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
+            if (watchOnly()) return true;   // read-only: no tone, no press, no fall-through
             playClickTone();
             // Retail pushes the button in on mouse-DOWN and releases it on UP, firing
             // the command there. We dispatch on down (changing that would also change
@@ -1711,9 +1794,11 @@ namespace {
     std::vector<std::string> GameView::conjureMenu(const std::string& builderType) const {
         const auto& all = registry_.buildable(builderType);
         std::vector<std::string> out;
+        // The mission's whitelist binds the campaign player, not the AI a watcher has on show.
+        const bool whitelisted = !missionAllowed_.empty() && hudPlayer() == localPlayer_;
         for (const auto& id : all)
             if (worldTables().buildAllowed(registry_.find(id)) &&
-                (missionAllowed_.empty() || std::find(missionAllowed_.begin(), missionAllowed_.end(), id) != missionAllowed_.end()))
+                (!whitelisted || std::find(missionAllowed_.begin(), missionAllowed_.end(), id) != missionAllowed_.end()))
                 out.push_back(id);
         return out;
     }
@@ -1814,7 +1899,7 @@ namespace {
             if (ii >= 0 && u && !multi) {
                 SDL_FRect pr = place(ii);
                 SDL_Texture* ic = iconFor(u->type->id);
-                if (!ic) ic = modelIconTex(u->type->id, colorSlot_[localPlayer_ & 7],
+                if (!ic) ic = modelIconTex(u->type->id, playerColorSlot(hudPlayer()),
                                            u->type->maxVel > tak::sim::Fixed());
                 if (ic) {   // no image at all: no bare box either
                     SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);
@@ -1931,7 +2016,7 @@ namespace {
         std::vector<std::pair<int, bool>> squads;
         for (int id : selection_)
             if (const UnitR* u = frameUnitP(id); u && u->alive() && u->type)
-                squads.push_back({u->player == localPlayer_ ? int(u->squad) : 0, u->type->isBuilder});
+                squads.push_back({u->player == hudPlayer() ? int(u->squad) : 0, u->type->isBuilder});
         if (squads.empty() || squads.front().first == 0) return {};   // skip the roster scan
         std::vector<int> sel(selection_);
         std::sort(sel.begin(), sel.end());
@@ -1939,7 +2024,7 @@ namespace {
         // builder's squad the moment it is laid, and is no member to command yet.
         std::vector<std::pair<int, bool>> rest;
         for (const UnitR* u : front().live)
-            if (u->alive() && u->player == localPlayer_ && u->type && u->squad &&
+            if (u->alive() && u->player == hudPlayer() && u->type && u->squad &&
                 !u->underConstruction && !std::binary_search(sel.begin(), sel.end(), u->id))
                 rest.push_back({int(u->squad), u->type->isBuilder});
         return tak::selportraits::squadLabel(tak::selportraits::selectionSquad(squads, rest));
@@ -1979,7 +2064,7 @@ namespace {
             SDL_SetRenderDrawColor(ren_, 0, 0, 0, 255);   // slot 0 too: one size for all
             SDL_RenderFillRectF(ren_, &r);
             SDL_Texture* ic = iconFor(g.type);
-            if (!ic && t) ic = modelIconTex(g.type, colorSlot_[localPlayer_ & 7],
+            if (!ic && t) ic = modelIconTex(g.type, playerColorSlot(hudPlayer()),
                                             t->maxVel > tak::sim::Fixed());
             if (ic) SDL_RenderCopyF(ren_, ic, nullptr, &r);
             const bool h = hot(r);
@@ -2018,7 +2103,7 @@ namespace {
     }
 
     bool GameView::selPortraitClick(float mx, float my, bool lmb) {
-        if (spectating_ || selection_.size() < 2) return false;
+        if (selection_.size() < 2) return false;
         for (const auto& [r, type] : selPortraitRects_) {
             if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
             if (!lmb || type.empty()) return true;   // other buttons / the "+K" tile: just swallow
@@ -2063,6 +2148,7 @@ namespace {
         for (size_t i = 0; i < orderBtns_.size(); ++i) {
             SDL_FRect r = orderBtnRect(i, winW);
             if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
+            if (watchOnly()) return true;   // read-only: swallowed, as in guiClick
             const auto& b = orderBtns_[i];
             if (b.cmd) {
                 pendingCmd_ = b.cmd;
@@ -2409,7 +2495,7 @@ namespace {
                 SDL_Texture* ic = iconFor(bt->id);
                 // isStructure(), not the canmove flag: a Barracks icon should sit
                 // square like the building it is, not turned like a soldier.
-                if (!ic) ic = modelIconTex(bt->id, colorSlot_[localPlayer_ & 7],
+                if (!ic) ic = modelIconTex(bt->id, playerColorSlot(hudPlayer()),
                                            !isStructure(bt));
                 if (ic) {
                     // A few retail portraits differ by a pixel, and generated
@@ -2494,7 +2580,7 @@ namespace {
         // Bottom-RIGHT: mana -- only on our own bar. The retail GUI bar draws the mana
         // readout at the command-panel foot around the orb (renderGui) instead.
         if (!guiBar) {
-            const PlayerR& tm = framePlayer(localPlayer_);
+            const PlayerR& tm = framePlayer(hudPlayer());
             float manaX = float(winW) - 192;
             shade(manaX - 8, 200);
             SDL_Color txt{0, 0, 0, 255};
@@ -2817,6 +2903,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
     }
 
     void GameView::playClickTone(int semitone) {
+        if (watchOnly()) return;   // nothing a watcher does is acknowledged
         constexpr bool kPitchedBongs = false;   // pending icd proof
         constexpr int kToneRef = 4;
         float rate = (kPitchedBongs && semitone > 0)
@@ -2888,7 +2975,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         // (chatbox.h hudFloor): the box never covers HUD text, at any scale.
         const float barTop = float(winH - barH());
         const float bottom = cb::hudFloor(barTop, float(barH()), buildBarScale_, buildRowTop_,
-                                          !spectating_, margin);
+                                          hudShown(), margin);
         // The box may use 45% of the play area's height, so long as it fits above the
         // HUD; higher up it would start to cover the battle rather than annotate it.
         const float maxBoxH = std::max(0.0f, std::min(barTop * 0.45f, bottom - 2 * margin));

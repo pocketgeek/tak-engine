@@ -25,6 +25,7 @@
 #include "client/hotkeysscreen.h"
 #include "client/options.h"
 #include "client/settings.h"
+#include "client/benchmarkpath.h"
 #include "client/voice.h"
 #include "client/dev.h"
 #include "client/appquit.h"
@@ -179,6 +180,7 @@ struct MainMenu::Impl {
     std::string replayError_;         // shown on the picker
     SDL_FRect replayBtnRect_[10]{};   // one per listed row (set each render)
     SDL_FRect benchBtnRect_[6]{};      // LOW..EXTRA ABSURD hit-rects (set each render)
+    SDL_FRect benchPathRect_[2]{};     // its PATHFINDING choices, kBenchmarkPaths order (set each render)
     int chosenBenchmark_ = 0;         // picked benchmark level 1..6 (0 = none)
 
     // The campaign / mission picker, opened from the PlayStory door (see run()). When
@@ -759,6 +761,8 @@ struct MainMenu::Impl {
     // screen for the destinations without an error line of their own.
     SessionFailure pendingFailure;
     std::string notice_;
+    std::string reopenConnect_;     // MainMenu::reopenConnect
+    bool reopenPending_ = false;
 
     // Reopen the screen a failed launch came from and put its message there. The
     // CONNECT dropdown and the replay picker have their own red error line; the
@@ -1056,7 +1060,6 @@ struct MainMenu::Impl {
         menuBackButton(px0, pw, pad, by + 8);
     }
 
-    // Benchmark intensity submenu: 5 spawn-rate levels. Records benchBtnRect_ for run().
     // Scan the user's config directory for saved replays, newest first. That is where
     // every human player's and spectator's client records its own .takrep (see
     // GameView::beginGameRecording) -- beside settings.ini -- so the picker lists
@@ -1149,16 +1152,19 @@ struct MainMenu::Impl {
         menuBackButton(px0, pw, pad, by + 8);
     }
 
-    void renderBenchMenu(int winW, int winH) {
+    // Benchmark submenu: the PATHFINDING choice over the spawn-rate levels. Records
+    // benchPathRect_ and benchBtnRect_ for run().
+    void renderBenchMenu(int winW, int winH, const Settings* settings) {
         SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
         SDL_FRect dim{0, 0, float(winW), float(winH)};
         SDL_SetRenderDrawColor(ren, 0, 0, 0, 150);
         SDL_RenderFillRectF(ren, &dim);
         const int nBtn = 6;
-        const float bw = 560, bh = 50, gap = 13, pad = 34, titlePx = 3.2f;
+        const float bw = 560, bh = 44, gap = 10, pad = 34, titlePx = 3.2f;
         const float titleH = 7 * titlePx + 22;
+        const float pathH = bh + 18;   // the PATHFINDING row and the space that sets it apart
         const float pw = bw + pad * 2;
-        const float ph = pad * 2 + titleH + nBtn * bh + (nBtn - 1) * gap + 44;
+        const float ph = pad * 2 + titleH + pathH + nBtn * bh + (nBtn - 1) * gap + 44;
         const float px0 = (winW - pw) / 2, py0 = (winH - ph) / 2;
         SDL_FRect panel{px0, py0, pw, ph};
         SDL_SetRenderDrawColor(ren, 26, 28, 36, 240); SDL_RenderFillRectF(ren, &panel);
@@ -1172,6 +1178,26 @@ struct MainMenu::Impl {
             "VERY HIGH  -  EVERY 0.125S", "ABSURD  -  EVERY 0.0625S",
             "EXTRA ABSURD +WTH  -  EVERY 0.03125S"};
         float by = py0 + pad + titleH;
+        const auto picked = settings ? settings->benchmarkPathfinding : sim::PathfindingMode::Retail;
+        const float pathPx = 1.9f, pathLabelW = tw("PATHFINDING", pathPx) + 16;
+        blockText("PATHFINDING", px0 + pad, by + (bh - 7 * pathPx) / 2, pathPx, {205, 210, 225, 255});
+        const float choiceW = (bw - pathLabelW - gap) / 2;
+        for (int i = 0; i < 2; ++i) {
+            SDL_FRect r{px0 + pad + pathLabelW + i * (choiceW + gap), by, choiceW, bh};
+            benchPathRect_[i] = r;
+            const bool on = kBenchmarkPaths[i] == picked;
+            bool hot = mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h;
+            if (on) SDL_SetRenderDrawColor(ren, 122, 104, 52, 255);
+            else SDL_SetRenderDrawColor(ren, hot ? 90 : 60, hot ? 110 : 66, hot ? 150 : 86, 255);
+            SDL_RenderFillRectF(ren, &r);
+            if (on) SDL_SetRenderDrawColor(ren, 235, 225, 180, 255);
+            else SDL_SetRenderDrawColor(ren, hot ? 180 : 90, hot ? 200 : 100, hot ? 240 : 130, 255);
+            SDL_RenderDrawRectF(ren, &r);
+            const char* label = benchmarkPathLabel(kBenchmarkPaths[i]);
+            blockText(label, r.x + (choiceW - tw(label, pathPx)) / 2, r.y + (bh - 7 * pathPx) / 2, pathPx,
+                      on ? SDL_Color{255, 245, 205, 255} : SDL_Color{190, 196, 212, 255});
+        }
+        by += pathH;
         for (int i = 0; i < nBtn; ++i) {
             SDL_FRect r{px0 + pad, by, bw, bh};
             benchBtnRect_[i] = r;
@@ -1187,6 +1213,56 @@ struct MainMenu::Impl {
         shadowText("ESC - BACK", px0 + pad, by + 8, 1.8f, {150, 155, 175, 255});
         menuBackButton(px0, pw, pad, by + 8);
     }
+
+    // A click on the PATHFINDING row picks that pathfinder for this and later runs and
+    // starts nothing. True when the click landed on the row.
+    bool pickBenchPath(float x, float y, Settings* settings) {
+        if (!settings) return false;
+        for (int i = 0; i < 2; ++i) {
+            const SDL_FRect& r = benchPathRect_[i];
+            if (x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) continue;
+            if (settings->benchmarkPathfinding != kBenchmarkPaths[i]) {
+                settings->benchmarkPathfinding = kBenchmarkPaths[i];
+                saveSettings(*settings);
+            }
+            return true;
+        }
+        return false;
+    }
+
+#ifndef NDEBUG
+    // TAK_BENCH_MENU_TEST: the Benchmark screen's PATHFINDING row, clicked where it is
+    // drawn, checking the settings FILE after each click. The file must be named by
+    // TAK_SETTINGS_FILE, never the player's (see testDataFolder).
+    void testBenchPath(const Settings& current, int width, int height) {
+        auto check = [](bool ok, const std::string& message) {
+            if (!ok) throw std::runtime_error("benchmark pathfinding: " + message);
+        };
+        const char* file = devEnv("TAK_SETTINGS_FILE");
+        check(file && *file && settingsPath() == file, "TAK_SETTINGS_FILE must name a scratch settings file");
+        Settings s = current;
+        check(s.benchmarkPathfinding == sim::PathfindingMode::Retail, "a new profile starts on Retail");
+        renderBenchMenu(width, height, &s);
+        auto click = [&](const SDL_FRect& r) { return pickBenchPath(r.x + r.w / 2, r.y + r.h / 2, &s); };
+        auto apart = [](const SDL_FRect& a, const SDL_FRect& b) {
+            return a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
+        };
+        for (const SDL_FRect& p : benchPathRect_) {
+            check(p.w > 0 && p.h > 0, "the row is drawn");
+            for (const SDL_FRect& b : benchBtnRect_) check(apart(p, b), "the row clears the intensity buttons");
+            check(apart(p, menuBackRect_), "the row clears BACK");
+        }
+        check(click(benchPathRect_[1]) && s.benchmarkPathfinding == sim::PathfindingMode::Legion,
+              "clicking LEGION picks it");
+        check(loadSettings().benchmarkPathfinding == sim::PathfindingMode::Legion, "the pick is saved");
+        check(!click(benchBtnRect_[0]) && s.benchmarkPathfinding == sim::PathfindingMode::Legion,
+              "an intensity button is not the row");
+        check(click(benchPathRect_[0]) && s.benchmarkPathfinding == sim::PathfindingMode::Retail,
+              "clicking RETAIL picks it");
+        check(loadSettings().benchmarkPathfinding == sim::PathfindingMode::Retail, "Retail is saved too");
+        std::puts("PASS: Benchmark pathfinding row picks and saves");
+    }
+#endif
 
     void screenshot(int winW, int winH, const std::string& path) {
         std::vector<uint8_t> px(size_t(winW) * size_t(winH) * 4);
@@ -1219,6 +1295,7 @@ MainMenu::MainMenu(SDL_Renderer* ren, const hpi::Vfs& vfs, std::string install)
 MainMenu::~MainMenu() { delete d_; }
 
 void MainMenu::setFailure(const SessionFailure& failure) { d_->pendingFailure = failure; }
+void MainMenu::reopenConnect(const std::string& server) { d_->reopenConnect_ = server; d_->reopenPending_ = true; }
 void MainMenu::setDataFolder(DataFolderRow row) { d_->dataFolder_ = std::move(row); }
 void MainMenu::setVoice(VoiceEngine* voice) { d_->voice_ = voice; }
 
@@ -1231,6 +1308,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
 #ifndef NDEBUG
     if (settings && tak::devFlag("TAK_GUI_SMOOTH_TEST")) d_->testSmoothArt(*settings, w, h);
     if (settings && tak::devFlag("TAK_OPTIONS_DATADIR_TEST")) d_->testDataFolder(*settings, w, h);
+    if (settings && tak::devFlag("TAK_BENCH_MENU_TEST")) d_->testBenchPath(*settings, w, h);
 #endif
 
 #ifndef NDEBUG
@@ -1257,6 +1335,11 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
     // reason shown, so the player lands back where they were, not at a bare menu --
     // and never in the server dialog for a launch that was not multiplayer.
     if (d_->pendingFailure) d_->applyFailure(std::exchange(d_->pendingFailure, {}), settings);
+    if (std::exchange(d_->reopenPending_, false)) {
+        d_->openServerSelect(settings);
+        const auto at = std::find(d_->serverItems.begin(), d_->serverItems.end(), d_->reopenConnect_);
+        if (at != d_->serverItems.end()) d_->serverSel = int(at - d_->serverItems.begin());
+    }
 
     if (!shotPath.empty()) {
         for (auto& dr : d_->doors) d_->updateDoor(dr, 0.0);
@@ -1264,7 +1347,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         // A failure handed to this visit: capture the screen it reopened.
         if (d_->serverSelect) d_->renderServerSelect(w, h);
         if (d_->replayMenu_) d_->renderReplayMenu(w, h);
-        if (d_->benchMenu_) d_->renderBenchMenu(w, h);
+        if (d_->benchMenu_) d_->renderBenchMenu(w, h, settings);
         if (d_->campaign_) d_->campaign_->render(w, h);
         d_->renderNotice(w, h);
         // Debug: TAK_SHOT_CAMPAIGN captures the campaign picker overlay for tests.
@@ -1317,7 +1400,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         if (const char* m = tak::devEnv("TAK_SHOT_MENU")) {
             const std::string which = m;
             if (which == "settings") d_->renderSettingsMenu(w, h);
-            else if (which == "benchmark") d_->renderBenchMenu(w, h);
+            else if (which == "benchmark") d_->renderBenchMenu(w, h, settings);
             else if (which == "replay") { d_->scanReplays(); d_->renderReplayMenu(w, h); }
         }
         d_->screenshot(w, h, shotPath);
@@ -1563,7 +1646,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         d_->settingsMenu_ = false;
                         d_->scanReplays();                 // rescan on every open
                         d_->replayMenu_ = true;
-                    } else if (hit(d_->setBtnRect_[3])) {   // BENCHMARK -> intensity submenu
+                    } else if (hit(d_->setBtnRect_[3])) {   // BENCHMARK -> its submenu
                         d_->settingsMenu_ = false;
                         d_->benchMenu_ = true;
                     }
@@ -1601,7 +1684,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                 continue;
             }
 
-            if (d_->benchMenu_) {   // benchmark intensity submenu (LOW..ABSURD)
+            if (d_->benchMenu_) {   // benchmark submenu (PATHFINDING, LOW..EXTRA ABSURD)
                 if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
                     d_->benchMenu_ = false;
                     d_->settingsMenu_ = true;   // back to SETTINGS, not out of the menu
@@ -1614,6 +1697,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
                         d_->settingsMenu_ = true;
                         continue;
                     }
+                    if (d_->pickBenchPath(fx, fy, settings)) continue;
                     for (int i = 0; i < 6; ++i)
                         if (hit(d_->benchBtnRect_[i])) {
                             d_->chosenBenchmark_ = i + 1;   // 1=Low .. 6=Extra Absurd
@@ -1706,7 +1790,7 @@ MainMenu::Choice MainMenu::run(const std::string& shotPath, std::string* serverO
         if (d_->serverSelect) d_->renderServerSelect(w, h);
         if (d_->settingsMenu_) d_->renderSettingsMenu(w, h);
         if (d_->replayMenu_) d_->renderReplayMenu(w, h);
-        if (d_->benchMenu_) d_->renderBenchMenu(w, h);
+        if (d_->benchMenu_) d_->renderBenchMenu(w, h, settings);
         if (d_->options_) d_->options_->render(w, h);
         if (d_->hotkeys_) d_->hotkeys_->render(w, h);   // above Options
         if (d_->campaign_) d_->campaign_->render(w, h);

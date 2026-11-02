@@ -55,6 +55,12 @@
             if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) stopBenchmark();
             return;
         }
+        // The timeline's marker is let go here, ahead of every overlay: one opened during
+        // the drag would swallow the release and leave the marker stuck to the pointer.
+        if (replayDragging_ && e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+            replayDragRelease();
+            return;
+        }
         // Push to talk, ahead of the lobby and every overlay but CONTROLS (which may be
         // capturing that very key): talking is allowed with a menu open, typing is not.
         if (voiceKey(e)) return;
@@ -106,7 +112,7 @@
         // hit-rects come from the last draw (see the overlay in draw()).
         if (exitMenu_) {
             if (e.type == SDL_MOUSEMOTION) { mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y); }
-            else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) exitMenu_ = false;
+            else if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) { exitMenu_ = false; surrenderArmed_ = false; }
             else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
                 float mx = float(e.button.x), my = float(e.button.y);
                 for (auto& [r, action] : exitHots_)
@@ -172,6 +178,7 @@
             return;
         }
         if (inputUnitInfo(e, winW, winH)) return;
+        if (replayMode_ && replayBarInput(e)) return;
         // In-game chat capture. While composing, keyboard goes to the draft;
         // mouse events still fall through so the camera stays usable.
         if (chatTyping_) {
@@ -218,6 +225,9 @@
         } else if (e.type == SDL_KEYDOWN && e.key.repeat &&
                    e.key.keysym.sym >= SDLK_0 && e.key.keysym.sym <= SDLK_9) {
             // Holding a number is not a second press to follow the squad.
+        } else if (e.type == SDL_KEYDOWN && e.key.repeat && replayMode_ &&
+                   replayHoldSwallows(e.key.keysym.sym)) {
+            // Holding a transport key is not another press.
         } else if (e.type == SDL_KEYDOWN && handleKey(e.key.keysym.sym,
                                                        SDL_GetModState())) {
             // handled by the hotkey dispatcher
@@ -276,7 +286,7 @@
                    selPortraitClick(float(e.button.x), float(e.button.y),
                                     e.button.button == SDL_BUTTON_LEFT)) {
             // info-bar type portrait: select only that type (Shift: drop it)
-        } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && hudShown() &&
                    e.button.y > winH - barH()) {
             // bottom bar: build icons already handled above; swallow the rest so a stray
             // click on the bar chrome doesn't deselect / order into the world
@@ -294,7 +304,7 @@
             draggingMinimap_ = true;   // camera follows the drag until release
             trackSel_ = false;
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
-                   e.button.x > mapViewW(winW) && e.button.y < winH - barH()) {
+                   e.button.x > mapViewW(winW) && e.button.y < mapViewH(winH)) {
             // Right-hand panel press. A right-click on the minimap orders the
             // selection to that world point; every other panel press is swallowed
             // so it can't start a box-select or drop an order on the map. (Only the
@@ -413,8 +423,7 @@
             placing_ = nullptr;
             buildDrag_ = manaBuildDrag_ = false;
             shiftBuildPlaced_ = false;
-        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
-                   !spectating_) {   // a spectator watches only -- no unit selection
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
             dragging_ = true;
             dragClicks_ = e.button.clicks;
             dragAnchor_ = dragAnchorAt(float(e.button.x), float(e.button.y));
@@ -470,29 +479,43 @@
                 lastClickHit_ = hit;
                 lastClickCount_ = dragClicks_;
                 if (dbl) {
+                    // A watcher's double-click expands within the clicked unit's owner.
+                    const auto* clicked = watchOnly() ? frameUnitP(hit) : nullptr;
+                    const int clickOwner = clicked ? int(clicked->player) : localPlayer_;
                     std::vector<tak::client::doubleclick::Candidate> cands;
                     for (const UnitR* _up : front().live) {
                         const UnitR& u = *_up;
                         if (!u.alive() || !u.type) continue;
                         const UnitR& fu = frameUnit(u.id);
                         SDL_FPoint p = dotsFrame_ ? dotCentre(fu) : unitScreen(fu);
-                        cands.push_back({u.id, u.type, u.player == localPlayer_,
+                        cands.push_back({u.id, u.type, u.player == clickOwner,
                                          !u.underConstruction, p.x, p.y});
                     }
                     matched = tak::client::doubleclick::expand(
-                        hit, cands, {float(mapViewW(winW_)), float(winH_ - barH())});
+                        hit, cands, {float(mapViewW(winW_)), float(mapViewH(winH_))});
                 }
             } else {
                 lastClickHit_ = -1;
                 for (const UnitR* _up : front().live) {
                     const UnitR& u = *_up;
-                    if (u.alive() && u.player == localPlayer_ && !u.underConstruction) {
+                    if (u.alive() && (watchOnly() ? canPickUnit(u) : u.player == localPlayer_) &&
+                        !u.underConstruction) {
                         // With Tactical Dots up, a unit is where its dot is drawn.
                         SDL_FPoint p = dotsFrame_ ? dotCentre(frameUnit(u.id))
                                                   : unitScreen(frameUnit(u.id));
                         if (p.x >= sx0 && p.x <= sx1 && p.y >= sy0 && p.y <= sy1)
                             matched.push_back(u.id);
                     }
+                }
+                // A watcher's box holds one owner: the one with the most units in it.
+                if (watchOnly()) {
+                    std::vector<int> owners;
+                    for (int id : matched) if (const auto* u = frameUnitP(id)) owners.push_back(int(u->player));
+                    const int owner = tak::client::boxOwner(owners);
+                    std::erase_if(matched, [&](int id) {
+                        const auto* u = frameUnitP(id);
+                        return !u || int(u->player) != owner;
+                    });
                 }
                 // Army filter: if a box caught any mobile ATTACKING unit, drop
                 // buildings and builders -- dragging over a base picks the army,
@@ -509,6 +532,10 @@
                         return u && u->type && (u->type->isStructure() || u->type->isBuilder);
                     }), matched.end());
             }
+            // Another owner replaces a watcher's selection, Shift or not: one player on show.
+            if (addSel && watchOnly() && !matched.empty())
+                if (const auto* u = frameUnitP(matched.front()); u && int(u->player) != hudPlayer())
+                    addSel = false;
             // Combine with the existing selection per the modifier.
             if (subSel) {
                 for (int id : matched)
@@ -523,7 +550,7 @@
             }
             if (!addSel && !subSel && isClick && selection_.size() == 1)
                 voice(selection_.front(), "select");
-        } else if (e.type == SDL_MOUSEBUTTONDOWN &&
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && !watchOnly() &&
                    e.button.button == SDL_BUTTON_RIGHT && !selection_.empty()) {
             float wx, wz;
             pickWorld(float(e.button.x), float(e.button.y), wx, wz);
@@ -540,9 +567,80 @@
         }
     }
 
+    // The replay bar's mouse. The bar takes its presses ahead of everything below it; a
+    // press on the bar between its controls is swallowed, so nothing lands on the map.
+    bool GameView::replayBarInput(const SDL_Event& e) {
+        namespace rb = tak::replaybar;
+        const rb::Layout& l = replayBar_;
+        if (e.type == SDL_MOUSEMOTION) {
+            if (!replayDragging_) return false;
+            mouseX_ = float(e.motion.x); mouseY_ = float(e.motion.y);
+            if (!(e.motion.state & SDL_BUTTON_LMASK)) {   // let go where nothing could see it
+                replayDragging_ = false;
+                return false;
+            }
+            replayDragTick_ = rb::xToTick(l, mouseX_, replayLength());
+            return true;
+        }
+        if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+            if (replayHeld_) { replayHeld_ = 0; return true; }
+            return false;
+        }
+        if (e.type != SDL_MOUSEBUTTONDOWN) return false;
+        const float mx = float(e.button.x), my = float(e.button.y);
+        if (!l.box.hit(mx, my)) return false;
+        if (e.button.button != SDL_BUTTON_LEFT) return true;
+        if (l.timeline.hit(mx, my)) {
+            replayDragging_ = true;
+            replayDragTick_ = rb::xToTick(l, mx, replayLength());
+        } else if (l.back.hit(mx, my) || l.forward.hit(mx, my)) {
+            replayHeld_ = l.back.hit(mx, my) ? -1 : 1;
+            replayNudge(int64_t(replayHeld_) * rb::kStepTicks);
+            replayHeldNextMs_ = SDL_GetTicks64() + 200;
+        } else if (l.play.hit(mx, my)) {
+            replayTogglePause();
+        } else if (l.slower.hit(mx, my)) {
+            replaySpeed_ = rb::stepSpeed(replaySpeed_, -1);
+        } else if (l.faster.hit(mx, my)) {
+            replaySpeed_ = rb::stepSpeed(replaySpeed_, +1);
+        }
+        return true;
+    }
+
+    void GameView::replayDragRelease() {
+        replayDragging_ = false;
+        replayJumpTo(replayDragTick_);   // the jump waits for the release
+    }
+
+    bool GameView::replayHoldSwallows(SDL_Keycode key) const {
+        if (key == SDLK_SPACE || key == SDLK_PAUSE) return true;   // or it flickers at the repeat rate
+        // As replayHoldNudge: a jump key held down waits for the landing.
+        return (key == SDLK_LEFTBRACKET || key == SDLK_RIGHTBRACKET) && replayInTransit_;
+    }
+
+    bool GameView::replayKey(SDL_Keycode key, uint16_t mod) {
+        namespace rb = tak::replaybar;
+        if (key == SDLK_SPACE || key == SDLK_PAUSE) { replayTogglePause(); return true; }
+        if (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS) {
+            replaySpeed_ = rb::stepSpeed(replaySpeed_, +1);
+            return true;
+        }
+        if (key == SDLK_MINUS || key == SDLK_KP_MINUS) {
+            replaySpeed_ = rb::stepSpeed(replaySpeed_, -1);
+            return true;
+        }
+        if (key == SDLK_LEFTBRACKET || key == SDLK_RIGHTBRACKET) {
+            const int64_t step = (mod & KMOD_SHIFT) ? rb::kLongStepTicks : rb::kStepTicks;
+            replayNudge(key == SDLK_LEFTBRACKET ? -step : step);
+            return true;
+        }
+        return false;
+    }
+
     void GameView::edgeScroll(float dt, float zm) {
         if (winW_ <= 0 || winH_ <= 0 || !edgeScrollOn_) return;
         if (mouseX_ < 0 || mouseX_ > winW_ || mouseY_ < 0 || mouseY_ > winH_) return;
+        if (replayMode_ && (replayDragging_ || replayBar_.box.hit(mouseX_, mouseY_))) return;
         const float margin = 24.0f, panPx = 2000.0f * edgeScrollSpeed_;   // px/s at zoom 1
         // Trigger at the real window edges (incl. the far right, past the panel),
         // so the player pushes to the screen edge to scroll -- not to the map edge.
@@ -562,7 +660,8 @@
         sounds_.pollMusic();
         if (inLobbyPhase()) return;
         edgeScroll(dt, std::max(mapView_.zoom(), 1e-3f));   // cursor-at-edge pan (real time)
-        if (trackSel_ && !centerOnSelection()) trackSel_ = false;   // follow selection
+        // Follow the selection. A jump's frames can lack a unit its landing has.
+        if (trackSel_ && !centerOnSelection() && !replayInTransit_) trackSel_ = false;
         if (shakeTime_ > 0) shakeTime_ = std::max(0.0f, shakeTime_ - dt);   // shake decay
     }
 
@@ -676,11 +775,12 @@
     }
 
     void GameView::cycleNextUnit() {
-        if (spectating_) return;   // watch-only
+        const int owner = hudPlayer();   // a watcher steps through the player on show
+        if (owner < 0) return;
         std::vector<int> owned;
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
-            if (u.alive() && u.player == localPlayer_ && u.type && u.type->canMove &&
+            if (u.alive() && u.player == owner && u.type && u.type->canMove &&
                 !u.underConstruction)
                 owned.push_back(u.id);
         }

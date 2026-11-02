@@ -124,7 +124,7 @@ std::string mmss(int sec) {
 ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool victory,
                                const std::string& title, bool hasNext,
                                Settings* settings, MenuMusic* music,
-                               const ResultStats* stats) {
+                               const ResultStats* stats, ResultChoice skirmishNext) {
     CursorSet cursors;
     cursors.load(ren, vfs, settings);
     // Decided per frame below (hardware -> shown, software -> hidden and drawn).
@@ -168,7 +168,14 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
     ResultChoice proceed = ResultChoice::Menu;
     if (victory && hasNext) proceed = ResultChoice::Next;
     else if (!victory) proceed = ResultChoice::Retry;
-    const char* proceedHint = proceed == ResultChoice::Next ? "ENTER: NEXT MISSION" : "";
+    if (skirmishNext != ResultChoice::Menu) proceed = skirmishNext;
+    const char* proceedTip = proceed == ResultChoice::Next       ? "Next Mission"
+                           : proceed == ResultChoice::NewGame    ? "New Game"
+                           : proceed == ResultChoice::GameSelect ? "Game Select"
+                                                                 : "Retry";
+    // A campaign's last win, or a replay's result, has no next step: the right door is inert.
+    const bool canProceed = hasNext || skirmishNext != ResultChoice::Menu ||
+                            (!victory && !title.empty());
 
     for (;;) {
         if (termRequested()) { freeAll(); return ResultChoice::Menu; }
@@ -180,7 +187,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
 
         int mx = 0, my = 0;
         hidpi::mousePixels(ren, mx, my);   // layout is in output pixels
-        bool okHover = inRect(okR, float(mx), float(my));
+        bool okHover = canProceed && inRect(okR, float(mx), float(my));
         bool cancelHover = inRect(cancelR, float(mx), float(my));
 
         SDL_Event e;
@@ -196,7 +203,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
             }
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
                 float bx = float(hidpi::toPixels(ren, e.button.x)), by = float(hidpi::toPixels(ren, e.button.y));
-                if (inRect(okR, bx, by)) { freeAll(); return proceed; }
+                if (canProceed && inRect(okR, bx, by)) { freeAll(); return proceed; }
                 if (inRect(cancelR, bx, by)) { freeAll(); return ResultChoice::Menu; }
             }
         }
@@ -217,7 +224,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
         const SDL_Color gold{236, 214, 160, 255};
         const SDL_Color dim{196, 178, 138, 255};
         auto text = [&](const Font& f, const std::string& s, const Rect& r, SDL_Color c,
-                        bool rightAlign = false, bool overArt = false) {
+                        bool rightAlign = false, bool overArt = false, bool centred = false) {
             if (s.empty()) return;
             float sc = lay.scale * (r.h / 20.0f);
             if (!f.ok()) sc = lay.scale * 1.6f;
@@ -227,7 +234,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
                 sc *= available / tw;
                 tw = f.ok() ? float(f.width(s, sc)) : uiTextWidth(s, sc);
             }
-            float x = lay.px(r.x) + (rightAlign ? (r.w * lay.scale - tw) : 0);
+            float x = lay.px(r.x) + (centred ? (r.w * lay.scale - tw) / 2 : rightAlign ? r.w * lay.scale - tw : 0);
             // draw() takes a baseline, not the gadget's top. Use common font
             // bounds so names, digits and times share one baseline in each row.
             float top = 0, height = 7 * sc;
@@ -310,7 +317,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
                 text(body, title, {(640 - ttw / lay.scale) / 2, g.title.y - 26, ttw / lay.scale, 20}, dim, false, true);
             }
         }
-        text(body, proceedHint, g.help, dim, false, true);
+        text(body, cancelHover ? "Title Screen" : okHover ? proceedTip : "", g.help, dim, false, true, true);
 
         auto button = [&](SDL_Texture** tex, const SDL_FRect& r, bool hover, const char* fallback) {
             SDL_Texture* t = tex[hover && tex[1] ? 1 : 0];
@@ -323,7 +330,7 @@ ResultChoice ResultScreen::run(SDL_Renderer* ren, const hpi::Vfs& vfs, bool vict
             uiText(ren, fallback, r.x + (r.w - uiTextWidth(fallback, px)) / 2,
                           r.y + (r.h - 7 * px) / 2, px, gold);
         };
-        button(cancelTex, cancelR, cancelHover, "MENU");
+        button(cancelTex, cancelR, cancelHover, "TITLE");
         button(okTex, okR, okHover, "GO");
 
         // Honour the hardware-cursor option here too -- see BriefingScreen.

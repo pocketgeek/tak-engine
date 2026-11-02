@@ -371,7 +371,7 @@
     }
 
     void GameView::issue(tak::net::Command c) {
-        if (replayMode_ || spectating_) return;   // watch-only: can't order units
+        if (watchOnly()) return;   // the backstop: a command from a watcher disconnects it
         c.player = uint8_t(localPlayer_);
         if (click_) { click_->cmds.push_back(std::move(c)); return; }
         if (mp_) outbox_.push_back(c);
@@ -425,6 +425,7 @@
         }
         replayBundles_ = std::move(bundles);
         replayMode_ = true;
+        replayKeyBudget_ = tak::replaybar::keyframeBudget(uint64_t(SDL_GetSystemRAM()) << 20);
         noFog_ = true;             // a spectator sees the whole map
         localPlayer_ = 0;
         side_ = "ara";
@@ -435,6 +436,20 @@
     }
 
     void GameView::replayStep(float dt) {
+        namespace rb = tak::replaybar;
+        if (replayKeys_.empty() && replayTick_ == 0) replayCaptureKeyframe();   // what rewinds reach
+        if (replayHeld_ && !(SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON_LMASK)) replayHeld_ = 0;
+        if (replayHeld_ && SDL_GetTicks64() >= replayHeldNextMs_) {   // << >> repeat while held
+            replayHoldNudge(replayHeld_);
+            replayHeldNextMs_ = SDL_GetTicks64() + 200;
+        }
+#ifndef NDEBUG
+        if (replaySeekStraight_.erase(replayTick_)) replaySeekPrint();
+        if (!replaySeekTo_ && !replaySeekScript_.empty()) {
+            replayJumpTo(replaySeekScript_.front());
+            replaySeekScript_.pop_front();
+        }
+#endif
         // The early return used to sit HERE, which quietly broke the last snapshot:
         // captureFrame only publishes the buffer, while the registration that makes a
         // unit drawable happens in cosmeticStep (it walks front().live and calls
@@ -444,9 +459,11 @@
         // Publishing and registering are two steps and both have to keep running.
         //
         // Pausing is the same story: a paused replay still has to draw what it froze on.
-        if (!paused_ && replayTick_ < replayBundles_.size()) {
+        // A jump runs paused or not, and playback then carries on as it was.
+        const bool jumping = replaySeekTo_.has_value();
+        if (!replayHalted_ && ((!paused_ && replayTick_ < replayBundles_.size()) || jumping || replayPublish_))
             replayAdvance(dt);
-        }
+        else replayRealRate_ = 0;
         // ...but with the SIM'S time, not the wall clock. Two things follow from that:
         //
         //   paused  -> zero. The pass still has to RUN (registration lives in it), but
@@ -457,61 +474,276 @@
         //              exactly that. Unscaled dt made effects outlive combat by the
         //              speed factor -- ten times longer at 10x playback, and expiring
         //              too fast when slowed.
-        cosmeticStep(paused_ ? 0.0f : dt * speedMult());
+        //   very fast -> no sound at all, and display time held at 8x: nothing can be
+        //              followed at that rate, and the effects and animation are what
+        //              would otherwise cap it. Ticks are not skipped.
+        //
+        //   in transit -> no sound and no display time either, up to and including the
+        //              frame that shows the landing, which is what cosmeticStep decides
+        //              on. It drops whatever the jump queued, so nothing comes out after.
+        const float speed = speedMult();
+        sounds_.setEffectsMuted(replayInTransit_ || speed > rb::kFullEffectsSpeed);
+        cosmeticStep(paused_ || replayInTransit_ ? 0.0f : dt * std::min(speed, rb::kFullEffectsSpeed));
+    }
+
+    std::vector<uint32_t> GameView::replayKeyTicks() const {
+        std::vector<uint32_t> ticks;
+        ticks.reserve(replayKeys_.size());
+        for (const auto& key : replayKeys_) ticks.push_back(key.tick);
+        return ticks;
+    }
+
+    void GameView::replayTickOnce() {
+#ifndef NDEBUG
+        if (situation_.armed()) situation_.observe(uint32_t(replayTick_), world_, replayBundles_);
+#endif
+        const auto& bd = replayBundles_[replayTick_];
+        for (const auto& c : bd.cmds) apply(c);
+        for (const auto& e : bd.events) { noteEvent(e); applyEvent(e); }
+        writableWorld().tick(1.0f / 30.0f);
+        captureTransportEffects();
+        ++replayTick_;
+#ifndef NDEBUG
+        if (postrail_.active()) postrail_.record(uint32_t(replayTick_ - 1), world_);
+#endif
+        // COMPARE against what the original game computed at this tick. Recording
+        // the checkpoints was only half of it -- playback printed the count and
+        // checked nothing, so a replay that diverged still ran happily to the end
+        // and looked like a faithful reproduction. Report the FIRST divergence and
+        // then stop reporting: after the first, every later tick differs too and
+        // the rest is noise.
+        if (replayCheckAt_ < replayChecks_.size()) {
+            const auto& ck = replayChecks_[replayCheckAt_];
+            if (ck.tick + 1 == uint32_t(replayTick_)) {
+                ++replayCheckAt_;
+                const uint64_t mine = world_.stateHash();
+                // Keeps checking the position digest after the first hash divergence:
+                // that is what separates a hash-layout change from changed play.
+                if (replayTracker_.observe(ck, mine, [&] { return world_.posDigest(); })) {
+                    std::fprintf(stderr,
+                        "replay: DIVERGED at tick %u -- recorded %016llx, replayed "
+                        "%016llx\n", ck.tick, (unsigned long long)ck.hash,
+                        (unsigned long long)mine);
+                    postNotice("REPLAY DIVERGED FROM THE RECORDING", 8);
+                }
+            } else if (ck.tick + 1 < uint32_t(replayTick_)) {
+                ++replayCheckAt_;   // checkpoint we stepped past; keep in step
+            }
+        }
+        if (replayTick_ % tak::replaybar::kKeyframeTicks == 0) replayCaptureKeyframe();
+#ifndef NDEBUG
+        if (replaySeekStraight_.erase(replayTick_)) replaySeekPrint();
+#endif
     }
 
     void GameView::replayAdvance(float dt) {
-        replayAccum_ += dt * speedMult();
-        int guard = 0;
+        namespace rb = tak::replaybar;
+        const float speed = speedMult();
+        const bool jumping = replaySeekTo_.has_value();
+        if (!paused_ && !jumping) replayAccum_ += dt * speed;
+        // On time, not on a tick count: how much fits in a frame is what the game's
+        // size decides. Never a tick, a checkpoint or a keyframe is skipped.
+        const auto start = std::chrono::steady_clock::now();
+        const auto budget = std::chrono::duration<double, std::milli>(rb::frameBudgetMs(speed, jumping));
         bool advanced = false;
-        while (replayAccum_ >= 1.0f / 30.0f && replayTick_ < replayBundles_.size() && guard < 64) {
-#ifndef NDEBUG
-            if (situation_.armed()) situation_.observe(uint32_t(replayTick_), world_, replayBundles_);
-#endif
-            const auto& bd = replayBundles_[replayTick_];
-            for (const auto& c : bd.cmds) apply(c);
-            for (const auto& e : bd.events) { noteEvent(e); applyEvent(e); }
-            writableWorld().tick(1.0f / 30.0f);
-            captureTransportEffects();
-            ++replayTick_;
-#ifndef NDEBUG
-            if (postrail_.active()) postrail_.record(uint32_t(replayTick_ - 1), world_);
-#endif
-            // COMPARE against what the original game computed at this tick. Recording
-            // the checkpoints was only half of it -- playback printed the count and
-            // checked nothing, so a replay that diverged still ran happily to the end
-            // and looked like a faithful reproduction. Report the FIRST divergence and
-            // then stop reporting: after the first, every later tick differs too and
-            // the rest is noise.
-            if (replayCheckAt_ < replayChecks_.size()) {
-                const auto& ck = replayChecks_[replayCheckAt_];
-                if (ck.tick + 1 == uint32_t(replayTick_)) {
-                    ++replayCheckAt_;
-                    const uint64_t mine = world_.stateHash();
-                    // Keeps checking the position digest after the first hash divergence:
-                    // that is what separates a hash-layout change from changed play.
-                    if (replayTracker_.observe(ck, mine, [&] { return world_.posDigest(); })) {
-                        std::fprintf(stderr,
-                            "replay: DIVERGED at tick %u -- recorded %016llx, replayed "
-                            "%016llx\n", ck.tick, (unsigned long long)ck.hash,
-                            (unsigned long long)mine);
-                        postNotice("REPLAY DIVERGED FROM THE RECORDING", 8);
-                    }
-                } else if (ck.tick + 1 < uint32_t(replayTick_)) {
-                    ++replayCheckAt_;   // checkpoint we stepped past; keep in step
-                }
-            }
-            replayAccum_ -= 1.0f / 30.0f;
-            ++guard;
+        size_t ticks = 0;
+        while (replayTick_ < replayBundles_.size()) {
+            if (jumping ? replayTick_ >= *replaySeekTo_ : replayAccum_ < 1.0f / 30.0f) break;
+            if (advanced && std::chrono::steady_clock::now() - start >= budget) break;
+            replayTickOnce();
+            if (!jumping) replayAccum_ -= 1.0f / 30.0f;
             advanced = true;
+            ++ticks;
+        }
+        if (jumping && replayTick_ >= *replaySeekTo_) {
+            replaySeekTo_.reset();
+            replayAccum_ = 0;
+            worldEpoch_.fetch_add(1, std::memory_order_release);   // the landing is its own frame
+            replayDisplayStale_ = true;
+            replayPublish_ = true;
+#ifndef NDEBUG
+            if (replaySeekPrinting_) replaySeekPrint();
+#endif
+        }
+        // What did not fit is dropped, so nothing keeps racing after the speed comes down.
+        replayAccum_ = std::min(replayAccum_, std::max(1.0f / 30.0f, dt * speed));
+        // The rate the speed label reports when it falls short of the request.
+        if (paused_ || jumping) { replayRealRate_ = 0; replayRateSec_ = 0; replayRateTicks_ = 0; }
+        else {
+            replayRateTicks_ += ticks;
+            replayRateSec_ += dt;
+            if (replayRateSec_ >= 0.5f) {
+                replayRealRate_ = float(replayRateTicks_) / 30.0f / replayRateSec_;
+                replayRateSec_ = 0;
+                replayRateTicks_ = 0;
+            }
         }
         // PUBLISH what we just simulated, exactly as update() does for a live game
         // (simStep ends with captureFrame, then cosmeticStep runs). replayStep did
         // neither, so front() was never filled: the render reads front().live, which
         // stayed empty, and playback drew the terrain with none of the recorded
         // armies on it. Effects follow the same snapshot, so cosmeticStep comes after.
-        if (advanced) captureFrame();
+        if (advanced || replayPublish_) captureFrame();
+        replayPublish_ = false;
     }
+
+    void GameView::replayCaptureKeyframe() {
+        namespace rb = tak::replaybar;
+        if (replayKeysStopped_) return;
+        const uint32_t tick = uint32_t(replayTick_);
+        const auto at = std::lower_bound(replayKeys_.begin(), replayKeys_.end(), tick,
+                                         [](const ReplayKeyframe& k, uint32_t t) { return k.tick < t; });
+        if (at != replayKeys_.end() && at->tick == tick) return;   // laid on an earlier pass
+        if (!replayThinKeys(replayKeyLast_)) return;   // room for one like the last
+        try {
+            ReplayKeyframe key;
+            key.tick = tick;
+            key.hash = world_.stateHash();
+            std::copy(std::begin(playerAi_), std::end(playerAi_), key.playerAi.begin());
+            {
+                tak::client::AllocCount counted;
+                key.world = world_.clone();
+                key.bytes = counted.bytes();
+            }
+            replayKeyLast_ = key.bytes;
+            replayKeyBytes_ += key.bytes;
+            const auto place = std::lower_bound(replayKeys_.begin(), replayKeys_.end(), tick,
+                                                [](const ReplayKeyframe& k, uint32_t t) { return k.tick < t; });
+            replayKeys_.insert(place, std::move(key));
+            replayThinKeys(0);   // this one can be the bigger
+        } catch (const std::bad_alloc&) {
+            std::fprintf(stderr, "replay: out of memory at tick %u: no more keyframes\n", tick);
+            if (replayKeys_.size() > 1) replayKeys_.erase(replayKeys_.begin() + 1, replayKeys_.end());
+            replayKeyBytes_ = replayKeys_.empty() ? 0 : replayKeys_.front().bytes;
+            replayKeysStopped_ = true;
+        }
+    }
+
+    bool GameView::replayThinKeys(uint64_t incoming) {
+        namespace rb = tak::replaybar;
+        const size_t capacity = size_t(replayKeyBudget_ / std::max<uint64_t>(replayKeyLast_, 1));
+        while (replayKeyBytes_ + incoming > replayKeyBudget_) {
+            const auto ticks = replayKeyTicks();
+            const size_t drop = rb::thinChoice(ticks, uint32_t(replayTick_), replayBundles_.size(), capacity);
+            if (drop >= ticks.size()) return false;
+            replayKeyBytes_ -= replayKeys_[drop].bytes;
+            replayKeys_.erase(replayKeys_.begin() + std::ptrdiff_t(drop));
+        }
+        return true;
+    }
+
+    void GameView::replayRestore(size_t keyframe) {
+        const ReplayKeyframe& key = replayKeys_[keyframe];
+        try {
+            for (int attempt = 0;; ++attempt) {
+                writableWorld().restoreFrom(*key.world);
+                if (world_.stateHash() == key.hash) break;
+                if (attempt) {
+                    std::fprintf(stderr, "replay: DIVERGED restoring tick %u -- kept %016llx, restored "
+                                 "%016llx\n", key.tick, (unsigned long long)key.hash,
+                                 (unsigned long long)world_.stateHash());
+                    replayKeyMismatch_ = true;
+                    postNotice("REPLAY DIVERGED FROM THE RECORDING", 8);
+                    break;
+                }
+            }
+        } catch (const std::bad_alloc&) {
+            // The world is half written and cannot be played on; the last frame stays up.
+            std::fprintf(stderr, "replay: out of memory restoring tick %u\n", key.tick);
+            replayHalted_ = true;
+            replaySeekTo_.reset();
+            replayInTransit_ = false;
+            postNotice("NOT ENOUGH MEMORY TO REWIND", 8);
+            return;
+        }
+        replayTick_ = key.tick;
+        replayAccum_ = 0;
+        replayCheckAt_ = tak::replaybar::checkAfter(replayChecks_, replayTick_);
+        std::copy(key.playerAi.begin(), key.playerAi.end(), std::begin(playerAi_));
+        worldEpoch_.fetch_add(1, std::memory_order_release);
+        replayDisplayStale_ = true;
+        replayPublish_ = true;
+    }
+
+    void GameView::replayJumpTo(size_t tick) {
+        namespace rb = tak::replaybar;
+        if (!replayMode_ || replayHalted_) return;
+        tick = std::min(tick, replayBundles_.size());
+        if (replayKeys_.empty()) {
+            if (replayTick_ == 0) replayCaptureKeyframe();
+            if (replayKeys_.empty()) return;
+        }
+        if (!replayInTransit_) replayJumpOwner_ = hudPlayer();
+        replayInTransit_ = true;
+        replaySeekTo_ = tick;
+        const size_t keyframe = rb::keyframeAt(replayKeyTicks(), uint32_t(tick));
+        if (tick < replayTick_ || replayKeys_[keyframe].tick > replayTick_) replayRestore(keyframe);
+    }
+
+    void GameView::replayNudge(int64_t ticks) {
+        namespace rb = tak::replaybar;
+        const size_t from = replaySeekTo_.value_or(replayTick_);
+        const size_t want = rb::nudgeTarget(replayTick_, from, ticks, replayBundles_.size());
+        replayJumpTo(ticks < 0 ? rb::snapRewind(replayKeyTicks(), uint32_t(want), uint32_t(from)) : want);
+    }
+
+    void GameView::replayHoldNudge(int direction) {
+        // The next step waits for the last landing, so a hold never runs ahead of what the
+        // game can simulate and keeps showing the units: every restore redraws them all.
+        if (!replayInTransit_) replayNudge(int64_t(direction) * tak::replaybar::kStepTicks);
+    }
+
+    void GameView::replayTogglePause() {
+        paused_ = !paused_;
+        if (paused_ && replaySeekTo_) replaySeekTo_ = replayTick_;   // a jump stops where it stands
+    }
+
+    void GameView::replayDropQueued() {
+        std::lock_guard<std::mutex> lock(hitQueueMutex_);
+        hitQueue_.clear();missionSoundQueue_.clear();unitSoundQueue_.clear();
+        transportEffectQueue_.clear();smokeTickQueue_.clear();
+        flightAnimationQueue_.clear();weaponAnimationQueue_.clear();
+        pendingMonarchAlerts_ = 0;
+    }
+
+    void GameView::replayResetDisplay() {
+        // Everything the display built up belongs to another moment of the game. Unit ids
+        // keep their meaning within a recording, so the selection, groups and tracking
+        // stay; what each unit looked like does not.
+        replayDropQueued();
+        shakeTime_ = 0;
+        anims_.clear();unitType_.clear();birthFx_.clear();
+        beams_.clear();effects_.clear();explosionGlows_.clear();rings_.clear();particles_.clear();
+        detachedPieces_.clear();bloodStains_.clear();nimbusEffects_.clear();stormsSeen_.clear();
+        pointParticles_.clear();damageFlames_.clear();smokeSprites_.clear();featureSmokeSprites_.clear();
+        smokeOwners_.clear();featureSmokeOwners_.clear();
+        effectVisibility_.reset();
+        // Features the game added (corpses) go, and the map's own re-sync from the world.
+        for (size_t i = featuresAtLoad_; i < features_.size(); ++i) featInstIds_.erase(features_[i].simId);
+        if (features_.size() > featuresAtLoad_) features_.erase(features_.begin() + std::ptrdiff_t(featuresAtLoad_), features_.end());
+        featureIndexDirty_ = true;
+        featSimState_.clear();lastFeatGen_ = UINT32_MAX;
+        registerEveryUnit_ = true;
+    }
+
+#ifndef NDEBUG
+    void GameView::setReplaySeekScript(const std::string& ticks, bool straight) {
+        std::stringstream list(ticks);
+        std::string item;
+        while (std::getline(list, item, ','))
+            if (!item.empty()) {
+                const size_t tick = size_t(std::strtoull(item.c_str(), nullptr, 10));
+                if (straight) replaySeekStraight_.insert(tick);
+                else replaySeekScript_.push_back(tick);
+            }
+        replaySeekPrinting_ = !straight;
+    }
+
+    void GameView::replaySeekPrint() const {
+        std::fprintf(stderr, "replay seek: tick=%zu hash=%016llx\n", replayTick_,
+                     (unsigned long long)world_.stateHash());
+    }
+#endif
 
     size_t GameView::aliveUnits() const {
         size_t n = 0; for (auto& u : world_.units()) if (u.alive() && u.type) ++n; return n;
@@ -849,12 +1081,12 @@
             : int(u.underConstruction);
         s.buildProgress = (float(u.buildProgress) + float(u.buildFraction) / 65536.0f) / 30.0f;   // ticks -> seconds
         // Orders/rally/areaVisited are read for the VIEWED player's units only (the order
-        // trails, queued-build ghosts and the HUD all gate on localPlayer_; a spectator or
-        // replay viewer is seated as localPlayer_ too). Copying them for every unit was the
-        // bulk of the capture cost at 10k units. Queues are tiny and only factories hold
+        // trails, queued-build ghosts and the HUD all gate on hudPlayer()); a watcher can
+        // put any player on show, so it copies them all, as the buildQueue below does.
+        // Copying them for every unit was the bulk of the capture cost at 10k units. Queues are tiny and only factories hold
         // one, so an ally's stay visible for the HUD -- and every player's for a spectator
         // or replay viewer, whose info panel shows any selected factory's queue.
-        if (u.player==localPlayer_) s.captureOrders(u);
+        if (u.player==localPlayer_ || (watchOnly() && !benchmarkMode_)) s.captureOrders(u);
         else s.clearOrders();
         if (u.player==localPlayer_ || alliedToLocal(u.player) || spectating_ || replayMode_) s.buildQueue = u.buildQueue;
         else s.buildQueue.clear();
@@ -898,7 +1130,9 @@
         // Pose: prev comes from the previously-published frame's curr for this SAME unit
         // (id live last tick + matching type). Interpolate alive units between ticks;
         // a dead unit holds its death pose. A big jump (teleport / id reuse) seeds fresh.
-        const UnitR* prev=pf.unit(u.id);
+        // Another epoch's frame is another world: a jump's last frame shows where a unit
+        // will be, not where it was.
+        const UnitR* prev=fb.worldEpoch==pf.worldEpoch ? pf.unit(u.id) : nullptr;
         if(prev && prev->type!=u.type)prev=nullptr;
         s.headingWord=u.heading.v;
         s.captureOccupancy(u,world_.mapSea(),prev ? prev->animationOccupancy : 0);
@@ -1273,6 +1507,18 @@
         // Reads the render SNAPSHOT (front()), never live world_, so it is safe
         // on the main thread while the sim worker ticks. Transient combat events
         // arrive through queues so skipped snapshots cannot discard them.
+        // The frame on show can still be from before a replay jump: a future that is gone,
+        // and nothing may be built from it (a flyer's anim seeded with serials ahead of
+        // its unit would count them back up through the whole uint32_t range).
+        if (replayMode_ && front().worldEpoch != worldEpoch_.load(std::memory_order_acquire)) return;
+        const bool jumpPass = replayInTransit_;
+        if (replayDisplayStale_) {
+            replayResetDisplay();
+            replayDisplayStale_ = false;
+            if (!replaySeekTo_) replayInTransit_ = false;   // this frame is the landing
+        } else if (jumpPass) {
+            replayDropQueued();
+        }
         const bool newTick_ = (front().gen != lastCosmeticGen_);
         lastCosmeticGen_ = front().gen;
         // Weapon impacts this tick: play each weapon's soundhitclass, picking the
@@ -1292,7 +1538,10 @@
         // A mission script asking for a camera shake: fire on the sequence edge.
         if (newTick_) {
             const auto& sr = front().shakeReq;     // snapshot, not live world_
-            if (sr.seq != shakeSeqSeen_) { shakeSeqSeen_ = sr.seq; triggerShake(sr.mag, sr.dur); }
+            if (sr.seq != shakeSeqSeen_) {
+                shakeSeqSeen_ = sr.seq;
+                if (!jumpPass) triggerShake(sr.mag, sr.dur);
+            }
         }
         std::vector<tak::sim::World::SoundReq> missionSounds;
         {
@@ -1326,7 +1575,8 @@
         for(const auto& sound:unitSounds) {
             if(sound.name.empty() || !tak::unitSoundLive(sound.tick,cmdReplayEnd_)) continue;
             const bool visible=unitSoundVisibleR(sound.player,sound.hidden,sound.type,sound.position);
-            const bool selected=std::find(selection_.begin(),selection_.end(),sound.unitId)!=selection_.end();
+            // Selecting a unit changes nothing a watcher hears.
+            const bool selected=!watchOnly() && std::find(selection_.begin(),selection_.end(),sound.unitId)!=selection_.end();
             playUnitSound(sound.name,sound.flags,sound.x,sound.z,visible,selected);
         }
         // Drained, not gated on newTick_: the whole point is to pick up impacts
@@ -1342,7 +1592,7 @@
                 hitQueue_.pop_front();
             }
         }
-        if (monarchAlert_.admit(monarchAlerts, localPlayer_, spectating_, SDL_GetTicks64()))
+        if (monarchAlert_.admit(monarchAlerts, localPlayer_, watchOnly(), SDL_GetTicks64()))
             sounds_.play("alarmmon", 1.f, 1.f, 7, false);
         for (const auto& h : hitsToShow) {
             // A Line-of-Sight weapon with no weaponvelocity (none shipped) still
@@ -1501,23 +1751,32 @@
         // over ~a second; the render path already skips units not yet in unitType_, so the
         // stragglers just pop in a few frames later. Purely cosmetic -- the sim already has
         // them (they move/fight); this only gates when the client starts drawing them.
-        int regBudget = kRegistrationsPerFrame;
+        int regBudget = registerEveryUnit_ ? INT_MAX : kRegistrationsPerFrame;
         // Cursor picking (perf follow-up C) also learns here whether every typed record of
         // this snapshot is registered (a budget break leaves that unknown).
         bool unregistered = false;
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
-            if (u.type && u.alive() && !unitType_.count(u.id)) {
+            // A rebuilt display brings the dead back too: a body is a dead unit's record.
+            if (u.type && (u.alive() || registerEveryUnit_) && !unitType_.count(u.id)) {
                 if (u.replacementModel && !visuals_.count(u.replacementModel->id))
                     loadVisual(u.replacementModel->id);
                 registerUnit(u.id, u.type);
                 if (!unitType_.registered(u.id)) unregistered = true;   // no model
+                // One that finished dying before this moment does not die again.
+                if (auto a = anims_.find(u.id); !u.alive() && a != anims_.end() &&
+                    u.deadFor >= float(u.corpseAnimationTicks) / 30.0f) {
+                    a->second.dying = true;
+                    a->second.vm->reset();
+                    a->second.ownerVmStopRequested = true;
+                }
                 if (--regBudget <= 0) { unregistered = true; break; }
             } else if (u.type && !u.alive() && !unitType_.registered(u.id)) {
                 unregistered = true;   // died before it was registered
             }
         }
         pickRegistered_ = {front().gen, front().unitSlots.size(), !unregistered};
+        registerEveryUnit_ = false;
         consumeSmokeTicks();
         for(auto it=pointParticles_.begin();it!=pointParticles_.end();) {
             const auto* owner=frameUnitP(it->first);
@@ -1941,7 +2200,7 @@
             }
             if (u && u->type && !a.pendingSnd.empty()) {
                 const bool visible=unitSoundVisibleR(u->player,u->cloaked || u->embarked(),u->type,u->worldPosition);
-                const bool selected=std::find(selection_.begin(),selection_.end(),id)!=selection_.end();
+                const bool selected=!watchOnly() && std::find(selection_.begin(),selection_.end(),id)!=selection_.end();
                 for (const auto& [index,flags]:a.pendingSnd)
                     playUnitSound(a.vm->file().name(uint32_t(index)),flags,u->x,u->z,visible,selected);
             }
@@ -1953,6 +2212,7 @@
 
     float GameView::animSpeed() const {
         if (isNet() && mp_) return std::max(1, int(mp_->gameSpeed())) / 10.0f;
+        if (replayMode_) return std::min(speedMult(), tak::replaybar::kFullEffectsSpeed);
         return speedMult();
     }
 
@@ -1987,6 +2247,8 @@
     }
 
     void GameView::prepare(int winW, int winH) {
+        if (watchOnly() && !inLobbyPhase())   // the interface of the player on show
+            if (const int shown = hudPlayer(); shown >= 0) showSideArt(framePlayer(shown).side);
         if (initialCamera_ && !inLobbyPhase() && !spectating_ && !replayMode_) {
             const auto [x,z]=*initialCamera_;
             float initialZoom=1.25f;
@@ -2938,6 +3200,7 @@
     }
 
     float GameView::speedMult() const {
+        if (replayMode_) return tak::replaybar::speedAt(replaySpeed_);
         return mp_ ? 1.0f : float(gameSpeed_ + 10) / 10.0f;   // retail: linear, (d+10)/10
     }
 
@@ -3226,12 +3489,30 @@
         reading_ = slot;
         placePreviewBusy_ = false;   // one failed try_lock per frame at most (canPlacePreview)
         if (!gameStartMs_ && front().gameTick > 0) gameStartMs_ = SDL_GetTicks64();
+        if (replayInTransit_) return;   // a frame on the way says nothing about the landing
         // A previously selected enemy must stop exposing its live state on leaving sight.
         std::erase_if(selection_, [this](int id) {
             const auto* u = frameUnitP(id);
             return !u || !u->alive() || !canPickUnit(*u);
         });
+        keepOneWatchOwner();   // a capture or a gift can split a watcher's selection
+    }
 
+    int GameView::hudPlayer() const {
+        if (!watchOnly()) return localPlayer_;
+        if (selection_.empty()) return -1;
+        const auto* u = frameUnitP(selection_.front());
+        if (u && u->type) return int(u->player);
+        return replayInTransit_ ? replayJumpOwner_ : -1;   // not born yet on this frame of a jump
+    }
+
+    void GameView::keepOneWatchOwner() {
+        if (!watchOnly() || selection_.empty()) return;
+        const int owner = hudPlayer();
+        std::erase_if(selection_, [&](int id) {
+            const auto* u = frameUnitP(id);
+            return !u || int(u->player) != owner;
+        });
     }
 
     void GameView::endFrame() {
@@ -3465,6 +3746,12 @@
         bool shift = (mod & KMOD_SHIFT) != 0;
         bool alt = (mod & KMOD_ALT) != 0;
 
+        if (replayMode_ && replayKey(key, mod)) return true;
+        const bool speedKey = key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS ||
+                              key == SDLK_MINUS || key == SDLK_KP_MINUS;
+        if (spectating_ && (key == SDLK_PAUSE || speedKey) &&
+            !tak::client::watchMayPace(singlePlayer_, mp_ && mp_->room().hostId == mp_->myClientId()))
+            return true;
         // Pause toggle works without a selection.
         if (key == SDLK_PAUSE) {
             paused_ = !paused_;
@@ -3476,8 +3763,7 @@
             return true;
         }
         // +/- (and keypad +/-) step game speed over -10..+10 (0 = normal).
-        if (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS ||
-            key == SDLK_MINUS || key == SDLK_KP_MINUS) {
+        if (speedKey) {
             bool up = (key == SDLK_EQUALS || key == SDLK_PLUS || key == SDLK_KP_PLUS);
             if (mp_) {   // lockstep: only the host may re-cadence, and only if unlocked
                 if (!mp_->room().opts.speedUnlock) {
@@ -3514,7 +3800,7 @@
         // Structural (the whole number row), not rebindable.
         int digit = -1;
         if (key >= SDLK_0 && key <= SDLK_9) digit = int(key - SDLK_0);
-        if (digit >= 0 && !spectating_) {
+        if (digit >= 0) {
             int num = digit == 0 ? 10 : digit;
             if (ctrl || alt) assignSquad(num, alt ? -1 : +1, shift);
             else             recallSquad(num);
@@ -3523,10 +3809,12 @@
 
         // Everything below is a REBINDABLE action: resolve the pressed chord to an
         // Act via the user's hotkey config (src/client/hotkeys) and dispatch.
+        // A watcher's order key does nothing at all, not even a notice.
+        if (watchOnly() && !tak::client::watchAllows(hotkeys_.match(int32_t(key), mod))) return true;
         switch (hotkeys_.match(int32_t(key), mod)) {
             case tak::Act::PushToTalk: return true;   // held for voice chat (voiceKey), no action here
             case tak::Act::GiveUnits:
-                if (!spectating_ && !replayMode_ && missionStem_.empty()) {
+                if (!watchOnly() && missionStem_.empty()) {
                     giveUnitsMenu_ = true;
                     giveUnitsHots_.clear();
                     voiceVolumeDrag_ = -1;
@@ -3540,7 +3828,7 @@
                 // Retail draws the map at native 1:1 scale. Preserve the centre
                 // of the world viewport rather than zooming toward the pointer.
                 const float cx=float(mapViewW(winW_))*0.5f;
-                const float cy=float(winH_-barH())*0.5f;
+                const float cy=float(mapViewH(winH_))*0.5f;
                 const float oldZoom=std::max(mapView_.zoom(),1e-3f);
                 const float wx=mapView_.offX()+cx/oldZoom;
                 const float wz=mapView_.offY()+cy/oldZoom;
@@ -3625,12 +3913,23 @@
                 selectOwned([this](const UnitR& u){ return onScreen(u); });
                 return true;
             case tak::Act::SelectMonarch: {   // select the Monarch and track it
-                const auto* m = playerMonarchId_ >= 0 ? frameUnitP(playerMonarchId_) : nullptr;
+                int monarch = playerMonarchId_;
+                if (watchOnly()) {   // the monarch of the player on show
+                    const int owner = hudPlayer();
+                    if (owner < 0) return true;
+                    monarch = -1;
+                    for (const UnitR* u : front().live)
+                        if (u->alive() && u->type && int(u->player) == owner && u->type->commander) {
+                            monarch = u->id;
+                            break;
+                        }
+                }
+                const auto* m = monarch >= 0 ? frameUnitP(monarch) : nullptr;
                 if (m && m->alive()) {
-                    selection_ = {playerMonarchId_};
+                    selection_ = {monarch};
                     trackSel_ = true;
                     centerOnSelection();
-                    voice(playerMonarchId_, "select");
+                    voice(monarch, "select");
                 } else {
                     notice_ = "NO MONARCH"; noticeTimer_ = 2;
                 }
@@ -3769,8 +4068,19 @@
         issue(c);
     }
 
+    void GameView::assignWatchSquad(int num, bool append) {
+        auto& squad = watchSquads_[size_t(num - 1)];
+        const auto* first = squad.empty() ? nullptr : frameUnitP(squad.front());
+        if (!append || (first && int(first->player) != hudPlayer())) squad.clear();
+        for (int id : selection_) {
+            for (auto& other : watchSquads_) std::erase(other, id);
+            squad.push_back(id);
+        }
+    }
+
     void GameView::assignSquad(int num, int sign, bool append) {
-        if (spectating_ || num < 1 || num > 10 || selection_.empty()) return;
+        if (num < 1 || num > 10 || selection_.empty()) return;
+        if (watchOnly()) { assignWatchSquad(num, append); return; }
         int want = sign * num;
         std::unordered_set<int> sel(selection_.begin(), selection_.end());
         for (const UnitR* _up : front().live) {
@@ -3785,10 +4095,14 @@
     }
 
     void GameView::recallSquad(int num) {
-        if (spectating_) return;
         const bool follow = lastRecalledSquad_ == num;
         selection_.clear();
-        for (const UnitR* _up : front().live) {
+        if (watchOnly()) {
+            for (int id : watchSquads_[size_t(num - 1)])
+                if (const auto* u = frameUnitP(id); u && u->alive() && canPickUnit(*u))
+                    selection_.push_back(id);
+            keepOneWatchOwner();
+        } else for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
             if (u.alive() && u.player == localPlayer_ && u.type &&
                 std::abs(int(u.squad)) == num && !u.type->isBuilder)
@@ -3801,7 +4115,10 @@
     }
 
     void GameView::clearSquad() {
-        if (spectating_) return;
+        if (watchOnly()) {
+            for (int id : selection_) for (auto& squad : watchSquads_) std::erase(squad, id);
+            return;
+        }
         for (int id : selection_)
             if (const auto* u = frameUnitP(id);
                 u && u->alive() && u->player == localPlayer_ && u->squad)
@@ -3811,7 +4128,7 @@
     bool GameView::onScreen(const UnitR& u) const {
         float sx = (u.x - mapView_.offX()) * mapView_.zoom();
         float sy = (u.z - mapView_.offY()) * mapView_.zoom();
-        return sx >= 0 && sy >= 0 && sx <= float(winW_) && sy <= float(winH_) - barH();
+        return sx >= 0 && sy >= 0 && sx <= float(winW_) && sy <= float(mapViewH(winH_));
     }
 
     bool GameView::lbHot(const SDL_FRect& r) const {
@@ -3864,6 +4181,7 @@
     }
 
     void GameView::voice(int unitId, const std::string& event) {
+        if (watchOnly()) return;   // no acknowledgement of any kind
         // Retail command feedback: one WEIGHTED draw from the sound class's
         // event pool -- the symbolic "_NN-note" entry (weight 100) vs the voice
         // lines (weight 1 each), so units bong ~99% of the time and speak

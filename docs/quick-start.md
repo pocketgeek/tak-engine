@@ -101,10 +101,10 @@ More in [Campaigns](user-guide.md#campaigns).
 
 ## Controls
 
-These are the default keys. Order, selection, view, emote, push-to-talk and poster keys
+These are the default keys. Order, selection, view, emote, push-to-talk, streaming panel and poster keys
 can be changed in **CONTROLS** (the main menu's lower-right Settings button, or
 **Esc → CONTROLS** in a game): click a row and press a key; right-click a row to
-unbind it. The number keys, Esc, Enter, Pause, **+**/**−**, F9 and the arrow keys
+unbind it. The number keys, Esc, Enter, Pause, **+**/**−** and the arrow keys
 are fixed.
 
 **UI Font** (**Options → Interface**): *Modern* (the default, a clean bold

@@ -2040,8 +2040,8 @@ bool World::groundMissionAccepts(const Unit& u,const Order& goal) {
         const int64_t dz=int64_t(u.z.floorInt())-goal.productionExit->second.floorInt();
         // The planned point includes extra tolerance for the Retail navigator.
         // A blocked automatic Legion exit can finish once its entire birth
-        // footprint is clear, whether or not a rally follows. Its parking spot
-        // was generated, not a precise player destination.
+        // footprint is clear, whether or not an order was queued behind it. Its
+        // parking spot was generated, not a precise player destination.
         const int xClear=u.type->footX*16;
         const int zClear=u.type->footZ*16;
         if(std::abs(dx)>=xClear || std::abs(dz)>=zClear)return true;
@@ -14773,6 +14773,81 @@ bool World::exitSpot(const UnitType* t, float fx, float fz, float& outX, float& 
     return false;
 }
 
+// Engine deviation (the owner's, with the rally that starts at once; retail's
+// BUILD stage 2 never shoves a body, and a mobile builder has no rally there). No
+// exit step walks a rallied output clear any more, so one whose rally ended close
+// by, or lay out of reach, stands in the only area the next may be made in. Once
+// that is full the producer would stop for good, repeat on and no error. With no
+// room left, a mobile producer with a rally sends one idle unit away every
+// kRoomRetry ticks. The units it can send are clearBuildSite's, on the output's
+// plane. The outermost in the area goes first, away from the area's centre, at
+// least the exit step's distance and past the area's edge (pointOutside: reachable,
+// free, not where a mover is already going). One hemmed in on that side stays: it
+// would only hold an order where it stands. When every unit in the area is hemmed
+// in, the nearest beyond it goes instead, which is what opens their way. The room
+// is won back as they spread, and a producer with no rally never comes here. A
+// scripted pad is one site, so it is simply cleared.
+void World::clearProductionRoom(Unit& producer,const UnitType* type,Fixed x,Fixed z) {
+    if (producer.type->productionScript) { clearBuildSite(producer,type,x,z); return; }
+    static constexpr uint32_t kRoomRetry=15;
+    static constexpr int kRows=6;
+    // productionPosition's exitSpot scan: 12 rings round this point, each spot
+    // kept clear by its clearance.
+    const int ex=producer.x.floorInt(),ez=producer.z.floorInt()+producer.type->footZ*8+20;
+    const int reach=12*16+std::max(type->footX,type->footZ)*8+10;
+    const int beyond=reach+kRows*std::max(type->footX,type->footZ)*16;
+    const NavGrid& plane=navFor(type);
+    std::vector<std::pair<int,int>> idle;   // Rank, id: the area, outermost first, then beyond it, nearest first.
+    forEachNear(float(ex),float(ez),float(beyond*3/2),[&](int index) {
+        const Unit& k=units_[size_t(index)];
+        if (k.id==producer.id || !k.orders.empty() || !k.buildQueue.empty() || !yieldsToSite(k,producer.player) ||
+            &navFor(k.type)!=&plane) return;
+        const int out=std::max(std::abs(k.x.floorInt()-ex),std::abs(k.z.floorInt()-ez));
+        if (out<=beyond) idle.emplace_back(out<=reach ? out-reach-1 : out,k.id);
+    });
+    if (idle.empty()) return;   // A crowd on its way frees the room itself.
+    producer.productionRetryTick=tickCounter_+kRoomRetry;
+    std::sort(idle.begin(),idle.end());
+    // Where movers are already going, as exitSpot reserves them, or the next would
+    // walk into the one ahead of it.
+    std::vector<std::array<int,4>> taken;
+    for (const auto& k:units_) {
+        if (!k.alive() || !k.type || k.underConstruction || k.orders.empty()) continue;
+        const auto& o=k.orders[currentLeg(k.orders)];
+        if (o.targetId || o.buildType || o.reclaimFeat || o.repairTarget) continue;
+        const auto target=o.missionTarget.value_or(std::pair{o.x,o.z});
+        if (std::abs(target.first.floorInt()-ex)<=2*beyond && std::abs(target.second.floorInt()-ez)<=2*beyond)
+            taken.push_back({footprintOrigin(target.first,k.type->footX),footprintOrigin(target.second,k.type->footZ),
+                             k.type->footX,k.type->footZ});
+    }
+    for (const auto& [rank,id]:idle) {
+        Unit& k=*unit(id);
+        const int kx=k.x.floorInt(),kz=k.z.floorInt();
+        // A shorter move than the exit step counts as arrived before it starts
+        // (productionExitDistance).
+        const int step=productionExitDistance(k.type);
+        for (int row=0;row<kRows;++row) {
+            const int grow=row*std::max(k.type->footX,k.type->footZ)*16;
+            int px=0,pz=0;
+            if (!pointOutside(k,std::min(ex-reach,kx-step)-grow,std::max(ex+reach,kx+step)+grow,
+                              std::min(ez-reach,kz-step)-grow,std::max(ez+reach,kz+step)+grow,
+                              2*kx-ex,2*kz-ez,{},taken,px,pz)) continue;
+            if (!k.type->canFly) {
+                const int dx=px-kx,dz=pz-kz,run=std::max(std::abs(dx),std::abs(dz));
+                const Fixed aheadX=k.x+Fixed::fromInt(dx*k.type->footX*16/run),aheadZ=k.z+Fixed::fromInt(dz*k.type->footZ*16/run);
+                const auto ahead=searchBodyRect(footprintOrigin(aheadX,k.type->footX),footprintOrigin(aheadZ,k.type->footZ),
+                                                k.type->footX,k.type->footZ,k.id);
+                if (std::any_of(ahead.cells.begin(),ahead.cells.end(),[](const Unit* b){return b!=nullptr;})) break;
+            }
+            const std::pair<Fixed,Fixed> from{k.x,k.z};
+            order(id,float(px),float(pz),false);
+            // An automatic exit: held up once clear of where it stood, it is done.
+            if (!k.type->canFly && !k.orders.empty()) k.orders[currentLeg(k.orders)].productionExit=from;
+            return;
+        }
+    }
+}
+
 // GetBuilt's release (0x402220, emulated): a structure's finished output with no
 // queued QMove/QPatrol order gets PARK around the factory, padding
 // (rand(6)+rand(3)+3)*16, or +6 for a flyer (0x4023b5..0x4023d3), whose PARK
@@ -16028,10 +16103,12 @@ void World::tickProduction(Unit& u, float dt) {
         if (atUnitCap(player) || atTypeCap(player,t)) return;
         // 401df4..401e19: a refused site sleeps the BUILD mission rand(15)+7
         // ticks before stage 2 runs QueryBuildInfo and the footprint test again.
-        if (u.type->productionScript && tickCounter_<u.productionRetryTick) return;
+        // (A rallied mobile producer's room search sets this tick too.)
+        if (tickCounter_<u.productionRetryTick) return;
         Fixed spawnX,spawnZ,spawnY;
         if (!productionPosition(producerId,t,spawnX,spawnY,spawnZ)) {
             if (u.type->productionScript) u.productionRetryTick=tickCounter_+7+gameRand(15);
+            if (!u.type->isStructure() && !u.rally.empty()) clearProductionRoom(u,t,spawnX,spawnZ);
             return;
         }
         u.productionRetryTick=0;
@@ -16147,8 +16224,8 @@ bool World::workProduction(Unit& producer,Unit& site,const UnitType* t,uint32_t 
 }
 
 // The product is finished, once: the producer is freed (its next item may
-// start this same tick) and the output is released with the producer's exit
-// step / PARK and rally, exactly once. An output that already holds orders
+// start this same tick) and the output is released with the producer's rally,
+// else its exit step / PARK, exactly once. An output that already holds orders
 // keeps them instead: they can only be the player's (or a script's), given
 // while it was unfinished, and the release must not override them.
 // A factory that dies with an unfinished output kills the output too
@@ -16203,8 +16280,8 @@ void World::finishProduction(int producerId,Unit& finished) {
         const auto& file=*producer->type->script();
         it->second.state().vm.start(file,file.scriptIndex("StopBuilding"));
     }
-    // Then walk it clear of the exit, to a spot that is free RIGHT NOW -- computed
-    // after the spawn, so it also avoids the unit we just put down.
+    // With no rally to start, walk it clear of the exit, to a spot that is free RIGHT
+    // NOW -- computed after the spawn, so it also avoids the unit we just put down.
     //
     // This used to be `order(id, sx + ((id % 5) - 2) * 22, sz + 60, false)`: a fan of
     // five fixed points keyed on the unit id. With five lanes and no memory of what is
@@ -16223,25 +16300,19 @@ void World::finishProduction(int producerId,Unit& finished) {
     // A structure's output -- ground, water or flying -- is released as retail's
     // GetBuilt does instead (0x402220, emulated): the factory's queued QMove/QPatrol
     // orders, else PARK around the factory (parkProductionOutput; a flyer's PARK
-    // flies to one point on its circle). The step stays for mobile producers'
-    // outputs, which retail gives nothing: without it a mobile producer's next
-    // output would be built on top of the last.
+    // flies to one point on its circle). The step is ours and stays for a mobile
+    // producer's output with nothing else to do: without it the next output would
+    // be built on top of the last. Retail has no rally on a mobile builder; a
+    // repeating one gives its output a PARK of its own (0x405c07), not ported.
     const Unit* factory=unit(producerId);
     const bool getBuilt=factory && factory->type->isStructure();
     bool hasExitStep=false;
-    if (commanded) {
-        // Orders it was given while unfinished stand: no exit step, PARK or rally.
-    } else if (getBuilt) {
-        if (factory->rally.empty()) parkProductionOutput(id,producerId);
-    } else if (float gx = sx, gz = sz + float(productionExitDistance(t)); exitSpot(t, gx, gz, gx, gz,id)) {
-        order(id, gx, gz, false);
-        hasExitStep=!unit(id)->orders.empty();
-    }
-    // ...then hand it the factory's RALLY plan. A production building accepts move /
-    // fight-move / patrol / attack orders (and queues them) -- it cannot act on them
-    // itself, so they describe what its OUTPUT should do. Behind the exit step where
-    // there is one; a factory's output, flyers included, takes the rally alone, as
-    // GetBuilt copies it with nothing before it.
+    // Orders it was given while unfinished stand: no rally, exit step or PARK.
+    // Otherwise hand it the producer's RALLY plan. A production building accepts
+    // move / fight-move / patrol / attack orders (and queues them) -- it cannot act
+    // on them itself, so they describe what its OUTPUT should do. Every output, a
+    // mobile producer's and flyers included, takes the rally alone and starts it at
+    // once, as GetBuilt copies it with nothing before it.
     if (const Unit* pb = unit(producerId); pb && !commanded)
         for (const Order& ro : pb->rally) {
             Unit* nu = unit(id);
@@ -16251,8 +16322,12 @@ void World::finishProduction(int producerId,Unit& finished) {
             if (ro.targetId) {
                 const Unit* tg = unit(ro.targetId);
                 if (!tg || !tg->alive()) continue;
-                // Through attack(), as the player's own Attack would go: an
-                // output that cannot attack (no weapon) drops the step.
+                // An output that cannot attack it (no weapon, or none for the
+                // layer it is on) drops the step here, not on its first tick,
+                // when the leg would go with nothing left to start in its place.
+                // A structure's holds it as its own rally.
+                if (!t->isStructure() && !canAttackTarget(*nu,*tg)) continue;
+                // Through attack(), as the player's own Attack would go.
                 attack(id,ro.targetId,true);
                 continue;
             }
@@ -16280,11 +16355,19 @@ void World::finishProduction(int producerId,Unit& finished) {
                 if (!leg.patrol) { leg.flightMoveMission=true;leg.mission.flags=0x3000400u; }
             }
         }
-    // A rally whose every entry was dropped (its attack targets are dead) hands
-    // over nothing: park instead, as GetBuilt does when there is nothing to copy,
-    // rather than leave the output standing on the pad.
-    if (const Unit* pb=unit(producerId),*nu=unit(id); getBuilt && !commanded && pb && !pb->rally.empty() && nu && nu->orders.empty())
-        parkProductionOutput(id,producerId);
+    // Nothing handed over -- no rally, or every entry was dropped (dead attack
+    // targets, a target the output cannot attack), which is why this looks at the
+    // output and not at the producer's rally: PARK, as GetBuilt does when there is
+    // nothing to copy, or the exit step, rather than leave the output standing where
+    // it was made. A structure keeps what it was handed in its own rally, as
+    // order() stores it: the step would replace that plan.
+    if (Unit* nu=unit(id); !commanded && nu && nu->orders.empty()) {
+        if (getBuilt) parkProductionOutput(id,producerId);
+        else if (float gx=sx,gz=sz+float(productionExitDistance(t)); nu->rally.empty() && exitSpot(t,gx,gz,gx,gz,id)) {
+            order(id,gx,gz,false);
+            hasExitStep=!unit(id)->orders.empty();
+        }
+    }
     // Legion routes the automatic exit as its own mission (LegionMission::
     // Exit): the birthplace lets a held-up exit finish once clear of it.
     if(hasExitStep && isLegionPathfinding(pathfindingMode_) && !t->canFly) {
@@ -19512,13 +19595,51 @@ uint64_t World::stateHash() const {
 
 // Mission runner ownership -- ctor/dtor defined here where MissionScript is a complete
 // type, so no other TU instantiates the unique_ptr<MissionScript> deleter.
-World::World() {
-    paths_.setEntitySlots(&entitySlots_);
-    paths_.setGradeHost({
+World::World() {bindPathService();}
+void World::bindPathService() {
+    paths_.bindHost(&entitySlots_,{
         [this](int id,bool last) { prepareSearchGrade(id,last); },
         [this](int id,int x,int z,int retry,PathCell start) { return searchGrade(id,x,z,retry,start); },
         [this](int id) { finishSearchGrade(id); }
     });
+}
+// The members are copied by default, so a member added later is carried without
+// anyone remembering to; only what points into a World is handled in adoptCopy.
+World::World(const World&)=default;
+World& World::operator=(const World&)=default;
+void World::adoptCopy(const World& from) {
+    const auto rebased=[&](const NavGrid* g)->const NavGrid* {
+        if(g==&from.nav_)return &nav_;
+        if(g==&from.navWater_)return &navWater_;
+        if(g==&from.navHover_)return &navHover_;
+        if(g==&from.navalSight_)return &navalSight_;
+        if(!g||from.navClasses_.empty()||g<from.navClasses_.data()||g>=from.navClasses_.data()+from.navClasses_.size())
+            throw std::logic_error("a cache names a grid outside the world");
+        return navClasses_.data()+(g-from.navClasses_.data());
+    };
+    for(NavGrid* g:{&nav_,&navWater_,&navHover_,&navalSight_})g->rebindOverlays(&obst_,&roads_);
+    for(auto& g:navClasses_)g.rebindOverlays(&obst_,&roads_);
+    std::map<std::pair<const NavGrid*,int>,CompGrid> components;
+    for(auto& [key,grid]:compCache_)components.emplace_hint(components.end(),std::make_pair(rebased(key.first),key.second),std::move(grid));
+    compCache_=std::move(components);
+    for(auto& plane:searchGrades_)if(plane.nav)plane.nav=rebased(plane.nav);
+    for(auto& [id,script]:unitScripts_)if(size_t(id)<unitScriptById_.size())unitScriptById_[size_t(id)]=&script;
+    bindPathService();
+    rngObserver_=nullptr;crtRngObserver_=nullptr;
+    mission_=from.mission_?from.mission_->clone():nullptr;
+    scenario_=from.scenario_?from.scenario_->clone():nullptr;
+    legion_=from.legion_?from.legion_->clone(*this):nullptr;
+}
+std::unique_ptr<World> World::clone() const {
+    std::unique_ptr<World> copy(new World(*this));
+    copy->adoptCopy(*this);
+    return copy;
+}
+void World::restoreFrom(const World& from) {
+    auto pool=std::move(pool_);
+    *this=from;
+    pool_=std::move(pool);
+    adoptCopy(from);
 }
 void World::setPathfindingMode(PathfindingMode mode) {
     if(!validPathfindingMode(uint8_t(mode)))

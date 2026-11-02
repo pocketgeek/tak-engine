@@ -117,7 +117,8 @@ def complete_ticks(path):
 
 
 class Game:
-    def __init__(self, args, root, client_env=None, time_limit=120, server_args=(), mission=None):
+    def __init__(self, args, root, client_env=None, time_limit=120, server_args=(), mission=None, map_name=MAP,
+                 launch='--mpai'):
         self.args, self.root = args, root
         self.env = environment(root)
         self.port = free_port()
@@ -134,9 +135,9 @@ class Game:
         env = dict(self.env)
         env.update(client_env or {})
         self.client_log = open(root / 'client.log', 'w')
-        mode = ['--mpmission', mission] if mission else ['--mpai']
+        mode = ['--mpmission', mission] if mission else [launch]
         self.client = subprocess.Popen(
-            [args.client, 'game', mission or MAP, '--data', args.data, '--server', '127.0.0.1',
+            [args.client, 'game', mission or map_name, '--data', args.data, '--server', '127.0.0.1',
              '--serverport', str(self.port), *mode, '--time', str(time_limit)],
             stdout=self.client_log, stderr=subprocess.STDOUT, env=env)
 
@@ -182,6 +183,70 @@ def verify(args, root, path):
     m = re.search(r'replay done: tick=(\d+) hash=\w+ units=\d+ framed=\d+(.*)', out)
     assert m and 'DIVERGED' not in m.group(2), 'replay did not play back cleanly:\n' + out
     return int(m.group(1)), out
+
+
+def seek_proof(args, root, path, ticks):
+    """Jump through `ticks` (keyframes laid on the way, then rewinds and forward jumps) and
+    play on to the end. Every landing must hash as a straight run does at that tick, and
+    so must the end, with no divergence from the recording."""
+    def run(straight):
+        env = environment(root)
+        env.update(TAK_REPLAY_VERIFY='1', TAK_REPLAY_SEEK_SCRIPT=','.join(map(str, ticks)))
+        if straight:
+            env['TAK_REPLAY_SEEK_STRAIGHT'] = '1'
+        out = subprocess.run([args.client, 'replay', str(path), '--data', args.data], env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace',
+                             timeout=240).stdout
+        done = re.search(r'replay done: tick=(\d+) hash=(\w+) units=\d+ framed=\d+(.*)', out)
+        assert done and 'DIVERGED' not in done.group(3) and 'DIVERGED' not in out, 'diverged:\n' + out
+        landings = dict(re.findall(r'replay seek: tick=(\d+) hash=(\w+)', out))
+        return landings, done.group(1), done.group(2)
+    straight, straight_ticks, straight_end = run(True)
+    jumped, jumped_ticks, jumped_end = run(False)
+    assert set(straight) == set(jumped) == set(map(str, ticks)), (sorted(straight), sorted(jumped), ticks)
+    assert straight == jumped, 'a landing is not the recorded state: %s\n%s' % (straight, jumped)
+    assert (straight_ticks, straight_end) == (jumped_ticks, jumped_end), 'the end changed after jumping'
+    return 'landed on %d ticks exactly, ending at %s hash %s' % (len(ticks), jumped_ticks, jumped_end)
+
+
+SEEK_SCRIPT = [3000, 1000, 0, 4700, 2000]   # forward over keyframes, back, back to 0, forward, back
+
+
+def recorded_game(args, root, **game):
+    game.setdefault('time_limit', 180)
+    run = Game(args, root, **game)
+    try:
+        assert run.wait_client(240) == 0, run.log()
+    finally:
+        run.close()
+    return finished_one(root)
+
+
+def case_seek_retail(args, root):
+    return seek_proof(args, root, recorded_game(args, root, client_env={'TAK_SPEED': '80'}), SEEK_SCRIPT)
+
+
+def case_seek_legion(args, root):
+    path = recorded_game(args, root, client_env={'TAK_SPEED': '80', 'TAK_LEGION': '1'})
+    return seek_proof(args, root, path, SEEK_SCRIPT)
+
+
+def case_seek_mission(args, root):
+    path = recorded_game(args, root, client_env={'TAK_SPEED': '80'}, mission=MISSION)
+    return seek_proof(args, root, path, SEEK_SCRIPT)
+
+
+def case_seek_scenario(args, root):
+    path = recorded_game(args, root, map_name='Riparian Conflict',
+                         client_env={'TAK_SPEED': '80', 'TAK_MAP_SCENARIO': '1'})
+    return seek_proof(args, root, path, SEEK_SCRIPT)
+
+
+def case_seek_spectator(args, root):   # a spectator's recording: no checkpoints to lean on
+    path = recorded_game(args, root, launch='--mphost',
+                         client_env={'TAK_SPEED': '80', 'TAK_MP_WATCH': '1', 'TAK_MP_AIS': '4'})
+    assert 'spectat' in (root / 'client.log').read_text(errors='replace').lower(), 'the recording was not a spectator\'s'
+    return seek_proof(args, root, path, SEEK_SCRIPT)
 
 
 def finished_one(root):
@@ -346,9 +411,14 @@ def main():
     cases = {'crash': case_crash, 'kill': case_kill, 'result': case_result,
              'sigterm': case_sigterm, 'disconnect': case_disconnect, 'server-sigterm': case_server_sigterm,
              'mission': case_mission, 'mission-crash': case_mission_crash}
+    seek_cases = {'seek-retail': case_seek_retail, 'seek-legion': case_seek_legion, 'seek-mission': case_seek_mission,
+                  'seek-scenario': case_seek_scenario, 'seek-spectator': case_seek_spectator}
     if os.name == 'nt':   # Windows delivers no SIGTERM; a kill is the 'kill' case
         del cases['sigterm'], cases['server-sigterm']
     names = args.case or list(cases)
+    if names == ['seek']:   # a run of its own (ctest replay_seek)
+        names = list(seek_cases)
+    cases.update(seek_cases)
     base = Path(tempfile.mkdtemp(prefix='tak-replay-always-'))
     failed = False
     try:

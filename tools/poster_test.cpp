@@ -79,6 +79,20 @@ int main(int, char**) {
     hk.load(overrides);
     check(hk.match(SDLK_F9, KMOD_LCTRL) == Act::MakePoster && hk.match(SDLK_p, KMOD_LSHIFT) != Act::MakePoster,
           "the rebound key makes the poster, Shift+P no longer does");
+    {   // The streaming panel's key, read by the panel itself.
+        std::map<std::string, std::string> keys;
+        check(streamingPanelPress(keys, SDLK_F9, 0, false) && streamingPanelPress(keys, SDLK_F9, 0, true),
+              "F9 opens the streaming panel by default, typing or not");
+        check(!streamingPanelPress(keys, SDLK_F9, KMOD_LCTRL, false), "Ctrl+F9 is not the panel's");
+        setChordOverride(keys, Act::StreamingPanel, KeyChord{SDLK_p, 0});
+        check(streamingPanelPress(keys, SDLK_p, 0, false) && !streamingPanelPress(keys, SDLK_F9, 0, false),
+              "a rebound panel key replaces F9");
+        check(!streamingPanelPress(keys, SDLK_p, 0, true), "a plain letter types while a text field has the keyboard");
+        setChordOverride(keys, Act::StreamingPanel, KeyChord{SDLK_p, HK_CTRL});
+        check(streamingPanelPress(keys, SDLK_p, KMOD_LCTRL, true), "Ctrl+letter still works while typing");
+        setChordOverride(keys, Act::StreamingPanel, KeyChord{});
+        check(!streamingPanelPress(keys, SDLK_F9, 0, false), "an unbound panel has no key");
+    }
     setChordOverride(overrides, Act::MakePoster, KeyChord{});
     hk.load(overrides);
     check(!hk.chord(Act::MakePoster).bound() && overrides["view.poster"] == "NONE", "MAKE POSTER can be unbound");

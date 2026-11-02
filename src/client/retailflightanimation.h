@@ -87,6 +87,7 @@ public:
         if(pending_.size()>=65536)pending_.pop_front();
         pending_.push_back(snapshot);
     }
+    void clear() {latest_.clear();pending_.clear();}   // the states restart (a replay jump)
     template<class Consume> void drain(uint32_t throughTick,Consume&& consume) {
         while(!pending_.empty() && int32_t(throughTick-pending_.front().tick)>=0) {
             consume(pending_.front());

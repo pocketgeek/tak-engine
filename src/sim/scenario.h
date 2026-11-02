@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 #include <functional>
@@ -37,6 +38,13 @@ public:
                    uint32_t participants = 0xff);
 
     bool active() const { return !players_.empty(); }
+    // An exact copy of the rules' state, for a copy of its world (World::clone). The
+    // trace sink, like every observer, stays behind.
+    std::unique_ptr<ScenarioScript> clone() const {
+        auto copy=std::make_unique<ScenarioScript>(*this);
+        copy->trace_=nullptr;
+        return copy;
+    }
 
     void start(World& w);              // first-tick hook (arms "start of game")
     void step(World& w, float dt);     // evaluate every player's rule groups

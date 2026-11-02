@@ -110,6 +110,11 @@ Settings loadSettings() {
         auto asInt   = [&](int lo, int hi) { return clampv(std::atoi(val.c_str()), lo, hi); };
         auto asFloat = [&](float lo, float hi) { return clampv(float(std::atof(val.c_str())), lo, hi); };
         auto asBool  = [&] { return val == "1" || val == "true" || val == "on"; };
+        // Exactly one stable mode byte; anything else falls back to Retail.
+        auto asPathMode = [&] {
+            return val.size() == 1 && val[0] >= '0' && sim::validPathfindingMode(uint8_t(val[0] - '0'))
+                ? sim::PathfindingMode(val[0] - '0') : sim::PathfindingMode::Retail;
+        };
 
         if(key=="mods.gamePack" || key=="mods.cosmeticPack") {
             readPackValue(val,key=="mods.gamePack"?s.gameModPacks:s.cosmeticModPacks);
@@ -200,11 +205,8 @@ Settings loadSettings() {
         else if (key == "voiceMicVolume")  s.voiceMicVolume = asInt(0, 100);
         else if (key == "voiceOutputVolume") s.voiceOutputVolume = asInt(0, 100);
         else if (key == "gameCreate.crusades") s.gameCreate.crusades = asBool();
-        else if (key == "gameCreate.pathfindingMode")
-            // Exactly one stable mode byte; anything else falls back to Retail.
-            s.gameCreate.pathfindingMode = val.size() == 1 && val[0] >= '0' &&
-                sim::validPathfindingMode(uint8_t(val[0] - '0'))
-                ? sim::PathfindingMode(val[0] - '0') : sim::PathfindingMode::Retail;
+        else if (key == "gameCreate.pathfindingMode") s.gameCreate.pathfindingMode = asPathMode();
+        else if (key == "benchmarkPathfinding") s.benchmarkPathfinding = asPathMode();
         else if (key == "gameCreate.doubleSight") s.gameCreate.doubleSight = asBool();
         else if (key == "gameCreate.speedUnlock") s.gameCreate.speedUnlock = asBool();
         else if (key == "gameCreate.monarchExpendable") s.gameCreate.monarchExpendable = asBool();
@@ -316,6 +318,7 @@ std::string serializeSettings(const Settings& s) {
     o << "voiceOutputVolume = " << std::clamp(s.voiceOutputVolume, 0, 100) << "\n";
     o << "gameCreate.crusades = " << s.gameCreate.crusades << "\n";
     o << "gameCreate.pathfindingMode = " << int(s.gameCreate.pathfindingMode) << "\n";
+    o << "benchmarkPathfinding = " << int(s.benchmarkPathfinding) << "\n";
     o << "gameCreate.doubleSight = " << s.gameCreate.doubleSight << "\n";
     o << "gameCreate.speedUnlock = " << s.gameCreate.speedUnlock << "\n";
     o << "gameCreate.monarchExpendable = " << s.gameCreate.monarchExpendable << "\n";

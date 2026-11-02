@@ -111,6 +111,8 @@ class Peer:
             self.send('AuthProof', field(bytes(32) if wrong else proof))
         reply = self.receive('AuthResult')
         status, signature = reply.num('<B'), reply.field()
+        reply.field()
+        self.token = reply.field() if reply.pos < len(reply.data) else None   # encrypted sign-in only
         if wrong:
             assert status == 2
             return

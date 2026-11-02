@@ -38,6 +38,23 @@ struct PieceState {
     bool operator==(const PieceState&) const = default;
 };
 
+// An owning pointer that copies what it points to, so the owner keeps a default copy.
+template<class T> class CopiedPtr {
+public:
+    CopiedPtr()=default;
+    CopiedPtr(std::unique_ptr<T> p):p_(std::move(p)) {}
+    CopiedPtr(const CopiedPtr& o):p_(o.p_?std::make_unique<T>(*o.p_):nullptr) {}
+    CopiedPtr(CopiedPtr&&)=default;
+    CopiedPtr& operator=(const CopiedPtr& o) {p_=o.p_?std::make_unique<T>(*o.p_):nullptr;return *this;}
+    CopiedPtr& operator=(CopiedPtr&&)=default;
+    T* operator->() const {return p_.get();}
+    T& operator*() const {return *p_;}
+    T* get() const {return p_.get();}
+    explicit operator bool() const {return bool(p_);}
+private:
+    std::unique_ptr<T> p_;
+};
+
 class Vm {
 public:
     // The bytecode is immutable and shared: every unit of a type references ONE
@@ -54,6 +71,9 @@ public:
         : Vm(std::make_shared<const File>(std::move(file)), deterministicRand) {}
 
     ~Vm();
+    // A copy of the state, the hooks included: a host that binds itself in a hook
+    // sets them again on its copy.
+    Vm(const Vm&);
     // Unit display animations use the retail integer scheduler and piece controller.
     // Mission scripting retains the general-purpose interpreter and its map hooks.
     void enableRetailAnimation();
@@ -120,7 +140,7 @@ public:
 
 private:
     struct Native;
-    std::unique_ptr<Native> native_;
+    CopiedPtr<Native> native_;
     void exportNativePieces();
     void hideExplodedPiece(int piece,int32_t flags);
     std::vector<std::vector<int>> explosionDescendants_;
@@ -155,7 +175,7 @@ private:
     // 8-byte xorshift `rng_` and a null pointer, not a 5 KB Mersenne Twister.
     uint64_t rng_ = 12345;
     bool detRand_ = false;
-    std::unique_ptr<std::mt19937> detRng_;
+    CopiedPtr<std::mt19937> detRng_;
     uint32_t nextRand() {
         if (detRand_) {
             if (!detRng_) detRng_ = std::make_unique<std::mt19937>(12345);

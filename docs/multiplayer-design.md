@@ -5,7 +5,7 @@ shipped). It superseded the 2-player peer-to-peer lockstep (`net::Session`,
 since removed; `src/net/lockstep.h` is now header-only); the deterministic-sim
 substrate underneath it is kept. Sections 1-12 are the original design, kept as
 written apart from short notes where it has since moved on; the later sections
-and the protocol history (to protocol 308) describe the
+and the protocol history (to protocol 309) describe the
 current engine.
 Notable changes since the v1 design: single-player runs a private local
 `takserver` (`--local --no-auth`) instead of in-process AI
@@ -370,7 +370,8 @@ link `sim`, `tdf`, `net`, and the new `ai` module only.
     frozen frame, a hitch, a Wi-Fi blip TCP rode out) ends that seat's wait. A
     client whose link actually dropped reconnects by itself: a new connection,
     the same login (the client keeps the login's SCRAM keys for the session;
-    the password itself is gone), then `Rejoin{game, resume token, fromTick}`,
+    the password itself is gone; a session signed in by token spends its next
+    sign-in token instead), then `Rejoin{game, resume token, fromTick}`,
     `fromTick` being the first tick whose bundle it never received. The server
     answers `Reseated{slot, rotated token, fromTick, logEnd}` and streams the
     log from `fromTick`; the client keeps its world (no rebuild from tick 0)
@@ -428,6 +429,7 @@ silently skipped.)
 |---|---|---|
 | `Hello` / `Welcome` | proto ver, build id, data hash / assigned session id | version + data gate |
 | `SetName` | display name | no accounts in v1 *(superseded: players sign in to an account by default, `--no-auth` serves without one)* |
+| `AuthToken` / `AuthRevoke` | username, sign-in token | TLS only (`src/net/auth.h`). In place of `AuthBegin`: a password login's `AuthResult` carries a token, which **Game Select** spends to sign in with no password (the `AuthResult` carries the next one) and quitting revokes. The server holds per-account hashes in memory, and a login's line of tokens ends 12 hours after the password however often it rotates. A token used twice ends its line, except a resend within 30 seconds after a lost reply; a bad token counts in the login throttle and sends the player to the normal password prompt |
 | `ListGames` / `GameList` | — / entries: id, name, map, players/capacity, state (lobby/running), passworded, uptime | running games listed but unjoinable |
 | `CreateGame` | name, password?, map id, options (crusades, gods, speed, unit cap, forfeit rule) | creator becomes host |
 | `JoinGame` / `JoinResult` | game id, password? / slot or error | error: full, bad password, running |
@@ -1183,6 +1185,13 @@ replay format 15 is unchanged; 307 replays are refused. 0.9.14 and 0.9.15 ship
 protocol 308; they play with each other, and with neither 0.9.13 nor any earlier
 version, nor their replays.
 
+Protocol 309 changes a mobile producer's rallied output, hashed: it starts its rally
+with no exit step, and with no room for the next unit the producer moves one idle unit
+aside. A rally step the output cannot perform is dropped. It adds sign-in tokens
+(`AuthResult`'s optional token, `AuthToken`, `AuthRevoke`), issued and accepted over TLS
+only. Replay format 15 is unchanged; 308 replays are refused. 0.9.16 ships protocol 309;
+it plays with neither 0.9.15 nor any earlier version, nor their replays.
+
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
 in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each
@@ -1472,6 +1481,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Versions 0.9.15 and 0.9.14 (peers and server) require protocol 308; 0.9.13 required 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Version 0.9.16 (peers and server) requires protocol 309; 0.9.15 and 0.9.14 required 308; 0.9.13 required 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions remain fixed to Retail.

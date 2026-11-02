@@ -516,6 +516,7 @@ private:
     WorkBudget loginGlobalWork_;
     Writer replayBytes(Room& room);
     tak::srv::LoginThrottle throttle_;
+    tak::srv::SessionTokens tokens_;
     // A mounted data set (retail, or retail + one room's game mods): the VFS, its base + Crusades
     // registries, and the gameplay-data fingerprint peers are held to.
     DataSet retail_;                   // shared immutable retail data; game-mod sets are room-local
@@ -590,8 +591,13 @@ private:
                      c.id, c.peer.c_str(), (unsigned long long)wait);
     }
     void sendWelcome(Client& c);
+    void signedIn(Client& c, const tak::srv::Account& a, const tak::crypto::Digest* sig, uint64_t now,
+                  const tak::srv::SessionTokens::Chain* rotated = nullptr);
+    // `earned`: a successful sign-in on that account, which on an encrypted connection
+    // carries its new sign-in token: the start of a line, or the next one in `rotated`.
     void sendAuthResult(Client& c, AuthStatus st, const tak::crypto::Digest* sig,
-                        const std::string& msg);
+                        const std::string& msg, const tak::srv::Account* earned = nullptr,
+                        const tak::srv::SessionTokens::Chain* rotated = nullptr);
     void lobbyMsg(Client& c, const Frame& f);
     void mapMsg(Client& c, const Frame& f);
     void acceptMap(Room& r, std::shared_ptr<tak::net::maps::Package> package);
@@ -795,12 +801,38 @@ void Server::sendWelcome(Client& c) {
 }
 
 void Server::sendAuthResult(Client& c, AuthStatus st, const tak::crypto::Digest* sig,
-                            const std::string& msg) {
+                            const std::string& msg, const tak::srv::Account* earned,
+                            const tak::srv::SessionTokens::Chain* rotated) {
     Writer w;
     w.u8(uint8_t(st));
     if (sig) w.bytes(sig->data(), sig->size()); else w.bytes(nullptr, 0);
     w.str(msg);
+    if (earned && c.conn.encrypted()) {
+        try {
+            std::vector<uint8_t> token = tokens_.issue(*earned, nowMs(), rotated);
+            w.bytes(token);
+            tak::crypto::wipe(token.data(), token.size());
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "takserver: %s\n", e.what());   // just no token: the login stands
+        }
+    }
     c.conn.send(Msg::AuthResult, w);
+    tak::crypto::wipe(w.b.data(), w.b.size());
+}
+
+// The end of a good sign-in, by password proof or by token.
+void Server::signedIn(Client& c, const tak::srv::Account& a, const tak::crypto::Digest* sig,
+                      uint64_t now, const tak::srv::SessionTokens::Chain* rotated) {
+    c.account = a.name;
+    c.name = a.name;
+    std::string err;
+    if(!accountWriteWork_.take(now,16)) {sendReject(c,"login persistence rate exceeded; retry later");c.conn.fail("login write budget");return;}
+    if (!accounts_.noteLogin(a.name, &err))
+        std::fprintf(stderr, "takserver: could not record login: %s\n", err.c_str());
+    sendAuthResult(c, AuthStatus::Ok, sig, "signed in", &a, rotated);
+    std::fprintf(stderr, "client %u (%s) signed in as '%s'\n",
+                 c.id, c.peer.c_str(), c.name.c_str());
+    sendWelcome(c);
 }
 
 // The login exchange. Everything here runs BEFORE the client can reach the lobby,
@@ -911,16 +943,51 @@ void Server::authMsg(Client& c, const Frame& f) {
         // to be pressed between guesses at somebody else's.
         throttle_.succeed(userKey);
         tak::crypto::Digest sig = tak::auth::serverSignature(a->cred.serverKey, am);
-        c.account = a->name;
-        c.name = a->name;
-        std::string err;
-        if(!accountWriteWork_.take(now,16)) {sendReject(c,"login persistence rate exceeded; retry later");c.conn.fail("login write budget");return;}
-        if (!accounts_.noteLogin(a->name, &err))
-            std::fprintf(stderr, "takserver: could not record login: %s\n", err.c_str());
-        sendAuthResult(c, AuthStatus::Ok, &sig, "signed in");
-        std::fprintf(stderr, "client %u (%s) signed in as '%s'\n",
-                     c.id, c.peer.c_str(), c.name.c_str());
-        sendWelcome(c);
+        signedIn(c, *a, &sig, now);
+        return;
+    }
+
+    // A sign-in token (src/net/auth.h): spent here, to sign in or because its player
+    // quit. It is a credential, so a bad one is a failed login like a wrong password.
+    static_assert(tak::srv::SessionTokens::kRetryMs >= tak::net::kDropWaitMs,
+                  "an in-game reconnect must be able to resend a token until it gives up");
+    if (f.kind == Msg::AuthToken || f.kind == Msg::AuthRevoke) {
+        if (c.pendAuth.challenged) { sendReject(c, "duplicate login"); c.conn.fail("dup auth"); return; }
+        std::string user = r.str();
+        std::vector<uint8_t> token = r.bytes(tak::auth::kTokenLen);
+        const bool wellFormed = r.ok && r.p==r.end;
+        if (!wellFormed || !c.conn.encrypted()) {
+            tak::crypto::wipe(token.data(), token.size());
+            sendReject(c, wellFormed ? "sign-in tokens need an encrypted connection" : "malformed login");
+            c.conn.fail("bad auth");
+            return;
+        }
+        std::string why;
+        tak::srv::SessionTokens::Chain chain;
+        if (uint64_t wait = loginLocked(c, user, now)) {
+            sendThrottled(c, wait);
+        } else if (!tak::auth::validUsername(user, &why)) {
+            throttle_.fail(ipKeyFor(c), now, tak::srv::LoginThrottle::kAddress);
+            sendAuthResult(c, AuthStatus::BadUsername, nullptr, why);
+        } else if (const tak::srv::Account* a = accounts_.find(user);
+                   a && (f.kind == Msg::AuthToken ? tokens_.spend(*a, token, now, &chain)
+                                                  : tokens_.revoke(*a, token))) {
+            throttle_.succeed(userKeyFor(user));   // the account only, as for a password
+            if (f.kind == Msg::AuthToken) {
+                signedIn(c, *a, nullptr, now, &chain);
+            } else {
+                sendAuthResult(c, AuthStatus::Ok, nullptr, "signed out");
+                c.conn.flushWrite();
+                c.conn.fail("signed out");
+            }
+        } else {
+            throttle_.fail(ipKeyFor(c), now, tak::srv::LoginThrottle::kAddress);
+            if (a) throttle_.fail(userKeyFor(user), now, tak::srv::LoginThrottle::kAccount);
+            sendAuthResult(c, AuthStatus::BadPassword, nullptr, "sign in with your password");
+            std::fprintf(stderr, "client %u (%s) failed token sign-in for '%s'\n",
+                         c.id, c.peer.c_str(), user.c_str());
+        }
+        tak::crypto::wipe(token.data(), token.size());
         return;
     }
 
@@ -974,7 +1041,8 @@ void Server::authMsg(Client& c, const Frame& f) {
         tak::crypto::Digest sig = tak::auth::serverSignature(cred.serverKey, am);
         // A registration that got this far is not a failed attempt.
         throttle_.succeed(userKeyFor(c.pendAuth.user));
-        sendAuthResult(c, AuthStatus::Created, &sig, "new account created");
+        sendAuthResult(c, AuthStatus::Created, &sig, "new account created",
+                       accounts_.find(c.pendAuth.user));
         std::fprintf(stderr, "client %u (%s) created account '%s' (%zu total)\n",
                      c.id, c.peer.c_str(), c.name.c_str(), accounts_.size());
         sendWelcome(c);
@@ -3014,6 +3082,7 @@ int Server::run() {
 
         for(auto& [id,room]:rooms_) {(void)id;finishTick(room);}
         throttle_.expire(now);   // forget hosts that have long since behaved
+        tokens_.expire(now);
 
         if (statusFd >= 0 && (pfds[1].revents & POLLIN)) {
             tak::srv::StatusCounts counts;

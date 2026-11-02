@@ -31,6 +31,11 @@
         winW_ = winW;
         winH_ = winH;
         topLeft_ = tak::hudcorner::Column(streamBannerBottom_ > 0 ? streamBannerBottom_ + tak::hudcorner::kGap : 0);
+        if (replayMode_) {
+            const float top = std::max(8 * uiScale_, topLeft_.next());
+            replayBar_ = tak::replaybar::layout(float(mapViewW(winW)), uiScale_, top);
+            topLeft_.place(top, replayBar_.box.h);
+        }
         // Render telemetry: reset every frame; recording only for debug harnesses.
         // The render study records by default; TAK_RENDER_STATS=0 switches it off
         // there, so the telemetry's own cost can be measured with one binary.
@@ -2318,8 +2323,9 @@
         // The order being worked has a site of its own, drawn in its painter place
         // (under any flyer); it gets no second ghost over everything
         // (tak::render::buildGhostDrawn).
+        const int hudOwner = hudPlayer();
         const auto buildGhosts = [&](const UnitR& u, bool draw) {
-            if (!u.alive() || u.player != localPlayer_) return false;
+            if (!u.alive() || u.player != hudOwner) return false;
             bool any = false;
             const UnitR* site = u.buildSiteId ? frameUnitP(u.buildSiteId) : nullptr;
             // Every queued build is an order now; the order sits at the builder's
@@ -3201,7 +3207,7 @@
         // shaded tan glyph art gave a dark, mottled outline that was hard to read.
         if (hudFont_.ok() && zm > 0.55f && !posterFrame_)
             overlayPass(2, unitpass::squadMarkerBand(overlayView, footMin, footMax), [&](const UnitR& u, bool draw) {
-                if (!u.alive() || u.embarked() || !u.type || u.player != localPlayer_ ||
+                if (!u.alive() || u.embarked() || !u.type || u.player != hudOwner ||
                     u.squad == 0)
                     return false;
                 if (u.underConstruction && !u.buildBegun) return false;
@@ -3221,8 +3227,8 @@
 
         // Player mana bar top left (legacy; only without the bottom bar). A spectator
         // isn't a player -- no personal mana readout.
-        if (!panelTex_ && !spectating_ && !posterFrame_) {
-            const PlayerR& tm = framePlayer(localPlayer_);
+        if (!panelTex_ && hudShown() && !posterFrame_) {
+            const PlayerR& tm = framePlayer(hudPlayer());
             float cap = std::max(tm.storage, 1.0f);
             // Its lines reach y = 90 with a builder selected (MANA, the unit, its menu,
             // TRAINING); the block moves down as one under the stream banner.
@@ -3285,7 +3291,7 @@
         // The strip normally stops short to leave room for the player's bottom
         // InfoPanel bar; a spectator has no bottom bar, so it must reach the
         // bottom edge (else a barH()-tall gap shows under the right panel).
-        float stripH = spectating_ ? float(winH) : float(winH) - barH();
+        float stripH = hudShown() ? float(winH) - barH() : float(winH);
         SDL_FRect panelStrip{float(mvw), 0, float(winW - mvw), stripH};
         SDL_RenderFillRectF(ren_, &panelStrip);
         {
@@ -3294,9 +3300,12 @@
             profHudMs_ += (double(SDL_GetPerformanceCounter()) - _t0) /
                           (double(SDL_GetPerformanceFrequency()) / 1000.0);
         }
-        if (!spectating_) {
+        if (hudShown()) {
             renderGui(winW, winH);
             drawPanel(winW, winH);
+        } else {   // nothing on screen to click
+            guiBtnRects_.clear();weaponRects_.clear();iconRects_.clear();selPortraitRects_.clear();
+            buildMenuRect_={};buildRowTop_=0;
         }
         // After the command panel: the readout fills the strip BETWEEN the two, and it
         // measures the panel's drawn position to find its own bottom edge.
@@ -3315,7 +3324,7 @@
             blockText(clock,14,y+6,2.f,{240,242,248,255});
         }
         if (showCounts_) drawUnitCounts(winW);
-        if (!spectating_) drawObjectivesPanel(winW, winH);
+        if (hudShown()) drawObjectivesPanel(winW, winH);
         if (showHDebug_) drawHDebug();
 
         if (mp_ && hudFont_.ok()) {
@@ -3348,8 +3357,10 @@
         }
         if (mp_ && !replayMode_) drawNetWaiting(winW);
         if (noticeTimer_ > 0 && hudFont_.ok() && !notice_.empty())
-            hudBanner(notice_, 120, 2.5f, {255, 230, 120, 255}, winW);
-        if (paused_ && bigFont_.ok()) {
+            hudBanner(notice_, replayMode_ ? std::max(120.0f, replayBar_.box.y + replayBar_.box.h + 8) : 120,
+                      2.5f, {255, 230, 120, 255}, winW);
+        if (paused_ && !replayMode_ && bigFont_.ok()) {   // a replay's bar says so
+
             const char* msg = "PAUSED";
             float tw = float(bigFont_.width(msg, 1.2f));
             bigFont_.draw(ren_, msg, (winW - tw) / 2, 60, 1.2f, {255, 230, 120, 255});
@@ -3413,27 +3424,7 @@
             blockText(m, bx, by, px, {235, 175, 110, 255});
         }
 
-        // Replay scrubber: elapsed/total time and a progress bar above the HUD.
-        if (replayMode_ && hudFont_.ok()) {
-            int cur = int(replayTick_) / 30, tot = int(replayLength()) / 30;
-            char sb[64];
-            std::snprintf(sb, sizeof sb, "REPLAY  %d:%02d / %d:%02d%s",
-                          cur / 60, cur % 60, tot / 60, tot % 60,
-                          paused_ ? "  PAUSED" : "");
-            float bw = 360, bx = (winW - bw) / 2, by = float(winH) - 118;
-            SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
-            SDL_FRect bg{bx - 8, by - 22, bw + 16, 44};
-            SDL_SetRenderDrawColor(ren_, 0, 0, 0, 150);
-            SDL_RenderFillRectF(ren_, &bg);
-            SDL_FRect track{bx, by + 6, bw, 6};
-            SDL_SetRenderDrawColor(ren_, 90, 95, 110, 220);
-            SDL_RenderFillRectF(ren_, &track);
-            float frac = replayLength() ? float(replayTick_) / float(replayLength()) : 0;
-            SDL_FRect fill{bx, by + 6, bw * frac, 6};
-            SDL_SetRenderDrawColor(ren_, 235, 205, 110, 255);
-            SDL_RenderFillRectF(ren_, &fill);
-            hudFont_.draw(ren_, sb, bx, by - 14, 1.6f, {235, 230, 210, 255});
-        }
+        if (replayMode_) drawReplayBar();
 
         drawVoiceIndicator(winW, winH);   // who is talking (voice chat), top-left
 
@@ -3450,7 +3441,12 @@
             SDL_SetRenderDrawColor(ren_, 0, 0, 0, 150);
             SDL_RenderFillRectF(ren_, &dim);
 
-            const int nBtn = canReturnToMenu_ ? 7 : 6;
+            // A seated player can give up: the server takes it as a Leave, so the units
+            // go the room's forfeit way, and main() shows the defeat's result screen.
+            const bool canSurrender = canReturnToMenu_ && mp_ && !watchOnly() && outcome_ == 0 &&
+                                      mp_->state() == tak::net::MpClient::State::InGame;
+            // The last row is SURRENDER, MAIN MENU or, launched without the menu, QUIT.
+            const int nBtn = 6;
             const float bw = 280, gap = 14, pad = 32, titlePx = 3.0f;
             const float titleH = 7 * titlePx + 24;
             // Buttons shrink on a short window (the minimum is 480 high) rather than spill.
@@ -3484,7 +3480,7 @@
                 exitHots_.push_back({r, std::move(action)});
                 by += bh + gap;
             };
-            btn("RESUME", [this] { exitMenu_ = false; });
+            btn("RESUME", [this] { exitMenu_ = false; surrenderArmed_ = false; });
             btn("YOUTUBE STREAMING", [this] {
                 exitMenu_ = false;
                 SDL_Event event{};event.type=SDL_USEREVENT;event.user.code=tak::kStreamingEvent;
@@ -3493,13 +3489,113 @@
             btn("OPTIONS", [this] { exitMenu_ = false; openOptions(); });
             btn("CONTROLS", [this] { exitMenu_ = false; openHotkeys(); });   // hotkey rebinding
             btn("VOICE CHAT", [this] { exitMenu_ = false; openVoiceOptions(); });
-            if (canReturnToMenu_) btn("MAIN MENU", [this] { menuRequested_ = true; });
-            btn("QUIT", [this] { quitRequested_ = true; });
+            if (canSurrender) btn(surrenderArmed_ ? "CONFIRM SURRENDER" : "SURRENDER", [this] {
+                if (!std::exchange(surrenderArmed_, true)) return;
+                outcome_ = -1;   // main() sends the Leave on the way out
+                exitMenu_ = false;
+                menuRequested_ = true;
+            });
+            if (canReturnToMenu_ && !canSurrender) btn("MAIN MENU", [this] { menuRequested_ = true; });
+            if (!canReturnToMenu_) btn("QUIT", [this] { quitRequested_ = true; });
         }
         drawUnitInfo(winW, winH);   // retail Unit Info dialog, above the HUD
         if (benchStatsShown_) renderBenchmarkStats(winW, winH);   // benchmark results, above the frozen game
         if (options_) options_->render(winW, winH);   // topmost of all
         if (hotkeysScreen_) hotkeysScreen_->render(winW, winH);   // above Options
+    }
+
+    // The replay transport, in the game's own menu colours and plain interface text, on a
+    // solid fill so it reads the same over any terrain.
+    void GameView::drawReplayBar() {
+        namespace rb = tak::replaybar;
+        const rb::Layout& l = replayBar_;
+        if (l.box.w <= 0) return;
+        const auto rect = [](const rb::Rect& r) { return SDL_FRect{r.x, r.y, r.w, r.h}; };
+        const auto fill = [&](const SDL_FRect& r, SDL_Color c) {
+            SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, c.a);
+            SDL_RenderFillRectF(ren_, &r);
+        };
+        const auto frame = [&](const SDL_FRect& r, SDL_Color c) {
+            SDL_SetRenderDrawColor(ren_, c.r, c.g, c.b, c.a);
+            SDL_RenderDrawRectF(ren_, &r);
+        };
+        const auto triangle = [&](SDL_FPoint a, SDL_FPoint b, SDL_FPoint c, SDL_Color color) {
+            const SDL_Vertex v[3] = {{a, color, {}}, {b, color, {}}, {c, color, {}}};
+            SDL_RenderGeometry(ren_, nullptr, v, 3, nullptr, 0);
+        };
+        constexpr SDL_Color kText{228, 232, 242, 255}, kGold{235, 205, 110, 255};
+        SDL_SetRenderDrawBlendMode(ren_, SDL_BLENDMODE_BLEND);
+        fill(rect(l.box), {26, 28, 36, 240});
+        frame(rect(l.box), {120, 130, 160, 255});
+
+        // The timeline: elapsed in gold, a knob on the playhead, or on where a jump is
+        // going, or where the drag has it. Hovering reads the time under the pointer.
+        const size_t length = replayLength();
+        const float pixel = std::max(1.0f, uiScale_);
+        fill(rect(l.track), {14, 15, 20, 255});
+        SDL_FRect elapsed = rect(l.track);
+        elapsed.w = rb::tickToX(l, replayTick_, length) - l.track.x;
+        fill(elapsed, kGold);
+        frame(rect(l.track), {90, 100, 130, 255});
+        const size_t marked = replayDragging_ ? replayDragTick_ : replaySeekTo_.value_or(replayTick_);
+        const float knobW = 5 * pixel, knobX = rb::tickToX(l, marked, length);
+        const SDL_FRect knob{knobX - knobW / 2, l.track.y - 3 * pixel, knobW, l.track.h + 6 * pixel};
+        fill(knob, {245, 240, 225, 255});
+        frame(knob, {60, 66, 86, 255});
+
+        // Row 2: flat buttons drawn as shapes, so they look the same in either UI font.
+        const auto button = [&](const rb::Rect& r) {
+            const SDL_FRect f = rect(r);
+            const bool hot = !exitMenu_ && r.hit(mouseX_, mouseY_);
+            fill(f, {Uint8(hot ? 90 : 60), Uint8(hot ? 110 : 66), Uint8(hot ? 150 : 86), 255});
+            frame(f, {Uint8(hot ? 180 : 90), Uint8(hot ? 200 : 100), Uint8(hot ? 240 : 130), 255});
+        };
+        for (const rb::Rect* r : {&l.back, &l.play, &l.forward, &l.slower, &l.faster}) button(*r);
+        const auto chevrons = [&](const rb::Rect& r, float dir) {
+            const float h = r.h * 0.42f, w = h * 0.8f, cy = r.y + r.h / 2;
+            for (int i = 0; i < 2; ++i) {
+                const float x = r.x + r.w / 2 + dir * (float(i) - 1) * w;
+                triangle({x, cy - h / 2}, {x, cy + h / 2}, {x + dir * w, cy}, kText);
+            }
+        };
+        chevrons(l.back, -1);
+        chevrons(l.forward, 1);
+        {
+            const float h = l.play.h * 0.46f, cx = l.play.x + l.play.w / 2, cy = l.play.y + l.play.h / 2;
+            if (paused_) {
+                triangle({cx - h * 0.4f, cy - h / 2}, {cx - h * 0.4f, cy + h / 2}, {cx + h * 0.5f, cy}, kText);
+            } else {
+                const float w = h * 0.3f;
+                fill({cx - w * 1.4f, cy - h / 2, w, h}, kText);
+                fill({cx + w * 0.4f, cy - h / 2, w, h}, kText);
+            }
+        }
+        const auto dash = [&](const rb::Rect& r, bool plus) {
+            const float w = r.h * 0.42f, t = std::max(2.0f, r.h * 0.11f);
+            const float cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+            fill({cx - w / 2, cy - t / 2, w, t}, kText);
+            if (plus) fill({cx - t / 2, cy - w / 2, t, w}, kText);
+        };
+        dash(l.slower, false);
+        dash(l.faster, true);
+        const float px = l.textPx, textH = 7 * px;
+        const std::string speed = rb::speedText(speedMult(), replayRealRate_);
+        const float speedPx = px * std::min(1.0f, l.speed.w / blockWidth(speed, px));   // the long ones shrink to fit
+        blockText(speed, l.speed.x + (l.speed.w - blockWidth(speed, speedPx)) / 2,
+                  l.speed.y + (l.speed.h - 7 * speedPx) / 2, speedPx, {235, 225, 180, 255});
+        const std::string time = rb::timeText(replayTick_) + " / " + rb::timeText(length);
+        blockText(time, l.timeRight - blockWidth(time, px), l.speed.y + (l.speed.h - textH) / 2, px, kText);
+
+        if (const bool hover = !exitMenu_ && l.timeline.hit(mouseX_, mouseY_); hover || replayDragging_) {
+            const size_t tick = replayDragging_ ? replayDragTick_ : rb::xToTick(l, mouseX_, length);
+            const std::string at = rb::timeText(tick);
+            const float w = blockWidth(at, px) + 12 * pixel, h = textH + 8 * pixel;
+            const float x = std::clamp(rb::tickToX(l, tick, length) - w / 2, l.box.x, l.box.x + l.box.w - w);
+            const SDL_FRect tip{x, l.box.y + l.box.h + 2 * pixel, w, h};
+            fill(tip, {26, 28, 36, 240});
+            frame(tip, {120, 130, 160, 255});
+            blockText(at, x + 6 * pixel, tip.y + 4 * pixel, px, kText);
+        }
     }
 
     // Render thread, before the parallel geometry pass: every visible unit, in
@@ -4775,6 +4871,7 @@
         for (auto& row : guiTex_)
             for (SDL_Texture* t : row) if (t) gpuvram::destroy(t);
         guiTex_.clear();
+        clearSideArt();
         for (auto& b : orderBtns_)
             for (SDL_Texture*& t : b.frames) kill(t);
         orderBtns_.clear();
@@ -6399,7 +6496,7 @@
         fi.name = name;
         fi.burnArt = nullptr;
         fi.frontFlame = fi.backFlame = nullptr;
-        fi.tree = false;   // a burnt stump/smudge doesn't sway
+        fi.tree = fi.simType == fi.treeType;   // a burnt stump/smudge doesn't sway
         auto di = featureDefs_.find(name);
         fi.low = di != featureDefs_.end() &&
                  tak::hiddenunits::lowFeature(int(di->second.numberOr("height", 0)));
@@ -6481,7 +6578,10 @@
             fi.blocking=st.blocking;
             fi.hasSim = st.hasSim ? 1 : 0;    // ...and whether it is reclaimable at all
             if (st.type < 0) continue;
-            if (fi.simType == -2) fi.simType = st.type;        // first sight
+            if (fi.simType == -2) {                             // first sight
+                fi.simType = st.type;
+                if (fi.tree) fi.treeType = st.type;
+            }
             else if (st.type != fi.simType) {                   // burnt-stage swap
                 fi.simType = st.type;
                 swapFeatureArt(fi, burnNames_[size_t(st.type)]);
@@ -6589,6 +6689,7 @@
         std::printf("mana deposits: %zu (from %zu features)\n",
                     manaSpots_.size(), raw.size());
         addShorelineWaves();
+        featuresAtLoad_ = features_.size();
     }
 
     void GameView::addShorelineWaves() {
@@ -6695,6 +6796,7 @@
         if (!b) return false;   // selection can change before the next HUD draw
         for (const auto& [r, bt] : iconRects_) {
             if (mx < r.x || mx > r.x + r.w || my < r.y || my > r.y + r.h) continue;
+            if (watchOnly()) return true;   // read-only: swallowed, no tone, no arming
             playClickTone();
             if (!bt) return true;   // consume the click even if it can't act
             uint16_t mod = SDL_GetModState();
@@ -7618,7 +7720,7 @@
         for (int selId : selection_) {
             const UnitR* up = frameUnitP(selId);
             if (!up || !up->alive() || !up->type) continue;
-            if (up->player != localPlayer_) continue;      // never leak enemy intent
+            if (up->player != hudPlayer()) continue;       // never leak enemy intent
             if (up->displayedOrders().empty()) continue;
             // Retail beads only its few "focus" units but puts an END MARKER on
             // every selected unit's orders (the dots flag is per unit; the marker
@@ -7811,7 +7913,7 @@
         renderStats_.add(tak::render::Counter::GhostCollects);
         g.tris.clear();
         workerScratch().unpackedTextures = 0;
-        collect(g.tris, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
+        collect(g.tris, atlas, model->root, Xform{}, nullptr, 0.0f, hudPlayer());
         std::stable_sort(g.tris.begin(), g.tris.end(),
                   [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
         g.atlas = atlas; g.atlasW = atlasW_; g.atlasH = atlasH_;
@@ -7839,7 +7941,7 @@
         const tak::tdo::Model* model = ghostModel(type->id);
         if (!model) return;
         renderStats_.add(tak::render::Counter::GhostPreps);
-        SDL_Texture* atlas = atlasFor(colorSlot_[localPlayer_ & 7]);
+        SDL_Texture* atlas = atlasFor(playerColorSlot(hudPlayer()));
 #ifndef NDEBUG
         static const bool reference = tak::devFlag("TAK_GHOST_REFERENCE");
         static const bool verify = tak::devFlag("TAK_GHOST_VERIFY");
@@ -7871,7 +7973,7 @@
         if (verify && g) {
             // The reference path: drawGhostAt's former collection and sort.
             ghostVerifyTris_.clear();
-            collect(ghostVerifyTris_, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
+            collect(ghostVerifyTris_, atlas, model->root, Xform{}, nullptr, 0.0f, hudPlayer());
             std::stable_sort(ghostVerifyTris_.begin(), ghostVerifyTris_.end(),
                       [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
             const auto fail = [&](const char* what) {
@@ -7923,7 +8025,7 @@
             renderStats_.add(tak::render::Counter::GhostCacheHits);
         } else {
             tris_.clear();
-            collect(tris_, atlas, model->root, Xform{}, nullptr, 0.0f, localPlayer_);
+            collect(tris_, atlas, model->root, Xform{}, nullptr, 0.0f, hudPlayer());
             std::stable_sort(tris_.begin(), tris_.end(),
                       [](const Tri& a, const Tri& b) { return a.depth > b.depth; });
             renderStats_.add(tak::render::Counter::GhostCollects);

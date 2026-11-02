@@ -1225,8 +1225,9 @@ float createOptionPx(float maxW) {
         // needs is played; ordinary skirmishes need two.
         bool canStart = host && startValid(room, scenarioOn, needSeats) && room.mapsReady && !mp_->modPending() &&
             (!room.opts.gameMods || bool(mp_->modPackage()));
-        lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); },
-              {70, 110, 70, 255});
+        // The server takes a moment to build the game: show the click landed.
+        if (mp_->startPending() || mp_->starting()) lbBtn(bx, y, 130, 30, "STARTING...", true, nullptr, {70, 110, 70, 255});
+        else lbBtn(bx, y, 130, 30, "START", canStart, [this] { mp_->startGame(); }, {70, 110, 70, 255});
         lbBtn(bx + 142, y, 120, 30, "LEAVE", true, [this] {
             mp_->leaveGame();
             lobbyScreen_ = singlePlayer_ ? LobbyScreen::Create : LobbyScreen::Browser;

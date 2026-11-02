@@ -5,6 +5,7 @@
 #include "client/hidpi.h"
 #include "client/uitext.h"
 #include "client/gpuvram.h"
+#include "client/hotkeys.h"
 #include "client/settings.h"
 #include "client/streamkey.h"
 #include "client/streamcapture_d3d.h"
@@ -13,6 +14,7 @@
 #include <SDL_opengl.h>
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <climits>
 #include <cstring>
 #include <vector>
@@ -313,14 +315,23 @@ struct Streaming::Impl {
     }
     // The status banner shown while the panel is closed: "" when there is none.
     static constexpr const char* kUploadWarning="UPLOAD CAN'T KEEP UP - LOWER THE BITRATE";
-    static std::string bannerText(const video::StreamStatus& s,bool uploadWarning) {
+    // The panel's key as shown, "" when it is unbound.
+    std::string panelKey() const {
+        const KeyChord c=settings ? effectiveChord(settings->hotkeys,Act::StreamingPanel)
+                                  : effectiveChord({},Act::StreamingPanel);
+        if(!c.bound())return {};
+        std::string name=chordName(c);
+        for(char& ch:name)ch=char(std::toupper(static_cast<unsigned char>(ch)));
+        return name;
+    }
+    static std::string bannerText(const video::StreamStatus& s,bool uploadWarning,const std::string& panelKey) {
         if(!s.active && !s.state.starts_with("FAILED"))return {};
         std::string text="STREAM " + s.state;
         if(s.active && uploadWarning)text+=std::string(" - ")+kUploadWarning;
         // A copy going well is left out beside the warning, to keep the banner short.
         if(s.active && !s.local.empty() && s.local!="LOCAL COPY SAVED" &&
            !(uploadWarning && s.local=="SAVING LOCAL COPY"))text+=" - "+s.local;
-        return text+" - F9";
+        return panelKey.empty() ? text : text+" - "+panelKey;
     }
     video::StreamStatus bannerStatus(video::StreamStatus s) const {
 #ifndef NDEBUG
@@ -349,7 +360,7 @@ struct Streaming::Impl {
             rateTime=now;rateBytes=s.bytes;rateSend=s.sendMicros;
         }
         if(!visible) {
-            if(const std::string text=bannerText(bannerStatus(s),upload.warning());!text.empty()) {
+            if(const std::string text=bannerText(bannerStatus(s),upload.warning(),panelKey());!text.empty()) {
                 const auto box=hudcorner::streamBanner(uiTextWidth(text,1.5f),w); // GameView keeps its overlays below it
                 SDL_SetRenderDrawColor(ren,10,12,18,230);SDL_FRect r{box.x,box.y,box.w,box.h};SDL_RenderFillRectF(ren,&r);
                 uiText(ren,text,20,20,1.5f,{255,210,100,255});
@@ -433,7 +444,7 @@ struct Streaming::Impl {
         if(!error.empty())text(error,20,547);
         else if(s.active&&upload.warning())text(kUploadWarning,20,547,{255,150,110,255});
         else if(!notice.empty()&&!s.active)text(notice,20,547,{255,210,100,255});
-        else text("ESC / F9: CLOSE - STREAM CONTINUES UNTIL STOP",20,547);
+        else text((panelKey().empty() ? std::string("ESC") : "ESC / "+panelKey())+": CLOSE - STREAM CONTINUES UNTIL STOP",20,547);
     }
 };
 Streaming::Streaming(SDL_Renderer* ren,Settings* settings,std::function<void()> save,
@@ -475,7 +486,10 @@ void Streaming::testCursor(const video::StreamCursor* c){p_->testCursorSet=c!=nu
 #endif
 bool Streaming::shown() const{return p_->visible;}
 bool Streaming::input(const SDL_Event& e,int w,int h) {
-    if((e.type==SDL_KEYDOWN && !e.key.repeat && e.key.keysym.sym==SDLK_F9) ||
+    static const std::map<std::string,std::string> noOverrides;
+    if((e.type==SDL_KEYDOWN && !e.key.repeat &&
+        streamingPanelPress(p_->settings?p_->settings->hotkeys:noOverrides,e.key.keysym.sym,
+                            e.key.keysym.mod,SDL_IsTextInputActive())) ||
        (e.type==SDL_USEREVENT && e.user.code==kStreamingEvent)) {p_->show(!p_->visible);return true;}
     if(e.type==SDL_RENDER_TARGETS_RESET || e.type==SDL_RENDER_DEVICE_RESET)p_->capture.reset();
     if(!p_->visible)return false;
@@ -576,7 +590,7 @@ bool Streaming::input(const SDL_Event& e,int w,int h) {
 void Streaming::draw(int w,int h) { p_->draw(w,h); }
 float Streaming::bannerBottom(int w) const {
     if(p_->visible)return 0;
-    const std::string text=Impl::bannerText(p_->bannerStatus(p_->stream.status()),p_->upload.warning());
+    const std::string text=Impl::bannerText(p_->bannerStatus(p_->stream.status()),p_->upload.warning(),p_->panelKey());
     if(text.empty())return 0;
     const auto box=hudcorner::streamBanner(uiTextWidth(text,1.5f),w);
     return box.y+box.h;

@@ -60,6 +60,63 @@ private:
     std::map<std::string, Account> byFold_;   // folded username -> account
 };
 
+// The sign-in tokens this server has issued (see src/net/auth.h). Only their hashes,
+// and only in memory: a restart invalidates them all, which just means a password
+// prompt. Per account, because a player may be signed in on two machines.
+class SessionTokens {
+public:
+    static constexpr uint64_t kLifetimeMs = auth::kTokenLifetimeMs;
+    // How long a spent token may be sent again. The link can take the reply with the
+    // next token, and the client then has only this one to retry with. The server's
+    // disconnect wait (kDropWaitMs) is as long as an in-game reconnect keeps trying.
+    static constexpr uint64_t kRetryMs = 30 * 1000;
+    static constexpr size_t kPerAccount = 8;   // live tokens; oldest goes first
+    // Spent hashes kept to recognise a second use. A line rotated further than this
+    // forgets its oldest: those are then just refused, and kLifetimeMs still ends it.
+    static constexpr size_t kSpentPerAccount = 32;
+
+    // One password login's line of tokens, which rotation carries on.
+    struct Chain {
+        uint64_t id = 0;
+        uint64_t expiresMs = 0;   // the login's, however often it has rotated
+    };
+
+    // A new random token for `a`: the start of a line, or with `rotated`, the next in
+    // that one. Throws std::runtime_error if the OS refuses entropy.
+    std::vector<uint8_t> issue(const Account& a, uint64_t nowMs, const Chain* rotated = nullptr);
+
+    // Spends a token: true if it was good for `a`, with its line in `chain` for the
+    // next issue(). A spent token sent again ends its whole line and is refused, unless
+    // it is a resend within kRetryMs and nothing later in the line has been used: then
+    // whatever followed it dies instead, so the reply that carried that was lost, and
+    // whoever turns up with it ends the line. Compares in constant time, against every
+    // hash the account holds.
+    [[nodiscard]] bool spend(const Account& a, const std::vector<uint8_t>& token, uint64_t nowMs,
+                             Chain* chain = nullptr);
+
+    // Ends the line of a token, spent or not: true if it was one of `a`'s.
+    [[nodiscard]] bool revoke(const Account& a, const std::vector<uint8_t>& token);
+
+    // Drops the hashes of expired tokens. Cheap to call often: it sweeps once a minute.
+    void expire(uint64_t nowMs);
+
+    size_t size() const;
+
+private:
+    struct Entry {
+        crypto::Digest hash{};
+        uint64_t chain = 0;
+        uint64_t expiresMs = 0;
+        bool spent = false;
+        uint64_t retryUntilMs = 0;   // 0 on a spent token no client can have: never retried
+    };
+    static size_t find(const std::vector<Entry>& held, const crypto::Digest& want);
+    static void drop(std::vector<Entry>& held, uint64_t chain);
+    std::map<std::string, std::vector<Entry>> byFold_;   // folded username, oldest first
+    uint64_t nextChain_ = 0;
+    uint64_t nextSweepMs_ = 0;
+};
+
 // Brute-force throttle. Keyed by whatever the caller considers an identity --
 // the server feeds it the peer address AND the account name, so neither many
 // accounts from one host nor one account from many hosts gets a free run.

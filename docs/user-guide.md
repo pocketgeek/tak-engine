@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.9.15**. Which versions it plays with, and whose
+This guide covers **TAK Engine 0.9.16**. Which versions it plays with, and whose
 replays it plays: see [Versions](#versions). What changed in each release: see
 the [CHANGELOG](../CHANGELOG.md). It is written for three kinds of reader:
 
@@ -270,7 +270,11 @@ the details.
 The version number is shown on the title screen.
 
 In a game, **Esc** opens the game menu: **Resume**, **YouTube Streaming**,
-**Options**, **Controls**, **Voice Chat**, **Main Menu** and **Quit**.
+**Options**, **Controls**, **Voice Chat** and **Surrender**. Replays, spectators and a
+finished game have **Main Menu** in place of Surrender.
+**Surrender** (click twice to confirm) ends your part in the game and shows the
+defeat screen with the match's statistics; your units go the way the room's forfeit
+setting says, and any allies and opponents play on.
 
 ---
 
@@ -834,7 +838,10 @@ Handler, for example). They place what they build like a structure. A mobile
 builder running infinite production treats **Move**, **Patrol**, **Attack**
 and **fight-move** as rally orders for its output, just like a production
 building (the builder itself stays put and keeps producing); **Shift** adds
-rally steps and shows the route. **Stop** ends production, clears the rally
+rally steps and shows the route. Each new unit starts the rally straight away.
+If idle units crowd the builder until there is no room for the next one, the
+ones at the edge walk out of the way.
+**Stop** ends production, clears the rally
 and gives you the builder back; turning infinite production off clears the
 rally too. A builder making a limited number of units
 (no infinite production) still takes those orders itself.
@@ -1250,7 +1257,7 @@ build menus unchanged.
 ## Controls
 
 These are the default bindings. Command, selection, view, emote,
-push-to-talk and poster (**MAKE POSTER**) keys can be changed in **Settings → Controls** (or **Esc →
+push-to-talk, streaming panel and poster (**MAKE POSTER**) keys can be changed in **Settings → Controls** (or **Esc →
 Controls** in a game): click a row and press the new key;
 right-click a row to unbind it. Each change is saved at once. **Defaults** asks
 first, then puts every key back. Number-key squads, **Esc**, chat, pause and game
@@ -1429,7 +1436,7 @@ group automatically.
 | **Shift+Z** | Return to the original game's 1:1 zoom. |
 | **F1** | Unit information for the selected unit. |
 | **F4** | Player names, kills, losses and score; with teams of two or more, grouped by team (see [Scoring](#scoring)). |
-| **F9** | YouTube streaming setup. |
+| **F9** | YouTube streaming setup (rebindable). |
 | **Pause** | Pause or resume. This pauses the game for every player. |
 | **+** / **−** | Game speed, as in the original: one level per press from −9 (0.1×) through NORMAL (1×) to +10 (2×): level *d* runs at (*d*+10)/10 of normal speed. **=** and the keypad **+**/**−** work too. In a replay they set the playback speed. A banner shows the new level, for example **GAME SPEED NORMAL** or **GAME SPEED +5**. The new speed takes effect at once, for spectators too. Only the host can change it, and only if **Allow speed change** was on. In a campaign mission you can always change it. |
 | **Enter** | Open chat; **Enter** sends, **Esc** cancels. Also where you type [power codes](#power-codes). Chat works in live games, single player included, but not in replays. |
@@ -2045,9 +2052,10 @@ The **stats panel** shows, from the top:
 | **FPS** | Frames drawn per second. |
 | **PING** | Multiplayer only: the round trip to the server. |
 | **SIM** | The speed the game is really running at, as a game-speed level (NORMAL, +5, -3). |
-| **UNITS** | Your living units (for a spectator, every living unit). |
+| **PATHFINDER** | Only during a [Benchmark](#benchmark): the pathfinder the battle uses. |
+| **UNITS** | Your living units. A spectator or replay viewer sees those of the selected unit's player, or every living unit with nothing selected. |
 | **CLOCK** | Your computer's time of day (24-hour). |
-| **KILLS**, **SCORE** | Yours; not shown while you spectate. |
+| **KILLS**, **SCORE** | Yours. A spectator or replay viewer sees those of the selected unit's player, and none with nothing selected. |
 | **REAL TIME**, **GAME TIME** | How long the game has run, in real time and in game time. |
 | **CLIENT CPU** | The game's share of the whole computer's processor capacity, 0–100%. |
 | **SERVER CPU** | Only when the game started its own local server (single player, campaigns): that server's share, 0–100%. |
@@ -2147,6 +2155,13 @@ host's game mods are sent automatically.
    starts the game when everyone is ready. To take a different seat, click
    **Move here** on any open slot (see [Start locations](#match-options)).
 
+After a game, **Game Select** on the results screen takes you straight back to
+that server's game list. Your password is never kept: on a server with TLS, which
+is the usual kind, the game holds a temporary sign-in token instead, in memory, for
+12 hours from your password or until you quit the game. Otherwise, or if the token no longer
+works, **CONNECT TO SERVER** opens with the server picked and you type your password
+again.
+
 ![The online game browser: the GAMES list with name, map and player count columns, a LOCK marker on one game, a LIVE game with its WATCH button, REFRESH and CREATE at the top and the password field at the bottom](img/guide/game-browser.jpg)
 
 *The game browser on a server.*
@@ -2212,6 +2227,32 @@ Click **Watch** on a running game in the browser to watch it live. Spectators
 see the whole map without fog, including every side's health bars, and cannot
 give orders.
 
+You can select any unit you can see, of any player. Click it, drag a box, or
+double-click for every unit of that type on screen. The interface then shows
+that unit's player: the order panel, the build row and its queues, the mana bulb
+and income, and that player's order lines and queued buildings, in that side's
+art. With nothing selected you get the plain view: the minimap, the match-wide
+numbers and the **F4** board.
+
+- Selecting never makes a unit answer, and nothing you press acts on it. Right
+  clicks do nothing, and the order and build buttons show what the unit is doing
+  but ignore clicks. There are no sounds, no order cursors and no messages.
+- A selection holds one player's units. A box keeps the player with the most units
+  in it (the lower player number on a tie), and Shift+click on another player's
+  unit replaces the selection.
+- **T** tracks the selected units. **N** steps through that player's units,
+  **Ctrl+M** selects their Monarch, and the selection hotkeys pick from that
+  player's units.
+- Number keys work as usual, but the groups are your own: they are not that
+  player's groups and do not change the game. **Ctrl+1** stores the selection,
+  **1** recalls it and a second **1** follows it, and **Ctrl+Esc** takes units
+  out. A number floating under a unit is its player's own group.
+- **Esc** clears the selection, then opens the menu. **F1** (Unit Info), **F4**,
+  **Tab**, chat and voice chat work as for a player.
+
+Only the host can pause a game or change its speed, so a spectator's **Pause** key
+does nothing. In **Spectate (Watch AIs)** you are the host, and both work.
+
 The host decides whether a game can be watched with **Allow spectators** (on by
 default). When it is off, the browser shows a red **No watch** button instead of
 **Watch**, and the server refuses any request to watch the game, including from a
@@ -2274,18 +2315,18 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 0.9.15 uses network protocol **308** and replay format **15**, the
-same as 0.9.14. No earlier release uses protocol 308, so:
+TAK Engine 0.9.16 uses network protocol **309** and replay format **15**. No earlier
+release uses protocol 309, so:
 
-- **Multiplayer:** 0.9.15 plays with 0.9.14, in either direction, and with nothing
-  older. A server turns away a client whose protocol differs from its own, so a
-  0.9.13 or older player cannot join a 0.9.15 server, nor a 0.9.15 player an older
-  one; the connection fails with a *protocol version mismatch* message. When a
-  release changes the protocol, a server and all of its players update together.
-- **Replays:** 0.9.15 plays replays recorded by 0.9.15 and 0.9.14. A replay
-  recorded by 0.9.13 or earlier needs a version with that replay's protocol; keep
-  an old copy of the engine (built from its tag, see the
-  [development guide](development.md)) if you want to keep watching old replays.
+- **Multiplayer:** 0.9.16 plays only with 0.9.16. A server turns away a client whose
+  protocol differs from its own, so a 0.9.15 or older player cannot join a 0.9.16
+  server, nor a 0.9.16 player an older one; the connection fails with a *protocol
+  version mismatch* message. When a release changes the protocol, a server and all of
+  its players update together.
+- **Replays:** 0.9.16 plays only replays recorded by 0.9.16. A replay recorded by 0.9.15
+  or earlier needs a version with that replay's protocol; keep an old copy of the
+  engine (built from its tag, see the [development guide](development.md)) if you want
+  to keep watching old replays.
 
 Every release's protocol and replay format are listed in the
 [CHANGELOG](../CHANGELOG.md).
@@ -2539,16 +2580,54 @@ replay folder cannot be written for a while, the game keeps the recording in
 memory and writes it as soon as it can.
 
 To watch one, open **Settings → Load Replay** on the main menu and choose a
-recording. During playback:
+recording. The replay bar sits at the top of the map view:
 
-- **Pause** pauses and resumes.
-- **+** / **−** change playback speed.
-- The time bar shows elapsed and total time.
-- Chat is not shown in replays.
+- **The timeline** shows how far you are. Click anywhere on it, or drag its marker
+  and let go, to jump there, forwards or backwards. Hovering shows the time under
+  the pointer.
+- **Rewind** and **fast forward** (the double arrows) jump 30 seconds, and keep
+  jumping while held.
+- **Play/pause** sits between them.
+- **−** and **+** set the speed, from 0.25× to 256×.
 
-![A replay of an Aramon army moving, with the replay time bar at nine of sixteen seconds](img/guide/replay.jpg)
+| Key | Action |
+| --- | --- |
+| **Space** or **Pause** | Play or pause |
+| **+** / **−** | Faster or slower |
+| **[** / **]** | Back or forward 30 seconds |
+| **Shift+[** / **Shift+]** | Back or forward 5 minutes |
 
-*Replay playback, with the time bar near the bottom.*
+Everything from [Spectating](#spectating) applies: select any unit to see its
+player's interface, **T** tracks it, and nothing you do changes anything. Chat is
+not shown in replays.
+
+![A replay with the replay bar at the top of the map view, a builder selected and its player's interface showing](img/guide/replay.jpg)
+
+*Replay playback, with a builder selected. The bar reads 32× requested, 27× reached.*
+
+**Speed.** Above 8× there is no sound and effects stop keeping up, but every game
+tick still runs, so the game cannot get faster than your processor can simulate
+it. Small games reach 256×. In a late game with thousands of units expect far less;
+when the speed falls short, the bar shows what it is really reaching in brackets,
+for example **64X (27X)**.
+
+**Jumping.** A jump lands on exactly the recorded state at that moment. As a replay
+plays, TAK Engine keeps a copy of the game every 30 seconds, and a jump starts from
+the nearest copy before the target and plays forward from there at top speed, with
+the world visibly running and no sound. So:
+
+- Short rewinds, and jumps to anywhere already played, are quick: usually about a
+  second or less, longer in a big game.
+- A jump to a part of the game not yet played has to run there once. The first
+  trip to the end of a long game can take minutes, and it lays the copies for
+  later jumps.
+- A jump also runs while paused, and playback then carries on as it was. Clicking
+  again while it runs picks a new target, and pausing stops it where it stands.
+
+The copies use a quarter of your memory, up to 4 GB. In a long or very large game
+the older ones are thinned out evenly, so jumps far from where you are take longer
+than jumps nearby. Your selection and groups survive a jump; units not yet alive at that
+moment drop out of them.
 
 A replay stores the match setup and every order, not the game art, so it is
 small. Playback needs:
@@ -2841,7 +2920,14 @@ only accepts clients of the same protocol version; see [Versions](#versions).
 ## Benchmark
 
 **Settings → Benchmark** runs a repeatable stress test: an eight-AI battle on
-Ulasem Arena for 60 seconds of game time. Choose an **intensity**:
+Ulasem Arena for 60 seconds of game time.
+
+**Pathfinding**, at the top of the screen, picks the
+[pathfinder](#pathfinding-retail-and-legion) the battle uses: **Retail** (the
+default) or **Legion**. The game remembers your last pick for the next
+Benchmark. It is separate from the Pathfinding choice for games you create.
+
+Then choose an **intensity**, which starts the run:
 
 | Intensity | New units per side |
 | --- | --- |
@@ -2854,7 +2940,9 @@ Ulasem Arena for 60 seconds of game time. Choose an **intensity**:
 
 The results screen shows, every ten seconds, frame rate, simulation speed (as
 a game-speed level, like the stats panel), processor use, memory, GPU use and video memory, together with the display
-settings used. Client and server processor use are each a share of the whole
+settings used, and lists the **Pathfinding** the battle ran with. The stats
+panel shows it as **PATHFINDER** during a run. Compare only runs with the same
+pathfinder. Client and server processor use are each a share of the whole
 computer's capacity, 0–100%, and GPU use is measured as in the
 [stats panel](#interface); a measurement the system cannot give shows **N/A**.
 Unit limits still apply, so the highest intensities may not reach their

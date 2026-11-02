@@ -146,6 +146,7 @@ public:
 
     // Non-positional (UI, music-adjacent) — centred across all speakers.
     void play(const std::string& name, float gain = 1.0f, float rate = 1.0f, int priority = 7, bool looping = false) {
+        if (effectsMuted_) return;
         playAt(name, 0.0f, 0.0f, false, 0, 0, gain, rate, priority, looping);
     }
     // Peak amplitude (0..1) of a loaded sample, for normalizing UI feedback:
@@ -171,6 +172,7 @@ public:
     // tagged positional, so setListener re-pans it every frame as the camera moves --
     // it tracks its world source for its whole duration, not just at trigger time.
     void playWorld(const std::string& name, float x, float z, int priority = 3) {
+        if (effectsMuted_) return;
         float pan = std::clamp((x - listenX_) / listenHW_, -1.0f, 1.0f);
         float depth = std::clamp((z - listenZ_) / listenHH_, -1.0f, 1.0f);
         playAt(name, pan, depth, true, x, z, 1.f, 1.f, priority);
@@ -661,6 +663,8 @@ public:
     void setMusicVolume(int v) { musicVol_ = std::clamp(v, 0, 256); }
     void setMasterVolume(int v) { masterVol_ = std::clamp(v, 0, 256); }
     void setSfxVolume(int v) { sfxVol_ = std::clamp(v, 0, 256); }
+    // New effects stop starting (a replay running too fast to follow); music plays on.
+    void setEffectsMuted(bool muted) { effectsMuted_ = muted; }
     void setChannelGain(int i, float g) { if (i >= 0 && i < 8) chanGain_[i] = std::clamp(g, 0.0f, 1.0f); }
 
     // For the Options screen: how many output channels the device gave us.
@@ -723,6 +727,7 @@ private:
     SDL_AudioSpec spec_{};
     int chan_ = 1;              // output channel count (2=stereo, 4/6/8=surround)
     bool verbose_ = false;
+    bool effectsMuted_ = false;
     // Subwoofer (LFE) feed: a one-pole low-pass of the full mono mix, driven into the
     // 5.1/7.1 LFE channel. lpfState_ persists across callbacks (the filter's memory).
     float lpfState_ = 0;

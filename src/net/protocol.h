@@ -19,7 +19,13 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 308;      // 308: AI level 7, Passive (SlotInfo.aiLevel): Easy that never explores and
+constexpr uint32_t kNetVersion = 309;      // 309: a mobile producer's output starts its rally straight away, with no exit step in front
+                                           //      of it (hashed: its orders and its route), as a factory's output always has. An output
+                                           //      left with nothing to do still takes the exit step. With a rally and no room for the next
+                                           //      output, the producer sends an idle unit away (hashed). 308 replays refused.
+                                           //      Extended in place, still unreleased: the sign-in token (src/net/auth.h):
+                                           //      AuthResult's optional trailing token, Msg::AuthToken and Msg::AuthRevoke
+                                           // 308: AI level 7, Passive (SlotInfo.aiLevel): Easy that never explores and
                                            //      builds only near home. A 307 server stores 7 as Normal. Sim unchanged;
                                            //      307 replays refused
                                            // 307: a ground melee attacker approaches a building (no mover) on Attack_Melee's
@@ -810,7 +816,8 @@ enum class Msg : uint8_t {
     AuthChallenge,      // S->C: does the account exist?, salt, iterations, server nonce
     AuthProof,          // C->S: the client's proof  (existing account)
     AuthRegister,       // C->S: StoredKey + ServerKey  (creating a new account)
-    AuthResult,         // S->C: status, server signature, message
+    AuthResult,         // S->C: status, server signature, message [, sign-in token: a success
+                        // on an encrypted connection only (src/net/auth.h)]
     MapOffer,          // both: room, map id, SHA-256, byte count
     MapRequest,        // both: room; request the offered package
     MapChunk,          // both: room, offset, <=64 KiB raw bytes
@@ -868,6 +875,10 @@ enum class Msg : uint8_t {
     Reseated,           // S->C: u8 slot, u64 rotated resume token, u32 fromTick, u32 logEnd. The
                         // answer to a good Rejoin: the client keeps its world, and the bundles
                         // from fromTick follow (those before logEnd are history it catches up on).
+    // The sign-in token (src/net/auth.h), on an encrypted connection only. Answered by
+    // AuthResult; a failure counts against the login throttle.
+    AuthToken,          // C->S: username, token  (sign in with it, instead of AuthBegin)
+    AuthRevoke,         // C->S: username, token  (the player quit: it is no longer good)
 };
 
 // Voice chat (Msg::VoiceUp / VoiceDown): Opus, 48 kHz mono, one 20 ms frame per message.

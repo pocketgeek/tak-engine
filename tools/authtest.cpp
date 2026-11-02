@@ -341,6 +341,152 @@ int main(int argc, char** argv) {
         check(x.size() == 1, "a currently-locked key is NOT forgotten early");
     }
 
+    // ---- 9. sign-in tokens ---------------------------------------------------
+    std::printf("sign-in tokens\n");
+    {
+        using T = srv::SessionTokens;
+        std::vector<uint8_t> salt2 = bytes("fedcba9876543210");
+        srv::Account alice, bob;
+        alice.name = "Alice";
+        alice.cred = stored;
+        bob.name = "Bob";
+        bob.cred = auth::makeCredential(auth::deriveKeys("another password", salt2.data(),
+                                                         salt2.size(), kIters),
+                                        salt2.data(), salt2.size(), kIters);
+        const uint64_t now = 1000;
+
+        // The next token in a line, or nothing if `from` is refused.
+        auto rotate = [&](srv::SessionTokens& s, const std::vector<uint8_t>& from, uint64_t when) {
+            T::Chain chain;
+            return s.spend(alice, from, when, &chain) ? s.issue(alice, when, &chain)
+                                                      : std::vector<uint8_t>{};
+        };
+
+        srv::SessionTokens t;
+        std::vector<uint8_t> tok = t.issue(alice, now), other = t.issue(alice, now);
+        check(tok.size() == auth::kTokenLen && tok != other, "tokens are long and random");
+        check(!t.spend(bob, tok, now), "a token is no good for another account");
+        srv::Account bobWithHerKeys = alice;
+        bobWithHerKeys.name = "Bob";
+        check(!t.spend(bobWithHerKeys, tok, now), "nor for another name on the same keys");
+        check(t.spend(alice, tok, now), "the right account can use it");
+        check(!t.spend(alice, tok, now + T::kRetryMs), "only once: a spent token is refused");
+        check(t.spend(alice, other, now), "and spending one leaves the account's others alone");
+
+        // The hash is bound to the name as folded, like every other lookup.
+        srv::Account lower = alice;
+        lower.name = "ALICE";
+        std::vector<uint8_t> folded = t.issue(alice, now);
+        check(t.spend(lower, folded, now), "the account name matches case-insensitively");
+
+        // The account's credential is what keys the hash: re-created, it starts clean.
+        std::vector<uint8_t> old = t.issue(alice, now);
+        srv::Account remade = alice;
+        remade.cred = bob.cred;
+        check(!t.spend(remade, old, now), "a token does not survive its credential");
+        check(t.spend(alice, old, now), "(the failed try above did not burn it)");
+
+        std::vector<uint8_t> e1 = t.issue(alice, now), e2 = t.issue(alice, now);
+        check(t.spend(alice, e1, now + T::kLifetimeMs - 1), "a token is good for 12 hours");
+        check(!t.spend(alice, e2, now + T::kLifetimeMs), "and expired after that");
+
+        // Rotation never adds to the 12 hours.
+        {
+            srv::SessionTokens s;
+            auto a = s.issue(alice, now);
+            auto b = rotate(s, a, now + T::kLifetimeMs - 2);
+            auto c = rotate(s, b, now + T::kLifetimeMs - 1);
+            check(!c.empty(), "a line rotates for its 12 hours");
+            check(!s.spend(alice, c, now + T::kLifetimeMs), "and ends 12 hours after the password");
+            check(s.size() == 0, "and nothing is left of it");
+        }
+        // A token used after its successor has been: one of the two is a thief.
+        {
+            srv::SessionTokens s;
+            auto a = s.issue(alice, now), mine = s.issue(alice, now);
+            auto b = rotate(s, a, now);
+            auto c = rotate(s, b, now + 1);
+            check(!s.spend(alice, a, now + 2), "a token used after its successor is refused");
+            check(!s.spend(alice, c, now + 2), "and ends the whole line");
+            check(s.spend(alice, mine, now + 2), "but not the account's other logins");
+        }
+        // Sent again when nothing followed it, but too late to be a lost reply.
+        {
+            srv::SessionTokens s;
+            auto a = s.issue(alice, now);
+            auto b = rotate(s, a, now);
+            check(!s.spend(alice, a, now + T::kRetryMs), "a late second use is refused");
+            check(!s.spend(alice, b, now + T::kRetryMs), "and ends the line too");
+        }
+        // The link took the reply: the only thing left to send is the spent token.
+        {
+            srv::SessionTokens s;
+            auto a = s.issue(alice, now);
+            auto lost = rotate(s, a, now);
+            auto lost2 = rotate(s, a, now + 1);
+            auto kept = rotate(s, a, now + 2);
+            check(!lost2.empty() && !kept.empty() && kept != lost2 && kept != lost,
+                  "a token whose reply was lost can be sent again, more than once");
+            check(!s.spend(alice, lost, now + 3), "what the lost reply carried is dead");
+            check(!s.spend(alice, kept, now + 3), "and whoever shows it up ends the line");
+
+            auto d = s.issue(alice, now);
+            auto e = rotate(s, d, now);
+            auto f = rotate(s, d, now + 1);
+            auto g = rotate(s, f, now + 2);
+            check(!e.empty() && !g.empty(), "a resend's token carries the line on");
+            check(!s.spend(alice, d, now + 3), "and the resend is over once that is used");
+            check(!s.spend(alice, g, now + 3), "(the line ends)");
+        }
+        // A retry never buys time either.
+        {
+            srv::SessionTokens s;
+            auto a = s.issue(alice, now);
+            T::Chain c1, c2;
+            check(s.spend(alice, a, now + T::kLifetimeMs - 2, &c1) &&
+                  s.spend(alice, a, now + T::kLifetimeMs - 1, &c2) &&
+                  c1.id == c2.id && c2.expiresMs == now + T::kLifetimeMs,
+                  "a resend stays on the login's clock");
+            check(!s.spend(alice, a, now + T::kLifetimeMs), "and stops with it");
+        }
+        // Quitting ends the line, whichever of its tokens the client still has.
+        {
+            srv::SessionTokens s;
+            auto a = s.issue(alice, now);
+            auto b = rotate(s, a, now);
+            check(s.revoke(alice, a), "a spent token can still sign its line out");
+            check(!s.spend(alice, b, now), "and what followed it goes too");
+            check(!s.revoke(alice, a), "after which it is unknown");
+            check(!s.revoke(bob, s.issue(alice, now)), "a token cannot revoke another account's");
+            check(s.size() == 1, "revoking leaves nothing but the other line");
+        }
+
+        {
+            srv::SessionTokens s;
+            std::vector<uint8_t> first = s.issue(alice, now);
+            for (size_t i = 1; i < T::kPerAccount; ++i) s.issue(alice, now);
+            std::vector<uint8_t> newest = s.issue(alice, now);
+            check(s.size() == T::kPerAccount, "an account holds a bounded number of tokens");
+            check(!s.spend(alice, first, now), "the oldest goes first");
+            check(s.spend(alice, newest, now), "the newest stays");
+
+            srv::SessionTokens r;
+            auto line = r.issue(alice, now);
+            for (size_t i = 0; i < 2 * T::kSpentPerAccount; ++i) line = rotate(r, line, now);
+            check(!line.empty() && r.size() == T::kSpentPerAccount,
+                  "and a bounded number of spent hashes");
+        }
+
+        srv::SessionTokens u;
+        auto swept = u.issue(alice, now);
+        check(u.spend(alice, swept, now), "(spent, not yet expired)");
+        u.issue(bob, now + T::kLifetimeMs / 2);
+        u.expire(now + T::kLifetimeMs);
+        check(u.size() == 1, "expired hashes are swept, spent ones too, live ones kept");
+        check(!t.spend(alice, std::vector<uint8_t>(auth::kTokenLen - 1, 1), now),
+              "a short token is refused");
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILURES" : "ALL PASS", failures,
                 failures == 1 ? "" : "s");
     return failures ? 1 : 0;

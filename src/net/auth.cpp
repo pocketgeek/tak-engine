@@ -95,6 +95,22 @@ crypto::Digest serverSignature(const crypto::Digest& serverKey, const std::vecto
     return crypto::hmacSha256(serverKey, am);
 }
 
+crypto::Digest tokenHash(const Credential& c, std::string_view user,
+                         const std::vector<uint8_t>& token) {
+    constexpr std::string_view kLabel = "TAK-sign-in-token-v1";
+    const std::string fold = foldUsername(user);
+    // Only tokens of kTokenLen are ever hashed, so the fields cannot shift.
+    // Sized up front: a reallocation would free a copy of the token unwiped.
+    std::vector<uint8_t> msg;
+    msg.reserve(kLabel.size() + token.size() + fold.size());
+    msg.insert(msg.end(), kLabel.begin(), kLabel.end());
+    msg.insert(msg.end(), token.begin(), token.end());
+    msg.insert(msg.end(), fold.begin(), fold.end());
+    crypto::Digest d = crypto::hmacSha256(c.storedKey, msg);
+    crypto::wipe(msg.data(), msg.size());
+    return d;
+}
+
 // ---- account naming --------------------------------------------------------
 
 bool validUsername(std::string_view u, std::string* why) {

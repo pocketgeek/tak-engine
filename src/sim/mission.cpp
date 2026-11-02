@@ -59,6 +59,17 @@ MissionScript::MissionScript(std::vector<uint8_t> cobBytes, const tak::tdf::Node
         return;
     }
     vm_ = std::make_unique<cob::Vm>(cob_, /*deterministicRand=*/true);   // hashed: mission RAND must be lockstep-identical
+    wireVm();
+    parseConditions(header);
+}
+
+std::unique_ptr<MissionScript> MissionScript::clone() const {
+    std::unique_ptr<MissionScript> copy(new MissionScript(*this));
+    if (copy->vm_) copy->wireVm();
+    return copy;
+}
+
+void MissionScript::wireVm() {
     vm_->onMapCommand = [this](int nameIdx, const std::vector<int32_t>& a) {
         return mapCommand(*world_, nameIdx, a);
     };
@@ -75,7 +86,6 @@ MissionScript::MissionScript(std::vector<uint8_t> cobBytes, const tak::tdf::Node
         const std::string& n = cob_.name(size_t(nameIdx));
         if (!n.empty()) world_->requestSound(n,flags);
     };
-    parseConditions(header);
 }
 
 const UnitType* MissionScript::findType(const std::string& name) const {

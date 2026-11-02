@@ -35,6 +35,7 @@ public:
     bool connect(const std::string& host, uint16_t port, int timeoutMs = 5000);
 
     int fd() const { return fd_; }
+    bool encrypted() const { return tls_ != nullptr; }   // this socket speaks TLS
     bool ok() const { return fd_ >= 0 && err_.empty(); }
     const std::string& error() const { return err_; }
     void fail(const std::string& why) { if (err_.empty()) err_ = why; }

@@ -24,6 +24,7 @@
 //    within one metric; a new metric re-baselines and never counts as a gain;
 //  * freshness: the geometry epoch the route was built on, and whether a later change touched it, apart from all of
 //    the above.
+#include "sim/copymember.h"
 #include <cstddef>
 #include <cstdint>
 #include <algorithm>
@@ -70,7 +71,7 @@ struct RouteGrid {
     int W = 0, x0 = 0, z0 = 0, fw = 0, fh = 0;   // map width; window origin and size (cells)
     int shift = 5, sx0 = 0, sz0 = 0, sw = 0, sh = 0;   // tile size 1 << shift; the window's tile box (sector coords)
     std::vector<const uint32_t*> tiles;          // sw*sh: each tile's K*K potentials (row-major), nullptr: none yet
-    std::vector<std::unique_ptr<uint32_t[]>> own;   // sw*sh: the tiles this route allocated
+    LeftEmptyOnCopy<std::vector<std::unique_ptr<uint32_t[]>>> own;   // sw*sh: the tiles this route allocated (Impl::copyField)
     size_t ownTiles = 0;                         // tiles allocated so far
     // A corridor (stage 6): the tiles of the window the route may cover (1) or not (0); empty: every tile. A cell
     // of a tile outside the corridor is outside the route (inside() false), so it is never written and reads kNone.

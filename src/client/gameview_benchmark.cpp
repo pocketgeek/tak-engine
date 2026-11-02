@@ -52,6 +52,17 @@
             benchNextTick_ += 300;
         }
         if (gt >= end) benchStatsShown_ = true;   // run complete -> show the stats overlay
+#ifndef NDEBUG
+        // TAK_BENCH_STOP_TICK=N: Esc at tick N, with the results filled out to a full run's
+        // size (all six samples, every row), so a short run lays out the tallest panel.
+        if (const char* st = tak::devEnv("TAK_BENCH_STOP_TICK"); st && !benchStatsShown_ && gt >= uint32_t(std::atoi(st))) {
+            stopBenchmark();
+            BenchSample full = benchSamples_.back();
+            full.gpuSysUsed = std::max<size_t>(full.gpuSysUsed, 1u << 30);
+            benchSamples_.resize(6, full);
+            if (benchGpuName_.empty()) benchGpuName_ = "HARNESS";
+        }
+#endif
     }
 
     void GameView::stopBenchmark() {
@@ -87,12 +98,43 @@
     }
 
     void GameView::renderBenchmarkStats(int winW, int winH) {
-        // One scale factor drives the whole panel, so it stays big + legible at 4K.
-        float k = float(winH) / 1000.0f; k = k < 1.0f ? 1.0f : (k > 2.4f ? 2.4f : k);
-        const float titlePx = 4.0f * k, subPx = 1.8f * k, cellPx = 2.2f * k, setPx = 2.0f * k;
-        const float pad = 44 * k, rowH = 34 * k;
-        const float colW[10] = {82*k, 96*k, 122*k, 122*k, 122*k, 70*k, 122*k, 122*k, 70*k, 96*k};
-        float tableW = 0; for (float c : colW) tableW += c;
+        // Every SETTINGS line first: the panel's height depends on how many there are.
+        std::vector<std::string> settings;
+        char b[64];
+        // What the run's world really used, not what was asked for.
+        settings.push_back(std::string("PATHFINDING ") + tak::benchmarkPathLabel(worldTables().pathfindingMode()));
+        std::snprintf(b, sizeof b, "RESOLUTION  %d X %d", winW, winH); settings.push_back(b);
+        if (!benchGpuName_.empty()) settings.push_back(std::string("GPU         ") + benchGpuName_);
+        {   // the backend that produced these numbers, and whether it was AUTO's pick
+            SDL_RendererInfo ri{};
+            std::string id = SDL_GetRendererInfo(ren_, &ri) == 0 && ri.name ? tak::renderdriver::normalize(ri.name) : std::string();
+            settings.push_back("RENDERER    " + tak::renderdriver::label(id) +
+                               (tak::renderdriver::active().inEffect.empty() ? " (AUTO)" : ""));
+        }
+        settings.push_back(std::string("FULLSCREEN  ") + (settings_ && settings_->fullscreen ? "ON" : "OFF"));
+        settings.push_back(std::string("VSYNC       ") + (settings_ && settings_->vsync ? "ON" : "OFF"));
+        if (settings_ && !settings_->vsync && settings_->maxFps <= 0) settings.push_back("MAX FPS     UNLIMITED");
+        else if (settings_ && !settings_->vsync) { std::snprintf(b, sizeof b, "MAX FPS     %d", settings_->maxFps); settings.push_back(b); }
+        else settings.push_back("MAX FPS     (VSYNC)");
+        {   const int tf = settings_ ? std::clamp(settings_->textureFilter, 0, 2) : 0;
+            settings.push_back(std::string("TEXFILTER   ") + (tf == 2 ? "EVERYTHING" : tf == 1 ? "UNITS" : "OFF")); }
+        // GPU texture memory: the cap in force (Options limit, or a tightening after a
+        // failed create), and this run's peak accounted usage.
+        size_t gpuPeak = 0, sysPeak = 0;
+        for (const auto& s : benchSamples_) {
+            if (s.gpuBytes > gpuPeak) gpuPeak = s.gpuBytes;
+            if (s.gpuSysUsed > sysPeak) sysPeak = s.gpuSysUsed;
+        }
+        if (gpuvram::cap() == gpuvram::kUnlimited) std::snprintf(b, sizeof b, "GPU TEX CAP UNLIMITED");
+        else std::snprintf(b, sizeof b, "GPU TEX CAP %zuMB", gpuvram::cap() >> 20);
+        settings.push_back(b);
+        std::snprintf(b, sizeof b, "GPU PEAK    %zuMB", gpuPeak >> 20); settings.push_back(b);
+        if (sysPeak) {
+            if (benchGpuTotal_) std::snprintf(b, sizeof b, "SYS VRAM    %zu / %zuMB PEAK", sysPeak >> 20, benchGpuTotal_ >> 20);
+            else std::snprintf(b, sizeof b, "SYS VRAM    %zuMB PEAK", sysPeak >> 20);
+            settings.push_back(b);
+        }
+
         const char* title = "BENCHMARK RESULTS";
         char subBuf[160];
         std::snprintf(subBuf, sizeof subBuf,
@@ -101,11 +143,23 @@
                       tak::sim::benchmarkLevelInterval(benchmarkLevel_));
         const char* sub = subBuf;
 
-        float contentW = tableW;
-        if (blockWidth(sub, subPx) > contentW) contentW = blockWidth(sub, subPx);
-        int rows = int(benchSamples_.size());
-        float contentH = 7 * (titlePx + subPx + cellPx + setPx) + rows * rowH + 482 * k;
-        float panelW = contentW + 2 * pad, panelH = contentH + 2 * pad;
+        // One scale factor drives the whole panel, so it stays big + legible at 4K and
+        // all of it, DONE included, still fits a short or narrow window.
+        constexpr float titleU = 4.0f, subU = 1.8f, cellU = 2.2f, setU = 2.0f;   // text sizes
+        constexpr float padU = 44, rowU = 34, setRowU = 28;
+        constexpr float colU[10] = {82, 96, 122, 122, 122, 70, 122, 122, 70, 96};
+        constexpr float gapsU = 22 + 26 + 10 + 12 + 30 + 24 + 20 + 56;   // the gaps below, and DONE
+        float tableU = 0; for (float c : colU) tableU += c;
+        const int rows = int(benchSamples_.size());
+        const float baseW = 2 * padU + std::max(tableU, blockWidth(sub, subU));
+        const float baseH = 2 * padU + 7 * (titleU + subU + cellU + setU) + rows * rowU +
+                            float(settings.size()) * setRowU + gapsU;
+        float k = float(winH) / 1000.0f; k = k < 1.0f ? 1.0f : (k > 2.4f ? 2.4f : k);
+        k = std::min({k, float(winW) / baseW, float(winH) / baseH});
+        const float titlePx = titleU * k, subPx = subU * k, cellPx = cellU * k, setPx = setU * k;
+        const float pad = padU * k, rowH = rowU * k, tableW = tableU * k;
+        float colW[10]; for (int c = 0; c < 10; ++c) colW[c] = colU[c] * k;
+        const float panelW = baseW * k, panelH = baseH * k;
         float px0 = (winW - panelW) * 0.5f, py0 = (winH - panelH) * 0.5f;
         if (px0 < 0) px0 = 0;
         if (py0 < 0) py0 = 0;
@@ -132,7 +186,6 @@
         SDL_SetRenderDrawColor(ren_, 90, 95, 120, 255);
         SDL_FRect ln{cxL, y, tableW, 2 * k}; SDL_RenderFillRectF(ren_, &ln);
         y += 12 * k;
-        char b[64];
         for (const auto& s : benchSamples_) {
             cx = cxL;
             auto cell = [&](const char* t) { blockText(t, cx, y, cellPx, {228, 231, 240, 255}); };
@@ -156,38 +209,7 @@
         y += 30 * k;
         blockText("SETTINGS", cxL, y, setPx, {205, 210, 225, 255});
         y += 7 * setPx + 24 * k;
-        auto sl = [&](const std::string& t) { blockText(t, cxL, y, setPx, {200, 205, 215, 255}); y += 28 * k; };
-        std::snprintf(b, sizeof b, "RESOLUTION  %d X %d", winW, winH); sl(b);
-        if (!benchGpuName_.empty()) sl(std::string("GPU         ") + benchGpuName_);
-        {   // the backend that produced these numbers, and whether it was AUTO's pick
-            SDL_RendererInfo ri{};
-            std::string id = SDL_GetRendererInfo(ren_, &ri) == 0 && ri.name ? tak::renderdriver::normalize(ri.name) : std::string();
-            sl("RENDERER    " + tak::renderdriver::label(id) +
-               (tak::renderdriver::active().inEffect.empty() ? " (AUTO)" : ""));
-        }
-        sl(std::string("FULLSCREEN  ") + (settings_ && settings_->fullscreen ? "ON" : "OFF"));
-        sl(std::string("VSYNC       ") + (settings_ && settings_->vsync ? "ON" : "OFF"));
-        if (settings_ && !settings_->vsync && settings_->maxFps <= 0) sl("MAX FPS     UNLIMITED");
-        else if (settings_ && !settings_->vsync) { std::snprintf(b, sizeof b, "MAX FPS     %d", settings_->maxFps); sl(b); }
-        else sl("MAX FPS     (VSYNC)");
-        {   const int tf = settings_ ? std::clamp(settings_->textureFilter, 0, 2) : 0;
-            sl(std::string("TEXFILTER   ") + (tf == 2 ? "EVERYTHING" : tf == 1 ? "UNITS" : "OFF")); }
-        // GPU texture memory: the cap in force (Options limit, or a tightening after a
-        // failed create), and this run's peak accounted usage.
-        size_t gpuPeak = 0, sysPeak = 0;
-        for (const auto& s : benchSamples_) {
-            if (s.gpuBytes > gpuPeak) gpuPeak = s.gpuBytes;
-            if (s.gpuSysUsed > sysPeak) sysPeak = s.gpuSysUsed;
-        }
-        if (gpuvram::cap() == gpuvram::kUnlimited) std::snprintf(b, sizeof b, "GPU TEX CAP UNLIMITED");
-        else std::snprintf(b, sizeof b, "GPU TEX CAP %zuMB", gpuvram::cap() >> 20);
-        sl(b);
-        std::snprintf(b, sizeof b, "GPU PEAK    %zuMB", gpuPeak >> 20); sl(b);
-        if (sysPeak) {
-            if (benchGpuTotal_) std::snprintf(b, sizeof b, "SYS VRAM    %zu / %zuMB PEAK", sysPeak >> 20, benchGpuTotal_ >> 20);
-            else std::snprintf(b, sizeof b, "SYS VRAM    %zuMB PEAK", sysPeak >> 20);
-            sl(b);
-        }
+        for (const std::string& t : settings) { blockText(t, cxL, y, setPx, {200, 205, 215, 255}); y += setRowU * k; }
         y += 20 * k;
 
         const float dw = 240 * k, dh = 56 * k;
@@ -197,4 +219,14 @@
         SDL_SetRenderDrawColor(ren_, hot ? 180 : 100, hot ? 200 : 110, hot ? 240 : 140, 255); SDL_RenderDrawRectF(ren_, &done);
         blockText("DONE", done.x + (dw - blockWidth("DONE", setPx)) * 0.5f, done.y + (dh - 7 * setPx) * 0.5f,
                   setPx, {230, 234, 244, 255});
+#ifndef NDEBUG
+        // TAK_BENCH_REPORT: the list and DONE where they were drawn, for benchmark_pathfinding.
+        static bool reported = false;
+        if (!reported && tak::devFlag("TAK_BENCH_REPORT")) {
+            reported = true;
+            for (const std::string& t : settings) std::printf("BENCHRESULT %s\n", t.c_str());
+            std::printf("BENCHDONE %d %d %.1f %.1f %.1f %.1f\n", winW, winH, done.x, done.y, done.w, done.h);
+            std::fflush(stdout);
+        }
+#endif
     }

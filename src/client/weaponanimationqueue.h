@@ -21,6 +21,7 @@ public:
         if (packets_.size()>=65536) packets_.pop_front();
         packets_.push_back({tick,unit,callbacks,{tick,firedWeapons,x,z}});
     }
+    void clear() {packets_.clear();}
     template<class Consume,class Fire> void drain(uint32_t throughTick,Consume&& consume,Fire&& fire) {
         while (!packets_.empty() && int32_t(throughTick-packets_.front().tick)>=0) {
             const auto& packet=packets_.front();

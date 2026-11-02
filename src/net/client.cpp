@@ -19,6 +19,14 @@ uint64_t nowMs() {   // monotonic wall-clock (pacing/keepalive only; never hashe
 }
 constexpr uint64_t kPingIdleMs = 5000, kTimeoutMs = 15000;
 constexpr uint64_t kSpectatorTimeoutMs = 120000;   // matches the server's spectator grace
+Writer helloFrame(uint64_t dataHash, const std::string& name) {
+    Writer w;
+    w.u32(kNetVersion);
+    w.str("");          // build id (version-gated only)
+    w.u64(dataHash);    // gameplay-data fingerprint (enforced by the server)
+    w.str(name);
+    return w;
+}
 }  // namespace
 
 bool MpClient::connect(const std::string& host, uint16_t port, const std::string& name) {
@@ -38,12 +46,7 @@ bool MpClient::connect(const std::string& host, uint16_t port, const std::string
     name_ = name;
     if (!conn_.connect(host, port)) { err_ = conn_.error(); state_ = State::Done; return false; }
     state_ = State::Connecting;
-    Writer w;
-    w.u32(kNetVersion);
-    w.str("");          // build id (version-gated only)
-    w.u64(dataHash_);   // gameplay-data fingerprint (enforced by the server)
-    w.str(name_);
-    send(Msg::Hello, w);
+    send(Msg::Hello, helloFrame(dataHash_, name_));
     lastRecvMs_ = nowMs();
     return true;
 }
@@ -75,7 +78,9 @@ uint64_t MpClient::reconnectWindowMs() const {
 
 bool MpClient::canReconnect() const {
     return lostInGame_ && !reconnectRefused_ && !spectator_ && !desynced_ && !host_.empty() &&
-           room_.id && resumeToken_ && (loginUser_.empty() || haveResumeKeys_);
+           room_.id && resumeToken_ &&
+           (loginUser_.empty() || haveResumeKeys_ ||
+            (tokenSignIn_ && token_ && token_->heldFor(host_, port_)));
 }
 
 bool MpClient::reconnect() {
@@ -94,12 +99,7 @@ bool MpClient::reconnect() {
     if (!conn_.connect(host_, port_, 1500)) { err_ = conn_.error(); state_ = State::Done; return false; }
     state_ = State::Connecting;
     reconnecting_ = true; rejoinSent_ = false;
-    Writer w;
-    w.u32(kNetVersion);
-    w.str("");
-    w.u64(dataHash_);
-    w.str(name_);
-    send(Msg::Hello, w);
+    send(Msg::Hello, helloFrame(dataHash_, name_));
     lastRecvMs_ = nowMs();
     return true;
 }
@@ -107,6 +107,42 @@ bool MpClient::reconnect() {
 void MpClient::setLogin(const std::string& user, const std::string& password) {
     loginUser_ = user;
     loginPass_ = password;
+}
+
+void MpClient::setSessionToken(SessionToken* token, bool signIn) {
+    token_ = token;
+    tokenSignIn_ = signIn;
+}
+
+void MpClient::revokeSessionToken(SessionToken& token, uint64_t dataHash) {
+    const uint64_t giveUp = nowMs() + 3000;
+    const auto revoke = [&](const SessionToken& t) {
+        // Past its 12 hours the server no longer knows it, and would count a failed login.
+        if (t.secret.empty() || nowMs() >= giveUp || nowMs() - t.earnedMs >= auth::kTokenLifetimeMs)
+            return;
+        Conn conn;
+        if (!conn.connect(t.host, t.port, 1000) || !conn.encrypted()) return;
+        conn.send(Msg::Hello, helloFrame(dataHash, t.account));
+        Writer w;
+        w.str(t.account);
+        w.bytes(t.secret);
+        conn.send(Msg::AuthRevoke, w);
+        crypto::wipe(w.b.data(), w.b.size());
+        // Wait for the answer: closing with its bytes unread could reset the connection
+        // ahead of the request.
+        const uint64_t deadline = std::min(nowMs() + 1000, giveUp);
+        for (bool answered = false; !answered && nowMs() < deadline;) {
+            if (!conn.flushWrite() || !conn.recv()) break;
+            Frame f;
+            while (conn.poll(f)) answered |= f.kind == Msg::AuthResult || f.kind == Msg::Reject;
+            if (conn.peerClosed()) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    };
+    revoke(token);
+    for (const SessionToken& old : token.retired) revoke(old);
+    token.wipe();
+    token.retired.clear();
 }
 
 void MpClient::disconnect(const std::string& reason) {
@@ -213,6 +249,12 @@ bool MpClient::poll() {
 //   S->C  AuthResult     outcome + the server's own signature
 //   S->C  Welcome        ... and we are in the lobby
 //
+// or, holding a sign-in token, after AuthRequired:
+//
+//   C->S  AuthToken      username, token
+//   S->C  AuthResult     outcome + the next token
+//   S->C  Welcome
+//
 // See src/net/auth.h for what each value is and why the password itself never
 // appears anywhere in it.
 
@@ -220,6 +262,7 @@ void MpClient::failAuth(const std::string& why) {
     auth_ = Auth::Failed;
     if (reconnecting_) reconnectRefused_ = true;   // the same login will not do better next time
     if (err_.empty()) err_ = why;
+    if (pend_.tokenSent && token_) token_->wipe();  // spent or refused: either way it is finished
     // Settle the key-derivation worker before touching anything it writes. This
     // can cost the tail of one PBKDF2 run, which is a fine price on a path that
     // has already decided to hang up -- and the alternative is a live data race
@@ -241,6 +284,7 @@ void MpClient::sendAuthBegin() {
     }
     std::string why;
     if (!auth::validUsername(loginUser_, &why)) { failAuth(why); return; }
+    if (tokenSignIn_) { sendAuthToken(); return; }
     try {
         pend_ = PendingAuth{};
         pend_.clientNonce = crypto::randomVec(auth::kNonceLen);
@@ -255,8 +299,26 @@ void MpClient::sendAuthBegin() {
     send(Msg::AuthBegin, w);
 }
 
+void MpClient::sendAuthToken() {
+    // Unlike a SCRAM proof the token itself crosses the wire: never in the clear, and
+    // only to the server it came from, for the account it came from.
+    if (!conn_.encrypted() || !token_ || !token_->heldFor(host_, port_) ||
+        token_->account != loginUser_) {
+        failAuth("sign in with your password");
+        return;
+    }
+    pend_ = PendingAuth{};
+    pend_.tokenSent = pend_.proofSent = true;     // proofSent: no key derivation to wait for
+    auth_ = Auth::Pending;
+    Writer w;
+    w.str(loginUser_);
+    w.bytes(token_->secret);
+    send(Msg::AuthToken, w);
+    crypto::wipe(w.b.data(), w.b.size());
+}
+
 void MpClient::onAuthChallenge(Reader& r) {
-    if (auth_ != Auth::Pending) { failAuth("unexpected login challenge"); return; }
+    if (auth_ != Auth::Pending || pend_.tokenSent) { failAuth("unexpected login challenge"); return; }
     // Exactly one challenge per login. Without this a server (or anything posing
     // as one) can send challenges in a loop: each spawns a fresh 600k-iteration
     // derivation, and startDerive joins the previous worker ON THE CALLER'S
@@ -340,6 +402,8 @@ void MpClient::onAuthResult(Reader& r) {
     auto status = AuthStatus(r.u8());
     std::vector<uint8_t> sig = r.bytes();
     std::string msg = r.str();
+    std::vector<uint8_t> token;                    // optional: the sign-in token this earned
+    if (r.ok && r.p != r.end) token = r.bytes(auth::kTokenLen);
     if (!r.ok) { failAuth("malformed login result"); return; }
 
     if (status != AuthStatus::Ok && status != AuthStatus::Created) {
@@ -347,6 +411,8 @@ void MpClient::onAuthResult(Reader& r) {
         // before a challenge (Throttled / BadUsername / ServerError all come
         // straight out of the AuthBegin handler), so they are answered here,
         // ahead of the state guard below.
+        if (status == AuthStatus::Throttled && pend_.tokenSent && token_)
+            token_->retire();                      // never looked at: still good there
         failAuth(msg.empty() ? "the server refused the login" : msg);
         return;
     }
@@ -367,8 +433,10 @@ void MpClient::onAuthResult(Reader& r) {
     // Mutual authentication, on BOTH paths. Only something holding this account's
     // ServerKey can produce this signature. Registration is included because the
     // server signs with the key we just gave it -- an unsigned "account created"
-    // would otherwise be a free way to skip this check entirely.
-    {
+    // would otherwise be a free way to skip this check entirely. A token sign-in has
+    // no such exchange: there the verified TLS certificate of the one address the
+    // token goes to has already shown whose server this is.
+    if (!pend_.tokenSent) {
         std::vector<uint8_t> am = auth::authMessage(loginUser_, pend_.clientNonce,
                                                     pend_.serverNonce, pend_.salt, pend_.iters);
         crypto::Digest want = auth::serverSignature(keys_.serverKey, am);
@@ -382,9 +450,26 @@ void MpClient::onAuthResult(Reader& r) {
     auth_ = status == AuthStatus::Created ? Auth::Created : Auth::Ok;
     // Kept (until disconnect() or the next connect()) so a game whose link drops can
     // sign in again and reconnect inside the disconnect wait without the password.
-    resumeKeys_ = keys_; resumeSalt_ = pend_.salt; resumeIters_ = pend_.iters; haveResumeKeys_ = true;
+    // (A token sign-in has no keys: its reconnect spends the next token instead.)
+    if (!pend_.tokenSent) {
+        resumeKeys_ = keys_; resumeSalt_ = pend_.salt; resumeIters_ = pend_.iters; haveResumeKeys_ = true;
+    }
     crypto::wipe(keys_.clientKey.data(), keys_.clientKey.size());
     crypto::wipe(keys_.serverKey.data(), keys_.serverKey.size());
+    if (token_) {
+        uint64_t earned = nowMs();
+        if (pend_.tokenSent) {                     // spent; the next one ends when it would have
+            earned = token_->earnedMs;
+            token_->wipe();
+        }
+        if (!token.empty() && conn_.encrypted()) {
+            token_->retire();                      // a password login leaves the last one good
+            token_->host = host_; token_->port = port_; token_->account = loginUser_;
+            token_->secret = token;
+            token_->earnedMs = earned;
+        }
+    }
+    crypto::wipe(token.data(), token.size());
     // The server follows this with a Welcome, which moves us into the lobby.
 }
 

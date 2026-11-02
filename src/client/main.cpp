@@ -1197,6 +1197,12 @@ int main(int argc, char** argv) {
     GameStreamAudio gameStreamAudio{&streaming.stream(), &menuMusic};
     tak::PresentationPacer streamPacer;
     tak::SessionFailure menuFailure;   // failed menu launch -> shown where it came from
+    tak::ResultChoice afterResult = tak::ResultChoice::Menu;   // a skirmish result's right door
+    std::string lastServer;                                    // the server its game was on
+    // The last password login's sign-in token (src/net/auth.h): GAME SELECT's way back
+    // to the game list. In memory only, and revoked when the app quits.
+    tak::net::SessionToken sessionToken;
+    uint64_t retailHash = 0;                                   // see the Hello below
     for (;;) {
     if (tak::termRequested()) { quitApp = true; break; }   // SIGTERM/SIGINT between sessions
     if (fromMenu || !pendingCampaign.empty()) { serverHost = launchServerHost;
@@ -1209,6 +1215,7 @@ int main(int argc, char** argv) {
     // 8 = auto campaign mission (create the mission room, seat, start, then play).
     int mpAutoMode = 0;
     bool menuInteractive = false;   // menu single-player -> interactive lobby, not auto-play
+    bool tokenLaunch = false;       // GAME SELECT, signing in with the sign-in token
     bool benchmarkLaunch = false;   // menu Benchmark -> auto-host an all-AI watch perf run
     int benchmarkLevel = 0;         // picked benchmark intensity 1..5
     std::string campaignStem;       // menu campaign pick -> host this mission (autoMode 8)
@@ -1216,6 +1223,15 @@ int main(int argc, char** argv) {
     // Where a failed launch goes back to; Cli (no menu) exits with an error code.
     tak::LaunchOrigin origin = tak::LaunchOrigin::Cli;
     auto failLaunch = [&](std::string why) { return tak::routeFailure(origin, std::move(why), menuFailure); };
+    // A sign-in token that did not work is no news to the player: GAME SELECT simply
+    // becomes the CONNECT screen, with no message. One the server refused is gone
+    // already; one lost on a bad link may still be good there, so quitting revokes it.
+    auto tokenFallback = [&] {
+        if (!tokenLaunch) return false;
+        sessionToken.retire();
+        afterResult = tak::ResultChoice::GameSelect;
+        return true;
+    };
     tak::LocalServer localServer;   // single-player's private takserver; dies with the session
     // Next/Retry chosen on the previous mission's result screen: re-enter directly.
     if (!pendingCampaign.empty()) {
@@ -1264,13 +1280,29 @@ int main(int argc, char** argv) {
                 menu.setDataFolder(std::move(row));
             }
             menu.setVoice(voiceOwner.get());
-            choice = menu.run(shot, &menuServer, &menuMusic, &settings, &streaming);
+            // NEW GAME is the single-player door. GAME SELECT goes straight back to the
+            // same server's game list on the sign-in token. With no token for it (a
+            // plaintext server, or one refused), it is the CONNECT screen: the password
+            // is never kept, so it has to be typed again.
+            const auto next = std::exchange(afterResult, tak::ResultChoice::Menu);
+            if (next == tak::ResultChoice::GameSelect) {
+                const auto address = tak::parseServerAddress(lastServer);
+                tokenLaunch = address && sessionToken.heldFor(address->host, address->port);
+                if (!tokenLaunch) menu.reopenConnect(lastServer);
+            }
+            choice = next == tak::ResultChoice::NewGame ? tak::MainMenu::Choice::SinglePlayer
+                   : tokenLaunch ? tak::MainMenu::Choice::Multiplayer
+                   : menu.run(shot, &menuServer, &menuMusic, &settings, &streaming);
             tak::renderdriver::active().noticeShown = true;   // the menu showed it (if any)
             if (choice == tak::MainMenu::Choice::Campaign) {
                 campaignStem = menu.chosenMission();
                 campaignId = menu.chosenCampaign();
             }
-            if (choice == tak::MainMenu::Choice::Multiplayer) {
+            if (tokenLaunch) {
+                menuServer = lastServer;
+                loginUser = sessionToken.account;
+                tak::crypto::wipe(loginPass);
+            } else if (choice == tak::MainMenu::Choice::Multiplayer) {
                 // Take the account out of the menu while it is still alive, and
                 // wipe its copy of the password immediately -- it has no further
                 // use for it, and a secret should outlive its purpose by as little
@@ -1321,6 +1353,7 @@ int main(int argc, char** argv) {
         if (choice == tak::MainMenu::Choice::Multiplayer) {
             std::string sv = menuServer.empty() ? std::string("127.0.0.1") : menuServer;
             rememberServer = sv;   // remembered (as picked/typed) if the connect succeeds
+            lastServer = sv;
             const auto address = tak::parseServerAddress(sv);
             if (!address) {
                 failLaunch("INVALID SERVER ADDRESS OR PORT");
@@ -1403,7 +1436,6 @@ int main(int argc, char** argv) {
         // immutable while the game runs, so the fingerprint (a mount + a read of
         // every gameplay file) is computed once and reused across menu->Play loops.
         if (lobbyLoading) lobbyLoading->step("Checking game data",20);
-        static uint64_t retailHash = 0;
         if (!dataRoot.empty()) {
             if (!retailHash)
                 retailHash = tak::hpi::gameplayHash(
@@ -1417,6 +1449,7 @@ int main(int argc, char** argv) {
         // there and the handshake never asks.
         if (!loginUser.empty()) {
             mp->setLogin(loginUser, loginPass);
+            mp->setSessionToken(&sessionToken, tokenLaunch);
             playerName = loginUser;   // the account IS the multiplayer identity
         }
         tak::crypto::wipe(loginPass);
@@ -1448,7 +1481,7 @@ int main(int argc, char** argv) {
             // from with the error shown (the CONNECT dropdown for multiplayer) --
             // never exits the app.
             mp.reset();
-            if (failLaunch(why)) continue;
+            if (tokenFallback() || failLaunch(why)) continue;
             return 1;
         }
         // The TCP connect only queued the Hello. Settle the handshake HERE, before
@@ -1486,7 +1519,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "server: %s\n", why.c_str());
             localServer.stop();
             mp.reset();
-            if (failLaunch(why)) continue;   // back where it was picked, the reason in red
+            if (tokenFallback() || failLaunch(why)) continue;   // back where it was picked, the reason in red
             return 1;
         }
         if (mp->auth() == tak::net::MpClient::Auth::Created)
@@ -1611,7 +1644,7 @@ int main(int argc, char** argv) {
                 if (!campaignStem.empty()) gameView->setMissionStem(campaignStem);   // autoMode 8 hosts this mission
                 else if (menuInteractive) gameView->setSinglePlayer();  // menu SP: SP-flavoured lobby, Create-first
                 else if (benchmarkLaunch) {   // menu Benchmark: all-AI watch run + metrics
-                    gameView->setBenchmark(benchmarkLevel);
+                    gameView->setBenchmark(benchmarkLevel, settings.benchmarkPathfinding);
                 }
             }
             if (lobbyLoading) {
@@ -1691,10 +1724,19 @@ int main(int argc, char** argv) {
     // Headless multiplayer test driver: auto-run the lobby + game loop against
     // takserver and print periodic hashes. Proves the server-sequenced lockstep
     // end to end without any SDL UI. (--mphost creates+starts, --mpjoin joins.)
+#ifndef NDEBUG
+    if (gameView && gameView->replayMode())
+        if (const char* seek = tak::devEnv("TAK_REPLAY_SEEK_SCRIPT"))
+            gameView->setReplaySeekScript(seek, tak::devFlag("TAK_REPLAY_SEEK_STRAIGHT"));
+#endif
     // Headless replay verify: play the whole recording and print the final hash.
     if (gameView && gameView->replayMode() && tak::devEnv("TAK_REPLAY_VERIFY")) {
-        while (gameView->replayTick() < gameView->replayLength())
-            gameView->replayStep(10.0f);   // guard caps to 64 ticks/call
+        while (gameView->replayTick() < gameView->replayLength()
+#ifndef NDEBUG
+               || gameView->replaySeekScriptBusy()
+#endif
+              )
+            gameView->replayStep(10.0f);   // each call simulates one frame's budget
         // PIN THE SNAPSHOT FIRST. captureFrame alternates buffers without moving
         // renderReadIdx_, and this loop never calls beginFrame, so framedUnits() would
         // read buffer 0 -- not the buffer just published. A replay consumed in a single
@@ -1751,6 +1793,9 @@ int main(int argc, char** argv) {
             // presentFrame advances the presentation clock exactly as a rendered frame does.
             gameView->presentFrame();
             bool cont = gameView->mpAutoStep(mpHeadless, mapId, crusades);
+#ifndef NDEBUG
+            gameView->debugWatchPoke();   // TAK_WATCHONLY_POKE
+#endif
             gameView->endFrame();
             // Ordinary headless runs finish at their result. The defeat probe waits
             // for the same three-second transition the interactive client uses.
@@ -2203,6 +2248,10 @@ int main(int argc, char** argv) {
             if (!benchFrozen) gameView->cameraFrame(dt);
             if (benchFrozen) {
                 // frozen -- fall through to draw() so the overlay still renders
+#ifndef NDEBUG
+                // TAK_QUIT_TICK: the results are as far as a benchmark run goes.
+                if (tak::devEnv("TAK_QUIT_TICK")) { running = false; quitApp = true; }
+#endif
             } else if (gameView->replayMode()) {
                 gameView->replayStep(dt);   // play back a recorded .takrep
             } else if (gameView->isNet()) {
@@ -2215,10 +2264,9 @@ int main(int argc, char** argv) {
                 gameView->mpAutoStep(autoOv, serverMapId, crusades);
 #ifndef NDEBUG
                 // TAK_QUIT_TICK=N: leave once the game reaches tick N (or the benchmark's stats
-                // screen is up), so a short real-display pacing run (TAK_PACELOG) ends by itself.
+                // screen is up, above), so a short real-display pacing run (TAK_PACELOG) ends by itself.
                 if (const char* qt = tak::devEnv("TAK_QUIT_TICK");
-                    qt && (gameView->netTick() >= uint32_t(std::max(1, std::atoi(qt))) ||
-                           gameView->benchmarkStatsShown())) {
+                    qt && gameView->netTick() >= uint32_t(std::max(1, std::atoi(qt)))) {
                     running = false; quitApp = true;
                 }
 #endif
@@ -2775,6 +2823,7 @@ int main(int argc, char** argv) {
             if(tak::devEnv("TAK_DAMAGE_FLAME_TEST") && gameView)ready=ready && gameView->debugDamageFlameDrawCount_>=1;
             if(tak::devEnv("TAK_FEATURE_FLAME_TEST") && gameView)ready=ready && gameView->debugFeatureFlameDrawCount_>=gameView->debugFeatureFlameExpected_ && gameView->debugFeatureSmokeDrawCount_>=1;
             if(tak::devEnv("TAK_SHOT_FLAME") && gameView)ready=ready && gameView->debugFlameDrawCount_>=3;
+            if(gameView && gameView->replayMode())ready=ready && !gameView->replaySeekScriptBusy();
 #endif
             static bool shotArmed = false;
             if (ready && ktPhase < 0) {
@@ -3006,7 +3055,11 @@ int main(int argc, char** argv) {
         int oc = gameView->outcomePublic();
         tak::ResultStats st = gameView->resultStats();
         localServer.stop(); gameView.reset(); mp.reset();   // view first: it saves the replay
-        tak::ResultScreen::run(ren, vfs, oc > 0, "", false, &settings, &menuMusic, &st);
+        const auto next = origin == tak::LaunchOrigin::SinglePlayer ? tak::ResultChoice::NewGame
+                        : origin == tak::LaunchOrigin::Multiplayer  ? tak::ResultChoice::GameSelect
+                                                                    : tak::ResultChoice::Menu;
+        const auto rc = tak::ResultScreen::run(ren, vfs, oc > 0, "", false, &settings, &menuMusic, &st, next);
+        if (rc == next) afterResult = rc;
     }
     // Session ended: tear down any single-player local server, then either loop back
     // to the menu or exit the app.
@@ -3041,6 +3094,9 @@ int main(int argc, char** argv) {
     tak::releaseUiTextGlyphs(); SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
+    // Quitting the game is signing out. After the window has gone, so a server that
+    // does not answer costs nobody a frozen screen.
+    tak::net::MpClient::revokeSessionToken(sessionToken, retailHash);
     if (restartApp) {
         // A new GAME DATA FOLDER is loaded by a fresh process (client/datafolder.h): the
         // same arguments, so the --data / launch-folder rules apply exactly as before.

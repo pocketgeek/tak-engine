@@ -71,7 +71,8 @@ public:
     using const_iterator=Iter<true>;
 
     IdMap()=default;
-    IdMap(const IdMap&)=delete;
+    // A copy holds equal values at new addresses; pointers to them are the copier's.
+    IdMap(const IdMap& o) {for(const auto& [id,value]:o)try_emplace(id,value);}
     IdMap& operator=(const IdMap&)=delete;
     IdMap(IdMap&&)=default;
     IdMap& operator=(IdMap&&)=default;

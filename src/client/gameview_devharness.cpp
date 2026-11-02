@@ -54,6 +54,33 @@
         };
     }
 
+    void GameView::debugWatchPoke() {
+        static const char* const poke = tak::devEnv("TAK_WATCHONLY_POKE");
+        static bool done = false;
+        if (!poke || done || !spectating_ || netTick_ < uint32_t(std::atoi(poke)) || front().live.empty()) return;
+        done = true;
+        for (const UnitR* u : front().live) if (u->alive() && u->type) { selection_ = {u->id}; break; }
+        constexpr int W = 1024, H = 768;
+        for (const auto& def : tak::hotkeyDefs()) {
+            const auto chord = hotkeys_.chord(def.act);
+            if (!chord.bound() || def.act == tak::Act::UnitInfo) continue;
+            uint16_t mod = 0;
+            if (chord.mod & tak::HK_CTRL) mod |= KMOD_CTRL;
+            if (chord.mod & tak::HK_SHIFT) mod |= KMOD_SHIFT;
+            if (chord.mod & tak::HK_ALT) mod |= KMOD_ALT;
+            handleKey(chord.key, mod);
+            selection_.resize(std::min<size_t>(selection_.size(), 1));
+        }
+        handleKey(SDLK_1, KMOD_CTRL);
+        handleKey(SDLK_1, 0);
+        SDL_Event e{};
+        e.type = SDL_MOUSEBUTTONDOWN;e.button.button = SDL_BUTTON_RIGHT;e.button.x = W / 2;e.button.y = H / 2;
+        input(e, W, H);
+        e.type = SDL_MOUSEBUTTONUP;
+        input(e, W, H);
+        std::fprintf(stderr, "watch poke at tick %u: %zu commands queued\n", netTick_, outbox_.size());
+    }
+
     void GameView::guiSmoothTest() {
         const auto hash = world_.stateHash();
         const auto initial = smoothArt_;
@@ -625,6 +652,546 @@
             check(bar(own) && bar(foeSeen) && bar(foeHidden) && bar(thirdHidden),
                   "spectator: every side's bars drawn");
             std::fprintf(stderr,"PASS: spectator bars (%zu bars)\n",debugHealthBarIds_.size());
+            return;
+        }
+        if (const char* prefix = tak::devEnv("TAK_REPLAYBAR_SHOT")) {
+            // The replay bar for the eye: <prefix>-<size>-ui<scale>-<font>[-hud].png.
+            noFog_=true;edgeScrollOn_=false;
+            writableWorld().setPlayerCount(2);
+            const float cx=float(mapView_.map().blocksX)*16.0f,cz=float(mapView_.map().blocksY)*16.0f;
+            const int a=spawn("arasword",cx,cz,0,0);
+            const int b=spawn("tarknigh",cx+60,cz+30,0,1);
+            const int builder=spawn("araking",cx-60,cz+60,0,0);
+            for (int i=0;i<3;++i) writableWorld().tick(1.f/30);
+            replayMode_=true;
+            replayBundles_.resize(23*60*30+2*30);
+            replayTick_=3*60*30+30*30;
+            replaySpeed_=7;
+            replayRealRate_=27;
+            const auto shot=[&](int W,int H,const std::string& name) {
+                for (int i=0;i<3;++i) {
+                    captureFrame();beginFrame();cosmeticStep(0);
+                    mapView_.setZoom(1.0f);
+                    const float vw=float(mapViewW(W)),vh=float(mapViewH(H));
+                    mapView_.setOffset(cx-vw/2,cz-vh/2);
+                    prepare(W,H);draw(W,H);
+                    if (i==2) {
+                        int ow=0,oh=0;
+                        SDL_GetRendererOutputSize(ren_,&ow,&oh);
+                        std::vector<uint8_t> px(size_t(ow)*size_t(oh)*4,0);
+                        SDL_RenderReadPixels(ren_,nullptr,SDL_PIXELFORMAT_RGBA32,px.data(),ow*4);
+                        tak::png::write(std::string(prefix)+"-"+name+".png",ow,oh,px);
+                    }
+                    endFrame();
+                }
+            };
+            const auto initialFont=tak::uiFontStyle();
+            for (const auto style:{tak::UiFontStyle::Modern,tak::UiFontStyle::Classic})
+                for (const float scale:{1.0f,2.0f}) {
+                    tak::setUiFontStyle(style);
+                    uiScale_=scale;
+                    const std::string name=std::string("1024-ui")+std::to_string(int(scale))+
+                        (style==tak::UiFontStyle::Modern ? "-modern" : "-classic");
+                    selection_.clear();
+                    mouseX_=1;mouseY_=400;
+                    shot(1024,768,name);
+                    // Hovering the timeline at a third, with a builder of the player on show.
+                    selection_={builder};
+                    mouseX_=replayBar_.track.x+replayBar_.track.w/3;
+                    mouseY_=replayBar_.track.y+2;
+                    shot(1024,768,name+"-hud");
+                }
+            tak::setUiFontStyle(initialFont);uiScale_=1;
+            selection_={b};mouseX_=1;mouseY_=400;
+            shot(1024,768,"1024-ui1-taros");
+            selection_={a};
+            shot(1024,768,"1024-ui1-aramon");
+            replayMode_=false;replayBundles_.clear();replayTick_=0;selection_.clear();
+            std::fprintf(stderr,"PASS: replay bar shots\n");
+            return;
+        }
+        if (const char* mode = tak::devEnv("TAK_WATCHONLY_TEST")) {
+            // A watcher (replay or spectator) through the real input() and draw(): it
+            // can select anything and see that player's interface, and nothing it does
+            // reaches the game or is acknowledged in any way.
+            const auto check=[](bool ok,const std::string& what) {
+                if (!ok) throw std::runtime_error("watch only: "+what);
+                std::fprintf(stderr,"PASS: watch only: %s\n",what.c_str());
+            };
+            constexpr int W=1280,H=960;
+            const bool replay=std::string(mode)=="replay";
+            noFog_=true;edgeScrollOn_=false;
+            writableWorld().setPlayerCount(3);
+            const float cx=float(mapView_.map().blocksX)*16.0f,cz=float(mapView_.map().blocksY)*16.0f;
+            const int a1=spawn("arasword",cx-80,cz,0,0),a2=spawn("arasword",cx-50,cz,0,0);
+            const int b1=spawn("tarknigh",cx+40,cz,0,1),b2=spawn("tarknigh",cx+70,cz,0,1),b3=spawn("tarknigh",cx+100,cz,0,1);
+            const int builder=spawn("araking",cx-80,cz+90,0,0);
+            const int factory=spawn("tarcastl",cx+70,cz+130,0,1);
+            check(a1>=0 && a2>=0 && b1>=0 && b2>=0 && b3>=0 && builder>=0 && factory>=0,"fixture spawned");
+            for (int i=0;i<3;++i) writableWorld().tick(1.f/30);
+            if (replay) replayMode_=true; else beginSpectating();
+            const auto frame=[&] {
+                captureFrame();beginFrame();cosmeticStep(0);
+                prepare(W,H);draw(W,H);
+                endFrame();
+            };
+            mapView_.setZoom(1.0f);
+            const float vw=float(mapViewW(W)),vh=float(mapViewH(H));
+            mapView_.setOffset(cx-vw/2,cz-vh/2);
+            frame();frame();
+            const uint64_t before=world_.stateHash();
+            bool tint=false;
+            int sounded=0;   // everything the sound bank was asked to play
+            sounds_.requestHook=[&](const SoundBank::RequestTrace&) {++sounded;};
+            // Nothing may have got out, been armed or been acknowledged. Checked after
+            // every step: the state hash catches a command the harness's local world took.
+            const auto untouched=[&](const std::string& what) {
+                check(outbox_.empty() && !click_,what+": nothing left the client");
+                check(world_.stateHash()==before,what+": the world is unchanged");
+                check(sounded==0,what+": no sound");
+                check(!pendingCmd_ && !placing_ && !reclaimDrag_ && !buildDrag_ && !manaBuildDrag_,what+": nothing armed");
+                check(notice_.empty(),what+": no notice");
+                check(!giveUnitsMenu_,what+": no diplomacy");
+                check(!guiPressed_,what+": no press flash");
+                const auto cursor=desiredCursor(tint);
+                check((cursor==tak::CursorId::Normal || cursor==tak::CursorId::Select) && !tint,what+": a watcher's cursor");
+            };
+            const auto mouse=[&](Uint32 type,float x,float y,Uint8 button,int clicks=1) {
+                SDL_Event e{};e.type=type;e.button.x=int(x);e.button.y=int(y);e.button.button=button;e.button.clicks=Uint8(clicks);
+                if (type==SDL_MOUSEMOTION) {
+                    e.motion.x=int(x);e.motion.y=int(y);e.motion.xrel=0;e.motion.yrel=0;e.motion.state=0;
+                }
+                input(e,W,H);
+            };
+            const auto clickAt=[&](float x,float y,Uint8 button=SDL_BUTTON_LEFT) {
+                mouse(SDL_MOUSEMOTION,x,y,0);
+                mouse(SDL_MOUSEBUTTONDOWN,x,y,button);
+                mouse(SDL_MOUSEBUTTONUP,x,y,button);
+                frame();
+            };
+            const auto at=[&](int id) { const auto* u=frameUnitP(id);return unitScreen(frameUnit(u->id)); };
+            const auto clickUnit=[&](int id,Uint8 button=SDL_BUTTON_LEFT) { const auto p=at(id);clickAt(p.x,p.y,button); };
+            check(hudPlayer()==-1 && !hudShown(),"nothing selected: no interface");
+            mouseX_=vw*0.5f;mouseY_=30;
+            untouched("idle");
+            {
+                const auto p=at(b1);
+                mouseX_=p.x;mouseY_=p.y;
+                check(desiredCursor(tint)==tak::CursorId::Select,"Select over another player's unit");
+            }
+            clickUnit(b1);
+            check(selection_==std::vector<int>{b1},"a click selects any player's unit");
+            check(hudPlayer()==1 && hudShown(),"the interface is that unit's player's");
+            check(framePlayer(hudPlayer()).side=="TAR" || framePlayer(hudPlayer()).side=="tar","fixture: player 1 is Taros");
+            {
+                const SDL_Color shown=factionColor(),seat=playerColor(localPlayer_),owner=playerColor(1);
+                check(shown.r==owner.r && shown.g==owner.g && shown.b==owner.b &&
+                      (seat.r!=owner.r || seat.g!=owner.g || seat.b!=owner.b),"the fallback panel wears the owner's colour");
+            }
+            untouched("selecting");
+            check(artSide_=="tar","the panel art follows the selected side");
+            // Right clicks: on the ground, on an enemy, on a friend, on the minimap.
+            clickAt(vw*0.5f,H*0.25f,SDL_BUTTON_RIGHT);
+            clickUnit(a1,SDL_BUTTON_RIGHT);
+            clickUnit(b2,SDL_BUTTON_RIGHT);
+            {
+                const auto r=minimapRect(W,H);
+                const float ox=mapView_.offX();
+                clickAt(r.x+r.w*0.5f,r.y+r.h*0.5f,SDL_BUTTON_RIGHT);
+                check(mapView_.offX()==ox,"a right click on the minimap does not move the camera");
+                clickAt(r.x+r.w*0.2f,r.y+r.h*0.2f);
+                check(mapView_.offX()!=ox,"a left click on the minimap moves the camera");
+                mapView_.setOffset(cx-vw/2,cz-vh/2);frame();
+                draggingMinimap_=false;
+            }
+            check(selection_==std::vector<int>{b1},"right clicks leave the selection");
+            untouched("right clicks");
+            const auto press=[&](tak::Act act) {
+                const auto chord=hotkeys_.chord(act);
+                uint16_t mod=0;
+                if (chord.mod & tak::HK_CTRL) mod|=KMOD_CTRL;
+                if (chord.mod & tak::HK_SHIFT) mod|=KMOD_SHIFT;
+                if (chord.mod & tak::HK_ALT) mod|=KMOD_ALT;
+                handleKey(chord.key,mod);
+            };
+            // Every key the rule blocks, as the player has them bound.
+            for (const auto& def:tak::hotkeyDefs()) {
+                if (tak::client::watchAllows(def.act) || !hotkeys_.chord(def.act).bound()) continue;
+                const float ox=mapView_.offX();
+                press(def.act);
+                check(mapView_.offX()==ox,std::string(def.id)+": the camera stays");
+                untouched(def.id);
+            }
+            // Pause and speed sit outside the table, and only a private game's host paces it
+            // (tak::client::watchMayPace). In a replay they are the transport's, below.
+            if (!replay) {
+                const bool wasPaused=paused_;
+                const int pace=gameSpeed_;
+                for (const SDL_Keycode key:{SDLK_PAUSE,SDLK_EQUALS,SDLK_MINUS,SDLK_KP_PLUS,SDLK_KP_MINUS}) handleKey(key,0);
+                check(paused_==wasPaused && gameSpeed_==pace,"a watcher's Pause and speed keys change nothing");
+                untouched("Pause and speed");
+            }
+            // The panel: a button draws the true state and a click on it does nothing.
+            clickUnit(a1);
+            check(selection_==std::vector<int>{a1} && hudPlayer()==0,"another owner replaces the selection");
+            check(artSide_=="ara","the panel art follows back");
+            frame();
+            check(!guiBtnRects_.empty(),"the order buttons are on show");
+            for (const auto [r,cmd]:std::vector<std::pair<SDL_FRect,char>>(guiBtnRects_)) {
+                clickAt(r.x+r.w/2,r.y+r.h/2);
+                check(selection_==std::vector<int>{a1},"a button press does not reach the map");
+            }
+            untouched("order buttons");
+            selection_={builder};frame();frame();
+            check(!iconRects_.empty(),"a selected builder's build row is on show");
+            for (const auto& [r,type]:std::vector<std::pair<SDL_FRect,const tak::sim::UnitType*>>(iconRects_)) {
+                (void)type;
+                clickAt(r.x+r.w/2,r.y+r.h/2);
+                clickAt(r.x+r.w/2,r.y+r.h/2,SDL_BUTTON_RIGHT);
+                check(selection_==std::vector<int>{builder},"a build icon press does not reach the map");
+            }
+            untouched("build icons");
+            // A reclaimer's right press would arm the area drag.
+            mouse(SDL_MOUSEBUTTONDOWN,vw*0.5f,H*0.25f,SDL_BUTTON_RIGHT);
+            check(!reclaimDrag_,"a right press arms no reclaim drag");
+            mouse(SDL_MOUSEBUTTONUP,vw*0.5f,H*0.25f,SDL_BUTTON_RIGHT);
+            // And the backstop, for anything that ever gets past the gates.
+            {
+                tak::net::Command c;
+                c.kind=tak::net::Cmd::Move;c.unitId=a1;c.x=cx+500;c.z=cz+500;
+                issue(c);
+            }
+            untouched("a command forced at issue()");
+            selection_={factory};frame();frame();   // the other player's factory, read-only too
+            check(hudPlayer()==1,"a factory shows its owner");
+            untouched("a factory selected");
+            // Boxes: over 2 of one owner and 3 of another, the 3.
+            {
+                const auto p0=at(a1),p1=at(b3);
+                const float y0=p0.y-40,y1=p0.y+30;
+                mouse(SDL_MOUSEMOTION,p0.x-25,y0,0);
+                mouse(SDL_MOUSEBUTTONDOWN,p0.x-25,y0,SDL_BUTTON_LEFT);
+                mouse(SDL_MOUSEMOTION,p1.x+25,y1,0);
+                mouse(SDL_MOUSEBUTTONUP,p1.x+25,y1,SDL_BUTTON_LEFT);
+                frame();
+                auto sorted=selection_;std::sort(sorted.begin(),sorted.end());
+                check(sorted==std::vector<int>({b1,b2,b3}),"a box keeps the owner with the most units");
+            }
+            // Shift+click on another owner replaces, never mixes.
+            {
+                SDL_SetModState(KMOD_LSHIFT);
+                clickUnit(a2);
+                SDL_SetModState(KMOD_NONE);
+                check(selection_==std::vector<int>{a2},"Shift+click on another owner replaces the selection");
+            }
+            // A gift or capture can never leave two owners either: the front unit wins.
+            selection_={b1,b2};
+            writableWorld().unit(b2)->player=0;
+            frame();
+            check(selection_==std::vector<int>{b1},"after a capture the front unit's owner stays");
+            writableWorld().unit(b2)->player=1;
+            for (int i=0;i<1;++i) frame();
+            const uint64_t afterFixture=world_.stateHash();
+            // Groups are the viewer's own: they never touch the units' squads.
+            clickUnit(b2);
+            handleKey(SDLK_1,KMOD_CTRL);
+            check(selection_==std::vector<int>{b2},"assigning a group keeps the selection");
+            selection_.clear();
+            handleKey(SDLK_1,0);frame();
+            check(selection_==std::vector<int>{b2},"a digit recalls the viewer's group");
+            check(frameUnitP(b2)->squad==0 && world_.stateHash()==afterFixture,"the group is not a squad");
+            check(!trackSel_,"one press does not follow");
+            handleKey(SDLK_1,0);frame();
+            check(trackSel_,"a second press follows the group");
+            trackSel_=false;
+            SDL_SetModState(KMOD_LCTRL);
+            SDL_Event esc{};esc.type=SDL_KEYDOWN;esc.key.keysym.sym=SDLK_ESCAPE;input(esc,W,H);
+            SDL_SetModState(KMOD_NONE);
+            selection_.clear();handleKey(SDLK_1,0);frame();
+            check(selection_.empty(),"Ctrl+Esc empties the group");
+            // T tracks, N steps through the player on show, select keys reach them.
+            clickUnit(b1);
+            press(tak::Act::TrackSelection);
+            check(trackSel_,"T tracks the selection");
+            press(tak::Act::TrackSelection);
+            check(!trackSel_,"T again stops");
+            press(tak::Act::SelectAll);frame();
+            check(selection_.size()>=3 && hudPlayer()==1,"select all stays on the player on show");
+            selection_={b1};press(tak::Act::NextUnit);frame();
+            check(selection_.size()==1 && hudPlayer()==1,"next unit stays on the player on show");
+            selection_.clear();frame();
+            check(!hudShown(),"Esc-cleared selection drops the interface");
+            untouched("the whole run");
+            // The transport, through the bar's own rects. A fixture recording of empty ticks.
+            if (replay) {
+                namespace rb=tak::replaybar;
+                replayBundles_.resize(3000);
+                replayKeyBudget_=uint64_t(1)<<30;
+                std::map<size_t,uint64_t> straight;
+                // Dead before the keyframe at 900: one long enough to be a body, one mid-fall.
+                const int body=spawn("arasword",cx-260,cz-260,0,0),falling=spawn("arasword",cx-200,cz-260,0,0);
+                replayStep(0);
+                check(replayKeys_.size()==1 && replayKeys_[0].tick==0,"tick 0 is kept before the first tick runs");
+                const auto base=world_.tickCount()-replayTick_;
+                straight[replayTick_]=world_.stateHash();
+                while (replayTick_<1800) {
+                    if (replayTick_==500) writableWorld().unit(body)->hp=tak::sim::Fixed();
+                    if (replayTick_==895) writableWorld().unit(falling)->hp=tak::sim::Fixed();
+                    replayTickOnce();straight[replayTick_]=world_.stateHash();
+                }
+                check(replayKeys_.size()==3 && replayKeys_[2].tick==1800,"a keyframe every 30 s of game");
+                {
+                    uint64_t held=0;
+                    for (const auto& key:replayKeys_) held+=key.bytes;
+                    check(held==replayKeyBytes_,"the budget holds the keyframes' own sizes");
+                    check(replayKeys_[1].bytes>=sizeof(tak::sim::World)+world_.units().size()*sizeof(tak::sim::Unit),
+                          "a keyframe's size is what the copy really took");
+                }
+                paused_=true;   // the bar works paused, and a jump runs regardless
+                frame();
+                // Something dies in the part about to be undone: the display must forget it.
+                writableWorld().unit(b3)->hp=tak::sim::Fixed();
+                for (int i=0;i<3;++i) writableWorld().tick(1.f/30);
+                frame();
+                check(anims_.count(b3) && anims_.at(b3).dying,"fixture: the dead unit shows dying");
+                const auto land=[&] { for (int i=0;i<400 && replaySeekTo_;++i) replayStep(1.f/60);frame(); };
+                // Alive here, so alive at every earlier moment.
+                int keeper=0;
+                for (const int id:{factory,builder,a1,a2,b1,b2})
+                    if (const auto* u=frameUnitP(id);!keeper && u && u->alive()) keeper=id;
+                check(keeper!=0,"fixture: someone outlives the fighting");
+                selection_={keeper};trackSel_=true;
+                frame();
+                const rb::Layout l=replayBar_;
+                const float y=l.track.y+l.track.h/2;
+                const auto xFor=[&](size_t tick) { return rb::tickToX(l,tick,3000); };
+                mouse(SDL_MOUSEMOTION,xFor(1500),y,0);
+                mouse(SDL_MOUSEBUTTONDOWN,xFor(1500),y,SDL_BUTTON_LEFT);
+                check(replayDragging_ && replayTick_==1800 && !replaySeekTo_,"a press only picks up the marker");
+                SDL_Event move{};move.type=SDL_MOUSEMOTION;move.motion.x=int(xFor(450));move.motion.y=int(y);
+                move.motion.state=SDL_BUTTON_LMASK;input(move,W,H);
+                check(!replaySeekTo_,"dragging does not jump yet");
+                mouse(SDL_MOUSEBUTTONUP,xFor(450),y,SDL_BUTTON_LEFT);
+                check(replaySeekTo_.has_value() && !replayDragging_,"the release commits the jump");
+                const size_t target=*replaySeekTo_;
+                check(std::abs(int(target)-450)<=10,"the timeline's x picks the tick");
+                land();
+                check(replayTick_==target,"a jump back lands on its tick, paused or not");
+                check(world_.stateHash()==straight.at(target),"a jump back lands on the recorded state");
+                check(world_.tickCount()==base+target,"the sim clock went back too");
+                check(anims_.count(b3) && !anims_.at(b3).dying,"what the future did to a unit's display is gone");
+                cameraFrame(0);
+                check(selection_==std::vector<int>{keeper},"the selection survives the jump");
+                check(trackSel_,"so does T");
+                check(hudPlayer()==int(frameUnitP(keeper)->player),"and the interface");
+                // A jump's frames can lack a unit its landing has: nothing is decided on them.
+                {
+                    const int late=spawn("arasword",cx-260,cz-200,0,0);
+                    selection_={late};trackSel_=true;
+                    frame();
+                    check(hudPlayer()==0,"fixture: a unit that exists only here");
+                    replayJumpTo(200);
+                    frame();cameraFrame(0);
+                    check(replaySeekTo_ && selection_==std::vector<int>{late} && trackSel_,"a frame of a jump prunes nothing");
+                    check(hudPlayer()==0,"and keeps the interface");
+                    land();frame();cameraFrame(0);
+                    check(selection_.empty() && !trackSel_ && hudPlayer()==-1,"a unit not alive at the landing drops out");
+                }
+                // Bodies are dead units' records: a rebuilt display has to bring them back.
+                replayJumpTo(900);land();
+                check(replayTick_==900 && world_.stateHash()==straight.at(900),"a jump lands on a keyframe's own state");
+                {
+                    const auto* dead=frameUnitP(body);
+                    check(dead && !dead->alive() && dead->corpsePhase,"fixture: a body lies on the field");
+                    check(unitType_.registered(body) && unitType_.at(body)!=dead->type->id,"a restored body draws, as its corpse");
+                    check(anims_.count(body) && anims_.at(body).dying && anims_.at(body).ownerVmStopRequested,"and does not die again");
+                    const auto* mid=frameUnitP(falling);
+                    check(mid && !mid->alive() && !mid->corpsePhase,"fixture: a unit in its death fall");
+                    check(unitType_.registered(falling) && anims_.count(falling) && anims_.at(falling).dying,"it still falls");
+                    check(pickRegistered_.complete,"and picking has every record again");
+                }
+                selection_={keeper};frame();
+                // The frame pinned when a restore runs still draws: the display goes with the
+                // frame on show, so no frame of a jump is an empty map.
+                beginFrame();
+                replayJumpTo(300);
+                cosmeticStep(0);
+                check(unitType_.registered(keeper) && anims_.count(keeper),"the frame on show keeps its units through a restore");
+                endFrame();
+                land();
+                check(unitType_.registered(keeper),"and the landing has them");
+                // Silent, and no effects, up to and including the frame that shows the landing.
+                {
+                    tak::sim::UnitType fleshy=*registry_.find("arasword");
+                    fleshy.bodyType="flesh";
+                    const auto queueEffects=[&] {
+                        std::lock_guard<std::mutex> lock(hitQueueMutex_);
+                        tak::sim::World::SoundReq sound;sound.name="alarmmon";sound.tick=world_.tickCount();
+                        missionSoundQueue_.push_back(sound);
+                        tak::sim::World::HitFx hit;hit.x=cx;hit.z=cz;
+                        hit.target=&fleshy;
+                        hitQueue_.push_back({world_.tickCount(),hit});
+                    };
+                    const auto shown=[&] { beginFrame();replayStep(1.f/60);endFrame(); };
+                    shown();
+                    sounded=0;
+                    queueEffects();
+                    shown();
+                    check(sounded>0 && !particles_.empty(),"fixture: outside a jump these play");
+                    sounded=0;
+                    replayJumpTo(1000);
+                    for (int i=0;i<400 && replaySeekTo_;++i) replayStep(1.f/60);
+                    check(!replaySeekTo_ && replayInTransit_,"the jump is done and its landing not on show");
+                    queueEffects();                          // the last ticks the jump ran
+                    // A shake sequence that moved with the jump, as a rewind moves it back.
+                    frameBuf_[published_].shakeReq.mag=8;frameBuf_[published_].shakeReq.dur=1;
+                    shakeSeqSeen_=frameBuf_[published_].shakeReq.seq+1;
+                    screenShake_=true;
+                    shown();
+                    check(!replayInTransit_,"the landing is on show");
+                    check(sounded==0,"a jump's last chunk makes no sound on the landing");
+                    check(particles_.empty() && rings_.empty() && beams_.empty(),"effects from before and during a jump are gone");
+                    check(shakeSeqSeen_==front().shakeReq.seq && shakeTime_==0,"an undone shake does not fire");
+                    screenShake_=false;
+                    shown();
+                    check(sounded==0,"nor on the frame after");
+                    queueEffects();
+                    shown();
+                    check(sounded>0,"the sound is back after the landing");
+                    sounded=0;
+                    particles_.clear();
+                }
+                // A takeover in a future that is gone: the name goes back, and a jump posts nothing.
+                playerAi_[1]=true;
+                replayJumpTo(950);land();
+                check(!playerAi_[1],"a rewind takes back a takeover");
+                {
+                    tak::net::Event takeover;takeover.kind=tak::net::Event::Kind::AiTakeover;takeover.player=1;
+                    notice_.clear();
+                    replayInTransit_=true;noteEvent(takeover);replayInTransit_=false;
+                    check(playerAi_[1] && notice_.empty(),"a jump keeps the state and posts no notice");
+                    playerAi_[1]=false;
+                }
+                // A tree the rewind brought back sways again; a burnt stage does not.
+                {
+                    const auto f=std::find_if(features_.begin(),features_.end(),[](const FeatureInst& i) { return i.simType>=0; });
+                    check(f!=features_.end(),"fixture: a feature the sim knows");
+                    const int type=f->simType;
+                    f->treeType=type;f->simType=type+1;f->tree=false;
+                    lastFeatGen_=UINT32_MAX;syncBurningFeatures();
+                    check(f->simType==type && f->tree,"a tree back to its living stage sways");
+                    f->treeType=-1;f->simType=type+1;f->tree=true;
+                    lastFeatGen_=UINT32_MAX;syncBurningFeatures();
+                    check(f->simType==type && !f->tree,"any other stage does not");
+                }
+                // Held keys: no pause flicker, and a jump key waits for the landing.
+                {
+                    const auto key=[&](SDL_Keycode sym,bool repeat) {
+                        SDL_Event e{};e.type=SDL_KEYDOWN;e.key.keysym.sym=sym;e.key.repeat=repeat ? 1 : 0;input(e,W,H);
+                    };
+                    const bool wasPaused=paused_;
+                    key(SDLK_SPACE,true);
+                    check(paused_==wasPaused,"a held Space toggles once");
+                    replayJumpTo(1000);
+                    key(SDLK_RIGHTBRACKET,true);key(SDLK_LEFTBRACKET,true);
+                    check(replaySeekTo_==size_t(1000),"a held jump key waits for the landing");
+                    key(SDLK_RIGHTBRACKET,false);
+                    check(replaySeekTo_==size_t(1000+rb::kStepTicks),"a fresh press stacks");
+                    land();
+                    replayHoldNudge(+1);
+                    check(replaySeekTo_==size_t(1000+2*rb::kStepTicks),"after the landing a hold steps again");
+                    replayHoldNudge(+1);
+                    check(replaySeekTo_==size_t(1000+2*rb::kStepTicks),"and then waits again");
+                    land();
+                    // Pausing stops a jump where it stands.
+                    paused_=false;
+                    replayJumpTo(200);
+                    replayJumpTo(2500);
+                    const size_t stoppedAt=replayTick_;
+                    key(SDLK_SPACE,false);
+                    check(paused_ && replaySeekTo_==stoppedAt,"pausing stops a running jump");
+                    land();
+                    check(replayTick_==stoppedAt,"it lands where it stood");
+                    check(world_.stateHash()==straight.at(stoppedAt),"on the recorded state");
+                }
+                // A marker let go under a menu, or where nothing could see it, comes off the pointer.
+                {
+                    selection_.clear();frame();
+                    mouse(SDL_MOUSEBUTTONDOWN,xFor(600),y,SDL_BUTTON_LEFT);
+                    check(replayDragging_,"fixture: the marker is in the hand");
+                    SDL_Event esc{};esc.type=SDL_KEYDOWN;esc.key.keysym.sym=SDLK_ESCAPE;input(esc,W,H);
+                    check(exitMenu_,"fixture: Esc opens the menu during the drag");
+                    mouse(SDL_MOUSEBUTTONUP,xFor(600),y,SDL_BUTTON_LEFT);
+                    check(!replayDragging_,"a release under the menu ends the drag");
+                    check(exitMenu_,"and fires no menu button");
+                    exitMenu_=false;
+                    land();
+                    mouse(SDL_MOUSEBUTTONDOWN,xFor(700),y,SDL_BUTTON_LEFT);
+                    SDL_Event lost{};lost.type=SDL_MOUSEMOTION;lost.motion.x=int(xFor(800));lost.motion.y=int(y);lost.motion.state=0;
+                    input(lost,W,H);
+                    check(!replayDragging_ && !replaySeekTo_,"motion with the button up drops the marker, with no jump");
+                    mouse(SDL_MOUSEBUTTONUP,xFor(800),y,SDL_BUTTON_LEFT);
+                    check(!replaySeekTo_,"and the release that follows does nothing");
+                }
+                replayJumpTo(900);land();
+                selection_.clear();
+                // Forward from there over a keyframe, then << snapping to one.
+                replayJumpTo(1000);land();
+                check(replayTick_==1000 && world_.stateHash()==straight.at(1000),"a jump forward lands on the recorded state");
+                const auto hit=[&](const rb::Rect& r) { clickAt(r.x+r.w/2,r.y+r.h/2); };
+                hit(l.forward);land();
+                check(replayTick_==1000+rb::kStepTicks,">> jumps 30 s");
+                check(replayHeld_==0,"releasing >> stops the repeat");
+                hit(l.back);land();
+                check(replayTick_==900,"<< snaps to the keyframe near its target");
+                hit(l.play);
+                check(!paused_,"the play button toggles");
+                hit(l.play);
+                check(paused_,"and back");
+                const int speed=replaySpeed_;
+                hit(l.faster);
+                check(replaySpeed_==speed+1 && speedMult()==rb::speedAt(replaySpeed_),"+ steps the speed");
+                hit(l.slower);
+                check(replaySpeed_==speed,"- steps it back");
+                for (int i=0;i<20;++i) handleKey(SDLK_EQUALS,0);
+                check(speedMult()==256,"the top speed is 256x");
+                replaySpeed_=speed;
+                handleKey(SDLK_SPACE,0);
+                check(!paused_,"Space plays");
+                handleKey(SDLK_SPACE,0);
+                handleKey(SDLK_RIGHTBRACKET,KMOD_SHIFT);land();
+                check(replayTick_==900+rb::kLongStepTicks || replayTick_==3000,"Shift+] jumps 5 minutes, or to the end");
+                handleKey(SDLK_LEFTBRACKET,0);land();
+                check(replayTick_<3000,"[ jumps back");
+                // A press between the controls goes no further than the bar.
+                selection_.clear();frame();
+                const auto gapX=l.speed.x+l.speed.w+l.faster.w+40;
+                clickAt(gapX,l.speed.y+2);
+                check(selection_.empty() && !dragging_,"the bar swallows a press on its own background");
+                // The budget is real bytes: squeezed, the keyframes thin to fit it.
+                check(replayKeys_.size()==4 && replayKeys_.back().tick==2700 && replayTick_<2700,"fixture: one keyframe to lay again");
+                replayKeyBytes_-=replayKeys_.back().bytes;
+                replayKeys_.pop_back();
+                replayKeyBudget_=replayKeyLast_*3+replayKeyLast_/2;
+                replayJumpTo(3000);land();
+                check(replayKeyBytes_<=replayKeyBudget_ && replayKeys_.size()==3,"keyframes stay inside the budget");
+                sounded=0;
+                sounds_.setEffectsMuted(false);
+                replayBundles_.clear();
+            }
+            // The rule is one predicate: as a seated player the same fixture acknowledges.
+            spectating_=false;replayMode_=false;
+            selection_={spawn("arasword",cx-300,cz-200,0,0)};   // the replay's fighting may have left nobody
+            frame();
+            const auto button=guiBtnRects_.front().first;
+            clickAt(button.x+button.w/2,button.y+button.h/2);
+            check(sounded>0,"a seated player's button press is heard: the sound check can fail");
+            pendingCmd_=0;
+            press(tak::Act::Move);
+            check(pendingCmd_=='m',"a seated player's order key still arms");
+            pendingCmd_=0;
+            sounds_.requestHook=nullptr;
+            std::fprintf(stderr,"PASS: watch only (%s)\n",mode);
             return;
         }
         if (tak::devFlag("TAK_AIR_OVER_FX_TEST")) {

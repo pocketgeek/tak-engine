@@ -19,6 +19,37 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.16
+*2026-11-01 · protocol 309 · replay format 15 · does not play with 0.9.15 or earlier, nor their replays*
+
+- **Replays have proper controls.** A clean bar across the top with a clickable
+  timeline, rewind, play/pause, fast forward and speeds from 0.25x to 256x (the label
+  shows the real speed when a machine cannot keep up). Space pauses, **+** and **−**
+  change speed, **[** and **]** jump 30 seconds, Shift with them 5 minutes. A jump lands
+  on exactly the recorded game.
+- **Watching stays watching.** In replays and when spectating you can select any unit,
+  with no sound or acknowledgement, and give it no orders. The right side shows that
+  unit's player, with mana, buttons and build queues. T tracks, and Ctrl and Alt number
+  groups are your own.
+- **An infinite-queue builder's units start their rally orders straight away,** without
+  walking to an exit spot first. When it has no room for the next unit, it moves one
+  idle unit out of the way, so parked units near it can be nudged.
+- **An attack rally step a unit cannot do is skipped,** instead of leaving it on the pad.
+- **Surrender** in the game menu (click twice) ends your part in a game and shows the
+  defeat screen. It replaces Main Menu and Quit while you play.
+- **Result screens:** the left door says Title Screen. The right door says New Game in a
+  single-player game, Game Select in multiplayer, and Next Mission or Retry in a campaign.
+- **Game Select signs you back in without your password,** using a temporary token held
+  in memory for up to 12 hours and revoked when you quit. Encrypted servers only; on a
+  plaintext server you type your password.
+- **The Benchmark screen can run Retail or Legion,** remembers your choice, and shows the
+  mode on its results. The results panel now fits small windows.
+- **The streaming panel's key can be rebound** in Controls; it was fixed on F9.
+- **START says STARTING...** as soon as you click it.
+
+Full notes: [release-0.9.16-notes.md](docs/release-0.9.16-notes.md) ·
+validation: [release-0.9.16-validation.md](docs/release-0.9.16-validation.md)
+
 ## 0.9.15
 *2026-11-01 · protocol 308 · replay format 15 · plays with 0.9.14, and its replays*
 

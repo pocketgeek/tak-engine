@@ -1,5 +1,6 @@
 #include "server/accounts.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -271,6 +272,95 @@ bool AccountStore::noteLogin(std::string_view user, std::string* err) {
     it->second.lastLoginUnix = nowUnix();
     ++it->second.logins;
     return save(err);
+}
+
+// ---- SessionTokens ---------------------------------------------------------
+
+std::vector<uint8_t> SessionTokens::issue(const Account& a, uint64_t nowMs, const Chain* rotated) {
+    std::vector<uint8_t> token = crypto::randomVec(auth::kTokenLen);
+    auto& held = byFold_[auth::foldUsername(a.name)];
+    const auto live = [](const Entry& e) { return !e.spent; };
+    if (size_t(std::count_if(held.begin(), held.end(), live)) >= kPerAccount)
+        drop(held, std::find_if(held.begin(), held.end(), live)->chain);
+    if (held.size() - size_t(std::count_if(held.begin(), held.end(), live)) >= kSpentPerAccount)
+        held.erase(std::find_if_not(held.begin(), held.end(), live));
+    Entry e;
+    e.hash = auth::tokenHash(a.cred, a.name, token);
+    e.chain = rotated ? rotated->id : ++nextChain_;
+    e.expiresMs = rotated ? rotated->expiresMs : nowMs + kLifetimeMs;
+    held.push_back(e);
+    return token;
+}
+
+size_t SessionTokens::find(const std::vector<Entry>& held, const crypto::Digest& want) {
+    size_t found = held.size();
+    for (size_t i = 0; i < held.size(); ++i)
+        if (crypto::equalCT(held[i].hash, want)) found = i;
+    return found;
+}
+
+void SessionTokens::drop(std::vector<Entry>& held, uint64_t chain) {
+    held.erase(std::remove_if(held.begin(), held.end(),
+                              [&](const Entry& e) { return e.chain == chain; }),
+               held.end());
+}
+
+bool SessionTokens::spend(const Account& a, const std::vector<uint8_t>& token, uint64_t nowMs,
+                          Chain* chain) {
+    auto it = byFold_.find(auth::foldUsername(a.name));
+    if (it == byFold_.end() || token.size() != auth::kTokenLen) return false;
+    auto& held = it->second;
+    const size_t found = find(held, auth::tokenHash(a.cred, a.name, token));
+    if (found == held.size()) return false;
+    Entry& e = held[found];
+    const uint64_t line = e.chain;
+    bool good = nowMs < e.expiresMs;
+    if (good && e.spent) {
+        good = nowMs < e.retryUntilMs;
+        for (size_t i = found + 1; i < held.size(); ++i)
+            if (held[i].chain == line && held[i].spent && held[i].retryUntilMs) good = false;
+        for (size_t i = found + 1; good && i < held.size(); ++i)
+            if (held[i].chain == line) held[i].spent = true;
+    } else if (good) {
+        e.spent = true;
+        e.retryUntilMs = nowMs + kRetryMs;
+    }
+    if (!good) {
+        drop(held, line);
+        if (held.empty()) byFold_.erase(it);
+        return false;
+    }
+    if (chain) *chain = {line, e.expiresMs};
+    return true;
+}
+
+bool SessionTokens::revoke(const Account& a, const std::vector<uint8_t>& token) {
+    auto it = byFold_.find(auth::foldUsername(a.name));
+    if (it == byFold_.end() || token.size() != auth::kTokenLen) return false;
+    auto& held = it->second;
+    const size_t found = find(held, auth::tokenHash(a.cred, a.name, token));
+    if (found == held.size()) return false;
+    drop(held, held[found].chain);
+    if (held.empty()) byFold_.erase(it);
+    return true;
+}
+
+void SessionTokens::expire(uint64_t nowMs) {
+    if (nowMs < nextSweepMs_) return;
+    nextSweepMs_ = nowMs + 60 * 1000;
+    for (auto it = byFold_.begin(); it != byFold_.end();) {
+        auto& held = it->second;
+        held.erase(std::remove_if(held.begin(), held.end(),
+                                  [&](const Entry& e) { return e.expiresMs <= nowMs; }),
+                   held.end());
+        it = held.empty() ? byFold_.erase(it) : std::next(it);
+    }
+}
+
+size_t SessionTokens::size() const {
+    size_t n = 0;
+    for (const auto& [fold, held] : byFold_) n += held.size();
+    return n;
 }
 
 // ---- LoginThrottle ---------------------------------------------------------

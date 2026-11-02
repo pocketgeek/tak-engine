@@ -95,13 +95,13 @@ uint64_t production(bool mobile,bool rally,bool serial) {
             // releases it with GetBuilt's PARK instead, whose ring lies clear
             // of the factory: an output born outside it (this unscripted
             // producer's) may park beside its own birthplace.
-            // A rally-only release (a factory's output) is first seen where born.
+            // A rally-only release (any producer's) is first seen where born.
             if(!births.contains(u.id)) {
                 for(const auto& order:u.orders) {
                     if(order.productionExit){births.emplace(u.id,*order.productionExit);break;}
                     if(order.park){births.emplace(u.id,std::pair{u.x,u.z});parked.insert(u.id);break;}
                 }
-                if(!births.contains(u.id) && rally && !mobile)births.emplace(u.id,std::pair{u.x,u.z});
+                if(!births.contains(u.id) && rally)births.emplace(u.id,std::pair{u.x,u.z});
             }
             if(u.orders.empty()) {
                 const auto origin=births.find(u.id);
@@ -124,6 +124,7 @@ uint64_t production(bool mobile,bool rally,bool serial) {
     int built=0,idle=0;
     for(const auto& u:w.units())if(u.id!=id&&u.alive()&&!u.underConstruction){++built;idle+=u.orders.empty();
         if(!u.orders.empty())std::printf("production mobile=%d rally=%d id=%d at=%.1f,%.1f orders=%zu\n",mobile,rally,u.id,u.x.toFloat(),u.z.toFloat(),u.orders.size());}
+    std::printf("production mobile=%d rally=%d serial=%d tick=%u built=%d hash=%016llx\n",mobile,rally,serial,w.tickCount(),built,(unsigned long long)w.stateHash());
     check(stopped&&built>=24,"infinite queue produced the requested observation cohort");
     check(!rally||controllerSeen,"produced rally points receive a ground controller");
     check(idle==built,"all completed outputs stop after their exit/rally move");
@@ -137,11 +138,12 @@ void mobileFightRally() {
     check(w.unit(id)->orders.empty()&&w.unit(id)->rally.size()==1&&w.unit(id)->rally.front().attackMove,
         "infinite mobile producer retains the fight-move rally flag");
 }
-void exitRally(PathfindingMode mode,bool rally) {
+// `queued`: the player Shift-queues a move onto the output during its exit.
+void exitRally(PathfindingMode mode,bool queued) {
     World w;setup(w,mode);
     auto type=soldier(),producer=soldier();producer.isBuilder=true;producer.workerTime=1000;
     const int id=w.spawn(&producer,600,600,0,0);w.player(0).mana=1e9;
-    w.setRepeat(id,&type);if(rally)w.order(id,1600,640,false);
+    w.setRepeat(id,&type);
     int child=0;
     for(int tick=0;tick<600&&!child;++tick) {
         w.tick(1.f/30);
@@ -151,12 +153,13 @@ void exitRally(PathfindingMode mode,bool rally) {
     check(w.unit(child)->orders[World::currentLeg(w.unit(child)->orders)].productionExit.has_value()==(mode==PathfindingMode::Legion),
           "only automatic Legion exits receive birthplace clearance");
     w.stop(id);
+    if(queued)w.order(child,1600,640,true);
     auto* u=w.unit(child);u->x=Fixed::fromInt(1000);u->z=Fixed::fromInt(900);u->bodyBlockStreak=2;
     ticks(w,5);
     bool rallyActive=false;
     for(const auto& order:w.unit(child)->orders)
         if(order.goal){rallyActive=order.missionTarget==std::pair{Fixed::fromInt(1600),Fixed::fromInt(640)};break;}
-    check(!rallyActive,"a blocked exit does not hand over to its rally early");
+    check(!rallyActive,"a blocked exit does not hand over to the order behind it early");
 }
 void combatResume(PathfindingMode mode,bool patrol) {
     World w;setup(w,mode);auto type=soldier(),enemy=soldier();enemy.maxVel=Fixed();
@@ -533,7 +536,8 @@ void mazeProduction(const char* data) {
         hunter.buildTime=1;hunter.buildCost=0;
         UnitType producer{};producer.id="maze-producer";producer.footX=6;producer.footZ=8;
         producer.maxHp=10000;producer.isBuilder=true;producer.workerTime=1000;
-        if(mobile){producer.maxVel=hunter.maxVel;producer.canMove=true;}
+        // A UnitType's default maxVel is mobile: a building must clear it.
+        producer.maxVel=mobile?hunter.maxVel:Fixed();producer.canMove=mobile;
         const int id=w.spawn(&producer,8448,24320,0,0);w.setRepeat(id,&hunter);
         if(rally)w.order(id,4864,16640,false);
         w.updateNavigationExploration();auto& known=w.editNavigationExploration();
@@ -584,8 +588,8 @@ uint64_t trollRally(const TypeRegistry& registry,bool serial,const tak::hpi::Vfs
     for(const auto& u:w.units())if(u.id!=id&&u.alive()&&!u.underConstruction&&!u.orders.empty())
         std::printf("unsettled Troll id=%d at=%.1f,%.1f orders=%zu legion=%d\n",u.id,u.x.toFloat(),u.z.toFloat(),u.orders.size(),
             w.legionNavigator()?int(w.legionNavigator()->mission(u)):-1);
-    check(stopped&&built==count&&idle==built,"all Beast Handler Trolls finish their exit and shared rally orders");
-    if(selectedMode==PathfindingMode::Legion)check(legionExit,"Legion routes the Trolls' production exits");
+    check(stopped&&built==count&&idle==built,"all Beast Handler Trolls finish their shared rally orders");
+    if(selectedMode==PathfindingMode::Legion)check(!legionExit,"no Troll takes a production exit ahead of its rally");
     if(!maze)for(const auto& u:w.units())if(u.id!=id&&u.alive()&&!u.underConstruction) {
         const int64_t dx=u.x.floorInt()-1600,dz=u.z.floorInt()-640;
         const int64_t radius=int64_t(count)*48+32;

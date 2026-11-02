@@ -1899,12 +1899,24 @@ call happens either way, and all 36 padding draws match. PARK's ring (already
 ported in `retailpark.h`, 8,192 cases in `check_ground_park.py`, re-run against
 this change) is footX*16 + padding + half the factory's footprint diagonal,
 out to three times that, around the factory; it ends on arrival (0x100) or
-when a next order is ready, and re-rolls on failure without limit. A mobile
-builder's output gets nothing.
+when a next order is ready, and re-rolls on failure without limit.
+
+A mobile builder's output never reaches this branch, and a mobile builder has
+no rally to copy. MobileBuild has its own release (icd, emulated): on a repeat
+(quantity 10000000, the test at `0x405c12`) the block at `0x405c1f` gives the
+output `PARK` with no target, permanent 0 and padding
+`(rand(3)+rand(3)+rand(3)+1)*16`, the 1 being 5 for a canfly builder. A limited
+quantity gives it nothing.
 
 Port (protocol 295): `World::parkProductionOutput` for every output of a
-structure, flyers included (flight branch below); mobile producers keep the
-exit step.
+structure, flyers included (flight branch below). Mobile producers keep the
+exit step, which is ours, for an output with no rally; MobileBuild's PARK is
+not ported. Since protocol 309 a rally on a mobile producer, also ours, starts
+straight away with no exit step ahead of it, as a factory's always has. An
+output with nothing else to do still takes the step, and that includes an output
+every step of whose rally dropped: a dead target, or one it has no weapon for,
+which is tested at the hand-over (a leg the first tick would drop would leave it
+standing where it was made). A structure output keeps the plan in its own rally.
 Ours, not retail: retail tests no reachability, so a Navy Yard on a pond could
 park its ship in the next body of water, and a permanent PARK that cannot be
 reached never ends, holding the pad. The ring is kept when any cell of it is
@@ -1941,8 +1953,8 @@ stored open (`Order::patrolOpen`) and copied that way, so an output closes
 the loop from where it starts that leg, as a unit's own queued patrol does
 ("move A, Shift-patrol B" patrols A <-> B). **Stop** clears the rally with
 the queue. The rally plan is folded into `World::stateHash` when set. A
-mobile builder repeating production (retail gives its output nothing) holds
-the same rally plan: while `repeatType` is set, Move, Patrol, Attack and
+mobile builder repeating production (retail has no rally there and gives its
+output a PARK of its own, above) holds the same rally plan: while `repeatType` is set, Move, Patrol, Attack and
 fight-move all set the rally and leave the builder producing in place
 (`applyCommand` rejects its other orders); with finite or no production they
 command the builder itself. Ending the repeat (Stop, the +++ toggle, or
@@ -2062,10 +2074,11 @@ pad nor block the factory's next output. Flyers are not Legion-routed, so
 both pathfinding modes release them identically.
 
 Mobile producers are deliberately unchanged: retail's GetBuilt releases only a
-structure builder's output (bit 0x2000000) and gives a mobile producer's output
-nothing, so it would stand where it was made. Ours keeps the exit step there,
-because a mobile producer (a Zhon builder, Ctrl+click repeat production)
-builds its next unit on the same spot. (The Legion column behind the first
+structure builder's output (bit 0x2000000), and a repeating MobileBuild gives
+its output a PARK of its own (`0x405c07`, above). Ours keeps the exit step for
+an output with no rally, because a mobile producer (a Zhon builder, Ctrl+click
+repeat production) builds its next unit on the same spot. With a rally the
+output flies or walks straight to it (protocol 309). (The Legion column behind the first
 ground output is gone: see "Legion: a spot of its own" above.)
 
 Placement over scenery (S yards, icd + emulation, 2026-10-30): the FBI parse
@@ -3850,6 +3863,26 @@ builder player's own idle and guarding units on the site just off it
 build order and cursor accept such a site (`canPlaceOrder`). Other players'
 units and own units with other orders still make the builder wait as retail.
 `pathblock_test` checks both modes.
+
+**Room for the next output (protocol 309, a deliberate deviation).** The exit
+step used to carry every output of a mobile producer out of the 12-cell area its
+next output may be made in. A rally that starts at once does not: one that ends
+close by, or lies out of reach (a ship rallied on land), leaves the output in that
+area, and when it was full the producer stopped for good, repeat on and no error.
+Retail cannot say what to do here, as its mobile builder has no rally and BUILD
+stage 2 never shoves a body. With no room left, a mobile producer that has a rally
+sends one idle unit away every 15 ticks (`World::clearProductionRoom`): the units
+`yieldsToSite` allows, on the output's plane, the outermost in the area first,
+away from the area's centre, at least the exit step's distance and past its edge.
+One with a body right ahead of it stays, or it would only hold an order where it
+stands; when that is all of them, the nearest idle unit beyond the area goes, which
+opens their way. The move is tagged `productionExit`: held up once clear of where
+it stood, it is done. A scripted pad is cleared with `clearBuildSite`. A producer
+with no rally never searches, so it stops where it always did. Outputs on a short
+patrol are never idle and do not yield: a patrol rally about 64 px away still stops
+production sooner than the exit step did. A factory with a rally on its pad is
+unchanged: retail's rule, nothing moves the body. `production_test` pins all of
+this.
 
 Two false starts worth recording, because both are easy to repeat: thread counts
 do NOT work as the test observable. A factory legitimately keeps a thread open

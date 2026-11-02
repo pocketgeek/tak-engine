@@ -39,6 +39,7 @@ public:
         map_.erase(id);
         if (id >= 0 && size_t(id) < flags_.size()) flags_[size_t(id)] = 0;
     }
+    void clear() { map_.clear(); flags_.clear(); }
     size_t flagBytes() const { return flags_.capacity(); }
 private:
     Map map_;

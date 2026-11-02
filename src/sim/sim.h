@@ -45,6 +45,7 @@
 #include <algorithm>
 #include <atomic>
 #include <thread>
+#include "sim/copymember.h"
 #include "sim/pathsearch.h"
 #include "sim/pathmode.h"
 #include "sim/legion.h"
@@ -1408,15 +1409,16 @@ struct alignas(64) Unit {
     HeapOptional<RetailFlightGoal> conjureHoverGoal;
     std::vector<int> cargo;
     // BUILD stage 2's refusal sleep (401df4): the tick a factory whose output
-    // site was refused may test it again. 0 = not waiting. Hashed when set.
+    // site was refused may test it again; also a rallied mobile producer's next
+    // room search (clearProductionRoom). 0 = not waiting. Hashed when set.
     uint32_t productionRetryTick = 0;
     // Factory/conjure progress past buildProgress, in 1/65536 of a tick of work.
     // Nonzero only when the player's construction share (Player::constructionShare)
     // bought part of a tick. Hashed when set.
     uint16_t buildFraction = 0;
     // RALLY orders for a production building (or a mobile builder while it repeats
-    // production): what the units it makes should do once they have walked clear
-    // of the exit. Kept OUT of `orders` on purpose -- a
+    // production): what the units it makes should do, from the moment they are
+    // finished. Kept OUT of `orders` on purpose -- a
     // structure must never enter the mover (it has no velocity, but the mover still
     // turns a unit's heading toward its goal, which is how right-clicking used to spin
     // a keep). Nothing reads this but tickProduction, which copies it onto each new
@@ -1810,6 +1812,12 @@ public:
     uint64_t version() const { return version_; }
     void setRoads(const std::vector<uint8_t>* roads) {
         roads_ = (roads && roads->size() == size_t(w_) * size_t(h_)) ? roads : nullptr;
+    }
+    // After a World copy: the same overlays, at the new world's addresses. Unlike
+    // setObstacles this keeps the clearance grid, which a copy holds up to date.
+    void rebindOverlays(const std::vector<uint8_t>* obst, const std::vector<uint8_t>* roads) {
+        if (obst_) obst_ = obst;
+        if (roads_) roads_ = roads;
     }
     bool roadAt(int cx, int cz) const {
         return roads_ && (*roads_)[size_t(cz) * w_ + cx] != 0;
@@ -2719,6 +2727,24 @@ public:
     // (src/sim/mission.h). Ticked inside tick(), and folded into stateHash().
     World();                                                    // out-of-line (mission_ member)
     ~World();                                                   // out-of-line (mission_ dtor)
+    // A separate, exact copy of this world between ticks: from here it runs as this
+    // one would, byte for byte, sharing nothing it can change (the type registry and
+    // the map data it reads are the caller's, as for any World). Its thread pool is its
+    // own and comes on first use; observers are left behind. Replay seeking keeps these
+    // as keyframes (client/replaybar.h).
+    std::unique_ptr<World> clone() const;
+    // Become an exact copy of `from` (a clone, or another world) without moving: anything
+    // holding this World still holds it. Keeps this world's thread pool. A throw (out of
+    // memory) leaves this world unusable.
+    void restoreFrom(const World& from);
+private:
+    World(const World& from);
+    World& operator=(const World& from);
+    void bindPathService();
+    // After a defaulted copy: everything that points into a World (or back at it)
+    // points into this one, and the members a copy leaves empty are cloned.
+    void adoptCopy(const World& from);
+public:
     void setMission(std::unique_ptr<MissionScript> m);
     MissionScript* mission() { return mission_.get(); }
     int missionOutcome() const;   // 0 none/running / +1 victory / -1 defeat
@@ -3025,6 +3051,10 @@ private:
     // able to move and idle or guarding (its guard resumes afterwards).
     bool yieldsToSite(const Unit& k, int player) const;
     void clearBuildSite(const Unit& builder, const UnitType* type, Fixed x, Fixed z);
+    // A mobile producer with a rally has no room for its next output: one idle
+    // unit walks out of the area the output may be made in. (x,z) is a scripted
+    // producer's pad; the unscripted search has no point of its own.
+    void clearProductionRoom(Unit& producer, const UnitType* type, Fixed x, Fixed z);
     bool pointOutside(const Unit& k, int left, int right, int top, int bottom, int rx, int rz,
                       const std::array<bool,4>& avoid, const std::vector<std::array<int,4>>& taken,
                       int& x, int& z) const;
@@ -3678,7 +3708,7 @@ private:
     void verifyNear(float x, float z, float radius, uint64_t players) const;
 #endif
 
-    std::atomic<uint32_t> featGen_{0};   // see featGeneration()
+    CopyableAtomic<uint32_t> featGen_{0};   // see featGeneration()
     void bumpFeatGen() { featGen_.fetch_add(1, std::memory_order_release); }
 
     bool doubleSight_ = false;  // synchronized skirmish/MP rule; campaigns use authored sight
@@ -3728,7 +3758,7 @@ private:
     uint64_t retiredHash_=0;
     int creditedOwner(int id) const;
     void compactRetiredUnits();
-    std::unique_ptr<MissionScript> mission_;   // optional campaign mission runner
+    LeftEmptyOnCopy<std::unique_ptr<MissionScript>> mission_;   // optional campaign mission runner
     // Mission orders' state (ScriptedOrder), indexed by Order::scripted - 1.
     // Appended in order-creation order on every peer; hashed through the
     // orders that refer to it. Full (16-bit index), it is compacted: entries
@@ -3742,7 +3772,7 @@ private:
     bool scriptedWaitDone(Unit& u);
     // A factory finished a unit of `t`: a scripted Train at its head counts it.
     void noteScriptedProduction(Unit& producer, const UnitType* t);
-    std::unique_ptr<ScenarioScript> scenario_; // optional .crt trigger runner
+    LeftEmptyOnCopy<std::unique_ptr<ScenarioScript>> scenario_; // optional .crt trigger runner
     std::vector<uint8_t> forcedDefeat_;        // scenario Victory/Defeat: forced-defeated slots
     std::vector<int> justDied_;                // unit ids that died this tick (mission/scenario hook)
     std::vector<std::pair<float, float>> manaSpots_;
@@ -3899,7 +3929,7 @@ private:
     int simWorkers_ = -1;
     // The intra-tick worker pool (0 workers when serialThreads_), created on
     // first use; see simPool().
-    std::unique_ptr<SimPool> pool_;
+    LeftEmptyOnCopy<std::unique_ptr<SimPool>> pool_;
     SimPool& simPool();
     std::vector<uint8_t> hadMonarch_;   // per-player: ever fielded a Monarch (for the loss rule)
     bool godsEnabled_ = false;
@@ -3938,7 +3968,7 @@ private:
     void allocateEntitySlot(int unitId,int player);
     void releaseEntitySlot(int unitId);
     PathfindingMode pathfindingMode_=PathfindingMode::Retail;
-    std::unique_ptr<LegionNavigator> legion_; // Legion mode only
+    LeftEmptyOnCopy<std::unique_ptr<LegionNavigator>> legion_; // Legion mode only
     ConvoyTable convoys_;                     // Legion mode only; hashed while not empty
     uint32_t joinConvoy(const Unit& u, ConvoyClass cls, Fixed x, Fixed z);
     uint32_t joinArea(int player, ConvoyClass cls, Fixed x, Fixed z, bool shared, uint32_t key);

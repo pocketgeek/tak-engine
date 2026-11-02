@@ -1,6 +1,7 @@
 // authrogue: points a REAL MpClient at a HOSTILE server and proves it walks away.
 //
 //   authrogue
+//   authrogue --live <tls://host> <port> <data hash in hex>
 //
 // The login's whole claim is that a machine posing as the server gains nothing:
 // it cannot sign you in, it cannot learn your password, and it cannot skip the
@@ -11,6 +12,9 @@
 // Each scenario is a fake server on a loopback port, speaking the real framing.
 // The client must end up NOT signed in for every attack, and signed in for the
 // one honest control.
+//
+// --live instead drives the client's sign-in token against a REAL takserver over TLS
+// (account_auth_network_test.py runs it; SSL_CERT_FILE must trust the server).
 //
 // A dev harness; not shipped in a game.
 
@@ -24,6 +28,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <thread>
 #include <vector>
@@ -49,6 +54,7 @@ enum class Attack {
     BareWelcome,              // ask for a login, then just let them in
     ChallengeStorm,           // many challenges, to make the client derive in a loop
     Honest,                   // the control: a correct exchange that must succeed
+    TokenInTheClear,          // honest, and offers a sign-in token on this plaintext link
 };
 
 const char* kUser = "curtis";
@@ -56,7 +62,7 @@ const char* kPass = "correct horse battery";
 constexpr uint32_t kIters = 4096;   // the real one is 600k; keep the test quick
 
 // One connection's worth of fake server. Runs on its own thread.
-void serveOnce(int listenFd, Attack attack, std::atomic<bool>* done) {
+void serveOnce(int listenFd, Attack attack, std::atomic<bool>* done, std::atomic<bool>* sawToken) {
     int fd = -1;
     for (int i = 0; i < 4000 && fd < 0; ++i) {
         fd = int(accept(listenFd, nullptr, nullptr));
@@ -79,6 +85,7 @@ void serveOnce(int listenFd, Attack attack, std::atomic<bool>* done) {
         w.u8(uint8_t(st));
         if (sig) w.bytes(sig->data(), sig->size()); else w.bytes(nullptr, 0);
         w.str(msg);
+        if (attack == Attack::TokenInTheClear) w.bytes(std::vector<uint8_t>(auth::kTokenLen, 0x77));
         c.send(Msg::AuthResult, w);
     };
     auto welcome = [&] {
@@ -97,6 +104,8 @@ void serveOnce(int listenFd, Attack attack, std::atomic<bool>* done) {
             if (f.kind == Msg::Hello) {
                 r.u32(); r.str(); r.u64(); r.str();
                 c.send(Msg::AuthRequired);
+            } else if (f.kind == Msg::AuthToken) {
+                sawToken->store(true);
             } else if (f.kind == Msg::AuthBegin) {
                 user = r.str();
                 cnonce = r.bytes(auth::kNonceLen);
@@ -164,20 +173,23 @@ struct Outcome {
     MpClient::State state = MpClient::State::Offline;
     std::string err;
     double seconds = 0;
+    bool sawToken = false;       // a sign-in token reached the fake server
 };
 
-Outcome run(Attack attack, uint16_t port) {
+// `token` (optional): the client's sign-in token; `tokenSignIn` spends it.
+Outcome run(Attack attack, uint16_t port, SessionToken* token = nullptr, bool tokenSignIn = false) {
     std::string err;
     int lf = listenOn(port, err, /*loopbackOnly=*/true);
     if (lf < 0) { Outcome o; o.err = "listen: " + err; return o; }
 
-    std::atomic<bool> done{false};
-    std::thread srv(serveOnce, lf, attack, &done);
+    std::atomic<bool> done{false}, sawToken{false};
+    std::thread srv(serveOnce, lf, attack, &done, &sawToken);
 
     Outcome o;
     {
         MpClient cl;
-        cl.setLogin(kUser, kPass);
+        cl.setLogin(kUser, tokenSignIn ? "" : kPass);
+        cl.setSessionToken(token, tokenSignIn);
         const auto t0 = std::chrono::steady_clock::now();
         if (!cl.connect("127.0.0.1", port, kUser)) {
             o.err = "connect: " + cl.error();
@@ -195,6 +207,7 @@ Outcome run(Attack attack, uint16_t port) {
     }
     srv.join();
     sockClose(lf);
+    o.sawToken = sawToken.load();
     return o;
 }
 
@@ -202,10 +215,90 @@ bool signedIn(const Outcome& o) {
     return o.auth == MpClient::Auth::Ok || o.auth == MpClient::Auth::Created;
 }
 
+// One real login against a real server: `token` is where it keeps what it earns, and
+// with `password` empty it signs in by spending that.
+MpClient::Auth login(const std::string& host, uint16_t port, uint64_t dataHash,
+                     const std::string& password, SessionToken& token) {
+    MpClient cl;
+    cl.setDataHash(dataHash);
+    cl.setLogin(kUser, password);
+    cl.setSessionToken(&token, password.empty());
+    if (!cl.connect(host, port, kUser)) return MpClient::Auth::Failed;
+    const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    while (!cl.handshakeSettled() && std::chrono::steady_clock::now() < limit) {
+        if (!cl.poll()) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    const auto result = cl.auth();
+    if (result != MpClient::Auth::Failed) check(cl.state() == MpClient::State::Lobby, "reaches the lobby");
+    cl.disconnect();
+    return result;
+}
+
+int live(const std::string& host, uint16_t port, uint64_t dataHash) {
+    SessionToken token;
+    std::printf("the sign-in token against a real server\n");
+    check(login(host, port, dataHash, kPass, token) == MpClient::Auth::Created,
+          "a password login registers");
+    check(token.heldFor(host, port), "and earns a token");
+    const std::vector<uint8_t> first = token.secret;
+
+    check(login(host, port, dataHash, "", token) == MpClient::Auth::Ok, "the token signs in");
+    check(token.heldFor(host, port) && token.secret != first, "and is replaced by the next");
+
+    // A client whose link took the reply still holds the token it sent.
+    SessionToken lost;
+    lost.host = host; lost.port = port; lost.account = kUser; lost.secret = first;
+    check(login(host, port, dataHash, "", lost) == MpClient::Auth::Ok,
+          "a token whose reply was lost can be sent again");
+    check(lost.heldFor(host, port) && lost.secret != first, "and earns the next");
+    check(login(host, port, dataHash, "", token) == MpClient::Auth::Failed,
+          "what the lost reply carried is refused");
+    check(token.secret.empty(), "and the client forgets it");
+    check(login(host, port, dataHash, "", lost) == MpClient::Auth::Failed,
+          "and that used the line up: the resend's token goes too");
+
+    check(login(host, port, dataHash, kPass, token) == MpClient::Auth::Ok, "the password signs in");
+    SessionToken elsewhere;
+    elsewhere.host = "tls://elsewhere.invalid"; elsewhere.port = port;
+    elsewhere.account = kUser; elsewhere.secret = token.secret;
+    check(login(host, port, dataHash, "", elsewhere) == MpClient::Auth::Failed,
+          "a token from another address is never sent");
+    check(login(host, port, dataHash, "", token) == MpClient::Auth::Ok,
+          "the current one did not go (it still signs in)");
+
+    SessionToken stale;
+    stale.host = host; stale.port = port; stale.account = kUser; stale.secret = token.secret;
+    MpClient::revokeSessionToken(token, dataHash);
+    check(token.secret.empty(), "quitting wipes the token");
+    check(login(host, port, dataHash, "", stale) == MpClient::Auth::Failed,
+          "and the server no longer takes it");
+
+    check(login(host, port, dataHash, kPass, token) == MpClient::Auth::Ok,
+          "the password still signs in");
+    check(token.heldFor(host, port), "and earns a new token");
+
+    // A second password login replaces the token; quitting has to sign that one out too.
+    stale.secret = token.secret;
+    check(login(host, port, dataHash, kPass, token) == MpClient::Auth::Ok, "so does another");
+    check(token.heldFor(host, port) && token.secret != stale.secret && token.retired.size() == 1,
+          "and the token it replaces is kept to revoke");
+    MpClient::revokeSessionToken(token, dataHash);
+    check(token.secret.empty() && token.retired.empty(), "quitting wipes them all");
+    check(login(host, port, dataHash, "", stale) == MpClient::Auth::Failed,
+          "and the replaced one no longer signs in");
+
+    std::printf("\n%s (%d failure%s)\n", failures ? "FAILURES" : "ALL PASS", failures,
+                failures == 1 ? "" : "s");
+    return failures ? 1 : 0;
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     netStartup();
+    if (argc == 5 && std::string(argv[1]) == "--live")
+        return live(argv[2], uint16_t(std::atoi(argv[3])), std::strtoull(argv[4], nullptr, 16));
     uint16_t port = 8390;
 
     std::printf("a hostile server must not be able to sign us in\n");
@@ -244,6 +337,22 @@ int main() {
         Outcome o = run(Attack::Honest, port++);
         check(o.auth == MpClient::Auth::Ok, "a correct exchange signs in", o.err);
         check(o.state == MpClient::State::Lobby, "and reaches the lobby");
+    }
+
+    std::printf("a sign-in token never crosses a plaintext link\n");
+    {
+        SessionToken token;
+        Outcome o = run(Attack::TokenInTheClear, port++, &token);
+        check(o.auth == MpClient::Auth::Ok, "a plaintext password login still signs in", o.err);
+        check(token.secret.empty(), "but a token offered on it is not taken");
+    }
+    {
+        SessionToken token;
+        token.host = "127.0.0.1"; token.port = port; token.account = kUser;
+        token.secret.assign(auth::kTokenLen, 0x42);
+        Outcome o = run(Attack::Honest, port++, &token, true);
+        check(!signedIn(o), "a token held for a plaintext address cannot sign in", o.err);
+        check(!o.sawToken, "because the client never sends it");
     }
 
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILURES" : "ALL PASS", failures,

@@ -115,6 +115,8 @@ int main() {
     flips("streamCpuEncoder", [](Settings& s) { s.streamCpuEncoder = true; });
     flips("streamLocalCopy", [](Settings& s) { s.streamLocalCopy = !s.streamLocalCopy; });
     flips("gameCreate.crusades", [](Settings& s) { s.gameCreate.crusades = !s.gameCreate.crusades; });
+    flips("gameCreate.pathfindingMode", [](Settings& s) { s.gameCreate.pathfindingMode = tak::sim::PathfindingMode::Legion; });
+    flips("benchmarkPathfinding", [](Settings& s) { s.benchmarkPathfinding = tak::sim::PathfindingMode::Legion; });
     flips("gameCreate.doubleSight", [](Settings& s) { s.gameCreate.doubleSight = !s.gameCreate.doubleSight; });
     flips("gameCreate.speedUnlock", [](Settings& s) { s.gameCreate.speedUnlock = !s.gameCreate.speedUnlock; });
     flips("gameCreate.monarchExpendable", [](Settings& s) { s.gameCreate.monarchExpendable = !s.gameCreate.monarchExpendable; });
@@ -189,6 +191,7 @@ int main() {
         cur.lastMap = "Inner Circle";
         cur.gameCreate.crusades = true;
         cur.gameCreate.generator = "saved recipe";
+        cur.benchmarkPathfinding = tak::sim::PathfindingMode::Legion;
         cur.hotkeys["selectAll"] = "ctrl+a";
         // Voice chat has its own screen and DEFAULTS: the Options reset leaves it alone.
         cur.voiceEnabled = true;
@@ -225,6 +228,7 @@ int main() {
         keep("campaign progress", d.campaignCompleted == cur.campaignCompleted &&
                                   d.missionCompleted("aramon", 4));
         keep("known servers",     d.knownServers == cur.knownServers);
+        keep("benchmarkPathfinding", d.benchmarkPathfinding == tak::sim::PathfindingMode::Legion);
         keep("dataDir",           d.dataDir == cur.dataDir);
         keep("dataManifest",      d.dataManifest == cur.dataManifest);
         keep("playerName",        d.playerName == cur.playerName);
@@ -599,6 +603,37 @@ int main() {
         const Settings s = tak::loadSettings();
         check("campaignAi: loads", s.lastMap == "Inner Circle" && s.masterVol == 7);
         check("campaignAi: dropped", tak::serializeSettings(s).find("campaignAi") == std::string::npos);
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
+    // The Benchmark's PATHFINDING pick round-trips through the file on its own key, leaves
+    // the game-create pick alone, and anything but a valid mode byte loads as Retail.
+    {
+        using Mode = tak::sim::PathfindingMode;
+        auto check = [&](const char* what, bool ok) {
+            std::printf("  %-22s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++g_fail;
+        };
+        const auto path = std::filesystem::temp_directory_path() /
+                          ("settings_test_bench_" + std::to_string(std::random_device{}()) + ".ini");
+        tak::setSettingsPath(path.string());
+        auto modeFrom = [&](const std::string& body) {
+            { std::ofstream(path) << body; }
+            return tak::loadSettings().benchmarkPathfinding;
+        };
+        check("benchPath: default", tak::Settings{}.benchmarkPathfinding == Mode::Retail);
+        check("benchPath: absent", modeFrom("masterVol = 7\n") == Mode::Retail);
+        Settings saved;
+        saved.benchmarkPathfinding = Mode::Legion;
+        check("benchPath: save", tak::saveSettings(saved));
+        const Settings loaded = tak::loadSettings();
+        check("benchPath: Legion kept", loaded.benchmarkPathfinding == Mode::Legion);
+        check("benchPath: lobby alone", loaded.gameCreate.pathfindingMode == Mode::Retail);
+        check("benchPath: 4 is Legion", modeFrom("benchmarkPathfinding = 4\n") == Mode::Legion);
+        check("benchPath: 0 is Retail", modeFrom("benchmarkPathfinding = 0\n") == Mode::Retail);
+        check("benchPath: 3 -> Retail", modeFrom("benchmarkPathfinding = 3\n") == Mode::Retail);
+        check("benchPath: 44 -> Retail", modeFrom("benchmarkPathfinding = 44\n") == Mode::Retail);
+        check("benchPath: junk -> Retail", modeFrom("benchmarkPathfinding = legion\n") == Mode::Retail);
         std::error_code ec;
         std::filesystem::remove(path, ec);
     }

@@ -40,6 +40,7 @@ enum class Act {
     GiveUnits, ToggleCounts, UnitInfo, FullScreenRadar, Disco, Headbang, RetailZoom,
     PushToTalk,
     MakePoster,
+    StreamingPanel,
     Count
 };
 
@@ -89,6 +90,12 @@ public:
 private:
     KeyChord chords_[size_t(Act::Count)] = {};
 };
+
+// Does this key press open or close the streaming panel? The panel sits above the menu
+// and the game, so it reads the override map itself. `typing` is a text field having the
+// keyboard: a plain character key is the field's then, not the panel's.
+bool streamingPanelPress(const std::map<std::string, std::string>& overrides, int32_t key,
+                         uint16_t sdlMod, bool typing);
 
 // Read/write one binding as a settings override (only stores when != default; an
 // explicit unbind stores "NONE"). Keeps the map minimal and forward-compatible.

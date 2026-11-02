@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(tak-engine VERSION 0.9.15 LANGUAGES CXX)
+project(tak-engine VERSION 0.9.16 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -361,6 +361,13 @@ add_executable(crowdbench tools/crowdbench.cpp)
 add_executable(navigation_telemetry_test tools/navigation_telemetry_test.cpp)
 target_link_libraries(navigation_telemetry_test PRIVATE tak-formats)
 add_test(NAME navigation_telemetry COMMAND navigation_telemetry_test)
+add_executable(world_clone_test tools/world_clone_test.cpp)
+target_link_libraries(world_clone_test PRIVATE tak-formats)
+if(TAK_TEST_DATA)
+  add_test(NAME world_clone COMMAND world_clone_test --data "${TAK_TEST_DATA}")
+else()
+  add_test(NAME world_clone COMMAND world_clone_test)
+endif()
 # Perf follow-up H: static-sync timing over a base-heavy world (not a test; prints BENCH lines).
 add_executable(legion_staticsync_bench tools/legion_staticsync_bench.cpp)
 target_link_libraries(legion_staticsync_bench PRIVATE tak-formats)
@@ -498,6 +505,9 @@ set_tests_properties(legion_idmap_test PROPERTIES LABELS legion)
 add_executable(selportraits_test tools/selportraits_test.cpp)   # header-only client logic, no SDL
 target_include_directories(selportraits_test PRIVATE src)
 add_test(NAME selportraits COMMAND selportraits_test)
+add_executable(replaybar_test tools/replaybar_test.cpp src/client/alloccount.cpp)
+target_include_directories(replaybar_test PRIVATE src)
+add_test(NAME replaybar COMMAND replaybar_test)
 
 add_executable(issue_selection_test tools/issue_selection_test.cpp)
 target_link_libraries(issue_selection_test PRIVATE tak-formats)
@@ -2174,7 +2184,7 @@ set_tests_properties(credstore PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 if(TAK_BUILD_CLIENT)
   find_package(SDL2 QUIET)
   if(SDL2_FOUND)
-    add_executable(takclient src/client/main.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/gameview_hidden.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp)
+    add_executable(takclient src/client/main.cpp src/client/alloccount.cpp src/client/gameview_impl.cpp src/client/gameview_render.cpp src/client/gameview_hud.cpp src/client/gameview_net.cpp src/client/gameview_lobby.cpp src/client/gameview_benchmark.cpp src/client/gameview_input.cpp src/client/gameview_voice.cpp src/client/gameview_powercodes.cpp src/client/ordertrail.cpp src/client/gameview_unitinfo.cpp src/client/gameview_hidden.cpp src/client/distantmodels.cpp src/client/animatedatlas.cpp src/client/mapview.cpp src/client/terrainchunks.cpp src/client/modelview.cpp src/client/replayfile.cpp src/client/mainmenu.cpp src/client/settings.cpp src/client/options.cpp src/client/hotkeys.cpp src/client/hotkeysscreen.cpp src/client/campaignscreen.cpp src/client/briefingscreen.cpp src/client/resultscreen.cpp src/client/loadscreen.cpp src/client/guiart.cpp src/client/cursors.cpp src/util/procmetrics.cpp src/util/relaunch.cpp src/video/bink.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp)
     # Local dev/test harness (standalone scenario/demo/FFA setup, --testbuild/--firetest...):
     # debug builds only. The file is also wrapped in #ifndef NDEBUG, as are its callers, so
     # this just skips an empty TU when the config's flags define NDEBUG.
@@ -2293,7 +2303,7 @@ if(TAK_BUILD_CLIENT)
     add_executable(crusades_effective_audit tools/crusades_effective_audit.cpp)
     target_compile_definitions(crusades_effective_audit PRIVATE SDL_MAIN_HANDLED)
     target_link_libraries(crusades_effective_audit PRIVATE tak-formats ${_tak_sdl2})
-    add_executable(stream_capture_test tools/stream_capture_test.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp
+    add_executable(stream_capture_test tools/stream_capture_test.cpp src/client/hotkeys.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp
                    src/client/settings.cpp)
     target_link_libraries(stream_capture_test PRIVATE tak-uifont tak-formats tak-credstore tak_ffmpeg ${_tak_sdl2})
     target_compile_definitions(stream_capture_test PRIVATE SDL_MAIN_HANDLED TAK_STREAM_TESTING=1)
@@ -2303,14 +2313,14 @@ if(TAK_BUILD_CLIENT)
     set_tests_properties(streaming_capture_cursor PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 15)
     set_tests_properties(streaming_capture PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 15)
     # Remember Key logic and panel against a fake credential store (never the real one).
-    add_executable(stream_key_test tools/stream_key_test.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp
+    add_executable(stream_key_test tools/stream_key_test.cpp src/client/hotkeys.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp
                    src/client/settings.cpp)
     target_link_libraries(stream_key_test PRIVATE tak-uifont tak-formats tak-credstore tak_ffmpeg ${_tak_sdl2})
     target_compile_definitions(stream_key_test PRIVATE SDL_MAIN_HANDLED)
     add_test(NAME stream_key COMMAND stream_key_test)
     set_tests_properties(stream_key PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy" TIMEOUT 30)
     # The panel's bitrate against YouTube's table, and the UPLOAD CAN'T KEEP UP warning.
-    add_executable(stream_bitrate_test tools/stream_bitrate_test.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp
+    add_executable(stream_bitrate_test tools/stream_bitrate_test.cpp src/client/hotkeys.cpp src/client/streaming.cpp src/client/streamcapture_d3d.cpp src/video/stream.cpp src/video/streamcursor.cpp src/video/rgbascale.cpp
                    src/client/settings.cpp)
     target_link_libraries(stream_bitrate_test PRIVATE tak-uifont tak-formats tak-credstore tak_ffmpeg ${_tak_sdl2})
     target_compile_definitions(stream_bitrate_test PRIVATE SDL_MAIN_HANDLED)
@@ -2856,6 +2866,16 @@ if(TAK_BUILD_CLIENT)
           --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/spectator-bars.png")
       set_tests_properties(spectator_health_bars PROPERTIES TIMEOUT 90
           PASS_REGULAR_EXPRESSION "PASS: spectator bars \\(")
+      foreach(watch_mode replay spectator)
+        add_test(NAME watch_only_${watch_mode} COMMAND ${CMAKE_COMMAND} -E env
+            SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_WATCHONLY_TEST=${watch_mode}
+            XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/watch-only-profile
+            XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/watch-only-profile
+            $<TARGET_FILE:takclient> game "Ulasem Arena" --data "${TAK_TEST_DATA}"
+            --testbuild --winsize 1280 960 --shot "${CMAKE_CURRENT_BINARY_DIR}/watch-only.png")
+        set_tests_properties(watch_only_${watch_mode} PROPERTIES TIMEOUT 90
+            PASS_REGULAR_EXPRESSION "PASS: watch only \\(${watch_mode}\\)")
+      endforeach()
       add_test(NAME gui_smoothing_menu COMMAND ${CMAKE_COMMAND} -E env
           SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy TAK_GUI_SMOOTH_TEST=1
           XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/gui-smooth-menu-profile
@@ -2891,6 +2911,11 @@ if(TAK_BUILD_CLIENT)
         add_test(NAME client_restart COMMAND "${Python3_EXECUTABLE}"
             "${CMAKE_SOURCE_DIR}/tools/client_restart_test.py" "$<TARGET_FILE:takclient>" "${TAK_TEST_DATA}")
         set_tests_properties(client_restart PROPERTIES TIMEOUT 150)
+        # Settings -> Benchmark's PATHFINDING row: a click is saved, and a menu launch
+        # with the pick in the settings file runs that pathfinder on both sims.
+        add_test(NAME benchmark_pathfinding COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/benchmark_pathfinding_test.py" "$<TARGET_FILE:takclient>" "${TAK_TEST_DATA}")
+        set_tests_properties(benchmark_pathfinding PROPERTIES TIMEOUT 300)
       endif()
       # A menu single-player launch whose local server cannot run must come back to
       # the title screen with the reason (not the multiplayer sign-in dialog, not a
@@ -3564,9 +3589,11 @@ if(TAK_TEST_DATA)
       --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}" --tls-tool "$<TARGET_FILE:tls_test>")
     set_tests_properties(server_status PROPERTIES TIMEOUT 120)
     # Account login (SCRAM): register, log in, a wrong proof, a pending registration.
+    # Sign-in tokens over TLS, with the real client (authrogue --live).
     add_test(NAME account_auth_network COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/tools/account_auth_network_test.py"
-      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}")
+      --server "$<TARGET_FILE:takserver>" --data "${TAK_TEST_DATA}"
+      --tls-tool "$<TARGET_FILE:tls_test>" --client-tool "$<TARGET_FILE:authrogue>")
     set_tests_properties(account_auth_network PROPERTIES TIMEOUT 120)
     if(TARGET takclient AND CMAKE_BUILD_TYPE STREQUAL "Debug")
       # Replays are saved however a game ends: crash, kill, play on after the result,
@@ -3575,6 +3602,13 @@ if(TAK_TEST_DATA)
         "${CMAKE_SOURCE_DIR}/tools/replay_always_test.py"
         --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}")
       set_tests_properties(replay_always PROPERTIES TIMEOUT 300)
+      # Replay seeking end to end: every landing and the end of the game hash as a straight
+      # run does, on Retail, Legion, a campaign mission, a .crt scenario and a spectator's recording.
+      add_test(NAME replay_seek COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/replay_always_test.py"
+        --server "$<TARGET_FILE:takserver>" --client "$<TARGET_FILE:takclient>" --data "${TAK_TEST_DATA}"
+        --case seek)
+      set_tests_properties(replay_seek PROPERTIES TIMEOUT 600)
       # A map that cannot build ends a headless --mphost run quickly with a message (it used to spin).
       add_test(NAME harness_createfail COMMAND "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/tools/harness_createfail_test.py"

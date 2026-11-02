@@ -29,6 +29,23 @@
 // registration. Explicit plaintext/LAN connections retain those limitations;
 // login proofs are not a substitute for TLS against interception or relaying.
 //
+// THE SIGN-IN TOKEN. The password is wiped straight after a login, so coming back
+// to the game list after a result screen would mean typing it again. A password
+// login on an ENCRYPTED connection therefore also earns a long random token (the
+// tail of AuthResult), which the client holds in memory and spends once, in
+// Msg::AuthToken in place of AuthBegin, for a sign-in with no password prompt. Every
+// use earns the next token, in a line that ends 12 hours after the password login
+// however often it rotates. A token used a second time ends its whole line, because
+// one of the two users is a thief; the one exception is a resend straight after, when
+// the link took the reply with the next token (kRetryMs in src/server/accounts.h).
+// Unlike a SCRAM proof the token IS the credential on the wire and replays until
+// spent, so it exists on TLS only: a plaintext server never issues or accepts one,
+// and those players keep the password prompt. The client sends it only to the address
+// it came from, and quitting revokes every token it still holds (Msg::AuthRevoke, best
+// effort). The server keeps tokenHash() per account, in memory (SessionTokens in
+// src/server/accounts.h), so a restart invalidates them.
+// Whatever goes wrong with one, the player just gets the normal password prompt.
+//
 // Unknown usernames are reported as unknown, by design -- the client has to be
 // told in order to offer to create the account. That does let someone probe
 // which usernames exist; it is the explicit cost of self-service registration.
@@ -52,6 +69,8 @@ constexpr uint32_t kPbkdf2Iters = 600000;
 
 constexpr size_t kNonceLen = 32;      // per-login randomness, both directions
 constexpr size_t kSaltLen = 16;       // per-account, server-chosen at registration
+constexpr size_t kTokenLen = 32;      // a sign-in token (see above)
+constexpr uint64_t kTokenLifetimeMs = 12 * 60 * 60 * 1000;   // from the password login
 constexpr size_t kMinPassword = 8;    // new accounts only; login accepts any length
 constexpr size_t kMaxPassword = 128;
 constexpr size_t kMinUsername = 3;
@@ -104,6 +123,11 @@ crypto::Digest clientProof(const Keys& k, const std::vector<uint8_t>& am);
 // ServerSignature = HMAC(ServerKey, authMessage): the server's half of mutual
 // auth. The client checks it against the ServerKey it derived from the password.
 crypto::Digest serverSignature(const crypto::Digest& serverKey, const std::vector<uint8_t>& am);
+
+// What the server keeps of a sign-in token. Keyed by the account's StoredKey and
+// bound to its name, so a token is good for that account and credential only.
+crypto::Digest tokenHash(const Credential& c, std::string_view user,
+                         const std::vector<uint8_t>& token);
 
 // ---- account naming --------------------------------------------------------
 

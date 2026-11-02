@@ -41,6 +41,41 @@ struct RoomView {
     int mySlot = -1;
 };
 
+// The sign-in token a password login on an encrypted connection earned (see
+// src/net/auth.h). Its owner keeps it across sessions, each with its own MpClient:
+// in memory only, for as long as the program runs, never in a file.
+struct SessionToken {
+    std::string host;      // the address connect() was given; the only place it may go
+    uint16_t port = 0;
+    std::string account;
+    std::vector<uint8_t> secret;
+    uint64_t earnedMs = 0;              // when its password login was (MpClient::clockMs)
+    // Tokens no longer used to sign in that may still be good on their server: a newer
+    // login replaced them, or this one's fate is unknown. Only for quitting to revoke.
+    std::vector<SessionToken> retired;
+
+    SessionToken() = default;
+    SessionToken(const SessionToken&) = delete;
+    SessionToken& operator=(const SessionToken&) = delete;
+    SessionToken(SessionToken&&) = default;
+    ~SessionToken() { wipe(); }
+    bool heldFor(const std::string& h, uint16_t p) const {
+        return !secret.empty() && host == h && port == p;
+    }
+    void wipe() {
+        crypto::wipe(secret.data(), secret.size());
+        secret.clear();
+    }
+    void retire() {
+        if (secret.empty()) return;
+        SessionToken old;
+        old.host = host; old.port = port; old.account = account; old.earnedMs = earnedMs;
+        old.secret = std::move(secret);
+        secret.clear();
+        retired.push_back(std::move(old));
+    }
+};
+
 class MpClient {
 public:
     enum class State { Offline, Connecting, Lobby, InRoom, Starting, InGame, Done };
@@ -108,6 +143,15 @@ public:
     // kept, and it never goes on the wire in any form (see src/net/auth.h).
     // Against a server that asks for no account these are simply unused.
     void setLogin(const std::string& user, const std::string& password);
+    // Where a login keeps the sign-in token it earns (see SessionToken), which must
+    // outlive this client. `signIn`: connect() signs in by spending the token held
+    // there, for the setLogin() user, with no password. If it cannot, auth() ends up
+    // Failed like any refused login, and the password is what is left to try.
+    void setSessionToken(SessionToken* token, bool signIn = false);
+    // Quitting is signing out: tell the server each token held, retired ones included,
+    // is no longer good, on a connection of its own, and wipe them. Best effort, and
+    // bounded to a few seconds: one that could not be revoked still dies with its 12 hours.
+    static void revokeSessionToken(SessionToken& token, uint64_t dataHash);
 
     enum class Auth {
         None,       // the server never asked -- an open server (LAN, single-player)
@@ -157,6 +201,8 @@ public:
     void moveSeat(int slot);
     void chat(const std::string& text, uint8_t recipients = 0xff);
     void startGame();
+    // START was clicked and the server has neither started the game nor refused.
+    bool startPending() const { return startRequested_ || startSent_; }
     // Host: change room options. In the lobby the server rebroadcasts them; in-game
     // only `speed` takes effect (re-cadences the sim), if speedUnlock was set.
     void setGameOptions(const GameOptions& opts);
@@ -334,6 +380,7 @@ public:
 private:
     void onFrame(const Frame& f);
     void sendAuthBegin();            // Hello answered with AuthRequired -> start SCRAM
+    void sendAuthToken();            // ... or spend the sign-in token instead
     void onAuthChallenge(Reader& r);
     void onAuthResult(Reader& r);
     void startDerive();              // spin the PBKDF2 off this thread
@@ -461,7 +508,10 @@ private:
         bool newAccount = false;     // the server said there is no such account yet
         bool challenged = false;     // a challenge arrived; a second one is refused
         bool proofSent = false;
+        bool tokenSent = false;      // this login is a sign-in token, not a SCRAM exchange
     } pend_;
+    SessionToken* token_ = nullptr;  // see setSessionToken
+    bool tokenSignIn_ = false;
     // PBKDF2 at the real work factor takes a few hundred milliseconds. Running it
     // on the caller's thread would stall the front-end mid-login, so it goes to a
     // worker and poll() picks the result up.

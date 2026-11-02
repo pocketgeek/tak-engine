@@ -109,6 +109,7 @@ struct Vm::Native {
 };
 
 Vm::~Vm()=default;
+Vm::Vm(const Vm&)=default;
 void Vm::hideExplodedPiece(int piece,int32_t flags) {
     if(flags&0x20)return;
     const auto hide=[&](int index) {

@@ -268,6 +268,9 @@ public:
         int frontage=0;                   // distinct across-cells among the 25% of slots nearest the click
     };
     explicit LegionNavigator(World&);
+    // An exact copy of the navigator's state, bound to `world` (a copy of its world;
+    // see World::clone). Between ticks only.
+    std::unique_ptr<LegionNavigator> clone(World& world) const;
     ~LegionNavigator();
     // Ground units whose current leg is a mission Legion routes (see
     // mission()); everything else stays Retail.

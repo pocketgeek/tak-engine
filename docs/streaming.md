@@ -6,7 +6,7 @@ TAK Engine can broadcast the game straight to YouTube, with no extra software.
 
 ## Quick start
 
-1. Open the panel: press **F9** at the title screen or in a game, or choose
+1. Open the panel: press **F9** (rebindable in Settings → Controls) at the title screen or in a game, or choose
    **Settings → YouTube Streaming** at the title screen or **Esc → YouTube
    Streaming** during a game.
 2. Copy the stream key from YouTube Studio and click **Paste** beside the key field

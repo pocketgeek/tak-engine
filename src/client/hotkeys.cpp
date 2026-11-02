@@ -53,6 +53,8 @@ const std::vector<HotkeyDef>& hotkeyDefs() {
         // Retail ships "UnitInfo" unbound (it's only in translate/customkeys.tdf as a
         // rebindable function), so the default key is ours to pick.
         {Act::UnitInfo,       "view.unitinfo",      "UNIT INFO",       "VIEW",      {SDLK_F1, 0}},
+        // Read by the streaming panel itself, at the title screen too (streamingPanelPress).
+        {Act::StreamingPanel,"view.streaming",     "STREAMING PANEL", "VIEW",      {SDLK_F9, 0}},
         {Act::Disco,          "emote.disco",        "DISCO",           "EMOTES",    {SDLK_d, HK_SHIFT}},
         {Act::Headbang,       "emote.headbang",     "HEADBANG",        "EMOTES",    {SDLK_h, HK_SHIFT}},
         // Voice chat, held while talking (client/voice.h). Space is free in the game:
@@ -152,6 +154,14 @@ void setChordOverride(std::map<std::string, std::string>& overrides, Act a, KeyC
     const HotkeyDef& d = defFor(a);
     if (c == d.def) { overrides.erase(d.id); return; }   // back to default: drop the override
     overrides[d.id] = c.bound() ? chordName(c) : "NONE";
+}
+
+bool streamingPanelPress(const std::map<std::string, std::string>& overrides, int32_t key,
+                         uint16_t sdlMod, bool typing) {
+    const KeyChord c = effectiveChord(overrides, Act::StreamingPanel);
+    if (!c.bound() || c.key != key || normMod(sdlMod) != c.mod) return false;
+    const bool character = key >= SDLK_SPACE && key <= SDLK_z;
+    return !(typing && character && !(c.mod & (HK_CTRL | HK_ALT)));
 }
 
 }  // namespace tak

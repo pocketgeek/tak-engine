@@ -22,6 +22,7 @@
 #include <set>
 #include <thread>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 // Legion navigation. See docs/legion-pathfinding.md for the design.
@@ -320,7 +321,8 @@ constexpr uint32_t kRingDeepRechoose=2;
 // fight column still rings its target.
 constexpr size_t kLateRingMembers=8;
 // A production exit without headway for this many crowd windows, its
-// birthplace clear, is done (twice as many hand it over to a rally).
+// birthplace clear, is done (twice as many hand it over to an order queued
+// behind it).
 constexpr uint8_t kExitWindows=1;
 // A spread factory PARK (World::legionParkSpot) has a free spot of its own:
 // the held release below waits this many windows for it (a body walking
@@ -367,7 +369,16 @@ uint64_t mix(uint64_t h,uint64_t v) {
 int64_t isqrtFloor(uint64_t n) {return int64_t(isqrt64(n));}
 }
 
-struct LegionNavigator::Impl {
+// The World an Impl belongs to. Impl copies its members by default, so that a member
+// added later is carried without anyone remembering to, and this is the one that must
+// not copy: a copy binds to the world it is being made for (LegionNavigator::clone).
+struct LegionWorldBinding {
+    World& w;
+    explicit LegionWorldBinding(World& world):w(world) {}
+    LegionWorldBinding(const LegionWorldBinding&):w(*copyingFor()) {}
+    static World*& copyingFor() {static thread_local World* world=nullptr;return world;}
+};
+struct LegionNavigator::Impl : LegionWorldBinding {
     // Static legality of every footprint origin for one mobility class.
     struct Plane {
         int maxDepth=0,minDepth=0,maxSlope=0,maxWaterSlope=0,footX=1,footZ=1;
@@ -552,7 +563,7 @@ struct LegionNavigator::Impl {
     // them through a RouteView (view()).
     struct Field : RouteGrid {
         Field()=default;
-        Field(const Field&)=delete;
+        Field(const Field&)=default;   // Impl::copyField only: it finishes the copy
         Field& operator=(const Field&)=delete;
         ~Field() {detach();for(const auto& t:held)t->release();}
         // Leave the field totals (the field is about to be freed; see Impl::orphan).
@@ -598,7 +609,7 @@ struct LegionNavigator::Impl {
         // (nextOpening) for as long as they steer by it, however few of the group are left (a chain records no
         // labels; the group's stragglers walked into a passage held the other way). Hashed with the field.
         bool chainAdmits=false;
-        std::vector<std::unique_ptr<uint16_t[]>> via;
+        LeftEmptyOnCopy<std::vector<std::unique_ptr<uint16_t[]>>> via;
         struct Charge {uint32_t label=0,cost=0;bool operator==(const Charge&) const=default;};
         std::vector<Charge> charges;
         uint16_t viaAt(int x,int z) const {
@@ -689,7 +700,7 @@ struct LegionNavigator::Impl {
         bool dDone=false;
         std::vector<uint8_t> attached,repairing;   // per node: its tile is read; a repair is queued for it
         std::vector<uint8_t> dAllow;
-        std::vector<std::shared_ptr<Tile>> held;
+        LeftEmptyOnCopy<std::vector<std::shared_ptr<Tile>>> held;
         bool usable() const {return done||covered;}
         RouteView view() const {return RouteView(this);}
         // Stage 7: which kind of static change reached the route after its build began (staticChanged; both also
@@ -1183,7 +1194,6 @@ struct LegionNavigator::Impl {
         } gateMemo;
     };
 
-    World& w;
     std::vector<Plane> planes;
     uint32_t planeGeneration=0;   // stage 6: PlaneId::generation's counter (never reused; never hashed)
     // Declared before `groups`: the fields it owns update these as they die.
@@ -2601,7 +2611,7 @@ struct LegionNavigator::Impl {
         }
         return -1;
     }
-    explicit Impl(World& world):w(world) {}
+    explicit Impl(World& world):LegionWorldBinding(world) {}
 
     int width() const {return w.hW_;}
     int height() const {return w.hH_;}
@@ -5581,7 +5591,7 @@ struct LegionNavigator::Impl {
         // The caches are declared after the groups and go first: a chain destroyed later must not touch this queue.
         ~TileCache() {for(auto& [h,bucket]:map)for(auto& t:bucket)t->unref=nullptr;}
     };
-    TileCache staticTiles,corrTiles;
+    LeftEmptyOnCopy<TileCache> staticTiles,corrTiles;
     static bool correction(const Tile& t) {return !t.soft.empty()||!t.avoid.empty();}
     TileCache& cacheOf(const Tile& t) {return correction(t)?corrTiles:staticTiles;}
     bool overTileLimit() const {return staticTiles.bytes>kTileBytes||corrTiles.bytes>kCorrectionBytes;}
@@ -5666,7 +5676,7 @@ struct LegionNavigator::Impl {
         bool built=false,taken=false;
         uint64_t field=0;size_t node=0;uint64_t soft=0;   // the prepared key: route serial, chain node, softSerial
     };
-    std::vector<Staged> staged;
+    LeftEmptyOnCopy<std::vector<Staged>> staged;
     std::map<uint64_t,std::vector<size_t>> stagedIndex;   // staged builds by hash
     std::map<std::pair<uint64_t,size_t>,size_t> keyIndex; // this pass's prepared keys by (route serial, node)
     std::vector<TileJob*> running;                        // the open asynchronous batch's jobs (chunk k: running[k])
@@ -5801,7 +5811,7 @@ struct LegionNavigator::Impl {
         running.clear();runJob=nullptr;
         par.workerJobs+=asyncByWorkers.exchange(0);
     }
-    std::atomic<uint64_t> asyncByWorkers{0};   // jobs of the open batch a worker ran (NAVPAR)
+    CopyableAtomic<uint64_t> asyncByWorkers{0};   // jobs of the open batch a worker ran (NAVPAR)
     // The seeds of chain node n and the route's values there (attachNode reads them the same way).
     void chainSeeds(const Field& f,const ChainNode& n,const Plane& p,std::vector<int>& seed,std::vector<uint32_t>& est,
                     bool& all) const {
@@ -5959,6 +5969,77 @@ struct LegionNavigator::Impl {
         staged.resize(keep);
         stagedIndex.clear();
         for(size_t i=0;i<staged.size();++i)stagedIndex[staged[i].job->tile.hash].push_back(i);
+    }
+    // ---- a copy for a copy of the world (World::clone) -----------------------------------------------------------
+    // The defaulted copy carried every value. This rebuilds what it cannot carry, the shared graph: each field, tile
+    // and plan once, however many groups and chains share it (the number of holders is itself read, see orphan), and
+    // the pointers that reach them. Staged tiles are speculation: dropping them changes no decision, as a run with no
+    // workers shows, so a copy starts with none. The rest is scratch that is only live inside a tick.
+    void copyTiles(const TileCache& from,TileCache& to,std::unordered_map<const Tile*,std::shared_ptr<Tile>>& copies,
+                   std::unordered_map<const uint32_t*,const uint32_t*>& values) {
+        to.bytes=from.bytes;
+        for(const auto& [hash,bucket]:from.map) {
+            auto& mine=to.map[hash];
+            for(const auto& t:bucket) {
+                auto copy=std::make_shared<Tile>(*t);
+                copy->unref=&to.unref;
+                if(!copy->routes)to.unref.insert({copy->lastUse,copy->seq,copy.get()});
+                mine.push_back(copy);
+                values.emplace(t->values.data(),copy->values.data());
+                copies.emplace(t.get(),std::move(copy));
+            }
+        }
+    }
+    std::shared_ptr<Field> copyField(const Field& from,const std::unordered_map<const Tile*,std::shared_ptr<Tile>>& tileCopies,
+                                     const std::unordered_map<const uint32_t*,const uint32_t*>& values) {
+        auto f=std::make_shared<Field>(from);
+        f->totals=nullptr;   // until it is whole: a throw below must not leave `from`'s totals
+        const size_t cells=from.tileCells();
+        f->own.resize(from.own.size());
+        for(size_t i=0;i<from.own.size();++i)if(from.own[i]) {
+            f->own[i].reset(new uint32_t[cells]);
+            std::copy_n(from.own[i].get(),cells,f->own[i].get());
+        }
+        for(size_t i=0;i<from.tiles.size();++i)if(const uint32_t* t=from.tiles[i])
+            f->tiles[i]=i<from.own.size()&&t==from.own[i].get()?f->own[i].get():values.at(t);
+        f->bind();
+        f->via.resize(from.via.size());
+        for(size_t i=0;i<from.via.size();++i)if(from.via[i]) {
+            f->via[i].reset(new uint16_t[cells]);
+            std::copy_n(from.via[i].get(),cells,f->via[i].get());
+        }
+        f->held.reserve(from.held.size());
+        for(const auto& t:from.held)f->held.push_back(tileCopies.at(t.get()));
+        if(from.totals)f->totals=&fieldTotals;
+        return f;
+    }
+    void adoptCopy(const Impl& from) {
+        stagedIndex.clear();keyIndex.clear();running.clear();runJob=nullptr;liveJobs=nullptr;
+        structureList=nullptr;structureIndex=nullptr;structureIdx=StructureIndex();structurePtrs.clear();
+        refreshList.clear();contactRefused=nullptr;pivoting=nullptr;
+        std::unordered_map<const Tile*,std::shared_ptr<Tile>> tileCopies;
+        std::unordered_map<const uint32_t*,const uint32_t*> values;
+        copyTiles(from.staticTiles,staticTiles,tileCopies,values);
+        copyTiles(from.corrTiles,corrTiles,tileCopies,values);
+        std::unordered_map<const Field*,std::shared_ptr<Field>> fieldCopies;
+        const auto field=[&](std::shared_ptr<Field>& f) {
+            if(!f)return;
+            auto& copy=fieldCopies[f.get()];
+            if(!copy)copy=copyField(*f,tileCopies,values);
+            f=copy;
+        };
+        std::unordered_map<const RoutePlan*,std::shared_ptr<RoutePlan>> planCopies;
+        for(auto& [id,g]:groups) {
+            field(g.field);field(g.next);
+            if(g.plan) {
+                auto& copy=planCopies[g.plan.get()];
+                if(!copy)copy=std::make_shared<RoutePlan>(*g.plan);
+                g.plan=copy;
+            }
+        }
+        std::unordered_map<const Point*,Point*> pointCopies;
+        for(const auto& [key,p]:from.points)pointCopies.emplace(&p,&points.at(key));
+        for(auto& [id,m]:members)if(m.pt)m.pt=pointCopies.at(m.pt);
     }
     void evictTiles() {
         for(TileCache* C:{&staticTiles,&corrTiles}) {
@@ -11529,17 +11610,17 @@ struct LegionNavigator::Impl {
         // A production exit without headway and with its birthplace already
         // clear is done: the point was generated, and pressing on would
         // block the factory lane behind it. Still on its birthplace, a body
-        // with a rally behind the exit hands over to it after a second
-        // window: it walks off the lane with the rally instead of holding
-        // there against the crowd.
+        // with an order queued behind the exit hands over to it after a
+        // second window: it walks off the lane with that order instead of
+        // holding there against the crowd.
         // (Still ticks are those the last window proved: windowTick - stillSince.)
         const uint32_t stillTicks=m.stillSince==kNoTick?0:m.windowTick-m.stillSince;
         if(rule.exitClear&&stillTicks>=kExitWindows*kCrowdWindow&&leg.productionExit) {
             const int64_t dx=int64_t(u.x.floorInt())-leg.productionExit->first.floorInt();
             const int64_t dz=int64_t(u.z.floorInt())-leg.productionExit->second.floorInt();
             const bool clear=std::abs(dx)>=u.type->footX*16||std::abs(dz)>=u.type->footZ*16;
-            const bool rally=World::currentLeg(u.orders)+1<u.orders.size();
-            if(clear||(rally&&stillTicks>=2*kExitWindows*kCrowdWindow)) {complete(u,m,true);return;}
+            const bool queued=World::currentLeg(u.orders)+1<u.orders.size();
+            if(clear||(queued&&stillTicks>=2*kExitWindows*kCrowdWindow)) {complete(u,m,true);return;}
         }
         // A factory's PARK release (GetBuilt) held up by the crowd already in
         // its ring is done once clear of the factory: as for the exit step,
@@ -14858,6 +14939,16 @@ struct LegionNavigator::Impl {
 };
 
 LegionNavigator::LegionNavigator(World& w):impl_(std::make_unique<Impl>(w)) {}
+std::unique_ptr<LegionNavigator> LegionNavigator::clone(World& world) const {
+    std::unique_ptr<LegionNavigator> copy(new LegionNavigator(world));
+    struct Target {
+        explicit Target(World* w) {LegionWorldBinding::copyingFor()=w;}
+        ~Target() {LegionWorldBinding::copyingFor()=nullptr;}
+    } target(&world);
+    copy->impl_=std::make_unique<Impl>(*impl_);
+    copy->impl_->adoptCopy(*impl_);
+    return copy;
+}
 LegionNavigator::~LegionNavigator() {
 #ifndef NDEBUG
     // W9 step 0: TAK_LEGION_CENSUS=1 prints the predicate census when the navigator goes (debug builds only).

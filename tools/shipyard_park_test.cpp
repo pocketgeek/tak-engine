@@ -319,6 +319,45 @@ void flyerFactory(const sim::TypeRegistry& registry,sim::PathfindingMode mode,co
     }
 }
 
+// A mobile producer's flyer takes the rally as a factory's does: alone, with no
+// hop ahead of it. The producer here is a bare fixture; the flyer is shipped.
+void flyerMobileRally(const sim::TypeRegistry& registry,sim::PathfindingMode mode) {
+    const auto* shipped=registry.find("arafast");
+    const std::string label=modeLabel(mode)+"mobile producer/arafast: ";
+    if(!shipped || !shipped->canFly) {check(false,label+"fixture: a flyer");return;}
+    sim::World w;flatWorld(w,registry,mode);
+    auto flyer=*shipped;flyer.buildTime=1;flyer.buildCost=0;
+    sim::UnitType producer{};producer.id=producer.name="mobile-producer";producer.footX=producer.footZ=6;
+    producer.maxHp=10000;producer.isBuilder=true;producer.workerTime=1000;
+    producer.maxVel=sim::Fixed::fromFloat(1);producer.canMove=true;
+    constexpr float kRx=3000,kRz=1200;
+    constexpr int kCount=3;
+    const int id=w.spawn(&producer,2000,2000,0,0);
+    w.setRepeat(id,&flyer);w.order(id,kRx,kRz,false);
+    struct Out {int id;size_t legs=0;float x=0,z=0;bool resolved=false;};
+    std::vector<Out> out;
+    bool stopped=false;
+    for(int tick=0;tick<3000;++tick) {
+        w.tick(1.f/30);
+        for(const auto& u:w.units()) {
+            if(!u.alive() || u.type!=&flyer || u.underConstruction)continue;
+            auto it=std::find_if(out.begin(),out.end(),[&](const Out& o){return o.id==u.id;});
+            if(it==out.end()) {out.push_back({u.id});it=out.end()-1;}
+            if(!it->resolved && !u.orders.empty() && !u.orders.front().stepOut) {
+                it->resolved=true;it->legs=u.orders.size();
+                it->x=u.orders.front().x.toFloat();it->z=u.orders.front().z.toFloat();
+            }
+        }
+        if(!stopped && int(out.size())>=kCount) {w.stop(id);stopped=true;}
+        if(stopped && std::all_of(out.begin(),out.end(),[](const Out& o){return o.resolved;}))break;
+    }
+    int straight=0;
+    for(const auto& o:out)straight+=o.legs==1 && std::abs(o.x-kRx)<=16 && std::abs(o.z-kRz)<=16;
+    std::printf("flyer mobile mode=%s outputs=%zu straight=%d hash=%016llx\n",
+        mode==sim::PathfindingMode::Legion?"Legion":"Retail",out.size(),straight,(unsigned long long)w.stateHash());
+    check(int(out.size())>=kCount && straight==int(out.size()),label+"a rally flyer flies straight to the rally point, no hop before it");
+}
+
 // PARK's flight branch centred on the flyer itself, without the diagonal, once
 // its factory is gone (0x407f0a); around the live factory otherwise.
 void flyerParkFallback(const sim::TypeRegistry& registry,sim::PathfindingMode mode) {
@@ -402,6 +441,7 @@ int main(int argc,char** argv) {
                     if(!rally)flyerFactory(registry,mode,"tarcastl","tarship",rally);
                     if(!rally)flyerFactory(registry,mode,"verkeep","verpar",rally);
                 }
+                flyerMobileRally(registry,mode);
                 flyerParkFallback(registry,mode);
             }
         }

@@ -33,7 +33,11 @@
 #include "hpi/hpi.h"
 #include "net/client.h"
 #include "client/benchmarkmods.h"   // the Benchmark runs with no mod packs
+#include "client/benchmarkpath.h"   // ... and with the pathfinder picked on its screen
 #include "client/replayfile.h"   // ReplayCheckTracker
+#include "client/alloccount.h"   // what a replay keyframe really takes
+#include "client/replaybar.h"    // the replay transport
+#include "client/watchonly.h"    // what a spectator or replay viewer may do
 #include "net/replaywriter.h"    // the replay recording, streamed as the game is played
 #include "client/situation.h"    // TAK_SITUATION (debug builds)
 #include "client/postrail.h"      // TAK_POSTRAIL (debug builds)
@@ -316,9 +320,9 @@ public:
     // Benchmark run: an all-AI watch game on Ulasem Arena with the staged benchmark spawn
     // plan (see MatchConfig::benchmark). Drives the createGame/seat path in mpAutoStep.
     // It runs with no mod packs of any kind (applyBenchmarkMods), so call it after
-    // setMpClient and before the room is created.
-    void setBenchmark(int level) {
-        benchmarkLevel_ = level; benchmarkMode_ = level > 0;
+    // setMpClient and before the room is created. `path` is the room's pathfinder.
+    void setBenchmark(int level, tak::sim::PathfindingMode path) {
+        benchmarkLevel_ = level; benchmarkMode_ = level > 0; benchmarkPathfinding_ = path;
         if (benchmarkMode_) tak::applyBenchmarkMods(mods_, mp_);
     }
     bool benchmarkMode() const { return benchmarkMode_; }
@@ -421,7 +425,7 @@ public:
     // as it passes it, so playback can say WHERE it stopped matching what happened
     // rather than merely running to the end and looking plausible.
     void setReplayChecks(std::vector<tak::net::ReplayCheck> c) { replayChecks_ = std::move(c); }
-    bool replayDiverged() const { return replayTracker_.stateDiverged(); }
+    bool replayDiverged() const { return replayTracker_.stateDiverged() || replayKeyMismatch_; }
     std::string replayDivergenceSummary() const { return replayTracker_.summary(); }
     // Advance playback by `dt` (real seconds), scaled by the game-speed control;
     // Pause freezes it. Applies each recorded bundle then ticks the world.
@@ -431,6 +435,18 @@ public:
     void replayAdvance(float dt);
     size_t replayTick() const { return replayTick_; }
     size_t replayLength() const { return replayBundles_.size(); }
+    // Jump to `tick`, forwards or backwards, from the keyframe nearest behind it. The
+    // recording is simply played from there (muted), so a landing is the recorded state.
+    void replayJumpTo(size_t tick);
+#ifndef NDEBUG
+    // TAK_REPLAY_SEEK_SCRIPT: jump through these ticks in turn, printing each landing's
+    // hash; `straight` prints the hash in passing instead, for a run to compare with.
+    void setReplaySeekScript(const std::string& ticks, bool straight);
+    // TAK_WATCHONLY_POKE=<tick>: a joined spectator tries every order on a real server
+    // at that tick. A command getting out disconnects it, so the run reports the leak.
+    void debugWatchPoke();
+    bool replaySeekScriptBusy() const { return !replaySeekScript_.empty() || replaySeekTo_.has_value(); }
+#endif
 
     uint64_t worldHashPublic() const { return world_.stateHash(); }
     // Headless harness telemetry (observation only): Legion's counters.
@@ -548,7 +564,7 @@ public:
     uint32_t netLinesTick_ = 0;
     bool netLinesDone_ = false;
 #endif
-    void selectOnly(int id) { if (spectating_) return; selection_.clear(); selection_.push_back(id); }
+    void selectOnly(int id) { selection_.clear(); selection_.push_back(id); }
 
 #ifndef NDEBUG
     // Harness hook: select one of the local player's mobile units and hand it a
@@ -1840,6 +1856,7 @@ private:
     // Max NEW units the client registers (model/COB/anim VM + Create script) per frame,
     // so a mass simultaneous spawn streams in over ~a second instead of freezing one frame.
     static constexpr int kRegistrationsPerFrame = 64;
+    bool registerEveryUnit_ = false;   // a replay restore: every unit returns at once
 
     // Append two triangles for an axis-aligned quad (uv is ignored when the batch
     // is drawn untextured).
@@ -2243,6 +2260,7 @@ private:
     bool paused_ = false;
     bool briefingPaused_ = false;  // reset the render clock after the startup modal
     bool exitMenu_ = false;          // in-game exit overlay (Esc) is open
+    bool surrenderArmed_ = false;    // game menu: SURRENDER clicked once, asks to confirm
     bool canReturnToMenu_ = false;   // launched from the front-end -> offer MAIN MENU
     std::vector<std::pair<SDL_FRect, std::function<void()>>> exitHots_;   // overlay hit-rects (screen space)
     // ---- Options (local display/input; see viewer/settings.h) ----
@@ -2305,6 +2323,21 @@ private:
     float streamBannerBottom_ = 0;        // setStreamBannerBottom
     tak::hudcorner::Column topLeft_;      // this frame's top-left overlays, in draw order
     bool spectating_ = false;   // watching a live net game (no control, no fog)
+    // Watching, not playing: a live spectator or a replay. This one rule is what every
+    // gate reads, so a watcher can look at anything and nothing can reach the game. It
+    // is not noFog_ (a player can have that) and not cmdCatchUp_ (a player rejoining).
+    bool watchOnly() const { return spectating_ || replayMode_; }
+    // Whose interface is on show: the seat for a player; for a watcher the owner of the
+    // selection, or -1 with nothing selected.
+    int hudPlayer() const;
+    bool hudShown() const { return !watchOnly() || hudPlayer() >= 0; }
+    // A watcher's selection holds one owner: the front unit's (see tak::client::boxOwner).
+    void keepOneWatchOwner();
+    // A watcher's number keys are their own: viewer-local lists of unit ids, which never
+    // reach Cmd::SetSquad. Ids mean the same unit for the whole recording, so a group
+    // survives a replay jump.
+    std::array<std::vector<int>, 10> watchSquads_;
+    void assignWatchSquad(int num, bool append);
     std::string playerName_[8];   // net games: display name per player (from lobby)
     std::optional<uint8_t> resultParticipants_; // frozen starting roster; keep defeated/disconnected players
     bool playerAi_[8] = {};       // net games: which players are server-run AI
@@ -2347,6 +2380,63 @@ public:
     int netDelay() const { return netDelay_; }
 private:
     bool replayMode_ = false;                     // playing a recorded .takrep
+    // ---- replay transport (client/replaybar.h) -------------------------------------
+    // A whole copy of the world on the way through, so a rewind starts from the nearest
+    // one behind it. `hash` is the world's at capture: a restore must land on exactly it.
+    // `bytes` is what the copy really took (client/alloccount.h). `playerAi` is the one
+    // piece of display state only the recording's events set, so a rewind takes it back.
+    struct ReplayKeyframe {
+        uint32_t tick = 0;
+        uint64_t hash = 0, bytes = 0;
+        std::array<bool, 8> playerAi{};
+        std::unique_ptr<tak::sim::World> world;
+    };
+    std::vector<ReplayKeyframe> replayKeys_;     // ascending; the first is tick 0
+    uint64_t replayKeyBytes_ = 0, replayKeyBudget_ = 0;
+    uint64_t replayKeyLast_ = 0;                 // the newest copy's size: what the next will take
+    bool replayKeysStopped_ = false;             // ran out of memory: tick 0 only, no more captures
+    bool replayKeyMismatch_ = false;             // a restore did not land on its keyframe, twice
+    bool replayHalted_ = false;                  // a restore failed part way: the world is gone
+    bool replayPublish_ = false;                 // a restore: publish even with no tick run
+    std::optional<size_t> replaySeekTo_;         // the tick a jump is running to
+    // A jump in transit, from the press until its landing frame is on show. The frames on
+    // the way only pass through: they make no sound and no effect, and say nothing about
+    // who is alive at the landing, so the selection and tracking wait for it. Each restore
+    // and each landing starts a new world epoch, and the display is rebuilt, whole, when
+    // that frame comes up (replayDisplayStale_), not before: a frame still on show keeps
+    // the display that goes with it.
+    bool replayInTransit_ = false;
+    bool replayDisplayStale_ = false;
+    int replayJumpOwner_ = -1;                   // hudPlayer() as the jump set off
+    int replaySpeed_ = tak::replaybar::kNormalSpeed;
+    float replayRealRate_ = 0, replayRateSec_ = 0;   // the rate reached (speed label)
+    size_t replayRateTicks_ = 0;
+    tak::replaybar::Layout replayBar_;           // this frame's bar, for input to read back
+    bool replayDragging_ = false;                // the timeline's marker is in the hand
+    size_t replayDragTick_ = 0;
+    int replayHeld_ = 0;                         // -1 << / +1 >> held down
+    uint64_t replayHeldNextMs_ = 0;
+    std::vector<uint32_t> replayKeyTicks() const;
+    void replayTickOnce();                       // one recorded tick, the same for play and jump
+    void replayCaptureKeyframe();
+    bool replayThinKeys(uint64_t incoming);      // make room; false when nothing is left to give up
+    void replayRestore(size_t keyframe);
+    void replayResetDisplay();                   // what the display built from another moment
+    void replayDropQueued();                     // what the sim queued for the display
+    void replayNudge(int64_t ticks);             // << >>: from the playhead, or the jump in hand
+    void replayHoldNudge(int direction);         // the same, held down: waits for the landing
+    void replayTogglePause();
+    bool replayKey(SDL_Keycode key, uint16_t mod);
+    bool replayHoldSwallows(SDL_Keycode key) const;   // a key's auto-repeat is no new press
+    bool replayBarInput(const SDL_Event& e);
+    void replayDragRelease();
+    void drawReplayBar();
+#ifndef NDEBUG
+    std::deque<size_t> replaySeekScript_;        // TAK_REPLAY_SEEK_SCRIPT: jumps still to run
+    std::set<size_t> replaySeekStraight_;        // ... or ticks to print in passing
+    bool replaySeekPrinting_ = false;
+    void replaySeekPrint() const;
+#endif
     std::unique_ptr<tak::net::ReplayWriter> replayRec_;   // this game's recording (see beginGameRecording)
     uint32_t replayRecGame_ = 0, replayRecSeed_ = 0;      // which game it records
     tak::net::ReplayHeader replayRecHeader_;             // ... and its header (beginGameRecording)
@@ -3030,6 +3120,7 @@ private:
     bool benchmarkMode_ = false;        // menu Benchmark: all-AI watch run + staged spawn plan
     float patrolPerfAccum_ = -1.0f;     // developer fixture only; negative disables it
     int benchmarkLevel_ = 0;            // benchmark intensity 1..5 (for the plan + results label)
+    tak::sim::PathfindingMode benchmarkPathfinding_ = tak::sim::PathfindingMode::Retail;   // menu Benchmark's pick
     // Benchmark metrics: one sample per 5s milestone (the 7 spawn stages + the 40s end).
     struct BenchSample {
         int gameSec = 0, liveUnits = 0;
@@ -3277,6 +3368,24 @@ private:
     // loaded state-art textures for each gadget (imgs[0]=normal,1=hover,2=grayed).
     tak::gui::Gui gui_;
     std::vector<std::vector<SDL_Texture*>> guiTex_;
+    // A watcher's interface follows the player on show, so each side's art stays loaded
+    // once seen: the active members above swap with these, and draw code never knows.
+    struct SideArt {
+        SDL_Texture* panelTex = nullptr;
+        int panelW = 0, panelH = 0;
+        SDL_Texture* botTex = nullptr;
+        int botW = 0, botH = 0;
+        tak::gui::Gui gui;
+        std::vector<std::vector<SDL_Texture*>> guiTex;
+        bool missing = false;   // the side has no .gui: what was showing stays
+    };
+    std::map<std::string, SideArt> sideArt_;
+    std::string artSide_;       // the side the active members hold
+    SideArt takeSideArt();
+    void useSideArt(SideArt art);
+    void destroySideArt(SideArt& art);
+    void showSideArt(std::string side);
+    void clearSideArt();
     std::map<std::string, SDL_Texture*> icons_;
     std::map<std::pair<std::string, int>, SDL_Texture*> modelIcons_;  // model-rendered fallback icons
     std::vector<std::pair<SDL_FRect, const tak::sim::UnitType*>> iconRects_;
@@ -3318,7 +3427,9 @@ private:
     // has none). With mapViewW, the area the map is actually seen in -- the zoom-out
     // floor and the scroll limits are measured against it, so full zoom-out fits the
     // map to that area rather than running it under the right panel or the bar.
-    int mapViewH(int winH) const { return std::max(64, winH - (spectating_ ? 0 : barH())); }
+    // Every watcher's view is the full height, whether or not a selection has put the
+    // bar over it, so the zoom floor and the scroll limits never jump on a click.
+    int mapViewH(int winH) const { return std::max(64, winH - (watchOnly() ? 0 : barH())); }
 
     // Screen rect for a command-panel gadget (x >= 512 in 640-space): the whole
     // command panel is anchored to the bottom-right corner, so the ButtonPanel art
@@ -3413,6 +3524,7 @@ private:
         bool reclaimable = false;
         bool blocking = false;
         int simType = -2;    // last-seen sim FeatType index (-2 = not yet synced)
+        int treeType = -1;   // the sim type a tree sways as; a burnt stage does not
         int simId = -1;      // cell-derived sim feature id (matches World's ids)
         bool tree = false;   // category=trees (eligible for the wind-sway option)
         bool mana = false;   // category=mana (deposit cluster: kept walkable/buildable)
@@ -3457,6 +3569,7 @@ private:
     std::vector<Tri> ghostVerifyTris_;    // TAK_GHOST_VERIFY reference collection
 #endif
     std::unordered_set<int> featInstIds_;   // sim ids with a visual inst (dynamic adds)
+    size_t featuresAtLoad_ = 0;             // features_ from the map; the rest the game added
     std::vector<std::pair<float, float>> manaSpots_;   // Sacred Stone deposits
 
     struct FeatArt {
@@ -3697,11 +3810,12 @@ private:
     // Replace the selection with every owned, living unit matching `pred`.
     template <class Pred>
     void selectOwned(Pred pred) {
-        if (spectating_) return;   // watch-only
+        const int owner = hudPlayer();   // a watcher's select keys reach the player on show
+        if (owner < 0) return;
         selection_.clear();
         for (const UnitR* _up : front().live) {
             const UnitR& u = *_up;
-            if (u.alive() && u.player == localPlayer_ && u.type && !u.underConstruction &&
+            if (u.alive() && u.player == owner && u.type && !u.underConstruction &&
                 pred(u))
                 selection_.push_back(u.id);
         }
@@ -3747,7 +3861,7 @@ private:
     bool centerOnSelection();
 
     // The player's HUD accent — follows their chosen player colour, not faction.
-    SDL_Color factionColor() const { return playerColor(localPlayer_); }
+    SDL_Color factionColor() const { return playerColor(hudShown() ? hudPlayer() : localPlayer_); }
 
     // Is this player on the local player's team? (Allies share vision, so their
     // units render/appear on the minimap through fog just like your own.)

@@ -40,8 +40,10 @@ public:
                   std::vector<int> playerMap = {});
 
     void setPlayerCommanders(std::vector<const UnitType*> types) { playerCommanders_=std::move(types); }
+    // An exact copy of the mission's state, for a copy of its world (World::clone).
+    std::unique_ptr<MissionScript> clone() const;
 
-    bool ok() const { return vm_ != nullptr; }
+    bool ok() const { return bool(vm_); }
 
     // Per-placed-unit `InitialMission=` order queues from the .ota, applied at start()
     // in the same mini-language SetMission uses. This is the shipped missions' NPC
@@ -81,6 +83,8 @@ private:
     };
 
     // ---- VM callback plumbing ----
+    MissionScript(const MissionScript&)=default;
+    void wireVm();   // the hooks bind this object, so a copy wires its own
     int32_t mapCommand(World& w, int nameIdx, const std::vector<int32_t>& args);
     int32_t getValue(World& w, int32_t valId, const std::vector<int32_t>& args);
     void setUnitValue(int32_t valId, int32_t value);
@@ -105,7 +109,7 @@ private:
     static float cellToWorld(float cell) { return cell * 16.0f + 8.0f; }   // .ota cell -> world px
 
     cob::File cob_;
-    std::unique_ptr<cob::Vm> vm_;
+    cob::CopiedPtr<cob::Vm> vm_;
     const TypeRegistry& reg_;
     World* world_ = nullptr;   // set on each entry (start/step/unit*) for the VM callbacks
     int human_;

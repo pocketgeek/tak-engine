@@ -12,12 +12,10 @@ independent security audit or protection against a volumetric DDoS.
 ## Versions
 
 Server and clients must speak the same gameplay protocol; update the server and
-every client together when it changes. **0.9.15 keeps protocol 308**, and its
-server code is unchanged from 0.9.14: a 0.9.14 `takserver` accepts 0.9.15 players
-and a 0.9.15 `takserver` accepts 0.9.14 players, so a 0.9.14 server needs no
-update for 0.9.15. **0.9.14 changed it (protocol 308):** a 0.9.14 or 0.9.15
-`takserver` turns away 0.9.13 and older clients with a *protocol version mismatch*
-message, and a 0.9.13 or older server turns away 0.9.14 and 0.9.15 players. (0.9.13 used protocol 307, 0.9.12 305, 0.9.11 304; 0.9.9 and 0.9.10 shared 303;
+every client together when it changes. **0.9.16 changes it (protocol 309):** a
+0.9.16 `takserver` accepts only 0.9.16 players and turns away 0.9.15 and older clients
+with a *protocol version mismatch* message, and a 0.9.15 or older server turns away
+0.9.16 players, so update `takserver` when you announce 0.9.16 to your players. (0.9.15 and 0.9.14 used protocol 308, 0.9.13 307, 0.9.12 305, 0.9.11 304; 0.9.9 and 0.9.10 shared 303;
 306 was never released.) Since 0.9.12 a
 server whose game has no human player left (AIs watched by spectators) no longer
 computes the lockstep check nobody compares, except for a recorded replay's
@@ -187,6 +185,16 @@ An invalid certificate fails the connection; there is no plaintext fallback.
 A TLS listener accepts only TLS connections. TLS 1.2 or later protects the whole
 session, including registration, login, game passwords, chat and commands.
 Account authentication is still required by default.
+
+A password login over TLS also earns a sign-in token, so **Game Select** after a
+game returns to the game list with no password prompt. A token is 256 random bits
+that rotates on every use and is revoked when the player quits the game. However
+often it rotates, it ends 12 hours after the password login. A token used twice ends
+that login's whole line of tokens, unless it is resent within 30 seconds because the
+link dropped before the answer arrived. The server keeps only a hash of each token,
+in memory, per account: nothing is written to disk, and a restart simply makes
+players type their password again. A bad token counts as a failed login in the login
+throttle. A plaintext server neither issues nor accepts tokens.
 
 OpenSSL is compiled into the binaries on Linux, Windows x64/ARM64 and macOS
 x64/ARM64. No OpenSSL DLL/shared library is shipped or required. Windows and

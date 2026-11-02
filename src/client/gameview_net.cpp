@@ -1396,6 +1396,7 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
     void GameView::noteEvent(const tak::net::Event& e) {
         if (e.kind != tak::net::Event::Kind::AiTakeover || e.player >= 8) return;
         playerAi_[e.player] = true;
+        if (replayInTransit_) return;   // a jump passes it by
         const std::string& name = playerName_[e.player];
         notice_ = (name.empty() ? "PLAYER " + std::to_string(e.player + 1) : name) +
                   " STOPPED RESPONDING: AN AI (NORMAL) TAKES OVER";
@@ -1458,8 +1459,10 @@ void GameView::autoplayHelpStep(const std::function<uint32_t()>& rnd) {
             o.monarchExpendable = tak::devFlag("TAK_MONARCH_EXPENDABLE") ? 1 : 0;
             o.forfeitSelfDestruct = tak::devFlag("TAK_FORFEIT_SELFDESTRUCT") ? 1 : 0;
             o.doubleSight = tak::devFlag("TAK_DOUBLE_SIGHT") ? 1 : 0;
+            // The menu Benchmark's pick; every other auto launch is Retail. TAK_LEGION
+            // forces Legion for any of them (a TAK_BENCH run has no pick of its own).
             o.pathfindingMode = tak::devFlag("TAK_LEGION") ? tak::sim::PathfindingMode::Legion :
-                tak::sim::PathfindingMode::Retail;
+                benchmarkPathfinding_;
             // TAK_FOG=0|1|2 forces the room's fog rule (not explored / explored /
             // full vision) so the setting can be tested end to end without driving
             // the lobby by hand.

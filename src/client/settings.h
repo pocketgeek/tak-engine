@@ -182,6 +182,9 @@ struct Settings {
         std::string name = "game", generator;
         friend bool operator==(const GameCreate&, const GameCreate&) = default;
     } gameCreate;
+    // Settings -> Benchmark's PATHFINDING pick, the last one used. Its own key, so a
+    // benchmark never changes what the game-create screen offers (gameCreate.pathfindingMode).
+    sim::PathfindingMode benchmarkPathfinding = sim::PathfindingMode::Retail;
     // Ticked mod packs, by folder name: mods/game/<pack> (applied in every non-campaign
     // room this player hosts, sent to every player) and mods/cosmetic/<pack> (every
     // player's own, never sent anywhere). Saved as mods.gamePack / mods.cosmeticPack.
@@ -253,6 +256,7 @@ struct Settings {
             && a.streamCpuEncoder == b.streamCpuEncoder
             && a.gameModPacks == b.gameModPacks && a.cosmeticModPacks == b.cosmeticModPacks
             && a.lastMap == b.lastMap && a.gameCreate == b.gameCreate
+            && a.benchmarkPathfinding == b.benchmarkPathfinding
             && a.dataDir == b.dataDir && a.dataManifest == b.dataManifest
             && a.knownServers == b.knownServers
             && a.audioDevice == b.audioDevice && a.renderer == b.renderer
@@ -340,6 +344,7 @@ inline Settings preferenceDefaults(const Settings& cur) {
     d.streamCpuEncoder = cur.streamCpuEncoder;
     d.lastMap = cur.lastMap;
     d.gameCreate = cur.gameCreate;
+    d.benchmarkPathfinding = cur.benchmarkPathfinding;
     d.gameModPacks=cur.gameModPacks;d.cosmeticModPacks=cur.cosmeticModPacks;
     d.hotkeys = cur.hotkeys;                      // reset from the Hotkeys screen
     d.dataDir = cur.dataDir;
