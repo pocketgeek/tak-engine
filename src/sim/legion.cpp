@@ -485,16 +485,24 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         return (px-qx)*(px-qx)+(pz-qz)*(pz-qz);
     }
     };
-    // The step charge of corridors `avoid` at origin (x, z) (Field::corridorCharge and a chain tile's build).
-    static uint32_t corridorChargeOf(const std::vector<Corridor>& avoid,int x,int z,int fx,int fz,uint32_t base) {
-        uint32_t extra=0;
+    // The step charge of corridors `avoid` at origin (x, z) is base * corridorMultOf: the largest multiplier any of
+    // them puts on the origin (kBehindFactor-1 inside a pass-behind corridor, kSoftFactor-1 inside another, kSoftNear-1
+    // within a cell of one, 0 clear). The multiplier depends on the corridors, the origin and the plane's footprint
+    // only, all fixed for the life of a build, so a build computes it once per cell (Field::corridorMult, tileCore)
+    // where it used to run this loop for each of up to eight relaxations of the cell (perf 2026-11-02, 6.3 item 1).
+    static uint32_t corridorMultOf(const std::vector<Corridor>& avoid,int x,int z,int fx,int fz) {
+        uint32_t mult=0;
         const int64_t px=int64_t(x)*16+fx*8,pz=int64_t(z)*16+fz*8;
         for(const auto& c:avoid) {
             const int l=c.level(px,pz);
-            if(l==2)extra=std::max(extra,base*((c.behind?kBehindFactor:kSoftFactor)-1));
-            else if(l==1)extra=std::max(extra,base*(kSoftNear-1));
+            if(l==2)mult=std::max(mult,(c.behind?kBehindFactor:kSoftFactor)-1);
+            else if(l==1)mult=std::max(mult,kSoftNear-1);
         }
-        return extra;
+        return mult;
+    }
+    static_assert(kSoftNear-1<255&&kSoftFactor-1<255&&kBehindFactor-1<255,"corridor multiplier memo: 1 + mult in a byte");
+    static uint32_t corridorChargeOf(const std::vector<Corridor>& avoid,int x,int z,int fx,int fz,uint32_t base) {
+        return base*corridorMultOf(avoid,x,z,fx,fz);
     }
     // ---- stage 6: shared tiles of tile chains -------------------------------------------------------------------
     // A TILE is the field of one hierarchy region (sim/legion_hier.h) toward the far side of one of its portals: the
@@ -650,7 +658,22 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // top a key then rises by at most (kSoftFactor+kBehindFactor-1)*
         // kDiagonal plus the heuristic's kDiagonal = 112, under the 128 buckets.
         std::vector<Corridor> avoid;
-        uint32_t corridorCharge(int x,int z,int fx,int fz,uint32_t base) const {return corridorChargeOf(avoid,x,z,fx,fz,base);}
+        // The corridor multiplier (corridorMultOf) of each cell the build has relaxed into, computed once per cell
+        // per build: per tile of the window, allocated on first use like `via`; a byte 0 (not yet computed) or
+        // 1 + the multiplier. The corridors and the footprint are fixed for the build, so a read is exact; freed
+        // when the build is done (nothing relaxes a finished field). Derived (a function of avoid and the cell),
+        // never hashed, not in NavBytes (bounded by the window's cells, a byte each, only while a build with
+        // corridors is unfinished).
+        LeftEmptyOnCopy<std::vector<std::unique_ptr<uint8_t[]>>> corrMemo;
+        uint32_t corridorMult(int x,int z,int fx,int fz) {
+            if(corrMemo.empty())corrMemo.resize(tiles.size());
+            auto& t=corrMemo[tileOf(x,z)];
+            if(!t) {t.reset(new uint8_t[tileCells()]);std::fill(t.get(),t.get()+tileCells(),uint8_t(0));}
+            uint8_t& m=t[inTile(x,z)];
+            if(!m)m=uint8_t(1+corridorMultOf(avoid,x,z,fx,fz));
+            return uint32_t(m)-1;
+        }
+        void dropCorrMemo() {std::vector<std::unique_ptr<uint8_t[]>>().swap(corrMemo);}
         // The heuristic target (RouteGrid::tx, tz, aimed) is the group's
         // bodies.
         std::vector<std::pair<uint32_t,int>> seedKeys;size_t seedNext=0;   // seeds by key, enqueued in order
@@ -5287,7 +5310,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     if(label&&!f.charges.empty())queue=f.chargeFor(label);
                 }
                 const uint32_t next=g+(level==2?base*kSoftFactor:level==1?base*kSoftNear:base)+
-                    (f.avoid.empty()?0:f.corridorCharge(x+d[0],z+d[1],p.footX,p.footZ,base))+queue;
+                    (f.avoid.empty()?0:base*f.corridorMult(x+d[0],z+d[1],p.footX,p.footZ))+queue;
                 if(next>=kUnreached)continue;   // out of range (never: over 40M cells even at the highest charge)
                 if(next<slot) {
                     f.slot(x+d[0],z+d[1])=next;
@@ -5305,12 +5328,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             std::vector<std::pair<uint32_t,int>>().swap(f.seedKeys);
             if(f.kind==KindChain) {
                 // The destination's field is done: its values are final; the transit tiles follow.
-                f.dDone=true;
+                f.dDone=true;f.dropCorrMemo();
                 f.work+=spent;f.syncInflight();
                 return spent+(spent<budget?advanceChain(f,budget-spent):0);
             }
             f.done=true;++fieldsDone;
-            f.demand.clear();
+            f.demand.clear();f.dropCorrMemo();
         }
         f.work+=spent;
         f.syncInflight();
@@ -5756,6 +5779,9 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         t.values.assign(size_t(K)*size_t(K),kUnreached);
         std::vector<uint8_t> level(size_t(K)*size_t(K),0);
         for(const auto& [c,l]:t.soft)level[c]=l;
+        // The corridor multiplier of each cell, once per cell (0: not yet computed, else 1 + corridorMultOf).
+        std::vector<uint8_t> corr;
+        if(!t.avoid.empty())corr.assign(size_t(K)*size_t(K),0);
         using Item=std::pair<uint32_t,int>;
         std::priority_queue<Item,std::vector<Item>,std::greater<Item>> open;
         std::map<int,uint32_t> seedAt;
@@ -5787,8 +5813,13 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 const size_t lc=size_t(((nz-r[1])<<sh)|(nx-r[0]));
                 const uint32_t base=dir[0]&&dir[1]?kDiagonal:kOrthogonal;
                 const uint32_t lv=level[lc];
-                const uint32_t nd=d+(lv==2?base*kSoftFactor:lv==1?base*kSoftNear:base)+
-                    (t.avoid.empty()?0:corridorChargeOf(t.avoid,nx,nz,footX,footZ,base));
+                uint32_t cm=0;
+                if(!corr.empty()) {
+                    uint8_t& m=corr[lc];
+                    if(!m)m=uint8_t(1+corridorMultOf(t.avoid,nx,nz,footX,footZ));
+                    cm=uint32_t(m)-1;
+                }
+                const uint32_t nd=d+(lv==2?base*kSoftFactor:lv==1?base*kSoftNear:base)+base*cm;
                 if(nd<d||nd>=kUnreached)continue;   // out of range (an exact seed near kUnreached)
                 if(nd<t.values[lc]) {t.values[lc]=nd;open.push({nd,nz*W+nx});}
             }
@@ -6033,6 +6064,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         for(size_t i=0;i<from.via.size();++i)if(from.via[i]) {
             f->via[i].reset(new uint16_t[cells]);
             std::copy_n(from.via[i].get(),cells,f->via[i].get());
+        }
+        f->corrMemo.resize(from.corrMemo.size());
+        for(size_t i=0;i<from.corrMemo.size();++i)if(from.corrMemo[i]) {
+            f->corrMemo[i].reset(new uint8_t[cells]);
+            std::copy_n(from.corrMemo[i].get(),cells,f->corrMemo[i].get());
         }
         f->held.reserve(from.held.size());
         for(const auto& t:from.held)f->held.push_back(tileCopies.at(t.get()));
