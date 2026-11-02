@@ -415,6 +415,45 @@ public:
     enum Site : uint8_t {SiteNone=0,SiteField=1,SiteGate=2,SitePivot=3,SitePass=4,SiteBlocked=5,SiteDirect=6};
     static constexpr int kSites=7;
     int steerSite(int id) const;
+    // Pathfinding deep dive 2026-11-02 (observation only, read-only, never hashed): finer than the site,
+    // which mechanism the member's last move() update ran -- the walk it was on, or why it stood.
+    // tools/legion_observe.h attributes its motion keys (statue ticks, sideways and backward steps,
+    // reversals, stopped samples) to these, so a fixture says which mechanism makes bodies slide, back up
+    // or stand. -1 if the unit is not a Legion member.
+    enum Why : uint8_t {WhyNone=0,
+        WhySteer,          // an ordinary step toward its route (field, gate, pinwheel aim)
+        WhyDirect,         // a straight walk to its goal (own line, or the heading while its field builds)
+        WhyPass,           // a lane-discipline pass, or walking its new lane after one
+        WhyFlowFirst,      // the first step of a flow-around shuffle committed in drive's blocked branch
+        WhyFlowBrisk,      // walking a committed flow-around shuffle at travel speed
+        WhyFlowCap,        // ... at the facing cap (a creep)
+        WhySidestep,       // walking an opposing-traffic side-step (sidestep)
+        WhyRoom,           // a move over at a merge (makeRoom)
+        WhyCorner,         // the corner clip (cornerStep)
+        WhyRouteBrisk,     // walking a local detour route at travel speed (kBriskRoute, a still target, a spot route)
+        WhyRouteCap,       // ... at the facing cap
+        WhyPress,          // a pressIn walk toward reach
+        WhyYield,          // a settled body stepping aside (serviceYields)
+        WhyHoldMovers,     // held: the wanted cell is covered by bodies that will move (a queue)
+        WhyHoldSettled,    // held: by settled / idle / engaged bodies (blockedBySettled)
+        WhyHoldJam,        // held: by another order's jam (blockedByJam)
+        WhyHoldCorner,     // held: the corner clip found no legal axis
+        WhyHoldRefused,    // held: commitGroundStep refused the step
+        WhyHoldDetour,     // held this update: a local detour was just planned (walked from the next)
+        WhyHoldAsk,        // held: asked bodies to yield / part / give way
+        WhyHoldAdmission,  // held: a narrow passage open the other way
+        WhyHoldNoAim,      // held: no legal neighbour nearer (aimCell < 0)
+        WhyHoldRing,       // held: a blind / shadowed ring member standing in reach
+        WhyHoldSpot,       // held: spotRoute found no way to its spot yet
+        WhyHoldRest,       // held: a long-held body's rest stride (heldRest)
+        WhyHoldYielding,   // held: parting a lane for another body
+        WhyHoldLivelock,   // held: the livelock latch forbids a flow-around
+        WhyHoldStill,      // held: an attacker round a still target gaining nothing (no new shuffle)
+        WhyWait,           // waiting for its field / registration / a repair
+        WhyTrapped};
+    static constexpr int kWhys=31;
+    static const char* whyName(int why);
+    int steerWhy(int id) const;
     // W9 step 0 (debug builds only; empty when NDEBUG is defined): the predicate census, (name, count)
     // pairs in a fixed order -- how often each W9 mechanism's trigger WOULD fire on this run, counted
     // where the mechanism will sit, without changing a decision. Each name's definition is on the

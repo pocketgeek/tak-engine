@@ -1100,6 +1100,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // W9 step 0: which steering source moved the member on its last update (LegionNavigator::Site;
         // 0 none). Observation only: never read by a decision, never hashed.
         uint8_t site=0;
+        // Pathfinding deep dive (LegionNavigator::Why): the mechanism of the last update, and which
+        // rule committed the current side-step (0 flow-around, 1 sidestep, 2 makeRoom). Observation
+        // only: never read by a decision, never hashed.
+        uint8_t why=0,detourWhy=0;
 #ifndef NDEBUG
         // W9 step 0 census shadow (debug builds only, never hashed, never read by a decision): the
         // member's yield refusals since its last settle window (dbgRefused) and in the two windows before
@@ -8059,6 +8063,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             w.commitGroundStep(*u,sx,sz,true);
             u->speed=Fixed();u->turnReqBam=0;
             if(u->x==bx&&u->z==bz) {it=yielding.erase(it);continue;}
+            if(Member* ym=member(it->first))ym->why=LegionNavigator::WhyYield;
             ++stats.slides;++it;
         }
     }
@@ -9459,7 +9464,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                                  std::max(t->type->footX,t->type->footZ)/2);
     }
     void hold(Unit& u,Member& m) {
-        if(pressIn(u,m)) {u.speed=Fixed();u.turnReqBam=0;return;}
+        if(pressIn(u,m)) {m.why=LegionNavigator::WhyPress;u.speed=Fixed();u.turnReqBam=0;return;}
         if(m.state!=Holding)m.nextDetour=8;
         // Holding is a full stop with a constant heading: no creeping, no
         // re-aiming. The body wakes when a candidate cell frees (rechecked
@@ -9583,6 +9588,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         return false;
     }
     void trapped(Unit& u,Member& m) {
+        m.why=LegionNavigator::WhyTrapped;
         // No legal route exists for this footprint: stop at once (zero speed,
         // constant heading, no probing). The order is kept for a grace
         // period so a gate opening or a wall coming down (a new static
@@ -11556,7 +11562,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         Member* found=member(u.id);
         // A member parting a lane (partable) takes its side-step from
         // serviceYields; it keeps its order and hold clock meanwhile.
-        if(found&&yielding.count(u.id)&&heldPart(u)) {u.speed=Fixed();u.turnReqBam=0;return;}
+        if(found&&yielding.count(u.id)&&heldPart(u)) {found->why=LegionNavigator::WhyHoldYielding;u.speed=Fixed();u.turnReqBam=0;return;}
         const auto& leg=u.orders[World::currentLeg(u.orders)];
         const Kind kind=kindOf(u);
         const Policy rule=policy(kind);
@@ -11603,7 +11609,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // Out of the owner's brake again (the target left reach or died): no
         // soft obstacle any more, at once (as a body setting off).
         if(m.state==Engaged)unstamp(u.id);
-        if(heldRest(u,m)) {u.speed=Fixed();u.turnReqBam=0;return;}
+        if(heldRest(u,m)) {m.why=LegionNavigator::WhyHoldRest;u.speed=Fixed();u.turnReqBam=0;return;}
         ++stats.moves;
         // The native goal predicate (the circle the native mover would test)
         // also ends the leg, with the same event.
@@ -11711,20 +11717,20 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // kMaxWiden times; then the whole component's window takes over, as for any bounded window.
         if(const RouteView r=view(g.field.get());r&&r.bounded()&&!g.full&&(!r.inside(ox,oz)||(r.complete()&&r.estimate(size_t(here))==kUnreached))) {
             // A chain's halo region: attach its tile (a repair, next tick) instead of rebuilding.
-            if(g.field->kind==KindChain&&r.complete()&&requestRepair(g,*g.field,here)) {m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;}
+            if(g.field->kind==KindChain&&r.complete()&&requestRepair(g,*g.field,here)) {m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;}
             // A corridor or chain a static change touched (its group is stale): the body is unknown to it, not cut
             // off; it waits for the refresh (demanded at once) instead of widening.
             if(g.field->kind!=KindWindow&&g.field->touched&&(g.stale||g.improveTick!=kNoTick)) {
                 // Stage 7: a deferred improvement refresh is wanted now (this body may be reachable only by it).
                 if(g.improveTick!=kNoTick) {++acct.improveDemands;promoteImprovement(g);}
                 if(!g.demand) {g.demand=true;listGroup(g);}
-                m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
+                m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
             }
             if(g.next&&!g.next->done)++stats.refreshDiscards;
             if(g.field->kind!=KindWindow&&g.widens<kMaxWiden) {++g.widens;++acct.corridorWidens;}
             else g.full=true;
             g.field.reset();g.next.reset();g.stale=false;g.demand=false;g.awareDemand=false;restaleSlots(g);listGroup(g);
-            m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
+            m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
         }
         // The holder rule (approachSettled): checked before routes and
         // side-steps, which a body held behind its own army otherwise walks
@@ -11791,7 +11797,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         watchStrips(u,m);
         updateClaim(u,m,p,f,ox,oz);
         if(f&&g.field&&(g.field->labels||(g.field->kind==KindChain&&g.soft&&(g.field->chainAdmits||g.members>=kOpeningMembers)))&&m.state!=Arrived&&
-           admissionHold(u,m,g,ox,oz)) {holdStall(m);hold(u,m);return;}
+           admissionHold(u,m,g,ox,oz)) {m.why=LegionNavigator::WhyHoldAdmission;holdStall(m);hold(u,m);return;}
         // A pressIn step (see pressIn) walks on to its point until combat
         // brakes the body in reach; it ends there, after kPressTicks
         // updates, or once the body has left its origin's neighbours. It walks
@@ -11807,6 +11813,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             else {
                 holdStall(m);
                 m.site=LegionNavigator::SiteBlocked;
+                m.why=LegionNavigator::WhyPress;
                 drive(u,m,p,nullptr,maximum,Fixed::raw(m.pressX),Fixed::raw(m.pressZ),false,false,false,false,pressHidden(u,m));
                 if(m.state==Holding)m.pressX=kNoPress;   // blocked: the next hold may press elsewhere
                 return;
@@ -11847,6 +11854,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 // it there, and at the cap its short steps crept for hundreds
                 // of ticks.
                 const bool brisk=(int(m.route.size())>=kBriskRoute&&policy(m.kind).completes)||stillTarget(m);
+                m.why=brisk?LegionNavigator::WhyRouteBrisk:LegionNavigator::WhyRouteCap;
                 drive(u,m,p,nullptr,maximum,ax,az,false,false,false,false,brisk);
                 return;
             }
@@ -11882,6 +11890,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 // a target standing still (stillTarget) keeps travel speed on any committed side-step; one
                 // that gains nothing commits no new flow-around shuffle (see drive).
                 const bool brisk=(m.detourFlow&&!m.passLabel&&!(m.pt&&m.pt->meet.tick!=kNoTick)&&stalledFor(m)<=kCrowdWindow)||stillTarget(m);
+                m.why=m.detourPass?LegionNavigator::WhyPass:m.detourWhy==1?LegionNavigator::WhySidestep:m.detourWhy==2?LegionNavigator::WhyRoom:
+                      brisk?LegionNavigator::WhyFlowBrisk:LegionNavigator::WhyFlowCap;
                 drive(u,m,p,nullptr,maximum,ax,az,false,false,m.detourFace,m.detourPass,brisk);
                 return;
             }
@@ -11988,14 +11998,14 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(const Unit* t=w.unit(g.reachTarget);t&&t->alive()&&t->type) {
                 const int64_t R=reachPx(u,t,false).first;
                 auto d2=[&](int64_t x,int64_t z) {const int64_t dx=x-(t->x.v>>16),dz=z-(t->z.v>>16);return dx*dx+dz*dz;};
-                if(R>0&&d2(u.x.v>>16,u.z.v>>16)<=R*R&&d2(gx.v>>16,gz.v>>16)>R*R) {hold(u,m);return;}
+                if(R>0&&d2(u.x.v>>16,u.z.v>>16)<=R*R&&d2(gx.v>>16,gz.v>>16)>R*R) {m.why=LegionNavigator::WhyHoldRing;hold(u,m);return;}
             }
         // Round 6: the walk to a ring spot through a narrow approach (spotRoute).
         const int spot=spotRoute(u,m,g,p,ox,oz);
-        if(spot==-1) {hold(u,m);return;}
+        if(spot==-1) {m.why=LegionNavigator::WhyHoldSpot;hold(u,m);return;}
         if(spot==1) {
             const auto [ax,az]=stepAim(u,m.route.front());
-            holdStall(m);
+            holdStall(m);m.why=LegionNavigator::WhyRouteBrisk;
             m.site=LegionNavigator::SiteBlocked;
             drive(u,m,p,nullptr,maximum,ax,az,false,false,false,false,true);
             return;
@@ -12069,16 +12079,16 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 const int dx=goalX-ox,dz=goalZ-oz,span=std::max(std::abs(dx),std::abs(dz));
                 const int hx=ox+dx*kHeadingCells/span,hz=oz+dz*kHeadingCells/span;
                 if(span>kHeadingCells&&sweep(p,u,u.x,u.z,centre(hx,fx),centre(hz,fz))) {
-                    m.site=LegionNavigator::SiteDirect;
+                    m.site=LegionNavigator::SiteDirect;m.why=LegionNavigator::WhyDirect;
                     drive(u,m,p,nullptr,maximum,centre(hx,fx),centre(hz,fz),false,false);
                     return;
                 }
-                m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
+                m.why=LegionNavigator::WhyWait;m.state=Waiting;++stats.waitingMemberTicks;w.brakeGround(u);return;
             }
             const uint32_t potential=f.estimate(size_t(here));
             if(potential==kUnreached) {trapped(u,m);return;}
             int cell=aimCell(u,m,p,f,ox,oz);
-            if(cell<0) {hold(u,m);return;}
+            if(cell<0) {m.why=LegionNavigator::WhyHoldNoAim;hold(u,m);return;}
             m.site=LegionNavigator::SiteField;
             if(gInstrumentProbes&&f.complete()&&m.slot>=0&&m.pt&&m.vertexCell!=here&&partRefs(m)>=kPivotMembers&&formationMember(m)) {
                 m.vertexCell=here;vertexInstrument(u,m,g,p,f,ox,oz);
@@ -12120,6 +12130,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // Nor does a livelocked body pass (a lane pass a cell over, undone by
         // the field's next step, was a 42-tick to-and-fro of its own).
         if(here!=m.goal&&!livelock(u)&&passAhead(u,m,p,f,maximum,ox,oz,aimX,aimZ,direct)) {m.site=LegionNavigator::SitePass;return;}
+        m.why=direct?LegionNavigator::WhyDirect:LegionNavigator::WhySteer;
         drive(u,m,p,f,maximum,aimX,aimZ,here==m.goal,direct);
     }
     // The cell a field follower at origin (ox,oz) aims at; -1 when no
@@ -13433,6 +13444,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(!direct||m.passUntil<=w.tickCounter_)return false;
             if(!step(p,ox,oz,dx,dz)||!stepFree(u,ox,oz,ox+dx,oz+dz))return false;
             const auto [cx,cz]=stepAim(u,(oz+dz)*W+ox+dx);
+            m.why=LegionNavigator::WhyPass;
             drive(u,m,p,f,maximum,cx,cz,false,true);
             return true;
         }
@@ -13458,9 +13470,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 if(o&&o!=u.id)++busy;
             }
             const bool face=busy<=fx*fz;
-            m.detour=cell;m.detourTicks=0;m.detourFace=face;m.detourPass=true;m.detourFlow=false;m.lineCell=-1;
+            m.detour=cell;m.detourTicks=0;m.detourFace=face;m.detourPass=true;m.detourFlow=false;m.lineCell=-1;m.detourWhy=0;
             m.passUntil=w.tickCounter_+kPassHold;m.passRX=int8_t(rx);m.passRZ=int8_t(rz);
             const auto [cx,cz]=stepAim(u,cell);
+            m.why=LegionNavigator::WhyPass;
             drive(u,m,p,nullptr,maximum,cx,cz,false,false,face,true);
             return true;
         }
@@ -13573,6 +13586,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
 #ifndef NDEBUG
             if(formationMember(m)&&partRefs(m)>=kPivotMembers)++census.b6Blocked;
 #endif
+            uint8_t why=livelock(u)?LegionNavigator::WhyHoldLivelock:
+                (m.stillSince!=kNoTick&&stillTarget(m)&&!shadowWalk(u,m))?LegionNavigator::WhyHoldStill:LegionNavigator::WhyHoldMovers;
             // Blocked by a body. Flow around it through any other free cell
             // that is strictly closer to the goal (field descent), committing
             // to that neighbour for this update; otherwise hold still.
@@ -13651,7 +13666,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                         // Commit to finishing this step into the cell
                         // (hysteresis): no re-deciding mid-cell, and the course
                         // keeps to its route while it shuffles.
-                        moved=true;++stats.slides;face=false;
+                        moved=true;++stats.slides;face=false;m.why=LegionNavigator::WhyFlowFirst;m.detourWhy=0;
                         m.detour=(oz+d[1])*W+ox+d[0];m.detourTicks=0;m.detourFace=false;m.detourPass=false;
                         // A fight leg's shuffles too (round 4, 2026-10-20): the column
                         // of a fight order flows round its own members standing in reach
@@ -13667,7 +13682,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     }
                 }
             }
-            if(!moved&&corner)moved=cornerStep();
+            if(!moved&&corner) {moved=cornerStep();if(moved)m.why=LegionNavigator::WhyCorner;else why=LegionNavigator::WhyHoldCorner;}
             // Room at a merge: a held body heading its queue records the origin it waits for (see makeRoom): its
             // own blocked step's (nx0,nz0), not the last flow-around option tried above.
             if(!moved)setWant(u.id,m,f&&roomKind(m)&&queueHead(u,m,p,f,ox,oz)?nz0*W+nx0:-1);
@@ -13688,7 +13703,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 // the body shuffles back, every ~250-400 ticks, never holding
                 // long enough to ask (a livelock).
                 const bool settled=f&&m.detour<0&&m.route.empty()&&blockedBySettled(u,m,nx,nz);
-                if(settled&&int64_t(m.nearest)==m.detourBest&&m.holdUpdates>=6&&yieldLane(u,m,p,nx,nz)) {hold(u,m);restartHold(m);return;}
+                if(settled&&int64_t(m.nearest)==m.detourBest&&m.holdUpdates>=6&&yieldLane(u,m,p,nx,nz)) {m.why=LegionNavigator::WhyHoldAsk;hold(u,m);restartHold(m);return;}
                 if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=m.nextDetour&&
                    (settled||(m.holdUpdates>=60&&(formationMember(m)||blockedByJam(u,m,nx,nz))))) {
                     // Back off geometrically after each attempt: a crowd that
@@ -13696,13 +13711,18 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     // (the count restarts on a new record, Member::nearest).
                     const uint32_t wait=std::min<uint32_t>(30u<<std::min<uint32_t>(m.detourCount,4u),480u);
                     ++m.detourCount;
-                    if(localDetour(u,m,p,f,towardGoal)) {m.nextDetour=wait;u.speed=Fixed();return;}
+                    if(localDetour(u,m,p,f,towardGoal)) {m.why=LegionNavigator::WhyHoldDetour;m.nextDetour=wait;u.speed=Fixed();return;}
                     m.nextDetour=m.holdUpdates+wait;
                 }
-                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=12&&yieldLane(u,m,p,nx,nz)) {hold(u,m);restartHold(m);return;}
-                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=12&&partLane(u,m,p,ox,oz,nx,nz)) {hold(u,m);restartHold(m);return;}
-                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=kGiveWayHeld&&giveWay(u,m,p,f,ox,oz)) {hold(u,m);restartHold(m);return;}
+                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=12&&yieldLane(u,m,p,nx,nz)) {m.why=LegionNavigator::WhyHoldAsk;hold(u,m);restartHold(m);return;}
+                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=12&&partLane(u,m,p,ox,oz,nx,nz)) {m.why=LegionNavigator::WhyHoldAsk;hold(u,m);restartHold(m);return;}
+                if(f&&m.detour<0&&m.route.empty()&&m.holdUpdates>=kGiveWayHeld&&giveWay(u,m,p,f,ox,oz)) {m.why=LegionNavigator::WhyHoldAsk;hold(u,m);restartHold(m);return;}
                 if(passFiltered)++stats.passFilterHolds;
+                if(why==LegionNavigator::WhyHoldMovers) {
+                    if(f&&blockedBySettled(u,m,nx,nz))why=LegionNavigator::WhyHoldSettled;
+                    else if(f&&blockedByJam(u,m,nx,nz))why=LegionNavigator::WhyHoldJam;
+                }
+                m.why=why;
 #ifndef NDEBUG
                 if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d hold at=(%d,%d) want=(%d,%d) corner=%d by=[%s] held=%u head=%d\n",
                     w.tickCounter_,u.id,ox,oz,nx,nz,int(corner),dbgOccupants(u,nx,nz).c_str(),heldFor(m),int(m.want>=0));
@@ -13715,7 +13735,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
            m.site!=LegionNavigator::SiteGate)
             if(const auto turn=makeRoom(u,m,p,f,ox,oz,nx-ox,nz-oz,speed)) {
                 std::tie(sx,sz)=std::pair{turn->first,turn->second};
-                nx=footprintOrigin(u.x+sx,fx);nz=footprintOrigin(u.z+sz,fz);face=false;
+                nx=footprintOrigin(u.x+sx,fx);nz=footprintOrigin(u.z+sz,fz);face=false;m.why=LegionNavigator::WhyRoom;
             }
         if(m.want>=0)setWant(u.id,m,-1);
         u.speed=speed;
@@ -13723,7 +13743,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         w.commitGroundStep(u,sx,sz,true);
         // The heading only turns with an actual step: a refused step is a
         // hold, and a held body keeps a constant heading.
-        if(u.x==beforeX&&u.z==beforeZ) {hold(u,m);return;}
+        if(u.x==beforeX&&u.z==beforeZ) {m.why=LegionNavigator::WhyHoldRefused;hold(u,m);return;}
         // A funnel's way is claimed on the step that reaches it (updateClaim):
         // two bodies stepping beside one way on successive updates of a tick
         // otherwise both stand on cells of it before either claims.
@@ -13897,7 +13917,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             const int64_t travel=std::min<int64_t>(speed.v,length);
             const Fixed sx=Fixed::raw(int32_t(sdx*travel/length)),sz=Fixed::raw(int32_t(sdz*travel/length));
             if(!stepFree(u,ox,oz,footprintOrigin(u.x+sx,fx),footprintOrigin(u.z+sz,fz)))continue;
-            m.detour=cz*W+cx;m.detourTicks=0;m.detourFace=false;m.detourPass=false;m.detourFlow=true;m.slideCell=-1;
+            m.detour=cz*W+cx;m.detourTicks=0;m.detourFace=false;m.detourPass=false;m.detourFlow=true;m.slideCell=-1;m.detourWhy=2;
             ++stats.slides;
 #ifndef NDEBUG
             if(traced(u.id))std::fprintf(stderr,"TRACE t=%u u=%d make-room want=(%d,%d) ahead=%d at=(%d,%d) to=(%d,%d)\n",
@@ -14066,7 +14086,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             const int cell=(oz+sz)*W+ox+sx;
             if(f.estimate(size_t(cell))>uint64_t(here)+kDiagonal)continue;
             if(!stepFree(u,ox,oz,ox+sx,oz+sz))continue;
-            m.detour=cell;m.detourTicks=0;m.detourFace=false;m.detourPass=false;m.detourFlow=false;return;
+            m.detour=cell;m.detourTicks=0;m.detourFace=false;m.detourPass=false;m.detourFlow=false;m.detourWhy=1;return;
         }
     }
     // "Close enough" settling (the user's rule: late bodies get close to the
@@ -15119,6 +15139,16 @@ int LegionNavigator::recordsForTest(int id) const {
 int LegionNavigator::steerSite(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?-1:int(found->second.site);
+}
+int LegionNavigator::steerWhy(int id) const {
+    const auto found=impl_->members.find(id);
+    return found==impl_->members.end()?-1:int(found->second.why);
+}
+const char* LegionNavigator::whyName(int why) {
+    static constexpr const char* names[kWhys]={"none","steer","direct","pass","flow_first","flow_brisk","flow_cap","sidestep","room","corner",
+        "route_brisk","route_cap","press","yield","hold_movers","hold_settled","hold_jam","hold_corner","hold_refused","hold_detour","hold_ask",
+        "hold_admission","hold_noaim","hold_ring","hold_spot","hold_rest","hold_yielding","hold_livelock","hold_still","wait","trapped"};
+    return why>=0&&why<kWhys?names[why]:"?";
 }
 std::vector<std::pair<std::string,uint64_t>> LegionNavigator::census() const {
     std::vector<std::pair<std::string,uint64_t>> out;

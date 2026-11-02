@@ -416,6 +416,15 @@ public:
         put("transit_samples",transit_);put("transit_held_permille",detail::permille(transitHeld_,transit_));
         put("transit_far_samples",transitFar_);put("transit_far_held_permille",detail::permille(transitFarHeld_,transitFar_));
         put("decision_samples",ordered_);put("stopped_permille",detail::permille(stopped_,ordered_));
+        // Pathfinding deep dive: the motion keys by the mechanism of the body's last update (LegionNavigator::Why).
+        // Report-only; Retail bodies are no members, so everything of theirs is "none".
+        for(int k=0;k<kWhys;++k) {
+            const auto& wa=why_[size_t(k)];
+            if(!wa.ticks&&!wa.samples)continue;
+            const std::string p=std::string("why.")+sim::LegionNavigator::whyName(k)+".";
+            put(p+"ticks",wa.ticks);put(p+"moved_ticks",wa.movedTicks);put(p+"samples",wa.samples);put(p+"stopped",wa.stopped);
+            put(p+"statue",wa.statue);put(p+"sideways",wa.sideways);put(p+"backward",wa.backward);put(p+"reversals",wa.reversals);
+        }
         put("flips",flips_);
         put("flip_rate_per30_permille",flipSamples_?(flips_*30*1000+flipSamples_*cfg_.decisionEvery/2)/(flipSamples_*cfg_.decisionEvery):0);
         put("aim_reversals",aimReversals_);put("engagement_on_flowing",engagement_);
@@ -517,6 +526,7 @@ public:
     }
 
     static constexpr int kSites=sim::LegionNavigator::kSites;
+    static constexpr int kWhys=sim::LegionNavigator::kWhys;
 private:
     struct Mark {int lat=0;int64_t tick=-1;};
     struct Member {
@@ -536,6 +546,7 @@ private:
         std::vector<std::pair<int32_t,int32_t>> ring;
         int lastClass=-1,aimSign=0,freeRun=0;
         int wasHeld=-1;          // transit: the last sample's held class (1 held, 0 moving), -1 none yet
+        uint8_t whyLast=0;       // LegionNavigator::steerWhy at the last per-tick sample (the why.* keys)
         int64_t speed=0;bool chainMover=false;int64_t stepX=0,stepZ=0;
         // flyers
         int mode=-1;bool landing=false,landedOnce=false;
@@ -639,6 +650,7 @@ private:
             m.landing=u->landing.has_value();
         }
         if(nav&&nav->staleStall(m.id))++stallStale_;
+        const int why=nav?std::clamp(nav->steerWhy(m.id),0,kWhys-1):0;m.whyLast=uint8_t(why);
         const bool orders=!u->orders.empty();
         const int64_t dx=int64_t(u->x.v)-m.x,dz=int64_t(u->z.v)-m.z;
         const bool moved=!fresh&&(dx||dz);
@@ -650,7 +662,7 @@ private:
         const int64_t cell=(int64_t(u->z.v>>20)<<32)|uint32_t(u->x.v>>20);
         if(m.cells.empty()||m.cells.back().first!=cell) {
             for(size_t i=0;i+1<m.cells.size();++i)
-                if(m.cells[i].first==cell&&tick-m.cells[i].second<90) {++reversals_;break;}
+                if(m.cells[i].first==cell&&tick-m.cells[i].second<90) {++reversals_;++why_[size_t(why)].reversals;break;}
             m.cells.push_back({cell,tick});
             if(m.cells.size()>6)m.cells.erase(m.cells.begin());
         }
@@ -661,6 +673,7 @@ private:
                 const auto way=sim::retailHeadingToPort(uint16_t(sim::retailDirection(sim::Fixed::raw(int32_t(-dx)),sim::Fixed::raw(int32_t(-dz))).v));
                 const int32_t off=std::abs(sim::retailTurnRequest(way,u->heading));
                 sideways_+=off>8192;backward_+=off>16384;
+                why_[size_t(why)].sideways+=off>8192;why_[size_t(why)].backward+=off>16384;
             }
             // age classes
             m.stillRun=moved?0:m.stillRun+1;
@@ -696,7 +709,8 @@ private:
                     } else if(m.walkFrom>=0&&tick-m.walkTo>15)closeWalk(m);
                 }
                 const int64_t cap=int64_t(u->type->maxVel.v)*9/64;   // cap/8 plus 1/8 slack
-                if(moved&&!turned&&step2<=cap*cap)++statue_;
+                ++why_[size_t(why)].ticks;why_[size_t(why)].movedTicks+=moved;
+                if(moved&&!turned&&step2<=cap*cap) {++statue_;++why_[size_t(why)].statue;}
             }
         } else {
             m.stillRun=0;m.noHeadRun=0;
@@ -909,7 +923,7 @@ private:
         const bool hasPrev=!m.ring.empty();
         const int64_t step=detail::isqrt(sx*sx+sz*sz);   // raw px over `every` ticks
         const int64_t base=std::max<int64_t>(1,u->baseSpeed.v);
-        if(orders) {++ordered_;stopped_+=u->speed.v<=0;}
+        if(orders) {++ordered_;stopped_+=u->speed.v<=0;auto& wa=why_[size_t(m.whyLast)];++wa.samples;wa.stopped+=u->speed.v<=0;}
         if(orders&&!m.flyer) {
             // W8 step 0 (MV-12 spacing probe): a sample more than 10 cells from the final goal is in transit;
             // more than 100 is far. Held = no speed. A stop is a held sample right after a moving one.
@@ -1194,6 +1208,8 @@ private:
     bool legion_=false;int64_t stallStale_=0;   // a Legion navigator was seen; LegionNavigator::staleStall updates
     int64_t transit_=0,transitHeld_=0,transitFar_=0,transitFarHeld_=0;
     int64_t ordered_=0,stopped_=0,flipSamples_=0,flips_=0,aimReversals_=0,engagement_=0,followMax_=0,followSum_=0,followSamples_=0;
+    struct WhyAcc {int64_t ticks=0,movedTicks=0,samples=0,stopped=0,statue=0,sideways=0,backward=0,reversals=0;};
+    std::array<WhyAcc,kWhys> why_{};
     int64_t spacingSamples_=0,contactOwn_=0,contactOther_=0,contactSettled_=0;
     static constexpr int64_t kConvoyCommand=int64_t(1)<<40;   // convoy commands, apart from plain selections
     std::vector<std::pair<int,int64_t>> selection_;int64_t selections_=0;   // (unit id, command), sorted
