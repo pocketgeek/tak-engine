@@ -9,7 +9,8 @@
 // ticks from completion until it is clear of the factory's rectangle and until
 // it is clear of the door (the rectangle grown kDoorCells). Then the same with
 // a dozen idle units of the owner parked 8 px apart just off the door, with
-// one idle unit on the pad, and with the dozen guarding one of them.
+// one idle unit on the pad, and with the dozen guarding one of them. Last, an
+// output guarding its idle factory must move nobody.
 //
 // Retail moves no idle body (BUGGER_OFF is stored, never acted on: 0x50d50e;
 // BUILD stage 2's footprint test 0x401deb holds the next site; the mover only
@@ -121,6 +122,39 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,const cha
         Result::median(r.door),Result::max(r.door),(unsigned long long)w.stateHash());
     return r;
 }
+
+// An older output guarding its factory is not leaving the door (review of
+// 4af4e0c4): with the factory idle, an idle unit in front of it stays put for
+// as long as the guard stays.
+bool guardOutputMovesNobody(const sim::TypeRegistry& registry,sim::PathfindingMode mode,const char* factoryName,
+                            const char* outputName,const char* crowdTypeName) {
+    sim::World w;w.setSerialThreads(true);w.setPathfindingMode(mode);
+    w.setTerrain(std::vector<uint8_t>(kCells*kCells,100),kCells,kCells,20);
+    w.setMapPlacementFeatures(std::vector<uint16_t>(kCells*kCells,0xffff),{});
+    w.buildNavClasses(registry);w.setPathService(true);
+    auto factory=*registry.find(factoryName);factory.workerTime*=4;factory.storage=1000000;
+    const auto* output=registry.find(outputName);
+    const float fx=float(112*16+factory.footX%2*8),fz=float(112*16+factory.footZ%2*8);
+    const int id=w.spawn(&factory,fx,fz,float(int16_t(factory.orientation))*6.28318530718f/65536.f,0);
+    const Rect yard=footprint(*w.unit(id));
+    w.player(0).mana=1000000;w.train(id,output,1);
+    int out=0;
+    for(int t=0;t<3000 && !out;++t) {
+        w.player(0).mana=1000000;w.tick(1.f/30);
+        for(const auto& u:w.units())
+            if(u.alive() && u.type==output && !u.underConstruction && u.orders.empty() && !intersects(footprint(u),yard))
+                out=u.id;
+    }
+    if(!out)return false;
+    w.guard(out,id,false);
+    const int idle=w.spawn(registry.find(crowdTypeName),fx+float(yard.w*16),float((yard.z+yard.h)*16+40),0,0);
+    bool moved=false;
+    for(int t=0;t<600;++t) {
+        w.tick(1.f/30);
+        if(const auto* u=w.unit(idle);u && u->alive())for(const auto& o:u->orders)moved|=bool(o.productionExit);
+    }
+    return !moved;
+}
 }
 
 int main(int argc,char** argv) {
@@ -161,6 +195,8 @@ int main(int argc,char** argv) {
                       label+"an idle unit on the pad moves off it and the factory builds");
                 const Result guard=run(registry,mode,c.factory,output,c.crowd,Crowd::Guard);
                 check(!guard.crowdMoved,label+"guards are not moved aside");
+                check(guardOutputMovesNobody(registry,mode,c.factory,output,c.crowd),
+                      label+"an output guarding its idle factory moves no idle unit aside");
             }
     std::printf("landdoor exit: %d cases, %d failures\n",cases,failures);
     return failures?1:0;

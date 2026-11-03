@@ -4041,8 +4041,10 @@ only the half of the area on the leaving output's side of the factory's centre i
 cleared, so units parked behind it stay (at a yard the half area kept a Legion Stern
 Wheeler out of a door onto a shore for 300 ticks, so a yard keeps the whole area).
 Each finished output now remembers its factory (`Unit::builtBy`, unhashed: set once
-at completion, from hashed state): an output with orders in front of its factory is
-the door's traffic, and the factory's own parked outputs move only off the pad, or,
+at completion, from hashed state): an output in front of its factory on its way out (on its PARK round it, on a
+plain move such as its rally, or still on the pad) is the door's traffic; an older
+output guarding, building, patrolling or attacking there is not, or it would clear
+the area for as long as it stayed; and the factory's own parked outputs move only off the pad, or,
 under the Retail navigator, when one stands in the cells round a later output of the
 factory (2 deep) that is held up by a body (refusal streak 2) on its PARK. That rule
 moves any other idle unit of the owner there too, past the area: crowd ships moved

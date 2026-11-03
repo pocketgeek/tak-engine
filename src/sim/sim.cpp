@@ -14871,7 +14871,8 @@ void World::clearProductionRoom(Unit& producer,const UnitType* type,Fixed x,Fixe
 // idle unit on the pad stops it before the first. Here, every kDoorRetry ticks,
 // the owner's idle units on the outputs' plane (ships at a Navy Yard, ground
 // and hover units at a land factory) move aside:
-//  - while an output of the factory (builtBy, any order) is in front of it,
+//  - while an output of the factory (builtBy) on its way out (its PARK, its
+//    rally's plain move, or still on the pad) is in front of it,
 //    those in that area (the factory's rectangle grown kDoorCells; at a land
 //    factory only its half on the output's side), to just outside it across
 //    the door's axis, on their own side, the door's side last;
@@ -14920,11 +14921,18 @@ void World::clearYardDoor(const Unit& factory) {
     forEachNear(float(cx),float(cz),reach,[&](int index) {
         const Unit& k=units_[size_t(index)];
         if (!body(k) || k.builtBy!=factory.id || k.orders.empty()) return;
-        const bool inArea=overlaps(k,left,right,top,bottom);
-        if (inArea && (!leaving || k.id<leaving->id)) leaving=&k;
+        // On its way out: on its PARK round this factory, still on the pad, or
+        // on a plain move (its rally). An older output guarding, building,
+        // patrolling or attacking near its factory is not leaving the door: it
+        // would clear the area for as long as it stayed.
         const Order& o=k.orders[currentLeg(k.orders)];
-        if (!isLegionPathfinding(pathfindingMode_) && (inArea || (o.park && o.park->target==factory.id)) &&
-            k.bodyBlockStreak>=2) {
+        const bool parking=o.park && o.park->target==factory.id;
+        const bool plainMove=!o.targetId && !o.guard && !o.patrol && !o.attackMove && !o.buildType &&
+            !o.reclaimFeat && !o.repairTarget && !o.load && !o.unload && !o.wait && !o.waitAttack;
+        const bool exiting=parking || plainMove || overlaps(k,yl,yr,yt,yb);
+        const bool inArea=exiting && overlaps(k,left,right,top,bottom);
+        if (inArea && (!leaving || k.id<leaving->id)) leaving=&k;
+        if (!isLegionPathfinding(pathfindingMode_) && (inArea || parking) && k.bodyBlockStreak>=2) {
             const int hx=(footprintOrigin(k.x,k.type->footX)-2)*16,hz=(footprintOrigin(k.z,k.type->footZ)-2)*16;
             held.push_back({hx,hx+(k.type->footX+4)*16,hz,hz+(k.type->footZ+4)*16});
         }
