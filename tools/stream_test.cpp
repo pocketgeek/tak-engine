@@ -114,7 +114,7 @@ static void waitStopped(tak::video::Stream& stream) {
 // Feeds moving pixels and a tone for `seconds`, requiring the stream to stay up.
 static void feed(tak::video::Stream& stream,std::chrono::milliseconds length) {
     std::vector<uint8_t> pixels(640*480*4);
-    std::array<int16_t,512*2> audio{};
+    std::array<int16_t,1024*2> audio{};
     int samples=0,frame=0;
     const auto begin=std::chrono::steady_clock::now();
     while(std::chrono::steady_clock::now()-begin<length) {
@@ -122,8 +122,8 @@ static void feed(tak::video::Stream& stream,std::chrono::milliseconds length) {
         for(size_t i=0;i<pixels.size();i+=4){pixels[i]=uint8_t(i/7+frame);pixels[i+1]=uint8_t(i/13);pixels[i+2]=80;pixels[i+3]=255;}
         ++frame;
         stream.video(pixels.data(),640,480,640*4);
-        for(int i=0;i<512;++i)audio[i*2]=audio[i*2+1]=int16_t(std::sin(double(samples++)*6.283185307179586*440/22050)*12000);
-        stream.audio(audio.data(),512,2);
+        for(int i=0;i<1024;++i)audio[i*2]=audio[i*2+1]=int16_t(std::sin(double(samples++)*6.283185307179586*440/44100)*12000);
+        stream.audio(audio.data(),1024,2);
         std::this_thread::sleep_for(23ms);
     }
 }
@@ -226,7 +226,7 @@ static int pacing(const std::string& encoder,int sw,int sh,int ow,int oh,int fps
     {
         tak::video::Stream stream;
         require(stream.startRecording(config,path.string()),"start pacing recording");
-        std::array<int16_t,367*2> audio{};
+        std::array<int16_t,735*2> audio{};
         const auto begin=std::chrono::steady_clock::now();
         bool warmed=false;
         std::vector<uint8_t> buffer;
@@ -239,7 +239,7 @@ static int pacing(const std::string& encoder,int sw,int sh,int ow,int oh,int fps
             // happens outside the stream's lock; a buffer comes back to reuse).
             buffer.assign(frames[n&1].begin(),frames[n&1].end());
             stream.video(buffer,sw,sh);
-            stream.audio(audio.data(),367,2);
+            stream.audio(audio.data(),735,2);
             std::this_thread::sleep_until(begin+std::chrono::microseconds(int64_t(n+1)*1000000/60));
         }
         end=stream.status();
@@ -336,7 +336,7 @@ int main(int argc,char** argv) {
         require(!stream.startRecording(config,path.string()),"cannot start twice");
         std::vector<uint8_t> pixels(640*480*4);
         for(int y=0;y<480;++y)for(int x=0;x<640;++x){size_t p=(y*640+x)*4;pixels[p]=uint8_t(x/3);pixels[p+1]=uint8_t(y/2);pixels[p+2]=80;pixels[p+3]=255;}
-        std::array<int16_t,512*6> audio{};
+        std::array<int16_t,1024*6> audio{};
         int samples=0;
         bool delayed=false;
         const bool overload=argc>2 && std::string(argv[2])=="overload";
@@ -347,11 +347,11 @@ int main(int argc,char** argv) {
                 stream.testDelayOnce(1300); delayed=true;
             }
             stream.video(pixels.data(),640,480,640*4);
-            for(int i=0;i<512;++i) {
-                int16_t s=int16_t(std::sin(double(samples++)*6.283185307179586*440/22050)*12000);
+            for(int i=0;i<1024;++i) {
+                int16_t s=int16_t(std::sin(double(samples++)*6.283185307179586*440/44100)*12000);
                 for(int c=0;c<6;++c)audio[i*6+c]=s;
             }
-            stream.audio(audio.data(),512,6);
+            stream.audio(audio.data(),1024,6);
             std::this_thread::sleep_for(23ms);
         }
         auto status=stream.status();

@@ -4,12 +4,13 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "util/audiolayout.h"
 #include "video/streamcursor.h"
 
 namespace tak::video {
 // Where Stream::start() sends the stream (the key follows it): YouTube's RTMPS ingest.
-// Stream::audio() takes PCM at the game's mix rate (client/sound.h kMixRate).
-inline constexpr int kAudioRate = 22050;
+// Stream::audio() takes PCM at the game's mix rate (util/audiolayout.h kMixRate).
+inline constexpr int kAudioRate = tak::audio::kMixRate;   // 44100
 inline constexpr const char* kYouTubeIngest = "rtmps://a.rtmps.youtube.com:443/live2/";
 struct StreamConfig {
     int width = 1280, height = 720, fps = 30, bitrateKbps = 6000;

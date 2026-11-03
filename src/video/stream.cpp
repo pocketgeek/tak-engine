@@ -210,7 +210,7 @@ struct Stream::Impl {
     std::vector<uint8_t> testPicture;
     int testPictureW = 0, testPictureH = 0;
 #endif
-    // Fixed two-second ring, stereo S16 at the game's 22050 Hz mix rate.
+    // Fixed two-second ring, stereo S16 at the game's 44100 Hz mix rate.
     static constexpr size_t kRing = 2 * kAudioRate;
     std::mutex audioMutex;
     std::array<int16_t, kRing * 2> pcm{};
@@ -759,17 +759,20 @@ void Stream::cursor(const StreamCursor& c) {
 void Stream::audio(const int16_t* samples, int frames, int channels) {
     if (!active() || !samples || channels < 1 || channels > 8) return;
     std::unique_lock lock(p_->audioMutex,std::try_to_lock); if (!lock.owns_lock()) return;
+    // Any device layout (SDL order) folds to stereo, ITU-style: centre and surrounds
+    // at -3 dB, the LFE dropped, each side weighted to unity (util/audiolayout.h).
+    const auto fold=tak::audio::downmixMatrix(channels,2);
     for (int f=0;f<frames;++f) {
         // Bounded latency: when the upload stalls, retain the newest audio.
         if (p_->count == Impl::kRing) { p_->read=(p_->read+1)%Impl::kRing; --p_->count; }
         const int16_t* in = samples + f*channels;
-        float l=in[0], r=channels==1 ? l : in[1];
-        float weight=1;
-        if (channels>=6) { l+=in[2]*.707f; r+=in[2]*.707f; weight+=.707f; }
-        if (channels>=4) { int rear=channels==4 ? 2:4; l+=in[rear]*.707f; r+=in[rear+1]*.707f; weight+=.707f; }
-        if (channels==8) {l+=in[6]*.707f;r+=in[7]*.707f;weight+=.707f;}
+        float l=in[0], r=in[0];
+        if (channels>1) {
+            l=r=0;
+            for (int k=0;k<channels;++k) { l+=fold[0][size_t(k)]*in[k]; r+=fold[1][size_t(k)]*in[k]; }
+        }
         size_t pos=(p_->read+p_->count)%Impl::kRing;
-        p_->pcm[pos*2]=int16_t(l/weight); p_->pcm[pos*2+1]=int16_t(r/weight); ++p_->count;
+        p_->pcm[pos*2]=int16_t(l); p_->pcm[pos*2+1]=int16_t(r); ++p_->count;
     }
 }
 }
