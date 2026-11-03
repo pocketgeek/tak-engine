@@ -13793,6 +13793,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     return f.estimate(size_t(z*W+x));
                 };
                 const int64_t here=metric(ox,oz);
+                const bool formation=formationMember(m);
                 std::array<std::pair<int64_t,int>,8> options{};int count=0;
                 for(int k=0;k<8;++k) {
                     const auto& d=kDirections[size_t(k)];
@@ -13810,7 +13811,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                     // the body is going was a backward step at travel speed, undone by the next
                     // descent. Without them: t90 5 better / 0 worse over the suite (bridges-100 -15%,
                     // densehead -9%), reversals 29 better / 9 worse, backward 27 / 9 (deep dive 5.4).
-                    if(int64_t(d[0])*aimDx+int64_t(d[1])*aimDz<0)continue;
+                    // Formation members only (2026-11-03): a plain crowd meeting another head on
+                    // needs its backward shuffles to back out of a bridge (bridges-1000, two armies
+                    // of 500 crossing: 860 arrive on main, 999 with speed alone, 728 with 184
+                    // standing stuck at the end once no body stepped back; 965 and none stuck with
+                    // the rule kept for formation members, whose files the suite measured).
+                    if(formation&&int64_t(d[0])*aimDx+int64_t(d[1])*aimDz<0)continue;
                     const int64_t v=metric(ox+d[0],oz+d[1]);
                     if(v<here)options[size_t(count++)]={v,k};
                 }
