@@ -47,7 +47,7 @@ enum class Layout {Open,Shore};
 const char* layoutName(Layout l) {return l==Layout::Open?"open":"shore";}
 
 struct Result {
-    int produced=0,stuck=0,lastDone=-1,refusals=0,inDoor=0;
+    int produced=0,stuck=0,lastDone=-1,refusals=0,inDoor=0,nudged=0;
     std::vector<int> clear,door;
     int median(std::vector<int> v) const {
         if(v.empty())return -1;
@@ -94,7 +94,7 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,Layout la
     if(crowd==Crowd::Pad)idle.push_back(w.spawn(iron,fx,fz+32,0,0));
     for(int t=0;t<30;++t)w.tick(1.f/30);
     w.player(0).mana=1000000;w.train(id,ship,count);
-    struct Out {int id,done,clear=-1,door=-1;Rect birth;};
+    struct Out {int id,done,clear=-1,door=-1;Rect birth;bool rested=false;};
     std::vector<Out> outs;Result r;uint32_t lastRetry=0;int tick=0;
     for(;tick<20000;++tick) {
         w.player(0).mana=1000000;w.tick(1.f/30);
@@ -109,6 +109,11 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,Layout la
                 outs.push_back({u.id,tick,-1,-1,footprint(u)});at=outs.end()-1;r.lastDone=tick;
             }
             if(at->clear<0 && !intersects(footprint(u),yard))at->clear=tick;
+            // An output that finished its PARK and was later given an order:
+            // the door clearing moved a parked ship (printed as nudged; with a
+            // free door it still happens when the next output leaves past it).
+            if(at->clear>=0 && u.orders.empty())at->rested=true;
+            else if(at->rested && !u.orders.empty()) {++r.nudged;at->rested=false;}
             if(at->door<0 && !intersects(footprint(u),door))at->door=tick;
             if(trace && at-outs.begin()==traceIndex && at->door<0 && (tick-at->done)%traceEvery==0) {
                 std::printf("  t=%d x=%.2f z=%.2f h=%d req=%d speed=%.3f stamp=%d orders=%zu",tick-at->done,
@@ -135,10 +140,10 @@ Result run(const sim::TypeRegistry& registry,sim::PathfindingMode mode,Layout la
     // (6 cells).
     const Rect strip{yard.x,yard.z,yard.w,yard.h+6};
     for(int k:idle)if(const auto* u=w.unit(k);u && u->alive())r.inDoor+=intersects(footprint(*u),strip);
-    std::printf("exit mode=%s layout=%s ship=%s crowd=%s produced=%d/%d stuck=%d lastDone=%d refusals=%d inDoor=%d "
+    std::printf("exit mode=%s layout=%s ship=%s crowd=%s produced=%d/%d stuck=%d lastDone=%d refusals=%d inDoor=%d nudged=%d "
                 "clear med=%d max=%d door med=%d max=%d ticks=%d hash=%016llx\n",
         mode==sim::PathfindingMode::Legion?"Legion":"Retail",layoutName(layout),shipName,crowdName(crowd),r.produced,count,r.stuck,
-        r.lastDone,r.refusals,r.inDoor,r.median(r.clear),r.max(r.clear),r.median(r.door),r.max(r.door),tick,
+        r.lastDone,r.refusals,r.inDoor,r.nudged,r.median(r.clear),r.max(r.clear),r.median(r.door),r.max(r.door),tick,
         (unsigned long long)w.stateHash());
     std::printf("  door:");for(const auto& o:outs)std::printf(" %d",o.door<0?-1:o.door-o.done);std::printf("\n");
     return r;

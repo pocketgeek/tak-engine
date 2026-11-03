@@ -14896,10 +14896,22 @@ void World::clearYardDoor(const Unit& factory) {
         factory.buildQueue.front() && factory.buildQueue.front()->domain==UnitType::Domain::Water &&
         tickCounter_<factory.productionRetryTick;
     if (!leaving && !refused) return;
+    // What has to be clear: with a ship on its way out, the whole area (a ship
+    // leaves along its PARK bearing, not only straight out of the door; a
+    // narrower strip, or acting only once the ship is body-blocked, left the
+    // crowd holding Submersibles and Legion's shore exits, measured 2026-11-03).
+    // With only a refused site, just the pad (the yard's own rectangle): ships
+    // parked round the yard do not stop the next site.
+    int zl=fx*16,zr=(fx+factory.type->footX)*16,zt=fz*16,zb=(fz+factory.type->footZ)*16;
+    if (leaving) {zl=left;zr=right;zt=top;zb=bottom;}
+    const auto inZone=[&](const Unit& k) {
+        const int ux=footprintOrigin(k.x,k.type->footX)*16,uz=footprintOrigin(k.z,k.type->footZ)*16;
+        return ux<zr && zl<ux+k.type->footX*16 && uz<zb && zt<uz+k.type->footZ*16;
+    };
     std::vector<int> movers;
     forEachNear(float(cx),float(cz),reach,[&](int index) {
         const Unit& k=units_[size_t(index)];
-        if (ship(k) && k.orders.empty() && yieldsToSite(k,factory.player) && inArea(k)) movers.push_back(k.id);
+        if (ship(k) && k.orders.empty() && yieldsToSite(k,factory.player) && inZone(k)) movers.push_back(k.id);
     });
     if (movers.empty()) return;
     std::sort(movers.begin(),movers.end());
@@ -14925,7 +14937,7 @@ void World::clearYardDoor(const Unit& factory) {
         const int rx=alongZ ? kx+sideX*4096 : kx,rz=alongZ ? kz : kz+sideZ*4096;
         const std::array<bool,4> door{!alongZ && ax<0,!alongZ && ax>=0,alongZ && az<0,alongZ && az>=0};
         int px=0,pz=0;
-        if (!pointOutside(k,left,right,top,bottom,rx,rz,door,taken,px,pz)) continue;
+        if (!pointOutside(k,zl,zr,zt,zb,rx,rz,door,taken,px,pz)) continue;
         taken.push_back({footprintOrigin(Fixed::fromInt(px),k.type->footX),footprintOrigin(Fixed::fromInt(pz),k.type->footZ),
                          k.type->footX,k.type->footZ});
         const std::pair<Fixed,Fixed> from{k.x,k.z};
