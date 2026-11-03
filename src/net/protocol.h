@@ -19,7 +19,8 @@
 
 namespace tak::net {
 
-constexpr uint32_t kNetVersion = 310;      // 310: Legion's blocked bodies keep speed, flow ahead, and press on (2026-11-02)
+constexpr uint32_t kNetVersion = 311;      // 311: Legion allies blocking each other head on swap places (round 2, 2026-11-03)
+                                           // 310: Legion's blocked bodies keep speed, flow ahead, and press on (2026-11-02)
                                            // 309: a mobile producer's output starts its rally straight away, with no exit step in front
                                            //      of it (hashed: its orders and its route), as a factory's output always has. An output
                                            //      left with nothing to do still takes the exit step. With a rally and no room for the next

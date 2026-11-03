@@ -190,9 +190,12 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 310, "replay format 11 is kept under protocol 310");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 310");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 310");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 311, "replay format 11 is kept under protocol 311");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 311");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 311");
+    // 311 swaps Legion allies blocking each other head on (hashed); 310 changed Legion's blocked bodies.
+    check(!supportedReplayProtocol(15, 310), "previous protocol (no Legion ally swap) is refused");
+    check(!supportedReplayProtocol(15, 309), "protocol 309 (Legion steering before 2026-11-02) is refused");
     // 309 starts a mobile producer's output on its rally with no exit step in front (hashed).
     check(!supportedReplayProtocol(15, 308), "previous protocol (exit step before a mobile rally) is refused");
     // 308 adds AI level 7, Passive; a 307 server would store it as Normal.
