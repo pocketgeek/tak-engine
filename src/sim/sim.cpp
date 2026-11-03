@@ -14859,6 +14859,105 @@ void World::clearProductionRoom(Unit& producer,const UnitType* type,Fixed x,Fixe
     }
 }
 
+// Engine deviation (user-requested; the 0.9.2 known limit "a crowd of Iron
+// Clads can block a yard door"). Retail moves no idle body: a ship leaving a
+// Navy Yard traces round parked ships or presses on them (its mover only
+// clamps and slows, docs/retail-engine.md "retail genuinely wedges"), and
+// BUILD stage 2 holds the next site while any body is on the pad (401deb).
+// A crowd of idle ships a few cells off the door then shuts the yard for good:
+// the first output wedges against it just out of the yard and the next is
+// born behind that one. Here, every kDoorRetry ticks while one of the yard's
+// ships is on its way out (in front of the yard on its PARK round it, or still
+// in the yard on any order) or the yard's next ship's site was refused, the yard
+// owner's idle ships in front of the yard (its rectangle grown kDoorCells on
+// every side) move aside: to just outside that area across the door's axis
+// (the side the ship is on), the door's own side last (pointOutside: free,
+// reachable, not where another mover was sent). Ships with any order, other
+// players' ships, land units and flyers stay as they are. The move is tagged
+// productionExit: held up once clear of where it stood, it is done.
+void World::clearYardDoor(const Unit& factory) {
+    static constexpr uint32_t kDoorRetry=15;
+    static constexpr int kDoorCells=8;
+    if (!factory.type || !factory.type->producesUnits() || !factory.type->productionScript ||
+        factory.underConstruction || (tickCounter_+uint32_t(factory.id))%kDoorRetry) return;
+    const int fx=footprintOrigin(factory.x,factory.type->footX),fz=footprintOrigin(factory.z,factory.type->footZ);
+    const int left=(fx-kDoorCells)*16,right=(fx+factory.type->footX+kDoorCells)*16;
+    const int top=(fz-kDoorCells)*16,bottom=(fz+factory.type->footZ+kDoorCells)*16;
+    const auto inArea=[&](const Unit& k) {
+        const int ux=footprintOrigin(k.x,k.type->footX)*16,uz=footprintOrigin(k.z,k.type->footZ)*16;
+        return ux<right && left<ux+k.type->footX*16 && uz<bottom && top<uz+k.type->footZ*16;
+    };
+    const auto ship=[&](const Unit& k) {
+        return k.alive() && k.type && !k.type->canFly && !k.type->isStructure() &&
+            k.type->domain==UnitType::Domain::Water && !k.underConstruction && k.player==factory.player;
+    };
+    const int cx=factory.x.floorInt(),cz=factory.z.floorInt();
+    const float reach=float(std::max(right-left,bottom-top));
+    // A ship of this yard on its way out decides the door's axis.
+    const Unit* leaving=nullptr;
+    forEachNear(float(cx),float(cz),reach,[&](int index) {
+        const Unit& k=units_[size_t(index)];
+        if (!ship(k) || k.orders.empty() || !inArea(k) || (leaving && leaving->id<k.id)) return;
+        const Order& o=k.orders[currentLeg(k.orders)];
+        const int ux=footprintOrigin(k.x,k.type->footX),uz=footprintOrigin(k.z,k.type->footZ);
+        const bool inYard=ux<fx+factory.type->footX && fx<ux+k.type->footX && uz<fz+factory.type->footZ && fz<uz+k.type->footZ;
+        if ((o.park && o.park->target==factory.id) || inYard) leaving=&k;
+    });
+    const bool refused=!factory.productionSiteId && !factory.buildQueue.empty() &&
+        factory.buildQueue.front() && factory.buildQueue.front()->domain==UnitType::Domain::Water &&
+        tickCounter_<factory.productionRetryTick;
+    if (!leaving && !refused) return;
+    // What has to be clear: with a ship on its way out, the whole area (a ship
+    // leaves along its PARK bearing, not only straight out of the door; a
+    // narrower strip, or acting only once the ship is body-blocked, left the
+    // crowd holding Submersibles and Legion's shore exits, measured 2026-11-03).
+    // With only a refused site, just the pad (the yard's own rectangle): ships
+    // parked round the yard do not stop the next site.
+    int zl=fx*16,zr=(fx+factory.type->footX)*16,zt=fz*16,zb=(fz+factory.type->footZ)*16;
+    if (leaving) {zl=left;zr=right;zt=top;zb=bottom;}
+    const auto inZone=[&](const Unit& k) {
+        const int ux=footprintOrigin(k.x,k.type->footX)*16,uz=footprintOrigin(k.z,k.type->footZ)*16;
+        return ux<zr && zl<ux+k.type->footX*16 && uz<zb && zt<uz+k.type->footZ*16;
+    };
+    std::vector<int> movers;
+    forEachNear(float(cx),float(cz),reach,[&](int index) {
+        const Unit& k=units_[size_t(index)];
+        if (ship(k) && k.orders.empty() && yieldsToSite(k,factory.player) && inZone(k)) movers.push_back(k.id);
+    });
+    if (movers.empty()) return;
+    std::sort(movers.begin(),movers.end());
+    // Where movers are already going, as exitSpot reserves them.
+    std::vector<std::array<int,4>> taken;
+    for (const auto& k:units_) {
+        if (!k.alive() || !k.type || k.underConstruction || k.orders.empty()) continue;
+        const auto& o=k.orders[currentLeg(k.orders)];
+        if (o.targetId || o.buildType || o.reclaimFeat || o.repairTarget) continue;
+        const auto target=o.missionTarget.value_or(std::pair{o.x,o.z});
+        if (std::abs(target.first.floorInt()-cx)<=2*int(reach) && std::abs(target.second.floorInt()-cz)<=2*int(reach))
+            taken.push_back({footprintOrigin(target.first,k.type->footX),footprintOrigin(target.second,k.type->footZ),
+                             k.type->footX,k.type->footZ});
+    }
+    for (int id:movers) {
+        Unit& k=*unit(id);
+        const int kx=k.x.floorInt(),kz=k.z.floorInt();
+        // The door's axis: from the yard's centre to the leaving ship, else to
+        // this ship. Aside means across it, on this ship's side.
+        const int ax=leaving ? leaving->x.floorInt()-cx : kx-cx,az=leaving ? leaving->z.floorInt()-cz : kz-cz;
+        const bool alongZ=std::abs(az)>=std::abs(ax);
+        const int sideX=kx>=cx ? 1 : -1,sideZ=kz>=cz ? 1 : -1;
+        const int rx=alongZ ? kx+sideX*4096 : kx,rz=alongZ ? kz : kz+sideZ*4096;
+        const std::array<bool,4> door{!alongZ && ax<0,!alongZ && ax>=0,alongZ && az<0,alongZ && az>=0};
+        int px=0,pz=0;
+        if (!pointOutside(k,zl,zr,zt,zb,rx,rz,door,taken,px,pz)) continue;
+        taken.push_back({footprintOrigin(Fixed::fromInt(px),k.type->footX),footprintOrigin(Fixed::fromInt(pz),k.type->footZ),
+                         k.type->footX,k.type->footZ});
+        const std::pair<Fixed,Fixed> from{k.x,k.z};
+        order(id,float(px),float(pz),false);
+        if (Unit* moved=unit(id);moved && !moved->orders.empty())
+            moved->orders[currentLeg(moved->orders)].productionExit=from;
+    }
+}
+
 // GetBuilt's release (0x402220, emulated): a structure's finished output with no
 // queued QMove/QPatrol order gets PARK around the factory, padding
 // (rand(6)+rand(3)+3)*16, or +6 for a flyer (0x4023b5..0x4023d3), whose PARK
@@ -17708,6 +17807,7 @@ void World::tick(float dt) {
             }
             rebuildGridAndOccupancy();
         }
+        if (units_[unitIndex].alive()) clearYardDoor(units_[unitIndex]);
         // Production may reallocate the vector; acquire the reference afterward.
         auto& u=units_[unitIndex];
         // 51e220 updates surface Y after each mover, including early returns.

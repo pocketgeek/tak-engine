@@ -3891,6 +3891,48 @@ production sooner than the exit step did. A factory with a rally on its pad is
 unchanged: retail's rule, nothing moves the body. `production_test` pins all of
 this.
 
+**A Navy Yard's door (a deliberate deviation, user request after 0.9.19).** How
+retail moves a finished ship out of a Navy Yard (established, icd): GetBuilt
+(`0x402220`) gives it the yard's QMove/QPatrol rally or else PARK (`0x407ca0`'s
+ground branch, ships are not canfly) round the yard, exactly as a land factory's
+output; the ring's point lies along the ship's own bearing from the yard, which for
+the Creon Navy Yard (the only shipped one; its pad is 25 px south of its centre) is
+straight out of its south door. Its boat scan (`4dba80`, `retailGroundScan`,
+protocol 143) probes ahead in 16 px steps to `(footprintX+1)*16 + sightdistance`: a
+shore cell or a body (grade below 4) within the probe counter's 160 (176 px ahead)
+runs it at a third of its speed, a later obstacle, grade 4 or unexplored water at
+two thirds. Nothing moves an idle body (BUGGER_OFF is never acted on, BUILD stage
+2's footprint test holds the next site, above). So a ship leaving a door that opens
+partly onto a shore crawls out at a third of its speed until its probe clears the
+land: `navyyard_exit_test` measures a median 120 (Iron Clad) and 152 (Stern Wheeler)
+ticks to clear the yard in Retail mode with two of the door's five columns facing
+land, against 74 and 78 on open water (Legion: 31 and 46, against 35 and 81). That
+time comes from the ported boat scan and is kept. Inferred, not observed in the
+running original: a crowd of idle ships a few cells off the door holds the yard in
+retail too, since nothing moves them. Observed in ours: the first 3x3 output wedges
+against the crowd just out of the yard, the next is born behind it, and the yard
+stops; an idle ship on the pad stops it before the first. On 0.9.19 eight idle Iron
+Clads parked a body's gap apart 40 px off the door let the yard build 2 of 6 Iron
+Clads or Stern Wheelers in 7 of the 8 combinations of mode and layout (Legion on
+open water got all six Iron Clads out; Submersibles 5 or 6 of 6), and one Iron Clad
+on the pad left the yard building nothing in all 12 combinations of mode, layout and
+ship. Now `World::clearYardDoor` runs for every scripted production building every
+15 ticks: while one of its ships is on its way out (in front of the yard on its PARK
+round it, or still in the yard on any order) or its next ship's site was refused,
+the owner's idle ships whose footprint is in front of the yard (its rectangle grown
+8 cells on every side) move to just outside that area across the door's axis (the
+axis from the yard's centre to the leaving ship), on their own side, the door's side
+last (`pointOutside`: free, reachable, not where another mover was sent), tagged
+`productionExit` so a held-up move ends once clear of where it stood. Only
+water-domain ships of the yard's owner move, and only idle ones: other players'
+ships, ships with any order (guards too), land units and flyers stay as before, and
+a land factory is unchanged. The crowd at the door now costs the yard at most 3.4%
+of its build time for six ships at four times the worker time (clear-door runs:
+1,483-2,201 ticks), the ship on the pad at most 8.4%. `navyyard_exit_test` (both
+modes; open water and a door facing a shore; Submersible, Iron Clad, Stern Wheeler;
+no crowd, eight at the door, one on the pad) fails 42 of its 60 checks without the
+change.
+
 Two false starts worth recording, because both are easy to repeat: thread counts
 do NOT work as the test observable. A factory legitimately keeps a thread open
 while active (Creon's `Go` ends with `START_SCRIPT FactoryFun`, the machinery
