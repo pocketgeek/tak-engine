@@ -13865,7 +13865,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             // wall-1x48 -5..-8%; corner-8x56 +8%, motion-wall +8%), done 13 / 6; on real terrain standing
             // -30% on all 13. The press's nudges count as statue / sideways / backward steps in the
             // observer (a few pixels at a time), which those keys cannot tell from a creep (deep dive 5.4).
-            if(!moved&&!livelock(u)&&!engagesEnemies(m.kind)) {
+            // Move legs only (2026-11-03): a mission leg with its own goal geometry (a builder helping a
+            // factory, a produced output walking to its park ring or out of the door lane) pressed
+            // against the yard it must keep clear of, and stood on it (doorway's assist cases, legion_park's
+            // queue of 100 arapults: 30 parked in the door lane); its hold is the right end.
+            const bool pressKind=policy(m.kind).completes&&!engagesEnemies(m.kind)&&!policy(m.kind).exact&&!policy(m.kind).exitClear;
+            if(!moved&&!livelock(u)&&pressKind) {
                 auto edge=[](Fixed at,Fixed by,int origin,int foot) {
                     const int64_t offset=int64_t(foot-1)*8*Fixed::kOne;
                     const int64_t lo=(int64_t(origin)<<20)+offset,hi=lo+(int64_t(1)<<20)-1;
