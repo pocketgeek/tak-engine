@@ -652,8 +652,9 @@ private:
                     add(f, 4, l / 2); add(f, 5, r / 2);
                     if (ch == 8) { add(f, 6, l / 2); add(f, 7, r / 2); }
                     break;
-                default:
-                    for (int ci = 0; ci < ch; ++ci) add(f, ci, (ci % 2 ? r : l) / 2); break;
+                default:   // 2.1 / 4.1 / 6.1: front pair only, as channelGains does
+                    add(f, 0, l); add(f, 1, r);
+                    break;
             }
             if (lfe >= 0) lfeMono_[size_t(f)] += (l + r) / 2;
         }
