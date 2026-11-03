@@ -975,7 +975,17 @@ constexpr int kLandedOpenTicks=1880;           // layout 1, none standing: the w
 // 2026-10-19 protocol 280 (flow-around shuffles at travel speed): the same again for the flow-around steps round
 // the stream's own bodies (medians, foot 2 / 3: ticks 2567 -> 2207 / 2332 -> 2162, stuck 1568 -> 1760 / 250 -> 218).
 // The foot-2 stuck base moves 1400 -> 1570 (the band covers the new median by about 7%); the rest is unchanged.
-constexpr FlyerBase kLandedBlock[2]={{2567,1570,0,1.20},{2332,230,0,1.20}};      // layout 0, flyer foot 2 and 3
+// 2026-11-02 (no facing cap on unturned steps, no flow-around behind the aim, the press): the stream threads the
+// scattered flyers faster and stands less in all, but its queue heads wait at the cells next to a flyer. Every
+// "stuck" tick is a hold for movers of its own order (steerWhy: hold_movers; a merge head waiting for a file
+// passing at travel speed; under the old rules the same heads waited as long at cells away from the flyers). Medians over the
+// 5 shifts, foot 2 / 3: ticks 2207 -> 2162 / 2162 -> 1837, stuck 1760 -> 2088 / 218 -> 731 (1819/1937/2290/2088/
+// 1607 and 731/966/543/948/551), while ordered bodies standing anywhere fall 9820 -> 6604 / 5027 -> 2795. The
+// three rules each put the waits beside the flyers (the press alone 646, the backward rule alone 539, both off 201
+// at foot 3) and no variant of the backward rule keeps the suite's gains (backward options ranked last: foot-3
+// stuck 501 and over the 64 fixtures reversals 7 better / 32 worse). Stuck bases 1570 -> 1950 and 230 -> 680 (the
+// band covers the new medians by about 12% / 12%); ticks unchanged.
+constexpr FlyerBase kLandedBlock[2]={{2567,1950,0,1.20},{2332,680,0,1.20}};      // layout 0, flyer foot 2 and 3
 constexpr FlyerBase kLandedOff={2414,0,0,1.20};          // layout 2, the block takes off
 constexpr int kLandedOffHalf=1438;
 void landedflyers() {
