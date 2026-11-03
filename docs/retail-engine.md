@@ -408,9 +408,9 @@ is. Test: `fire_sweep_sites`.
 
 Not ported: a retail site at HP 0 or below is live to retail's scans; only
 restored saves have such sites here, and World's lists and slot checks test
-HP > 0. Found on the way and left alone: the picker's paralyzer immunity
-test (`4128e1..4128ff`: a paralyzer class skips an `immunetoparalyzer` type)
-is not in `retailSelectTarget`.
+HP > 0. The picker's paralyzer tests (`4128e1..4128ff`: a paralyzer skips
+an `immunetoparalyzer` type; `412905..41292c`: and a paralyzed unit) are in
+`retailSelectTarget` since 2026-11-03 (see "Mission target scan").
 
 ### A computer's Sea Dragon on Hold Position never fires at 472 px (2026-11-03)
 
@@ -5524,6 +5524,39 @@ first, a home leash), and it also runs from a per-tick stride scan of idle
 armed units, guard fronts and `tickGuardNoMove` (which picks for
 structures). Move_Ground's fallback has a cloak test and a range + 90 test,
 and the stride scan is what makes fight-move legs fight.
+
+**The ported pieces** (fx-tsearch step 1; not yet called by any mission):
+`World::retailScanSlot` (`519ac0`), `World::retailMissionScan` (`4d8370`:
+armed and Fire At Will, then `retailSelectTarget` on the scanning slot with
+the mission radius) and `World::retailMissionAttack` (a mission's tail:
+an optional leash reject on the pick, then `4d7de0` through
+`retailIssueAutoAttack`). Oracles, each against retail's own code:
+
+- `tools/re/check_mission_scan.py` (E, 4,000 cases against `fire_sweep_test
+  --scan`): the real `4d8370`, `519ac0`, `412620`, `411ae0` and `52ad60` with
+  the real weapon-class vtables, over armed or not, the three fire states,
+  one to three slots (ranged or melee), switchers (selected slot 0..2, or 3:
+  `519ac0` then takes the first slot), kamikaze, AI owners, fireatwillrandom
+  and paralyzers, with candidates listed on +5 or not, in the air or not,
+  shootme or not, paralyzed, paralyzer-immune, inside, between and beyond the
+  slot's range and the sight: the same pick and RNG state.
+- `tools/re/check_issue_gate.py` (E, 108 calls against `fire_sweep_test
+  --gate`): the gate's result and missions (kind, mode, leash, the attack's
+  origin `+0x2e/+0x30`, the return Move's goal and mode) for every mover,
+  stance, fire state and call, with and without a point. **The point** (S,
+  `4d7ec8..4d7fe7`): the return Move's goal and the leashed attack's origin
+  are the point, else the unit's position (`+0x68`), and the return Move's
+  response mode is 1 with a point, 0 without. Every caller that passes one
+  passes the unit's own position (`40784e`, `403972`, `409e4b`: `lea
+  [unit+0x68]`); the VTOL callers pass none, and World's flight return has no
+  response mode. So `retailMissionAttack` needs no point argument.
+- `tools/re/check_fire_sweep_picker.py` now also draws a paralyzer weapon
+  (WeaponType `+0xc8 & 0xf == 4`, the FBI `damagetype = paralyzer`) and
+  `immunetoparalyzer` targets (UnitDef `+0x260` bit 26). **Both paralyzer
+  tests key on the damage type** (S, E), so `retailSelectTarget` tests
+  `Weapon::dmgType == 4` for the paralyzed-target skip too (it tested the
+  name-derived `Status::Paralyzed`; the shipped weapons are the same set, so
+  no game changes) and adds the immunity skip.
 
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 

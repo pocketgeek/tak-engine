@@ -7035,8 +7035,10 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
     // is dropped here too.
     // The list is id-sorted (see rebuildVisibleLists), so the spatial grid
     // gathers the near units and membership is a binary search; the result
-    // is the list's own order.
-    std::vector<int> candidates;
+    // is the list's own order. The candidates live in a reused scratch
+    // vector: the mission scans call this far more often than the sweep.
+    std::vector<int>& candidates=pickCandidates_;
+    candidates.clear();
     const auto listed=visibleEnemies(u.player);
     if (listed.empty()) return 0;
     uint64_t enemies=~uint64_t(0);
@@ -7079,7 +7081,10 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
         if (w.status==Weapon::Status::Frozen && t.type->cantBeFrozen) continue;
         if (w.mindControl && t.type->cantBeCaptured) continue;
         if (status && t.underConstruction) continue;
-        if (w.status==Weapon::Status::Paralyzed && t.paralyzedFor>0) continue;
+        // 4128e1..4128ff, 412905..41292c: a paralyzer (damage type 4, WeaponType
+        // +0xc8 & 0xf) skips a type with immunetoparalyzer (UnitDef +0x260 bit
+        // 26) and a unit already paralyzed (+0x114 & 0x10).
+        if (w.dmgType==4 && (t.type->immuneToParalyzer || t.paralyzedFor>0)) continue;
         // 412932..412945: a melee slot takes grounded units only (+0x130 & 3
         // == 1): a flyer in the air never, a landed one like any other.
         if (w.melee && t.flightGroundMode!=1) continue;
@@ -7128,6 +7133,49 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
         else if (s<best) { best=s;pick=id; }
     }
     return pick ? pick : pickBad;
+}
+
+int World::retailScanSlot(const Unit& u) const {
+    if (!u.type || u.type->weapons.empty()) return -1;
+    // 519ac0: UnitDef +0x260 & 0x10000 (weaponswitching) and the selected
+    // slot (+0x130 >> 30) below 3; otherwise the first slot holding a weapon.
+    if (u.type->weaponSwitching && u.weaponSlot>=0 && u.weaponSlot<3) return u.weaponSlot;
+    return 0;
+}
+
+int World::retailMissionScan(Unit& u) {
+    // 4d8370: armed (+0x130 & 0x8000000) and Fire At Will ((+0x130 & 0xc0000)
+    // == 0x80000), else 0; then 412620(unit, 519ac0(unit), sweep 0).
+    if (!u.type || u.type->weapons.empty() || u.fireState!=2) return 0;
+    TAK_PROBE(++probe::tl.missionScans);
+    return retailSelectTarget(u,retailScanSlot(u),false);
+}
+
+bool World::retailMissionAttack(Unit& u,int targetId,MissionAttack how,const std::optional<MissionLeash>& leash) {
+    const Unit* t=unit(targetId);
+    if (!t || !t->type) return false;
+    if (leash && int64_t(retailGroundDistance({int16_t(t->x.floorInt()),int16_t(t->z.floorInt())},leash->point))>=
+                 int64_t(leash->leash))
+        return false;
+    // The gate's point only names the return Move's goal and the attack's
+    // origin, and every caller that passes one passes the unit's own
+    // position (40784e, 403972, 409e4b: lea [unit+0x68]), which is what the
+    // gate falls back to without one; so the five kinds differ only in
+    // explicit and forceLeash, and in the flight return the VTOL calls get.
+    const bool idleFlyer=u.orders.empty() && u.type->canFly && !u.type->isStructure();
+    bool issued=false;
+    switch (how) {
+        case MissionAttack::Standby: case MissionAttack::Vtol:
+            issued=retailIssueAutoAttack(u,targetId,false); break;
+        case MissionAttack::Patrol: case MissionAttack::VtolPatrol:
+            issued=retailIssueAutoAttack(u,targetId,true); break;
+        case MissionAttack::Forced:
+            issued=retailIssueAutoAttack(u,targetId,false,true); break;
+    }
+    // An idle flyer's attack goes in ahead of its default mission (VTOL_Standby).
+    if (issued && idleFlyer && (how==MissionAttack::Vtol || how==MissionAttack::VtolPatrol))
+        u.orders.front().aheadOfDefault=true;
+    return issued;
 }
 
 // 40f330's slot part, for one player: a budget of N/30+1 counted units per
@@ -18762,7 +18810,7 @@ void World::tick(float dt) {
         std::fprintf(stderr, "SIMSTATS tick=%u units=%d vm_ticks=%llu vm_skippable=%llu vm_empty=%llu vm_debt_flushes=%llu"
                      " near_scans=%llu near_cells=%llu near_cells_masked=%llu near_blocks_skipped=%llu"
                      " near_cells_block_skippable=%llu near_cells_outside_disk=%llu near_cells_tested=%llu"
-                     " near_cells_tested_outside_disk=%llu acq_scans=%llu los_calls=%llu"
+                     " near_cells_tested_outside_disk=%llu acq_scans=%llu mission_scans=%llu los_calls=%llu"
                      " refresh_rects=%llu refresh_grade_evals=%llu refresh_raw_grades=%llu refresh_cells_rated=%llu compact_moved=%llu passes=%llu"
                      " acq_gate_walks=%llu acq_gate_walks_before=%llu body_rects=%llu body_rects_heap=%llu"
                      "%s\n",
@@ -18772,7 +18820,7 @@ void World::tick(float dt) {
                      (unsigned long long)c.nearBlocksSkipped, (unsigned long long)c.nearCellsBlockSkippable,
                      (unsigned long long)c.nearCellsOutsideDisk, (unsigned long long)c.nearCellsTested,
                      (unsigned long long)c.nearCellsTestedOutsideDisk, (unsigned long long)c.acqScans,
-                     (unsigned long long)c.losCalls, (unsigned long long)c.refreshRects,
+                     (unsigned long long)c.missionScans, (unsigned long long)c.losCalls, (unsigned long long)c.refreshRects,
                      (unsigned long long)c.refreshGradeEvals, (unsigned long long)c.refreshRawGrades,
                      (unsigned long long)c.refreshCellsRated,
                      (unsigned long long)c.compactMoved, (unsigned long long)c.passes,

@@ -3650,12 +3650,42 @@ private:
     // attack is not an auto target.
     bool retailIssueAutoAttack(Unit& u,int targetId,bool forceReturn,bool forced=false);
     std::vector<std::vector<int>> sweepIds_;   // per-player id-ordered scratch; not state
+    std::vector<int> pickCandidates_;          // retailSelectTarget's candidate list; scratch, not state
 public:
     // Why a unit's slots are manual (Unit::slotManual).
     enum : uint8_t { kSlotsAuto=0, kSlotsAttack=1, kSlotsWork=2, kSlotsStatus=3 };
     // Port of 412620: one weapon slot's target, by retail's 50-draw sampled
     // score. sweep=true is the fire-at-will radius (the weapon's range).
     int retailSelectTarget(Unit& u,int slot,bool sweep);
+    // 519ac0: the slot a mission scan picks for -- a switcher's selected
+    // slot when it is below 3, else the first (World packs the present
+    // slots, so the first is 0). -1 for an unarmed unit.
+    int retailScanSlot(const Unit& u) const;
+    // Port of 4d8370, the mission scan: an armed unit on Fire At Will runs
+    // the picker (412620) on its scanning slot with the mission radius,
+    // max(sightdistance, range); anything else gets 0. Whether the unit's
+    // current mission is one that scans stays the host's test.
+    int retailMissionScan(Unit& u);
+    // How a mission turns its scan's hit into an attack: the arguments its
+    // call site passes to 4d7de0 (unit, target, explicit, point, auto,
+    // forceLeash) (docs/retail-engine.md, "Mission target scan").
+    enum class MissionAttack : uint8_t {
+        Standby,     // (0, &pos, 1, 0): Standby 40784e (the hit response 409e4b too)
+        Patrol,      // (0, &pos, 1, 1): Patrol 403972: a forced leash and return move
+        Vtol,        // (0, 0, 1, 0): VTOL_Standby 4176cc and the air missions' retargets
+        VtolPatrol,  // (0, 0, 1, 1): VTOL_Patrol 41a25e
+        Forced,      // (1, ., 0, 0): an explicit attack, the guards' answer
+    };
+    // A reject applied to the single pick before the gate (Standby_Wander's
+    // post, a Move's goal, a formation point, a melee origin): a target at or
+    // beyond `leash` from `point` (retailGroundDistance) is dropped, and no
+    // rescan follows.
+    struct MissionLeash { RetailGroundPoint point; int32_t leash=0; };
+    // The mission's tail on a pick: the leash filter, then 4d7de0 as `how`
+    // says (retailIssueAutoAttack). An idle flyer's VTOL attack goes in ahead
+    // of its default mission. Whether orders were inserted.
+    bool retailMissionAttack(Unit& u,int targetId,MissionAttack how,
+                             const std::optional<MissionLeash>& leash={});
     // Port of 4f7210 (LosOn): `player` sees `u` when it owns it; otherwise
     // never when u is cloaked, carried or dead, else when any of the four
     // projected bounding-box corners lies on a cell `player`'s current-view

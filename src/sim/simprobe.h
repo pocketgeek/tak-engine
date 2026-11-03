@@ -88,6 +88,7 @@ struct Counters {
     uint64_t refreshRects = 0, refreshGradeEvals = 0, refreshRawGrades = 0, refreshCellsRated = 0;
     uint64_t acqGateWalks = 0, acqGateWalksBefore = 0, bodyRects = 0, bodyRectsHeap = 0;
     uint64_t compactMoved = 0, passes = 0;
+    uint64_t missionScans = 0;   // retailMissionScan calls (4d8370)
 };
 // Per thread, like the TAK_PHASE accumulators: the server may tick rooms on several threads.
 inline thread_local Counters tl;

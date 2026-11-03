@@ -5,8 +5,10 @@ Per case it runs retail's picker 0x412620(shooter, slot 0, sweep) on a random
 shooter and one to six enemy candidates: finished or with construction left
 (+0x108 a fraction or 1.0), paralyzed or not (+0x114 bit 0x10), a bad target
 or not (UnitDef +0x8e[slot]), immune to the stone, freeze and charm classes or
-not, at random positions in range, for a plain, melee, stone, freeze or charm
-weapon class, with or without fireatwillrandom, AI-owned or not, in the sweep
+not, immune to paralyzers or not (UnitDef +0x260 bit 26), at random positions
+in range, for a plain, melee, stone, freeze or charm weapon class, of the
+paralyzer damage type (WeaponType +0xc8 & 0xf == 4) or not, with or without
+fireatwillrandom, AI-owned or not, in the sweep
 (radius: the weapon's range) and in the mission scan (4d8370's call: the
 larger of sightdistance and the range).
 
@@ -94,6 +96,7 @@ def main():
             'seed': rng.getrandbits(32) | 1, 'sweep': rng.randint(0, 1), 'fawr': int(rng.random() < 0.3),
             'melee': melee, 'cls': cls, 'ai': rng.randint(0, 1), 'sight': rng.randint(0, 600),
             'range': rng.randint(160, 420), 'damage': rng.choice((1, 3, 10, 57, 250, 1000)),
+            'para': int(rng.random() < 0.2),
         }
         # Candidates on distinct 48 px cells, in range, clear of the shooter.
         cells = set()
@@ -108,7 +111,7 @@ def main():
             cells.add((gx, gz))
             cands.append({'x': x, 'z': z, 'unfinished': rng.choice((0, 0, 0, 0.25, 1.0)),
                           'paralyzed': int(rng.random() < 0.2), 'bad': int(rng.random() < 0.2),
-                          'immune': int(rng.random() < 0.2)})
+                          'immune': int(rng.random() < 0.2), 'pimmune': int(rng.random() < 0.25)})
         c['cands'] = cands
         case.clear(); case.update(c)
 
@@ -123,6 +126,7 @@ def main():
         put(SDEF + 0x1aa, WEAPON); put(SDEF + 0x264, 0x1000000 if c['fawr'] else 0)
         put16(SDEF + 0x226, c['sight']); put(SDEF + 0x9a, NOTARGET); put(SDEF + 0x8e, BADTARGET)
         put(WEAPON + 0x40, CLASSOBJ); put(CLASSOBJ, VTABLE)
+        put(WEAPON + 0xc8, 4 if c['para'] else 0)    # damage type (low nibble): 4 paralyzer
         put(VTABLE + 0x14, STUB_TRUE if melee else STUB_FALSE)
         put(VTABLE + 0x1c, STUB_TRUE if cls == 1 else STUB_FALSE)
         put(VTABLE + 0x20, STUB_TRUE if cls == 2 else STUB_FALSE)
@@ -136,7 +140,7 @@ def main():
             putf(u + 0x108, e['unfinished'])
             put8(u + 0x114, 0x10 if e['paralyzed'] else 0)
             put(u + 0x68, e['x'] << 16); put(u + 0x70, e['z'] << 16)
-            put(d + 0x260, 0x8000)               # shootme
+            put(d + 0x260, 0x8000 | (0x4000000 if e['pimmune'] else 0))   # shootme, immunetoparalyzer
             put(d + 0x268, 6 if e['immune'] else 0)
             put(d + 0x264, 0x100000 if e['immune'] else 0)
             if e['bad']:
@@ -152,9 +156,9 @@ def main():
         assert queries == [(0, radius, 0)], (n, queries, radius)
         expected.append(f'{index} {get(0x64186c)}')
         fields = [c['seed'], c['sweep'], c['fawr'], melee, cls, c['ai'], c['sight'], c['range'], c['damage'],
-                  CENTRE, CENTRE, k]
+                  CENTRE, CENTRE, k, c['para']]
         for e in cands:
-            fields += [e['x'], e['z'], int(e['unfinished'] > 0), e['paralyzed'], e['bad'], e['immune']]
+            fields += [e['x'], e['z'], int(e['unfinished'] > 0), e['paralyzed'], e['bad'], e['immune'], e['pimmune']]
         rows.append(' '.join(map(str, fields)))
     proc = subprocess.run([args.binary, '--picker'], input='\n'.join(rows) + '\n', text=True,
                           capture_output=True, check=True)
@@ -175,7 +179,7 @@ def main():
 
 def case_unfinished(row, index):
     fields = row.split()
-    return fields[12 + 6 * index + 2] == '1'
+    return fields[13 + 7 * index + 2] == '1'
 
 
 if __name__ == '__main__':
