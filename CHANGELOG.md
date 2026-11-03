@@ -19,6 +19,47 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## 0.9.19
+*2026-11-03 · protocol 311 · replay format 15 · does not play with 0.9.18 or earlier, nor their replays*
+
+- **Legion: allied units meeting head on swap places.** Two of your (or your allies')
+  units on move orders that block each other where neither can get round now trade
+  places and walk on, instead of both standing. Two allied armies of 500 crossing a
+  river in opposite directions over three bridges used to gridlock at most starts (a
+  median of 741 of 1,000 arrived and 182 stood stuck); now a median of 983 arrive and
+  none are stuck. On screen the two units pass side by side over a fraction of a second
+  instead of jumping through each other.
+- **Legion: blocked units press on, as in Retail.** A unit queued behind its own army
+  on a move order closes up on the one ahead and slides along the file instead of
+  stopping dead. Units in a formation flow round a rock, a wall end or a block of idle
+  units at their travel speed, facing the way they go, instead of creeping sideways at
+  a crawl, and no longer step backwards behind where they are heading. Units on attack,
+  fight, guard or patrol orders, builders and newly built units leaving their factory
+  behave as before, so attackers still stand and fire from their places round a target.
+- **Passive AI stays at home.** It now strikes only at enemies within 800 pixels of one
+  of its buildings, so it defends its base and never sends waves after something it saw
+  elsewhere, such as your lodestone in the middle of the map.
+- **Legion is quicker with 1,000 units:** three exact optimisations of its route search
+  (the same moves in a shorter tick).
+- **Protocol 311:** Legion games play differently, so 0.9.19 plays with neither 0.9.18
+  nor any earlier version, nor their replays. Retail pathfinding plays exactly as in
+  0.9.18. Replay format 15 and the random map generator (version 9) are unchanged.
+- **Technical:** protocol 310 (Legion: an unturned step keeps travel speed, except a
+  plain mover's flow-around shuffle and the in-reach press; a formation member's
+  flow-around shuffle never steps behind its aim; a body blocked by bodies on a move leg
+  is clamped per axis and presses on) and protocol 311 (allied head-on swap in one exact
+  step, a 45-tick cool-down, the swap ticks hashed). The swap's 8-tick pass is drawn by
+  the client only and never hashed. A per-member mechanism tag for the scenario observer
+  (observation only); proving tests `legion_swap`, `swapshow` and one per steering
+  change; Legion goldens retaken for 310 and 311; the Slackware CI job tries three
+  package mirrors in turn.
+
+**Upgrading (server operators):** update `takserver` together with your
+players.
+
+Full notes: [release-0.9.19-notes.md](docs/release-0.9.19-notes.md) ·
+validation: [release-0.9.19-validation.md](docs/release-0.9.19-validation.md)
+
 ## 0.9.18
 *2026-11-02 · protocol 309 · replay format 15 · plays with 0.9.17 and 0.9.16, and their replays*
 

@@ -6,7 +6,7 @@
 
 A clean-room C++20 / SDL2 recreation of Cavedog's 1999 fantasy RTS.
 
-[![version](https://img.shields.io/badge/version-0.9.18-c9a227?style=flat-square)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.19-c9a227?style=flat-square)](CHANGELOG.md)
 [![platforms](https://img.shields.io/badge/platforms-Linux%20·%20Windows%20·%20macOS-4c8c4a?style=flat-square)](#download)
 [![license](https://img.shields.io/badge/license-GPL--3.0-6c3483?style=flat-square)](LICENSE)
 
@@ -26,14 +26,14 @@ interface art and sound straight from its installation folder.
 > original sides and the base campaign: the Creon side and its campaign need the
 > `IP*.hpi` archives.
 
-## What's new in 0.9.18
+## What's new in 0.9.19
 
-- A clean build: no compiler warnings on any platform, with no change to how the game plays.
-- Windows: a single-player game's private server now closes when the game does, even after a crash.
-- Checked with the full local, Windows, Mac and remote multiplayer test sweeps.
+- Legion: allied units meeting head on swap places, so crowded bridges no longer gridlock.
+- Legion: units queued behind their own army close up and press on; formations flow round obstacles at full speed.
+- Passive AI strikes only near its own buildings.
 
-Plays with 0.9.17 and 0.9.16 and their replays (protocol 309); servers need no update.
-Details in the [CHANGELOG](CHANGELOG.md#0918).
+Protocol 311: does not play with 0.9.18 or earlier, nor their replays; servers must update too.
+Details in the [CHANGELOG](CHANGELOG.md#0919).
 
 ## Features
 

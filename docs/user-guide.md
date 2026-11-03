@@ -2,7 +2,7 @@
 
 [Back to the README](../README.md) · [Quick start](quick-start.md) · [Cartographer (map editor) guide](cartographer-guide.md) · [Changelog](../CHANGELOG.md) · [Build and development guide](development.md)
 
-This guide covers **TAK Engine 0.9.18**. Which versions it plays with, and whose
+This guide covers **TAK Engine 0.9.19**. Which versions it plays with, and whose
 replays it plays: see [Versions](#versions). What changed in each release: see
 the [CHANGELOG](../CHANGELOG.md). It is written for three kinds of reader:
 
@@ -341,7 +341,7 @@ except passwords, Spectate and Map scenario.
 
 | Difficulty | What to expect |
 | --- | --- |
-| **Passive** | Plays exactly like Easy, except that nothing of its goes looking for you and its builders never leave home. It sends no scouts, and its army and fleet never explore or head for a start position, so it attacks only what it has seen. It takes mana deposits and builds only within 900 pixels of its base. |
+| **Passive** | Plays exactly like Easy, except that nothing of its goes looking for you and its builders never leave home. It sends no scouts, and its army and fleet never explore or head for a start position. It sends its army only against enemies it has seen within 800 pixels of one of its buildings, so it defends its base but never goes out after what it saw elsewhere, such as a lodestone in the middle of the map. It takes mana deposits and builds only within 900 pixels of its base. |
 | **Easy** | Builds slowly. First attack after about four minutes, then small waves of at most eight units, at least two minutes apart. |
 | **Normal** | Sends small raiding parties to probe and scout while it builds up a main army sized to its income. |
 | **Hard** | Keeps expanding its income and production, raids, and commits larger armies. |
@@ -1659,6 +1659,11 @@ measurements](legion-pathfinding.md)):
   moving outside a formation still edges round an obstacle slowly, and units on
   an attack, guard or patrol order keep facing their target and wait in their
   queue as before.
+- **Allies meeting head on swap places.** Two units of yours or your allies'
+  on move orders that block each other where neither can get round, as two
+  columns meeting on a bridge, trade places and walk on; on screen they pass
+  side by side. A unit that has just swapped does not swap again for a moment,
+  and units on attack, fight, guard or patrol orders never swap.
 - **Unreachable orders end where the unit stops.** Ordered to a place it cannot
   reach, a unit walks to the nearest spot it can reach, and its order ends there,
   so it is free for the next one at once. Units queued behind their own army end
@@ -2321,15 +2326,15 @@ others. In single-player there is nobody to wait for, so none of this applies.
 
 ### Versions
 
-TAK Engine 0.9.18 uses network protocol **309** and replay format **15**, the same as
-0.9.17 and 0.9.16. No earlier release uses protocol 309, so:
+TAK Engine 0.9.19 uses network protocol **311** and replay format **15**. No earlier
+release uses protocol 311 (0.9.18, 0.9.17 and 0.9.16 used 309), so:
 
-- **Multiplayer:** 0.9.18 plays with 0.9.18, 0.9.17 and 0.9.16, in either direction. A
-  server turns away a client whose protocol differs from its own, so a 0.9.15 or older
-  player cannot join a 0.9.18 server, nor a 0.9.18 player an older one; the connection
-  fails with a *protocol version mismatch* message. When a release changes the protocol, a server and all of
+- **Multiplayer:** 0.9.19 plays only with 0.9.19. A server turns away a client whose
+  protocol differs from its own, so a 0.9.18 or older player cannot join a 0.9.19
+  server, nor a 0.9.19 player an older one; the connection fails with a *protocol
+  version mismatch* message. When a release changes the protocol, a server and all of
   its players update together.
-- **Replays:** 0.9.18 plays replays recorded by 0.9.18, 0.9.17 and 0.9.16. A replay recorded by 0.9.15
+- **Replays:** 0.9.19 plays replays recorded by 0.9.19. A replay recorded by 0.9.18
   or earlier needs a version with that replay's protocol; keep an old copy of the
   engine (built from its tag, see the [development guide](development.md)) if you want
   to keep watching old replays.
