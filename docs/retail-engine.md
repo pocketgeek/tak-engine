@@ -5558,6 +5558,32 @@ an optional leash reject on the pick, then `4d7de0` through
   name-derived `Status::Paralyzed`; the shipped weapons are the same set, so
   no game changes) and adds the immunity skip.
 
+**Idle coverage audit** (fx-tsearch step 2, the shipped `units/` FBIs and
+World's hosts at 7bf30019). Every mobile type names one of three default
+missions, and only structures name Guard_NoMove:
+
+| FBI `defaultmissiontype` | Armed | Unarmed | World's host for an idle unit |
+|---|---|---|---|
+| Standby (mobile) | 98 | 11 | Standby (`standbyEligible`) |
+| VTOL_Standby (every flyer) | 19 | 8 | VTOL_Standby (`standbyEligible`, `vtolStandby`) |
+| Standby_Wander (mobile) | 9 | 7 | none: a stroll order every 240 ticks (`wanders`), no mission |
+| Guard_NoMove (structures) | 15 | 0 | Guard_NoMove (`tickGuardNoMove`, any structure) |
+| none (structures) | 0 | 36 | Guard_NoMove (unarmed: it only sleeps) |
+
+The armed Standby_Wander types (lifsaber, lifwolf, monboar, mondev,
+monghoul, monpiran, npchunt, npcsail, npctribe) have no mission host: what
+engages them today is tickCombat's stride scan, so the Standby_Wander scan
+(`4078e0`) has to be hosted before that scan goes. `target_search_test
+idle_coverage` (and its `--legion` twin) puts each of the 126 armed mobile
+types idle on Fire At Will beside a seen enemy inside its scanning slot's
+range (an Archer, else a Skeleton Archer or a Cannoneer for a weapon that
+spares Humans) and needs an attack order, a sweep target or a hit within 60
+ticks. At 7bf30019 all 126 engage at tick 2 with an attack order: the 19
+flyers from VTOL_Standby's own scan call, the 107 others from the stride scan
+before their Standby has run (and the wanderers have no host at all). The
+ported `retailMissionScan` takes the same enemy for all 126 two list rebuilds
+in. The test prints the table per type.
+
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 
 A campaign mission gives its units orders in a one-letter language: a placed
