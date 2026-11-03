@@ -19,9 +19,9 @@
 // Checks (flat map, shipped units, a hold-position Archer of player 1):
 //   - on the attack-move she acquires the Archer while her player cannot
 //     see it;
-//   - she stands in reach aiming and fires no shot in 60 s while it hits her
-//     (the known limit: when this check fails, the stall is gone and the
-//     notes and this guard are out of date);
+//   - she stands in reach aiming and fires no shot in 60 s (the known
+//     limit: when this check fails, the stall is gone and the notes and
+//     this guard are out of date);
 //   - on a plain move past it she fires.
 //
 // A dev harness; not shipped in a game.
@@ -130,8 +130,11 @@ int main(int argc, char** argv) {
     std::printf("  attack-move: %s\n", describe(am).c_str());
     check(am.acquired >= 0 && !am.seenAtAcquire, "the attack-move acquires the Archer while her player cannot see it",
           describe(am));
-    check(am.standing && am.aiming && am.dist <= 400.5f && am.shots == 0 && am.hits > 0,
-          "known limit: she stands in reach aiming, never fires, and is hit (0.9.3 notes)", describe(am));
+    // The Archer no longer hits her: idle on Hold Position its Standby attack
+    // is refused (4d7de0) and its sweep takes only what its player sees, and
+    // she stands past its sight. The stall itself is unchanged.
+    check(am.standing && am.aiming && am.dist <= 400.5f && am.shots == 0,
+          "known limit: she stands in reach aiming and never fires (0.9.3 notes)", describe(am));
 
     const Run mv = fight(vfs, reg, false);
     std::printf("  plain move: %s\n", describe(mv).c_str());

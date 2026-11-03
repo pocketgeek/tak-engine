@@ -214,19 +214,32 @@ WagonOutcome runWagon(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, Wagon v
     const int lodestone = w.spawn(lode, 256, 384, 0, 1);
     for (int i = 0; i < 30; ++i) w.tick(1.f / 30);
     const int shooter = w.spawn(wagon, sx, sz, {}, 0);
+    // A spotter of the wagon's beside the lodestone, as in the game (its sight
+    // is 180, the lodestone 344 px off): the sweep and the scans take only
+    // what the player sees.
+    static sim::UnitType spotter;
+    spotter = *wagon; spotter.id = "spotter"; spotter.weapons.clear(); spotter.weapon = {};
+    w.spawn(&spotter, 256, 264, {}, 0);
     w.player(0).mana = 30000;
     sim::Unit* u = w.unit(shooter);
     if (variant == Wagon::AttackMoveManeuver) u->moveState = 1;
     WagonOutcome out;
     if (u->moveState != (variant == Wagon::AttackMoveManeuver ? 1 : 0))
         check(false, "crefire ships Hold Position (standingunitorder=1)");
-    // It acquires the lodestone on its own (fire at will); the attack-move
-    // the AI gave it is then behind the auto attack, as in the game.
-    for (int i = 0; i < 90 && (u->orders.empty() || u->orders.front().targetId != lodestone); ++i) {
+    // It takes the lodestone on its own (fire at will): on Maneuver Standby's
+    // scan puts an auto attack in, and the attack-move the AI gave it is then
+    // behind it, as in the game; on Hold Position Standby's attack is refused
+    // (4d7de0) and the sweep holds it in an automatic slot.
+    const auto takes = [&](const sim::Unit& a) {
+        if (!a.orders.empty() && a.orders.front().targetId == lodestone) return a.orders.front().autoTarget;
+        return a.moveState == 0 && a.orders.empty() &&
+               std::find(a.slotTarget.begin(), a.slotTarget.end(), lodestone) != a.slotTarget.end();
+    };
+    for (int i = 0; i < 90 && !takes(*u); ++i) {
         w.tick(1.f / 30);
         u = w.unit(shooter);
     }
-    if (u->orders.empty() || !u->orders.front().autoTarget) check(false, "the wagon auto-acquires the lodestone");
+    if (!takes(*u)) check(false, "the wagon takes the lodestone on its own");
     if (variant != Wagon::Hold) w.attackMove(shooter, sx - 500, sz + 480, true);
     const float hp0 = w.unit(lodestone)->hp.toFloat();
     for (int i = 0; i < ticks; ++i) {
@@ -522,10 +535,16 @@ int main(int argc, char** argv) {
     // A Thirsha hovering behind a standing stone moves round its ring.
     const HoverOutcome hover = runHover(vfs, reg, 1800);
     std::printf("  thirsha hover, stone:        %s\n", describe(hover).c_str());
-    check(hover.stoneBolts >= 3 && hover.stoneBolts <= 6,
+    // On its shipped Hold Position the idle Thirsha no longer takes off for
+    // the Hunter before the order (VTOL_Standby's 4d7de0 refuses), so it
+    // starts its hover from the ground: its first bolt still stops on the
+    // stone, and from where it then hovers the rest clear it (no reposition
+    // is needed; before, it came in already airborne on a non-retail auto
+    // attack and needed one).
+    check(hover.stoneBolts >= 1 && hover.stoneBolts <= 6,
           "the Thirsha's first bolts stop on the standing stone, then it stops firing into it");
-    check(hover.repositions >= 1 && hover.hunterHits > 0 && hover.damage > 0,
-          "the Thirsha moves round its hover ring to a clear bearing and hits the Hunter");
+    check(hover.hunterHits > 0 && hover.damage > 0,
+          "the Thirsha reaches a clear bearing and hits the Hunter");
     const auto [walks, hits] = runSticky(vfs, reg);
     check(walks >= 1 && hits > 0, "a failed search does not give up on the target once a clear spot is in reach",
           "walks=" + std::to_string(walks) + " hits=" + std::to_string(hits));

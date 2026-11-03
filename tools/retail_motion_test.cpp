@@ -1241,10 +1241,19 @@ int main(int argc, char** argv) {
         UnitType fighter; fighter.canMove=true; fighter.maxHp=10000;
         fighter.maxVel=Fixed::fromInt(3); fighter.accel=fighter.brake=Fixed::fromFloat(0.1f);
         fighter.turnRate=1200; fighter.leash=90;
+        // Upright, so both stand on the terrain: the response's scan (4d8370)
+        // takes only an enemy its player sees.
+        fighter.upright=true;
         fighter.weapon.damage=10; fighter.weapon.range=80; fighter.weapons.push_back(fighter.weapon);
         const int id=world.spawn(&fighter,256,256,0.0f,0);
         const int enemy=world.spawn(&fighter,304,256,0.0f,1);
         world.unit(enemy)->fireState=0;
+        // The scan draws on the player's visible-enemy list (411700, rebuilt
+        // every 7 ticks): let it be built first, with the unit off Fire At
+        // Will so its Standby does not take the enemy meanwhile.
+        world.unit(id)->fireState=1;
+        for (int i=0;i<8;++i) world.tick(1.0f/30.0f);
+        world.unit(id)->fireState=2;
         world.order(id,800,256,false);
         auto* u=world.unit(id);
         auto& move=u->orders.back(); move.groundResponse={-1,{}, {800,256}};

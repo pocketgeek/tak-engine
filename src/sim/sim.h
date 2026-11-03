@@ -3686,6 +3686,31 @@ public:
     // of its default mission. Whether orders were inserted.
     bool retailMissionAttack(Unit& u,int targetId,MissionAttack how,
                              const std::optional<MissionLeash>& leash={});
+    // The host's stand-in for "the unit's current mission is one that scans"
+    // (a powered-down switchable, a neutral owner, a builder at or holding
+    // work are in another mission in retail), then 4d8370.
+    int retailHostScan(Unit& u);
+    // 4d7de0's refusals, without inserting anything: whether
+    // retailIssueAutoAttack(u, target, forceReturn, forced) would issue.
+    bool retailIssueAutoAttackAllowed(const Unit& u,int targetId,bool forceReturn,bool forced=false) const;
+    // The stored-attacker answer shared by the hit response (409ba8..409e4b)
+    // and the response of Move_Ground (402f..403) and VTOL_Move (4181c1..
+    // 4184a5): the attacker passes the scanning slot's category masks, is in
+    // the slot's reach (52ad60) or, for a mover, nearer than 9/10 of
+    // maneuverleashlength plus the slot's range (a melee slot adds none), and
+    // the slot can hurt it on its current layer.
+    bool retailAnswersAttacker(const Unit& e,const Unit& a,int slot,bool mobile) const;
+    // Move_Ground's and VTOL_Move's fallback when the scan finds nothing: the
+    // stored attacker (+0xf8, lastHitBy) alive, finished and not allied,
+    // through retailAnswersAttacker. No sight, cloak or fire-state test.
+    int retailMoveFallback(const Unit& u) const;
+    // The attack a mission builds itself (4de530 kind 3, then 4d6c40(kind,
+    // target, 0, 0, mode, leash) with origin +0x2e/+0x30): Move_Ground,
+    // Move_Ground_Formation, VTOL_Move and Standby_Wander. mode != 0 is an
+    // automatic chase; a leash retires it that far from `origin`. Not
+    // inserted: the caller inserts it once its own mission state is safe.
+    std::optional<Order> retailBuiltAttack(const Unit& u,int targetId,bool automatic,uint16_t leash,
+                                           RetailGroundPoint origin) const;
     // Port of 4f7210 (LosOn): `player` sees `u` when it owns it; otherwise
     // never when u is cloaked, carried or dead, else when any of the four
     // projected bounding-box corners lies on a cell `player`'s current-view

@@ -57,13 +57,18 @@ int main(int argc,char**argv) {
             w.player(0).mana=30000;
             if (order==1) w.attackMove(a,shore?4048.f:tx,tz,false);
             if (order==2) w.attack(a,b,false);
-            bool fired=false,routed=false;
+            bool fired=false,routed=false,seen=false;
             for (int tick=0;tick<1800 && !fired;++tick) {
                 w.tick(1.f/30.f);fired=w.unit(a)->justFired;served(w,a,routed);
+                seen=seen || w.playerSees(0,*w.unit(b));
             }
             const float actual=tak::sim::fxLen(w.unit(a)->x-w.unit(b)->x,w.unit(a)->z-w.unit(b)->z).toFloat();
-            std::printf("balance=%d unit=%s shore=%d order=%d fired=%d distance=%.1f range=%d\n",
-                crusades,name.c_str(),shore,order,fired,actual,type->weapon.range);
+            std::printf("balance=%d unit=%s shore=%d order=%d fired=%d seen=%d distance=%.1f range=%d\n",
+                crusades,name.c_str(),shore,order,fired,seen,actual,type->weapon.range);
+            // Idle, the ship has only Standby's scan and the sweep, and both
+            // take only an enemy its player sees (4d8370, 40f330: list +5): a
+            // submarine whose sight falls short of the target leaves it alone.
+            if (order==0 && !seen) { ++cases;check(!fired,"an idle ship leaves an enemy its player cannot see");continue; }
             ++cases;check(fired,"ship acquires, attack-moves, and attacks across open water/shore");
             if (order==0) check(actual>=distance-20,"in-range ship turns and fires without charging the target");
             if (legion && order>0) check(routed,"Legion routes the ship's approach");
@@ -168,6 +173,13 @@ int main(int argc,char**argv) {
                 auto victim=*mana;victim.maxHp=60000;victim.healTime=0;
                 const float tx=float(c*16),tz=float(c*16);
                 const int b=w.spawn(&victim,tx,tz,0,1);
+                // A spotter of the sub's off the island: the sub's sight is 80
+                // and its range 800, and the sweep and the scans take only
+                // what the player sees.
+                static tak::sim::UnitType spotter;
+                spotter=*sub;spotter.id="spotter";spotter.weapons.clear();spotter.weapon={};
+                spotter.sight=400;spotter.maxVel={};
+                w.spawn(&spotter,tx,tz-240,0,0);
                 const int a=w.spawn(sub,tx-distance,tz,1.570796327f,0);
                 w.unit(a)->moveState=moveState;
                 w.player(0).mana=30000;
@@ -205,12 +217,14 @@ int main(int argc,char**argv) {
             // In arc and in range: it hits from where it lies.
             const Shot near=run(range-60,0,8,900);show("hold, near",range-60,near);
             check(near.hits>0 && near.bowSplashes==0,"a sub well inside its range lobs onto the lodestone");
-            // Past the range: a sub that may move closes in and hits; it never
-            // lobs a shell flat into the water at its bow.
+            // Past the range: it never lobs a shell flat into the water at its
+            // bow. Idle, even on Roam, it does not close in: Standby's scan
+            // (4d8370 -> 412620) takes a ranged slot's target only within the
+            // slot's range (52ad60), so a seen enemy just past it is left be.
             for (float d:{range+30,range+40,range+48}) {
                 const Shot open=run(d,2,8,1800);show("roam, open water",d,open);
                 check(open.bowSplashes==0,"no flat shell into the water from beyond the arc's reach");
-                check(open.hits>0 && open.closest<=range,"the sub closes to its range and hits");
+                check(open.acquired==0 && open.hits==0,"an idle sub does not close on a seen enemy past its range");
             }
             // The band where the origin arc reaches but the muzzle-to-SweetSpot
             // solve may not: a shell is lobbed onto the target or not at all.

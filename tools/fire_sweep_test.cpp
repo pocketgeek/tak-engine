@@ -435,9 +435,15 @@ void sites() {
         check(attacked && hit,"sites: an idle armed unit attacks an enemy site in reach");
     }
     {   // Behind finished targets: at the same distance the idle unit takes the
-        // finished one; with the site four times nearer (16 > 10) the site.
-        const auto g=gunner(300);
+        // finished one; with the site four times nearer (16 > 10) the site is
+        // the likelier pick of Standby's scan (4d8370: 412620's sampled score,
+        // not nearest first), and the finished enemy still comes up. A turn
+        // rate of 1000 leaves out the turn penalty (412a77), which is added
+        // before the x10 and would put the site, off the gunner's bearing,
+        // behind the enemy ahead of it.
         for (const bool near:{false,true}) {
+            auto g=gunner(300);
+            if (near) g.turnRate=1000;
             sim::World w;setup(w,2);
             const int u=w.spawn(&g,400,1000,0,0);
             const int s=site(w,near ? 450 : 600,1000),foe=w.spawn(&d,400,1200,0,1);
@@ -447,8 +453,16 @@ void sites() {
                 const auto& o=w.unit(u)->orders;
                 if (!o.empty() && o[0].targetId) first=o[0].targetId;
             }
-            if (near) check(first==s,"sites: an idle unit takes a site four times nearer than a finished enemy");
-            else check(first==foe,"sites: an idle unit takes a finished enemy before a site as near");
+            if (near) {
+                int siteN=0,foeN=0;
+                for (int i=0;i<400;++i) {
+                    const int picked=w.retailMissionScan(*w.unit(u));
+                    siteN+=picked==s;foeN+=picked==foe;
+                }
+                std::printf("  near site %d finished %d of 400\n",siteN,foeN);
+                check(first!=0 && siteN>foeN && foeN>0 && siteN+foeN==400,
+                      "sites: the scan takes a site four times nearer than a finished enemy more often");
+            } else check(first==foe,"sites: an idle unit takes a finished enemy before a site as near");
         }
     }
     {   // A guard runs no scan of its own (Follow_Ground): it keeps its ward and

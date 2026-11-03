@@ -46,6 +46,12 @@ long reachCase(const tak::sim::TypeRegistry& registry,const char* id,bool hold,i
     // with no pad, 20 px inside the range.
     const int inner=w.spawn(&building,4096,4096-(pad>0.0f ? reach+pad*0.5f : reach-20.0f),0,1);
     const int outer=decoy ? w.spawn(&mobile,4096+reach+std::max(pad*0.25f,10.0f),4096,0,1) : 0;
+    // An unarmed spotter of the shooter's beside the structure: the sweep and
+    // the mission scan take only what the player sees (list +5), and a Fire
+    // Mage's Fire Storm (447) outreaches its sight (200). The cases measure
+    // the reach.
+    const float innerZ=4096-(pad>0.0f ? reach+pad*0.5f : reach-20.0f);
+    w.spawn(&mobile,4096-8.0f*float(building.footX)-64.0f,innerZ,0,0);
     w.player(0).mana=100000;
     if(hold)w.unit(a)->moveState=0;
     if(slot>=0)w.setWeapon(a,slot);

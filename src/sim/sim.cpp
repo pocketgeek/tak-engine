@@ -2618,7 +2618,9 @@ bool World::tickLegionLift(Unit& u) {
     }
     if (u.flightGroundMode==2 && (uint32_t(u.id)+tickCounter_)%kLegionLiftPoll==0) {
         if (legion_) legion_->noteFlyerEvent(LegionNavigator::FlyerEvent::TargetPoll);
-        if (acquireTarget(u,true)) {
+        // VTOL_Standby's rule (4176bc): 4d8370, then 4d7de0(unit, found, 0,
+        // 0, 1, 0).
+        if (const int found=retailHostScan(u);found && retailMissionAttack(u,found,MissionAttack::Vtol)) {
             // A target: the attack order ends the lift (the flyer is no longer
             // liftable) and this tick's combat update takes it on.
             u.legionLift=false;
@@ -3302,10 +3304,20 @@ void World::tickGroundMission(Unit& u) {
             if (&m==&u.standbyState && u.type->canFly)
                 return retailVtolStandby(m,w.tickCounter_,true,true,u.flightGroundMode==2,
                     [&](int n){return random(n);},[&]{ initialize(); },
-                    [&]{return w.acquireTarget(u,true);},[&]{u.landing.emplace();return true;});
+                    [&] {
+                        // 4176bc: 4d8370, then 4d7de0(unit, found, 0, 0, 1, 0).
+                        const int found=w.retailHostScan(u);
+                        return found && w.retailMissionAttack(u,found,MissionAttack::Vtol);
+                    },[&]{u.landing.emplace();return true;});
             if (&m == &u.standbyState)
                 return retailStandby(m,w.tickCounter_,true,[&](int n) { return random(n); },
-                    [&] { w.cancelPath(u); }, [&] { return w.acquireTarget(u,true); });
+                    [&] { w.cancelPath(u); }, [&] {
+                        // 407839: 4d8370, then 4d7de0(unit, found, 0, &pos, 1, 0):
+                        // nothing on Hold Position, a leashed attack and a
+                        // return move on Maneuver, a plain attack on Roam.
+                        const int found=w.retailHostScan(u);
+                        return found && w.retailMissionAttack(u,found,MissionAttack::Standby);
+                    });
             auto& goal = u.orders[currentLeg(u.orders)];
             if(goal.transportUnloadApproach) {
                 const auto target=goal.missionTarget.value_or(std::pair{goal.x,goal.z});
@@ -3483,25 +3495,25 @@ void World::tickGroundMission(Unit& u) {
             const int result=retailGroundMove(m,goal.missionRadius,w.tickCounter_,events,
                 int16_t(u.type->footX),u.embarked(),response.mode,uint8_t(u.moveState),[&](int n) { return random(n); },
                 resetGoal,[&] {
-                    // Target scoring and retaliation eligibility still use the
-                    // World's combat host; the mission owns when to poll it.
-                    int target=w.findTarget(u,true,true,response.mode<0);
-                    if (!target && u.fireState!=0 && u.lastHitBy) {
-                        const Unit* enemy=w.unit(u.lastHitBy);
-                        if (enemy && enemy->alive() && !enemy->embarked() && enemy->type &&
-                            !w.allied(u.player,enemy->player) && !enemy->cloaked &&
-                            fxLen(enemy->x-u.x,enemy->z-u.z)<=Fixed::fromFloat(u.type->maxRange()+90)) {
-                            if (w.canAttackTarget(u,*enemy)) target=enemy->id;
-                        }
-                    }
+                    // 402e2e: 4d8370, else the stored attacker (+0xf8).
+                    int target=w.retailHostScan(u);
+                    if (!target) target=w.retailMoveFallback(u);
                     if (!target) return false;
                     const auto* enemy=w.unit(target);
+                    // Mode > 0 on Maneuver: a hit at or beyond the leash from
+                    // the move's goal is dropped, with no rescan.
                     if (response.mode>0 && u.moveState==1 &&
                         retailGroundDistance({int16_t(enemy->x.floorInt()),int16_t(enemy->z.floorInt())},
                                              response.goal)>=leash) return false;
+                    // Both branches build the same attack: mode 1 (an automatic
+                    // chase) and leash maneuverleashlength on every stance; its
+                    // origin is where the unit stands (mode < 0, which the
+                    // Move keeps to return to) or the move's goal (mode > 0).
+                    const RetailGroundPoint origin=response.mode<0 ? position : response.goal;
+                    auto attack=w.retailBuiltAttack(u,target,true,leash,origin);
+                    if (!attack) return false;
                     if (response.mode<0) response.origin=position;
-                    auxiliary.emplace(); auxiliary->targetId=target;
-                    auxiliary->goal=true; auxiliary->autoTarget=response.mode>=0;
+                    auxiliary=std::move(attack);
                     w.cancelPath(u); u.routeStamp=-1;
                     goal.controller=0; m.pending&=~0x3700u;
                     return true;
@@ -7178,6 +7190,69 @@ bool World::retailMissionAttack(Unit& u,int targetId,MissionAttack how,const std
     return issued;
 }
 
+int World::retailHostScan(Unit& u) {
+    if (!u.type) return 0;
+    // VTOL landing also clears active; only a switchable unit reads it as
+    // powered down. A neutral owner never scans. A builder at a site, a
+    // repair or a reclaim, or holding queued work or a production queue, is
+    // in a work mission in retail, not a scanning one.
+    if (u.type->onOffable && !u.active) return 0;
+    if (isNeutralPlayer(u.player)) return 0;
+    if (u.buildSiteId || u.repairId || u.reclaimId) return 0;
+    if (!u.type->isStructure() && (!u.buildQueue.empty() || u.repeatType)) return 0;
+    if (u.type->weapons.empty() || u.fireState!=2) return 0;   // 4d8370's own gate, before the queue walk
+    if (hasQueuedWork(u)) return 0;
+    return retailMissionScan(u);
+}
+
+bool World::retailIssueAutoAttackAllowed(const Unit& u,int targetId,bool forceReturn,bool forced) const {
+    if (targetId==u.id) return false;
+    if (u.moveState==0 && !forceReturn && !forced) return false;
+    if (u.fireState==0 && !forced) return false;
+    const Unit* t=unit(targetId);
+    return t && canAttackTarget(u,*t);
+}
+
+bool World::retailAnswersAttacker(const Unit& e,const Unit& a,int s,bool mobile) const {
+    if (!e.type || !a.type || s<0 || s>=int(e.type->weapons.size())) return false;
+    const Weapon& w=e.type->weapons[size_t(s)];
+    if (categoryMatch(e.type->noTargetCats,*a.type) || slotBadTarget(e,s,a)) return false;
+    const int32_t eff=int32_t(w.damageVs(a.type));
+    bool reach=eff>0 && slotInRange(e,a,s);
+    if (!reach && mobile) {
+        const int32_t leash=int32_t(uint16_t(std::clamp(e.type->leash,0,65535)));
+        const int32_t oct=retailOctDistance(a.x.floorInt()-e.x.floorInt(),a.z.floorInt()-e.z.floorInt());
+        reach=oct<(leash*9)/10+(w.melee ? 0 : w.range);
+    }
+    // 409db4..409dcc (4183e8..4184a5 in VTOL_Move): a melee weapon answers
+    // only an attacker on the ground (+0x130 & 3 == 1); the air bits test
+    // its current layer.
+    return reach && canAttackTarget(e,a) && !(w.melee && a.flightGroundMode!=1) &&
+        !(w.toAir && a.flightGroundMode!=2) && !(w.noAir && a.flightGroundMode==2) && eff>0;
+}
+
+int World::retailMoveFallback(const Unit& u) const {
+    // 402f..: +0xf8 alive, not dying, finished, of a player not allied; the
+    // unit armed and not carried. Then the hit response's reach and weapon
+    // tests on the scanning slot (402f9f..40302b).
+    if (!u.lastHitBy || u.type->weapons.empty() || u.embarked() || u.underConstruction) return 0;
+    const Unit* a=unit(u.lastHitBy);
+    if (!a || a==&u || !a->alive() || a->hp<=Fixed() || !a->type || a->underConstruction ||
+        allied(u.player,a->player)) return 0;
+    return retailAnswersAttacker(u,*a,retailScanSlot(u),true) ? a->id : 0;
+}
+
+std::optional<Order> World::retailBuiltAttack(const Unit& u,int targetId,bool automatic,uint16_t leash,
+                                              RetailGroundPoint origin) const {
+    const Unit* t=unit(targetId);
+    // 4de530 kind 3 (an attack mission for the pair) -> the closest host test.
+    if (targetId==u.id || !t || !canAttackTarget(u,*t)) return std::nullopt;
+    Order attack{Fixed(),Fixed(),targetId};
+    attack.goal=true;attack.autoTarget=automatic;attack.issuedTick=tickCounter_;
+    if (leash) { attack.chaseLeashed=true;attack.chaseLeash=leash;attack.chaseOrigin=origin; }
+    return attack;
+}
+
 // 40f330's slot part, for one player: a budget of N/30+1 counted units per
 // call from a cursor that walks the player's slot range and wraps. A dead or
 // dying unit, or one with construction left (40f3a1..40f3c9: the same test as
@@ -7391,12 +7466,10 @@ void World::retailAiWeaponSwitch(Unit& u) {
 }
 
 bool World::retailIssueAutoAttack(Unit& u,int targetId,bool forceReturn,bool forced) {
-    if (targetId==u.id) return false;
-    if (u.moveState==0 && !forceReturn && !forced) return false;   // Defensive/Hold Position: part (b) only
-    if (u.fireState==0 && !forced) return false;                   // Hold Fire
-    const Unit* t=unit(targetId);
-    // 4de530 kind 3 (no attack mission for this pair) -> the closest host test.
-    if (!t || !canAttackTarget(u,*t)) return false;
+    // Hold Position without force: part (b) only; Hold Fire without
+    // explicit; 4de530 kind 3 (no attack mission for this pair) -> the
+    // closest host test.
+    if (!retailIssueAutoAttackAllowed(u,targetId,forceReturn,forced)) return false;
     const RetailGroundPoint pos{int16_t(u.x.floorInt()),int16_t(u.z.floorInt())};
     Order attack{Fixed(),Fixed(),targetId};
     attack.autoTarget=!forced;attack.goal=true;attack.issuedTick=tickCounter_;
@@ -7461,20 +7534,7 @@ void World::retailHitResponse(Unit& e,const Unit* a,int dmgType) {
     bool mission=false;
     if (!e.type->weapons.empty() && (idle || (mobile && patrolling))) {
         const int s=e.type->weaponSwitching ? std::clamp(e.weaponSlot,0,int(std::min<size_t>(3,e.type->weapons.size()))-1) : 0;
-        const Weapon& w=e.type->weapons[size_t(s)];
-        const bool categoriesOk=!categoryMatch(e.type->noTargetCats,*a->type) && !slotBadTarget(e,s,*a);
-        const int32_t eff=int32_t(w.damageVs(a->type));
-        bool reach=eff>0 && slotInRange(e,*a,s);
-        if (!reach && mobile) {
-            const int32_t leash=int32_t(uint16_t(std::clamp(e.type->leash,0,65535)));
-            const int32_t oct=retailOctDistance(a->x.floorInt()-e.x.floorInt(),a->z.floorInt()-e.z.floorInt());
-            reach=oct<(leash*9)/10+(w.melee ? 0 : w.range);
-        }
-        // 409db4..409dcc: a melee weapon answers only an attacker on the
-        // ground (+0x130 & 3 == 1); one in the air is left alone.
-        const bool usable=canAttackTarget(e,*a) && !(w.melee && a->flightGroundMode!=1) &&
-            !(w.toAir && a->flightGroundMode!=2) && !(w.noAir && a->flightGroundMode==2) && eff>0;
-        if (categoriesOk && reach && usable) {
+        if (retailAnswersAttacker(e,*a,s,mobile)) {
             const bool flag=e.fireState==2 && mobile && patrolling;
             mission=retailIssueAutoAttack(e,a->id,flag);
             // An idle flyer's answer goes in ahead of its default mission.
@@ -12249,10 +12309,9 @@ void World::tickAirToGroundHover(Unit& u,const Unit& target,const Weapon* select
         bool retarget() {
             // 4d8370 is World's target scan, as AirToAir's; then 4d7de0(unit,
             // found, 0, 0, 1, 0), retailIssueAutoAttack's gates.
-            const int found=w.findTarget(u,true,true,false);
+            const int found=w.retailHostScan(u);
             if (!found || found==target.id) return false;
-            const Unit* t=w.unit(found);
-            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            if (!w.retailIssueAutoAttackAllowed(u,found,false)) return false;
             retargetTo=found;
             return true;
         }
@@ -12431,10 +12490,9 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
         bool retarget() {
             // 4d8370 is World's target scan, as AirToAir's; then 4d7de0(unit,
             // found, 0, 0, 1, 0), retailIssueAutoAttack's gates.
-            const int found=w.findTarget(u,true,true,false);
+            const int found=w.retailHostScan(u);
             if (!found || found==target.id) return false;
-            const Unit* t=w.unit(found);
-            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            if (!w.retailIssueAutoAttackAllowed(u,found,false)) return false;
             retargetTo=found;
             return true;
         }
@@ -12542,10 +12600,9 @@ void World::tickAirStrike(Unit& u,const Unit& target) {
         bool retarget() {
             // 4d8370 is World's target scan; then 4d7de0(unit, found, 0, 0, 1,
             // 0), retailIssueAutoAttack's gates, as AirToGround's.
-            const int found=w.findTarget(u,true,true,false);
+            const int found=w.retailHostScan(u);
             if (!found || found==target.id) return false;
-            const Unit* t=w.unit(found);
-            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            if (!w.retailIssueAutoAttackAllowed(u,found,false)) return false;
             retargetTo=found;
             return true;
         }
@@ -12698,10 +12755,9 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
         bool retarget() {
             // 4d8370 is World's target scan, as the ground response's; then
             // 4d7de0(unit, found, 0, 0, 1, 0), retailIssueAutoAttack's gates.
-            const int found=w.findTarget(u,true,true,false);
+            const int found=w.retailHostScan(u);
             if (!found || found==target.id) return false;
-            const Unit* t=w.unit(found);
-            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            if (!w.retailIssueAutoAttackAllowed(u,found,false)) return false;
             retargetTo=found;
             return true;
         }
@@ -12965,10 +13021,9 @@ void World::tickSeekAttack(Unit& u,bool carriesTarget) {
             // 4d8370 is World's target scan, as AirToAir's (it finds nothing
             // off Fire At Will); then 4d7de0(unit, found, 0, 0, 1, 0),
             // retailIssueAutoAttack's gates.
-            const int found=w.findTarget(u,true,true,false);
+            const int found=w.retailHostScan(u);
             if (!found) return false;
-            const Unit* t=w.unit(found);
-            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            if (!w.retailIssueAutoAttackAllowed(u,found,false)) return false;
             retargetTo=found;
             return true;
         }

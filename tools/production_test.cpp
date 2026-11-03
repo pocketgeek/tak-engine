@@ -531,6 +531,10 @@ static void workAndShotsBlockCloak() {
         Weapon weapon; weapon.name = "cloak-test-weapon"; weapon.range = 300; weapon.damage = 1;
         weapon.reload = 1000; weapon.aimTol = 32767; spy.weapon = weapon; spy.weapons.push_back(weapon);
         UnitType dummy = soldierType(); dummy.id = "dummy"; dummy.maxHp = 30000;
+        // Upright, so both stand on the terrain (surfaceHeight): Standby's
+        // scan (4d8370) takes only an enemy its owner sees, and a body left
+        // at y 0 under height-100 ground projects onto the wrong sight cells.
+        spy.upright = dummy.upright = true;
         const int id = w.spawn(&spy, 300, 300, 0, 0);
         w.setCloak(id, true);
         for (int t = 0; t < 5; ++t) w.tick(1.0f / 30);

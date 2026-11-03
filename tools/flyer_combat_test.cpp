@@ -224,13 +224,29 @@ int main(int argc,char** argv) {
             int target=world.spawn(&victim,x+distance,z,0,1);
             if (order==1) world.attackMove(flyer,x+distance,z,false);
             if (order==2) world.attack(flyer,target,false);
-            bool fired=false;
+            bool fired=false,attacked=false,seen=false;
             for (int tick=0;tick<1200 && !fired;++tick) {
                 world.tick(1.f/30.f);
                 fired=world.unit(flyer)->justFired;
+                const auto& o=world.unit(flyer)->orders;
+                attacked=attacked || (!o.empty() && o.front().targetId==target);
+                seen=seen || world.playerSees(0,*world.unit(target));
             }
-            std::printf("balance=%s unit=%s order=%d fired=%d\n",crusades?"Crusades":"standard",
-                        name.c_str(),order,int(fired));
+            std::printf("balance=%s unit=%s order=%d fired=%d seen=%d\n",crusades?"Crusades":"standard",
+                        name.c_str(),order,int(fired),int(seen));
+            // Idle on Hold Position (standingunitorder 1), VTOL_Standby's
+            // 4d7de0(unit, found, 0, 0, 1, 0) refuses: the flyer stays landed
+            // and only its sweep slots may take the target.
+            if (order==0 && world.unit(flyer)->moveState==0) {
+                check(!attacked,"an idle flyer on Hold Position puts no attack in");
+                continue;
+            }
+            // Its scan and sweep take only an enemy its player sees: a landed
+            // flyer whose sight falls short of the target leaves it alone.
+            if (order==0 && !seen) {
+                check(!attacked && !fired,"an idle flyer leaves an enemy its player cannot see");
+                continue;
+            }
             // A very short authored maneuver leash (e.g. the Crusades Angel)
             // intentionally refuses this idle target. Explicit orders override it.
             if (order==0 && world.unit(flyer)->moveState==1 && type->leash>0 && distance>type->leash) {
