@@ -1264,6 +1264,52 @@ if(Python3_Interpreter_FOUND)
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100 corner-1x100 --data "${TAK_TEST_DATA}"
                    --offsets 0,1,-1 --max still900_ever=3 --max stopped_permille=245 --max g.A.t90=4100 --min g.A.done=1)
   set_tests_properties(legion_cornermerge PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # The Legion steering changes of 2026-11-02 (docs/legion-deep-dive-2026-11-02.md sections 3-6 for the measured
+  # basis; the commits a06d3f80, 740f0bd9, 75925618, 8dcb123f, c4933aa8 for the shape landed), one test each. The
+  # numbers are the final shape's against main's (0.9.18 plus the observer instrument), measured with both binaries at
+  # the offsets named; the per-mechanism why.* keys are docs/legion-scenario-keys.md's.
+  # 1. No facing cap on an unturned step: a formation member's flow-around shuffle, a side-step, a detour route and a
+  # nudge keep travel speed (the cap applies to a step that turns the course, to a plain mover's flow-around shuffle
+  # and to the in-reach press), so the creeps that were 98% of Legion's statue ticks are gone. island-1x100 (100 bodies
+  # round a 24x24 rock) at offsets 0, 1, -1: the statue ticks the observer attributes to the two cap walks are at most
+  # 10 each (why.flow_cap.statue now 0 / 0 / 0, main 420 / 121 / 222; why.route_cap.statue now 0 / 0 / 0, main
+  # 157 / 284 / 435; both 0 at all eleven gate offsets), and t90 at most 1,640 (now 1,401 / 1,487 / 1,487; main
+  # 1,549 / 1,487 / 1,532, so the t90 bound alone would pass main: it guards the arrival, the cap keys prove the change).
+  # The total statue_ticks is no measure here: the press's sub-cell nudges count as statues too (why.nudge.statue
+  # 866 / 1,153 / 1,354), so the total rose from 577 / 405 / 664 to 866 / 1,153 / 1,364 while the nudge-free remainder
+  # fell to 0 / 0 / 10.
+  add_test(NAME legion_nocap
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100 island-1x100 --data "${TAK_TEST_DATA}"
+                   --offsets 0,1,-1 --max why.flow_cap.statue=10 --max why.route_cap.statue=10 --max g.U.t90=1640 --min g.U.done=1)
+  set_tests_properties(legion_nocap PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # 2. No flow-around behind the aim: blocked by a body, a member no longer shuffles through a neighbour more than 90
+  # degrees from the way it is going (a backward walk the next descent undid). bridges-100 (two allied armies of 50
+  # cross a river in opposite directions over a 12-cell bridge) at offsets 0, 2, -2: at most 2,000 backward steps (now
+  # 1,325 / 1,454 / 1,012; main 3,291 / 2,519 / 3,166), the first army's t90 at most 9,300 (g.A: now 8,498 / 8,242 /
+  # 8,248; main 8,479 / 10,492 / 10,537 -- its median over the eleven gate offsets fell from 10,248 to 8,345) and all
+  # 100 arrive. Offsets 2 and -2 rather than 1 and -1: main's 1 and -1 are two of its three fast starts (8,737 / 8,692,
+  # within the bound), and the new shape keeps a slow start at -3, -4, -5 (9,997 / 10,161 / 9,997). The second army's
+  # t90 is not bounded: a 5% gain (g.B 8,879-9,457 against 9,101-9,641) is inside any sensible slack.
+  add_test(NAME legion_flowahead
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100 bridges-100 --data "${TAK_TEST_DATA}"
+                   --offsets 0,2,-2 --max backward=2000 --max g.A.t90=9300 --min scale.arrive.n=95)
+  set_tests_properties(legion_flowahead PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
+  # 3. The press: on a leg that engages no enemies, a body blocked by bodies with no way round walks the free axis of
+  # its step and the other to its origin cell's edge (Retail's clamp) instead of stopping dead, so a queue closes up
+  # and slides along a file. corner-1x100 at offsets 0, 2, -2: stopped permille at most 205 (now 160 / 182 / 164; main
+  # 236 / 235 / 226), the stopped samples of the queue hold (why.hold_movers.stopped) at most 5,200 (now 3,994 / 4,650 /
+  # 4,061; main 6,014 / 6,203 / 6,109) and t90 at most 4,200 (now 3,512 / 3,843 / 3,669; main 3,759 / 3,917 / 3,827,
+  # inside the bound: it guards the arrival, the stopped keys prove the change). Offset 1 is the new shape's highest
+  # stopped permille of the nine gate offsets (193, main 219), so the test reads 0, 2 and -2 and legion_cornermerge
+  # keeps 0, 1, -1 at the old bound. The nudges count as statue ticks (why.nudge.statue 6,192 / 6,918 / 7,093 of
+  # statue_ticks 6,200 / 6,924 / 7,115; main 2,507 / 3,466 / 2,202 with no nudge), so statue_ticks is no bound here.
+  add_test(NAME legion_press
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_scale_check.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/legion100 corner-1x100 --data "${TAK_TEST_DATA}"
+                   --offsets 0,2,-2 --max stopped_permille=205 --max why.hold_movers.stopped=5200 --max g.A.t90=4200 --min g.A.done=1)
+  set_tests_properties(legion_press PROPERTIES LABELS legion TIMEOUT 600 SKIP_RETURN_CODE 77)
 endif()
 # Legion navigation requirements as World checks (tools/legion_acceptance_test.cpp).
 # Legion asserts; Retail runs the same checks with --report (comparison
