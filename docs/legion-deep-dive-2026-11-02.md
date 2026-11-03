@@ -458,7 +458,8 @@ format 15 unchanged, 309 replays refused). The `why` instrument 41fe26a2 (observ
 this document 48022dd9, then the proposals of 6.1 as the guards reshaped them: a06d3f80 (no facing cap on
 unturned steps), 740f0bd9 (no flow-around step behind the aim), 75925618 (the press), 8dcb123f (the press
 only on legs that engage no enemies, as an unturned step; the in-reach press keeps its cap), c4933aa8 (a
-plain mover's flow-around shuffle keeps its old speed rule), 6e8c1dd6 (a press blocked by a body walking
+plain mover's flow-around shuffle keeps its old speed rule), 566fc41a (the no-backward rule for formation
+members only), 6e8c1dd6 (a press blocked by a body walking
 through waits for it), 3b09f132 (a face step that turned nothing requests no turn), the exact perf items 4,
 1 and 2 of 6.3 as 2a68a223, ad12c080 and e95abe0d, and three re-bounded tests cc826274, 65bfe947, 9a089398.
 The design doc's section "Blocked bodies: speed, ahead, pressing" records the landed shape and its sweep.
@@ -478,6 +479,11 @@ entrance in, 45 of 64 settled instead of 64, the yields refused for want of a fr
 shuffling about the crowd read as spinning (spin_while_crowd_held 0 -> 47). Bisected per kind: routes,
 side-steps, room moves, nudges and a formation member's shuffles at speed keep 64 / 64 and spin 0. The
 in-reach press keeps its cap: at travel speed its braked bodies glided past reach and pressed again.
+*Narrowed: proposal 2.* The no-backward rule is for formation members only (566fc41a): a plain crowd meeting
+another head on needs its backward shuffles to back out of a bridge. `bridges-1000` (two armies of 500
+crossing a river over three bridges, legion_choke: at least 450 arrive, at most 80 stand stuck at the end)
+arrives 860 on main with none stuck, 999 with the speed alone, 728 with 184 stuck under the rule for all,
+965 with none stuck under the rule for formation members; without the rule at all 727 and 155 stuck.
 *Restricted: proposal 3.* The press is for legs that engage no enemies and is an unturned step: at attack,
 fight and guard rings its nudges were the creep the round-4 and round-5 work removed (attackring-wall-64
 statue ticks 62 -> 1,781, attackring-guard-64 0 -> 4,944, attackring-fight-diag-60 -> 1,477). A press into a

@@ -328,8 +328,10 @@ stopped permille 288,524 to 288,538, Legion work flat.
   new cell is entered. It moves only along the axis whose origin changes,
   never back toward a cell centre, and it does not turn the body's course (at
   travel speed the body faces its steps: "Facing follows motion" below); this is a shuffle. Since
-  2026-11-02 no shuffle steps more than 90° behind the aim as given to `drive` (`aimDx`, `aimDz`): such
-  a step was a backward walk the next descent undid. A formation member on a
+  2026-11-02 no shuffle of a formation member steps more than 90° behind the aim as given to `drive`
+  (`aimDx`, `aimDz`): such a step was a backward walk the next descent undid (a plain mover keeps its
+  backward shuffles: a crowd meeting another head on backs out of a bridge with them, "Blocked bodies"
+  below). A formation member on a
   move-like leg walks the shuffle at travel speed (`Member::detourFlow`, since
   2026-10-19: "Flow-around at travel speed" below); a plain mover's shuffle (a body of a point with no formation
   assigned, `formationMember` false) keeps the facing cap unless its target is still, because at travel speed it let the
@@ -4995,9 +4997,16 @@ mostly queue time Retail animates.
    with no formation assigned (`plainFlow`) keeps the rule of before: brisk round a still target, the cap
    otherwise. The in-reach press (`pressIn`) keeps the cap of before too (8dcb123f): at travel speed its braked
    bodies glided past reach and pressed again from the same origin (`ctest:legion_pressin`).
-2. *A flow-around shuffle never steps behind its aim* (740f0bd9): a free neighbour more than 90 deg from the
-   aim as given to `drive` (`aimDx`, `aimDz`) is not an option. Such a step was a backward walk at travel
-   speed that the next descent undid. A body with no option ahead holds, and the hold's ways out run. Alone
+2. *A formation member's flow-around shuffle never steps behind its aim* (740f0bd9, formation members only
+   since 566fc41a): a free neighbour more than 90 deg from the aim as given to `drive` (`aimDx`, `aimDz`)
+   is not an option. Such a step was a backward walk at travel speed that the next descent undid. A body
+   with no option ahead holds, and the hold's ways out run. A plain crowd (a point with no formation
+   assigned, as a 500-body army is) keeps its backward shuffles: meeting another head on it backs out of a
+   bridge with them. `bridges-1000` (two allied armies of 500 crossing a river in opposite directions over
+   three bridges, `ctest:legion_choke`: at least 450 arrive, at most 80 stand stuck at the end) arrives 860
+   of 1,000 on main with none stuck, 999 with the unturned-step speed alone, 728 with 184 stuck once no
+   body stepped behind its aim, and 965 with none stuck with the rule kept for formation members, whose
+   files the suite measured (dropping the rule altogether: 727 and 155 stuck). Alone
    over the suite: t90 5 / 0 (bridges-100 -15%, densehead -9%, taperbridge-100 -5%), done 7 / 3, reversals
    29 better / 9 worse, backward 27 / 9, sideways 26 / 4. Two variants were measured when the stuck bases of
    `ctest:legion_landedflyers` moved (cc826274): a backward option ranked last instead of skipped (foot-3
