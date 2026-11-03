@@ -213,10 +213,7 @@
             !tak::mapgen::isGeneratedMapId(room.mapId) ? mp_->mapPackage()->files : room.mission.empty()
                 ? std::make_shared<const tak::hpi::Vfs::Files>() : nullptr);
         featureDefs_.clear(); featurePals_.clear();
-        for (auto& [name, art] : featureArt_) {
-            for (auto texture : art.frames) if (texture) gpuvram::destroy(texture);
-            for (auto texture : art.shadowFrames) if (texture) gpuvram::destroy(texture);
-        }
+        for (auto& [name, art] : featureArt_) art.destroyTextures();
         featureArt_.clear();
         if ((room.opts.crusades != 0) != crusades_) {
             crusades_ = room.opts.crusades != 0;

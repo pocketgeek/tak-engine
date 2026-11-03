@@ -1876,11 +1876,48 @@ Port: `sim/retailreclaim.h` (rectangle, countdown, work wake) driven by
 Ours, not retail: a MobileBuild retry treats a fading feature on its site like
 a mobile unit (the engine's own placement-clearing queues reclaims ahead of a
 build); a fading feature or corpse takes no weapon damage and cannot catch
-fire (otherwise a hit could swap it into a stage that outlives the fade); the
-fade is not drawn (the feature simply goes at its end). Not emulated: the turn
+fire (otherwise a hit could swap it into a stage that outlives the fade); a
+reclaimed corpse's fade is not drawn (it simply goes at its end). Not emulated: the turn
 child and the COB time to INBUILDSTANCE (both add to the table above), what
 else raises 0x400, and retail's per-wake lookup by cell (a new feature on the
 same cell would be carried on with; ours follows the feature id).
+
+**How the fade is drawn** (static analysis, 2026-11-03). Reclaim is the only
+fade: `494ce0` is called with mode 1 only from `494fd0` (the reclaim removal)
+and from net event 3 (`4e9c2c`); damage (`49630a`, `496339`) and net event 1
+(`4e9c60`) pass mode 0. Mode 1 takes a feature object slot (0x60 bytes at
+gameState+0x19e74, 0x800 of them; with none free it calls `494f00` and the
+feature goes at once) and sets +0x2e = 1, alpha +0x30 = 1.0f. The object tick
+`4959c0` subtracts 0.03f (`5f03cc`) at `495b3c` and at <= 0 calls `494f00`
+(`495b6f`): 34 steps, the last drawn alpha 0.0100004f. The feature draw
+`4fd430` (Glide is driven through the renderer vtable `5f67c0`) takes, for a
+sprite feature (type+0x13c bit 0) whose object fades, the current frame
+(`536400`, animating) or seqname frame 0 (`5367a0`), copies it, sets every
+texel that is not the frame's transparent index to 0xff (`4fd5fe`), makes a
+paletted texture of it (vtable +0x7c, `5b8400`), and draws one quad with
+vertex colour `(ftol(alpha * 255.0f) << 24) | 0xffffff` (`4fd688`,
+255.0f at `5ee95c`) under renderer state 6 (`5b77b0`: blending from the
+vertex alpha; `5b7f70` sets render states 0x13 = 5 and 0x14 = 6, source
+alpha / inverse source alpha in Direct3D's numbering -- inferred from the
+numbers) and state 8 (render state 0x29 = 1, colour key, with the
+transparent index set through vtable +0x58). Palette index
+255 is white in every shipped palette (`palettes/*.pal`, `*.pcx`, but for
+`veruna_newpalette`), so a reclaimed tree or rock turns into a white
+silhouette that fades out over 34 ticks. That path jumps past the shadow,
+flame and smoke draws (`4fd7c7` -> `4fda73`). TDF `seqnamereclamate` is not a
+string in the icd: retail never reads it. Port: `client/reclaimfade.h`, drawn
+in the feature body pass from `Feature::fadeLeft` (display only). Area reclaim
+and the placement clearing both reclaim, so they fade the same way.
+
+Not a fade: a feature DESTROYED by damage (`494ce0` mode 0) with a
+`seqnamedie` plays that animation (object +0x4, its shadow `seqnamedieshad`
+at +0x10) and at its end (`495ef7`) calls `494f00` with 0, which places the
+`featuredead` stage (type+0x12c, `494f50`); without a `seqnamedie` it swaps at
+once (`494ee3`). A burn plays seqnameburn and swaps through `495300`. 3DO
+features (statues, corpses) hand +0x2e and +0x30 to the model draw
+(`4fd850`/`4fd85c` -> `4ee700`; `4ec9ba` picks draw mode 2 when +0x13 is
+set); ours does not draw that one yet. Ours swaps a destroyed feature at once and does
+not play `seqnamedie`.
 
 ## A factory's output: rally, else PARK (icd `0x402220`, emulated 2026-10-25)
 
