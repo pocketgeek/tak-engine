@@ -13518,9 +13518,18 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // taperbridge-100 -7%; one loss, motion-cross-100 +5%) and no fixture
         // under the Retail floor (docs/legion-deep-dive-2026-11-02.md, 5.4).
         // Retail's mover traces round a body at its own speed.
-        // The in-reach press (pressIn) keeps the cap: at travel speed its braked bodies glided past
-        // reach and pressed again from the same origin (legion_pressin, 2026-11-02 check).
-        if(pass||brisk||(!face&&m.pressX==kNoPress)) {}
+        // Two unturned steps keep the cap. The in-reach press (pressIn): at travel speed its braked
+        // bodies glided past reach and pressed again from the same origin (legion_pressin). A
+        // flow-around shuffle of a body that is not a formation member (a plain order, no slot): at
+        // travel speed such shuffles let the rear of a plain crowd overtake its front at an obstacle,
+        // and in the acceptance world groupdetour (64 bodies with distinct goals on a lattice beyond a
+        // block) the near goals then settled before the far ones and boxed the entrance in: 45 of 64
+        // settled instead of 64, and the bodies shuffling about in the crowd read as spinning
+        // (crowdtrap spin_while_crowd_held 0 -> 47). A formation member's shuffles kept speed before
+        // (Member::detourFlow) and its slots are ordered; routes, side-steps, room moves and nudges at
+        // speed re-order nothing (bisected per kind, 2026-11-03).
+        const bool plainFlow=m.detour>=0&&m.detourWhy==0&&!formationMember(m);
+        if(pass||brisk||(!face&&m.pressX==kNoPress&&!plainFlow)) {}
         else if(facing>12288)cap=Fixed::raw(cap.v/8);
         else if(facing>4096)cap=Fixed::raw(cap.v/2);
         Fixed speed=fxMin(cap,u.speed+u.type->accel*multiplier);
