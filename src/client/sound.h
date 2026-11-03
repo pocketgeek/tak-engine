@@ -34,9 +34,63 @@
 // keep that quality. Every WAV is cached at its own rate and channel count (S16; only
 // a rate above 44100 is converted down): the 11025 Hz 8-bit mono unit sounds, the
 // 22050 Hz stereo music tracks and a mod's 44.1 kHz or 5.1 files alike. Each voice
-// steps through its source at srcRate/kMixRate with linear interpolation, and its
-// channels meet the output layout at mix time, so a device switch needs no reload.
-// Failing to open audio is non-fatal: play() no-ops.
+// steps through its source at srcRate/kMixRate through a windowed-sinc interpolator
+// (tak::sinc below), and its channels meet the output layout at mix time, so a device
+// switch needs no reload. Failing to open audio is non-fatal: play() no-ops.
+
+// Polyphase Kaiser-windowed sinc for the mixer's rate stepping. A source played slower
+// than the mix rate (11025/22050 Hz at 44100) is low-passed at its own Nyquist, so the
+// spectral images linear interpolation left above it (-26 dB on a unit sound) are gone;
+// a source stepped faster than 1 frame per output frame (pitch up) stretches the kernel
+// by the step, moving the cutoff to the output's Nyquist so it does not alias.
+//   32 taps, Kaiser beta 8, -6 dB at 0.42 x source rate (-1 dB at 0.386, -3 dB at
+//   0.405; >= 81 dB down from 0.5 = the source Nyquist up), 256 phases + linear blend.
+// 16 taps cannot both pass 4 kHz of an 11025 Hz sound and stop 5.5 kHz; 32 voices of
+// 32 taps cost well under a millisecond per callback. Built once at static init.
+namespace tak::sinc {
+inline constexpr int kTaps = 32;         // source frames under the kernel at step <= 1
+inline constexpr int kPhaseBits = 8;     // 256 phases per source frame
+inline constexpr int kPhases = 1 << kPhaseBits;
+inline constexpr int kMaxStep = 4;       // playAt rate <= 4 and source rate <= mix rate
+inline constexpr int kMaxTaps = kTaps * kMaxStep + 2;
+inline constexpr double kBeta = 8.0, kCutoff = 0.42;   // cutoff as a fraction of source rate
+// row[j][m] = h(m - (kTaps/2 - 1) - j/kPhases), each row normalised to unit DC gain:
+// the weights of the frames n-15..n+16 for a read position n + j/kPhases.
+struct Table { std::array<std::array<float, kTaps>, kPhases + 1> row{}; };
+inline Table build() {
+    constexpr double pi = 3.14159265358979323846;
+    const auto i0 = [](double x) {   // modified Bessel I0 (series)
+        double sum = 1, term = 1;
+        for (int k = 1; k < 64; ++k) { term *= (x / (2 * k)) * (x / (2 * k)); sum += term; }
+        return sum;
+    };
+    Table t;
+    for (int j = 0; j <= kPhases; ++j) {
+        double h[kTaps], sum = 0;
+        for (int m = 0; m < kTaps; ++m) {
+            const double x = double(m - (kTaps / 2 - 1)) - double(j) / kPhases, r = 2 * x / kTaps;
+            const double window = std::fabs(r) >= 1 ? 0 : i0(kBeta * std::sqrt(1 - r * r)) / i0(kBeta);
+            const double a = 2 * kCutoff * x;
+            h[m] = 2 * kCutoff * (a == 0 ? 1 : std::sin(pi * a) / (pi * a)) * window;
+            sum += h[m];
+        }
+        for (int m = 0; m < kTaps; ++m) t.row[size_t(j)][size_t(m)] = float(h[m] / sum);
+    }
+    return t;
+}
+inline const Table kTable = build();
+// The kernel at an arbitrary offset u in source frames (|u| < kTaps/2), from the table.
+inline float kernel(double u) {
+    const double v = u + kTaps / 2;
+    if (v <= 0 || v >= kTaps) return 0;
+    const int m = std::min(int(v), kTaps - 1);
+    const double pos = (1 - (v - m)) * kPhases;
+    const int j = std::min(int(pos), kPhases - 1);
+    const float a = float(pos - j), lo = kTable.row[size_t(j)][size_t(m)];
+    return lo + a * (kTable.row[size_t(j) + 1][size_t(m)] - lo);
+}
+}  // namespace tak::sinc
+
 class SoundBank {
     friend struct SoundBankTestAccess;
 public:
@@ -477,6 +531,7 @@ public:
             c.positional=positional;c.wx=wx;c.wz=wz;c.gain=gain;
             c.distanceGain=positional ? worldSoundGain(wx,wz) : 1.f;
             c.fpos=0;c.step=stepFor(std::clamp(rate,0.25f,4.f)*double(samples->rate)/kMixRate);
+            c.wrapped=false;
             c.priority=priority;c.started=++soundSequence_;c.looping=looping;
 #ifndef NDEBUG
             report.trace.slot=slot;
@@ -498,18 +553,95 @@ private:
         int priority=0;
         uint64_t started=0;
         bool looping=false;
+        bool wrapped=false;         // a loop has come round: frames before 0 are its end
         uint64_t fpos = 0;          // 32.32 fractional read position in source frames
     };
     static constexpr uint64_t kUnitStep = uint64_t(1) << 32;
     static uint64_t stepFor(double ratio) { return uint64_t(ratio * double(kUnitStep) + 0.5); }
-    // Source channel `k` at the 32.32 position `fpos` (frame `frame` = fpos>>32),
-    // linearly interpolated toward the next frame: the frame after the last one is
-    // the first for a loop and the last itself otherwise.
-    static int sampleAt(const Pcm& p, size_t frame, uint64_t fpos, int k, bool loop) {
-        const size_t n = p.frames(), c = size_t(p.channels);
-        const size_t next = frame + 1 < n ? frame + 1 : (loop ? 0 : frame);
-        const int a = p.samples[frame * c + size_t(k)], b = p.samples[next * c + size_t(k)];
-        return a + int((int64_t(b - a) * int64_t((fpos >> 16) & 0xFFFF)) >> 16);
+    // Source frame `i` (its first sample), or null for silence: before frame 0 and past
+    // the end of a one-shot. A loop wraps both ways once it has come round, but its
+    // first pass still starts from silence.
+    static const int16_t* frameAt(const Pcm& p, int64_t i, bool loop, bool wrapped) {
+        const int64_t n = int64_t(p.frames());
+        if (i < 0 || i >= n) {
+            if (!loop || n == 0 || (i < 0 && !wrapped)) return nullptr;
+            i %= n;
+            if (i < 0) i += n;
+        }
+        return &p.samples[size_t(i) * size_t(p.channels)];
+    }
+    // Every channel of the source at the 32.32 position `fpos` read `step` per output
+    // frame, into out[0..channels). Exact 1:1 (step == kUnitStep) copies the frame,
+    // bit for bit. Slower than 1:1 the polyphase kernel sits on frames n-15..n+16 at the
+    // blended phase; faster, it is stretched by the step (cutoff / step) and its taps
+    // are renormalised. Allocation- and lock-free: it runs on the audio thread.
+    static void framesAt(const Pcm& p, uint64_t fpos, uint64_t step, bool loop, bool wrapped, int* out) {
+        namespace s = tak::sinc;
+        const int c = std::clamp(p.channels, 1, 8);
+        const int64_t n = int64_t(fpos >> 32), total = int64_t(p.frames());
+        if (step == kUnitStep) {
+            const int16_t* x = frameAt(p, n, loop, wrapped);
+            for (int k = 0; k < c; ++k) out[k] = x ? x[k] : 0;
+            return;
+        }
+        float w[s::kMaxTaps];
+        const float* wp = w;   // the weights: w, or a table row as it is
+        int64_t first = n - (s::kTaps / 2 - 1);
+        int taps = s::kTaps;
+        const uint32_t frac = uint32_t(fpos);
+        if (step < kUnitStep) {
+            constexpr int shift = 32 - s::kPhaseBits;
+            constexpr uint32_t below = (uint32_t(1) << shift) - 1;   // the fraction between phases
+            const uint32_t j = frac >> shift;
+            const float a = float(frac & below) * (1.0f / float(below + 1));
+            const auto& r0 = s::kTable.row[j];
+            const auto& r1 = s::kTable.row[j + 1];
+            if (a == 0) wp = r0.data();   // on a phase (11025/22050 at 44100 always are)
+            else for (int m = 0; m < taps; ++m) w[m] = r0[size_t(m)] + a * (r1[size_t(m)] - r0[size_t(m)]);
+        } else {
+            const double st = std::min(double(step) / double(kUnitStep), double(s::kMaxStep));
+            const double f = double(frac) / double(kUnitStep), half = s::kTaps / 2 * st;
+            const int64_t lo = int64_t(std::floor(f - half)) + 1, hi = int64_t(std::ceil(f + half)) - 1;
+            first = n + lo;
+            taps = int(std::min<int64_t>(hi - lo + 1, s::kMaxTaps));
+            float sum = 0;
+            for (int m = 0; m < taps; ++m) sum += w[m] = s::kernel((double(lo + m) - f) / st);
+            const float norm = sum != 0 ? 1.0f / sum : 0.0f;
+            for (int m = 0; m < taps; ++m) w[m] *= norm;
+        }
+        float acc[8] = {};
+        if (first >= 0 && first + taps <= total) {
+            const int16_t* x = &p.samples[size_t(first) * size_t(c)];
+            if (c == 1) {
+                // Eight running sums (one per lane) so the compiler can vectorise the
+                // dot product without reassociating floats.
+                float a8[8] = {};
+                int m = 0;
+                for (; m + 8 <= taps; m += 8)
+                    for (int i = 0; i < 8; ++i) a8[i] += wp[m + i] * float(x[m + i]);
+                for (; m < taps; ++m) a8[0] += wp[m] * float(x[m]);
+                acc[0] = ((a8[0] + a8[4]) + (a8[1] + a8[5])) + ((a8[2] + a8[6]) + (a8[3] + a8[7]));
+            } else if (c == 2) {
+                float a8[8] = {};   // lanes L R L R ..: four frames per step
+                int m = 0;
+                for (; m + 4 <= taps; m += 4)
+                    for (int i = 0; i < 8; ++i) a8[i] += wp[m + i / 2] * float(x[2 * m + i]);
+                for (; m < taps; ++m) {
+                    a8[0] += wp[m] * float(x[2 * m]);
+                    a8[1] += wp[m] * float(x[2 * m + 1]);
+                }
+                acc[0] = (a8[0] + a8[4]) + (a8[2] + a8[6]);
+                acc[1] = (a8[1] + a8[5]) + (a8[3] + a8[7]);
+            } else {
+                for (int m = 0; m < taps; ++m)
+                    for (int k = 0; k < c; ++k) acc[k] += wp[m] * float(x[m * c + k]);
+            }
+        } else {
+            for (int m = 0; m < taps; ++m)
+                if (const int16_t* x = frameAt(p, first + m, loop, wrapped))
+                    for (int k = 0; k < c; ++k) acc[k] += wp[m] * float(x[k]);
+        }
+        for (int k = 0; k < c; ++k) out[k] = int(std::lrint(acc[k]));
     }
     // Full gain throughout the camera rectangle. Outside, measure the shortest
     // world-space distance to its edge (including corners), then fade to zero
@@ -637,8 +769,8 @@ private:
             for (int f = 0; f < frames; ++f) {
                 const size_t frame = size_t(musicPos_ >> 32);
                 if (frame >= total) { musicDone_ = true; break; }
-                for (int k = 0; k < mc; ++k)
-                    src[k] = sampleAt(music_, frame, musicPos_, k, false) * musicVol_ / 256;
+                framesAt(music_, musicPos_, musicStep_, false, false, src);
+                for (int k = 0; k < mc; ++k) src[k] = src[k] * musicVol_ / 256;
                 musicPos_ += musicStep_;
                 for (int o = 0; o < ch; ++o) {
                     float v = 0;
@@ -685,8 +817,9 @@ private:
                     if (!c.looping || total == 0) break;
                     c.fpos %= uint64_t(total) << 32;
                     c.pos = size_t(c.fpos >> 32);
+                    c.wrapped = true;
                 }
-                for (int k = 0; k < sc; ++k) src[k] = sampleAt(p, c.pos, c.fpos, k, c.looping);
+                framesAt(p, c.fpos, c.step, c.looping, c.wrapped, src);
                 c.fpos += c.step;
                 if (sc == 1) {
                     int s = scale(float(src[0]));

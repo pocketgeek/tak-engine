@@ -7,7 +7,8 @@
 #include <random>
 
 // In-game audio through SoundBank at the 44100 Hz mix rate: music and effects keep
-// their own rate and channels (stepped with linear interpolation), stereo effects
+// their own rate and channels (stepped through the windowed-sinc interpolator, which
+// stops the images above a source's Nyquist and bypasses 1:1 bit for bit), stereo effects
 // keep their image and still pan, multichannel sources map channel for channel onto
 // the output and fold down only what it lacks, a mod's music/track<n>.wav replacement
 // plays at its own 44.1 kHz stereo, and the stream tap receives the 44100 Hz mix
@@ -96,8 +97,10 @@ int main(int argc,char** argv) {
     {
         // Retail-format 22050 Hz stereo track: an 8 kHz tone on the left, 440 Hz on
         // the right. Cached at 22050 (no resample), it lasts twice the frames at the
-        // 44100 Hz mix and keeps both tones, each on its own side (8 kHz ~3 dB down:
-        // linear interpolation's response at 2x).
+        // 44100 Hz mix and keeps both tones, each on its own side. 8 kHz is 0.363 of the
+        // source rate, inside the sinc's passband (-1 dB at 0.386): linear interpolation
+        // left it ~3 dB down (> 5300), the sinc ~0.5 dB. Its image at 22050-8000 Hz and
+        // the 440 Hz one at 21610 Hz lie in the stopband (>= 81 dB down): below -60 dB.
         constexpr int N=4410;
         auto pcm=SoundBankTestAccess::convert(wavFile(22050,2,16,tones(22050,N,{8000,440})));
         check(pcm && pcm->rate==22050 && pcm->channels==2 && pcm->frames()==size_t(N),
@@ -108,7 +111,10 @@ int main(int argc,char** argv) {
         const double l8=tone(out,2,0,8000,R),r8=tone(out,2,1,8000,R);
         const double l4=tone(out,2,0,440,R),r4=tone(out,2,1,440,R);
         std::cerr<<"22050 stereo: L8k="<<l8<<" R8k="<<r8<<" L440="<<l4<<" R440="<<r4<<'\n';
-        check(l8>5300 && r8<200,"8 kHz left-channel content reaches only the left speaker");
+        const double img8=tone(out,2,0,22050-8000,R),img4=tone(out,2,1,22050-440,R);
+        std::cerr<<"22050 stereo images: 14.05k="<<img8<<" 21.61k="<<img4<<'\n';
+        check(l8>7000 && r8<200,"8 kHz left-channel content reaches only the left speaker");
+        check(img8<0.001*l8 && img4<0.001*r4,"22050 Hz track: images above 11 kHz below -60 dB");
         check(r4>7900 && l4<200,"440 Hz right-channel content reaches only the right speaker");
         check(!SoundBankTestAccess::musicDone(bank),"track still playing on its last frame");
         SoundBankTestAccess::mix(bank,1);
@@ -225,12 +231,23 @@ int main(int argc,char** argv) {
         bank.play("blip");
         auto out=SoundBankTestAccess::mix(bank,5000);
         const int last=lastNonZero(out,1);
-        check(last>=4404 && last<=4408,"SFX plays 0.1 s = ~4408 frames at 44100 Hz ("+std::to_string(last+1)+")");
-        check(out[0]==out[100] && out[0]==(0xC0-0x80)*256/2,"8-bit SFX level unchanged");
+        // Exactly four output frames per source frame: the voice ends when its position
+        // passes the last frame, no tail (the kernel's ring past the end is not played);
+        // the last frame reads the sound's end against silence, so it is still non-zero.
+        check(last+1==4408,"SFX plays 0.1 s = 4408 frames at 44100 Hz ("+std::to_string(last+1)+")");
+        // The level holds once the kernel is inside the sound. The first frame's kernel
+        // half-reads the silence before frame 0, so the onset is a band-limited step
+        // (~0.92 of the level: the kernel's centre tap is 0.84) where linear
+        // interpolation started at the full level.
+        constexpr int level=(0xC0-0x80)*256/2;
+        check(std::abs(out[100]-level)<=1 && std::abs(out[4000]-level)<=1,"8-bit SFX level unchanged ("
+              +std::to_string(out[100])+")");
+        check(out[0]>level*3/4 && out[0]<level-200,"SFX onset starts from silence ("+std::to_string(out[0])+")");
     }
     {
-        // Linear interpolation: a 1 kHz tone at 11025 Hz stepped to 44100. Nearest-sample
-        // stepping would leave its image at 11025-1000 Hz only ~20 dB down.
+        // A 1 kHz tone at 11025 Hz stepped to 44100. Nearest-sample stepping would leave
+        // its images at 11025-/+1000 Hz only ~20 dB down and linear interpolation ~40 dB
+        // (the old limit was 3%); the sinc stops everything past 5.5 kHz: below -60 dB.
         SoundBank bank;
         if(!SoundBankTestAccess::openPaused(bank))return 2;
         SoundBankTestAccess::layout(bank,1);
@@ -239,7 +256,69 @@ int main(int argc,char** argv) {
         auto out=SoundBankTestAccess::mix(bank,R-100);
         const double f=tone(out,1,0,1000,R),image=tone(out,1,0,10025,R),image2=tone(out,1,0,12025,R);
         std::cerr<<"11025 interpolation: 1k="<<f<<" image10k="<<image<<" image12k="<<image2<<'\n';
-        check(f>3800 && image<0.03*f && image2<0.03*f,"interpolated 11025 Hz tone shows no strong image");
+        check(f>3800 && image<0.001*f && image2<0.001*f,"11025 Hz tone: images at 10/12 kHz below -60 dB");
+    }
+    {
+        // A 44100 Hz source plays 1:1 past the filter: noise through the music bed at
+        // unity comes out sample for sample.
+        std::vector<int16_t> noise(2*4096);
+        uint32_t seed=12345;
+        for(auto& v:noise){seed=seed*1664525u+1013904223u;v=int16_t(seed>>16);}
+        SoundBank bank;SoundBankTestAccess::layout(bank,2);bank.setMusicVolume(256);
+        SoundBankTestAccess::setMusic(bank,{noise,R,2});
+        check(SoundBankTestAccess::mix(bank,4096)==noise,"44100 Hz source is bit-exact through the mixer");
+    }
+    {
+        // A loop: 441 Hz at 11025 Hz is 25 frames a cycle, 1100 frames 44 whole cycles. Past
+        // the first wrap the kernel reads across it (the end before frame 0, the start
+        // past the end), so the seam is as smooth as the rest of the sine: no sample step
+        // larger than the sine's own slope, and the third pass repeats the second.
+        SoundBank bank;
+        if(!SoundBankTestAccess::openPaused(bank))return 2;
+        SoundBankTestAccess::layout(bank,1);
+        SoundBankTestAccess::decodeSfx(bank,"loop",wavFile(11025,1,16,tones(11025,1100,{441})));
+        bank.playAt("loop",0,0,false,0,0,1.f,1.f,3,true);
+        constexpr int P=4*1100;
+        auto out=SoundBankTestAccess::mix(bank,3*P+200);
+        int jump=0,seam=0,repeat=0;
+        for(int i=P/2;i<3*P;++i)jump=std::max(jump,std::abs(out[size_t(i)+1]-out[size_t(i)]));
+        for(int i=2*P-50;i<2*P+50;++i)seam=std::max(seam,std::abs(out[size_t(i)+1]-out[size_t(i)]));
+        for(int i=P;i<2*P;++i)repeat=std::max(repeat,std::abs(out[size_t(i)+P]-out[size_t(i)]));
+        const int slope=int(std::ceil(4000*2*M_PI*441/R));   // amplitude 8000 /2 headroom
+        std::cerr<<"loop: max jump="<<jump<<" at seam="<<seam<<" slope="<<slope<<" repeat="<<repeat<<'\n';
+        check(jump<=slope+2 && seam<=slope+2,"loop wrap is continuous (no click at the seam)");
+        check(repeat<=2,"each loop pass repeats the last, seam included");
+    }
+    {
+        // Pitch: an 11025 Hz 1 kHz tone at rate 2 steps half a frame per output frame;
+        // it plays at 2 kHz and the kernel still stops its images at 22050 -/+ 2000 Hz.
+        SoundBank bank;
+        if(!SoundBankTestAccess::openPaused(bank))return 2;
+        SoundBankTestAccess::layout(bank,1);
+        SoundBankTestAccess::decodeSfx(bank,"tone",wavFile(11025,1,16,tones(11025,11025,{1000})));
+        bank.playAt("tone",0,0,false,0,0,1.f,2.f);
+        auto out=SoundBankTestAccess::mix(bank,R/2-100);
+        const double f=tone(out,1,0,2000,R),image=tone(out,1,0,20050,R),old=tone(out,1,0,1000,R);
+        std::cerr<<"11025 at rate 2: 2k="<<f<<" image20k="<<image<<" 1k="<<old<<'\n';
+        check(f>3800 && image<0.001*f && old<0.001*f,"rate 2 on 11025 Hz: tone at 2 kHz, no image");
+    }
+    {
+        // Pitch above the mix rate: a 44100 Hz source at rate 2 (two frames per output
+        // frame) has its kernel stretched, cutoff halved. A 15 kHz tone (-> 30 kHz,
+        // above Nyquist) must not alias to 44100-30000 = 14.1 kHz; a 5 kHz one -> 10 kHz.
+        SoundBank bank;
+        if(!SoundBankTestAccess::openPaused(bank))return 2;
+        SoundBankTestAccess::layout(bank,1);
+        SoundBankTestAccess::decodeSfx(bank,"hi",wavFile(R,1,16,tones(R,R,{15000})));
+        SoundBankTestAccess::decodeSfx(bank,"mid",wavFile(R,1,16,tones(R,R,{5000})));
+        bank.playAt("hi",0,0,false,0,0,1.f,2.f);
+        auto hi=SoundBankTestAccess::mix(bank,R/2-100);
+        SoundBankTestAccess::silence(bank);bank.playAt("mid",0,0,false,0,0,1.f,2.f);
+        auto mid=SoundBankTestAccess::mix(bank,R/2-100);
+        const double alias=tone(hi,1,0,14100,R),ten=tone(mid,1,0,10000,R);
+        std::cerr<<"44100 at rate 2: alias14.1k="<<alias<<" 10k="<<ten<<'\n';
+        check(alias<4,"rate 2 on 44100 Hz: 15 kHz does not alias to 14.1 kHz (< -60 dB of 4000)");
+        check(ten>3800,"rate 2 on 44100 Hz: 5 kHz plays at 10 kHz");
     }
     {
         // A stereo SFX pans with position: on screen centre it keeps its image; off to
