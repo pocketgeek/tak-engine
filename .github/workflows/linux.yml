@@ -142,21 +142,34 @@ jobs:
         if: matrix.family == 'slack'
         run: |
           set -eu
-          # A fixed mirror: the mirrors.slackware.com redirector can hand out a
-          # mirror whose certificate chain the runner cannot verify.
-          mirror=https://mirrors.kernel.org/slackware/slackware64-15.0/
-          printf '%s\n' "$mirror" > /etc/slackpkg/mirrors
+          # Fixed mirrors, tried in turn: the mirrors.slackware.com redirector can hand
+          # out a mirror whose certificate chain the runner cannot verify, and any one
+          # mirror can be down or serve a bad sync (mirrors.kernel.org, 2026-11-03).
           sed -i 's|^WGETFLAGS=.*|WGETFLAGS="--ca-certificate=/run/host-ca/ca-certificates.crt"|' /etc/slackpkg/slackpkg.conf
-          wget --ca-certificate=/run/host-ca/ca-certificates.crt -O /tmp/slackware-key "${mirror}GPG-KEY"
-          gpg --import /tmp/slackware-key
-          slackpkg -batch=on -default_answer=y update
-          slackpkg -batch=on -default_answer=y install \
-            gcc gcc-g++ binutils flex dcron make ninja cmake ccache git curl ca-certificates perl python3 \
-            pkg-config nasm glibc kernel-headers zlib libffi libmpc isl libarchive sqlite icu4c \
-            libxml2 nghttp2 cyrus-sasl brotli guile gc \
-            alsa-lib pulseaudio pipewire dbus libX11 libXext libXcursor libXi \
-            libXrandr libXfixes libXScrnSaver libxkbcommon wayland wayland-protocols \
-            libdecor mesa libxcb xorgproto libXrender libXau libXdmcp libglvnd eudev
+          ok=
+          for mirror in https://slackware.osuosl.org/slackware64-15.0/ \
+                        https://mirrors.ocf.berkeley.edu/slackware/slackware64-15.0/ \
+                        https://mirrors.kernel.org/slackware/slackware64-15.0/; do
+            echo "::group::slackpkg from $mirror"
+            printf '%s\n' "$mirror" > /etc/slackpkg/mirrors
+            if wget --ca-certificate=/run/host-ca/ca-certificates.crt --timeout=60 --tries=2 \
+                   -O /tmp/slackware-key "${mirror}GPG-KEY" &&
+               gpg --import /tmp/slackware-key &&
+               slackpkg -batch=on -default_answer=y update &&
+               slackpkg -batch=on -default_answer=y install \
+                 gcc gcc-g++ binutils flex dcron make ninja cmake ccache git curl ca-certificates perl python3 \
+                 pkg-config nasm glibc kernel-headers zlib libffi libmpc isl libarchive sqlite icu4c \
+                 libxml2 nghttp2 cyrus-sasl brotli guile gc \
+                 alsa-lib pulseaudio pipewire dbus libX11 libXext libXcursor libXi \
+                 libXrandr libXfixes libXScrnSaver libxkbcommon wayland wayland-protocols \
+                 libdecor mesa libxcb xorgproto libXrender libXau libXdmcp libglvnd eudev; then
+              ok=1
+            fi
+            echo "::endgroup::"
+            [ -n "$ok" ] && break
+            echo "::warning::slackpkg failed from $mirror; trying the next mirror"
+          done
+          [ -n "$ok" ] || { echo "::error::slackpkg failed from every mirror"; exit 1; }
           update-ca-certificates
           # Minimal Slackware lacks the usual OpenSSL certificate rehash hook.
           openssl rehash /etc/ssl/certs
