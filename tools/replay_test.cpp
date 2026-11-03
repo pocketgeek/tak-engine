@@ -190,9 +190,11 @@ int main() {
     check(!supportedReplayProtocol(11, 221), "previous crowded-arrival protocol is refused");
     check(!supportedReplayProtocol(11, 223), "previous Flowfield avoidance protocol is refused");
     check(!supportedReplayProtocol(11, 227), "pre-Legion protocol is refused");
-    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 311, "replay format 11 is kept under protocol 311");
-    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 311");
-    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 311");
+    check(supportedReplayProtocol(11, kNetVersion) && kNetVersion == 312, "replay format 11 is kept under protocol 312");
+    check(supportedReplayProtocol(14, kNetVersion), "replay format 14 is kept under protocol 312");
+    check(supportedReplayProtocol(15, kNetVersion) && kReplayFormat == 15, "replay format 15 is written under protocol 312");
+    // 312 lapses blocked-shot write-offs when the target moves and clears a Navy Yard's door (hashed).
+    check(!supportedReplayProtocol(15, 311), "previous protocol (blocked write-off tied to the shooter only) is refused");
     // 311 swaps Legion allies blocking each other head on (hashed); 310 changed Legion's blocked bodies.
     check(!supportedReplayProtocol(15, 310), "previous protocol (no Legion ally swap) is refused");
     check(!supportedReplayProtocol(15, 309), "protocol 309 (Legion steering before 2026-11-02) is refused");
