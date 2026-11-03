@@ -292,6 +292,10 @@ HoverOutcome runHover(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, int tic
     w.unit(target)->fireState = 0;
     w.unit(target)->hp = sim::Fixed::fromInt(30000);
     const int shooter = w.spawn(thirsha, sx, sz, 0, 0);
+    // The Thirsha ships Hold Position, on which its standby takes no attack
+    // (hold_flyer_test). On Maneuver it is already hovering in on the Hunter
+    // when the order comes, the case this replays.
+    w.unit(shooter)->moveState = 1;
     for (int i = 0; i < 30; ++i) w.tick(1.f / 30);
     const float hp0 = w.unit(target)->hp.toFloat();
     w.attack(shooter, target, false);
