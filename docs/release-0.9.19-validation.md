@@ -3,8 +3,9 @@
 Protocol **311** (0.9.18 used 309; 310 was never released on its own), replay format
 **15** (unchanged), generator version **9** (unchanged).
 
-Tag `v0.9.19` -> **TODO** (the preparation commit, full sha); annotated tag object
-**TODO**. Published **TODO** UTC as the Latest release.
+Tag `v0.9.19` -> `0a6f52dc9d01c4a53bef265bbec6b2e876d08763` (the preparation
+commit); annotated tag object `e1e2ff569d7277fcf7d122ef7e467a778289dcf2`.
+Published 2026-11-03 19:57:25 UTC as the Latest release.
 
 ## Scope and compatibility
 
@@ -188,23 +189,75 @@ the `-O2` build passed 563 of 563; the seven `--mpai` gates above repeated exact
 
 ## CI and packages
 
-**TODO** (lead): the four tag workflows (Determinism, Linux packages, Windows, macOS)
-with run ids; asset download, SHA-256 and size check; build strings; the RPM
-`takserver` game with the 0.9.19 client; **does not play with 0.9.18** (a 0.9.18 server
-refuses the 0.9.19 client with a protocol mismatch).
+Main CI on `0a6f52dc` (pushed as a fast-forward of `e8b3ca5b`) passed on attempt 1:
+Determinism 41697487708, Linux packages 41697487766, Windows 41697487601 and macOS
+41697487802.
+
+All four tag workflows ran on `0a6f52dc` (tag `v0.9.19`) on 2026-11-03 and passed on
+attempt 1: Determinism 41702270178 (dispatched; golden `dcef618cd2e4d558`, "DETERMINISM
+OK"), Linux packages 41702258339, Windows 41702258204 and macOS 41702258437 (both signing
+jobs passed; no notary stall). Compiler warnings: the Windows job's 8 `'NOMINMAX'
+redefined` lines (`src/cartographer/document.cpp`, `playtest.cpp`) are the same as in
+0.9.18's tag run, and the macOS job has no compiler warning (its `ld` "no platform load
+command" lines for libjpeg's assembly objects are as in 0.9.18). The Linux job has one
+new warning, on GCC 13 and 14 only (Debian 13 and Ubuntu 24.04, x64 and arm64):
+`-Walloc-size-larger-than=` at `src/sim/legion.cpp:6122`, the `new uint8_t[cells]` of
+the corridor-charge memo added in `ad12c080` (see Limits).
+
+All 29 assets were downloaded fresh and match GitHub's SHA-256 digests and sizes, and
+the asset names are 0.9.18's with the version changed. All 30 extracted x86-64 Linux
+binaries carry the `v0.9.19` build string and no other `v0.x.y` string; none has a
+libva, libdrm, libsecret, GLib or libsqlite `NEEDED` entry or embedded VA or SQLite
+code; the 27 release binaries hold no forbidden `TAK_` name, and every binary's `TAK_`
+name set equals 0.9.18's. Each reports `0.9.19 (build v0.9.19)` from scratch profile
+dirs and leaves no files, except the Arch `takclient`, which needs GLIBC 2.44 and
+cannot run on this Fedora host, as before.
+
+The Fedora 44 x86-64 RPM's `takserver` (protocol v311, retail gameplay hash
+`d6000f4fa9095a51`) ran the Retail AI game with the 0.9.19 Debug client (the local
+Debug `-O2 -g` build of `db6457a8`, the preparation tree, with the 0.9.19 version line;
+`TAK_AI_LEVEL=6 TAK_SPEED=80 --mpai --time 60`): `hash=12003fba552b8696 units=4
+err=none`, with no desync, mismatch or referee-suspect line. **Does not play with
+0.9.18:** the 0.9.18 Fedora 44 RPM's `takserver` (protocol v309) refused the same client
+with "protocol version mismatch (server 309, client 311) -- update your build".
 
 ## Signing
 
-**TODO** (lead): Windows Authenticode on oden-win (scratch dirs only); macOS
-notarization, `stapler`, `spctl`, `codesign` on the MacBook (scratch dirs only).
+Windows: on oden-win, no `takserver.exe` or `takclient.exe` was running before or after
+the check, which ran in `C:/tak/w/rel0919`. `Get-AuthenticodeSignature` reports
+**Valid** (timestamped, "Curtis Edge") for the same 7 files as 0.9.18 (the x64 setup
+program and `takclient`, `takserver` and `cartographer` in both zips); the x64
+`takclient.exe` and `takserver.exe` report `0.9.19 (build v0.9.19)` and the arm64 ones
+carry the build string. The real profile's listing (384 lines) is identical before and
+after, and the scratch copy was removed.
+
+macOS: on the MacBook, both DMGs and all eight app copies pass `stapler validate` and
+`spctl -a -vv` accepts them as "Notarized Developer ID" (Curtis Edge, L479Y59RN8); each
+app passes `codesign --verify --strict --deep` and has version 0.9.19 and
+`LSMinimumSystemVersion` 14.0; `takclient` and `takserver` report 0.9.19 and every
+Mach-O binary reports `minos 14.0`. The bare zip programs pass `codesign`; `spctl`
+calls them "not an app", as expected. The real profile listing (121 lines) was identical
+before and after, and the scratch folder was removed.
 
 ## Publication
 
-**TODO** (lead): publication time, asset count, earlier releases kept, `blob` `v0.9.19`
-links checked.
+Published on 2026-11-03 19:57:25 UTC as the Latest release, 29 assets; 0.9.18 and
+earlier releases are kept. Every `blob` `v0.9.19` link in the notes names a file at
+the tag.
 
 ## Limits
 
-- **TODO** (lead): anything this run could not cover.
+- The full suite, sweeps and Mac and Windows runs were against `e8b3ca5b`; the
+  preparation commit changes only the version line and docs, and was checked by the
+  builds, `ctest -L quick`, the gates and the golden above, and by CI.
+- The remote sweep's two 2-human stress cases needed one `--only` rerun in each mode
+  because the local host seat was starved of CPU (see Full test run); not a desync.
+- UBSan's signed-overflow reports in `src/sim/retailflight.h` (pre-existing, unchanged
+  since 0.9.18) are undefined behaviour in hashed sim code that in practice wraps; the
+  golden and gates hold on g++ and clang++. Follow-up: do those subtractions in int64 or
+  as wrapping uint32.
+- GCC 13/14's `-Walloc-size-larger-than=` at `src/sim/legion.cpp:6122` (Linux package
+  CI only) is new in 0.9.19; it was not seen locally (GCC 16) or on the other CI
+  compilers. Follow-up: give `cells` a type or bound GCC can see.
 - All of 0.9.18's limits carry over (see
   [release-0.9.18-validation.md](release-0.9.18-validation.md#limits)).
