@@ -296,6 +296,16 @@ weapon slots is **auto** or **manual**:
   after the AI-Monarch threat roll, the attacker check and the armed check)
   skips both parts; before 0.9.12 an unfinished site under fire took its
   attacker as an attack order it could not carry out until finished.
+  (Re-read 2026-11-03: `409b56` loads `+0x108`, compares it with the rdata
+  float at `0x5eb524`, 0.0, and `409b67` jumps to the exit `409f6f` unless it
+  is equal.) This was the 0.9.3 notes' unexplained hold: on duel seed
+  `0x6666` (Creon against Aramon, Edmont's Field) a Prismatic Mirror still
+  being conjured was shelled by an Aramon Trebuchet 1469 px away, took it as
+  an auto target from the hit response and held it 176 s without a shot,
+  until it was finished; with the 0.9.12 gate applied to 0.9.3 the site takes
+  no target, and 16 seeds on 0.9.19 show no hold of 60 s or more by any unit.
+  Pinned by `structure_combat_site` (the real pair at that distance) and
+  `fire_sweep_retaliation` case 5.
 
 Deviations: auto slots of ranged ground weapons whose shot flies the line
 (not a plain Ballistic shell, `Weapon::needsClearLine`) keep our 2D clear-shot
