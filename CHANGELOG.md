@@ -19,6 +19,34 @@ yourself.
 Releases 0.7.11 and later link full release notes, and 0.7.6 and later link
 their validation reports; both live in [`docs/`](docs/).
 
+## Unreleased
+*protocol 312 · replay format 15 · does not play with 0.9.19 or earlier, nor their replays*
+
+- **A unit no longer ignores an enemy for good after its shots hit a rock.** A unit
+  that wrote off an enemy because three shots in a row struck a hill or rock used to
+  keep skipping it, even after that enemy walked into the open, until you gave it an
+  attack or move order. Now the write-off lapses as soon as either unit moves off its
+  spot, and the unit opens fire as the original game would. A target that keeps
+  moving behind cover no longer makes your unit walk to a clear spot; it fires on, as
+  in the original game.
+- **Idle ships make way at a Navy Yard's door.** Your own idle ships parked in front of
+  a Navy Yard now move aside while a new ship is leaving, and an idle ship on the
+  yard's pad moves off it, so a crowd of Iron Clads no longer stops the yard (it used
+  to finish two ships of six, or none with a ship on the pad). The original game moves
+  no idle ship. A ship leaving a door that faces a shore still sails out slowly: that
+  is the original game's own behaviour.
+- **Reclaimed trees and rocks fade out.** As in the original game, a reclaimed tree or
+  rock turns into a white silhouette of itself that fades away over about a second,
+  instead of vanishing at once. Trees destroyed by damage still change at once.
+- **Investigated, no change needed:**
+  - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
+    keeps switching weapons and never fires: the original game does exactly the same.
+  - A Prismatic Mirror holding a target without firing (0.9.3) was a Mirror still being
+    built; this was fixed in 0.9.12, and the original game does the same as now.
+  - Kirenna on an attack-move can stand in range aiming and not fire at an enemy her
+    side cannot see. The attack-move is not in the original game; this stays a known
+    limit for now.
+
 ## 0.9.19
 *2026-11-03 · protocol 311 · replay format 15 · does not play with 0.9.18 or earlier, nor their replays*
 
