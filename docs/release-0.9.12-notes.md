@@ -905,7 +905,10 @@ New with 0.9.12:
   weapon's plain range**, whoever owns them, as in the original. A Sea Dragon
   on Hold Position with its Fire Breath (525) selected is acquired by a
   building 472 pixels off but never fires at it (it did not fire at a unit
-  there either; not yet diagnosed).
+  there either; diagnosed later: a computer's Sea Dragon does the same in
+  the original, whose AI weapon switch keeps trading Fire Breath for the
+  Tsunami. See "A computer's Sea Dragon on Hold Position never fires at
+  472 px" in `docs/retail-engine.md`).
 - **Kirenna still stalls sometimes** after walking up to a target, as the
   original does: when her walk script has not settled by the time she aims
   (for example against a castle from 848 or 1,148 pixels, or a lodestone from

@@ -401,6 +401,41 @@ HP > 0. Found on the way and left alone: the picker's paralyzer immunity
 test (`4128e1..4128ff`: a paralyzer class skips an `immunetoparalyzer` type)
 is not in `retailSelectTarget`.
 
+### A computer's Sea Dragon on Hold Position never fires at 472 px (2026-11-03)
+
+The 0.9.12 attack sweep found a computer-owned Sea Dragon on Hold Position,
+fire at will, that takes an enemy 472 px off (inside Fire Breath's 525 and
+Water Ball's 800, outside the Tsunami's 450) and never fires at it, unit or
+building. Retail does the same; the engine is unchanged.
+
+The AI weapon switch (`40f411..40fb92`) looks at no range: its only calls
+are the slot target `51a9a0`, the mana cost `531ea0`, the class tests
+(vtable +0x1c/+0x20/+0x24), the enemy and ally counts `411ae0`/`411dd0`,
+`rand` `535cc0` and the switch `51a8b0`. With Fire Breath holding a lone
+enemy that it cannot half-kill, it takes the Tsunami (aoe 180: enemies 1 >
+5 x allies 0) before it reaches the Water Ball. The Tsunami's own sweep finds
+nothing in 450, and a costly slot with no target goes back to the primary on
+`rand(10) == 0`. Fire Breath takes the enemy again in that same visit and
+gives it up for the Tsunami on the next one. `51a8b0` gives the new slot its
+`switchreloadtime` (weapon +0x9e at `51a978`; the FBI parser sets it at
+`530817..53082b` and defaults it to `reloadtime` x 30, 90 ticks for Fire
+Breath). Each return to Fire Breath therefore restarts its reload, and a
+sweep visits each unit at least once every 30 ticks, so Fire Breath is never
+selected long enough to fire. A player's Sea Dragon runs no AI switch and
+fires Fire Breath. So does a computer's that cannot afford the Tsunami (it
+takes the Water Ball, which reaches) or whose Fire Breath does at least half
+the target's HP.
+
+`tools/re/probe_seadragon_switch.py` runs `40f330`, `51a8b0` and `51a7f0`
+natively for the Sea Dragon's slots, 3000 visits on a fixed seed: the
+Tsunami is taken with no range call, Fire Breath comes back 273 times, never
+stays selected for more than one visit, and gets a reload of 90 each time.
+With 600 mana the block takes the Water Ball (7 observations). The engine's
+`seadragon_hold` test is the guard: 0 shots from the computer's Sea Dragon
+against an Archer and a lodestone, about 85 returns to Fire Breath in 900
+ticks, each with a full reload; the player's Sea Dragon fires Fire Breath 10
+times.
+
 ## Blocked shots: retail fires on, the engine walks to a clear shot (2026-10-19)
 
 Retail has no line-of-fire test and no reposition. The common weapon update
