@@ -5027,6 +5027,11 @@ mostly queue time Retail animates.
    0 -> 4,944, attackring-fight-diag-60 -> 1,477 (`ctest:legion_ringroutespeed`, `ctest:legion_guardstill`,
    `ctest:legion_fightshuffle`), and the mixed ring's damage fell under `ctest:legion_ringshadowmixed`'s floor
    (984 at offset 2). So fight, attack, guard and patrol legs hold as before (`engagesEnemies`).
+   *Move legs only* (58d87d96). A mission leg with its own goal geometry pressed against the yard it must
+   keep clear of and stood on it: `ctest:doorway`'s Legion assist cases (a sage helping a smithy ended in the
+   yard, both balances) and `ctest:legion_park`'s queue of 100 arapults from a keep (30 parked in the door
+   lane); main passes both. A press is for a leg that completes at a point and engages no enemies, never for
+   an exact mission goal (Build, Repair, Reclaim, Load, Unload, Park) or a production exit (`pressKind`).
    *The press-in wait* (6e8c1dd6). With the queued attackers' shuffles at travel speed, a body walking through
    the neighbouring origin a press was stepping into blocked the step a cell short of its point; the press was
    dropped, the body walked back to its spot's centre out of reach, held, and pressed again from the same

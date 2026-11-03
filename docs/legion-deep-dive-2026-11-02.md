@@ -457,7 +457,8 @@ ordinary play.
 format 15 unchanged, 309 replays refused). The `why` instrument 41fe26a2 (observation only, hash-neutral),
 this document 48022dd9, then the proposals of 6.1 as the guards reshaped them: a06d3f80 (no facing cap on
 unturned steps), 740f0bd9 (no flow-around step behind the aim), 75925618 (the press), 8dcb123f (the press
-only on legs that engage no enemies, as an unturned step; the in-reach press keeps its cap), c4933aa8 (a
+only on legs that engage no enemies, as an unturned step; the in-reach press keeps its cap), 58d87d96 (the
+press for move legs only), c4933aa8 (a
 plain mover's flow-around shuffle keeps its old speed rule), 566fc41a (the no-backward rule for formation
 members only), 6e8c1dd6 (a press blocked by a body walking
 through waits for it), 3b09f132 (a face step that turned nothing requests no turn), the exact perf items 4,
@@ -484,7 +485,9 @@ another head on needs its backward shuffles to back out of a bridge. `bridges-10
 crossing a river over three bridges, legion_choke: at least 450 arrive, at most 80 stand stuck at the end)
 arrives 860 on main with none stuck, 999 with the speed alone, 728 with 184 stuck under the rule for all,
 965 with none stuck under the rule for formation members; without the rule at all 727 and 155 stuck.
-*Restricted: proposal 3.* The press is for legs that engage no enemies and is an unturned step: at attack,
+*Restricted: proposal 3.* The press is for move legs only (not a leg that engages enemies, nor a builder's,
+transport's, park or production-exit leg with its own goal geometry, which pressed against the yard it had to
+keep clear of: doorway's assist cases and legion_park's queue of 100 arapults, 58d87d96) and is an unturned step: at attack,
 fight and guard rings its nudges were the creep the round-4 and round-5 work removed (attackring-wall-64
 statue ticks 62 -> 1,781, attackring-guard-64 0 -> 4,944, attackring-fight-diag-60 -> 1,477). A press into a
 body walking through its point waits for it (the press-in repeat of legion_pressin).
