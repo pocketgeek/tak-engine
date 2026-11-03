@@ -185,6 +185,8 @@ constexpr int kPartCells=16;                   // lane parting through idle bodi
 constexpr uint8_t kMaxParts=3;                 // parting steps per idle body
 constexpr uint8_t kMaxGiveWays=8;              // funnel give-way steps per leg (giveWay)
 constexpr uint32_t kGiveWayHeld=2;             // hold updates before a funnel give-way is asked (giveWay)
+constexpr int kSwapAngle=16384;                // allies swap places (swapPartner): courses at least 90 deg apart
+constexpr uint32_t kSwapCool=45;               // ticks before a body that swapped may swap again
 constexpr int64_t kOncomingCos2=14;            // 100*cos^2(112 deg): goal directions this far apart are oncoming
 constexpr int kLineCells=160;                  // direct-line probe reach
 constexpr int kFormationLineCells=640;         // ... for a member with a formation slot
@@ -13623,6 +13625,95 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // A livelock (World::updateLegionStill): the body stands by its net
     // headway although it went on stepping or turning to and fro.
     static bool livelock(const Unit& u) {return u.legionShuffle;}
+    // Allies swap places (Legion round 2, item 3). Two members of allied players blocking each other head on -- this
+    // body's blocked step (nx,nz) is covered by exactly one other body, that body's own route descends into this
+    // body's origin and this body's into its, their courses are at least kSwapAngle apart and it aims at this body --
+    // trade origins in one step, when both have one footprint and one plane (each footprint then lands exactly on
+    // cells the other leaves). Neither may be settled, engaged, trapped, approaching, livelocked, parting, pressing in
+    // or walking a route; only move legs (the press's pressKind). A body that swapped does not swap again for
+    // kSwapCool ticks. Without it two opposing streams in a one-body lane gridlock (bridges-1000 at some offsets).
+    // The tick each body last traded places (kept until the next swap finds it older than the cool-down). Hashed.
+    std::map<int,uint32_t> swapTicks;
+    bool swapCool(int id) const {const auto it=swapTicks.find(id);return it!=swapTicks.end()&&w.tickCounter_-it->second<kSwapCool;}
+    static bool swapLeg(const Member& m) {return policy(m.kind).completes&&!engagesEnemies(m.kind)&&!policy(m.kind).exact&&!policy(m.kind).exitClear;}
+    Unit* swapPartner(const Unit& u,const Member& m,RouteView f,bool towardGoal,int ox,int oz,int nx,int nz) {
+        if(u.type->canFly||livelock(u)||!swapLeg(m)||!m.route.empty()||m.approach||m.pressX!=kNoPress)return nullptr;
+        if(swapCool(u.id))return nullptr;
+        const int fx=u.type->footX,fz=u.type->footZ,W=width();
+        if(nx==ox&&nz==oz)return nullptr;
+        int other=0;
+        for(int j=0;j<fz;++j)for(int i=0;i<fx;++i) {
+            const int cx=nx+i,cz=nz+j;
+            if(cx<0||cz<0||cx>=w.occW_||cz>=w.occH_)return nullptr;
+            const int32_t o=occAt(size_t(cz)*w.occW_+cx);
+            if(!o||o==u.id)continue;
+            if(other&&o!=other)return nullptr;
+            other=o;
+        }
+        if(!other)return nullptr;
+        Unit* b=w.unit(other);
+        if(!b||!b->alive()||b->embarked()||!w.allied(b->player,u.player)||!b->type||b->type->canFly||b->type->isStructure()||
+           b->type->footX!=fx||b->type->footZ!=fz||b->orders.empty())return nullptr;
+        if(livelock(*b)||yielding.count(other)||anchors.count(other)||queued(other))return nullptr;
+        Member* bm=member(other);
+        if(!bm||(bm->state!=Moving&&bm->state!=Holding)||!swapLeg(*bm)||bm->approach||!bm->route.empty()||bm->pressX!=kNoPress)return nullptr;
+        if(swapCool(other))return nullptr;
+        const auto ga=groups.find(m.group),gb=groups.find(bm->group);
+        if(ga==groups.end()||gb==groups.end()||ga->second.plane!=gb->second.plane)return nullptr;
+        const int bx=footprintOrigin(b->x,fx),bz=footprintOrigin(b->z,fz);
+        if(bm->detour>=0&&bm->detour!=oz*W+ox)return nullptr;
+        if(m.detour>=0&&m.detour!=bz*W+bx)return nullptr;
+        // Each wants the other's origin: its route (else its own goal's line) descends into it.
+        auto down=[&](RouteView r,const Member& who,int fromX,int fromZ,int toX,int toZ)->bool {
+            if(r&&r.usable()) {
+                const uint32_t a=r.estimate(size_t(fromZ*W+fromX)),c=r.estimate(size_t(toZ*W+toX));
+                return a!=kUnreached&&c!=kUnreached&&c<a;
+            }
+            const int gx=who.goal%W,gz=who.goal/W;
+            return int64_t(gx-toX)*(gx-toX)+int64_t(gz-toZ)*(gz-toZ)<int64_t(gx-fromX)*(gx-fromX)+int64_t(gz-fromZ)*(gz-fromZ);
+        };
+        if(!down(towardGoal?RouteView():f,m,ox,oz,bx,bz))return nullptr;
+        if(!down(gb->second.route(),*bm,bx,bz,ox,oz))return nullptr;
+        // Head on: the courses at least kSwapAngle apart, and the other body's course toward this one (67.5 deg).
+        const Bam ca=courseOf(u),cb=courseOf(*b);
+        if(std::abs(retailTurnRequest(ca,cb))<kSwapAngle)return nullptr;
+        const auto towardA=retailHeadingToPort(uint16_t(retailDirection(b->x-u.x,b->z-u.z).v));
+        if(std::abs(retailTurnRequest(towardA,cb))>12288)return nullptr;
+        return b;
+    }
+    // Trade the two bodies' places exactly (positions, occupancy, ground stamps, body index): both footprints are equal,
+    // so each lands on the cells the other leaves. The partner's step is bookkept here; this body's by drive's tail.
+    void swapBodies(Unit& a,Member& am,Unit& b) {
+        const int fx=a.type->footX,fz=a.type->footZ,W=width();
+        const int ax=footprintOrigin(a.x,fx),az=footprintOrigin(a.z,fz),bx=footprintOrigin(b.x,fx),bz=footprintOrigin(b.z,fz);
+        auto clear=[&](const Unit& u,int x0,int z0) {
+            for(int z=z0;z<z0+fz;++z)for(int x=x0;x<x0+fx;++x)
+                if(x>=0&&z>=0&&x<w.occW_&&z<w.occH_)if(auto& o=w.occ_[size_t(z)*w.occW_+x];o==u.id)o=0;
+        };
+        auto fill=[&](const Unit& u,int x0,int z0) {
+            for(int z=z0;z<z0+fz;++z)for(int x=x0;x<x0+fx;++x)
+                if(x>=0&&z>=0&&x<w.occW_&&z<w.occH_)w.setOccupant(size_t(z)*w.occW_+x,u.id);
+        };
+        w.refreshMovingSearchBody(a);w.refreshMovingSearchBody(b);
+        if(w.occW_>0) {clear(a,ax,az);clear(b,bx,bz);}
+        w.groundUnstamp(a);w.groundUnstamp(b);
+        std::swap(a.x,b.x);std::swap(a.z,b.z);
+        if(w.occW_>0) {fill(a,bx,bz);fill(b,ax,az);}
+        w.groundStamp(a);w.groundStamp(b);
+        a.groundMoveTick=b.groundMoveTick=w.tickCounter_;a.bodyBlockStreak=b.bodyBlockStreak=0;
+        w.updateBodyIndex(a);w.updateBodyIndex(b);
+        ++stats.swaps;
+        for(auto it=swapTicks.begin();it!=swapTicks.end();)it=w.tickCounter_-it->second>=kSwapCool?swapTicks.erase(it):std::next(it);
+        swapTicks[a.id]=w.tickCounter_;swapTicks[b.id]=w.tickCounter_;am.why=LegionNavigator::WhyPass;
+        if(am.detour==bz*W+bx)am.detour=-1;
+        Member& bm=*member(b.id);
+        if(bm.detour==az*W+ax)bm.detour=-1;
+        bm.why=LegionNavigator::WhyPass;
+        if(bm.state==Holding)unstamp(b.id);
+        bm.state=Moving;bm.heldSince=kNoTick;bm.holdUpdates=0;
+        if(const auto g=groups.find(bm.group);g!=groups.end()&&g->second.route().usable())
+            updateClaim(b,bm,planes[size_t(g->second.plane)],g->second.route(),ax,az);
+    }
     void drive(Unit& u,Member& m,const Plane& p,RouteView f,Fixed maximum,Fixed aimX,Fixed aimZ,bool final,
                bool towardGoal=false,bool face=true,bool pass=false,bool brisk=false) {
         const int W=width(),fx=u.type->footX,fz=u.type->footZ;
@@ -13677,6 +13768,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // (Member::detourFlow) and its slots are ordered; routes, side-steps, room moves and nudges at
         // speed re-order nothing (bisected per kind, 2026-11-03).
         const bool plainFlow=m.detour>=0&&m.detourWhy==0&&!formationMember(m);
+        Unit* swapWith=nullptr;   // the ally this body trades places with on this update (swapPartner)
         if(pass||brisk||(!face&&m.pressX==kNoPress&&!plainFlow)) {}
         else if(facing>12288)cap=Fixed::raw(cap.v/8);
         else if(facing>4096)cap=Fixed::raw(cap.v/2);
@@ -13780,7 +13872,12 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             // after a held window) take over. Not where walls hide the
             // target (shadowWalk): there the held queue had no way round.
             bool moved=false,passFiltered=false;
-            if(f&&!livelock(u)&&!(m.stillSince!=kNoTick&&stillTarget(m)&&!shadowWalk(u,m))) {
+            // Head on with an ally that wants this body's cell: trade places before any way round.
+            if((swapWith=swapPartner(u,m,f,towardGoal,ox,oz,nx0,nz0))) {
+                sx=Fixed::raw(swapWith->x.v-u.x.v);sz=Fixed::raw(swapWith->z.v-u.z.v);nx=footprintOrigin(swapWith->x,fx);nz=footprintOrigin(swapWith->z,fz);
+                moved=true;face=false;
+            }
+            if(!moved&&f&&!livelock(u)&&!(m.stillSince!=kNoTick&&stillTarget(m)&&!shadowWalk(u,m))) {
                 // Direct-line members measure progress toward their own goal
                 // cell; field followers by the group potential.
                 const int goalX=m.goal%W,goalZ=m.goal/W;
@@ -13934,7 +14031,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             }
         }
         // Room at a merge: a step toward the origin a queue head of the group waits for moves over instead.
-        if(!wants.empty()&&!pass&&f&&(nx!=ox||nz!=oz)&&roomKind(m)&&!m.passLabel&&!(m.pt&&m.pt->meet.tick!=kNoTick)&&
+        if(!swapWith&&!wants.empty()&&!pass&&f&&(nx!=ox||nz!=oz)&&roomKind(m)&&!m.passLabel&&!(m.pt&&m.pt->meet.tick!=kNoTick)&&
            m.site!=LegionNavigator::SiteGate)
             if(const auto turn=makeRoom(u,m,p,f,ox,oz,nx-ox,nz-oz,speed)) {
                 std::tie(sx,sz)=std::pair{turn->first,turn->second};
@@ -13943,7 +14040,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(m.want>=0)setWant(u.id,m,-1);
         u.speed=speed;
         const Fixed beforeX=u.x,beforeZ=u.z;
-        w.commitGroundStep(u,sx,sz,true);
+        if(swapWith)swapBodies(u,m,*swapWith);
+        else w.commitGroundStep(u,sx,sz,true);
         // The heading only turns with an actual step: a refused step is a
         // hold, and a held body keeps a constant heading.
         if(u.x==beforeX&&u.z==beforeZ) {m.why=LegionNavigator::WhyHoldRefused;hold(u,m);return;}
@@ -15127,6 +15225,8 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             h=mix(h,uint64_t(id));h=mix(h,n.count);h=mix(h,uint64_t(uint8_t(n.sx))|uint64_t(uint8_t(n.sz))<<8);
             if(n.leg) {h=mix(h,0x706172746c6567ull);h=mix(h,n.leg);}
         }
+        // The bodies that traded places lately (swapTicks), while any.
+        for(const auto& [id,t]:swapTicks) {h=mix(h,0x73776170ull^uint64_t(uint32_t(id))<<32);h=mix(h,t);}
         for(const auto& [id,m]:members) {
             h=mix(h,uint64_t(id));h=mix(h,m.controller);h=mix(h,uint64_t(m.group));h=mix(h,uint64_t(m.goal));
             if(m.entryState) {h=mix(h,0x656e746572ull);h=mix(h,m.entryState);}

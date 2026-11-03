@@ -183,6 +183,7 @@ public:
         // W8 step 5 (S4 pass release, dropped; the counter stays): hold updates in which the pass filter
         // kept a body from stepping back across the lane it left and nothing else moved it.
         uint64_t passFilterHolds=0;
+        uint64_t swaps=0;   // round 2 item 3: allies that traded places (swapBodies)
         // ---- W9 step 0 instruments (observation only, never hashed) ----------
         // One counter per W9 mechanism, declared here and 0 until the step that builds it:
         // sealSettles (A2, a pressed lattice member settled by two yield refusals), creepPresses (A3, a
@@ -245,7 +246,7 @@ public:
         f("vertex_calls",s.vertexCalls);f("vertex_found",s.vertexFound);f("vertex_visible",s.vertexVisible);
         f("vertex_near",s.vertexNear);f("vertex_blocked",s.vertexBlocked);f("vertex_work",s.vertexWork);
         f("gate_commits",s.gateCommits);f("gate_releases",s.gateReleases);
-        f("pass_filter_holds",s.passFilterHolds);
+        f("pass_filter_holds",s.passFilterHolds);f("swaps",s.swaps);
         f("seal_settles",s.sealSettles);f("creep_presses",s.creepPresses);f("deep_rechoices",s.deepRechoices);
         f("anchor_advances",s.anchorAdvances);f("gate_lane_moves",s.gateLaneMoves);f("gate_holds",s.gateHolds);
         f("fold_binds",s.foldBinds);f("turn_guard_rejects",s.turnGuardRejects);f("clear_aims",s.clearAims);
