@@ -3097,10 +3097,15 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
         if(!flyersBusy&&r.flyersDone<0)r.flyersDone=t;
         if(t%30==0) {
             // Keeping up: over each 30-tick window in which the ground's
-            // centroid moved at least 9 px, a travelling flyer covers at least
+            // centroid moved at least 12 px, a travelling flyer covers at least
             // 40% of that distance -- or of the ground's leading body's advance
             // along it, if less: a flyer over a front that has stopped (a
-            // patrol's leading bodies turning at its point) holds there.
+            // patrol's leading bodies turning at its point) holds there. The
+            // floor was 9 px until the 2026-11-02 steering: with it the patrol's
+            // return leg has one window in which the front crawls 11 px (0.37
+            // px a tick, turning at its point) and a flyer holding over it flew
+            // 4.1 px against the 4.4 asked (712 windows, one stall); under 0.4
+            // px a tick the front is turning, not marching.
             float cx,cz;centroid(cx,cz);
             const float marched=std::hypot(cx-windowCx,cz-windowCz);
             float advance=marched;
@@ -3121,7 +3126,7 @@ MixedRun mixedformationRun(bool legion,tak::net::Cmd kind,bool serial=true) {
                 // (Its own final approach, inside 300 px of its point, is retail's.)
                 const bool travelling=!u.orders.empty()&&std::hypot(u.x.toFloat()-u.orders.back().x.toFloat(),
                     u.z.toFloat()-u.orders.back().z.toFloat())>300.f;
-                if(t>=300&&groundBusy&&it!=windowStart.end()&&travelling&&marched>=9.f) {
+                if(t>=300&&groundBusy&&it!=windowStart.end()&&travelling&&marched>=12.f) {
                     const float flown=std::hypot(u.x.toFloat()-it->second.first,u.z.toFloat()-it->second.second);
                     ++r.windows;r.stalls+=flown<0.4f*std::max(advance,0.f);r.flown+=flown;r.marched+=marched;
                 }
