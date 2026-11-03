@@ -93,6 +93,12 @@ COMBAT_KEYS = ("work.legion_total.total", "work.legion_total.max", "work.legion_
 # pinwheel steering work the instruments report (2026-10-14 review, item 5). It needs no baseline entry, a
 # retake (write_base) never takes one in, and check() skips one a baseline still carries.
 REPORT_WORK = ("work.legion_all.",)
+# The observer's mechanism attribution (tools/legion_observe.h, the pathfinding deep dive of 2026-11-02): the motion
+# keys split by the mechanism of a body's last update (why.<mechanism>.ticks / moved_ticks / samples / stopped /
+# statue / sideways / backward / reversals). Observation only, like REPORT_WORK: a plain `baseline` run never takes
+# one in, and check() skips one a baseline still carries.
+REPORT_WHY = ("why.",)
+REPORT_KEYS = REPORT_WORK + REPORT_WHY      # reported by the runner, never baselined, never gated
 SKIP_KEYS = ("members", "samples", "commands", "last_command_tick", "decision_samples",
              # W5 step 0: the claims audit's report-only classes (claims.bad_max, their sum, is the safety key)
              "claims.audits", "claims.overlaps_max", "claims.missing_max", "claims.dangling_max",
@@ -685,8 +691,8 @@ def check(doc, recs, skipped=(), step=None, cumulative=False, require_all=False)
                     rpt.fail("%s/%s" % (scn, mode), "no result in the run")
                 continue
             for key, e in sorted(keys.items()):
-                if is_report_only(key, rec) or key.startswith(REPORT_WORK):
-                    continue        # ruling (f): judged at click level; a reported work sum is never gated
+                if is_report_only(key, rec) or key.startswith(REPORT_KEYS):
+                    continue        # ruling (f): judged at click level; a reported work sum or why.* tag is never gated
                 exc = exception_for(doc, scn, mode, key)
                 if exc:
                     need_median5(rpt, "%s/%s/%s" % (scn, mode, key), exc, rec)
@@ -778,7 +784,7 @@ def write_base(doc, recs, reason, since, patterns, hashes, clusters):
     for (scn, mode), rec in sorted(recs.items()):
         slot = entries.setdefault(scn, {}).setdefault(mode, {})
         todo = {k: v for k, v in rec.get("keys", {}).items()
-                if k not in SKIP_KEYS and not is_report_only(k, rec) and not k.startswith(REPORT_WORK)
+                if k not in SKIP_KEYS and not is_report_only(k, rec) and not k.startswith(REPORT_KEYS)
                 and any(fnmatch.fnmatch(k, p) for p in patterns)}
         if hashes:
             for off, h in rec.get("hash", {}).items():
