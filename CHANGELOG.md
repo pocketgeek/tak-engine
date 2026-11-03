@@ -37,7 +37,15 @@ their validation reports; both live in [`docs/`](docs/).
   is the original game's own behaviour.
 - **Reclaimed trees and rocks fade out.** As in the original game, a reclaimed tree or
   rock turns into a white silhouette of itself that fades away over about a second,
-  instead of vanishing at once. Trees destroyed by damage still change at once.
+  instead of vanishing at once.
+- **Trees and scenery destroyed by damage play their death first.** A tree, hut,
+  wall or other scenery knocked down by weapons now plays its falling or collapsing
+  animation (two-thirds of a second for a tree) before its stump or rubble appears,
+  as in the original game, instead of changing at once. While it falls it still
+  blocks its ground, takes no more damage, cannot catch fire and cannot be reclaimed.
+  A burning tree takes no weapon damage either, as in the original game; it burns
+  down instead of being knocked into its stump. Rocks, which have no death animation,
+  still go at once.
 - **Investigated, no change needed:**
   - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
     keeps switching weapons and never fires: the original game does exactly the same.

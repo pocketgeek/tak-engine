@@ -78,7 +78,7 @@ struct RetailReplayProbe {
                         auto it = w.featureIdx_.find(nz * w.terW_ + nx);
                         if (it == w.featureIdx_.end()) continue;
                         Feature& nf = w.features_[it->second];
-                        if (!nf.alive || nf.burn || nf.type < 0) continue;
+                        if (!nf.alive || nf.burn || nf.fadeLeft || nf.dieLeft || nf.type < 0) continue;
                         const FeatType& nft = w.featTypes_[size_t(nf.type)];
                         if (!nft.flamable || !nft.hasBurnAnim) continue;
                         if (w.burnRand(100) < nft.spreadChance) w.igniteFeature(nf);
