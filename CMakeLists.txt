@@ -1154,6 +1154,13 @@ if(Python3_Interpreter_FOUND)
            COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_choke_test.py
                    $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
   set_tests_properties(legion_choke PROPERTIES LABELS legion TIMEOUT 1200 SKIP_RETURN_CODE 77)
+  # Legion round 2, item 3: allies swap places -- two allied members blocking each other head on trade cells, so
+  # opposing streams on bridges-1000 no longer gridlock at offsets -2, -1, 1, 2 (at least 850 of 1,000 arrive, at
+  # most 10 stuck; main 558..741 arrive, 182..279 stuck; tools/legion_swap_test.py).
+  add_test(NAME legion_swap
+           COMMAND "${Python3_EXECUTABLE}" ${CMAKE_SOURCE_DIR}/tools/legion_swap_test.py
+                   $<TARGET_FILE:legion_scenario> ${CMAKE_SOURCE_DIR}/tools/scenarios/scale --data "${TAK_TEST_DATA}")
+  set_tests_properties(legion_swap PROPERTIES LABELS legion TIMEOUT 1200 SKIP_RETURN_CODE 77)
   # Legion 10,000 stage 8: shared destination areas -- churn-1000's half stopped and sent again to the point the
   # other half is arriving at joins its area instead of planning round it as traffic (at least 780 of 1,000 arrive,
   # at most 40 stuck; the previous commit 717 / 73).
