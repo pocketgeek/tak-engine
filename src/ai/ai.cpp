@@ -1719,6 +1719,20 @@ Controller::StrikeBoard Controller::scanTargets(const tak::sim::World& world) co
     }
     const auto [hx, hz] = homeOf(world);
     const bool expendable = world.monarchExpendable();
+    // Passive strikes only at what comes within kPassiveReach of one of its buildings:
+    // it defends its base and never goes out after what it has seen elsewhere.
+    constexpr float kPassiveReach = 800;
+    std::vector<std::pair<float, float>> base;
+    if (stayHome_)
+        for (const auto& u : world.units())
+            if (u.alive() && u.player == player_ && u.type && u.type->isStructure())
+                base.emplace_back(u.x.toFloat(), u.z.toFloat());
+    const auto nearBase = [&](float x, float z) {
+        return std::any_of(base.begin(), base.end(), [&](const auto& b) {
+            const float dx = x - b.first, dz = z - b.second;
+            return dx * dx + dz * dz <= kPassiveReach * kPassiveReach;
+        });
+    };
     struct Cell { int cx, cz; float value = 0, defence = 0, anchorValue = -1; int anchor = 0; const Known* known = nullptr; bool seen = false; };
     std::map<std::pair<int, int>, size_t> index;
     std::vector<Cell> cells;
@@ -1726,6 +1740,7 @@ Controller::StrikeBoard Controller::scanTargets(const tak::sim::World& world) co
         if (k.player < 0 || k.player >= players || !enemy[size_t(k.player)]) continue;
         const auto* t = k.type;
         const float x = k.x, z = k.z;
+        if (stayHome_ && !nearBase(x, z)) continue;
         const float threat = armed(t) && !k.unfinished ? k.strength : 0.0f;
         float v = std::max(t->buildCost, 20.0f);
         if (t->onMana) v *= 3;

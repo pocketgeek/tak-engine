@@ -2218,8 +2218,21 @@ int main(int argc,char** argv) {
         bool quiet=true;
         for (uint32_t minute=4;minute<30;++minute) quiet=quiet && attacks(think(controller,w,minute*60*30))==0;
         check(quiet,"Passive never looks for an enemy it has not seen");
-        // An enemy it has seen gets Easy's wave on Easy's timing.
+        // An enemy it has seen far from its buildings is left alone.
+        auto base=soldier;base.id="base";base.maxVel={};base.sight=300;
+        sim::World far;terrain(far);far.player(0).income=100;
+        far.spawn(&base,300,800,0,0);
+        for(int i=0;i<35;++i)far.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
+        far.spawn(&soldier,1260,800,0,0);   // a sentry there sees it
+        far.spawn(&soldier,1300,800,0,1);
+        far.setTeam(1,1);sight(far);pastStart(far);
+        ai::Controller distant(0,empty,profile,1,ai::Difficulty::Passive,{{3400,800}});
+        bool home=true;
+        for (uint32_t minute=4;minute<10;++minute) home=home && attacks(think(distant,far,minute*60*30))==0;
+        check(home,"Passive never goes out after an enemy it has seen away from its base");
+        // An enemy it has seen near its base gets Easy's wave on Easy's timing.
         sim::World seen;terrain(seen);seen.player(0).income=100;
+        seen.spawn(&base,300,800,0,0);
         for(int i=0;i<35;++i)seen.spawn(&soldier,400+float(i%7)*40,800+float(i/7)*40,0,0);
         seen.spawn(&soldier,690,800,0,1);
         seen.setTeam(1,1);sight(seen);pastStart(seen);
