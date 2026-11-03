@@ -1339,9 +1339,9 @@ for this. A unit that is not under an attack order stops firing at that target
 and picks another one. This is new behaviour; the original game had no such
 check, and its units fire into the hill or rock until their orders change.
 
-One rough edge: a unit standing still and choosing its own targets (no attack
-order) can keep ignoring an enemy it once found blocked, even after that enemy
-walks into the open. Give it an attack order, or move it, and it fires again.
+The check is of the line between the two spots, not of the enemy: once
+either unit moves off its spot, the enemy counts as a fair target again, and a
+unit choosing its own targets fires at it as soon as it walks into the open.
 
 ### Selection
 

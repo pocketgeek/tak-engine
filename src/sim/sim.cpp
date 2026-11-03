@@ -6690,8 +6690,21 @@ bool World::slotClearShot(const Unit& u,const Unit& t,int slot) const {
 // impact on terrain, water or scenery this weapon cannot destroy, short of
 // the target and clear of it, counts against the target; a hit on it or a
 // miss beside it clears the count, and so does walking away from the spot.
+// What is written off is the line between two spots, the shooter's and the
+// target's: retail keeps no memory of a blocked shot at all (nothing feeds
+// 52a4d0's impact back to the shooter, and the picker 412620 and the weapon
+// update 52ae90 never ask), so the moment either end leaves its spot the
+// write-off lapses and the unit acquires and fires at the target as retail
+// would; if the new line is blocked too the count starts again.
 static constexpr uint8_t kBlockedShots=3;    // in a row before the spot is written off
-static constexpr int kBlockedSpot=16;        // px the shooter may drift and keep its count
+static constexpr int kBlockedSpot=16;        // px the shooter or the target may drift and keep the count
+
+// Has the shooter or its target left the spots the blocked count was taken
+// between (more than kBlockedSpot either way)?
+static bool blockedSpotLeft(const Unit& u,int64_t sx,int64_t sz,int64_t tx,int64_t tz) {
+    return std::abs(sx-u.blockedX)>kBlockedSpot || std::abs(sz-u.blockedZ)>kBlockedSpot ||
+        std::abs(tx-u.blockedTX)>kBlockedSpot || std::abs(tz-u.blockedTZ)>kBlockedSpot;
+}
 
 // Is (dx,dz), in whole px from a body's centre, within `slack` of the body?
 // Retail's collision (52a4d0) reaches a unit through the map cells it owns,
@@ -6759,11 +6772,10 @@ void World::noteShotImpact(int fromId,int targetId,const Weapon& w,const std::ar
         return;
     }
     if (u->blockedTarget!=targetId) { u->blockedTarget=targetId;u->blockedShots=0;u->repositions=0;u->searchFailed=0; }
-    if (u->blockedShots && (std::abs(sx-u->blockedX)>kBlockedSpot || std::abs(sz-u->blockedZ)>kBlockedSpot)) {
-        u->blockedShots=0;u->searchFailed=0;
-    }
+    if (u->blockedShots && blockedSpotLeft(*u,sx,sz,tx,tz)) { u->blockedShots=0;u->searchFailed=0; }
     if (u->blockedShots<255) ++u->blockedShots;
     u->blockedX=int16_t(sx);u->blockedZ=int16_t(sz);
+    u->blockedTX=int16_t(tx);u->blockedTZ=int16_t(tz);
 }
 
 // A ballistic slot aimed and ready whose muzzle-to-SweetSpot solve has no
@@ -6773,18 +6785,17 @@ void World::noteShotImpact(int fromId,int targetId,const Weapon& w,const std::ar
 // writes the target off from this spot like a blocked one instead of holding
 // it for ever without a shot.
 void World::noteNoArc(Unit& u,const Unit& t) {
-    const int64_t sx=u.x.floorInt(),sz=u.z.floorInt();
+    const int64_t sx=u.x.floorInt(),sz=u.z.floorInt(),tx=t.x.floorInt(),tz=t.z.floorInt();
     if (u.blockedTarget!=t.id) { u.blockedTarget=t.id;u.blockedShots=0;u.repositions=0;u.searchFailed=0; }
-    if (u.blockedShots && (std::abs(sx-u.blockedX)>kBlockedSpot || std::abs(sz-u.blockedZ)>kBlockedSpot)) {
-        u.blockedShots=0;u.searchFailed=0;
-    }
+    if (u.blockedShots && blockedSpotLeft(u,sx,sz,tx,tz)) { u.blockedShots=0;u.searchFailed=0; }
     if (u.blockedShots<255) ++u.blockedShots;
     u.blockedX=int16_t(sx);u.blockedZ=int16_t(sz);
+    u.blockedTX=int16_t(tx);u.blockedTZ=int16_t(tz);
 }
 
 bool World::shotBlockedHere(const Unit& u,const Unit& t) const {
     return u.blockedTarget==t.id && u.blockedShots>=kBlockedShots &&
-        std::abs(u.x.floorInt()-u.blockedX)<=kBlockedSpot && std::abs(u.z.floorInt()-u.blockedZ)<=kBlockedSpot;
+        !blockedSpotLeft(u,u.x.floorInt(),u.z.floorInt(),t.x.floorInt(),t.z.floorInt());
 }
 
 // Would a shot fired by `u` standing at (fromX,fromZ) reach `t`'s SweetSpot
@@ -19288,6 +19299,7 @@ uint64_t World::stateHash() const {
             mix(0x424c4b44u);mix(uint32_t(u.blockedTarget));
             mix(uint32_t(u.blockedShots)|uint32_t(u.repositions)<<8|uint32_t(u.searchFailed)<<16);
             mix(uint32_t(uint16_t(u.blockedX))|uint32_t(uint16_t(u.blockedZ))<<16);
+            mix(uint32_t(uint16_t(u.blockedTX))|uint32_t(uint16_t(u.blockedTZ))<<16);
         }
         mix(uint64_t(uint32_t(u.selfDestructT)));   // ticks; drives a deterministic death
         // Stance / cloak-intent / active gate auto-acquire, cloaking and firing, so a

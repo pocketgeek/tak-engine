@@ -393,6 +393,72 @@ std::string describe(const Outcome& o) {
                   o.shortShots, o.targetHits, o.damage, o.moved, o.repositions);
     return buf;
 }
+// A write-off is of the line between two spots, not of the target. Retail
+// keeps no memory of a blocked shot (52ae90 admits a shot on range alone and
+// nothing feeds 52a4d0's impact back), so a retail unit shoots at an enemy in
+// the open whatever it shot at before. An idle Hold Position archer
+// auto-acquires a Swordsman behind the ridge and lands its arrows short until
+// the target is written off from this spot. The Swordsman walks off out of
+// range (the archer lets it go) and then back over the ridge into the open
+// beside the archer, which must acquire and engage it unordered. Returns
+// {short shots before, hits after} (-1 short shots if the target was not
+// written off, or was hit, before it moved; -2 if the archer kept it).
+std::pair<int, int> runWalkOut(const hpi::Vfs& vfs, const sim::TypeRegistry& reg) {
+    tnt::Map map;
+    map.width = map.height = 64;
+    map.seaLevel = 0;
+    map.heights.assign(64 * 64, 30);
+    map.features.assign(64 * 64, 0xffff);
+    const int profile[] = {42, 54, 66, 78, 90, 78, 66, 54, 42};
+    for (int z = 0; z < 64; ++z)
+        for (int i = 0; i < 9; ++i) map.heights[size_t(z) * 64 + size_t(16 + i)] = uint8_t(profile[i]);
+    sim::World w;
+    w.setPathfindingMode(mode);
+    w.setTerrain(map.heights, map.width, map.height, map.seaLevel, &map.features);
+    sim::registerMapFeatures(w, map, vfs, &reg);
+    w.setPathService(true);
+    const sim::UnitType* bow = reg.find("arabow");
+    const sim::UnitType* sword = reg.find("arasword");
+    if (!bow || !sword) return {0, 0};
+    const float sz = 32 * 16;
+    const int archer = w.spawn(bow, 14 * 16 + 8, sz, 0, 0);
+    const int target = w.spawn(sword, 26 * 16 + 8, sz, 0, 1);
+    w.setStance(target, 2);
+    w.unit(target)->moveState = 0;
+    w.unit(target)->fireState = 0;
+    w.unit(target)->hp = sim::Fixed::fromInt(30000);
+    w.unit(archer)->moveState = 0;
+    int shortShots = 0, hits = 0;
+    auto step = [&](int n) {
+        for (int i = 0; i < n; ++i) {
+            w.tick(1.f / 30);
+            const sim::Unit* t = w.unit(target);
+            if (!t || !t->alive()) return;
+            for (const auto& h : w.hits()) {
+                if (h.fromPlayer != 0) continue;
+                if (h.victimId == target) { ++hits; continue; }
+                const float dx = h.x - t->x.toFloat(), dz = h.z - t->z.toFloat();
+                if (dx * dx + dz * dz > 48.f * 48.f) ++shortShots;
+            }
+        }
+    };
+    step(900);
+    const sim::Unit* a = w.unit(archer);
+    if (!a || a->blockedTarget != target || a->blockedShots < 3 || hits != 0) return {-1, hits};
+    const int before = shortShots;
+    // Out of range to the east: the Hold Position archer drops its auto
+    // target (tickCombat's !mayChase && !inReach)...
+    w.order(target, 60 * 16 + 8, sz, false);
+    step(900);
+    a = w.unit(archer);
+    if (!a || !a->orders.empty()) return {-2, 0};
+    // ...then back over the ridge into the open beside it.
+    hits = 0;
+    w.order(target, 9 * 16 + 8, sz + 160, false);
+    step(1200);
+    return {before, hits};
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -463,6 +529,11 @@ int main(int argc, char** argv) {
     const auto [walks, hits] = runSticky(vfs, reg);
     check(walks >= 1 && hits > 0, "a failed search does not give up on the target once a clear spot is in reach",
           "walks=" + std::to_string(walks) + " hits=" + std::to_string(hits));
+    const auto [blockedBefore, hitsAfter] = runWalkOut(vfs, reg);
+    std::printf("  walk-out:   %d short before, %d hits after it walked into the open\n", blockedBefore, hitsAfter);
+    check(blockedBefore >= 3 && hitsAfter > 0,
+          "an idle Hold Position archer engages an enemy it found blocked once it walks into the open",
+          "short=" + std::to_string(blockedBefore) + " hits=" + std::to_string(hitsAfter));
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

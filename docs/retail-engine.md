@@ -432,7 +432,14 @@ none of them can stop on scenery:
   flamable feature as destructible) that lies short of the target and outside
   its body plus one body plus half the weapon's splash counts against the
   target. A hit on the target, or a miss beside or past it, clears the count;
-  so does moving more than 16 px from where the count started. Lobbers are
+  so does the shooter or the target moving more than 16 px from where the
+  last counted shot was fired from or aimed at (`blockedSpotLeft`; the
+  target's spot is `Unit::blockedTX/TZ`, hashed). Retail
+  keeps no such memory, so the write-off is of the line between the two
+  spots and never of the target: before, only the shooter's spot was kept, so
+  a unit standing still and choosing its own targets skipped an enemy it once
+  found blocked even after it walked into the open (`blocked_shot_test`'s
+  walk-out case: 0 hits before, hits after). Lobbers are
   included: an arc that clears never counts. The body is a circle of its
   footprint's half-extent; a building longer one way (a castle, a gate) is
   also held to its footprint rectangle (`nearBody`, since 2026-10-30), since
