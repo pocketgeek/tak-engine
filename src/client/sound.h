@@ -28,11 +28,18 @@
 #include <string>
 #include <vector>
 
-// Minimal 32-voice WAV mixer over an SDL audio device (the game's WAVs are
-// 11025 Hz 8-bit mono). Failing to open audio is non-fatal: play() no-ops.
+// Minimal 32-voice WAV mixer over an SDL audio device. It mixes at 22050 Hz like
+// retail's Miles output (AIL_quick_startup 22050/16/stereo): the unit WAVs are
+// 11025 Hz 8-bit mono and are resampled once at decode, while the music tracks
+// (22050 Hz stereo IMA ADPCM) play at their own rate, in stereo. Failing to open
+// audio is non-fatal: play() no-ops.
 class SoundBank {
     friend struct SoundBankTestAccess;
 public:
+    static constexpr int kMixRate = 22050;   // device + decoded PCM rate
+    static constexpr int kSfxRate = 11025;   // the shipped unit WAVs
+    static constexpr int kTapRate = 11025;   // what the stream capture accepts
+    static_assert(kMixRate == 2 * kTapRate, "the audio tap decimates 2:1");
     const tak::hpi::Vfs* vfs_ = nullptr;   // runtime read-path (owned by main)
 
     SoundBank() = default;
@@ -56,6 +63,7 @@ public:
     void setAudioTap(void* context, void (*tap)(void*, const int16_t*, int, int)) {
         if (dev_) SDL_LockAudioDevice(dev_);
         tapContext_ = context; tap_ = tap;
+        tapPhase_ = 0;
         if (dev_) SDL_UnlockAudioDevice(dev_);
     }
 
@@ -95,19 +103,19 @@ public:
         // and it reveals surround even when the default sink advertises stereo.
         int chans = tak::detectOutputChannels();
         SDL_AudioSpec want{};
-        want.freq = 11025;
+        want.freq = kMixRate;
         want.format = AUDIO_S16SYS;
         want.channels = Uint8(chans);
-        // 256 samples @ 11025 Hz = ~23ms of device buffer. The old 1024 put
-        // ~93ms between a command click and its acknowledgment tone -- a very
+        // 512 samples @ 22050 Hz = ~23ms of device buffer. The old 1024 @ 11025
+        // put ~93ms between a command click and its acknowledgment tone -- a very
         // feelable lag on the mouse. The mix callback is light (a handful of
-        // 11kHz channels), so short periods are cheap; the OS adds its own
-        // safety on top.
-        want.samples = 256;
+        // channels), so short periods are cheap; the OS adds its own safety on top.
+        want.samples = 512;
         want.callback = &SoundBank::mixThunk;
         want.userdata = this;
         dev_ = tak::openAudioDevice(0, &want, &spec_, SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
         chan_ = dev_ ? (spec_.channels ? spec_.channels : 2) : 1;
+        tapPhase_ = 0;
         std::fprintf(stderr, "audio: %d output channels%s%s\n", chan_,
                      chan_ >= 4 ? " (surround: front/rear enabled)" : "",
                      (chan_ == 6 || chan_ == 8) ? ", LFE subwoofer driven" : "");
@@ -178,9 +186,20 @@ public:
         playAt(name, pan, depth, true, x, z, 1.f, 1.f, priority);
     }
 
+    // The synthesised tracks' filters and envelopes are tuned per kSfxRate sample, so
+    // they are rendered at that rate and doubled here (linear) to the mix rate.
+    static std::vector<int16_t> toMixRate(const std::vector<int16_t>& in) {
+        std::vector<int16_t> out(in.size() * 2);
+        for (size_t i = 0; i < in.size(); ++i) {
+            const int next = i + 1 < in.size() ? in[i + 1] : in[i];
+            out[2 * i] = in[i];
+            out[2 * i + 1] = int16_t((in[i] + next) / 2);
+        }
+        return out;
+    }
+
     // Play the synthesised 10-second disco loop as a positional SFX from (x,z) -- the
-    // Shift+D dance-floor track. Generated in code (no shipped asset) at the mixer's
-    // 11025 Hz mono and cached under "disco", so it pans/fades like any unit sound.
+    // Shift+D dance-floor track. Generated in code (no shipped asset), mono, and cached under "disco", so it pans/fades like any unit sound.
     void discoAt(float x, float z) {
         if (!cache_.count("disco")) buildDisco();
         playWorld("disco", x, z);
@@ -211,7 +230,7 @@ public:
   private:
     void buildDisco() {
         constexpr float PI = 3.14159265358979f;
-        const int SR = 11025;
+        const int SR = kSfxRate;
         const float BPM = 120.0f, beat = 60.0f / BPM, eighth = beat * 0.5f;
         const int N = int(SR * 10.0f);
         std::vector<float> buf(size_t(N) + size_t(SR), 0.0f);
@@ -292,13 +311,13 @@ public:
         std::vector<int16_t> pcm(size_t(N), 0);
         for (int i = 0; i < N; ++i)
             pcm[size_t(i)] = int16_t(std::clamp(std::tanh(buf[size_t(i)] * g) * 0.9f, -1.0f, 1.0f) * 32767);
-        cache_["disco"] = std::move(pcm);
+        cache_["disco"] = toMixRate(pcm);
         index_["disco"] = "disco";
     }
 
     void buildMetal() {
         constexpr float PI = 3.14159265358979f;
-        const int SR = 11025;
+        const int SR = kSfxRate;
         const float BPM = 152.0f, beat = 60.0f / BPM, six = beat / 4;
         const int N = int(SR * 10.0f);
         std::vector<float> buf(size_t(N) + size_t(SR), 0.0f);
@@ -387,7 +406,7 @@ public:
         std::vector<int16_t> pcm(size_t(N), 0);
         for (int i = 0; i < N; ++i)
             pcm[size_t(i)] = int16_t(std::clamp(std::tanh(buf[size_t(i)] * g) * 0.92f, -1.0f, 1.0f) * 32767);
-        cache_["metal"] = std::move(pcm);
+        cache_["metal"] = toMixRate(pcm);
         index_["metal"] = "metal";
     }
 
@@ -524,16 +543,19 @@ private:
     }
     float listenX_ = 0, listenZ_ = 0, listenHW_ = 1, listenHH_ = 1;
 
-    // Decode a WAV (from memory) to the mixer's 11025 Hz mono S16 format.
-    std::optional<std::vector<int16_t>> decodeWav(const uint8_t* data, size_t size) {
+    // Decode a WAV (from memory) to S16 at the mix rate with `channels` interleaved
+    // channels. Any source rate/layout works (SDL resamples and up/downmixes), so a
+    // mod WAV need not match the shipped formats. SDL_GetError() says why on failure.
+    static std::optional<std::vector<int16_t>> convertWav(const uint8_t* data, size_t size,
+                                                          int channels) {
         SDL_AudioSpec spec{};
         Uint8* buf = nullptr;
         Uint32 len = 0;
-        SDL_RWops* rw = SDL_RWFromConstMem(data, int(size));
+        SDL_RWops* rw = size ? SDL_RWFromConstMem(data, int(size)) : nullptr;
         if (!rw || !SDL_LoadWAV_RW(rw, 1, &spec, &buf, &len)) return std::nullopt;
         SDL_AudioCVT cvt;
         if (SDL_BuildAudioCVT(&cvt, spec.format, spec.channels, spec.freq, AUDIO_S16SYS,
-                              1, 11025) < 0) {
+                              Uint8(channels), kMixRate) < 0) {
             SDL_FreeWAV(buf);
             return std::nullopt;
         }
@@ -544,9 +566,14 @@ private:
         cvt.len = int(len);
         if (cvt.needed && SDL_ConvertAudio(&cvt) != 0) return std::nullopt;
         size_t outBytes = cvt.needed ? size_t(cvt.len_cvt) : len;
-        std::vector<int16_t> out(outBytes / 2);
+        std::vector<int16_t> out(outBytes / 2 / size_t(channels) * size_t(channels));
         std::memcpy(out.data(), work.data(), out.size() * 2);
         return out;
+    }
+    // Sound effects: mono at the mix rate. Resampling the 11025 Hz unit WAVs here,
+    // once, keeps step 65536 = native pitch and their length in seconds unchanged.
+    std::optional<std::vector<int16_t>> decodeWav(const uint8_t* data, size_t size) {
+        return convertWav(data, size, 1);
     }
 
     const std::vector<int16_t>* load(const std::string& key, const std::string& path) {
@@ -566,8 +593,35 @@ private:
         auto* bank = static_cast<SoundBank*>(ud);
         auto* pcm = reinterpret_cast<int16_t*>(stream);
         bank->mix(pcm, len / 2);
-        if (bank->tap_) bank->tap_(bank->tapContext_, pcm, len / 2 / std::max(bank->chan_,1), bank->chan_);
+        if (bank->tap_) bank->feedTap(pcm, len / 2 / std::max(bank->chan_, 1));
     }
+    // The stream capture takes kTapRate PCM, so halve the mix: a [1 2 1]/4 low-pass
+    // (zero at the new Nyquist) centred on every even input frame. The filter's
+    // left/centre taps carry across callbacks; output goes out in fixed-size chunks
+    // from a member buffer, so the audio thread never allocates.
+    void feedTap(const int16_t* in, int frames) {
+        const int ch = std::clamp(chan_, 1, 8);
+        const int chunk = int(tapBuf_.size()) / ch;
+        int outFrames = 0;
+        for (int f = 0; f < frames; ++f) {
+            const int16_t* x = in + size_t(f) * size_t(ch);
+            if (tapPhase_ == 0) {
+                for (int ci = 0; ci < ch; ++ci) { tapLeft_[ci] = tapLast_[ci]; tapMid_[ci] = x[ci]; }
+                tapPhase_ = 1;
+            } else {
+                int16_t* o = tapBuf_.data() + size_t(outFrames) * size_t(ch);
+                for (int ci = 0; ci < ch; ++ci)
+                    o[ci] = int16_t((tapLeft_[ci] + 2 * tapMid_[ci] + x[ci]) / 4);
+                tapPhase_ = 0;
+                if (++outFrames == chunk) { tap_(tapContext_, tapBuf_.data(), outFrames, ch); outFrames = 0; }
+            }
+            for (int ci = 0; ci < ch; ++ci) tapLast_[ci] = x[ci];
+        }
+        if (outFrames) tap_(tapContext_, tapBuf_.data(), outFrames, ch);
+    }
+    std::array<int16_t, 256 * 8> tapBuf_{};
+    int tapLeft_[8] = {}, tapMid_[8] = {}, tapLast_[8] = {};
+    int tapPhase_ = 0;   // 1 = a centre frame waits for its right neighbour
 
     void mix(int16_t* out, int n) {
         std::memset(out, 0, size_t(n) * 2);
@@ -579,15 +633,29 @@ private:
             int idx = f * ch + ci;
             out[idx] = int16_t(std::clamp(out[idx] + v, -32768, 32767));
         };
-        // Background music bed (quieter than SFX), spread across the main speakers --
-        // NOT the LFE, which gets the low-passed sub feed instead.
+        // Background music bed (quieter than SFX), stereo: left on the left-side
+        // speakers, right on the right, both halved on surround rigs so it doesn't get
+        // louder with more speakers, and a quarter of each in the centre. NOT the LFE,
+        // which gets the low-passed sub feed of their mono sum instead.
         for (int f = 0; f < frames; ++f) {
-            if (musicPos_ >= music_.size()) { musicDone_ = true; break; }
-            int m = (music_[musicPos_++] * musicVol_) / 256;
-            int mc = m / (ch > 2 ? 2 : 1);   // don't get louder with more speakers
-            for (int ci = 0; ci < ch; ++ci)
-                if (ci != lfe) add(f, ci, mc);
-            if (lfe >= 0) lfeMono_[size_t(f)] += m;
+            if (2 * musicPos_ + 1 >= music_.size()) { musicDone_ = true; break; }
+            int l = (music_[2 * musicPos_] * musicVol_) / 256;
+            int r = (music_[2 * musicPos_ + 1] * musicVol_) / 256;
+            ++musicPos_;
+            switch (ch) {
+                case 1: add(f, 0, (l + r) / 2); break;
+                case 2: add(f, 0, l); add(f, 1, r); break;
+                case 4:   // FL FR BL BR
+                    add(f, 0, l / 2); add(f, 1, r / 2); add(f, 2, l / 2); add(f, 3, r / 2); break;
+                case 6: case 8:   // FL FR FC LFE BL BR (SL SR)
+                    add(f, 0, l / 2); add(f, 1, r / 2); add(f, 2, (l + r) / 4);
+                    add(f, 4, l / 2); add(f, 5, r / 2);
+                    if (ch == 8) { add(f, 6, l / 2); add(f, 7, r / 2); }
+                    break;
+                default:
+                    for (int ci = 0; ci < ch; ++ci) add(f, ci, (ci % 2 ? r : l) / 2); break;
+            }
+            if (lfe >= 0) lfeMono_[size_t(f)] += (l + r) / 2;
         }
         // Positional SFX: pan each into the speaker layout.
         float g[8];
@@ -608,10 +676,11 @@ private:
                 if (lfe >= 0) lfeMono_[size_t(f)] += s;
             }
         }
-        // Subwoofer: one-pole low-pass of the mono mix (~110 Hz cutoff at 11025 Hz),
-        // fed into the LFE channel so a 5.1/7.1 rig drives the sub directly.
+        // Subwoofer: one-pole low-pass of the mono mix (~110 Hz cutoff at the mix
+        // rate), fed into the LFE channel so a 5.1/7.1 rig drives the sub directly.
         if (lfe >= 0) {
-            constexpr float kAlpha = 0.06f;   // 1/(1 + fs/(2*pi*fc)), fc ~= 110 Hz
+            // 1/(1 + fs/(2*pi*fc)), fc = 110 Hz: ~0.030 at 22050 Hz.
+            constexpr float kAlpha = 1.0f / (1.0f + float(kMixRate) / (2.0f * 3.14159265f * 110.0f));
             constexpr float kGain = 0.7f;     // sub level (headroom for stacked bass)
             for (int f = 0; f < frames; ++f) {
                 lpfState_ += kAlpha * (float(lfeMono_[size_t(f)]) - lpfState_);
@@ -672,37 +741,19 @@ public:
 
 private:
     void loadTrack(size_t idx) {
-        SDL_AudioSpec spec{};
-        Uint8* buf = nullptr;
-        Uint32 len = 0;
+        // Interleaved stereo at the mix rate: the retail tracks are 22050 Hz stereo
+        // already (decoded from IMA ADPCM, no resample); a mod track at another
+        // rate or channel count is converted, as Miles' stream resampled it.
         std::vector<uint8_t> raw;
         if (vfs_) { try { raw = vfs_->read(playlist_[idx]); } catch (const std::exception&) {} }
-        SDL_RWops* rw = raw.empty() ? nullptr : SDL_RWFromConstMem(raw.data(), int(raw.size()));
-        if (!rw || !SDL_LoadWAV_RW(rw, 1, &spec, &buf, &len)) {
-            std::fprintf(stderr, "music: LoadWAV failed: %s\n", SDL_GetError());
+        auto pcm = convertWav(raw.data(), raw.size(), 2);
+        if (!pcm) {
+            std::fprintf(stderr, "music: decoding %s failed: %s\n", playlist_[idx].c_str(),
+                         SDL_GetError());
             return;
         }
-        SDL_AudioCVT cvt;
-        if (SDL_BuildAudioCVT(&cvt, spec.format, spec.channels, spec.freq, AUDIO_S16SYS,
-                              1, 11025) < 0) {
-            std::fprintf(stderr, "music: BuildAudioCVT failed: %s\n", SDL_GetError());
-            SDL_FreeWAV(buf);
-            return;
-        }
-        std::vector<uint8_t> work(size_t(len) * size_t(std::max(cvt.len_mult, 1)));
-        std::memcpy(work.data(), buf, len);
-        SDL_FreeWAV(buf);
-        cvt.buf = work.data();
-        cvt.len = int(len);
-        if (cvt.needed && SDL_ConvertAudio(&cvt) != 0) {
-            std::fprintf(stderr, "music: ConvertAudio failed: %s\n", SDL_GetError());
-            return;
-        }
-        size_t outBytes = cvt.needed ? size_t(cvt.len_cvt) : len;
-        std::vector<int16_t> pcm(outBytes / 2);
-        std::memcpy(pcm.data(), work.data(), pcm.size() * 2);
         SDL_LockAudioDevice(dev_);
-        music_ = std::move(pcm);
+        music_ = std::move(*pcm);
         musicPos_ = 0;
         musicTrack_ = idx;
         musicDone_ = false;
@@ -716,8 +767,8 @@ private:
     Channel channels_[32];
     uint64_t soundSequence_=0;
     std::vector<std::string> playlist_;
-    std::vector<int16_t> music_;
-    size_t musicPos_ = 0, musicTrack_ = 0;
+    std::vector<int16_t> music_;   // interleaved stereo (L R) at kMixRate
+    size_t musicPos_ = 0, musicTrack_ = 0;   // musicPos_ counts stereo frames
     int musicVol_ = 128;  // out of 256 (BGM); 50% default
     int masterVol_ = 256; // out of 256, global gain over the whole mix
     int sfxVol_ = 256;    // out of 256, sound effects

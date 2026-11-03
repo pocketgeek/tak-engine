@@ -10,7 +10,7 @@
 // racing the audio callback or depending on physical audio hardware.
 struct SoundBankTestAccess {
     static bool prepare(SoundBank& bank) {
-        SDL_AudioSpec want{};want.freq=11025;want.format=AUDIO_S16SYS;
+        SDL_AudioSpec want{};want.freq=SoundBank::kMixRate;want.format=AUDIO_S16SYS;
         want.channels=1;want.samples=256;
         bank.dev_=SDL_OpenAudioDevice(nullptr,0,&want,&bank.spec_,0);
         bank.chan_=1;
