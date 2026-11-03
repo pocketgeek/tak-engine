@@ -44,8 +44,9 @@ using Matrix = std::array<std::array<float, 8>, 8>;
 // A source of `in` channels onto an `out`-channel output, channel for channel:
 // every speaker the output has keeps its own feed, and only what it lacks folds
 // down, ITU-style at -3 dB -- the centre into FL+FR, a back or side speaker into
-// its side-to-side twin (BL<->SL) or else the front speaker on its side, the back
-// centre into the rear pair. The LFE is dropped where the output has none (the
+// its side-to-side twin (BL<->SL; at unity when the source leaves that twin
+// empty) or else the front speaker on its side, the back centre into the rear
+// pair. A 6.1 output's back centre gets no feed from a BL/BR source (no upmix). The LFE is dropped where the output has none (the
 // usual downmix rule: its content is in the mains already). A mono output takes
 // the stereo fold's (L+R)/2. Each output row is then scaled to sum to at most 1,
 // as the stream's downmix weights it, so a dense fold cannot clip.
@@ -61,6 +62,9 @@ inline Matrix downmixMatrix(int in, int out) {
     using S = Speaker;
     constexpr float h = 0.70710678f;
     const auto roles = speakers(in);
+    // A twin the source has no channel for is the surround's own speaker (5.1 on
+    // 6.1: BL/BR play on SL/SR) and takes it at unity; only a shared one is -3 dB.
+    auto twin = [&](S target) { return speakerIndex(in, target) >= 0 ? h : 1.f; };
     for (int k = 0; k < in; ++k) {
         const S s = roles[size_t(k)];
         auto to = [&](S target, float g) {
@@ -73,10 +77,10 @@ inline Matrix downmixMatrix(int in, int out) {
         if (to(s, 1.f)) continue;
         switch (s) {
             case S::FC: to(S::FL, h); to(S::FR, h); break;
-            case S::BL: if (!to(S::SL, h)) to(S::FL, h); break;
-            case S::BR: if (!to(S::SR, h)) to(S::FR, h); break;
-            case S::SL: if (!to(S::BL, h)) to(S::FL, h); break;
-            case S::SR: if (!to(S::BR, h)) to(S::FR, h); break;
+            case S::BL: if (!to(S::SL, twin(S::SL))) to(S::FL, h); break;
+            case S::BR: if (!to(S::SR, twin(S::SR))) to(S::FR, h); break;
+            case S::SL: if (!to(S::BL, twin(S::BL))) to(S::FL, h); break;
+            case S::SR: if (!to(S::BR, twin(S::BR))) to(S::FR, h); break;
             case S::BC:
                 if (speakerIndex(out, S::BL) >= 0) { to(S::BL, h); to(S::BR, h); }
                 else if (speakerIndex(out, S::SL) >= 0) { to(S::SL, h); to(S::SR, h); }

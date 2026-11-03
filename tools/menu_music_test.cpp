@@ -143,6 +143,13 @@ int main(int argc,char**argv) {
             const double h=0.70710678,w=1+2*h;
             require(std::abs(two[0]-int((v[0]+h*v[2]+h*v[4])/w*32768))<=3
                     && std::abs(two[1]-int((v[1]+h*v[2]+h*v[5])/w*32768))<=3,"5.1 menu track folds to stereo");
+            // On 6.1 (FL FR FC LFE BC SL SR) the 5.1 surrounds play at full level on SL/SR.
+            Access::source(music,wavFile(AUDIO_S16SYS,44100,6,s),7);
+            capture.pcm.clear();capture.channels=0;
+            auto seven=Access::fill(music,100);
+            const double want7[7]={v[0],v[1],v[2],v[3],0,v[4],v[5]};
+            for(int k=0;k<7;++k)
+                require(std::abs(seven[size_t(k)]-int(want7[k]*32768))<=2,"5.1 menu track on 6.1 keeps its surrounds");
         }
         music.stop();
         if(music.playing())throw std::runtime_error("stopped music still owns audio");
