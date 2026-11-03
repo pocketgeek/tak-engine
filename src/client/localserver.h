@@ -8,6 +8,10 @@
 // binary, unreadable data, a crash) fails the launch at once instead of after the
 // whole connect timeout. Process control is the one genuinely platform-specific
 // bit: fork/exec + waitpid on POSIX, CreateProcess + GetExitCodeProcess on Windows.
+// On Windows the child also gets the client's standard handles (its log goes where
+// the client's does, as a forked child's does on POSIX) and runs in a job that
+// closes with the client, so a client that is killed or crashes cannot leave its
+// server running, holding the port and its files.
 // Header-only and SDL-free (tools/local_server_test.cpp drives it directly).
 
 #include <string>
@@ -41,9 +45,54 @@ public:
         const auto executable = tak::u8path(program).wstring();
         std::wstring cmd = quoteWindowsArgument(executable);
         for (const auto& a : args) cmd += L" " + quoteWindowsArgument(tak::u8path(a).wstring());
-        STARTUPINFOW si{}; si.cb = sizeof(si);
-        if (!CreateProcessW(executable.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
-                            nullptr, nullptr, &si, &proc_)) return false;
+        // Inheritable copies of the client's standard handles, passed as the only
+        // handles the child inherits (a GUI launch with none keeps the child's empty).
+        STARTUPINFOEXW si{}; si.StartupInfo.cb = sizeof(si);
+        HANDLE std[3] = {};
+        std::vector<HANDLE> inherit;
+        const DWORD which[3] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+        for (int i = 0; i < 3; ++i) {
+            const HANDLE h = GetStdHandle(which[i]);
+            if (h && h != INVALID_HANDLE_VALUE &&
+                DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &std[i], 0, TRUE, DUPLICATE_SAME_ACCESS))
+                inherit.push_back(std[i]);
+        }
+        std::vector<char> attributes;
+        if (!inherit.empty()) {
+            SIZE_T size = 0;
+            InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+            attributes.resize(size);
+            si.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
+            if (InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &size) &&
+                UpdateProcThreadAttribute(si.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit.data(),
+                                          inherit.size() * sizeof(HANDLE), nullptr, nullptr)) {
+                si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+                si.StartupInfo.hStdInput = std[0];
+                si.StartupInfo.hStdOutput = std[1];
+                si.StartupInfo.hStdError = std[2];
+            } else {
+                si.lpAttributeList = nullptr;
+            }
+        }
+        const bool handles = si.lpAttributeList != nullptr;
+        const bool made = CreateProcessW(executable.c_str(), cmd.data(), nullptr, nullptr, handles,
+                                         CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT,
+                                         nullptr, nullptr, &si.StartupInfo, &proc_);
+        if (handles) DeleteProcThreadAttributeList(si.lpAttributeList);
+        for (HANDLE h : std) if (h) CloseHandle(h);
+        if (!made) return false;
+        // Into a kill-on-close job before it runs: the client's last handle to the job
+        // closes when the client ends in any way, and Windows then ends the server.
+        job_ = CreateJobObjectW(nullptr, nullptr);
+        if (job_) {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION limit{};
+            limit.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            if (!SetInformationJobObject(job_, JobObjectExtendedLimitInformation, &limit, sizeof limit) ||
+                !AssignProcessToJobObject(job_, proc_.hProcess)) {
+                CloseHandle(job_); job_ = nullptr;   // the server still runs, just without the guard
+            }
+        }
+        ResumeThread(proc_.hThread);
         CloseHandle(proc_.hThread); proc_.hThread = nullptr;
         up_ = true;
 #else
@@ -103,6 +152,7 @@ public:
         }
         CloseHandle(proc_.hProcess);
         proc_ = {};
+        if (job_) { CloseHandle(job_); job_ = nullptr; }
 #else
         if (!exited()) { kill(pid_, SIGTERM); waitpid(pid_, nullptr, 0); }
         pid_ = 0;
@@ -125,6 +175,7 @@ private:
     int exitCode_ = 0;
 #ifdef _WIN32
     PROCESS_INFORMATION proc_{};
+    HANDLE job_ = nullptr;   // kill-on-close job holding the child (see start)
 #else
     pid_t pid_ = 0;
 #endif

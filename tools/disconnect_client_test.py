@@ -120,7 +120,9 @@ class Match:
 def verify_replay(args, root, name):
     found = sorted((root / name / 'data').rglob('*.takrep'))
     assert len(found) == 1, ('replays', found)
-    env = environment(root, name + '-verify')
+    # The recording player's own profile, as a player watches: it holds the verified
+    # game mods a data folder with game mods recorded into the replay.
+    env = environment(root, name)
     env['TAK_REPLAY_VERIFY'] = '1'
     out = subprocess.run([args.client, 'replay', str(found[0]), '--data', args.data], env=env,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace',

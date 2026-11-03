@@ -109,6 +109,13 @@ def seat_and_start(host, state, extra=None):
         host.send('SlotUpdate', bytes([1, 2, 1, 1, 1, 1, 0]))
     else:
         extra.send('SlotUpdate', bytes([1, 1, 1, 1, 1, 1, 2]))
+        # That ready travels on the other player's connection, and the server ignores
+        # a start while a human is unready (tryStart returns with no reply): wait until
+        # the host sees slot 1 seated and ready, or StartGame can arrive first.
+        while True:
+            values = lobby(host.receive('LobbyState'))[3][1][0]
+            if values[0] == 1 and values[4] == 1:
+                break
     host.send('StartGame')
 
 

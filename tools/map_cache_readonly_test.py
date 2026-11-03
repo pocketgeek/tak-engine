@@ -149,13 +149,19 @@ def main():
     p = argparse.ArgumentParser()
     for name in ('--server', '--client', '--map-tool', '--data'):
         p.add_argument(name, type=Path, required=True)
+    # A Release takclient on Windows or macOS reads only the player's real profile
+    # (util/prefpath.h), so its --play-map half cannot be isolated: CMake skips it there.
+    p.add_argument('--no-play-map', action='store_true')
     a = p.parse_args()
     a.server, a.client, a.map_tool, a.data = (x.resolve() for x in (a.server, a.client, a.map_tool, a.data))
     with tempfile.TemporaryDirectory(prefix='tak-map-ro-') as tmp:
         root = Path(tmp)
         try:
             network(a, root)
-            play_map(a, root)
+            if a.no_play_map:
+                print('play-map: skipped (a Release client here would use the real profile)')
+            else:
+                play_map(a, root)
         finally:
             writable(root)
 

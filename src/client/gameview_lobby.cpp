@@ -1096,7 +1096,7 @@ float createOptionPx(float maxW) {
             SDL_FRect row{x, y, winW - 360.0f, 30};
             SDL_SetRenderDrawColor(ren_, mine ? 40 : 26, mine ? 48 : 30, mine ? 66 : 40, 255);
             SDL_RenderFillRectF(ren_, &row);
-            char sn[8]; std::snprintf(sn, sizeof sn, "%d", i + 1);
+            char sn[12]; std::snprintf(sn, sizeof sn, "%d", i + 1);
             blockText(sn, x + 8, y + 8, 1.8f, {150, 155, 170, 255});
             // type (host may cycle open<->closed on empty slots)
             SDL_Color tcol = s.type == 1 ? SDL_Color{200, 230, 200, 255}
