@@ -9,6 +9,7 @@
 #include "client/cursortiming.h"
 #include "client/buildghost.h"
 #include "client/reclaimpick.h"
+#include "client/reclaimfade.h"
 #include "client/retaillightningquad.h"
 #include "client/retailflame.h"
 #include "client/retaileffectframe.h"
@@ -2108,6 +2109,32 @@
                 // deposit sits at the height its heightmap claims (and lodestones/units
                 // built on it line up) instead of the decal being flat.
                 float lfx = terrainLiftX(f.x, f.z) * zm0, lfy = terrainLift(f.x, f.z) * zm0;
+                // RECLAIMED, fading out: retail draws only a white silhouette of the
+                // frame at the fade's alpha -- no shadow, no flames (reclaimfade.h).
+                if (const int steps = f.aliveVis ? tak::reclaimfade::fadeSteps(f.fadeEnd, front().gameTick) : 0) {
+                    const FeatureSprite sprite = featureSprite(f, zm0);
+                    SDL_Texture* white = sprite.tex && sprite.art && !sprite.burning
+                        ? fadeSilhouette(*sprite.art, sprite.frame) : nullptr;
+                    const uint8_t alpha = uint8_t(unsigned(tak::reclaimfade::alphaByte(steps)) *
+                                                  hiddenFeatureAlpha(f) / 255u);
+                    if (!white || !alpha) continue;
+                    if (sprite.sway) {
+                        const SDL_FRect& dst = sprite.dst;
+                        const SDL_Color wc{255, 255, 255, alpha};
+                        SDL_Vertex v[4] = {
+                            {{dst.x + sprite.shear, dst.y}, wc, {0, 0}},
+                            {{dst.x + dst.w + sprite.shear, dst.y}, wc, {1, 0}},
+                            {{dst.x + dst.w, dst.y + dst.h}, wc, {1, 1}},
+                            {{dst.x, dst.y + dst.h}, wc, {0, 1}},
+                        };
+                        static const int fadeIdx[6] = {0, 1, 2, 0, 2, 3};
+                        SDL_RenderGeometry(ren_, white, v, 4, fadeIdx, 6);
+                    } else {
+                        SDL_SetTextureAlphaMod(white, alpha);
+                        SDL_RenderCopyF(ren_, white, nullptr, &sprite.dst);
+                    }
+                    continue;
+                }
                 const bool swayTree=f.tree && settings_ && settings_->treeSway;
                 const float phase=f.x*0.043f+f.z*0.029f;
                 const float sway=swayTree ? std::sin(animClock_*1.1f+phase)*0.7f+
@@ -4892,10 +4919,7 @@
         // body/shadow frame arrays only; FeatureInst merely borrows these pointers.
         features_.clear();
         featureIndexDirty_=true;
-        for (auto& [n, a] : featureArt_) {
-            for (SDL_Texture* t : a.frames) if (t) gpuvram::destroy(t);
-            for (auto* texture : a.shadowFrames) if (texture) gpuvram::destroy(texture);
-        }
+        for (auto& [n, a] : featureArt_) a.destroyTextures();
         featureArt_.clear();
         for (auto& [n, ea] : effectAnims_)
             for (auto& f : ea.frames) if (f.tex) gpuvram::destroy(f.tex);
@@ -4958,6 +4982,7 @@
         for (auto& [key, art] : featureArt_) {
             for (SDL_Texture* t : art.frames) set(t);
             for (SDL_Texture* t : art.shadowFrames) set(t);
+            for (SDL_Texture* t : art.fadeFrames) set(t);
         }
         for (auto& [name, anim] : effectAnims_) for (auto& f : anim.frames) set(f.tex);
         for (auto& [name, shadow] : shadowTex_) set(shadow.tex);
@@ -6335,6 +6360,8 @@
         }
         place(fw, fh, fxo, fyo);
         out.mask = out.tex ? maskOf(f.art, idx) : nullptr;
+        out.art = f.art;
+        out.frame = idx;
         if (f.tree && settings_ && settings_->treeSway) {
             const float phase = f.x*0.043f+f.z*0.029f;
             const float sway = std::sin(animClock_*1.1f+phase)*0.7f+
@@ -6343,6 +6370,33 @@
             out.shear = sway * out.dst.h * 0.04f;
         }
         return out;
+    }
+
+    void GameView::FeatArt::destroyTextures() {
+        for (SDL_Texture* t : frames) if (t) gpuvram::destroy(t);
+        for (SDL_Texture* t : shadowFrames) if (t) gpuvram::destroy(t);
+        for (SDL_Texture* t : fadeFrames) if (t) gpuvram::destroy(t);
+        frames.clear(); shadowFrames.clear(); fadeFrames.clear();
+        tex = shadow = nullptr;
+    }
+
+    // The reclaim fade's white silhouette of one frame (client/reclaimfade.h),
+    // made from the frame's opacity mask on first use.
+    SDL_Texture* GameView::fadeSilhouette(const FeatArt& art, size_t frame) {
+        if (frame >= art.masks.size()) return nullptr;
+        if (art.fadeFrames.size() < art.frames.size()) art.fadeFrames.resize(art.frames.size(), nullptr);
+        SDL_Texture*& made = art.fadeFrames[frame];
+        if (made) return made;
+        const auto& mask = art.masks[frame];
+        if (mask.width() <= 0 || mask.height() <= 0) return nullptr;
+        made = gpuvram::create(ren_, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC,
+                               mask.width(), mask.height());
+        if (!made) return nullptr;
+        const std::vector<uint8_t> px = tak::reclaimfade::silhouette(mask);
+        SDL_UpdateTexture(made, nullptr, px.data(), mask.width() * 4);
+        SDL_SetTextureBlendMode(made, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(made, worldScaleMode());
+        return made;
     }
 
     GameView::FeatArt* GameView::featureArtFor(const tak::tdf::Node& def,
@@ -6545,7 +6599,8 @@
             for (const auto& fi : features_) {
                 const auto* sf = world.feature(fi.simId);
                 simState.push_back(sf ? FeatSim{sf->type, sf->alive && sf->burn != 0,
-                                                sf->alive, sf->fx, sf->fz, true, sf->burnStarted, world.featureReclaimable(*sf),sf->blocks}
+                                                sf->alive, sf->fx, sf->fz, true, sf->burnStarted, world.featureReclaimable(*sf),sf->blocks,
+                                                tak::reclaimfade::fadeEnd(world.tickCount(), sf->fadeLeft)}
                                       : FeatSim{-1, false, true, 1, 1, false});
             }
             // The type NAMES are read below too, and featureTypes() is filled at map
@@ -6576,6 +6631,7 @@
             }
             fi.reclaimable=st.reclaimable;
             fi.blocking=st.blocking;
+            fi.fadeEnd=st.fadeEnd;
             fi.hasSim = st.hasSim ? 1 : 0;    // ...and whether it is reclaimable at all
             if (st.type < 0) continue;
             if (fi.simType == -2) {                             // first sight

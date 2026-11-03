@@ -1536,7 +1536,8 @@ private:
     // instances (shoreline waves and the like) have none, and the snapshot's fallback
     // deliberately reports them alive so they keep RENDERING. That must not be confused
     // with "reclaimable" -- see hoverCursor.
-    struct FeatSim { int type; bool burning; bool alive; int fx, fz; bool hasSim; uint32_t burnStarted = 0; bool reclaimable = false; bool blocking = false; };
+    struct FeatSim { int type; bool burning; bool alive; int fx, fz; bool hasSim; uint32_t burnStarted = 0; bool reclaimable = false; bool blocking = false;
+                     uint32_t fadeEnd = 0; };   // reclaimfade::fadeEnd
     std::vector<FeatSim> featSimState_;
     uint32_t lastFeatGen_ = UINT32_MAX;   // != any real generation, so the first sync runs
 
@@ -2960,6 +2961,7 @@ private:
 #endif
     // The sprite a feature shows this frame (burn playback, animation frame, wind
     // sway), in screen space: what the body pass draws and the cover tests read.
+    struct FeatArt;   // defined with the feature art below
     struct FeatureSprite {
         SDL_Texture* tex = nullptr;
         const tak::hiddenunits::AlphaMask* mask = nullptr;
@@ -2967,6 +2969,8 @@ private:
         float shear = 0;   // top edge shifted sideways by this much (sway)
         bool sway = false;      // drawn as a sheared quad (Trees Sway In Wind)
         bool burning = false;   // the burn playback (never sways)
+        const FeatArt* art = nullptr;   // the standing art and frame drawn (not the burn)
+        size_t frame = 0;
     };
     FeatureSprite featureSprite(const FeatureInst& f, float zm);
 #ifndef NDEBUG
@@ -3489,7 +3493,6 @@ private:
     // minimap location (F + minimap = fight-move there). Returns true if handled.
     bool minimapArmedOrder(float mx, float my, int winW, int winH);
 
-    struct FeatArt;   // defined just below; FeatureInst only needs the pointer type
     struct FeatureInst {
         SDL_Texture* tex = nullptr;
         const std::vector<SDL_Texture*>* frames = nullptr;
@@ -3504,6 +3507,9 @@ private:
         const EffectAnim* backFlame = nullptr;
         uint32_t burnStarted = 0; // simulation ignition tick
         uint8_t burnVis = 0; // sim says burning: draw burnArt + emit smoke
+        // Reclaimed, fading out: the tick it leaves the plane (client/reclaimfade.h),
+        // 0 when not fading. Snapshotted with aliveVis.
+        uint32_t fadeEnd = 0;
         // Snapshotted once per frame in syncBurningFeatures, under simMutex_. The
         // draw loop used to ask world_.featureAliveAt() per feature with no lock,
         // and addFeature() does a push_back that can REALLOCATE the feature vector
@@ -3592,6 +3598,10 @@ private:
         std::vector<tak::hiddenunits::AlphaMask> masks;
         std::vector<int> tickEnd;   // cumulative end tick per frame
         int totalTicks = 0;         // full loop length in 30Hz ticks
+        // White silhouettes of the frames for the reclaim fade, parallel to frames
+        // and made on first use (fadeSilhouette): most art never fades.
+        mutable std::vector<SDL_Texture*> fadeFrames;
+        void destroyTextures();   // frames, shadowFrames and fadeFrames
     };
     std::map<std::string, tak::tdf::Node> featureDefs_;
     std::map<std::string, tak::gaf::Palette> featurePals_;
@@ -3612,6 +3622,7 @@ private:
                            const char* shadKey = "seqnameshad");
     void swapFeatureArt(FeatureInst& fi, const std::string& name);
     void syncBurningFeatures();
+    SDL_Texture* fadeSilhouette(const FeatArt& art, size_t frame);
 
     // Place one feature instance by definition name; returns success.
     bool addFeature(const std::string& rawName, int cx, int cz);
