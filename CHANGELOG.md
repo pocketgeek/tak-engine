@@ -35,6 +35,14 @@ their validation reports; both live in [`docs/`](docs/).
   to finish two ships of six, or none with a ship on the pad). The original game moves
   no idle ship. A ship leaving a door that faces a shore still sails out slowly: that
   is the original game's own behaviour.
+- **Idle units make way at a land factory's door too.** Your own idle units standing in
+  front of a land factory (a Barracks, a Keep, a Dungeon, an Academy and the rest) now
+  step aside while a new unit is leaving, and one on the factory's pad steps off it, so
+  they no longer stop the factory: one idle unit on the pad used to stop it before its
+  first unit, and a crowd at a Creon Academy's door let it finish one of six. Units with
+  orders of their own, guards and your allies' units stay put, as in the original game,
+  which moves no idle unit. A factory's own new units, parked round it, now move again
+  only when they stand on its pad or hold up the next one out; at a Navy Yard too.
 - **Reclaimed trees and rocks fade out.** As in the original game, a reclaimed tree or
   rock turns into a white silhouette of itself that fades away over about a second,
   instead of vanishing at once.
