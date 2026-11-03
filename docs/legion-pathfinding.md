@@ -207,12 +207,20 @@ Each update a supported unit:
   runs along the wall, so the unit slides instead of pressing into it. Inside
   the flat zero-potential goal region, a member whose own goal is not in line
   steps to the legal neighbour that most reduces its distance to that goal.
-* **moves along the proven direction exactly.** The heading turns toward that
-  direction at the authored rate, and speed is capped while the body still
-  faces away from it (full speed within 22.5°, half within 67.5°, an eighth
-  otherwise). Because turning lag never moves the footprint off the proven
-  line, the units cannot orbit a waypoint, overshoot into terrain or rock on a
-  step. A lane-discipline pass (section 4) is exempt from the cap.
+* **moves along the proven direction exactly.** The heading (since
+  2026-10-28 the member's course, "Facing follows motion" below) turns toward
+  that direction at the authored rate, and a step that turns the course is
+  capped while the body still faces away from it (full speed within 22.5°,
+  half within 67.5°, an eighth otherwise). Because turning lag never moves
+  the footprint off the proven line, the units cannot orbit a waypoint,
+  overshoot into terrain or rock on a step. Since 2026-11-02 the cap is on
+  three steps only: one that turns the course, a plain mover's flow-around
+  shuffle (a body of a point with no formation assigned) and an attacker's in-reach press;
+  a lane-discipline pass, a side-step, a detour route of any length, a
+  formation member's shuffle and a press against a queue (section 4) keep
+  travel speed, and the body turns to its motion as it goes ("Blocked
+  bodies: speed, ahead, pressing" below). Until then every unturned step but
+  a pass, a long route and a formation member's shuffle crept at the eighth.
 
 The step is committed with `commitGroundStep(..., strictDiagonal=true)`, the
 authority Retail uses. An update's step that would change both origins at
@@ -319,13 +327,23 @@ stopped permille 288,524 to 288,538, Legion work flat.
   strictly reduces its distance still to go. The step is committed until the
   new cell is entered. It moves only along the axis whose origin changes,
   never back toward a cell centre, and it does not turn the body's course (at
-  travel speed the body faces its steps: "Facing follows motion" below); this is a shuffle. Speed follows the facing cap, except that a formation member on a
+  travel speed the body faces its steps: "Facing follows motion" below); this is a shuffle. Since
+  2026-11-02 no shuffle steps more than 90° behind the aim as given to `drive` (`aimDx`, `aimDz`): such
+  a step was a backward walk the next descent undid. A formation member on a
   move-like leg walks the shuffle at travel speed (`Member::detourFlow`, since
-  2026-10-19: "Flow-around at travel speed" below). A flat half-speed shuffle was
+  2026-10-19: "Flow-around at travel speed" below); a plain mover's shuffle (a body of a point with no formation
+  assigned, `formationMember` false) keeps the facing cap unless its target is still, because at travel speed it let the
+  rear of a plain crowd overtake its front at an obstacle and wedge the goal lattice of the acceptance
+  world groupdetour ("Blocked bodies: speed, ahead, pressing" below). A flat half-speed shuffle was
   measured to gridlock opposing columns, and at travel speed two allied armies
   meeting head on knot as well, so a member whose point is in a head-on meet, a
   body admitted through a narrow passage, a body that has gained nothing for a
-  crowd window, and fight, attack, guard and patrol legs keep the cap. If no such neighbour exists the unit
+  crowd window, and fight, attack, guard and patrol legs kept the cap until 2026-11-02; those
+  measurements predate the body turning to its motion, and with it none of those cases lost. If no such
+  neighbour exists, a unit on a leg that engages no enemies (not fight, attack, guard or patrol)
+  **presses** (since 2026-11-02): the free axis of its blocked step is walked at travel speed, unturned,
+  and the other stops at its origin cell's edge, when that moves it at least 1/16 px; otherwise, and at
+  the edge, the unit
   **holds**: speed zero, heading constant, no creeping. A held unit rechecks
   its candidate cells against occupancy every update. This is change-driven,
   since nothing moves until a cell frees, and it never triggers a re-plan, so
@@ -351,10 +369,11 @@ stopped permille 288,524 to 288,538, Legion work flat.
   footprint touches no still body. The target is its own goal if it is inside
   the window, otherwise the reachable cell that most reduces its distance to
   go, and only a gain of about two cells is committed. The route is walked
-  cell by cell without turning the course: at travel speed while 4 or more of
-  its cells are left (`kBriskRoute`; a move-like order only, a reach kind's
-  detour round its own ring keeps the shuffle), otherwise at the unturned
-  facing cap (an eighth of travel speed). It is attempted only when the
+  cell by cell without turning the course, at travel speed (since 2026-11-02
+  for its whole length; until then while 4 or more of its cells were left,
+  `kBriskRoute`, a move-like order only, and at the unturned facing cap of an
+  eighth otherwise). A reach kind's detour round its own ring keeps the
+  shuffle. It is attempted only when the
   blocking body will not move by itself (idle, arrived, trapped, or not a
   Legion mover), or when a formation member has been held for 60 updates in
   a standing jam of crossing lanes; never for a queue of members waiting on
@@ -4915,6 +4934,194 @@ group round a standing block): sideways steps 35 and 69 per 1,000 before, 9 and 
 keys); Retail's do not. The facing alone kept the seven `--mpai` gates on Inner Circle; the body's own stand window
 changes the three Legion ones (docs/release-0.9.11-validation.md).
 
+### Blocked bodies: speed, ahead, pressing (2026-11-02, protocol 310)
+
+The user's complaint of 2026-11-02: Legion units get stuck, slide and go backwards. The measured basis is
+docs/legion-deep-dive-2026-11-02.md (sections 3-6) and the per-fixture rows in
+docs/legion-deep-dive-2026-11-02-data.md; this section records what landed on worktree-pathfinding: the
+instrument 41fe26a2, three steering changes (a06d3f80, narrowed by c4933aa8 and 8dcb123f; 740f0bd9; 75925618,
+shaped by 8dcb123f and 6e8c1dd6), a still-turn fix 3b09f132, protocol 310 in 2913e751, three re-bounded tests
+(cc826274, 65bfe947, 9a089398) and three exact perf items of the dive's 6.3 (2a68a223, ad12c080, e95abe0d:
+hashes, observer keys and work counters byte-identical on 20 fixtures, serial == workers). The dive's fourth
+proposal, the near-level flow, was dropped (below). Legion only: Retail is bit-identical to 309. The scenario
+baseline (tools/scenarios/baseline.json) is not retaken in this range.
+
+**The instrument** (41fe26a2, observation only). Each member carries an unhashed `why` byte
+(`LegionNavigator::Why`, `steerWhy`, `Member::why`, `whyName`; 32 values, `none` among them): the mechanism
+of its last update, finer than `steerSite` -- the walk it was on (`steer`, `direct`, `pass`, `flow_first`,
+`flow_brisk`, `flow_cap`, `sidestep`, `room`, `corner`, `route_brisk`, `route_cap`, `press`, `yield`, `nudge`)
+or why it stood (`hold_movers`, `hold_rest`, `hold_settled`, `hold_admission`, `hold_detour`, `hold_ring`,
+`hold_livelock`, `hold_still`, ..., `wait`, `trapped`). The scenario observer (`tools/legion_observe.h`)
+attributes its statue ticks, sideways and backward steps, cell reversals and stopped samples to it
+(`why.<name>.ticks`, `.moved_ticks`, `.samples`, `.stopped`, `.statue`, `.sideways`, `.backward`,
+`.reversals`), report-only and gated by nothing. Never hashed, never read by a decision: with it alone every
+fixture's hashes and the Inner Circle Legion gate (a860707b7b4113e6) were unchanged.
+
+**The attribution** (deep dive 3.2: Legion, 64 fixtures, gate offsets). 98% of statue ticks (a step at or
+under an eighth of travel speed, unturned) were the facing cap's creeps: flow-around shuffles at the cap 80%,
+short detour routes at the cap 18%; Legion had 11x Retail's statue ticks over the 31 motion fixtures (158,708
+against 14,446) and densehead 56,289 against 611. 54% of backward steps were bodies walking a committed detour
+route out of a pocket at travel speed, unturned (the deliberate back-out, "Faster detours cost travel
+reversals" in Known weaknesses), and a further quarter flow-around shuffles (brisk, capped and first step).
+60% of stopped samples were a hold for a cell covered by a *moving* member of the body's own order (45%) or
+the rest stride of such a hold (15%): a queue of its own movers. Retail has the same queue and walks in place
+in it (corner-1x100: walk_in_place 54,084 ticks, stopped 1 permille), so what the player sees as "stuck" is
+mostly queue time Retail animates.
+
+**The changes as landed**, all in `drive` (its cap and its blocked branch):
+
+1. *An unturned step keeps travel speed* (a06d3f80, narrowed by c4933aa8 and 8dcb123f). The cap -- full
+   speed within 22.5 deg of the course, half within 67.5, an eighth beyond -- applies to a step that turns the
+   course (`face`) and to two unturned steps the guards singled out, below. An opposing side-step, a detour
+   route of any length, a formation member's shuffle and a press against a queue keep travel speed, as lane
+   passes, long routes and formation move shuffles (`Member::detourFlow`) already did; a move-like body turns
+   to its motion as it goes (the 2026-10-28 facing rule), and a fight, attack, guard or patrol leg's body
+   slides at speed unturned, its facing still serving its weapon. The cases that had kept the crawl
+   (crowdheld's packed lattice, a head-on meet, passage admission, a body stalled a crowd window) were all
+   measured before the body turned to its motion; with the facing in place none of them lost (crowdheld
+   keeps its ratchet, gen1-route-61923 is unchanged, the bridges arrive sooner). Alone over the suite: statue
+   ticks -99% on 60 fixtures (0 worse), t90 8 better / 2 worse (bridges-100 -19%, densehead -14%,
+   taperbridge-100 -7%; motion-cross-100 +5%), done 13 / 4; on real terrain t90 4 / 0. `detourFlow` and the
+   `brisk` flag remain to name the why tag and for a pass that faces its step.
+   *The narrowing* (c4933aa8). The acceptance world groupdetour (64 bodies with distinct goals on a lattice
+   beyond a block, `ctest:legion_acceptance_group_legion`) settled 45 of 64 instead of 64: at travel speed a
+   plain mover's flow-around shuffle let the rear of the crowd overtake its front at the block, the near goals
+   settled first and boxed the lattice's entrance in, and the yields the boxed-out bodies asked for were refused
+   (no free cell to part into) -- the yield mechanism opens a lane through standing bodies, not a sealed
+   entrance. In crowdtrap the bodies shuffling about the crowd read as spinning
+   (`ctest:legion_acceptance_crowdheld_legion`, spin_while_crowd_held 0 -> 47). Bisected per kind with a
+   scratch toggle: routes, side-steps, room moves, nudges and a formation member's shuffles (stalled or not) at
+   speed keep 64 / 64 and spin 0; only the plain mover's shuffle breaks both. So a flow-around step of a body of a point
+   with no formation assigned (`plainFlow`) keeps the rule of before: brisk round a still target, the cap
+   otherwise. The in-reach press (`pressIn`) keeps the cap of before too (8dcb123f): at travel speed its braked
+   bodies glided past reach and pressed again from the same origin (`ctest:legion_pressin`).
+2. *A flow-around shuffle never steps behind its aim* (740f0bd9): a free neighbour more than 90 deg from the
+   aim as given to `drive` (`aimDx`, `aimDz`) is not an option. Such a step was a backward walk at travel
+   speed that the next descent undid. A body with no option ahead holds, and the hold's ways out run. Alone
+   over the suite: t90 5 / 0 (bridges-100 -15%, densehead -9%, taperbridge-100 -5%), done 7 / 3, reversals
+   29 better / 9 worse, backward 27 / 9, sideways 26 / 4. Two variants were measured when the stuck bases of
+   `ctest:legion_landedflyers` moved (cc826274): a backward option ranked last instead of skipped (foot-3
+   stuck 501 against 731, but over the suite reversals 7 better / 32 worse and backward 7 / 31:
+   taperbridge-100 reversals 692 -> 1,438, ringcross-100 backward 433 -> 891) and the course instead of the
+   aim (834); neither kept the suite's gains.
+3. *A body blocked by bodies presses on* (75925618, shaped by 8dcb123f and 6e8c1dd6). With no flow-around and
+   no corner clip, on a leg that engages no enemies, the blocked proposal is clamped per axis as Retail's mover
+   clamps its own (`edge`): the free axis is walked and the other stops at the body's own origin cell's edge,
+   when that moves the body at least 1/16 px (`WhyNudge`); the nudge is an unturned step (`face=false`) like a
+   side-step. A queued body closes on the one ahead and slides along a file; at the edge it holds, and the
+   hold's ways out (side-step, detour, yield, room at a merge) run as before. Not for a livelocked body. Alone
+   over the suite: standing 52 fixtures better / 0 worse (-25% median), t90 10 / 5 (densehead,
+   doorplug100-124, doubleturn, pocket-304-wall, wall-1x48 -5 to -8%; corner-8x56 +8%, motion-wall +8%), done
+   13 / 6; on real terrain standing -30% on all 13.
+   *The ring restriction* (8dcb123f). At attack rings, fights and guard rings the nudges were the creep the
+   round-4 and round-5 ring work had removed: attackring-wall-64 statue ticks 62 -> 1,781, attackring-guard-64
+   0 -> 4,944, attackring-fight-diag-60 -> 1,477 (`ctest:legion_ringroutespeed`, `ctest:legion_guardstill`,
+   `ctest:legion_fightshuffle`), and the mixed ring's damage fell under `ctest:legion_ringshadowmixed`'s floor
+   (984 at offset 2). So fight, attack, guard and patrol legs hold as before (`engagesEnemies`).
+   *The press-in wait* (6e8c1dd6). With the queued attackers' shuffles at travel speed, a body walking through
+   the neighbouring origin a press was stepping into blocked the step a cell short of its point; the press was
+   dropped, the body walked back to its spot's centre out of reach, held, and pressed again from the same
+   origin once the mover had passed -- the in/out shuffle `ctest:legion_pressin` guards (one repeat at
+   attackring-wall-64 offsets 2 and -1; main had none). A press now waits while every body on its point's
+   origin is a member on the move (`pressWaits`), bounded by `kPressTicks` like the walk, and a press that
+   ended in reach is no repeat's origin (`pressEnd`): repeats 0 at all 11 gate offsets, in reach at the end
+   within 1 of before at every offset, damage within 4.
+
+**The dropped near-level flow** (the dive's proposal 4: a blocked field follower may step to a free neighbour
+at most one orthogonal step uphill, not behind its aim, sorted after every real descent, the way back barred
+for 60 holds as after an arc step). Its own sweep was the mixed one (t90 10 / 2, done 8 / 8, standing 18 / 8,
+reversals +1% at 20 / 31, taperbridge-small +9%, `deadend-w2-n40-room-plain:g.A.done` complete where main
+never did), and most of the corner t90 gains of the dive's all-four were its. The spreading it bought is
+bodies leaving their file, and the W9 lane-order keys ("Lane order, walls and reversals at ~100 bodies" in
+Known weaknesses) counted it: `corner-1x448:gate.top.crossings` 36 -> 285 alone and 550 with the other three
+(Retail 5), `corner-8x56:gate.top.crossings` 9 -> 164 / 322 (Retail 10), `corner-4x50:gate.top.crossings`
+6 -> 102 / 129, corner-1x100 5 -> 85 / 168 (Retail 5), `slowturn:gate.topC400.crossings` 3 -> 14 -- ten
+times the crossings the ribbon and pinwheel work had brought down -- and `ctest:legion_ribbon` (sbend's
+second turn in single digits) failed with it, as did `ctest:legion_crowdhold` (the held crowd oscillated),
+`ctest:legion_quota` (arrived 63) and `ctest:legion_traffic` (scatter-400: 355 of 400 arrived and 45
+stuck at the end, against 380 and 10); all four pass without it. With the three that landed the corners'
+crossings are at or under main's (corner-1x448 36 -> 17). What it was for, a crowd spreading over the free
+width beside an obstacle, stays with the density-aware descent below.
+
+**Measured** (the final steering's sweep against main's, both at the gate offsets; counts are fixtures of 64
+whose median moved by more than 3%, "never" counts as worse than any number; the sweep is identical to
+9a089398 on every key but the press-in fix's ring fixtures, which moved nothing in the suite):
+
+| key | better | same | worse | median | with the press's nudges taken out (`why.nudge.*`) |
+|---|---|---|---|---|---|
+| t90 | 18 | 43 | 3 | -1% | |
+| done | 22 | 36 | 6 | 0% | |
+| stopped permille | 45 | 17 | 2 | **-27%** | |
+| statue ticks | 19 | 4 | 41 | +59% | 58 / 3 / 3, **-99%** |
+| sideways | 16 | 5 | 43 | +16% | 41 / 12 / 11, -7% |
+| backward | 22 | 9 | 33 | +3% | 40 / 10 / 14, -11% |
+| reversals | 32 | 7 | 25 | -2% | |
+
+t90 gains over 5% (11): bridges-100 10,248 -> 8,345, corner-4x50 3,647 -> 3,442, densehead 2,882 -> 2,432,
+doubleturn 2,493 -> 2,252, gap10 2,162 -> 2,039, island-1x150 1,663 -> 1,578, pocket-304-wall 6,595 -> 5,808,
+strait-2x48 1,877 -> 1,762, taperbridge-100 9,010 -> 8,353, wall-1x48 2,124 -> 1,982, wall-4x50 1,934 ->
+1,802. One loss over 5%: motion-wall 2,633 -> 2,962 (+12%, `motion-wall:click.u00.t90`; one body along a
+wall, where a nudge into the edge delays the next hold's detour by the hold's back-off -- the 1/16 px floor
+and the hold clock are the knobs, neither tuned). No fixture fell under the Retail floor (a Legion t90 at or
+better than Retail's never became worse than Retail's). The nudges count as statue, sideways and backward
+steps in the observer (a few pixels at a time), which those keys cannot tell from a creep; the nudge-free
+column subtracts `why.nudge.statue`, `.sideways` and `.backward` per fixture, and a key of the press's own is
+a follow-up before it is gated by them. The lane keys: `densehead:gate.mid.crossings` 14 -> 94 (Retail 184)
+is the one that rose, with island-1x100's blocked lane crossings 7 -> 17 (Retail 0); the corners' pass-filter
+holds fall (corner-1x100 2,571 -> 307, corner-4x50 9,038 -> 2,190, doubleturn 2,050 -> 227). After the
+change the attribution over the suite reads: statue ticks 97% nudges, 2% the plain mover's capped shuffle,
+1% the in-reach press (the cap's creeps are gone); backward steps 63% detour routes (the deliberate
+back-outs, now walked facing the way) and 17% nudges; reversals spread over routes (28%), steer (27%),
+nudges, direct lines and brisk shuffles (8% each); of what stands, 61% is a hold for movers of its own
+order and 15% the rest stride of one. The Inner Circle Legion `--mpai` game runs clean; its hash moves.
+
+**The guards.** The dive's sweep judged arrival first and found no fixture under the Retail floor, and that
+held for the landed set; what it did not see was lane order, arrival order and the rings, which the suite's
+guards did: of `ctest -L legion` on the original four, 14 tests failed (listed in the dive's section 7), each
+resolved by a narrowing above, by dropping the near-level flow, or by a re-bound for a standing-only move
+with arrival better. `ctest:legion_landedflyers` (cc826274): the stream of 40 ground bodies past the landed
+flyers threads them faster and stands less in all (ticks 2,207 -> 2,162 / 2,162 -> 1,837 at foot 2 / 3,
+ordered bodies standing anywhere 9,820 -> 6,604 / 5,027 -> 2,795), but its queue heads now wait at the
+cells next to a flyer, which the test's "stuck" counts (every stuck tick a `hold_movers`: a merge head
+waiting for a file passing at travel speed); stuck bases 1,570 -> 1,950 and 230 -> 680, arrival bounds
+unchanged. `ctest:legion_cornermerge` (65bfe947): corner-1x100 at offsets 0, 1, -1 arrives 3,512 / 3,737 /
+3,487 (before 3,759 / 3,827 / 3,737) and stands 160 / 193 / 159 permille (236 / 219 / 218), and at offset 1
+the last three bodies of the corner wedge, which used to creep at the cap and read as moving, stand 991-1,098
+ticks for their own file ahead: still900_ever 0 -> 3, the rest unchanged. `ctest:legion_mixedformation`
+(9a089398): one 30-tick window of 712 in which the patrol's return front crawled 11 px (0.37 px a tick, its
+leaders turning at the patrol point) and a flyer holding over it flew 4.1 px against the 4.4 asked; the
+keep-up windows now start at a 12 px march (under 0.4 px a tick the front is turning, not marching), the lead
+measurement keeps its 9 px floor. `ctest:legion_stillturn` (3b09f132): a face step whose course, turned
+toward the aim, landed exactly on the heading the body already had requested the aim's turn (1,680 BAM) and
+walked the gait's TurnDirection on a step that turned nothing; `faceMotion`'s snap returns 0 when it changes
+nothing (display only, `turnReqBam` is never hashed): unturned_turn 1 -> 0 in 122,737 steps.
+
+**What remains.** Three quarters of what still stands is queues of own movers (`hold_movers` and its
+`hold_rest`): the same queue Retail has, shown as a stand instead of a walk in place; the press closes the
+gaps in it but does not shorten it. The lattice wedge the narrowing avoided is a general limit: when a change
+alters a crowd's arrival order so that near goals settle before far ones, the yield mechanism cannot open an
+entrance the settled bodies have sealed (a yield parts a lane through bodies with somewhere to go), so any
+later speed change for plain movers has to be judged on `ctest:legion_acceptance_group_legion` first. The
+dive's structural option for the queues is a density-aware descent: a soft charge in the group field for
+cells covered by the group's own moving members (the field already charges other orders' standing bodies and
+awareness corridors), refreshed on the existing demand path under `kRefreshQuota`, so a crowd spreads over
+the free width by the field itself instead of by the special cases ("Room at a merge", the ribbon, the
+passage lanes) and the near-level flow's lane crossings do not come with it -- the open item "nothing spreads
+a crowd across the free width beside an obstacle"; its risk is a refresh that keeps moving the file. Behind
+it: a continuous blocked step (no cell commitment for shuffles, re-measurable now that the reasons it lost in
+2026-10-05 are gone), a queue head given the next lane out when the member it waits for is itself held past
+kRoomHeld, and a walk-in-place animation for a held body whose blocker moves (display only). Not changed
+here: a passage admission queue still waits by design, rings and melees keep their holds (and their press
+keeps its cap), trapped orders retire after five minutes, and the ring figures in Known weaknesses predate
+this section. Measured by `densehead:g.A.t90`, `densehead:stopped_permille`, `densehead:reversals`,
+`densehead:gate.mid.crossings`, `pocket-304-wall:g.A.t90`, `motion-wall:click.u00.t90`,
+`corner-1x448:gate.top.crossings`, `taperbridge-100:statue_ticks`, `taperbridge-100:backward`,
+`attackring-wall-64:statue_ticks`, `attackring-guard-64:statue_ticks`, the `stopped_permille`,
+`statue_ticks`, `backward` and `reversals` keys of tools/scenarios/legion100/corner-1x100.scn and
+bridges-100.scn, and `ctest:legion_acceptance_group_legion`, `ctest:legion_acceptance_crowdheld_legion`,
+`ctest:legion_pressin`, `ctest:legion_ringroutespeed`, `ctest:legion_ribbon`, `ctest:legion_stillturn`,
+`ctest:legion_landedflyers`, `ctest:legion_cornermerge` and `ctest:legion_mixedformation`.
+
 ### Legion 10,000: where the program left it
 
 docs/legion-10000-report.md gives the measured result against the starting revision c2c25707:
@@ -5049,7 +5256,14 @@ Rules that came out of using them:
   `doorplug-112:wall_touch_permille`, `ringcross:g.M.t90`,
   `doorplug-124:g.A.done`, `motion-cross:click.u01.done` and
   `ctest:legion_liftflyers`.
-* **Faster detours cost travel reversals (2026-10-19).** A local detour
+* **Faster detours cost travel reversals (2026-10-19).** The numbers in this
+  entry predate 2026-11-02 ("Blocked bodies: speed, ahead, pressing"): since
+  then every detour route, side-step, formation shuffle and press is walked
+  at travel speed and the body turns to its motion, no shuffle steps behind
+  its aim, and over the suite at the gate offsets reversals are -2% at the
+  median (32 fixtures better / 25 worse), backward steps -11% with the press's
+  nudges taken out, standing -27%; a route's back-out of a pocket, 63% of what
+  is left of backward steps, now reads as a turn and walk. A local detour
   route with 4 or more cells left is walked at travel speed, unturned (the
   departure fix above), so a body that takes a detour and then rejoins its
   field turns its travel direction round more often: travel reversals over
@@ -5119,7 +5333,11 @@ Rules that came out of using them:
   straight at a spot beyond the yard wall and braked flush in the corridor's mouth (attackring-gatehouse-40: 16 ever
   in reach and 320 damage over the gate offsets against Retail's 29 and 584; fixed by round 6, "Round 6 landed
   together"); a ring across a river stands 17 in reach against Retail's 21 ever and 14 now; statue ticks stay a few
-  times Retail's (presses toward reach keep the facing cap), wall touch is near Retail's on wall-100 (20 permille against
+  times Retail's (presses toward reach keep the facing cap, since 2026-11-02 as one of the three capped steps; the
+  press against a queue of that date is off fight, attack, guard and patrol legs, so of the 2026-11-02 changes only
+  the queued attackers' shuffles and routes at travel speed touch the rings -- `attackring-wall-64:statue_ticks` 62
+  -> 122 over the gate offsets -- and the press-in wait of 6e8c1dd6 keeps attackring-wall-64 in reach at the end
+  within 1 and damage within 4 of before at every gate offset, repeats 0), wall touch is near Retail's on wall-100 (20 permille against
   17) and above it by the box's walls and the gatehouse (wall-64 32 against 20, gatehouse 78 against 68). (These
   ring figures were measured on task-l4-ringwall alone. Merged with the fight track, its still-window rule stopped
   the queue short of the shadow, and wall-64 fell to 35 ever in reach. Since task-l4-fixring the members walls stand in the way of

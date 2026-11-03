@@ -5,7 +5,7 @@ shipped). It superseded the 2-player peer-to-peer lockstep (`net::Session`,
 since removed; `src/net/lockstep.h` is now header-only); the deterministic-sim
 substrate underneath it is kept. Sections 1-12 are the original design, kept as
 written apart from short notes where it has since moved on; the later sections
-and the protocol history (to protocol 309) describe the
+and the protocol history (to protocol 310) describe the
 current engine.
 Notable changes since the v1 design: single-player runs a private local
 `takserver` (`--local --no-auth`) instead of in-process AI
@@ -1194,6 +1194,15 @@ it plays with neither 0.9.15 nor any earlier version, nor their replays. 0.9.17 
 309 (interface changes only), so it plays with 0.9.16 and its replays, and so does
 0.9.18 (build clean-up only).
 
+Protocol 310 changes Legion steering only, hashed (docs/legion-pathfinding.md, "Blocked
+bodies: speed, ahead, pressing"): an unturned step keeps travel speed except a plain
+mover's flow-around shuffle and the in-reach press, a flow-around shuffle never steps
+behind its aim, and a body blocked by bodies on a leg that engages no enemies presses on
+instead of stopping dead. Retail is bit-identical to 309. Nothing on the wire changes;
+replay format 15 is unchanged; 309 replays are refused (a 309 peer would desync in a
+Legion game, and a 309 replay would play differently). It follows 0.9.18 and is in no
+release yet.
+
 Protocol 258 adds the room's ALLOW SPECTATORS rule and changes only the lobby
 wire: `GameOptions.allowSpectators` (u8, default 1) follows the pathfinder byte
 in `CreateGame`, `SetGameOptions`, `LobbyState` and `GameStarting`, and each
@@ -1483,6 +1492,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Versions 0.9.18, 0.9.17 and 0.9.16 (peers and server) require protocol 309; 0.9.15 and 0.9.14 required 308; 0.9.13 required 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Protocol 310 (Legion steering, 2026-11-02) follows 0.9.18 and is in no release yet; versions 0.9.18, 0.9.17 and 0.9.16 (peers and server) require protocol 309; 0.9.15 and 0.9.14 required 308; 0.9.13 required 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions remain fixed to Retail.

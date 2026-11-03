@@ -453,6 +453,66 @@ ordinary play.
 
 ## 7. How a landing would go
 
+**Landed** (branch worktree-pathfinding, 2026-11-02, protocol 310 in 2913e751; Retail bit-identical, replay
+format 15 unchanged, 309 replays refused). The `why` instrument 41fe26a2 (observation only, hash-neutral),
+this document 48022dd9, then the proposals of 6.1 as the guards reshaped them: a06d3f80 (no facing cap on
+unturned steps), 740f0bd9 (no flow-around step behind the aim), 75925618 (the press), 8dcb123f (the press
+only on legs that engage no enemies, as an unturned step; the in-reach press keeps its cap), c4933aa8 (a
+plain mover's flow-around shuffle keeps its old speed rule), 6e8c1dd6 (a press blocked by a body walking
+through waits for it), 3b09f132 (a face step that turned nothing requests no turn), the exact perf items 4,
+1 and 2 of 6.3 as 2a68a223, ad12c080 and e95abe0d, and three re-bounded tests cc826274, 65bfe947, 9a089398.
+The design doc's section "Blocked bodies: speed, ahead, pressing" records the landed shape and its sweep.
+
+*Dropped: proposal 4, the near-level flow.* Its lateral spreading is bodies leaving their file, and the W9
+lane-order keys counted it: corner-1x448's top-gate crossings 36 -> 285 alone and 550 with the other three
+against Retail's 5 (corner-1x100 5 -> 85 / 168, corner-8x56 9 -> 164 / 322, corner-4x50 6 -> 102 / 129,
+slowturn's 400-body gate 3 -> 14), ten times what the ribbon and pinwheel rounds had brought down; with the
+three that landed the corners are at or under main's (corner-1x448 17). Its t90 gains at the corners go with
+it; the final sweep keeps 18 fixtures better / 3 worse on t90 against main (the all-four's 25 / 2), standing
+-27% (-34%), the nudge-free statue ticks -99% on 58 of 64, and motion-wall +12% as the one loss over 5%.
+
+*Narrowed: proposal 1.* A plain mover's flow-around shuffle (a body of a point with no formation assigned) keeps the cap
+unless its target is still: at travel speed it let the rear of a plain crowd overtake its front at an
+obstacle, and in the acceptance world groupdetour the near goals settled first and boxed the lattice's
+entrance in, 45 of 64 settled instead of 64, the yields refused for want of a free cell; crowdtrap's bodies
+shuffling about the crowd read as spinning (spin_while_crowd_held 0 -> 47). Bisected per kind: routes,
+side-steps, room moves, nudges and a formation member's shuffles at speed keep 64 / 64 and spin 0. The
+in-reach press keeps its cap: at travel speed its braked bodies glided past reach and pressed again.
+*Restricted: proposal 3.* The press is for legs that engage no enemies and is an unturned step: at attack,
+fight and guard rings its nudges were the creep the round-4 and round-5 work removed (attackring-wall-64
+statue ticks 62 -> 1,781, attackring-guard-64 0 -> 4,944, attackring-fight-diag-60 -> 1,477). A press into a
+body walking through its point waits for it (the press-in repeat of legion_pressin).
+
+*What the guards caught.* The sweep's rule held -- no fixture fell under the Retail floor, before or after
+the reshaping -- but its headline keys (arrival, standing, statue, backward, reversals) do not see lane
+order, arrival order or a ring's reach, and `ctest -L legion`, the acceptance worlds and the W9 lane-order
+keys do. On the original four, 14 Legion tests failed:
+
+| test | failure on the four | resolved by |
+|---|---|---|
+| legion_ribbon | sbend's second-turn crossings out of single digits | dropping the near-level flow |
+| legion_crowdhold | the held crowd oscillated (reversals 26) | dropping the near-level flow |
+| legion_quota | the quota world arrived 63 | dropping the near-level flow |
+| legion_traffic | scatter-400: 355 of 400 arrived, 45 stuck at the end (bounds 380, 10) | dropping the near-level flow |
+| legion_acceptance_group_legion | groupdetour arrived_settled 63 (45 without the near-level flow) | c4933aa8, the plain mover's shuffle keeps its cap |
+| legion_acceptance_crowdheld_legion | crowdtrap spin_while_crowd_held 64 (47), a body terrain-stuck | c4933aa8 |
+| legion_ringroutespeed | attackring-wall-64 statue ticks 62 -> 1,781 | 8dcb123f, no press on engaging legs |
+| legion_guardstill | attackring-guard-64 statue ticks 0 -> 4,944 | 8dcb123f |
+| legion_fightshuffle | attackring-fight-diag-60 statue ticks -> 1,477 | 8dcb123f |
+| legion_ringshadowmixed | attackring-wall-mixed-56 damage_end 984 at offset 2, median under 1,330 | 8dcb123f |
+| legion_pressin | reach_press_repeats 1 at attackring-wall-64 offsets 2 and -1 | 6e8c1dd6, the press waits for a body walking through; a press ended in reach is no repeat's origin |
+| legion_stillturn | unturned_turn 3 in 122,721 steps (1 after the reshaping) | 3b09f132, the snap requests no turn when it changes nothing |
+| legion_landedflyers | stuck 2,095 / 432 against bases 1,570 / 230 | cc826274, bases 1,950 / 680: every stuck tick a hold for own movers beside a flyer, arrival and standing-anywhere better |
+| legion_mixedformation | one patrol flyer stalled in 704 keep-up windows | 9a089398, keep-up windows start at a 12 px march (was 9): the front was turning at 0.37 px a tick |
+
+legion_cornermerge was re-bounded on the final rules (65bfe947): corner-1x100 arrives sooner and stands less
+at offsets 0, 1, -1 (t90 3,512 / 3,737 / 3,487 against 3,759 / 3,827 / 3,737; stopped 160 / 193 / 159
+against 236 / 219 / 218), and the last three bodies of the corner wedge at offset 1, which used to creep at
+the cap and read as moving, stand 991-1,098 ticks for their own file: still900_ever 0 -> 3. The scenario
+baseline retake (step 2's licence per moved key) is not in the branch.
+
+The plan as written before the landing:
+
 1. Land the `why` instrument on main as observation (it is hash-neutral; `legion_doc_links` and the
    baseline are untouched because `why.*` keys are not gated). It makes every later round
    attributable.

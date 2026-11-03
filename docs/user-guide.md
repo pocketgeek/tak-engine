@@ -1651,8 +1651,14 @@ measurements](legion-pathfinding.md)):
 - **Going round obstacles.** Groups route round parked crowds of units and round
   landed flyers instead of pushing into them. Your own and your allies' idle
   units step aside to let a group through, so a group can leave a place where
-  another army has just arrived. Formation units flow round a rock, a wall end
-  or a block of idle units at their travel speed instead of creeping sideways.
+  another army has just arrived. Units in a formation flow round a rock, a
+  wall end or a block of idle units at their travel speed, facing the way they
+  go, instead of creeping sideways; a unit backing out of a jam turns round and
+  walks; a unit queued behind its own army on a move order closes up on the
+  one ahead and slides along the file instead of stopping dead. A unit
+  moving outside a formation still edges round an obstacle slowly, and units on
+  an attack, guard or patrol order keep facing their target and wait in their
+  queue as before.
 - **Unreachable orders end where the unit stops.** Ordered to a place it cannot
   reach, a unit walks to the nearest spot it can reach, and its order ends there,
   so it is free for the next one at once. Units queued behind their own army end
