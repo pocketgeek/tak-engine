@@ -28,9 +28,10 @@ table below).
    backward steps a further 10-20% on the corner fixtures.
 4. **Stuck** is standing in a queue of its own movers: 45% of all stopped samples are bodies holding
    (speed 0) for a cell that another moving member of the same order covers, another 15% the rest
-   stride of such holds, 5% passage admission. Retail never stands (its stopped permille is 1 on these
-   fixtures) because its mover keeps walking on the spot (walk_in_place 54,084 ticks on corner-1x100
-   against Legion's 0): the queue is the same, Retail just animates it. The real losses to a player are
+   stride of such holds, 5% passage admission. Retail's stopped permille is 1 on these fixtures only
+   because its refused mover keeps an internal speed above 0; its gait stands in the queue as Legion's
+   does (corrected 2026-11-03, see 3.2: an earlier reading here said Retail walks on the spot). The
+   queue is the same in both. The real losses to a player are
    the orders that never complete, and those are at passage mouths (bridges, taperbridge), dead-end
    rooms and the corner funnel: Legion's known weaknesses, where the fixture suite agrees with the
    player. Two scratch changes help the queues themselves: pressing on along the free axis up to the
@@ -156,10 +157,19 @@ Readings:
   oscillates where Legion commits).
 * **Stuck = queues.** 60% of stopped samples are holds for a cell covered by a *moving* member of
   the same order (plus its rest stride). The hold is a full stop by design ("no creeping, no
-  re-aiming; the body wakes when a cell frees"). Retail's mover never stops: its blocked body clamps
-  per axis and walks in place (corner-1x100: walk_in_place 54,084 ticks, stopped 1 permille). So the
-  "stuck" the player sees in Legion is the same queue Retail has, shown as a statue instead of as a
-  walking animation; the user judged on 2026-10-20 that standing is cosmetic whenever arrival matches
+  re-aiming; the body wakes when a cell frees"). Retail's blocked body clamps per axis and slows to
+  half and then a fifth of its speed, but keeps a speed above 0, which is why its stopped permille
+  reads 1 (corner-1x100). It does not walk in place: GET 29 (4dc100) answers 0 once the body has been
+  refused twice (`bodyBlockStreak` >= 2), the walk controllers (VERMAGE's `MoveWatcher`: moving is
+  GET 29 > 5) stop the gait, and the client stands it too (`movementRefused`). *Correction
+  (2026-11-03, Legion round 2, item 1):* this dive first read the observer's `walk_in_place` (54,084
+  ticks for Retail on corner-1x100, 61,070 at protocol 310) as Retail walking in place; that key
+  counts speed > 0 without headway, so for Retail it counts the hidden internal speed, not the gait.
+  The gait key `walk_net` (GET 29 > 5 without headway) is 0 for Retail on corner-1x100, corner-4x25,
+  gap10/gap20, swap-100 and doorplug-*, and a scratch key counting GET 29 > 5 after 16 ticks without
+  headway read 0 in both modes on corner-1x100, corner-4x50, densehead and gap10-100. So the "stuck"
+  the player sees in Legion is the same queue Retail has, and Retail shows it standing as well; the
+  user judged on 2026-10-20 that standing is cosmetic whenever arrival matches
   or beats Retail. It does on the suite. The queue's cost is throughput at funnels: corner-1x100's
   queue head waited 1,100-1,500 ticks before round 4's "room at a merge" (now ~300-400).
 * **Where orders really do not complete** (Legion `done` = never, Retail too in most): the attack
@@ -397,6 +407,10 @@ melees keep their holds, trapped orders still retire after five minutes.
   alive because the gait keeps walking. Legion zeroes GET 29 for a standing body (the livelock
   work made standing honest). A compromise is an idle "shuffle" animation state for Holding bodies
   with a mover ahead that is itself moving. Cosmetic, but it is the literal thing the player sees.
+  *Declined (2026-11-03, Legion round 2, item 1):* the premise is wrong -- Retail's gait stands in
+  the queue too (GET 29 is 0 after two refusals; 3.2) -- and it would not be display only: GET 29
+  and MoveRate feed the gameplay COB threads, which run in World and are hashed, and GET 29 gates
+  VERMAGE's AimWeapon through `MoveWatcher`.
 
 ### 6.3 Faster (exact: identical outcomes and hashes)
 
@@ -446,7 +460,7 @@ ordinary play.
 * Do not re-run the eleven accepted W9 gates as a goal: each attempt in 2026-10 broke more than it
   fixed, and the owner closed them.
 * Do not tune by standing permille: the owner ranks arrival first; the "stuck" the player sees is
-  mostly queue time that Retail hides behind a walking animation.
+  mostly queue time, which Retail shows standing as well (3.2, corrected 2026-11-03).
 * Do not change the cap for fight / attack / guard / patrol legs in the same step: their facing
   serves their weapons and their rings were tuned with the creep (round 4 gave fight legs speed and
   kept the cap for the rest on measurement).

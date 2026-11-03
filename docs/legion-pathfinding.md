@@ -4966,9 +4966,13 @@ against 14,446) and densehead 56,289 against 611. 54% of backward steps were bod
 route out of a pocket at travel speed, unturned (the deliberate back-out, "Faster detours cost travel
 reversals" in Known weaknesses), and a further quarter flow-around shuffles (brisk, capped and first step).
 60% of stopped samples were a hold for a cell covered by a *moving* member of the body's own order (45%) or
-the rest stride of such a hold (15%): a queue of its own movers. Retail has the same queue and walks in place
-in it (corner-1x100: walk_in_place 54,084 ticks, stopped 1 permille), so what the player sees as "stuck" is
-mostly queue time Retail animates.
+the rest stride of such a hold (15%): a queue of its own movers. Retail has the same queue and stands in it
+too: its refused mover keeps an internal speed above 0 (so its stopped permille reads 1 on corner-1x100), but
+GET 29 answers 0 once it has been refused twice (`bodyBlockStreak` >= 2), so its gait stops. *Corrected
+2026-11-03 (Legion round 2, item 1):* this paragraph first said Retail walks in place in the queue, reading
+the observer's `walk_in_place` (corner-1x100: 54,084 ticks); that key counts speed > 0 without headway, which
+for Retail is the hidden internal speed, not the gait (`walk_net`, the gait key, is 0 there). What the player
+sees as "stuck" is queue time in both modes.
 
 **The changes as landed**, all in `drive` (its cap and its blocked branch):
 
@@ -5111,7 +5115,7 @@ walked the gait's TurnDirection on a step that turned nothing; `faceMotion`'s sn
 nothing (display only, `turnReqBam` is never hashed): unturned_turn 1 -> 0 in 122,737 steps.
 
 **What remains.** Three quarters of what still stands is queues of own movers (`hold_movers` and its
-`hold_rest`): the same queue Retail has, shown as a stand instead of a walk in place; the press closes the
+`hold_rest`): the same queue Retail has, and Retail stands in it as well (corrected 2026-11-03, above); the press closes the
 gaps in it but does not shorten it. The lattice wedge the narrowing avoided is a general limit: when a change
 alters a crowd's arrival order so that near goals settle before far ones, the yield mechanism cannot open an
 entrance the settled bodies have sealed (a yield parts a lane through bodies with somewhere to go), so any
@@ -5124,7 +5128,8 @@ passage lanes) and the near-level flow's lane crossings do not come with it -- t
 a crowd across the free width beside an obstacle"; its risk is a refresh that keeps moving the file. Behind
 it: a continuous blocked step (no cell commitment for shuffles, re-measurable now that the reasons it lost in
 2026-10-05 are gone), a queue head given the next lane out when the member it waits for is itself held past
-kRoomHeld, and a walk-in-place animation for a held body whose blocker moves (display only). Not changed
+kRoomHeld, and a walk-in-place animation for a held body whose blocker moves (declined in round 2, item 1:
+Retail stands in its queues, and GET 29 drives hashed COB threads, so it would not be display only). Not changed
 here: a passage admission queue still waits by design, rings and melees keep their holds (and their press
 keeps its cap), trapped orders retire after five minutes, and the ring figures in Known weaknesses predate
 this section. Measured by `densehead:g.A.t90`, `densehead:stopped_permille`, `densehead:reversals`,
@@ -5135,6 +5140,110 @@ this section. Measured by `densehead:g.A.t90`, `densehead:stopped_permille`, `de
 bridges-100.scn, and `ctest:legion_acceptance_group_legion`, `ctest:legion_acceptance_crowdheld_legion`,
 `ctest:legion_pressin`, `ctest:legion_ringroutespeed`, `ctest:legion_ribbon`, `ctest:legion_stillturn`,
 `ctest:legion_landedflyers`, `ctest:legion_cornermerge` and `ctest:legion_mixedformation`.
+
+### Allies swap places (2026-11-03, Legion round 2, protocol 311)
+
+Round 2 prototyped seven ideas for the queues and passages round 1 left (docs/legion-deep-dive-2026-11-02.md
+section 6), each behind a scratch toggle in its own worktree, judged against the round's bar: arrival first (t90 and
+done on the 64-fixture suite against main 793510f3, no fixture under the Retail floor), then every Legion guard
+(`ctest -L legion`, `ctest:legion_choke`, the acceptance worlds, the lane-order keys), Retail bit-identical. One
+landed: allies swap places (8ab9c67e, its proving test `ctest:legion_swap` 5e220572, protocol 311). Legion only:
+every Retail hash@ at every gate offset is unchanged.
+
+**The change** (`swapPartner`, `swapBodies` in src/sim/legion.cpp). Tried first in `drive`'s blocked branch,
+before any way round: when this body's blocked step is covered by exactly one other body of an allied player,
+that body's route (else the line to its own goal) descends into this body's origin and this body's into its,
+their courses are at least 90 deg apart (`kSwapAngle`) and the other body's course points at this one (within
+67.5 deg), the two trade places in one exact step -- positions, occupancy, ground stamps and body index. Both must
+have one footprint and one plane (each footprint then lands exactly on the cells the other leaves, so no
+legality question arises), both must be on move legs (the press's restriction: no fight, attack, guard or patrol
+leg, no exact or exit-clear mission leg), and neither may be settled, engaged, trapped, approaching, livelocked,
+parting, pressing in or walking a route. A body that swapped does not swap again for 45 ticks (`kSwapCool`). The
+swap ticks (`swapTicks`) are folded into the navigator's checksum and carried by `World::clone`; `Stats::swaps`
+counts the swaps (`work.swaps`). Integer only. What it fixes: two opposing streams of one side that meet head on
+in a one-body lane, where neither has a way round, gridlocked a bridge (the bistable meet of round 1's
+`bridges-1000` numbers above).
+
+**Measured** (-O2, against main 793510f3):
+
+* `bridges-1000` (two allied armies of 500 crossing a river in opposite directions over three bridges), arrived /
+  stuck at the end at seven offsets:
+
+  | offset | 0 | +1 | -1 | +2 | -2 | +3 | -3 | median |
+  |---|---|---|---|---|---|---|---|---|
+  | main | 965 / 0 | 643 / 255 | 641 / 208 | 558 / 279 | 741 / 182 | 854 / 44 | 948 / 0 | 741 / 182 |
+  | swap | 992 / 0 | 979 / 0 | 999 / 0 | 909 / 0 | 975 / 0 | 995 / 0 | 983 / 0 | 983 / 0 |
+
+  Main gridlocks at five of the seven offsets; with the swap none stand stuck at any (133-278 swaps a run).
+  `ctest:legion_swap` runs offsets -2, -1, +1 and +2 (at least 850 arrive, at most 10 stuck, a swap happened):
+  it fails on main at all four and passes here. maze-1000 950 / 0 as main (`ctest:legion_choke`).
+* The 64-fixture suite: t90 1 better / 63 same / 0 worse (scatter-100 866 -> 822), done 0 / 64 / 0, no fixture
+  under the Retail floor; lane crossings, wall touch, reversals and spins unchanged; standing (stopped) 2 better
+  / 0 worse; nudge-free statue 6 better / 4 worse (both sides counted the same way: pocket-304-wall 83 -> 176,
+  strait-2x150 17 -> 53 nudge-free, raw statue fell on both). The suite has few head-on meets of one side.
+* The acceptance worlds are byte-identical (groupdetour 64 / 64 all arrived at tick 4,796, crowdtrap spin 0).
+* crowdbench, 7,200 ticks, main -> swap: opposingcolumns 100x1 seeds 0/2/4/7/42 p95 3,597 -> 3,257, 3,421 ->
+  3,118, 3,379 -> 3,273, 3,290 -> 3,204, 3,407 -> 3,130, stalled -28%, -41%, +25% (seed 4), -28%, -42%;
+  opposingcolumns 250x8@50 in goal 726 -> 745, stalled -9%; opposingdoors 100x1 p95 -13% / -7% at seeds 2 / 4,
+  +2% / 0% at 42 / 7 and +6% at seed 0 (p50 +8%, stalled +21%: the one worse case); opposingbridges 100x1 p95 -3%
+  to 0%. Over the 100x1 runs 1,490 bodies end in goal on both sides (one or two per seed end idle 22-56 px out,
+  moving between seeds).
+* The `--mpai` Inner Circle gates keep their hashes in both modes: no swap happens there, so the swap ticks stay
+  empty.
+
+*Seen on screen:* a swap is a one-tick hop of 16-32 px; the two bodies' positions trade between frames.
+
+**Declined, with the evidence** (the prototypes' branches are local, never landed):
+
+1. *Walk in place while queued.* The premise was wrong. Retail stands in its queues: a refused Retail mover keeps
+   an internal speed above 0, but GET 29 (4dc100) answers 0 once it has been refused twice (`bodyBlockStreak` >= 2),
+   so its gait stops (VERMAGE's `MoveWatcher` walks on GET 29 > 5), and the client stands it too
+   (`movementRefused`). The observer's `walk_in_place` counts speed > 0 without headway, so for Retail it counts
+   the hidden speed (corner-1x100 61,070) while `walk_net`, the gait key, reads 0; a scratch key counting GET 29 > 5
+   after 16 ticks without headway read 0 in both modes on corner-1x100, corner-4x50, densehead and gap10-100. The
+   change would also not be display only: GET 29 and MoveRate feed the hashed gameplay COB threads and gate
+   VERMAGE's AimWeapon. This corrects the 2026-11-02 reading (deep dive sections 1 and 3.2, and the two
+   paragraphs of "Blocked bodies" above).
+2. *Far goals first.* A shared click is a formation, and `assignFormation` already hands the far slots to the
+   front; `enterArea` already swaps slots by arrival at an entrance. groupdetour's 64 bodies have 64 authored
+   per-unit goals, so filling far goals first means trading goals between bodies, and the acceptance tests check
+   each body at its own goal (arrived_settled at its own goal fell to 1 with goal trading plus a plain mover's
+   shuffle at speed). Lifting the `plainFlow` cap alone brings crowdtrap's spin back (13-14).
+3. *Allies swap places*: landed, above.
+4. *Push the blocker forward.* About 85% of `hold_movers` holds wait on a body that is itself boxed with no free
+   cell lower on the field (corner-1x100: chains of such holds end at a moving body in 23,049 of 25,300): a
+   real queue draining as fast as cells free. Pushing raised `hold_movers` standing +10% (woken rest holds became
+   movers' holds) and lost `bridges-1000` (793 / 0 and, within 45 deg of the aim, 713 / 103 stuck).
+5. *Crowd-density cost in the group field.* The arrival gains are the crowd spreading (corner-1x448 t90 5,528 ->
+   4,502, corner-8x56 5,222 -> 4,187, pocket-615-wall completes), and so are the losses: gate crossings rose
+   30-800x (corner-1x100 0 -> 393, corner-8x56 0 -> 829), reversals on 44 of 64 fixtures, crowdtrap spin 0 -> 25,
+   maze-1000's subgroup split failed. The variant that keeps crossings near main's is arrival-neutral and still
+   broke `bridges-1000` (748 / 175) and a dead-end fixture. Round 1's near-level flow lost the same way.
+6. *Short reservations at chokepoints.* Admission already serialises a narrow passage, so time there goes to
+   admission turns and holds behind the body's own queue, not to bodies cutting in at the mouth -- the only
+   thing a booking changes. No arrival gain (done 0 better / 2 worse, corner-8x56 +10%), bridges-100 reversals
+   919 -> 225 the one clear gain, 27 ctest failures (`legion_passage_small`, `legion_acceptance_trapped_legion`,
+   real keys on the dead ends), per-tick cost +15-25%; bookings that bind allies across groups made the two
+   armies of `bridges-1000` refuse each other's cells (703 / 217).
+7. *Search the constants* (on the result of 1-6). A deterministic coordinate search over twelve thresholds
+   (kSlideHold, kCrowdWindow, the detour back-off start and cap, kGiveWayHeld, kRoomHeld, kFaceAverage,
+   kSwapCool, kSwapAngle, the yield/part hold, the jam detour hold, the settled-yield hold): 38 screening sweeps
+   on the suite, Linux and Windows bit-identical. Nothing landed. The one constant that moved arrival cleanly,
+   kRoomHeld 60 -> 15 (t90 11 better / 0 worse, done 15 / 0), broke `ctest:legion_choke` (maze-1000 no subgroup)
+   and `ctest:legion_swap` (bridges-1000 at -1 676 / 181); 30 and 40 broke them too, as did a detour back-off
+   start of 45. kCrowdWindow 30, a 6-tick yield hold and a 3-tick settled-yield hold improved `done` only by
+   settling bodies earlier and farther out. kSwapAngle 12,288 passes the choke tests but gains nothing on the
+   suite and moves `completion_dist_3` on staticblock-own/-other. The suite has no 1,000-body fixture, so its
+   fitness cannot see the guards that decide; a later search needs the 1,000-body pre-screen first.
+
+**What remains.** `bridges-1000` stays bistable: with the swap it arrives at every offset measured, but small
+changes to unrelated constants (kRoomHeld 15/40, a detour back-off start of 45) tip -1 back into gridlock, so
+`ctest:legion_swap` is the guard and its margin is thin. The swap covers one side's head-on meet only: enemies,
+different footprints, flyers, routed bodies and mission legs keep the hold's ways out. Queue standing of own
+movers is unchanged (item 4's census: it is mostly real queue). The swap's on-screen hop is not interpolated.
+Measured by `ctest:legion_swap`, `ctest:legion_choke`, `ctest:legion_acceptance_group_legion`,
+`ctest:legion_acceptance_crowdheld_legion` and the `scale.arrive.n`, `scale.stuck_end` and `work.swaps.total` keys of
+tools/scenarios/scale/bridges-1000.scn.
 
 ### Legion 10,000: where the program left it
 
@@ -5336,6 +5445,18 @@ Rules that came out of using them:
   over the wide offsets; `ctest:legion_passage_admission`,
   `ctest:legion_passage_taper` and `ctest:legion_passage_green` hold their
   offsets.
+* **Two opposing streams in a one-body lane are bistable (2026-11-03).** Where
+  two streams of one side meet head on and neither has a way round, the meet
+  either threads or gridlocks, depending on the offset: `bridges-1000` arrived
+  965 / 643 / 641 / 558 / 741 / 854 / 948 of 1,000 at offsets 0, +-1, +-2, +-3
+  on main, with up to 279 stuck. Allies now swap places ("Allies swap places"),
+  and it arrives 909-999 with none stuck at all seven, but the margin is thin:
+  kRoomHeld 15 or 40, or a detour back-off starting at 45, put offset -1 back
+  into gridlock (676 / 181, 547 / 316, 538 / 329). The swap covers allied
+  bodies of one footprint on move legs only; enemies, mixed footprints, routed
+  bodies and mission legs still meet with the hold's ways out. A swap shows as
+  a one-tick hop of 16-32 px. Measured by `ctest:legion_swap` and
+  `ctest:legion_choke`.
 * **Attack rings at ~100 bodies (after round 4, 2026-10-20).** Rings round a still target walk their detours at
   travel speed, spend the spots their firing arc closes off, send spare attackers to the outer bands and press flush
   against 1-cell walls the way Retail's clamped bodies end up ("Rings at ~100 bodies, round 3"). Since round 4 the
