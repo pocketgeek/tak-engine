@@ -2086,6 +2086,7 @@ public:
     }
     LegionNavigator::Stats legionStats() const {return legion_?legion_->stats():LegionNavigator::Stats{};}
     LegionNavigator* legionNavigator() {return legion_.get();}
+    uint32_t legionSwapTick(int unitId) const {return legion_?legion_->swapTick(unitId):UINT32_MAX;}
     // Legion's open convoys (sim/convoy.h) and their lookup counters. The
     // counters are observation only (never hashed); tools export them beside
     // the navigator's Stats as legion_convoy_*.

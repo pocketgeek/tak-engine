@@ -1168,9 +1168,20 @@
             s.turnReqBam = u.turnReqBam;
             s.seeded = u.alive();   // dead holds its pose (never interpolated)
         }
+        // Legion allies swap places in one tick; the display plays it out over a few (swapshow.h).
+        s.swap = {}; s.pox = s.poz = 0;
+        if (s.seeded && prev && !u.type->canFly && !u.type->isStructure() &&
+            tak::sim::isLegionPathfinding(world_.pathfindingMode())) {
+            const uint32_t ticks = uint32_t(world_.tickCount() - pf.gameTick);
+            const uint32_t swapped = world_.legionSwapTick(u.id);   // stamped after the counter advanced
+            s.swap = tak::swapShowStep(prev->swap, s.x - s.px, s.z - s.pz, ticks,
+                                       swapped != UINT32_MAX && swapped > pf.gameTick);
+            s.pox = prev->swap.ox; s.poz = prev->swap.oz;
+        }
         captureSlots_[slot].x = s.x; captureSlots_[slot].z = s.z;   // Frame::unitGrid
         captureSlots_[slot].corpseFoot = std::max(s.corpseFootX, s.corpseFootZ);   // Frame::maxCorpseFoot
-        captureSlots_[slot].step = std::max(std::fabs(s.x - s.px), std::fabs(s.z - s.pz));   // Frame::maxInterpStep
+        captureSlots_[slot].step = std::max({std::fabs(s.x - s.px - s.pox), std::fabs(s.z - s.pz - s.poz),
+                                             std::fabs(s.swap.ox), std::fabs(s.swap.oz)});   // Frame::maxInterpStep
         captureSlots_[slot].buildGhosts = std::any_of(s.orders.begin(), s.orders.end(),
             [](const RenderOrder& o) { return o.buildType && !o.manaBuildArea; });   // Frame::buildGhostUnits
     }
@@ -1317,11 +1328,11 @@
     }
 
     void GameView::interpPose(const UnitR& s, float& x, float& z, float& heading) const {
-        x = s.x; z = s.z; heading = s.heading;
+        x = s.x + s.swap.ox; z = s.z + s.swap.oz; heading = s.heading;
         if (!settings_ || !settings_->smoothMotion || !s.seeded) return;
         float a = interpAlpha_;
-        x = s.px + (s.x - s.px) * a;
-        z = s.pz + (s.z - s.pz) * a;
+        x = s.px + s.pox + (x - s.px - s.pox) * a;
+        z = s.pz + s.poz + (z - s.pz - s.poz) * a;
         float dh = s.heading - s.ph;
         while (dh >  3.14159265f) dh -= 6.28318531f;   // shortest-path turn
         while (dh < -3.14159265f) dh += 6.28318531f;

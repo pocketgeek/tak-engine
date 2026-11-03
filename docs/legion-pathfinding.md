@@ -5191,7 +5191,9 @@ in a one-body lane, where neither has a way round, gridlocked a bridge (the bist
 * The `--mpai` Inner Circle gates keep their hashes in both modes: no swap happens there, so the swap ticks stay
   empty.
 
-*Seen on screen:* a swap is a one-tick hop of 16-32 px; the two bodies' positions trade between frames.
+*Seen on screen:* the sim trades the two positions in one tick, a jump of 16-32 px. The client plays it out over
+8 ticks and sidesteps each body to the right of its jump, so the two pass side by side (`src/client/swapshow.h`,
+display only, never hashed; `World::legionSwapTick` tells it which bodies swapped).
 
 **Declined, with the evidence** (the prototypes' branches are local, never landed):
 
@@ -5240,7 +5242,7 @@ in a one-body lane, where neither has a way round, gridlocked a bridge (the bist
 changes to unrelated constants (kRoomHeld 15/40, a detour back-off start of 45) tip -1 back into gridlock, so
 `ctest:legion_swap` is the guard and its margin is thin. The swap covers one side's head-on meet only: enemies,
 different footprints, flyers, routed bodies and mission legs keep the hold's ways out. Queue standing of own
-movers is unchanged (item 4's census: it is mostly real queue). The swap's on-screen hop is not interpolated.
+movers is unchanged (item 4's census: it is mostly real queue). The client draws the swap's one-tick jump as an 8-tick pass (`swapshow.h`).
 Measured by `ctest:legion_swap`, `ctest:legion_choke`, `ctest:legion_acceptance_group_legion`,
 `ctest:legion_acceptance_crowdheld_legion` and the `scale.arrive.n`, `scale.stuck_end` and `work.swaps.total` keys of
 tools/scenarios/scale/bridges-1000.scn.
@@ -5454,8 +5456,8 @@ Rules that came out of using them:
   kRoomHeld 15 or 40, or a detour back-off starting at 45, put offset -1 back
   into gridlock (676 / 181, 547 / 316, 538 / 329). The swap covers allied
   bodies of one footprint on move legs only; enemies, mixed footprints, routed
-  bodies and mission legs still meet with the hold's ways out. A swap shows as
-  a one-tick hop of 16-32 px. Measured by `ctest:legion_swap` and
+  bodies and mission legs still meet with the hold's ways out. The sim's swap is a
+  one-tick jump of 16-32 px; the client draws it as an 8-tick pass. Measured by `ctest:legion_swap` and
   `ctest:legion_choke`.
 * **Attack rings at ~100 bodies (after round 4, 2026-10-20).** Rings round a still target walk their detours at
   travel speed, spend the spots their firing arc closes off, send spare attackers to the outer bands and press flush

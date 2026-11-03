@@ -7,6 +7,7 @@
 // client/main.cpp; kept at global scope so its unqualified use sites there are
 // unchanged.
 
+#include "client/swapshow.h"
 #include "client/unitindex.h"
 #include "sim/retailanimationqueries.h"
 #include "sim/sim.h"   // tak::sim::UnitType / Order / Projectile / World::HitFx
@@ -59,6 +60,8 @@ struct RenderOrder {
 struct UnitR {
     float px = 0, pz = 0, ph = 0;   // previous-tick pose (for interpolation)
     bool  seeded = false;           // has a valid prev pose to interpolate from
+    tak::SwapShow swap;             // a Legion swap still playing out (swapshow.h); swap.ox/oz is drawn at x/z
+    float pox = 0, poz = 0;         // ... and the offset that was drawn at px/pz
     uint32_t gen = 0;               // captureFrame generation this record was last written
                                     // (== frame gen means the unit is live THIS tick)
     // --- snapshot of Unit's render-read surface (same NAMES as sim::Unit, so render code
@@ -292,8 +295,9 @@ struct Frame {
     // The largest corpse footprint side (UnitR::corpseFootX/Z) of any live record: the
     // body pick circle (reclaimPickRadius) of every record is within its radius.
     int maxCorpseFoot = 0;
-    // The largest |x - px| or |z - pz| of any live record: interpPose (px + (x - px) a,
-    // a in [0, 1]) never puts a unit further than this from its snapshot position.
+    // The largest |x - px - pox|, |z - pz - poz|, |swap.ox| or |swap.oz| of any live record:
+    // interpPose (px + pox + (x + swap.ox - px - pox) a, a in [0, 1]) never puts a unit further
+    // than this from its snapshot position.
     float maxInterpStep = 0;
     std::array<PlayerR, 8> players{};
     int numPlayers = 0;

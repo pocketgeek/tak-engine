@@ -456,6 +456,8 @@ public:
     static constexpr int kWhys=32;
     static const char* whyName(int why);
     int steerWhy(int id) const;
+    // The tick a body last traded places with an ally (swapBodies), or UINT32_MAX. Display only (swapshow.h).
+    uint32_t swapTick(int id) const;
     // W9 step 0 (debug builds only; empty when NDEBUG is defined): the predicate census, (name, count)
     // pairs in a fixed order -- how often each W9 mechanism's trigger WOULD fire on this run, counted
     // where the mechanism will sit, without changing a decision. Each name's definition is on the

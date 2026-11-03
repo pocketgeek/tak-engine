@@ -15454,6 +15454,10 @@ int LegionNavigator::steerWhy(int id) const {
     const auto found=impl_->members.find(id);
     return found==impl_->members.end()?-1:int(found->second.why);
 }
+uint32_t LegionNavigator::swapTick(int id) const {
+    const auto found=impl_->swapTicks.find(id);
+    return found==impl_->swapTicks.end()?UINT32_MAX:found->second;
+}
 const char* LegionNavigator::whyName(int why) {
     static constexpr const char* names[kWhys]={"none","steer","direct","pass","flow_first","flow_brisk","flow_cap","sidestep","room","corner",
         "route_brisk","route_cap","press","yield","hold_movers","hold_settled","hold_jam","hold_corner","hold_refused","hold_detour","hold_ask",
