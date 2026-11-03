@@ -446,6 +446,56 @@ against an Archer and a lodestone, about 85 returns to Fire Breath in 900
 ticks, each with a full reload; the player's Sea Dragon fires Fire Breath 10
 times.
 
+### A flyer on Hold Position does not leave its post (2026-11-03)
+
+Established (static, `4d7de0` and its callers): `4d7de0(unit, target,
+explicit, point, auto, forced)` first refuses a unit's own target, then
+returns 0 on Hold Position (`+0x130 & 0x30000 == 0`) unless `explicit`
+(arg 3) or `forced` (arg 6) is set (`4d7e0a..4d7e19`), and on Hold Fire
+(`& 0xc0000`) unless `explicit` (`4d7e24..4d7e2d`). VTOL_Standby's stage 1
+(`4176bb`) scans with `4d8370` and calls `4d7de0(unit, found, 0, 0, 1, 0)`
+(`4176cc`); refused, it falls to `417736` (return 1) and stage 2 lands an
+airborne flyer whose type can land (UnitDef `+0x260 & 0x800`, layer 2,
+`4175e4..417605`). So an idle flyer on Hold Position gets no attack mission:
+no attack run, no hover ring, no dogfight. Its auto slots stay with the
+fire-at-will sweep (`40f330`), which takes a seen enemy in the slot's range and
+fires from where the flyer stands by. The other callers: ground Standby
+(`40784e`, args `0, &pos, 1, 0`) refuses the same way; VTOL_Patrol
+(`41a25e`, forced 1) and the guards' alarm (`4081e0`, `418c46`, explicit 1)
+are not held; the air attack missions' retargets (`41963d`, `41bb08`,
+`41c440`, `41ce80`, `41d125`, `41e046`: `0, 0, 1, 0`) refuse on Hold
+Position, which `retailIssueAutoAttack` already did.
+
+Ours before: VTOL_Standby's `tryOrder` (and the Legion lift's poll and
+`tickCombat`'s idle acquisition) called `World::acquireTarget`, which
+inserted the auto attack with no Hold Position test; `findTarget` only held a
+Hold unit to targets already in reach, so a Hold Position flyer took a target
+in range and flew its attack mission off its post (190-960 px in
+`hold_flyer_test`). Now `acquireTarget` returns false for an idle flyer
+(`orders.empty()`) on Hold Position. `hold_flyer_test` runs every armed
+shipped flyer with a seen enemy in weapon range (450 px where the weapon
+reaches), on the ground and hovering: on Hold Position none takes an attack
+or moves, 31 of 37 fire from their post (the six that do not: the Taros
+priests' selected Lightning reaches 275 px, and the Fallen Angel takes no auto target
+on Maneuver either); on Maneuver 35 of 37 take the attack. Inferred, not
+emulated: that the sweep's fire from a landed flyer matches retail shot for
+shot.
+
+This is the shipped default for some flyers: `standingunitorder = 1` (the
+Thirsha `zonhunt`, the Ghost Ship `tarship`, the Dirigible `verball`, both Taros
+priests) sets UnitDef `+0x260` move bits to 0 (`4c005d..4c00a1`: 2 -> move 1
+fire 2, 1 -> move 0 fire 2, 0 -> move 0 fire 0), and the unit takes them into
+`+0x130 & 0x30000` (`511c2a..511c3e`). So an idle Thirsha, as built, stands by
+and shoots from where it is. `flyer_combat_test` now expects no automatic
+attack for those types, and `blocked_shot_test`'s Thirsha is put on Maneuver
+so it is still hovering in when its order comes.
+
+Ground Standby is not changed: ours inserts an auto attack that a Hold unit
+may not chase (`tickCombat`'s `mayChase`, `findTarget`'s reach test), where
+retail leaves the target to the sweep. Both stand and shoot what is in reach;
+the target choice (nearest vs the sweep's sampled score) and the order state
+differ. Left for the target-search port.
+
 ## Blocked shots: retail fires on, the engine walks to a clear shot (2026-10-19)
 
 Retail has no line-of-fire test and no reposition. The common weapon update

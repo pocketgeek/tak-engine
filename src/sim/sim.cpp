@@ -6482,6 +6482,12 @@ int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chase
 }
 
 bool World::acquireTarget(Unit& u,bool missionPoll) {
+    // An idle flyer's acquisition is VTOL_Standby's: 4d8370, then 4d7de0(unit,
+    // found, 0, 0, 1, 0) (4176cc), which refuses on Hold Position
+    // (+0x130 & 0x30000 == 0, 4d7e0a..4d7e19). No attack is pushed, so the
+    // flyer flies no attack run, hover ring or dogfight; its auto slots (the
+    // fire-at-will sweep) still shoot what is in range from its post.
+    if (u.moveState==0 && u.orders.empty() && u.type->canFly && !u.type->isStructure()) return false;
     const int target=findTarget(u,missionPoll);
     if (!target) return false;
     cancelPath(u); u.routeStamp=-1;

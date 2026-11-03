@@ -38,6 +38,12 @@ their validation reports; both live in [`docs/`](docs/).
 - **Reclaimed trees and rocks fade out.** As in the original game, a reclaimed tree or
   rock turns into a white silhouette of itself that fades away over about a second,
   instead of vanishing at once. Trees destroyed by damage still change at once.
+- **Flyers on Hold Position hold their post.** An idle flyer on Hold Position used to
+  take off after an enemy that came into range and fly attack runs at it, hundreds of
+  pixels from where you left it. Now it stays where it is and shoots what it can reach
+  from there, as in the original game. The Thirsha, the Ghost Ship, the Dirigible and
+  the Dark and Darkest Priests start on Hold Position, so idle ones now stay put: set
+  them to Maneuver to have them go after enemies.
 - **Investigated, no change needed:**
   - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
     keeps switching weapons and never fires: the original game does exactly the same.
