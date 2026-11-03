@@ -1466,6 +1466,12 @@ struct alignas(64) Unit {
     // World::productionOwnerOf, which checks the producer still holds it, so a
     // stale value is harmless and it is not hashed.
     int productionOwner = 0;
+    // On a building's finished output: the factory that made it (set at
+    // completion, never cleared). World::clearYardDoor takes one with orders in
+    // front of its factory as the door's traffic, and moves a parked one only
+    // off the pad or off a later output it holds up. Set once, from hashed state
+    // (the completion), and read only there, so not hashed.
+    int builtBy = 0;
     // A campaign mission's fixed veterancy multiplier (SetMission/InitialMission
     // `v F`, unit +0xf4, set by icd 0x5148e1). Not 0: getMult (0x5193c0) answers
     // it instead of 1 + level/10 and getLevel (0x519310) answers 10, so the unit
@@ -3058,10 +3064,10 @@ private:
     // unit walks out of the area the output may be made in. (x,z) is a scripted
     // producer's pad; the unscripted search has no point of its own.
     void clearProductionRoom(Unit& producer, const UnitType* type, Fixed x, Fixed z);
-    // A factory's ship waits in or just out of its yard (or its next site is
-    // refused): the player's own idle ships in front of the yard move aside,
-    // out of the door's way (engine deviation, user-requested; retail moves no
-    // idle body, see clearYardDoor).
+    // A factory's output waits in or just out of its yard (or its next site is
+    // refused): the player's own idle units in front of the yard, on the
+    // output's plane, move aside, out of the door's way (engine deviation,
+    // user-requested; retail moves no idle body, see clearYardDoor).
     void clearYardDoor(const Unit& factory);
     bool pointOutside(const Unit& k, int left, int right, int top, int bottom, int rx, int rz,
                       const std::array<bool,4>& avoid, const std::vector<std::array<int,4>>& taken,

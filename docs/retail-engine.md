@@ -4015,6 +4015,57 @@ modes; open water and a door facing a shore; Submersible, Iron Clad, Stern Wheel
 no crowd, eight at the door, one on the pad) fails 42 of its 60 checks without the
 change.
 
+**A land factory's door (the same deviation, user request after 0.9.19).** Retail
+treats a land factory's door exactly as a Navy Yard's (established, icd, re-read
+2026-11-03): BUILD stage 2 (`0x401c20` stage 2, the call at `0x401deb`) admits the
+next site only through `0x507d10(type, self 0, origin, factory +0x130 & 3,
+allowMoving 0)`, and a refusal (`0x401df2`) sleeps the mission `rand(15)+7` ticks
+(`0x401df4..0x401e01`) and sets mission flag 2; nothing is moved. BUGGER_OFF's setter
+(`0x50d50e`) masks bit 3 of unit `+0x12f` in and out; of the 42 accesses to that byte
+only GET 19 (`0x50d1fd`) and save/load (`0x513528`, `0x513cf8`) read it (the masked
+tests at `0x4d4b9b`, `0x4d4bcb`, `0x506355`, `0x5139ec` and `0x5206e1` are bits 0, 1
+and 2). The finished unit gets GetBuilt's rally or PARK (`0x402220`, the same ground
+branch of `0x407ca0`), and a body in its way only clamps and slows it
+(`0x4dbe2c`). So in retail a new unit waits on the pad for the body there, and once
+out presses on, or re-rolls its PARK point, round a crowd; no idle body ever steps
+aside. Inferred, not observed in the running original: one idle unit on a land
+factory's pad stops it for good there too. Observed in ours on fixes-0920 before the
+change (`landdoor_exit_test`: Aramon Barracks, Veruna Keep, Taros Dungeon, Creon
+Academy; a small and a large output, six each; both modes): one idle unit on the pad
+left every factory building nothing in all 16 combinations; a dozen idle units two
+rows deep 24 px off the door held the Academy to one or two of six in all four of its
+combinations, while the other factories' outputs found a way round. `clearYardDoor`
+now serves every scripted production building: the outputs' plane decides who moves
+(ships at a yard, ground and hover units at a land factory), and at a land factory
+only the half of the area on the leaving output's side of the factory's centre is
+cleared, so units parked behind it stay (at a yard the half area kept a Legion Stern
+Wheeler out of a door onto a shore for 300 ticks, so a yard keeps the whole area).
+Each finished output now remembers its factory (`Unit::builtBy`, unhashed: set once
+at completion, from hashed state): an output with orders in front of its factory is
+the door's traffic, and the factory's own parked outputs move only off the pad, or,
+under the Retail navigator, when one stands in the cells round a later output of the
+factory (2 deep) that is held up by a body (refusal streak 2) on its PARK. That rule
+moves any other idle unit of the owner there too, past the area: crowd ships moved
+just outside the area held an Iron Clad there, and the yard's own parked Stern
+Wheelers wedged the next one off a shore. Legion gives each output a spot of its own
+out of the door's lane and has no such rule: moving its parked outputs put them
+back in the lane (`legion_park`). The first Navy Yard rule moved every own parked
+unit in the area each time the next one left: 87 re-orders of parked outputs over
+`navyyard_exit_test`'s 36 runs and 127 over `landdoor_exit_test`'s 64; now 2 and
+26. Owner only, allies
+included: nothing in the sim orders another player's units, as `clearBuildSite` and
+`clearProductionRoom` move only the builder's own. Units with any order, guards,
+units with production of their own (a Zhon builder), flyers and other players'
+units stay; a Zhon producer itself is mobile and keeps `clearProductionRoom`. A
+crowd of guards at the door still holds a factory (Legion: the Academy builds none of
+six); they keep their guard. With the change the crowd costs the factory at most 13%
+of its clear-door build time and the unit on the pad at most 14% (six outputs at four
+times the worker time, 576-1,306 ticks clear-door); medians to clear the factory with
+no crowd, Retail / Legion, small then large output: Barracks 57/61 and 92/124, Keep
+42/45 and 83/99, Dungeon 33/43 and 62/80, Academy 25/27 and 20/35 ticks.
+`landdoor_exit_test` (quick label, 128 checks) fails 40 of them on the code before
+the change.
+
 Two false starts worth recording, because both are easy to repeat: thread counts
 do NOT work as the test observable. A factory legitimately keeps a thread open
 while active (Creon's `Go` ends with `START_SCRIPT FactoryFun`, the machinery
