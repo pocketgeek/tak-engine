@@ -1537,7 +1537,8 @@ private:
     // deliberately reports them alive so they keep RENDERING. That must not be confused
     // with "reclaimable" -- see hoverCursor.
     struct FeatSim { int type; bool burning; bool alive; int fx, fz; bool hasSim; uint32_t burnStarted = 0; bool reclaimable = false; bool blocking = false;
-                     uint32_t fadeEnd = 0; };   // reclaimfade::fadeEnd
+                     uint32_t fadeEnd = 0;   // reclaimfade::fadeEnd
+                     uint32_t dieEnd = 0; }; // tick its featuredead replaces it (0: not dying)
     std::vector<FeatSim> featSimState_;
     uint32_t lastFeatGen_ = UINT32_MAX;   // != any real generation, so the first sync runs
 
@@ -2968,7 +2969,7 @@ private:
         SDL_FRect dst{};
         float shear = 0;   // top edge shifted sideways by this much (sway)
         bool sway = false;      // drawn as a sheared quad (Trees Sway In Wind)
-        bool burning = false;   // the burn playback (never sways)
+        bool burning = false;   // the burn or death playback (never sways)
         const FeatArt* art = nullptr;   // the standing art and frame drawn (not the burn)
         size_t frame = 0;
     };
@@ -3510,6 +3511,11 @@ private:
         // Reclaimed, fading out: the tick it leaves the plane (client/reclaimfade.h),
         // 0 when not fading. Snapshotted with aliveVis.
         uint32_t fadeEnd = 0;
+        // Destroyed by damage, playing seqnamedie: the tick the sim replaces it
+        // with featuredead (Feature::dieLeft), 0 when not dying; dieArt is that
+        // playback, loaded on the death edge.
+        uint32_t dieEnd = 0;
+        const FeatArt* dieArt = nullptr;
         // Snapshotted once per frame in syncBurningFeatures, under simMutex_. The
         // draw loop used to ask world_.featureAliveAt() per feature with no lock,
         // and addFeature() does a push_back that can REALLOCATE the feature vector

@@ -2018,8 +2018,61 @@ at +0x10) and at its end (`495ef7`) calls `494f00` with 0, which places the
 once (`494ee3`). A burn plays seqnameburn and swaps through `495300`. 3DO
 features (statues, corpses) hand +0x2e and +0x30 to the model draw
 (`4fd850`/`4fd85c` -> `4ee700`; `4ec9ba` picks draw mode 2 when +0x13 is
-set); ours does not draw that one yet. Ours swaps a destroyed feature at once and does
-not play `seqnamedie`.
+set); ours does not draw that one yet.
+
+**The death playback** (static analysis, 2026-11-03; established unless
+marked). The loader resolves `seqnamedie` (string `611520`, read at `493ed3`)
+and `seqnamedieshad` (`611510`, `493f23`) in the feature's own `filename` GAF
+through `493700`, as it does `seqnameburn`, and forces both nonlooping
+(`493eff`, `493f4f`: sequence byte +2 = 0); they sit at type+0xe8 and +0xec.
+`494ce0` mode 0 takes that path only for a sprite feature (type+0x13c bit 0;
+a 3DO one swaps at once, `494e00`) whose cell has no object yet (`494d78`:
+cell+0xd bit 8 -- a burning, fading or already dying feature ignores it), and
+only when an object slot is free (`4949c0` < 0x800; with none it returns and
+the feature stays, not ported: ours has no slot limit). The slot gets the
+feature type (+0x2c), the cell (+0x28/+0x2a), the clock `537390(+0x4, die, 0)`,
+the shadow clock at +0x10 only with a `seqnamedieshad` (+0x5d bit 4), and the
+cell gets bit 8 and the slot index in its word +0xa (the damage counter until
+then). The cell keeps the feature (word +8): it still blocks and still owns
+its footprint. Each tick `4959c0` steps the clock (`495edf` -> `5373d0`: a
+frame is held for max(1, delay) ticks, its duration the low word at +0x2c of
+the frame entry, `5367e0`) and the tick the last frame's hold runs out the
+clock's sequence pointer is cleared and `495ef7` calls `494f00(x, z, 0)`:
+`496380` removes the feature and `495360` places `featuredead` (none when the
+object's burn bit +0x5d&2 is set, which mode 0 clears). The same clock times a
+burn-out, so ours counts the death like `Feature::burnLeft`: `dieLeft` starts
+at the sequence's length and the feature is replaced on the tick it would
+reach 0. While it dies:
+- **No damage.** `4961a0` skips a sprite feature whose cell has an object
+  (`4962b6` -> `4962bc`), fire or not: a dying -- and a burning -- feature
+  takes no weapon damage and is not lit (that path is also how a firestarter
+  ignites, `4962ac`).
+- **No fire.** StartBurning `494b40` returns for a cell with an object
+  (`494b6d`), and BurnSpread `495110` passes such a cell over before its
+  rand(100) roll (`49515d`, and `49525c` for the downwind sparks).
+- **Not a reclaim target.** `496ea0` wants the type's reclaimable flag (0x40)
+  and, with an object, that object's +0x5d bit 0x10, which `4949c0` clears and
+  mode 0 never sets. A reclaimer already on it quits on its next wake.
+- **Drawn** (`4fd430`): with an object the body is the clock's current frame
+  (`4fd821` -> `536400`) and the shadow only the `seqnamedieshad` clock's
+  (`4fd7cc`); no shipped feature has one, so a dying feature casts no shadow.
+
+Shipped data (the extracted feature TDFs and GAFs): 382 feature sections
+carry a non-empty `seqnamedie`, every one with a `featuredead`, all sprites,
+none with a `seqnamedieshad`: every tree (Aramon, Creon, Taros, Veruna, Zhon)
+and its dead stage, and buildings, huts, walls, towers, crops, fences,
+inventions and other props. Rocks have none (`zhon/zonrock.tdf`), so they go
+at once. Lengths: 298 are 10 frames of 2 ticks (20 ticks, the trees), 55 are
+3 frames (6), the rest 4 to 38 ticks, and one 10 frames of 10 (100 ticks).
+So an Aramon tree hit for its 1000 falls for 20 ticks, becomes AraTree01a, and
+a further 600 plays AraTreek01a (20) and leaves AraSmudge01.
+
+Port: `World::destroyFeature`/`tickFeatureDeaths` and `Feature::dieLeft`
+(hashed) in the sim, `FeatType::dieTicks` from
+`gaf::FeatureBurnTiming::dieDuration` (also in the gameplay-data hash), and
+`client/featuredie.h` for the drawn frame; `tools/featdie_test.cpp`. Inferred,
+not checked: the order of a burn-out, a death's end and a fade in one tick
+(retail walks one object list; ours takes burns, then deaths, then fades).
 
 ## A factory's output: rally, else PARK (icd `0x402220`, emulated 2026-10-25)
 

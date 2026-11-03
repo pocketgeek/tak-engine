@@ -952,6 +952,8 @@ uint64_t gameplayHash(const Vfs& input) {
                 // (retail StartBurning requires a burn anim) -- hash the bit.
                 mixs(node->valueOr("seqnameburn", "").empty() ? "0" : "1");
                 mixs(std::to_string(burnTiming.duration(*node)));
+                // seqnamedie's length holds a destroyed feature in place.
+                mixs(std::to_string(burnTiming.dieDuration(*node)));
             }
         }
     }

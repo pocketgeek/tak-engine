@@ -5721,15 +5721,19 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             // no featuredead; ours keeps it inert rather than let a hit or a
             // fire swap it into a stage that would outlive the fade.
             if (!f.alive || f.type < 0 || f.fadeLeft) return;
+            // 4962b6..4962be: a sprite feature with an object -- burning
+            // (494b40) or playing its death (494ce0) -- takes no weapon damage
+            // and cannot be lit again.
+            if (f.burn || f.dieLeft) return;
             const FeatType& ft = featTypes_[size_t(f.type)];
             if (ft.indestructible) return;
-            if (w.fireStarter && ft.flamable && !f.burn && ft.hasBurnAnim) {
+            if (w.fireStarter && ft.flamable && ft.hasBurnAnim) {
                 igniteFeature(f);
                 return; // ignition replaces the damage this hit
             }
             if (ft.hp <= 0) return;
             f.dmg += w.damage;
-            if (f.dmg >= ft.hp) swapFeature(f, ft.deadType);
+            if (f.dmg >= ft.hp) destroyFeature(f);
         };
         // Dead-unit visuals/reclaim targets live separately from scenery, but
         // their installed footprints receive the same feature weapon damage.
@@ -10423,6 +10427,7 @@ void World::addFeature(int id, float x, float z, float energy,
     if (const size_t words = (features_.size() + 63) / 64; burningMarks_.size() < words) {
         burningMarks_.resize(words, 0);
         fadingMarks_.resize(words, 0);
+        dyingMarks_.resize(words, 0);
     }
     if (placeOnMap && blocks) blockCells(footprintOrigin(f.x,fx),footprintOrigin(f.z,fz),fx,fz,true);
     bumpFeatGen();   // a new feature needs a visual instance
@@ -10475,6 +10480,7 @@ static void forEachMarked(std::vector<uint64_t>& marks, Visit&& visit) {
 void World::swapFeature(Feature& f, int newType) {
     bumpFeatGen();   // burnt-stage swap (or removal): art changes
     if (f.fadeLeft) { f.fadeLeft = 0; --fadingFeatures_; }
+    f.dieLeft = 0;   // its mark goes on tickFeatureDeaths' next visit
     f.burn = 0;
     f.burnSequence = 0;
     f.dmg = 0;
@@ -10498,8 +10504,38 @@ void World::swapFeature(Feature& f, int newType) {
     f.energy = nt.energy;
 }
 
+// 494ce0 mode 0, damage's destruction: a sprite feature with a seqnamedie
+// takes an object slot that plays it (object +0x4, nonlooping) while the cell
+// keeps the feature, and its end (495ef7) places featuredead (494f00 ->
+// 494f50). Without one, featuredead replaces it at once (494ee3).
+void World::destroyFeature(Feature& f) {
+    const FeatType& ft = featTypes_[size_t(f.type)];
+    if (!ft.dieTicks) { swapFeature(f, ft.deadType); return; }
+    f.dieLeft = ft.dieTicks;
+    const size_t index = size_t(&f - features_.data());
+    uint64_t& word = dyingMarks_[index / 64];
+    const uint64_t bit = uint64_t(1) << (index % 64);
+    if (!(word & bit)) { word |= bit; ++dyingMarked_; }
+    bumpFeatGen();   // death edge: the client plays seqnamedie; no longer a reclaim target
+}
+
+// 4959c0's sprite branch (495ed8): the death clock 5373d0 runs one step a tick
+// and the tick it runs out (495ef7) the featuredead stage replaces the feature,
+// the same countdown as a burn-out's (tickBurning).
+void World::tickFeatureDeaths() {
+    if (!dyingMarked_) return;
+    forEachMarked(dyingMarks_, [&](size_t i, uint64_t& word, uint64_t bit) {
+        Feature& f = features_[i];
+        if (!f.alive || !f.dieLeft || f.type < 0) { f.dieLeft = 0; word &= ~bit; --dyingMarked_; return; }
+        if (f.dieLeft > 1) { --f.dieLeft; return; }
+        word &= ~bit; --dyingMarked_;
+        swapFeature(f, featTypes_[size_t(f.type)].deadType);
+    });
+}
+
 void World::igniteFeature(Feature& f) {
-    if (f.burn || !f.alive || f.type < 0 || f.fadeLeft) return;   // fading: see damageFeature
+    // An object already on the cell (dying, fading) refuses it: 494b6d.
+    if (f.burn || !f.alive || f.type < 0 || f.fadeLeft || f.dieLeft) return;
     const FeatType& ft = featTypes_[size_t(f.type)];
     if (!ft.flamable || !ft.hasBurnAnim) return;
     static const bool kBurnLog = tak::devEnv("TAK_BURNLOG") != nullptr;
@@ -10557,7 +10593,9 @@ void World::tickBurning() {
                     auto it = featureIdx_.find(nz * terW_ + nx);
                     if (it == featureIdx_.end()) continue;
                     Feature& nf = features_[it->second];
-                    if (!nf.alive || nf.burn || nf.type < 0) continue;
+                    // 49515d: a cell with an object (burning, fading,
+                    // dying) is passed over before the spread roll.
+                    if (!nf.alive || nf.burn || nf.fadeLeft || nf.dieLeft || nf.type < 0) continue;
                     const FeatType& nft = featTypes_[size_t(nf.type)];
                     if (!nft.flamable || !nft.hasBurnAnim) continue;
                     if (burnRand(100) < nft.spreadChance) igniteFeature(nf);
@@ -10665,7 +10703,7 @@ void World::tickReclaimArea(Unit& b) {
     // misses multi-cell trees and rubble intersecting the selection rectangle.
     std::unordered_map<int,int> targets;
     for (const auto& f:features_) {
-        if (!f.alive || !f.id || f.fadeLeft) continue;
+        if (!f.alive || !f.id || f.fadeLeft || f.dieLeft) continue;
         if (f.type>=0 && (size_t(f.type)>=featTypes_.size() || !featTypes_[size_t(f.type)].reclaimable)) continue;
         const int x=footprintOrigin(f.x,f.fx),z=footprintOrigin(f.z,f.fz);
         targets.emplace(z*hW_+x,f.id);
@@ -17006,6 +17044,7 @@ void World::tick(float dt) {
         std::optional<PhaseSpan> _burn;
         if (g_phase) _burn.emplace(g_burnMs, probe::kBurn);
         tickBurning();   // feature fire: spread + burn-out (deterministic, hashed)
+        tickFeatureDeaths();   // destroyed features finish seqnamedie (495ef7)
         tickFeatureFades();   // reclaimed features leave the plane (494ce0)
     }
     // Benchmark: fire the staged spawn plan at its scheduled ticks. Deterministic -- both
@@ -19641,7 +19680,7 @@ uint64_t World::stateHash() const {
                      // burning/damage state: type swaps and timers are sim state
                      (uint64_t(uint32_t(f.type + 1)) << 17) ^
                      (uint64_t(f.burn) << 33) ^ (uint64_t(uint32_t(f.burnLeft)) << 40) ^
-                     (uint64_t(dm) << 9);
+                     (uint64_t(dm) << 9) ^ (uint64_t(f.dieLeft) << 52);
         }
     mix(fAlive);
     mix(fWork);

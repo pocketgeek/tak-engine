@@ -1600,6 +1600,10 @@ struct FeatType {
     bool flamable = false;   // TDF flamable=1: can be ignited / spread to
     bool hasBurnAnim = false;// TDF seqnameburn present (retail StartBurning requires it)
     uint32_t burnTicks = 1; // full-quality authored burn/overlay lifetime
+    // TDF seqnamedie's length in ticks (each frame max(1, delay), 5373d0): how
+    // long a feature destroyed by damage stays before featuredead replaces it.
+    // 0 = no seqnamedie, replaced at once (494ce0 -> 494ee3).
+    uint32_t dieTicks = 0;
     int  spreadChance = 0;   // TDF spreadchance (percent)
     int  sparkTicks = 0;     // TDF sparktime * 30 (retail stores seconds*30)
     int  burntType = -1;     // TDF featureburnt -> index into the same table
@@ -1667,6 +1671,11 @@ struct Feature {
     int32_t dmg = 0;       // accumulated weapon damage (dies at FeatType.hp)
     int   spreadIn = 0;    // ticks until the single spread event (sparktime-derived)
     uint32_t burnLeft = 0;    // ticks until burn-out (swap to burntType / die)
+    // Destroyed by damage, playing seqnamedie (494ce0 mode 0): ticks until its
+    // featuredead stage replaces it. Meanwhile it keeps its cells and blocking
+    // but takes no damage, cannot catch fire and is not a reclaim target.
+    // Hashed.
+    uint32_t dieLeft = 0;
 };
 
 struct Projectile {
@@ -2312,7 +2321,7 @@ public:
     SinCos steerGround(Unit& subject,RetailSteeringPoint start,RetailSteeringPoint end,
                        RetailSteeringPoint next,Fixed maximum);
     bool featureReclaimable(const Feature& f) const {
-        return f.alive && !f.fadeLeft && (f.type<0 ||
+        return f.alive && !f.fadeLeft && !f.dieLeft && (f.type<0 ||
             (size_t(f.type)<featTypes_.size() && featTypes_[size_t(f.type)].reclaimable));
     }
     const Feature* feature(int id) const;                 // by id, nullptr if none
@@ -3868,7 +3877,9 @@ private:
     // it was ordered as depends on the two types alone, which do not change.
     bool reclaimTargetValid(int target,bool revive=false) const;
     void swapFeature(Feature& f, int newType);   // chain stage swap (burnt/dead)
+    void destroyFeature(Feature& f);   // weapon damage reached its `damage` (494ce0 mode 0)
     void tickBurning();
+    void tickFeatureDeaths();   // seqnamedie playback ends: featuredead (495ef7)
     std::unordered_map<int, size_t> featureIdx_;   // feature id -> index in features_
     std::vector<Projectile> projectiles_;
     std::vector<FlameShot> flames_;
@@ -3958,9 +3969,14 @@ private:
     // fadingMarks_ (finishReclaim); a stale mark (a swap put the fire or the
     // fade out) is dropped when the walk reaches it. burningMarked_ counts the
     // set bits, so a tick without fire visits nothing.
-    std::vector<uint64_t> burningMarks_, fadingMarks_;
-    uint32_t burningMarked_ = 0;
-    void clearFeatureMarks() { burningMarks_.clear(); fadingMarks_.clear(); burningMarked_ = 0; }
+    // dyingMarks_ likewise holds every feature with dieLeft != 0
+    // (destroyFeature); dyingMarked_ counts its set bits.
+    std::vector<uint64_t> burningMarks_, fadingMarks_, dyingMarks_;
+    uint32_t burningMarked_ = 0, dyingMarked_ = 0;
+    void clearFeatureMarks() {
+        burningMarks_.clear(); fadingMarks_.clear(); dyingMarks_.clear();
+        burningMarked_ = dyingMarked_ = 0;
+    }
     std::vector<BenchStage> benchPlan_;   // benchmark staged spawns (executed in tick)
     size_t benchCursor_ = 0;              // next unexecuted stage
     uint32_t benchEndTick_ = 0;           // 0 = not a benchmark run
