@@ -5133,6 +5133,79 @@ fire-at-will sweep switches her weapon on its first tick, and she stalls in 26
 attack-sweep cases that she fires in now (all of them that step, 14 against the
 castle or the lodestone); retail's automatic slot would aim during that walk.
 
+## Kirenna on an attack-move (icd static + emulation, 2026-11-03)
+
+The 0.9.3 known limit "a Vermage on attack-move with Maneuver dealt no
+damage" reproduces on 0.9.19: Kirenna attack-moving past an Archer 1100 px
+off acquires it about 680 px off (inside 690), walks in, stands 400 px off aiming (her slot's
+aim flags 0xe0) and never fires while it hits her (`vermage_fight_test`,
+Retail and `--legion`). It is the Attack_Chase race above, reached through
+an order retail does not have:
+
+- **Retail has no fight-move** (see "Fight-move legs" above). Its nearest
+  order, a move with fire at will, fires through the automatic slots: the
+  sweep (`40f330`) picks only enemies on the player's visible list (`412620`,
+  `fire_sweep_test vision`). World does that on a plain move too: past the
+  same Archer she walks on until she sees it (sight 215), the sweep aims her
+  slot while she walks, and she fires (the same test).
+- **World's attack-move acquisition is not retail's scan.** `findTarget`
+  takes an enemy within the longest weapon's range + 90 px (Water Burst 600:
+  690 px) whether or not the player sees it; retail's scan (`4d8370` ->
+  `412620`) takes visible enemies within max(sight, the selected slot's
+  range). So she starts an Attack_Chase on an Archer she cannot see, stops in
+  reach of Water Ball (400) before seeing it, and the sweep never aims for
+  her. Her AimWeapon then waits on static 7 for ever, as retail's does in the
+  stalled cases of the grid above.
+
+**Attack_Chase's approach, read (static, `403bb0`).** Stage 2's new
+approach is picked by mission `+0x52` (the mode) through the byte table at
+`404620` (106 entries) into the jump table at `404608`: modes 0-1 and
+100-101 case 0, 2 and 102 case 1, 3/103 case 2, 4/104 case 3, 5/105 case 4,
+any other mode case 5 (`403c47`, return 7: the mission ends). With R =
+`52aba0` (range), r = `52abd0` (minimum range), span = R - r and d the whole
+pixel distance from the unit to the goal (`+0x22`):
+
+- case 0 (`4040dd`): r = 0 ? circle(goal, R) (`4d4da0` -> `4e2500`) :
+  ring(goal, R, r) (`4d4e10` -> `4e28f0`; an inner radius at or past the
+  outer widens the outer to 2 x inner + 100, `4e2906`);
+- case 1 (`40410c`): outer = R - rand(span/3) - rand(span/3), inner =
+  rand(span/8) + r; if inner <= d <= outer and rand(3) != 0 the mode steps
+  on; r = 0 ? circle(goal, outer) : outer - inner >= 50 ? ring(goal, outer,
+  inner) : ring(goal, span >= 75 ? R - span/3 : R, r);
+- case 2 (`404208`): outer = R - 3 x span/4 - rand(span/4), the same band
+  test against r, then circle(goal, outer) or ring(goal, outer, r) when 50
+  apart, else ring(goal, span < 100 ? R : R - span/2, r);
+- case 3 (`4042dc`): the mode steps on; a circle of 16 px on the point d'
+  from the target toward the unit (heading `51b340`(target, unit) +
+  rand(0x5555) - 0x2aaa; d' = rand(span/2) + r, or rand(span) + r, or
+  rand(span/2) + span/2 + r on two rand(2) draws; offsets `5360bf`/`5360f3`
+  negated);
+- case 4 (`4041fc`): keeps the controller it has.
+
+Stage 1 (`404406`) out of reach steps the mode on when rand(2) != 0 and
+mode % 100 < 4 (`4044ba`), adds 1000 and runs stage 2 at once, which takes
+the 1000 off and installs the case's approach; an arrival at mode 5 steps it
+back to 4 (`403f3e`). Stage 2 on a wake re-reads the target only when its
+footprint origin left the goal's (`403f62`), and then goes to stage 1 if the
+target is in reach and rand(mode % 100 + 1) == 0 (`404011`, a sixth of those
+also drop the mode to its hundred). The chase's slots are left alone until
+stage 1 (`519b70` is called only at `404483`, for the selected slot whose
+target differs). Emulated (`probe_attack_chase_stop.py`, 1100 px, sweep
+every 4 ticks): the first circle accepts 403.5 px off, out of reach; stage 1
+runs at +2, the re-installed circle reports at once, stage 1 at +4 steps to
+mode 2 and the narrower ring walks her to 242.5 px; in reach while walking,
+the sweep aims her slot at 400 px and she fires at once.
+
+**Not changed.** A port of that approach and of the automatic chase slots
+was tried on `fx-vermage` and kept out: it does not make Kirenna fire here
+(the sweep still cannot see the Archer), and on a plain-approach grid of
+explicit attacks with hold fire (620-760 px, one per pixel, this World's
+geometry) she fired in 59 of 141 with it and 72 without, against retail's 34
+of 141 in the emulator's own geometry; where the circle accepts depends on
+the cell alignment, so the two grids are not the same cases. Matching retail
+here means a retail-faithful fight-move acquisition (visible enemies, the
+selected slot's reach), not this mission alone.
+
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 
 A campaign mission gives its units orders in a one-letter language: a placed
