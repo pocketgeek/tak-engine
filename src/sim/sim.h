@@ -3056,6 +3056,11 @@ private:
     // unit walks out of the area the output may be made in. (x,z) is a scripted
     // producer's pad; the unscripted search has no point of its own.
     void clearProductionRoom(Unit& producer, const UnitType* type, Fixed x, Fixed z);
+    // A factory's ship waits in or just out of its yard (or its next site is
+    // refused): the player's own idle ships in front of the yard move aside,
+    // out of the door's way (engine deviation, user-requested; retail moves no
+    // idle body, see clearYardDoor).
+    void clearYardDoor(const Unit& factory);
     bool pointOutside(const Unit& k, int left, int right, int top, int bottom, int rx, int rz,
                       const std::array<bool,4>& avoid, const std::vector<std::array<int,4>>& taken,
                       int& x, int& z) const;
