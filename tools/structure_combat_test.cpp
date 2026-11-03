@@ -5,6 +5,9 @@
 //     Acolyte on its selected weapon)
 //     never auto-acquires an enemy outside tickCombat's reach: it would drop
 //     it at once, and every acquisition wipes the fire-at-will sweep.
+//   structure_combat_test <data> site    an unfinished Prismatic Mirror under
+//     a Trebuchet's fire takes no target (retail's hit response skips a
+//     site); finished, it shoots the Trebuchet.
 #include "hpi/hpi.h"
 #include "sim/matchsetup.h"
 #include <cstdio>
@@ -112,9 +115,63 @@ int reachCases(const char* data) {
     std::printf("structure_combat reach: %d failures\n",failures);
     return failures?1:0;
 }
+// The 0.9.3 duel's hold (seed 0x6666, Creon against Aramon on Edmont's
+// Field): an Aramon Trebuchet shelled a Prismatic Mirror still being
+// conjured 1469 px away, the site took the Trebuchet as an auto target from
+// the hit response, and it held that target without a shot for 176 s, until
+// it was finished. Retail's hit response skips a victim with construction left
+// (409b56..409b67: unit +0x108 != 0.0 jumps to the exit), so a site takes no
+// target. Here: the same pair and distance on a flat field; the site must
+// hold no target, order or slot, through several hits, and once finished the
+// Mirror picks the Trebuchet itself and shoots it.
+int siteCase(const char* data) {
+    auto vfs=tak::hpi::mountRetailRoot(data);
+    tak::sim::TypeRegistry registry;tak::sim::setupRegistry(registry,vfs,false);
+    const auto* mirror=registry.find("crepris");const auto* trebuchet=registry.find("aratre");
+    if(!mirror || !trebuchet){std::printf("FAIL missing crepris or aratre\n");return 1;}
+    const float distance=1469.0f;   // the duel's: inside the Mirror's 1478, the Trebuchet's 500..2700
+    if(mirror->weapons.empty() || trebuchet->weapons.empty() || distance>mirror->weapons[0].range ||
+       distance>trebuchet->weapons[0].range || distance<trebuchet->weapons[0].minRange)
+        {std::printf("FAIL the duel's distance is not in both reaches\n");return 1;}
+    tak::sim::World w;
+    w.setTerrain(std::vector<uint8_t>(512*512,70),512,512,64);
+    w.buildNavClasses(registry);
+    const int site=w.spawn(mirror,4096,4096,0,0);
+    const int shooter=w.spawn(trebuchet,4096+distance,4096,0,1);
+    w.unit(site)->underConstruction=true;
+    // Kept just under full each tick: one stone (2001) never kills it, and
+    // an unattended site neither decays nor counts as finished.
+    const auto siteHp=tak::sim::Fixed::fromInt(mirror->maxHp-1);
+    const auto keep=tak::sim::Fixed::fromInt(trebuchet->maxHp);
+    int hits=0,heldTicks=0;
+    for(int tick=0;tick<1800;++tick) {
+        w.unit(site)->hp=siteHp;   // no decay, no death
+        w.unit(shooter)->hp=keep;
+        w.tick(1.f/30.f);
+        if(!w.unit(site) || !w.unit(site)->alive()){std::printf("FAIL the site died at tick %d\n",tick);return 1;}
+        const auto& u=*w.unit(site);
+        if(u.lastHitBy==shooter && u.hp<siteHp-tak::sim::Fixed::fromInt(100))++hits;   // a stone, not decay
+        if(!u.orders.empty() || u.slotTarget[0] || u.scriptAimTarget)++heldTicks;
+    }
+    const bool quiet=hits>=2 && heldTicks==0;
+    std::printf("%s unfinished crepris under aratre fire at %.0f px: %d hits, %d ticks with a target\n",
+                quiet?"PASS":"FAIL",distance,hits,heldTicks);
+    // Finished, the Mirror chooses for itself (Guard_NoMove's scan).
+    w.unit(site)->underConstruction=false;
+    long damage=0;
+    for(int tick=0;tick<900;++tick) {
+        w.unit(shooter)->hp=keep;w.unit(site)->hp=tak::sim::Fixed::fromInt(mirror->maxHp);
+        w.tick(1.f/30.f);
+        damage+=trebuchet->maxHp-w.unit(shooter)->hp.floorInt();
+    }
+    const bool fires=damage>0;
+    std::printf("%s finished crepris deals %ld to the aratre in 30 s\n",fires?"PASS":"FAIL",damage);
+    return quiet && fires?0:1;
+}
 } // namespace
 int main(int argc,char** argv) {
     if(argc==3 && std::strcmp(argv[2],"reach")==0)return reachCases(argv[1]);
+    if(argc==3 && std::strcmp(argv[2],"site")==0)return siteCase(argv[1]);
     if(argc!=2)return 2;
     auto vfs=tak::hpi::mountRetailRoot(argv[1]);
     int failures=0,cases=0;
