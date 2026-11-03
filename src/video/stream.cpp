@@ -210,9 +210,10 @@ struct Stream::Impl {
     std::vector<uint8_t> testPicture;
     int testPictureW = 0, testPictureH = 0;
 #endif
-    // Fixed two-second ring, stereo S16 at the game's native 11025 Hz.
+    // Fixed two-second ring, stereo S16 at the game's 22050 Hz mix rate.
+    static constexpr size_t kRing = 2 * kAudioRate;
     std::mutex audioMutex;
-    std::array<int16_t, 22050 * 2> pcm{};
+    std::array<int16_t, kRing * 2> pcm{};
     size_t read = 0, count = 0;
     // How far the worker's current attempt got, for the failure reason. Worker only.
     enum class Stage { Setup, Connect, Live } stage = Stage::Setup;
@@ -429,7 +430,7 @@ struct Stream::Impl {
         check(av_frame_get_buffer(e.af, 0));
         AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
         check(swr_alloc_set_opts2(&e.resample, &stereo, AV_SAMPLE_FMT_FLTP, 44100,
-                                &stereo, AV_SAMPLE_FMT_S16, 11025, 0, nullptr));
+                                &stereo, AV_SAMPLE_FMT_S16, kAudioRate, 0, nullptr));
         check(swr_init(e.resample));
         e.fifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLTP, 2, 4096);
         if (!e.fifo) throw AVERROR(ENOMEM);
@@ -490,7 +491,7 @@ struct Stream::Impl {
             { std::lock_guard lock(audioMutex);
               for (int i = 0; i < 256 && count; ++i) {
                   input[i*2] = pcm[read*2]; input[i*2+1] = pcm[read*2+1];
-                  read = (read + 1) % 22050; --count;
+                  read = (read + 1) % kRing; --count;
               }
             }
             float left[1152], right[1152];
@@ -760,14 +761,14 @@ void Stream::audio(const int16_t* samples, int frames, int channels) {
     std::unique_lock lock(p_->audioMutex,std::try_to_lock); if (!lock.owns_lock()) return;
     for (int f=0;f<frames;++f) {
         // Bounded latency: when the upload stalls, retain the newest audio.
-        if (p_->count == 22050) { p_->read=(p_->read+1)%22050; --p_->count; }
+        if (p_->count == Impl::kRing) { p_->read=(p_->read+1)%Impl::kRing; --p_->count; }
         const int16_t* in = samples + f*channels;
         float l=in[0], r=channels==1 ? l : in[1];
         float weight=1;
         if (channels>=6) { l+=in[2]*.707f; r+=in[2]*.707f; weight+=.707f; }
         if (channels>=4) { int rear=channels==4 ? 2:4; l+=in[rear]*.707f; r+=in[rear+1]*.707f; weight+=.707f; }
         if (channels==8) {l+=in[6]*.707f;r+=in[7]*.707f;weight+=.707f;}
-        size_t pos=(p_->read+p_->count)%22050;
+        size_t pos=(p_->read+p_->count)%Impl::kRing;
         p_->pcm[pos*2]=int16_t(l/weight); p_->pcm[pos*2+1]=int16_t(r/weight); ++p_->count;
     }
 }

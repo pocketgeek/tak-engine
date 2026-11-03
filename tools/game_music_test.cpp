@@ -5,7 +5,7 @@
 
 // In-game music through SoundBank: it plays at its native 22050 Hz in stereo, unit
 // effects keep their length after the 11025 -> 22050 Hz decode, and the stream
-// tap still receives 11025 Hz PCM. No device: mix()/mixThunk are driven directly.
+// tap receives the 22050 Hz mix unchanged. No device: mix()/mixThunk are driven directly.
 struct SoundBankTestAccess {
     static void layout(SoundBank& bank,int channels) {bank.chan_=channels;bank.musicVol_=256;}
     static std::optional<std::vector<int16_t>> convert(const std::vector<uint8_t>& wav,int channels) {
@@ -140,8 +140,18 @@ int main(int argc,char** argv) {
         check(last>=2196 && last<=2206,"SFX plays 0.1 s = ~2204 frames at 22050 Hz ("+std::to_string(last+1)+")");
     }
     {
-        // Tap: 512 device frames at 22050 Hz reach the stream as 256 at 11025 Hz,
-        // channel count unchanged, levels kept; an odd callback carries over.
+        // A mod sound at another rate and layout (44100 Hz 16-bit stereo, 0.1 s)
+        // is converted to the mix rate on load: same length in seconds, mono.
+        SoundBank bank;
+        if(!SoundBankTestAccess::openPaused(bank))return 2;
+        check(SoundBankTestAccess::decodeSfx(bank,"modsfx",wavFile(44100,2,16,std::vector<int>(4410*2,6000))),
+              "44100 Hz stereo mod SFX decodes");
+        const size_t n=SoundBankTestAccess::cached(bank,"modsfx");
+        check(n>=2200 && n<=2210,"44100 Hz mod SFX becomes 0.1 s at 22050 Hz ("+std::to_string(n)+")");
+    }
+    {
+        // Tap: the stream gets every 22050 Hz device frame as mixed, channel
+        // count and stereo levels unchanged.
         struct Sink {int frames=0,channels=0,calls=0;std::vector<int16_t> pcm;} sink;
         SoundBank bank;SoundBankTestAccess::layout(bank,2);
         std::vector<int16_t> pcm;for(int i=0;i<4000;++i){pcm.push_back(8192);pcm.push_back(-4096);}
@@ -151,10 +161,10 @@ int main(int argc,char** argv) {
             s->pcm.insert(s->pcm.end(),p,p+size_t(frames)*size_t(channels));
         });
         SoundBankTestAccess::mixThunk(bank,512);
-        check(sink.frames==256 && sink.channels==2,"tap gets half the frames, same channels");
+        check(sink.frames==512 && sink.channels==2,"tap gets every frame, same channels");
         SoundBankTestAccess::mixThunk(bank,511);SoundBankTestAccess::mixThunk(bank,1);
-        check(sink.frames==512,"odd-sized callbacks still decimate exactly 2:1 ("+std::to_string(sink.frames)+")");
-        check(sink.pcm[2]==8192 && sink.pcm[3]==-4096 && sink.pcm[1022]==8192 && sink.pcm[1023]==-4096,
+        check(sink.frames==1024,"odd-sized callbacks pass through ("+std::to_string(sink.frames)+")");
+        check(sink.pcm[2]==8192 && sink.pcm[3]==-4096 && sink.pcm[2046]==8192 && sink.pcm[2047]==-4096,
               "tap keeps the stereo levels");
         bank.setAudioTap(nullptr,nullptr);
     }

@@ -38,8 +38,6 @@ class SoundBank {
 public:
     static constexpr int kMixRate = 22050;   // device + decoded PCM rate
     static constexpr int kSfxRate = 11025;   // the shipped unit WAVs
-    static constexpr int kTapRate = 11025;   // what the stream capture accepts
-    static_assert(kMixRate == 2 * kTapRate, "the audio tap decimates 2:1");
     const tak::hpi::Vfs* vfs_ = nullptr;   // runtime read-path (owned by main)
 
     SoundBank() = default;
@@ -63,7 +61,6 @@ public:
     void setAudioTap(void* context, void (*tap)(void*, const int16_t*, int, int)) {
         if (dev_) SDL_LockAudioDevice(dev_);
         tapContext_ = context; tap_ = tap;
-        tapPhase_ = 0;
         if (dev_) SDL_UnlockAudioDevice(dev_);
     }
 
@@ -115,7 +112,6 @@ public:
         want.userdata = this;
         dev_ = tak::openAudioDevice(0, &want, &spec_, SDL_AUDIO_ALLOW_CHANNELS_CHANGE);
         chan_ = dev_ ? (spec_.channels ? spec_.channels : 2) : 1;
-        tapPhase_ = 0;
         std::fprintf(stderr, "audio: %d output channels%s%s\n", chan_,
                      chan_ >= 4 ? " (surround: front/rear enabled)" : "",
                      (chan_ == 6 || chan_ == 8) ? ", LFE subwoofer driven" : "");
@@ -199,7 +195,8 @@ public:
     }
 
     // Play the synthesised 10-second disco loop as a positional SFX from (x,z) -- the
-    // Shift+D dance-floor track. Generated in code (no shipped asset), mono, and cached under "disco", so it pans/fades like any unit sound.
+    // Shift+D dance-floor track. Generated in code (no shipped asset), mono, and
+    // cached under "disco", so it pans/fades like any unit sound.
     void discoAt(float x, float z) {
         if (!cache_.count("disco")) buildDisco();
         playWorld("disco", x, z);
@@ -593,35 +590,9 @@ private:
         auto* bank = static_cast<SoundBank*>(ud);
         auto* pcm = reinterpret_cast<int16_t*>(stream);
         bank->mix(pcm, len / 2);
-        if (bank->tap_) bank->feedTap(pcm, len / 2 / std::max(bank->chan_, 1));
+        // The stream capture takes the mix as it is (video::kAudioRate = kMixRate).
+        if (bank->tap_) bank->tap_(bank->tapContext_, pcm, len / 2 / std::max(bank->chan_, 1), bank->chan_);
     }
-    // The stream capture takes kTapRate PCM, so halve the mix: a [1 2 1]/4 low-pass
-    // (zero at the new Nyquist) centred on every even input frame. The filter's
-    // left/centre taps carry across callbacks; output goes out in fixed-size chunks
-    // from a member buffer, so the audio thread never allocates.
-    void feedTap(const int16_t* in, int frames) {
-        const int ch = std::clamp(chan_, 1, 8);
-        const int chunk = int(tapBuf_.size()) / ch;
-        int outFrames = 0;
-        for (int f = 0; f < frames; ++f) {
-            const int16_t* x = in + size_t(f) * size_t(ch);
-            if (tapPhase_ == 0) {
-                for (int ci = 0; ci < ch; ++ci) { tapLeft_[ci] = tapLast_[ci]; tapMid_[ci] = x[ci]; }
-                tapPhase_ = 1;
-            } else {
-                int16_t* o = tapBuf_.data() + size_t(outFrames) * size_t(ch);
-                for (int ci = 0; ci < ch; ++ci)
-                    o[ci] = int16_t((tapLeft_[ci] + 2 * tapMid_[ci] + x[ci]) / 4);
-                tapPhase_ = 0;
-                if (++outFrames == chunk) { tap_(tapContext_, tapBuf_.data(), outFrames, ch); outFrames = 0; }
-            }
-            for (int ci = 0; ci < ch; ++ci) tapLast_[ci] = x[ci];
-        }
-        if (outFrames) tap_(tapContext_, tapBuf_.data(), outFrames, ch);
-    }
-    std::array<int16_t, 256 * 8> tapBuf_{};
-    int tapLeft_[8] = {}, tapMid_[8] = {}, tapLast_[8] = {};
-    int tapPhase_ = 0;   // 1 = a centre frame waits for its right neighbour
 
     void mix(int16_t* out, int n) {
         std::memset(out, 0, size_t(n) * 2);

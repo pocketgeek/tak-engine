@@ -8,6 +8,8 @@
 
 namespace tak::video {
 // Where Stream::start() sends the stream (the key follows it): YouTube's RTMPS ingest.
+// Stream::audio() takes PCM at the game's mix rate (client/sound.h kMixRate).
+inline constexpr int kAudioRate = 22050;
 inline constexpr const char* kYouTubeIngest = "rtmps://a.rtmps.youtube.com:443/live2/";
 struct StreamConfig {
     int width = 1280, height = 720, fps = 30, bitrateKbps = 6000;
@@ -57,7 +59,7 @@ public:
     bool video(const uint8_t* rgba, int width, int height, int pitch);
     // Transfer packed RGBA ownership, returning a reusable buffer to the producer.
     bool video(std::vector<uint8_t>& rgba, int width, int height);
-    void audio(const int16_t* samples, int frames, int channels); // 11025 Hz
+    void audio(const int16_t* samples, int frames, int channels); // kAudioRate Hz
     // The hardware cursor for the NEXT video() submission (video/streamcursor.h); it
     // stays set until replaced, and a default StreamCursor shows none. The worker
     // stamps it in after scaling, so it costs the caller a copy of a shared_ptr.

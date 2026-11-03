@@ -52,7 +52,7 @@ int main(int argc,char**argv) {
             music.setVolume(256,128);capture.pcm.clear();
             for(int i=0;i<100;++i)tak::MenuMusicTestAccess::fill(music,rate/50);
             const size_t frames=capture.pcm.size()/2;
-            if(frames<21000 || frames>22100)throw std::runtime_error("wrong resampled duration");
+            if(frames<42000 || frames>44200)throw std::runtime_error("wrong resampled duration");
             const size_t middle=(capture.pcm.size()/4)*2;
             if(std::abs(int(capture.pcm[middle])-4096)>20)
                 throw std::runtime_error("music volume not reflected in stream");

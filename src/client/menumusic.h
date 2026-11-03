@@ -26,7 +26,7 @@ public:
     MenuMusic(const MenuMusic&) = delete;
     MenuMusic& operator=(const MenuMusic&) = delete;
 
-    // The stream mixer accepts 11025 Hz signed PCM. Tap the volume-scaled
+    // The stream mixer accepts 22050 Hz signed PCM. Tap the volume-scaled
     // device buffer, converting the menu WAV's native format/rate as needed.
     void setAudioTap(void* context, void (*tap)(void*, const int16_t*, int, int)) {
         if (dev_) SDL_LockAudioDevice(dev_);
@@ -117,7 +117,7 @@ private:
         if (tapConverter_) SDL_FreeAudioStream(tapConverter_);
         tapConverter_ = tap_ && !src_.empty()
             ? SDL_NewAudioStream(fmt_, openWant_.channels, openWant_.freq,
-                                 AUDIO_S16SYS, 2, 11025) : nullptr;
+                                 AUDIO_S16SYS, 2, 22050) : nullptr;
     }
     static void SDLCALL mixThunk(void* userdata, Uint8* stream, int len) {
         static_cast<MenuMusic*>(userdata)->fill(stream, len);
