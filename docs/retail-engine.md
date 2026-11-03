@@ -349,7 +349,8 @@ finished targets:
   -> `40f2e0` -> `412620` with the slot's range) and the mission scan
   `4d8370`: Fire At Will and armed only, `412620` on the scanning slot
   (`519ac0`: a switcher's selected slot, else the first weapon the unit has)
-  with the radius max(sightdistance, range). `4d8370` is called by Standby
+  gathering within max(sightdistance, range); a ranged slot then keeps only
+  what is within its range (see "Mission target scan"). `4d8370` is called by Standby
   (`407770`), Standby_Wander, Patrol (`403600`), VTOL_Patrol, Move_Ground's
   attack response (`402e2d`, a move with a response mode),
   Move_Ground_Formation, Attack_Chase and Attack_Melee's retargets,
@@ -1582,7 +1583,9 @@ the shot's slot for the shots World resolves from a slot (instant and melee
 shots, projectiles, flames, bombs).
 
 **Fight-move legs, patrols and rally steps (protocol 307).** Retail has
-no fight-move mission (none of the registry's 77 rows): a flyer's leg of one
+no fight-move mission (none of the registry's 77 rows; its fight-move order,
+the unbound `UnitCommand MoveFight`, is a Move_Ground / VTOL_Move / QMove with
+response mode -1: "Mission target scan", 2026-11-03): a flyer's leg of one
 is VTOL_Move (`Order::flightMoveMission` kept beside `attackMove`), the
 move's mission with its air-traffic check, its coarse and refining
 controllers and, for a Ctrl group in Retail mode, its group checks;
@@ -3574,9 +3577,10 @@ read it. Found by static analysis and by emulating `0x4c6800`; ported in
   the centre is the WORLD cell (`x>>5`, `z>>5`), the disc reaches twice the
   sight distance, and each cell is admitted under a cone from the eye through
   the coarse projected height plane (`0x50ea58`): about 1x on flat ground, up
-  to 2x from high ground, less uphill. `0x4f59c0` (shared vision with a
-  computer ally) re-points that ally's sight objects at the sharing player,
-  so its units stamp into his plane. The Mapping plane is `game+0x19ef4`, one
+  to 2x from high ground, less uphill. `0x4f59c0` (a remote ally's
+  ShareMapAndLOS message) re-points that ally's sight objects at the local
+  player, so its units stamp into his plane; who shares by default is in
+  "Mission target scan" (allied humans on one team, never a computer). The Mapping plane is `game+0x19ef4`, one
   bit per player.
 - **LosOn** (`0x4f7210`): the owner always; otherwise a unit is seen when one
   of its four projected bounding-box corners (`0x4c1410`) is on a cell whose
@@ -5273,8 +5277,10 @@ aim flags 0xe0) and never fires while it hits her (`vermage_fight_test`,
 Retail and `--legion`). It is the Attack_Chase race above, reached through
 an order retail does not have:
 
-- **Retail has no fight-move** (see "Fight-move legs" above). Its nearest
-  order, a move with fire at will, fires through the automatic slots: the
+- **Retail has no fight-move mission** (see "Fight-move legs" above; but it
+  has a fight-move ORDER, the unbound key command `UnitCommand MoveFight`: a
+  Move_Ground with response mode -1, see "Mission target scan"). Its plain
+  move with fire at will fires through the automatic slots: the
   sweep (`40f330`) picks only enemies on the player's visible list (`412620`,
   `fire_sweep_test vision`). World does that on a plain move too: past the
   same Archer she walks on until she sees it (sight 215), the sweep aims her
@@ -5282,8 +5288,12 @@ an order retail does not have:
 - **World's attack-move acquisition is not retail's scan.** `findTarget`
   takes an enemy within the longest weapon's range + 90 px (Water Burst 600:
   690 px) whether or not the player sees it; retail's scan (`4d8370` ->
-  `412620`) takes visible enemies within max(sight, the selected slot's
-  range). So she starts an Attack_Chase on an Archer she cannot see, stops in
+  `412620`) takes only visible enemies, and for a ranged slot only those
+  within the selected slot's own range (`52ad60` on every candidate; the
+  max(sight, range) radius is only the gather and binds a melee or kamikaze
+  slot alone: corrected 2026-11-03, E, `tools/re/probe_mission_scan_vision.py`).
+  With Water Ball (400) selected she would take the Archer only inside 400 px
+  and only once she or another of her player's units sees it. So she starts an Attack_Chase on an Archer she cannot see, stops in
   reach of Water Ball (400) before seeing it, and the sweep never aims for
   her. Her AimWeapon then waits on static 7 for ever, as retail's does in the
   stalled cases of the grid above.
@@ -5336,6 +5346,184 @@ of 141 in the emulator's own geometry; where the circle accepts depends on
 the cell alignment, so the two grids are not the same cases. Matching retail
 here means a retail-faithful fight-move acquisition (visible enemies, the
 selected slot's reach), not this mission alone.
+
+## Mission target scan (icd static + emulation, 2026-11-03)
+
+Where every automatic target a retail unit picks comes from, read for the
+port of `4d8370` / `412620` to all of World's automatic picks. Marks: **E**
+emulated (the probe named), **S** static reading, **I** inferred. The probes
+are in `tools/re/`; each runs the user's own `KINGDOMS.icd` and copies
+nothing.
+
+**Two scans, one picker.** `412620` has exactly two call sites in the binary
+(S, a byte scan of every `call rel32`): `40f301`, the fire-at-will sweep
+(`40f330` -> `40f2e0`, radius = the slot's range), and `4d839b`, the mission
+scan `4d8370`. Both draw only from the owner's visible-enemy list +5
+(`411700`, rebuilt every 7 ticks; `4f7210` reads the owner's own sight plane,
+so an enemy lit only in an ally's plane is not on it; a cloaked enemy never
+is) (E, `probe_mission_scan_vision.py`, 10 observations):
+
+- `4d8370` scans only for an armed unit (`+0x130 & 0x8000000`) on Fire At
+  Will (`(+0x130 & 0xc0000) == 0x80000`); Return Fire and Hold Fire return 0.
+  It takes the scanning slot (`519ac0`: a switcher's selected slot, else the
+  first present slot of 0..2) and gathers within max(sightdistance
+  `def+0x226`, the slot's range).
+- The picker then tests every candidate with `52ad60` (in range) unless the
+  slot is melee (weapon class vtable `+0x14`) or the unit has
+  `def+0x260 & 0x10000000` (kamikaze, I) (`412783..4127b8`). **So a ranged unit only ever
+  takes a visible enemy already within its scanning slot's range**: range 300
+  and sight 500 never take a seen enemy at 400; range 700 and sight 200 take
+  one at 650. A melee slot reaches max(sight, range): sight 500 takes 250 and
+  400. The sweep is the same picker on the slot's range alone.
+- The picker's other gates: a target needs `shootme` (`def+0x260 & 0x8000`)
+  unless the owner is computer-run (World's `automaticGates`) or the
+  **ShootAll** console toggle is on (`[[0x62d558]]+7`: ConsoleOptions, set
+  only by `+shootall` at `0x427c70`, the console table at `0x605a60`; reset
+  to 0 by `0x499440`, never loaded from the registry: S). World keeps it unset.
+
+**The seventeen callers of `4d8370`** (S: call sites by byte scan, each
+mapped to its handler through the mission registry's rows):
+
+| Call | Mission (handler) | When it scans | What a hit becomes |
+|---|---|---|---|
+| `402988` | Move_Ground_Formation(/Standby) (`402880`) | stage 3, the parent move's response mode non-zero | the formation point's leash on Maneuver (pathfinding-port.md) |
+| `402e2e` | Move_Ground (`402b00`) | response mode < 0 on every stance; mode > 0 off Hold Position; mode 0 never | an attack built in place (below) (E) |
+| `40395e` | Patrol (`403600`) | a timer wake (no controller event `0x700`, no `0x2000`) | `4d7de0(u, t, 0, &pos, 1, 1)`: forced leash and return move |
+| `404075` | Attack_Chase (`403bb0`) | stage 2, an automatic chase (mode >= 100), off Hold Position, rand(mode % 100 + 1) != 0 | a different hit becomes the target (`5199f0`), stage 0 (E) |
+| `4049a0` | Attack_Melee (`404690`) | stage 2, automatic (`+0x52` != 0), no event, off Hold Position, rand(2) == 0 | a different hit, kept only within `+0x56` of the origin when a leash is set |
+| `407839` | Standby (`407770`) | stage 1 | `4d7de0(u, t, 0, &pos, 1, 0)`; none: sleep 7 + rand(7) |
+| `40797e` | Standby_Wander (`4078e0`) | off Hold Position | Maneuver: only within the leash of the post `+0x2e/+0x30` |
+| `4176bc` | VTOL_Standby (`417350`) | every scan wake | `4d7de0(u, t, 0, 0, 1, 0)`: stage 0, return 3 |
+| `4179f0` | VTOL_Move_Formation(/Standby) (`417750`) | after its group tests (`50c140`, `50bd20`, `50b900`) | `4d7de0(u, t, 0, 0, 1, 0)` |
+| `4181b1` | VTOL_Move (`417c20`) | as Move_Ground: mode < 0 always, > 0 off Hold Position (`418193..4181b0`) | the same `+0xf8` fallback follows (`4181c1`); the tail not read |
+| `41962a` | VTOL_SeekAttack (`4192f0`) | stage 1 | `4d7de0(u, t, 0, 0, 1, 0)`: an attack put ahead ends it |
+| `41a24d` | VTOL_Patrol (`419db0`) | stage-2 wake | `4d7de0(u, t, 0, 0, 1, 1)` |
+| `41baf0` | AirStrike (`41b5e0`) | an automatic attack's rescan, rand(2) == 0 (see its section) | `4d7de0(u, t, 0, 0, 1, 0)` |
+| `41c428` | AirToGround (`41bf80`) | an automatic attack's rescan (see its section) | as AirStrike |
+| `41ce68`, `41d10d` | AirToAir (`41ca50`) | an automatic attack's rescans (see its section) | as AirStrike |
+| `41e02e` | AirToGroundHover (`41d820`) | an automatic attack's rescan (see its section) | as AirStrike |
+
+No other mission scans. Follow_Ground and VTOL_Follow (guard) answer the
+ward's attacker (`+0xf8`); the hit response `409a50` answers the unit's own;
+the scripted AttackUType (`401580`) walks the whole unit table with no sight
+test on purpose; Wait (`401480`) counts with `411ae0`. **Guard_NoMove picks
+nothing** (below), so a retail structure targets only through the sweep and
+the hit response.
+
+**The attack-issuing gate** `4d7de0(unit, target, explicit, point, auto,
+forceLeash)` (E, `probe_issue_gate.py`: 54 of 54 combinations of mover or
+not, stance, fire state, explicit / auto / auto + force). Explicit: a plain
+attack (mode 0, no leash). Auto on Hold Fire: nothing. Auto on Hold Position
+without force: nothing. Auto with force, or on Maneuver: a mover gets a
+return move (kind 2) and an attack with mode 1 and leash `def+0x232`
+(maneuverleashlength); a non-mover a plain attack with mode 1. Auto on Roam
+without force: a plain attack with mode 1.
+
+**Move_Ground's response** (`402e10..4032a8`, E, `probe_move_ground_response.py`,
+18 observations; entered mid-function with a hand-built frame):
+
+- The scan runs on a wake when the response mode (`+0x52`) is below 0 on
+  every stance, above 0 off Hold Position, and never at 0. No hit: the
+  fallback below; nothing: stage 1, return 4.
+- **The fallback** is the stored attacker `+0xf8`: alive, not dying,
+  finished, of a non-allied player (owner `+0xac[]`); the unit has a first
+  weapon (`def+0x264 & 0x20`), is alive, not dying, selectable (`+0x130 &
+  0x20`), finished, not carried; the attacker passes the scanning slot's
+  category masks (`def+0x9a`, `+0x8e[slot]`). Then it is taken when `52ad60`
+  puts it in range, or when it is nearer than 9/10 x maneuverleashlength,
+  plus the slot's range for a non-melee slot (`402f9f..40302b`, a strict
+  `<`). The weapon tests follow (`+0x268` bits 2 and 4, melee needs a ground
+  target, `+0xc8` air bits, damage > 0). **No visibility test, no cloak test
+  and no fire-state test**: a Hold Fire unit on a move with a response mode
+  answers its attacker; only `4d8370` gates on Fire At Will.
+- Mode > 0 on Maneuver drops a hit (scanned or fallback) at or beyond
+  maneuverleashlength from the move's goal (`+0x24/+0x2c`), with no rescan;
+  Roam keeps it at any distance.
+- The attack is the same in both branches: ctor mode 1 (so it becomes an
+  automatic chase, below) and leash `+0x56` = maneuverleashlength **on every
+  stance, Roam included**; Attack_Chase ends when the unit is that far from
+  the attack's origin (`403d1d..403d5e`, S). Mode < 0: the origin is the
+  unit's position, the Move keeps it in `+0x2e/+0x30` and goes to stage 3
+  (the return to it before the leg resumes). Mode > 0: the origin is the
+  goal and the Move goes to stage 0.
+
+**Retail's fight-move is a key command** (S). `UnitCommand MoveFight` (the
+name dispatcher `0x4b0e40`, reached from the `UnitCommand` key binding
+`0x48e0b0`, table entry `0x610934`) arms the Move cursor (`0x4b0df0`) and
+sets `game+0x17633 |= 0x400`; changing the command mode (`0x429950`) clears
+it. The order code `0x5214b0` then gives a resolved Move_Ground, VTOL_Move or
+QMove response mode -1 when that bit is set and the command mode
+(`game+0x1762c`) is 2 (`0x521bf4..0x521c5b`, and `0x521867..0x521892` on the
+group-spread path). The shipped `Keys.TDF` binds no key to it, so few
+players had it; its behaviour is the mode < 0 branch above: scan on every
+stance at Move_Ground's cadence, attack with a leash from where it stopped,
+return there, go on. This is the "mode < 0, producer not found" of the
+pathfinding port.
+
+**Automatic chases** (E, `probe_attack_chase_mode.py`, 13 observations).
+`4d7de0` builds an explicit attack with mode 0 and an automatic one with
+mode 1; Attack_Chase's stage-0 set-up (`404583..4045ba`) turns any non-zero
+mode into 100 for an armed mover (a non-mover, or an unarmed unit, ends:
+result 7). So "mode >= 100" is exactly "automatic". The stage-2 retarget
+(`40404d..40409b`) runs off Hold Position and only when rand(mode % 100 + 1)
+!= 0, so never at mode 100 itself (rand(1) is 0): only after stage 1 has
+stepped the mode on (101..105). It runs whether the target is in reach or
+not, except on the in-reach draw that goes to stage 1. A hit equal to the
+current target changes nothing.
+
+**Guard_NoMove** (`401bb0`, S; `401a90` E, `probe_guard_nomove_slots.py`, 15
+observations). It runs only with `+0x130 & 0x2000000`; an armed unit calls
+`401a90` and sleeps 7 + rand(15), an unarmed one sleeps 150. `401a90` never
+calls `4d8370` or `412620`:
+
+1. If any of the per-slot bits `+0xd0 & 0xe00000` (0x200000 << slot) is set,
+   it draws rand(3); on 0 it releases each flagged slot; the bits are
+   cleared on either draw. No bit, no draw. The bits come from `4099e0(shot,
+   damage to an enemy, damage to an own unit)`, which the impact dispatch
+   calls after a hit: enemy damage at most twice the own damage sets the
+   shot's slot bit (`+0xd8` bits 2-3), more sets `+0xd0 & 0x1000000`.
+2. Then each present slot (a switcher only its selected one) whose target
+   (`51a9a0`) is missing, bad (`52adf0`) or out of reach (`!52ad60`) is
+   released.
+
+"Release" is `519b70(i)` then `519b10(i)`: `519b70` clears the slot's
+automatic bit (slot flags `+0x1a & 4`) and, if it was set, its target
+(`51a7f0`); `519b10` sets the bit and, if it was clear, clears the target.
+Net: the slot is automatic with no target, back to the sweep (a manual slot
+is cleared once, an automatic one twice).
+
+**Shared sight** (E, `probe_shared_vision.py`, 13 observations). A player
+record (`game+0x2404 + 0x110 x i`) has `+0xf7[j]` ("j's sight comes to me")
+and `+0x101[j]` ("mine goes to j"), both set for itself (`0x4f6290`). At game
+start `0x4f6770` sets both, both ways, for every pair of players on the same
+lobby team (`+0x50`->`+0x8a`, 4 = none; the iterator `0x50e490`) unless
+either is a computer (`+0x50`->`+0x84` == 2, "LOCALLY/REMOTELY_HOSTED_AI"):
+**allied humans on one team share by default; a computer shares with nobody
+and nobody with it, allied computers included**. A unit's sight object
+(`0x4c66b0`) stamps into the local player's plane when the local record's
+`+0xf7[owner]` is set, else into its owner's, so each player's plane holds
+his own units and his sharing allies' (each machine runs its own units'
+scans), and `4f7210` reads only that plane. In game the Diplomacy dialog's
+ShareMapAndLOS box (`0x4b6b60`, disabled for a computer row) sets the local
+`+0x101[j]` and, for a remote human, sends message 0x15 (`0x4f5960`), whose
+handler `0x4f59c0` sets the receiver's `+0xf7[sender]` and re-points the
+sender's units' sight objects.
+
+**Double sight is ours** (S). Retail has no such option: `def+0x226` is
+written only by the FBI loader (`0x4bfa50`, `sightdistance`, default 0) and
+two whole-definition copies (`0x4c37f0`, `0x4c51c0`); the sight object copies
+it as authored (`0x4c66eb`); the stamp's reach of twice the distance is
+unconditional (`0x4c68c1`); `412620` reads it raw (`0x4126d5`). World's
+`doubleSight` option doubles sight and radar for skirmish and multiplayer;
+which sight the ported scan's gather radius uses with it on is World's
+choice, not retail's.
+
+**World before this work** (2f04e112): `findTarget` stands in for `4d8370`
+and is not it (no visibility, the longest weapon's range + 90 px, nearest
+first, a home leash), and it also runs from a per-tick stride scan of idle
+armed units, guard fronts and `tickGuardNoMove` (which picks for
+structures). Move_Ground's fallback has a cloak test and a range + 90 test,
+and the stride scan is what makes fight-move legs fight.
 
 ## Mission order strings (icd 0x513fb0, 2026-10-30)
 
