@@ -4884,10 +4884,11 @@ selected builder could work on).
 
 Ours, by `src/client/friendlyorder.h` (`friendly_order` test): per unit,
 repair when a mobile builder (not repeating production) and the target is
-damaged, else Guard when `canguard`. Differences kept: a unit that can neither
-repair nor guard does nothing (retail moves it to the point), a non-builder over
-an unfinished unit does nothing (retail guards it), and an ally's unit is
-offered the guard but `World::guard` accepts only its own side's units.
+damaged, else Guard when `canguard`, else -- since 2026-11-03, as retail -- a
+Move to the point (a repeating builder's Move sets its output's rally). The
+whole mode-1 resolver now runs per unit in `src/client/clickrules.h`; see
+"What a click orders" below. An ally's unit is offered the guard but
+`World::guard` accepts only its own side's units.
 
 ## The pointer cursor: the right-click interface's four hover cursors (icd + emulation, 2026-11-03)
 
@@ -4927,6 +4928,68 @@ minimap with nothing armed is always Normal (our left-click there moves the
 camera and our right-click is a plain Move, so no dot is selected or
 attacked), and an armed ATTACK there ignores the dot (our minimap attack is an
 attack-move to the ground point). The left-click interface is not offered.
+
+## What a click orders: the resolver per unit, on release (icd, 2026-11-03)
+
+Static reading (S) unless marked I (inferred). Retail issues every order through
+`0x5214b0`, which runs the resolver `0x4de530` for each selected unit except the
+hovered one (`0x521562`, `0x521625`) and voices one random selected unit
+(`0x5215df`). The hovered unit is ONE unit for cursor and click (`+0x17624`):
+among the units whose rotated footprint contains the pointer (`0x520530`), the
+smallest (height/2 + depth) x width of the type's model box (UnitDef
+`+0x152/+0x156/+0x15a`, set at `0x4c14c4`) wins, a tie to the earlier entry
+(`0x52133e..0x521381`); on the minimap the nearest dot within 2 px
+(`0x5213ae..0x52141f`). Main-view clicks act on the RELEASE (`0x5281ad`,
+`0x527bf0`); the minimap acts on the press (`0x52835b`). An armed left-click
+issues only when the cursor is an order cursor (`0x527dd0`, `0x525ce0`).
+
+- Mode 1 (right-click): an enemy -> ATTACK when `canattack` and the target
+  resolves, nothing when it does not (`0x4df215`), MOVE without `canattack`;
+  an ally -> HELPBUILD, REPAIR, pickup (single weaponless transport), FOLLOW,
+  MOVE; ground -> MOVE (a loaded transport too: no unload); a body or feature
+  -> RESURRECT, RECLAIM, MOVE. A passenger over its own transport FOLLOWs it.
+- Mode 2 (armed MOVE, `0x4df0b9..0x4df1d2`): the ally branch as above over an
+  own or allied unit, MOVE elsewhere; its cursor shows Revive over a body while
+  the click moves.
+- Mode 3 (armed ATTACK, `0x4de65f..0x4de7cc`): ground or a friendly unit is a
+  fire-at-point (SUPPRESS for a ranged ground unit -- I, from its name --
+  AIRSTRIKE / AIRTOGROUND for a flyer, nothing for melee and anti-air units).
+- Mode 5 (armed GUARD): the cursor needs `canguard` and (the unit flies or the
+  target does not); the resolver (`0x4dec78`) has no flyer rule, so a mixed
+  selection with one flyer guards a flyer with every unit.
+- Mode 12 (armed CLEAR, `0x4decd6..0x4deef6`): RESURRECT first, else RECLAIM;
+  the cursor (`0x4ddcf4`) shows Reclaim over a raisable reclaimable body.
+- The right-drag box (`0x520e30`, `0x527d00` for armed boxes): with exactly one
+  weaponless transport and no attacker, reclaimer or raiser selected, it loads
+  every own unit in the box; else each attacker attacks the visible enemies in
+  the screen box (3n random draws); a unit with no attack order and
+  `canreclaim` clears the box (RECLAIMAREA); with exactly one enemy a unit
+  without a weapon does nothing. Armed ATTACK / LOAD / CLEAR boxes do the
+  attack, load or clear step alone; any other armed box selects.
+- Minimap placement (mode 14, `0x527eb0`): MOBILEBUILD at the minimap point
+  with the sound "oktobuild", gated by the placement flag `+0x17633` 0x80 that
+  only the main-view ghost (`0x429690`, `0x4297a3`) sets -- stale on the
+  minimap (I) -- else "notoktobuild".
+- Modifiers: Shift appends and keeps the mode armed; Ctrl inserts at the front;
+  Shift/Ctrl on the same order kind within 16 px of a queued one removes it;
+  Alt is never read.
+
+Ours (`src/client/clickrules.h`, `click_rules` test with a cursor parity check;
+`src/client/gameview_clicks.cpp`): the same per-unit resolver, on release, with
+the one picker (our hit region's screen area stands in for the model box).
+Kept or chosen differently, by the owner's decisions: our ground-move spread;
+an own transport a passenger fits in is boarded (the rest guard it);
+Alt+right-click unloads a loaded transport; a rally holder's Move / Attack set
+its output's rally; armed ATTACK on ground or a friendly attack-moves for now
+(cursor Attack, never TooFar) until the fire-at-point order is ported; the box
+attacks every visible enemy once, nearest first, and a unit without a weapon
+always clears; minimap placement is checked at the minimap point and falls
+back to our clear-then-build; a left-click on an enemy or ally with nothing of
+ours selected selects it for inspection (with a selection it deselects, as
+retail); Ctrl removes from the selection and the box keeps our army filter.
+Where retail's cursor and click disagree (armed MOVE over a body, armed CLEAR
+over a raisable reclaimable body, Airstrike over an enemy it cannot hurt, Attack
+over an empty right-drag box) ours shows what the click does.
 
 ## Drag boxes: world-anchored corners and the 32-pixel test (icd, 2026-10-21)
 
