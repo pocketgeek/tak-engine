@@ -368,6 +368,16 @@ int main(int argc, char** argv) {
                               "unrelated commands stay rejected during infinite mobile production");
                     }
                 }
+                // Fire at a point (past SetSquad in the enum): retail's SUPPRESS would
+                // end the repeat; our rally rule (C9) refuses it -- plain, Shift or Ctrl.
+                c.kind=net::Cmd::AttackGround;c.targetId=0;c.x=1500;c.z=1500;
+                for (uint8_t queued : {uint8_t(net::kQueueReplace),uint8_t(net::kQueueAppend|net::kQueueToggle),
+                                       uint8_t(net::kQueueFront|net::kQueueToggle)}) {
+                    c.queue=queued;sim::applyCommand(world,registry,c);
+                    check(world.stateHash()==before && world.unit(id)->repeatType==output &&
+                          world.unit(id)->orders.empty(),
+                          "AttackGround is refused during infinite mobile production");
+                }
             }
             for (auto kind : {net::Cmd::Move, net::Cmd::Patrol, net::Cmd::Attack, net::Cmd::AttackMove}) {
                 world.unit(id)->rally.clear();
