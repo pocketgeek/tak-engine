@@ -288,29 +288,38 @@
             // command-panel button handled
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    minimapArmedOrder(float(e.button.x), float(e.button.y), winW, winH)) {
-            // An armed order (F/M/A/P/G) + minimap click issues that order at the
-            // clicked location, instead of moving the camera there.
+            // An armed order + minimap press issues that order at the pressed point,
+            // aimed at the dot there, when its cursor is an order cursor (retail acts
+            // on the minimap on DOWN, 0x52835b); the camera stays.
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
+                   minimapPlace(float(e.button.x), float(e.button.y), winW, winH)) {
+            // A build item armed: place it at the minimap point (0x527eb0).
+        } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT && !placing_ &&
+                   minimapOrder(float(e.button.x), float(e.button.y), winW, winH,
+                                (SDL_GetModState() & KMOD_SHIFT) != 0)) {
+            // Right press on the minimap (wherever it is drawn, the full-screen radar
+            // included): the right-click order at that point, aimed at the dot.
+            trackSel_ = false;
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    minimapClick(float(e.button.x), float(e.button.y), winW, winH)) {
             draggingMinimap_ = true;   // camera follows the drag until release
             trackSel_ = false;
         } else if (e.type == SDL_MOUSEBUTTONDOWN &&
                    e.button.x > mapViewW(winW) && e.button.y < mapViewH(winH)) {
-            // Right-hand panel press. A right-click on the minimap orders the
-            // selection to that world point; every other panel press is swallowed
-            // so it can't start a box-select or drop an order on the map. (Only the
-            // PRESS -- releases still fall through to end a drag/box-select.)
-            if (e.button.button == SDL_BUTTON_RIGHT &&
-                minimapOrder(float(e.button.x), float(e.button.y), winW, winH,
-                             (SDL_GetModState() & KMOD_SHIFT) != 0))
-                trackSel_ = false;
+            // Right-hand panel press: swallowed so it can't start a box-select or drop
+            // an order on the map. (Only the PRESS -- releases still fall through to
+            // end a drag/box-select.)
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    pendingCmd_) {
-            float wx, wz;
-            pickWorld(float(e.button.x), float(e.button.y), wx, wz);
-            const bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
-            issueArmedOrder(pendingCmd_, wx, wz, queue, /*precise=*/true);
-            armedOrderIssued(queue);
+            // An armed press waits for the release (retail 0x527bf0): a click at
+            // the press, or past the area threshold an armed box (2.9).
+            pickWorld(float(e.button.x), float(e.button.y), apX0_, apZ0_);
+            armedPress_ = true;
+            dragging_ = true;
+            dragClicks_ = e.button.clicks;
+            dragAnchor_ = dragAnchorAt(float(e.button.x), float(e.button.y));
+            dragX1_ = float(e.button.x);
+            dragY1_ = float(e.button.y);
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT &&
                    placing_) {
             // Placement pick: a building takes the flat cell under the cursor (so the
@@ -388,20 +397,24 @@
                 placing_ = nullptr;shiftBuildPlaced_=false;
             }
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_RIGHT &&
-                   reclaimDrag_) {
-            reclaimDrag_ = false;
+                   rightDrag_) {
+            rightDrag_ = false;
             bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
             float ex = float(e.button.x), ey = float(e.button.y), ewx, ewz;
             pickWorld(ex, ey, ewx, ewz);
-            // Only a deliberate box clears an area (both sides at least the area
-            // threshold, measured from where the press's ground is drawn NOW, so a pan
-            // mid-drag counts as the box the player sees); anything less was a click ->
-            // the ordinary contextual order.
-            // A click orders at the PRESS, as a plain right-click does on press: a
-            // twitch (now up to the area threshold) must not move the target off what
-            // was clicked. Units are picked where the pressed ground is drawn now.
+            // Retail orders on the release (0x5281ad). Only a deliberate box is one
+            // (both sides at least the area threshold, measured from where the press's
+            // ground is drawn NOW, so a pan mid-drag counts as the box the player
+            // sees): retail's per-unit load / attack / clear (clickrules.h
+            // boxOrders); anything less was a click -> the ordinary contextual order.
+            // A click orders at the PRESS: a twitch (up to the area threshold) must
+            // not move the target off what was clicked. Units are picked where the
+            // pressed ground is drawn now.
             if (areaBoxAt(rdAnchor_, ex, ey)) {
-                issueReclaimBox(rdX0_, rdZ0_, ewx, ewz, queue);
+                const auto a = dragStartOnScreen(rdAnchor_);
+                issueBoxPlan(planBox(tak::client::BoxMode::Right, std::min(a.x, ex), std::min(a.y, ey),
+                                     std::max(a.x, ex), std::max(a.y, ey)),
+                             rdX0_, rdZ0_, ewx, ewz, queue);
             } else {
                 const auto a = dragStartOnScreen(rdAnchor_);
                 const float mx = mouseX_, my = mouseY_;
@@ -424,6 +437,9 @@
                    draggingMinimap_) {
             draggingMinimap_ = false;
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT &&
+                   dragging_ && armedPress_ && armedRelease(float(e.button.x), float(e.button.y))) {
+            // the armed press's click or box (armedRelease)
+        } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT &&
                    dragging_) {
             // Only complete a box/click-select if the press actually began on
             // the map. A release after an icon click or a build placement must
@@ -442,26 +458,35 @@
             float sy0 = std::min(a.y, dragY1_), sy1 = std::max(a.y, dragY1_);
             bool isClick = !tak::client::areadrag::isSelectBox(dragAnchor_, a, dragX1_, dragY1_, uiScale_);
             std::vector<int> matched;
+            // A click's own choice (2.11, clickrules.h selectClick); a box keeps the
+            // modifier combine below.
+            std::optional<tak::client::SelectAction> clickAction;
             if (isClick) {
-                // Pick the unit nearest the cursor in SCREEN space (matching the
-                // render lift + flyer altitude), so a unit on a lifted wall top or a
-                // Monarch cruising overhead is selected where it's drawn. The click is
-                // at the press (re-projected), so a unit pressed on near the screen edge
-                // is still the one selected after edge scroll moved it under a held
-                // pointer.
-                float ccx = a.x, ccy = a.y;
-                int hit = -1;
-                float best = 1e30f;
-                for (const UnitR* _up : front().live) {
-                    const UnitR& u = *_up;
-                    if (!u.alive() || u.underConstruction || !u.type) continue;  // not-yet-built: unselectable
-                    // Hit region = the drawn sprite box (unitUnderCursor: projected
-                    // model bounds + lift + flyer altitude -- shared with the hover
-                    // cursor so pointer feedback and the click always agree).
-                    // Overlaps resolve to the nearest sprite centre.
-                    float d = 0;
-                    if (unitUnderCursor(u, ccx, ccy, &d) && d < best) { best = d; hit = u.id; }
-                }
+                // The ONE unit under the press (hoveredUnitAt, the picker the cursor
+                // and every order use: the smallest drawn region wins), in SCREEN
+                // space with the render lift + flyer altitude, so a unit on a lifted
+                // wall top or a Monarch cruising overhead is picked where it's drawn.
+                // The click is at the press (re-projected), so a unit pressed on near
+                // the screen edge is still the one picked after edge scroll moved it
+                // under a held pointer.
+                const UnitR* picked = hoveredUnitAt(tak::client::PointerArea::World, a.x, a.y);
+                tak::client::SelectClick sc;
+                sc.target = cursorHoverKind(picked);
+                // An own unit under construction is not selectable: retail deselects.
+                if (picked && picked->player == localPlayer_ && picked->underConstruction)
+                    sc.target = tak::client::HoverKind::None;
+                sc.shift = addSel;
+                sc.ctrl = subSel;
+                sc.watcher = watchOnly();
+                if (sc.watcher && picked && picked->underConstruction) sc.target = tak::client::HoverKind::None;
+                sc.alreadySelected = picked &&
+                    std::find(selection_.begin(), selection_.end(), picked->id) != selection_.end();
+                sc.ownSelected = std::any_of(selection_.begin(), selection_.end(), [&](int id) {
+                    const auto* u = frameUnitP(id);
+                    return u && u->player == localPlayer_;
+                });
+                clickAction = tak::client::selectClick(sc);
+                const int hit = sc.target != tak::client::HoverKind::None ? picked->id : -1;
                 if (hit >= 0) matched.push_back(hit);
                 // Double-click on the same unit: every unit of its type drawn in the map
                 // view (Shift adds them to the selection, Ctrl removes them).
@@ -469,7 +494,7 @@
                                                                     lastClickCount_);
                 lastClickHit_ = hit;
                 lastClickCount_ = dragClicks_;
-                if (dbl) {
+                if (dbl && (sc.watcher || sc.target == tak::client::HoverKind::OwnSelectable)) {
                     // A watcher's double-click expands within the clicked unit's owner.
                     const auto* clicked = watchOnly() ? frameUnitP(hit) : nullptr;
                     const int clickOwner = clicked ? int(clicked->player) : localPlayer_;
@@ -484,6 +509,10 @@
                     }
                     matched = tak::client::doubleclick::expand(
                         hit, cands, {float(mapViewW(winW_)), float(mapViewH(winH_))});
+                    // The whole type joins (Shift) or leaves (Ctrl), as before.
+                    clickAction = subSel ? tak::client::SelectAction::Remove
+                                : addSel ? tak::client::SelectAction::Add
+                                         : tak::client::SelectAction::Replace;
                 }
             } else {
                 lastClickHit_ = -1;
@@ -525,8 +554,19 @@
             }
             // Another owner replaces a watcher's selection, Shift or not: one player on show.
             if (addSel && watchOnly() && !matched.empty())
-                if (const auto* u = frameUnitP(matched.front()); u && int(u->player) != hudPlayer())
+                if (const auto* u = frameUnitP(matched.front()); u && int(u->player) != hudPlayer()) {
                     addSel = false;
+                    if (clickAction == tak::client::SelectAction::Add) clickAction = tak::client::SelectAction::Replace;
+                }
+            if (clickAction) {
+                // A click: keep, replace, add, remove (Shift on a selected unit, Ctrl)
+                // or clear, as selectClick decided.
+                using tak::client::SelectAction;
+                addSel = *clickAction == SelectAction::Add;
+                subSel = *clickAction == SelectAction::Remove;
+                if (*clickAction == SelectAction::Keep) matched.clear(), addSel = true;
+                if (*clickAction == SelectAction::Clear) matched.clear();
+            }
             // Combine with the existing selection per the modifier.
             if (subSel) {
                 for (int id : matched)
@@ -543,17 +583,13 @@
                 voice(selection_.front(), "select");
         } else if (e.type == SDL_MOUSEBUTTONDOWN && !watchOnly() &&
                    e.button.button == SDL_BUTTON_RIGHT && !selection_.empty()) {
+            // Retail orders on the release (0x5281ad): keep the press, which the
+            // release turns into a click at it or a box (above).
             float wx, wz;
             pickWorld(float(e.button.x), float(e.button.y), wx, wz);
-            // A mobile reclaimer selected: arm a right-drag "clear this area" box and
-            // defer the normal order to button-up, so a plain click still works.
-            if (haveReclaimer()) {
-                reclaimDrag_ = true;
-                rdX0_ = wx; rdZ0_ = wz;
-                rdAnchor_ = dragAnchorAt(float(e.button.x), float(e.button.y));
-                return;
-            }
-            rightClickOrder(wx, wz, (SDL_GetModState() & KMOD_SHIFT) != 0);
+            rightDrag_ = true;
+            rdX0_ = wx; rdZ0_ = wz;
+            rdAnchor_ = dragAnchorAt(float(e.button.x), float(e.button.y));
             return;
         }
     }

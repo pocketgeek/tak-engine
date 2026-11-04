@@ -2941,7 +2941,7 @@
         } else if (placing_) {
             drawGhost();
         }
-        if (!posterFrame_ && reclaimDrag_ && areaBoxAt(rdAnchor_, mouseX_, mouseY_)) {
+        if (!posterFrame_ && rightDrag_ && areaBoxAt(rdAnchor_, mouseX_, mouseY_)) {
             // "Clear this area" box, with a marker on every reclaimable feature it
             // currently catches. Shown only once the release would be an area clear
             // (client/areadrag.h), so a right-click order never flashes it. The press
@@ -3427,7 +3427,8 @@
         // pixels of hand jitter shouldn't flash a box. Its press corner stays on
         // the map when the camera moves (client/areadrag.h).
         if (const auto a = dragStartOnScreen(dragAnchor_);
-            dragging_ && tak::client::areadrag::isSelectBox(dragAnchor_, a, dragX1_, dragY1_, uiScale_)) {
+            dragging_ && (armedPress_ ? areaBoxAt(dragAnchor_, dragX1_, dragY1_)
+                                      : tak::client::areadrag::isSelectBox(dragAnchor_, a, dragX1_, dragY1_, uiScale_))) {
             SDL_FRect r{std::min(a.x, dragX1_), std::min(a.y, dragY1_),
                         std::abs(dragX1_ - a.x), std::abs(dragY1_ - a.y)};
             SDL_SetRenderDrawColor(ren_, 120, 255, 150, 200);

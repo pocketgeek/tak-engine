@@ -749,7 +749,7 @@
                 check(outbox_.empty() && !click_,what+": nothing left the client");
                 check(world_.stateHash()==before,what+": the world is unchanged");
                 check(sounded==0,what+": no sound");
-                check(!pendingCmd_ && !placing_ && !reclaimDrag_ && !buildDrag_ && !manaBuildDrag_,what+": nothing armed");
+                check(!pendingCmd_ && !placing_ && !rightDrag_ && !buildDrag_ && !manaBuildDrag_,what+": nothing armed");
                 check(notice_.empty(),what+": no notice");
                 check(!giveUnitsMenu_,what+": no diplomacy");
                 check(!guiPressed_,what+": no press flash");
@@ -853,7 +853,7 @@
             untouched("build icons");
             // A reclaimer's right press would arm the area drag.
             mouse(SDL_MOUSEBUTTONDOWN,vw*0.5f,H*0.25f,SDL_BUTTON_RIGHT);
-            check(!reclaimDrag_,"a right press arms no reclaim drag");
+            check(!rightDrag_,"a right press arms no reclaim drag");
             mouse(SDL_MOUSEBUTTONUP,vw*0.5f,H*0.25f,SDL_BUTTON_RIGHT);
             // And the backstop, for anything that ever gets past the gates.
             {
@@ -2055,9 +2055,19 @@
                 rightClickOrder(fx,fz,false);
                 cmds=click_->cmds;
             }
-            check(fanned(cmds,tak::net::Cmd::Reclaim) && cmds[0].targetId==fid && cmds[2].targetId==fid,
-                  "a right-click on a feature gives each reclaimer one Reclaim of it, the soldier none");
-            check(soldierKept(),"right-click reclaim leaves the soldier's order alone");
+            {
+                // Retail's mode 1 (0x4de530): a unit that can neither raise nor reclaim
+                // moves to the point.
+                std::vector<tak::net::Command> reclaims;
+                int soldierMoves=0;
+                for (const auto& c:cmds) {
+                    if (c.unitId==soldier) soldierMoves+=c.kind==tak::net::Cmd::Move;
+                    else reclaims.push_back(c);
+                }
+                check(fanned(reclaims,tak::net::Cmd::Reclaim) && reclaims[0].targetId==fid && reclaims[2].targetId==fid &&
+                      soldierMoves==1 && cmds.size()==builders.size()+1,
+                      "a right-click on a feature gives each reclaimer one Reclaim of it, the soldier a Move there");
+            }
             reset();
             {
                 ClickScope outer(*this);
@@ -2092,14 +2102,15 @@
                 // Right-click interface: a body a selected unit can raise shows the green
                 // gem; Revive is the armed command's cursor.
                 check(hoverCursor(bx,bz,nullptr)==tak::CursorId::Green,"the cursor over it is Green");
-                const auto raised=[&](const std::vector<tak::net::Command>& cmds,const char* what) {
-                    int resurrect=0,reclaim=0,other=0;
+                const auto raised=[&](const std::vector<tak::net::Command>& cmds,const char* what,bool soldierMoves) {
+                    int resurrect=0,reclaim=0,moves=0,other=0;
                     for (const auto& c:cmds) {
                         if (c.kind==tak::net::Cmd::Resurrect && c.unitId==caster && c.targetId==dead) ++resurrect;
                         else if (c.kind==tak::net::Cmd::Reclaim && c.unitId==mason && c.targetId==-dead) ++reclaim;
+                        else if (c.kind==tak::net::Cmd::Move && c.unitId==soldier) ++moves;
                         else ++other;
                     }
-                    check(resurrect==1 && reclaim==1 && other==0,what);
+                    check(resurrect==1 && reclaim==1 && other==0 && moves==(soldierMoves ? 1 : 0),what);
                 };
                 std::vector<tak::net::Command> bodyCmds;
                 {
@@ -2107,8 +2118,8 @@
                     rightClickOrder(bx,bz,false);
                     bodyCmds=click_->cmds;
                 }
-                raised(bodyCmds,"a right-click on a body: the caster raises it, the mason reclaims it, the soldier nothing");
-                for (const auto& c:bodyCmds) apply(c);
+                raised(bodyCmds,"a right-click on a body: the caster raises it, the mason reclaims it, the soldier moves there",true);
+                for (const auto& c:bodyCmds) if (c.unitId!=soldier) apply(c);
                 check(!world_.unit(caster)->orders.empty() && world_.unit(caster)->orders.back().reviveKind==1,
                       "the caster's order is a RESURRECT leg");
                 writableWorld().stop(caster);writableWorld().stop(mason);publish();
@@ -2117,7 +2128,7 @@
                     issueArmedOrder('c',bx,bz,false,false);
                     bodyCmds=click_->cmds;
                 }
-                raised(bodyCmds,"an armed CLEAR on a body: the caster raises it, the mason reclaims it");
+                raised(bodyCmds,"an armed CLEAR on a body: the caster raises it, the mason reclaims it",false);
             }
             SDL_SetModState(savedMod);
             std::fprintf(stderr,"PASS: reclaim fan-out to every selected reclaimer\n");

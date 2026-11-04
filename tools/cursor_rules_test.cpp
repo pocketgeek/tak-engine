@@ -53,7 +53,7 @@ void stages() {
     f = world(); f.area = PointerArea::Interface; f.armed = true;
     expect(stage(f, CursorStage::Fixed, "A5/A14 interface"), CursorId::Normal,
            "A5/A14 build strip, command panel, bottom bar: Normal even armed");
-    f.armed = false; f.placing = true;
+    f.armed = false; f.placing = true; f.minimapPlaceOk = true;
     expect(stage(f, CursorStage::Fixed, "A5 interface + placing"), CursorId::Normal, "A5 interface hides placement");
     f = world(); f.area = PointerArea::Unknown;
     expect(stage(f, CursorStage::Fixed, "A13 no pointer"), CursorId::Normal, "A13 no pointer yet");
@@ -72,11 +72,18 @@ void stages() {
     // Mode 14 in the main view: the ghost shows validity, the cursor is Normal.
     f = world(); f.placing = true;
     expect(stage(f, CursorStage::Fixed, "A9 placing"), CursorId::Normal, "A9/A10 build placement: Normal (retail 0x525d30)");
+    f.minimapPlaceOk = true;
+    expect(stage(f, CursorStage::Fixed, "A9 placing main view"), CursorId::Normal, "A9 main view: Normal even where valid");
     f.area = PointerArea::Minimap;
-    expect(stage(f, CursorStage::Fixed, "A9 placing minimap"), CursorId::Normal,
-           "A9 placement over the minimap: Normal (our minimap click moves the camera)");
-    f = world(); f.reclaimAreaDrag = true; f.boxDrag = false;
-    expect(stage(f, CursorStage::Fixed, "A11 reclaim box"), CursorId::Reclaim, "A11 right-drag clear-area box");
+    expect(stage(f, CursorStage::Fixed, "A9 placing minimap"), CursorId::FindSite,
+           "A9 placement over the minimap where the click places: FindSite (C2b)");
+    f.minimapPlaceOk = false;
+    expect(stage(f, CursorStage::Fixed, "A9 placing minimap refused"), CursorId::Normal,
+           "A9 placement over the minimap where the click refuses: Normal");
+    for (CursorId box : {CursorId::Reclaim, CursorId::Attack, CursorId::Airstrike, CursorId::Load, CursorId::Normal}) {
+        f = world(); f.areaBoxDrag = true; f.areaBoxCursor = box; f.armed = true;
+        expect(stage(f, CursorStage::Fixed, "A11 area box"), box, "A11 a box past its threshold shows what its release does");
+    }
     f = world(); f.boxDrag = true; f.armed = true;
     expect(stage(f, CursorStage::Fixed, "A12 box select"), CursorId::Normal, "A12 left-drag box select");
     f = world(); f.armed = true;
@@ -140,53 +147,30 @@ void attack() {
     expect(mix(HoverKind::Enemy, {towerOut}), CursorId::TooFar, "B a: enemy out of a tower's range");
     expect(mix(HoverKind::Enemy, {tower}), CursorId::Attack, "B a: enemy in a tower's range");
     expect(mix(HoverKind::Enemy, {mobileMiss, mobileHit}), CursorId::Attack, "B a: lowest slot wins");
-    expect(mix(HoverKind::Enemy, {air}), CursorId::Airstrike, "B a: airstrike weapon, any target");
+    AttackUnitFacts airMiss = air;
+    air.canHit = true;
+    expect(mix(HoverKind::Enemy, {air}), CursorId::Airstrike, "B a: airstrike weapon over an enemy it can hurt");
+    expect(mix(HoverKind::Enemy, {airMiss}), CursorId::TooFar,
+           "B a: airstrike weapon over an enemy it cannot hurt: TooFar (retail Airstrike; the click gives nothing)");
     expect(mix(HoverKind::Enemy, {air, mobileMiss}), CursorId::Airstrike, "B a: Airstrike beats TooFar");
     expect(mix(HoverKind::Enemy, {air, mobileHit}), CursorId::Attack, "B a: Attack beats Airstrike");
-    expect(mix(HoverKind::None, {mobileMiss}), CursorId::Attack, "B a: ground");
+    expect(mix(HoverKind::None, {mobileMiss}), CursorId::Attack, "B a: ground (C1 staged: attack-move)");
     expect(mix(HoverKind::None, {air}), CursorId::Airstrike, "B a: all-airstrike selection over ground");
     expect(mix(HoverKind::None, {air, mobileMiss}), CursorId::Attack, "B a: mixed selection over ground");
-    expect(mix(HoverKind::Friendly, {mobileHit}), CursorId::TooFar, "B a: friendly target, mobile attacker: TooFar");
-    expect(mix(HoverKind::OwnSelectable, {mobileHit}), CursorId::TooFar, "B a: own unit, mobile attacker: TooFar");
-    expect(mix(HoverKind::Friendly, {tower}), CursorId::Attack, "B a: friendly in an immobile unit's range");
-    expect(mix(HoverKind::Friendly, {towerOut}), CursorId::TooFar, "B a: friendly out of an immobile unit's range");
+    expect(mix(HoverKind::Friendly, {mobileHit}), CursorId::Attack,
+           "B a / C1: friendly target, mobile attacker: Attack -- it attack-moves, never TooFar");
+    expect(mix(HoverKind::OwnSelectable, {mobileHit}), CursorId::Attack, "B a / C1: own unit, mobile attacker: Attack");
+    expect(mix(HoverKind::Friendly, {tower}), CursorId::Normal, "B a / C1: friendly, immobile attacker: nothing yet");
+    expect(mix(HoverKind::None, {towerOut}), CursorId::Normal, "B a / C1: ground, immobile attacker: nothing yet");
     expect(mix(HoverKind::Enemy, {rally}), CursorId::Attack, "C10/B a: rally holder sends its output (ours)");
 }
 
-void armed() {
-    const auto a = [](char cmd, bool capable, auto&& set) {
-        ArmedFacts f; f.cmd = cmd; f.capable = capable; set(f);
-        return cursorForArmed(f);
-    };
-    const auto plain = [](ArmedFacts&) {};
-    for (char cmd : {'m', 'f', 'p', 'g', 'r', 'c', 'u', 'l'})
-        expect(a(cmd, false, plain), CursorId::Normal, std::string("B ") + cmd + ": nothing capable");
-    expect(a('m', true, plain), CursorId::Move, "B m: Move everywhere");
-    expect(a('f', true, plain), CursorId::Move, "B f: fight-move shows Move (retail MOVE + 0x400)");
-    expect(a('p', true, plain), CursorId::Patrol, "B p: Patrol");
-    expect(a('u', true, plain), CursorId::Unload, "B u: Unload");
-    expect(a('g', true, [](ArmedFacts& f) { f.eligibleTarget = true; }), CursorId::Defend, "B g: over a guardable unit");
-    expect(a('g', true, plain), CursorId::Normal, "B g: elsewhere");
-    expect(a('r', true, [](ArmedFacts& f) { f.eligibleTarget = true; }), CursorId::Repair, "B r: over a site or damaged friend");
-    expect(a('r', true, plain), CursorId::Normal, "B r: elsewhere");
-    expect(a('c', true, [](ArmedFacts& f) { f.reclaimAtPoint = true; f.raiseAtPoint = true; }), CursorId::Reclaim,
-           "B c: a raisable body that is a reclaimable feature: Reclaim (retail mode 12)");
-    expect(a('c', true, [](ArmedFacts& f) { f.reclaimAtPoint = true; }), CursorId::Reclaim, "B c: reclaimable feature");
-    expect(a('c', true, [](ArmedFacts& f) { f.raiseAtPoint = true; }), CursorId::Revive,
-           "B c: a body only raisable (ours: the click raises it)");
-    expect(a('c', true, plain), CursorId::Normal, "B c: elsewhere");
-    expect(a('l', true, [](ArmedFacts& f) { f.singleTransport = true; f.loadTarget = true; }), CursorId::Load,
-           "B l: one transport over a passenger");
-    expect(a('l', true, [](ArmedFacts& f) { f.singleTransport = true; }), CursorId::Normal, "B l: no passenger");
-    expect(a('l', true, [](ArmedFacts& f) { f.loadTarget = true; }), CursorId::Normal, "B l: several transports");
-}
 } // namespace
 
 int main() {
     stages();
     hover();
     attack();
-    armed();
     if (failures) return 1;
     std::printf("cursor rules: all rows pass\n");
     return 0;

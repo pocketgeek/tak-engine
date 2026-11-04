@@ -84,15 +84,19 @@ struct CursorFrame {
     bool watcher = false;          // a spectator or replay: no orders to show
     bool watcherOverUnit = false;  // ...with a finished unit under the pointer
     bool placing = false;          // a build item armed (retail action mode 14)
-    bool reclaimAreaDrag = false;  // our right-drag clear-area box, past its threshold
+    bool minimapPlaceOk = false;   // ...over the minimap, a click there would place it
+    bool areaBoxDrag = false;      // a right-drag or armed box, past its area threshold
+    CursorId areaBoxCursor = CursorId::Normal;   // ...what its release does (clickrules.h boxCursor)
     bool boxDrag = false;          // left-drag selection box
     bool armed = false;            // a map command armed (pendingCmd_)
 };
 
 // Retail draws the placement ghost and then sets Normal in mode 14 (0x525d30):
-// an invalid site shows only on the ghost. Every interface area outside the
-// main view and the minimap is Normal. Our watcher keeps Select over units
-// (retail has no spectator; unchanged).
+// an invalid site shows only on the ghost. Over the minimap our click places
+// (owner C2b, retail 0x527eb0), so the cursor is FindSite where it would and
+// Normal where it would not. Every interface area outside the main view and the
+// minimap is Normal. Our watcher keeps Select over units (retail has no
+// spectator; unchanged).
 inline CursorStage cursorStage(const CursorFrame& f, CursorId& fixed) {
     fixed = CursorId::Normal;
     if (f.modalUi) return CursorStage::Fixed;
@@ -102,10 +106,13 @@ inline CursorStage cursorStage(const CursorFrame& f, CursorId& fixed) {
         return CursorStage::Fixed;
     }
     if (f.area == PointerArea::Unknown || f.area == PointerArea::Interface) return CursorStage::Fixed;
-    if (f.placing) return CursorStage::Fixed;
-    // Ours: the right-drag box clears an area (retail's right-drag box
-    // attacks/reclaims/loads; our box only reclaims, so it keeps Reclaim).
-    if (f.reclaimAreaDrag) { fixed = CursorId::Reclaim; return CursorStage::Fixed; }
+    if (f.placing) {
+        if (f.area == PointerArea::Minimap && f.minimapPlaceOk) fixed = CursorId::FindSite;
+        return CursorStage::Fixed;
+    }
+    // A box past its threshold shows what its release does: Load, Attack /
+    // Airstrike, Reclaim, or Normal when nothing would happen (clickrules.h).
+    if (f.areaBoxDrag) { fixed = f.areaBoxCursor; return CursorStage::Fixed; }
     if (f.boxDrag) return CursorStage::Fixed;
     return f.armed ? CursorStage::Armed : CursorStage::Hover;
 }
@@ -136,7 +143,13 @@ inline CursorId cursorForHover(const HoverFacts& f) {
     return CursorId::Normal;
 }
 
-// One selected unit under an armed ATTACK (action mode 3, 0x4dd780).
+// One selected unit under an armed ATTACK (action mode 3, 0x4dd780). Over an
+// enemy, retail's selector exactly. Over ground or a friendly unit retail's click
+// fires at the point (SUPPRESS / airstrike-at-point) and its selector shows Attack
+// (TooFar over a friendly mobile unit). Until that order is ported (owner C1) our
+// click attack-moves a mobile attacker there, so the cursor says Attack (or
+// Airstrike) for it -- never TooFar -- and Normal for an immobile one, which has
+// nothing to do there yet (clickrules.h armedAttack).
 struct AttackUnitFacts {
     bool rallyHolder = false;   // ours: a factory's Attack sends its output
     bool attacker = false;      // canattack, alive, finished, not carried
@@ -150,40 +163,17 @@ struct AttackUnitFacts {
 inline CursorId attackUnitCursor(HoverKind target, const AttackUnitFacts& u) {
     if (u.rallyHolder) return CursorId::Attack;
     if (!u.attacker) return CursorId::Normal;
-    if (u.airstrike) return CursorId::Airstrike;
-    if (target == HoverKind::None) return CursorId::Attack;
-    if (target != HoverKind::Enemy && u.mobile) return CursorId::TooFar;
-    return u.canHit ? CursorId::Attack : CursorId::TooFar;
-}
-
-// Every other armed command, per the selection as a whole.
-struct ArmedFacts {
-    char cmd = 0;
-    bool capable = false;          // some selected unit can take the command at all
-    bool eligibleTarget = false;   // 'r'/'g': the hovered unit can be repaired / guarded
-    bool singleTransport = false;  // 'l': exactly one transport selected
-    bool loadTarget = false;       // 'l': the hovered unit can board it
-    bool reclaimAtPoint = false;   // 'c': a reclaimable feature at the point
-    bool raiseAtPoint = false;     // 'c': a body a selected unit can raise there
-};
-
-inline CursorId cursorForArmed(const ArmedFacts& f) {
-    if (!f.capable) return CursorId::Normal;
-    switch (f.cmd) {
-        // Retail's fight-move is MOVE plus a flag the selector never reads.
-        case 'm': case 'f': return CursorId::Move;
-        case 'p': return CursorId::Patrol;
-        case 'u': return CursorId::Unload;
-        case 'l': return f.singleTransport && f.loadTarget ? CursorId::Load : CursorId::Normal;
-        case 'g': return f.eligibleTarget ? CursorId::Defend : CursorId::Normal;
-        case 'r': return f.eligibleTarget ? CursorId::Repair : CursorId::Normal;
-        // Retail mode 12 shows Reclaim over a reclaimable feature only. Our
-        // CLEAR also raises a body a caster can raise there, so a body that is
-        // not a reclaimable feature keeps Revive.
-        case 'c': return f.reclaimAtPoint ? CursorId::Reclaim
-                       : f.raiseAtPoint ? CursorId::Revive : CursorId::Normal;
-        default:  return CursorId::Normal;
+    if (target != HoverKind::Enemy) {
+        if (!u.mobile) return CursorId::Normal;
+        return u.airstrike ? CursorId::Airstrike : CursorId::Attack;
     }
+    // Retail shows Airstrike over any enemy; ours only over one the click attacks
+    // (one it cannot hurt gets no order, so TooFar, as for any other weapon).
+    if (!u.canHit) return CursorId::TooFar;
+    return u.airstrike ? CursorId::Airstrike : CursorId::Attack;
 }
+
+// Every other armed command is decided per unit with its order, in
+// clickrules.h (armedClick), so the cursor and the click share one rule.
 
 } // namespace tak::client

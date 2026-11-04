@@ -60,6 +60,7 @@
 #include "version.h"
 #include "client/cursors.h"
 #include "client/cursorrules.h"
+#include "client/clickrules.h"
 #include "client/selportraits.h"   // info-bar multi-selection strip
 #include "client/dirpicker.h"   // first-run data-dir folder picker
 #include "client/distantmodels.h"
@@ -280,9 +281,59 @@ public:
 
     void input(const SDL_Event& e, int winW, int winH);
 
-    // Contextual right-click order, extracted so the reclaim right-drag can defer to
-    // it on a plain click: transport unload/load, assist/guard, attack, or move.
+    // Contextual right-click order at world (wx,wz), the hovered unit taken at the
+    // pointer (mouseX_/mouseY_): retail's per-unit resolver (clickrules.h rightClick)
+    // for every selected unit of ours but the hovered one. Alt: a loaded transport
+    // unloads at the point instead of moving (ours).
     void rightClickOrder(float wx, float wz, bool queue);
+    // One click's plan (client/clickrules.h): each selected unit's order against the
+    // hovered unit and the ground point. `mode` 0 is the right-click resolver, else
+    // an armed command; `cursor` is the armed cursor (lowest slot over the units),
+    // what desiredCursor shows and what gates an armed left-click (P4). On the
+    // minimap (`pointTargets` false) bodies and features at the point do not count.
+    struct ClickPlan {
+        std::vector<std::pair<int, tak::client::ClickOrder>> orders;   // None dropped
+        tak::CursorId cursor = tak::CursorId::Normal;
+        int target = 0;                    // the hovered unit, 0 for none
+        float wx = 0, wz = 0;
+        int body = 0;                      // raiseTargetAt at the point
+        std::optional<int> reclaim;        // reclaimTargetAt at the point
+    };
+    ClickPlan planClick(char mode, float wx, float wz, const UnitR* hovered, bool queue, bool alt,
+                        bool pointTargets);
+    void issueClickPlan(const ClickPlan& plan, char mode, bool queue);
+    // The selected units of ours an order can go to: alive, finished, not carried.
+    std::vector<const UnitR*> ownClickUnits() const;
+    // A box (the right-drag, an armed left-drag) over screen (sx0,sy0)-(sx1,sy1),
+    // world (x0,z0)-(x1,z1): per selected unit its share (clickrules.h boxOrders),
+    // the visible enemies drawn in it (nearest the attackers first) and the own
+    // units there a lone transport can carry (nearest it first).
+    struct BoxPlan {
+        std::vector<int> units;
+        std::vector<tak::client::BoxUnit> facts;
+        std::vector<tak::client::ClickOrder> orders;
+        std::vector<int> enemies, passengers;
+        tak::CursorId cursor = tak::CursorId::Normal;
+    };
+    BoxPlan planBox(tak::client::BoxMode mode, float sx0, float sy0, float sx1, float sy1);
+    // False when the box gave nobody an order.
+    bool issueBoxPlan(const BoxPlan& plan, float x0, float z0, float x1, float z1, bool queue);
+    // The armed command's click at (wx,wz) over `hovered`: issued only when its
+    // cursor is an order cursor (P4); otherwise nothing happens and it stays armed.
+    // True when the click was taken (the caller then disarms, Shift keeping it).
+    bool armedClickAt(char cmd, float wx, float wz, const UnitR* hovered, bool queue, bool pointTargets);
+    // The armed press's release at screen (ex,ey): its click at the press, or its
+    // box. False when the release is a select instead (disarmed meanwhile, or the box
+    // of a command without one: it box-selects and the command stays armed).
+    bool armedRelease(float ex, float ey);
+    // Build placement from the minimap (retail 0x527eb0, owner C2b): place at the
+    // point when the site is valid there, else clear-then-build, else refuse.
+    bool minimapPlace(float mx, float my, int winW, int winH);
+    bool minimapPlaceOk(float wx, float wz);
+    // 2.13: retail acknowledges an order with one RANDOM selected unit (0x5215df).
+    // Client-side randomness only: nothing of it reaches the sim.
+    int ackUnit(const std::vector<int>& ids);
+    uint32_t ackRng_ = 0x9e3779b9u;
     // Retail's order line: beads strung between a selected unit's queued orders.
     void drawOrderTrails(int mvw, int winH);
     static constexpr int kTrailUnits = 3;    // retail beaded only its few "focus" units
@@ -301,15 +352,13 @@ public:
     uint64_t orderTrailSceneSignature_=0;
     void refreshOrderTrailTargets();
 
-    // A mobile, reclaim-capable builder of ours is selected (drives the right-drag).
+    // A mobile, reclaim-capable builder of ours is selected.
     bool haveReclaimer();
     std::vector<int> reclaimers();   // every selected one, in selection order
-    // Right-drag "clear this area": order EVERY selected reclaimer to clear the box
-    // (each its own ReclaimArea, retail 5214b0); non-reclaimers are left alone.
-    void issueReclaimBox(float x0, float z0, float x1, float z1, bool queue);
-    // A right-click / armed CLEAR on a body or feature: each selected unit
-    // raises the body when it can, else reclaims the target (retail 4de530).
-    void issueRaiseOrReclaim(int bodyId, std::optional<int> reclaimId, bool queue);
+    // "Clear this area": order each of `ids` (every selected reclaimer when empty) to
+    // clear the box (each its own ReclaimArea, retail 5214b0); the rest are left alone.
+    void issueReclaimBox(float x0, float z0, float x1, float z1, bool queue,
+                         const std::vector<int>& ids = {});
 
     // Attach the multiplayer client. The game world is set up later, from the
     // server's GameStarting (startMpGame), not from the constructor.
@@ -966,14 +1015,16 @@ private:
     // unit under the pointer (or null): retail's right-click interface.
     tak::CursorId hoverCursor(float wx, float wz, const UnitR* hovered);
     tak::client::PointerArea pointerArea() const;
-    const UnitR* hoveredUnit(tak::client::PointerArea area);
+    const UnitR* hoveredUnit(tak::client::PointerArea area) { return hoveredUnitAt(area, mouseX_, mouseY_); }
+    const UnitR* hoveredUnitAt(tak::client::PointerArea area, float mx, float my);
     tak::client::HoverKind cursorHoverKind(const UnitR* u) const;
     bool isCursorAttacker(const UnitR& u) const;
     // Screen-space sprite hit test: the unit's projected model bounds at its
     // DRAWN position (terrain lift + flyer altitude), floored for tiny units --
     // the same region click-select uses, so the hover cursor and a click always
     // agree. Optional out: squared distance to the sprite centre (tie-breaks).
-    bool unitUnderCursor(const UnitR& u, float mx, float my, float* d2 = nullptr);
+    // `size`: the hit region's screen area, the key retail's picker sorts by.
+    bool unitUnderCursor(const UnitR& u, float mx, float my, float* d2 = nullptr, float* size = nullptr);
     // Perf follow-up C: indices into front().live, ascending, of every unit that
     // unitUnderCursor(u, mx, my) can accept -- a superset; callers keep that exact test
     // and their own filters, so whatever a loop over the whole list picks (first hit,
@@ -2243,9 +2294,24 @@ private:
         std::vector<Site> sites;
     } buildLineTrail_;
     bool bdQueue_ = false;
-    bool reclaimDrag_ = false;        // right-drag box: a builder clears the area
-    float rdX0_ = 0, rdZ0_ = 0;       // reclaim-drag start (world)
-    tak::client::areadrag::Anchor rdAnchor_;   // reclaim-drag start on the map plane
+    // A right press in the main view: the order waits for the release (retail acts
+    // on release, 0x5281ad), a click at the press or a box (clickrules.h boxOrders).
+    bool rightDrag_ = false;
+    float rdX0_ = 0, rdZ0_ = 0;       // right-drag start (world)
+    tak::client::areadrag::Anchor rdAnchor_;   // right-drag start on the map plane
+    // An armed left press in the main view, waiting for the release (0x527bf0): a
+    // click at the press, or past the area threshold an armed box (2.9).
+    bool armedPress_ = false;
+    float apX0_ = 0, apZ0_ = 0;       // its press (world)
+    // The armed box's mode for the armed command, if it has one (A, L, C).
+    static std::optional<tak::client::BoxMode> armedBoxMode(char cmd) {
+        switch (cmd) {
+            case 'a': return tak::client::BoxMode::ArmedAttack;
+            case 'l': return tak::client::BoxMode::ArmedLoad;
+            case 'c': return tak::client::BoxMode::ArmedClear;
+            default:  return std::nullopt;
+        }
+    }
     bool draggingMinimap_ = false;
     tak::client::areadrag::Anchor dragAnchor_; // marquee start on the map plane
     float dragX1_ = 0, dragY1_ = 0;            // marquee pointer end (screen)
@@ -3482,15 +3548,15 @@ private:
 
     bool minimapClick(float mx, float my, int winW, int winH);
 
-    // Right-click on the minimap: order the selection to that world point.
+    // Right-click on the minimap: the right-click resolver at that world point,
+    // aimed at the dot under the pointer (retail 0x5213ae..0x52141f).
     bool minimapOrder(float mx, float my, int winW, int winH, bool queue);
 
     // After an armed order's click: keep it armed while Shift queues.
     void armedOrderIssued(bool queue);
-    // Issue the armed order (pendingCmd_) to the selection at world (wx,wz). On the
-    // main map (`precise`) 'a' targets an enemy under the cursor and 'g' the friendly
-    // under it; from the minimap (coarse) 'a' falls back to attack-move and 'g' to the
-    // nearest friendly. Shared by the map click and the minimap click.
+    // Issue the armed order to the selection at world (wx,wz), ungated (the dev
+    // harness's form): `precise` takes the hovered unit at the pointer in the main
+    // view, else the minimap dot under it. The clicks go through armedClickAt.
     void issueArmedOrder(char cmd, float wx, float wz, bool queue, bool precise);
 
     // Left-click on the minimap while an order is armed (e.g. F): issue it at the
