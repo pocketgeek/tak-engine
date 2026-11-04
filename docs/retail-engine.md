@@ -4923,7 +4923,10 @@ MOVE button does those; ours only moves), armed GUARD not testing the flyer
 rule (ours guards a flyer from the ground), CLEAR's Revive over a body that is
 not a reclaimable feature, and Normal for placement over the minimap (our
 minimap click moves the camera; retail's selector gives FindSite there). The
-left-click interface is not offered.
+minimap with nothing armed is always Normal (our left-click there moves the
+camera and our right-click is a plain Move, so no dot is selected or
+attacked), and an armed ATTACK there ignores the dot (our minimap attack is an
+attack-move to the ground point). The left-click interface is not offered.
 
 ## Drag boxes: world-anchored corners and the 32-pixel test (icd, 2026-10-21)
 

@@ -412,11 +412,18 @@ namespace {
         const CursorStage stage = cursorStage(frame, fixed);
         if (stage == CursorStage::Fixed) return fixed;
 
+        // Ours: with nothing armed a minimap click never acts on a dot (left
+        // moves the camera, right is a plain Move to the ground point), so the
+        // minimap keeps Normal where retail's selector would read the dot.
+        if (stage == CursorStage::Hover && area == PointerArea::Minimap) return tak::CursorId::Normal;
         float wx = 0, wz = 0;
         if (area == PointerArea::Minimap) minimapToWorld(mouseX_, mouseY_, winW_, winH_, wx, wz);
         else pickWorld(mouseX_, mouseY_, wx, wz);
         const UnitR* hovered = hoveredUnit(area);
         if (stage == CursorStage::Hover) return hoverCursor(wx, wz, hovered);
+        // Ours: an armed Attack on the minimap is always an attack-move to the
+        // ground point (minimapArmedOrder), so no dot is its target.
+        if (pendingCmd_ == 'a' && area == PointerArea::Minimap) hovered = nullptr;
 
         const HoverKind kind = cursorHoverKind(hovered);
         if (pendingCmd_ == 'a') {
@@ -449,7 +456,9 @@ namespace {
             for (int id : selection_) {
                 const auto* unit = frameUnitP(id);
                 if (unit && unit->alive() && !unit->embarked() && unit->type &&
-                    unit->type->canTransport) { ++transportCount; loadTransport = unit; }
+                    unit->type->canTransport && !(hovered && unit->id == hovered->id)) {
+                    ++transportCount; loadTransport = unit;
+                }
             }
             // Native 520b60 requires exactly one selected carrier.
             f.singleTransport = transportCount == 1;
@@ -457,7 +466,10 @@ namespace {
         }
         f.capable = std::any_of(selection_.begin(), selection_.end(), [&](int id) {
             const auto* u = frameUnitP(id);
-            if (!u || !u->alive() || u->embarked() || u->underConstruction || !u->type) return false;
+            // 0x525eee calls 0x521cd0 for every armed mode: the hovered unit is
+            // out of the list, and an empty list is Normal.
+            if (!u || !u->alive() || u->embarked() || u->underConstruction || !u->type ||
+                (hovered && u->id == hovered->id)) return false;
             // Move/patrol on a rally holder set its output's rally.
             switch (pendingCmd_) {
                 case 'm': return u->type->canMove || u->holdsRally();
