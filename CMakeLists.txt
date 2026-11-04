@@ -983,10 +983,14 @@ set_tests_properties(legion_fightshuffle PROPERTIES LABELS legion
 # one body at a time), so it had no ring and the column queued on the near arc (attackring-fight-60 at offset 0: half
 # the attackers in reach at tick 1,526, Retail's gate median 1,206; 1,510 with the in-reach press edge alone). Passes
 # when half are in reach by tick 1,300, serial equal to workers.
+# Retaken 2026-11-03 (retail target search, protocol 312; owner's decision): attack-move legs are retail's
+# MoveFight, whose scan takes only enemies in weapon range (96 px), not range + 90 as the removed stride scan did,
+# so attackers convert to attacks later: t50 1,211 -> 1,339 (Retail 1,329 -> 1,251). The owner accepted it as the
+# retail rule. Passes at 1,400 or earlier.
 add_test(NAME legion_fightring
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-fight-60.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_fightring PROPERTIES LABELS legion
-                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.t50\":(1[0-2][0-9][0-9]|1300|[1-9][0-9][0-9]),")
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.t50\":(1[0-3][0-9][0-9]|1400|[1-9][0-9][0-9]),")
 # A press may end exactly on the reach edge (round 5): combat fires there, but pressIn wanted a point a sixteenth of a
 # pixel inside, so bodies held flush on their origins' edges 1-2 px out of reach (attackring-f1-64 at offset 0: 39 in
 # reach at the end, Retail's gate median 43; 41 with the late ring and the stop-origin rounding alone). Passes when 43
