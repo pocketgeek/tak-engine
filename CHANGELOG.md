@@ -43,6 +43,8 @@ their validation reports; both live in [`docs/`](docs/).
   orders of their own, guards and your allies' units stay put, as in the original game,
   which moves no idle unit. A factory's own new units, parked round it, now move again
   only when they stand on its pad or hold up the next one out; at a Navy Yard too.
+  A factory whose rally point is on its own pad no longer stalls: its new unit steps
+  off the pad. A unit guarding or building beside its own factory moves nobody.
 - **Reclaimed trees and rocks fade out.** As in the original game, a reclaimed tree or
   rock turns into a white silhouette of itself that fades away over about a second,
   instead of vanishing at once.
