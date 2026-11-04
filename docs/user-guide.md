@@ -92,7 +92,7 @@ version, for example `tak-engine-<version>-ubuntu24.04-amd64.deb`:
 | macOS 14 or later, Intel | `tak-engine-<version>-macos-x64.dmg`, or `takclient-<version>-macos-x64.zip` |
 | Ubuntu 22.04 / 24.04 / 26.04 | `…-ubuntu22.04-amd64.deb` and so on; `-arm64.deb` for ARM64 |
 | Debian 12 / 13 | `…-debian12-amd64.deb`, `…-debian13-amd64.deb`; `-arm64.deb` for ARM64 |
-| Fedora 44 | `…-fedora44-x86_64.rpm`, or `…-fedora44-aarch64.rpm` for ARM64 |
+| Fedora 44 / 45 | `…-fedora44-x86_64.rpm`, `…-fedora45-x86_64.rpm`; `-aarch64.rpm` for ARM64 |
 | openSUSE Leap 16.0 | `…-opensuse-leap16.0-x86_64.rpm`, or `…-aarch64.rpm` for ARM64 |
 | Arch Linux | `…-1-x86_64.pkg.tar.zst` |
 | Slackware 15.0 | `…-x86_64-1_slack15.0.txz` |

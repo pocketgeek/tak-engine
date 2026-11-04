@@ -106,7 +106,7 @@ installer, DMGs) or `takclient-<version>-` (ZIPs), followed by:
 | macOS 14 or later, Intel | `macos-x64.dmg`, or `macos-x64.zip` |
 | Ubuntu 22.04 / 24.04 / 26.04 | `ubuntu<version>-amd64.deb` or `-arm64.deb` |
 | Debian 12 / 13 | `debian<version>-amd64.deb` or `-arm64.deb` |
-| Fedora 44 | `fedora44-x86_64.rpm` or `-aarch64.rpm` |
+| Fedora 44 / 45 | `fedora<version>-x86_64.rpm` or `-aarch64.rpm` |
 | openSUSE Leap 16.0 | `opensuse-leap16.0-x86_64.rpm` or `-aarch64.rpm` |
 | Arch Linux (x64) | `1-x86_64.pkg.tar.zst` |
 | Slackware64 15.0 | `x86_64-1_slack15.0.txz` |

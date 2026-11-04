@@ -189,6 +189,8 @@ their validation reports; both live in [`docs/`](docs/).
   quality, and the original's 11 kHz unit sounds keep their pitch and length with a
   cleaner top end. On 6.1 speakers the surrounds of 5.1 music now play at full level.
   Video streams carry the same 44.1 kHz sound.
+- **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside
+  Fedora 44's.
 - **Investigated, no change needed:**
   - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
     keeps switching weapons and never fires: the original game does exactly the same.

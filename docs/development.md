@@ -126,7 +126,7 @@ frameworks. CI checks these dependency boundaries for release packages.
   are published starting with version 0.7.19, as well as CI artifacts.
   See [macos.yml](../.github/workflows/macos.yml) for app/DMG packaging.
 - **Linux x64 and ARM64:** native CI runners build Ubuntu 22.04/24.04/26.04,
-  Debian 12/13, Fedora 44, and openSUSE Leap 16.0 containers for each architecture. Arch's official
+  Debian 12/13, Fedora 44/45, and openSUSE Leap 16.0 containers for each architecture. Arch's official
   container builds x64 only. Choose the package matching both your distribution
   and architecture (`amd64`/`arm64` for DEB, `x86_64`/`aarch64` for RPM).
   ARM64 uses GitHub's [native ARM runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),

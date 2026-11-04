@@ -58,6 +58,8 @@ jobs:
               tag: debian13, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
           - { name: 'Fedora 44 x64', image: 'fedora:44', family: rpm,
               tag: fedora44, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
+          - { name: 'Fedora 45 x64', image: 'fedora:45', family: rpm,
+              tag: fedora45, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
           - { name: 'Arch x64', image: 'archlinux:latest', family: arch,
               tag: arch, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
           - { name: 'Ubuntu 22.04 arm64', image: 'ubuntu:22.04', family: deb,
@@ -72,6 +74,8 @@ jobs:
               tag: debian13, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm }
           - { name: 'Fedora 44 arm64', image: 'fedora:44', family: rpm,
               tag: fedora44, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm }
+          - { name: 'Fedora 45 arm64', image: 'fedora:45', family: rpm,
+              tag: fedora45, arch: arm64, cpu: aarch64, runner: ubuntu-24.04-arm }
           - { name: 'openSUSE Leap 16.0 x64', image: 'registry.opensuse.org/opensuse/leap:16.0', family: suse,
               tag: opensuse-leap16.0, arch: x64, cpu: x86_64, runner: ubuntu-24.04 }
           - { name: 'openSUSE Leap 16.0 arm64', image: 'registry.opensuse.org/opensuse/leap:16.0', family: suse,
