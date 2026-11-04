@@ -63,6 +63,20 @@ enum class Cmd : uint8_t {
 
 struct SelectionOrder;
 
+// Command::queue on an order verb (Move, Attack, AttackMove, Patrol, Build,
+// BuildManaArea, Assist, Guard, Load, Unload, Reclaim, ReclaimArea,
+// Resurrect, Repair): the low two bits place the order -- kQueueReplace
+// clears the queue, kQueueAppend adds it at the end (Shift), kQueueFront puts
+// it at the head without clearing anything (Ctrl; retail 4d7a09 -> 4d7750) --
+// and kQueueToggle marks a player's own click, whose Shift or Ctrl order
+// instead removes a queued one of the same kind on its target or within 16 px
+// of its point (retail 4d7a30). A producer's (or a repeating mobile builder's)
+// Move, AttackMove, Patrol and Attack act on its rally list. The AI and
+// scripts send only kQueueReplace and kQueueAppend. Other verbs keep their
+// own uses of the byte (ShareMana, Disco, PowerCode).
+inline constexpr uint8_t kQueueReplace = 0, kQueueAppend = 1, kQueueFront = 2, kQueuePlace = 3,
+                         kQueueToggle = 4;
+
 struct Command {
     Cmd kind = Cmd::Move;
     uint8_t player = 0;

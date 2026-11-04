@@ -1848,6 +1848,169 @@ bool World::setRally(Unit& u, const Order& o, bool queue) {
     return true;
 }
 
+// The kinds a player's Shift/Ctrl order can take back (removeQueuedMatch).
+// Only issued legs count: route corners, what missions push ahead of
+// themselves (step-outs, landings, formation waits, auto attacks, a guard's
+// own repairs) and the work kinds no click names (areas, waits, scripts, a
+// raise) never match.
+World::QueuedKind World::queuedKind(const Order& o) {
+    if (!o.goal || o.scripted || o.stepOut || o.landing || o.formationLevel || o.seekGuard || o.seekAttack ||
+        o.reclaimAreaApproach || o.transportPickup || o.patrolRepair || o.guardRepair || o.wait ||
+        o.waitAttack || o.reclaimArea || o.manaBuildArea)
+        return QueuedKind::None;
+    if (o.buildType) return QueuedKind::Build;
+    if (o.helpSite) return QueuedKind::Assist;
+    if (o.repairTarget) return QueuedKind::Repair;
+    if (o.reclaimFeat) return o.reviveKind ? QueuedKind::None : QueuedKind::Reclaim;
+    if (o.load) return QueuedKind::Load;
+    if (o.unload) return QueuedKind::Unload;
+    if (o.guard) return QueuedKind::Guard;
+    if (o.targetId) return o.autoTarget ? QueuedKind::None : QueuedKind::Attack;
+    if (o.patrol) return QueuedKind::Patrol;
+    if (o.attackMove) return QueuedKind::AttackMove;
+    return QueuedKind::Move;
+}
+
+// 4d7a5b..4d7ab2: from the head, the first queued mission of the click's kind
+// whose target is the click's (when it names one) and whose point is within
+// 16 px of the click's on both axes (when it has one) is removed, and the
+// click adds nothing. A leg's point is where it was clicked: a ground leg's
+// mission point survives the footprint snap and any route in its x/z.
+bool World::removeQueuedMatch(int unitId, bool rally, const QueuedMatch& m) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type || m.kind == QueuedKind::None) return false;
+    if (m.kind == QueuedKind::Build && !m.type) return false;
+    const bool point = m.kind == QueuedKind::Move || m.kind == QueuedKind::AttackMove ||
+                       m.kind == QueuedKind::Patrol || m.kind == QueuedKind::Unload || m.kind == QueuedKind::Build;
+    Fixed mx = m.x, mz = m.z;
+    if (m.kind == QueuedKind::Build) {   // the site as makeBuildOrder keeps it
+        mx = footprintWaypoint(footprintCell(m.x, m.type->footX), m.type->footX);
+        mz = footprintWaypoint(footprintCell(m.z, m.type->footZ), m.type->footZ);
+    }
+    const auto near = [](Fixed a, Fixed b) {
+        const int64_t d = int64_t(a.v) - int64_t(b.v);
+        return d >= -(int64_t(16) << 16) && d <= (int64_t(16) << 16);
+    };
+    const auto matches = [&](const Order& o) {
+        if (queuedKind(o) != m.kind) return false;
+        if (point) {
+            if (m.kind == QueuedKind::Build && o.buildType != m.type) return false;
+            Fixed px = o.x, pz = o.z;
+            if (o.buildType) { px = o.buildX; pz = o.buildZ; }
+            else if (o.missionTarget) { px = o.missionTarget->first; pz = o.missionTarget->second; }
+            else if (o.groundMission) { px = o.clickX; pz = o.clickZ; }
+            return near(px, mx) && near(pz, mz);
+        }
+        const int t = m.kind == QueuedKind::Reclaim ? o.reclaimFeat
+                    : m.kind == QueuedKind::Repair  ? o.repairTarget
+                    : m.kind == QueuedKind::Assist  ? o.helpSite : o.targetId;
+        return t == m.target;
+    };
+    std::vector<Order>& list = rally ? u->rally : u->orders;
+    const auto it = std::find_if(list.begin(), list.end(), matches);
+    if (it == list.end()) return false;
+    if (rally) { list.erase(it); return true; }
+    OrdersNote note{*this, unitId};
+    if (size_t(it - list.begin()) != currentLeg(list)) { list.erase(it); return true; }
+    // The current leg: it ends with its route, and its job with it.
+    dropLeg(*u);
+    if (!u->repeatType) {
+        std::vector<Order> rest;
+        rest.swap(u->orders);
+        cancelBuilds(unitId);
+        unit(unitId)->orders.swap(rest);
+    }
+    return true;
+}
+
+// 4d7750 links the new mission in at the head, ahead of the running one; that
+// one sleeps behind it and runs again when the head ends. Here the new order
+// is issued as an append onto an emptied queue (so every verb's own code
+// applies), and the old queue goes back behind it, its current leg rewound
+// to how it stood when queued: what its run pushed ahead of it and its route
+// go, its mission starts at stage 0 on a fresh controller. A builder already
+// at work on a site comes back to it as a HelpBuild on that site.
+void World::insertOrderFront(int unitId, bool rally, const std::function<void()>& issue) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type) return;
+    if (rally) {
+        std::vector<Order> rest;
+        rest.swap(u->rally);
+        issue();
+        u = unit(unitId);
+        u->rally.insert(u->rally.end(), std::make_move_iterator(rest.begin()), std::make_move_iterator(rest.end()));
+        if (u->rally.size() > 32) u->rally.erase(u->rally.begin() + 32, u->rally.end());   // bound it
+        return;
+    }
+    if (u->orders.empty()) { issue(); return; }
+    OrdersNote note{*this, unitId};
+    // The route stamp as the current leg's detachment leaves it (dropLeg).
+    {
+        const Order& cur = u->orders[currentLeg(u->orders)];
+        if (cur.groundMission || cur.buildRectangle) {
+            if (cur.controller && uint32_t(u->routeStamp) <= tickCounter_ - 6u) u->routeStamp = 0;
+        } else u->routeStamp = -1;
+    }
+    size_t first = 0;
+    while (first < u->orders.size()) {
+        const Order& o = u->orders[first];
+        if (o.goal && o.autoTarget && o.targetId) {   // an auto attack, and the return move a leash gave it
+            first += o.chaseLeashed ? 2 : 1;
+            continue;
+        }
+        if (o.goal && !o.stepOut && !o.landing && !o.formationLevel && !o.reclaimAreaApproach && !o.guardRepair)
+            break;
+        ++first;
+    }
+    std::vector<Order> rest;
+    if (first < u->orders.size())
+        rest.assign(std::make_move_iterator(u->orders.begin() + long(first)), std::make_move_iterator(u->orders.end()));
+    u->orders.clear();
+    int site = 0;
+    if (!rest.empty() && rest.front().buildType && u->buildSiteId) {
+        site = u->buildSiteId;   // placed: the build leg's work is now the site's
+        rest.erase(rest.begin());
+    }
+    if (!rest.empty()) {
+        Order& o = rest.front();
+        const uint32_t flags = o.mission.flags;
+        o.mission = RetailMissionState{};
+        o.mission.flags = flags;
+        o.hasSegment = false;
+        o.navigationConsumed = o.navigationExhausted = false;
+        o.flightGoal.reset();
+        o.park.reset();
+        o.airToAir.reset();
+        o.controller = o.groundMission ? ++nextMovementController_ : 0;   // as order() queues a leg
+        if (o.groundMission && o.missionTarget) {
+            o.x = o.missionTarget->first;
+            o.z = o.missionTarget->second;
+            o.missionTarget.reset();
+        }
+        o.attackAimTick = Order::kAttackUnaimed;
+        o.attackChased = false;
+        o.airRunCount = 0;
+        o.strikeFollow = o.mixedSlots = false;
+        o.reclaimCountdown = 0;
+        o.repairLooks = 0;
+        o.placementFailures = 0;
+        o.placementRetryTick = 0;
+        o.stationFree = 0;
+        o.stationRefX = o.stationRefZ = 0;
+        o.stationRefTick = 0;
+        o.guardOrbitAngle = 0;
+    }
+    cancelPath(*u);
+    // The running job stops (the queue is empty); a structure's production is
+    // not an order and goes on.
+    if (!u->repeatType && !u->type->isStructure()) cancelBuilds(unitId);
+    issue();
+    if (site)
+        if (const Unit* s = unit(site); s && s->alive() && s->underConstruction) assist(unitId, site, true);
+    u = unit(unitId);
+    u->orders.insert(u->orders.end(), std::make_move_iterator(rest.begin()), std::make_move_iterator(rest.end()));
+}
+
 static void resetGroundSegment(const Unit& u,Order& goal) {
     // 4e2500/4e2820 retain the mission point separately from the navigator's
     // footprint-aligned endpoint. A retry must use the mission, not a partial
@@ -5451,6 +5614,7 @@ void World::guard(int unitId, int targetId, bool queue) {
         u->routeStamp = -1;
         u->guardHelpTick = 0;   // a fresh guard looks for work at once
         u->guardHeard = t->attackedTick;   // nor hears an alarm older than itself
+        u->doorYieldFactory = 0;u->doorYieldSerial = 0;   // nor owes a door a past step aside
     }
     Order o;
     o.targetId = targetId;
@@ -5891,15 +6055,19 @@ void World::applyHit(const Weapon& w, float hx, float hz, int fromPlayer, int fr
             // no featuredead; ours keeps it inert rather than let a hit or a
             // fire swap it into a stage that would outlive the fade.
             if (!f.alive || f.type < 0 || f.fadeLeft) return;
+            // 4962b6..4962be: a sprite feature with an object -- burning
+            // (494b40) or playing its death (494ce0) -- takes no weapon damage
+            // and cannot be lit again.
+            if (f.burn || f.dieLeft) return;
             const FeatType& ft = featTypes_[size_t(f.type)];
             if (ft.indestructible) return;
-            if (w.fireStarter && ft.flamable && !f.burn && ft.hasBurnAnim) {
+            if (w.fireStarter && ft.flamable && ft.hasBurnAnim) {
                 igniteFeature(f);
                 return; // ignition replaces the damage this hit
             }
             if (ft.hp <= 0) return;
             f.dmg += w.damage;
-            if (f.dmg >= ft.hp) swapFeature(f, ft.deadType);
+            if (f.dmg >= ft.hp) destroyFeature(f);
         };
         // Dead-unit visuals/reclaim targets live separately from scenery, but
         // their installed footprints receive the same feature weapon damage.
@@ -10964,6 +11132,7 @@ void World::addFeature(int id, float x, float z, float energy,
     if (const size_t words = (features_.size() + 63) / 64; burningMarks_.size() < words) {
         burningMarks_.resize(words, 0);
         fadingMarks_.resize(words, 0);
+        dyingMarks_.resize(words, 0);
     }
     if (placeOnMap && blocks) blockCells(footprintOrigin(f.x,fx),footprintOrigin(f.z,fz),fx,fz,true);
     bumpFeatGen();   // a new feature needs a visual instance
@@ -11016,6 +11185,7 @@ static void forEachMarked(std::vector<uint64_t>& marks, Visit&& visit) {
 void World::swapFeature(Feature& f, int newType) {
     bumpFeatGen();   // burnt-stage swap (or removal): art changes
     if (f.fadeLeft) { f.fadeLeft = 0; --fadingFeatures_; }
+    f.dieLeft = 0;   // its mark goes on tickFeatureDeaths' next visit
     f.burn = 0;
     f.burnSequence = 0;
     f.dmg = 0;
@@ -11039,8 +11209,38 @@ void World::swapFeature(Feature& f, int newType) {
     f.energy = nt.energy;
 }
 
+// 494ce0 mode 0, damage's destruction: a sprite feature with a seqnamedie
+// takes an object slot that plays it (object +0x4, nonlooping) while the cell
+// keeps the feature, and its end (495ef7) places featuredead (494f00 ->
+// 494f50). Without one, featuredead replaces it at once (494ee3).
+void World::destroyFeature(Feature& f) {
+    const FeatType& ft = featTypes_[size_t(f.type)];
+    if (!ft.dieTicks) { swapFeature(f, ft.deadType); return; }
+    f.dieLeft = ft.dieTicks;
+    const size_t index = size_t(&f - features_.data());
+    uint64_t& word = dyingMarks_[index / 64];
+    const uint64_t bit = uint64_t(1) << (index % 64);
+    if (!(word & bit)) { word |= bit; ++dyingMarked_; }
+    bumpFeatGen();   // death edge: the client plays seqnamedie; no longer a reclaim target
+}
+
+// 4959c0's sprite branch (495ed8): the death clock 5373d0 runs one step a tick
+// and the tick it runs out (495ef7) the featuredead stage replaces the feature,
+// the same countdown as a burn-out's (tickBurning).
+void World::tickFeatureDeaths() {
+    if (!dyingMarked_) return;
+    forEachMarked(dyingMarks_, [&](size_t i, uint64_t& word, uint64_t bit) {
+        Feature& f = features_[i];
+        if (!f.alive || !f.dieLeft || f.type < 0) { f.dieLeft = 0; word &= ~bit; --dyingMarked_; return; }
+        if (f.dieLeft > 1) { --f.dieLeft; return; }
+        word &= ~bit; --dyingMarked_;
+        swapFeature(f, featTypes_[size_t(f.type)].deadType);
+    });
+}
+
 void World::igniteFeature(Feature& f) {
-    if (f.burn || !f.alive || f.type < 0 || f.fadeLeft) return;   // fading: see damageFeature
+    // An object already on the cell (dying, fading) refuses it: 494b6d.
+    if (f.burn || !f.alive || f.type < 0 || f.fadeLeft || f.dieLeft) return;
     const FeatType& ft = featTypes_[size_t(f.type)];
     if (!ft.flamable || !ft.hasBurnAnim) return;
     static const bool kBurnLog = tak::devEnv("TAK_BURNLOG") != nullptr;
@@ -11098,7 +11298,9 @@ void World::tickBurning() {
                     auto it = featureIdx_.find(nz * terW_ + nx);
                     if (it == featureIdx_.end()) continue;
                     Feature& nf = features_[it->second];
-                    if (!nf.alive || nf.burn || nf.type < 0) continue;
+                    // 49515d: a cell with an object (burning, fading,
+                    // dying) is passed over before the spread roll.
+                    if (!nf.alive || nf.burn || nf.fadeLeft || nf.dieLeft || nf.type < 0) continue;
                     const FeatType& nft = featTypes_[size_t(nf.type)];
                     if (!nft.flamable || !nft.hasBurnAnim) continue;
                     if (burnRand(100) < nft.spreadChance) igniteFeature(nf);
@@ -11206,7 +11408,7 @@ void World::tickReclaimArea(Unit& b) {
     // misses multi-cell trees and rubble intersecting the selection rectangle.
     std::unordered_map<int,int> targets;
     for (const auto& f:features_) {
-        if (!f.alive || !f.id || f.fadeLeft) continue;
+        if (!f.alive || !f.id || f.fadeLeft || f.dieLeft) continue;
         if (f.type>=0 && (size_t(f.type)>=featTypes_.size() || !featTypes_[size_t(f.type)].reclaimable)) continue;
         const int x=footprintOrigin(f.x,f.fx),z=footprintOrigin(f.z,f.fz);
         targets.emplace(z*hW_+x,f.id);
@@ -15506,73 +15708,151 @@ void World::clearProductionRoom(Unit& producer,const UnitType* type,Fixed x,Fixe
     }
 }
 
-// Engine deviation (user-requested; the 0.9.2 known limit "a crowd of Iron
-// Clads can block a yard door"). Retail moves no idle body: a ship leaving a
-// Navy Yard traces round parked ships or presses on them (its mover only
-// clamps and slows, docs/retail-engine.md "retail genuinely wedges"), and
-// BUILD stage 2 holds the next site while any body is on the pad (401deb).
-// A crowd of idle ships a few cells off the door then shuts the yard for good:
-// the first output wedges against it just out of the yard and the next is
-// born behind that one. Here, every kDoorRetry ticks while one of the yard's
-// ships is on its way out (in front of the yard on its PARK round it, or still
-// in the yard on any order) or the yard's next ship's site was refused, the yard
-// owner's idle ships in front of the yard (its rectangle grown kDoorCells on
-// every side) move aside: to just outside that area across the door's axis
-// (the side the ship is on), the door's own side last (pointOutside: free,
-// reachable, not where another mover was sent). Ships with any order, other
-// players' ships, land units and flyers stay as they are. The move is tagged
-// productionExit: held up once clear of where it stood, it is done.
+// Engine deviation (user-requested: the 0.9.2 known limit "a crowd of Iron
+// Clads can block a yard door", then the same at land factories). Retail moves
+// no idle body, at a Navy Yard or a land factory alike: BUGGER_OFF only stores
+// a bit (0x50d50e, read back by GET 19 and save/load alone), an output leaving
+// on its PARK presses on a parked body and only clamps and slows (0x4dbe2c,
+// docs/retail-engine.md "retail genuinely wedges"), and BUILD stage 2 holds the
+// next site while any body is on the pad (401deb). A crowd of idle units a few
+// cells off the door then shuts the factory for good: the first output wedges
+// against it just out of the yard and the next is born behind that one; one
+// idle unit on the pad stops it before the first. Here, every kDoorRetry ticks,
+// the owner's idle units on the outputs' plane (ships at a Navy Yard, ground
+// and hover units at a land factory) move aside:
+//  - while an output of the factory (builtBy) on its way out (its PARK, its
+//    rally's plain move, or still on the pad) is in front of it,
+//    those in that area (the factory's rectangle grown kDoorCells; at a land
+//    factory only its half on the output's side), to just outside it across
+//    the door's axis, on their own side, the door's side last;
+//  - while its next site is refused, those on the pad (its rectangle);
+//  - under the Retail navigator, while an output on its PARK round it is held
+//    up by a body, those in the cells round that output, away from it (a crowd
+//    moved just past the area can hold a ship there).
+// The factory's own parked outputs move only off the pad or off an output they
+// hold up, not for every next one that walks past them (the Navy Yard's first
+// rule moved them each time). The point is pointOutside's: free, reachable,
+// not where another mover was sent. The owner's guards move too (user-requested
+// after the 0.9.19 known limit: a dozen guards at a Legion Academy's door held
+// all six outputs in), as clearBuildSite moves them: the move goes ahead of the
+// guard, which resumes when it ends, and a guard steps aside once per output
+// or refusal of this factory (Unit::doorSerial, doorYieldFactory/Serial), so
+// walking back into its ring does not start it again.
+// A guard fighting (an attack or a job ahead of its guard, its ward's alarm
+// still to answer, a weapon slot on a target) stays (doorGuard). Units with any
+// other order, with production of their own, other players' units (allies
+// included: nothing in the sim orders another player's units, and
+// clearBuildSite and clearProductionRoom move only the builder's own) and
+// flyers stay; a mobile producer (Zhon) has clearProductionRoom instead. The
+// move is tagged productionExit: held up once clear of where it stood, it is
+// done.
 void World::clearYardDoor(const Unit& factory) {
     static constexpr uint32_t kDoorRetry=15;
     static constexpr int kDoorCells=8;
-    if (!factory.type || !factory.type->producesUnits() || !factory.type->productionScript ||
-        factory.underConstruction || (tickCounter_+uint32_t(factory.id))%kDoorRetry) return;
+    if (!factory.type || !factory.type->isStructure() || !factory.type->producesUnits() ||
+        !factory.type->productionScript || factory.underConstruction ||
+        (tickCounter_+uint32_t(factory.id))%kDoorRetry) return;
     const int fx=footprintOrigin(factory.x,factory.type->footX),fz=footprintOrigin(factory.z,factory.type->footZ);
     const int left=(fx-kDoorCells)*16,right=(fx+factory.type->footX+kDoorCells)*16;
     const int top=(fz-kDoorCells)*16,bottom=(fz+factory.type->footZ+kDoorCells)*16;
-    const auto inArea=[&](const Unit& k) {
+    const auto overlaps=[](const Unit& k,int l,int r,int t,int b) {
         const int ux=footprintOrigin(k.x,k.type->footX)*16,uz=footprintOrigin(k.z,k.type->footZ)*16;
-        return ux<right && left<ux+k.type->footX*16 && uz<bottom && top<uz+k.type->footZ*16;
+        return ux<r && l<ux+k.type->footX*16 && uz<b && t<uz+k.type->footZ*16;
     };
-    const auto ship=[&](const Unit& k) {
-        return k.alive() && k.type && !k.type->canFly && !k.type->isStructure() &&
-            k.type->domain==UnitType::Domain::Water && !k.underConstruction && k.player==factory.player;
+    const int yl=fx*16,yr=(fx+factory.type->footX)*16,yt=fz*16,yb=(fz+factory.type->footZ)*16;
+    const auto body=[&](const Unit& k) {
+        return k.alive() && k.type && !k.type->canFly && !k.type->isStructure() && !k.underConstruction &&
+            k.player==factory.player;
     };
     const int cx=factory.x.floorInt(),cz=factory.z.floorInt();
     const float reach=float(std::max(right-left,bottom-top));
-    // A ship of this yard on its way out decides the door's axis.
+    // An output of this factory on its way out decides the door's axis. Under
+    // the Retail navigator, those still on their PARK round it and held up by a
+    // body (the mover's refusal streak), in the area or past it, mark the cells
+    // round each, 2 deep: where whatever holds it stands. Legion gives each
+    // output a spot of its own out of the door's lane and resolves its own
+    // crowds; moving its parked outputs there put them back in the lane
+    // (legion_park, measured 2026-11-03).
     const Unit* leaving=nullptr;
+    std::vector<std::array<int,4>> held;   // World px: left, right, top, bottom.
     forEachNear(float(cx),float(cz),reach,[&](int index) {
         const Unit& k=units_[size_t(index)];
-        if (!ship(k) || k.orders.empty() || !inArea(k) || (leaving && leaving->id<k.id)) return;
+        if (!body(k) || k.builtBy!=factory.id || k.orders.empty()) return;
+        // On its way out: on its PARK round this factory, still on the pad, or
+        // on a plain move (its rally). An older output guarding, building,
+        // patrolling or attacking near its factory is not leaving the door: it
+        // would clear the area for as long as it stayed.
         const Order& o=k.orders[currentLeg(k.orders)];
-        const int ux=footprintOrigin(k.x,k.type->footX),uz=footprintOrigin(k.z,k.type->footZ);
-        const bool inYard=ux<fx+factory.type->footX && fx<ux+k.type->footX && uz<fz+factory.type->footZ && fz<uz+k.type->footZ;
-        if ((o.park && o.park->target==factory.id) || inYard) leaving=&k;
+        const bool parking=o.park && o.park->target==factory.id;
+        const bool plainMove=!o.targetId && !o.guard && !o.patrol && !o.attackMove && !o.buildType &&
+            !o.reclaimFeat && !o.repairTarget && !o.load && !o.unload && !o.wait && !o.waitAttack;
+        const bool exiting=parking || plainMove || overlaps(k,yl,yr,yt,yb);
+        const bool inArea=exiting && overlaps(k,left,right,top,bottom);
+        if (inArea && (!leaving || k.id<leaving->id)) leaving=&k;
+        if (!isLegionPathfinding(pathfindingMode_) && (inArea || parking) && k.bodyBlockStreak>=2) {
+            const int hx=(footprintOrigin(k.x,k.type->footX)-2)*16,hz=(footprintOrigin(k.z,k.type->footZ)-2)*16;
+            held.push_back({hx,hx+(k.type->footX+4)*16,hz,hz+(k.type->footZ+4)*16});
+        }
     });
-    const bool refused=!factory.productionSiteId && !factory.buildQueue.empty() &&
-        factory.buildQueue.front() && factory.buildQueue.front()->domain==UnitType::Domain::Water &&
-        tickCounter_<factory.productionRetryTick;
-    if (!leaving && !refused) return;
-    // What has to be clear: with a ship on its way out, the whole area (a ship
-    // leaves along its PARK bearing, not only straight out of the door; a
-    // narrower strip, or acting only once the ship is body-blocked, left the
-    // crowd holding Submersibles and Legion's shore exits, measured 2026-11-03).
-    // With only a refused site, just the pad (the yard's own rectangle): ships
-    // parked round the yard do not stop the next site.
-    int zl=fx*16,zr=(fx+factory.type->footX)*16,zt=fz*16,zb=(fz+factory.type->footZ)*16;
-    if (leaving) {zl=left;zr=right;zt=top;zb=bottom;}
-    const auto inZone=[&](const Unit& k) {
-        const int ux=footprintOrigin(k.x,k.type->footX)*16,uz=footprintOrigin(k.z,k.type->footZ)*16;
-        return ux<zr && zl<ux+k.type->footX*16 && uz<zb && zt<uz+k.type->footZ*16;
-    };
-    std::vector<int> movers;
+    const UnitType* next=!factory.productionSiteId && !factory.buildQueue.empty() ? factory.buildQueue.front() : nullptr;
+    const bool refused=next && !next->canFly && tickCounter_<factory.productionRetryTick;
+    // The pad: the yard, and with a refused site that site's footprint too.
+    int pl=yl,pr=yr,pt=yt,pb=yb;
+    if (refused) {
+        const int sx=footprintOrigin(Fixed::fromInt(factory.refusedSiteX),next->footX)*16;
+        const int sz=footprintOrigin(Fixed::fromInt(factory.refusedSiteZ),next->footZ)*16;
+        pl=std::min(pl,sx);pr=std::max(pr,sx+next->footX*16);pt=std::min(pt,sz);pb=std::max(pb,sz+next->footZ*16);
+    }
+    if (!leaving && !refused && held.empty()) return;
+    // The plane that has to be clear: a ship's, or a land unit's. Every output
+    // of one factory shares it (a yard builds only ships).
+    const Unit* any=leaving;
+    if (!any) forEachNear(float(cx),float(cz),reach,[&](int index) {
+        const Unit& k=units_[size_t(index)];
+        if (!any && body(k) && k.builtBy==factory.id && !k.orders.empty()) any=&k;
+    });
+    const bool water=(any ? any->type : next)->domain==UnitType::Domain::Water;
+    // The door's axis: from the factory's centre to the leaving output.
+    const int ax=leaving ? leaving->x.floorInt()-cx : 0,az=leaving ? leaving->z.floorInt()-cz : 0;
+    const bool alongZ=std::abs(az)>=std::abs(ax);
+    // What has to be clear: with an output on its way out, the area (it leaves
+    // along its PARK bearing, not only straight out of the door; a narrower
+    // strip, or acting only once the output is body-blocked, left the crowd
+    // holding Submersibles and Legion's shore exits, measured 2026-11-03). At a
+    // land factory only the area's half on the output's side of the factory's
+    // centre: units parked behind it are never in a land output's way (a ship's
+    // PARK round the yard is: the half area kept a Legion Stern Wheeler out of a
+    // door onto a shore for 300 ticks). With only a refused site, just the pad;
+    // with only a held output, nothing but what holds it.
+    int zl=0,zr=0,zt=0,zb=0;
+    if (leaving) {
+        zl=left;zr=right;zt=top;zb=bottom;
+        if (!water && alongZ) (az>=0 ? zt : zb)=cz;
+        else if (!water) (ax>=0 ? zl : zr)=cx;
+    } else if (refused) {zl=pl;zr=pr;zt=pt;zb=pb;}
+    struct Mover {int id,heldBy;};   // heldBy: index into held, or -1 for the zone.
+    std::vector<Mover> movers;
+    // A guard steps aside once per this factory's doorSerial: once per finished
+    // output and once per refusal episode of the next one's site.
     forEachNear(float(cx),float(cz),reach,[&](int index) {
         const Unit& k=units_[size_t(index)];
-        if (ship(k) && k.orders.empty() && yieldsToSite(k,factory.player) && inZone(k)) movers.push_back(k.id);
+        if (!body(k) || (k.type->domain==UnitType::Domain::Water)!=water ||
+            !(k.orders.empty() || doorGuard(k)) ||
+            !k.buildQueue.empty() || k.productionSiteId || !yieldsToSite(k,factory.player)) return;
+        int at=-1;
+        for (size_t i=0;i<held.size() && at<0;++i)
+            if (overlaps(k,held[i][0],held[i][1],held[i][2],held[i][3])) at=int(i);
+        // Its own parked output only off the pad, or when it is what holds up
+        // the output leaving after it: not for every next one that walks past.
+        // A guard (its own output or not) steps aside for each output once.
+        const bool guarding=!k.orders.empty();
+        const bool zone=overlaps(k,zl,zr,zt,zb) && (guarding || k.builtBy!=factory.id || overlaps(k,pl,pr,pt,pb));
+        if (guarding && (zone || at>=0) && k.doorYieldFactory==factory.id && k.doorYieldSerial==factory.doorSerial) return;
+        if (zone) movers.push_back({k.id,-1});
+        else if (at>=0) movers.push_back({k.id,at});
     });
     if (movers.empty()) return;
-    std::sort(movers.begin(),movers.end());
+    std::sort(movers.begin(),movers.end(),[](const Mover& a,const Mover& b){return a.id<b.id;});
     // Where movers are already going, as exitSpot reserves them.
     std::vector<std::array<int,4>> taken;
     for (const auto& k:units_) {
@@ -15584,25 +15864,58 @@ void World::clearYardDoor(const Unit& factory) {
             taken.push_back({footprintOrigin(target.first,k.type->footX),footprintOrigin(target.second,k.type->footZ),
                              k.type->footX,k.type->footZ});
     }
-    for (int id:movers) {
+    for (const auto& [id,at]:movers) {
         Unit& k=*unit(id);
         const int kx=k.x.floorInt(),kz=k.z.floorInt();
-        // The door's axis: from the yard's centre to the leaving ship, else to
-        // this ship. Aside means across it, on this ship's side.
-        const int ax=leaving ? leaving->x.floorInt()-cx : kx-cx,az=leaving ? leaving->z.floorInt()-cz : kz-cz;
-        const bool alongZ=std::abs(az)>=std::abs(ax);
-        const int sideX=kx>=cx ? 1 : -1,sideZ=kz>=cz ? 1 : -1;
-        const int rx=alongZ ? kx+sideX*4096 : kx,rz=alongZ ? kz : kz+sideZ*4096;
-        const std::array<bool,4> door{!alongZ && ax<0,!alongZ && ax>=0,alongZ && az<0,alongZ && az>=0};
         int px=0,pz=0;
-        if (!pointOutside(k,zl,zr,zt,zb,rx,rz,door,taken,px,pz)) continue;
+        if (at>=0) {
+            // Off what it holds up: out of the cells round that output, away
+            // from it.
+            const auto& h=held[size_t(at)];
+            if (!pointOutside(k,h[0],h[1],h[2],h[3],2*kx-(h[0]+h[1])/2,2*kz-(h[2]+h[3])/2,{},taken,px,pz)) continue;
+        } else {
+            // With no output leaving, the axis runs to this unit. Aside means
+            // across it, on this unit's side.
+            const int dx=leaving ? ax : kx-cx,dz=leaving ? az : kz-cz;
+            const bool along=std::abs(dz)>=std::abs(dx);
+            const int sideX=kx>=cx ? 1 : -1,sideZ=kz>=cz ? 1 : -1;
+            const int rx=along ? kx+sideX*4096 : kx,rz=along ? kz : kz+sideZ*4096;
+            const std::array<bool,4> door{!along && dx<0,!along && dx>=0,along && dz<0,along && dz>=0};
+            if (!pointOutside(k,zl,zr,zt,zb,rx,rz,door,taken,px,pz)) continue;
+        }
         taken.push_back({footprintOrigin(Fixed::fromInt(px),k.type->footX),footprintOrigin(Fixed::fromInt(pz),k.type->footZ),
                          k.type->footX,k.type->footZ});
         const std::pair<Fixed,Fixed> from{k.x,k.z};
+        if (k.orders.empty()) {
+            order(id,float(px),float(pz),false);
+            if (Unit* moved=unit(id);moved && !moved->orders.empty())
+                moved->orders[currentLeg(moved->orders)].productionExit=from;
+            continue;
+        }
+        // A guard: the move goes ahead of its guard, which resumes when it
+        // ends (clearBuildSite's step aside).
+        OrdersNote note{*this,id};
+        k.doorYieldFactory=factory.id;k.doorYieldSerial=factory.doorSerial;
+        guardStandAside(k);
+        std::vector<Order> rest;rest.swap(k.orders);
+        cancelPath(k);k.routeStamp=0;
         order(id,float(px),float(pz),false);
-        if (Unit* moved=unit(id);moved && !moved->orders.empty())
-            moved->orders[currentLeg(moved->orders)].productionExit=from;
+        Unit& moved=*unit(id);
+        if (!moved.orders.empty()) moved.orders[currentLeg(moved.orders)].productionExit=from;
+        moved.orders.insert(moved.orders.end(),std::make_move_iterator(rest.begin()),std::make_move_iterator(rest.end()));
     }
+}
+
+// A guard that may step aside out of a factory's door: on its guard of a live
+// ward (not on a job or an attack put ahead of it), with no alarm of its ward
+// still to answer and no weapon slot on a target: a guard fighting stays.
+bool World::doorGuard(const Unit& k) const {
+    if (k.orders.empty()) return false;
+    const Order& o=k.orders[currentLeg(k.orders)];
+    if (!o.guard || o.productionExit) return false;
+    const Unit* g=unit(o.targetId);
+    if (!g || !g->alive() || guardAlarm(k,*g)) return false;
+    return std::all_of(k.slotTarget.begin(),k.slotTarget.end(),[](int32_t t){return t==0;});
 }
 
 // GetBuilt's release (0x402220, emulated): a structure's finished output with no
@@ -16906,6 +17219,7 @@ void World::tickProduction(Unit& u, float dt) {
     Unit* site=u.productionSiteId ? unit(u.productionSiteId) : nullptr;
     if (u.productionSiteId && (!site || !site->alive() || (site->hp<=Fixed() && !site->retailSite) || site->player!=player)) {
         u.productionSiteId=0; u.buildProgress=0; u.buildFraction=0;
+        if (u.doorSerial&1u) ++u.doorSerial;   // a refusal for the next site is a new episode
         return;
     }
     if (!site) {
@@ -16917,7 +17231,11 @@ void World::tickProduction(Unit& u, float dt) {
         if (tickCounter_<u.productionRetryTick) return;
         Fixed spawnX,spawnZ,spawnY;
         if (!productionPosition(producerId,t,spawnX,spawnY,spawnZ)) {
-            if (u.type->productionScript) u.productionRetryTick=tickCounter_+7+gameRand(15);
+            if (u.type->productionScript) {
+                u.productionRetryTick=tickCounter_+7+gameRand(15);
+                if (u.type->isStructure() && !(u.doorSerial&1u)) ++u.doorSerial;   // a new refusal episode
+                u.refusedSiteX=spawnX.floorInt();u.refusedSiteZ=spawnZ.floorInt();
+            }
             if (!u.type->isStructure() && !u.rally.empty()) clearProductionRoom(u,t,spawnX,spawnZ);
             return;
         }
@@ -17082,6 +17400,8 @@ void World::finishProduction(int producerId,Unit& finished) {
     const bool commanded=!site->orders.empty();
     site->underConstruction=false;
     site->productionOwner=0;
+    // A building's output remembers its factory (clearYardDoor).
+    if (producer->type->isStructure()) { site->builtBy=producerId;producer->doorSerial=(producer->doorSerial|1u)+1u; }
     producer->productionSiteId=0;
     producer->buildProgress=0;producer->buildFraction=0;
     noteScriptedProduction(*producer,t);
@@ -17701,6 +18021,7 @@ void World::tick(float dt) {
         std::optional<PhaseSpan> _burn;
         if (g_phase) _burn.emplace(g_burnMs, probe::kBurn);
         tickBurning();   // feature fire: spread + burn-out (deterministic, hashed)
+        tickFeatureDeaths();   // destroyed features finish seqnamedie (495ef7)
         tickFeatureFades();   // reclaimed features leave the plane (494ce0)
     }
     // Benchmark: fire the staged spawn plan at its scheduled ticks. Deterministic -- both
@@ -20108,6 +20429,8 @@ uint64_t World::stateHash() const {
         if (u.cloakBlockedUntil) { mix(0x434c4f4bu); mix(u.cloakBlockedUntil); }
         if (u.guardHelpTick) { mix(0x47554152u); mix(u.guardHelpTick); }
         if (u.guardHeard) { mix(0x47484541u); mix(u.guardHeard); }
+        if (u.doorYieldFactory) { mix(0x444f4f52u); mix(uint32_t(u.doorYieldFactory)); mix(u.doorYieldSerial); }
+        if (u.doorSerial) { mix(0x44534552u); mix(u.doorSerial); }
         if (u.reviveTarget) {
             mix(0x52455649u);mix(uint32_t(u.reviveTarget));mix(uint32_t(u.reviveWork));mix(uint8_t(u.reviveMode));
         }
@@ -20329,7 +20652,7 @@ uint64_t World::stateHash() const {
                      // burning/damage state: type swaps and timers are sim state
                      (uint64_t(uint32_t(f.type + 1)) << 17) ^
                      (uint64_t(f.burn) << 33) ^ (uint64_t(uint32_t(f.burnLeft)) << 40) ^
-                     (uint64_t(dm) << 9);
+                     (uint64_t(dm) << 9) ^ (uint64_t(f.dieLeft) << 52);
         }
     mix(fAlive);
     mix(fWork);

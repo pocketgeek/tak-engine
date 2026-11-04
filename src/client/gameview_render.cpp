@@ -10,6 +10,7 @@
 #include "client/buildghost.h"
 #include "client/reclaimpick.h"
 #include "client/reclaimfade.h"
+#include "client/featuredie.h"
 #include "client/retaillightningquad.h"
 #include "client/retailflame.h"
 #include "client/retaileffectframe.h"
@@ -2142,9 +2143,13 @@
                 const uint32_t burnAge = int32_t(front().gameTick-f.burnStarted) < 0
                     ? 0 : front().gameTick-f.burnStarted;
                 const bool overlayBurn = f.burnVis && (f.frontFlame || f.backFlame);
-                const FeatArt* shadowArt = f.burnVis && !overlayBurn ? f.burnArt : f.art;
-                const uint32_t shadowAge = f.burnVis
-                    ? (overlayBurn ? f.burnStarted : burnAge) : front().gameTick;
+                // Dying: only a seqnamedieshad shadow (4fd7cc; none ships), so none.
+                const bool dying = f.dieEnd && f.dieArt;
+                const FeatArt* shadowArt = dying ? f.dieArt
+                    : f.burnVis && !overlayBurn ? f.burnArt : f.art;
+                const uint32_t shadowAge = dying
+                    ? uint32_t(tak::featuredie::elapsed(f.dieArt->totalTicks, f.dieEnd, front().gameTick))
+                    : f.burnVis ? (overlayBurn ? f.burnStarted : burnAge) : front().gameTick;
                 SDL_Texture* shadow = nullptr;
                 FeatArt::FGeom sg;
                 if (shadowArt) {
@@ -2936,7 +2941,7 @@
         } else if (placing_) {
             drawGhost();
         }
-        if (!posterFrame_ && reclaimDrag_ && areaBoxAt(rdAnchor_, mouseX_, mouseY_)) {
+        if (!posterFrame_ && rightDrag_ && areaBoxAt(rdAnchor_, mouseX_, mouseY_)) {
             // "Clear this area" box, with a marker on every reclaimable feature it
             // currently catches. Shown only once the release would be an area clear
             // (client/areadrag.h), so a right-click order never flashes it. The press
@@ -3422,7 +3427,8 @@
         // pixels of hand jitter shouldn't flash a box. Its press corner stays on
         // the map when the camera moves (client/areadrag.h).
         if (const auto a = dragStartOnScreen(dragAnchor_);
-            dragging_ && tak::client::areadrag::isSelectBox(dragAnchor_, a, dragX1_, dragY1_, uiScale_)) {
+            dragging_ && (armedPress_ ? areaBoxAt(dragAnchor_, dragX1_, dragY1_)
+                                      : tak::client::areadrag::isSelectBox(dragAnchor_, a, dragX1_, dragY1_, uiScale_))) {
             SDL_FRect r{std::min(a.x, dragX1_), std::min(a.y, dragY1_),
                         std::abs(dragX1_ - a.x), std::abs(dragY1_ - a.y)};
             SDL_SetRenderDrawColor(ren_, 120, 255, 150, 200);
@@ -6323,6 +6329,19 @@
         const auto maskOf = [](const FeatArt* art, size_t idx) -> const tak::hiddenunits::AlphaMask* {
             return art && idx < art->masks.size() ? &art->masks[idx] : nullptr;
         };
+        // Destroyed, playing seqnamedie once (494ce0 mode 0): the frame its clock
+        // has reached, counted back from the tick featuredead replaces it.
+        if (f.dieEnd && f.dieArt && f.dieArt->tex) {
+            const FeatArt* da = f.dieArt;
+            const size_t idx = std::min(da->frames.size() - 1, tak::featuredie::frame(da->tickEnd,
+                tak::featuredie::elapsed(da->totalTicks, f.dieEnd, front().gameTick)));
+            out.tex = da->frames[idx];
+            const auto& g = da->fgeom[idx];
+            place(g.w, g.h, g.xoff, g.yoff);
+            out.mask = maskOf(da, idx);
+            out.burning = true;
+            return out;
+        }
         if (f.burnVis && f.burnArt && f.burnArt->tex) {
             const uint32_t burnAge = int32_t(front().gameTick-f.burnStarted) < 0
                 ? 0 : front().gameTick-f.burnStarted;
@@ -6407,10 +6426,12 @@
         if (seq.empty()) return nullptr;   // e.g. a def without seqnameburn
         const std::string world = def.valueOr("world", "aramon");
         const bool burn = std::string_view(seqKey) == "seqnameburn";
-        const bool animate = burn || def.numberOr("animating", 0) != 0 ||
+        // seqnamedie and seqnamedieshad load nonlooping (493eff, 493f4f).
+        const bool die = std::string_view(seqKey) == "seqnamedie";
+        const bool animate = burn || die || def.numberOr("animating", 0) != 0 ||
                              def.numberOr("animatable", 0) != 0;
         const std::array<std::string, 6> key{file, seq, seqShad, world,
-                                           animate ? "1" : "0", burn ? "1" : "0"};
+                                           animate ? "1" : "0", burn ? "1" : die ? "2" : "0"};
         auto it = featureArt_.find(key);
         if (it != featureArt_.end()) return it->second.tex ? &it->second : nullptr;
         FeatArt a{};
@@ -6430,7 +6451,7 @@
                     if (sq.frames.empty()) continue;
                     auto& fr = sq.frames[0];
                     if (ieq(sq.name, seq)) {
-                        a.bodyLoop = !animate || sq.loopFlag != 0;
+                        a.bodyLoop = !die && (!animate || sq.loopFlag != 0);
                         size_t nf = animate ? sq.frames.size() : 1;
                         // Keep EVERY frame at its own size/anchor: wave sequences
                         // author their motion through per-frame w/h/xoff/yoff (the
@@ -6465,8 +6486,7 @@
                         }
                     } else if (!seqShad.empty() && ieq(sq.name, seqShad)) {
                         // Retail forces burn-shadow sequences nonlooping at load.
-                        a.shadowLoop = std::string_view(seqKey) != "seqnameburn" &&
-                            (!animate || sq.loopFlag != 0);
+                        a.shadowLoop = !burn && !die && (!animate || sq.loopFlag != 0);
                         const size_t count = animate ? sq.frames.size() : 1;
                         for (size_t index = 0; index < count; ++index) {
                             const auto& frame = sq.frames[index];
@@ -6549,6 +6569,7 @@
     void GameView::swapFeatureArt(FeatureInst& fi, const std::string& name) {
         fi.name = name;
         fi.burnArt = nullptr;
+        fi.dieArt = nullptr;
         fi.frontFlame = fi.backFlame = nullptr;
         fi.tree = fi.simType == fi.treeType;   // a burnt stump/smudge doesn't sway
         auto di = featureDefs_.find(name);
@@ -6600,7 +6621,8 @@
                 const auto* sf = world.feature(fi.simId);
                 simState.push_back(sf ? FeatSim{sf->type, sf->alive && sf->burn != 0,
                                                 sf->alive, sf->fx, sf->fz, true, sf->burnStarted, world.featureReclaimable(*sf),sf->blocks,
-                                                tak::reclaimfade::fadeEnd(world.tickCount(), sf->fadeLeft)}
+                                                tak::reclaimfade::fadeEnd(world.tickCount(), sf->fadeLeft),
+                                                sf->dieLeft ? world.tickCount() + sf->dieLeft : 0}
                                       : FeatSim{-1, false, true, 1, 1, false});
             }
             // The type NAMES are read below too, and featureTypes() is filled at map
@@ -6632,6 +6654,7 @@
             fi.reclaimable=st.reclaimable;
             fi.blocking=st.blocking;
             fi.fadeEnd=st.fadeEnd;
+            fi.dieEnd=st.dieEnd;
             fi.hasSim = st.hasSim ? 1 : 0;    // ...and whether it is reclaimable at all
             if (st.type < 0) continue;
             if (fi.simType == -2) {                             // first sight
@@ -6641,6 +6664,12 @@
             else if (st.type != fi.simType) {                   // burnt-stage swap
                 fi.simType = st.type;
                 swapFeatureArt(fi, burnNames_[size_t(st.type)]);
+            }
+            if (!st.dieEnd) fi.dieArt = nullptr;
+            else if (!fi.dieArt) {                              // death edge
+                auto di = featureDefs_.find(fi.name);
+                if (di != featureDefs_.end())
+                    fi.dieArt = featureArtFor(di->second, "seqnamedie", "seqnamedieshad");
             }
             const bool b = st.burning;
             if (b && !fi.burnVis) {                             // ignition edge
@@ -7887,8 +7916,8 @@
                 else if (o.guard)           marker = tak::CursorId::Defend;
                 else if (o.targetId)        marker = tak::CursorId::Attack;
                 else if (o.patrol)          marker = tak::CursorId::Patrol;
-                // Fight-move: the cursor its armed command shows
-                // (cursorForArmedCommand 'f').
+                // Fight-move: its waypoint is marked with the Attack glyph (ours;
+                // the armed pointer itself is Move, as retail's).
                 else if (o.attackMove)      marker = tak::CursorId::Attack;
                 if (haveMarker) {
                     // Draw the marker where the PLAYER CLICKED, not where the

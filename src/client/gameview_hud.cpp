@@ -8,7 +8,7 @@
 #include "client/artscale.h"
 #include "client/cursorpath.h"
 #include "client/cursorrange.h"
-#include "client/friendlyorder.h"
+#include "client/cursorrules.h"
 #include "sim/retailflyerspread.h"
 #include "client/reclaimpick.h"
 #include "client/gpuvram.h"
@@ -29,30 +29,6 @@
 // methods stay inline in the header. Grouping is by name heuristic.
 
 namespace {
-    // A frame position as the sim's raw 16.16 (the frame holds Fixed::toFloat).
-    int32_t flyerRaw(float v) { return tak::sim::Fixed::fromFloat(v).v; }
-
-    // Retail's flyer spread (sim/retailflyerspread.h): the goal of a flyer at its
-    // frame position for a click at (wx, wz), the same integer 16.16 arithmetic the
-    // sim gives an explicit order's flyers.
-    template<class Unit>
-    void flyerSpreadGoal(const tak::sim::FlyerGroupCentre& air, const Unit& u, float wx, float wz,
-                         float& gx, float& gz) {
-        int32_t x = 0, z = 0;
-        air.goal(flyerRaw(u.x), flyerRaw(u.z), flyerRaw(wx), flyerRaw(wz), x, z);
-        gx = tak::sim::Fixed::raw(x).toFloat();
-        gz = tak::sim::Fixed::raw(z).toFloat();
-    }
-
-    int32_t unloadDestinationHeight(const tak::tnt::Map& map,float x,float z) {
-        const int height=map.heights.empty() ? 0 : tak::sim::retailTerrainHeight(
-            tak::sim::Fixed::fromFloat(x).v,tak::sim::Fixed::fromFloat(z).v,
-            map.width,map.height,[&](int cx,int cz) {
-                return map.heights[size_t(cz)*size_t(map.width)+size_t(cx)];
-            });
-        return std::max(height,int(uint8_t(map.seaLevel)))*65536;
-    }
-
     // An OPEN gate's doorway at world point (wx,wz): the cell is one of the gate's
     // own 'c'/'C' yard cells (the cells retail's yard stamp 0x5062d0 flags 0x20) and
     // the yard is open. Yardmaps are indexed unrotated, as the sim does
@@ -120,194 +96,6 @@ namespace {
             uint16_t(t.type->maxTransportSize),count,uint16_t(t.type->transportCap),
             used,uint16_t(t.type->transportSizeCap));
     }
-
-    void GameView::rightClickOrder(float wx, float wz, bool queue) {
-        ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
-        if (selection_.empty()) return;
-        const auto* first = frameUnitP(selection_.front());
-        // Selected transport with cargo: right-click = sail + disembark.
-            if (first && first->type && first->type->canTransport &&
-                !first->cargo.empty()) {
-                tak::net::Command c;
-                c.kind = tak::net::Cmd::Unload;
-                c.targetId = unloadDestinationHeight(mapView_.map(),wx,wz);
-                c.unitId = first->id;
-                c.x = wx;
-                c.z = wz;
-                c.queue = queue ? 1 : 0;
-                issue(c);
-                return;
-            }
-            // Clicking a friendly transport = board it.
-            int friendlyTransport = -1;
-            float bestT = 1e30f;
-            for (const UnitR* _up : front().live) {
-                const UnitR& u = *_up;
-                if (!canPickUnit(u)) continue;
-                if (!u.alive() || !first || u.player != first->player || !u.type ||
-                    !u.type->canTransport)
-                    continue;
-                float d=0;
-                if (unitUnderCursor(u,mouseX_,mouseY_,&d) && d<bestT &&
-                    std::any_of(selection_.begin(),selection_.end(),[&](int id) {
-                        const auto* passenger=frameUnitP(id);
-                        return passenger && canLoadPassenger(*passenger,u);
-                    })) {bestT=d;friendlyTransport=u.id;}
-            }
-            if (friendlyTransport >= 0) {
-                for (int id : selection_) {
-                    tak::net::Command c;
-                    c.kind = tak::net::Cmd::Load;
-                    c.unitId = id;
-                    c.targetId = friendlyTransport;
-                    c.queue = queue ? 1 : 0;
-                    issue(c);
-                }
-                return;
-            }
-            // Right-clicking a friendly unit is contextual, never a move:
-            //  - a conjure-in-progress: selected builders that can build that type
-            //    resume/assist it (revives a decaying site); other units do nothing.
-            //  - any other friendly unit: each selected unit decides for itself
-            //    (friendlyUnitOrder, retail's per-unit resolver): a mobile builder
-            //    repairs it when it is damaged, else any unit that can guard
-            //    (builders included) guards it; the rest do nothing.
-            // Either case consumes the click (no move fallthrough).
-            {
-                int siteId = -1;   float bestSite = 1e18f;
-                int allyId = -1;   float bestAlly = 1e30f;
-                for (const UnitR* _up : front().live) {
-                    const UnitR& u = *_up;
-                    if (!canPickUnit(u)) continue;
-                    if (!u.alive() || u.embarked() || !u.type || !first ||
-                        !worldTables().allied(u.player, first->player)) continue;
-                    float d=0;
-                    if (!unitUnderCursor(u,mouseX_,mouseY_,&d)) continue;
-                    if (u.underConstruction) {
-                        if (d < bestSite) { bestSite = d; siteId = u.id; }
-                    } else if (d < bestAlly) { bestAlly = d; allyId = u.id; }
-                }
-                if (siteId >= 0) {
-                    const auto* st = frameUnitP(siteId);
-                    bool any = false;
-                    for (int id : selection_) {
-                        const auto* bu = frameUnitP(id);
-                        if (!bu || !canAssistSite(*bu,*st)) continue;
-                        tak::net::Command c;
-                        c.kind = tak::net::Cmd::Assist;
-                        c.unitId = id; c.targetId = siteId; c.queue = queue;
-                        issue(c);
-                        any = true;
-                    }
-                    if (any) voice(selection_.front(), "move");
-                    return;   // non-builders / can't-build-it: nothing happens
-                }
-                if (allyId >= 0) {
-                    const auto* target=frameUnitP(allyId);
-                    const bool damaged=target && target->hp<target->type->maxHp;
-                    bool any = false;
-                    for (int id : selection_) {
-                        const auto* u = frameUnitP(id);
-                        if (!u || !u->type || !u->alive() || u->embarked()) continue;
-                        const auto order=tak::client::friendlyUnitOrder(*u->type,!u->underConstruction,
-                            u->repeatType!=nullptr,id==allyId,damaged);
-                        if (order==tak::client::FriendlyOrder::None) continue;
-                        tak::net::Command c;
-                        c.kind = order==tak::client::FriendlyOrder::Repair ? tak::net::Cmd::Repair
-                                                                           : tak::net::Cmd::Guard;
-                        c.unitId = id; c.targetId = allyId; c.queue = queue;
-                        issue(c);
-                        any = true;
-                    }
-                    if (any) voice(selection_.front(), "move");
-                    return;   // units that can neither repair nor guard: nothing happens
-                }
-            }
-            // Clicking near an enemy = attack; else formation move. (Allies are
-            // not enemies -- clicking one falls through to a move, not an attack.)
-            int enemy = -1;
-            float best = 1e30f;
-            for (const UnitR* _up : front().live) {
-                const UnitR& u = *_up;
-                if (!canPickUnit(u)) continue;
-                if (!u.alive() || u.embarked() || !first ||
-                    worldTables().allied(u.player, first->player)) continue;
-                float d=0;
-                if (unitUnderCursor(u,mouseX_,mouseY_,&d) && d<best) {best=d;enemy=u.id;}
-            }
-            // A click directly on a body or a reclaimable feature (with no enemy
-            // there): each caster raises the body if it can, each other
-            // reclaimer reclaims -- retail's RESURRECT / single RECLAIM.
-            if (enemy < 0) {
-                const int body = raiseTargetAt(wx, wz);
-                const auto fid = haveReclaimer() ? reclaimTargetAt(wx, wz) : std::nullopt;
-                if (body || fid) {
-                    issueRaiseOrReclaim(body, fid, queue);
-                    return;
-                }
-            }
-            // Every selected unit gets the Attack order, whatever the cursor
-            // shows: retail's order code (0x5214b0) never consults the cursor
-            // selector 0x4dd780. The sim sorts the units out -- a production
-            // building rallies its output at the target, an out-of-range tower
-            // keeps the order and fires once the target arrives, and a unit
-            // with no weapon drops it (World::attack).
-            if (enemy >= 0) {
-                for (int id : selection_) {
-                    tak::net::Command c;
-                    c.kind = tak::net::Cmd::Attack;
-                    c.unitId = id;
-                    c.targetId = enemy;
-                    c.queue = queue;
-                    issue(c);
-                }
-                voice(selection_.front(), "attack");
-            } else {
-                voice(selection_.front(), "move");
-                // In a Legion net game the selection goes as ONE explicit order,
-                // OrderShape::Offsets at the click: the sim gives the members the
-                // same goals as the loop below, from their positions at activation.
-                setClickMove(wx, wz);
-                // Legion packs one shared destination into arrival slots for the
-                // surface movers it plans (ground units, boats, hovercraft).
-                const bool legion=tak::sim::isLegionPathfinding(worldTables().pathfindingMode());
-                float cx = 0, cz = 0;
-                int n = 0;
-                tak::sim::FlyerGroupCentre air;
-                for (int id : selection_)
-                    if (const auto* u = frameUnitP(id)) { cx += u->x; cz += u->z; ++n; air.add(flyerRaw(u->x), flyerRaw(u->z)); }
-                if (n) { cx /= float(n); cz /= float(n); }
-                for (int id : selection_) {
-                    const auto* u = frameUnitP(id);
-                    if (!u) continue;
-                    tak::net::Command c;
-                    c.kind = tak::net::Cmd::Move;
-                    c.unitId = id;
-                    // Flyers take retail's spread (0x5214b0, sim/retailflyerspread.h):
-                    // the click plus their unclamped offset from the selection's
-                    // centre within sqrt(3000 n) px, else the click -- a big air
-                    // group keeps its shape. Ground units keep OUR +-60 px per-axis
-                    // spread (retail sends them all to the click; a deliberate
-                    // difference), except that Legion owns footprint-aware group
-                    // spreading: per-unit click offsets would split one selection
-                    // into unrelated goals, so Legion plans footprints up to 8 in
-                    // every surface domain on the shared point.
-                    // A Shift-queued leg shares the point too: once the legs
-                    // ahead of it are done it is a plain Move, and the legs one
-                    // click queued share its issue tick, so the selection plans
-                    // and packs it as one group when it becomes current.
-                    const bool shared=u->type && legion&&
-                        tak::sim::legionSharedClick(u->type->canFly,u->type->footX,u->type->footZ);
-                    if (u->type && u->type->canFly) flyerSpreadGoal(air, *u, wx, wz, c.x, c.z);
-                    else {
-                        c.x = shared ? wx : wx + std::clamp(u->x - cx, -60.0f, 60.0f);
-                        c.z = shared ? wz : wz + std::clamp(u->z - cz, -60.0f, 60.0f);
-                    }
-                    c.queue = queue;
-                    issue(c);
-                }
-            }
-        }
 
     bool GameView::hardwareCursorInUse() const {
         return settings_ && tak::useHardwareCursor(settings_->hardwareCursor, hwCursorFailed_);
@@ -382,142 +170,132 @@ namespace {
     }
 
     tak::CursorId GameView::desiredCursor(bool& fightTint) {
+        // Retail draws fight-move with the plain MOVE cursor (the selector never
+        // reads the fight flag), so nothing is tinted any more.
         fightTint = false;
-        // Overlays / lobby: a plain arrow for clicking UI.
-        if (inLobbyPhase() || exitMenu_ || giveUnitsMenu_ || options_)
-            return tak::CursorId::Normal;
-        // Build icons and their strip cover the map. Do not classify world
-        // targets behind them, even with a placement or command armed.
-        if (overBuildMenu(mouseX_, mouseY_)) return tak::CursorId::Normal;
-        // A watcher has no orders to promise: the arrow, or Select over what a click selects.
-        if (watchOnly()) {
-            if (mouseX_ < 0 || dragging_ || mouseX_ > mapViewW(winW_) ||
-                (hudShown() && mouseY_ > winH_ - barH()) ||
-                (replayMode_ && replayBar_.box.hit(mouseX_, mouseY_)))
-                return tak::CursorId::Normal;
+        using namespace tak::client;
+        const PointerArea area = pointerArea();
+        CursorFrame frame;
+        frame.modalUi = inLobbyPhase() || exitMenu_ || giveUnitsMenu_ || options_;
+        frame.area = area;
+        frame.watcher = watchOnly();
+        if (frame.watcher && !frame.modalUi && area == PointerArea::World && !dragging_) {
+            // A watcher has no orders to promise: Select over what a click selects.
             const auto& live = front().live;
             for (uint32_t index : pickCandidates(mouseX_, mouseY_)) {
                 const UnitR& u = *live[index];
                 if (canPickUnit(u) && u.alive() && u.type && !u.underConstruction &&
-                    unitUnderCursor(u, mouseX_, mouseY_)) return tak::CursorId::Select;
+                    unitUnderCursor(u, mouseX_, mouseY_)) { frame.watcherOverUnit = true; break; }
             }
-            return tak::CursorId::Normal;
         }
-        // Native action mode 14 (armed by selecting a build item) returns
-        // FindSite for a selected builder; placement validity is shown by the
-        // ghost and does not change this cursor slot.
-        if (placing_ && mouseX_ >= 0) {
-            const bool selectedBuilder=std::any_of(selection_.begin(),selection_.end(),[&](int id) {
-                const UnitR* unit=frameUnitP(id);
-                return unit && unit->alive() && !unit->embarked() && !unit->underConstruction &&
-                       unit->type && unit->type->isBuilder &&
-                       !registry_.buildable(unit->type->id).empty();
-            });
-            return tak::cursorForBuildPlacement(true,selectedBuilder);
+        frame.placing = placing_ != nullptr;
+        if (frame.placing && !frame.watcher && !frame.modalUi && area == PointerArea::Minimap) {
+            float wx = 0, wz = 0;
+            frame.minimapPlaceOk = minimapToWorld(mouseX_, mouseY_, winW_, winH_, wx, wz) && minimapPlaceOk(wx, wz);
         }
-        // Right-drag "clear this area": show the broom only once the box is big enough
-        // to be an area command (the test that tells a right-CLICK from a box on
-        // release). Before that, keep the ordinary hover cursor.
-        if (reclaimDrag_ && areaBoxAt(rdAnchor_, mouseX_, mouseY_))
-            return tak::CursorId::Reclaim;
-        if (dragging_) return tak::CursorId::Normal;       // box-select drag
-        if (pendingCmd_)  {
-            fightTint = (pendingCmd_ == 'f');
-            if (pendingCmd_ == 'a') {
-                bool anySelected=false,hasAirstrike=false,allAirstrike=!selection_.empty();
-                for(int id:selection_) {
-                    const UnitR* unit=frameUnitP(id);
-                    // A rally holder's Attack sends its output (World::attack).
-                    if(unit && unit->alive() && !unit->underConstruction && unit->holdsRally()) {anySelected=true;allAirstrike=false;continue;}
-                    if(!unit || !unit->alive() || unit->embarked() || unit->underConstruction || !unit->type ||
-                       !unit->type->hasPrimaryWeaponBlock || (unit->repeatType && !unit->type->isStructure()))continue;
-                    anySelected=true;
-                    const bool airstrike=tak::client::unitHasAirstrikeCursor(
-                        *unit->type,unit->weaponSlot);
-                    hasAirstrike|=airstrike;allAirstrike&=airstrike;
-                }
-                if (!anySelected) return tak::CursorId::Normal;
-                allAirstrike&=anySelected;
-                tak::CursorId ordinaryCursor=tak::CursorId::Normal;
-                if(mouseX_>=0 && !selection_.empty()) {
-                    float wx,wz;pickWorld(mouseX_,mouseY_,wx,wz);
-                    ordinaryCursor=hoverCursor(wx,wz,true);
-                }
-                return tak::cursorForArmedAttack(ordinaryCursor,hasAirstrike,allAirstrike);
-            }
-            const UnitR* loadTransport=nullptr;
-            int transportCount=0;
-            bool hasLoadTarget=false;
-            if(pendingCmd_=='l') {
-                for(int id:selection_) {
-                    const auto* unit=frameUnitP(id);
-                    if(unit && unit->alive() && !unit->embarked() && unit->type &&
-                       unit->type->canTransport) {
-                        ++transportCount;
-                        loadTransport=unit;
-                    }
-                }
-                // Native 520b60 requires exactly one selected carrier.
-                if(transportCount==1 && mouseX_>=0) {
-                    const auto& live=front().live;
-                    for(uint32_t index:pickCandidates(mouseX_,mouseY_)) {
-                        const UnitR* unit=live[index];
-                        if(canPickUnit(*unit) && unitUnderCursor(*unit,mouseX_,mouseY_) &&
-                           canLoadPassenger(*unit,*loadTransport)) {
-                            hasLoadTarget=true;
-                            break;
-                        }
-                    }
-                }
-            }
-            const bool capable=std::any_of(selection_.begin(),selection_.end(),[&](int id) {
-                const auto* u=frameUnitP(id);
-                if (!u || !u->alive() || u->embarked() || u->underConstruction || !u->type) return false;
-                // Move/patrol on a rally holder set its output's rally.
-                switch (pendingCmd_) {
-                    case 'm': return u->type->canMove || u->holdsRally();
-                    case 'p': return u->type->canPatrol || u->holdsRally();
-                    case 'g': return u->type->canGuard;
-                    case 'c': return u->type->canReclaim;
-                    case 'r': return u->type->isBuilder && !u->type->isStructure();
-                    case 'u': return u->type->canTransport;
-                    default: return true;
-                }
-            });
-            if (!capable) return tak::CursorId::Normal;
-            if (pendingCmd_=='c') {
-                float wx,wz;pickWorld(mouseX_,mouseY_,wx,wz);
-                if (raiseTargetAt(wx,wz)) return tak::CursorId::Revive;   // the order raises it
-                return reclaimTargetAt(wx,wz) ? tak::CursorId::Reclaim : tak::CursorId::Normal;
-            }
-            // Repair and guard are target-dependent in the native selector.
-            if (pendingCmd_=='r' || pendingCmd_=='g') {
-                bool eligible=false;
-                const auto& live=front().live;
-                for (uint32_t index:pickCandidates(mouseX_,mouseY_)) {
-                    const UnitR* target=live[index];
-                    if (!canPickUnit(*target) || !target->alive() || target->embarked() ||
-                        !target->type || !unitUnderCursor(*target,mouseX_,mouseY_)) continue;
-                    for (int id:selection_) {
-                        const auto* u=frameUnitP(id);
-                        if (!u || !u->alive() || u->embarked() || u->underConstruction ||
-                            !u->type || u->id==target->id || !worldTables().allied(u->player,target->player)) continue;
-                        eligible|=pendingCmd_=='r'
-                            ? canAssistSite(*u,*target) || (u->type->isBuilder && !u->type->isStructure() &&
-                                !target->underConstruction && target->hp<target->type->maxHp)
-                            : u->type->canGuard;
-                    }
-                }
-                if (!eligible) return tak::CursorId::Normal;
-            }
-            return tak::cursorForArmedCommand(pendingCmd_,transportCount==1,hasLoadTarget);
+        // A box past its area threshold (the right-drag, an armed A/L/C left-drag)
+        // shows what its release does; before that, the cursor of the click.
+        const auto boxMode = rightDrag_ ? std::optional<BoxMode>(BoxMode::Right)
+                           : armedPress_ ? armedBoxMode(pendingCmd_) : std::nullopt;
+        const auto& boxAnchor = rightDrag_ ? rdAnchor_ : dragAnchor_;
+        const bool areaBox = (rightDrag_ || armedPress_) && !frame.placing && !frame.modalUi && !frame.watcher &&
+                             areaBoxAt(boxAnchor, mouseX_, mouseY_);
+        if (areaBox && boxMode) {
+            const auto a = dragStartOnScreen(boxAnchor);
+            frame.areaBoxDrag = true;
+            frame.areaBoxCursor = planBox(*boxMode, std::min(a.x, mouseX_), std::min(a.y, mouseY_),
+                                          std::max(a.x, mouseX_), std::max(a.y, mouseY_)).cursor;
         }
-        if (mouseX_ < 0)  return tak::CursorId::Normal;
-        float wx, wz; pickWorld(mouseX_, mouseY_, wx, wz);
-        return hoverCursor(wx, wz);
+        // An armed press of another command past the threshold is a box select.
+        frame.boxDrag = armedPress_ ? areaBox && !boxMode : dragging_;
+        frame.armed = pendingCmd_ != 0;
+        tak::CursorId fixed = tak::CursorId::Normal;
+        const CursorStage stage = cursorStage(frame, fixed);
+        if (stage == CursorStage::Fixed) return fixed;
+
+        // Ours: with nothing armed the minimap keeps Normal. Retail's hover cursor
+        // describes the LEFT click in the right-click interface, and on the minimap
+        // that is the camera.
+        if (stage == CursorStage::Hover && area == PointerArea::Minimap) return tak::CursorId::Normal;
+        float wx = 0, wz = 0;
+        if (area == PointerArea::Minimap) minimapToWorld(mouseX_, mouseY_, winW_, winH_, wx, wz);
+        else pickWorld(mouseX_, mouseY_, wx, wz);
+        const UnitR* hovered = hoveredUnit(area);
+        if (stage == CursorStage::Hover) return hoverCursor(wx, wz, hovered);
+        // Armed: the per-unit decisions the click itself takes (clickrules.h), the
+        // lowest cursor slot over the selected units but the hovered one (0x521cd0).
+        return planClick(pendingCmd_, wx, wz, hovered, keyQueue(), false,
+                         area == PointerArea::World).cursor;
     }
 
-    // A selected unit that takes part in the enemy-hover cursor: retail's
+    // Where the pointer is, as retail's 0x528430 sorts it: the main view, the
+    // minimap, or interface (the command panel, the bottom bar, the build strip,
+    // the replay bar), where every cursor is Normal.
+    tak::client::PointerArea GameView::pointerArea() const {
+        using tak::client::PointerArea;
+        if (mouseX_ < 0) return PointerArea::Unknown;
+        // Build icons and their strip cover the map. Do not classify world
+        // targets behind them, even with a placement or command armed.
+        if (overBuildMenu(mouseX_, mouseY_)) return PointerArea::Interface;
+        if (replayMode_ && replayBar_.box.hit(mouseX_, mouseY_)) return PointerArea::Interface;
+        const SDL_FRect mini = minimapRect(winW_, winH_);
+        if (mouseX_ >= mini.x && mouseY_ >= mini.y && mouseX_ <= mini.x + mini.w &&
+            mouseY_ <= mini.y + mini.h) return PointerArea::Minimap;
+        if (mouseX_ > mapViewW(winW_) || (hudShown() && mouseY_ > winH_ - barH()))
+            return PointerArea::Interface;
+        return PointerArea::World;
+    }
+
+    // Retail 0x521260: the ONE unit under the pointer, which the cursor and every
+    // click use alike (P1). In the main view, among the units whose drawn region
+    // contains the pointer (unitUnderCursor: the projected model bounds + lift +
+    // flyer altitude; an open gate's doorway is not the gate), the SMALLEST wins --
+    // retail sorts by (height/2 + depth) x width of the type's model box
+    // (0x52133e..0x521381 S), the screen area of that box, which is what our hit
+    // region measures -- a tie to the nearer centre, then the earlier entry. A
+    // carried unit is not drawn and never picked. On the minimap, the nearest dot
+    // within 2 px, from the units the minimap draws (0x5213ae S).
+    const UnitR* GameView::hoveredUnitAt(tak::client::PointerArea area, float mx, float my) {
+        const UnitR* best = nullptr;
+        float bestD = 1e30f, bestSize = 1e30f;
+        if (area == tak::client::PointerArea::Minimap) {
+            const SDL_FRect r = minimapRect(winW_, winH_);
+            const float mapW = float(mapView_.map().blocksX) * 32, mapH = float(mapView_.map().blocksY) * 32;
+            if (mapW <= 0 || mapH <= 0) return nullptr;
+            for (const UnitR* up : front().live) {
+                const UnitR& u = *up;
+                if (radarCode_ ? !u.alive() || u.embarked() || !u.type : !radarVisible(u)) continue;
+                if (!u.alive() || !u.type) continue;
+                const float dx = r.x + u.x / mapW * r.w - mx, dy = r.y + u.z / mapH * r.h - my;
+                const float d = dx * dx + dy * dy;
+                if (d <= 4.0f && d < bestD) { bestD = d; best = &u; }
+            }
+            return best;
+        }
+        if (area != tak::client::PointerArea::World) return nullptr;
+        const auto& live = front().live;
+        for (uint32_t index : pickCandidates(mx, my)) {
+            const UnitR& u = *live[index];
+            if (!canPickUnit(u) || !u.alive() || u.embarked() || !u.type) continue;
+            float d = 0, size = 0;
+            if (!unitUnderCursor(u, mx, my, &d, &size)) continue;
+            if (size < bestSize || (size == bestSize && d < bestD)) { bestSize = size; bestD = d; best = &u; }
+        }
+        return best;
+    }
+
+    // The hovered unit as the selector sees it from the local player's side:
+    // Select needs our own FINISHED unit (0x4de03b's test); anything else of
+    // ours or an ally's is friendly, the rest enemy.
+    tak::client::HoverKind GameView::cursorHoverKind(const UnitR* u) const {
+        using tak::client::HoverKind;
+        if (!u) return HoverKind::None;
+        if (u->player == localPlayer_ && !u->underConstruction && !u->embarked())
+            return HoverKind::OwnSelectable;
+        return worldTables().allied(u->player, localPlayer_) ? HoverKind::Friendly : HoverKind::Enemy;
+    }
+
+    // A selected unit that takes part in the armed-attack cursor: retail's
     // `canattack` (WEAPON1 block present) on a live, finished, unembarked unit.
     // A factory's build repeat suppresses it, as a structure's does not.
     bool GameView::isCursorAttacker(const UnitR& u) const {
@@ -525,121 +303,25 @@ namespace {
                u.type->hasPrimaryWeaponBlock && !(u.repeatType && !u.type->isStructure());
     }
 
-    // The per-unit Attack/TooFar decision over an enemy (cursorCanAttackEnemy).
-    // Cursor only: the right-click order still goes to every selected unit,
-    // as retail's order code never consults this decision.
-    bool GameView::attackerCanHitEnemy(const UnitR& attacker,const UnitR& target,
-                                       bool ignoreAirstrikeWeapons) const {
-        return isCursorAttacker(attacker) && target.type &&
-               tak::client::cursorCanAttackEnemy(*attacker.type,attacker.weaponSlot,
-                   attacker.worldPosition,*target.type,target.worldPosition,
-                   target.flightGroundMode,ignoreAirstrikeWeapons);
-    }
-
-    tak::CursorId GameView::hoverCursor(float wx, float wz,bool ignoreAirstrikeWeapons) {
-        const auto* first = selection_.empty() ? nullptr : frameUnitP(selection_.front());
-
-        // Selected transport carrying cargo -> unload cursor anywhere.
-        if (first && first->type && first->type->canTransport && !first->cargo.empty())
-            return tak::CursorId::Unload;
-
-        if (first) {
-            // One SCREEN-SPACE pass over the drawn sprites (unitUnderCursor: the
-            // projected model bounds + lift + flyer altitude -- the exact region
-            // a click selects), categorised; overlaps resolve to the nearest
-            // sprite centre. The old world-space 20-22px centre radii ignored
-            // footprints entirely: most of a keep hovered as bare ground.
-            int loadId = -1, siteId = -1, ownId = -1, allyId = -1, enemy = -1;
-            float bLoad = 1e30f, bSite = 1e30f, bOwn = 1e30f, bAlly = 1e30f,
-                  bEnemy = 1e30f;
-            const auto& live = front().live;
-            for (uint32_t index : pickCandidates(mouseX_, mouseY_)) { const UnitR& u = *live[index];
-                if (!canPickUnit(u)) continue;
-                if (!u.alive() || u.embarked() || !u.type) continue;
-                float d = 0;
-                if (!unitUnderCursor(u, mouseX_, mouseY_, &d)) continue;
-                bool ally = worldTables().allied(u.player, first->player);
-                if (ally && u.type->canTransport && u.player == first->player &&
-                    !u.underConstruction) {
-                    if (d < bLoad) { bLoad = d; loadId = u.id; }
-                } else if (ally && u.underConstruction) {
-                    if (d < bSite) { bSite = d; siteId = u.id; }
-                } else if (ally && u.player == localPlayer_) {
-                    if (d < bOwn) { bOwn = d; ownId = u.id; }
-                } else if (ally) {
-                    if (d < bAlly) { bAlly = d; allyId = u.id; }
-                } else {
-                    if (d < bEnemy) { bEnemy = d; enemy = u.id; }
-                }
-            }
-            if (loadId >= 0) {
-                const auto* transport=frameUnitP(loadId);
-                for (int id:selection_) {
-                    const auto* passenger=frameUnitP(id);
-                    if (passenger && canLoadPassenger(*passenger,*transport)) return tak::CursorId::Load;
-                }
-                return tak::CursorId::Select;
-            }
-            if (siteId >= 0) {
-                const auto* site=frameUnitP(siteId);
-                for (int id:selection_) {
-                    const auto* builder=frameUnitP(id);
-                    if (builder && canAssistSite(*builder,*site)) return tak::CursorId::Repair;
-                }
-                return tak::CursorId::Green;
-            }
-            if (ownId>=0 || allyId>=0) {
-                const auto* target=frameUnitP(ownId>=0 ? ownId : allyId);
-                if (target && target->hp<target->type->maxHp) for (int id:selection_) {
-                    const auto* builder=frameUnitP(id);
-                    if (builder && builder->alive() && !builder->embarked() && !builder->underConstruction &&
-                        builder->id!=target->id && builder->type && builder->type->isBuilder &&
-                        builder->type->buildMovementCode && !builder->type->isStructure() && !builder->repeatType)
-                        return tak::CursorId::Repair;
-                }
-            }
-            if (ownId  >= 0) return tak::CursorId::Select;
-            if (allyId >= 0) return tak::CursorId::Green;
-            if (enemy >= 0) {
-                const UnitR* target = frameUnitP(enemy);
-                if (!target || !target->type) return tak::CursorId::TooFar;
-                // Native 0x521cd0 keeps the lowest per-unit slot: any selected
-                // unit that can attack shows Attack, else TooFar when some
-                // selected unit is an attacker at all.
-                bool canAttack=false,rally=false;
-                for (int id : selection_) {
-                    const UnitR* attacker = frameUnitP(id);
-                    if (attacker && attacker->alive() && !attacker->underConstruction &&
-                        attacker->holdsRally()) rally=true;
-                    if (!attacker || !isCursorAttacker(*attacker)) continue;
-                    canAttack=true;
-                    if (attackerCanHitEnemy(*attacker,*target,ignoreAirstrikeWeapons))
-                        return tak::CursorId::Attack;
-                }
-                // Ours, not retail (whose factories take only QMove/QPatrol): a
-                // rally holder's right-click on an enemy sends its output at it.
-                if (rally) return tak::CursorId::Attack;
-                return canAttack ? tak::CursorId::TooFar : tak::CursorId::Normal;
-            }
-
-            // The order the click issues (issueRaiseOrReclaim): Revive when a
-            // selected unit raises the body there, else Reclaim.
-            if (raiseTargetAt(wx,wz)) return tak::CursorId::Revive;
-            if (haveReclaimer() && reclaimTargetAt(wx,wz)) return tak::CursorId::Reclaim;
-
-            // Empty ground: plain arrow. The Move cursor shows ONLY when the move order
-            // is armed (Move button / hotkey), not merely from having a unit selected.
-            return tak::CursorId::Normal;
+    // Nothing armed: retail's right-click interface (UseLeftClickIface=0, the
+    // shipped setting, and the interface our right-click orders follow) shows only
+    // Select, Red, Green and Normal on hover, whatever the selection can do -- an
+    // enemy is Red, an ally's unit or one of ours under construction (the site the
+    // selected builder is working on included) is Green, and a body or feature a
+    // selected unit could raise or reclaim is Green. Attack, Repair, Load, Unload,
+    // Revive and Reclaim appear only with the command armed. cursorrules.h.
+    tak::CursorId GameView::hoverCursor(float wx, float wz, const UnitR* hovered) {
+        tak::client::HoverFacts f;
+        f.target = cursorHoverKind(hovered);
+        f.othersSelected = std::any_of(selection_.begin(), selection_.end(), [&](int id) {
+            const auto* u = frameUnitP(id);
+            return u && u->alive() && u->player == localPlayer_ && (!hovered || u->id != hovered->id);
+        });
+        if (f.othersSelected && f.target == tak::client::HoverKind::None) {
+            f.raisableAtPoint = raiseTargetAt(wx, wz) != 0;
+            f.reclaimableAtPoint = !f.raisableAtPoint && haveReclaimer() && reclaimTargetAt(wx, wz);
         }
-
-        // Nothing selected: highlight your own unit under the pointer, else the arrow.
-        const auto& live = front().live;
-        for (uint32_t index : pickCandidates(mouseX_, mouseY_)) { const UnitR& u = *live[index];
-            if (!canPickUnit(u)) continue;
-            if (!u.alive() || u.embarked() || !u.type || u.player != localPlayer_) continue;
-            if (!u.underConstruction && unitUnderCursor(u,mouseX_,mouseY_)) return tak::CursorId::Select;
-        }
-        return tak::CursorId::Normal;
+        return tak::client::cursorForHover(f);
     }
 
     void GameView::postNotice(std::string msg, float t) {
@@ -977,184 +659,6 @@ namespace {
         float zm = mapView_.zoom();   // centre the clicked point in the map viewport
         mapView_.setOffset(wx - mapViewW(winW) / zm / 2,
                            wz - mapViewH(winH) / zm / 2);
-        return true;
-    }
-
-    bool GameView::minimapOrder(float mx, float my, int winW, int winH, bool queue) {
-        float wx, wz;
-        if (watchOnly() || selection_.empty() || !minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
-        for (int id : selection_) {
-            const auto* u = frameUnitP(id);
-            if (!u || u->player != localPlayer_) continue;
-            tak::net::Command c;
-            c.kind = tak::net::Cmd::Move;
-            c.unitId = id;
-            c.x = wx;
-            c.z = wz;
-            c.queue = queue ? 1 : 0;
-            issue(c);
-        }
-        if (const auto* u = frameUnitP(selection_.front()); u && u->player == localPlayer_)
-            voice(selection_.front(), "move");
-        return true;
-    }
-
-    void GameView::issueArmedOrder(char cmd, float wx, float wz, bool queue, bool precise) {
-        ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
-        if (selection_.empty()) return;
-        if (cmd == 'c') {   // clear/reclaim: reclaim the feature under the cursor
-            // 4de530 mode 12 at a point: a body a caster can raise is
-            // RESURRECT, anything else RECLAIM (issueRaiseOrReclaim).
-            const int body = raiseTargetAt(wx, wz);
-            const auto fid = haveReclaimer() ? reclaimTargetAt(wx, wz) : std::nullopt;
-            if (!body && !fid) return;
-            issueRaiseOrReclaim(body, fid, queue);
-            return;
-        }
-        if (cmd == 'r') { // repair or resume construction, using the cursor's eligibility
-            int worker=-1,targetId=-1;float best=precise ? 1e30f : 96.f*96.f;
-            for (const auto* target:front().live) {
-                if (!canPickUnit(*target) || !target->alive() || target->embarked() || !target->type) continue;
-                float d=(target->x-wx)*(target->x-wx)+(target->z-wz)*(target->z-wz);
-                if (precise && !unitUnderCursor(*target,mouseX_,mouseY_,&d)) continue;
-                if (d>=best) continue;
-                for (int id:selection_) {
-                    const auto* b=frameUnitP(id);
-                    if (!b || !b->alive() || b->embarked() || b->underConstruction || !b->type ||
-                        !b->type->isBuilder || b->type->isStructure() ||
-                        (b->repeatType && !target->underConstruction) ||
-                        b->id==target->id || !worldTables().allied(b->player,target->player)) continue;
-                    if (target->underConstruction ? !canAssistSite(*b,*target) : target->hp>=target->type->maxHp) continue;
-                    worker=id;targetId=target->id;best=d;break;
-                }
-            }
-            if (targetId<0) return;
-            tak::net::Command c;
-            c.kind=frameUnitP(targetId)->underConstruction ? tak::net::Cmd::Assist : tak::net::Cmd::Repair;
-            c.unitId=worker;c.targetId=targetId;c.queue=queue;issue(c);voice(worker,"move");
-            return;
-        }
-        if (cmd == 'u') {   // unload: selected transport(s) sail to (wx,wz), disembark
-            bool any = false;
-            for (int id : selection_) {
-                const auto* u = frameUnitP(id);
-                if (!u || !u->type || !u->type->canTransport ||
-                    (!queue && u->cargo.empty())) continue;
-                tak::net::Command c;
-                c.kind = tak::net::Cmd::Unload;
-                c.targetId = unloadDestinationHeight(mapView_.map(),wx,wz);
-                c.unitId = id;
-                c.x = wx;
-                c.z = wz;
-                c.queue = queue ? 1 : 0;
-                issue(c);
-                any = true;
-            }
-            if (any) voice(selection_.front(), "move");
-            return;
-        }
-        if (cmd == 'l') {   // load: the friendly unit under the cursor boards a transport
-            int transportId = -1, pid = -1;
-            float best = 24.0f * 24.0f;
-            for (int id : selection_) {
-                const auto* t = frameUnitP(id);
-                if (!t || !t->type || !t->alive() || t->embarked() ||
-                    t->underConstruction || !t->type->canTransport) continue;
-                for (const UnitR* up : front().live) {
-                    const auto& u=*up;
-                    if (!canPickUnit(u) || !canLoadPassenger(u,*t)) continue;
-                    const float dx=u.x-wx,dz=u.z-wz,d=dx*dx+dz*dz;
-                    if (d<best) {best=d;pid=u.id;transportId=id;}
-                }
-            }
-            if (pid < 0) return;
-            tak::net::Command c;
-            c.kind = tak::net::Cmd::Load;
-            c.unitId = pid;
-            c.targetId = transportId;
-            c.queue = queue ? 1 : 0;
-            issue(c);
-            voice(transportId, "move");
-            return;
-        }
-        if (cmd == 'g') {   // guard: needs a friendly unit
-            int buddy = -1;
-            float best = precise ? 24.0f : 96.0f;   // generous radius on the minimap
-            best *= best;
-            for (const UnitR* _up : front().live) { const UnitR& u = *_up;
-                if (!canPickUnit(u)) continue;
-                if (!u.alive() || u.player != localPlayer_) continue;
-                float dx = u.x - wx, dz = u.z - wz, d = dx * dx + dz * dz;
-                if (d < best) { best = d; buddy = u.id; }
-            }
-            if (buddy < 0) return;
-            for (int id : selection_) {
-                if (id == buddy) continue;
-                tak::net::Command c;
-                c.kind = tak::net::Cmd::Guard;
-                c.unitId = id;
-                c.targetId = buddy;
-                c.queue = queue ? 1 : 0;
-                issue(c);
-            }
-            voice(selection_.front(), "guard");
-            return;
-        }
-        // 'a' (attack) targets an enemy under a precise click; otherwise (and always
-        // on the minimap) it is an attack-move to the ground point.
-        int enemy = -1;
-        if (cmd == 'a' && precise) {
-            const auto* first = frameUnitP(selection_.front());
-            float best = 20 * 20;
-            for (const UnitR* _up : front().live) { const UnitR& u = *_up;
-                if (!canPickUnit(u)) continue;
-                if (!u.alive() || u.embarked() || !first ||
-                    worldTables().allied(u.player, first->player))
-                    continue;
-                float dx = u.x - wx, dz = u.z - wz;
-                if (dx * dx + dz * dz < best) { best = dx * dx + dz * dz; enemy = u.id; }
-            }
-        }
-        // An armed MOVE, PATROL or fight-move gives flyers retail's spread
-        // (their legs are VTOL_Move and VTOL_Patrol, which carry the offset
-        // flag; sim/retailflyerspread.h) and every other unit the point itself,
-        // as retail's Move_Ground / Patrol do.
-        const bool spread = enemy < 0;
-        tak::sim::FlyerGroupCentre air;
-        if (spread) {
-            for (int id : selection_)
-                if (const auto* u = frameUnitP(id)) air.add(flyerRaw(u->x), flyerRaw(u->z));
-            setFlyerSpread(wx, wz);
-        }
-        for (int id : selection_) {
-            tak::net::Command c;
-            if (enemy >= 0) {
-                c.kind = tak::net::Cmd::Attack;
-                c.targetId = enemy;
-            } else {
-                c.kind = (cmd == 'f' || cmd == 'a') ? tak::net::Cmd::AttackMove
-                         : cmd == 'p'               ? tak::net::Cmd::Patrol
-                                                    : tak::net::Cmd::Move;
-                c.x = wx;
-                c.z = wz;
-                const auto* u = spread ? frameUnitP(id) : nullptr;
-                if (u && u->type && u->type->canFly) flyerSpreadGoal(air, *u, wx, wz, c.x, c.z);
-            }
-            c.unitId = id;
-            c.queue = queue ? 1 : 0;
-            issue(c);
-        }
-        voice(selection_.front(),
-              (cmd == 'a' || cmd == 'f') ? "attack" : cmd == 'p' ? "patrol" : "move");
-    }
-
-    bool GameView::minimapArmedOrder(float mx, float my, int winW, int winH) {
-        if (watchOnly() || !pendingCmd_) return false;
-        float wx, wz;
-        if (!minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
-        const bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
-        issueArmedOrder(pendingCmd_, wx, wz, queue, false);
-        armedOrderIssued(queue);
         return true;
     }
 
@@ -2853,7 +2357,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
         return out;
     }
 
-    bool GameView::unitUnderCursor(const UnitR& u, float mx, float my, float* d2) {
+    bool GameView::unitUnderCursor(const UnitR& u, float mx, float my, float* d2, float* size) {
         renderStats_.add(tak::render::Counter::CursorPickTests);
 #ifndef NDEBUG
         ++debugPickTests_;
@@ -2866,6 +2370,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
             float half = std::max(dotSide(u) * 0.5f + 1.0f, 9.0f);
             if (std::fabs(mx - c.x) > half || std::fabs(my - c.y) > half) return false;
             if (d2) { float dx = c.x - mx, dy = c.y - my; *d2 = dx * dx + dy * dy; }
+            if (size) *size = 4 * half * half;
             renderStats_.add(tak::render::Counter::CursorPickHits);
             return true;
         }
@@ -2876,6 +2381,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
             const float half = std::max(dotSide(u) * 0.5f + 1.0f, 9.0f);
             if (std::fabs(mx - c.x) <= half && std::fabs(my - c.y) <= half) {
                 if (d2) { float dx = c.x - mx, dy = c.y - my; *d2 = dx * dx + dy * dy; }
+                if (size) *size = 4 * half * half;
                 renderStats_.add(tak::render::Counter::CursorPickHits);
                 return true;
             }
@@ -2898,6 +2404,7 @@ void GameView::drawGiveUnitsMenu(int winW, int winH) {
             if (openGateDoorwayAt(u, wx, wz)) return false;
         }
         if (d2) { float dx = cx - mx, dy = cy - my; *d2 = dx * dx + dy * dy; }
+        if (size) *size = 4 * hw * hh;
         renderStats_.add(tak::render::Counter::CursorPickHits);
         return true;
     }

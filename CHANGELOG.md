@@ -22,6 +22,41 @@ their validation reports; both live in [`docs/`](docs/).
 ## Unreleased
 *protocol 312 · replay format 15 · does not play with 0.9.19 or earlier, nor their replays*
 
+- **Clicks do what the original game's clicks do, and the cursor says so.** Orders now
+  go out when you let go of the button, as in the original game, and every click
+  picks the same unit the cursor shows: where units overlap, the smallest one under
+  the pointer. Each selected unit decides for itself:
+  - Right-clicking an enemy: units that can hurt it attack, units with no weapon walk
+    there, and a unit that cannot hurt it stays put. Right-clicking one of your own or
+    an ally's units helps build it, repairs it, boards it (when it is your transport
+    and the unit fits), guards it, or else walks there. A right-click on a body or a
+    tree raises or reclaims it, and the other units walk there.
+  - A loaded transport now just moves where you right-click; **Alt+right-click**
+    unloads it there (or use the Unload button).
+  - Right-dragging a box attacks the visible enemies in it, nearest first; units with
+    no attack order and the ability to clear it clear the box; a lone transport loads
+    your units in it. The cursor shows what the box will do.
+  - With Attack, Load or Clear armed, a left-drag box attacks, loads or clears too.
+  - An armed button acts only where its cursor shows an order; elsewhere the click
+    does nothing and the button stays armed. Guard no longer lets ground units guard
+    a flyer (unless a flyer is selected too), Attack over your own units or the
+    ground attack-moves with an Attack cursor, Move over a friendly unit helps,
+    repairs, loads or guards it, and Clear shows Revive where it will raise a body.
+    Fight-move (F) is the original game's move-fight: over a friendly unit it does
+    what Move does there (helps, repairs, loads or guards it, with the same cursor),
+    and everywhere else it moves to the point, fighting on the way.
+  - On the minimap, a right-click attacks, helps or repairs the unit under the
+    pointer, armed orders aim at it, and a building can be placed by clicking the
+    minimap (with the found-site cursor where it would be accepted).
+  - Left-clicking an enemy or ally clears your selection, as in the original game;
+    with nothing of yours selected it still selects the unit so you can look at it.
+    Shift-clicking a selected unit now removes it from the selection.
+  - A random unit of the selection acknowledges an order, as in the original game.
+  - **Ctrl+click puts an order at the front** of a unit's queue without clearing it,
+    as in the original game: the unit does it first, then carries on with what it
+    was doing. Shift- or Ctrl-clicking the same order again (on the same target, or
+    within 16 pixels of a queued point) takes that queued order back. For a factory,
+    or a Zhon builder repeating production, both work on its rally orders.
 - **A unit no longer ignores an enemy for good after its shots hit a rock.** A unit
   that wrote off an enemy because three shots in a row struck a hill or rock used to
   keep skipping it, even after that enemy walked into the open, until you gave it an
@@ -35,9 +70,39 @@ their validation reports; both live in [`docs/`](docs/).
   to finish two ships of six, or none with a ship on the pad). The original game moves
   no idle ship. A ship leaving a door that faces a shore still sails out slowly: that
   is the original game's own behaviour.
+- **Idle units make way at a land factory's door too.** Your own idle units standing in
+  front of a land factory (a Barracks, a Keep, a Dungeon, an Academy and the rest) now
+  step aside while a new unit is leaving, and one on the factory's pad steps off it, so
+  they no longer stop the factory: one idle unit on the pad used to stop it before its
+  first unit, and a crowd at a Creon Academy's door let it finish one of six. Your
+  guards step aside for the factory's new units too, at land factories and at a Navy
+  Yard, keep their Guard order and go back to guarding afterwards, once for each new
+  unit (a dozen guards at a Legion Academy's door used to let none of six out); a guard
+  that is fighting stays where it is. Units with other orders of their own and your
+  allies' units stay put, as in the original game, which moves no idle unit. When a
+  factory cannot start its next unit, units standing where that unit would appear,
+  just outside the factory's pad, step aside as well. A factory's own new units, parked
+  round it, now move again only when they stand on its pad or hold up the next one out;
+  at a Navy Yard too.
+  A factory whose rally point is on its own pad no longer stalls: its new unit steps
+  off the pad. A unit guarding or building beside its own factory moves nobody.
 - **Reclaimed trees and rocks fade out.** As in the original game, a reclaimed tree or
   rock turns into a white silhouette of itself that fades away over about a second,
-  instead of vanishing at once. Trees destroyed by damage still change at once.
+  instead of vanishing at once.
+- **Trees and scenery destroyed by damage play their death first.** A tree, hut,
+  wall or other scenery knocked down by weapons now plays its falling or collapsing
+  animation (two-thirds of a second for a tree) before its stump or rubble appears,
+  as in the original game, instead of changing at once. While it falls it still
+  blocks its ground, takes no more damage, cannot catch fire and cannot be reclaimed.
+  A burning tree takes no weapon damage either, as in the original game; it burns
+  down instead of being knocked into its stump. Rocks, which have no death animation,
+  still go at once.
+- **Flyers on Hold Position hold their post.** An idle flyer on Hold Position used to
+  take off after an enemy that came into range and fly attack runs at it, hundreds of
+  pixels from where you left it. Now it stays where it is and shoots what it can reach
+  from there, as in the original game. The Thirsha, the Ghost Ship, the Dirigible and
+  the Dark and Darkest Priests start on Hold Position, so idle ones now stay put: set
+  them to Maneuver to have them go after enemies.
 - **Units pick their own targets the way the original game does.** Every target a
   unit chooses for itself now comes from the original game's own search:
   - A unit only goes after an enemy that your side can see, with its own sight or

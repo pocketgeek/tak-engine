@@ -1217,9 +1217,34 @@ shots") now covers the line between the shooter's spot and the target's, and lap
 either moves more than 16 px (the target's spot is new hashed unit state); and a Navy
 Yard's owner's idle ships move out of the yard's way while one of its ships is leaving,
 or off the pad when its next site is refused (`World::clearYardDoor`, docs/retail-engine.md
-"A Navy Yard's door"). Nothing on the wire changes; replay format 15 is unchanged; 311
-replays are refused (a 311 peer would desync, and a 311 replay would play differently).
-It follows 0.9.19 and is in no release yet.
+"A Navy Yard's door"). The same door rule now covers every scripted land factory: the
+owner's idle ground and hover units step aside while one of its outputs is on its way
+out (its PARK, its rally's plain move, or still on the pad), off the pad while its next
+site is refused, and, under the Retail navigator, out of the cells round an output held
+up on its PARK; the factory's own parked outputs move only off the pad or off an output
+they hold up (`Unit::builtBy`, set once at completion from hashed state, not hashed
+itself; docs/retail-engine.md "A land factory's door"). At land factories and the Navy
+Yard the owner's guards step aside too, unless fighting (`World::doorGuard`: the guard is
+the current leg, its ward lives, no ward alarm to answer, no weapon slot on a target):
+the move goes ahead of the guard order, which resumes when it ends, and a guard steps
+aside once per factory event, keyed on the factory's own `Unit::doorSerial` (the next
+even number per finished output, odd for a refusal episode of its next site) and
+remembered on the guard as `doorYieldFactory`/`doorYieldSerial` (cleared by a fresh
+guard order); all three are hashed when set. A refused site's own footprint, which can
+lie just outside the pad, is cleared with the pad (`Unit::refusedSiteX/Z`, set at each
+refusal from hashed state and read only while it lasts, not hashed). A factory whose
+rally point is on its own pad no longer stalls: its output steps off the pad. An idle flyer on Hold Position
+takes no automatic attack (`World::acquireTarget` returns first, so it also makes no
+`findTarget` draws), as retail's VTOL standby refuses it at 4d7de0; it fires from its
+post through the fire-at-will sweep. A sprite feature destroyed by damage plays its
+`seqnamedie` before `featuredead` replaces it: `Feature::dieLeft` counts the ticks down
+and is hashed, and each type's death length (`FeatType::dieTicks`) joins the
+gameplay-data hash; while it dies, and while it burns, it takes no weapon damage, and a
+dying feature cannot ignite or be reclaimed; fire spread skips burning, fading and dying
+cells before its roll (docs/retail-engine.md "The death playback"). Nothing on the wire
+changes; replay format 15 is unchanged; 311 replays are refused (a 311 peer would
+desync, and a 311 replay would play differently). It follows 0.9.19 and is in no
+release yet.
 
 Protocol 312 also carries the retail target search (fx-tsearch, docs/retail-engine.md
 "Mission target scan"), hashed in both pathfinding modes. Every automatic pick goes
@@ -1525,6 +1550,6 @@ that recorded them. Retail pathfinding behavior is unchanged.
 Protocol 225 first added Cooperative selection without changing the existing mode
 values, command layout, or replay format 11. Retail and Flowfield remain separate
 choices with their existing behavior. This was superseded by protocols 226 and
-227. Protocol 312 (blocked shots, Navy Yard door, 2026-11-03) follows 0.9.19 and is in no release yet; version 0.9.19 (peers and server) requires protocol 311 (310, Legion steering of 2026-11-02, was never released on its own); versions 0.9.18, 0.9.17 and 0.9.16 (peers and server) require protocol 309; 0.9.15 and 0.9.14 required 308; 0.9.13 required 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
+227. Protocol 312 (blocked shots, factory doors, flyers on Hold Position, feature deaths, 2026-11-03) follows 0.9.19 and is in no release yet; version 0.9.19 (peers and server) requires protocol 311 (310, Legion steering of 2026-11-02, was never released on its own); versions 0.9.18, 0.9.17 and 0.9.16 (peers and server) require protocol 309; 0.9.15 and 0.9.14 required 308; 0.9.13 required 307; 0.9.12 required 305 (306 was never released); 0.9.11 required 304; 0.9.10 and 0.9.9 required 303; 0.9.8 required 302, 0.9.7 required 301, 0.9.6 required 300, 0.9.5 required 299, 0.9.4 required 298, 0.9.3 297, 0.9.2 296, 0.9.1 295, 0.9.0 294, 0.8.14, 0.8.13 and 0.8.12 required 293, 0.8.11 290, 0.8.10 289, 0.8.9 and 0.8.8 288, 0.8.7 284, 0.8.6 281, 0.8.5 278, 0.8.4 277, 0.8.3 266,
 0.8.2 257, 0.8.0 and 0.8.1 256. The replay loader rejects every other simulation protocol.
 Campaign missions remain fixed to Retail.
