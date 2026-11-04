@@ -118,6 +118,8 @@ struct Run {
     int aims = 0;                // times its slots took the point (stage 3)
     bool treeAtStart = false;    // a live blocking feature under the first point
     bool treeAtEnd = false;
+    int ringGoals = 0;           // ticks a hover ring controller (4e4540(4)) was set
+    bool ringWithoutFixed = false; // ... one lacking the fixed heading or altitude (0x48)
     uint64_t hash = 0;
 };
 
@@ -173,6 +175,11 @@ Run fireAt(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const Shooter& sh,
         r.endDist = d;
         if (i >= ticks * 2 / 3) { lateSum += d; ++lateN; }
         r.airborne = r.airborne || u->flightGroundMode == 2;
+        if (!u->orders.empty() && u->orders.front().airPoint == sim::Order::kAirHover &&
+            u->orders.front().flightGoal && u->orders.front().flightGoal->radius == 4) {
+            ++r.ringGoals;
+            if ((u->orders.front().flightGoal->flags & 0x48) != 0x48) r.ringWithoutFixed = true;
+        }
         if (u->slotPoint && !held) ++r.aims;
         held = u->slotPoint != 0;
         r.slotPointMax |= u->slotPoint;
@@ -315,6 +322,10 @@ void flyers(const hpi::Vfs& vfs, const sim::TypeRegistry& reg) {
         check(r.shots >= 2 && r.hits >= 2 && r.hitDist < 64 && !r.targetedShot,
               "and its shots land on the point, with no target", describeAir(r));
         check(r.orderAtEnd && r.ordersAtEnd == 1, "and keeps the order", describeAir(r));
+        // 41df8f..41dfd3 / 41e225..41e269: every ring controller without a
+        // target is 4e40e0 + 4e4520 (0x40) + 4e4540 (0x10) + 4e44c0 (0x8).
+        check(r.ringGoals > 0 && !r.ringWithoutFixed,
+              "each hover ring point has a fixed heading and the attack altitude (0x48)", describeAir(r));
     }
     // AIRSTRIKE: no shipped weapon has `dropped`; the attack-run flyer with
     // its weapon given the key stands in.

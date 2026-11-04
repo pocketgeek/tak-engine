@@ -13015,6 +13015,8 @@ void World::tickAirToGroundHover(Unit& u,const Unit* target,const Weapon* select
             // Without a target (41df8f / 41e225): a point controller (4e40e0)
             // with a fixed heading (4e4520): the ring point as seen from the
             // point (51b340), so the flyer faces it there; let go on arrival.
+            // Flags 0x40 (4e4520) and 0x8 (4e44c0) already come with the goal
+            // (retailHoverAttackGoal's 0x68 at stage 3, 0x78 at stage 5).
             else goal.heading=detail::retailStrikeHeading(goal.point,{order.attackPointX.v,0,order.attackPointZ.v});
             order.flightGoal=goal;order.mission.pending&=~0x3700u;
             ringInstalled=true;
