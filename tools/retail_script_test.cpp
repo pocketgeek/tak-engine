@@ -139,11 +139,12 @@ struct Host {
 int main(int argc,char** argv) {
     if (argc==2 && std::string(argv[1])=="--mana-fallback") {
         // Rows: selector (3 = every slot), three manapershot costs, mana
-        // before the release, the vetOverride (+0xf4) and noveteran. Prints
-        // the selector and the mana after the release in 1/1024 units.
+        // before the release, the vetOverride (+0xf4), noveteran and the
+        // kills. Prints the selector and the mana after the release in 1/1024
+        // units.
         using namespace tak::sim;
-        int selected,noVeteran;float c0,c1,c2,vet;double mana;
-        while(std::cin>>selected>>c0>>c1>>c2>>mana>>vet>>noVeteran) {
+        int selected,noVeteran,kills;float c0,c1,c2,vet;double mana;
+        while(std::cin>>selected>>c0>>c1>>c2>>mana>>vet>>noVeteran>>kills) {
             UnitType type;type.maxHp=100;type.maxMana=1000;type.noVeteran=noVeteran!=0;
             type.weaponSwitching=selected<3;
             Weapon gun;gun.range=400;gun.damage=1;gun.projVel=300;gun.reload=1;
@@ -151,8 +152,13 @@ int main(int argc,char** argv) {
             type.weapon=type.weapons.front();
             World world;
             world.setTerrain(std::vector<uint8_t>(64*64,100),64,64,20);
-            Unit& u=*world.unit(world.spawn(&type,200,200,{},0));
-            u.weaponSlot=selected<3 ? selected : 0;u.vetOverride=vet;u.mana=mana;
+            const int id=world.spawn(&type,200,200,{},0);
+            Unit& u=*world.unit(id);
+            u.weaponSlot=selected<3 ? selected : 0;u.mana=mana;
+            // The kills as the kill credit counts them (a noveteran type gains
+            // none); the override then sets the rank (getLevel 519310: 10
+            // while +0xf4 is set, else the kills capped at 10).
+            u.xp=type.noVeteran ? 0 : kills;world.setVeterancyOverride(id,vet);
             // A non-switcher releases every slot it holds (52ae90's selector 3).
             for(int slot=type.weaponSwitching ? u.weaponSlot : 0;slot<=(type.weaponSwitching ? u.weaponSlot : 2);++slot)
                 RetailReplayProbe::release(world,u,slot);

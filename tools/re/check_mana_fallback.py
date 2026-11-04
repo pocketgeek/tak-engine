@@ -10,8 +10,16 @@ allocation 529a90 (a buffer), the weapon class vtable (+0x2c create, the rest
 false) and the script callbacks 56c640. Random selectors (3 = every slot, a
 unit without weaponswitching), costs, mana, +0xf4 multipliers and noveteran;
 the port prints the selector and the mana left (1/1024 units) for each.
-+0xf4 is never 0 here: 5193c0's level path (1 + 0.1 x level) reads state
-this fixture does not build, and World's vetMul already ports it.
+
+With +0xf4 at 0, 5193c0 takes its level path: 519310's level, the unit's
+experience +0xf0 over its type's experiencepoints +0x1c2 (idiv), capped at
+the global 6188bc (10), times 6188b8 (0.1f) plus 5ebfb4 (1.0f); noveteran
+(type +0x268 & 0x10) answers 1.0 first. The kill credit (512ce0) adds the
+victim type's experiencepoints to +0xf0, so a unit that killed K units of its
+own type's experiencepoints, as here (+0xf0 = K x +0x1c2 plus a remainder
+below one level), stands at level min(K, 10); the port is given K kills
+(xp, then setVeterancyOverride sets the rank). A level-path case "flips" when
+the native selector differs from the same row at 0 kills.
 
     python3 tools/re/check_mana_fallback.py [build-o2/retail_script_test]
 """
@@ -54,11 +62,12 @@ def main():
         put(vt + i, stub_false)
     put(vt + 0x2c, stub_create); put(cls, vt)
 
-    def native(selected, costs, mana, vet, noveteran):
+    def native(selected, costs, mana, vet, noveteran, kills=0, points=1, spare=0):
         p.uc.mem_write(unit, bytes(0x138)); p.uc.mem_write(kind, bytes(0x300)); p.uc.mem_write(shot, bytes(0x100))
         put(unit + 0xb4, kind); put(unit + 0xbc, script); put(unit + 0xb8, 0)
         put(kind + 0x260, 0x10000); put(kind + 0x268, 0x10 if noveteran else 0, 'B')
         put(unit + 0x130, 0x01000000 | (selected << 30)); put(unit + 0xf4, vet, 'f'); put(unit + 0xd8, mana, 'f')
+        put(kind + 0x1c2, points); put(unit + 0xf0, kills * points + spare)
         for s in range(3):
             w = weapons[s]; p.uc.mem_write(w, bytes(0x100))
             put(w + 0xd4, float(costs[s]), 'f'); put(w + 0x40, cls); put(w + 0x9e, 100 + s, 'H')
@@ -85,8 +94,24 @@ def main():
     for _ in range(600):
         fixtures.append((rng.choice((0, 1, 2, 2, 3)), (cost(), cost(), cost()), rng.randrange(0, 400) / 4,
                          rng.choice((1.0, 1.0, 1.3, 1.5, 2.0)), rng.choice((0, 0, 1))))
+    plain = len(fixtures)
+    # The level path (+0xf4 = 0): kills from 0 to past the cap of 10, each with
+    # a type experiencepoints as shipped (1..30, the 666 default) and a
+    # remainder below one level.
+    def level(selected, costs, mana, noveteran, kills):
+        points = rng.choice((1, 2, 3, 5, 7, 15, 18, 27, 30, 666))
+        return (selected, costs, mana, 0.0, noveteran, kills, points, rng.randrange(points))
+    for kills in (0, 1, 2, 3, 5, 9, 10, 11, 25):
+        for mana in (40, 35, 34, 33, 32, 31.5, 30, 28, 25, 20, 60, 59.5, 58, 55):
+            for noveteran in (0, 1):
+                fixtures.append(level(2, (0, 10, 30), mana, noveteran, kills))
+    for _ in range(600):
+        fixtures.append(level(rng.choice((0, 1, 2, 2, 3)), (cost(), cost(), cost()), rng.randrange(0, 400) / 4,
+                              rng.choice((0, 0, 1)), rng.choice((0, 0, 1, 2, 3, 4, 6, 8, 10, 10, 11, 14, 40))))
     expected = [native(*f) for f in fixtures]
-    rows = ['%d %r %r %r %r %r %d' % (f[0], *map(float, f[1]), float(f[2]), f[3], f[4]) for f in fixtures]
+    flips = sum(native(*f[:5])[0] != want[0] for f, want in zip(fixtures[plain:], expected[plain:]))
+    rows = ['%d %r %r %r %r %r %d %d' % (f[0], *map(float, f[1]), float(f[2]), f[3], f[4], f[5] if len(f) > 5 else 0)
+            for f in fixtures]
     output = subprocess.run([binary, '--mana-fallback'], input='\n'.join(rows) + '\n',
                             text=True, capture_output=True, check=True)
     actual = [tuple(map(int, line.split())) for line in output.stdout.splitlines()]
@@ -97,7 +122,8 @@ def main():
         if got != want:
             raise AssertionError('fixture %d: %s\n  port   %s\n  native %s' % (i, fixtures[i], got, want))
         switched += want[0] != fixtures[i][0]
-    print('52af72 mana fallback: %d fixtures match (%d switched)' % (len(fixtures), switched))
+    print('52af72 mana fallback: %d fixtures match (%d switched; %d on the level path, %d flipped by it)'
+          % (len(fixtures), switched, len(fixtures) - plain, flips))
 
 
 if __name__ == '__main__':
