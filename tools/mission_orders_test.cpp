@@ -13,6 +13,7 @@
 //   v F       a fixed veterancy multiplier (unit +0xf4): rank 10, kills can't move it
 //   a TYPE    AttackUType: every unit of TYPE, one after another, until none
 //   s / d     no owner change / a self-destruct queued in its place
+//   m/ma/p/u  the point X*16,Y*16 (16.16, X*65536 chopped first), no half cell
 //
 // Synthetic types from a scratch FBI tree, on a flat map. With a retail install
 // (`mission_orders_test --data <dir>`) it checks shipped missions instead: takx04's
@@ -118,9 +119,19 @@ static std::unique_ptr<World> makeWorld() {
 // One placed unit of a mission: its type, cell, owner, Ident= and InitialMission=.
 struct Placed { const char* type; int cx, cz, player; const char* ident; const char* orders; int id = 0; };
 
+// A GlobalHeader with a [Map Data] section, as every shipped mission has: its
+// order points are X*16 (retail's scenario +0xdc5 is 16; 1 without the section).
+static tdf::Node mapDataHeader() {
+    tdf::Node header;
+    header.children["map data"];
+    header.childOrder.push_back("map data");
+    return header;
+}
+
 // Spawn `placed` in file order and start a mission whose only script is their
 // InitialMission strings.
-static std::unique_ptr<sim::MissionScript> startMission(Fixture& f, World& w, std::vector<Placed>& placed) {
+static std::unique_ptr<sim::MissionScript> startMission(Fixture& f, World& w, std::vector<Placed>& placed,
+                                                        const tdf::Node& header = mapDataHeader()) {
     std::vector<sim::MissionScript::Placement> table;
     std::vector<std::pair<int, std::string>> orders;
     for (auto& p : placed) {
@@ -128,7 +139,7 @@ static std::unique_ptr<sim::MissionScript> startMission(Fixture& f, World& w, st
         table.push_back({p.ident, p.type, p.id});
         if (p.orders && *p.orders) orders.push_back({p.id, p.orders});
     }
-    auto m = std::make_unique<sim::MissionScript>(std::vector<uint8_t>{}, tdf::Node{}, f.reg, 0, "orders fixture");
+    auto m = std::make_unique<sim::MissionScript>(std::vector<uint8_t>{}, header, f.reg, 0, "orders fixture");
     m->setInitialOrders(std::move(orders));
     m->setPlacements(std::move(table));
     m->start(w);
@@ -253,6 +264,57 @@ static void builds(Fixture& f) {
     bool hut = false;
     for (const auto& u : w->units()) hut = hut || (u.type == f.t("hut") && u.alive());
     check(hut, "the builder walks there and builds the hut");
+}
+
+// ---- 3b. the point of m / ma / p / u ------------------------------------------------
+
+static void points(Fixture& f) {
+    std::printf("m / ma / p / u X Y: the point X*16 (16.16, chopped), no half cell:\n");
+    // 0x513fb0: ftol(X * 65536.0) * scenario +0xdc5, emulated (tools/re/check_mission_points.py).
+    auto raw = [](const Fixed& v) { return std::to_string(v.v); };
+    // A ground move keeps the point it was given as its click point; its leg may
+    // already carry a route's waypoint. An unload keeps it as the order's point.
+    auto px = [](const Order* o) { return o->unload ? o->x : o->clickX; };
+    auto pz = [](const Order* o) { return o->unload ? o->z : o->clickZ; };
+    auto at = [&](const Order* o, int32_t x, int32_t z) { return o && px(o).v == x && pz(o).v == z; };
+    auto shown = [&](const Order* o) { return o ? raw(px(o)) + "," + raw(pz(o)) : std::string("none"); };
+    {
+        auto w = makeWorld();
+        std::vector<Placed> p = {
+            {"soldier", 20, 20, 0, "", "m 30 40"},
+            {"soldier", 24, 20, 0, "", "ma 10.5 3.25"},
+            {"soldier", 28, 20, 0, "", "p 7.3 9.99 4"},
+            {"wagon", 40, 20, 0, "", "u 45 30"},
+        };
+        auto m = startMission(f, *w, p);
+        auto last = [&](int i) -> const Order* {
+            const Unit* u = w->unit(p[size_t(i)].id);
+            return u && !u->orders.empty() ? &u->orders.back() : nullptr;
+        };
+        const Order* mv = last(0);
+        check(at(mv, 480 << 16, 640 << 16), "m 30 40 goes to pixel 480,640 (it was the cell centre 488,648)", shown(mv));
+        const Order* fight = last(1);
+        check(at(fight, 168 << 16, 52 << 16), "ma 10.5 3.25 keeps the fraction: pixel 168,52", shown(fight));
+        // float 7.3 * 65536 = 478412.79 -> 478412, x16; 9.99 -> 654704, x16.
+        const Order* patrol = last(2);
+        check(at(patrol, 478412 * 16, 654704 * 16) && patrol->patrol,
+              "p 7.3 9.99 chops X*65536 before the x16 (7654592,10475264 raw)", shown(patrol));
+        const Unit* wagon = w->unit(p[3].id);
+        const Order* drop = nullptr;
+        for (const Order& o : wagon->orders) if (o.unload) drop = &o;
+        check(at(drop, 720 << 16, 480 << 16), "u 45 30 unloads at pixel 720,480", shown(drop));
+    }
+    {
+        // A scenario without [Map Data] keeps +0xdc5 at 1 (4c8748): the point is X pixels.
+        auto w = makeWorld();
+        std::vector<Placed> p = {{"soldier", 20, 20, 0, "", "m 30 40"}};
+        auto m = startMission(f, *w, p, tdf::Node{});
+        const Unit* u = w->unit(p[0].id);
+        const Order* mv = u->orders.empty() ? nullptr : &u->orders.back();
+        check(at(mv, 30 << 16, 40 << 16), "without [Map Data] m 30 40 is pixel 30,40", shown(mv));
+    }
+    check(sim::MissionScript::orderPoint(-0.3f, 16) == float(-19660 * 16) / 65536.0f,
+          "a negative fraction chops toward zero (-0.3 -> -19660 raw, x16)");
 }
 
 // ---- 4. i / u: troops start aboard ------------------------------------------------
@@ -573,6 +635,14 @@ static void shipped(const char* data) {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--points") {
+        // tools/re/check_mission_points.py: "X scale" per line -> orderPoint's 16.16 raw.
+        char text[64];
+        int scale = 0;
+        while (std::scanf("%63s %d", text, &scale) == 2)
+            std::printf("%d\n", Fixed::fromFloat(sim::MissionScript::orderPoint(std::strtof(text, nullptr), scale)).v);
+        return 0;
+    }
     if (argc == 3 && std::string(argv[1]) == "--data") {
         std::printf("mission_orders_test (shipped missions)\n");
         shipped(argv[2]);
@@ -586,6 +656,7 @@ int main(int argc, char** argv) {
         clauses(f);
         standing(f);
         builds(f);
+        points(f);
         aboard(f);
         names(f);
         waitNear(f);

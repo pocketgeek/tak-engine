@@ -189,6 +189,10 @@ their validation reports; both live in [`docs/`](docs/).
   quality, and the original's 11 kHz unit sounds keep their pitch and length with a
   cleaner top end. On 6.1 speakers the surrounds of 5.1 music now play at full level.
   Video streams carry the same 44.1 kHz sound.
+- **Campaign units go to the exact spot the mission gives.** A mission's scripted
+  moves, fight-moves, patrols and unloads went to the middle of the named map square;
+  as in the original game they now go to its corner, half a square up and left, and
+  a point with a fraction keeps it.
 - **Fedora 45 packages.** Fedora 45 now has its own x86-64 and ARM64 RPMs, beside
   Fedora 44's.
 - **Investigated, no change needed:**

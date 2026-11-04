@@ -57,6 +57,12 @@ public:
     struct Placement { std::string ident, unitname; int unitId = 0; };
     void setPlacements(std::vector<Placement> p) { placements_ = std::move(p); }
 
+    // An order clause's point coordinate in world px, as 0x513fb0 builds it for
+    // m/ma/p/u/b: ftol(X * 65536.0), chopped toward zero, times `scale` -- the
+    // scenario's +0xdc5, 16 when the .ota has [Map Data] (every shipped mission),
+    // else 1 -- a 16.16 pixel value with no half cell, exact in a float on any map.
+    static float orderPoint(float cell, int32_t scale);
+
     void start(World& w);              // run the "Start" script once (initial spawns/triggers)
     void step(World& w, float dt);     // tick the VM, sweep triggers, evaluate conditions
     void unitBuilt(World& w, int id);  // a unit finished building -> UnitCreated(id, 0)
@@ -107,6 +113,7 @@ private:
 
     const UnitType* findType(const std::string& name) const;   // registry lookup (lowercased)
     static float cellToWorld(float cell) { return cell * 16.0f + 8.0f; }   // .ota cell -> world px
+    float orderPoint(float cell) const { return orderPoint(cell, pointScale_); }
 
     cob::File cob_;
     cob::CopiedPtr<cob::Vm> vm_;
@@ -115,6 +122,7 @@ private:
     int human_;
     std::string origin_;
     std::vector<int> playerMap_;   // .ota player (1-based) -> World slot (empty = identity)
+    int32_t pointScale_ = 16;      // scenario +0xdc5 (orderPoint): 16 with [Map Data], else 1
 
     std::array<Region, 16> regions_{};
     std::array<std::unordered_set<int>, 16> inside_{};   // edge-triggered: units currently in region

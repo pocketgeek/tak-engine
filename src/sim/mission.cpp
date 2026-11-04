@@ -44,7 +44,8 @@ std::pair<std::string, std::string> splitVerb(const std::string& cmd) {
 MissionScript::MissionScript(std::vector<uint8_t> cobBytes, const tak::tdf::Node& header,
                              const TypeRegistry& reg, int humanPlayer, std::string origin,
                              std::vector<int> playerMap)
-    : reg_(reg), human_(humanPlayer), origin_(std::move(origin)), playerMap_(std::move(playerMap)) {
+    : reg_(reg), human_(humanPlayer), origin_(std::move(origin)), playerMap_(std::move(playerMap)),
+      pointScale_(header.child("map data") ? 16 : 1) {   // 4c86eb / 4c8748
     if (cobBytes.empty()) {
         // Data-only mission (11 of the 74 shipped ones ship no .cob): no god script.
         // The .ota conditions + the placed units' InitialMission queues drive it.
@@ -231,7 +232,8 @@ int32_t MissionScript::doCreate(World& w, const std::string& type, const std::ve
 // either case, picks the order, and the rest is read with sscanf: each form
 // needs exactly the conversions it lists, else the clause does nothing. So a
 // clause never reads into the next one, and "w 900 40 b ARAPRIES 1" is one
-// wait clause whose tail is ignored, as retail ignores it.
+// wait clause whose tail is ignored, as retail ignores it. The point of m, ma,
+// p, u and b is the pixel X*16,Y*16 (orderPoint): a cell's corner, not its centre.
 //   m X Y / ma X Y   move / fight-move to cell X,Y
 //   a X Y            fire at the ground there (SUPPRESS; see below)
 //   a TYPE           AttackUType: every unit of TYPE, nearest first, until none
@@ -307,6 +309,15 @@ int MissionScript::resolvePlacement(const std::string& name) const {
     return 0;
 }
 
+float MissionScript::orderPoint(float cell, int32_t scale) {
+    // 5d3d54 is fistp under round-toward-zero into 64 bits, its low dword kept
+    // (out of range, the integer indefinite, whose low dword is 0); imul wraps.
+    const double chopped = std::trunc(double(cell) * 65536.0);
+    const int64_t whole = std::fabs(chopped) < 9.2e18 ? int64_t(chopped) : INT64_MIN;
+    const int32_t raw = int32_t(uint32_t(uint64_t(whole)) * uint32_t(scale));
+    return float(double(raw) / 65536.0);
+}
+
 void MissionScript::applyOrders(World& w, int unitId, const std::string& orders, bool initial) {
     if (!w.unit(unitId)) return;
     const bool queue = true;   // retail appends; it never clears the unit's orders
@@ -332,8 +343,8 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
             const bool fight = c2 == 'a';
             scan.i = fight ? 2 : 1;
             if (!scan.number(fx) || !scan.number(fz)) break;
-            if (fight) w.attackMove(unitId, cellToWorld(fx), cellToWorld(fz), queue);
-            else       w.order(unitId, cellToWorld(fx), cellToWorld(fz), queue);
+            if (fight) w.attackMove(unitId, orderPoint(fx), orderPoint(fz), queue);
+            else       w.order(unitId, orderPoint(fx), orderPoint(fz), queue);
             break;
         }
         case 'a': {                                       // 5143b5
@@ -376,20 +387,20 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
                 break;
             }
             // 514543: all four, the count read and unused (MobileBuild gets 1).
-            // The builder must have TYPE on its menu (519850). The point is the
-            // retail X*16 (no half cell): MobileBuild snaps it to the footprint
-            // as a player's click is snapped.
+            // The builder must have TYPE on its menu (519850). The point is
+            // orderPoint's: MobileBuild snaps it to the footprint as a player's
+            // click is snapped.
             if (!scan.name(nm, true) || !scan.integer(n) || !scan.number(fx) || !scan.number(fz)) break;
             const UnitType* t = findType(nm);
             if (!t) break;
             const auto& menu = u->type->buildMenu;
             if (std::find(menu.begin(), menu.end(), t->id) == menu.end()) break;
-            w.queueBuild(unitId, t, fx * 16.0f, fz * 16.0f, queue);
+            w.queueBuild(unitId, t, orderPoint(fx), orderPoint(fz), queue);
             break;
         }
         case 'p': {                                       // 514307: p X Y [T]
             if (!scan.number(fx) || !scan.number(fz)) break;
-            w.patrolTo(unitId, cellToWorld(fx), cellToWorld(fz), queue);
+            w.patrolTo(unitId, orderPoint(fx), orderPoint(fz), queue);
             break;
         }
         case 'w': {                                       // 514787
@@ -439,7 +450,7 @@ void MissionScript::applyOrders(World& w, int unitId, const std::string& orders,
             break;
         }
         case 'u':                                         // 5141d3: u X Y
-            if (scan.number(fx) && scan.number(fz)) w.unloadAt(unitId, cellToWorld(fx), cellToWorld(fz), {}, queue);
+            if (scan.number(fx) && scan.number(fz)) w.unloadAt(unitId, orderPoint(fx), orderPoint(fz), {}, queue);
             break;
         case 's':                                         // 514876: MakeSelectable
             break;

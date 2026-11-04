@@ -6402,6 +6402,31 @@ resolve only in an `InitialMission`. Ours registered a unit under the name an
   `u X Y` (`5141d3`), `c` (`514a48`: the cloak bit when cloakcost > 0) and
   `r` (`514910`, resurrect; no shipped uses).
 
+**Points (2026-11-04; E = emulated, S = static).** Every handler that reads
+`" %f %f"` -- `m`/`ma`, `p`, `u`, `a X Y` (`5143d6`) and the mobile `b`
+(`514573`) -- builds its point the same way: x = `ftol(X * 65536.0) * ebx`, the
+same for z from Y, y 0, a 16.16 pixel value (E). `ftol` (`5d3d54`) is `fistp`
+with the control word's rounding set to chop into 64 bits, the low dword kept,
+so `X * 65536` is cut toward zero before the multiply: 7.3 is raw 478412 x 16
+(116.7998 px), -0.3 is -19660 x 16 (E, both signs, integers and fractions). `ebx`
+is the scenario's +0xdc5, read once at `513fd6` from `[0x62d55c]+0x175dc`: 16
+when the `.ota`'s GlobalHeader has a `[Map Data]` child, set at `4c86eb` after
+`542940` (the child-by-name search, `542f80`, case-insensitive) finds the name
+`4c86b0` copies from `0x615548`; else 1, set at `4c8748` (E, `4c8710` on a fake
+TDF with and without the child). All 74 shipped missions have `[Map Data]`, so
+their points are X*16, Y*16: a cell's corner, not its centre. The `.ota`'s own
+unit `XPos`/`ZPos` take the same `<< 16` times +0xdc5 (`4c8cf7`, `4c8d2b`, S);
+`SetMission` reaches the same parser (`4d37f6`, S); the god script's `Create`
+puts a type's footprint corner at the cell, ((X*2 + footprintx) << 19, then
+`5085c0`, S). Ours used the cell centre (X*16+8) for `m`/`ma`/`p`/`u` through
+0.9.19; `MissionScript::orderPoint` is retail's for them and `b`, the scale
+from the header's `[Map Data]` (`mission_orders_test` points,
+`tools/re/check_mission_points.py`). `a X Y`, the placed units' `XPos`/`ZPos`,
+`Create` and `SetTrigger`'s regions (stored as given, `4d2b00` / `4d2ae0`, not
+followed further) still use the cell centre. The shipped strings hold 1160 `m`,
+248 `ma`, 3480 `p` and 81 `u` points in 69 missions, all whole numbers, so
+there the change is the half-cell shift alone.
+
 When the parser has pushed a mission it clears the unit's selectable bit 0x20,
 and unless the last of them was a patrol, an attack on the ground, `s` or `d`
 it appends MAKESELECTABLE (`514a7d`): a player's unit under a script cannot be
