@@ -5276,11 +5276,64 @@ castle or the lodestone); retail's automatic slot would aim during that walk.
 order (`World::markFightLeg`: Move_Ground / VTOL_Move response mode -1, the
 leg's point as the response goal), so its acquisition is the Move's own scan
 (`4d8370`, every stance) and not `findTarget`. She takes the Archer only once
-her player sees it, inside her selected slot's range, stops and fires:
-`vermage_fight_test` now checks that (kirenna_attack_move_fires: 11 shots in
-Retail, 1 in `--legion`, where after the first shot her AimWeapon waits on
-static 7 again, the same script race as below, not yet understood there).
-The text below is the finding as it stood.
+her player sees it, inside her selected slot's range, stops and fires
+(`vermage_fight_test`, kirenna_attack_move_fires). The text after the next
+subsection is the finding as it stood.
+
+### Why she fired once in Legion and kept firing in Retail mode (2026-11-03)
+
+Not the pathfinding mode: the phase of her walk cycle when she stops (I,
+from a per-tick trace of her script, `vermage_fight_test --trace`; the
+script and the engine order are the ones emulated below). In the test's
+start phase Legion's Move woke (its scan, rand(5)+5 ticks apart, on a
+random stream the two modes draw differently) on the tick the sweep
+started her aim (t541), Retail mode's two ticks later (t543). Varying the
+order tick (30-32) and her start point (0-117 px back), 120 phases, she
+kept firing in 8 in Retail mode and 13 in Legion, fired once in 95 and
+84, and never in 17 and 23.
+
+The sequence, in both modes:
+
+1. Walking on the fight-move, the 7-tick visible list takes the Archer
+   once she comes within her sight (215 px, inside Water Ball's 400); the
+   sweep (`40f330`) gives her automatic slot the target and the weapon
+   update starts AimWeapon (static 2 = 1). Her walk controller is inside a
+   plain `walk` cycle it chose before she aimed (it decides only between
+   cycles; a cycle quits early once MoveWatcher's moving flag, static 3,
+   drops), and `walk` ends with static 7 = 0.
+2. The Move's next wake (0 to 9 ticks later) takes the Archer
+   (`retailHostScan`), the attack in reach stops her at once (brakerate 10).
+3. MoveWatcher sees the stop within 100 ms; the `walk` cycle returns and
+   writes static 7 = 0; the controller, stopped and aiming, plays
+   `restore_legs` (static 9) and from then on sets 7 no more. Only a whole
+   walk cycle ending while she still walked with static 2 set (`walk_legs`,
+   7 = 1) avoids it: those are the phases that keep firing.
+4. Her one shot in most phases comes from a TargetCleared that World sends
+   when the attack makes her slot manual (`setSlotsManual` -> 51a7f0 with a
+   target set: static 7 = 1), which the `walk` cycle's end then clears
+   again (before her second aim). Retail does not send it here (S):
+   Attack_Chase's stage 1 calls `519b70` (manual, and so 51a7f0) only when
+   the slot's target (`51a9a0`) differs from the mission's
+   (`404476..404483`); with the sweep already on the Archer the slot stays
+   automatic and keeps it. Ported, that rule turns her one shot into none:
+   in the same 120 phases she fired in none of 112 in Retail mode and of
+   110 in Legion. So retail, by its own script and engine order, would
+   stall her on most of these attack-moves (I: not emulated end to end, the
+   chase probe has no fight-move). Left as it is (not ported): an owner
+   call.
+
+**Legion clears the stalled aim** (deliberate, not retail;
+`World::legionAimStall`): a loaded ground unit standing still whose started
+aim (flags 0xe0) its script has not accepted (SET 22) for
+`World::kLegionAimStall` ticks (90, 3 s) gets TargetCleared on that slot
+once, as if the target had been retired and taken again; the order and the
+slot keep the target. Her script then sets static 7 and fires, and standing
+she keeps it. The count (`Unit::aimWait`, hashed when set, always 0 in
+Retail) restarts only when an aim is accepted, the body moves or the slot's
+target is retired, so a script that waits on purpose (activation, burrow,
+holster) hears it once per stall. In the 120 phases she now keeps firing
+in all 120 in Legion (10 shots, 14958 damage in 60 s at the test's phase;
+Retail mode 11, 15859). Retail mode keeps the race (8 of 120).
 
 The 0.9.3 known limit "a Vermage on attack-move with Maneuver dealt no
 damage" reproduces on 0.9.19: Kirenna attack-moving past an Archer 1100 px

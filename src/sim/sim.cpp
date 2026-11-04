@@ -6465,6 +6465,7 @@ bool categoryMatch(const std::vector<std::string>& cats,const UnitType& t) {
 void World::dropSlotTarget(Unit& u,int slot) {
     if (slot<0 || slot>=3 || !u.slotTarget[size_t(slot)]) return;
     u.slotTarget[size_t(slot)]=0;
+    u.aimWait[size_t(slot)]=0;
     // 51a7f0: TargetCleared(slot) only when a target was set, and for a
     // switcher only on the selected slot.
     if (u.type->weaponSwitching && slot!=u.weaponSlot) return;
@@ -15839,6 +15840,7 @@ void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
             // dropSlotTarget (boarding's switch to manual) does not announce
             // TargetCleared a second time.
             u.slotTarget[slot]=0;
+            u.aimWait[slot]=0;
             if(fromCommand)u.pendingWeaponAnimations.push_back({tak::RetailWeaponAnimation::Clear,uint8_t(slot),0,0});
             else u.weaponAnimations.add(tak::RetailWeaponAnimation::Clear,int(slot));
             // Native 51a7f0 starts TargetCleared with immediate=0. The callback
@@ -15848,6 +15850,40 @@ void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
         }
     }
     u.scriptAimTarget=0;
+}
+
+// Legion (deliberate, not retail): no aim stalled for good on a script race.
+// Kirenna's AimWeapon (VERMAGE) waits for static 7, which her walk controller
+// sets after walk_legs (walking while aiming) or restore_x (stopped, not yet
+// aiming) and clears after a plain walk cycle; stopped and aiming it plays
+// restore_legs and sets it no more, and only TargetCleared or walking again
+// does. When she stops with a walk cycle still playing that began before she
+// aimed (an aim the sweep starts while she walks, the fight-move's scan
+// stopping her soon after: sight 215 inside her 400 range), the cycle's end
+// clears 7 after the stop and she never fires while the target stands. The
+// race is retail's (the same script in the same engine order; retail stalls
+// the same way, see docs/retail-engine.md, "Kirenna on an attack-move"), and
+// which side of it she lands on is the phase of her walk cycle, not the
+// pathfinding mode: over 120 start phases of vermage_fight_test she kept
+// firing in 8 in Retail mode and 13 in Legion. In Legion a loaded ground
+// unit standing still whose started aim (flags 0xe0) its script has not
+// accepted (SET 22) for kLegionAimStall ticks gets TargetCleared on that
+// slot once, as if its target had been retired and taken again: her script
+// sets 7 and fires, and standing, keeps it. The order and the slot keep the
+// target. Once per stall: the count restarts only when an aim is accepted,
+// the body moves or the slot's target is retired, so a script waiting on
+// purpose (activation, burrow, holster) hears it once.
+void World::legionAimStall(Unit& u,int slot,bool available) {
+    auto& wait=u.aimWait[size_t(slot)];
+    const auto& aim=u.weaponAim[size_t(slot)];
+    if((aim.flags&8) || u.speed.v!=0) { wait=0; return; }
+    if(!(aim.flags&0xe0) || !available || wait>kLegionAimStall) return;
+    if(++wait<=kLegionAimStall) return;
+    const auto it=unitScript(u.id);
+    if(!it) return;
+    const auto& file=*u.type->script();
+    u.weaponAnimations.add(tak::RetailWeaponAnimation::Clear,slot);
+    it->state().startArguments(file,file.scriptIndex("TargetCleared"),{uint32_t(slot),0,0,0},1);
 }
 
 bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept,const WeaponAimSolution* given) {
@@ -15883,6 +15919,8 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept,const Weap
     }
     const bool available=u.reloads[slot]==0 &&
         (u.type->maxMana<=0 || u.mana>=weapon.manaCost);
+    if(isLegionPathfinding(pathfindingMode_) && !u.type->canFly && !u.type->isStructure())
+        legionAimStall(u,slot,available);
     // Native readiness (52fff0) compares the body heading with the mover's
     // requested heading, which 52fe30 has just posted toward the slot's point:
     // the led SweetSpot, or a melee target's origin. Only the units 52fe30
@@ -18993,6 +19031,10 @@ void World::hashTrace() const {
         for (int32_t t : u.slotTarget) hUnitMisc=fnv(hUnitMisc,uint32_t(t));
         hUnitMisc=fnv(hUnitMisc,uint32_t(u.slotAuto)|uint32_t(u.slotManual)<<8);
         hUnitMisc=fnv(hUnitMisc,uint32_t(u.faceRequest));
+        if (u.aimWait!=std::array<uint8_t,3>{}) {
+            hUnitMisc=fnv(hUnitMisc,0x41494d57u);
+            hUnitMisc=fnv(hUnitMisc,uint32_t(u.aimWait[0])|uint32_t(u.aimWait[1])<<8|uint32_t(u.aimWait[2])<<16);
+        }
         for (int32_t rl : u.reloads) hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(rl)));
         for(const auto& aim:u.weaponAim) {
             hUnitMisc=fnv(hUnitMisc,aim.heading);hUnitMisc=fnv(hUnitMisc,aim.pitch);hUnitMisc=fnv(hUnitMisc,aim.flags);
@@ -19515,6 +19557,8 @@ uint64_t World::stateHash() const {
         for (int32_t t : u.slotTarget) mix(uint32_t(t));
         mix(uint32_t(u.slotAuto)|uint32_t(u.slotManual)<<8);
         mix(uint32_t(u.faceRequest));
+        if (u.aimWait!=std::array<uint8_t,3>{})
+            {mix(0x41494d57u);mix(uint32_t(u.aimWait[0])|uint32_t(u.aimWait[1])<<8|uint32_t(u.aimWait[2])<<16);}
         if (u.blockedTarget) {
             mix(0x424c4b44u);mix(uint32_t(u.blockedTarget));
             mix(uint32_t(u.blockedShots)|uint32_t(u.repositions)<<8|uint32_t(u.searchFailed)<<16);

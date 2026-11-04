@@ -1383,6 +1383,11 @@ struct alignas(64) Unit {
     std::array<int32_t,3> slotTarget{};
     uint8_t slotAuto = 7;
     uint8_t slotManual = 0;
+    // Legion only (World::kLegionAimStall): per slot, the ticks a loaded,
+    // standing ground unit's started aim has waited for its script's SET 22;
+    // kLegionAimStall + 1 once that aim was cleared for it. Always 0 in
+    // Retail. Hashed with a tag when set.
+    std::array<uint8_t,3> aimWait{};
     int32_t faceRequest = -1;
     // 4c6800's current-view footprint (the sight object at unit+0x84 as the
     // per-player view counters see it) and the plane it is counted in (-1 =
@@ -3085,6 +3090,7 @@ private:
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
     void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
     bool tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept=false,const WeaponAimSolution* given=nullptr);
+    void legionAimStall(Unit& u,int slot,bool available);
     void clearScriptWeaponTarget(Unit& u,bool fromCommand=false);
     // Convert a unit to another player (contact charm + mind-control weapons).
     void captureUnit(Unit& t, int newPlayer);
@@ -4117,6 +4123,9 @@ private:
     uint32_t retailMissionFlags(Unit& u);
     void tickRetailGroups();
     void planLegionFlightStations();
+    // Legion: a standing ground unit's aim its script has not accepted for
+    // this many ticks gets one TargetCleared (tickScriptWeapon).
+    static constexpr uint8_t kLegionAimStall=90;
     // Legion: idle landed flyers make way for allied ground groups.
     static constexpr uint32_t kLegionLiftQuiet=90;   // ticks after the last request
     static constexpr uint32_t kLegionLiftRest=240;   // ticks from the hand-over to landing until it may lift again

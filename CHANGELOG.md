@@ -63,6 +63,13 @@ their validation reports; both live in [`docs/`](docs/).
   destination. This is the original game's own fight-move (it had no key for it).
   Kirenna on an attack-move now fires at the enemy in front of her (a known limit since
   0.9.3), and so does any unit whose longest weapon outranges the one it has selected.
+  With Legion pathfinding she keeps firing. With Retail pathfinding she still often
+  stops after one shot and waits: her own animation script holds her fire when she
+  stops in the middle of a step, and the original game has the same race.
+- **Legion: a unit whose animation script never lets it fire tries again.** A unit
+  standing still and ready to fire whose weapon has waited 3 seconds for its script
+  is told its target was cleared, once, and aims again. Kirenna is the unit this
+  catches.
 - **Allies share sight.** Every player on your team, human or computer, sees for
   you: your units now attack an enemy that only an ally's units can see, and computer
   allies act on what you and the rest of the team see. The original game shared sight
