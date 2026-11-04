@@ -177,7 +177,8 @@ their validation reports; both live in [`docs/`](docs/).
   finds itself left behind walks back to its group first, still firing at the spot
   when its weapon can aim without turning the body, and then fires on from there; now
   and then it gives up the order instead. Flyers attacking in a group, at a spot or
-  at a unit, fly back to their group the same way.
+  at a unit, fly back to their group the same way, and keep firing at what they
+  had aimed at while they do.
 - **Holding Shift shows a cloaked unit's decloak range.** While Shift is held, each
   of your selected units, and your unit under the pointer, that is cloaked now shows a
   white circle at its decloak distance, as in the original game. A `kamikaze` unit

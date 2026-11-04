@@ -6527,7 +6527,9 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   and AirToAir (`41ccc4`) at a point or on a unit; Attack_Chase (stage 1,
   mask 0x1f40068) and Attack_Melee (0x40068) take it in the same dispatch
   (missions run after `52ae90`) and aim the new slot. I: World raises it for
-  a unit on SUPPRESS or on a flyer's attack only. A walker's unit attack
+  a unit on SUPPRESS or on a flyer's attack only, the walk back its group
+  check put ahead of either included (the formation waits on no 0x40, so the
+  bit stays until the attack, from stage 0 again, takes it). A walker's unit attack
   runs per tick on the selected slot (`tickCombat`), which aims the new slot
   on the next tick as Attack_Chase does, with no mission to take the bit; set
   there it would linger and wake a later order. A commandfire shot's 0x40000
@@ -6566,9 +6568,13 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   level -3, mode 0) from `tickCombat`, after the weapons, as retail's dispatch
   follows `52ae90`; the main loop's call skips it. `syncSlotMode` keeps the
   slots manual and their point while it leads with SUPPRESS right behind it
-  (`World::formationAttack`); `tickPointWeapons` fires them and posts the
-  facing request, which only a stopped body with no orders turns to, and
-  SUPPRESS's brake does not apply. Its retirement sets every slot automatic
+  (`World::formationAttack`, which knows the leg by `Order::attackFormation`,
+  set at the push: a Move's formation left ahead of a queued attack when the
+  Move is taken back stays a Move's and retires); `tickPointWeapons` fires
+  them and posts the facing request, and SUPPRESS's brake does not apply. A
+  body turns to the request only stopped with an idle navigator: with no
+  orders, or (`tickAttackWalk`) with the formation's controller let go (at the
+  centre, asleep in stage 2). Its retirement sets every slot automatic
   with TargetCleared, and SUPPRESS runs from stage 0 in the same tick. The
   pushed leg takes SUPPRESS's melee rectangle and route with it (stage 1 makes
   them again). The leg is not an issued one: Shift on the point removes
@@ -6577,9 +6583,13 @@ Ours (`World::suppress`, `tickSuppress`, `suppressStage`, `tickPointWeapons`):
   never runs while the leg leads. `retailMissionFlags` reports 0x1000410 for
   SUPPRESS and for its approach leg (the approach is its own controller in
   retail). `suppress_test` checks a spread Ctrl group: a turret outlier
-  fires on the walk back and again once back, one that must face holds fire
-  on the move, a patrolling group makes it leave the order, Shift and Ctrl on
-  the walk; Legion: none of it.
+  fires on the walk back and again once back, a shot due on the tick the
+  formation retires leaves then and once, the outlier counts as a moving
+  member, one that must face holds fire on the move and turns once stopped
+  at the centre, a weapon switch on the walk leaves 0x40 for SUPPRESS, a
+  patrolling group makes it leave the order (flagged and out of its slot),
+  Shift and Ctrl on the walk, and a Move's formation left ahead of an attack
+  still retires; Legion: none of it.
 - E, as retail (`tools/re/probe_guided_projectile.py`, 2026-11-04): a Guided
   shot at a point flies straight. `52e030` steers only when `+0x78` holds a
   target with 0x1000000 (alive) and without 0x1000 (dying); a point shot has
@@ -6655,12 +6665,27 @@ null target; `Order::airPoint`):
   templates share `retailAirGroupCheck`, the hosts `World::AirAttackGroup`;
   `retailMissionFlags` counts the three missions as group movers. The checks
   answer `51d1e0` at random and compare every result, flag, draw, leave and
-  push with the drivers. I: the formation leg keeps the attack's slots as they
-  are (the push touches none), so a slot on a point fires on the way, but a
-  unit target's manual slot does not: World fires an ordered unit attack from
-  the order (`tickCombat`), not from the slot. `suppress_test`: an all-flyer
-  Ctrl group's outlier flies back on VTOL_Move_Formation and attacks again,
-  for each of the three.
+  push with the drivers. The formation leg keeps the attack's slots as they
+  are (the push touches none): a slot on a point fires on the way
+  (`tickPointWeapons`), and a manual slot the attack gave its unit target
+  (`51a700`, `Unit::slotTarget`) aims and fires on it per reload
+  (`tickAttackWalkWeapons`); one the push came before has no target and does
+  not. The leg is dispatched from `tickCombat` after the weapons
+  (`tickAttackWalk`), as SUPPRESS's is, so a shot due on the tick it retires
+  leaves before `4d6da0` drops the aim (TargetCleared on a unit target's
+  slots). `suppress_test`: an all-flyer Ctrl group's outlier flies back on
+  VTOL_Move_Formation and attacks again, at a point and at a unit, for each
+  of the three; one left behind after it has aimed fires on the way back
+  (AirToGround at either, the hover at a point), and a shot due as the
+  formation retires leaves then, once. I: the formation is pushed after the
+  dispatch and first runs at the next tick; retail's dispatcher runs it at
+  once.
+- S, the registry rows (read statically, 2026-11-04): VTOL_SEEKATTACK
+  (`4192f0`) and VTOL_SEEKGUARD (`4197d0`) both carry
+  0x1000600, so a seek is a group mover; whether their ctor clears 0x200
+  without a target is not read, and the group check reads only 0x1000000
+  and 0x4000000. `retailOrderFlags` and `retailMissionFlags` give World's
+  seeks (which carry no target unit) that row.
 
 `suppress_test` (both modes): `creaeri` flies runs over the
 point and hits it (24 shots, 4 px off); a Tarbeak hovers ~134 px off a point

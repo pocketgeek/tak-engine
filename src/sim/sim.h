@@ -1022,6 +1022,11 @@ struct alignas(64) Order {
     // Hashed with a tag when set.
     static constexpr uint8_t kAirStrike = 1, kAirHover = 2, kAirRun = 3;
     uint8_t airPoint = 0;
+    // A formation leg an attack's group check put ahead of the attack
+    // (SUPPRESS's Move_Ground_Formation, a flyer attack's
+    // VTOL_Move_Formation; World::formationAttack), not one a Move's group
+    // check made. Hashed with a tag when set.
+    bool attackFormation = false;
 
     // A build leg Ctrl interrupted after its site went down (insertOrderFront):
     // that site. When the leg runs again it helps the site if it still stands
@@ -1061,7 +1066,7 @@ TAK_ORDER_LINE(orderSerial, 4);
 static_assert(offsetof(Order, mission) == 128, "line 1 ends at byte 127; line 2 starts with mission");
 TAK_ORDER_LINE(suppress, 5); TAK_ORDER_LINE(suppressFeature, 5); TAK_ORDER_LINE(suppressSlot, 5);
 TAK_ORDER_LINE(suppressReach, 5); TAK_ORDER_LINE(suppressApproach, 5); TAK_ORDER_LINE(suppressInner, 5);
-TAK_ORDER_LINE(airPoint, 5); TAK_ORDER_LINE(resumeSite, 5);
+TAK_ORDER_LINE(airPoint, 5); TAK_ORDER_LINE(attackFormation, 5); TAK_ORDER_LINE(resumeSite, 5);
 static_assert(offsetof(Order, suppress) == 320, "lines 0-4 are full; line 5 starts with SUPPRESS");
 static_assert(sizeof(Order) == 384, "Order is six cache lines (line 5 has room left); a new field names its line above");
 #undef TAK_ORDER_LINE
@@ -3247,6 +3252,15 @@ private:
     // and 52ffd3's refusal (event 0x100000) when the point is out of reach
     // or inside the minimum range.
     void tickPointWeapons(Unit& u);
+    // 52ae90 for the manual slots of a flyer's unit attack while the
+    // formation its group check put ahead of it leads: they keep the target,
+    // aim and fire per reload on the way back.
+    void tickAttackWalkWeapons(Unit& u,Unit& target);
+    // The walk back an attack's group check put ahead of it (formationAttack),
+    // after the weapons: SUPPRESS's on the ground, a flyer attack's in the
+    // air, then the turn an idle navigator makes to its facing request
+    // (4d9b6a). False once the formation has retired (the attack runs on).
+    bool tickAttackWalk(Unit& u);
     void setSlotPoint(Unit& u,int slot,RetailGroundPoint p);   // 51a770
     void dropSlotPoint(Unit& u,int slot);                      // 51a7f0 on a point
     // 530630 / vtable +0x10 (530500, BallisticWeapon 52bbb0, MeleeWeapon
