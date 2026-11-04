@@ -68,6 +68,13 @@ their validation reports; both live in [`docs/`](docs/).
   from there, as in the original game. The Thirsha, the Ghost Ship, the Dirigible and
   the Dark and Darkest Priests start on Hold Position, so idle ones now stay put: set
   them to Maneuver to have them go after enemies.
+- **The result screen's buttons click.** The two buttons on the victory and defeat
+  screen now play their clicks when pressed, as in the original game (the left one
+  its cancel click, the right one its OK click), like the title menu's buttons. The
+  SETTINGS, LOAD REPLAY, BENCHMARK and server pages click too, with the clicks the
+  original game gives the same kinds of button. Menu clicks now also follow the
+  Options MASTER and SOUND EFFECTS volumes; at the default full volumes they sound as
+  before.
 - **Investigated, no change needed:**
   - A computer's Sea Dragon on Hold Position with an enemy just outside Tsunami's range
     keeps switching weapons and never fires: the original game does exactly the same.

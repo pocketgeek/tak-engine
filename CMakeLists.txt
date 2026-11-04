@@ -514,6 +514,9 @@ set_tests_properties(legion_idmap_test PROPERTIES LABELS legion)
 add_executable(selportraits_test tools/selportraits_test.cpp)   # header-only client logic, no SDL
 target_include_directories(selportraits_test PRIVATE src)
 add_test(NAME selportraits COMMAND selportraits_test)
+add_executable(menuclick_test tools/menuclick_test.cpp)   # header-only client logic, no SDL
+target_include_directories(menuclick_test PRIVATE src)
+add_test(NAME menuclick COMMAND menuclick_test)
 add_executable(replaybar_test tools/replaybar_test.cpp src/client/alloccount.cpp)
 target_include_directories(replaybar_test PRIVATE src)
 add_test(NAME replaybar COMMAND replaybar_test)
@@ -1842,6 +1845,20 @@ if(TAK_TEST_DATA)
             ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_DIPLOMACY_TEST=1"
             PASS_REGULAR_EXPRESSION "PASS: diplomacy hotkey, roster, defaults, checkboxes, voice column, volume sliders"
             TIMEOUT 60)
+        # The result plate's buttons play their .gui clicks (defeat.gui / victory<race>.gui:
+        # MainMenu cancel.wav, Proceed ok.wav) on the press, like the title menu's.
+        foreach(result_press IN ITEMS menu proceed)
+            set(result_env "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy;TAK_RESULT_PRESS=${result_press};TAK_SHOT_RESULT=${CMAKE_CURRENT_BINARY_DIR}/result-click-${result_press}.png;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/result-click-profile;XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/result-click-profile;TAK_SETTINGS_FILE=${CMAKE_CURRENT_BINARY_DIR}/result-click-profile/settings.ini")
+            if(result_press STREQUAL "menu")
+                set(result_pass "result click: choice=0 sound=cancel.wav queued=1")
+            else()
+                list(APPEND result_env "TAK_SHOT_RESULT_LOSE=1")   # a lost mission's Proceed is Retry
+                set(result_pass "result click: choice=1 sound=ok.wav queued=1")
+            endif()
+            add_test(NAME result_click_${result_press} COMMAND takclient --data "${TAK_TEST_DATA}")
+            set_tests_properties(result_click_${result_press} PROPERTIES ENVIRONMENT "${result_env}"
+                PASS_REGULAR_EXPRESSION "${result_pass}" TIMEOUT 60)
+        endforeach()
         add_test(NAME retirement_ui COMMAND takclient game "Ulasem Arena"
             --data "${TAK_TEST_DATA}" --testbuild --time 0
             --shot "${CMAKE_CURRENT_BINARY_DIR}/retirement-ui.png")
