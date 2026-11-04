@@ -57,7 +57,7 @@ Builder / production / HUD-chase state (the reason the array needs id lookup, no
 - `const UnitType* repeatType`
 - `std::vector<const UnitType*> buildQueue` (copy — small; `sim.h:269`) + `float buildProgress`. This backs the train bar and lets render compute the per-icon queued-count badge (formerly `world_.queuedCount` at `9965`; now `frameQueuedCount` reads the snapshot) and `+++` marker (`9954`) without calling into `World`.
 - `std::vector<int> cargo` (or just `int cargoCount` — LOAD/UNLOAD gating at `7982-7984`, hover at `4915` need only non-empty; keep ids if any overlay needs them)
-- orders, snapshotted as a **small value list** `std::vector<OrderR>` where `OrderR { float x,z; int targetId; uint8_t flags; }` packing load/unload/attackMove/patrol/guard from `Order` (`sim.h:193-205`). Backs selection brackets (`4369-4400`), attack-target brackets (`4402-4419`), status text, cursor preview. Never read `u.orders` live.
+- orders, snapshotted as a **small value list** `std::vector<OrderR>` where `OrderR { float x,z; int targetId; uint8_t flags; }` packing load/unload/attackMove/patrol/guard from `Order` (`sim.h:193-205`). Backs selection brackets (`4369-4400`), attack-target brackets (`4402-4419`; removed since, retail marks no target), status text, cursor preview. Never read `u.orders` live.
 
 Precomputed convenience:
 - `bool alliedToLocal` — fold `world_.allied(player, localPlayer_)` per unit at capture time (team membership can change via `setTeam`; `team` field `sim.h:446`). Removes the per-unit `world_.allied` call in the fog cull (`3993`) and minimap.

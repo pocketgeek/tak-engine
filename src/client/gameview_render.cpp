@@ -7920,12 +7920,15 @@
 
     // ---- Shift range circles (retail 0x4d6530, client/orderoverlay.h) -----------
     // With Shift held retail rings each selected own unit, and the own unit under
-    // the pointer, with its mincloakdistance while it is cloaked (white), and a
-    // kamikaze type with a red blast pulse and a red trigger ring. Each ring point
-    // sits on the higher of the unit and the ground under the point.
+    // the pointer (main view or minimap), with its mincloakdistance while it is
+    // cloaked (white), and a kamikaze type with a red blast pulse and a red
+    // trigger ring. Each ring point sits on the higher of the unit and the ground
+    // under the point.
     void GameView::drawRangeCircles(int mvw, int winH) {
         if (!(SDL_GetModState() & KMOD_SHIFT)) return;
-        if (selection_.empty() && pointerArea() != tak::client::PointerArea::World) return;
+        const auto area = pointerArea();
+        const bool pointerPicks = area == tak::client::PointerArea::World || area == tak::client::PointerArea::Minimap;
+        if (selection_.empty() && !pointerPicks) return;
         const float zm = mapView_.zoom();
         const uint32_t tick = front().gameTick;
         const float th = std::max(1.0f, zm);
@@ -7974,8 +7977,9 @@
         };
         for (int id : selection_)
             if (const UnitR* up = frameUnitP(id)) rings(*up);
-        if (pointerArea() == tak::client::PointerArea::World)
-            if (const UnitR* hovered = hoveredUnit(tak::client::PointerArea::World);
+        // 0x521260 picks the hovered unit in the main view or on the minimap.
+        if (pointerPicks)
+            if (const UnitR* hovered = hoveredUnit(area);
                 hovered && !selSet_.count(hovered->id))
                 rings(*hovered);
         if (!overlayBatch_.empty()) {
