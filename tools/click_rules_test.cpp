@@ -393,7 +393,8 @@ void modifierRows() {
     row(clickQueue(false, true), kQueueFront | kQueueToggle, "Ctrl goes to the front, toggling");
     row(clickQueue(true, true), kQueueFront | kQueueToggle, "Ctrl+Shift is Ctrl");
     row(followQueue(kQueueReplace), kQueueAppend, "after a replacing first order, the rest append");
-    row(followQueue(kQueueAppend | kQueueToggle), kQueueAppend, "after a Shift first order, the rest append untoggled");
+    row(followQueue(kQueueAppend | kQueueToggle), kQueueAppend | kQueueToggle,
+        "after a Shift first order, each is a Shift order too (every target toggles)");
     row(followQueue(kQueueFront | kQueueToggle), kQueueFront | kQueueToggle, "after a Ctrl first order, each goes to the front");
 }
 

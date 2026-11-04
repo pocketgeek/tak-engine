@@ -222,11 +222,11 @@ inline uint8_t clickQueue(bool shift, bool ctrl) {
     if (shift) return tak::net::kQueueAppend | tak::net::kQueueToggle;
     return tak::net::kQueueReplace;
 }
-// A click's follow-on orders for one unit (a box's second and later targets)
-// go behind its first: appended, and never toggled.
+// A click's follow-on orders for one unit (a box's second and later targets):
+// behind a replacing first order they append; a Shift or Ctrl click's go as
+// the first went, each a Shift or Ctrl order of its own that may toggle.
 inline uint8_t followQueue(uint8_t first) {
-    return (first & tak::net::kQueuePlace) == tak::net::kQueueFront ? first
-                                                                     : tak::net::kQueueAppend;
+    return (first & tak::net::kQueuePlace) == tak::net::kQueueReplace ? tak::net::kQueueAppend : first;
 }
 
 // ---- Boxes: the right-drag box (2.2) and the armed left-drag box (2.9) ----
