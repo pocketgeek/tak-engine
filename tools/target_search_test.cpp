@@ -433,6 +433,7 @@ bool countsMatchFootprints(const sim::World& w) {
 struct Share {
     bool sees0 = false, sees1 = false, engaged = false, consistent = true;
     bool takeoverSees = true, revealerHeld = false, revealerGone = false;
+    bool explored0 = false, lockedOwnSees = false;
 };
 Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, bool takeover, bool revealer) {
     Flat flat;
@@ -470,12 +471,17 @@ Share sharedSight(const sim::UnitType& archer, int team1, bool ai0, bool ai1, bo
     if (const sim::Unit* f = w.unit(foe)) {
         out.sees0 = w.playerSees(0, *f);
         out.sees1 = w.playerSees(1, *f);
+        out.explored0 = w.exploredAt(0, f->x.toFloat(), f->z.toFloat());
     }
     if (takeover) {
+        // The scout is frozen through the takeover: its footprint stays where
+        // it stands and moves to its owner's own plane alone.
+        w.unit(spot)->frozenFor = 200;
         w.player(1).automaticGates = true;
         w.tick(kTick);
         out.consistent = out.consistent && countsMatchFootprints(w);
         out.takeoverSees = w.unit(foe) && w.playerSees(0, *w.unit(foe));
+        out.lockedOwnSees = w.unit(foe) && w.playerSees(1, *w.unit(foe));
     }
     if (revealer) {
         w.unit(me)->fireState = 0;
@@ -510,12 +516,17 @@ void sharedSights(const sim::TypeRegistry& reg) {
           "allied_human_spots: a same-team human ally's scout puts the enemy in player 0's plane; the archer takes it",
           describe(human));
     check(!human.takeoverSees, "takeover_stops_sharing: once the ally is a computer its sight leaves player 0's plane");
+    check(human.lockedOwnSees && human.consistent,
+          "takeover_frozen_scout: a frozen scout's footprint stays in its owner's plane through the takeover");
+    check(human.explored0, "explore_shared: the human ally's scout explores for player 0 too");
     const Share aiAlly = sharedSight(*archer, 0, false, true, false, false);
     check(!aiAlly.sees0 && aiAlly.sees1 && !aiAlly.engaged && aiAlly.consistent,
           "computer_never_shares: a computer ally's sight stays its own", describe(aiAlly));
+    check(!aiAlly.explored0, "computer_never_explores_for_ally: a computer ally's scout explores for itself alone");
     const Share aiMe = sharedSight(*archer, 0, true, false, false, false);
     check(!aiMe.sees0 && aiMe.sees1 && !aiMe.engaged && aiMe.consistent,
           "computer_never_shares: a computer player gets no human ally's sight", describe(aiMe));
+    check(!aiMe.explored0, "computer_never_explores_for_ally: a computer player gets no human ally's explored cells");
     const Share enemy = sharedSight(*archer, 1, false, false, false, false);
     check(!enemy.sees0 && enemy.sees1 && !enemy.engaged && enemy.consistent,
           "other_team_no_share: a player on another team shares nothing", describe(enemy));

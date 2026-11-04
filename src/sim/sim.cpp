@@ -6964,7 +6964,11 @@ bool World::sweepKeepsTarget(const Unit& u,int slot,const Unit& t) const {
 int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
     if (slot<0 || slot>=int(std::min<size_t>(3,u.type->weapons.size()))) return 0;
     const Weapon& w=u.type->weapons[size_t(slot)];
-    const int64_t radius=sweep ? int64_t(w.range) : std::max<int64_t>(u.type->sight,w.range);
+    // The mission scan gathers over def+0x226 (sightdistance) or the range.
+    // Retail has no double-sight option (S, 4bfa50); with ours on, the scan
+    // gathers as far as the plane the unit stamps, so a melee unit's reach
+    // keeps up with its doubled sight.
+    const int64_t radius=sweep ? int64_t(w.range) : std::max<int64_t>(sightDistance(*u.type),w.range);
     // 411ae0 over the owner's enemy list +5 (hostile units it saw at the last
     // 7-tick rebuild, in unit order): live, by live centre distance. Retail
     // re-checks nothing else; a unit carried or converted since the rebuild
@@ -7186,6 +7190,10 @@ int World::retailMoveFallback(const Unit& u) const {
     const Unit* a=unit(u.lastHitBy);
     if (!a || a==&u || !a->alive() || a->hp<=Fixed() || !a->type || a->underConstruction ||
         allied(u.player,a->player)) return 0;
+    // Engine guard: an attacker since carried off in a transport is not a
+    // target here (retail's +0xf8 for a carried unit was not read); without
+    // it every Move wake would chase the transport to the leash and back.
+    if (a->embarked()) return 0;
     return retailAnswersAttacker(u,*a,retailScanSlot(u),true) ? a->id : 0;
 }
 
@@ -14462,10 +14470,17 @@ void World::updateExplorationPlane() {
         std::abort();
     }
 #endif
+    // A footprint explores the same players' bits it counts in: 4c6800 ORs
+    // the Mapping bit of the sight object's player (4c685f..4c6871,
+    // 4c6a11..4c6a1f), the same player whose +0x88 plane it counts in, so a
+    // shared ally explores for the human it shares with and a computer for
+    // itself alone (viewShareMask). Neutral scenery keeps the allied rule.
     std::vector<uint16_t> playerViewers(players_.size(),0);
-    for (size_t owner=0;owner<players_.size();++owner)
+    for (size_t owner=0;owner<players_.size();++owner) {
+        if (!isNeutralPlayer(int(owner))) { playerViewers[owner]=viewShareMask(int(owner));continue; }
         for (size_t viewer=0;viewer<players_.size() && viewer<16;++viewer)
             if (allied(int(owner),int(viewer))) playerViewers[owner]|=uint16_t(1u<<viewer);
+    }
     // One plane shared by every chunk. Exploration only adds bits: a footprint
     // depends on its own unit alone, and covered/needed may skip only work whose
     // bits are already set, so any interleaving of the reveals yields the same
@@ -14640,7 +14655,16 @@ void World::updateViewCounts() {
             // the sight objects).
             if (u.viewSight.active && (u.viewPlayer!=u.player || u.viewPlanes!=mask)) {
                 if (size_t(u.viewPlayer)<planes) change(u.viewSight,u.viewPlanes,u.viewPlayer,false,shared);
-                u.viewSight.active=false;u.viewSight.x=-1;u.viewPlayer=-1;u.viewPlanes=0;
+                const bool locked=u.stonedFor>0 || u.frozenFor>0;
+                if (locked && mask && u.player>=0 && size_t(u.player)<planes && !isNeutralPlayer(u.player) &&
+                    u.viewSight.distance==int16_t(sightDistance(*u.type)) && u.viewSight.sightHeight==u.type->sightHeight) {
+                    // A status-locked unit's footprint stays where it stands
+                    // (4f6a40 skips it), so it moves to the new planes there.
+                    change(u.viewSight,mask,u.player,true,shared);
+                    u.viewPlayer=int8_t(u.player);u.viewPlanes=mask;
+                } else {
+                    u.viewSight.active=false;u.viewSight.x=-1;u.viewPlayer=-1;u.viewPlanes=0;
+                }
             }
             const int16_t distance=int16_t(sightDistance(*u.type));
             if (u.viewSight.distance!=distance || u.viewSight.sightHeight!=u.type->sightHeight) {

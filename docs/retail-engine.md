@@ -5533,10 +5533,19 @@ planes it was counted in. Retail stamps an ally's units into the *local*
 plane on each machine; our every-plane-on-every-peer sim gives each human the
 same union. Not ported: the in-game ShareMapAndLOS toggle (no Diplomacy
 checkbox here), and the "fewer than 20" revealer cap is still counted by the
-dying unit's owner, not per receiving plane (I). Exploration
-(`updateExplorationPlane`) is unchanged and still marks every allied
-player's explored bit, computer allies included -- wider than retail (I: the
-same sight object explores).
+dying unit's owner, not per receiving plane (I).
+
+**Exploration follows the same planes** (S). `0x4c6800` takes the Mapping bit
+from the sight object's player (`[esi]`, `+0xeb` -> `1 << index`,
+`0x4c685f..0x4c6871`) and ORs it into `game+0x19ef4` at every admitted cell
+(`0x4c6a11..0x4c6a1f`) of the same pass that adds to that player's `+0x88`
+counts (`0x4c69f1..0x4c6a0f`). So a footprint explores for exactly the
+player whose plane it counts in: a shared human ally's units explore for the
+local human, a computer's units for the computer alone. Ported in
+`updateExplorationPlane` with the same `viewShareMask` (it marked every
+allied player's bit before, computer allies included); neutral scenery keeps
+the allied rule. A status-locked unit (stone, freeze) whose share set changes
+keeps its footprint where it stands and moves it to the new planes.
 Guard: `target_search_test shared_sight`.
 
 **Double sight is ours** (S). Retail has no such option: `def+0x226` is
@@ -5546,7 +5555,9 @@ it as authored (`0x4c66eb`); the stamp's reach of twice the distance is
 unconditional (`0x4c68c1`); `412620` reads it raw (`0x4126d5`). World's
 `doubleSight` option doubles sight and radar for skirmish and multiplayer;
 which sight the ported scan's gather radius uses with it on is World's
-choice, not retail's.
+choice, not retail's. World gathers over `sightDistance(type)` (the doubled
+sight with the option on), so a melee unit's mission scan reaches as far as
+the plane it stamps; with the option off it is retail's `def+0x226`.
 
 **World before this work** (2f04e112): `findTarget` stands in for `4d8370`
 and is not it (no visibility, the longest weapon's range + 90 px, nearest
