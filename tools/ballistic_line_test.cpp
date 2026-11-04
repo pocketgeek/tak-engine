@@ -24,6 +24,9 @@
 //   - the same tower holding an enemy when a row of its owner's walls goes up
 //     between them: it drops it (once, with no re-acquisition) and shoots a
 //     second enemy in the open.
+// Each shooter has a passive spotter of its own player: towers fire through
+// the sweep alone, on enemies their player sees (Guard_NoMove picks no
+// target, 401a90), and "holds" means an order's or a weapon slot's target.
 //
 // A dev harness; not shipped in a game.
 
@@ -80,6 +83,33 @@ int dummy(sim::World& w, const sim::UnitType* t, float x, float z) {
     return id;
 }
 
+// A passive unit of the shooter's player beside `x, z`: retail's towers
+// fire only through the sweep (Guard_NoMove picks nothing, 401a90), which
+// takes only an enemy its player sees (40f330, list +5), and a shooter whose
+// sight falls short of its target needs a spotter. It also keeps the
+// shooter from being its player's only unit, which the sweep's walk skips.
+int spotter(sim::World& w, const sim::TypeRegistry& reg, float x, float z) {
+    const int id = w.spawn(reg.find("verman"), x, z, {}, 0);
+    w.setStance(id, 2);
+    w.unit(id)->moveState = 0;
+    w.unit(id)->fireState = 0;
+    w.unit(id)->hp = sim::Fixed::fromInt(30000);
+    return id;
+}
+
+// Whether u holds t: its front order's target or a weapon slot's (a tower
+// holds a sweep target in its automatic slots, with no order).
+bool holds(const sim::Unit& u, int t) {
+    if (!u.orders.empty() && u.orders.front().targetId == t) return true;
+    for (int s : u.slotTarget) if (s == t) return true;
+    return false;
+}
+int held(const sim::Unit& u) {
+    if (!u.orders.empty() && u.orders.front().targetId) return u.orders.front().targetId;
+    for (int s : u.slotTarget) if (s) return s;
+    return 0;
+}
+
 struct Fire {
     int impacts = 0;     // every impact of the shooter's shots
     int onTarget = 0;    // impacts on the target
@@ -97,11 +127,12 @@ Fire staticBehindWall(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const c
     const int shooter = s.w.spawn(st, float(shooterCell * 16 + 8), 32 * 16, {}, 0);
     s.w.player(0).mana = 30000;
     const int target = dummy(s.w, sword, float(targetCell * 16 + 8), 32 * 16);
+    spotter(s.w, reg, float(targetCell * 16 + 8), 40 * 16);
     Fire f;
     for (int i = 0; i < ticks; ++i) {
         s.w.tick(1.f / 30);
         const sim::Unit* u = s.w.unit(shooter);
-        if (u && !u->orders.empty() && u->orders.front().targetId == target) ++f.acquired;
+        if (u && holds(*u, target)) ++f.acquired;
         for (const auto& h : s.w.hits()) {
             if (h.fromPlayer != 0) continue;
             ++f.impacts;
@@ -136,13 +167,14 @@ TowerOutcome tower(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, bool wallG
     if (!vt || !sword || !wall) { check(false, "shipped vertower, arasword and arawall load"); return {}; }
     const int t = s.w.spawn(vt, 10 * 16 + 8, 32 * 16 + 8, {}, 0);
     s.w.player(0).mana = 30000;
+    spotter(s.w, reg, 4 * 16 + 8, 32 * 16 + 8);
     TowerOutcome out;
     const int hidden = dummy(s.w, sword, 26 * 16 + 8, 32 * 16 + 8);
     int open = 0;
     if (wallGoesUp) {
         for (int i = 0; i < 90; ++i) s.w.tick(1.f / 30);
         const sim::Unit* u = s.w.unit(t);
-        check(u && !u->orders.empty() && u->orders.front().targetId == hidden,
+        check(u && holds(*u, hidden),
               "the tower acquires the enemy while it stands in the open");
         for (int z = 16; z < 48; z += 2) {   // spawn() leaves nav to its caller, as a placement does
             s.w.spawn(wall, 21 * 16, float(z * 16 + 16), {}, 0);
@@ -154,7 +186,7 @@ TowerOutcome tower(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, bool wallG
     for (int i = 0; i < ticks; ++i) {
         s.w.tick(1.f / 30);
         const sim::Unit* u = s.w.unit(t);
-        const int front = u && !u->orders.empty() ? u->orders.front().targetId : 0;
+        const int front = u ? held(*u) : 0;
         if (front != last && front) ++out.acquisitions;
         last = front;
         if (front == hidden) ++out.heldHiddenBlind;

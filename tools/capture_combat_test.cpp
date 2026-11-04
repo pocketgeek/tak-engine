@@ -22,7 +22,10 @@ void check(bool ok,const char* message) {
 }
 tak::sim::UnitType victimType() {
     // bmcode 1: retail's charm (52da10) refuses a body without a mover.
-    tak::sim::UnitType t;t.id="victim";t.maxHp=10000;t.canMove=true;t.buildMovementCode=1;
+    // Upright, so it stands on the terrain: the scans take only what the
+    // player sees, and a body left at y 0 under the height-100 ground falls
+    // on the wrong sight cells.
+    tak::sim::UnitType t;t.id="victim";t.maxHp=10000;t.canMove=true;t.buildMovementCode=1;t.upright=true;
     return t;
 }
 tak::sim::UnitType casterType() {

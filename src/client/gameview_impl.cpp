@@ -910,8 +910,9 @@
         effectVisibility_->expire(world_.tickCount());
         for (const auto& unit:world_.units()) {
             // Transport cargo keeps a live footprint (4f6a60 has no attachment test).
+            // A passive neutral's sight is not the local player's (World::viewShareMask).
             const bool eligible=unit.type && unit.alive() && !unit.underConstruction &&
-                                alliedToLocal(unit.player);
+                                sharesSightToLocal(unit.player);
             effectVisibility_->track(unit.id,unit.player,localPlayer_,eligible,unit.alive(),
                                      unit.sightFootprint,world_.tickCount());
         }
@@ -1115,11 +1116,11 @@
         s.justBuilt = u.justBuilt;
         s.disco = u.alive() && world_.discoTarget(u.player, u.id);
         s.headbang = u.alive() && world_.headbangTarget(u.player, u.id);
-        s.alliedToLocal = alliedToLocal(u.player);
+        s.sightShared = sharesSightToLocal(u.player);
         // The local view's sight of another side's unit, on the plane captureFog
         // just built (a dying or dead unit is tested where it lies).
         s.losSeen = s.mapSeen = false;
-        if (!noFog_ && !s.alliedToLocal && !fb.fog.empty()) {
+        if (!noFog_ && !s.sightShared && !fb.fog.empty()) {
             namespace rf = tak::retailfog;
             const bool hidden = u.cloaked || u.embarked();
             const int32_t y = (u.type->canFly ? u.flightY : u.groundY).v;
@@ -1390,9 +1391,11 @@
     }
 
     bool GameView::localSeesLive(const tak::sim::Unit& u) const {
-        if (noFog_ || alliedToLocal(u.player)) return true;
+        // The players whose sight the local plane holds (World::viewShareMask):
+        // an allied passive neutral's units and eyes count only through them.
+        if (noFog_ || sharesSightToLocal(u.player)) return true;
         for (int p = 0; p < world_.numPlayers(); ++p)
-            if (alliedToLocal(p) && world_.playerSees(p, u)) return true;
+            if (sharesSightToLocal(p) && world_.playerSees(p, u)) return true;
         return false;
     }
 
@@ -1412,8 +1415,9 @@
         source.width = w; source.height = h; source.player = localPlayer_;
         source.mapRevealed = world_.mapRevealedFor(localPlayer_);
         source.losOff = world_.roomLosOff() || world_.powerLosOff(localPlayer_);
-        for (int p = 0; p < world_.numPlayers() && p < 32; ++p)
-            if (alliedToLocal(p)) source.viewers |= 1u << p;
+        // The planes the local player shares (World::viewShareMask: every ally
+        // but a passive neutral), so the fog is the plane its units pick from.
+        source.viewers = world_.viewShareMask(localPlayer_);
         source.viewCounts = world_.viewCounts();
         source.explored = world_.navigationExploration();
         if (world_.viewCounts().empty()) {
@@ -1428,8 +1432,7 @@
             fogPreviewExplored_.assign(cells, 0);
             if (fogPreviewHeights_.size() == cells)
                 for (const auto& u : world_.units()) {
-                    if (!u.alive() || !u.type || u.underConstruction || !alliedToLocal(u.player) ||
-                        world_.isNeutralPlayer(u.player)) continue;
+                    if (!u.alive() || !u.type || u.underConstruction || !sharesSightToLocal(u.player)) continue;
                     tak::sim::RetailSightFootprint sight;
                     sight.distance = int16_t(world_.sightDistance(*u.type));
                     sight.sightHeight = u.type->sightHeight;

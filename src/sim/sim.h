@@ -707,7 +707,7 @@ struct ScriptedOrder {
 // after the struct: a new field must say which cache line it belongs on.
 //  - Line 0 (bytes 0-63) holds everything the per-tick order predicates read:
 //    groundMissionOrder's `plain`, currentLeg, hasQueuedWork/hasQueuedBuild,
-//    tickCombat's and findTarget's front-order tests. A queue scan then touches
+//    tickCombat's front-order tests. A queue scan then touches
 //    one line per Order. Add a field here only if such a predicate reads it.
 //  - Line 1 (64-127): the per-order mission state the movers read once they have
 //    the order (controller, the presence of park/buildRectangle/flightGoal,
@@ -891,7 +891,11 @@ struct alignas(64) Order {
     // which run on `mission`): AirToGround's is 1 once a run has brought the
     // flyer within half its range of the target, and its stage 7 counts
     // wakes off the map on it; AirToGroundHover's counts its step-outs. A
-    // step-out order's D.
+    // step-out order's D. On a ground walker's automatic melee attack
+    // (Attack_Melee 404690, which a flyer never runs) it is the tick of the
+    // next stage-2 timer wake instead (stage 1's 4 + rand(5) + rand(5)
+    // sleep), where the walker may take another target (4049a0); 0 until
+    // the approach starts (retailMeleeRetarget). Hashed with a tag then.
     int32_t airRunCount = 0;
     // A ground attack (Attack_Chase, 403bb0; tickCombat): whether the unit
     // has walked toward its target under this order (`attackChased`, beside
@@ -1379,6 +1383,11 @@ struct alignas(64) Unit {
     std::array<int32_t,3> slotTarget{};
     uint8_t slotAuto = 7;
     uint8_t slotManual = 0;
+    // Legion only (World::kLegionAimStall): per slot, the ticks a loaded,
+    // standing ground unit's started aim has waited for its script's SET 22;
+    // kLegionAimStall + 1 once that aim was cleared for it. Always 0 in
+    // Retail. Hashed with a tag when set.
+    std::array<uint8_t,3> aimWait{};
     int32_t faceRequest = -1;
     // 4c6800's current-view footprint (the sight object at unit+0x84 as the
     // per-player view counters see it) and the plane it is counted in (-1 =
@@ -1390,6 +1399,9 @@ struct alignas(64) Unit {
     // changes self-correcting. Hashed.
     RetailSightFootprint viewSight;
     int8_t viewPlayer = -1;
+    // The planes viewSight is counted in (bit per player): the owner's, plus
+    // each ally's, human or computer (World::viewShareMask). 0 = none. Hashed.
+    uint16_t viewPlanes = 0;
     // An upgrade consumes its old building when the new site is admitted. Keep
     // its presentation independent of retired/reused unit slots.
     struct LodestoneReplacement {
@@ -1910,6 +1922,13 @@ struct Player {
     RetailResourceHistory displayResources;
     bool automaticGates=false; // normal AI capability; human gates remain manually controlled
     bool defensiveAi = false; // Passive AI defends in place from the moment units spawn
+    // A campaign mission's brainless Player%i (villagers, wildlife, props: the
+    // .ota's "passive" control word, or no "strategic"), whom missions put on the
+    // human's team. Shares no sight and no explored cells with anyone, even when
+    // allied (World::viewShareMask): retail makes every mission computer a kind-2
+    // owner (4d298f -> 4f6290 -> 4f5940 stores lobby +0x84 = 2), which 4f6770
+    // pairs with nobody; outside campaigns the owner's rule is the same. Hashed.
+    bool passiveNeutral = false;
     RetailPlayerCacheClock cacheClock;
     std::optional<RetailBuildCache> buildCache;
     std::optional<RetailConstructionResources> retailResources;
@@ -2285,6 +2304,16 @@ public:
     // 4f6a40/4c6a70/4c6800 for the per-player current-view counters: one pass
     // after each tick, beside updateNavigationExploration.
     void updateViewCounts();
+    // The players whose current-view plane a unit of `owner` counts in: the
+    // owner and every allied player, human or computer (owner decision D2,
+    // beyond retail). Retail's game start (4f6770) sets ShareMapAndLOS
+    // (+0xf7[]/+0x101[]) both ways for each pair of players on one lobby team
+    // unless either is a computer, and a unit's sight object (4c66b0) then
+    // stamps into the sharing player's plane; World shares between computers
+    // too. A passive neutral (Player::passiveNeutral) shares with nobody and
+    // nobody with it, allied or not: its mask is its own bit, and it is in no
+    // other player's. Bit per player; 0 for a neutral or out-of-range owner.
+    uint16_t viewShareMask(int owner) const;
     // Test reference: move counted footprints by retail's full removal and
     // re-add instead of retailSightMove (the counts and hashes must not differ).
     void setViewCountsByRebuildForTest(bool on) { viewCountsByRebuild_=on; }
@@ -2827,7 +2856,7 @@ public:
     void endOrder() { activeOrder_.reset(); }
     // A unit's orders changed (a leg gained or retired, a mission step, its
     // death): Legion drops the settled-arrival and parting records the unit
-    // no longer qualifies for. The order helpers, dropLeg, acquireTarget, the
+    // no longer qualifies for. The order helpers, dropLeg, retailIssueAutoAttack, the
     // ground/flight/construction mission dispatchers and the death edge call
     // it. Touches Legion state only (a no-op without Legion).
     void noteOrders(int unitId);
@@ -3104,6 +3133,7 @@ private:
     void tickCombat(Unit& u, float dt, bool& groundMovementHandled);
     void fire(Unit& u, Unit& target, int slot,bool scriptTriggered=false);
     bool tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept=false,const WeaponAimSolution* given=nullptr);
+    void legionAimStall(Unit& u,int slot,bool available);
     void clearScriptWeaponTarget(Unit& u,bool fromCommand=false);
     // Convert a unit to another player (contact charm + mind-control weapons).
     void captureUnit(Unit& t, int newPlayer);
@@ -3611,13 +3641,12 @@ private:
         return f.flightGroundMode==1 || (f.landing && f.landing->mission.stage==3);
     }
     std::pair<int,int> cellHeightRange(size_t cell) const;
-    bool acquireTarget(Unit& u, bool missionPoll);
+    // A fight-move leg: attackMove, and off a patrol Move response mode -1
+    // with the leg's point as its goal (retail's MoveFight order, 5214b0).
+    static void markFightLeg(Order& o);
     bool combatLineOfSight(const Unit& from, const Unit& to) const;
     bool canCaptureTarget(int player, const Unit& target) const;
     bool canAttackTarget(const Unit& from, const Unit& target) const;
-    // chases: the attack it installs is not an auto target (tickCombat's
-    // mayChase), so the hold-post reach filter does not apply.
-    int findTarget(Unit& u, bool missionPoll, bool groundResponse = false, bool chases = false);
     // --- retail weapon-slot layer (fire-at-will sweep, icd 40f330) ----------
     void setSlotsAuto(Unit& u);                    // 519b10(3)
     void setSlotsManual(Unit& u,uint8_t cause);    // 519b70(3)
@@ -3684,12 +3713,84 @@ private:
     // attack is not an auto target.
     bool retailIssueAutoAttack(Unit& u,int targetId,bool forceReturn,bool forced=false);
     std::vector<std::vector<int>> sweepIds_;   // per-player id-ordered scratch; not state
+    std::vector<int> pickCandidates_;          // retailSelectTarget's candidate list; scratch, not state
 public:
     // Why a unit's slots are manual (Unit::slotManual).
     enum : uint8_t { kSlotsAuto=0, kSlotsAttack=1, kSlotsWork=2, kSlotsStatus=3 };
     // Port of 412620: one weapon slot's target, by retail's 50-draw sampled
     // score. sweep=true is the fire-at-will radius (the weapon's range).
     int retailSelectTarget(Unit& u,int slot,bool sweep);
+    // 519ac0: the slot a mission scan picks for -- a switcher's selected
+    // slot when it is below 3, else the first (World packs the present
+    // slots, so the first is 0). -1 for an unarmed unit.
+    int retailScanSlot(const Unit& u) const;
+    // Port of 4d8370, the mission scan: an armed unit on Fire At Will runs
+    // the picker (412620) on its scanning slot with the mission radius,
+    // max(sightdistance, range); anything else gets 0. Whether the unit's
+    // current mission is one that scans stays the host's test.
+    int retailMissionScan(Unit& u);
+    // How a mission turns its scan's hit into an attack: the arguments its
+    // call site passes to 4d7de0 (unit, target, explicit, point, auto,
+    // forceLeash) (docs/retail-engine.md, "Mission target scan").
+    enum class MissionAttack : uint8_t {
+        Standby,     // (0, &pos, 1, 0): Standby 40784e (the hit response 409e4b too)
+        Patrol,      // (0, &pos, 1, 1): Patrol 403972: a forced leash and return move
+        Vtol,        // (0, 0, 1, 0): VTOL_Standby 4176cc and the air missions' retargets
+        VtolPatrol,  // (0, 0, 1, 1): VTOL_Patrol 41a25e
+        Forced,      // (1, ., 0, 0): an explicit attack, the guards' answer
+    };
+    // A reject applied to the single pick before the gate (Standby_Wander's
+    // post, a Move's goal, a formation point, a melee origin): a target at or
+    // beyond `leash` from `point` (retailGroundDistance) is dropped, and no
+    // rescan follows.
+    struct MissionLeash { RetailGroundPoint point; int32_t leash=0; };
+    // The mission's tail on a pick: the leash filter, then 4d7de0 as `how`
+    // says (retailIssueAutoAttack). An idle flyer's VTOL attack goes in ahead
+    // of its default mission. Whether orders were inserted.
+    bool retailMissionAttack(Unit& u,int targetId,MissionAttack how,
+                             const std::optional<MissionLeash>& leash={});
+    // The host's stand-in for "the unit's current mission is one that scans"
+    // (a powered-down switchable, a neutral owner, a builder at or holding
+    // work are in another mission in retail), then 4d8370.
+    int retailHostScan(Unit& u);
+    // 4d7de0's refusals, without inserting anything: whether
+    // retailIssueAutoAttack(u, target, forceReturn, forced) would issue.
+    bool retailIssueAutoAttackAllowed(const Unit& u,int targetId,bool forceReturn,bool forced=false) const;
+    // The stored-attacker answer shared by the hit response (409ba8..409e4b)
+    // and the response of Move_Ground (402f..403) and VTOL_Move (4181c1..
+    // 4184a5): the attacker passes the scanning slot's category masks, is in
+    // the slot's reach (52ad60) or, for a mover, nearer than 9/10 of
+    // maneuverleashlength plus the slot's range (a melee slot adds none), and
+    // the slot can hurt it on its current layer.
+    bool retailAnswersAttacker(const Unit& e,const Unit& a,int slot,bool mobile) const;
+    // Move_Ground's and VTOL_Move's fallback when the scan finds nothing: the
+    // stored attacker (+0xf8, lastHitBy) alive, finished and not allied,
+    // through retailAnswersAttacker. No sight, cloak or fire-state test.
+    int retailMoveFallback(const Unit& u) const;
+    // The attack a mission builds itself (4de530 kind 3, then 4d6c40(kind,
+    // target, 0, 0, mode, leash) with origin +0x2e/+0x30): Move_Ground,
+    // Move_Ground_Formation, VTOL_Move and Standby_Wander. mode != 0 is an
+    // automatic chase; a leash retires it that far from `origin`. Not
+    // inserted: the caller inserts it once its own mission state is safe.
+    std::optional<Order> retailBuiltAttack(const Unit& u,int targetId,bool automatic,uint16_t leash,
+                                           RetailGroundPoint origin) const;
+    // Standby_Wander's scan (40797e): 4d8370, the Maneuver post's leash on
+    // the pick, then the attack it builds (no return move). Whether it went in.
+    bool retailWanderScan(Unit& u);
+    // Guard_NoMove's armed step (401a90): no pick. When a shot of a slot
+    // posted 0x200000 << slot to the mission event word (4099e0: it did the
+    // other side no more than twice what it did its own), rand(3) == 0
+    // releases each such slot, and the bits clear on either draw; then each
+    // present slot (a switcher's selected one alone) whose target is gone,
+    // inside its minimum range (52adf0) or out of reach (52ad60, plus the
+    // engine's clear-shot test, slotClearShot) is released. Release is 519b70 then 519b10: the slot ends automatic with
+    // no target, back to the sweep. `draw` >= 0 stands in for the rand(3)
+    // (the oracle's); otherwise pathRand, Guard_NoMove's own stream.
+    void retailGuardNoMoveSlots(Unit& u,int draw=-1);
+    // Attack_Melee's retarget (4049a0) for a ground melee walker closing on
+    // an automatic attack's target: at each stage-2 timer wake. True when the
+    // front order took another target (the caller returns).
+    bool retailMeleeRetarget(Unit& u);
     // Port of 4f7210 (LosOn): `player` sees `u` when it owns it; otherwise
     // never when u is cloaked, carried or dead, else when any of the four
     // projected bounding-box corners lies on a cell `player`'s current-view
@@ -3769,8 +3870,9 @@ private:
     // retail below that. Hashed.
     std::vector<uint16_t> viewCounts_;
     // 4c6750/4c6b30: a dying human-owned unit's footprint stays counted for
-    // 60 ticks (at most 20 per player). Hashed, in order.
-    struct RetailDeathSight { RetailSightFootprint sight; int8_t player=-1; uint32_t expiry=0; };
+    // 60 ticks (at most 20 per player), in the planes it was counted in.
+    // Hashed, in order.
+    struct RetailDeathSight { RetailSightFootprint sight; int8_t player=-1; uint32_t expiry=0; uint16_t planes=0; };
     std::vector<RetailDeathSight> deathSights_;
     bool viewCountsByRebuild_ = false;   // setViewCountsByRebuildForTest; not hashed
     std::vector<uint8_t> viewDirty_;   // viewDirty(); display bookkeeping, not hashed
@@ -4005,8 +4107,6 @@ private:
     std::vector<BenchStage> benchPlan_;   // benchmark staged spawns (executed in tick)
     size_t benchCursor_ = 0;              // next unexecuted stage
     uint32_t benchEndTick_ = 0;           // 0 = not a benchmark run
-    uint32_t acqStride_ = 4;     // auto-acquire re-scan period, widened with crowd size
-                                 // (deterministic: derived from the live-unit count)
     PathService paths_;          // retail's request queue + budget scheduler
     // Per-player entity pools for live matches (5121d8 placement, retirement
     // frees). Restored retail fixtures use retailEntityPools_ instead.
@@ -4073,6 +4173,9 @@ private:
     uint32_t retailMissionFlags(Unit& u);
     void tickRetailGroups();
     void planLegionFlightStations();
+    // Legion: a standing ground unit's aim its script has not accepted for
+    // this many ticks gets one TargetCleared (tickScriptWeapon).
+    static constexpr uint8_t kLegionAimStall=90;
     // Legion: idle landed flyers make way for allied ground groups.
     static constexpr uint32_t kLegionLiftQuiet=90;   // ticks after the last request
     static constexpr uint32_t kLegionLiftRest=240;   // ticks from the hand-over to landing until it may lift again

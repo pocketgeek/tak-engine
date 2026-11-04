@@ -5,7 +5,11 @@
 // left (411700, 412620, 40f330). One ctest per part:
 //   fire_sweep_test vision | switch | retaliation | turnrate | sites
 // `fire_sweep_test --picker` is the oracle tools/re/check_fire_sweep_picker.py
-// compares with retail's target picker 412620.
+// compares with retail's target picker 412620; `--scan` is
+// tools/re/check_mission_scan.py's (the mission scan 4d8370) and `--gate`
+// tools/re/check_issue_gate.py's (the attack-issuing gate 4d7de0) and
+// `--guard` tools/re/check_guard_nomove.py's (Guard_NoMove's slot release
+// 401a90).
 #include "sim/sim.h"
 #include "sim/retailcost.h"
 #include "sim/retailexploration.h"
@@ -53,7 +57,10 @@ bool countsMatchRebuild(const sim::World& w) {
         auto sight=u.viewSight;sight.active=false;
         sim::retailSightFootprint(sight,true,false,width,height,uint8_t(u.viewPlayer),
             [&](int x,int z){return heights[size_t(z)*width+x];},
-            [&](int x,int z,int d,uint16_t){expect[size_t(u.viewPlayer)*cells+size_t(z)*width+x]+=uint16_t(d);});
+            [&](int x,int z,int d,uint16_t){
+                for (int p=0;p<16;++p)
+                    if (u.viewPlanes>>p & 1) expect[size_t(p)*cells+size_t(z)*width+x]+=uint16_t(d);
+            });
     }
     return expect==w.viewCounts();
 }
@@ -124,10 +131,16 @@ void retaliation();
 void turnRate();
 void sites();
 int pickerOracle();
+int scanOracle();
+int gateOracle();
+int guardOracle();
 
 int main(int argc,char** argv) {
     const std::string part=argc>1 ? argv[1] : "all";
     if(part=="--picker")return pickerOracle();
+    if(part=="--scan")return scanOracle();
+    if(part=="--gate")return gateOracle();
+    if(part=="--guard")return guardOracle();
     if(part=="vision" || part=="all")vision();
     if(part=="vision" || part=="all")shootMe();
     if(part=="switch" || part=="all")weaponSwitch();
@@ -429,9 +442,15 @@ void sites() {
         check(attacked && hit,"sites: an idle armed unit attacks an enemy site in reach");
     }
     {   // Behind finished targets: at the same distance the idle unit takes the
-        // finished one; with the site four times nearer (16 > 10) the site.
-        const auto g=gunner(300);
+        // finished one; with the site four times nearer (16 > 10) the site is
+        // the likelier pick of Standby's scan (4d8370: 412620's sampled score,
+        // not nearest first), and the finished enemy still comes up. A turn
+        // rate of 1000 leaves out the turn penalty (412a77), which is added
+        // before the x10 and would put the site, off the gunner's bearing,
+        // behind the enemy ahead of it.
         for (const bool near:{false,true}) {
+            auto g=gunner(300);
+            if (near) g.turnRate=1000;
             sim::World w;setup(w,2);
             const int u=w.spawn(&g,400,1000,0,0);
             const int s=site(w,near ? 450 : 600,1000),foe=w.spawn(&d,400,1200,0,1);
@@ -441,8 +460,16 @@ void sites() {
                 const auto& o=w.unit(u)->orders;
                 if (!o.empty() && o[0].targetId) first=o[0].targetId;
             }
-            if (near) check(first==s,"sites: an idle unit takes a site four times nearer than a finished enemy");
-            else check(first==foe,"sites: an idle unit takes a finished enemy before a site as near");
+            if (near) {
+                int siteN=0,foeN=0;
+                for (int i=0;i<400;++i) {
+                    const int picked=w.retailMissionScan(*w.unit(u));
+                    siteN+=picked==s;foeN+=picked==foe;
+                }
+                std::printf("  near site %d finished %d of 400\n",siteN,foeN);
+                check(first!=0 && siteN>foeN && foeN>0 && siteN+foeN==400,
+                      "sites: the scan takes a site four times nearer than a finished enemy more often");
+            } else check(first==foe,"sites: an idle unit takes a finished enemy before a site as near");
         }
     }
     {   // A guard runs no scan of its own (Follow_Ground): it keeps its ward and
@@ -507,8 +534,10 @@ void sites() {
 }
 
 // The oracle for tools/re/check_fire_sweep_picker.py. One case per stdin line:
-//   seed sweep fawr melee cls ai sight range damage sx sz k {x z unfinished paralyzed bad immune}*k
-// cls 0 plain, 1 stone, 2 freeze, 3 charm. The shooter is a structure of
+//   seed sweep fawr melee cls ai sight range damage sx sz k para
+//   {x z unfinished paralyzed bad immune pimmune}*k
+// cls 0 plain, 1 stone, 2 freeze, 3 charm; para: the paralyzer damage type;
+// pimmune: immunetoparalyzer. The shooter is a structure of
 // player 0 (no turn penalty) and every candidate an enemy unit, listed on
 // player 0's visible-enemy list in id order, in range of the shooter.
 // Prints the picked candidate's index (-1 none) and the game RNG state after
@@ -517,32 +546,34 @@ int pickerOracle() {
     std::string line;
     while (std::getline(std::cin,line)) {
         std::istringstream in(line);
-        uint32_t seed=0;int sweep=0,fawr=0,melee=0,cls=0,ai=0,sight=0,range=0,damage=0,sx=0,sz=0,k=0;
-        in>>seed>>sweep>>fawr>>melee>>cls>>ai>>sight>>range>>damage>>sx>>sz>>k;
+        uint32_t seed=0;int sweep=0,fawr=0,melee=0,cls=0,ai=0,sight=0,range=0,damage=0,sx=0,sz=0,k=0,para=0;
+        in>>seed>>sweep>>fawr>>melee>>cls>>ai>>sight>>range>>damage>>sx>>sz>>k>>para;
         sim::UnitType shooter;shooter.id="shooter";shooter.maxHp=500;shooter.footX=shooter.footZ=2;
         shooter.sight=sight;shooter.sightHeight=24;shooter.fireAtWillRandom=fawr!=0;
         shooter.badTargetCats[0]={"BAD"};
         sim::Weapon wp;wp.name="w";wp.range=range;wp.damage=damage;wp.reload=1;wp.melee=melee!=0;
         wp.status=cls==1 ? sim::Weapon::Status::Stoned : cls==2 ? sim::Weapon::Status::Frozen : sim::Weapon::Status::None;
-        wp.mindControl=cls==3;
+        wp.mindControl=cls==3;wp.dmgType=para ? 4 : 1;
         shooter.weapon=wp;shooter.weapons={wp};
-        // The four candidate kinds: bad target or not, immune to the class or not.
-        std::array<sim::UnitType,4> kinds;
-        for (int b=0;b<4;++b) {
+        // The eight candidate kinds: bad target or not, immune to the class
+        // or not, immune to paralyzers or not.
+        std::array<sim::UnitType,8> kinds;
+        for (int b=0;b<8;++b) {
             // Mobile: a structure would block the engine's 2D clear-shot line
             // to the candidates behind it (retail has no such test).
             auto& t=kinds[size_t(b)];t=dummy();t.id="cand"+std::to_string(b);
             if (b&1) t.categories={"BAD"};
             t.cantBeStoned=t.cantBeFrozen=t.cantBeCaptured=(b&2)!=0;
+            t.immuneToParalyzer=(b&4)!=0;
         }
         sim::World w;setup(w,2);w.player(0).automaticGates=ai!=0;
         const int shooterId=w.spawn(&shooter,float(sx),float(sz),0,0);
         struct Cand { int id,unfinished,paralyzed; };
         std::vector<Cand> cands;
         for (int i=0;i<k;++i) {
-            int x=0,z=0,unfinished=0,paralyzed=0,bad=0,immune=0;
-            in>>x>>z>>unfinished>>paralyzed>>bad>>immune;
-            cands.push_back({w.spawn(&kinds[size_t(bad+2*immune)],float(x),float(z),0,1),unfinished,paralyzed});
+            int x=0,z=0,unfinished=0,paralyzed=0,bad=0,immune=0,pimmune=0;
+            in>>x>>z>>unfinished>>paralyzed>>bad>>immune>>pimmune;
+            cands.push_back({w.spawn(&kinds[size_t(bad+2*immune+4*pimmune)],float(x),float(z),0,1),unfinished,paralyzed});
         }
         w.unit(shooterId)->fireState=0;
         ticks(w,1);   // the spatial grid
@@ -559,6 +590,159 @@ int pickerOracle() {
         int index=-1;
         for (int i=0;i<k;++i) if (cands[size_t(i)].id==picked) index=i;
         std::printf("%d %u\n",index,w.gameRngState());
+    }
+    return 0;
+}
+
+// The oracle for tools/re/check_mission_scan.py. One case per stdin line:
+//   seed fire armed switcher sel fawr ai kamikaze sight damage para sx sz
+//   nslots {range melee}*nslots k {x z listed flyer shootme paralyzed pimmune}*k
+// The shooter is a structure of player 0 (no turn penalty) with `nslots`
+// weapons (none when unarmed); every candidate an enemy unit of player 1,
+// on player 0's visible-enemy list when `listed`. Prints the picked
+// candidate's index (-1 none) and the game RNG state after
+// retailMissionScan(shooter).
+int scanOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        uint32_t seed=0;
+        int fire=0,armed=0,switcher=0,sel=0,fawr=0,ai=0,kamikaze=0,sight=0,damage=0,para=0,sx=0,sz=0,nslots=0,k=0;
+        in>>seed>>fire>>armed>>switcher>>sel>>fawr>>ai>>kamikaze>>sight>>damage>>para>>sx>>sz>>nslots;
+        sim::UnitType shooter;shooter.id="shooter";shooter.maxHp=500;shooter.footX=shooter.footZ=2;
+        shooter.canMove=false;shooter.maxVel=sim::Fixed();
+        shooter.sight=sight;shooter.sightHeight=24;shooter.fireAtWillRandom=fawr!=0;
+        shooter.kamikaze=kamikaze!=0;shooter.weaponSwitching=switcher!=0;
+        for (int s=0;s<nslots;++s) {
+            int range=0,melee=0;in>>range>>melee;
+            sim::Weapon wp;wp.name="w"+std::to_string(s);wp.range=range;wp.damage=uint16_t(damage);wp.reload=1;
+            wp.melee=melee!=0;wp.dmgType=para ? 4 : 1;
+            if (armed) shooter.weapons.push_back(wp);
+        }
+        if (!shooter.weapons.empty()) shooter.weapon=shooter.weapons[0];
+        in>>k;
+        struct Cand { int listed,flyer,paralyzed; };
+        std::vector<Cand> spec;
+        std::vector<std::pair<int,int>> at;
+        std::vector<sim::UnitType> kinds;kinds.reserve(size_t(k));
+        for (int i=0;i<k;++i) {
+            int x=0,z=0,listed=0,flyer=0,shootme=0,paralyzed=0,pimmune=0;
+            in>>x>>z>>listed>>flyer>>shootme>>paralyzed>>pimmune;
+            auto t=dummy();t.id="cand"+std::to_string(i);t.shootMe=shootme!=0;t.immuneToParalyzer=pimmune!=0;
+            kinds.push_back(t);spec.push_back({listed,flyer,paralyzed});at.push_back({x,z});
+        }
+        sim::World w;setup(w,2);w.player(0).automaticGates=ai!=0;
+        const int shooterId=w.spawn(&shooter,float(sx),float(sz),0,0);
+        std::vector<int> ids;
+        for (int i=0;i<k;++i) ids.push_back(w.spawn(&kinds[size_t(i)],float(at[size_t(i)].first),float(at[size_t(i)].second),0,1));
+        w.unit(shooterId)->fireState=0;
+        ticks(w,1);   // the spatial grid
+        auto& u=*w.unit(shooterId);
+        u.fireState=fire;
+        if (switcher) u.weaponSlot=sel;
+        std::vector<int> listed;
+        for (int i=0;i<k;++i) {
+            auto& c=*w.unit(ids[size_t(i)]);
+            c.flightGroundMode=spec[size_t(i)].flyer ? 2 : 1;
+            c.paralyzedFor=spec[size_t(i)].paralyzed ? 300 : 0;
+            if (spec[size_t(i)].listed) listed.push_back(c.id);
+        }
+        std::sort(listed.begin(),listed.end());
+        w.player(0).visibleEnemies=listed;
+        w.setGameSeed(seed^0x66e29572u);   // retailSeed: the state is `seed` (odd)
+        const int picked=w.retailMissionScan(u);
+        int index=-1;
+        for (int i=0;i<k;++i) if (ids[size_t(i)]==picked) index=i;
+        std::printf("%d %u\n",index,w.gameRngState());
+    }
+    return 0;
+}
+
+// The oracle for tools/re/check_issue_gate.py. One call per stdin line:
+//   mover point stance fire explicit force x z leash
+// A mover with a point is a walker (the ground missions' calls), a mover
+// without one a flyer (the VTOL calls), a non-mover a building; the target
+// an enemy unit. Prints the result, then the missions in the order the gate
+// builds them: "return:<response mode>:<goal x>:<goal z>" and
+// "attack:<auto>:<leash>:<origin x>:<origin z>" (leash and origin 0 when
+// the attack is not leashed).
+int gateOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        int mover=0,point=0,stance=0,fire=0,isExplicit=0,force=0,x=0,z=0,leash=0;
+        in>>mover>>point>>stance>>fire>>isExplicit>>force>>x>>z>>leash;
+        auto type=gunner(300);type.id="unit";type.leash=leash;
+        if (!mover) { type.canMove=false;type.maxVel=sim::Fixed(); }
+        else if (!point) { type.canFly=true;type.vtolStandby=true; }
+        const auto d=dummy();
+        sim::World w;setup(w,2);
+        const int id=w.spawn(&type,float(x),float(z),0,0);
+        const int foe=w.spawn(&d,float(x+200),float(z),0,1);
+        auto& u=*w.unit(id);
+        u.orders.clear();u.moveState=stance;u.fireState=fire;
+        using MA=sim::World::MissionAttack;
+        const MA how=isExplicit ? MA::Forced : point ? (force ? MA::Patrol : MA::Standby)
+                                                     : (force ? MA::VtolPatrol : MA::Vtol);
+        const bool issued=w.retailMissionAttack(u,foe,how);
+        std::string out=issued ? "1" : "0";
+        if (issued) {
+            const auto& o=u.orders;
+            if (o.size()>1 && o[1].targetId==0) {
+                const int mode=o[1].groundMission ? o[1].groundResponse.mode : 0;
+                out+=" return:"+std::to_string(mode)+":"+std::to_string(o[1].x.floorInt())+":"+
+                     std::to_string(o[1].z.floorInt());
+            }
+            const auto& a=o.front();
+            out+=" attack:"+std::to_string(a.autoTarget ? 1 : 0)+":"+std::to_string(a.chaseLeashed ? a.chaseLeash : 0)+
+                 ":"+std::to_string(a.chaseLeashed ? a.chaseOrigin.x : 0)+":"+std::to_string(a.chaseLeashed ? a.chaseOrigin.z : 0);
+        }
+        std::printf("%s\n",out.c_str());
+    }
+    return 0;
+}
+
+// One row per line: slots switcher selected bits draw, then per slot its
+// automatic flag and target state (0 none, 1 inside the minimum range, 2 out
+// of reach, 3 good). Answers per slot the final automatic flag and whether
+// its target was cleared, then the event word's slot bits left.
+int guardOracle() {
+    std::string line;
+    while (std::getline(std::cin,line)) {
+        std::istringstream in(line);
+        int slots=0,switcher=0,selected=0,draw=0;uint32_t bits=0;
+        in>>slots>>switcher>>selected>>bits>>draw;
+        sim::UnitType tower;tower.id="tower";tower.maxHp=500;tower.footX=tower.footZ=2;
+        tower.canMove=false;tower.maxVel=sim::Fixed();tower.sight=400;tower.sightHeight=24;
+        tower.weaponSwitching=switcher!=0;
+        for (int s=0;s<slots;++s) {
+            sim::Weapon wp;wp.name="w"+std::to_string(s);wp.range=300;wp.minRange=100;wp.damage=10;wp.reload=1;
+            tower.weapons.push_back(wp);
+        }
+        if (!tower.weapons.empty()) tower.weapon=tower.weapons[0];
+        const auto d=dummy();
+        sim::World w;setup(w,2);
+        const int id=w.spawn(&tower,1000,1000,0,0);
+        static constexpr float kDist[4]={0,50,450,200};
+        static constexpr float kDir[3][2]={{1,0},{0,1},{-1,0}};
+        std::array<int,3> before{};
+        for (int s=0;s<slots;++s) {
+            int automatic=0,state=0;in>>automatic>>state;
+            auto& u=*w.unit(id);
+            u.slotAuto=automatic ? uint8_t(u.slotAuto|1u<<s) : uint8_t(u.slotAuto&~(1u<<s));
+            if (state) {
+                const int foe=w.spawn(&d,1000+kDir[s][0]*kDist[state],1000+kDir[s][1]*kDist[state],0,1);
+                w.unit(id)->slotTarget[size_t(s)]=foe;before[size_t(s)]=foe;
+            } else w.unit(id)->slotTarget[size_t(s)]=0;
+        }
+        auto& u=*w.unit(id);
+        u.weaponSlot=selected;u.missionEvents=bits;
+        w.retailGuardNoMoveSlots(u,draw);
+        std::string out;
+        for (int s=0;s<slots;++s)
+            out+=std::to_string(u.slotAuto>>s&1)+":"+std::to_string(before[size_t(s)] && !u.slotTarget[size_t(s)] ? 1 : 0)+" ";
+        out+=std::to_string(u.missionEvents&0xe00000u);
+        std::printf("%s\n",out.c_str());
     }
     return 0;
 }

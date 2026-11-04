@@ -1382,7 +1382,7 @@ void World::setTerrain(const std::vector<uint8_t>& heights, int w, int h, int se
     navigationExplored_.assign(explorationHeights_.size(),0);
     explorationBlocks_.clear();   // rebuilt for the new plane by the next exploration pass
     restoredNavigationViewer_=-1;
-    for (auto& u:units_) { u.sightFootprint={};u.viewSight={};u.viewPlayer=-1; }
+    for (auto& u:units_) { u.sightFootprint={};u.viewSight={};u.viewPlayer=-1;u.viewPlanes=0; }
     viewCounts_.clear();deathSights_.clear();
     // Road cells: the retail map format marks them as 0xFFFB in the feature
     // plane (verified against Two Castles -- the mask traces the road network).
@@ -2076,11 +2076,11 @@ int World::flightGround(const Unit& u) const {
 }
 
 // A flyer's move, fight-move or patrol leg: VTOL_Move (VTOL_Move_Formation
-// for a formation leg) or VTOL_Patrol, run by tickFlightPatrol. Retail has no
-// fight-move: a fight-move leg (attackMove) flies VTOL_Move as a move does,
-// and World's target acquisition puts its attacks ahead of it. Every flyer's
-// patrol is VTOL_Patrol, armed or a builder: its stage-2 scan and job search
-// are World's acquisition and tickPatrolRepair.
+// for a formation leg) or VTOL_Patrol, run by tickFlightPatrol. A fight-move
+// leg (attackMove) flies VTOL_Move with response mode -1 (markFightLeg), as
+// retail's MoveFight order does: its stage-2 scan puts the attacks ahead of
+// it. Every flyer's patrol is VTOL_Patrol, armed or a builder: its stage-2
+// scan (41a24d) and job search (tickPatrolRepair).
 static bool plainFlightPatrol(const Unit& u) {
     if (!u.type || !u.type->canFly || u.orders.empty()) return false;
     const auto& order=u.orders.front();
@@ -2199,7 +2199,54 @@ void World::tickFlightPatrol(Unit& u) {
                 }
                 if (m.stage==2) {
                     if (events&0x700) return 1;
+                    // 418193..4185fe: Move_Ground's response (402e2e) on a
+                    // flyer: the scan when the response mode is below 0, or
+                    // above 0 off Hold Position; the +0xf8 fallback; mode > 0
+                    // on Maneuver drops a hit at or beyond the leash from the
+                    // goal (+0x24/+0x2c). The attack (mode 1, leash
+                    // maneuverleashlength) has its origin where the flyer is
+                    // (mode < 0: the move keeps it, stage 5) or the goal
+                    // (mode > 0: stage 0). 4d4d40(0) drops the controller.
+                    auto& response=order.groundResponse;
+                    if (response.mode<0 || (response.mode>0 && u.moveState)) {
+                        int found=w.retailHostScan(u);
+                        if (!found) found=w.retailMoveFallback(u);
+                        const Unit* enemy=found ? w.unit(found) : nullptr;
+                        const uint16_t leash=uint16_t(std::clamp(u.type->leash,0,65535));
+                        const RetailGroundPoint position{int16_t(u.x.floorInt()),int16_t(u.z.floorInt())};
+                        const RetailGroundPoint goalPoint{int16_t(order.x.floorInt()),int16_t(order.z.floorInt())};
+                        if (enemy && !(response.mode>0 && u.moveState==1 &&
+                                retailGroundDistance({int16_t(enemy->x.floorInt()),int16_t(enemy->z.floorInt())},
+                                                     goalPoint)>=leash)) {
+                            if (auto attack=w.retailBuiltAttack(u,found,true,leash,
+                                    response.mode<0 ? position : goalPoint)) {
+                                if (response.mode<0) { response.origin=position; response.goal=goalPoint; m.stage=5; }
+                                else m.stage=0;
+                                order.flightGoal.reset();order.mission.pending&=~0x3700u;
+                                u.orders.insert(u.orders.begin(),*attack);
+                                return 4;
+                            }
+                        }
+                    }
                     m.waitMask=0x700;m.sleep(w.tickCounter_,random(10)+5);return 2;
+                }
+                if (m.stage==5) {
+                    // 4186f5: after the attack, a return move to the origin
+                    // when the flyer is past it by more than a third of the
+                    // leash (retailGroundReturnNeeded, as Move_Ground's
+                    // stage 3); then the move again from stage 0.
+                    const auto response=order.groundResponse;
+                    const uint16_t leash=uint16_t(std::clamp(u.type->leash,0,65535));
+                    const RetailGroundPoint position{int16_t(u.x.floorInt()),int16_t(u.z.floorInt())};
+                    m.stage=0;
+                    if (retailGroundReturnNeeded(position,response,leash)) {
+                        Order back{Fixed::fromInt(response.origin.x),Fixed::fromInt(response.origin.z),0};
+                        back.goal=back.flightMoveMission=true;back.mission.flags=0x1000000u;
+                        back.groundResponse.mode=1;back.groundResponse.goal=response.origin;
+                        back.issuedTick=w.tickCounter_;
+                        u.orders.insert(u.orders.begin(),back);
+                    }
+                    return 4;
                 }
                 if (m.stage==3) {
                     if (u.orders.size()>1) return 5;
@@ -2243,6 +2290,16 @@ void World::tickFlightPatrol(Unit& u) {
             }
             if (m.stage==2) {
                 if (events&0x700) { m.stage=1; return 6; }
+                // 41a24d: 4d8370, then 4d7de0(unit, found, 0, 0, 1, 1); an
+                // attack put in clears the wait mask and returns 3. The
+                // dispatcher's sleep is taken here, before the insert
+                // invalidates m (4: the dispatcher touches m no more).
+                if (const int found=w.retailHostScan(u);found && w.retailIssueAutoAttackAllowed(u,found,true)) {
+                    m.waitMask=0;
+                    m.sleep(w.tickCounter_,random(30)+15);
+                    w.retailMissionAttack(u,found,MissionAttack::VtolPatrol);
+                    return 4;
+                }
                 m.waitMask|=0x700;
                 m.sleep(w.tickCounter_,random(10)+5);
                 return 2;
@@ -2421,8 +2478,9 @@ void World::tickFlightBody(Unit& u) {
 
 void World::tickGuardNoMove(Unit& u) {
     const bool eligible=u.guardNoMoveAllowed && u.type->isStructure() && !u.underConstruction &&
-        u.buildQueue.empty() && !u.buildSiteId &&
-        (u.orders.empty() || u.orders.front().autoTarget);
+        u.buildQueue.empty() && !u.buildSiteId && u.orders.empty();
+    // An attack in front (a hit response's, an order's) is the head mission
+    // in retail, ahead of Guard_NoMove, which then does not run.
     if (!eligible) { u.guardNoMoveActive=false; return; }
     if (!u.guardNoMoveActive) { u.guardNoMoveState={}; u.guardNoMoveActive=true; }
     struct Host {
@@ -2437,7 +2495,7 @@ void World::tickGuardNoMove(Unit& u) {
         void clear() { u.guardNoMoveActive=false; }
         int handle(RetailMissionState& m,uint32_t) {
             return retailGuardNoMove(m,w.tickCounter_,true,!u.type->weapons.empty(),
-                [&](int n){return random(n);},[&]{ w.acquireTarget(u,true); });
+                [&](int n){return random(n);},[&]{ w.retailGuardNoMoveSlots(u); });
         }
     } host{*this,u};
     retailDispatchMissions(tickCounter_,u.missionEvents,host);
@@ -2585,8 +2643,9 @@ bool World::legionLiftable(const Unit& f,int player) const {
 // a member is blocked by the flyer itself (it covers the member's next planned
 // cells); a capped episode then rests kLegionLiftCapRest ticks once landed.
 // While lifted the flyer polls for a target on the VTOL-standby call
-// (acquireTarget, as the landed standby does) every kLegionLiftPoll ticks,
-// staggered by id: lifted flyers fight instead of hovering through a battle.
+// (retailHostScan with VTOL_Standby's tail, as the landed standby does)
+// every kLegionLiftPoll ticks, staggered by id: lifted flyers fight instead
+// of hovering through a battle.
 bool World::requestLegionLift(Unit& f, bool blocked) {
     if (!f.legionLift) {
         f.legionLift=true; f.legionLiftX=f.x; f.legionLiftZ=f.z; f.legionLiftSince=tickCounter_;
@@ -2618,7 +2677,9 @@ bool World::tickLegionLift(Unit& u) {
     }
     if (u.flightGroundMode==2 && (uint32_t(u.id)+tickCounter_)%kLegionLiftPoll==0) {
         if (legion_) legion_->noteFlyerEvent(LegionNavigator::FlyerEvent::TargetPoll);
-        if (acquireTarget(u,true)) {
+        // VTOL_Standby's rule (4176bc): 4d8370, then 4d7de0(unit, found, 0,
+        // 0, 1, 0).
+        if (const int found=retailHostScan(u);found && retailMissionAttack(u,found,MissionAttack::Vtol)) {
             // A target: the attack order ends the lift (the flyer is no longer
             // liftable) and this tick's combat update takes it on.
             u.legionLift=false;
@@ -3216,7 +3277,7 @@ const World::LegionFlightStation* World::legionFlightStation(const Unit& u) cons
 // scatters a packed flyer formation's touchdowns (legion_flyerfront 56 -> 171px).
 bool World::standbyEligible(const Unit& u) const {
     return u.standbyAllowed && u.type && (!u.type->canFly || u.type->vtolStandby) && !u.type->isStructure() &&
-           !u.type->wanders && !u.buildSiteId && !u.repairId && !u.reclaimId &&
+           !(u.type->wanders && u.type->canFly) && !u.buildSiteId && !u.repairId && !u.reclaimId &&
            u.buildQueue.empty() && !u.repeatType && u.orders.empty() &&
            (!u.retainedFlightGoal || u.retainedFlightControllerActive);
 }
@@ -3224,7 +3285,9 @@ bool World::standbyEligible(const Unit& u) const {
 void World::beginStandby(Unit& u) {
     if (!standbyEligible(u)) return;
     u.standbyState = {};
-    if (!u.type->canFly) u.standbyState.flags=0x5012000u;
+    // Standby's registry flags; Standby_Wander's row (5eb826) differs from
+    // Standby's (5eb7f4) only in its last flag byte, 0 for 5 (I: 0x0012000).
+    if (!u.type->canFly) u.standbyState.flags=u.type->wanders ? 0x0012000u : 0x5012000u;
     u.standbyActive = true;
 }
 
@@ -3302,10 +3365,23 @@ void World::tickGroundMission(Unit& u) {
             if (&m==&u.standbyState && u.type->canFly)
                 return retailVtolStandby(m,w.tickCounter_,true,true,u.flightGroundMode==2,
                     [&](int n){return random(n);},[&]{ initialize(); },
-                    [&]{return w.acquireTarget(u,true);},[&]{u.landing.emplace();return true;});
+                    [&] {
+                        // 4176bc: 4d8370, then 4d7de0(unit, found, 0, 0, 1, 0).
+                        const int found=w.retailHostScan(u);
+                        return found && w.retailMissionAttack(u,found,MissionAttack::Vtol);
+                    },[&]{u.landing.emplace();return true;});
+            if (&m==&u.standbyState && u.type->wanders)
+                return retailStandbyWander(m,w.tickCounter_,true,u.moveState==0,[&](int n) { return random(n); },
+                    [&] { w.setSlotsAuto(u); },[&] { return w.retailWanderScan(u); });
             if (&m == &u.standbyState)
                 return retailStandby(m,w.tickCounter_,true,[&](int n) { return random(n); },
-                    [&] { w.cancelPath(u); }, [&] { return w.acquireTarget(u,true); });
+                    [&] { w.cancelPath(u); }, [&] {
+                        // 407839: 4d8370, then 4d7de0(unit, found, 0, &pos, 1, 0):
+                        // nothing on Hold Position, a leashed attack and a
+                        // return move on Maneuver, a plain attack on Roam.
+                        const int found=w.retailHostScan(u);
+                        return found && w.retailMissionAttack(u,found,MissionAttack::Standby);
+                    });
             auto& goal = u.orders[currentLeg(u.orders)];
             if(goal.transportUnloadApproach) {
                 const auto target=goal.missionTarget.value_or(std::pair{goal.x,goal.z});
@@ -3406,7 +3482,7 @@ void World::tickGroundMission(Unit& u) {
             if (goal.formationLevel) {
                 const int level=goal.formationLevel;
                 const bool all=(m.flags&0x4000000u)!=0;
-                return retailGroundFormation(m,w.tickCounter_,level,u.embarked(),response.mode,
+                const int result=retailGroundFormation(m,w.tickCounter_,level,u.embarked(),response.mode,
                     [&] { return group && (level>0
                         ? retailGroupOutOfSlot(*group,w.retailGroupMember(u),false,level,all)
                         : retailGroupOutOfSlot(*group,w.retailGroupMember(u),true,-level,all)); },
@@ -3424,7 +3500,31 @@ void World::tickGroundMission(Unit& u) {
                         goal.x=Fixed::fromInt(int16_t(c.x));goal.z=Fixed::fromInt(int16_t(c.z));
                         goal.missionTarget=std::pair{goal.x,goal.z};
                     },
-                    [&] { resetGoal(4); },[] { return false; },[&](int n) { return random(n); });
+                    [&] { resetGoal(4); },[&] {
+                        // 40296c: off Hold Position, 4d8370; mode > 0 on
+                        // Maneuver drops a hit at or beyond the leash from
+                        // the formation point (+0x24/+0x2c); the attack is
+                        // Move_Ground's (mode 1, leash maneuverleashlength,
+                        // origin the formation point), with no fallback.
+                        if (u.moveState==0) return false;
+                        const int found=w.retailHostScan(u);
+                        if (!found) return false;
+                        const Unit* enemy=w.unit(found);
+                        const RetailGroundPoint point{int16_t(goal.x.floorInt()),int16_t(goal.z.floorInt())};
+                        if (response.mode>0 && u.moveState==1 &&
+                            retailGroundDistance({int16_t(enemy->x.floorInt()),int16_t(enemy->z.floorInt())},
+                                                 point)>=leash) return false;
+                        auto attack=w.retailBuiltAttack(u,found,true,leash,point);
+                        if (!attack) return false;
+                        auxiliary=std::move(attack);
+                        w.cancelPath(u);u.routeStamp=-1;
+                        goal.controller=0;m.pending&=~0x3700u;
+                        return true;
+                    },[&](int n) { return random(n); });
+                // Inserting invalidates m and goal; the template set the
+                // stage first (0 after an attack).
+                if (auxiliary) u.orders.insert(u.orders.begin(),*auxiliary);
+                return result;
             }
             if (group && w.pathfindingMode_==PathfindingMode::Retail && !goal.park) {
                 const auto member=w.retailGroupMember(u);
@@ -3460,8 +3560,9 @@ void World::tickGroundMission(Unit& u) {
             // (see the Move mask below); Legion owns its arrival.
             if (goal.patrol && w.legion_ && isLegionPathfinding(w.pathfindingMode_) && w.legion_->supports(u))
                 events&=~0x2600u;
-            if (goal.patrol)
-                return retailGroundPatrol(m,goal.missionRadius,w.tickCounter_,events,
+            if (goal.patrol) {
+                int patrolAttack=0;
+                const int result=retailGroundPatrol(m,goal.missionRadius,w.tickCounter_,events,
                     int16_t(u.type->footX),true,[&](int n){return random(n);},
                     [&] {
                         // Initialize: a Shift-queued patrol that starts with no
@@ -3474,7 +3575,26 @@ void World::tickGroundMission(Unit& u) {
                         for (size_t i=current+1;i<u.orders.size();++i)
                             loop|=u.orders[i].goal && u.orders[i].patrol && !u.orders[i].patrolOpen;
                         if (!loop) {patrolReturn=std::pair{u.x,u.z};patrolReturnIdentity=goal.identity();}
-                    },resetGoal,[]{return 0;});
+                    },resetGoal,[&] {
+                        // 40395e: 4d8370, then 4d7de0(unit, found, 0, &pos,
+                        // 1, 1): a forced leash and return move, Hold
+                        // Position included. Put in once the patrol's own
+                        // state is done with (below).
+                        const int found=w.retailHostScan(u);
+                        if (!found || !w.retailIssueAutoAttackAllowed(u,found,true)) return 0;
+                        patrolAttack=found;
+                        return 3;
+                    });
+                if (patrolAttack) {
+                    // The dispatcher's sleep for 3 (15 + rand(30)) on the
+                    // patrol, then the attack ahead of it; inserting
+                    // invalidates m, so the dispatcher gets 4 (no access).
+                    m.sleep(w.tickCounter_,random(30)+15);
+                    w.retailMissionAttack(u,patrolAttack,MissionAttack::Patrol);
+                    return 4;
+                }
+                return result;
+            }
             // Retail relaxes the goal radius after failed searches. Legion
             // waits/retries the same plain Move instead: a blocked army must
             // never "arrive" because repeated failures enlarged its circle.
@@ -3483,25 +3603,25 @@ void World::tickGroundMission(Unit& u) {
             const int result=retailGroundMove(m,goal.missionRadius,w.tickCounter_,events,
                 int16_t(u.type->footX),u.embarked(),response.mode,uint8_t(u.moveState),[&](int n) { return random(n); },
                 resetGoal,[&] {
-                    // Target scoring and retaliation eligibility still use the
-                    // World's combat host; the mission owns when to poll it.
-                    int target=w.findTarget(u,true,true,response.mode<0);
-                    if (!target && u.fireState!=0 && u.lastHitBy) {
-                        const Unit* enemy=w.unit(u.lastHitBy);
-                        if (enemy && enemy->alive() && !enemy->embarked() && enemy->type &&
-                            !w.allied(u.player,enemy->player) && !enemy->cloaked &&
-                            fxLen(enemy->x-u.x,enemy->z-u.z)<=Fixed::fromFloat(u.type->maxRange()+90)) {
-                            if (w.canAttackTarget(u,*enemy)) target=enemy->id;
-                        }
-                    }
+                    // 402e2e: 4d8370, else the stored attacker (+0xf8).
+                    int target=w.retailHostScan(u);
+                    if (!target) target=w.retailMoveFallback(u);
                     if (!target) return false;
                     const auto* enemy=w.unit(target);
+                    // Mode > 0 on Maneuver: a hit at or beyond the leash from
+                    // the move's goal is dropped, with no rescan.
                     if (response.mode>0 && u.moveState==1 &&
                         retailGroundDistance({int16_t(enemy->x.floorInt()),int16_t(enemy->z.floorInt())},
                                              response.goal)>=leash) return false;
+                    // Both branches build the same attack: mode 1 (an automatic
+                    // chase) and leash maneuverleashlength on every stance; its
+                    // origin is where the unit stands (mode < 0, which the
+                    // Move keeps to return to) or the move's goal (mode > 0).
+                    const RetailGroundPoint origin=response.mode<0 ? position : response.goal;
+                    auto attack=w.retailBuiltAttack(u,target,true,leash,origin);
+                    if (!attack) return false;
                     if (response.mode<0) response.origin=position;
-                    auxiliary.emplace(); auxiliary->targetId=target;
-                    auxiliary->goal=true; auxiliary->autoTarget=response.mode>=0;
+                    auxiliary=std::move(attack);
                     w.cancelPath(u); u.routeStamp=-1;
                     goal.controller=0; m.pending&=~0x3700u;
                     return true;
@@ -4841,6 +4961,21 @@ bool World::tickTransport(Unit& u, float dt) {
     return advanceCarrier();
 }
 
+// Retail's fight-move order (UnitCommand MoveFight, 4b0e40: game+0x17633 |=
+// 0x400; the order code 5214b0 then gives Move_Ground, VTOL_Move or QMove
+// response mode -1, 521bf4..521c5b, 521867..521892): the move scans (4d8370)
+// at its wake on every stance, falls back to the stored attacker, and puts
+// an automatic leashed chase ahead of itself with its origin where the unit
+// stood; after it the Move returns there and goes on (Move_Ground stage 3,
+// VTOL_Move stage 5). A patrol leg also carries attackMove but scans in its
+// own mission, so it keeps mode 0.
+void World::markFightLeg(Order& o) {
+    o.attackMove = true;
+    if (o.patrol) return;
+    o.groundResponse.mode = -1;
+    o.groundResponse.goal = {int16_t(o.x.floorInt()), int16_t(o.z.floorInt())};
+}
+
 void World::attackMove(int unitId, float x, float z, bool queue) {
     Unit* u = unit(unitId);
     // isStructure(), NOT canMove: the Keep and both Taros/Veruna walls declare
@@ -4850,15 +4985,16 @@ void World::attackMove(int unitId, float x, float z, bool queue) {
     if (!u || !u->alive() || !u->type) return;
     if (u->type->isStructure() || u->repeatType) {
         Order o{Fixed::fromFloat(x), Fixed::fromFloat(z), 0};
-        o.attackMove = true;
+        markFightLeg(o);
         setRally(*u, o, queue);
         return;
     }
     size_t before = queue ? u->orders.size() : 0;
     order(unitId, x, z, queue, ConvoyClass::Fight);
-    // A flyer's leg keeps order()'s VTOL_Move (flightMoveMission): retail
-    // has no fight-move, so it flies the move's mission, check and all.
-    for (size_t i = before; i < u->orders.size(); ++i) u->orders[i].attackMove = true;
+    // A flyer's leg keeps order()'s VTOL_Move (flightMoveMission), the
+    // fight-move's mission with response mode -1, as a ground leg's
+    // Move_Ground.
+    for (size_t i = before; i < u->orders.size(); ++i) markFightLeg(u->orders[i]);
 }
 
 void World::patrol(int unitId, float x, float z) {
@@ -6301,212 +6437,6 @@ bool World::canAttackTarget(const Unit& from,const Unit& target) const {
     return std::any_of(from.type->weapons.begin(),from.type->weapons.end(),usable);
 }
 
-int World::findTarget(Unit& u, bool missionPoll, bool groundResponse, bool chases) {
-    // VTOL landing also clears active. Only switchable units interpret it as
-    // power-off; ordinary landed flyers must still acquire and fire.
-    if (u.type->onOffable && !u.active) return false;
-    // Auto-acquire: idle armed units engage the nearest enemy in reach;
-    // attack-movers and patrollers interrupt their route to fight. A PASSIVE unit
-    // (stance 2, hold fire) never auto-acquires -- it only fights when ordered.
-    // A builder mid-job -- constructing a site, repairing, reclaiming, holding
-    // queued builds, or producing from a queue -- stays on task: it does NOT
-    // auto-acquire a nearby enemy and wander off to fight while it should build.
-    // Every gate below is a pure test and the scan runs only if all of them pass,
-    // so their order is free: the cheap ones go first and the order-queue walk
-    // (hasQueuedWork) last, because most armed units fail the stride gate on any
-    // given tick and would otherwise walk their whole queue for nothing.
-    // Auto-acquisition belongs to the FIRE order: only Fire At Will goes looking.
-    // Hold Fire and Return Fire both wait to be handed a target (an explicit attack
-    // order still works -- retail's hold-fire gate has a "forced" bypass for
-    // exactly that).
-    // Auto-acquisition is staggered across ticks by unit id: an idle armed unit
-    // rescans for a target every kAcqStride ticks (~0.13s at 30Hz), not every
-    // tick. That turns the dense-crowd O(n^2) neighbour scan into O(n^2/stride)
-    // -- the dominant sim cost when thousands of idle armed units pile together.
-    // Deterministic (id+tick, identical on every lockstep peer), so no desync. The
-    // stride widens with the crowd (acqStride_, set at tick start) so massive battles
-    // rescan less often -- the acquisition cost scales sub-linearly instead of O(n).
-    const bool acqTurn = missionPoll || (uint32_t(u.id) + tickCounter_) % acqStride_ == 0;
-    const bool acquireGate = u.fireState == 2 && acqTurn && !isNeutralPlayer(u.player) &&
-        u.type->weapon.damage > 0 &&
-        (groundResponse || u.orders.empty() ||
-         (u.orders.front().targetId == 0 &&
-          (u.orders.front().attackMove || u.orders.front().patrol)) ||
-         u.orders.front().guard) &&
-        u.buildSiteId == 0 && u.repairId == 0 && u.reclaimId == 0 &&
-        (u.type->isStructure() || (u.buildQueue.empty() && !u.repeatType));
-    TAK_PROBE(if (acquireGate) ++probe::tl.acqGateWalks;
-              if (u.buildSiteId == 0 && u.repairId == 0 && u.reclaimId == 0) ++probe::tl.acqGateWalksBefore);
-    const bool acquiring = acquireGate && !hasQueuedWork(u);
-#ifndef NDEBUG
-    // TAK_VERIFY_ACQ_GATE: the gates in their original order (busyBuilding first)
-    // must decide exactly as the reordered ones.
-    static const bool verifyGate = probe::envOn("TAK_VERIFY_ACQ_GATE");
-    if (verifyGate) {
-        const bool busyBuilding = u.buildSiteId != 0 || u.repairId != 0 || u.reclaimId != 0 ||
-                                  hasQueuedWork(u) ||
-                                  (!u.type->isStructure() && (!u.buildQueue.empty() || u.repeatType));
-        const bool acquiringBefore = !busyBuilding && u.fireState == 2 &&
-                                     (groundResponse || u.orders.empty() ||
-                                      (u.orders.front().targetId == 0 &&
-                                       (u.orders.front().attackMove || u.orders.front().patrol)) ||
-                                      u.orders.front().guard);
-        if ((acquiringBefore && !isNeutralPlayer(u.player) && u.type->weapon.damage > 0 && acqTurn) != acquiring)
-            throw std::runtime_error("findTarget: reordered acquisition gates disagree with the original order");
-    }
-#endif
-    // Retail's scan (4d8370) runs the picker (412620) for the slot 519ac0
-    // names, a switcher's selected one, else the first. For a melee slot the
-    // picker keeps grounded units only (+0x130 & 3 == 1, 412932..412945):
-    // a flyer in the air is never acquired, a landed one is.
-    const Weapon* scanWeapon = u.type->weapons.empty() ? nullptr :
-        &u.type->weapons[size_t(u.type->weaponSwitching ?
-            std::clamp(u.weaponSlot,0,int(u.type->weapons.size())-1) : 0)];
-    const bool groundOnly = scanWeapon && scanWeapon->melee;
-    auto canTarget = [&](const Unit& e) {
-        if (e.cloaked) return false;   // cloaked units are invisible to auto-acquire
-        if (groundOnly && e.flightGroundMode != 1) return false;
-        return canAttackTarget(u,e);
-    };
-    if (acquiring) {
-        // The +90 is approach margin: room to notice something and walk to it. A
-        // unit whose move order forbids leaving has no use for it -- it should
-        // acquire only what it can already shoot, or it would lock onto something
-        // it will never reach and then drop it again next tick.
-        float ar = u.type->maxRange() + (u.moveState == 0 ? 0.0f : 90.0f);
-        int best = 0;
-        // The rank of the best so far: its squared distance, ten times that for
-        // a target with construction left (below). The range test is its own.
-        float bestD = 1e30f;
-        // fireatwillrandom: spread fire across whatever is in range instead of
-        // every unit converging on the nearest body. Only while AUTO-acquiring --
-        // an explicit attack order still goes exactly where it was pointed, which
-        // is retail's gate too (its scorer is reached only from the fire-at-will
-        // path, and every shipped unit is fire-at-will by default since no FBI
-        // sets standingfireorder).
-        const bool scatter = u.type->fireAtWillRandom;
-        float bestScore = 1e30f;
-        // maneuverleashlength limits how far an IDLE defender will chase from its
-        // post. It must NOT apply while attack-moving/patrolling — those orders
-        // mean "advance and engage everything en route", so an army that has
-        // travelled far from its spawn still acquires (incl. just-conjured foes).
-        // An OFFENSIVE unit (stance 0) ignores its leash entirely and chases freely.
-        // ... while whether you may LEAVE to engage belongs to the move order:
-        //   0 = never (shoot what wanders into range, but hold the post),
-        //   1 = only within maneuverleashlength of where you were posted,
-        //   2 = no limit.
-        // The leash is measured from home, and an attack-move or patrol overrides
-        // it entirely -- those orders mean "advance and engage everything en route".
-        float leash2 = (u.moveState == 1 && u.orders.empty() && u.type->leash > 0)
-                           ? u.type->leash * u.type->leash : 1e30f;
-        // This scan stands in for retail's 4d8370 (Standby, Patrol, a move's
-        // attack response, the VTOL missions' retargets), which runs the picker
-        // 412620 over list +5. That list holds enemies with construction left
-        // (411700: a site still being conjured, a unit still being built at a
-        // factory door), and the picker takes one behind finished targets: its
-        // score is multiplied by 10 (412b52..412b77). Here the nearest-first
-        // rank is a site's squared distance x10, and the scatter score x10.
-        // Two scans take no site, as in retail: a guard's (Follow_Ground and
-        // VTOL_Follow run no scan; they answer the guarded unit's attacker,
-        // and a site never attacks), and one whose scanning slot (519ac0: a
-        // switcher's selected weapon, else the first) is a stone, freeze or
-        // charm class, which the picker never offers a site (4127eb..4128db).
-        const bool guarding = !groundResponse && !u.orders.empty() && u.orders.front().guard;
-        const bool takesSites = !guarding && !(scanWeapon &&
-            (scanWeapon->status==Weapon::Status::Stoned || scanWeapon->status==Weapon::Status::Frozen ||
-             scanWeapon->mindControl));
-        // A ranged unit only auto-acquires enemies it can actually see, so it
-        // doesn't charge a target hidden behind a wall (which caused pile-ups at
-        // corners). Melee/flyers acquire regardless.
-        // Whether that needs the 2D line is decided by the weapon the unit
-        // fights with (approachNeedsClearLine), as tickCombat decides it: a
-        // Ballistic shell flies its arc over the wall, as in retail.
-        uint64_t enemies=~uint64_t(0);
-        for (int player=0;player<numPlayers() && player<64;++player)
-            if (allied(player,u.player)) enemies&=~(uint64_t(1)<<player);
-        TAK_PROBE(++probe::tl.acqScans; probeNear(u.x.toFloat(), u.z.toFloat(), ar, enemies, true));
-        forEachNear(u.x.toFloat(), u.z.toFloat(), ar, [&](int idx) {
-            const Unit& e = units_[size_t(idx)];
-            if (!e.alive() || e.embarked() || isNeutralPlayer(e.player) || allied(e.player, u.player) || !e.type) return;
-            if (e.underConstruction && !takesSites) return;
-            float dx = (e.x - u.x).toFloat(), dz = (e.z - u.z).toFloat();
-            float d = dx * dx + dz * dz;
-            const float rank = e.underConstruction ? d * 10.0f : d;
-            // A scatter-firing unit still only considers what is in RANGE (retail
-            // gathers by radius the same way), but inside that set it no longer
-            // prefers the nearest -- so the early-out on distance is skipped.
-            if (!scatter && rank >= bestD) return;
-            if (d >= ar * ar) return;
-            float hx = (e.x - u.homeX).toFloat(), hz = (e.z - u.homeZ).toFloat();
-            if (hx * hx + hz * hz > leash2) return;   // outside the leash
-            // Range rejects most candidates. Damage/category lookup is pure,
-            // so defer it until these cheap geometric checks have passed.
-            if (!canTarget(e)) return;
-            if (shotBlockedHere(u,e)) return;   // written off from this spot (noteShotImpact)
-            // A unit that may not leave its post (tickCombat's !mayChase) drops
-            // an auto target out of its reach at once; never pick one up, or it
-            // is acquired and dropped again on every acquisition turn, and each
-            // acquisition (setSlotsManual) wipes the fire-at-will sweep's slot
-            // targets. The reach is tickCombat's own (combatReach): the arc for
-            // a ballistic weapon, else the selected weapon's range (the longest
-            // when all fire), centre to centre for a structure too. Melee keeps
-            // the old reach.
-            // A ground mission's attack response (chases: not an auto target)
-            // may chase, as tickCombat's mayChase says, so it is not held to it.
-            if (!(u.type->canMove && (u.moveState != 0 || chases))) {
-                const CombatReach cr=combatReach(u,e,std::sqrt(d));
-                if (cr.weapon && !cr.weapon->melee && !cr.in) return;
-            }
-            if (approachNeedsClearLine(u,e) && !combatLineOfSight(u,e))
-                return;                         // no clear shot: don't acquire it
-            if (scatter) {
-                // Retail's scorer, with the flag's substitution in place: n is
-                // INT_MAX/damage instead of dist^2/damage, and the winner is the
-                // lowest of rand(n)/2 + rand(n). Dividing by damage keeps the
-                // draw biased toward whatever this weapon hits hardest, which is
-                // the half of the original scoring the flag does NOT remove.
-                float dmg = 0;
-                for (const auto& wp : u.type->weapons)
-                    if (!(wp.noAir && e.flightGroundMode==2))
-                        dmg = std::max(dmg, wp.damageVs(e.type));
-                if (dmg <= 0) return;
-                uint32_t n = uint32_t(float(0x7FFFFFFF) / dmg);
-                const auto firstRoll = fireRand(n);
-                const auto secondRoll = fireRand(n);
-                float score = float(firstRoll) / 2.0f + float(secondRoll);
-                if (e.underConstruction) score *= 10.0f;
-                if (score >= bestScore) return;
-                bestScore = score; best = e.id;
-                return;
-            }
-            bestD = rank; best = e.id;
-        },enemies);
-        return best;
-    }
-    return false;
-}
-
-bool World::acquireTarget(Unit& u,bool missionPoll) {
-    // An idle flyer's acquisition is VTOL_Standby's: 4d8370, then 4d7de0(unit,
-    // found, 0, 0, 1, 0) (4176cc), which refuses on Hold Position
-    // (+0x130 & 0x30000 == 0, 4d7e0a..4d7e19). No attack is pushed, so the
-    // flyer flies no attack run, hover ring or dogfight; its auto slots (the
-    // fire-at-will sweep) still shoot what is in range from its post.
-    if (u.moveState==0 && u.orders.empty() && u.type->canFly && !u.type->isStructure()) return false;
-    const int target=findTarget(u,missionPoll);
-    if (!target) return false;
-    cancelPath(u); u.routeStamp=-1;
-    // The attack it starts owns the weapons (Attack_* calls 519b70(3)).
-    setSlotsManual(u,kSlotsAttack);
-    // An idle flyer's attack goes in ahead of its default mission.
-    const bool idleFlyer=u.orders.empty() && u.type->canFly && !u.type->isStructure();
-    u.orders.insert(u.orders.begin(),{Fixed(),Fixed(),target});
-    u.orders.front().autoTarget=true; u.orders.front().goal=true;
-    u.orders.front().aheadOfDefault=idleFlyer;
-    noteOrders(u.id);
-    return true;
-}
-
 // ---------------------------------------------------------------------------
 // Retail's weapon-slot layer: auto/manual slots, the fire-at-will sweep
 // (icd 40f330 + 40f2e0 + 412620), the auto-slot weapon update (52ae90 ->
@@ -6540,6 +6470,7 @@ bool categoryMatch(const std::vector<std::string>& cats,const UnitType& t) {
 void World::dropSlotTarget(Unit& u,int slot) {
     if (slot<0 || slot>=3 || !u.slotTarget[size_t(slot)]) return;
     u.slotTarget[size_t(slot)]=0;
+    u.aimWait[size_t(slot)]=0;
     // 51a7f0: TargetCleared(slot) only when a target was set, and for a
     // switcher only on the selected slot.
     if (u.type->weaponSwitching && slot!=u.weaponSlot) return;
@@ -6675,7 +6606,7 @@ bool World::slotInRange(const Unit& u,const Unit& t,int slot) const {
     return retailCentreDist2(u,t)<=r*r;
 }
 
-// Engine deviation shared with findTarget and the order-driven fire test: a
+// Engine deviation shared with the scans (412620) and the order-driven fire test: a
 // ranged ground weapon whose shot flies the line (Weapon::needsClearLine: not
 // a plain Ballistic shell) needs a clear 2D line to its target (retail has no
 // such test; without it a unit would empty its auto slots into a wall). Part
@@ -7039,28 +6970,34 @@ bool World::sweepKeepsTarget(const Unit& u,int slot,const Unit& t) const {
 int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
     if (slot<0 || slot>=int(std::min<size_t>(3,u.type->weapons.size()))) return 0;
     const Weapon& w=u.type->weapons[size_t(slot)];
-    const int64_t radius=sweep ? int64_t(w.range) : std::max<int64_t>(u.type->sight,w.range);
+    // The mission scan gathers over def+0x226 (sightdistance) or the range.
+    // Retail has no double-sight option (S, 4bfa50); with ours on, the scan
+    // gathers as far as the plane the unit stamps, so a melee unit's reach
+    // keeps up with its doubled sight.
+    const int64_t radius=sweep ? int64_t(w.range) : std::max<int64_t>(sightDistance(*u.type),w.range);
     // 411ae0 over the owner's enemy list +5 (hostile units it saw at the last
-    // 7-tick rebuild, in unit order): live, by live centre distance. Retail
-    // re-checks nothing else; a unit carried or converted since the rebuild
-    // is dropped here too.
-    // The list is id-sorted (see rebuildVisibleLists), so the spatial grid
-    // gathers the near units and membership is a binary search; the result
-    // is the list's own order.
-    std::vector<int> candidates;
-    const auto listed=visibleEnemies(u.player);
-    if (listed.empty()) return 0;
-    uint64_t enemies=~uint64_t(0);
-    for (int player=0;player<numPlayers() && player<64;++player)
-        if (allied(player,u.player)) enemies&=~(uint64_t(1)<<player);
-    forEachNear(u.x.toFloat(),u.z.toFloat(),float(radius)+1.0f,[&](int idx) {
-        const Unit& e=units_[size_t(idx)];
-        if (!e.alive() || e.hp<=Fixed() || !e.type || e.embarked() || allied(e.player,u.player)) return;
-        if (retailCentreDist2(u,e)>radius*radius) return;
-        if (!std::binary_search(listed.begin(),listed.end(),e.id)) return;
-        candidates.push_back(e.id);
-    },enemies);
-    std::sort(candidates.begin(),candidates.end());
+    // 7-tick rebuild, in unit order): live (+0x130 & 0x1000000) and not dying
+    // (& 0x1000), by live centre distance (411b2c..411b95). Retail re-checks
+    // nothing else; a unit carried or converted since the rebuild is dropped
+    // here too. The candidates are read straight off the list, as retail
+    // does, rather than gathered from the spatial grid over the radius: the
+    // list is the 7-tick result every scan of the player shares, so a scan
+    // costs the list's length and no grid cells. The list is id-sorted (see
+    // rebuildVisibleLists), the order the grid gather used to sort into.
+    // 411ae0's fallback to list +0x25 when nothing is found and the owner has
+    // a live, switched-on istargetingupgrade unit (411bb4..411bd4, 413290,
+    // 4118de..4118f7) is not ported: no shipped FBI sets istargetingupgrade.
+    // The candidates live in a reused scratch vector: the mission scans call
+    // this far more often than the sweep.
+    std::vector<int>& candidates=pickCandidates_;
+    candidates.clear();
+    const int64_t radius2=radius*radius;
+    for (const int id:visibleEnemies(u.player)) {
+        const Unit* e=unit(id);
+        if (!e || !e->alive() || e->hp<=Fixed() || !e->type || e->embarked() || allied(e->player,u.player)) continue;
+        if (retailCentreDist2(u,*e)>radius2) continue;
+        candidates.push_back(id);
+    }
     int32_t best=INT32_MAX,bestBad=INT32_MAX;
     int pick=0,pickBad=0;
     const bool mobile=!u.type->isStructure();
@@ -7090,7 +7027,10 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
         if (w.status==Weapon::Status::Frozen && t.type->cantBeFrozen) continue;
         if (w.mindControl && t.type->cantBeCaptured) continue;
         if (status && t.underConstruction) continue;
-        if (w.status==Weapon::Status::Paralyzed && t.paralyzedFor>0) continue;
+        // 4128e1..4128ff, 412905..41292c: a paralyzer (damage type 4, WeaponType
+        // +0xc8 & 0xf) skips a type with immunetoparalyzer (UnitDef +0x260 bit
+        // 26) and a unit already paralyzed (+0x114 & 0x10).
+        if (w.dmgType==4 && (t.type->immuneToParalyzer || t.paralyzedFor>0)) continue;
         // 412932..412945: a melee slot takes grounded units only (+0x130 & 3
         // == 1): a flyer in the air never, a landed one like any other.
         if (w.melee && t.flightGroundMode!=1) continue;
@@ -7139,6 +7079,194 @@ int World::retailSelectTarget(Unit& u,int slot,bool sweep) {
         else if (s<best) { best=s;pick=id; }
     }
     return pick ? pick : pickBad;
+}
+
+int World::retailScanSlot(const Unit& u) const {
+    if (!u.type || u.type->weapons.empty()) return -1;
+    // 519ac0: UnitDef +0x260 & 0x10000 (weaponswitching) and the selected
+    // slot (+0x130 >> 30) below 3; otherwise the first slot holding a weapon.
+    if (u.type->weaponSwitching && u.weaponSlot>=0 && u.weaponSlot<3) return u.weaponSlot;
+    return 0;
+}
+
+int World::retailMissionScan(Unit& u) {
+    // 4d8370: armed (+0x130 & 0x8000000) and Fire At Will ((+0x130 & 0xc0000)
+    // == 0x80000), else 0; then 412620(unit, 519ac0(unit), sweep 0).
+    if (!u.type || u.type->weapons.empty() || u.fireState!=2) return 0;
+    TAK_PROBE(++probe::tl.missionScans);
+    return retailSelectTarget(u,retailScanSlot(u),false);
+}
+
+bool World::retailMissionAttack(Unit& u,int targetId,MissionAttack how,const std::optional<MissionLeash>& leash) {
+    const Unit* t=unit(targetId);
+    if (!t || !t->type) return false;
+    if (leash && int64_t(retailGroundDistance({int16_t(t->x.floorInt()),int16_t(t->z.floorInt())},leash->point))>=
+                 int64_t(leash->leash))
+        return false;
+    // The gate's point only names the return Move's goal and the attack's
+    // origin, and every caller that passes one passes the unit's own
+    // position (40784e, 403972, 409e4b: lea [unit+0x68]), which is what the
+    // gate falls back to without one; so the five kinds differ only in
+    // explicit and forceLeash, and in the flight return the VTOL calls get.
+    const bool idleFlyer=u.orders.empty() && u.type->canFly && !u.type->isStructure();
+    bool issued=false;
+    switch (how) {
+        case MissionAttack::Standby: case MissionAttack::Vtol:
+            issued=retailIssueAutoAttack(u,targetId,false); break;
+        case MissionAttack::Patrol: case MissionAttack::VtolPatrol:
+            issued=retailIssueAutoAttack(u,targetId,true); break;
+        case MissionAttack::Forced:
+            issued=retailIssueAutoAttack(u,targetId,false,true); break;
+    }
+    // An idle flyer's attack goes in ahead of its default mission (VTOL_Standby).
+    if (issued && idleFlyer && (how==MissionAttack::Vtol || how==MissionAttack::VtolPatrol))
+        u.orders.front().aheadOfDefault=true;
+    return issued;
+}
+
+void World::retailGuardNoMoveSlots(Unit& u,int draw) {
+    if (!u.type) return;
+    const int slots=int(std::min<size_t>(3,u.type->weapons.size()));
+    auto release=[&](int s) { setSlotMode(u,s,false); setSlotMode(u,s,true); };   // 519b70, 519b10
+    if (const uint32_t bits=u.missionEvents&0xe00000u) {
+        const uint32_t r=draw>=0 ? uint32_t(draw) : pathRand(3);
+        if (r==0)
+            for (int s=0;s<slots;++s)
+                if (bits&(0x200000u<<s)) release(s);
+        u.missionEvents&=~0xe00000u;
+    }
+    for (int s=0;s<slots;++s) {
+        if (u.type->weaponSwitching && s!=u.weaponSlot) continue;
+        const Unit* t=unit(u.slotTarget[size_t(s)]);   // 51a9a0
+        // slotClearShot: the engine's line-of-fire deviation, which is part of
+        // "in reach" wherever the sweep and the weapon update test it (D4), so
+        // a tower lets go of a target its owner's new wall hides.
+        if (t && t->alive() && !slotInsideMinRange(u,*t,s) && slotInRange(u,*t,s) && slotClearShot(u,*t,s))
+            continue;
+        release(s);
+    }
+}
+
+int World::retailHostScan(Unit& u) {
+    if (!u.type) return 0;
+    // VTOL landing also clears active; only a switchable unit reads it as
+    // powered down. A neutral owner never scans. A builder at a site, a
+    // repair or a reclaim, or holding queued work or a production queue, is
+    // in a work mission in retail, not a scanning one.
+    if (u.type->onOffable && !u.active) return 0;
+    if (isNeutralPlayer(u.player)) return 0;
+    if (u.buildSiteId || u.repairId || u.reclaimId) return 0;
+    if (!u.type->isStructure() && (!u.buildQueue.empty() || u.repeatType)) return 0;
+    if (u.type->weapons.empty() || u.fireState!=2) return 0;   // 4d8370's own gate, before the queue walk
+    if (hasQueuedWork(u)) return 0;
+    return retailMissionScan(u);
+}
+
+bool World::retailIssueAutoAttackAllowed(const Unit& u,int targetId,bool forceReturn,bool forced) const {
+    if (targetId==u.id) return false;
+    if (u.moveState==0 && !forceReturn && !forced) return false;
+    if (u.fireState==0 && !forced) return false;
+    const Unit* t=unit(targetId);
+    return t && canAttackTarget(u,*t);
+}
+
+bool World::retailAnswersAttacker(const Unit& e,const Unit& a,int s,bool mobile) const {
+    if (!e.type || !a.type || s<0 || s>=int(e.type->weapons.size())) return false;
+    const Weapon& w=e.type->weapons[size_t(s)];
+    if (categoryMatch(e.type->noTargetCats,*a.type) || slotBadTarget(e,s,a)) return false;
+    const int32_t eff=int32_t(w.damageVs(a.type));
+    bool reach=eff>0 && slotInRange(e,a,s);
+    if (!reach && mobile) {
+        const int32_t leash=int32_t(uint16_t(std::clamp(e.type->leash,0,65535)));
+        const int32_t oct=retailOctDistance(a.x.floorInt()-e.x.floorInt(),a.z.floorInt()-e.z.floorInt());
+        reach=oct<(leash*9)/10+(w.melee ? 0 : w.range);
+    }
+    // 409db4..409dcc (4183e8..4184a5 in VTOL_Move): a melee weapon answers
+    // only an attacker on the ground (+0x130 & 3 == 1); the air bits test
+    // its current layer.
+    return reach && canAttackTarget(e,a) && !(w.melee && a.flightGroundMode!=1) &&
+        !(w.toAir && a.flightGroundMode!=2) && !(w.noAir && a.flightGroundMode==2) && eff>0;
+}
+
+int World::retailMoveFallback(const Unit& u) const {
+    // 402f..: +0xf8 alive, not dying, finished, of a player not allied; the
+    // unit armed and not carried. Then the hit response's reach and weapon
+    // tests on the scanning slot (402f9f..40302b).
+    if (!u.lastHitBy || u.type->weapons.empty() || u.embarked() || u.underConstruction) return 0;
+    const Unit* a=unit(u.lastHitBy);
+    if (!a || a==&u || !a->alive() || a->hp<=Fixed() || !a->type || a->underConstruction ||
+        allied(u.player,a->player)) return 0;
+    // Engine guard: an attacker since carried off in a transport is not a
+    // target here (retail's +0xf8 for a carried unit was not read); without
+    // it every Move wake would chase the transport to the leash and back.
+    if (a->embarked()) return 0;
+    return retailAnswersAttacker(u,*a,retailScanSlot(u),true) ? a->id : 0;
+}
+
+std::optional<Order> World::retailBuiltAttack(const Unit& u,int targetId,bool automatic,uint16_t leash,
+                                              RetailGroundPoint origin) const {
+    const Unit* t=unit(targetId);
+    // 4de530 kind 3 (an attack mission for the pair) -> the closest host test.
+    if (targetId==u.id || !t || !canAttackTarget(u,*t)) return std::nullopt;
+    Order attack{Fixed(),Fixed(),targetId};
+    attack.goal=true;attack.autoTarget=automatic;attack.issuedTick=tickCounter_;
+    if (leash) { attack.chaseLeashed=true;attack.chaseLeash=leash;attack.chaseOrigin=origin; }
+    return attack;
+}
+
+bool World::retailWanderScan(Unit& u) {
+    // 40797e: 4d8370; on Maneuver (+0x130 & 0x30000 == 0x10000) a hit at or
+    // beyond maneuverleashlength from the post is dropped (4079a2..4079e8).
+    // Then 4de530 kind 3 and 4d6c40(kind, target, 0, 0, Maneuver, Maneuver ?
+    // leash : 0) with origin the post, put ahead (407aac..407b7f): no return
+    // move. World's post is the unit's home: its stroll orders end the
+    // mission, so stage 0 runs again after each, while home stays where the
+    // unit was placed, as retail's post does.
+    const int found=retailHostScan(u);
+    if (!found) return false;
+    const bool maneuver=u.moveState==1;
+    const uint16_t leash=uint16_t(std::clamp(u.type->leash,0,65535));
+    const RetailGroundPoint post{int16_t(u.homeX.floorInt()),int16_t(u.homeZ.floorInt())};
+    const Unit* t=unit(found);
+    if (maneuver && retailGroundDistance({int16_t(t->x.floorInt()),int16_t(t->z.floorInt())},post)>=leash)
+        return false;
+    auto attack=retailBuiltAttack(u,found,maneuver,maneuver ? leash : 0,post);
+    if (!attack) return false;
+    // 4d4d40(0), then the attack ahead; its stage 0 makes the slots manual.
+    cancelPath(u);u.routeStamp=-1;
+    u.orders.insert(u.orders.begin(),*attack);
+    setSlotsManual(u,kSlotsAttack);
+    noteOrders(u.id);
+    return true;
+}
+
+bool World::retailMeleeRetarget(Unit& u) {
+    Order& o=u.orders.front();
+    if (!o.autoTarget || u.type->canFly || u.type->isStructure() || !u.type->canMove) return false;
+    // Stage 1 far from the target: sleep 4 + rand(5) + rand(5) (404c2e).
+    const auto nap=[&]{ const uint32_t a=pathRand(5),b=pathRand(5); return tickCounter_+4+a+b; };
+    if (!o.airRunCount) { o.airRunCount=int32_t(nap()); return false; }
+    if (tickCounter_<uint32_t(o.airRunCount)) return false;
+    // Stage 2's timer wake on an automatic attack (+0x52 != 0, 40496a..):
+    // off Hold Position, rand(2) == 0, 4d8370, a hit other than the target,
+    // inside +0x56 of the origin when a leash is set, then rand(10) == 0:
+    // 5199f0 makes it the target and the mission starts again (stage 0).
+    int to=0;
+    if (u.moveState!=0 && pathRand(2)==0) {
+        if (const int found=retailHostScan(u);found && found!=o.targetId) {
+            const Unit* t=unit(found);
+            const bool inLeash=!o.chaseLeashed || !o.chaseLeash ||
+                retailGroundDistance({int16_t(t->x.floorInt()),int16_t(t->z.floorInt())},o.chaseOrigin)<o.chaseLeash;
+            if (inLeash && pathRand(10)==0) to=found;
+        }
+    }
+    if (!to) { o.airRunCount=int32_t(nap()); return false; }
+    if (u.scriptAimTarget) clearScriptWeaponTarget(u);
+    o.targetId=to;o.airRunCount=0;o.attackAimTick=Order::kAttackUnaimed;
+    if (o.buildRectangle) { o.buildRectangle.reset();o.controller=0;o.navigationExhausted=o.navigationConsumed=false; }
+    cancelPath(u);u.routeStamp=-1;
+    noteOrders(u.id);
+    return true;
 }
 
 // 40f330's slot part, for one player: a budget of N/30+1 counted units per
@@ -7251,8 +7379,8 @@ void World::tickSlotWeapons(Unit& u) {
 
 // 409a50 part (b): a unit that returns fire hands the attacker to every auto
 // slot that reaches it, unless the slot's current target is still a good
-// one. No RNG. The idle retaliation mission (part a, 4d7de0) is not ported;
-// findTarget and the ground-response path cover most of it.
+// one. No RNG. Part (a), the retaliation mission (4d7de0), is
+// retailHitResponse's, which calls this when it issues none.
 void World::slotHitResponse(Unit& victim,const Unit& attacker) {
     if (!victim.alive() || victim.hp<=Fixed() || !victim.type || victim.type->weapons.empty() ||
         victim.fireState==0 || victim.incapacitated() || isNeutralPlayer(victim.player) ||
@@ -7354,12 +7482,10 @@ void World::retailAiWeaponSwitch(Unit& u) {
 }
 
 bool World::retailIssueAutoAttack(Unit& u,int targetId,bool forceReturn,bool forced) {
-    if (targetId==u.id) return false;
-    if (u.moveState==0 && !forceReturn && !forced) return false;   // Defensive/Hold Position: part (b) only
-    if (u.fireState==0 && !forced) return false;                   // Hold Fire
-    const Unit* t=unit(targetId);
-    // 4de530 kind 3 (no attack mission for this pair) -> the closest host test.
-    if (!t || !canAttackTarget(u,*t)) return false;
+    // Hold Position without force: part (b) only; Hold Fire without
+    // explicit; 4de530 kind 3 (no attack mission for this pair) -> the
+    // closest host test.
+    if (!retailIssueAutoAttackAllowed(u,targetId,forceReturn,forced)) return false;
     const RetailGroundPoint pos{int16_t(u.x.floorInt()),int16_t(u.z.floorInt())};
     Order attack{Fixed(),Fixed(),targetId};
     attack.autoTarget=!forced;attack.goal=true;attack.issuedTick=tickCounter_;
@@ -7424,20 +7550,7 @@ void World::retailHitResponse(Unit& e,const Unit* a,int dmgType) {
     bool mission=false;
     if (!e.type->weapons.empty() && (idle || (mobile && patrolling))) {
         const int s=e.type->weaponSwitching ? std::clamp(e.weaponSlot,0,int(std::min<size_t>(3,e.type->weapons.size()))-1) : 0;
-        const Weapon& w=e.type->weapons[size_t(s)];
-        const bool categoriesOk=!categoryMatch(e.type->noTargetCats,*a->type) && !slotBadTarget(e,s,*a);
-        const int32_t eff=int32_t(w.damageVs(a->type));
-        bool reach=eff>0 && slotInRange(e,*a,s);
-        if (!reach && mobile) {
-            const int32_t leash=int32_t(uint16_t(std::clamp(e.type->leash,0,65535)));
-            const int32_t oct=retailOctDistance(a->x.floorInt()-e.x.floorInt(),a->z.floorInt()-e.z.floorInt());
-            reach=oct<(leash*9)/10+(w.melee ? 0 : w.range);
-        }
-        // 409db4..409dcc: a melee weapon answers only an attacker on the
-        // ground (+0x130 & 3 == 1); one in the air is left alone.
-        const bool usable=canAttackTarget(e,*a) && !(w.melee && a->flightGroundMode!=1) &&
-            !(w.toAir && a->flightGroundMode!=2) && !(w.noAir && a->flightGroundMode==2) && eff>0;
-        if (categoriesOk && reach && usable) {
+        if (retailAnswersAttacker(e,*a,s,mobile)) {
             const bool flag=e.fireState==2 && mobile && patrolling;
             mission=retailIssueAutoAttack(e,a->id,flag);
             // An idle flyer's answer goes in ahead of its default mission.
@@ -7492,7 +7605,11 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     if (u.type->onOffable && !u.active) return;   // explicitly powered down
     if (stepOutFront(u)) { fireBehindStepOut(u); return; }
 
-    if (!u.standbyActive && !u.guardNoMoveActive) acquireTarget(u, false);
+    // No scan here: retail has no per-tick one. Every automatic pick comes
+    // from a mission's scan (4d8370: Standby, Standby_Wander, VTOL_Standby,
+    // Patrol, a Move's response, the air missions' retargets) or the
+    // fire-at-will sweep (40f330); a guard answers its ward's attacker and
+    // a structure fires through the sweep alone.
     const int activeTarget=!u.orders.empty() && !u.orders.front().guard ? u.orders.front().targetId : 0;
     if(u.scriptAimTarget && u.scriptAimTarget!=activeTarget)clearScriptWeaponTarget(u);
     if (!u.orders.empty() && u.orders.front().seekAttack) {
@@ -7653,8 +7770,7 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     //     AA/ground turret really does work both barrels at once.
     // (`fireatwillrandom` is unrelated to this -- it scatters auto-acquired TARGET
     // choice; see UnitType::fireAtWillRandom.)
-    // The reach it fights at (combatReach, which findTarget shares so a unit
-    // that may not chase never acquires what is dropped below): the selected
+    // The reach it fights at (combatReach): the selected
     // weapon's range for a switcher, the longest when they all fire, padded for
     // a structure target only for a melee weapon (Weapon::centreReach); the
     // arc for a ballistic weapon.
@@ -7725,8 +7841,9 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     // One that may not chase and has no clear line from here for the weapon
     // it fights with would hold an AUTO target for ever without a shot (a
     // tower behind a wall that went up; Hold Position behind a building), and
-    // nothing else would get shot at: it drops it, and findTarget, which
-    // applies the same test from the same spot, does not pick it again. An
+    // nothing else would get shot at: it drops it, and the scans, which
+    // apply the same test from the same spot (slotClearShot), do not pick it
+    // again. An
     // explicitly ordered attack is kept: the order says which target.
     if (!mayChase && inReach && approachNeedsLine && !los && u.orders.front().autoTarget) {
         if(u.scriptAimTarget)clearScriptWeaponTarget(u);
@@ -7740,7 +7857,7 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     // walks to a spot with a clear shot. So does a Hold Position unit whose
     // auto target interrupted a movement order (an attack-move, a patrol, a
     // move queued behind it): it is on its way anyway. If no spot is left in
-    // reach it drops the target and goes on with that movement (findTarget
+    // reach it drops the target and goes on with that movement (the scans
     // will not pick the target again from this spot). Hold Position with
     // nothing to go on with stays and fires on, as retail.
     if (!airRun && !hovering && sel && !sel->melee && inReach && u.type->canMove &&
@@ -7757,7 +7874,7 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     }
     // A unit that may not move (a building, Hold Position on an auto target)
     // whose aimed shell has no arc from here (noteNoArc wrote the target
-    // off) drops it; findTarget and the sweep do not pick it up again from
+    // off) drops it; the scans and the sweep do not pick it up again from
     // this spot.
     if (!mayChase && shotBlockedHere(u,*target) && arcShort()) {
         if(u.scriptAimTarget)clearScriptWeaponTarget(u);
@@ -7776,6 +7893,7 @@ void World::tickCombat(Unit& u, float /*dt*/, bool& groundMovementHandled) {
     if (!airRun && !airToAir && !hovering && !strike && ((sel && sel->melee) ? !adj
                             : (!inReach || (approachNeedsLine && !los && mayChase) || (mayChase && arcShort())))) {
         if (chaseMission) u.orders.front().attackChased = true;
+        if (sel && sel->melee && retailMeleeRetarget(u)) return;
         // Attack_Melee (404690) stage 0: a melee weapon's target with no
         // mover (a structure) is approached on 4d4e80's rectangle round its
         // footprint, not at its centre: each attacker walks to its own
@@ -12246,10 +12364,9 @@ void World::tickAirToGroundHover(Unit& u,const Unit& target,const Weapon* select
         bool retarget() {
             // 4d8370 is World's target scan, as AirToAir's; then 4d7de0(unit,
             // found, 0, 0, 1, 0), retailIssueAutoAttack's gates.
-            const int found=w.findTarget(u,true,true,false);
+            const int found=w.retailHostScan(u);
             if (!found || found==target.id) return false;
-            const Unit* t=w.unit(found);
-            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            if (!w.retailIssueAutoAttackAllowed(u,found,false)) return false;
             retargetTo=found;
             return true;
         }
@@ -12428,10 +12545,9 @@ void World::tickAirToGround(Unit& u,const Unit& target,const Weapon* selected) {
         bool retarget() {
             // 4d8370 is World's target scan, as AirToAir's; then 4d7de0(unit,
             // found, 0, 0, 1, 0), retailIssueAutoAttack's gates.
-            const int found=w.findTarget(u,true,true,false);
+            const int found=w.retailHostScan(u);
             if (!found || found==target.id) return false;
-            const Unit* t=w.unit(found);
-            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            if (!w.retailIssueAutoAttackAllowed(u,found,false)) return false;
             retargetTo=found;
             return true;
         }
@@ -12539,10 +12655,9 @@ void World::tickAirStrike(Unit& u,const Unit& target) {
         bool retarget() {
             // 4d8370 is World's target scan; then 4d7de0(unit, found, 0, 0, 1,
             // 0), retailIssueAutoAttack's gates, as AirToGround's.
-            const int found=w.findTarget(u,true,true,false);
+            const int found=w.retailHostScan(u);
             if (!found || found==target.id) return false;
-            const Unit* t=w.unit(found);
-            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            if (!w.retailIssueAutoAttackAllowed(u,found,false)) return false;
             retargetTo=found;
             return true;
         }
@@ -12695,10 +12810,9 @@ void World::tickAirToAir(Unit& u,const Unit& target,const Weapon* selected) {
         bool retarget() {
             // 4d8370 is World's target scan, as the ground response's; then
             // 4d7de0(unit, found, 0, 0, 1, 0), retailIssueAutoAttack's gates.
-            const int found=w.findTarget(u,true,true,false);
+            const int found=w.retailHostScan(u);
             if (!found || found==target.id) return false;
-            const Unit* t=w.unit(found);
-            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            if (!w.retailIssueAutoAttackAllowed(u,found,false)) return false;
             retargetTo=found;
             return true;
         }
@@ -12962,10 +13076,9 @@ void World::tickSeekAttack(Unit& u,bool carriesTarget) {
             // 4d8370 is World's target scan, as AirToAir's (it finds nothing
             // off Fire At Will); then 4d7de0(unit, found, 0, 0, 1, 0),
             // retailIssueAutoAttack's gates.
-            const int found=w.findTarget(u,true,true,false);
+            const int found=w.retailHostScan(u);
             if (!found) return false;
-            const Unit* t=w.unit(found);
-            if (u.moveState==0 || u.fireState==0 || !t || !w.canAttackTarget(u,*t)) return false;
+            if (!w.retailIssueAutoAttackAllowed(u,found,false)) return false;
             retargetTo=found;
             return true;
         }
@@ -14397,10 +14510,18 @@ void World::updateExplorationPlane() {
         std::abort();
     }
 #endif
+    // A footprint explores the same players' bits it counts in: 4c6800 ORs
+    // the Mapping bit of the sight object's player (4c685f..4c6871,
+    // 4c6a11..4c6a1f), the same player whose +0x88 plane it counts in, so a
+    // shared ally explores for every player it shares with (viewShareMask:
+    // all allies, human or computer, but never a passive neutral). Neutral
+    // scenery keeps the allied rule.
     std::vector<uint16_t> playerViewers(players_.size(),0);
-    for (size_t owner=0;owner<players_.size();++owner)
+    for (size_t owner=0;owner<players_.size();++owner) {
+        if (!isNeutralPlayer(int(owner))) { playerViewers[owner]=viewShareMask(int(owner));continue; }
         for (size_t viewer=0;viewer<players_.size() && viewer<16;++viewer)
             if (allied(int(owner),int(viewer))) playerViewers[owner]|=uint16_t(1u<<viewer);
+    }
     // One plane shared by every chunk. Exploration only adds bits: a footprint
     // depends on its own unit alone, and covered/needed may skip only work whose
     // bits are already set, so any interleaving of the reveals yields the same
@@ -14496,12 +14617,32 @@ void World::updateExplorationPlane() {
 
 // The per-player current-view counters (player +0x88). One pass per tick
 // after the tick, like exploration (retail runs it once per frame, 52654e ->
-// 4f6ae0). Retail removes a changed footprint and adds it again; a footprint
+// 4f6ae0). A unit counts in its owner's plane and in each plane its owner
+// shares sight with (viewShareMask: every ally, human or computer -- the
+// owner's D2 rule; retail's default ShareMapAndLOS covers same-team humans
+// only); retail's machines each stamp a sharing ally's units into the local
+// plane (4c66b0), and every plane here is every machine's. Retail removes a changed footprint and adds it again; a footprint
 // that stays counted on the same plane instead changes only the cells whose
 // admission differs (retailSightMove), which leaves the same counts. The plane
 // always equals the sum of the active footprints plus the death revealers.
 // Count deltas commute, so chunks add atomically (relaxed) in any order to the
 // same result.
+uint16_t World::viewShareMask(int owner) const {
+    const size_t planes=players_.size();
+    if (owner<0 || size_t(owner)>=planes || owner>=16 || isNeutralPlayer(owner)) return 0;
+    uint16_t mask=uint16_t(1u<<owner);
+    // A campaign's passive neutral is a computer (kind 2) to 4f6770, which
+    // pairs it with nobody, so it shares nothing either way; outside campaigns
+    // the owner's rule is the same.
+    if (players_[size_t(owner)].passiveNeutral) return mask;
+    // Owner decision (D2, beyond retail): every other allied player shares,
+    // human or computer. Retail's 4f6770 leaves a computer out both ways.
+    for (size_t j=0;j<planes && j<16;++j)
+        if (int(j)!=owner && !isNeutralPlayer(int(j)) && !players_[j].passiveNeutral && allied(owner,int(j)))
+            mask|=uint16_t(1u<<j);
+    return mask;
+}
+
 void World::updateViewCounts() {
     if (explorationHeights_.empty()) return;
     const int width=hW_/2,height=hH_/2;
@@ -14513,20 +14654,28 @@ void World::updateViewCounts() {
         viewCounts_.assign(planes*cells,0);
         markViewDirtyAll();
         deathSights_.clear();
-        for (auto& u:units_) { u.viewSight={};u.viewPlayer=-1; }
+        for (auto& u:units_) { u.viewSight={};u.viewPlayer=-1;u.viewPlanes=0; }
     }
     if (!planes) return;
+    // Each owner's share set, once per pass (teams are hashed; a team change
+    // moves the footprints on this pass, an AI takeover changes nothing).
+    std::array<uint16_t,16> shareMask{};
+    for (size_t p=0;p<planes && p<16;++p) shareMask[p]=viewShareMask(int(p));
     auto heightAt=[&](int x,int z){return explorationHeights_[size_t(z)*width+x];};
-    auto change=[&](RetailSightFootprint& sight,int player,bool add,auto shared) {
+    // One footprint cell's delta into every plane of `mask`.
+    auto addTo=[&](uint16_t mask,int x,int z,int delta,auto shared) {
         constexpr bool kShared=decltype(shared)::value;
+        const size_t at=size_t(z)*width+x;
+        for (uint32_t m=mask;m;m&=m-1) {
+            uint16_t& cell=viewCounts_[size_t(std::countr_zero(m))*cells+at];
+            if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);
+            else cell=uint16_t(cell+delta);
+        }
+    };
+    auto change=[&](RetailSightFootprint& sight,uint16_t mask,int player,bool add,auto shared) {
         if (sight.active!=add) markViewDirty(sight);
-        uint16_t* plane=viewCounts_.data()+size_t(player)*cells;
         retailSightFootprint(sight,add,false,width,height,uint8_t(player),heightAt,
-            [&](int x,int z,int delta,uint16_t) {
-                uint16_t& cell=plane[size_t(z)*width+x];
-                if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);
-                else cell=uint16_t(cell+delta);
-            });
+            [&](int x,int z,int delta,uint16_t) { addTo(mask,x,z,delta,shared); });
     };
     // Deaths first, serially: a dying human-owned unit hands its footprint to
     // the revealer list (4c6750: LosOn, fewer than 20 for that player), any
@@ -14534,43 +14683,53 @@ void World::updateViewCounts() {
     for (auto& u:units_) {
         if (u.alive() || !u.viewSight.active) continue;
         const int p=u.viewPlayer;
-        const bool human=size_t(p)<planes && !players_[size_t(p)].automaticGates && !isNeutralPlayer(p);
+        // 512ae0 keeps it only when the owner's index equals game+0x306f, a
+        // local-player byte beside 4c66b0's 0x306e; a passive neutral is a
+        // mission computer, never that player.
+        const bool human=size_t(p)<planes && !players_[size_t(p)].automaticGates && !isNeutralPlayer(p) &&
+                         !players_[size_t(p)].passiveNeutral;
         if (human && std::count_if(deathSights_.begin(),deathSights_.end(),
                 [&](const RetailDeathSight& d){return d.player==p;})<20) {
-            deathSights_.push_back({u.viewSight,int8_t(p),tickCounter_+60});
+            deathSights_.push_back({u.viewSight,int8_t(p),tickCounter_+60,u.viewPlanes});
             u.viewSight.active=false;
-        } else if (size_t(p)<planes) change(u.viewSight,p,false,std::false_type{});
+        } else if (size_t(p)<planes) change(u.viewSight,u.viewPlanes,p,false,std::false_type{});
         else u.viewSight.active=false;
-        u.viewPlayer=-1;
+        u.viewPlayer=-1;u.viewPlanes=0;
     }
     auto pass=[&](size_t begin,size_t end,auto shared) {
         for (size_t index=begin;index<end;++index) {
             auto& u=units_[index];
             if (!u.alive() || !u.type || u.underConstruction) continue;
-            // 4c67d0 + 4f5a35: an ownership change moves the footprint.
-            if (u.viewSight.active && u.viewPlayer!=u.player) {
-                if (size_t(u.viewPlayer)<planes) change(u.viewSight,u.viewPlayer,false,shared);
-                u.viewSight.active=false;u.viewSight.x=-1;u.viewPlayer=-1;
+            const uint16_t mask=size_t(u.player)<planes && u.player<16 ? shareMask[size_t(u.player)] : 0;
+            // 4c67d0 + 4f5a35: an ownership change moves the footprint; so
+            // does a change of the planes it is shared into (4f59c0 re-points
+            // the sight objects).
+            if (u.viewSight.active && (u.viewPlayer!=u.player || u.viewPlanes!=mask)) {
+                if (size_t(u.viewPlayer)<planes) change(u.viewSight,u.viewPlanes,u.viewPlayer,false,shared);
+                const bool locked=u.stonedFor>0 || u.frozenFor>0;
+                if (locked && mask && u.player>=0 && size_t(u.player)<planes && !isNeutralPlayer(u.player) &&
+                    u.viewSight.distance==int16_t(sightDistance(*u.type)) && u.viewSight.sightHeight==u.type->sightHeight) {
+                    // A status-locked unit's footprint stays where it stands
+                    // (4f6a40 skips it), so it moves to the new planes there.
+                    change(u.viewSight,mask,u.player,true,shared);
+                    u.viewPlayer=int8_t(u.player);u.viewPlanes=mask;
+                } else {
+                    u.viewSight.active=false;u.viewSight.x=-1;u.viewPlayer=-1;u.viewPlanes=0;
+                }
             }
             const int16_t distance=int16_t(sightDistance(*u.type));
             if (u.viewSight.distance!=distance || u.viewSight.sightHeight!=u.type->sightHeight) {
-                if (u.viewSight.active && size_t(u.viewPlayer)<planes) change(u.viewSight,u.viewPlayer,false,shared);
+                if (u.viewSight.active && size_t(u.viewPlayer)<planes) change(u.viewSight,u.viewPlanes,u.viewPlayer,false,shared);
                 u.viewSight={};u.viewSight.distance=distance;u.viewSight.sightHeight=u.type->sightHeight;
-                u.viewPlayer=-1;
+                u.viewPlayer=-1;u.viewPlanes=0;
             }
-            if (u.player<0 || size_t(u.player)>=planes || isNeutralPlayer(u.player)) continue;
+            if (u.player<0 || size_t(u.player)>=planes || isNeutralPlayer(u.player) || !mask) continue;
             // 4f6a40 skips a status-locked unit (+0x108: stone, freeze): its
             // footprint is frozen where it stands, not removed.
             if (u.stonedFor>0 || u.frozenFor>0) continue;
             const Fixed y=u.type->canFly?u.flightY:u.groundY;
-            uint16_t* plane=viewCounts_.data()+size_t(u.player)*cells;
-            constexpr bool kShared=decltype(shared)::value;
             const RetailSightFootprint before=u.viewSight;
-            auto count=[&](int x,int z,int delta,uint16_t) {
-                uint16_t& cell=plane[size_t(z)*width+x];
-                if constexpr (kShared) __atomic_fetch_add(&cell,uint16_t(delta),__ATOMIC_RELAXED);
-                else cell=uint16_t(cell+delta);
-            };
+            auto count=[&](int x,int z,int delta,uint16_t) { addTo(mask,x,z,delta,shared); };
             if (viewCountsByRebuild_)
                 retailUpdateSight(u.viewSight,u.x,y,u.z,uint8_t(seaLevel_),false,width,height,uint8_t(u.player),heightAt,count);
             else
@@ -14581,6 +14740,7 @@ void World::updateViewCounts() {
                 if (u.viewSight.active) markViewDirty(u.viewSight);
             }
             u.viewPlayer=u.viewSight.active ? int8_t(u.player) : int8_t(-1);
+            u.viewPlanes=u.viewSight.active ? mask : uint16_t(0);
         }
     };
     SimPool& pool=simPool();
@@ -14592,7 +14752,7 @@ void World::updateViewCounts() {
     // 4c6b30: revealers whose expiry is earlier than now are removed.
     std::erase_if(deathSights_,[&](RetailDeathSight& d) {
         if (d.expiry>=tickCounter_) return false;
-        if (size_t(d.player)<planes) change(d.sight,d.player,false,std::false_type{});
+        if (size_t(d.player)<planes) change(d.sight,d.planes,d.player,false,std::false_type{});
         return true;
     });
 }
@@ -15878,6 +16038,7 @@ void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
             // dropSlotTarget (boarding's switch to manual) does not announce
             // TargetCleared a second time.
             u.slotTarget[slot]=0;
+            u.aimWait[slot]=0;
             if(fromCommand)u.pendingWeaponAnimations.push_back({tak::RetailWeaponAnimation::Clear,uint8_t(slot),0,0});
             else u.weaponAnimations.add(tak::RetailWeaponAnimation::Clear,int(slot));
             // Native 51a7f0 starts TargetCleared with immediate=0. The callback
@@ -15887,6 +16048,40 @@ void World::clearScriptWeaponTarget(Unit& u,bool fromCommand) {
         }
     }
     u.scriptAimTarget=0;
+}
+
+// Legion (deliberate, not retail): no aim stalled for good on a script race.
+// Kirenna's AimWeapon (VERMAGE) waits for static 7, which her walk controller
+// sets after walk_legs (walking while aiming) or restore_x (stopped, not yet
+// aiming) and clears after a plain walk cycle; stopped and aiming it plays
+// restore_legs and sets it no more, and only TargetCleared or walking again
+// does. When she stops with a walk cycle still playing that began before she
+// aimed (an aim the sweep starts while she walks, the fight-move's scan
+// stopping her soon after: sight 215 inside her 400 range), the cycle's end
+// clears 7 after the stop and she never fires while the target stands. The
+// race is retail's (the same script in the same engine order; retail stalls
+// the same way, see docs/retail-engine.md, "Kirenna on an attack-move"), and
+// which side of it she lands on is the phase of her walk cycle, not the
+// pathfinding mode: over 120 start phases of vermage_fight_test she kept
+// firing in 8 in Retail mode and 13 in Legion. In Legion a loaded ground
+// unit standing still whose started aim (flags 0xe0) its script has not
+// accepted (SET 22) for kLegionAimStall ticks gets TargetCleared on that
+// slot once, as if its target had been retired and taken again: her script
+// sets 7 and fires, and standing, keeps it. The order and the slot keep the
+// target. Once per stall: the count restarts only when an aim is accepted,
+// the body moves or the slot's target is retired, so a script waiting on
+// purpose (activation, burrow, holster) hears it once.
+void World::legionAimStall(Unit& u,int slot,bool available) {
+    auto& wait=u.aimWait[size_t(slot)];
+    const auto& aim=u.weaponAim[size_t(slot)];
+    if((aim.flags&8) || u.speed.v!=0) { wait=0; return; }
+    if(!(aim.flags&0xe0) || !available || wait>kLegionAimStall) return;
+    if(++wait<=kLegionAimStall) return;
+    const auto it=unitScript(u.id);
+    if(!it) return;
+    const auto& file=*u.type->script();
+    u.weaponAnimations.add(tak::RetailWeaponAnimation::Clear,slot);
+    it->state().startArguments(file,file.scriptIndex("TargetCleared"),{uint32_t(slot),0,0,0},1);
 }
 
 bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept,const WeaponAimSolution* given) {
@@ -15922,6 +16117,8 @@ bool World::tickScriptWeapon(Unit& u,Unit& target,int slot,bool swept,const Weap
     }
     const bool available=u.reloads[slot]==0 &&
         (u.type->maxMana<=0 || u.mana>=weapon.manaCost);
+    if(isLegionPathfinding(pathfindingMode_) && !u.type->canFly && !u.type->isStructure())
+        legionAimStall(u,slot,available);
     // Native readiness (52fff0) compares the body heading with the mover's
     // requested heading, which 52fe30 has just posted toward the slot's point:
     // the led SweetSpot, or a melee target's origin. Only the units 52fe30
@@ -16649,9 +16846,9 @@ void World::finishProduction(int producerId,Unit& finished) {
                 const size_t before=nu->orders.size();
                 order(id,ro.x.toFloat(),ro.z.toFloat(),true);
                 for (size_t i=before;i<nu->orders.size();++i) {
-                    nu->orders[i].attackMove=ro.attackMove;
                     nu->orders[i].patrol=ro.patrol;
                     nu->orders[i].patrolOpen=ro.patrolOpen;
+                    if (ro.attackMove) markFightLeg(nu->orders[i]);
                 }
             } else {
                 nu->orders.push_back(ro);
@@ -17733,11 +17930,9 @@ void World::tick(float dt) {
     }
     std::erase_if(projectiles_, [](const Projectile& p) { return p.life <= 0; });
 
-    // The spatial hash for this tick (combat acquire + separation), and who is
-    // parked where: units are solid (see sim.h). Its walk also counts the live
-    // units for acqStride_ below.
-    const size_t unitsBeforeGates = units_.size();
-    uint32_t live = rebuildGridAndOccupancy();
+    // The spatial hash for this tick (the scans + separation), and who is
+    // parked where: units are solid (see sim.h).
+    rebuildGridAndOccupancy();
     tickAutomaticGates();
 
     // The periodic re-anchor sweep that lived here (every unit with a route,
@@ -17748,41 +17943,6 @@ void World::tick(float dt) {
     // re-anchoring IS the ladder: the plain branch chains a long haul route by
     // route, the traffic branches pace crowd re-asks, and a failed route with
     // no traffic evidence rests.
-    // Auto-acquire re-scan period, widened with the crowd: target acquisition is the
-    // dominant sim cost in a huge battle (each idle armed unit scans its neighbourhood
-    // every acqStride_ ticks), so as unit counts climb we rescan LESS often -- a 0.5s
-    // re-acquire delay is imperceptible in a 5000-unit melee but roughly halves the
-    // acquisition cost there. Deterministic: derived from the live-unit count, which is
-    // identical on every lockstep peer.
-    {
-        // The grid walk above counted them. Only tickAutomaticGates ran since:
-        // a unit's type is set only by spawn, and its scripts (Activate and
-        // Deactivate) can neither kill nor retire a unit -- alive() changes in
-        // the unit loop's death sweep and in the construction, reclaim and
-        // cancel paths, none reachable from a script. So the count still holds
-        // unless something was spawned.
-        auto countLive = [&] {
-            uint32_t n = 0;
-            TAK_PASS();
-            for (const auto& u : units_) if (u.alive() && u.type) ++n;
-            return n;
-        };
-        if (units_.size() != unitsBeforeGates) live = countLive();
-#ifndef NDEBUG
-        if (verifyLists() && live != countLive()) {
-            std::fprintf(stderr, "TAK_VERIFY_LISTS tick %u: live count %u differs from a full count %u\n",
-                         tickCounter_, live, countLive());
-            std::abort();
-        }
-#endif
-        acqStride_ = std::clamp<uint32_t>(4 + live / 700, 4, 16);
-        // (Goal quantization used to coarsen with the crowd here as well -- 2x2 cell
-        // blocks up to 8x8 -- so that fewer distinct goal blocks meant fewer full-map
-        // flow-field builds per tick, which was the dominant cost at 10k+ units. Both
-        // the quantization and the flow fields are gone; only acqStride_ above
-        // survives. Deterministic: it keys off the live count.)
-    }
-
 
     // Formations (Unit::squad < 0): each tick, compute the group's centre + slowest
     // member speed, then walk idle stragglers back toward the centre so they congregate.
@@ -18964,21 +19124,20 @@ void World::tick(float dt) {
         std::fprintf(stderr, "SIMSTATS tick=%u units=%d vm_ticks=%llu vm_skippable=%llu vm_empty=%llu vm_debt_flushes=%llu"
                      " near_scans=%llu near_cells=%llu near_cells_masked=%llu near_blocks_skipped=%llu"
                      " near_cells_block_skippable=%llu near_cells_outside_disk=%llu near_cells_tested=%llu"
-                     " near_cells_tested_outside_disk=%llu acq_scans=%llu los_calls=%llu"
+                     " near_cells_tested_outside_disk=%llu mission_scans=%llu los_calls=%llu"
                      " refresh_rects=%llu refresh_grade_evals=%llu refresh_raw_grades=%llu refresh_cells_rated=%llu compact_moved=%llu passes=%llu"
-                     " acq_gate_walks=%llu acq_gate_walks_before=%llu body_rects=%llu body_rects_heap=%llu"
+                     " body_rects=%llu body_rects_heap=%llu"
                      "%s\n",
                      tickCounter_, alive, (unsigned long long)c.vmTicks, (unsigned long long)c.vmSkippable,
                      (unsigned long long)c.vmEmpty, (unsigned long long)c.vmDebtFlushes, (unsigned long long)c.nearScans,
                      (unsigned long long)c.nearCells, (unsigned long long)c.nearCellsMasked,
                      (unsigned long long)c.nearBlocksSkipped, (unsigned long long)c.nearCellsBlockSkippable,
                      (unsigned long long)c.nearCellsOutsideDisk, (unsigned long long)c.nearCellsTested,
-                     (unsigned long long)c.nearCellsTestedOutsideDisk, (unsigned long long)c.acqScans,
-                     (unsigned long long)c.losCalls, (unsigned long long)c.refreshRects,
+                     (unsigned long long)c.nearCellsTestedOutsideDisk,
+                     (unsigned long long)c.missionScans, (unsigned long long)c.losCalls, (unsigned long long)c.refreshRects,
                      (unsigned long long)c.refreshGradeEvals, (unsigned long long)c.refreshRawGrades,
                      (unsigned long long)c.refreshCellsRated,
                      (unsigned long long)c.compactMoved, (unsigned long long)c.passes,
-                     (unsigned long long)c.acqGateWalks, (unsigned long long)c.acqGateWalksBefore,
                      (unsigned long long)c.bodyRects, (unsigned long long)c.bodyRectsHeap,
                      probe::allocFields().c_str());
         probe::tl = {};   // work between ticks (commands, the state hash) counts toward the next line
@@ -19078,6 +19237,10 @@ void World::hashTrace() const {
         for (int32_t t : u.slotTarget) hUnitMisc=fnv(hUnitMisc,uint32_t(t));
         hUnitMisc=fnv(hUnitMisc,uint32_t(u.slotAuto)|uint32_t(u.slotManual)<<8);
         hUnitMisc=fnv(hUnitMisc,uint32_t(u.faceRequest));
+        if (u.aimWait!=std::array<uint8_t,3>{}) {
+            hUnitMisc=fnv(hUnitMisc,0x41494d57u);
+            hUnitMisc=fnv(hUnitMisc,uint32_t(u.aimWait[0])|uint32_t(u.aimWait[1])<<8|uint32_t(u.aimWait[2])<<16);
+        }
         for (int32_t rl : u.reloads) hUnitMisc = fnv(hUnitMisc, uint64_t(uint32_t(rl)));
         for(const auto& aim:u.weaponAim) {
             hUnitMisc=fnv(hUnitMisc,aim.heading);hUnitMisc=fnv(hUnitMisc,aim.pitch);hUnitMisc=fnv(hUnitMisc,aim.flags);
@@ -19231,7 +19394,7 @@ uint64_t World::stateHash() const {
     for (const auto& d:deathSights_) {
         mix(uint16_t(d.sight.x));mix(uint16_t(d.sight.z));mix(uint32_t(d.sight.eyeHeight));
         mix(uint16_t(d.sight.distance));mix(d.sight.sightHeight);mix(d.sight.active);
-        mix(uint8_t(d.player));mix(d.expiry);
+        mix(uint8_t(d.player));mix(d.expiry);mix(d.planes);
     }
     checkpoint("vision");
     // Each script folds on its own and the digests in id order, so up to four
@@ -19524,6 +19687,9 @@ uint64_t World::stateHash() const {
                 mix(0x434841534555ull);mix(order.chaseLeash);
                 mix(uint16_t(order.chaseOrigin.x));mix(uint16_t(order.chaseOrigin.z));
             }
+            if (order.airRunCount && u.type && !u.type->canFly && order.targetId) {
+                mix(0x4d454c4545574bull);mix(uint32_t(order.airRunCount));
+            }
             if (order.stationFree || order.stationRefTick) {
                 mix(0x53544e52454cull);mix(order.stationFree);
                 mix(uint32_t(order.stationRefX));mix(uint32_t(order.stationRefZ));mix(order.stationRefTick);
@@ -19579,7 +19745,7 @@ uint64_t World::stateHash() const {
         mix(u.sightFootprint.sightHeight);mix(u.sightFootprint.active);
         mix(uint16_t(u.viewSight.x));mix(uint16_t(u.viewSight.z));
         mix(uint32_t(u.viewSight.eyeHeight));mix(uint16_t(u.viewSight.distance));
-        mix(u.viewSight.sightHeight);mix(u.viewSight.active);mix(uint8_t(u.viewPlayer));
+        mix(u.viewSight.sightHeight);mix(u.viewSight.active);mix(uint8_t(u.viewPlayer));mix(u.viewPlanes);
         mix(u.groundGradeTick);
         mix(uint64_t(u.veteran));
         if (u.vetOverride != 0.0f) { mix(0x5645544f56524445ull); mixf(u.vetOverride); }
@@ -19597,6 +19763,8 @@ uint64_t World::stateHash() const {
         for (int32_t t : u.slotTarget) mix(uint32_t(t));
         mix(uint32_t(u.slotAuto)|uint32_t(u.slotManual)<<8);
         mix(uint32_t(u.faceRequest));
+        if (u.aimWait!=std::array<uint8_t,3>{})
+            {mix(0x41494d57u);mix(uint32_t(u.aimWait[0])|uint32_t(u.aimWait[1])<<8|uint32_t(u.aimWait[2])<<16);}
         if (u.blockedTarget) {
             mix(0x424c4b44u);mix(uint32_t(u.blockedTarget));
             mix(uint32_t(u.blockedShots)|uint32_t(u.repositions)<<8|uint32_t(u.searchFailed)<<16);
@@ -19756,7 +19924,7 @@ uint64_t World::stateHash() const {
         mix(uint64_t(uint32_t(s.nextVary)));
     }
     for (const auto& t : players_) {
-        mix(uint32_t(t.automaticGates) | (uint32_t(t.defensiveAi)<<1));
+        mix(uint32_t(t.automaticGates) | (uint32_t(t.defensiveAi)<<1) | (uint32_t(t.passiveNeutral)<<2));
         if (t.manaShareMask != 0xff) { mix(0x53484152454d414eull); mix(t.manaShareMask); }
         { uint64_t b; std::memcpy(&b, &t.mana, 8); mix(b); }   // double: fold all 8 bytes
         if (t.constructionDemand != 0) { mix(0x434f4e5344454d44ull); mix(std::bit_cast<uint64_t>(t.constructionDemand)); }

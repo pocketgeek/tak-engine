@@ -1635,11 +1635,25 @@ struct LegionNavigator::Impl : LegionWorldBinding {
     // keeps every direction any member standing in it has had. passAhead
     // skips its lane scan when no block the scan reads holds a direction
     // that can be oncoming (passOpposed): the scan would find no oncoming
-    // body. Never hashed.
+    // body. Two fight legs (attack-move or patrol) of enemies meeting are a
+    // fight, not traffic: to a fight leg an enemy's fight-leg body is never
+    // oncoming. So each block keeps one mask per player and leg kind
+    // (passSlot), and a fight leg's scan leaves out its enemies' fight slots
+    // (any other leg reads every slot). A body is marked again whenever its
+    // goal is set, so a body whose kind changed in the tick is in both.
+    // Never hashed.
     static constexpr int kPassBlock=8;
     std::vector<uint16_t> passMask;
     std::vector<int> passMaskList;   // non-zero entries of passMask
-    int passMaskW=0;
+    int passMaskW=0,passMaskP=0;
+    // A player's mask in each block, plain legs in the first half of the
+    // slots and fight legs in the second; one shared slot per kind for an
+    // owner outside the player table (allied to none of them).
+    int passSlot(int player,bool fight) const {
+        const int q=passMaskP/2;
+        return (fight?q:0)+(player>=0&&player<q-1?player:q-1);
+    }
+    static bool passFightLeg(const Unit& u) {return !u.orders.empty()&&u.orders.front().attackMove;}
     // 16 sectors of 22.5 degrees from +x toward +z; each an interval of
     // directions (boundaries at tan 22.5 ~ 0.414214).
     static int sector16(int64_t x,int64_t z) {
@@ -1679,9 +1693,11 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         const uint16_t bits=widenSector(uint16_t(1u<<sector16(odx,odz)));
         const int x0=std::max(ox-1,0),z0=std::max(oz-1,0),x1=std::min(ox+fx,w.occW_-1),z1=std::min(oz+fz,w.occH_-1);
         if(x0>x1||z0>z1)return;
+        const int slot=passSlot(u.player,passFightLeg(u));
         for(int bz=z0/kPassBlock;bz<=z1/kPassBlock;++bz)for(int bx=x0/kPassBlock;bx<=x1/kPassBlock;++bx) {
-            uint16_t& b=passMask[size_t(bz)*passMaskW+bx];
-            if(!b)passMaskList.push_back(bz*passMaskW+bx);
+            const int at=(bz*passMaskW+bx)*passMaskP+slot;
+            uint16_t& b=passMask[size_t(at)];
+            if(!b)passMaskList.push_back(at);
             b|=bits;
         }
     }
@@ -1690,9 +1706,10 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(u)markPass(*u,*m);
     }
     void buildPassMask() {
-        if(w.occW_<=0||w.occH_<=0) {passMask.clear();passMaskList.clear();passMaskW=0;return;}
+        if(w.occW_<=0||w.occH_<=0) {passMask.clear();passMaskList.clear();passMaskW=passMaskP=0;return;}
         passMaskW=(w.occW_+kPassBlock-1)/kPassBlock;
-        const size_t n=size_t(passMaskW)*size_t((w.occH_+kPassBlock-1)/kPassBlock);
+        passMaskP=2*(w.numPlayers()+1);
+        const size_t n=size_t(passMaskW)*size_t((w.occH_+kPassBlock-1)/kPassBlock)*size_t(passMaskP);
         if(passMask.size()!=n) {passMask.assign(n,0);passMaskList.clear();}
         for(int b:passMaskList)passMask[size_t(b)]=0;
         passMaskList.clear();
@@ -10013,7 +10030,21 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // holds a cell inside the area, and the search ends there instead of
         // at ring 48 (a member that finds no cell walked all 9,409).
         const int64_t reach=pt.limit+int64_t(isqrtFloor(uint64_t((tx-px)*(tx-px)+(tz-pz)*(tz-pz))))+1;
-        for(int r=0;r<=48;++r) {
+        // The inner side of the same bound: a cell r rings out has its centre
+        // within 16r+8 px of the target on each axis (sx is the target's
+        // floored origin), and a cell inside the area is within `limit` of the
+        // point on each axis, so no ring with 16r+8+limit below the target's
+        // Chebyshev distance from the point holds one. The search starts at
+        // the first ring that can: the same cell, fewer rings walked. A
+        // straggler whose target lies past the area (one left behind its
+        // formation fighting at weapon range, fx-tsearch) walked all 48 rings
+        // to find nothing; it now walks the last few. The hand-out budget
+        // (ringCells, handBudget) is still charged the skipped rings, so the
+        // members a tick serves, and with them the game, are unchanged.
+        const int64_t far=std::max(std::abs(tx-px),std::abs(tz-pz))-pt.limit-24;
+        const int first=far>0?int(std::min<int64_t>(far/16,49)):0;
+        const uint64_t skipped=first?1+4*uint64_t(first-1)*uint64_t(first):0;
+        for(int r=first;r<=48;++r) {
             if(best>=0&&int64_t(r-1)*16*int64_t(r-1)*16>bestD)break;
             if(int64_t(r-1)*16>reach)break;
             // The ring at Chebyshev distance r alone, in the (dz,dx) order of
@@ -10025,7 +10056,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 for(int dx=-r;dx<=r;dx+=stride)test(dx,dz,best,bestD);
             }
         }
-        stats.formationRingCells+=cells;stats.slotSearchCells+=cells;ringCells+=cells;
+        stats.formationRingCells+=cells;stats.slotSearchCells+=cells;ringCells+=cells+skipped;
 #ifndef NDEBUG
         if(gVerify) {
             // The walk of every square cell the ring search replaced (A6).
@@ -13514,13 +13545,29 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         if(!passOpen(options[0])&&!passOpen(options[1])&&!(laneHeld&&mayStep(dx,dz))) {++stats.passScansSkipped;return false;}
         // No block the scan reads holds a member direction that can be
         // oncoming (see passMask): the scan would find no oncoming body.
+        // Two enemies' fight legs meeting are a fight, not traffic (see
+        // passMask): a fight-move column meeting the enemy's would step
+        // aside for it. Every other pair still makes way, enemy or ally.
+        const bool fightLeg=passFightLeg(u);
         bool opposed=passMask.empty();
         if(!opposed) {
             const uint16_t want=passOpposed()[size_t((dx+1)*3+dz+1)];
+            // The mask slots a fight leg reads: every plain slot and the
+            // fight slots of the players allied to this body (its own
+            // included); an owner outside the table reads the shared fight
+            // slot. Any other leg, or past 64 slots, reads every slot.
+            uint64_t friends=passMaskP>64||!fightLeg?~uint64_t(0):0;
+            if(fightLeg&&passMaskP<=64) {
+                const int half=passMaskP/2;
+                friends|=(uint64_t(1)<<half)-1;
+                for(int q=0;q<half-1;++q)if(w.allied(q,u.player))friends|=uint64_t(1)<<(half+q);
+                if(passSlot(u.player,true)==passMaskP-1)friends|=uint64_t(1)<<(passMaskP-1);
+            }
             const int x0=std::max(ox+std::min(dx,kPassCells*dx),0),x1=std::min(ox+std::max(dx,kPassCells*dx)+fx-1,w.occW_-1);
             const int z0=std::max(oz+std::min(dz,kPassCells*dz),0),z1=std::min(oz+std::max(dz,kPassCells*dz)+fz-1,w.occH_-1);
-            for(int bz=z0/kPassBlock;bz<=z1/kPassBlock&&!opposed&&x0<=x1;++bz)for(int bx=x0/kPassBlock;bx<=x1/kPassBlock;++bx)
-                if(passMask[size_t(bz)*passMaskW+bx]&want) {opposed=true;break;}
+            for(int bz=z0/kPassBlock;bz<=z1/kPassBlock&&!opposed&&x0<=x1;++bz)for(int bx=x0/kPassBlock;bx<=x1/kPassBlock&&!opposed;++bx)
+                for(int q=0;q<passMaskP;++q)
+                    if((q>=64||(friends>>q&1))&&(passMask[size_t((bz*passMaskW+bx)*passMaskP+q)]&want)) {opposed=true;break;}
         }
         bool oncoming=false;
         const Member* oncomingPeer=nullptr;
@@ -13552,6 +13599,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
             if(!peer||peer->state==Arrived||peer->state==Trapped||peer->state==Engaged)continue;
             const Unit* other=w.unit(o);
             if(!other||other->orders.empty()||peer->goal<0)continue;
+            if(fightLeg&&passFightLeg(*other)&&!w.allied(other->player,u.player))continue;
             // Oncoming by intent, not heading: the other body's way to its
             // own goal points back at this one by more than ~112 degrees. A
             // body that has not turned yet (fresh or reversed order) is not

@@ -224,26 +224,42 @@ int main(int argc,char** argv) {
             int target=world.spawn(&victim,x+distance,z,0,1);
             if (order==1) world.attackMove(flyer,x+distance,z,false);
             if (order==2) world.attack(flyer,target,false);
-            bool fired=false,attacked=false;
+            bool fired=false,attacked=false,seen=false;
             for (int tick=0;tick<1200 && !fired;++tick) {
                 world.tick(1.f/30.f);
                 fired=world.unit(flyer)->justFired;
-                for (const auto& o:world.unit(flyer)->orders) attacked=attacked || o.targetId==target;
+                const auto& o=world.unit(flyer)->orders;
+                attacked=attacked || (!o.empty() && o.front().targetId==target);
+                seen=seen || world.playerSees(0,*world.unit(target));
             }
-            std::printf("balance=%s unit=%s order=%d fired=%d\n",crusades?"Crusades":"standard",
-                        name.c_str(),order,int(fired));
-            // A type that ships Hold Position (standingunitorder=1: the Thirsha,
-            // the Ghost Ship, the Dirigible) takes no attack from its standby: retail's
-            // 4d7de0 refuses VTOL_Standby's call (4176cc) on Hold Position.
-            // hold_flyer_test covers what it does instead.
+            std::printf("balance=%s unit=%s order=%d fired=%d seen=%d\n",crusades?"Crusades":"standard",
+                        name.c_str(),order,int(fired),int(seen));
+            // Idle on Hold Position (standingunitorder 1), VTOL_Standby's
+            // 4d7de0(unit, found, 0, 0, 1, 0) refuses: the flyer stays landed
+            // and only its sweep slots may take the target.
             if (order==0 && world.unit(flyer)->moveState==0) {
-                check(!attacked,"a landed flyer on Hold Position takes no automatic attack");
+                check(!attacked,"an idle flyer on Hold Position puts no attack in");
+                continue;
+            }
+            // Its scan and sweep take only an enemy its player sees: a landed
+            // flyer whose sight falls short of the target leaves it alone.
+            if (order==0 && !seen) {
+                check(!attacked && !fired,"an idle flyer leaves an enemy its player cannot see");
                 continue;
             }
             // A very short authored maneuver leash (e.g. the Crusades Angel)
             // intentionally refuses this idle target. Explicit orders override it.
             if (order==0 && world.unit(flyer)->moveState==1 && type->leash>0 && distance>type->leash) {
                 check(!fired,"automatic attack respects the authored maneuver leash");
+                continue;
+            }
+            // A fight-move's pick is the move's own scan (4d8370), which runs
+            // the picker on the scanning slot alone (519ac0: a switcher's
+            // selected one): the Crusades Angel's Soul Stealer (slot 0) does
+            // nothing to Undead, so it leaves the zombie, as retail's would.
+            // The stride scan it used to rely on weighed every weapon.
+            if (order==1 && !type->weapons.empty() && type->weapons[0].damageVs(&victim)<=0) {
+                check(!attacked,"a fight-move leaves a target its scanning slot cannot hurt");
                 continue;
             }
             check(fired,"landed flyer can acquire, Move Fight, and directly attack");

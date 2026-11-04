@@ -163,6 +163,14 @@ void exitRally(PathfindingMode mode,bool queued) {
 }
 void combatResume(PathfindingMode mode,bool patrol) {
     World w;setup(w,mode);auto type=soldier(),enemy=soldier();enemy.maxVel=Fixed();
+    // Upright, so both stand on the terrain: a patrol's scan (403600's
+    // 4d8370) takes only an enemy its player sees, and a body left at y 0
+    // under the height-100 ground falls on the wrong sight cells.
+    type.upright=enemy.upright=true;
+    // Ten shots to kill, so it outlives the first shot of the walker's
+    // fire-at-will sweep and the patrol's own scan (a timer wake, 5 +
+    // rand(10)) gets to put its attack in.
+    enemy.maxHp=1000;
     Weapon weapon;weapon.name="order-test-weapon";weapon.range=120;weapon.damage=100;
     weapon.reload=0.1f;weapon.aimTol=32767;type.weapon=weapon;type.weapons.push_back(weapon);
     const int id=w.spawn(&type,320,640,0,0),target=w.spawn(&enemy,600,640,0,1);
@@ -373,6 +381,9 @@ void queuedMoves(PathfindingMode mode) {
     }
     {   // Fight-move, then Shift-patrol: engage en route, reach the fight point, then patrol from there.
         World w;setup(w,mode);auto type=armed(),enemy=soldier();enemy.maxVel=Fixed();
+        // Upright, as combatResume's: the fight-move's scan (Move response
+        // mode -1, 4d8370) takes only an enemy its player sees.
+        type.upright=enemy.upright=true;
         const int id=w.spawn(&type,320,640,0,0),target=w.spawn(&enemy,700,640,0,1);
         send(w,Cmd::AttackMove,id,1200,640,false);send(w,Cmd::Patrol,id,1200,1400,true);
         const int reached=visits(w,id,{{1200,640},{1200,1400},{1200,640},{1200,1400}},12000);

@@ -202,6 +202,15 @@ Static staticShooter(const hpi::Vfs& vfs, const sim::TypeRegistry& reg, const ch
     if (slot >= 0) s.w.setWeapon(shooter, slot);
     s.w.player(0).mana = 30000;
     const int target = building(s.w, tt, sx + dx, sz + dz);
+    // A spotter of the shooter's beside the building: a shooter whose range
+    // outreaches its sight (a Fire Mage: 200 sight, Fire Storm 447) takes only
+    // what its player sees (the sweep and Standby's scan draw on list +5), and
+    // the cases measure range, not sight.
+    if (const sim::UnitType* sp = reg.find("araarch")) {
+        static sim::UnitType spotter;
+        spotter = *sp; spotter.id = "spotter"; spotter.weapons.clear(); spotter.weapon = {};
+        s.w.spawn(&spotter, sx + dx + 8.f * float(tt->footX) + 64.f, sz + dz, {}, 0);
+    }
     Static out;
     for (int i = 0; i < ticks; ++i) {
         s.w.player(0).mana = 30000;
@@ -355,6 +364,15 @@ int main(int argc, char** argv) {
               std::string(c.what) + " on hold never targets a building past its range", describe(band));
         const Static in = staticShooter(vfs, standard, c.unit, target, 0, float(w->range) - 20, 900, c.slot);
         std::printf("  %s on hold %d px off: %s\n", c.unit, w->range - 20, describe(in).c_str());
+        // A stone or freeze class never takes the Keep on its own: it is
+        // cantbestoned and cantbefrozen, and the picker (412620, the sweep's
+        // and the scan's) skips a type immune to the slot's status. Its reach
+        // shows in the explicit attacks below.
+        if (statusShot(*w)) {
+            check(in.held == 0 && in.struck == 0,
+                  std::string(c.what) + " on hold never takes a building immune to its status", describe(in));
+            continue;
+        }
         check(in.held > 0 && (statusShot(*w) ? in.struck > 0 && in.damage == 0 : in.damage > 0),
               std::string(c.what) + (statusShot(*w) ? " on hold strikes one inside its range, harmlessly"
                                                     : " on hold hits one inside its range"),

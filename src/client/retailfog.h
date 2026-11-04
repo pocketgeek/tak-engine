@@ -24,8 +24,8 @@ namespace tak::retailfog {
 enum : uint8_t { kUnexplored = 0, kExplored = 1, kInView = 2 };
 
 // What the local display plane is made of. `viewers` are the players whose
-// current view the local screen shows (the local player and its allies, as our
-// exploration plane already shares among allies); `player` is the local
+// current view the local screen shows (World::viewShareMask of the local
+// player: it and every ally but a passive neutral); `player` is the local
 // player, whose Mapping (explored) bit is read.
 struct PlaneSource {
     std::span<const uint16_t> viewCounts;   // player-major, width*height per player

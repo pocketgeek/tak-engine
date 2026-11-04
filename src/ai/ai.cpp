@@ -2594,8 +2594,11 @@ void Controller::updateKnowledge(const tak::sim::World& world) {
     const bool blind = world.viewCounts().empty() && world.tickCount() == 0 && !world.roomLosOff();
     const int players = world.numPlayers();
     team_.clear();
+    // The players whose sight this one's plane holds (World::viewShareMask:
+    // every ally but a passive neutral).
+    const uint16_t sharing = world.viewShareMask(player_);
     for (int p = 0; p < players; ++p)
-        if (p == player_ || (world.allied(player_, p) && !world.isNeutralPlayer(p))) team_.push_back(p);
+        if (p == player_ || (p < 16 && (sharing >> p & 1))) team_.push_back(p);
     updateRadar(world);
     std::vector<uint8_t> enemies(size_t(std::max(players, 0)), 0), allies(enemies.size(), 0);
     for (int p = 0; p < players; ++p) {

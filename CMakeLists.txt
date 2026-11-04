@@ -348,6 +348,7 @@ add_executable(ballistic_line_test tools/ballistic_line_test.cpp)
 add_executable(shot_range_test tools/shot_range_test.cpp)
 add_executable(attack_stop_test tools/attack_stop_test.cpp)
 add_executable(vermage_fight_test tools/vermage_fight_test.cpp)
+add_executable(target_search_test tools/target_search_test.cpp)
 add_executable(sweetspot_test tools/sweetspot_test.cpp)
 add_executable(reclaimarea_test tools/reclaimarea_test.cpp)
 add_executable(revive_order_test tools/revive_order_test.cpp)
@@ -994,10 +995,14 @@ set_tests_properties(legion_fightshuffle PROPERTIES LABELS legion
 # one body at a time), so it had no ring and the column queued on the near arc (attackring-fight-60 at offset 0: half
 # the attackers in reach at tick 1,526, Retail's gate median 1,206; 1,510 with the in-reach press edge alone). Passes
 # when half are in reach by tick 1,300, serial equal to workers.
+# Retaken 2026-11-03 (retail target search, protocol 312; owner's decision): attack-move legs are retail's
+# MoveFight, whose scan takes only enemies in weapon range (96 px), not range + 90 as the removed stride scan did,
+# so attackers convert to attacks later: t50 1,211 -> 1,339 (Retail 1,329 -> 1,251). The owner accepted it as the
+# retail rule. Passes at 1,400 or earlier.
 add_test(NAME legion_fightring
          COMMAND legion_scenario ${CMAKE_SOURCE_DIR}/tools/scenarios/attackring-fight-60.scn --mode legion --offsets 0 --json)
 set_tests_properties(legion_fightring PROPERTIES LABELS legion
-                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.t50\":(1[0-2][0-9][0-9]|1300|[1-9][0-9][0-9]),")
+                     PASS_REGULAR_EXPRESSION "\"serial_eq_workers\":true,.*\"reach\\.ring\\.t50\":(1[0-3][0-9][0-9]|1400|[1-9][0-9][0-9]),")
 # A press may end exactly on the reach edge (round 5): combat fires there, but pressIn wanted a point a sixteenth of a
 # pixel inside, so bodies held flush on their origins' edges 1-2 px out of reach (attackring-f1-64 at offset 0: 39 in
 # reach at the end, Retail's gate median 43; 41 with the late ring and the stop-origin rounding alone). Passes when 43
@@ -1580,6 +1585,7 @@ target_link_libraries(ballistic_line_test PRIVATE tak-formats)
 target_link_libraries(shot_range_test PRIVATE tak-formats)
 target_link_libraries(attack_stop_test PRIVATE tak-formats)
 target_link_libraries(vermage_fight_test PRIVATE tak-formats)
+target_link_libraries(target_search_test PRIVATE tak-formats)
 target_link_libraries(sweetspot_test PRIVATE tak-formats)
 target_link_libraries(reclaimarea_test PRIVATE tak-formats)
 target_link_libraries(revive_order_test PRIVATE tak-formats)
@@ -1848,6 +1854,18 @@ if(TAK_TEST_DATA)
     add_test(NAME vermage_fight COMMAND vermage_fight_test "${TAK_TEST_DATA}")
     add_test(NAME legion_vermage_fight COMMAND vermage_fight_test "${TAK_TEST_DATA}" --legion)
     set_tests_properties(legion_vermage_fight PROPERTIES LABELS legion)
+    add_test(NAME idle_coverage COMMAND target_search_test "${TAK_TEST_DATA}" idle_coverage)
+    add_test(NAME legion_idle_coverage COMMAND target_search_test "${TAK_TEST_DATA}" idle_coverage --legion)
+    set_tests_properties(legion_idle_coverage PROPERTIES LABELS legion)
+    add_test(NAME target_search_missions COMMAND target_search_test "${TAK_TEST_DATA}" mission_ports)
+    add_test(NAME legion_target_search_missions COMMAND target_search_test "${TAK_TEST_DATA}" mission_ports --legion)
+    set_tests_properties(legion_target_search_missions PROPERTIES LABELS legion)
+    add_test(NAME target_search_attack_move COMMAND target_search_test "${TAK_TEST_DATA}" attack_move)
+    add_test(NAME legion_target_search_attack_move COMMAND target_search_test "${TAK_TEST_DATA}" attack_move --legion)
+    set_tests_properties(legion_target_search_attack_move PROPERTIES LABELS legion)
+    add_test(NAME target_search_shared_sight COMMAND target_search_test "${TAK_TEST_DATA}" shared_sight)
+    add_test(NAME legion_target_search_shared_sight COMMAND target_search_test "${TAK_TEST_DATA}" shared_sight --legion)
+    set_tests_properties(legion_target_search_shared_sight PROPERTIES LABELS legion)
     add_test(NAME placement COMMAND placement_test "${TAK_TEST_DATA}")
     add_test(NAME cursor_enemy COMMAND cursor_enemy_test "${TAK_TEST_DATA}")
     add_test(NAME friendly_order_data COMMAND friendly_order_test "${TAK_TEST_DATA}")

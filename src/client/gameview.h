@@ -686,9 +686,9 @@ public:
     float groundProjectedZ(float x, float z) const;   // z - h/2 of the terrain under (x, z)
     uint8_t projectedFogCellR(float x, float projectedZ) const;
     // The main view draws (and the cursor picks) another side's unit only when
-    // LosOn passes on the local plane (UnitR::losSeen); own, allied and spectated
-    // units always.
-    bool unitShownR(const UnitR& u) const { return noFog_ || u.alliedToLocal || u.losSeen; }
+    // LosOn passes on the local plane (UnitR::losSeen); own, sight-sharing allies'
+    // (every ally but a passive neutral) and spectated units always.
+    bool unitShownR(const UnitR& u) const { return noFog_ || u.sightShared || u.losSeen; }
     bool effectVisibleR(const std::array<int32_t,3>& position) const;
     // The native unit sound host 50def0's sight test on the effect plane, which keeps
     // a dying local unit's sight for 60 ticks: display fog drops it at once, and
@@ -701,7 +701,7 @@ public:
 
     bool canPickPoint(float x, float z) const { return noFog_ || cellVisibleR(x, z); }
     bool canPickUnit(const UnitR& u) const {
-        return !u.embarked() && (alliedToLocal(u.player) || unitShownR(u));
+        return !u.embarked() && unitShownR(u);   // sight-sharing allies always, as drawn
     }
     // Impacts are ONE-SHOT and the sim clears them every tick, while the render
     // only ever sees the newest published snapshot. Whenever the sim outruns the
@@ -2883,10 +2883,10 @@ private:
     // exactly where it would have been.
     bool worldFxFrame() const { return !dotsFrame_; }
     // The minimap's rule for a unit's dot: alive, not embarked, and a spectator's,
-    // an ally's, or UnitR::mapSeen (radar, or its centre cell in view).
+    // a sight-sharing ally's, or UnitR::mapSeen (radar, or its centre cell in view).
     bool radarVisible(const UnitR& u) const {
         if (!u.alive() || u.embarked() || !u.type) return false;
-        return noFog_ || u.alliedToLocal || u.mapSeen;
+        return noFog_ || u.sightShared || u.mapSeen;
     }
     // The main view's rule, which Tactical Dots and the hidden-unit dots follow:
     // radar shows a unit on the minimap only, never in the main view.
@@ -3893,6 +3893,11 @@ private:
     // Is this player on the local player's team? (Allies share vision, so their
     // units render/appear on the minimap through fog just like your own.)
     bool alliedToLocal(int player) const { return worldTables().allied(player, localPlayer_); }
+    // Does `player`'s sight count in the local plane (World::viewShareMask)?
+    // Every ally's does but a passive neutral's: its units show only in sight.
+    bool sharesSightToLocal(int player) const {
+        return localPlayer_ >= 0 && localPlayer_ < 16 && (world_.viewShareMask(player) >> localPlayer_ & 1) != 0;
+    }
 
     // Plain interface text in the chosen UI FONT (client/uitext.h): `px` is the size of
     // one block-font cell pixel (caps 7 * px tall from y), and blockWidth is exactly

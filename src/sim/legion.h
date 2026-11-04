@@ -57,7 +57,7 @@ public:
         // stationOverflow (a 5th distinct click in one squad that got no station,
         // step 3).
         uint64_t relifts=0,capHits=0,stationReleasesA=0,stationReleasesB=0,goArounds=0,stationOverflow=0;
-        // W6 FL-01: acquireTarget polls by lifted flyers (a declared work class,
+        // W6 FL-01: target polls by lifted flyers (a declared work class,
         // PLAN 3.0: at most lifted flyers / 8 per tick).
         uint64_t liftTargetPolls=0;
         // Per LegionMission: legs (unit, order) Legion took on, arrivals it
