@@ -10030,7 +10030,21 @@ struct LegionNavigator::Impl : LegionWorldBinding {
         // holds a cell inside the area, and the search ends there instead of
         // at ring 48 (a member that finds no cell walked all 9,409).
         const int64_t reach=pt.limit+int64_t(isqrtFloor(uint64_t((tx-px)*(tx-px)+(tz-pz)*(tz-pz))))+1;
-        for(int r=0;r<=48;++r) {
+        // The inner side of the same bound: a cell r rings out has its centre
+        // within 16r+8 px of the target on each axis (sx is the target's
+        // floored origin), and a cell inside the area is within `limit` of the
+        // point on each axis, so no ring with 16r+8+limit below the target's
+        // Chebyshev distance from the point holds one. The search starts at
+        // the first ring that can: the same cell, fewer rings walked. A
+        // straggler whose target lies past the area (one left behind its
+        // formation fighting at weapon range, fx-tsearch) walked all 48 rings
+        // to find nothing; it now walks the last few. The hand-out budget
+        // (ringCells, handBudget) is still charged the skipped rings, so the
+        // members a tick serves, and with them the game, are unchanged.
+        const int64_t far=std::max(std::abs(tx-px),std::abs(tz-pz))-pt.limit-24;
+        const int first=far>0?int(std::min<int64_t>(far/16,49)):0;
+        const uint64_t skipped=first?1+4*uint64_t(first-1)*uint64_t(first):0;
+        for(int r=first;r<=48;++r) {
             if(best>=0&&int64_t(r-1)*16*int64_t(r-1)*16>bestD)break;
             if(int64_t(r-1)*16>reach)break;
             // The ring at Chebyshev distance r alone, in the (dz,dx) order of
@@ -10042,7 +10056,7 @@ struct LegionNavigator::Impl : LegionWorldBinding {
                 for(int dx=-r;dx<=r;dx+=stride)test(dx,dz,best,bestD);
             }
         }
-        stats.formationRingCells+=cells;stats.slotSearchCells+=cells;ringCells+=cells;
+        stats.formationRingCells+=cells;stats.slotSearchCells+=cells;ringCells+=cells+skipped;
 #ifndef NDEBUG
         if(gVerify) {
             // The walk of every square cell the ring search replaced (A6).
