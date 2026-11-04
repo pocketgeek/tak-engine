@@ -125,7 +125,7 @@ struct ArmedSelection {
     // guards a flyer with its ground units too.
     bool guardOk = false;
     bool singleTransport = false;   // 'l': exactly one transport selected (0x520b60)
-    bool queue = false;             // Shift: an unload may be queued on an empty transport
+    bool queue = false;             // Shift (append, not Ctrl): an unload may be queued on an empty transport
 };
 
 inline CursorId friendlyCursor(ClickOrder o) {
@@ -221,6 +221,12 @@ inline uint8_t clickQueue(bool shift, bool ctrl) {
     if (ctrl) return tak::net::kQueueFront | tak::net::kQueueToggle;
     if (shift) return tak::net::kQueueAppend | tak::net::kQueueToggle;
     return tak::net::kQueueReplace;
+}
+// Whether the order goes behind the unit's queue (Shift), so that something
+// queued ahead of it -- a pickup ahead of an unload -- runs first. Ctrl's goes
+// first and plain's alone.
+inline bool queuesBehind(uint8_t queue) {
+    return (queue & tak::net::kQueuePlace) == tak::net::kQueueAppend;
 }
 // A click's follow-on orders for one unit (a box's second and later targets):
 // behind a replacing first order they append; a Shift or Ctrl click's go as

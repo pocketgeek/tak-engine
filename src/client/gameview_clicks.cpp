@@ -97,7 +97,7 @@ namespace {
         ClickUnit f;
         ArmedSelection sel;
         sel.singleTransport = transports == 1;
-        sel.queue = queue != 0;
+        sel.queue = tak::client::queuesBehind(queue);
         const auto facts = [&](const UnitR& u) {
             f = ClickUnit{};
             f.self = hovered && u.id == hovered->id;

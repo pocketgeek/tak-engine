@@ -392,6 +392,15 @@ void modifierRows() {
     row(clickQueue(true, false), kQueueAppend | kQueueToggle, "Shift appends, toggling");
     row(clickQueue(false, true), kQueueFront | kQueueToggle, "Ctrl goes to the front, toggling");
     row(clickQueue(true, true), kQueueFront | kQueueToggle, "Ctrl+Shift is Ctrl");
+    const auto flag = [&](bool got, bool want, const char* what) {
+        if (got == want) return;
+        std::fprintf(stderr, "FAIL: %s\n", what);
+        ++failures;
+    };
+    flag(queuesBehind(clickQueue(true, false)), true, "Shift queues behind (an unload may wait on a pickup)");
+    flag(queuesBehind(clickQueue(false, true)), false, "Ctrl goes first: no unload on an empty transport");
+    flag(queuesBehind(clickQueue(true, true)), false, "Ctrl+Shift is Ctrl");
+    flag(queuesBehind(clickQueue(false, false)), false, "plain replaces");
     row(followQueue(kQueueReplace), kQueueAppend, "after a replacing first order, the rest append");
     row(followQueue(kQueueAppend | kQueueToggle), kQueueAppend | kQueueToggle,
         "after a Shift first order, each is a Shift order too (every target toggles)");
