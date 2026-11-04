@@ -4991,6 +4991,27 @@ Where retail's cursor and click disagree (armed MOVE over a body, armed CLEAR
 over a raisable reclaimable body, Airstrike over an enemy it cannot hurt, Attack
 over an empty right-drag box) ours shows what the click does.
 
+The order modifiers (C9, sim since 2026-11-03). Retail's order call `0x4d78a0`
+links a new mission at the head of the list (`0x4d7750`, ahead of the running
+one, which sleeps behind it) when Ctrl is down (`[ebp+0x24]`, `0x4d7a09`) and at
+the tail (`0x4d77f0`) for Shift; Ctrl+Shift is Ctrl. Before that, `0x4d7a30`
+walks the list from the head (`+0x60`, next `+0x66`) for a mission of the same
+kind (`+4`), the same target unit (`+0x16`) when the order names one, and a
+point (`+0x22`/`+0x2a`) within 16 px on both axes (`d + 0x100000 <= 0x200000`)
+when it has one, and removes the first match (`0x4d6ad0`) instead of adding
+(`0x4d7a5b..0x4d7ab2`) -- a toggle. Retail also drops a Shift order for a builder
+repeating production (count >= 10,000,000, `0x52162d..0x5216c5`); ours does not:
+a producer, or a mobile builder repeating production, takes Move / Patrol /
+Attack / fight-move as RALLY orders (rally rule), and Ctrl and the toggle work on
+that rally list. Ours (`Command::queue`, `net/lockstep.h`): `kQueueFront` (2)
+inserts, `kQueueToggle` (4) marks a player's click so that the toggle applies --
+the AI and scripts send 0/1 only, so their queued routes are never toggled
+(`World::insertOrderFront`, `World::removeQueuedMatch`, `queue_modifiers` test).
+The interrupted leg is rewound to its queued state (its route and what its run
+pushed ahead of it go; its mission restarts at stage 0 on a fresh controller);
+a builder at work on a placed site comes back to it as a HelpBuild (I: retail
+resumes the MobileBuild mission itself).
+
 ## Drag boxes: world-anchored corners and the 32-pixel test (icd, 2026-10-21)
 
 Retail keeps a map drag box as two WORLD points (game state `+0x175fc..+0x17614`,

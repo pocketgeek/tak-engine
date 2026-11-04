@@ -2967,6 +2967,28 @@ public:
     void loadInto(int unitId, int transportId, bool queue = false);
     void unloadAt(int transportId, float x, float z, Fixed destinationY = {},
                   bool queue = false);
+    // Retail's queue modifiers on a player's order (4d78a0's place, 4d7a30's
+    // toggle; applyCommand reads them from Command::queue). The kind a queued
+    // order is matched by, from its own fields (queuedKind).
+    enum class QueuedKind : uint8_t { None, Move, AttackMove, Patrol, Attack, Guard, Load, Unload,
+                                      Build, Reclaim, Repair, Assist };
+    struct QueuedMatch {
+        QueuedKind kind = QueuedKind::None;
+        Fixed x, z;                         // the point kinds' click (Build: the site)
+        int target = 0;                     // the unit kinds' target (Reclaim: the feature)
+        const UnitType* type = nullptr;     // Build
+    };
+    static QueuedKind queuedKind(const Order& o);
+    // Ctrl (4d7a09 -> 4d7750): `issue` appends its order to an emptied list --
+    // the unit's own, or its rally list when `rally` (a producer, or a mobile
+    // builder repeating production) -- and everything that was queued goes
+    // back behind it. The interrupted leg starts over when it comes round.
+    void insertOrderFront(int unitId, bool rally, const std::function<void()>& issue);
+    // Shift or Ctrl on an order of the same kind as a queued one, on its target
+    // or within 16 px of its point (4d7a5b..4d7ab2): that order goes instead.
+    // The first match from the head; the rally list when `rally`. True when
+    // one went.
+    bool removeQueuedMatch(int unitId, bool rally, const QueuedMatch& m);
     void tick(float dt);
 
     std::vector<Unit>& units() { return units_; }

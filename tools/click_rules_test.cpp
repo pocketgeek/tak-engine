@@ -378,7 +378,27 @@ void parity() {
 }
 } // namespace
 
+// 2.12 the order modifiers (B.4, 0x5214bf): Ctrl (with or without Shift) at
+// the head, Shift appended, both toggling; plain replaces. A box's follow-on
+// targets go behind the first: appended untoggled, or (Ctrl) each at the head.
+void modifierRows() {
+    using namespace tak::net;
+    const auto row = [](uint8_t got, uint8_t want, const char* what) {
+        if (got == want) return;
+        std::fprintf(stderr, "FAIL: %s: queue %d, want %d\n", what, int(got), int(want));
+        ++failures;
+    };
+    row(clickQueue(false, false), kQueueReplace, "plain click replaces");
+    row(clickQueue(true, false), kQueueAppend | kQueueToggle, "Shift appends, toggling");
+    row(clickQueue(false, true), kQueueFront | kQueueToggle, "Ctrl goes to the front, toggling");
+    row(clickQueue(true, true), kQueueFront | kQueueToggle, "Ctrl+Shift is Ctrl");
+    row(followQueue(kQueueReplace), kQueueAppend, "after a replacing first order, the rest append");
+    row(followQueue(kQueueAppend | kQueueToggle), kQueueAppend, "after a Shift first order, the rest append untoggled");
+    row(followQueue(kQueueFront | kQueueToggle), kQueueFront | kQueueToggle, "after a Ctrl first order, each goes to the front");
+}
+
 int main() {
+    modifierRows();
     rightClickRows();
     armedRows();
     boxRows();

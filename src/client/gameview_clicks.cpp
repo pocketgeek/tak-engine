@@ -44,6 +44,13 @@ namespace {
     }
 }
 
+    uint8_t GameView::keyQueue() {
+        const SDL_Keymod m = SDL_GetModState();
+        return tak::client::clickQueue((m & KMOD_SHIFT) != 0, (m & KMOD_CTRL) != 0);
+    }
+
+    bool GameView::shiftHeld() { return (SDL_GetModState() & KMOD_SHIFT) != 0; }
+
     std::vector<const UnitR*> GameView::ownClickUnits() const {
         std::vector<const UnitR*> out;
         out.reserve(selection_.size());
@@ -61,7 +68,7 @@ namespace {
         return ids[size_t(ackRng_ >> 8) % ids.size()];
     }
 
-    GameView::ClickPlan GameView::planClick(char mode, float wx, float wz, const UnitR* hovered, bool queue,
+    GameView::ClickPlan GameView::planClick(char mode, float wx, float wz, const UnitR* hovered, uint8_t queue,
                                             bool alt, bool pointTargets) {
         using namespace tak::client;
         ClickPlan plan;
@@ -90,7 +97,7 @@ namespace {
         ClickUnit f;
         ArmedSelection sel;
         sel.singleTransport = transports == 1;
-        sel.queue = queue;
+        sel.queue = queue != 0;
         const auto facts = [&](const UnitR& u) {
             f = ClickUnit{};
             f.self = hovered && u.id == hovered->id;
@@ -137,7 +144,7 @@ namespace {
         return plan;
     }
 
-    void GameView::issueClickPlan(const ClickPlan& plan, char mode, bool queue) {
+    void GameView::issueClickPlan(const ClickPlan& plan, char mode, uint8_t queue) {
         ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         if (plan.orders.empty()) return;
         // One run per order kind, in selection order within it, so a Legion net game
@@ -157,7 +164,7 @@ namespace {
             attacked |= kind == ClickOrder::Attack || kind == ClickOrder::AttackMove;
             const auto send = [&](tak::net::Cmd k, int unit, int targetId) {
                 tak::net::Command c;
-                c.kind = k; c.unitId = unit; c.targetId = targetId; c.queue = queue ? 1 : 0;
+                c.kind = k; c.unitId = unit; c.targetId = targetId; c.queue = queue;
                 issue(c);
             };
             switch (kind) {
@@ -177,7 +184,7 @@ namespace {
                         tak::net::Command c;
                         c.kind = tak::net::Cmd::Unload;
                         c.targetId = unloadDestinationHeight(mapView_.map(), plan.wx, plan.wz);
-                        c.unitId = id; c.x = plan.wx; c.z = plan.wz; c.queue = queue ? 1 : 0;
+                        c.unitId = id; c.x = plan.wx; c.z = plan.wz; c.queue = queue;
                         issue(c);
                     }
                     break;
@@ -227,7 +234,7 @@ namespace {
                                 c.z = plan.wz + std::clamp(u->z - cz, -60.0f, 60.0f);
                             }
                         }
-                        c.queue = queue ? 1 : 0;
+                        c.queue = queue;
                         issue(c);
                     }
                     break;
@@ -240,7 +247,7 @@ namespace {
         voice(ackUnit(all), event);
     }
 
-    void GameView::rightClickOrder(float wx, float wz, bool queue) {
+    void GameView::rightClickOrder(float wx, float wz, uint8_t queue) {
         ClickScope click(*this);   // one click: a Legion net game sends it as explicit orders
         if (selection_.empty()) return;
         const UnitR* hovered = hoveredUnitAt(tak::client::PointerArea::World, mouseX_, mouseY_);
@@ -248,7 +255,7 @@ namespace {
         issueClickPlan(planClick(0, wx, wz, hovered, queue, alt, true), 0, queue);
     }
 
-    bool GameView::armedClickAt(char cmd, float wx, float wz, const UnitR* hovered, bool queue, bool pointTargets) {
+    bool GameView::armedClickAt(char cmd, float wx, float wz, const UnitR* hovered, uint8_t queue, bool pointTargets) {
         ClickScope click(*this);
         const ClickPlan plan = planClick(cmd, wx, wz, hovered, queue, false, pointTargets);
         // P4 (0x527dd0 S): only an order cursor issues; Normal leaves it armed.
@@ -257,7 +264,7 @@ namespace {
         return true;
     }
 
-    void GameView::issueArmedOrder(char cmd, float wx, float wz, bool queue, bool precise) {
+    void GameView::issueArmedOrder(char cmd, float wx, float wz, uint8_t queue, bool precise) {
         ClickScope click(*this);
         if (selection_.empty()) return;
         const UnitR* hovered = precise ? hoveredUnitAt(tak::client::PointerArea::World, mouseX_, mouseY_)
@@ -266,7 +273,7 @@ namespace {
         issueClickPlan(planClick(cmd, wx, wz, hovered, queue, false, true), cmd, queue);
     }
 
-    bool GameView::minimapOrder(float mx, float my, int winW, int winH, bool queue) {
+    bool GameView::minimapOrder(float mx, float my, int winW, int winH, uint8_t queue) {
         float wx, wz;
         if (watchOnly() || selection_.empty() || !minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
         ClickScope click(*this);
@@ -280,11 +287,10 @@ namespace {
         if (watchOnly() || !pendingCmd_) return false;
         float wx, wz;
         if (!minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
-        const bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
         // The armed order with the dot as its target, gated by the cursor (P4); a
         // Normal cursor leaves the order armed, and the press is still taken.
-        if (armedClickAt(pendingCmd_, wx, wz, hoveredUnitAt(tak::client::PointerArea::Minimap, mx, my), queue, false))
-            armedOrderIssued(queue);
+        if (armedClickAt(pendingCmd_, wx, wz, hoveredUnitAt(tak::client::PointerArea::Minimap, mx, my), keyQueue(), false))
+            armedOrderIssued(shiftHeld());
         return true;
     }
 
@@ -301,7 +307,7 @@ namespace {
     bool GameView::minimapPlace(float mx, float my, int winW, int winH) {
         float wx, wz;
         if (!placing_ || watchOnly() || !minimapToWorld(mx, my, winW, winH, wx, wz)) return false;
-        const bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
+        const uint8_t queue = keyQueue();   // Ctrl puts the build at the head of the queue
         if (selection_.empty()) { sounds_.play("notoktobuild", 1.f, 1.f, 7, false); return true; }
         const int builder = selectedBuilder() ? selectedBuilder()->id : selection_.front();
         std::vector<int> feats;
@@ -311,7 +317,7 @@ namespace {
             c.kind = tak::net::Cmd::Build;
             c.unitId = builder;
             c.x = wx; c.z = wz;
-            c.queue = queue ? 1 : 0;
+            c.queue = queue;
             std::snprintf(c.type, sizeof c.type, "%s", placing_->id.c_str());
             issue(c);
             placed = true;
@@ -321,7 +327,7 @@ namespace {
         }
         sounds_.play(placed ? "oktobuild" : "notoktobuild", 1.f, 1.f, 7, false);
         if (placed) {
-            if (queue) shiftBuildPlaced_ = true;
+            if (shiftHeld()) shiftBuildPlaced_ = true;
             else { placing_ = nullptr; shiftBuildPlaced_ = false; }
         }
         return true;
@@ -395,7 +401,7 @@ namespace {
         return plan;
     }
 
-    bool GameView::issueBoxPlan(const BoxPlan& plan, float x0, float z0, float x1, float z1, bool queue) {
+    bool GameView::issueBoxPlan(const BoxPlan& plan, float x0, float z0, float x1, float z1, uint8_t queue) {
         ClickScope click(*this);
         std::vector<int> ordered, clearers;
         // Step L: the transport fetches each passenger in turn. Every Load but the
@@ -405,15 +411,19 @@ namespace {
             if (plan.orders[i] != ClickOrder::Pickup) continue;
             for (int p : plan.passengers) {
                 tak::net::Command c;
-                c.kind = tak::net::Cmd::Load; c.unitId = p; c.targetId = plan.units[i]; c.queue = queue ? 1 : 0;
+                c.kind = tak::net::Cmd::Load; c.unitId = p; c.targetId = plan.units[i]; c.queue = queue;
                 issue(c);
             }
             if (!plan.passengers.empty()) ordered.push_back(plan.units[i]);
         }
         // Step A: one Attack per box enemy each attacker can hurt, nearest first; the
-        // first replaces (Shift: queues), the rest queue behind it.
+        // first replaces (Shift: queues), the rest queue behind it. Ctrl puts each at
+        // the head (clickrules.h), so they go farthest first, the nearest ending up
+        // in front.
         std::vector<char> started(plan.units.size(), 0);
-        for (int enemyId : plan.enemies) {
+        const bool front = (queue & tak::net::kQueuePlace) == tak::net::kQueueFront;
+        for (size_t k = 0; k < plan.enemies.size(); ++k) {
+            const int enemyId = plan.enemies[front ? plan.enemies.size() - 1 - k : k];
             const UnitR* e = frameUnitP(enemyId);
             if (!e || !e->type) continue;
             for (size_t i = 0; i < plan.units.size(); ++i) {
@@ -423,7 +433,7 @@ namespace {
                                                 e->worldPosition, e->flightGroundMode)) continue;
                 tak::net::Command c;
                 c.kind = tak::net::Cmd::Attack; c.unitId = u->id; c.targetId = enemyId;
-                c.queue = queue || started[i] ? 1 : 0;
+                c.queue = started[i] ? tak::client::followQueue(queue) : queue;
                 issue(c);
                 if (!started[i]) ordered.push_back(u->id);
                 started[i] = 1;
@@ -443,7 +453,7 @@ namespace {
     bool GameView::armedRelease(float ex, float ey) {
         armedPress_ = false;
         if (!pendingCmd_ || watchOnly()) return false;
-        const bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
+        const uint8_t queue = keyQueue();
         const auto a = dragStartOnScreen(dragAnchor_);
         if (areaBoxAt(dragAnchor_, ex, ey)) {
             // 0x527d00 S: ATTACK attacks the box's enemies, LOAD loads its units,
@@ -457,13 +467,13 @@ namespace {
                                          std::max(a.x, ex), std::max(a.y, ey));
             // The cursor said Normal: nothing happens and the command stays armed.
             if (plan.cursor != tak::CursorId::Normal && issueBoxPlan(plan, apX0_, apZ0_, wx, wz, queue))
-                armedOrderIssued(queue);
+                armedOrderIssued(shiftHeld());
             return true;
         }
         dragging_ = false;
         // A click at the press, over the unit drawn there now.
         if (armedClickAt(pendingCmd_, apX0_, apZ0_,
                          hoveredUnitAt(tak::client::PointerArea::World, a.x, a.y), queue, true))
-            armedOrderIssued(queue);
+            armedOrderIssued(shiftHeld());
         return true;
     }

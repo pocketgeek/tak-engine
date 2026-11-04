@@ -18,6 +18,7 @@
 
 #include "client/cursorrules.h"
 #include "client/friendlyorder.h"
+#include "net/lockstep.h"
 
 #include <cstdint>
 #include <vector>
@@ -208,6 +209,24 @@ inline UnitClick armedClick(char cmd, const ClickTarget& t, const ClickUnit& u, 
 // mode stays armed. FindSite is placement's.
 inline bool isOrderCursor(CursorId c) {
     return retailCursorSlot(c) < retailCursorSlot(CursorId::Select) || c == CursorId::FindSite;
+}
+
+// The queue byte a player's order click sends (net/lockstep.h; retail B.4,
+// read off the event's +8 flags at 0x5214bf S): Ctrl, with or without Shift,
+// puts the order at the head of the queue without clearing it (0x4d7a09 ->
+// 0x4d7750 S); Shift appends (0x4d77f0 S); both carry the toggle, which takes
+// back a queued order of the same kind on the same target or within 16 px
+// (0x4d7a5b..0x4d7ab2 S). Alt is never read. Plain replaces.
+inline uint8_t clickQueue(bool shift, bool ctrl) {
+    if (ctrl) return tak::net::kQueueFront | tak::net::kQueueToggle;
+    if (shift) return tak::net::kQueueAppend | tak::net::kQueueToggle;
+    return tak::net::kQueueReplace;
+}
+// A click's follow-on orders for one unit (a box's second and later targets)
+// go behind its first: appended, and never toggled.
+inline uint8_t followQueue(uint8_t first) {
+    return (first & tak::net::kQueuePlace) == tak::net::kQueueFront ? first
+                                                                     : tak::net::kQueueAppend;
 }
 
 // ---- Boxes: the right-drag box (2.2) and the armed left-drag box (2.9) ----

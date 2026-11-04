@@ -113,6 +113,50 @@ void applyCommand(World& world, const TypeRegistry& reg, const tak::net::Command
         const auto* u = world.unit(id);
         return u && u->player == int(c.player);
     };
+    // Retail's queue modifiers (net/lockstep.h kQueueFront, kQueueToggle): a
+    // player's Shift/Ctrl order on a queued one of its kind takes it back, and
+    // Ctrl puts the order at the head of the queue -- for a producer's rally
+    // verbs, of its rally list. A structure's own list is never interrupted.
+    {
+        using tak::net::kQueueFront; using tak::net::kQueuePlace; using tak::net::kQueueToggle;
+        const bool front = (c.queue & kQueuePlace) == kQueueFront;
+        const bool toggle = (c.queue & kQueueToggle) && (c.queue & kQueuePlace);
+        const bool rallyVerb = c.kind == Cmd::Move || c.kind == Cmd::AttackMove || c.kind == Cmd::Patrol ||
+                               c.kind == Cmd::Attack;
+        const bool orderVerb = rallyVerb || c.kind == Cmd::Build || c.kind == Cmd::BuildManaArea ||
+            c.kind == Cmd::Assist || c.kind == Cmd::Guard || c.kind == Cmd::Load || c.kind == Cmd::Unload ||
+            c.kind == Cmd::Reclaim || c.kind == Cmd::ReclaimArea || c.kind == Cmd::Resurrect || c.kind == Cmd::Repair;
+        if (orderVerb && (front || toggle) && owns(c.unitId) && producer->type) {
+            const bool rally = rallyVerb && (producer->repeatType ||
+                (c.kind == Cmd::Attack ? producer->type->producesUnits() : producer->type->isStructure()));
+            if (toggle) {
+                World::QueuedMatch m;
+                m.x = Fixed::fromFloat(c.x); m.z = Fixed::fromFloat(c.z);
+                m.target = c.targetId;
+                switch (c.kind) {
+                    case Cmd::Move:       m.kind = World::QueuedKind::Move; break;
+                    case Cmd::AttackMove: m.kind = World::QueuedKind::AttackMove; break;
+                    case Cmd::Patrol:     m.kind = World::QueuedKind::Patrol; break;
+                    case Cmd::Attack:     m.kind = World::QueuedKind::Attack; break;
+                    case Cmd::Guard:      m.kind = World::QueuedKind::Guard; break;
+                    case Cmd::Load:       m.kind = World::QueuedKind::Load; break;
+                    case Cmd::Unload:     m.kind = World::QueuedKind::Unload; break;
+                    case Cmd::Build:      m.kind = World::QueuedKind::Build; m.type = reg.find(c.type); break;
+                    case Cmd::Reclaim:    m.kind = World::QueuedKind::Reclaim; break;
+                    case Cmd::Repair:     m.kind = World::QueuedKind::Repair; break;
+                    case Cmd::Assist:     m.kind = World::QueuedKind::Assist; break;
+                    default: break;
+                }
+                if (world.removeQueuedMatch(c.unitId, rally, m)) return;
+            }
+            if (front && (rally || !producer->type->isStructure())) {
+                tak::net::Command append = c;
+                append.queue = tak::net::kQueueAppend;
+                world.insertOrderFront(c.unitId, rally, [&] { applyCommand(world, reg, append); });
+                return;
+            }
+        }
+    }
     auto redirect = [&] { if (!c.queue && !repeatingMobile) world.cancelBuilds(c.unitId); };
     switch (c.kind) {
         case Cmd::ShareMana:

@@ -224,7 +224,7 @@ namespace {
         if (stage == CursorStage::Hover) return hoverCursor(wx, wz, hovered);
         // Armed: the per-unit decisions the click itself takes (clickrules.h), the
         // lowest cursor slot over the selected units but the hovered one (0x521cd0).
-        return planClick(pendingCmd_, wx, wz, hovered, (SDL_GetModState() & KMOD_SHIFT) != 0, false,
+        return planClick(pendingCmd_, wx, wz, hovered, keyQueue(), false,
                          area == PointerArea::World).cursor;
     }
 

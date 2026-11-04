@@ -416,6 +416,27 @@ void sameTick() {
                       o[1].convoyTick == (kExplicitArea | 3u) && o[0].convoyTick == (kExplicitArea | 2u);
         }
         check(queued, "a queued order appends a leg with its own identity");
+        // Ctrl (kQueueFront, C9): the order's leg goes to the head, the earlier legs
+        // keep their own identities behind it; then a Shift toggle on the queued
+        // leg's point takes that leg back.
+        f.apply(orderCmd(0, 4, verb(Cmd::Move, 120 * 16, 40 * 16, 0, tak::net::kQueueFront | tak::net::kQueueToggle),
+                         sorted(ids), OrderShape::Offsets));
+        bool front = true;
+        for (int id : ids) {
+            std::vector<uint32_t> serials;
+            for (const auto& o : f.world.unit(id)->orders) if (o.goal) serials.push_back(o.orderSerial);
+            front &= serials == std::vector<uint32_t>{4, 2, 3};
+        }
+        check(front, "a Ctrl order goes to the head; the earlier legs keep their identities behind it");
+        f.apply(orderCmd(0, 5, verb(Cmd::Move, 40 * 16, 40 * 16, 0, tak::net::kQueueAppend | tak::net::kQueueToggle),
+                         sorted(ids), OrderShape::Offsets));
+        bool toggled = true;
+        for (int id : ids) {
+            std::vector<uint32_t> serials;
+            for (const auto& o : f.world.unit(id)->orders) if (o.goal) serials.push_back(o.orderSerial);
+            toggled &= serials == std::vector<uint32_t>{4, 2};
+        }
+        check(toggled, "a Shift order on a queued leg's point takes that leg back for every member");
     }
     {
         // Two orders of one player to one point in one tick share the area; another point does not.

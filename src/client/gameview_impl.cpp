@@ -319,7 +319,7 @@
         return out;
     }
 
-    void GameView::issueReclaimBox(float x0, float z0, float x1, float z1, bool queue,
+    void GameView::issueReclaimBox(float x0, float z0, float x1, float z1, uint8_t queue,
                                    const std::vector<int>& only) {
         ClickScope click(*this);
         const auto ids = only.empty() ? reclaimers() : only;

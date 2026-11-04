@@ -1844,6 +1844,167 @@ bool World::setRally(Unit& u, const Order& o, bool queue) {
     return true;
 }
 
+// The kinds a player's Shift/Ctrl order can take back (removeQueuedMatch).
+// Only issued legs count: route corners, what missions push ahead of
+// themselves (step-outs, landings, formation waits, auto attacks, a guard's
+// own repairs) and the work kinds no click names (areas, waits, scripts, a
+// raise) never match.
+World::QueuedKind World::queuedKind(const Order& o) {
+    if (!o.goal || o.scripted || o.stepOut || o.landing || o.formationLevel || o.seekGuard || o.seekAttack ||
+        o.reclaimAreaApproach || o.transportPickup || o.patrolRepair || o.guardRepair || o.wait ||
+        o.waitAttack || o.reclaimArea || o.manaBuildArea)
+        return QueuedKind::None;
+    if (o.buildType) return QueuedKind::Build;
+    if (o.helpSite) return QueuedKind::Assist;
+    if (o.repairTarget) return QueuedKind::Repair;
+    if (o.reclaimFeat) return o.reviveKind ? QueuedKind::None : QueuedKind::Reclaim;
+    if (o.load) return QueuedKind::Load;
+    if (o.unload) return QueuedKind::Unload;
+    if (o.guard) return QueuedKind::Guard;
+    if (o.targetId) return o.autoTarget ? QueuedKind::None : QueuedKind::Attack;
+    if (o.patrol) return QueuedKind::Patrol;
+    if (o.attackMove) return QueuedKind::AttackMove;
+    return QueuedKind::Move;
+}
+
+// 4d7a5b..4d7ab2: from the head, the first queued mission of the click's kind
+// whose target is the click's (when it names one) and whose point is within
+// 16 px of the click's on both axes (when it has one) is removed, and the
+// click adds nothing. A leg's point is where it was clicked: a ground leg's
+// mission point survives the footprint snap and any route in its x/z.
+bool World::removeQueuedMatch(int unitId, bool rally, const QueuedMatch& m) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type || m.kind == QueuedKind::None) return false;
+    if (m.kind == QueuedKind::Build && !m.type) return false;
+    const bool point = m.kind == QueuedKind::Move || m.kind == QueuedKind::AttackMove ||
+                       m.kind == QueuedKind::Patrol || m.kind == QueuedKind::Unload || m.kind == QueuedKind::Build;
+    Fixed mx = m.x, mz = m.z;
+    if (m.kind == QueuedKind::Build) {   // the site as makeBuildOrder keeps it
+        mx = footprintWaypoint(footprintCell(m.x, m.type->footX), m.type->footX);
+        mz = footprintWaypoint(footprintCell(m.z, m.type->footZ), m.type->footZ);
+    }
+    const auto near = [](Fixed a, Fixed b) {
+        const int64_t d = int64_t(a.v) - int64_t(b.v);
+        return d >= -(int64_t(16) << 16) && d <= (int64_t(16) << 16);
+    };
+    const auto matches = [&](const Order& o) {
+        if (queuedKind(o) != m.kind) return false;
+        if (point) {
+            if (m.kind == QueuedKind::Build && o.buildType != m.type) return false;
+            Fixed px = o.x, pz = o.z;
+            if (o.buildType) { px = o.buildX; pz = o.buildZ; }
+            else if (o.missionTarget) { px = o.missionTarget->first; pz = o.missionTarget->second; }
+            else if (o.groundMission) { px = o.clickX; pz = o.clickZ; }
+            return near(px, mx) && near(pz, mz);
+        }
+        const int t = m.kind == QueuedKind::Reclaim ? o.reclaimFeat
+                    : m.kind == QueuedKind::Repair  ? o.repairTarget
+                    : m.kind == QueuedKind::Assist  ? o.helpSite : o.targetId;
+        return t == m.target;
+    };
+    std::vector<Order>& list = rally ? u->rally : u->orders;
+    const auto it = std::find_if(list.begin(), list.end(), matches);
+    if (it == list.end()) return false;
+    if (rally) { list.erase(it); return true; }
+    OrdersNote note{*this, unitId};
+    if (size_t(it - list.begin()) != currentLeg(list)) { list.erase(it); return true; }
+    // The current leg: it ends with its route, and its job with it.
+    dropLeg(*u);
+    if (!u->repeatType) {
+        std::vector<Order> rest;
+        rest.swap(u->orders);
+        cancelBuilds(unitId);
+        unit(unitId)->orders.swap(rest);
+    }
+    return true;
+}
+
+// 4d7750 links the new mission in at the head, ahead of the running one; that
+// one sleeps behind it and runs again when the head ends. Here the new order
+// is issued as an append onto an emptied queue (so every verb's own code
+// applies), and the old queue goes back behind it, its current leg rewound
+// to how it stood when queued: what its run pushed ahead of it and its route
+// go, its mission starts at stage 0 on a fresh controller. A builder already
+// at work on a site comes back to it as a HelpBuild on that site.
+void World::insertOrderFront(int unitId, bool rally, const std::function<void()>& issue) {
+    Unit* u = unit(unitId);
+    if (!u || !u->alive() || !u->type) return;
+    if (rally) {
+        std::vector<Order> rest;
+        rest.swap(u->rally);
+        issue();
+        u = unit(unitId);
+        u->rally.insert(u->rally.end(), std::make_move_iterator(rest.begin()), std::make_move_iterator(rest.end()));
+        if (u->rally.size() > 32) u->rally.erase(u->rally.begin() + 32, u->rally.end());   // bound it
+        return;
+    }
+    if (u->orders.empty()) { issue(); return; }
+    OrdersNote note{*this, unitId};
+    // The route stamp as the current leg's detachment leaves it (dropLeg).
+    {
+        const Order& cur = u->orders[currentLeg(u->orders)];
+        if (cur.groundMission || cur.buildRectangle) {
+            if (cur.controller && uint32_t(u->routeStamp) <= tickCounter_ - 6u) u->routeStamp = 0;
+        } else u->routeStamp = -1;
+    }
+    size_t first = 0;
+    while (first < u->orders.size()) {
+        const Order& o = u->orders[first];
+        if (o.goal && o.autoTarget && o.targetId) {   // an auto attack, and the return move a leash gave it
+            first += o.chaseLeashed ? 2 : 1;
+            continue;
+        }
+        if (o.goal && !o.stepOut && !o.landing && !o.formationLevel && !o.reclaimAreaApproach && !o.guardRepair)
+            break;
+        ++first;
+    }
+    std::vector<Order> rest;
+    if (first < u->orders.size())
+        rest.assign(std::make_move_iterator(u->orders.begin() + long(first)), std::make_move_iterator(u->orders.end()));
+    u->orders.clear();
+    int site = 0;
+    if (!rest.empty() && rest.front().buildType && u->buildSiteId) {
+        site = u->buildSiteId;   // placed: the build leg's work is now the site's
+        rest.erase(rest.begin());
+    }
+    if (!rest.empty()) {
+        Order& o = rest.front();
+        const uint32_t flags = o.mission.flags;
+        o.mission = RetailMissionState{};
+        o.mission.flags = flags;
+        o.hasSegment = false;
+        o.navigationConsumed = o.navigationExhausted = false;
+        o.flightGoal.reset();
+        o.park.reset();
+        o.airToAir.reset();
+        o.controller = o.groundMission ? ++nextMovementController_ : 0;   // as order() queues a leg
+        if (o.groundMission && o.missionTarget) {
+            o.x = o.missionTarget->first;
+            o.z = o.missionTarget->second;
+            o.missionTarget.reset();
+        }
+        o.attackAimTick = Order::kAttackUnaimed;
+        o.attackChased = false;
+        o.airRunCount = 0;
+        o.strikeFollow = o.mixedSlots = false;
+        o.reclaimCountdown = 0;
+        o.repairLooks = 0;
+        o.placementFailures = 0;
+        o.placementRetryTick = 0;
+        o.stationFree = 0;
+        o.stationRefX = o.stationRefZ = 0;
+        o.stationRefTick = 0;
+        o.guardOrbitAngle = 0;
+    }
+    cancelPath(*u);
+    if (!u->repeatType) cancelBuilds(unitId);   // the running job stops (the queue is empty)
+    issue();
+    if (site)
+        if (const Unit* s = unit(site); s && s->alive() && s->underConstruction) assist(unitId, site, true);
+    u = unit(unitId);
+    u->orders.insert(u->orders.end(), std::make_move_iterator(rest.begin()), std::make_move_iterator(rest.end()));
+}
+
 static void resetGroundSegment(const Unit& u,Order& goal) {
     // 4e2500/4e2820 retain the mission point separately from the navigator's
     // footprint-aligned endpoint. A retry must use the mission, not a partial

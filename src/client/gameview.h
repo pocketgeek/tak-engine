@@ -285,7 +285,7 @@ public:
     // pointer (mouseX_/mouseY_): retail's per-unit resolver (clickrules.h rightClick)
     // for every selected unit of ours but the hovered one. Alt: a loaded transport
     // unloads at the point instead of moving (ours).
-    void rightClickOrder(float wx, float wz, bool queue);
+    void rightClickOrder(float wx, float wz, uint8_t queue);
     // One click's plan (client/clickrules.h): each selected unit's order against the
     // hovered unit and the ground point. `mode` 0 is the right-click resolver, else
     // an armed command; `cursor` is the armed cursor (lowest slot over the units),
@@ -299,9 +299,9 @@ public:
         int body = 0;                      // raiseTargetAt at the point
         std::optional<int> reclaim;        // reclaimTargetAt at the point
     };
-    ClickPlan planClick(char mode, float wx, float wz, const UnitR* hovered, bool queue, bool alt,
+    ClickPlan planClick(char mode, float wx, float wz, const UnitR* hovered, uint8_t queue, bool alt,
                         bool pointTargets);
-    void issueClickPlan(const ClickPlan& plan, char mode, bool queue);
+    void issueClickPlan(const ClickPlan& plan, char mode, uint8_t queue);
     // The selected units of ours an order can go to: alive, finished, not carried.
     std::vector<const UnitR*> ownClickUnits() const;
     // A box (the right-drag, an armed left-drag) over screen (sx0,sy0)-(sx1,sy1),
@@ -317,11 +317,11 @@ public:
     };
     BoxPlan planBox(tak::client::BoxMode mode, float sx0, float sy0, float sx1, float sy1);
     // False when the box gave nobody an order.
-    bool issueBoxPlan(const BoxPlan& plan, float x0, float z0, float x1, float z1, bool queue);
+    bool issueBoxPlan(const BoxPlan& plan, float x0, float z0, float x1, float z1, uint8_t queue);
     // The armed command's click at (wx,wz) over `hovered`: issued only when its
     // cursor is an order cursor (P4); otherwise nothing happens and it stays armed.
     // True when the click was taken (the caller then disarms, Shift keeping it).
-    bool armedClickAt(char cmd, float wx, float wz, const UnitR* hovered, bool queue, bool pointTargets);
+    bool armedClickAt(char cmd, float wx, float wz, const UnitR* hovered, uint8_t queue, bool pointTargets);
     // The armed press's release at screen (ex,ey): its click at the press, or its
     // box. False when the release is a select instead (disarmed meanwhile, or the box
     // of a command without one: it box-selects and the command stays armed).
@@ -357,7 +357,7 @@ public:
     std::vector<int> reclaimers();   // every selected one, in selection order
     // "Clear this area": order each of `ids` (every selected reclaimer when empty) to
     // clear the box (each its own ReclaimArea, retail 5214b0); the rest are left alone.
-    void issueReclaimBox(float x0, float z0, float x1, float z1, bool queue,
+    void issueReclaimBox(float x0, float z0, float x1, float z1, uint8_t queue,
                          const std::vector<int>& ids = {});
 
     // Attach the multiplayer client. The game world is set up later, from the
@@ -3252,7 +3252,7 @@ private:
                      std::vector<int>& outFeatures);
     // Submit one Build command; the simulation clears the footprint first.
     void issueClearThenBuild(int builderId, const tak::sim::UnitType* type,
-                             float x, float z, const std::vector<int>& feats, bool queue);
+                             float x, float z, const std::vector<int>& feats, uint8_t queue);
     // HUD notice setter that is safe to call from the sim worker: the worker's sim events
     // (god summon, scenario/mission messages) defer into a pending slot that the main thread
     // applies in mpStep, so notice_ (a std::string draw() reads every frame) and noticeTimer_
@@ -3550,14 +3550,18 @@ private:
 
     // Right-click on the minimap: the right-click resolver at that world point,
     // aimed at the dot under the pointer (retail 0x5213ae..0x52141f).
-    bool minimapOrder(float mx, float my, int winW, int winH, bool queue);
+    bool minimapOrder(float mx, float my, int winW, int winH, uint8_t queue);
 
     // After an armed order's click: keep it armed while Shift queues.
     void armedOrderIssued(bool queue);
+    // The queue byte for an order click from the held keys (clickrules.h
+    // clickQueue: Ctrl front, Shift append, both toggle), and whether Shift is held.
+    static uint8_t keyQueue();
+    static bool shiftHeld();
     // Issue the armed order to the selection at world (wx,wz), ungated (the dev
     // harness's form): `precise` takes the hovered unit at the pointer in the main
     // view, else the minimap dot under it. The clicks go through armedClickAt.
-    void issueArmedOrder(char cmd, float wx, float wz, bool queue, bool precise);
+    void issueArmedOrder(char cmd, float wx, float wz, uint8_t queue, bool precise);
 
     // Left-click on the minimap while an order is armed (e.g. F): issue it at the
     // minimap location (F + minimap = fight-move there). Returns true if handled.

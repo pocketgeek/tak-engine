@@ -49,6 +49,11 @@ their validation reports; both live in [`docs/`](docs/).
     with nothing of yours selected it still selects the unit so you can look at it.
     Shift-clicking a selected unit now removes it from the selection.
   - A random unit of the selection acknowledges an order, as in the original game.
+  - **Ctrl+click puts an order at the front** of a unit's queue without clearing it,
+    as in the original game: the unit does it first, then carries on with what it
+    was doing. Shift- or Ctrl-clicking the same order again (on the same target, or
+    within 16 pixels of a queued point) takes that queued order back. For a factory,
+    or a Zhon builder repeating production, both work on its rally orders.
 - **A unit no longer ignores an enemy for good after its shots hit a rock.** A unit
   that wrote off an enemy because three shots in a row struck a hill or rock used to
   keep skipping it, even after that enemy walked into the open, until you gave it an

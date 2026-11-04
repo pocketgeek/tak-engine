@@ -295,8 +295,7 @@
                    minimapPlace(float(e.button.x), float(e.button.y), winW, winH)) {
             // A build item armed: place it at the minimap point (0x527eb0).
         } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT && !placing_ &&
-                   minimapOrder(float(e.button.x), float(e.button.y), winW, winH,
-                                (SDL_GetModState() & KMOD_SHIFT) != 0)) {
+                   minimapOrder(float(e.button.x), float(e.button.y), winW, winH, keyQueue())) {
             // Right press on the minimap (wherever it is drawn, the full-screen radar
             // included): the right-click order at that point, aimed at the dot.
             trackSel_ = false;
@@ -332,7 +331,7 @@
                 manaBuildDrag_=true;buildDrag_=false;
                 bdX0_=wx;bdZ0_=wz;bdAnchor_=dragAnchorAt(float(e.button.x),float(e.button.y));
                 bdQueue_=(SDL_GetModState() & KMOD_SHIFT)!=0;
-            } else if (SDL_GetModState() & KMOD_SHIFT) {
+            } else if ((SDL_GetModState() & KMOD_SHIFT) && !(SDL_GetModState() & KMOD_CTRL)) {
                 // Shift: begin a drag — a whole line of these gets queued on
                 // release (a single shift-click is just a zero-length line).
                 buildDrag_ = true;
@@ -345,6 +344,7 @@
                 c.unitId = selectedBuilder() ? selectedBuilder()->id : selection_.front();
                 c.x = wx;
                 c.z = wz;
+                c.queue = keyQueue();   // Ctrl (with or without Shift): at the head of the queue
                 std::snprintf(c.type, sizeof c.type, "%s", placing_->id.c_str());
                 issue(c);
                 placing_ = nullptr;
@@ -356,7 +356,7 @@
                 std::vector<int> feats;
                 if (clearableAt(placing_, wx, wz, feats) && !feats.empty()) {
                     int bid = selectedBuilder() ? selectedBuilder()->id : selection_.front();
-                    issueClearThenBuild(bid, placing_, wx, wz, feats, false);
+                    issueClearThenBuild(bid, placing_, wx, wz, feats, keyQueue());
                     placing_ = nullptr;
                     shiftBuildPlaced_ = false;
                 }
@@ -399,7 +399,7 @@
         } else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_RIGHT &&
                    rightDrag_) {
             rightDrag_ = false;
-            bool queue = (SDL_GetModState() & KMOD_SHIFT) != 0;
+            const uint8_t queue = keyQueue();
             float ex = float(e.button.x), ey = float(e.button.y), ewx, ewz;
             pickWorld(ex, ey, ewx, ewz);
             // Retail orders on the release (0x5281ad). Only a deliberate box is one
@@ -773,7 +773,7 @@
     // The simulation queues footprint reclamation before admitting construction.
     void GameView::issueClearThenBuild(int builderId, const tak::sim::UnitType* type,
                                        float x, float z, const std::vector<int>& feats,
-                                       bool queue) {
+                                       uint8_t queue) {
         const UnitR* b=frameUnitP(builderId);
         if (!type || feats.empty() || !b || !b->type || !b->type->canReclaim) return;
         tak::net::Command bc;
@@ -781,7 +781,7 @@
         bc.unitId = builderId;
         bc.x = x;
         bc.z = z;
-        bc.queue = uint8_t(queue);
+        bc.queue = queue;
         std::snprintf(bc.type, sizeof bc.type, "%s", type->id.c_str());
         issue(bc);
         notice_ = "CLEARING " + std::to_string(feats.size());
